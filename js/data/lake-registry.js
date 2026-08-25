@@ -217,6 +217,7 @@ export function loadLakeRegistry() {
         // working off the worker's DNR feeds alone, exactly as it did before.
         console.warn('[lake-registry] load failed, falling back to DNR feeds only:', e.message);
         registry = { bySlug: new Map(), byName: new Map(), list: [], loaded: false };
+        _normIndex = null; _normStateIndex = null;
         return registry;
       });
   }
@@ -345,31 +346,129 @@ export function accessPointsFor(rec) {
 // better answer than a confidently wrong lake -- a caller can fall back, but it cannot
 // detect that it was handed the wrong reservoir's pool level.
 
+/**
+ * A PARENTHETICAL IS EITHER THE COUNTY OR THE IDENTITY, AND THIS USED TO DELETE BOTH.
+ *
+ * Reported by Ryan 2026-08-25: a conditions card for the Lower Saluda at Saluda Shoals showed
+ * flow, stage and an 87-year history from "Saluda River near WARE SHOALS", 105 km upstream on
+ * the far side of Lake Greenwood AND Lake Murray, and a water temperature of 81.1 F taken on a
+ * free-flowing upper river. The Lower Saluda below Murray Dam is a bottom-release tailwater and
+ * does not get near that.
+ *
+ * The registry keeps FOUR Saludas and tells them apart in the name:
+ *
+ *     Saluda River (Greenville Co, SC)                 1,310 ac
+ *     Saluda River (2) (Newberry Co, SC)                 722 ac
+ *     Saluda River (Lower Saluda) (Lexington Co, SC)     389 ac
+ *
+ * `.replace(/\(.*?\)/g, ' ')` stripped EVERY parenthetical, so all three normalised to
+ * `river saluda`, the index is first-writer-wins over a largest-first list, and the 1,310-acre
+ * Greenville reach claimed the key for all of them. Nothing downstream could tell.
+ *
+ * THE TAIL IS NOISE; THE REST IS THE NAME. `(Lexington Co, SC)` and `(SC/GA)` are the registry's
+ * own county stamp and carry no identity -- the caller never has them, which is the whole reason
+ * they were being stripped. `(Lower Saluda)`, `(2)` and `(Union County)` are the only thing
+ * separating two real waters, and a matcher that deletes them is guessing.
+ *
+ * `\bco\b` and not `county`: `(Union Co, NC)` is a stamp, `(Union County)` is a name.
+ */
 function normName(s) {
   return String(s || '')
     .toLowerCase()
-    .replace(/\(.*?\)/g, ' ')
-    .replace(/,\s*[a-z]{2}(\/[a-z]{2})*\s*$/, '')
+    // A trailing state: "…, sc", "…, sc/ga".
+    .replace(/,\s*[a-z]{2}(\/[a-z]{2})*\s*$/, ' ')
+    // A trailing county stamp: "(lexington co, sc)".
+    .replace(/\s*\([^()]*\bco\b[^()]*\)\s*$/, ' ')
+    // A trailing bare state stamp: "(sc)", "(sc/ga)".
+    .replace(/\s*\([a-z]{2}(\/[a-z]{2})*\)\s*$/, ' ')
+    // Whatever parenthetical is LEFT is part of the name. Keep its words, drop its brackets.
+    .replace(/[()]/g, ' ')
     .replace(/\b(lake|lakes|reservoir|rsvr|pond|millpond|impoundment|the|of)\b/g, ' ')
     .replace(/[^a-z0-9]+/g, ' ')
     .trim()
     .split(' ').filter(Boolean).sort().join(' ');
 }
 
+/**
+ * THE STATE IS THE OTHER HALF OF THE NAME, AND normName THROWS IT AWAY TOO.
+ *
+ * With the parenthetical fix above, 11 of the 358 shipped waters still resolved to a different
+ * water when asked by the name the app actually passes. EIGHT of those eleven are in different
+ * states, and the caller has the state -- the access index builds every name as
+ * `<feed spelling>, <ST>`, and the ST comes from which state agency published the row:
+ *
+ *     Lake Lanier, SC        85 ac, Greenville Co    vs   Lake Sidney Lanier, GA   38,293 ac
+ *     Lake Russell, GA       88 ac, Habersham Co     vs   Richard B Russell, SC    24,608 ac
+ *     Lake Cherokee, SC      51 ac, Cherokee Co      vs   Cherokee Lake, TN        30,053 ac
+ *     Hunt Pond, SC          50 ac                   vs   Lake Hunt, NC              176 ac
+ *
+ * Every one of those was answering with the bigger water in the other state, because
+ * `normName` strips `, sc` before it builds the key. Lake Lanier is the pair `check-lake-geo`
+ * was written for in 2026-08-04 -- it recorded 'Lake Lanier, GA' resolving to the 85-acre SC
+ * pond. Both directions are the same defect: the state was in our hands and the key dropped it.
+ *
+ * STATE-KEYED FIRST, STATE-BLIND SECOND. The state-blind index is kept and consulted after, so
+ * a caller with no state resolves exactly as it did before. This can turn a wrong answer right
+ * or a null into a hit; it cannot take away an answer that was already being given.
+ *
+ * THREE PAIRS ARE LEFT AND NO KEY CAN SEPARATE THEM, because they are in the same state:
+ * Cedar Creek (Richland Co, SC) against Cedar Creek Reservoir (Chester Co, SC), Cypress Lake
+ * (Bulloch Co, GA) against Lake Cypress (Dodge Co, GA), and Glenville Lake (Cumberland Co, NC)
+ * against Lake Glenville (Jackson Co, NC). The feed name carries no county. Largest-first
+ * first-writer-wins still decides those, and the smaller water is reachable by slug or by its
+ * full display name -- which is a limit worth stating rather than a bug worth hiding.
+ */
 let _normIndex = null;
-function normIndex() {
-  if (_normIndex && _normIndex.size) return _normIndex;
+let _normStateIndex = null;
+
+function buildNormIndexes() {
   _normIndex = new Map();
+  _normStateIndex = new Map();
   for (const r of registry.list) {
     for (const n of [r.name, r.displayName, r.legacyDisplayName, ...r.legacyDisplayNames]) {
       if (!n) continue;
       const k = normName(n);
+      if (!k) continue;
       // First writer wins, and the list is sorted largest-first below, so a 30-acre namesake
       // cannot claim the key belonging to the reservoir everyone means.
-      if (k && !_normIndex.has(k)) _normIndex.set(k, r);
+      if (!_normIndex.has(k)) _normIndex.set(k, r);
+      // A NUMERIC PARENTHETICAL IS THE REGISTRY'S HANDWRITING, NOT THE WATER'S NAME.
+      //
+      // `(Lower Saluda)` and `(Union County)` are what the water is called. `(2)`, `(3)`, `(4)`
+      // are what consolidate_lake_index.py writes when two rows collide, and nobody asks for a
+      // river by its ordinal. Keeping the ordinal fixed "Broad River (2)" resolving to the wrong
+      // Broad River and immediately broke the other direction: "Broad River, SC" is the 5,166-acre
+      // Union County reach, and with the ordinal in the key it could only reach the 4,084-acre
+      // Cherokee County NC one through the state-blind fallback.
+      //
+      // So an ordinal row claims its base name too -- IN THE STATE INDEX ONLY. The state-blind
+      // index keeps the ordinal, because without a state "Broad River" genuinely is ambiguous
+      // and largest-first has to break the tie as it always did.
+      const bare = k.replace(/\b\d+\b/g, ' ').replace(/\s+/g, ' ').trim();
+      for (const st of String(r.state || '').toUpperCase().split(/[^A-Z]+/).filter(Boolean)) {
+        for (const key of (bare && bare !== k) ? [k, bare] : [k]) {
+          const sk = `${st}|${key}`;
+          if (!_normStateIndex.has(sk)) _normStateIndex.set(sk, r);
+        }
+      }
     }
   }
+}
+
+function normIndex() {
+  if (!_normIndex || !_normIndex.size) buildNormIndexes();
   return _normIndex;
+}
+
+function normStateIndex() {
+  if (!_normStateIndex || !_normStateIndex.size) buildNormIndexes();
+  return _normStateIndex;
+}
+
+/** The state a caller stamped on a name, or null. `, SC` / `(Lexington Co, SC)` / `(SC/GA)`. */
+function stateOfQuery(q) {
+  const m = String(q || '').match(/(?:,\s*|\(\s*)([A-Za-z]{2})(?:\s*\/\s*[A-Za-z]{2})*\s*\)?\s*$/);
+  return m ? m[1].toUpperCase() : null;
 }
 
 /**
@@ -380,9 +479,13 @@ export function lakeRecordFor(query) {
   if (!query || typeof query !== 'string') return null;
   const q = query.trim();
   if (!q) return null;
+  const st = stateOfQuery(q);
+  const nk = normName(q);
   return registry.bySlug.get(q)
       || registry.byName.get(q)
-      || normIndex().get(normName(q))
+      // The state the caller stamped, when it stamped one. See normStateIndex.
+      || (st && nk ? normStateIndex().get(`${st}|${nk}`) : null)
+      || normIndex().get(nk)
       || null;
 }
 

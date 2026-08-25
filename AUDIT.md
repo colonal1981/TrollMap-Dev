@@ -12,8 +12,8 @@ Python side will read as dead here and may not be. See the `lakes.js` near miss 
 
 | metric | count |
 |---|---|
-| files | 454 |
-| jsModules | 285 |
+| files | 455 |
+| jsModules | 286 |
 | pyScripts | 163 |
 | routes | 56 |
 | routesUncalled | 0 |
@@ -141,7 +141,7 @@ _none_
 | www.tva.com | pipeline, worker, browser | 8 | Scripts/build_water_bindings.py:114 |
 | usgs-nims-images.s3.amazonaws.com | pipeline, worker, browser | 6 | Scripts/build_camera_index.py:61 |
 | api.tidesandcurrents.noaa.gov | pipeline, worker, browser | 6 | Scripts/build_water_bindings.py:117 |
-| api.hydro-derived.duke-energy.app | worker | 6 | Worker/conditions.js:1607 |
+| api.hydro-derived.duke-energy.app | worker | 6 | Worker/conditions.js:1631 |
 | waterdata.usgs.gov | worker, browser | 6 | Worker/worker-data.js:933 |
 | lakemonster.com | worker | 6 | Worker/worker-data.js:957 |
 | www.topografix.com | browser | 6 | js/modules/garmin-export.js:65 |
@@ -188,7 +188,7 @@ _none_
 | www.weather.gov | pipeline | 1 | Scripts/probe_ndbc_stations.py:11 |
 | prd-tnm.s3.amazonaws.com | pipeline | 1 | Scripts/trollmap_nhd_boundaries.py:34 |
 | api.cloudflare.com | pipeline | 1 | Scripts/trollmap_r2_clean.py:39 |
-| forecast.weather.gov | worker | 1 | Worker/conditions.js:208 |
+| forecast.weather.gov | worker | 1 | Worker/conditions.js:232 |
 | api.tavily.com | worker | 1 | Worker/research/clients.js:239 |
 | s.jina.ai | worker | 1 | Worker/research/clients.js:311 |
 | www.ncwildlife.org | worker | 1 | Worker/research/dataset.js:13 |
@@ -337,7 +337,7 @@ _none_
 |---|---|---|---|---|---|
 | `Scripts/make_counties.mjs` | 49 | 0 | 0 | 0 | make_counties.mjs -- flatten us-atlas counties-10m TopoJSON into a GeoJSON the Python |
 | `Worker/cameras.js` | 176 | 5 | 1 | **4** | Worker/cameras.js — the current frame from a USGS NIMS camera. |
-| `Worker/conditions.js` | 4184 | 61 | 29 | **2** | Worker/conditions.js — one call that answers "what is this water doing right now". |
+| `Worker/conditions.js` | 4208 | 62 | 30 | **2** | Worker/conditions.js — one call that answers "what is this water doing right now". |
 | `Worker/core/arcgis.js` | 401 | 7 | 2 | **2** | Worker/core/arcgis.js — shared ArcGIS helper for ramps/paddle/bank-pier/attractors |
 | `Worker/operators.js` | 169 | 3 | 2 | 0 | operators.js — the three utility operators that publish HTML tables instead of JSON. |
 | `Worker/registry.js` | 342 | 12 | 6 | **3** | The lake index, read by the Worker. |
@@ -373,7 +373,7 @@ _none_
 | `js/data/coastal-zones.js` | 327 | 6 | 23 | 0 | coastal-zones.js — SC / GA / NC coastal + tidal zone catalog. |
 | `js/data/fishing-style-profile.js` | 135 | 5 | 5 | **4** | fishing-style-profile.js — Ryan's actual gear, platform, and technique |
 | `js/data/lake-keys.js` | 512 | 4 | 24 | 0 | Shared lake display-name → R2 key map. |
-| `js/data/lake-registry.js` | 421 | 13 | 11 | 0 | lake-registry.js — the 3DHP lake registry, with every access source joined on. |
+| `js/data/lake-registry.js` | 524 | 13 | 11 | 0 | lake-registry.js — the 3DHP lake registry, with every access source joined on. |
 | `js/data/lure-knowledge.js` | 1083 | 20 | 12 | **4** | lure-knowledge.js — Lure behavior profiles and scoring engine. |
 | `js/data/ramps-loader.js` | 209 | 2 | 4 | 0 | ramps.js — Tri-state (SC/NC/GA) boat ramp database. |
 | `js/data/regulations-live.js` | 228 | 8 | 5 | 0 | The state regulation digest, in the browser. |
@@ -505,7 +505,7 @@ _none_
 | `test/conditions-follow-the-ramp.test.js` | 120 | 0 | 0 | 0 | The point you ask about is the answer you get. |
 | `test/confidence.test.js` | 157 | 0 | 0 | 0 |  |
 | `test/credit-guards.test.js` | 228 | 0 | 0 | 0 | THE TWO PLACES A PAID SERVICE'S BALANCE WAS A NUMBER SOMEBODY TYPED. |
-| `test/cwms-series.test.js` | 353 | 0 | 0 | 0 | Picking the Corps' pool elevation out of forty-two candidates, and the metres trap. |
+| `test/cwms-series.test.js` | 434 | 0 | 0 | 0 | Picking the Corps' pool elevation out of forty-two candidates, and the metres trap. |
 | `test/cwms-units.test.js` | 202 | 0 | 0 | 0 | THE CORPS PUBLISHES ITS OWN UNIT TABLE, AND OURS WAS A HAND-TYPED SUBSET OF IT. |
 | `test/data-reaches-the-app.test.js` | 329 | 0 | 0 | 0 |  |
 | `test/db-writes.test.js` | 232 | 0 | 0 | 0 | test/db-writes.test.js — a write either happened or it did not, and the caller must be abl |
@@ -520,7 +520,7 @@ _none_
 | `test/duke-lake-row.test.js` | 83 | 0 | 0 | 0 | normalizeDukeRow against the REAL /lakes/current-level response. |
 | `test/duke-operating-range.test.js` | 278 | 0 | 0 | 0 | The guide curve, the drought stage as a NUMBER, and where this date usually sits. |
 | `test/duke-release-direction.test.js` | 396 | 0 | 0 | 0 | Inflow or outflow: which side of a lake a Duke release comes from. |
-| `test/expect-shim.mjs` | 221 | 8 | 85 | 0 | test/expect-shim.mjs -- `describe`/`it`/`expect` on top of node:test and node:assert. |
+| `test/expect-shim.mjs` | 221 | 8 | 86 | 0 | test/expect-shim.mjs -- `describe`/`it`/`expect` on top of node:test and node:assert. |
 | `test/facts-are-not-agent-scoped.test.js` | 86 | 0 | 0 | 0 | A FIX BUILT ON A PREMISE NOBODY MEASURED. |
 | `test/fake-indexeddb.mjs` | 186 | 2 | 4 | 0 | test/fake-indexeddb.mjs — a small in-memory IndexedDB, enough for utils/db.js. |
 | `test/fishing-reports.test.js` | 331 | 0 | 0 | 0 | The four fishing-report sources, parsed and matched to water this app ships. |
@@ -539,6 +539,7 @@ _none_
 | `test/live-ramps-reach-the-filter.test.js` | 344 | 0 | 0 | 0 |  |
 | `test/nwps-flood-context.test.js` | 208 | 0 | 0 | 0 | WHAT FLOODS AT WHAT STAGE, AND WHERE TODAY SITS AGAINST THIS GAUGE'S OWN RECORD. |
 | `test/nwps-flow-units.test.js` | 72 | 0 | 0 | 0 | The unit that travels with the value, and nothing else. |
+| `test/obs-bearing.test.js` | 82 | 0 | 0 | 0 | "WIND 5 MPH FROM 999°" |
 | `test/operator-levels.test.js` | 217 | 0 | 0 | 0 | The three operators that publish HTML instead of JSON. |
 | `test/persistence.test.js` | 142 | 0 | 0 | 0 | test/persistence.test.js — one persistence path, and a readiness check that can actually f |
 | `test/plan-assemble.test.js` | 811 | 0 | 0 | 0 |  |
@@ -564,7 +565,7 @@ _none_
 | `test/ramps-reach-research.test.js` | 56 | 0 | 0 | 0 | Why a 41,000-acre reservoir reported "ramps: 0". |
 | `test/registry-catalog.test.js` | 66 | 0 | 0 | 0 | test/registry-catalog.test.js -- the registry may answer "what does this site publish", bu |
 | `test/registry-grounding.test.js` | 189 | 0 | 0 | 0 | Ground the identity agent on 454 waters instead of 15. |
-| `test/registry_smoke.mjs` | 170 | 0 | 0 | 0 | registry_smoke.mjs -- run the REAL lake_index.json through the REAL lake-registry.js and |
+| `test/registry_smoke.mjs` | 225 | 0 | 0 | 0 | registry_smoke.mjs -- run the REAL lake_index.json through the REAL lake-registry.js and |
 | `test/regulations-live.test.js` | 134 | 0 | 0 | 0 | A check that ran, said "I don't know", and showed nothing. |
 | `test/regulations-matching.test.js` | 27 | 0 | 0 | 0 |  |
 | `test/regulations-wiring.test.js` | 470 | 0 | 0 | 0 | regulations-wiring.test.js — the regulation digest actually reaches the agents |
@@ -709,7 +710,7 @@ _none_
 - `cached()` — Worker/conditions.js:86, Worker/reports.js:471
 - `getJson()` — Worker/conditions.js:97, js/modules/usgs-gauges.js:84
 - `getText()` — Worker/conditions.js:103, Worker/research/agency-pages.js:164
-- `kmBetween()` — Worker/conditions.js:524, js/utils/cameras.js:40
+- `kmBetween()` — Worker/conditions.js:548, js/utils/cameras.js:40
 - `sampleDated()` — Worker/research/facts-util.js:665, js/modules/lake-research-engine.js:339
 - `sanitizeLakeId()` — Worker/research/keys.js:1, js/data/research-ids.js:1
 - `stripLakeQualifiers()` — Worker/research/keys.js:22, js/data/research-ids.js:56

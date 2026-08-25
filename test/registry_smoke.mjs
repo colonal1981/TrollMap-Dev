@@ -165,5 +165,60 @@ check('shipped lakes resolve to themselves', unresolvable.length === 0,
   `${shipped.length} shipped, ${unresolvable.length} resolve to a DIFFERENT slug: ` +
   unresolvable.slice(0, 5).map(r => r.displayName).join(' | '));
 
+// ── AND THE CHECK ABOVE ASKS WITH THE WRONG CALLER'S NAME ────────────────────────────────────
+//
+// 2026-08-25. Ryan opened a conditions card for the Lower Saluda at Saluda Shoals and got flow,
+// stage, an 87-year history and an 81.1 F water temperature from "Saluda River near WARE
+// SHOALS" -- 105 km upstream, on the far side of Lake Greenwood AND Lake Murray, on a
+// free-flowing river rather than the cold bottom-release tailwater he was standing on.
+//
+// The check above reported 358 of 358 resolving to themselves, and had done all along, because
+// it asks with `r.displayName` -- "Saluda River (Lower Saluda) (Lexington Co, SC)". THE APP
+// NEVER PASSES THAT. access-index.js names a water `<feed spelling>, <ST>`, so what actually
+// reaches the resolver is "Saluda River (Lower Saluda), SC" -- and that resolved to the
+// Greenville County Saluda River, along with 18 other waters.
+//
+// This is the rule at the top of 00_START_HERE, applied to this file: A NAME IS ONLY A NAME IN
+// THE CALLER THAT PASSES IT. A resolver check that invents its own query is testing itself.
+//
+// So: ask the way the app asks. The display name with the registry's county stamp removed, plus
+// the state -- which is exactly what displayLakeName() builds from a DNR feed row.
+console.log('\n-- and again with the name the APP passes, not the one this file has --');
+
+const feedName = (dn) => String(dn)
+  .replace(/\s*\([^()]*\bCo\b[^()]*\)\s*$/, '')      // "(Lexington Co, SC)"
+  .replace(/\s*\([A-Z]{2}(\/[A-Z]{2})*\)\s*$/, '')     // "(SC)" / "(SC/GA)"
+  .trim();
+
+// THE ONLY PAIRS NO FEED NAME CAN SEPARATE, because both waters are in the same state and the
+// feed name carries no county. Largest-first decides; the smaller is reachable by slug or by
+// its full display name. THIS LIST MAY ONLY EVER SHRINK -- a new pair fails the run.
+const SAME_STATE_TWINS = new Set([
+  'cedar_creek',      // Richland Co, SC  vs  Cedar Creek Reservoir, Chester Co, SC
+  'cypress_lake',     // Bulloch Co, GA   vs  Lake Cypress, Dodge Co, GA
+  'glenville_lake',   // Cumberland Co, NC vs Lake Glenville, Jackson Co, NC
+]);
+
+const asFed = [];
+for (const r of shipped) {
+  const bare = feedName(r.displayName);
+  const asked = /\b(SC|NC|GA|TN|AL|VA)\b/.test(bare) ? bare : `${bare}, ${r.state || ''}`.trim();
+  const got = reg.lakeRecordFor(asked);
+  if (got?.slug !== r.slug) asFed.push({ asked, want: r.slug, got: got?.slug ?? null });
+}
+const unexpected = asFed.filter(m => !SAME_STATE_TWINS.has(m.want));
+const stillTwinned = new Set(asFed.filter(m => SAME_STATE_TWINS.has(m.want)).map(m => m.want));
+
+check('shipped lakes resolve to themselves BY FEED NAME', unexpected.length === 0,
+  `${shipped.length} shipped, ${unexpected.length} resolve to a DIFFERENT slug: ` +
+  unexpected.slice(0, 6).map(m => `${m.asked} -> ${m.got}`).join(' | '));
+
+// A stale allowance is how a fixed bug goes on paying rent. Report a twin that stopped firing.
+const gone = [...SAME_STATE_TWINS].filter(sl => !stillTwinned.has(sl));
+if (gone.length) {
+  console.log(`  note  ${gone.length} same-state twin(s) no longer collide -- DELETE them from`);
+  console.log(`        SAME_STATE_TWINS so the allowance shrinks with the bugs: ${gone.join(', ')}`);
+}
+
 console.log(fails ? `\n${fails} FAILURE(S)` : '\nall checks passed');
 process.exit(fails ? 1 : 0);

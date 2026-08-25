@@ -1,8 +1,8 @@
 {
   "generatedFrom": "tools/audit.mjs",
   "summary": {
-    "files": 454,
-    "jsModules": 285,
+    "files": 455,
+    "jsModules": 286,
     "pyScripts": 163,
     "routes": 56,
     "routesUncalled": 0,
@@ -964,8 +964,9 @@
     },
     "Worker/conditions.js": {
       "purpose": "Worker/conditions.js — one call that answers \"what is this water doing right now\".",
-      "lines": 4184,
+      "lines": 4208,
       "exports": [
+        "obsBearing",
         "wwaText",
         "wwaSeverity",
         "nwpsFlowCfs",
@@ -1230,6 +1231,12 @@
           "file": "test/nwps-flow-units.test.js",
           "names": [
             "nwpsFlowCfs"
+          ]
+        },
+        {
+          "file": "test/obs-bearing.test.js",
+          "names": [
+            "obsBearing"
           ]
         },
         {
@@ -4850,7 +4857,7 @@
     },
     "js/data/lake-registry.js": {
       "purpose": "lake-registry.js — the 3DHP lake registry, with every access source joined on.",
-      "lines": 421,
+      "lines": 524,
       "exports": [
         "ACCESS_OPEN",
         "ACCESS_REACHABLE",
@@ -12983,7 +12990,7 @@
     },
     "test/cwms-series.test.js": {
       "purpose": "Picking the Corps' pool elevation out of forty-two candidates, and the metres trap.",
-      "lines": 353,
+      "lines": 434,
       "exports": [],
       "imports": [
         {
@@ -13798,6 +13805,14 @@
         },
         {
           "file": "test/nwps-flood-context.test.js",
+          "names": [
+            "describe",
+            "it",
+            "expect"
+          ]
+        },
+        {
+          "file": "test/obs-bearing.test.js",
           "names": [
             "describe",
             "it",
@@ -14870,6 +14885,33 @@
           "names": [
             "readFileSync"
           ]
+        }
+      ],
+      "importedBy": [],
+      "deadExports": [],
+      "globalsWritten": [],
+      "globalsRead": []
+    },
+    "test/obs-bearing.test.js": {
+      "purpose": "\"WIND 5 MPH FROM 999°\"",
+      "lines": 82,
+      "exports": [],
+      "imports": [
+        {
+          "from": "./expect-shim.mjs",
+          "names": [
+            "describe",
+            "it",
+            "expect"
+          ],
+          "resolved": "test/expect-shim.mjs"
+        },
+        {
+          "from": "../Worker/conditions.js",
+          "names": [
+            "obsBearing"
+          ],
+          "resolved": "Worker/conditions.js"
         }
       ],
       "importedBy": [],
@@ -15970,7 +16012,7 @@
     },
     "test/registry_smoke.mjs": {
       "purpose": "registry_smoke.mjs -- run the REAL lake_index.json through the REAL lake-registry.js and",
-      "lines": 170,
+      "lines": 225,
       "exports": [],
       "imports": [
         {
@@ -18095,7 +18137,7 @@
       "hits": 2,
       "files": [
         "Scripts/bind_operator_lakes.py:192",
-        "Worker/conditions.js:1438"
+        "Worker/conditions.js:1462"
       ],
       "side": [
         "pipeline",
@@ -18107,7 +18149,7 @@
       "hits": 2,
       "files": [
         "Scripts/bind_operator_lakes.py:194",
-        "Worker/conditions.js:1439"
+        "Worker/conditions.js:1463"
       ],
       "side": [
         "pipeline",
@@ -18246,9 +18288,9 @@
       "hits": 4,
       "files": [
         "Scripts/build_lake_drainage.py:152",
-        "Worker/conditions.js:282",
-        "Worker/conditions.js:368",
-        "Worker/conditions.js:440"
+        "Worker/conditions.js:306",
+        "Worker/conditions.js:392",
+        "Worker/conditions.js:464"
       ],
       "side": [
         "pipeline",
@@ -18281,8 +18323,8 @@
       "hits": 3,
       "files": [
         "Scripts/build_water_bindings.py:113",
-        "Worker/conditions.js:737",
-        "Worker/conditions.js:3297"
+        "Worker/conditions.js:761",
+        "Worker/conditions.js:3321"
       ],
       "side": [
         "pipeline",
@@ -18299,7 +18341,7 @@
         "Scripts/capture_upstreams.py:368",
         "Scripts/capture_upstreams.py:382",
         "Scripts/capture_upstreams.py:383",
-        "Worker/conditions.js:950",
+        "Worker/conditions.js:974",
         "test/discover-authority.test.js:33"
       ],
       "side": [
@@ -18315,7 +18357,7 @@
         "Scripts/build_water_bindings.py:115",
         "Scripts/capture_upstreams.py:143",
         "Scripts/probe_cwms_catalog.py:80",
-        "Worker/conditions.js:1262"
+        "Worker/conditions.js:1286"
       ],
       "side": [
         "pipeline",
@@ -18330,7 +18372,7 @@
         "Scripts/capture_upstreams.py:120",
         "Scripts/capture_upstreams.py:366",
         "Scripts/capture_upstreams.py:386",
-        "Worker/conditions.js:3906",
+        "Worker/conditions.js:3930",
         "js/modules/tide-engine.js:22"
       ],
       "side": [
@@ -18349,8 +18391,8 @@
         "Scripts/capture_upstreams.py:367",
         "Scripts/capture_upstreams.py:379",
         "Scripts/capture_upstreams.py:384",
-        "Worker/conditions.js:2761",
-        "Worker/conditions.js:3397",
+        "Worker/conditions.js:2785",
+        "Worker/conditions.js:3421",
         "Worker/trollmap-worker.js:336",
         "Worker/trollmap-worker.js:1417",
         "Worker/worker-data.js:286",
@@ -18426,7 +18468,7 @@
         "Scripts/capture_upstreams.py:152",
         "Scripts/pull_usgs_current_conditions.py:80",
         "Scripts/pull_usgs_dashboard.py:85",
-        "Worker/conditions.js:1074"
+        "Worker/conditions.js:1098"
       ],
       "side": [
         "pipeline",
@@ -18608,7 +18650,7 @@
       "host": "forecast.weather.gov",
       "hits": 1,
       "files": [
-        "Worker/conditions.js:208"
+        "Worker/conditions.js:232"
       ],
       "side": [
         "worker"
@@ -18618,10 +18660,10 @@
       "host": "api.hydro-derived.duke-energy.app",
       "hits": 6,
       "files": [
-        "Worker/conditions.js:1607",
-        "Worker/conditions.js:2214",
-        "Worker/conditions.js:2593",
-        "Worker/conditions.js:3660",
+        "Worker/conditions.js:1631",
+        "Worker/conditions.js:2238",
+        "Worker/conditions.js:2617",
+        "Worker/conditions.js:3684",
         "Worker/worker-data.js:463",
         "Worker/worker-data.js:597"
       ],
@@ -22305,7 +22347,7 @@
     {
       "name": "kmBetween",
       "at": [
-        "Worker/conditions.js:524",
+        "Worker/conditions.js:548",
         "js/utils/cameras.js:40"
       ]
     },
