@@ -2990,11 +2990,20 @@ async function waterProbe(b, lat, lon, seededTemp) {
   const out = { temp: seededTemp && Number.isFinite(seededTemp.c) ? seededTemp : null,
                 oxygen: null, turbidity: null, salt: null, tidalFlow: null,
                 // What no bound site publishes at all, so a null can say WHY.
-                unpublished: [], catalogued: 0 };
+                unpublished: [],
+                // What a bound site DOES publish and did not answer with. The third state.
+                silent: [], catalogued: 0 };
   const WANT = { '00010': 'water temperature', '00300': 'dissolved oxygen',
                  '63680': 'turbidity', '00095': 'specific conductance',
                  '00480': 'salinity', '72137': 'tidally filtered discharge' };
   const published = new Set();
+  // code -> the site that publishes it, so a field that ends up empty can name where to look.
+  const cataloguedBy = new Map();
+  // Sites that were asked and came back with NOTHING -- no series at all, whether the request
+  // failed or the site answered empty. "The whole gauge is quiet" and "the gauge is reporting
+  // and this one sensor is not" are different problems and only one of them is worth a drive.
+  // fetchUsgs swallows its own transport errors and returns {}, so a throw is not the test.
+  const siteSilent = new Set();
   for (const s of usgsSitesFor(b, lat, lon).slice(0, 4)) {
     if (out.temp && out.oxygen && out.turbidity && out.salt && out.tidalFlow) break;
 
@@ -3007,7 +3016,18 @@ async function waterProbe(b, lat, lon, seededTemp) {
     }
     if (cat) {
       out.catalogued += 1;
-      for (const code of Object.keys(cat)) published.add(code);
+      for (const code of Object.keys(cat)) {
+        published.add(code);
+        if (!WANT[code]) continue;
+        // NEWEST PERIOD OF RECORD WINS. If two bound sites both publish 00010 and one of them
+        // stopped in 2019, the live one is the one worth sending somebody to look at.
+        const prev = cataloguedBy.get(code);
+        const end = (cat[code] && cat[code].end) || null;
+        if (!prev || (end && (!prev.last || end > prev.last))) {
+          cataloguedBy.set(code, { usgs_site: s.site, name: s.name, last: end,
+                                   count: (cat[code] && cat[code].count) || null });
+        }
+      }
       const stillWanted = [
         !out.temp && '00010', !out.oxygen && '00300', !out.turbidity && '63680',
         !out.salt && '00480', !out.salt && '00095', !out.tidalFlow && '72137',
@@ -3017,8 +3037,11 @@ async function waterProbe(b, lat, lon, seededTemp) {
 
     let u = null;
     try { u = await cached(`usgs:${s.site}`, TTL.gauge, () => fetchUsgs(s.site, USGS_PARMS)); }
-    catch (_) { continue; }
-    if (!u) continue;
+    catch (_) { siteSilent.add(s.site); continue; }
+    if (!u) { siteSilent.add(s.site); continue; }
+    // `timestamp` is bookkeeping, not a reading: a response carrying only that is still a
+    // gauge that told us nothing.
+    if (!Object.keys(u).some((k) => k !== 'timestamp' && u[k] != null)) siteSilent.add(s.site);
     const where = {
       usgs_site: s.site, name: s.name, role: s.role, below_dam: s.below_dam,
       km_from_point: Number.isFinite(s.km) ? round1(s.km) : null,
@@ -3054,6 +3077,30 @@ async function waterProbe(b, lat, lon, seededTemp) {
     out.unpublished = Object.entries(WANT)
       .filter(([code]) => !published.has(code))
       .map(([code, label]) => ({ code, label }));
+    // THE THIRD STATE, AND UNTIL NOW IT RENDERED AS NOTHING AT ALL.
+    //
+    // A field can be empty for three reasons and the response could only tell two of them
+    // apart. `unpublished` says no bound site measures this -- a registry gap. A value says
+    // it was measured. The gap between them is a site that DOES publish the parameter and
+    // returned no number, and that is neither: it is a live gauge to go look at.
+    //
+    // Not hypothetical. The Lower Saluda card on 2026-08-25 showed no water temperature and no
+    // reason, because three bound sites catalogue 00010 -- which put it in `published` and so
+    // excluded it from "Not published" -- and none of them answered with one. Meanwhile site
+    // 02168504 below the Murray dam was carrying 14.0 degC, last written 2026-08-22.
+    //
+    // NOTHING HERE IS GUESSED. `last` is the period of record USGS publishes for that exact
+    // series, and it is null when the catalogue came from the registry, which does not record
+    // one. A null `last` says we do not know, not that the series is dead.
+    const FIELD = { '00010': 'temp', '00300': 'oxygen', '63680': 'turbidity',
+                    '00095': 'salt', '00480': 'salt', '72137': 'tidalFlow' };
+    out.silent = Object.entries(WANT)
+      .filter(([code]) => !out[FIELD[code]] && cataloguedBy.has(code))
+      .map(([code, label]) => {
+        const at = cataloguedBy.get(code);
+        return { code, label, ...at,
+                 reason: siteSilent.has(at.usgs_site) ? 'site_silent' : 'no_reading' };
+      });
   }
   return out;
 }
@@ -3948,6 +3995,8 @@ async function waterBlock(b, lat, lon, env) {
   // registry gap somebody can close; an empty field is a mystery.
   out.unpublished_parameters = (probe.unpublished && probe.unpublished.length)
     ? probe.unpublished : null;
+  // Measured by a bound site and still empty -- a gauge to go read, not a registry gap.
+  out.silent_parameters = (probe.silent && probe.silent.length) ? probe.silent : null;
   out.sites_catalogued = probe.catalogued || 0;
   // Whether `tide: null` on this response is a FACT or a GAP. An inland lake has no tide and
   // that is the right answer; a coastal zone with no station bound is a hole in the registry.

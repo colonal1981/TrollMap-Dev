@@ -1,13 +1,13 @@
 {
   "generatedFrom": "tools/audit.mjs",
   "summary": {
-    "files": 457,
-    "jsModules": 288,
+    "files": 459,
+    "jsModules": 290,
     "pyScripts": 163,
     "routes": 57,
     "routesUncalled": 0,
     "routesMutatingUngated": 18,
-    "feeds": 105,
+    "feeds": 107,
     "deadExports": 210,
     "orphanModules": 4,
     "duplicateFnNames": 42,
@@ -981,7 +981,7 @@
     },
     "Worker/conditions.js": {
       "purpose": "Worker/conditions.js — one call that answers \"what is this water doing right now\".",
-      "lines": 4310,
+      "lines": 4495,
       "exports": [
         "obsBearing",
         "wwaText",
@@ -1084,7 +1084,8 @@
           "names": [
             "parseCubeLevels",
             "parseSouthernCoLevels",
-            "parseBrookfieldFacility"
+            "parseBrookfieldFacility",
+            "parseSanteeCooper"
           ],
           "resolved": "Worker/operators.js"
         },
@@ -1285,6 +1286,12 @@
           ]
         },
         {
+          "file": "test/silent-parameters.test.js",
+          "names": [
+            "handleConditions"
+          ]
+        },
+        {
           "file": "test/site-catalog.test.js",
           "names": [
             "parseSiteCatalog"
@@ -1408,11 +1415,14 @@
     },
     "Worker/operators.js": {
       "purpose": "operators.js — the three utility operators that publish HTML tables instead of JSON.",
-      "lines": 169,
+      "lines": 331,
       "exports": [
         "parseCubeLevels",
         "parseSouthernCoLevels",
-        "parseBrookfieldFacility"
+        "parseBrookfieldFacility",
+        "santeeDate",
+        "santeeClock",
+        "parseSanteeCooper"
       ],
       "imports": [],
       "importedBy": [
@@ -1421,7 +1431,8 @@
           "names": [
             "parseCubeLevels",
             "parseSouthernCoLevels",
-            "parseBrookfieldFacility"
+            "parseBrookfieldFacility",
+            "parseSanteeCooper"
           ]
         },
         {
@@ -1430,6 +1441,14 @@
             "parseCubeLevels",
             "parseSouthernCoLevels",
             "parseBrookfieldFacility"
+          ]
+        },
+        {
+          "file": "test/santee-cooper.test.js",
+          "names": [
+            "parseSanteeCooper",
+            "santeeClock",
+            "santeeDate"
           ]
         }
       ],
@@ -6644,7 +6663,7 @@
     },
     "js/modules/conditions-strip.js": {
       "purpose": "The state of the water, above the map, before you plan anything.",
-      "lines": 681,
+      "lines": 695,
       "exports": [
         "showConditionsFor",
         "refreshConditions"
@@ -7931,7 +7950,7 @@
     },
     "js/modules/plan-assemble.js": {
       "purpose": "plan-assemble.js — ordered candidates + the model's judgement → a plan v2 object.",
-      "lines": 856,
+      "lines": 872,
       "exports": [
         "parseClock",
         "formatClock",
@@ -8624,7 +8643,7 @@
     },
     "js/modules/plan-preflight.js": {
       "purpose": "plan-preflight.js — the two things that must happen before a plan is worth building.",
-      "lines": 415,
+      "lines": 413,
       "exports": [
         "detectCoastalZone",
         "checkPlanLegality",
@@ -11809,7 +11828,7 @@
     },
     "js/utils/water-conditions.js": {
       "purpose": "ONE READ FOR THE STATE OF THE WATER.",
-      "lines": 778,
+      "lines": 802,
       "exports": [
         "cToF",
         "conditionsUrl",
@@ -14073,6 +14092,14 @@
           ]
         },
         {
+          "file": "test/santee-cooper.test.js",
+          "names": [
+            "describe",
+            "it",
+            "expect"
+          ]
+        },
+        {
           "file": "test/search-cascade.test.js",
           "names": [
             "describe",
@@ -14578,7 +14605,7 @@
     },
     "test/hazard-cues.test.js": {
       "purpose": "NWS WATCHES AND WARNINGS AS ECHOMAP ALERTS.",
-      "lines": 179,
+      "lines": 238,
       "exports": [],
       "imports": [
         {
@@ -16435,6 +16462,35 @@
       "globalsWritten": [],
       "globalsRead": []
     },
+    "test/santee-cooper.test.js": {
+      "purpose": "SANTEE COOPER PUBLISHES MORE THAN DUKE OR DOMINION, AND I TOLD RYAN FIVE TIMES IT PUBLISHED",
+      "lines": 202,
+      "exports": [],
+      "imports": [
+        {
+          "from": "./expect-shim.mjs",
+          "names": [
+            "describe",
+            "it",
+            "expect"
+          ],
+          "resolved": "test/expect-shim.mjs"
+        },
+        {
+          "from": "../Worker/operators.js",
+          "names": [
+            "parseSanteeCooper",
+            "santeeClock",
+            "santeeDate"
+          ],
+          "resolved": "Worker/operators.js"
+        }
+      ],
+      "importedBy": [],
+      "deadExports": [],
+      "globalsWritten": [],
+      "globalsRead": []
+    },
     "test/search-cascade.test.js": {
       "purpose": "FIVE OF SIX SEARCHES HAD NO FALLBACK AT ALL.",
       "lines": 324,
@@ -16579,6 +16635,24 @@
             "LAKE_CATALOG"
           ],
           "resolved": "Worker/research/shared.js"
+        }
+      ],
+      "importedBy": [],
+      "deadExports": [],
+      "globalsWritten": [],
+      "globalsRead": []
+    },
+    "test/silent-parameters.test.js": {
+      "purpose": "THE THIRD STATE: a parameter a bound site PUBLISHES and did not answer with.",
+      "lines": 132,
+      "exports": [],
+      "imports": [
+        {
+          "from": "../Worker/conditions.js",
+          "names": [
+            "handleConditions"
+          ],
+          "resolved": "Worker/conditions.js"
         }
       ],
       "importedBy": [],
@@ -17661,7 +17735,7 @@
     },
     "test/water-conditions.test.js": {
       "purpose": "One read for the state of the water.",
-      "lines": 819,
+      "lines": 840,
       "exports": [],
       "imports": [
         {
@@ -18241,7 +18315,7 @@
       "hits": 2,
       "files": [
         "Scripts/bind_operator_lakes.py:192",
-        "Worker/conditions.js:1462"
+        "Worker/conditions.js:1518"
       ],
       "side": [
         "pipeline",
@@ -18253,7 +18327,7 @@
       "hits": 2,
       "files": [
         "Scripts/bind_operator_lakes.py:194",
-        "Worker/conditions.js:1463"
+        "Worker/conditions.js:1522"
       ],
       "side": [
         "pipeline",
@@ -18265,7 +18339,7 @@
       "hits": 5,
       "files": [
         "Scripts/build_camera_index.py:59",
-        "Scripts/build_water_bindings.py:118",
+        "Scripts/build_water_bindings.py:122",
         "Worker/cameras.js:37",
         "js/modules/plan-builder.js:1244",
         "js/modules/usgs-gauges.js:23"
@@ -18392,9 +18466,9 @@
       "hits": 4,
       "files": [
         "Scripts/build_lake_drainage.py:152",
-        "Worker/conditions.js:306",
-        "Worker/conditions.js:392",
-        "Worker/conditions.js:464"
+        "Worker/conditions.js:307",
+        "Worker/conditions.js:403",
+        "Worker/conditions.js:511"
       ],
       "side": [
         "pipeline",
@@ -18422,30 +18496,17 @@
         "pipeline"
       ]
     },
-    "api.water.noaa.gov": {
-      "host": "api.water.noaa.gov",
-      "hits": 3,
-      "files": [
-        "Scripts/build_water_bindings.py:113",
-        "Worker/conditions.js:761",
-        "Worker/conditions.js:3378"
-      ],
-      "side": [
-        "pipeline",
-        "worker"
-      ]
-    },
     "www.tva.com": {
       "host": "www.tva.com",
       "hits": 8,
       "files": [
-        "Scripts/build_water_bindings.py:114",
+        "Scripts/build_water_bindings.py:118",
         "Scripts/capture_upstreams.py:20",
         "Scripts/capture_upstreams.py:132",
         "Scripts/capture_upstreams.py:368",
         "Scripts/capture_upstreams.py:382",
         "Scripts/capture_upstreams.py:383",
-        "Worker/conditions.js:974",
+        "Worker/conditions.js:1021",
         "test/discover-authority.test.js:33"
       ],
       "side": [
@@ -18458,10 +18519,10 @@
       "host": "cwms-data.usace.army.mil",
       "hits": 4,
       "files": [
-        "Scripts/build_water_bindings.py:115",
+        "Scripts/build_water_bindings.py:119",
         "Scripts/capture_upstreams.py:143",
         "Scripts/probe_cwms_catalog.py:80",
-        "Worker/conditions.js:1286"
+        "Worker/conditions.js:1333"
       ],
       "side": [
         "pipeline",
@@ -18472,11 +18533,11 @@
       "host": "api.tidesandcurrents.noaa.gov",
       "hits": 6,
       "files": [
-        "Scripts/build_water_bindings.py:117",
+        "Scripts/build_water_bindings.py:121",
         "Scripts/capture_upstreams.py:120",
         "Scripts/capture_upstreams.py:366",
         "Scripts/capture_upstreams.py:386",
-        "Worker/conditions.js:3987",
+        "Worker/conditions.js:4172",
         "js/modules/tide-engine.js:22"
       ],
       "side": [
@@ -18489,14 +18550,14 @@
       "host": "waterservices.usgs.gov",
       "hits": 12,
       "files": [
-        "Scripts/build_water_bindings.py:119",
+        "Scripts/build_water_bindings.py:123",
         "Scripts/capture_upstreams.py:112",
         "Scripts/capture_upstreams.py:116",
         "Scripts/capture_upstreams.py:367",
         "Scripts/capture_upstreams.py:379",
         "Scripts/capture_upstreams.py:384",
-        "Worker/conditions.js:2842",
-        "Worker/conditions.js:3478",
+        "Worker/conditions.js:2978",
+        "Worker/conditions.js:3661",
         "Worker/trollmap-worker.js:336",
         "Worker/trollmap-worker.js:1422",
         "Worker/worker-data.js:286",
@@ -18507,13 +18568,28 @@
         "worker"
       ]
     },
+    "water.noaa.gov": {
+      "host": "water.noaa.gov",
+      "hits": 6,
+      "files": [
+        "Scripts/build_water_bindings.py:609",
+        "Scripts/probe_nwps_bulk.py:28",
+        "Scripts/probe_nwps_bulk.py:98",
+        "Scripts/probe_nwps_bulk.py:426",
+        "Scripts/probe_nwps_bulk.py:432",
+        "Scripts/triage_water_bindings.py:277"
+      ],
+      "side": [
+        "pipeline"
+      ]
+    },
     "aa.usno.navy.mil": {
       "host": "aa.usno.navy.mil",
       "hits": 4,
       "files": [
         "Scripts/capture_upstreams.py:21",
         "Scripts/capture_upstreams.py:129",
-        "Worker/conditions.js:158",
+        "Worker/conditions.js:159",
         "js/modules/plan-builder.js:1431"
       ],
       "side": [
@@ -18572,7 +18648,7 @@
         "Scripts/capture_upstreams.py:152",
         "Scripts/pull_usgs_current_conditions.py:80",
         "Scripts/pull_usgs_dashboard.py:85",
-        "Worker/conditions.js:1098"
+        "Worker/conditions.js:1145"
       ],
       "side": [
         "pipeline",
@@ -18609,7 +18685,7 @@
     },
     "x": {
       "host": "x",
-      "hits": 18,
+      "hits": 19,
       "files": [
         "Scripts/capture_upstreams.py:260",
         "Scripts/capture_upstreams.py:356",
@@ -18626,7 +18702,8 @@
         "test/search-cascade.test.js:73",
         "test/search-cascade.test.js:82",
         "test/search-cascade.test.js:239",
-        "test/search-cascade.test.js:262"
+        "test/search-cascade.test.js:262",
+        "test/silent-parameters.test.js:79"
       ],
       "side": [
         "pipeline",
@@ -18674,20 +18751,6 @@
       "files": [
         "Scripts/probe_ndbc_stations.py:36",
         "Scripts/probe_ndbc_stations.py:65"
-      ],
-      "side": [
-        "pipeline"
-      ]
-    },
-    "water.noaa.gov": {
-      "host": "water.noaa.gov",
-      "hits": 5,
-      "files": [
-        "Scripts/probe_nwps_bulk.py:28",
-        "Scripts/probe_nwps_bulk.py:98",
-        "Scripts/probe_nwps_bulk.py:426",
-        "Scripts/probe_nwps_bulk.py:432",
-        "Scripts/triage_water_bindings.py:277"
       ],
       "side": [
         "pipeline"
@@ -18754,7 +18817,39 @@
       "host": "forecast.weather.gov",
       "hits": 1,
       "files": [
-        "Worker/conditions.js:232"
+        "Worker/conditions.js:233"
+      ],
+      "side": [
+        "worker"
+      ]
+    },
+    "api.water.noaa.gov": {
+      "host": "api.water.noaa.gov",
+      "hits": 2,
+      "files": [
+        "Worker/conditions.js:808",
+        "Worker/conditions.js:3561"
+      ],
+      "side": [
+        "worker"
+      ]
+    },
+    "azapp-lakespublic-prd-001.azurewebsites.net": {
+      "host": "azapp-lakespublic-prd-001.azurewebsites.net",
+      "hits": 2,
+      "files": [
+        "Worker/conditions.js:1530",
+        "Worker/operators.js:327"
+      ],
+      "side": [
+        "worker"
+      ]
+    },
+    "publicservice.dominionenergyse.com": {
+      "host": "publicservice.dominionenergyse.com",
+      "hits": 1,
+      "files": [
+        "Worker/conditions.js:1540"
       ],
       "side": [
         "worker"
@@ -18764,10 +18859,10 @@
       "host": "api.hydro-derived.duke-energy.app",
       "hits": 6,
       "files": [
-        "Worker/conditions.js:1631",
-        "Worker/conditions.js:2238",
-        "Worker/conditions.js:2674",
-        "Worker/conditions.js:3741",
+        "Worker/conditions.js:1767",
+        "Worker/conditions.js:2374",
+        "Worker/conditions.js:2810",
+        "Worker/conditions.js:3924",
         "Worker/worker-data.js:463",
         "Worker/worker-data.js:597"
       ],
@@ -20177,7 +20272,7 @@
       "Scripts/build_water_features.py:100"
     ],
     "registry/gauge_overrides.json": [
-      "Scripts/build_water_bindings.py:1318"
+      "Scripts/build_water_bindings.py:1457"
     ],
     "registry/water_chain.json": [
       "Scripts/build_water_chain.py:67"
@@ -22335,6 +22430,16 @@
       ]
     },
     {
+      "name": "run",
+      "at": [
+        "test/conditions-bindings.test.js:235",
+        "test/plan-weights.test.js:103",
+        "test/plan-weights.test.js:155",
+        "test/silent-parameters.test.js:76",
+        "test/smart-plan-v2.test.js:19"
+      ]
+    },
+    {
       "name": "cacheGet",
       "at": [
         "Worker/water.js:47",
@@ -22380,15 +22485,6 @@
       ]
     },
     {
-      "name": "run",
-      "at": [
-        "test/conditions-bindings.test.js:235",
-        "test/plan-weights.test.js:103",
-        "test/plan-weights.test.js:155",
-        "test/smart-plan-v2.test.js:19"
-      ]
-    },
-    {
       "name": "esc",
       "at": [
         "js/modules/conditions-strip.js:72",
@@ -22399,7 +22495,7 @@
     {
       "name": "wire",
       "at": [
-        "js/modules/conditions-strip.js:655",
+        "js/modules/conditions-strip.js:669",
         "js/modules/lake-ramp-select.js:593",
         "js/modules/noaa-tides.js:64"
       ]
@@ -22430,28 +22526,28 @@
     {
       "name": "cached",
       "at": [
-        "Worker/conditions.js:86",
+        "Worker/conditions.js:87",
         "Worker/reports.js:471"
       ]
     },
     {
       "name": "getJson",
       "at": [
-        "Worker/conditions.js:97",
+        "Worker/conditions.js:98",
         "js/modules/usgs-gauges.js:84"
       ]
     },
     {
       "name": "getText",
       "at": [
-        "Worker/conditions.js:103",
+        "Worker/conditions.js:104",
         "Worker/research/agency-pages.js:164"
       ]
     },
     {
       "name": "kmBetween",
       "at": [
-        "Worker/conditions.js:548",
+        "Worker/conditions.js:595",
         "js/utils/cameras.js:40"
       ]
     },
@@ -22563,7 +22659,7 @@
     {
       "name": "paint",
       "at": [
-        "js/modules/conditions-strip.js:573",
+        "js/modules/conditions-strip.js:587",
         "js/modules/plan-water-ui.js:464"
       ]
     },

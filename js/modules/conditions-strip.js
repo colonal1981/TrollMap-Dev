@@ -337,6 +337,20 @@ function cardHtml(rec, c) {
       + '<span class="cond-sub"> — no USGS site bound to this water reports these, per the site '
       + 'catalogue. An empty field with a reason is a gap somebody can close.</span>'));
   }
+  // Measured by a bound site, and no number came back. Named separately from "Not published"
+  // because the two ask for different things: that one is a registry gap, this one is a gauge.
+  if (c.silent) {
+    out.push(row('Not reporting', c.silent.map((u) => {
+      const at = u.name ? esc(u.name) : `site ${esc(u.usgs_site)}`;
+      const why = u.reason === 'site_silent'
+        ? 'that whole gauge returned nothing'
+        : (u.last ? `USGS's record for that series runs to ${esc(u.last)}`
+                  : 'no reading came back');
+      return `${esc(u.label)} <span class="cond-sub">— ${at}, ${why}.</span>`;
+    }).join('<br>')
+      + '<span class="cond-sub"> — a bound site publishes these and returned no number.'
+      + ' Not a registry gap: a gauge to go look at.</span>'));
+  }
   if (c.gaugeOutOfService) {
     out.push(row('Gauge', `<b>OUT OF SERVICE</b>`
       + `<span class="cond-sub"> — ${esc(c.gaugeOutOfService.name || c.gaugeOutOfService.role)}`

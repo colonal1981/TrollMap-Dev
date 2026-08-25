@@ -805,6 +805,27 @@ test('no catalogue read means no claim about what is unpublished', () => {
   assert.equal(c.unpublished, null);
 });
 
+test('a field a bound site DOES publish and did not answer with is its own state', () => {
+  // Not "unpublished" -- that is a registry gap. This is a live gauge to go read, and until
+  // 2026-08-25 it rendered as nothing at all: no value, no reason.
+  const c = readConditions({ slug: 'x', water: { display_name: 'L', feature_type: 'lake',
+    chart_datum: { below_full_pool_ft: 1 }, sites_catalogued: 2,
+    silent_parameters: [{ code: '00010', label: 'water temperature', usgs_site: '02168504',
+                          name: 'Saluda River below Lake Murray Dam', last: '2026-08-22',
+                          count: 2280, reason: 'no_reading' }] } });
+  assert.equal(c.silent.length, 1);
+  assert.equal(c.silent[0].usgs_site, '02168504');
+  assert.equal(c.silent[0].last, '2026-08-22');
+  // a note about a gauge, not a number about the water -- it stays off the one-line strip
+  assert.ok(!/temperature/.test(conditionsStrip(c).text));
+});
+
+test('an empty silent list is not a claim', () => {
+  const c = readConditions({ slug: 'x', water: { display_name: 'L', feature_type: 'lake',
+    chart_datum: { below_full_pool_ft: 1 }, sites_catalogued: 2, silent_parameters: [] } });
+  assert.equal(c.silent, null);
+});
+
 test('NWPS reports flow in kcfs and it must not print as ft3/s', () => {
   // Seen live on the Congaree card 2026-08-16: "Flow 4 ft³/s" on a river running about four
   // thousand. NWPS publishes discharge in kcfs, USGS publishes 00060 in ft3/s, and both arrived

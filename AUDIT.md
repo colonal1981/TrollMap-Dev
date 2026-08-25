@@ -12,13 +12,13 @@ Python side will read as dead here and may not be. See the `lakes.js` near miss 
 
 | metric | count |
 |---|---|
-| files | 457 |
-| jsModules | 288 |
+| files | 459 |
+| jsModules | 290 |
 | pyScripts | 163 |
 | routes | 57 |
 | routesUncalled | 0 |
 | routesMutatingUngated | 18 |
-| feeds | 105 |
+| feeds | 107 |
 | deadExports | 210 |
 | orphanModules | 4 |
 | duplicateFnNames | 42 |
@@ -122,14 +122,14 @@ _none_
 | pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev | worker | 42 | Worker/research/clients.js:506 |
 | www.dnr.sc.gov | worker, browser | 23 | Worker/research/agency-pages.js:34 |
 | w | browser | 20 | test/coastal-regulations-live.test.js:50 |
+| x | pipeline, browser | 19 | Scripts/capture_upstreams.py:260 |
 | lakes.hydro-derived.duke-energy.app | pipeline, worker | 18 | Scripts/capture_upstreams.py:184 |
-| x | pipeline, browser | 18 | Scripts/capture_upstreams.py:260 |
 | www.anglersheadquarters.com | worker, browser | 16 | Worker/reports.js:63 |
 | georgiawildlife.blog | worker, browser | 15 | Worker/reports.js:51 |
 | trollmap-worker.colonal1981.workers.dev | pipeline, browser | 14 | Scripts/audit_research_fields.py:43 |
 | www.eregulations.com | worker, browser | 13 | Worker/worker-data.js:909 |
 | w.example | browser | 13 | test/smart-plan-v2.test.js:411 |
-| waterservices.usgs.gov | pipeline, worker | 12 | Scripts/build_water_bindings.py:119 |
+| waterservices.usgs.gov | pipeline, worker | 12 | Scripts/build_water_bindings.py:123 |
 | www.carolinasportsman.com | worker, browser | 12 | Worker/reports.js:57 |
 | www.tn.gov | worker, browser | 12 | Worker/reports.js:69 |
 | api.firecrawl.dev | worker, browser | 11 | Worker/research/clients.js:277 |
@@ -139,20 +139,20 @@ _none_
 | services6.arcgis.com | pipeline, worker | 8 | Scripts/build_dnr_ramps_by_lake.py:165 |
 | services1.arcgis.com | pipeline, worker | 8 | Scripts/build_dnr_ramps_by_lake.py:177 |
 | services3.arcgis.com | pipeline, worker | 8 | Scripts/build_dnr_ramps_by_lake.py:188 |
-| www.tva.com | pipeline, worker, browser | 8 | Scripts/build_water_bindings.py:114 |
+| www.tva.com | pipeline, worker, browser | 8 | Scripts/build_water_bindings.py:118 |
 | usgs-nims-images.s3.amazonaws.com | pipeline, worker, browser | 6 | Scripts/build_camera_index.py:61 |
-| api.tidesandcurrents.noaa.gov | pipeline, worker, browser | 6 | Scripts/build_water_bindings.py:117 |
-| api.hydro-derived.duke-energy.app | worker | 6 | Worker/conditions.js:1631 |
+| api.tidesandcurrents.noaa.gov | pipeline, worker, browser | 6 | Scripts/build_water_bindings.py:121 |
+| water.noaa.gov | pipeline | 6 | Scripts/build_water_bindings.py:609 |
+| api.hydro-derived.duke-energy.app | worker | 6 | Worker/conditions.js:1767 |
 | waterdata.usgs.gov | worker, browser | 6 | Worker/worker-data.js:933 |
 | lakemonster.com | worker | 6 | Worker/worker-data.js:957 |
 | www.topografix.com | browser | 6 | js/modules/garmin-export.js:65 |
 | api.waterdata.usgs.gov | pipeline, worker, browser | 5 | Scripts/build_camera_index.py:59 |
 | www.waterqualitydata.us | pipeline, worker, browser | 5 | Scripts/capture_upstreams.py:125 |
 | worker | pipeline, browser | 5 | Scripts/capture_upstreams.py:260 |
-| water.noaa.gov | pipeline | 5 | Scripts/probe_nwps_bulk.py:28 |
 | data-scdnr.opendata.arcgis.com | worker | 5 | Worker/worker-data.js:941 |
 | mapservices.weather.noaa.gov | pipeline, worker | 4 | Scripts/build_lake_drainage.py:152 |
-| cwms-data.usace.army.mil | pipeline, worker | 4 | Scripts/build_water_bindings.py:115 |
+| cwms-data.usace.army.mil | pipeline, worker | 4 | Scripts/build_water_bindings.py:119 |
 | aa.usno.navy.mil | pipeline, worker, browser | 4 | Scripts/capture_upstreams.py:21 |
 | dashboard.waterdata.usgs.gov | pipeline, worker | 4 | Scripts/capture_upstreams.py:152 |
 | cdnjs.cloudflare.com | pipeline, browser | 4 | Scripts/show_missing_water.py:308 |
@@ -160,7 +160,6 @@ _none_
 | unpkg.com | browser | 4 | index.html:8 |
 | x.gov | browser | 4 | test/proxy-target-type.test.js:31 |
 | www.google.com | pipeline | 3 | Scripts/build_garmin_water_inventory.py:649 |
-| api.water.noaa.gov | pipeline, worker | 3 | Scripts/build_water_bindings.py:113 |
 | dash.cloudflare.com | pipeline | 3 | Scripts/trollmap_r2_clean.py:6 |
 | api.scrape.do | worker | 3 | Worker/research/clients.js:475 |
 | www.dominionenergy.com | worker | 3 | Worker/trollmap-worker.js:387 |
@@ -174,6 +173,8 @@ _none_
 | www.ncpaws.org | pipeline | 2 | Scripts/build_nc_species_by_lake.py:61 |
 | www.ndbc.noaa.gov | pipeline | 2 | Scripts/probe_ndbc_stations.py:36 |
 | safewaters.com | pipeline | 2 | Scripts/test_bind_operator_lakes.py:127 |
+| api.water.noaa.gov | worker | 2 | Worker/conditions.js:808 |
+| azapp-lakespublic-prd-001.azurewebsites.net | worker | 2 | Worker/conditions.js:1530 |
 | georgiawildlife.com | worker, browser | 2 | Worker/research/dataset.js:17 |
 | generativelanguage.googleapis.com | worker | 2 | Worker/trollmap-worker.js:800 |
 | coastalgadnr.org | worker, browser | 2 | Worker/worker-data.js:1717 |
@@ -189,7 +190,8 @@ _none_
 | www.weather.gov | pipeline | 1 | Scripts/probe_ndbc_stations.py:11 |
 | prd-tnm.s3.amazonaws.com | pipeline | 1 | Scripts/trollmap_nhd_boundaries.py:34 |
 | api.cloudflare.com | pipeline | 1 | Scripts/trollmap_r2_clean.py:39 |
-| forecast.weather.gov | worker | 1 | Worker/conditions.js:232 |
+| forecast.weather.gov | worker | 1 | Worker/conditions.js:233 |
+| publicservice.dominionenergyse.com | worker | 1 | Worker/conditions.js:1540 |
 | api.tavily.com | worker | 1 | Worker/research/clients.js:239 |
 | s.jina.ai | worker | 1 | Worker/research/clients.js:311 |
 | www.ncwildlife.org | worker | 1 | Worker/research/dataset.js:13 |
@@ -320,7 +322,7 @@ _none_
 | `registry/_water_bindings_review.json` | Scripts/triage_water_bindings.py:10 |
 | `registry/charted.json` | Scripts/build_structure.py:51<br>Scripts/build_trolling_runs.py:62<br>Scripts/build_water_features.py:100 |
 | `registry/curated_lakes.json` | Scripts/remove_registry_water.py:48 |
-| `registry/gauge_overrides.json` | Scripts/build_water_bindings.py:1318 |
+| `registry/gauge_overrides.json` | Scripts/build_water_bindings.py:1457 |
 | `registry/lake_aliases.json` | Scripts/build_dnr_ramps_by_lake.py:66<br>Scripts/remove_registry_water.py:48 |
 | `registry/lake_display_names.json` | Scripts/merge_duplicate_waters.py:61 |
 | `registry/lake_index.json` | Scripts/bind_dams_to_waters.py:43<br>Scripts/build_dnr_ramps_by_lake.py:32<br>Scripts/build_duke_dam_table.py:37<br>Scripts/build_water_chain.py:66<br>Scripts/find_duplicate_waters.py:39<br>Scripts/gen_water_aliases_js.py:109<br>Scripts/lookup_3dhp.py:11<br>Scripts/match_waters_to_nhd.py:41<br>Scripts/merge_duplicate_waters.py:40<br>Scripts/migrate_merged_slugs.py:50<br>Scripts/sweep_unclaimed.py:52<br>Scripts/sweep_unclaimed.py:226 |
@@ -338,9 +340,9 @@ _none_
 |---|---|---|---|---|---|
 | `Scripts/make_counties.mjs` | 49 | 0 | 0 | 0 | make_counties.mjs -- flatten us-atlas counties-10m TopoJSON into a GeoJSON the Python |
 | `Worker/cameras.js` | 176 | 5 | 1 | **4** | Worker/cameras.js — the current frame from a USGS NIMS camera. |
-| `Worker/conditions.js` | 4310 | 63 | 31 | **2** | Worker/conditions.js — one call that answers "what is this water doing right now". |
+| `Worker/conditions.js` | 4495 | 63 | 32 | **2** | Worker/conditions.js — one call that answers "what is this water doing right now". |
 | `Worker/core/arcgis.js` | 401 | 7 | 2 | **2** | Worker/core/arcgis.js — shared ArcGIS helper for ramps/paddle/bank-pier/attractors |
-| `Worker/operators.js` | 169 | 3 | 2 | 0 | operators.js — the three utility operators that publish HTML tables instead of JSON. |
+| `Worker/operators.js` | 331 | 6 | 3 | 0 | operators.js — the three utility operators that publish HTML tables instead of JSON. |
 | `Worker/registry.js` | 342 | 12 | 6 | **3** | The lake index, read by the Worker. |
 | `Worker/reports.js` | 553 | 17 | 8 | **4** | reports.js — recent fishing reports for one water, from the people who were on it. |
 | `Worker/research/agency-pages.js` | 221 | 9 | 2 | **2** | agency-pages.js — the state's own description of a lake, found through the state's own ind |
@@ -399,7 +401,7 @@ _none_
 | `js/modules/cloud-sync.js` | 389 | 4 | 3 | 0 | Cloud Sync — auto-push on save, auto-pull on load. |
 | `js/modules/coastal-layers.js` | 345 | 5 | 1 | **5** | coastal-layers.js — oyster beds, marsh edges and depth soundings. |
 | `js/modules/coastal-scoring.js` | 289 | 15 | 3 | **1** | coastal-scoring.js — tide- and structure-aware spot scoring for inshore |
-| `js/modules/conditions-strip.js` | 681 | 2 | 1 | **2** | The state of the water, above the map, before you plan anything. |
+| `js/modules/conditions-strip.js` | 695 | 2 | 1 | **2** | The state of the water, above the map, before you plan anything. |
 | `js/modules/contour-data.js` | 645 | 10 | 5 | **6** | contour-data.js — Contour dataset lazy loader + lake selector integration. |
 | `js/modules/custom-vectors.js` | 146 | 4 | 2 | **2** | custom-vectors.js — imported GeoJSON layers. |
 | `js/modules/edit.js` | 253 | 1 | 2 | 0 | Edit tab — table-based view of waypoints + tracks with inline |
@@ -420,14 +422,14 @@ _none_
 | `js/modules/noaa-tides.js` | 228 | 1 | 1 | **1** | NOAA Coastal Tides — Plan-tab tide panel. |
 | `js/modules/notifications.js` | 548 | 7 | 3 | **5** | notifications.js — On-water alerts for TrollMap |
 | `js/modules/osm-structure.js` | 145 | 0 | 1 | 0 | osm-structure.js — OSM Structure Layer Toggle |
-| `js/modules/plan-assemble.js` | 856 | 8 | 10 | 0 | plan-assemble.js — ordered candidates + the model's judgement → a plan v2 object. |
+| `js/modules/plan-assemble.js` | 872 | 8 | 10 | 0 | plan-assemble.js — ordered candidates + the model's judgement → a plan v2 object. |
 | `js/modules/plan-builder.js` | 2547 | 10 | 7 | 0 | Plan Builder — the Plan tab form, save/load, preview rendering, |
 | `js/modules/plan-candidates.js` | 1410 | 26 | 16 | **9** | Candidate legs for a day's plan — the payload the model chooses from. |
 | `js/modules/plan-from-water.js` | 306 | 1 | 2 | 0 | plan-from-water.js — the water is already chosen. Build the day around it. |
 | `js/modules/plan-inputs.js` | 527 | 9 | 5 | **1** | plan-inputs.js — the parts of "what am I planning" that are not the DOM. |
 | `js/modules/plan-issues.js` | 78 | 1 | 2 | 0 | plan-issues.js — what the plan says about itself, in the shape the tab can show. |
 | `js/modules/plan-pieces.js` | 361 | 4 | 3 | **1** | plan-pieces.js — turning charted lanes into the water a fisherman actually chooses from. |
-| `js/modules/plan-preflight.js` | 415 | 8 | 4 | **2** | plan-preflight.js — the two things that must happen before a plan is worth building. |
+| `js/modules/plan-preflight.js` | 413 | 8 | 4 | **2** | plan-preflight.js — the two things that must happen before a plan is worth building. |
 | `js/modules/plan-prompt.js` | 755 | 13 | 5 | **1** | plan-prompt.js — what the model is asked, and what comes back. |
 | `js/modules/plan-tab-wiring.js` | 68 | 0 | 1 | 0 | plan-tab-wiring.js |
 | `js/modules/plan-to-timeline.js` | 407 | 6 | 6 | **1** | plan-to-timeline.js — a v2 plan, in the shape the rest of the Plan tab already reads. |
@@ -477,7 +479,7 @@ _none_
 | `js/utils/species-phase.js` | 102 | 3 | 1 | 0 | WHAT THE FISH ARE DOING AT THIS HOUR — a stated rule, not invented per-lake numbers. |
 | `js/utils/structure-markers.js` | 103 | 3 | 2 | 0 | structure-markers.js — humps and ledges, read from the pack the pipeline builds. |
 | `js/utils/viewport-cull.js` | 129 | 7 | 5 | **1** | Viewport culling for big GeoJSON layers. |
-| `js/utils/water-conditions.js` | 778 | 7 | 7 | 0 | ONE READ FOR THE STATE OF THE WATER. |
+| `js/utils/water-conditions.js` | 802 | 7 | 7 | 0 | ONE READ FOR THE STATE OF THE WATER. |
 | `js/utils/worker-auth.js` | 63 | 3 | 5 | 0 | utils/worker-auth.js — the shared secret for TrollMap's own Worker, in one place. |
 | `sw.js` | 94 | 0 | 0 | 0 | TrollMap service worker — v18 (the shell was frozen at v17, 2026-08-16) |
 | `test/agency-domains.test.js` | 85 | 0 | 0 | 0 | A TABLE THAT LOOKS LIKE A KNOB AND IS NOT CONNECTED. |
@@ -522,7 +524,7 @@ _none_
 | `test/duke-lake-row.test.js` | 83 | 0 | 0 | 0 | normalizeDukeRow against the REAL /lakes/current-level response. |
 | `test/duke-operating-range.test.js` | 278 | 0 | 0 | 0 | The guide curve, the drought stage as a NUMBER, and where this date usually sits. |
 | `test/duke-release-direction.test.js` | 396 | 0 | 0 | 0 | Inflow or outflow: which side of a lake a Duke release comes from. |
-| `test/expect-shim.mjs` | 221 | 8 | 88 | 0 | test/expect-shim.mjs -- `describe`/`it`/`expect` on top of node:test and node:assert. |
+| `test/expect-shim.mjs` | 221 | 8 | 89 | 0 | test/expect-shim.mjs -- `describe`/`it`/`expect` on top of node:test and node:assert. |
 | `test/facts-are-not-agent-scoped.test.js` | 86 | 0 | 0 | 0 | A FIX BUILT ON A PREMISE NOBODY MEASURED. |
 | `test/fake-indexeddb.mjs` | 186 | 2 | 4 | 0 | test/fake-indexeddb.mjs — a small in-memory IndexedDB, enough for utils/db.js. |
 | `test/fishing-reports.test.js` | 331 | 0 | 0 | 0 | The four fishing-report sources, parsed and matched to water this app ships. |
@@ -530,7 +532,7 @@ _none_
 | `test/flow-percentile.test.js` | 102 | 0 | 0 | 0 | Where today's flow sits in this river's own history. |
 | `test/geojson-coords.test.js` | 136 | 0 | 0 | 0 | test/geojson-coords.test.js — the bounding box, and the 3D case the old heuristic got wron |
 | `test/hand-written-tables.test.js` | 337 | 0 | 0 | 0 | THE TABLES THAT NEVER GREW WHEN THE APP DID. |
-| `test/hazard-cues.test.js` | 179 | 0 | 0 | 0 | NWS WATCHES AND WARNINGS AS ECHOMAP ALERTS. |
+| `test/hazard-cues.test.js` | 238 | 0 | 0 | 0 | NWS WATCHES AND WARNINGS AS ECHOMAP ALERTS. |
 | `test/keys_smoke.mjs` | 104 | 0 | 0 | 0 | keys_smoke.mjs -- prove every shipped lake's display name resolves to its own R2 key. |
 | `test/lake-keys-parity.test.js` | 116 | 0 | 0 | 0 |  |
 | `test/lake-keys.test.js` | 185 | 0 | 0 | 0 |  |
@@ -577,10 +579,12 @@ _none_
 | `test/research-keys.test.js` | 108 | 0 | 0 | 0 |  |
 | `test/research-reaches-the-plan.test.js` | 201 | 0 | 0 | 0 |  |
 | `test/research-storage-keys.test.js` | 90 | 0 | 0 | 0 | Which key a lake's research profile is filed under. |
+| `test/santee-cooper.test.js` | 202 | 0 | 0 | 0 | SANTEE COOPER PUBLISHES MORE THAN DUKE OR DOMINION, AND I TOLD RYAN FIVE TIMES IT PUBLISHE |
 | `test/search-cascade.test.js` | 324 | 0 | 0 | 0 | FIVE OF SIX SEARCHES HAD NO FALLBACK AT ALL. |
 | `test/shared-latest-pointer.test.js` | 214 | 0 | 0 | 0 | shared-latest-pointer.test.js — latest.json stopped being a second copy of the document. |
 | `test/shared-pack.test.js` | 67 | 0 | 0 | 0 |  |
 | `test/shared-store-cpu.test.js` | 88 | 0 | 0 | 0 | Tagging a document's sections, on a 10 ms CPU budget. |
+| `test/silent-parameters.test.js` | 132 | 0 | 0 | 0 | THE THIRD STATE: a parameter a bound site PUBLISHES and did not answer with. |
 | `test/site-catalog.test.js` | 75 | 0 | 0 | 0 | Which parameters a site actually publishes, instead of asking for twelve and seeing what |
 | `test/smart-plan-coastal.test.js` | 200 | 0 | 0 | 0 |  |
 | `test/smart-plan-route.test.js` | 92 | 0 | 0 | 0 |  |
@@ -609,7 +613,7 @@ _none_
 | `test/water-aliases.test.js` | 126 | 0 | 0 | 0 |  |
 | `test/water-cameras.test.js` | 144 | 0 | 0 | 0 | One camera roster, two questions, and they are not the same question. |
 | `test/water-chain-loader.test.js` | 91 | 0 | 0 | 0 | The chain has to reach the Worker, and a missing object must not look like an empty chain. |
-| `test/water-conditions.test.js` | 819 | 0 | 0 | 0 | One read for the state of the water. |
+| `test/water-conditions.test.js` | 840 | 0 | 0 | 0 | One read for the state of the water. |
 | `test/water-endpoints.test.js` | 305 | 0 | 0 | 0 | water-endpoints.test.js — the compute plane, pinned against the ways it has already broken |
 | `test/water-filter.test.js` | 178 | 0 | 0 | 0 |  |
 | `test/water-search.test.js` | 96 | 0 | 0 | 0 |  |
@@ -699,21 +703,21 @@ _none_
 - `walk()` — js/utils/viewport-cull.js:20, test/check-imports.mjs:48, test/data-reaches-the-app.test.js:34, test/hand-written-tables.test.js:257, test/persistence.test.js:27, test/worker-auth.test.js:29, test/worker-external-imports.test.js:43, tools/audit.mjs:56, tools/audit_duplication.mjs:73, tools/audit_silent_catches.mjs:189
 - `wireButtons()` — js/modules/catch-journal.js:1378, js/modules/chart-mosaic.js:390, js/modules/chart-overlay.js:387, js/modules/edit.js:236, js/modules/file-io.js:51, js/modules/ramps.js:137, js/modules/saved-spreads.js:73, js/modules/spread-builder.js:335, js/modules/topbar.js:9
 - `init()` — js/modules/coastal-layers.js:300, js/modules/gis-toggles.js:263, js/modules/layers-panel.js:70, js/modules/routes-panel.js:131, js/modules/species-selector.js:278, js/modules/supplemental-layers.js:1395
+- `run()` — test/conditions-bindings.test.js:235, test/plan-weights.test.js:103, test/plan-weights.test.js:155, test/silent-parameters.test.js:76, test/smart-plan-v2.test.js:19
 - `cacheGet()` — Worker/water.js:47, js/modules/tide-engine.js:27, js/modules/usgs-gauges.js:28, js/utils/db.js:273
 - `cacheSet()` — Worker/water.js:55, js/modules/tide-engine.js:37, js/modules/usgs-gauges.js:35, js/utils/db.js:288
 - `getMap()` — js/modules/coastal-layers.js:36, js/modules/gis-toggles.js:16, js/modules/osm-structure.js:40, js/modules/supplemental-layers.js:173
 - `mapReady()` — js/modules/coastal-layers.js:38, js/modules/gis-toggles.js:20, js/modules/osm-structure.js:42, js/modules/supplemental-layers.js:175
 - `say()` — js/modules/lake-intel.js:20, js/modules/lake-intel.js:260, js/modules/noaa-tides.js:77, js/modules/utility-sync.js:25
-- `run()` — test/conditions-bindings.test.js:235, test/plan-weights.test.js:103, test/plan-weights.test.js:155, test/smart-plan-v2.test.js:19
 - `esc()` — js/modules/conditions-strip.js:72, js/modules/lake-research-ui.js:354, js/utils/escape.js:1
-- `wire()` — js/modules/conditions-strip.js:655, js/modules/lake-ramp-select.js:593, js/modules/noaa-tides.js:64
+- `wire()` — js/modules/conditions-strip.js:669, js/modules/lake-ramp-select.js:593, js/modules/noaa-tides.js:64
 - `withFetch()` — test/credit-guards.test.js:26, test/cwms-series.test.js:194, test/usgs-series-pick.test.js:20
 - `leg()` — test/plan-assemble.test.js:26, test/plan-export-reads-the-plan.test.js:28, test/plan-tracks.test.js:28
 - `json()` — Worker/cameras.js:48, Worker/water.js:61
-- `cached()` — Worker/conditions.js:86, Worker/reports.js:471
-- `getJson()` — Worker/conditions.js:97, js/modules/usgs-gauges.js:84
-- `getText()` — Worker/conditions.js:103, Worker/research/agency-pages.js:164
-- `kmBetween()` — Worker/conditions.js:548, js/utils/cameras.js:40
+- `cached()` — Worker/conditions.js:87, Worker/reports.js:471
+- `getJson()` — Worker/conditions.js:98, js/modules/usgs-gauges.js:84
+- `getText()` — Worker/conditions.js:104, Worker/research/agency-pages.js:164
+- `kmBetween()` — Worker/conditions.js:595, js/utils/cameras.js:40
 - `sampleDated()` — Worker/research/facts-util.js:665, js/modules/lake-research-engine.js:339
 - `sanitizeLakeId()` — Worker/research/keys.js:1, js/data/research-ids.js:1
 - `stripLakeQualifiers()` — Worker/research/keys.js:22, js/data/research-ids.js:56
@@ -729,7 +733,7 @@ _none_
 - `openDB()` — js/data/tackle-inventory.js:249, js/utils/db.js:28
 - `normalizeRows()` — js/lazy-data.js:1, js/modules/gis-toggles.js:47
 - `row()` — js/modules/conditions-strip.js:98, js/modules/plan-water-ui.js:215
-- `paint()` — js/modules/conditions-strip.js:573, js/modules/plan-water-ui.js:464
+- `paint()` — js/modules/conditions-strip.js:587, js/modules/plan-water-ui.js:464
 - `setAtPath()` — js/modules/lake-research-engine.js:1222, js/modules/lake-research-ui.js:66
 - `put()` — js/modules/plan-builder.js:2276, js/utils/db.js:113
 - `norm()` — js/modules/supplemental-layers.js:703, js/modules/water-search.js:42

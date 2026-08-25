@@ -189,6 +189,7 @@ export function readConditions(j) {
     tvaDischargeCfs: null,
     tvaTailwaterFt: null,
     unpublished: null,
+    silent: null,
     featureType: null,
     pending: null,
     error: null,
@@ -435,6 +436,11 @@ export function readConditions(j) {
   // publishes dissolved oxygen" is a registry gap somebody can close; a blank is a mystery.
   out.unpublished = (Array.isArray(w.unpublished_parameters) && w.unpublished_parameters.length)
     ? w.unpublished_parameters : null;
+  // THE THIRD STATE. `unpublished` is "nobody bound to this water measures it". This is "a
+  // bound site measures it and gave us nothing", which is a different job for a different
+  // person: the first is a registry gap, the second is a gauge to go read.
+  out.silent = (Array.isArray(w.silent_parameters) && w.silent_parameters.length)
+    ? w.silent_parameters : null;
 
   out.releases = w.releases || null;
   out.accessAlerts = Array.isArray(w.access_alerts) ? w.access_alerts : [];
