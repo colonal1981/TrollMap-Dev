@@ -496,11 +496,29 @@ function cardHtml(rec, c) {
   // number nobody can act on.
   if (c.droughtNotice) {
     const d = c.droughtNotice;
+    // No schedule at all, or one that says no release on every day it publishes.
+    const releaseIsEmpty = !c.releases
+      || c.releases.all_no_release === true
+      || !((c.releases.items || []).length);
     out.push(row('Drought status',
       `<b>${d.stage != null ? `Low Inflow Protocol — Stage ${d.stage}` : 'Low Inflow Protocol'}</b>`
+      // "WHICH IS WHY THE SCHEDULE READS NO RELEASE" IS A CLAIM ABOUT THE SCHEDULE, and it was
+      // being made without looking at one. Ryan's Wateree card, 2026-08-25, said recreation
+      // flows were SUSPENDED "which is why the schedule reads no release" directly underneath a
+      // schedule showing a projected arrival at 18:48 to Highway 1/Highway 601 Landing.
+      //
+      // `r.all_no_release` is the signal and it was already on the wire, four hundred lines up.
+      // When the schedule DOES carry a release the disagreement is the interesting part, not
+      // something to paper over: the same card reported the operating-range field at Stage 0
+      // dated today against alert prose at Stage 2 last rewritten in May. A release arriving
+      // under a stage that forbids one is the third witness that the prose is the stale half.
       + (d.suspends_recreation_flows
-        ? '<span class="cond-sub"> — recreation flow releases are SUSPENDED under this stage, '
-          + 'which is why the schedule reads no release.</span>'
+        ? (releaseIsEmpty
+          ? '<span class="cond-sub"> — recreation flow releases are SUSPENDED under this stage, '
+            + 'which is why the schedule reads no release.</span>'
+          : '<span class="cond-sub"> — recreation flow releases are SUSPENDED under this stage, '
+            + 'yet the schedule above still carries one. One of the two is out of date; the '
+            + 'schedule is the thing with a time on it.</span>')
         : '')
       + `<br><span class="cond-sub">${esc(d.text).replace(/\n/g, '<br>')}</span>`
       + (d.last_updated ? `<span class="cond-sub"><br>Duke, updated ${esc(String(d.last_updated).slice(0, 10))}</span>` : '')));
