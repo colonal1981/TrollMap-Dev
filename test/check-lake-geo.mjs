@@ -209,10 +209,16 @@ if (SELF_TEST) {
  * that mattered: Old Hickory Reservoir and its 38 TWRA ramps, both Normandys, Great Falls TN,
  * Lake Cherokee SC.
  *
- * The 14 left are a different defect and want a different fix. They are Pass 3.5 -- the coastal
+ * The 13 left are a different defect and want a different fix. They are Pass 3.5 -- the coastal
  * pointers generated into water-aliases.js -- filing small Georgia creeks onto 340,000-acre
- * coastal zones, and SC's Waccamaw onto Brunswick County NC. Same state, so the state guard
- * cannot see them; they are wrong DATA in a generated table, not a wrong RULE.
+ * coastal zones. Same state, so the state guard cannot see them; they are wrong DATA in a
+ * generated table, not a wrong RULE.
+ *
+ * IT WAS 14 UNTIL 2026-08-25, and the fourteenth is why this list reports its own stale rows.
+ * `Waccamaw River|coast_brunswick_nc` was filed here as same-state and is not: the river is SC
+ * and Brunswick County is NC. The state guard kills it, and it only looked like Pass 3.5 debt
+ * because the guard was not running when this list was written down. An allowance that cannot
+ * report its own dead rows becomes the bug's hiding place.
  *
  * THIS LIST MAY ONLY EVER SHRINK. A new pair fails the run. A pair that stops firing is
  * reported so it gets deleted from here rather than quietly padding the allowance. That is the
@@ -232,7 +238,6 @@ const KNOWN_2026_08_14 = new Set([
   'South Newport River|coast_ossabaw_st_catherines_ga',
   'Tybee Creek|coast_savannah_ga',
   'Wacammaw River|coast_murrells_inlet_sc',
-  'Waccamaw River|coast_brunswick_nc',
 ]);
 
 // ── The run ──────────────────────────────────────────────────────────────────────────────────

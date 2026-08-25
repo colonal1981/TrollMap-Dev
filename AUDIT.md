@@ -372,7 +372,7 @@ _none_
 | `js/data/coastal-regulations.js` | 509 | 9 | 4 | 0 | coastal-regulations.js — saltwater size/creel/season rules for SC, GA, NC. |
 | `js/data/coastal-zones.js` | 327 | 6 | 23 | 0 | coastal-zones.js — SC / GA / NC coastal + tidal zone catalog. |
 | `js/data/fishing-style-profile.js` | 135 | 5 | 5 | **4** | fishing-style-profile.js — Ryan's actual gear, platform, and technique |
-| `js/data/lake-keys.js` | 462 | 4 | 24 | 0 | Shared lake display-name → R2 key map. |
+| `js/data/lake-keys.js` | 512 | 4 | 24 | 0 | Shared lake display-name → R2 key map. |
 | `js/data/lake-registry.js` | 421 | 13 | 11 | 0 | lake-registry.js — the 3DHP lake registry, with every access source joined on. |
 | `js/data/lure-knowledge.js` | 1083 | 20 | 12 | **4** | lure-knowledge.js — Lure behavior profiles and scoring engine. |
 | `js/data/ramps-loader.js` | 209 | 2 | 4 | 0 | ramps.js — Tri-state (SC/NC/GA) boat ramp database. |
@@ -487,7 +487,7 @@ _none_
 | `test/bait-depth-ceiling.test.js` | 97 | 0 | 0 | 0 |  |
 | `test/chart-datum.test.js` | 578 | 0 | 0 | 0 | What the chart was drawn at, versus where the water is today. |
 | `test/check-imports.mjs` | 137 | 0 | 0 | 0 | check-imports.mjs — every named import across js/ must resolve to a real export. |
-| `test/check-lake-geo.mjs` | 306 | 0 | 0 | 0 | check-lake-geo.mjs — a name must map to a lake in the right PLACE. |
+| `test/check-lake-geo.mjs` | 311 | 0 | 0 | 0 | check-lake-geo.mjs — a name must map to a lake in the right PLACE. |
 | `test/check-lake-keys-parity.mjs` | 57 | 0 | 0 | 0 | !/usr/bin/env node |
 | `test/check-tackle-parity.mjs` | 244 | 0 | 0 | 0 | check-tackle-parity.mjs — runner-free tackle parity check. |
 | `test/cloud-sync.test.js` | 131 | 0 | 0 | 0 | test/cloud-sync.test.js -- a deleted plan must actually tombstone in the cloud. |

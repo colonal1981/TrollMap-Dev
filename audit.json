@@ -4664,7 +4664,7 @@
     },
     "js/data/lake-keys.js": {
       "purpose": "Shared lake display-name → R2 key map.",
-      "lines": 462,
+      "lines": 512,
       "exports": [
         "LAKE_NAME_TO_R2_KEY",
         "registerR2Key",
@@ -12218,7 +12218,7 @@
     },
     "test/check-lake-geo.mjs": {
       "purpose": "check-lake-geo.mjs — a name must map to a lake in the right PLACE.",
-      "lines": 306,
+      "lines": 311,
       "exports": [],
       "imports": [
         {
