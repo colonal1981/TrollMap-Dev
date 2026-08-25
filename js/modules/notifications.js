@@ -125,8 +125,13 @@ function tick() {
   for (const w of (_session.weatherCues || [])) {
     if (w.fired || now < w.h) continue;
     w.fired = true;
-    fire(w.severity === 'stop' ? '⛈️ Get off the water' : '🌧️ Weather', w.label,
-         `weather-${w.severity}`);
+    // An NWS product gets its own title. "Get off the water" is the right words for a storm we
+    // inferred from a forecast; it is the wrong words for a Small Craft Advisory, and it buries
+    // the one thing that came from a forecaster rather than from us.
+    const title = w.kind === 'hazard'
+      ? (w.severity === 'stop' ? '⚠️ NWS warning' : '⚠️ NWS advisory')
+      : (w.severity === 'stop' ? '⛈️ Get off the water' : '🌧️ Weather');
+    fire(title, w.label, `${w.kind || 'weather'}-${w.severity}`);
   }
 
   // Return time warning
@@ -207,8 +212,10 @@ export function loadSessionFromPlan(plan, o = {}) {
     }
     // The clock half. One notice, at the hour it is due, and the storm one already carries the
     // leave-by time computed from the run home.
-    _session.weatherCues = (weatherCues(plan, o.weatherByHour, { transitMph: o.transitMph }) || [])
-      .map((c) => ({ h: c.atHour, label: c.what, severity: c.severity, fired: false }));
+    _session.weatherCues = (weatherCues(plan, o.weatherByHour,
+      { transitMph: o.transitMph, hazards: o.hazards }) || [])
+      .map((c) => ({ h: c.atHour, label: c.what, severity: c.severity, fired: false,
+                     kind: c.kind || 'weather' }));
     console.log('[notifications] plan loaded:', _planPins.length, 'position cues,',
                 _session.weatherCues.length, 'weather cues');
   } catch (e) {

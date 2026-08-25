@@ -548,6 +548,42 @@ export function readConditions(j) {
   }
   if (out.pressureMb != null && out.pressureFrom == null) out.pressureFrom = 'tide_station';
 
+  // ── ACTIVE WATCHES, WARNINGS AND ADVISORIES, AND THE LIGHTNING OUTLOOK ───────────────────
+  //
+  // BOTH ARRIVE ON A REQUEST THIS FUNCTION ALREADY MAKES AND BOTH WERE BEING DISCARDED HERE.
+  // `/conditions` has returned `hazards` and `convective` on every call for weeks; neither word
+  // appeared anywhere in js/ until 2026-08-25. They are the two safety fields in the payload.
+  //
+  // Ryan: *"the weather alerts absolutely need to be included in the notifications.js that sends
+  // alerts from my phone to the garmin echomap."* They cannot be until they survive this mapper.
+  //
+  // CURRENT AND FORECAST ARE BOTH IN HERE AND `severity` IS WHAT SEPARATES THEM. A Warning is in
+  // effect; a Watch is a forecast, and measured live on 2026-08-25 its onset runs from under two
+  // hours to two days out. `begins`/`ends` are the hazard's own clock and are the fields that
+  // make the difference usable -- see the note on wwaSeverity in Worker/conditions.js.
+  const hz = j.hazards || null;
+  if (hz && Array.isArray(hz.items)) {
+    out.hazards = hz.items.map((h) => ({
+      type: h.type || null,
+      severity: h.severity || null,          // Warning | Watch | Advisory | Statement
+      begins: h.begins || null,              // when the HAZARD starts, not when the message was cut
+      ends: h.ends || null,
+      messageType: h.message_type || null,
+      office: h.office || null,
+      id: h.id || null,
+      url: h.url || null,
+    }));
+    // An empty array and "nobody asked" are different facts, and only one of them is good news.
+    out.hazardsAllClear = hz.all_clear === true;
+  }
+
+  // SPC Day 1 categorical outlook. A forecast, unambiguously, and the lightning answer.
+  const cv = j.convective || null;
+  if (cv && (cv.risk || cv.label)) {
+    out.convective = { risk: cv.risk || null, label: cv.label || null,
+                       valid: cv.valid || null, expire: cv.expire || null };
+  }
+
   // ── ALMANAC ─────────────────────────────────────────────────────────────────────────────
   // CIVIL TWILIGHT, NOT SUNRISE. The fishing day starts when you can see to launch and ends
   // when you cannot, and in South Carolina that is roughly 25 minutes either side of the sun.

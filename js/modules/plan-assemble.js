@@ -732,6 +732,59 @@ export function weatherCues(plan, weatherByHour, o = {}) {
   const hhmm = (h) => `${String(Math.floor(((h % 24) + 24) % 24)).padStart(2, '0')}:`
                     + `${String(Math.round((h % 1) * 60)).padStart(2, '0')}`;
 
+  // ── NWS WATCHES, WARNINGS AND ADVISORIES ────────────────────────────────────────────────
+  //
+  // Ryan, 2026-08-25: *"the weather alerts absolutely need to be included in the
+  // notifications.js that sends alerts from my phone to the garmin echomap ... but are these
+  // current alerts or forecasted?"*
+  //
+  // BOTH, AND `severity` IS WHICH. Measured off the live layer the same day:
+  //
+  //     Flash Flood Watch   issued 12:17   onset 14:00 same day     1h43m out
+  //     Flash Flood Watch   issued 12:17   onset 12:00 NEXT DAY      ~24h out
+  //     Fire Weather Watch  issued 10:39   onset 12:00 in TWO DAYS   ~2 days out
+  //
+  // A Warning is in effect. A Watch is a forecast. An Advisory is in effect and milder. So a
+  // Watch gets the same treatment as forecast thunder -- the leave-by, computed from the run
+  // home -- and a Warning already in effect fires on the next tick because its hour is behind us.
+  // One formula covers both: the cue's hour is the hazard's start minus the run home.
+  //
+  // ONLY TODAY'S. A watch whose onset is noon on Thursday must not fire a notification on
+  // Tuesday, and hour-of-day alone cannot tell those apart -- the date has to be read.
+  const nowMs = Number.isFinite(o.now) ? o.now : Date.now();
+  const dayKey = (d) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  const today = dayKey(new Date(nowMs));
+  const SEVERITY = { Warning: 'stop', Watch: 'stop', Advisory: 'note', Statement: 'note' };
+
+  for (const h of (o.hazards || [])) {
+    if (!h || !h.begins) continue;
+    const begins = new Date(h.begins);
+    if (!Number.isFinite(begins.getTime())) continue;
+    // Already over. A lapsed warning is not a warning.
+    if (h.ends) {
+      const ends = new Date(h.ends);
+      if (Number.isFinite(ends.getTime()) && ends.getTime() < nowMs) continue;
+    }
+    const begun = begins.getTime() <= nowMs;
+    if (!begun && dayKey(begins) !== today) continue;   // a future day is not today's cue
+
+    const sev = SEVERITY[h.severity] || 'note';
+    const startH = begins.getHours() + begins.getMinutes() / 60;
+    // In effect already -> its own hour, which is behind us, so the next tick fires it.
+    // Still coming -> back it off by the run home, the same arithmetic the thunder cue uses.
+    const atHour = begun ? startH : Math.max(0, startH - homeMin / 60);
+    const label = h.type || `${h.severity || 'Weather'} in effect`;
+    out.push({
+      atHour, kind: 'hazard', severity: sev, code: h.id || null,
+      what: begun
+        ? `${label} IN EFFECT now${h.ends ? ` until ${hhmm(new Date(h.ends).getHours()
+            + new Date(h.ends).getMinutes() / 60)}` : ''}. Issued by NWS for this point.`
+        : `${label} from ${hhmm(startH)}. The furthest this plan gets from the ramp is `
+          + `${(farthestM / 1609.34).toFixed(1)} mi, which is ${homeMin} min home at `
+          + `${transitMph} mph — so leave by ${hhmm(atHour)}.`,
+    });
+  }
+
   let saidThunder = false;
   for (const w of (weatherByHour || [])) {
     if (!w || !Number.isFinite(w.hour)) continue;
@@ -757,6 +810,8 @@ export function weatherCues(plan, weatherByHour, o = {}) {
   // Rain hours run in blocks; the first of each block is the useful one.
   const seen = new Set();
   return out.filter((c) => {
+    // A hazard is one notice about one product, never a block of hours to thin out.
+    if (c.kind === 'hazard') return true;
     if (c.severity === 'stop') return true;
     const k = Math.floor(c.atHour);
     if (seen.has(k - 1) || seen.has(k - 2)) { seen.add(k); return false; }

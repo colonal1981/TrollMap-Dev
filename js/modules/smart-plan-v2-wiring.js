@@ -314,7 +314,13 @@ export async function runSmartPlanV2() {
   const gpx = materialisePlan(r.plan, { launch: ramp, win: window, marks: true });
   // planCues() and weatherCues() go to the thing that can actually reach him. The phone is not the
   // interface; the Echomap is.
-  loadSessionFromPlan(r.plan, { weatherByHour: forecast ? forecast.weatherByHour : null });
+  // THE NWS HAZARDS RIDE THE SAME /conditions RESPONSE `waterState` ALREADY CAME FROM, so this
+  // costs no request. Ryan, 2026-08-25: "the weather alerts absolutely need to be included in
+  // the notifications.js that sends alerts from my phone to the garmin echomap."
+  loadSessionFromPlan(r.plan, {
+    weatherByHour: forecast ? forecast.weatherByHour : null,
+    hazards: (waterState && waterState.hazards) || null,
+  });
   try { renderAll(); } catch (e) { console.warn('[plan-v2] map redraw failed:', e.message); }
 
   // A safety call made on a daily maximum is a safety call made on the wrong number, and the

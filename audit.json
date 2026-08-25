@@ -1,8 +1,8 @@
 {
   "generatedFrom": "tools/audit.mjs",
   "summary": {
-    "files": 455,
-    "jsModules": 286,
+    "files": 457,
+    "jsModules": 288,
     "pyScripts": 163,
     "routes": 56,
     "routesUncalled": 0,
@@ -964,7 +964,7 @@
     },
     "Worker/conditions.js": {
       "purpose": "Worker/conditions.js — one call that answers \"what is this water doing right now\".",
-      "lines": 4208,
+      "lines": 4265,
       "exports": [
         "obsBearing",
         "wwaText",
@@ -1180,6 +1180,13 @@
             "parseAccessAlerts",
             "alertsForWater",
             "droughtNoticeFor"
+          ]
+        },
+        {
+          "file": "test/duke-alerts-water.test.js",
+          "names": [
+            "alertsForWater",
+            "dukeLocationIdFor"
           ]
         },
         {
@@ -6617,7 +6624,7 @@
     },
     "js/modules/conditions-strip.js": {
       "purpose": "The state of the water, above the map, before you plan anything.",
-      "lines": 663,
+      "lines": 681,
       "exports": [
         "showConditionsFor",
         "refreshConditions"
@@ -7785,7 +7792,7 @@
     },
     "js/modules/notifications.js": {
       "purpose": "notifications.js — On-water alerts for TrollMap",
-      "lines": 452,
+      "lines": 459,
       "exports": [
         "requestNotificationPermission",
         "loadSessionFromPlan",
@@ -7904,7 +7911,7 @@
     },
     "js/modules/plan-assemble.js": {
       "purpose": "plan-assemble.js — ordered candidates + the model's judgement → a plan v2 object.",
-      "lines": 801,
+      "lines": 856,
       "exports": [
         "parseClock",
         "formatClock",
@@ -7968,6 +7975,12 @@
           "file": "test/bait-depth-ceiling.test.js",
           "names": [
             "assemblePlan"
+          ]
+        },
+        {
+          "file": "test/hazard-cues.test.js",
+          "names": [
+            "weatherCues"
           ]
         },
         {
@@ -8591,7 +8604,7 @@
     },
     "js/modules/plan-preflight.js": {
       "purpose": "plan-preflight.js — the two things that must happen before a plan is worth building.",
-      "lines": 406,
+      "lines": 415,
       "exports": [
         "detectCoastalZone",
         "checkPlanLegality",
@@ -9689,7 +9702,7 @@
     },
     "js/modules/smart-plan-v2-wiring.js": {
       "purpose": "smart-plan-v2-wiring.js — the DOM end of SmartPlan v2.",
-      "lines": 412,
+      "lines": 418,
       "exports": [
         "readInputs",
         "rampCoords",
@@ -11776,7 +11789,7 @@
     },
     "js/utils/water-conditions.js": {
       "purpose": "ONE READ FOR THE STATE OF THE WATER.",
-      "lines": 742,
+      "lines": 778,
       "exports": [
         "cToF",
         "conditionsUrl",
@@ -13375,6 +13388,34 @@
       "globalsWritten": [],
       "globalsRead": []
     },
+    "test/duke-alerts-water.test.js": {
+      "purpose": "THREE ALERTS FROM THREE OTHER RIVER BASINS, ON ONE WORD.",
+      "lines": 166,
+      "exports": [],
+      "imports": [
+        {
+          "from": "./expect-shim.mjs",
+          "names": [
+            "describe",
+            "it",
+            "expect"
+          ],
+          "resolved": "test/expect-shim.mjs"
+        },
+        {
+          "from": "../Worker/conditions.js",
+          "names": [
+            "alertsForWater",
+            "dukeLocationIdFor"
+          ],
+          "resolved": "Worker/conditions.js"
+        }
+      ],
+      "importedBy": [],
+      "deadExports": [],
+      "globalsWritten": [],
+      "globalsRead": []
+    },
     "test/duke-feed-reach.test.js": {
       "purpose": "Every lake Duke publishes, reachable — not the nine in the table.",
       "lines": 84,
@@ -13724,6 +13765,14 @@
           ]
         },
         {
+          "file": "test/duke-alerts-water.test.js",
+          "names": [
+            "describe",
+            "it",
+            "expect"
+          ]
+        },
+        {
           "file": "test/fixtures.test.js",
           "names": [
             "describe",
@@ -13733,6 +13782,14 @@
         },
         {
           "file": "test/geojson-coords.test.js",
+          "names": [
+            "describe",
+            "it",
+            "expect"
+          ]
+        },
+        {
+          "file": "test/hazard-cues.test.js",
           "names": [
             "describe",
             "it",
@@ -14492,6 +14549,33 @@
           "names": [
             "path"
           ]
+        }
+      ],
+      "importedBy": [],
+      "deadExports": [],
+      "globalsWritten": [],
+      "globalsRead": []
+    },
+    "test/hazard-cues.test.js": {
+      "purpose": "NWS WATCHES AND WARNINGS AS ECHOMAP ALERTS.",
+      "lines": 179,
+      "exports": [],
+      "imports": [
+        {
+          "from": "./expect-shim.mjs",
+          "names": [
+            "describe",
+            "it",
+            "expect"
+          ],
+          "resolved": "test/expect-shim.mjs"
+        },
+        {
+          "from": "../js/modules/plan-assemble.js",
+          "names": [
+            "weatherCues"
+          ],
+          "resolved": "js/modules/plan-assemble.js"
         }
       ],
       "importedBy": [],
@@ -18324,7 +18408,7 @@
       "files": [
         "Scripts/build_water_bindings.py:113",
         "Worker/conditions.js:761",
-        "Worker/conditions.js:3321"
+        "Worker/conditions.js:3378"
       ],
       "side": [
         "pipeline",
@@ -18372,7 +18456,7 @@
         "Scripts/capture_upstreams.py:120",
         "Scripts/capture_upstreams.py:366",
         "Scripts/capture_upstreams.py:386",
-        "Worker/conditions.js:3930",
+        "Worker/conditions.js:3987",
         "js/modules/tide-engine.js:22"
       ],
       "side": [
@@ -18391,8 +18475,8 @@
         "Scripts/capture_upstreams.py:367",
         "Scripts/capture_upstreams.py:379",
         "Scripts/capture_upstreams.py:384",
-        "Worker/conditions.js:2785",
-        "Worker/conditions.js:3421",
+        "Worker/conditions.js:2842",
+        "Worker/conditions.js:3478",
         "Worker/trollmap-worker.js:336",
         "Worker/trollmap-worker.js:1417",
         "Worker/worker-data.js:286",
@@ -18662,8 +18746,8 @@
       "files": [
         "Worker/conditions.js:1631",
         "Worker/conditions.js:2238",
-        "Worker/conditions.js:2617",
-        "Worker/conditions.js:3684",
+        "Worker/conditions.js:2674",
+        "Worker/conditions.js:3741",
         "Worker/worker-data.js:463",
         "Worker/worker-data.js:597"
       ],
@@ -22295,7 +22379,7 @@
     {
       "name": "wire",
       "at": [
-        "js/modules/conditions-strip.js:637",
+        "js/modules/conditions-strip.js:655",
         "js/modules/lake-ramp-select.js:593",
         "js/modules/noaa-tides.js:64"
       ]
@@ -22404,7 +22488,7 @@
       "name": "isEnabled",
       "at": [
         "js/core/layer-registry.js:97",
-        "js/modules/notifications.js:364"
+        "js/modules/notifications.js:371"
       ]
     },
     {
@@ -22459,7 +22543,7 @@
     {
       "name": "paint",
       "at": [
-        "js/modules/conditions-strip.js:555",
+        "js/modules/conditions-strip.js:573",
         "js/modules/plan-water-ui.js:464"
       ]
     },

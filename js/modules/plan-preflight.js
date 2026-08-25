@@ -310,8 +310,17 @@ export async function fetchWaterState(lakeName, dateStr, o = {}) {
       : null,
   }) : null;
 
-  if (!river && !tidal) return null;
-  return { featureType, river, tidal };
+  // AN ACTIVE WARNING OVER THE WATER IS WHAT THE WATER IS DOING TODAY, which is this function's
+  // whole subject. It rides the same /conditions response as the flow and the tide -- no second
+  // request -- and it is the reason this early return had to change: a lake with no river block
+  // and no tide is most of the registry, and returning null there threw the hazards away with
+  // everything else.
+  const hazards = (c && Array.isArray(c.hazards) && c.hazards.length) ? c.hazards : null;
+  const allClear = c && c.hazardsAllClear === true;
+  const convective = (c && c.convective) || null;
+
+  if (!river && !tidal && !hazards && !convective) return null;
+  return { featureType, river, tidal, hazards, hazardsAllClear: allClear, convective };
 }
 
 function round1(v) {
