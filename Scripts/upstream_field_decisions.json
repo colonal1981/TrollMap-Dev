@@ -6,48 +6,724 @@
     "envelope": "protocol scaffolding rather than data -- a wrapper, an echo of our own request, or a transport detail. Reading it would not add a fact.",
     "wired-elsewhere": "the fact IS used, reached by a different name or from a different source. `why` must name that source."
   },
-
-  "waterservices.usgs.gov::queryInfo": {"verdict": "envelope", "why": "WaterML wraps every response in an echo of the request. queryURL, locationParam, variableParam and criteria are the URL this app just built.", "when": "2026-08-25"},
-  "waterservices.usgs.gov::queryURL": {"verdict": "envelope", "why": "our own request, read back to us.", "when": "2026-08-25"},
-  "waterservices.usgs.gov::locationParam": {"verdict": "envelope", "why": "our own request, read back to us.", "when": "2026-08-25"},
-  "waterservices.usgs.gov::variableParam": {"verdict": "envelope", "why": "our own request, read back to us.", "when": "2026-08-25"},
-  "waterservices.usgs.gov::declaredType": {"verdict": "envelope", "why": "the Java class name of the response type. Not a fact about water.", "when": "2026-08-25"},
-  "waterservices.usgs.gov::globalScope": {"verdict": "envelope", "why": "XML-to-JSON serialisation artefact.", "when": "2026-08-25"},
-  "waterservices.usgs.gov::typeSubstituted": {"verdict": "envelope", "why": "XML-to-JSON serialisation artefact.", "when": "2026-08-25"},
-  "waterservices.usgs.gov::sourceInfo": {"verdict": "envelope", "why": "the container holding site name and coordinates. This app already knows both -- the binding put the site there.", "when": "2026-08-25"},
-  "waterservices.usgs.gov::siteCode": {"verdict": "wired-elsewhere", "why": "the site number is the argument fetchUsgs was called with.", "when": "2026-08-25"},
-  "waterservices.usgs.gov::agencyCode": {"verdict": "envelope", "why": "always USGS on a USGS endpoint.", "when": "2026-08-25"},
-  "waterservices.usgs.gov::geoLocation": {"verdict": "wired-elsewhere", "why": "the gauge's coordinates come from water_bindings.json, which is also what decided this gauge belongs to this water.", "when": "2026-08-25"},
-  "waterservices.usgs.gov::geogLocation": {"verdict": "wired-elsewhere", "why": "see geoLocation.", "when": "2026-08-25"},
-  "waterservices.usgs.gov::localSiteXY": {"verdict": "declined", "why": "state-plane coordinates. This app is in WGS84 everywhere.", "when": "2026-08-25"},
-  "waterservices.usgs.gov::siteProperty": {"verdict": "declined", "why": "county code, state code, HUC and site type. The binder already holds all four per gauge and they do not change between refreshes.", "when": "2026-08-25"},
-  "waterservices.usgs.gov::timeZoneInfo": {"verdict": "envelope", "why": "the container for the two zone blocks below.", "when": "2026-08-25"},
-  "waterservices.usgs.gov::defaultTimeZone": {"verdict": "declined", "why": "dateTime on every point carries its own offset. A separate zone table is a second way to get the same answer wrong.", "when": "2026-08-25"},
-  "waterservices.usgs.gov::daylightSavingsTimeZone": {"verdict": "declined", "why": "see defaultTimeZone.", "when": "2026-08-25"},
-  "waterservices.usgs.gov::siteUsesDaylightSavingsTime": {"verdict": "declined", "why": "see defaultTimeZone.", "when": "2026-08-25"},
-  "waterservices.usgs.gov::zoneAbbreviation": {"verdict": "declined", "why": "see defaultTimeZone.", "when": "2026-08-25"},
-  "waterservices.usgs.gov::variableID": {"verdict": "declined", "why": "USGS's internal row id for the parameter. parameterCd is the identifier this app and every other consumer uses.", "when": "2026-08-25"},
-  "waterservices.usgs.gov::variableName": {"verdict": "declined", "why": "'Streamflow, ft&#179;/s' -- HTML-entity encoded and unit-suffixed. This app labels its own readings and would have to strip the entity to use it.", "when": "2026-08-25"},
-  "waterservices.usgs.gov::variableDescription": {"verdict": "declined", "why": "see variableName.", "when": "2026-08-25"},
-  "waterservices.usgs.gov::variableProperty": {"verdict": "envelope", "why": "empty container on every series in the capture.", "when": "2026-08-25"},
-  "waterservices.usgs.gov::unitCode": {"verdict": "declined", "why": "the unit is fixed per parameter code -- 00010 is degC, 00060 is ft3/s, 00062 is ft -- and the mapping in fetchUsgs is written against those. A per-response unit would only matter if USGS started serving a code in two units, which would break the mapping loudly rather than silently.", "when": "2026-08-25"},
-  "waterservices.usgs.gov::valueType": {"verdict": "declined", "why": "'Derived Value' vs 'Measured Value'. Discharge is always derived from stage through a rating curve; saying so on screen would not change a decision about where to fish.", "when": "2026-08-25"},
-  "waterservices.usgs.gov::optionCode": {"verdict": "envelope", "why": "the statistic option, always 00000 on instantaneous values.", "when": "2026-08-25"},
-  "waterservices.usgs.gov::noDataValue": {"verdict": "wired-elsewhere", "why": "the sentinel is -999999 on every series and fetchUsgs rejects it numerically. Reading it per-series would replace a constant with a fetch.", "when": "2026-08-25"},
-  "waterservices.usgs.gov::qualifierCode": {"verdict": "declined", "why": "'P' provisional vs 'A' approved. Essentially every instantaneous reading is provisional -- approval runs a year or more behind -- so a provisional badge would sit on every number this app shows and mean nothing. The qualifiers that DO matter (Ice, Eqp, Mnt) arrive as the -999999 sentinel, which is already rejected.", "when": "2026-08-25"},
-  "waterservices.usgs.gov::qualifierDescription": {"verdict": "declined", "why": "see qualifierCode.", "when": "2026-08-25"},
-  "waterservices.usgs.gov::qualifierID": {"verdict": "declined", "why": "see qualifierCode.", "when": "2026-08-25"},
-  "waterservices.usgs.gov::qualityControlLevel": {"verdict": "declined", "why": "empty on every series in the capture; the same fact as qualifierCode when it is not.", "when": "2026-08-25"},
-  "waterservices.usgs.gov::methodID": {"verdict": "wired-elsewhere", "why": "the sensor is chosen by methodDescription, which says TOP or BOTTOM in words. The numeric id says nothing without a lookup.", "when": "2026-08-25"},
-  "waterservices.usgs.gov::censorCode": {"verdict": "declined", "why": "below-detection-limit marking. Empty on continuous series; it belongs to discrete lab samples.", "when": "2026-08-25"},
-
-  "api.water.noaa.gov::TruncateObs": {"verdict": "envelope", "why": "how many observations the NWPS hydrograph page trims for display. A rendering hint for their chart, not ours.", "when": "2026-08-25"},
-  "api.water.noaa.gov::TruncateFcst": {"verdict": "envelope", "why": "see TruncateObs.", "when": "2026-08-25"},
-  "api.water.noaa.gov::ObservedFloodCategory": {"verdict": "wired-elsewhere", "why": "duplicate of status.observed.floodCategory, which conditions.js reads into flood_category.", "when": "2026-08-25"},
-  "api.water.noaa.gov::ForecastFloodCategory": {"verdict": "wired-elsewhere", "why": "duplicate of status.forecast.floodCategory. The forecast block is dropped entirely when primary is the -999 sentinel, which is what this field reports as 'fcst_not_current'.", "when": "2026-08-25"},
-  "api.water.noaa.gov::olddatum": {"verdict": "declined", "why": "a per-crest flag saying the historic stage was recorded against a superseded datum. Only reachable through flood.crests, which is itself declined.", "when": "2026-08-25"},
-  "api.water.noaa.gov::preliminary": {"verdict": "declined", "why": "see olddatum.", "when": "2026-08-25"},
-  "api.water.noaa.gov::occurredTime": {"verdict": "declined", "why": "see olddatum.", "when": "2026-08-25"},
-  "api.water.noaa.gov::secondaryUnits": {"verdict": "wired-elsewhere", "why": "the ENVELOPE-level unit label. conditions.js reads status.observed.secondaryUnit instead, on purpose and with the gauges listed: the two disagree, and trusting the envelope turned 4,000 cfs into '4 ft3/s' on the Congaree.", "when": "2026-08-25"},
-  "api.water.noaa.gov::generatedTime": {"verdict": "envelope", "why": "when NWPS built the response, repeated on all 2,861 points. The observation's own validTime is the time that matters.", "when": "2026-08-25"}
+  "waterservices.usgs.gov::queryInfo": {
+    "verdict": "envelope",
+    "why": "WaterML wraps every response in an echo of the request. queryURL, locationParam, variableParam and criteria are the URL this app just built.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::queryURL": {
+    "verdict": "envelope",
+    "why": "our own request, read back to us.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::locationParam": {
+    "verdict": "envelope",
+    "why": "our own request, read back to us.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::variableParam": {
+    "verdict": "envelope",
+    "why": "our own request, read back to us.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::declaredType": {
+    "verdict": "envelope",
+    "why": "the Java class name of the response type. Not a fact about water.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::globalScope": {
+    "verdict": "envelope",
+    "why": "XML-to-JSON serialisation artefact.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::typeSubstituted": {
+    "verdict": "envelope",
+    "why": "XML-to-JSON serialisation artefact.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::sourceInfo": {
+    "verdict": "envelope",
+    "why": "the container holding site name and coordinates. This app already knows both -- the binding put the site there.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::siteCode": {
+    "verdict": "wired-elsewhere",
+    "why": "the site number is the argument fetchUsgs was called with.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::agencyCode": {
+    "verdict": "envelope",
+    "why": "always USGS on a USGS endpoint.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::geoLocation": {
+    "verdict": "wired-elsewhere",
+    "why": "the gauge's coordinates come from water_bindings.json, which is also what decided this gauge belongs to this water.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::geogLocation": {
+    "verdict": "wired-elsewhere",
+    "why": "see geoLocation.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::localSiteXY": {
+    "verdict": "declined",
+    "why": "state-plane coordinates. This app is in WGS84 everywhere.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::siteProperty": {
+    "verdict": "declined",
+    "why": "county code, state code, HUC and site type. The binder already holds all four per gauge and they do not change between refreshes.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::timeZoneInfo": {
+    "verdict": "envelope",
+    "why": "the container for the two zone blocks below.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::defaultTimeZone": {
+    "verdict": "declined",
+    "why": "dateTime on every point carries its own offset. A separate zone table is a second way to get the same answer wrong.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::daylightSavingsTimeZone": {
+    "verdict": "declined",
+    "why": "see defaultTimeZone.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::siteUsesDaylightSavingsTime": {
+    "verdict": "declined",
+    "why": "see defaultTimeZone.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::zoneAbbreviation": {
+    "verdict": "declined",
+    "why": "see defaultTimeZone.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::variableID": {
+    "verdict": "declined",
+    "why": "USGS's internal row id for the parameter. parameterCd is the identifier this app and every other consumer uses.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::variableName": {
+    "verdict": "declined",
+    "why": "'Streamflow, ft&#179;/s' -- HTML-entity encoded and unit-suffixed. This app labels its own readings and would have to strip the entity to use it.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::variableDescription": {
+    "verdict": "declined",
+    "why": "see variableName.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::variableProperty": {
+    "verdict": "envelope",
+    "why": "empty container on every series in the capture.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::unitCode": {
+    "verdict": "declined",
+    "why": "the unit is fixed per parameter code -- 00010 is degC, 00060 is ft3/s, 00062 is ft -- and the mapping in fetchUsgs is written against those. A per-response unit would only matter if USGS started serving a code in two units, which would break the mapping loudly rather than silently.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::valueType": {
+    "verdict": "declined",
+    "why": "'Derived Value' vs 'Measured Value'. Discharge is always derived from stage through a rating curve; saying so on screen would not change a decision about where to fish.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::optionCode": {
+    "verdict": "envelope",
+    "why": "the statistic option, always 00000 on instantaneous values.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::noDataValue": {
+    "verdict": "wired-elsewhere",
+    "why": "the sentinel is -999999 on every series and fetchUsgs rejects it numerically. Reading it per-series would replace a constant with a fetch.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::qualifierCode": {
+    "verdict": "declined",
+    "why": "'P' provisional vs 'A' approved. Essentially every instantaneous reading is provisional -- approval runs a year or more behind -- so a provisional badge would sit on every number this app shows and mean nothing. The qualifiers that DO matter (Ice, Eqp, Mnt) arrive as the -999999 sentinel, which is already rejected.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::qualifierDescription": {
+    "verdict": "declined",
+    "why": "see qualifierCode.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::qualifierID": {
+    "verdict": "declined",
+    "why": "see qualifierCode.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::qualityControlLevel": {
+    "verdict": "declined",
+    "why": "empty on every series in the capture; the same fact as qualifierCode when it is not.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::methodID": {
+    "verdict": "wired-elsewhere",
+    "why": "the sensor is chosen by methodDescription, which says TOP or BOTTOM in words. The numeric id says nothing without a lookup.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::censorCode": {
+    "verdict": "declined",
+    "why": "below-detection-limit marking. Empty on continuous series; it belongs to discrete lab samples.",
+    "when": "2026-08-25"
+  },
+  "api.water.noaa.gov::TruncateObs": {
+    "verdict": "envelope",
+    "why": "how many observations the NWPS hydrograph page trims for display. A rendering hint for their chart, not ours.",
+    "when": "2026-08-25"
+  },
+  "api.water.noaa.gov::TruncateFcst": {
+    "verdict": "envelope",
+    "why": "see TruncateObs.",
+    "when": "2026-08-25"
+  },
+  "api.water.noaa.gov::ObservedFloodCategory": {
+    "verdict": "wired-elsewhere",
+    "why": "duplicate of status.observed.floodCategory, which conditions.js reads into flood_category.",
+    "when": "2026-08-25"
+  },
+  "api.water.noaa.gov::ForecastFloodCategory": {
+    "verdict": "wired-elsewhere",
+    "why": "duplicate of status.forecast.floodCategory. The forecast block is dropped entirely when primary is the -999 sentinel, which is what this field reports as 'fcst_not_current'.",
+    "when": "2026-08-25"
+  },
+  "api.water.noaa.gov::olddatum": {
+    "verdict": "declined",
+    "why": "a per-crest flag saying the historic stage was recorded against a superseded datum. Only reachable through flood.crests, which is itself declined.",
+    "when": "2026-08-25"
+  },
+  "api.water.noaa.gov::preliminary": {
+    "verdict": "declined",
+    "why": "see olddatum.",
+    "when": "2026-08-25"
+  },
+  "api.water.noaa.gov::occurredTime": {
+    "verdict": "declined",
+    "why": "see olddatum.",
+    "when": "2026-08-25"
+  },
+  "api.water.noaa.gov::secondaryUnits": {
+    "verdict": "wired-elsewhere",
+    "why": "the ENVELOPE-level unit label. conditions.js reads status.observed.secondaryUnit instead, on purpose and with the gauges listed: the two disagree, and trusting the envelope turned 4,000 cfs into '4 ft3/s' on the Congaree.",
+    "when": "2026-08-25"
+  },
+  "api.water.noaa.gov::generatedTime": {
+    "verdict": "envelope",
+    "why": "when NWPS built the response, repeated on all 2,861 points. The observation's own validTime is the time that matters.",
+    "when": "2026-08-25"
+  },
+  "api.hydro-derived.duke-energy.app::SpecialMessageUpdated": {
+    "verdict": "wired-elsewhere",
+    "why": "a row-level 'when the message block was last touched'. Every message in SpecialMessage[] carries its own EventDate, which pickNewestMessage already sorts on; on Lake Wateree this row field is 2026-05-01, the OLDER of its two notices. The coarser date would undo the fix.",
+    "when": "2026-08-25"
+  },
+  "api.hydro-derived.duke-energy.app::SpecialMessageEventDate": {
+    "verdict": "declined",
+    "why": "null on all 34 lakes in the capture. See SpecialMessageUpdated.",
+    "when": "2026-08-25"
+  },
+  "api.hydro-derived.duke-energy.app::SortOrder": {
+    "verdict": "declined",
+    "why": "the order Duke's own lake list renders in. This app orders by distance from the person.",
+    "when": "2026-08-25"
+  },
+  "api.hydro-derived.duke-energy.app::LocationParentId": {
+    "verdict": "declined",
+    "why": "Duke's internal parent-location id. No endpoint takes it; lakepondLocationId is the key /lakes/operating-range wants and that one is read.",
+    "when": "2026-08-25"
+  },
+  "api.hydro-derived.duke-energy.app::locationParentId": {
+    "verdict": "declined",
+    "why": "see LocationParentId -- the alerts feed spells it lower-case.",
+    "when": "2026-08-25"
+  },
+  "api.hydro-derived.duke-energy.app::riverBasinLocationId": {
+    "verdict": "declined",
+    "why": "internal id with no endpoint behind it. riverbasinId is the one that identifies the basin and it is read.",
+    "when": "2026-08-25"
+  },
+  "api.hydro-derived.duke-energy.app::lakepondId": {
+    "verdict": "declined",
+    "why": "-1 on the system-wide row and unused elsewhere; lakepondLocationId is the usable key.",
+    "when": "2026-08-25"
+  },
+  "api.hydro-derived.duke-energy.app::lakepond_id": {
+    "verdict": "declined",
+    "why": "the operating-range response echoing the id we passed in the URL.",
+    "when": "2026-08-25"
+  },
+  "api.hydro-derived.duke-energy.app::riverLocationDesc": {
+    "verdict": "wired-elsewhere",
+    "why": "the long form of the group's riverName ('Catawba - Wateree' vs 'Catawba'). parseAccessAlerts carries riverName into basin_name, which nothing renders -- alerts display place or water. Reading the longer label would not change a screen.",
+    "when": "2026-08-25"
+  },
+  "api.water.noaa.gov::secondaryName": {
+    "verdict": "wired-elsewhere",
+    "why": "the stageflow envelope's label for the secondary series. conditions.js reads status.observed.secondaryUnit instead, deliberately: the envelope and the observation disagree, and trusting the envelope turned 4,000 cfs into '4 ft3/s' on the Congaree.",
+    "when": "2026-08-25"
+  },
+  "api.water.noaa.gov::issuedTime": {
+    "verdict": "declined",
+    "why": "when NWPS issued the stageflow product. Each observation carries its own time and that is the one the card shows.",
+    "when": "2026-08-25"
+  },
+  "api.waterdata.usgs.gov::approval_status": {
+    "verdict": "declined",
+    "why": "'Approved' vs 'Provisional'. Approval runs a year or more behind, so a provisional badge would sit on essentially every live reading and mean nothing. Same call as NWIS qualifierCode.",
+    "when": "2026-08-25"
+  },
+  "api.waterdata.usgs.gov::unit_of_measure": {
+    "verdict": "declined",
+    "why": "fixed per parameter code, and the only OGC caller (js/modules/usgs-gauges.js) queries parameter_code=00060 explicitly, so the unit cannot vary underneath it.",
+    "when": "2026-08-25"
+  },
+  "api.waterdata.usgs.gov::time_series_id": {
+    "verdict": "declined",
+    "why": "an opaque hash identifying one series. latest-continuous returns one row per series and the caller filters to a single parameter at a single site; there is nothing to disambiguate with it.",
+    "when": "2026-08-25"
+  },
+  "api.waterdata.usgs.gov::numberReturned": {
+    "verdict": "envelope",
+    "why": "the page size of the response we just asked for.",
+    "when": "2026-08-25"
+  },
+  "api.waterdata.usgs.gov::storageCrs": {
+    "verdict": "envelope",
+    "why": "the collection's declared CRS. Everything here is WGS84 and a mismatch would misplace every point loudly.",
+    "when": "2026-08-25"
+  },
+  "api.waterdata.usgs.gov::itemType": {
+    "verdict": "envelope",
+    "why": "OGC API boilerplate, 'feature' on every collection.",
+    "when": "2026-08-25"
+  },
+  "api.waterdata.usgs.gov::temporal": {
+    "verdict": "envelope",
+    "why": "the collection's overall time extent, null in the capture. The per-series begin/end is the useful form and it is a different endpoint.",
+    "when": "2026-08-25"
+  },
+  "api.waterdata.usgs.gov::openapi": {
+    "verdict": "envelope",
+    "why": "a link to the NIMS API's own schema document.",
+    "when": "2026-08-25"
+  },
+  "api.waterdata.usgs.gov::documentation": {
+    "verdict": "envelope",
+    "why": "see openapi.",
+    "when": "2026-08-25"
+  },
+  "api.waterdata.usgs.gov::email": {
+    "verdict": "envelope",
+    "why": "the NIMS support mailbox, published in their service index.",
+    "when": "2026-08-25"
+  },
+  "api.open-meteo.com::generationtime_ms": {
+    "verdict": "envelope",
+    "why": "how long Open-Meteo took to build the response.",
+    "when": "2026-08-25"
+  },
+  "archive-api.open-meteo.com::generationtime_ms": {
+    "verdict": "envelope",
+    "why": "see api.open-meteo.com.",
+    "when": "2026-08-25"
+  },
+  "api.open-meteo.com::utc_offset_seconds": {
+    "verdict": "declined",
+    "why": "the request asks for a fixed timezone and every timestamp comes back in it. A second representation of the same offset is a second chance to be wrong.",
+    "when": "2026-08-25"
+  },
+  "archive-api.open-meteo.com::utc_offset_seconds": {
+    "verdict": "declined",
+    "why": "see api.open-meteo.com.",
+    "when": "2026-08-25"
+  },
+  "api.open-meteo.com::timezone_abbreviation": {
+    "verdict": "declined",
+    "why": "'GMT-4'. See utc_offset_seconds.",
+    "when": "2026-08-25"
+  },
+  "archive-api.open-meteo.com::timezone_abbreviation": {
+    "verdict": "declined",
+    "why": "see api.open-meteo.com.",
+    "when": "2026-08-25"
+  },
+  "api.open-meteo.com::daily_units": {
+    "verdict": "declined",
+    "why": "the units block echoes what the request asked for -- fahrenheit, mph, inch -- and those are pinned in the URL this app builds.",
+    "when": "2026-08-25"
+  },
+  "archive-api.open-meteo.com::hourly_units": {
+    "verdict": "declined",
+    "why": "see daily_units.",
+    "when": "2026-08-25"
+  },
+  "aa.usno.navy.mil::apiversion": {
+    "verdict": "envelope",
+    "why": "USNO's API version string.",
+    "when": "2026-08-25"
+  },
+  "aa.usno.navy.mil::day_of_week": {
+    "verdict": "declined",
+    "why": "derivable from the date this app supplied in the request.",
+    "when": "2026-08-25"
+  },
+  "aa.usno.navy.mil::isdst": {
+    "verdict": "declined",
+    "why": "the tz offset is passed in the request; a daylight-saving flag alongside it is a second source for one fact.",
+    "when": "2026-08-25"
+  },
+  "forecast.weather.gov::operationalMode": {
+    "verdict": "envelope",
+    "why": "'Production' vs a test instance of the NWS point-forecast service.",
+    "when": "2026-08-25"
+  },
+  "forecast.weather.gov::srsName": {
+    "verdict": "envelope",
+    "why": "'WGS 1984', which is the only CRS this app uses.",
+    "when": "2026-08-25"
+  },
+  "forecast.weather.gov::creationDate": {
+    "verdict": "declined",
+    "why": "when the NWS product was generated. Each forecast period carries its own valid time and that is what the card shows.",
+    "when": "2026-08-25"
+  },
+  "forecast.weather.gov::creationDateLocal": {
+    "verdict": "declined",
+    "why": "see creationDate.",
+    "when": "2026-08-25"
+  },
+  "forecast.weather.gov::productionCenter": {
+    "verdict": "wired-elsewhere",
+    "why": "'Charleston, SC'. The WFO identifier is already read from this same response and is the precise form of the same fact.",
+    "when": "2026-08-25"
+  },
+  "forecast.weather.gov::moreInformation": {
+    "verdict": "envelope",
+    "why": "a link back to weather.gov.",
+    "when": "2026-08-25"
+  },
+  "forecast.weather.gov::layoutKey": {
+    "verdict": "envelope",
+    "why": "the DWML time-layout key that binds periods to times. This app reads the already-flattened JSON arrays.",
+    "when": "2026-08-25"
+  },
+  "cwms-data.usace.army.mil::interval-offset": {
+    "verdict": "declined",
+    "why": "minutes past the interval that a series is stamped at. Every value carries its own timestamp.",
+    "when": "2026-08-25"
+  },
+  "cwms-data.usace.army.mil::last-update": {
+    "verdict": "declined",
+    "why": "when the CATALOGUE row was last touched, which is not when the series last reported. The data endpoint answers that.",
+    "when": "2026-08-25"
+  },
+  "www.tva.com::DamType": {
+    "verdict": "declined",
+    "why": "'Non-hydropower' vs hydro. TVA publishes generation and release data only for the hydro projects, and a project with no data is already absent from the result.",
+    "when": "2026-08-25"
+  },
+  "www.tva.com::AltAbbr1": {
+    "verdict": "declined",
+    "why": "TVA's alternate short code ('Bark' for Barkley). The binder joins on the NWS handbook-5 lid, which is the code every other feed here uses.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::OrganizationIdentifier": {
+    "verdict": "wired-elsewhere",
+    "why": "the code beside OrganizationFormalName, which IS read as the programme fallback. A code and its name are one fact.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::ActivityIdentifier": {
+    "verdict": "declined",
+    "why": "activity bookkeeping on a discrete sample. The fields that place a measurement in the water -- CharacteristicName, ResultMeasureValue, the depth pair, ActivityStartDate -- are all read; these identify the visit, not the water.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::ActivityTypeCode": {
+    "verdict": "declined",
+    "why": "activity bookkeeping on a discrete sample. The fields that place a measurement in the water -- CharacteristicName, ResultMeasureValue, the depth pair, ActivityStartDate -- are all read; these identify the visit, not the water.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::ActivityMediaName": {
+    "verdict": "declined",
+    "why": "activity bookkeeping on a discrete sample. The fields that place a measurement in the water -- CharacteristicName, ResultMeasureValue, the depth pair, ActivityStartDate -- are all read; these identify the visit, not the water.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::ActivityMediaSubdivisionName": {
+    "verdict": "declined",
+    "why": "activity bookkeeping on a discrete sample. The fields that place a measurement in the water -- CharacteristicName, ResultMeasureValue, the depth pair, ActivityStartDate -- are all read; these identify the visit, not the water.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::ActivityConductingOrganizationText": {
+    "verdict": "declined",
+    "why": "activity bookkeeping on a discrete sample. The fields that place a measurement in the water -- CharacteristicName, ResultMeasureValue, the depth pair, ActivityStartDate -- are all read; these identify the visit, not the water.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::ActivityCommentText": {
+    "verdict": "declined",
+    "why": "activity bookkeeping on a discrete sample. The fields that place a measurement in the water -- CharacteristicName, ResultMeasureValue, the depth pair, ActivityStartDate -- are all read; these identify the visit, not the water.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::ActivityStartTime/Time": {
+    "verdict": "declined",
+    "why": "the clock time of a grab sample. WQP records are summarised by DATE and by month; a lake's July temperature does not turn on whether the boat went out at 9 or at 11.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::ActivityStartTime/TimeZoneCode": {
+    "verdict": "declined",
+    "why": "see ActivityStartTime/Time.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::ActivityEndDate": {
+    "verdict": "declined",
+    "why": "a grab sample starts and ends in the same minute; the end fields are empty or equal to the start on continuous-profile rows too.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::ActivityEndTime/Time": {
+    "verdict": "declined",
+    "why": "see ActivityEndDate.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::ActivityEndTime/TimeZoneCode": {
+    "verdict": "declined",
+    "why": "see ActivityEndDate.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::ActivityDepthAltitudeReferencePointText": {
+    "verdict": "declined",
+    "why": "which surface the depth is measured from. Every WQP depth this app uses is below the water surface, and a row that meant something else would be an outlier the depth clamp already rejects.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::ResultDepthAltitudeReferencePointText": {
+    "verdict": "declined",
+    "why": "see ActivityDepthAltitudeReferencePointText.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::SampleAquifer": {
+    "verdict": "declined",
+    "why": "groundwater bookkeeping. This app reads lakes and rivers.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::HydrologicCondition": {
+    "verdict": "declined",
+    "why": "'stable, low stage' and similar, filled by some agencies and not others. USGS gauge readings answer stage for the same water, continuously and for every day rather than for sample days.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::HydrologicEvent": {
+    "verdict": "declined",
+    "why": "see HydrologicCondition.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::SampleCollectionMethod/MethodIdentifier": {
+    "verdict": "declined",
+    "why": "a discrete lab sample's paperwork. limnology.js summarises WQP as measurements by characteristic, depth and date; who ran the analysis and on what instrument does not change a temperature profile or a secchi reading.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::SampleCollectionMethod/MethodIdentifierContext": {
+    "verdict": "declined",
+    "why": "a discrete lab sample's paperwork. limnology.js summarises WQP as measurements by characteristic, depth and date; who ran the analysis and on what instrument does not change a temperature profile or a secchi reading.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::SampleCollectionMethod/MethodName": {
+    "verdict": "declined",
+    "why": "a discrete lab sample's paperwork. limnology.js summarises WQP as measurements by characteristic, depth and date; who ran the analysis and on what instrument does not change a temperature profile or a secchi reading.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::SampleCollectionEquipmentName": {
+    "verdict": "declined",
+    "why": "a discrete lab sample's paperwork. limnology.js summarises WQP as measurements by characteristic, depth and date; who ran the analysis and on what instrument does not change a temperature profile or a secchi reading.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::ResultAnalyticalMethod/MethodIdentifier": {
+    "verdict": "declined",
+    "why": "a discrete lab sample's paperwork. limnology.js summarises WQP as measurements by characteristic, depth and date; who ran the analysis and on what instrument does not change a temperature profile or a secchi reading.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::ResultAnalyticalMethod/MethodIdentifierContext": {
+    "verdict": "declined",
+    "why": "a discrete lab sample's paperwork. limnology.js summarises WQP as measurements by characteristic, depth and date; who ran the analysis and on what instrument does not change a temperature profile or a secchi reading.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::ResultAnalyticalMethod/MethodName": {
+    "verdict": "declined",
+    "why": "a discrete lab sample's paperwork. limnology.js summarises WQP as measurements by characteristic, depth and date; who ran the analysis and on what instrument does not change a temperature profile or a secchi reading.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::MethodDescriptionText": {
+    "verdict": "declined",
+    "why": "a discrete lab sample's paperwork. limnology.js summarises WQP as measurements by characteristic, depth and date; who ran the analysis and on what instrument does not change a temperature profile or a secchi reading.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::LaboratoryName": {
+    "verdict": "declined",
+    "why": "a discrete lab sample's paperwork. limnology.js summarises WQP as measurements by characteristic, depth and date; who ran the analysis and on what instrument does not change a temperature profile or a secchi reading.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::AnalysisStartDate": {
+    "verdict": "declined",
+    "why": "a discrete lab sample's paperwork. limnology.js summarises WQP as measurements by characteristic, depth and date; who ran the analysis and on what instrument does not change a temperature profile or a secchi reading.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::PreparationStartDate": {
+    "verdict": "declined",
+    "why": "a discrete lab sample's paperwork. limnology.js summarises WQP as measurements by characteristic, depth and date; who ran the analysis and on what instrument does not change a temperature profile or a secchi reading.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::ResultLaboratoryCommentText": {
+    "verdict": "declined",
+    "why": "a discrete lab sample's paperwork. limnology.js summarises WQP as measurements by characteristic, depth and date; who ran the analysis and on what instrument does not change a temperature profile or a secchi reading.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::DetectionQuantitationLimitTypeName": {
+    "verdict": "declined",
+    "why": "detection limits matter for contaminants near zero. Temperature, dissolved oxygen, secchi depth and turbidity are never near a detection limit.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::DetectionQuantitationLimitMeasure/MeasureValue": {
+    "verdict": "declined",
+    "why": "see DetectionQuantitationLimitTypeName.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::DetectionQuantitationLimitMeasure/MeasureUnitCode": {
+    "verdict": "declined",
+    "why": "see DetectionQuantitationLimitTypeName.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::ResultDetectionConditionText": {
+    "verdict": "declined",
+    "why": "'Not Detected' and similar, and those rows arrive with an empty ResultMeasureValue, which parseFloat already drops.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::ResultSampleFractionText": {
+    "verdict": "declined",
+    "why": "'Total' vs 'Dissolved'. Meaningful for metals and nutrients; the five characteristics this app requests have no fractions.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::ResultStatusIdentifier": {
+    "verdict": "declined",
+    "why": "'Final' vs 'Preliminary'. Same call as NWIS qualifierCode -- it would sit on nearly every row.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::StatisticalBaseCode": {
+    "verdict": "declined",
+    "why": "empty on grab samples; it labels pre-aggregated rows, which this app does not request.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::ResultValueTypeName": {
+    "verdict": "declined",
+    "why": "'Actual' vs 'Estimated'. An estimated secchi reading is still the only secchi reading that lake has.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::ResultWeightBasisText": {
+    "verdict": "declined",
+    "why": "wet vs dry weight, for tissue and sediment results. Not applicable to water measurements.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::ResultTimeBasisText": {
+    "verdict": "declined",
+    "why": "the averaging period for a computed result. Grab samples have none.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::ResultTemperatureBasisText": {
+    "verdict": "declined",
+    "why": "the temperature a lab result was normalised to. Applies to chemistry, not to the water temperature itself.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::ResultParticleSizeBasisText": {
+    "verdict": "declined",
+    "why": "sediment gradation. Not applicable.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::PrecisionValue": {
+    "verdict": "declined",
+    "why": "the analytical precision of a lab result. See DetectionQuantitationLimitTypeName.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::ResultCommentText": {
+    "verdict": "declined",
+    "why": "free text from the sampling agency, mostly empty and never in a fixed vocabulary.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::MeasureQualifierCode": {
+    "verdict": "declined",
+    "why": "lab qualifier flags. The ones that matter arrive as an empty ResultMeasureValue, which is already dropped.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::USGSPCode": {
+    "verdict": "declined",
+    "why": "the NWIS parameter code for a WQP row. This app selects WQP rows by CharacteristicName, which is the vocabulary WQP itself is keyed on and the only one STORET providers populate.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::SubjectTaxonomicName": {
+    "verdict": "declined",
+    "why": "fish and invertebrate tissue sampling. Not a water measurement.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::SampleTissueAnatomyName": {
+    "verdict": "declined",
+    "why": "see SubjectTaxonomicName.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::agency_cd": {
+    "verdict": "envelope",
+    "why": "always USGS on these requests, and the binder joins on the site number alone.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::coord_acy_cd": {
+    "verdict": "declined",
+    "why": "how precisely the site's coordinates are known. The binder's name+geometry test already refuses a match that is not inside the water.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::dec_coord_datum_cd": {
+    "verdict": "declined",
+    "why": "NAD83 on every row in all four state catalogues.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::alt_va": {
+    "verdict": "declined",
+    "why": "the GAUGE's land-surface altitude, not the water's. Pool elevation comes from the reading, not from where the instrument sits.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::alt_acy_va": {
+    "verdict": "declined",
+    "why": "see alt_va.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::alt_datum_cd": {
+    "verdict": "declined",
+    "why": "see alt_va.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::huc_cd": {
+    "verdict": "declined",
+    "why": "the hydrologic unit. The binder decides which water a gauge belongs to by name AND geometry against the actual shoreline, which is a stronger test than sharing a HUC.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::medium_grp_cd": {
+    "verdict": "declined",
+    "why": "'wat' on every surface-water row.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::parm_grp_cd": {
+    "verdict": "declined",
+    "why": "USGS's parameter grouping. This app selects by parameter code.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::access_cd": {
+    "verdict": "declined",
+    "why": "public vs restricted access to the series. A restricted series simply returns nothing.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::tz_cd": {
+    "verdict": "declined",
+    "why": "the RDB timezone column. Each row's datetime is read together with it in the fallback path and the JSON path carries offsets inline.",
+    "when": "2026-08-25"
+  },
+  "waterservices.usgs.gov::value_qualifier_cd": {
+    "verdict": "declined",
+    "why": "the RDB spelling of qualifierCode -- 'P' provisional on essentially every live reading. The qualifiers that matter (Ice, Eqp, Mnt) arrive as the -999999 sentinel, which fetchUsgs rejects numerically.",
+    "when": "2026-08-25"
+  }
 }

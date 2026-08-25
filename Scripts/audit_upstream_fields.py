@@ -157,8 +157,22 @@ def keys_of_rdb(text):
     out = {}
     for h in head:
         h = h.strip()
-        if h:
-            out[h] = {'n': 1, 'sample': None}
+        if not h:
+            continue
+        # A VALUE COLUMN IS AN INSTANCE, NOT A FIELD NAME. USGS names its RDB value columns
+        # `<ts_id>_<parm_cd>` -- `311670_00065`, and `311670_00065_cd` for the qualifier -- so
+        # every site produces different column names for the same two things. Reported raw they
+        # were four permanent NOT-FOUND entries per capture that no code could ever "read",
+        # which is the kind of noise that makes a person stop reading the list. Canonicalised to
+        # the parameter code, which IS what the reader matches on.
+        m = re.match(r'^\d+_(\d{5})(_cd)?$', h)
+        if m:
+            # The `_cd` companion is the qualification code for the column beside it, and it
+            # means the same thing on every parameter. Named once rather than once per code, so
+            # deciding about it is a decision rather than a subscription.
+            h = 'value_qualifier_cd' if m.group(2) else m.group(1)
+        rec = out.setdefault(h, {'n': 0, 'sample': None})
+        rec['n'] += 1
     # A second line of type codes ("5s", "15s", "20d") is the RDB signature.
     if not re.match(r'^\d+[sndv](\t|$)', lines[1].strip()):
         return None
@@ -346,6 +360,14 @@ def self_test():
            'USGS\t02147801\t00010\n')
     k = keys_of_rdb(rdb)
     check('rdb header parsed', sorted(k), ['agency_cd', 'parm_cd', 'site_no'])
+    iv = ('# x\nagency_cd\tsite_no\tdatetime\ttz_cd\t177216_00010\t177216_00010_cd'
+          '\t177218_00010\t177218_00010_cd\n5s\t15s\t20d\t6s\t14n\t10s\t14n\t10s\n'
+          'USGS\t02168500\t2026-08-25 09:00\tEDT\t29.4\tP\t14.1\tP\n')
+    ivk = keys_of_rdb(iv)
+    check('a ts_id value column is reported as its parameter code',
+          sorted(ivk), ['00010', 'agency_cd', 'datetime', 'site_no', 'tz_cd',
+                        'value_qualifier_cd'])
+    check('two sensors on one code are counted as two', ivk['00010']['n'], 2)
     check('non-rdb text refused', keys_of_rdb('hello\nworld\n'), None)
     c = keys_of_csv('OrganizationIdentifier,ActivityStartDate,ResultMeasureValue\nUSGS,2025-01-01,7.2\n')
     check('csv header parsed', sorted(c),
