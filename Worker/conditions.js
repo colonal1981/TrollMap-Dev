@@ -3075,13 +3075,86 @@ const CWMS_FLOW_SERIES = [
   ['inflow', /\.Flow-In\./i, 'inflow'],
 ];
 
-/** m3/s as ft3/s, or null. CWMS publishes cms on the catalogue and sometimes cfs on the data. */
+/**
+ * THE UNIT SPELLINGS ARE THE CORPS', NOT OURS.
+ *
+ * Both converters below used to carry a hand-typed handful of spellings. `/cwms-data/units`
+ * publishes the whole table -- 424 rows, each with its `abstract-parameter`, its `unit-system`
+ * and its registered `alternate-names` -- and fetched on 2026-08-25 it says the hand-typed lists
+ * were wrong in both directions:
+ *
+ *   MISSING, and every one of them is a REGISTERED spelling of a unit we already accept:
+ *       foot                            (we had ft, feet)
+ *       meter, metre                    (we had m, meters, metres)
+ *       ft3/sec, cu-ft/sec, cuft/sec, cusecs      (we had cfs, ft3/s)
+ *       m3/sec, cu-meters/sec                     (we had cms, m3/s)
+ *
+ *   INVENTED: `ft^3/s` is in the Corps' table, `m^3/s` is NOT. We made it up and it has never
+ *       matched anything.
+ *
+ *   AND THE LANDMINE: `kcfs` is a registered unit -- "Kilo-cubic feet per second", aliases
+ *       `1000 cfs`, `1000 cu-ft/sec`, `1000 ft3/sec`. This app has already been bitten once by
+ *       kcfs arriving in a field that assumed cfs: the Congaree at roughly 4,000 cfs rendered
+ *       as "4 ft3/s" and was then compared against USGS percentiles in real cfs. Here it
+ *       currently returns null, which is the safe half of wrong -- an absence rather than a
+ *       thousandfold error -- but it is an absence nobody can see.
+ *
+ * AN UNRECOGNISED UNIT AND A DECLINED ONE ARE DIFFERENT FACTS. Miles and inches are registered
+ * Lengths and are never an elevation; gallons per minute is a registered Volume Rate and is
+ * never a dam release. Those are DECLINED on purpose. Anything not in either list is UNKNOWN,
+ * and `cwmsUnitKind` says which -- so the tests can assert that the Corps' own published table
+ * contains zero units this file has no opinion about.
+ *
+ * Every alias below is transcribed from that fetch, lower-cased. Nothing here is invented.
+ */
+const CWMS_UNIT_TABLE = [
+  // Length, and plausible as an elevation. Factor converts TO international feet.
+  [['ft', 'feet', 'foot'], 'length', 1],
+  // Survey feet differ from international feet by 2 parts per million -- 0.0013 ft at a 660 ft
+  // full pool. Accepted, because refusing an elevation over two thousandths of a foot would be
+  // an absence bought with nothing.
+  [['ftus', 'survey feet', 'survey foot'], 'length', 1.000002],
+  [['m', 'meter', 'metre', 'meters', 'metres'], 'length', 3.280839895],
+
+  // Volume Rate, and plausible as a release. Factor converts TO ft3/s.
+  [['cfs', 'cu-ft/sec', 'cuft/sec', 'cusecs', 'ft3/s', 'ft3/sec', 'ft^3/s'], 'flow', 1],
+  // `m^3/s` is NOT in the Corps' table. It was in ours, so it stays: dropping a spelling this
+  // file already accepted would be a silent narrowing, and a narrowing shows up as an absence.
+  // Registered or not, it can only ever mean cubic metres per second.
+  [['cms', 'cu-meters/sec', 'm3/s', 'm3/sec', 'm^3/s'], 'flow', 35.3147],
+  [['kcfs', '1000 cfs', '1000 cu-ft/sec', '1000 ft3/sec'], 'flow', 1000],
+  [['kcms', '1000 cms'], 'flow', 35314.7],
+
+  // Registered, understood, and REFUSED. A lake level in miles is a mis-parameterised series,
+  // not a lake, and converting it would produce a number that reads like one.
+  [['in', 'inch', 'inches', 'mi', 'mile', 'miles', 'cm', 'centimeter', 'centimeters',
+    'km', 'kilometer', 'kilometers', 'mm', 'millimeter', 'millimeters'], 'declined', 0],
+  [['gal/min', 'gallons per minute', 'gpm', 'mgd', 'million gallons/day',
+    'mcm/mon', '1000 ac-ft/mon', 'kaf/mon'], 'declined', 0],
+];
+
+const CWMS_UNITS = new Map();
+for (const [names, kind, factor] of CWMS_UNIT_TABLE) {
+  for (const n of names) CWMS_UNITS.set(n, { kind, factor });
+}
+
+/**
+ * What this file makes of a CWMS unit string: 'length', 'flow', 'declined' or 'unknown'.
+ *
+ * Exported so a test can walk the Corps' published table and assert nothing in it is 'unknown'.
+ */
+export function cwmsUnitKind(units) {
+  const u = String(units == null ? '' : units).trim().toLowerCase();
+  if (!u) return 'unknown';
+  return (CWMS_UNITS.get(u) || {}).kind || 'unknown';
+}
+
+/** A CWMS flow value as ft3/s, or null. */
 export function cwmsToCfs(value, units) {
   if (!Number.isFinite(value)) return null;
-  const u = String(units || '').trim().toLowerCase();
-  if (u === 'cfs' || u === 'ft3/s' || u === 'ft^3/s') return Math.round(value);
-  if (u === 'cms' || u === 'm3/s' || u === 'm^3/s') return Math.round(value * 35.3147);
-  return null;
+  const hit = CWMS_UNITS.get(String(units == null ? '' : units).trim().toLowerCase());
+  if (!hit || hit.kind !== 'flow') return null;
+  return Math.round(value * hit.factor);
 }
 
 /**
@@ -3151,10 +3224,9 @@ export async function usaceRelease(project, office, nowMs = Date.now()) {
  */
 export function cwmsToFeet(value, units) {
   if (!Number.isFinite(value)) return null;
-  const u = String(units || '').trim().toLowerCase();
-  if (u === 'ft' || u === 'feet') return Math.round(value * 100) / 100;
-  if (u === 'm' || u === 'meters' || u === 'metres') return Math.round(value * 3.28084 * 100) / 100;
-  return null;
+  const hit = CWMS_UNITS.get(String(units == null ? '' : units).trim().toLowerCase());
+  if (!hit || hit.kind !== 'length') return null;
+  return Math.round(value * hit.factor * 100) / 100;
 }
 
 /**

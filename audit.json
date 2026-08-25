@@ -1,9 +1,9 @@
 {
   "generatedFrom": "tools/audit.mjs",
   "summary": {
-    "files": 452,
-    "jsModules": 284,
-    "pyScripts": 162,
+    "files": 454,
+    "jsModules": 285,
+    "pyScripts": 163,
     "routes": 56,
     "routesUncalled": 0,
     "routesMutatingUngated": 18,
@@ -964,7 +964,7 @@
     },
     "Worker/conditions.js": {
       "purpose": "Worker/conditions.js — one call that answers \"what is this water doing right now\".",
-      "lines": 4112,
+      "lines": 4184,
       "exports": [
         "wwaText",
         "wwaSeverity",
@@ -1016,6 +1016,7 @@
         "cwmsLevel",
         "pickElevSeries",
         "pickCwmsSeries",
+        "cwmsUnitKind",
         "cwmsToCfs",
         "usaceRelease",
         "cwmsToFeet",
@@ -1158,6 +1159,14 @@
           "names": [
             "parseCwmsTimeseries",
             "cwmsLevel"
+          ]
+        },
+        {
+          "file": "test/cwms-units.test.js",
+          "names": [
+            "cwmsToFeet",
+            "cwmsToCfs",
+            "cwmsUnitKind"
           ]
         },
         {
@@ -13015,6 +13024,35 @@
       "globalsWritten": [],
       "globalsRead": []
     },
+    "test/cwms-units.test.js": {
+      "purpose": "THE CORPS PUBLISHES ITS OWN UNIT TABLE, AND OURS WAS A HAND-TYPED SUBSET OF IT.",
+      "lines": 202,
+      "exports": [],
+      "imports": [
+        {
+          "from": "./expect-shim.mjs",
+          "names": [
+            "describe",
+            "it",
+            "expect"
+          ],
+          "resolved": "test/expect-shim.mjs"
+        },
+        {
+          "from": "../Worker/conditions.js",
+          "names": [
+            "cwmsToFeet",
+            "cwmsToCfs",
+            "cwmsUnitKind"
+          ],
+          "resolved": "Worker/conditions.js"
+        }
+      ],
+      "importedBy": [],
+      "deadExports": [],
+      "globalsWritten": [],
+      "globalsRead": []
+    },
     "test/data-reaches-the-app.test.js": {
       "purpose": "",
       "lines": 329,
@@ -13624,6 +13662,14 @@
         },
         {
           "file": "test/credit-guards.test.js",
+          "names": [
+            "describe",
+            "it",
+            "expect"
+          ]
+        },
+        {
+          "file": "test/cwms-units.test.js",
           "names": [
             "describe",
             "it",
@@ -18073,7 +18119,7 @@
       "hits": 5,
       "files": [
         "Scripts/build_camera_index.py:59",
-        "Scripts/build_water_bindings.py:106",
+        "Scripts/build_water_bindings.py:118",
         "Worker/cameras.js:37",
         "js/modules/plan-builder.js:1244",
         "js/modules/usgs-gauges.js:23"
@@ -18234,9 +18280,9 @@
       "host": "api.water.noaa.gov",
       "hits": 3,
       "files": [
-        "Scripts/build_water_bindings.py:101",
+        "Scripts/build_water_bindings.py:113",
         "Worker/conditions.js:737",
-        "Worker/conditions.js:3225"
+        "Worker/conditions.js:3297"
       ],
       "side": [
         "pipeline",
@@ -18247,7 +18293,7 @@
       "host": "www.tva.com",
       "hits": 8,
       "files": [
-        "Scripts/build_water_bindings.py:102",
+        "Scripts/build_water_bindings.py:114",
         "Scripts/capture_upstreams.py:20",
         "Scripts/capture_upstreams.py:132",
         "Scripts/capture_upstreams.py:368",
@@ -18266,7 +18312,7 @@
       "host": "cwms-data.usace.army.mil",
       "hits": 4,
       "files": [
-        "Scripts/build_water_bindings.py:103",
+        "Scripts/build_water_bindings.py:115",
         "Scripts/capture_upstreams.py:143",
         "Scripts/probe_cwms_catalog.py:80",
         "Worker/conditions.js:1262"
@@ -18280,11 +18326,11 @@
       "host": "api.tidesandcurrents.noaa.gov",
       "hits": 6,
       "files": [
-        "Scripts/build_water_bindings.py:105",
+        "Scripts/build_water_bindings.py:117",
         "Scripts/capture_upstreams.py:120",
         "Scripts/capture_upstreams.py:366",
         "Scripts/capture_upstreams.py:386",
-        "Worker/conditions.js:3834",
+        "Worker/conditions.js:3906",
         "js/modules/tide-engine.js:22"
       ],
       "side": [
@@ -18297,14 +18343,14 @@
       "host": "waterservices.usgs.gov",
       "hits": 12,
       "files": [
-        "Scripts/build_water_bindings.py:107",
+        "Scripts/build_water_bindings.py:119",
         "Scripts/capture_upstreams.py:112",
         "Scripts/capture_upstreams.py:116",
         "Scripts/capture_upstreams.py:367",
         "Scripts/capture_upstreams.py:379",
         "Scripts/capture_upstreams.py:384",
         "Worker/conditions.js:2761",
-        "Worker/conditions.js:3325",
+        "Worker/conditions.js:3397",
         "Worker/trollmap-worker.js:336",
         "Worker/trollmap-worker.js:1417",
         "Worker/worker-data.js:286",
@@ -18342,11 +18388,12 @@
     },
     "github.com": {
       "host": "github.com",
-      "hits": 8,
+      "hits": 9,
       "files": [
         "Scripts/capture_upstreams.py:65",
         "Scripts/probe_cwms_catalog.py:83",
         "Scripts/probe_ndbc_stations.py:130",
+        "Scripts/probe_nwps_bulk.py:99",
         "Scripts/pull_usgs_current_conditions.py:135",
         "Scripts/pull_usgs_dashboard.py:197",
         "Scripts/r2_audit.py:184",
@@ -18486,6 +18533,20 @@
         "pipeline"
       ]
     },
+    "water.noaa.gov": {
+      "host": "water.noaa.gov",
+      "hits": 5,
+      "files": [
+        "Scripts/probe_nwps_bulk.py:28",
+        "Scripts/probe_nwps_bulk.py:98",
+        "Scripts/probe_nwps_bulk.py:426",
+        "Scripts/probe_nwps_bulk.py:432",
+        "Scripts/triage_water_bindings.py:277"
+      ],
+      "side": [
+        "pipeline"
+      ]
+    },
     "cdnjs.cloudflare.com": {
       "host": "cdnjs.cloudflare.com",
       "hits": 4,
@@ -18506,16 +18567,6 @@
       "files": [
         "Scripts/test_bind_operator_lakes.py:127",
         "Scripts/test_bind_operator_lakes.py:135"
-      ],
-      "side": [
-        "pipeline"
-      ]
-    },
-    "water.noaa.gov": {
-      "host": "water.noaa.gov",
-      "hits": 1,
-      "files": [
-        "Scripts/triage_water_bindings.py:277"
       ],
       "side": [
         "pipeline"
@@ -18570,7 +18621,7 @@
         "Worker/conditions.js:1607",
         "Worker/conditions.js:2214",
         "Worker/conditions.js:2593",
-        "Worker/conditions.js:3588",
+        "Worker/conditions.js:3660",
         "Worker/worker-data.js:463",
         "Worker/worker-data.js:597"
       ],
@@ -19980,7 +20031,7 @@
       "Scripts/build_water_features.py:100"
     ],
     "registry/gauge_overrides.json": [
-      "Scripts/build_water_bindings.py:1306"
+      "Scripts/build_water_bindings.py:1318"
     ],
     "registry/water_chain.json": [
       "Scripts/build_water_chain.py:67"
@@ -21331,6 +21382,21 @@
         "--top"
       ],
       "reads": []
+    },
+    {
+      "file": "Scripts/probe_nwps_bulk.py",
+      "purpose": "probe_nwps_bulk.py -- one download against 371, and it carries more than the 371 did.",
+      "flags": [
+        "--csv",
+        "--registry",
+        "--cache",
+        "--out",
+        "--keep-csv",
+        "--self-test"
+      ],
+      "reads": [
+        "lake_index.json"
+      ]
     },
     {
       "file": "Scripts/prune_r2_keys.py",
