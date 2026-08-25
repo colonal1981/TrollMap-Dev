@@ -299,24 +299,78 @@ async function convective(lat, lon) {
 // ── active watches, warnings and advisories ─────────────────────────────────────────────────
 
 /**
+ * A BLANK WWA FIELD IS A SINGLE SPACE, NOT NULL AND NOT EMPTY.
+ *
+ * Measured 2026-08-25 off layer 1 itself: `"ends":" "`, `"sig":" "`, `"phenom":" "`, `"wfo":" "`.
+ * `a.ends || null` therefore yields `" "` — truthy, so every downstream guard passes and a
+ * blank renders as a timestamp-shaped hole. Trim first, then decide.
+ */
+export function wwaText(v) {
+  const s = String(v == null ? '' : v).trim();
+  return s || null;
+}
+
+/**
+ * VTEC significance, which is NWS's own codebook (NWSI 10-1703), not a scale invented here.
+ *
+ * This is the field that separates "a storm MIGHT form over you this afternoon" from "one is
+ * over you now", and until 2026-08-25 the app could not tell them apart without string-matching
+ * the words out of `prod_type`.
+ */
+const VTEC_SIGNIFICANCE = { W: 'Warning', A: 'Watch', Y: 'Advisory', S: 'Statement',
+                            F: 'Forecast', O: 'Outlook', N: 'Synopsis' };
+
+/** `sig` when the product carries one; the product's own trailing noun when it does not. */
+export function wwaSeverity(sig, prodType) {
+  const s = wwaText(sig);
+  const mapped = s && VTEC_SIGNIFICANCE[s.toUpperCase()];
+  if (mapped) return mapped;
+  // Special Weather Statements and a few siblings ship `sig` blank. The name still ends in it.
+  const m = /\b(Warning|Watch|Advisory|Statement)\b/i.exec(prodType || '');
+  return m ? m[1][0].toUpperCase() + m[1].slice(1).toLowerCase() : null;
+}
+
+/**
  * NWS WWA filtered to a point. VERIFIED 2026-08-06 by Ryan against Wateree's centroid: the
- * point query works and the layer declares exactly these fields —
+ * point query works, and it returned `"features": []` — the RIGHT answer, worth saying out
+ * loud: no warning was active over that lake at that moment. An empty array here is good news,
+ * not a failure, and code that treats "no features" as an error will cry wolf on every clear day.
  *
- *   prod_type (Hazard Type, 40 chars)  event (4)  issuance (25)  expiration (25)  url (254)
+ * WHAT WAS WRONG WAS THE LINE UNDER HIS VERIFICATION, NOT THE VERIFICATION. This comment used to
+ * read "the layer declares exactly these fields — prod_type, event, issuance, expiration,
+ * url". Those five are what the query ASKED FOR. Restating our own request as the upstream's
+ * schema is how a field nobody fetched becomes a field everybody believes does not exist.
  *
- * It returned `"features": []`, which is the RIGHT answer and worth saying out loud: no warning
- * was active over that lake at that moment. An empty array here is good news, not a failure,
- * and code that treats "no features" as an error will cry wolf on every clear day.
+ * The layer declares fifteen, measured 2026-08-25 with `outFields=*`:
  *
- * `prod_type` is the useful one for a kayak — it carries "Small Craft Advisory" and "Special
- * Weather Statement" rather than a numeric code.
+ *   objectid  prod_type  msg_type  phenom  url  expiration  onset  ends  issuance
+ *   event  sig  wfo  idp_filedate  idp_ingestdate  cap_id
+ *
+ * FOUR OF THEM CHANGE WHAT A PADDLER IS TOLD.
+ *
+ *   `sig`      W / A / Y — Warning, Watch, Advisory. See wwaSeverity.
+ *   `onset`    when the hazard BEGINS, which is not when the message was issued. A watch cut at
+ *              06:00 for a 14:00 storm has issuance 06:00 and onset 14:00, and this app showed
+ *              the 06:00.
+ *   `ends`     when the HAZARD ends. `expiration` is when the MESSAGE lapses and gets reissued.
+ *              They are routinely hours apart and only one of them answers "can I still fish".
+ *   `msg_type` carries cancellations, so a lifted warning stops looking active.
+ *
+ * `event` IS NOT AN EVENT NAME. It is the four-digit VTEC event tracking number — a real
+ * sample is `"0038"` — and it was returned under the key `event`, which reads as a label and
+ * is not one. It keeps its place here under the name it actually has.
+ *
+ * LAYER 0 IS NOT A GAP. It is `CurrentWarnings`, the short-fuse convective and marine subset
+ * (tornado, severe thunderstorm, flash flood, snow squall, special marine). Layer 1 renders 177
+ * distinct `prod_type` values and contains those already, so a second request would buy nothing.
  */
 async function hazards(lat, lon) {
   const url = 'https://mapservices.weather.noaa.gov/eventdriven/rest/services/WWA/'
             + 'watch_warn_adv/MapServer/1/query'
             + `?geometry=${lon},${lat}&geometryType=esriGeometryPoint&inSR=4326`
             + '&spatialRel=esriSpatialRelIntersects'
-            + '&outFields=prod_type,event,issuance,expiration,url&returnGeometry=false&f=json';
+            + '&outFields=prod_type,sig,phenom,msg_type,onset,ends,issuance,expiration,'
+            + 'wfo,cap_id,event,url&returnGeometry=false&f=json';
   const j = await cached(`wwa:${lat.toFixed(3)},${lon.toFixed(3)}`, TTL.wwa, () => getJson(url));
   const feats = (j && j.features) || [];
   return {
@@ -325,8 +379,21 @@ async function hazards(lat, lon) {
     all_clear: feats.length === 0,
     items: feats.map((f) => {
       const a = f.attributes || {};
-      return { type: a.prod_type || null, event: a.event || null,
-               issued: a.issuance || null, expires: a.expiration || null, url: a.url || null };
+      return {
+        type: wwaText(a.prod_type),
+        severity: wwaSeverity(a.sig, a.prod_type),
+        // Fall back to the message's own clock when the hazard clock is blank, which is common.
+        begins: wwaText(a.onset) || wwaText(a.issuance),
+        ends: wwaText(a.ends) || wwaText(a.expiration),
+        issued: wwaText(a.issuance),
+        expires: wwaText(a.expiration),
+        message_type: wwaText(a.msg_type),
+        phenomenon: wwaText(a.phenom),
+        office: wwaText(a.wfo),
+        etn: wwaText(a.event),
+        id: wwaText(a.cap_id),
+        url: wwaText(a.url),
+      };
     }),
   };
 }
