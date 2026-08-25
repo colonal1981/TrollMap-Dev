@@ -2597,6 +2597,63 @@ export function pickElevSeries(catalog) {
 }
 
 /**
+ * THE CORPS' POOL ELEVATION, FETCHED.
+ *
+ * `pickElevSeries`, `parseCwmsTimeseries` and `cwmsLevel` were written on 2026-08-16, tested
+ * against a real 42-entry catalogue, and NEVER CALLED. Nothing in this repo fetched a CWMS
+ * catalogue. Meanwhile `worker-data.js` carried a second CWMS reader that WAS wired, and it
+ * asked for a series that does not exist:
+ *
+ *   it asked for   Hartwell.Elev.Inst.0.0.USACE-RAW      office=SA    unit=ft
+ *   SAS publishes  Hartwell.Elev-Pool.Inst.1Hour.0.Raw-SHEF_SAS   office=SAS   units=m
+ *
+ * Wrong parameter (Elev vs Elev-Pool), wrong interval (0 vs 1Hour), wrong version (USACE-RAW
+ * vs Raw-SHEF_SAS), wrong office (SA is the division, SAS is the district), and it asked for
+ * feet from a service that publishes metres. Four ways wrong, one of them silently dangerous.
+ * Verified 2026-08-25 against registry/_cwms_inventory.json, which holds all 3,328 catalogued
+ * series for these districts: Hartwell 84, Russell 104, Thurmond 82, on the PROJECT locations
+ * the site-number join never reached.
+ *
+ * Two implementations of one thing, one right and dead, one wired and wrong. This connects the
+ * right one and the wrong one is deleted.
+ *
+ * THE `like` PATTERN IS UPPERCASE ON PURPOSE. CWMS matches it as a regex against the ts-id
+ * AFTER upper-casing the id — proven in this session by base64-decoding the pagination cursor,
+ * which carries the pattern verbatim. An upper-case pattern matches whether or not the
+ * comparison itself is case-sensitive; `^Hartwell\.` gambles on it not being.
+ */
+export async function cwmsPoolElevation(location, office = 'SAS', nowMs = Date.now()) {
+  const loc = String(location || '').trim();
+  if (!loc) return null;
+  const base = 'https://cwms-data.usace.army.mil/cwms-data';
+  const like = encodeURIComponent('^' + loc.toUpperCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\.ELEV');
+  // page-size large enough that one lake's Elev series cannot paginate: Hartwell publishes 84
+  // series in total and about half of them are Elev-something.
+  const catUrl = `${base}/catalog/TIMESERIES?office=${encodeURIComponent(office)}`
+               + `&like=${like}&page-size=500`;
+  let picked;
+  try {
+    picked = pickElevSeries(await cached(`cwms:cat:${office}:${loc}`, TTL.bindings, () => getJson(catUrl)));
+  } catch (_) {
+    return null;
+  }
+  if (!picked || !picked.name) return null;
+  const tsUrl = `${base}/timeseries?name=${encodeURIComponent(picked.name)}`
+              + `&office=${encodeURIComponent(picked.office || office)}`;
+  try {
+    // NO `unit=` PARAMETER. Whatever unit arrives is the unit cwmsToFeet is handed, and an
+    // unrecognised one is refused rather than assumed. Asking for feet and being answered in
+    // metres is the failure this whole path exists to avoid.
+    const level = cwmsLevel(parseCwmsTimeseries(
+      await cached(`cwms:ts:${picked.name}`, TTL.level, () => getJson(tsUrl))), nowMs);
+    if (!level) return null;
+    return { ...level, location: loc, series: picked.name, of_total: picked.of_total };
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
  * A CWMS value in the unit CWMS declared, as feet — or null.
  *
  * Refuses anything it does not recognise. A silent pass-through of an unknown unit is how 201.2
@@ -2817,8 +2874,8 @@ async function waterBlock(b, lat, lon, env) {
     .sort((x, y) => x.km_from_point - y.km_from_point);
 
   // Declared, not fetched. The NWM reach and the CWMS locations already have callers elsewhere
-  // (worker-data.js fetchCwmsLakeLevel, and /rivers above); repeating those fetches here would
-  // be two code paths that can disagree about the same number.
+  // (`cwmsPoolElevation` above, reached from the /lakes route, and /rivers); repeating those
+  // fetches here would be two code paths that can disagree about the same number.
   out.reach = b.reach || null;
   out.usace = b.usace || null;
   out.curated = b.curated || null;

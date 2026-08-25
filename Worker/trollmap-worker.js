@@ -6,11 +6,11 @@ import { CORS, JSON_HEADERS, TEXT_HEADERS, callLLM, isAuthorized, chartpackKey, 
 // Bump on every edit to this file. See ARCGIS_BUILD in core/arcgis.js.
 const WORKER_BUILD = 'worker-2026-08-07a';
 
-import { fetchDukeFlowArrivals, dukeRowForNames, LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, fetchCwmsLakeLevel, fetchDukeDashboard } from './worker-data.js';
+import { fetchDukeFlowArrivals, dukeRowForNames, LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, CWMS_PROJECT, fetchDukeDashboard } from './worker-data.js';
 import { SPECIES_MIDLANDS_SANTEE, SPECIES_UPSTATE, SPECIES_COASTAL_SALTWATER, SPECIES_ALL_TROLLMAP, MAX_BIOLOGICAL_LENGTH, PURE_SALTWATER, PURE_FRESHWATER, getSpeciesListForGps, checkBiologicalLength, checkEcologicalReality } from './worker-species.js';
 import { handleGisRoute, flagIsYes, hasText, ARCGIS_BUILD } from './core/arcgis.js';
 import { handleWaterRoute } from './water.js';
-import { handleConditions } from './conditions.js';
+import { handleConditions, cwmsPoolElevation } from './conditions.js';
 import { handleCameras } from './cameras.js';
 import { handleReports } from './reports.js';
 import { fetchStateRegulations, getLakeRegulations } from './research/clients.js';
@@ -486,24 +486,41 @@ async function resolveLake(lakeName) {
         out.sources.push("Santee Cooper");
       }
     } else {
-      // Try the USACE CWMS Data API first for authoritative near-real-time elevation.
-      const cwms = await fetchCwmsLakeLevel(lakeName, key);
-      if (cwms?.elevation_ft != null) {
+      // THE CORPS' OWN READING, through the discovered-series path in conditions.js. This used
+      // to call a second CWMS reader in worker-data.js that asked for
+      // `Hartwell.Elev.Inst.0.0.USACE-RAW` on office `SA` in feet -- a series that does not
+      // exist, on a division rather than a district, in the wrong unit. See cwmsPoolElevation.
+      //
+      // FRESH CORPS BEATS THE SCRAPE; STALE CORPS LOSES TO IT BUT STILL BEATS NOTHING. Savannah
+      // District's SHEF feed runs a day or three behind -- measured 2026-08-24, when the newest
+      // Hartwell pool value in the catalogue was 77 hours old. A three-day-old elevation is not
+      // a current reading and must not outrank a page scraped today, but it is a real number
+      // from the operator and it is better than the normalPool constant this route falls back
+      // to. The age travels with it either way, so nothing downstream has to guess.
+      const cwms = await cwmsPoolElevation(CWMS_PROJECT[cfg.sepa] || CWMS_PROJECT[key]);
+      const useCwms = (why) => {
         out.elevation_ft = round2(cwms.elevation_ft);
-        out.sources.push(`USACE CWMS ${cwms.location || key}`);
+        out.sources.push(`USACE CWMS ${cwms.location}${why}`);
         out.cwms = {
           location: cwms.location,
+          series: cwms.series,
           source: cwms.source,
-          timestamp: cwms.timestamp,
-          method: cwms.method
+          timestamp: cwms.observed_at,
+          age_hours: cwms.age_hours,
+          stale: cwms.stale,
+          units_reported: cwms.units_reported
         };
-      }
+      };
+      if (cwms?.elevation_ft != null && !cwms.stale) useCwms('');
       if (out.elevation_ft == null) {
         const us = await fetchUsaceSavannah(cfg.sepa);
         if (us?.elevation != null) {
           out.elevation_ft = us.elevation;
           out.sources.push("USACE Savannah District");
         }
+      }
+      if (out.elevation_ft == null && cwms?.elevation_ft != null) {
+        useCwms(` (${cwms.age_hours}h old)`);
       }
     }
   }

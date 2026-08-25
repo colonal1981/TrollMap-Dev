@@ -5,7 +5,7 @@
 // series for one lake and exactly one of them is "how high is the water".
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pickElevSeries, cwmsToFeet } from '../Worker/conditions.js';
+import { pickElevSeries, cwmsToFeet, cwmsPoolElevation } from '../Worker/conditions.js';
 
 const e = (name, interval, latest) => ({
   office: 'SAS', name, units: 'm', interval, 'interval-offset': 0, 'time-zone': 'US/Central',
@@ -190,4 +190,104 @@ test('a malformed envelope is null rather than half-parsed', () => {
   const noCols = ENVELOPE([[T0, 1, 0]]);
   delete noCols['value-columns'];
   assert.equal(parseCwmsTimeseries(noCols), null);
+});
+
+
+// ── the fetch that was never wired ──────────────────────────────────────────────────────────
+//
+// pickElevSeries, parseCwmsTimeseries and cwmsLevel were written on 2026-08-16 and tested right
+// here, and NOTHING EVER CALLED THEM. The CWMS reader that WAS wired lived in worker-data.js and
+// asked for `Hartwell.Elev.Inst.0.0.USACE-RAW` on office `SA` in feet -- wrong parameter, wrong
+// interval, wrong version, wrong office, wrong unit. It returned nothing on every call, and the
+// /lakes route fell through to scraping a district web page for a three-digit number.
+//
+// These tests pin the request as well as the answer, because four of those five mistakes were
+// in the URL rather than in the parsing.
+
+/** Swap global fetch for one call, always restoring it, and record what was asked for. */
+async function withFetch(impl, fn) {
+  const real = globalThis.fetch;
+  const seen = [];
+  globalThis.fetch = async (url, opts) => { seen.push(String(url)); return impl(String(url), opts); };
+  try { return { out: await fn(), seen }; } finally { globalThis.fetch = real; }
+}
+
+const CAT_FOR = (loc) => ({ total: 42, 'page-size': 500, entries: [
+  e(`${loc}.Elev-GC.Inst.1Day.0.ARCHIVE-DAILY`, '1Day', '2030-01-01T00:00:00Z'),
+  e(`${loc}.Elev-Head.Inst.1Hour.0.Raw-SHEF_SAS`, '1Hour', '2026-08-21T18:00:00Z'),
+  e(`${loc}.Elev-Pool_p50.Inst.1Day.0.ARCHIVE-DAILY`, '1Day', '2031-12-31T00:00:00Z'),
+  e(`${loc}.Elev-Pool.Inst.1Day.0.Raw-SHEF_SAS`, '1Day', '2026-08-21T00:00:00Z'),
+  e(`${loc}.Elev-Pool.Inst.1Hour.0.Raw-SHEF_SAS`, '1Hour', '2026-08-21T18:00:00Z'),
+] });
+
+const NOW = Date.parse('2026-08-21T20:00:00Z');
+
+/** A catalogue-then-timeseries responder. `metres` is what the Corps actually publishes. */
+const responder = (loc, metres) => async (url) => {
+  if (url.includes('/catalog/TIMESERIES')) {
+    return { ok: true, status: 200, json: async () => CAT_FOR(loc) };
+  }
+  const env = ENVELOPE([[Date.parse('2026-08-21T18:00:00Z'), metres, 0]]);
+  env.units = 'm';
+  env.name = `${loc}.Elev-Pool.Inst.1Hour.0.Raw-SHEF_SAS`;
+  return { ok: true, status: 200, json: async () => env };
+};
+
+test('Hartwell: the hourly pool series is discovered and read as feet', async () => {
+  // 201.17 m is 660.01 ft. Hartwell's full pool is 660 ft; reading the metres as feet would put
+  // the lake 459 feet below the bottom of its conservation pool.
+  const { out, seen } = await withFetch(responder('Hartwell', 201.17),
+    () => cwmsPoolElevation('Hartwell', 'SAS', NOW));
+  assert.equal(out.elevation_ft, 660.01);
+  assert.equal(out.location, 'Hartwell');
+  assert.equal(out.series, 'Hartwell.Elev-Pool.Inst.1Hour.0.Raw-SHEF_SAS');
+  assert.equal(out.units_reported, 'm');
+  assert.equal(out.stale, false);
+  assert.equal(seen.length, 2, 'one catalogue request, one series request');
+});
+
+test('the like pattern is upper-case, because CWMS upper-cases the id before matching', async () => {
+  const { seen } = await withFetch(responder('Russell', 101.5),
+    () => cwmsPoolElevation('Russell', 'SAS', NOW));
+  const cat = decodeURIComponent(seen[0]);
+  assert.ok(cat.includes('office=SAS'), cat);
+  assert.ok(cat.includes('^RUSSELL\\.ELEV'), cat);
+  assert.ok(cat.includes('page-size=500'), cat);
+});
+
+test('no unit= is requested, so whatever arrives is what gets converted', async () => {
+  // Asking for feet and being answered in metres is the exact failure this path exists to
+  // avoid. The response carries its unit; the request must not presume one.
+  const { seen } = await withFetch(responder('Thurmond', 100.6),
+    () => cwmsPoolElevation('Thurmond', 'SAS', NOW));
+  assert.ok(!seen[1].includes('unit='), seen[1]);
+  assert.ok(seen[1].includes('office=SAS'), seen[1]);
+});
+
+test('a stale reading is still returned, and says so', async () => {
+  const week = Date.parse('2026-08-28T20:00:00Z');
+  const { out } = await withFetch(responder('HartwellStale', 201.17),
+    () => cwmsPoolElevation('HartwellStale', 'SAS', week));
+  assert.equal(out.stale, true, 'seven days old is past the 48-hour bar');
+  assert.equal(out.elevation_ft, 660.01, 'the value is carried; the caller decides');
+});
+
+test('an empty catalogue is null rather than a guess', async () => {
+  const { out } = await withFetch(
+    async () => ({ ok: true, status: 200, json: async () => ({ total: 0, entries: [] }) }),
+    () => cwmsPoolElevation('Nowhere', 'SAS', NOW));
+  assert.equal(out, null);
+});
+
+test('a failed catalogue request does not throw into the route', async () => {
+  const { out } = await withFetch(async () => ({ ok: false, status: 503, json: async () => ({}) }),
+    () => cwmsPoolElevation('Offline', 'SAS', NOW));
+  assert.equal(out, null);
+});
+
+test('no location, no request', async () => {
+  const { out, seen } = await withFetch(async () => { throw new Error('should not fetch'); },
+    () => cwmsPoolElevation('', 'SAS', NOW));
+  assert.equal(out, null);
+  assert.equal(seen.length, 0);
 });

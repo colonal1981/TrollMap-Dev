@@ -60,9 +60,16 @@ const DECLARED = [
   // ── foreign keys: cannot be derived, CAN be verified ──────────────────────────────────────
   ['Worker/worker-data.js', 'LAKEMONSTER_IDS', 5, 'foreign-key',
    "another site's slug, used to build a URL. Nothing in the registry replaces it."],
-  ['Worker/worker-data.js', 'CWMS_LOCATIONS', 6, 'foreign-key',
-   'Corps location ids. usaceLevels() now picks from the live district roster instead, so '
-   + 'this is a candidate for deletion once its last caller goes.'],
+  // RENAMED AND SHRUNK, 2026-08-25. Was CWMS_LOCATIONS, sitting beside a fetch that asked for
+  // `Hartwell.Elev.Inst.0.0.USACE-RAW` on office `SA` in feet -- a series that does not exist,
+  // on a division rather than a district, in the wrong unit. What was wrong was the SERIES id,
+  // not the project name, so the fetch went and the six-row map stayed: cwmsPoolElevation
+  // discovers the series from the district catalogue and needs only which project a lake is.
+  ['Worker/worker-data.js', 'CWMS_PROJECT', 6, 'foreign-key',
+   "the Corps' own name for a project -- 'Hartwell', 'Russell', 'Thurmond' -- which is the "
+   + 'location half of every ts-id in that district. water_bindings.json carries it per water '
+   + 'as usace[].cwms_name, so this becomes a registry lookup the day the /lakes route reads '
+   + 'the registry; today that route knows lakes only through the LAKES table.'],
 
   // ── data: belongs in the registry or the research pipeline ────────────────────────────────
   ['Worker/worker-data.js', 'LAKE_INTEL', 9, 'data',

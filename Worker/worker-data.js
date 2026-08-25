@@ -824,112 +824,34 @@ async function fetchUsaceSavannah(lakeKey) {
   return null;
 }
 
-// Query the USACE Corps Water Management System (CWMS) Data API for the
-// latest reservoir elevation for a given lake. Falls back to a location-name
-// search against /locations if no specific CWMS location ID is configured.
-async function fetchCwmsLakeLevel(lakeName, lakeKey) {
-  const base = 'https://cwms-data.usace.army.mil/cwms-data';
-  const nameFrag = String(lakeName || lakeKey || '')
-    .replace(/^lake\s+/i, '')
-    .replace(/,\s*(sc|nc|ga)(\/(sc|nc|ga))?\s*$/i, '')
-    .trim();
-  if (!nameFrag) return null;
-
-  // Known CWMS location IDs for tristate USACE lakes (Savannah District).
-  // These are the official CWMS location names used by the district.
-  const CWMS_LOCATIONS = {
-    hartwell: 'Hartwell',
-    russell: 'Russell',
-    thurmond: 'Thurmond',
-    'clarks hill': 'Thurmond',
-    'clark hill': 'Thurmond',
-    'j strom thurmond': 'Thurmond'
-  };
-
-  const locId = CWMS_LOCATIONS[lakeKey] || CWMS_LOCATIONS[nameFrag.toLowerCase()];
-
-  // Try the configured location ID first.
-  if (locId) {
-    try {
-      // Latest value endpoint for the elevation time series.
-      const tsUrl = `${base}/timeseries?name=${encodeURIComponent(locId)}.Elev.Inst.0.0.USACE-RAW&office=SA&unit=ft`;
-      const r = await fetch(tsUrl, {
-        headers: { 'User-Agent': 'TrollMap/16 Worker', 'Accept': 'application/json' },
-        cf: { cacheTtl: 900 }
-      });
-      if (r.ok) {
-        const j = await r.json();
-        // CWMS CDA response shape: { values: [[dateTs, value, quality]], ... }
-        const vals = j?.values || j?.value?.values || [];
-        if (vals.length) {
-          const latest = vals[vals.length - 1];
-          const elevation = parseFloat(latest[1]);
-          if (isFinite(elevation)) {
-            return {
-              elevation_ft: elevation,
-              source: tsUrl,
-              location: locId,
-              timestamp: latest[0] || null,
-              method: 'cwms_cda_timeseries'
-            };
-          }
-        }
-      }
-    } catch (e) {
-      console.warn(`CWMS configured-location fetch failed for ${locId}: ${e.message}`);
-    }
-  }
-
-  // Fallback: search /locations for the lake name and return the first match.
-  try {
-    const searchUrl = `${base}/locations?name=${encodeURIComponent(nameFrag)}&office=SA`;
-    const r = await fetch(searchUrl, {
-      headers: { 'User-Agent': 'TrollMap/16 Worker', 'Accept': 'application/json' },
-      cf: { cacheTtl: 86400 }
-    });
-    if (r.ok) {
-      const j = await r.json();
-      const locations = j?.locations || j || [];
-      const match = locations.find(loc => {
-        const n = String(loc?.name || loc?.location_id || loc?.id || '').toLowerCase();
-        return n.includes(nameFrag.toLowerCase()) || n.includes(String(lakeKey || '').toLowerCase());
-      });
-      if (match) {
-        const matchedName = match.name || match.location_id || match.id;
-        const tsUrl = `${base}/timeseries?name=${encodeURIComponent(matchedName)}.Elev.Inst.0.0.USACE-RAW&office=SA&unit=ft`;
-        try {
-          const tsR = await fetch(tsUrl, {
-            headers: { 'User-Agent': 'TrollMap/16 Worker', 'Accept': 'application/json' },
-            cf: { cacheTtl: 900 }
-          });
-          if (tsR.ok) {
-            const tsJ = await tsR.json();
-            const vals = tsJ?.values || tsJ?.value?.values || [];
-            if (vals.length) {
-              const latest = vals[vals.length - 1];
-              const elevation = parseFloat(latest[1]);
-              if (isFinite(elevation)) {
-                return {
-                  elevation_ft: elevation,
-                  source: tsUrl,
-                  location: matchedName,
-                  timestamp: latest[0] || null,
-                  method: 'cwms_cda_search'
-                };
-              }
-            }
-          }
-        } catch (e2) {
-          console.warn(`CWMS fallback timeseries fetch failed for ${matchedName}: ${e2.message}`);
-        }
-      }
-    }
-  } catch (e) {
-    console.warn(`CWMS location search failed for ${nameFrag}: ${e.message}`);
-  }
-
-  return null;
-}
+// THE CORPS' CWMS LOCATION NAME FOR A LAKE THIS APP KNOWS.
+//
+// A function called fetchCwmsLakeLevel used to live here, and it asked CWMS for
+// `Hartwell.Elev.Inst.0.0.USACE-RAW` on office `SA` in feet. Savannah District publishes
+// `Hartwell.Elev-Pool.Inst.1Hour.0.Raw-SHEF_SAS` on office `SAS` in METRES. Wrong parameter,
+// wrong interval, wrong version, wrong office, wrong unit — five ways wrong, so it returned
+// nothing on every call and the route fell through to scraping water.sas.usace.army.mil for a
+// three-digit number sitting next to a lake name.
+//
+// conditions.js has had the correct reader since 2026-08-16 — pickElevSeries,
+// parseCwmsTimeseries and cwmsLevel, tested against a real 42-entry catalogue — and NOTHING
+// EVER CALLED IT. Two implementations of one thing: one right and dead, one wired and wrong.
+// `cwmsPoolElevation` now fetches through the right one, and all that survives here is the part
+// that was never in question — which Corps project a lake key names.
+//
+// Verified 2026-08-25 against registry/_cwms_inventory.json, all 3,328 catalogued series for
+// these districts. The PROJECT locations carry Hartwell 84, Russell 104 and Thurmond 82 series
+// apiece — pool and tailwater elevation, guide curve, inflow, turbine and spill release,
+// storage, scheduled generation, and a day-of-year percentile envelope back to 1954 — none of
+// which the site-number join ever reached.
+var CWMS_PROJECT = {
+  hartwell: 'Hartwell',
+  russell: 'Russell',
+  thurmond: 'Thurmond',
+  'clarks hill': 'Thurmond',
+  'clark hill': 'Thurmond',
+  'j strom thurmond': 'Thurmond'
+};
 async function fetchAhqWaterTemp(slug) {
   if (!slug) return null;
   const url = `https://www.anglersheadquarters.com/pages/${slug}-fishing-report`;
@@ -2050,4 +1972,4 @@ var RIVERS = {
   }
 };
 
-export { normalizeDukeRow, dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun, fetchDukeAccessAlerts, fetchDukeOperatingRange, LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, seriesRank, rdbSeriesDescriptions, newerStamp, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, fetchCwmsLakeLevel, fetchDukeDashboard };
+export { normalizeDukeRow, dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun, fetchDukeAccessAlerts, fetchDukeOperatingRange, LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, seriesRank, rdbSeriesDescriptions, newerStamp, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, CWMS_PROJECT, fetchDukeDashboard };
