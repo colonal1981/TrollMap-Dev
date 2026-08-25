@@ -775,5 +775,40 @@
     "verdict": "declined",
     "why": "the NWS fire weather zone, 'SCZ149'. It answers a question about burning conditions on land. The marine and public zone ids from this same response ARE read, because they are how the marine forecast and the WWA query are addressed.",
     "when": "2026-08-25"
+  },
+  "api.water.noaa.gov::weekint": {
+    "verdict": "declined",
+    "why": "part of the `images` block -- NWPS's own rendered GIFs and PNGs of this gauge's hydrograph and probabilistic exceedance. This app draws its own chart from the values in the same response, so a remote image is a picture of data already in hand, and one that cannot be read, scaled or themed. On WATS1 the stage and flow variants are empty strings anyway; only a volume GIF exists.",
+    "when": "2026-08-25"
+  },
+  "api.water.noaa.gov::entperiod": {
+    "verdict": "declined",
+    "why": "part of the `images` block -- NWPS's own rendered GIFs and PNGs of this gauge's hydrograph and probabilistic exceedance. This app draws its own chart from the values in the same response, so a remote image is a picture of data already in hand, and one that cannot be read, scaled or themed. On WATS1 the stage and flow variants are empty strings anyway; only a volume GIF exists.",
+    "when": "2026-08-25"
+  },
+  "api.water.noaa.gov::shortrange": {
+    "verdict": "declined",
+    "why": "part of the `images` block -- NWPS's own rendered GIFs and PNGs of this gauge's hydrograph and probabilistic exceedance. This app draws its own chart from the values in the same response, so a remote image is a picture of data already in hand, and one that cannot be read, scaled or themed. On WATS1 the stage and flow variants are empty strings anyway; only a volume GIF exists.",
+    "when": "2026-08-25"
+  },
+  "api.water.noaa.gov::inundation": {
+    "verdict": "declined",
+    "why": "the flood-inundation mapping block. `enabled` is FALSE on both gauges captured -- ERJS1 and WATS1 -- so url, zeroDatum, siteSpecificInfo and downloads are all empty beneath it. Where it IS enabled it links to a floodplain map, which answers where water will cover land rather than anything about fishing it. The stage thresholds that matter for getting a boat in are flood.impacts, and those ARE read.",
+    "when": "2026-08-25"
+  },
+  "api.water.noaa.gov::zeroDatum": {
+    "verdict": "declined",
+    "why": "the flood-inundation mapping block. `enabled` is FALSE on both gauges captured -- ERJS1 and WATS1 -- so url, zeroDatum, siteSpecificInfo and downloads are all empty beneath it. Where it IS enabled it links to a floodplain map, which answers where water will cover land rather than anything about fishing it. The stage thresholds that matter for getting a boat in are flood.impacts, and those ARE read.",
+    "when": "2026-08-25"
+  },
+  "api.water.noaa.gov::siteSpecificInfo": {
+    "verdict": "declined",
+    "why": "the flood-inundation mapping block. `enabled` is FALSE on both gauges captured -- ERJS1 and WATS1 -- so url, zeroDatum, siteSpecificInfo and downloads are all empty beneath it. Where it IS enabled it links to a floodplain map, which answers where water will cover land rather than anything about fishing it. The stage thresholds that matter for getting a boat in are flood.impacts, and those ARE read.",
+    "when": "2026-08-25"
+  },
+  "api.water.noaa.gov::dataAttribution": {
+    "verdict": "envelope",
+    "why": "empty on both gauges captured. Where populated it is a credit string for a co-operating agency -- who to thank, not what the water is doing.",
+    "when": "2026-08-25"
   }
 }

@@ -271,13 +271,10 @@ describe('every route in trollmap-worker.js has a caller', () => {
     // '/lake' was here from 2026-08-17 with the note "Deletion tab". Deleted 2026-08-25, along
     // with the CWMS_PROJECT table, the water.sas.usace.army.mil scrape and the Santee Cooper
     // reader that only it reached. The tab worked; it just needed someone to act on it.
-    '/duke': 'no caller, and fetchDukeDashboard() behind it has no other caller either — unlike '
-           + '/duke-flow-arrivals, whose function conditions.js imports directly. It is a raw '
-           + 'per-basin dump advertised in this Worker\'s own route help, so it reads as a '
-           + 'hand-curled debug door rather than a mistake. Same tab as /lake was on: it works, '
-           + 'nothing asks for it, and it needs a decision rather than a guess. Its `?duke` '
-           + 'search-param trigger — which hijacked ANY path carrying that parameter — was '
-           + 'removed 2026-08-25.',
+    // '/duke' was here for one night. Deleted 2026-08-25 on Ryan's "whatever is the best way
+    // to handle it": no caller in js/, no other caller for fetchDukeDashboard() behind it, a
+    // `?basin=` parameter the function ignored, and a second trigger that answered ANY path
+    // carrying `?duke` with a raw dump instead of the route asked for.
     '/lake-research': 'no caller. Superseded by /research/get, which three modules do call.',
     '/lake-intel-sources': 'no caller. Goes with LAKE_INTEL_SOURCE_REGISTRY, already on the tab.',
     '/lakes/': 'no caller. A shortcut alias for /research/get.',

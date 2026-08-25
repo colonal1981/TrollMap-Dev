@@ -6,7 +6,7 @@ import { CORS, JSON_HEADERS, TEXT_HEADERS, callLLM, isAuthorized, chartpackKey, 
 // Bump on every edit to this file. See ARCGIS_BUILD in core/arcgis.js.
 const WORKER_BUILD = 'worker-2026-08-07a';
 
-import { fetchDukeFlowArrivals, dukeRowForNames, LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchDukeDashboard } from './worker-data.js';
+import { fetchDukeFlowArrivals, dukeRowForNames, LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake } from './worker-data.js';
 import { SPECIES_MIDLANDS_SANTEE, SPECIES_UPSTATE, SPECIES_COASTAL_SALTWATER, SPECIES_ALL_TROLLMAP, MAX_BIOLOGICAL_LENGTH, PURE_SALTWATER, PURE_FRESHWATER, getSpeciesListForGps, checkBiologicalLength, checkEcologicalReality } from './worker-species.js';
 import { handleGisRoute, flagIsYes, hasText, ARCGIS_BUILD } from './core/arcgis.js';
 import { handleWaterRoute } from './water.js';
@@ -1403,21 +1403,13 @@ var trollmap_worker_default = {
           }),
         });
       }
-      // `|| url.searchParams.has("duke")` used to be the second half of this condition, which
-      // meant ANY request carrying a `?duke` parameter on ANY path was answered with a Duke
-      // dashboard dump instead of the route it asked for. Nothing builds such a URL today, which
-      // is the only reason it never bit. A route is its path.
-      if (path === "/duke") {
-        const format = (url.searchParams.get("format") || "text").toLowerCase();
-        const d = await fetchDukeDashboard(url.searchParams.get("basin") || "1");
-        if (!d) {
-          return new Response(JSON.stringify({ error: "Duke API unreachable" }), { headers: JSON_HEADERS, status: 502 });
-        }
-        if (format === "json") {
-          return new Response(JSON.stringify(d.json, null, 2), { headers: { ...JSON_HEADERS, "X-Source": d.url } });
-        }
-        return new Response(d.text, { headers: { ...TEXT_HEADERS, "X-Source": d.url } });
-      }
+      // The `/duke` route stood here and is gone, 2026-08-25. It had no caller in js/, and
+      // fetchDukeDashboard() behind it had no other caller either -- unlike /duke-flow-arrivals,
+      // whose function conditions.js imports directly. Its `?basin=` parameter was a lie: the
+      // function ignored the argument and returned every Duke lake regardless. And its second
+      // trigger, `url.searchParams.has("duke")`, answered ANY path carrying that parameter with
+      // a raw dump instead of the route asked for. The normalised Duke reading reaches the app
+      // through /conditions, which is where the client looks.
       if (path === "/usgs") {
         const site = url.searchParams.get("site");
         const params = url.searchParams.get("params") || "00010,00065";
@@ -1764,7 +1756,6 @@ var trollmap_worker_default = {
           "/sync/list-updates?since=<ts>      \u2014 delta list for cross-device sync (auth required)",
           "/sync/migrate                      \u2014 bulk import all local data (auth required)",
           "/contours/:lake/geojson            \u2014 serve/upload vectorized contour GeoJSON",
-          "/duke?basin=1|2|3                      \u2014 raw Duke lake levels",
           "/lake?lake=wateree                     \u2014 unified lake JSON",
           "/lake-clarity?lake=wateree&date=YYYY-MM-DD \u2014 runoff clarity/ramp/lure forecast",
           "/lake-intel-sources?lake=wateree       \u2014 trust-tier source registry",

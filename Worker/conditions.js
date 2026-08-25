@@ -534,6 +534,137 @@ export function nwpsFlowCfs(v, units) {
   return null;
 }
 
+/**
+ * WHAT FLOODS AT WHAT STAGE, AND WHERE TODAY SITS AGAINST THIS GAUGE'S OWN RECORD.
+ *
+ * `/gauges/{lid}` has carried all of this since before the app read it, and the audit reported
+ * it as unread for weeks because the only NWPS gauge in `_captures` was ERJS1 -- a tidal gauge
+ * with no flood stage, where every one of these fields is empty. Deciding them off that fixture
+ * would have been deciding them off a guess, so it stayed open until Ryan captured WATS1, Lake
+ * Wateree at the dam, on 2026-08-25. That one answers with all of it.
+ *
+ * `impacts` IS THE FISHING FACT AND IT IS NOT A FLOOD FACT. On Wateree, at 100.4 ft the piers on
+ * the Wildlife Road bridge over Singleton Creek submerge; at 100.5 yards and docks in the low
+ * lying areas start to flood; at 103 the boat launch on U.S. 1 closes. The lake sat at 97.34
+ * when this was read. Duke's access alerts say a ramp IS shut; this says at what level it WILL
+ * be, which is the difference between a notice and a plan.
+ *
+ * THE NEXT ONE UP IS THE WHOLE POINT. A list of five stages is a table; "three feet of rise from
+ * here puts the Singleton Creek bridge piers under" is a sentence somebody can act on.
+ *
+ * `crests` IS THE HISTORY THIS APP HAS NOWHERE ELSE for an NWPS-only water. It already answers
+ * "is this normal for the date" from USGS daily percentiles for flow and from the operator's own
+ * five years for a Duke lake; a gauge with neither had nothing. 34 crests on file here, the
+ * highest 107.00 ft on 1989-10-03.
+ *
+ * `historic` AND `recent` ARE THE SAME SET on this gauge -- compared element by element, not
+ * assumed -- so only one is carried and the equality is checked rather than trusted.
+ *
+ * `hydronotes` CARRIES A CAVEAT ABOUT THE READING ITSELF. Wateree's first one is "Gauge reading
+ * affected by reservoir operations", which is exactly the thing a person needs told when the
+ * level moved and the weather did not. Their `effective` and `expiration` are MMDD strings, so a
+ * note can be seasonal, and the ones outside today's window are left out rather than shown.
+ *
+ * `forecastReliability` TURNS A SILENT NULL INTO A STATED REASON. The forecast block on this
+ * gauge is the -999 sentinel, which the reader already drops; this says why -- "Forecasts are
+ * issued as needed during times of high water, but are not routinely available."
+ *
+ * ZERO IS NOT A THRESHOLD. `normalThreshold` and `lowThreshold` both read `{value: 0}` here,
+ * which is how this service spells "none set", and a 0 ft low-water threshold on a lake that
+ * runs at 97 would read as a gauge permanently in the clear.
+ */
+/** Today as MM/DD in UTC, which is the form NWPS's seasonal note windows use.
+ *
+ * NOT named todayMmDd: tvaShape and tvaReservoir both take a PARAMETER by that name, and a
+ * module function a caller can shadow without noticing is a trap for whoever edits next.
+ */
+function utcMmDd() {
+  const d = new Date();
+  return `${String(d.getUTCMonth() + 1).padStart(2, '0')}/${String(d.getUTCDate()).padStart(2, '0')}`;
+}
+
+export function nwpsFloodContext(j, stageFt, nowMmDd) {
+  if (!j || typeof j !== 'object') return null;
+  const fl = j.flood || {};
+  const stage = num(stageFt);
+  const out = {};
+
+  const impacts = (Array.isArray(fl.impacts) ? fl.impacts : [])
+    .map((i) => ({ stage: num(i && i.stage), statement: String((i && i.statement) || '').trim() }))
+    .filter((i) => i.stage !== null && i.statement)
+    .sort((a, b) => a.stage - b.stage);
+  if (impacts.length) {
+    const next = stage === null ? null : impacts.find((i) => i.stage > stage);
+    out.impacts = {
+      count: impacts.length,
+      // Signed and named: how far the water has to come up before this one happens.
+      next: next ? { ...next, ft_to_go: round2(next.stage - stage) } : null,
+      passed: stage === null ? [] : impacts.filter((i) => i.stage <= stage),
+      all: impacts,
+      units: fl.stageUnits || null,
+    };
+  }
+  const low = (Array.isArray(j.impactsLowWaters) ? j.impactsLowWaters : [])
+    .map((i) => ({ stage: num(i && i.stage), statement: String((i && i.statement) || '').trim() }))
+    .filter((i) => i.statement);
+  if (low.length) out.low_water_impacts = low;
+
+  const crestList = (fl.crests && Array.isArray(fl.crests.historic)) ? fl.crests.historic : [];
+  const crests = crestList
+    .map((c) => ({ stage: num(c && c.stage), at: (c && c.occurredTime) || null,
+                   // Carried, never interpreted -- this codebase has no reference for NWPS's
+                   // preliminary vocabulary, the same call it makes on CWMS quality codes.
+                   preliminary: (c && c.preliminary) || null,
+                   old_datum: !!(c && c.olddatum) }))
+    .filter((c) => c.stage !== null)
+    .sort((a, b) => b.stage - a.stage);
+  if (crests.length) {
+    const record = crests[0];
+    out.crests = {
+      on_file: crests.length,
+      record,
+      latest: crests.slice().sort((a, b) => String(b.at).localeCompare(String(a.at)))[0],
+      // Negative is below the record, which is where a lake nearly always is.
+      vs_record_ft: stage === null ? null : round2(stage - record.stage),
+      // `recent` was identical to `historic` element for element on the gauge this was written
+      // against. Checked rather than assumed, and said out loud when they diverge.
+      recent_differs: !!(fl.crests && Array.isArray(fl.crests.recent)
+        && fl.crests.recent.length !== crestList.length),
+    };
+  }
+
+  const notes = (Array.isArray(j.hydronotes) ? j.hydronotes : [])
+    .filter((n) => n && String(n.statement || '').trim())
+    .filter((n) => {
+      // MMDD in, MMDD out, and a window may wrap the year end.
+      const a = String(n.effective || '').trim();
+      const b = String(n.expiration || '').trim();
+      if (!/^\d{4}$/.test(a) || !/^\d{4}$/.test(b) || !/^\d{2}\/\d{2}$/.test(String(nowMmDd || ''))) {
+        return true;                                   // undated notes always apply
+      }
+      const today = String(nowMmDd).replace('/', '');
+      return a <= b ? (today >= a && today <= b) : (today >= a || today <= b);
+    })
+    .map((n) => String(n.statement).replace(/\s+/g, ' ').trim());
+  if (notes.length) out.notes = notes;
+
+  const reliability = String(j.forecastReliability || '').trim();
+  if (reliability) out.forecast_reliability = reliability;
+
+  for (const [key, src] of [['low_threshold_ft', j.lowThreshold],
+                            ['normal_threshold_ft', j.normalThreshold]]) {
+    const v = num(src && src.value);
+    // 0 is how this service spells "none set", not a threshold at the waterline.
+    if (v !== null && v !== 0) out[key] = v;
+  }
+
+  const up = String(j.upstreamLid || '').trim();
+  const down = String(j.downstreamLid || '').trim();
+  if (up || down) out.chain = { upstream_lid: up || null, downstream_lid: down || null };
+
+  return Object.keys(out).length ? out : null;
+}
+
 async function nwpsGauge(lid, role, bound, lat, lon) {
   const j = await cached(`nwps:${lid}`, TTL.gauge,
     () => getJson(`https://api.water.noaa.gov/nwps/v1/gauges/${encodeURIComponent(lid)}`));
@@ -573,6 +704,10 @@ async function nwpsGauge(lid, role, bound, lat, lon) {
     observed_at: st.validTime && !String(st.validTime).startsWith('0001') ? st.validTime : null,
     flood_category: st.floodCategory || null,
     flood_thresholds: Object.keys(thresholds).length ? thresholds : null,
+    // WHAT FLOODS AT WHAT STAGE, AND WHERE TODAY SITS AGAINST THIS GAUGE'S RECORD. Already on
+    // the wire in the same response the stage came from -- no extra request. See
+    // nwpsFloodContext for why it went unread until a gauge with a flood stage was captured.
+    flood_context: nwpsFloodContext(j, num(st.primary), utcMmDd()),
     forecast: fcStage === null ? null : {
       stage: fcStage,
       units: fc.primaryUnit || null,

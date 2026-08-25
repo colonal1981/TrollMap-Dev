@@ -835,16 +835,6 @@ async function dukeRowForNames(waterNames) {
   return n ? { ...n, duke_feed_name: best.feedName, matched_registry_name: best.matched } : null;
 }
 
-async function fetchDukeDashboard(basin = "1") {
-  const arr = await fetchDukeApi();
-  if (!arr) return null;
-  const lines = arr.map((r) => {
-    const n = normalizeDukeRow(r);
-    if (!n) return "";
-    return `${n.name} \xB7 ${n.ft != null ? n.ft.toFixed(2) + " ft AMSL" : "NA"} \xB7 ${n.belowFullPoolFt != null ? n.belowFullPoolFt.toFixed(2) + " ft below full pond" : "NA"} \xB7 index ${n.index} \xB7 target ${isFinite(n.target) ? n.target : "NA"} \xB7 full ${n.fullPool || "NA"}`;
-  }).filter(Boolean);
-  return { url: "https://api.hydro-derived.duke-energy.app/lakes/current-level", text: lines.join("\n"), json: arr };
-}
 // SANTEE COOPER NO LONGER PUBLISHES A LEVEL PAGE, AND ITS REPLACEMENT PAGE POINTS AT USGS.
 //
 // This used to regex two numbers out of santeecooper.com/community/lakes-and-recreation/
@@ -2002,4 +1992,4 @@ var RIVERS = {
   }
 };
 
-export { normalizeDukeRow, dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun, fetchDukeAccessAlerts, fetchDukeOperatingRange, LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, seriesRank, rdbSeriesDescriptions, newerStamp, applyElevation, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchDukeDashboard };
+export { normalizeDukeRow, dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun, fetchDukeAccessAlerts, fetchDukeOperatingRange, LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, seriesRank, rdbSeriesDescriptions, newerStamp, applyElevation, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake };
