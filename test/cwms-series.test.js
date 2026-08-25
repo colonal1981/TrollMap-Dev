@@ -233,14 +233,21 @@ const responder = (loc, metres) => async (url) => {
   return { ok: true, status: 200, json: async () => env };
 };
 
-test('Hartwell: the hourly pool series is discovered and read as feet', async () => {
+// EVERY FIXTURE PROJECT NAME BELOW IS DISTINCT, AND THAT IS NOT COSMETIC. cwmsPoolElevation
+// caches the series read by the SERIES NAME the catalogue handed back, which is correct -- two
+// waters on one Corps series should not be two requests -- but it means two tests sharing a
+// project name share a cached answer, and the second one passes on the first one's numbers. The
+// real `Hartwell.*` names are reserved for the live-response test further down.
+
+test('a metres payload is converted, and the hourly series is the one discovered', async () => {
   // 201.17 m is 660.01 ft. Hartwell's full pool is 660 ft; reading the metres as feet would put
-  // the lake 459 feet below the bottom of its conservation pool.
-  const { out, seen } = await withFetch(responder('Hartwell', 201.17),
-    () => cwmsPoolElevation('Hartwell', 'SAS', NOW));
+  // the lake 459 feet below the bottom of its conservation pool. (Synthetic: the live service
+  // answered this series in FEET on 2026-08-25 while its catalogue said metres -- see below.)
+  const { out, seen } = await withFetch(responder('HartwellMetres', 201.17),
+    () => cwmsPoolElevation('HartwellMetres', 'SAS', NOW));
   assert.equal(out.elevation_ft, 660.01);
-  assert.equal(out.location, 'Hartwell');
-  assert.equal(out.series, 'Hartwell.Elev-Pool.Inst.1Hour.0.Raw-SHEF_SAS');
+  assert.equal(out.location, 'HartwellMetres');
+  assert.equal(out.series, 'HartwellMetres.Elev-Pool.Inst.1Hour.0.Raw-SHEF_SAS');
   assert.equal(out.units_reported, 'm');
   assert.equal(out.stale, false);
   assert.equal(seen.length, 2, 'one catalogue request, one series request');
@@ -262,6 +269,58 @@ test('no unit= is requested, so whatever arrives is what gets converted', async 
     () => cwmsPoolElevation('Thurmond', 'SAS', NOW));
   assert.ok(!seen[1].includes('unit='), seen[1]);
   assert.ok(seen[1].includes('office=SAS'), seen[1]);
+});
+
+// ── the live shape, read 2026-08-25 ─────────────────────────────────────────────────────────
+//
+// Both calls made against cwms-data.usace.army.mil with exactly the URLs cwmsPoolElevation
+// builds. Everything below is transcribed from those two responses.
+
+test('the live Hartwell response: catalogue says metres, the DATA says feet', async () => {
+  // ONE SERVICE, TWO ANSWERS, AND ONLY THE SECOND IS BESIDE THE NUMBERS.
+  //   catalog/TIMESERIES  Hartwell.Elev-Pool.Inst.1Hour.0.Raw-SHEF_SAS  "units": "m"
+  //   timeseries          the same name                                 "units": "ft"
+  // Converting on the catalogue's metres would report 2,138 feet for a lake sitting at 651.59.
+  const live = async (url) => {
+    if (url.includes('/catalog/TIMESERIES')) {
+      return { ok: true, status: 200, json: async () => ({ 'page-size': 500, total: 42, entries: [
+        // Real names, real extents, real units -- the tie between the two 1Hour candidates is
+        // broken by latest-time, and HISTORIAN_SAS is four months behind.
+        e('Hartwell.Elev-Pool.Inst.1Day.0.Raw-SHEF_SAS', '1Day', '2026-08-21T00:00:00Z'),
+        e('Hartwell.Elev-Pool.Inst.1Hour.0.HISTORIAN_SAS', '1Hour', '2026-05-07T14:00:00Z'),
+        e('Hartwell.Elev-Pool.Inst.1Hour.0.Raw-SHEF_SAS', '1Hour', '2026-08-21T18:00:00Z'),
+        e('Hartwell.Elev-Pool_p50.Inst.1Day.0.ARCHIVE-DAILY', '1Day', '2031-12-31T00:00:00Z'),
+        e('Hartwell.Elev-Tail.Inst.1Hour.0.Raw-SHEF_SAS', '1Hour', '2026-08-21T18:00:00Z'),
+      ] }) };
+    }
+    const env = ENVELOPE([[1787616000000, 651.62, 3], [1787619600000, 651.5899999999999, 3]]);
+    env.name = 'Hartwell.Elev-Pool.Inst.1Hour.0.Raw-SHEF_SAS';
+    env.units = 'ft';                       // <- the data endpoint's answer, not the catalogue's
+    env['office-id'] = 'SAS';
+    return { ok: true, status: 200, json: async () => env };
+  };
+  const now = Date.parse('2026-08-25T01:30:00Z');
+  const { out, seen } = await withFetch(live, () => cwmsPoolElevation('Hartwell', 'SAS', now));
+  assert.equal(out.elevation_ft, 651.59, 'feet passed through, not multiplied by 3.28');
+  assert.equal(out.units_reported, 'ft');
+  assert.equal(out.series, 'Hartwell.Elev-Pool.Inst.1Hour.0.Raw-SHEF_SAS',
+    'the HISTORIAN copy is four months behind and must lose the tie');
+  assert.equal(out.of_total, 42, 'the whole catalogue fits in one page at page-size=500');
+  assert.equal(out.stale, false, 'the newest point was half an hour old');
+  assert.equal(out.age_hours, 0.5);
+  assert.equal(seen.length, 2);
+});
+
+test('the catalogue extent is NOT the age of the data', () => {
+  // The extent for that series said latest-time 2026-08-21T18:00 while its newest value was
+  // 2026-08-25T01:00 -- three and a half days apart. Staleness is computed from the VALUE's
+  // timestamp for exactly this reason; reading it off the catalogue would have called a
+  // half-hour-old reading stale and thrown it away in favour of a scraped web page.
+  const env = ENVELOPE([[1787619600000, 651.59, 3]]);
+  env.units = 'ft';
+  const l = cwmsLevel(parseCwmsTimeseries(env), Date.parse('2026-08-25T01:30:00Z'));
+  assert.equal(l.observed_at, '2026-08-25T01:00:00.000Z');
+  assert.equal(l.stale, false);
 });
 
 test('a stale reading is still returned, and says so', async () => {

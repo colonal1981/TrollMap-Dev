@@ -491,12 +491,19 @@ async function resolveLake(lakeName) {
       // `Hartwell.Elev.Inst.0.0.USACE-RAW` on office `SA` in feet -- a series that does not
       // exist, on a division rather than a district, in the wrong unit. See cwmsPoolElevation.
       //
-      // FRESH CORPS BEATS THE SCRAPE; STALE CORPS LOSES TO IT BUT STILL BEATS NOTHING. Savannah
-      // District's SHEF feed runs a day or three behind -- measured 2026-08-24, when the newest
-      // Hartwell pool value in the catalogue was 77 hours old. A three-day-old elevation is not
-      // a current reading and must not outrank a page scraped today, but it is a real number
-      // from the operator and it is better than the normalPool constant this route falls back
-      // to. The age travels with it either way, so nothing downstream has to guess.
+      // FRESH CORPS BEATS THE SCRAPE; STALE CORPS LOSES TO IT BUT STILL BEATS NOTHING.
+      //
+      // Measured against the live service 2026-08-25: Hartwell's hourly pool series answered
+      // with 24 points ending 30 MINUTES earlier, reading 651.59 ft -- 8.4 ft under its 660 ft
+      // full pool, which is what a Stage 2 drought August looks like. So the fresh branch is the
+      // one that normally runs.
+      //
+      // The stale branch exists because the CATALOGUE'S `latest-time` extent lags the data by
+      // days -- it said 2026-08-21T18:00 for a series whose newest point was 2026-08-25T01:00 --
+      // and because a district that stops reporting looks exactly like one that is merely slow.
+      // A three-day-old elevation is not a current reading and must not outrank a page scraped
+      // today, but it is a real number from the operator and beats the normalPool constant this
+      // route otherwise falls back to. The age travels with it either way.
       const cwms = await cwmsPoolElevation(CWMS_PROJECT[cfg.sepa] || CWMS_PROJECT[key]);
       const useCwms = (why) => {
         out.elevation_ft = round2(cwms.elevation_ft);

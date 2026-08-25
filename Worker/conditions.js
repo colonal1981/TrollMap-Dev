@@ -2641,9 +2641,16 @@ export async function cwmsPoolElevation(location, office = 'SAS', nowMs = Date.n
   const tsUrl = `${base}/timeseries?name=${encodeURIComponent(picked.name)}`
               + `&office=${encodeURIComponent(picked.office || office)}`;
   try {
-    // NO `unit=` PARAMETER. Whatever unit arrives is the unit cwmsToFeet is handed, and an
-    // unrecognised one is refused rather than assumed. Asking for feet and being answered in
-    // metres is the failure this whole path exists to avoid.
+    // NO `unit=` PARAMETER, AND THE CATALOGUE'S UNIT IS NOT THE DATA'S UNIT.
+    //
+    // Verified against the live service 2026-08-25, both calls, same series:
+    //   catalog/TIMESERIES   Hartwell.Elev-Pool.Inst.1Hour.0.Raw-SHEF_SAS   "units": "m"
+    //   timeseries           the same name                                  "units": "ft"
+    //
+    // One service, two answers, and only the second one is beside the numbers. Converting on
+    // the catalogue's metres would turn 651.59 into 2,138 feet. Whatever unit arrives with the
+    // values is the unit cwmsToFeet is handed, and an unrecognised one is refused rather than
+    // assumed.
     const level = cwmsLevel(parseCwmsTimeseries(
       await cached(`cwms:ts:${picked.name}`, TTL.level, () => getJson(tsUrl))), nowMs);
     if (!level) return null;

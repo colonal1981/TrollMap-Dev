@@ -139,6 +139,63 @@ SAMPLE = """<catalog><entries>
 </entries><next-page>Q1VSU09S</next-page><page-size>20</page-size><total>615</total></catalog>"""
 
 
+def location_index(bindings):
+    """Every CWMS location name this app has a water for, and which water(s).
+
+    TWO KEYS, NOT ONE, AND THE SECOND ONE IS WHERE THE DATA IS.
+
+    The first version joined on the USGS site number alone, because for every series sourced
+    `Raw-USGS_*` the CWMS location name IS the site number and that join is exact. It is exact
+    and it is a fifth of the picture: of 3,328 series catalogued across SAS, SAM, SAW and LRN on
+    2026-08-24, only 181 joined. The other 3,147 sit on NAMED PROJECT LOCATIONS -- `Hartwell`
+    (84 series), `Russell` (104), `Thurmond` (82) -- which no site number will ever match.
+
+    Those are the Corps' own instruments on the Corps' own dams: pool and tailwater elevation,
+    the guide curve out to 2030, inflow, turbine and spill release, storage, scheduled
+    generation, and a day-of-year percentile envelope back to 1954. `water_bindings.json`
+    already carries the key to them, as `usace[].cwms_name`, and this script simply never read
+    it -- so the report said "the Corps publishes Stage and Flow for this lake" about a lake for
+    which it also publishes twenty other things.
+
+    A CHILD LOCATION IS RECORDED, NOT MERGED. `Hartwell-Unit1` and `Thurmond-O2System-Line3` are
+    real locations with real series, and they are turbine and transmission telemetry -- of no use
+    to anyone choosing where to fish. They join to the water under `via='cwms_child'` so they can
+    be counted and then set aside, rather than either vanishing or padding the lake's parameter
+    list.
+    """
+    by_site, by_project = {}, {}
+    for slug, r in (bindings or {}).items():
+        name = r.get('display_name') or slug
+        for g in [r.get('pool'), r.get('tailwater')] + list(r.get('gauges') or []):
+            if isinstance(g, dict) and g.get('usgs_site'):
+                by_site.setdefault(str(g['usgs_site']), set()).add(name)
+        for u in (r.get('usace') or []):
+            if isinstance(u, dict) and u.get('cwms_name'):
+                by_project.setdefault(str(u['cwms_name']), set()).add(name)
+    return {'by_site': by_site, 'by_project': by_project}
+
+
+def join_location(loc, index):
+    """(waters, via) for one catalogue location. `via` is site | project | child | None.
+
+    Exact match first, on both keys. Only then the `<project>-<component>` shape, and only
+    against a project this app is actually bound to -- so `Hartwell-Unit1` resolves and
+    `Hartwell-Something-Nobody-Bound` does not resolve to Hartwell by accident of prefix.
+    """
+    loc = str(loc or '')
+    if not loc:
+        return [], None
+    if loc in index['by_site']:
+        return sorted(index['by_site'][loc]), 'site'
+    if loc in index['by_project']:
+        return sorted(index['by_project'][loc]), 'project'
+    for sep in ('-', '_'):
+        head = loc.split(sep)[0]
+        if head and head != loc and head in index['by_project']:
+            return sorted(index['by_project'][head]), 'child'
+    return [], None
+
+
 def self_test():
     ok = True
 
@@ -162,6 +219,29 @@ def self_test():
     check('total found', total, 615)
     check('usgs site pattern matches', bool(USGS_SITE.match('02187010')), True)
     check('a named project is not a usgs site', bool(USGS_SITE.match('Hartwell')), False)
+    IDX = location_index({
+        'hartwell_lake': {'display_name': 'Hartwell Lake (Anderson Co, SC/GA)',
+                          'pool': {'usgs_site': '02187010'},
+                          'usace': [{'cwms_name': '02187010'}, {'cwms_name': 'Hartwell'},
+                                    {'cwms_name': 'Hartwell-Powerhouse'}]},
+        'thurmond': {'display_name': 'J. Strom Thurmond Reservoir (Lincoln Co, GA/SC)',
+                     'gauges': [{'usgs_site': '02193900'}],
+                     'usace': [{'cwms_name': 'Thurmond'}]},
+    })
+    check('a site number still joins', join_location('02187010', IDX)[1], 'site')
+    check('a NAMED PROJECT joins now', join_location('Hartwell', IDX),
+          (['Hartwell Lake (Anderson Co, SC/GA)'], 'project'))
+    check('an exact child location is its own row, not a prefix guess',
+          join_location('Hartwell-Powerhouse', IDX)[1], 'project')
+    check('an unbound child resolves to its project and is FLAGGED as one',
+          join_location('Hartwell-Unit1', IDX), (['Hartwell Lake (Anderson Co, SC/GA)'], 'child'))
+    check('underscore components too', join_location('Thurmond_Basin', IDX)[1], 'child')
+    # THE PREFIX RULE IS NOT A SUBSTRING RULE. `Hartwellville` must not become Hartwell, and a
+    # sentinel for a project nobody bound must not acquire a water by looking similar.
+    check('a longer name is not a prefix match', join_location('Hartwellville', IDX), ([], None))
+    check('an unbound project joins nothing', join_location('Buford', IDX), ([], None))
+    check('an unbound child joins nothing', join_location('Buford-Unit1', IDX), ([], None))
+    check('empty location is refused', join_location('', IDX), ([], None))
     try:
         parse_catalog('<not xml')
         ok = False
@@ -190,12 +270,9 @@ def main():
         print('FATAL: %s not found. Pass --registry <your registry folder>.' % p)
         return 2
     B = json.load(open(p, encoding='utf-8')).get('bindings') or {}
-    site_to_waters = {}
-    for slug, r in B.items():
-        for g in [r.get('pool'), r.get('tailwater')] + list(r.get('gauges') or []):
-            if isinstance(g, dict) and g.get('usgs_site'):
-                site_to_waters.setdefault(g['usgs_site'], []).append(r.get('display_name'))
-    print('bindings: %d waters, %d distinct USGS sites\n' % (len(B), len(site_to_waters)))
+    index = location_index(B)
+    print('bindings: %d waters, %d distinct USGS sites, %d Corps project locations\n'
+          % (len(B), len(index['by_site']), len(index['by_project'])))
 
     allrows = []
     for office in [o.strip().upper() for o in a.offices.split(',') if o.strip()]:
@@ -232,27 +309,65 @@ def main():
         us = sorted({r['units'] for r in allrows if r['parameter'] == k and r['units']})
         print('%-22s %-7d %s' % (k, n, ','.join(us[:4])))
 
+    # `hits` is what the Corps publishes AT the water. `telemetry` is what it publishes at the
+    # machinery inside the dam -- turbine units, transmission lines, the oxygen system. Both are
+    # counted; only the first is a fishing fact, and keeping them apart is what stops a lake's
+    # parameter list from filling up with Power-Real and Opening.
     hits = collections.defaultdict(lambda: collections.defaultdict(set))
+    telemetry = collections.defaultdict(lambda: collections.defaultdict(set))
+    by_via = collections.Counter()
+    locs_seen = collections.defaultdict(set)
+    unjoined = collections.Counter()
     for r in allrows:
-        loc = r['location'] or ''
-        if loc in site_to_waters:
-            for w in site_to_waters[loc]:
-                hits[w][r['parameter']].add(r['units'] or '?')
-    print('\n%d of your bound USGS sites appear in the Corps catalogue, covering %d waters.'
-          % (len({r['location'] for r in allrows if r['location'] in site_to_waters}), len(hits)))
-    print('\n%-46s %s' % ('WATER', 'WHAT THE CORPS PUBLISHES FOR IT'))
-    for w in sorted(hits):
-        print('%-46s %s' % ((w or '')[:46], ', '.join(sorted(hits[w]))))
+        waters, via = join_location(r['location'], index)
+        by_via[via or 'none'] += 1
+        r['water_via'] = via
+        r['waters'] = waters
+        if not waters:
+            unjoined[r['location'] or '?'] += 1
+            continue
+        bucket = telemetry if via == 'child' else hits
+        for w in waters:
+            bucket[w][r['parameter']].add(r['units'] or '?')
+            locs_seen[w].add(r['location'])
+
+    joined = by_via['site'] + by_via['project'] + by_via['child']
+    print('\n%d of %d catalogued series join to one of your waters '
+          '(%d by USGS site number, %d on the project itself, %d on machinery inside it).'
+          % (joined, len(allrows), by_via['site'], by_via['project'], by_via['child']))
+    print('%d series are on Corps locations this app has no water for.' % by_via['none'])
+    print('\n%-46s %s' % ('WATER', 'WHAT THE CORPS PUBLISHES AT IT'))
+    for w in sorted(set(hits) | set(telemetry)):
+        print('%-46s %s' % ((w or '')[:46], ', '.join(sorted(hits.get(w, {})))))
+        extra = sorted(telemetry.get(w, {}))
+        if extra:
+            print('%-46s   (inside the dam: %s)' % ('', ', '.join(extra)))
+    if unjoined:
+        print('\nTHE TEN BIGGEST UNJOINED LOCATIONS -- each is a Corps project this app either '
+              'does not carry\nor did not bind a usace[] row for. Worth a look before concluding '
+              'a water has nothing.')
+        for loc, n in unjoined.most_common(10):
+            print('   %-34s %4d series' % (loc[:34], n))
 
     out = os.path.join(a.registry, '_cwms_inventory.json')
     with open(out, 'w', encoding='utf-8') as fh:
         json.dump({'_note': 'Every CWMS timeseries in the queried districts, with its declared '
-                            'unit and period of record, joined to water_bindings.json by USGS '
-                            'site number. UNITS ARE METRIC on this service. Built by '
-                            'probe_cwms_catalog.py.',
+                            'unit and period of record, joined to water_bindings.json on TWO '
+                            'keys: the USGS site number (exact, for Raw-USGS_* series) and the '
+                            'Corps project name from usace[].cwms_name (which is where four '
+                            'fifths of the series live). Each row carries how it joined in '
+                            '`water_via`: site | project | child | null. `child` is machinery '
+                            'inside the dam -- turbine units, transmission lines -- kept out of '
+                            "the water's parameter list and counted separately in `telemetry`. "
+                            'UNITS ARE METRIC on this service. Built by probe_cwms_catalog.py.',
                    'series': len(allrows),
+                   'joined': {k: n for k, n in by_via.most_common()},
                    'by_parameter': {k: n for k, n in par.most_common()},
                    'waters': {w: {p: sorted(u) for p, u in d.items()} for w, d in hits.items()},
+                   'telemetry': {w: {p: sorted(u) for p, u in d.items()}
+                                 for w, d in telemetry.items()},
+                   'locations_per_water': {w: sorted(v) for w, v in locs_seen.items()},
+                   'unjoined_locations': {k: n for k, n in unjoined.most_common(60)},
                    'rows': allrows}, fh, indent=1)
     print('\nwrote %s' % os.path.abspath(out))
     return 0
