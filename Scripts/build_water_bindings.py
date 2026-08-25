@@ -92,8 +92,20 @@ UA = 'TrollMap/1.0 (personal fishing app; contact via github.com/colonal1981)'
 # of it, including Kentucky Lake (144,086 ac, reaching 37.02 N against a 36.9 N ceiling), Lake
 # Barkley and the Mississippi. Kentucky Dam's gauge sits at 37.024 -- outside the box, therefore
 # never enumerated, therefore Kentucky Lake reads as a water with no gauge rather than a water
-# whose gauge was never asked for. `bbox_covering` widens this to cover whatever the registry
-# actually holds; it never narrows it, so the offshore margin here is kept.
+# whose gauge was never asked for.
+#
+# `bbox_covering` SNAPS THIS TO THE REGISTRY IN BOTH DIRECTIONS -- read its docstring, not this
+# line. This comment said "it never narrows it, so the offshore margin here is kept" until
+# 2026-08-25, and that stopped being true when the region polygon became the authority on scope:
+# the floor spans 15.4 x 7.5 deg and the registry spans 7.1 x 6.7, so the box now SHRINKS to
+# (-84.6, 30.2, -77.1, 37.7) -- narrower east and west, taller north. Snapping on the floor's own
+# south-west corner is what makes shrinking safe for the cache, because every surviving tile
+# keeps its tag.
+#
+# A CONSEQUENCE WORTH KNOWING BEFORE READING THE CACHE: `_bindings_cache` therefore holds tiles
+# from every box ever swept, not from this one. Anything comparing a cached roster against a
+# fresh source has to filter BOTH sides to the current box or it will report the difference
+# between two boxes as a difference between two sources.
 BBOX_FLOOR = (-90.6, 30.2, -75.2, 36.9)
 BBOX = BBOX_FLOOR
 TILE_DEG = 1.5
