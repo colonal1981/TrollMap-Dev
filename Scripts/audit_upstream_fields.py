@@ -95,12 +95,39 @@ CODE_EXT = ('.js', '.mjs', '.cjs', '.ts', '.py', '.html')
 # Object.keys/entries/values ONLY. An earlier version also matched any obj[ident], which is
 # arr[i] -- it flagged 315 of 443 files as risk, and a risk list covering 71% of a repo is noise.
 DYNAMIC = re.compile(r'Object\.(keys|entries|values)\s*\(')
-# THE AUDITOR MUST NOT READ THE FETCHERS. `pull_usgs_dashboard.py` carries the upstream's whole
-# field list inside a $select string; indexing it makes the audit find its own request and report
-# every field as used. Caught on the first real run, 2026-08-24, which reported 12 of 17 keys READ
-# for an endpoint the app has never once called.
+# `entry['tva'] = {}` is us DEFINING a key on an object of our own, which is the same
+# class of false positive as a name sitting in a $select string: the presence of the name
+# is not evidence the upstream's value was ever looked at. A trailing `=` that is not part
+# of `==`, `===`, `>=`, `<=`, `!=` or `+=` marks the match as a write target and disqualifies
+# it. Compound assignment (`+=`) still counts -- it reads before it writes.
+NOT_ASSIGNED = r'(?!\s*=[^=])'
+# WHY `Scripts/` IS NO LONGER SKIPPED.
+#
+# The first version skipped it, because `pull_usgs_dashboard.py` carries an upstream's whole
+# field list inside a $select string and indexing it made the audit find its own request and
+# call every field used. That was a real bug -- it reported 12 of 17 keys READ for an endpoint
+# the app has never called.
+#
+# But the blanket skip cured the symptom and caused a worse one: `Scripts/` is also where the
+# PIPELINE BUILDERS live, and they are genuine consumers. On 2026-08-25 this auditor reported
+# TVA's /RestApi/locations as ten fields, zero read -- while `build_water_bindings.py:1046` had
+# been reading TopOfGatesFt, River and RiverMile all along, putting a `tva{}` block on 13 waters.
+# A blind spot that says "nobody reads this" about code that does is worse than noise, because
+# it reads as a finding.
+#
+# The READ vs MENTIONED-ONLY split already solves the original problem properly and with
+# evidence: a name sitting in a $select string is never a property access, so it lands in
+# MENTIONED-ONLY with the file named, and can be judged rather than guessed at.
+#
+# `test/` stays skipped. A fixture that DEFINES a field is not a consumer of it, and the ones
+# here are full of example.com and x.gov URLs that are not upstreams at all.
 SKIP_DIRS = {'node_modules', '.git', 'dist', 'build', '_to_delete', 'coverage',
-             'Scripts', 'scripts', 'test', 'tests', '__pycache__'}
+             'test', 'tests', '__tests__', '__pycache__'}
+# ...but two files in `Scripts/` ARE homework. This script's own self-test fixtures are
+# strings full of real upstream field names -- TopOfGatesFt, ParameterUnit, IsPrimary -- so
+# indexing it makes it a "reader" of every field it was written to check. `capture_upstreams.py`
+# carries upstream URL templates for the same reason. Instruments measure; they do not consume.
+SKIP_FILES = {'audit_upstream_fields.py', 'capture_upstreams.py'}
 
 
 def keys_of_json(obj, out, depth=0, maxdepth=12):
@@ -186,7 +213,7 @@ def index_repo(repo, extra_skip=None):
     for root, dirs, files in os.walk(repo):
         dirs[:] = [d for d in dirs if d not in skip]
         for f in files:
-            if not f.endswith(CODE_EXT):
+            if not f.endswith(CODE_EXT) or f in SKIP_FILES:
                 continue
             p = os.path.join(root, f)
             try:
@@ -209,10 +236,17 @@ def readers_of(key, blobs, limit=4):
     because our own request listed it. A name in a request string is the OPPOSITE of evidence
     that the response is read.
     """
-    access = [re.compile(r'\.%s\b' % re.escape(key)),
-              re.compile(r'''\[\s*['"]%s['"]\s*\]''' % re.escape(key)),
+    access = [re.compile(r'\.%s\b%s' % (re.escape(key), NOT_ASSIGNED)),
+              re.compile(r'''\[\s*['"]%s['"]\s*\]%s''' % (re.escape(key), NOT_ASSIGNED)),
               # destructuring: const { ParameterUnit, Value } = row
-              re.compile(r'\{[^{}\n]*\b%s\b[^{}\n]*\}\s*=' % re.escape(key))]
+              re.compile(r'\{[^{}\n]*\b%s\b[^{}\n]*\}\s*=' % re.escape(key)),
+              # PYTHON READS A DICT BY NAME, NOT BY DOT. `t.get('TopOfGatesFt')` is every bit a
+              # property access, and missing it made this auditor report TVA's locations feed as
+              # ten fields and zero readers while build_water_bindings.py:1046 was reading three
+              # of them into a `tva{}` block on 13 waters. The pipeline is written in Python; an
+              # auditor that only understands JavaScript syntax is half an auditor.
+              re.compile(r'''\.get\(\s*['"]%s['"]''' % re.escape(key)),
+              re.compile(r'''\.pop\(\s*['"]%s['"]''' % re.escape(key))]
     read, mentioned = [], []
     for rel, t in blobs.items():
         if key not in t:
@@ -266,10 +300,30 @@ def self_test():
     check('destructured read found', readers_of('LatencyMinutes', blobs)[0], ['Worker/z.js'])
     # THE BUG THE FIRST REAL RUN FOUND: a field listed in our own request string is not read.
     check('request-string name is NOT read', readers_of('RateOfChangeUnitPerHour', blobs)[0], [])
+    pyb = {'build.py': "entry['tva'] = {'top': t.get('TopOfGatesFt'), 'rm': t.get('RiverMile')}"}
+    check('python .get() counts as a read', readers_of('TopOfGatesFt', pyb)[0], ['build.py'])
+    check('python .get() on a second key too', readers_of('RiverMile', pyb)[0], ['build.py'])
+    # An assignment TARGET is a write. `entry['tva'] = {}` names the key without ever looking
+    # at the upstream's value -- the same false positive as a $select string, in a different
+    # syntax. It cost nothing to catch here and would have inflated the read count on every
+    # feed whose fields we re-emit under their own names.
+    check('a key only assigned to is not a read',
+          readers_of('tva', {'x.py': "entry['tva'] = {}"})[0], [])
+    check('dotted assignment target is not a read',
+          readers_of('Foo', {'x.js': 'out.Foo = 1;'})[0], [])
+    check('a write does not mask a read in the same file',
+          readers_of('tva', {'x.py': "entry['tva'] = {}\nif row['tva']: pass"})[0], ['x.py'])
+    check('=== is a comparison, not an assignment',
+          readers_of('Foo', {'x.js': "if (row['Foo'] === 2) {}"})[0], ['x.js'])
+    check('+= reads before it writes',
+          readers_of('Foo', {'x.js': 'n += row.Foo;'})[0], ['x.js'])
+    check('this auditor does not read its own fixtures',
+          'audit_upstream_fields.py' in SKIP_FILES, True)
     check('request-string name IS mentioned',
           readers_of('RateOfChangeUnitPerHour', blobs)[1], ['fetcher.py'])
     check('absent key found nowhere', readers_of('NwsIdentifier', blobs), ([], []))
-    check('Scripts is skipped by default', 'Scripts' in SKIP_DIRS, True)
+    check('Scripts is INDEXED -- builders are consumers', 'Scripts' in SKIP_DIRS, False)
+    check('test/ stays skipped -- a fixture is not a consumer', 'test' in SKIP_DIRS, True)
     check('arr[i] no longer counts as dynamic', bool(DYNAMIC.search('a = arr[i];')), False)
     check('Object.keys still counts', bool(DYNAMIC.search('Object.keys(o)')), True)
     check('generic guard holds a common name', 'value' in GENERIC, True)
@@ -285,7 +339,7 @@ def main():
     ap.add_argument('--dir', default=None, help='a folder of saved responses')
     ap.add_argument('--out', default=None, help='report path (default: beside the repo)')
     ap.add_argument('--exclude', action='append', default=[],
-                    help='extra directory name to skip (Scripts/ and test/ are skipped already)')
+                    help='extra directory name to skip (test/ is skipped already)')
     ap.add_argument('--self-test', action='store_true')
     a = ap.parse_args()
     if a.self_test:
