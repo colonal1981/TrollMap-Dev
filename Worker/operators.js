@@ -166,3 +166,165 @@ export function parseBrookfieldFacility(html) {
       : null,
   };
 }
+
+
+/* ── Santee Cooper ───────────────────────────────────────────────────────────────────────────
+ *
+ * Lake Marion, Lake Moultrie, and the two hydros that move the Santee and the Cooper.
+ *
+ * RYAN AND I BOTH HAD THIS WRONG. I told him five times that santeecooper.com "just points at
+ * USGS", off a text extraction of their FAQ page -- which is true of that page, and the page is
+ * a shell. The data is in an iframe, `azapp-lakespublic-prd-001.azurewebsites.net`, and the
+ * iframe's `src` was an ATTRIBUTE, so my tag-stripping read the prose around the answer and
+ * concluded there was none. A confident absence is the most expensive kind of wrong answer, and
+ * this file's own header already says text was not enough for Southern Company either.
+ *
+ * WHAT IS ACTUALLY THERE IS MORE THAN DUKE OR DOMINION PUBLISH:
+ *
+ *   a TEN-DAY FORWARD generation schedule, per hydro, as start and end times
+ *   daily Marion and Moultrie elevations WITH THE RULE CURVE beside them
+ *   daily discharge per facility, and whether the lake is spilling
+ *   upstream inflows for the Broad, Saluda, Congaree and Wateree
+ *
+ * Duke gives projected arrivals; Dominion gives a colour band and "until further notice". This
+ * gives turbine hours ten days out. For the Santee below the dams and the Cooper below
+ * Jefferies, "when is the water moving" is the whole question.
+ *
+ * THE ELEVATIONS AND FLOWS ARE NOT SCRAPED. The page carries them as JSON in hidden inputs for
+ * its own charts, so those are parsed rather than read out of table cells. Only the schedule
+ * and the upstream table are markup.
+ */
+
+/** A hidden input's `value`, JSON-parsed. The page feeds its charts this way. */
+function hiddenJson(html, id) {
+  const re = new RegExp(`id="${id}"[^>]*?value="([\\s\\S]*?)"\\s*/?>`, 'i');
+  const m = re.exec(String(html || ''));
+  if (!m) return null;
+  const unescaped = m[1].replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+  try { return JSON.parse(unescaped); } catch (_) { return null; }
+}
+
+/** '8/25/2026' → '2026-08-25'. Also accepts an ISO stamp and keeps its date half. */
+export function santeeDate(v) {
+  const s = String(v || '').trim();
+  const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s);
+  if (!m) return null;
+  return `${m[3]}-${String(m[1]).padStart(2, '0')}-${String(m[2]).padStart(2, '0')}`;
+}
+
+/**
+ * '11 AM' → 660. Minutes past midnight, or null.
+ *
+ * THREE TRAPS IN A THREE-WORD FIELD. `12 PM` is NOON and `12 AM` is midnight, and the naive
+ * `hour + 12` makes noon into midnight — a generation window that reads as starting twelve
+ * hours early. `Midnight` is spelled out rather than given as a clock, and it only ever appears
+ * as an END time, so it is the end of that day: 1440, not 0. Returning 0 would make every
+ * overnight run look like a zero-length one.
+ */
+export function santeeClock(v) {
+  const s = String(v || '').trim();
+  if (!s) return null;
+  if (/^midnight$/i.test(s)) return 1440;
+  if (/^noon$/i.test(s)) return 720;
+  const m = /^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/i.exec(s);
+  if (!m) return null;
+  let h = Number(m[1]) % 12;
+  if (/pm/i.test(m[3])) h += 12;
+  return h * 60 + Number(m[2] || 0);
+}
+
+/** One hydro's schedule table. */
+function santeeSchedule(html, id) {
+  const t = tableById(html, id);
+  if (!t) return [];
+  const out = [];
+  for (const row of rowsOf(t)) {
+    const c = cellsOf(row).map(text);
+    if (c.length < 3) continue;
+    const date = santeeDate(c[0]);
+    if (!date) continue;                          // the header row, and anything malformed
+    // A STATED NON-RUN IS A READING. Santee Cooper writes "Not scheduled to run" into the time
+    // columns themselves, exactly as Duke writes "No Flow Release" into a datetime field. A row
+    // that says so must survive, or ten days of "they are not generating" reads as ten days of
+    // no information — which is the opposite of what it says.
+    const off = /not\s+scheduled/i.test(c[1]) || /not\s+scheduled/i.test(c[2]);
+    out.push({
+      date,
+      running: !off,
+      start: off ? null : (c[1] || null),
+      end: off ? null : (c[2] || null),
+      start_min: off ? null : santeeClock(c[1]),
+      end_min: off ? null : santeeClock(c[2]),
+    });
+  }
+  return out;
+}
+
+/**
+ * The Santee Cooper lakes page as a reading, or null when nothing parsed.
+ *
+ * Pure, so it can be tested against the saved source without the network — same reason the
+ * three parsers above are.
+ */
+export function parseSanteeCooper(html) {
+  const src = String(html || '');
+  if (!src) return null;
+
+  const elev = (hiddenJson(src, 'elevationJSON') || []).map((r) => {
+    const marion = num(r.Marion);
+    const rule = num(r.RuleCurve);
+    return {
+      date: santeeDate(r.Date),
+      marion_ft: marion,
+      moultrie_ft: num(r.Moultrie),
+      rule_curve_ft: rule,
+      // THE NUMBER THE LAKE IS ACTUALLY JUDGED BY. USGS gives Marion's level; only Santee Cooper
+      // says what it is supposed to be. Rounded to hundredths because both inputs are.
+      marion_vs_rule_ft: (marion != null && rule != null)
+        ? Math.round((marion - rule) * 100) / 100 : null,
+    };
+  }).filter((r) => r.date);
+
+  const flows = (hiddenJson(src, 'flowJSON') || []).map((r) => ({
+    date: santeeDate(r.Date),
+    spilling_cfs: num(r.Spilling),
+    inflow_cfs: num(r.TotalInflow),
+    discharge_cfs: num(r.TotalDischarge),
+  })).filter((r) => r.date);
+
+  const upstream = [];
+  const ut = tableById(src, 'upstreamRivers');
+  for (const row of rowsOf(ut || '')) {
+    const c = cellsOf(row).map(text);
+    const date = c.length >= 5 ? santeeDate(c[0]) : null;
+    if (!date) continue;
+    upstream.push({
+      date,
+      broad_cfs: num(c[1]),
+      saluda_cfs: num(c[2]),
+      congaree_inflow_cfs: num(c[3]),
+      wateree_inflow_cfs: num(c[4]),
+    });
+  }
+
+  const schedule = {
+    jefferies: santeeSchedule(src, 'jhTimes'),
+    st_stephen: santeeSchedule(src, 'ssTimes'),
+  };
+
+  if (!elev.length && !flows.length && !schedule.jefferies.length) return null;
+  return {
+    elevations: elev,
+    flows,
+    schedule,
+    upstream,
+    // Their own words, and the reason this is not stamped with the fetch time: the page is
+    // updated daily and a fetch at 3am is not an observation at 3am.
+    updated: (/Data last updated\s*([\d/]+)/i.exec(text(src)) || [])[1] || null,
+    source: 'https://azapp-lakespublic-prd-001.azurewebsites.net/',
+    note: 'Congaree and Wateree inflows take 3-5 days to reach Lake Marion — Santee Cooper.',
+  };
+}
