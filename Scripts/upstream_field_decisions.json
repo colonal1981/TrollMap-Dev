@@ -725,5 +725,30 @@
     "verdict": "declined",
     "why": "the RDB spelling of qualifierCode -- 'P' provisional on essentially every live reading. The qualifiers that matter (Ice, Eqp, Mnt) arrive as the -999999 sentinel, which fetchUsgs rejects numerically.",
     "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::ActivityTopDepthHeightMeasure/MeasureValue": {
+    "verdict": "declined",
+    "why": "MEASURED, NOT ASSUMED. Two real resultPhysChem responses on 2026-08-25 -- Lake Murray (Lexington Co, SC), 3,080 rows, and Hartwell Lake (Anderson Co, SC/GA), 7,872 rows, covering SCDES and Georgia DNR EPD -- carry ZERO non-empty values in the ActivityTop/BottomDepthHeightMeasure pair. Neither agency states depth as an interval. GA EPD uses ResultDepthHeightMeasure (4,340 rows) and limnology.js already falls back to it; SCDES publishes single-depth grab samples, one result per activity, with no profile to attach a depth interval to. A fallback here would have been built on a guess.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::ActivityTopDepthHeightMeasure/MeasureUnitCode": {
+    "verdict": "declined",
+    "why": "MEASURED, NOT ASSUMED. Two real resultPhysChem responses on 2026-08-25 -- Lake Murray (Lexington Co, SC), 3,080 rows, and Hartwell Lake (Anderson Co, SC/GA), 7,872 rows, covering SCDES and Georgia DNR EPD -- carry ZERO non-empty values in the ActivityTop/BottomDepthHeightMeasure pair. Neither agency states depth as an interval. GA EPD uses ResultDepthHeightMeasure (4,340 rows) and limnology.js already falls back to it; SCDES publishes single-depth grab samples, one result per activity, with no profile to attach a depth interval to. A fallback here would have been built on a guess.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::ActivityBottomDepthHeightMeasure/MeasureValue": {
+    "verdict": "declined",
+    "why": "MEASURED, NOT ASSUMED. Two real resultPhysChem responses on 2026-08-25 -- Lake Murray (Lexington Co, SC), 3,080 rows, and Hartwell Lake (Anderson Co, SC/GA), 7,872 rows, covering SCDES and Georgia DNR EPD -- carry ZERO non-empty values in the ActivityTop/BottomDepthHeightMeasure pair. Neither agency states depth as an interval. GA EPD uses ResultDepthHeightMeasure (4,340 rows) and limnology.js already falls back to it; SCDES publishes single-depth grab samples, one result per activity, with no profile to attach a depth interval to. A fallback here would have been built on a guess.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::ActivityBottomDepthHeightMeasure/MeasureUnitCode": {
+    "verdict": "declined",
+    "why": "MEASURED, NOT ASSUMED. Two real resultPhysChem responses on 2026-08-25 -- Lake Murray (Lexington Co, SC), 3,080 rows, and Hartwell Lake (Anderson Co, SC/GA), 7,872 rows, covering SCDES and Georgia DNR EPD -- carry ZERO non-empty values in the ActivityTop/BottomDepthHeightMeasure pair. Neither agency states depth as an interval. GA EPD uses ResultDepthHeightMeasure (4,340 rows) and limnology.js already falls back to it; SCDES publishes single-depth grab samples, one result per activity, with no profile to attach a depth interval to. A fallback here would have been built on a guess.",
+    "when": "2026-08-25"
+  },
+  "www.waterqualitydata.us::ProjectIdentifier": {
+    "verdict": "wired-elsewhere",
+    "why": "read as the FALLBACK for `programs` when a row has no OrganizationFormalName. The organisation wins because it is the answer a person wants: Murray shows 11 project codes against 1 organisation, Hartwell 11 against 2 -- and the 2 are the fact worth showing, since Georgia and South Carolina both monitor that lake.",
+    "when": "2026-08-25"
   }
 }

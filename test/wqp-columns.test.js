@@ -79,9 +79,23 @@ describe('WQP column lookups in limnology.js', () => {
     expect(lookups.includes('projectidentifier')).toBe(true);
   });
 
-  it('the organisation fallback resolves too', () => {
+  it('the organisation resolves, and is looked up BEFORE the project code', () => {
+    // `programs` is read by a person. Measured against two real responses on 2026-08-25:
+    // Lake Murray carries 11 ProjectIdentifiers against 1 organisation, Hartwell 11 against 2 --
+    // and the 2 are the fact worth showing, since Georgia and South Carolina both monitor it.
     expect(resolve('organizationformalname') >= 0).toBe(true);
     expect(lookups.includes('organizationformalname')).toBe(true);
+    expect(lookups.indexOf('organizationformalname') < lookups.indexOf('projectidentifier')).toBe(true);
+    expect(/cols\[iOrg\]\s*\|\|\s*cols\[iProject\]/.test(SRC)).toBe(true);
+  });
+
+  it('the depth fallback stops where the evidence stops', () => {
+    // ActivityDepth, then ResultDepth, and no further. Two real responses covering SCDES and
+    // Georgia DNR EPD -- 10,952 rows between them -- carry ZERO values in the
+    // ActivityTop/BottomDepthHeightMeasure pair, so a third fallback would be built on a guess.
+    expect(lookups.includes('activitydepthheightmeasure/measurevalue')).toBe(true);
+    expect(lookups.includes('resultdepthheightmeasure/measurevalue')).toBe(true);
+    expect(lookups.some((n) => n.includes('topdepth') || n.includes('bottomdepth'))).toBe(false);
   });
 
   it('no lookup is ambiguous enough to hit a column it did not mean', () => {

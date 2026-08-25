@@ -155,14 +155,23 @@ async function handleResearchLimnologyData(request, env, opts = {}) {
   // record, and `.filter(Boolean)` then emptied both `programs` lists. The surfaceWater block has
   // been reporting "no monitoring programs" for every lake in the app.
   //
-  // ProjectIdentifier is a code like `SC-DES-AMB`; OrganizationFormalName is the readable name of
-  // whoever runs it. Take the code when there is one and the organisation when there is not,
-  // matching how depth already falls back from ActivityDepth to ResultDepth two lines below.
+  // THE ORGANISATION FIRST, THE PROJECT CODE ONLY IF THERE IS NO ORGANISATION. Measured against
+  // two real responses on 2026-08-25 rather than guessed at:
+  //
+  //   Lake Murray (Lexington Co, SC)   11 ProjectIdentifiers -- SWS-2020..SWS-2025, HAB-Program,
+  //                                    MurrayNutrients, PFAS -- against 1 organisation.
+  //   Hartwell Lake (Anderson Co, SC/GA)  11 project codes against 2 organisations: Georgia DNR
+  //                                    Environmental Protection Division AND South Carolina
+  //                                    Department of Environmental Services.
+  //
+  // The field is called `programs` and a person reads it. "Georgia DNR EPD and SCDES both
+  // monitor this lake" is the answer to who watches this water; "SWS-2021, SWS-2022, SWS-2023,
+  // SWS-2024, SWS-2025" is the answer to what they named the files.
   //
   // Found 2026-08-25 by audit_upstream_fields.py, once it was taught that a column can be looked
   // up by name instead of reached by one.
-  const iProject = col('projectidentifier');
   const iOrg = col('organizationformalname');
+  const iProject = col('projectidentifier');
 
   const records = [];
   for (let i = 1; i < lines.length; i++) {
@@ -174,7 +183,7 @@ async function handleResearchLimnologyData(request, env, opts = {}) {
     const depRaw = cols[iDepth] || cols[iResultDepth] || '';
     const depUnit = cols[iDepthU] || cols[iResultDepthU] || '';
     const date = cols[iDate] || '';
-    const project = cols[iProject] || cols[iOrg] || '';
+    const project = cols[iOrg] || cols[iProject] || '';
     const val = parseFloat(valRaw);
     if (isNaN(val)) continue;
     let dep = parseFloat(depRaw);
