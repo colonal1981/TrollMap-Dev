@@ -2273,6 +2273,42 @@ export function parseAccessAlerts(json) {
 }
 
 /**
+ * THE TOKENS THAT NAME THIS WATER -- AND A GAUGE'S PLACE HALF IS NOT ONE OF THEM.
+ *
+ * Reported by Ryan 2026-08-25. A conditions card for the Lower Saluda carried three Duke access
+ * alerts, and all three belong to other rivers in other basins:
+ *
+ *     Mountain Island Tailrace Fishing Area and Mountain Island Park   filed under Lake Wylie
+ *     Mile Creek Park                                                  filed under Lake Keowee
+ *     Morrow Mountain State Park                                       filed under Lake Tillery
+ *
+ * ONE WORD DID IT: `park`. It enters this water's token set from its OWN gauge --
+ * `SALUDA RIVER AT SALUDA SHOALS PARK AT COLUMBIA, SC` -- and `park` is not in the stop list,
+ * so a fishing area on the Catawba and a county park on Keowee both "named" the Lower Saluda.
+ * `columbia` and `shoals` were in there for the same reason and are the next two waiting to do it.
+ *
+ * THE ANSWER WAS ALREADY WRITTEN. `gaugeRiverPart()` exists precisely for this and says so:
+ * "the place half is a minefield ... Tokenising the whole string would let a town or a road agree
+ * with a basin. The river is the part in front, and that is the only part read." It was being
+ * used for the basin match and not for this one. Now both.
+ *
+ * Extending the stop list with `park` was the other option and it is the wrong one: the next
+ * name is `landing`, then `access`, then `point`, and the list is never finished. Reading only
+ * the river half cannot be outrun by a new place name.
+ *
+ * THE ALERT'S OWN PLACE IS STILL READ IN FULL, deliberately. "Mountain Island Tailrace Fishing
+ * Area" is filed under Lake WYLIE and names a different lake in its own title, so Mountain
+ * Island Lake has to be able to find it there. That is the alert side; this is the water side.
+ */
+function wantedTokens(waterName, gaugeNames = []) {
+  const want = new Set(distinctive(waterName));
+  for (const n of gaugeNames || []) {
+    for (const t of distinctive(gaugeRiverPart(n))) want.add(t);
+  }
+  return want;
+}
+
+/**
  * The alerts about this water.
  *
  * MATCHED ON THE PLACE, NOT THE BASIN. A basin-level notice is about a quarter of a state and
@@ -2286,14 +2322,36 @@ export function parseAccessAlerts(json) {
  * Lake WYLIE and names a different lake in its own title.
  */
 export function alertsForWater(alerts, waterName, gaugeNames = []) {
-  const want = new Set(distinctive(waterName));
-  for (const n of gaugeNames || []) for (const t of distinctive(n)) want.add(t);
+  const want = wantedTokens(waterName, gaugeNames);
   if (!want.size) return [];
-  const hit = (v) => {
-    for (const t of distinctive(v)) if (want.has(t)) return true;
-    return false;
+  // HOW MANY OF THIS WATER'S OWN WORDS THE TEXT CARRIES.
+  const score = (v) => {
+    let n = 0;
+    for (const t of distinctive(v)) if (want.has(t)) n++;
+    return n;
   };
-  return (alerts || []).filter((a) => a.kind !== 'RIVERBASIN' && (hit(a.water) || hit(a.place)));
+
+  // A POI NAME NEEDS TWO WORDS; THE ALERT'S OWN WATER NEEDS ONE.
+  //
+  // Reading a place name against a token set over-matches on generic geography, and reading only
+  // the river half of the gauge names does not save it: with `park` gone, Mountain Island Lake
+  // picked up "Morrow Mountain State Park" -- Lake Tillery, Yadkin basin, a hundred km away -- on
+  // the single word `mountain`. The next one is `creek`, then `island`, then `point`.
+  //
+  // `lakepondDesc` is Duke naming the water itself, so one word is evidence. A POI title is free
+  // text about a place, so it takes two -- which is the same second-signal rule the gauge binder
+  // and the picker both already use, and it is what keeps the case this function was built for:
+  // "Mountain Island Tailrace Fishing Area and Mountain Island Park" is filed under Lake WYLIE
+  // and still reaches Mountain Island Lake, because it names it twice.
+  //
+  // AN ALERT WITH NO WATER AT ALL falls back to one word on the place, because the place is then
+  // the only thing it has. Three of the twenty-eight captured alerts are shaped that way.
+  return (alerts || []).filter((a) => {
+    if (!a || a.kind === 'RIVERBASIN') return false;
+    const named = distinctive(a.water).size > 0;
+    if (named && score(a.water) >= 1) return true;
+    return score(a.place) >= (named ? 2 : 1);
+  });
 }
 
 /**
@@ -2304,8 +2362,7 @@ export function alertsForWater(alerts, waterName, gaugeNames = []) {
  * an ambiguous name returns nothing rather than the first id that looked close.
  */
 export function dukeLocationIdFor(alerts, waterName, gaugeNames = []) {
-  const want = new Set(distinctive(waterName));
-  for (const n of gaugeNames || []) for (const t of distinctive(n)) want.add(t);
+  const want = wantedTokens(waterName, gaugeNames);
   if (!want.size) return null;
   const found = new Set();
   for (const a of alerts || []) {
