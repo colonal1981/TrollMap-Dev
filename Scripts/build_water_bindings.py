@@ -1433,13 +1433,36 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
             # Bound sites carrying a parm list: 760 of 760 before the rebind, 503 of 801 after.
             # WHAT A SITE PUBLISHES IS KNOWN ONLY TO THE CATALOGUE, and it is what lets the
             # Worker skip a per-site catalogue request and rank which four sites to ask.
+            def _take_catalogue(e):
+                """Write what only the catalogue knows onto an entry that already exists, and
+                let it claim an EMPTY pool slot. Both halves, in one place: the first version of
+                the same-site rule wrote the parameters and skipped the promotion, and Black
+                Shoals Reservoir (Rockdale Co, GA) lost its pool to that -- 02207414 publishes
+                00062, reservoir elevation, and was enriched and then never promoted.
+
+                Never at the expense of a tailwater: `Lake Moultrie at Pinopolis Dam` reads
+                pool, `... Tailrace` does not.
+                """
+                nonlocal pool
+                e['usgs_site'] = g['site']
+                e['usgs_name'] = gname
+                e['usgs_parms'] = g_level
+                if g_hist:
+                    e['usgs_parms_dv'] = g_hist
+                e['usgs_site_type'] = g['site_type']
+                if pool is None and g_pool_grade and e is not tail:
+                    if e in others:
+                        others.remove(e)
+                    if e in geom_only:
+                        geom_only.remove(e)
+                    e['pool_from'] = 'usgs:%s' % (sorted(ELEV_PARMS & g['parms'])[0]
+                                                  if (ELEV_PARMS & g['parms']) else '00065')
+                    pool = e
+                    tally['usgs_pool_via_merge'] += 1
+
             same = _by_site(g['site'])
             if same is not None:
-                same['usgs_name'] = gname
-                same['usgs_parms'] = g_level
-                if g_hist:
-                    same['usgs_parms_dv'] = g_hist
-                same['usgs_site_type'] = g['site_type']
+                _take_catalogue(same)
                 tally['usgs_catalogue_merged_by_site'] += 1
                 continue
 
@@ -1451,26 +1474,30 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
                     # Table Rock's tailrace site number on a record still named for the
                     # reservoir -- a row that reads as one gauge and cites another.
                     #
+                    # UNLESS THE ARRIVING SITE IS THE LAKE AND THE SITTING ONE IS THE CREEK.
+                    # Randy Poynter Lake / Black Shoals Reservoir (Rockdale Co, GA) has two USGS
+                    # sites at Jack Turner Dam: 02207414 is site type LK and publishes 00062,
+                    # reservoir elevation -- the POOL -- and 02207418 is type ST, the creek at
+                    # the dam. The NWPS bulk roster names the creek. So once nwps_roster began
+                    # carrying `usgs_site`, the creek was sitting in the record before the lake
+                    # site arrived, the lake was filed under `usgs_also`, and the reservoir came
+                    # back with NO POOL READING AT ALL.
+                    #
+                    # SITE TYPE IS WHAT SAYS WHICH READING A SITE IS, and this file already
+                    # decides pool candidates that way in _grade(). Only for an EMPTY pool slot,
+                    # only from a pool-grade site, never over a tailwater, and the displaced
+                    # number is kept rather than dropped -- so nothing is lost, it is reordered.
+                    if (pool is None and g_pool_grade and hit is not tail
+                            and not str(hit.get('usgs_site_type') or '').startswith(('LK', 'ES'))):
+                        hit.setdefault('usgs_also', []).append(hit['usgs_site'])
+                        _take_catalogue(hit)
+                        tally['usgs_lake_site_outranked_stream'] += 1
+                        continue
                     hit.setdefault('usgs_also', []).append(g['site'])
                     tally['usgs_second_site_at_same_spot'] += 1
                     continue
-                hit['usgs_site'] = g['site']
-                hit['usgs_name'] = gname
-                hit['usgs_parms'] = g_level
-                if g_hist:
-                    hit['usgs_parms_dv'] = g_hist
-                hit['usgs_site_type'] = g['site_type']
+                _take_catalogue(hit)
                 tally['usgs_merged_into_nwps'] += 1
-                # Promote only into an EMPTY pool slot, and never at the expense of a tailwater:
-                # `Lake Moultrie at Pinopolis Dam` reads pool, `... Tailrace` does not.
-                if pool is None and g_pool_grade and hit is not tail:
-                    if hit in others:
-                        others.remove(hit)
-                    if hit in geom_only:
-                        geom_only.remove(hit)
-                    hit['pool_from'] = 'usgs:%s' % (sorted(ELEV_PARMS & g['parms'])[0] if (ELEV_PARMS & g['parms']) else '00065')
-                    pool = hit
-                    tally['usgs_pool_via_merge'] += 1
                 continue
             tok = name_relation(names, gname, weak)
             d_km, inside = _how_far(glon, glat)
