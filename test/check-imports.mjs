@@ -93,7 +93,21 @@ let checked = 0;
 for (const file of files) {
   const src = code(readFileSync(file, 'utf8'));
   // import { a, b as c } from './x.js'   (relative specifiers only — bare ones are deps)
-  for (const m of src.matchAll(/import\s*\{([^}]*)\}\s*from\s*['"](\.[^'"]+)['"]/g)) {
+  //
+  // ANCHORED, and that is the whole point. The same trap the `code()` header above describes
+  // sprang a second time on 2026-08-25, one quoting style over: blanking comments does nothing
+  // about a STRING, and coastal-regulations-live.test.js asserts on the text of an import —
+  //
+  //     expect(src).toContain("import { liveCoastalPolicyFor } from './regulations-live.js'");
+  //
+  // Unanchored, that scored as an import of `test/regulations-live.js`, which has never
+  // existed. The real import three hundred lines above it is `../js/data/regulations-live.js`
+  // and resolves fine. So `lint:audit` reported an unresolved import, `npm run check` went red,
+  // and the defect was entirely in the instrument.
+  //
+  // A real `import` is a statement and lives at the start of its line. The three export
+  // patterns above have always been written `^\s*…/gm`; this one never was. It is now.
+  for (const m of src.matchAll(/^\s*import\s*\{([^}]*)\}\s*from\s*['"](\.[^'"]+)['"]/gm)) {
     const target = resolve(dirname(file), m[2]);
     const provided = exportsOf(target);
     const rel = relative(ROOT, file);

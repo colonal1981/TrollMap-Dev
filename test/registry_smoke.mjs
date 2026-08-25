@@ -55,7 +55,14 @@ const stats = reg.registryStats();
 console.log(`stats: ${JSON.stringify(stats)}\n`);
 
 console.log('-- lakeRecordFor: slug / display name / loose name / junk --');
-check('by slug', !!reg.lakeRecordFor('kentucky_lake'), reg.lakeRecordFor('kentucky_lake')?.displayName);
+// THE CANARY IS DRAWN FROM THE REGISTRY, NOT NAMED IN THIS FILE. It was the literal
+// `kentucky_lake` until 2026-08-25, and Kentucky Lake is not in the shipped set — 358 waters
+// across SC, GA, NC and TN. So slug lookup worked perfectly and this line reported FAIL, which
+// is the worst way for a check to be wrong: it accuses the code of a defect that is in the test.
+// A hand-written canary tests the hand.
+const anySlug = [...R.bySlug.keys()][0];
+check('by slug', !!reg.lakeRecordFor(anySlug),
+      `${anySlug} -> ${reg.lakeRecordFor(anySlug)?.displayName}`);
 const wat = reg.lakeRecordFor('Wateree');
 check('loose name "Wateree"', !!wat, wat && `${wat.displayName} ${wat.areaAcres} ac charted=${wat.charted}`);
 check('exact display name', !!reg.lakeRecordFor(wat?.displayName || ''), wat?.displayName);

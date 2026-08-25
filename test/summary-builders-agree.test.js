@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, it, expect } from './expect-shim.mjs';
-import { buildFactualSummary, sampleDated, hasResearchValue } from '../worker/research/facts-util.js';
+import { buildFactualSummary, sampleDated, hasResearchValue } from '../Worker/research/facts-util.js';
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // THE SENTENCE MUST NOT OUTLIVE THE NUMBERS IT STATES

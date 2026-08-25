@@ -107,7 +107,15 @@ for (const f of FILES.filter(f => /\.m?js$/.test(f))) {
   if (/export\s+default/.test(code)) exports.add('default');
 
   const imports = [];
-  for (const m of code.matchAll(/import\s+(?:([\w$*\s{},]+?)\s+from\s+)?['"]([^'"]+)['"]/g)) {
+  // ANCHORED. Unanchored, this matched the word `import` inside a STRING and scored the quoted
+  // path after it as a real dependency. coastal-regulations-live.test.js asserts on the text of
+  // an import statement, and that one assertion put `test/regulations-live.js` — a file that has
+  // never existed — into `missingImports`, which is what `--check` exits non-zero on. Reported
+  // 2026-08-25, together with the same defect in test/check-imports.mjs, which had already been
+  // bitten once by the comment-shaped version of it and carries the note.
+  //
+  // An `import` statement lives at the start of its line. A quoted one does not.
+  for (const m of code.matchAll(/^\s*import\s+(?:([\w$*\s{},]+?)\s+from\s+)?['"]([^'"]+)['"]/gm)) {
     const names = (m[1] || '').replace(/[{}]/g, ' ').split(',')
       .map(s => s.trim().split(/\s+as\s+/).pop().trim()).filter(Boolean);
     imports.push({ from: m[2], names });
