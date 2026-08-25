@@ -1871,9 +1871,53 @@ def main():
         print('-> %s  (%d geometry-only + %d name-only, IN FULL)'
               % (rev_path, len(full['review_geom_only']), len(full['rejected_name_only'])))
 
+    # ── KEYS THIS SCRIPT DOES NOT OWN, AND USED TO DESTROY ──────────────────────────────────
+    #
+    # `bind_operator_lakes.py` writes `operator: {operator, feed_name, url, why}` into this same
+    # file -- it says so in its own docstring, and Worker/conditions.js reads it to decide which
+    # utility page a lake's level comes from. This script then rewrote the file wholesale and
+    # took every one of those blocks with it.
+    #
+    # MEASURED 2026-08-25: ZERO of 204 bound waters carried an operator block, while
+    # Worker/operators.js held working parsers for Cube Carolinas, Southern Company and
+    # Brookfield and conditions.js imported all three. Three parsers, a purpose-built binder and
+    # a documented contract, unreachable for every water -- because a rebind erased the join and
+    # nothing anywhere recorded the dependency. `bind_operator_lakes.py` appears in no runner.
+    #
+    # A FULL RUN OF ONE SCRIPT MUST NOT SILENTLY DESTROY ANOTHER'S OUTPUT. The registry already
+    # carries the inverse rule -- a partial run must not write a whole file -- and this is the
+    # same lesson from the other side.
+    #
+    # So: carry forward, per slug, any key in FOREIGN_KEYS that this script did not compute, and
+    # SAY HOW MANY. Silence is how it went unnoticed for nine days. A slug that no longer exists
+    # drops its block with it, which is correct -- the binding was about that water.
+    FOREIGN_KEYS = ('operator',)
+    carried = 0
+    if os.path.exists(out):
+        try:
+            with open(out, encoding='utf-8') as fh:
+                prev = (json.load(fh) or {}).get('bindings') or {}
+        except Exception:
+            prev = {}
+        for slug, old_b in prev.items():
+            if slug not in bindings or not isinstance(old_b, dict):
+                continue
+            for k in FOREIGN_KEYS:
+                if k in old_b and k not in bindings[slug]:
+                    bindings[slug][k] = old_b[k]
+                    carried += 1
+    print('   carried forward %d block(s) this script does not own (%s)'
+          % (carried, ', '.join(FOREIGN_KEYS)))
+    if not carried and os.path.exists(out):
+        print('   !! none found. If bind_operator_lakes.py has run, its output is missing --'
+              ' re-run it, or the utility-page parsers stay unreachable.')
+
     with open(out, 'w', encoding='utf-8') as fh:
         json.dump({'_note': 'built by build_water_bindings.py; name AND geometry, never either '
-                            'alone -- name-only matches are refused, see the report',
+                            'alone -- name-only matches are refused, see the report. '
+                            '`operator` is written by bind_operator_lakes.py and is CARRIED '
+                            'FORWARD here, not computed -- re-run that script after any change '
+                            'to the operator feeds.',
                    'bindings': bindings}, fh)
     with open(rep_path, 'w', encoding='utf-8') as fh:
         json.dump(report, fh, indent=1)
