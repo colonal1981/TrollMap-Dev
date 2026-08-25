@@ -2230,6 +2230,41 @@ export function dukeBasinAgrees(sched, waterName, gaugeNames = []) {
  * lake, and on a generating day they are not the same water. `below_dam` says so and the strip
  * marks it.
  */
+/** A binding's parameter list, whichever key and shape it was written in. */
+function parmList(g) {
+  const raw = (g && (g.usgs_parms || g.parms)) || null;
+  const arr = Array.isArray(raw) ? raw
+    : (typeof raw === 'string' ? raw.split(',') : []);
+  return arr.map((x) => String(x).trim()).filter(Boolean);
+}
+
+// Level and flow. A binding carrying ONLY these is indistinguishable from one written by the
+// old builder, which narrowed every site to exactly this set -- so it is treated as "unknown"
+// rather than as "publishes nothing else". See registryCatalog().
+const LEVEL_ONLY = new Set(['00060', '00065', '00062', '62614', '62615']);
+
+/**
+ * The registry's own answer to "what does this site publish", or null if it cannot be trusted.
+ *
+ * TRUSTED ONLY WHEN IT NAMES SOMETHING OUTSIDE LEVEL AND FLOW. Bindings written before
+ * 2026-08-25 hold `00060,00065` and nothing more, because the builder intersected the catalogue
+ * away before writing. Believing such a list would have `waterProbe` conclude that no site on
+ * any water publishes 00010 and skip every temperature request -- turning a stale registry into
+ * a silent, total loss of water temperature. A list that names 00010, 00300, 63680 or anything
+ * else outside the level set can only have come from the new builder, so it is believed.
+ *
+ * The cost of being wrong in the safe direction is one HTTP request. The cost of being wrong in
+ * the other direction is every reading on the strip going blank with no error.
+ */
+export function registryCatalog(parms) {
+  const list = Array.isArray(parms) ? parms.filter(Boolean) : [];
+  if (!list.length) return null;
+  if (!list.some((c) => !LEVEL_ONLY.has(c))) return null;
+  const out = {};
+  for (const c of list) out[c] = { from: 'water_bindings.json' };
+  return out;
+}
+
 export function usgsSitesFor(b, lat, lon) {
   const seen = new Set();
   const out = [];
@@ -2243,6 +2278,11 @@ export function usgsSitesFor(b, lat, lon) {
       role,
       km: (Number.isFinite(g.lat) && Number.isFinite(g.lon)) ? kmBetween(lat, lon, g.lat, g.lon) : Infinity,
       below_dam: role === 'tailwater' || /tailrace|tailwater|below\b/i.test(String(g.name || '')),
+      // WHAT THE REGISTRY ALREADY KNOWS THIS SITE PUBLISHES. `build_water_bindings.py` fetches
+      // the full series catalogue for every site; until 2026-08-25 it intersected the answer
+      // down to level and flow one line before writing, so the Worker re-fetched a catalogue
+      // per site at runtime to relearn it. Carried here so `waterProbe` can skip that request.
+      parms: parmList(g),
     });
   };
   add(b.pool, 'pool');
@@ -2325,8 +2365,11 @@ async function waterProbe(b, lat, lon, seededTemp) {
 
     // Ask the catalog first. A site that publishes none of what is still missing is not worth a
     // request, and knowing that is also what lets the response explain an empty field.
-    let cat = null;
-    try { cat = await siteParameters(s.site); } catch (_) { cat = null; }
+    // The registry first; the network only when the registry cannot answer.
+    let cat = registryCatalog(s.parms);
+    if (!cat) {
+      try { cat = await siteParameters(s.site); } catch (_) { cat = null; }
+    }
     if (cat) {
       out.catalogued += 1;
       for (const code of Object.keys(cat)) published.add(code);
