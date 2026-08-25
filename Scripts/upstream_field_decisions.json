@@ -750,5 +750,30 @@
     "verdict": "wired-elsewhere",
     "why": "read as the FALLBACK for `programs` when a row has no OrganizationFormalName. The organisation wins because it is the answer a person wants: Murray shows 11 project codes against 1 organisation, Hartwell 11 against 2 -- and the 2 are the fact worth showing, since Georgia and South Carolina both monitor that lake.",
     "when": "2026-08-25"
+  },
+  "forecast.weather.gov::metar": {
+    "verdict": "wired-elsewhere",
+    "why": "the id of the ASOS station the observation came from. conditions.js already reads it as `currentobservation.id` into `observation.station` -- 'KNBC', Beaufort MCAS -- alongside the station's own name and coordinates, so the distance from the water can be measured rather than assumed. Two fields, one fact.",
+    "when": "2026-08-25"
+  },
+  "forecast.weather.gov::Weatherimage": {
+    "verdict": "declined",
+    "why": "'bkn.png', the filename of an NWS sky-cover icon. `currentobservation.Weather` carries the same sky state as words -- 'Mostly Cloudy' -- and that IS read, into observation.weather. A remote image URL would be an asset fetched from weather.gov to say what a string already in hand says.",
+    "when": "2026-08-25"
+  },
+  "forecast.weather.gov::iconLink": {
+    "verdict": "declined",
+    "why": "the per-period forecast icon URLs. See Weatherimage: the forecast text is already read and an icon is a rendering choice, not a fact about the water.",
+    "when": "2026-08-25"
+  },
+  "forecast.weather.gov::hazardUrl": {
+    "verdict": "wired-elsewhere",
+    "why": "a link to the active hazard product. conditions.js queries the NWS WWA service directly at the point -- mapservices.weather.noaa.gov/eventdriven/WWA -- which returns the hazards themselves rather than a page about them, and does it for a point rather than a zone.",
+    "when": "2026-08-25"
+  },
+  "forecast.weather.gov::firezone": {
+    "verdict": "declined",
+    "why": "the NWS fire weather zone, 'SCZ149'. It answers a question about burning conditions on land. The marine and public zone ids from this same response ARE read, because they are how the marine forecast and the WWA query are addressed.",
+    "when": "2026-08-25"
   }
 }
