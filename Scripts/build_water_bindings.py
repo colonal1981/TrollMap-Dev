@@ -160,6 +160,37 @@ def _ogc_pages(url, cache, tag, force, max_pages=60):
                 break
 
 
+# NWIS SAYS `data_type_cd`; THE SUCCESSOR SAYS `computation_period_identifier`.
+#
+# `ogc_rows_from` adapts the OGC catalogue into the RDB row shape, and it adapted every field
+# except this one -- so `data_type_cd` was ABSENT on every row the successor produced. The
+# accumulator below reads it to split live series from daily ones, found neither `uv` nor `dv`,
+# and left `parms_uv` and `parms_dv` empty on all 3,930 sites. `written_parms` then reduced to
+# `parms & LEVEL_PARMS`, which is exactly what it did before the split was written.
+#
+# The split has therefore been inert since the day it was added, on the path that actually runs
+# -- OGC is tried first and NWIS is only the fallback. There was no symptom: the union it falls
+# back to still produces a valid-looking answer. Measured 2026-08-25 against the 17,579 cached
+# series rows for SC, GA, NC and TN.
+#
+# The period is the field that says what the CADENCE is, which is what `data_type_cd` means:
+#
+#   Points      2,952 rows   one value per reading      -> uv
+#   Daily       8,563 rows   Mean/Max/Min/Median/Tidal  -> dv
+#   Water Year  6,063 rows   "Max At Event Time"        -> pk
+#
+# `statistic_id` was the other candidate and it is worse: 19 rows are 00011 "Instantaneous" on a
+# DAILY period, so keying on the statistic would file a once-a-day value as a live feed.
+#
+# `pk` IS THE ONE WORTH NAMING. An annual flood peak is not a gauge, and 1,341 of the 3,786
+# sites that pass the level filter have NO live or daily level series -- only a Water Year peak.
+# That is the same trapdoor as counting `qw` grab samples as gauges, which this script fell
+# through once already. Nothing is changed about selection here, so this run stays byte-identical
+# to the last one on that question; the number is written down so the decision can be made on
+# purpose rather than by omission.
+OGC_PERIOD_TO_DATA_TYPE = {'Points': 'uv', 'Daily': 'dv', 'Water Year': 'pk'}
+
+
 def ogc_rows_from(locs, series):
     """(monitoring-locations features, time-series-metadata features) -> NWIS-shaped rows.
 
@@ -193,6 +224,10 @@ def ogc_rows_from(locs, series):
         end = str(p.get('end') or p.get('end_utc') or '').strip()
         r = dict(site)
         r['parm_cd'] = pc
+        # Unknown periods stay '' rather than guessing a cadence: the accumulator counts them in
+        # the `parms` union either way, and a wrong `uv` would put a dead series on a lake.
+        r['data_type_cd'] = OGC_PERIOD_TO_DATA_TYPE.get(
+            str(p.get('computation_period_identifier') or '').strip(), '')
         # `end_date` downstream is compared with `>` as a string, so an ISO timestamp has to be
         # cut to the date NWIS would have returned or the comparison stops meaning anything.
         r['end_date'] = end[:10]
