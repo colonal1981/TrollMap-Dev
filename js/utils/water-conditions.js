@@ -605,8 +605,9 @@ export function readConditions(j) {
   // Ryan, on forecast weather generally: "if there is a forecast that is going to drive a watch
   // or warning i am not going to plan to be on the water."
   //
-  // The Worker still fetches it on /conditions. That it reaches nothing is a real open item and
-  // is recorded as one; it is not fixed by pretending here.
+  // THE FETCH IS GONE TOO, as of 2026-08-25. A refusal written down here beside a live fetch in
+  // the Worker was money spent on a field with a standing decision never to look at it -- the
+  // same defect, one layer up. Worker/conditions.js carries the removal note.
 
   // ── ALMANAC ─────────────────────────────────────────────────────────────────────────────
   // CIVIL TWILIGHT, NOT SUNRISE. The fishing day starts when you can see to launch and ends

@@ -234,6 +234,7 @@ def main():
         return bool(v.get('usace') or v.get('tva') or v.get('pool'))
 
     total_bound = 0
+    total_dup = 0
     result = {}
     for op, cfg in OPERATORS.items():
         paths = sorted(glob.glob(os.path.join(a.pagesrc, cfg['files'])))
@@ -292,11 +293,34 @@ def main():
                 else:
                     why = 'only candidate inside the operator cluster'
                 pick = near[0]
-            result.setdefault(pick['slug'], {'operator': op, 'feed_name': fn, 'url': url, 'why': why})
+            # TWO FEED ROWS, ONE SLUG. `setdefault` kept whichever arrived first and said
+            # NOTHING, while the line below printed both rows as bound -- so a reader counting
+            # the output got one more binding than the file received, and which row won was
+            # decided by iteration order.
+            #
+            # Measured 2026-08-25: brookfield's "Calderwood" and "Cheoah" both landed on
+            # `calderwood_lake`, because Cheoah Lake is not in the index and its row matched the
+            # neighbouring slug on the same river. The block that stuck was Calderwood's, which
+            # is the right one -- by luck. This codebase has been bitten by whichever-arrived-
+            # last twice already (three elevation codes into one field; two USGS sites at one
+            # dam), and a coin flip that lands the right way up is still a coin flip.
+            #
+            # A slug already claimed is refused and SAID OUT LOUD, because the thing that made
+            # this invisible for a week was silence, not the collision.
+            if pick['slug'] in result:
+                held = result[pick['slug']]
+                print('    REFUSED  %-28s %s is already bound to this feed\'s row "%s"'
+                      % (fn, pick['slug'], held['feed_name']))
+                total_dup += 1
+                continue
+            result[pick['slug']] = {'operator': op, 'feed_name': fn, 'url': url, 'why': why}
             total_bound += 1
             print('    %-30s -> %-28s %9s ac   [%s]' % (fn, pick['slug'], format(pick['acres'], ',.0f'), why))
 
     print('\n%d slug(s) bound to an operator feed.' % total_bound)
+    if total_dup:
+        print('%d feed row(s) refused because another row already claimed the slug. A refused row'
+              ' is usually a water this registry does not offer.' % total_dup)
     if a.write:
         for slug, v in result.items():
             bindings.setdefault(slug, {'slug': slug})['operator'] = v

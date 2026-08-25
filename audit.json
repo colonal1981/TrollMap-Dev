@@ -981,7 +981,7 @@
     },
     "Worker/conditions.js": {
       "purpose": "Worker/conditions.js — one call that answers \"what is this water doing right now\".",
-      "lines": 4520,
+      "lines": 4515,
       "exports": [
         "obsBearing",
         "wwaText",
@@ -11828,7 +11828,7 @@
     },
     "js/utils/water-conditions.js": {
       "purpose": "ONE READ FOR THE STATE OF THE WATER.",
-      "lines": 802,
+      "lines": 803,
       "exports": [
         "cToF",
         "conditionsUrl",
@@ -12919,7 +12919,7 @@
     },
     "test/conditions-bindings.test.js": {
       "purpose": "Harness: exercise handleConditions with a stubbed R2 + stubbed upstreams.",
-      "lines": 416,
+      "lines": 419,
       "exports": [],
       "imports": [
         {
@@ -18315,7 +18315,7 @@
       "hits": 2,
       "files": [
         "Scripts/bind_operator_lakes.py:192",
-        "Worker/conditions.js:1518"
+        "Worker/conditions.js:1514"
       ],
       "side": [
         "pipeline",
@@ -18327,7 +18327,7 @@
       "hits": 2,
       "files": [
         "Scripts/bind_operator_lakes.py:194",
-        "Worker/conditions.js:1522"
+        "Worker/conditions.js:1518"
       ],
       "side": [
         "pipeline",
@@ -18463,12 +18463,11 @@
     },
     "mapservices.weather.noaa.gov": {
       "host": "mapservices.weather.noaa.gov",
-      "hits": 4,
+      "hits": 3,
       "files": [
         "Scripts/build_lake_drainage.py:152",
-        "Worker/conditions.js:307",
-        "Worker/conditions.js:403",
-        "Worker/conditions.js:511"
+        "Worker/conditions.js:399",
+        "Worker/conditions.js:507"
       ],
       "side": [
         "pipeline",
@@ -18506,7 +18505,7 @@
         "Scripts/capture_upstreams.py:368",
         "Scripts/capture_upstreams.py:382",
         "Scripts/capture_upstreams.py:383",
-        "Worker/conditions.js:1021",
+        "Worker/conditions.js:1017",
         "test/discover-authority.test.js:33"
       ],
       "side": [
@@ -18522,7 +18521,7 @@
         "Scripts/build_water_bindings.py:119",
         "Scripts/capture_upstreams.py:143",
         "Scripts/probe_cwms_catalog.py:80",
-        "Worker/conditions.js:1333"
+        "Worker/conditions.js:1329"
       ],
       "side": [
         "pipeline",
@@ -18537,7 +18536,7 @@
         "Scripts/capture_upstreams.py:120",
         "Scripts/capture_upstreams.py:366",
         "Scripts/capture_upstreams.py:386",
-        "Worker/conditions.js:4197",
+        "Worker/conditions.js:4193",
         "js/modules/tide-engine.js:22"
       ],
       "side": [
@@ -18556,8 +18555,8 @@
         "Scripts/capture_upstreams.py:367",
         "Scripts/capture_upstreams.py:379",
         "Scripts/capture_upstreams.py:384",
-        "Worker/conditions.js:2978",
-        "Worker/conditions.js:3686",
+        "Worker/conditions.js:2974",
+        "Worker/conditions.js:3682",
         "Worker/trollmap-worker.js:336",
         "Worker/trollmap-worker.js:1422",
         "Worker/worker-data.js:286",
@@ -18572,7 +18571,7 @@
       "host": "water.noaa.gov",
       "hits": 6,
       "files": [
-        "Scripts/build_water_bindings.py:609",
+        "Scripts/build_water_bindings.py:660",
         "Scripts/probe_nwps_bulk.py:28",
         "Scripts/probe_nwps_bulk.py:98",
         "Scripts/probe_nwps_bulk.py:426",
@@ -18648,7 +18647,7 @@
         "Scripts/capture_upstreams.py:152",
         "Scripts/pull_usgs_current_conditions.py:80",
         "Scripts/pull_usgs_dashboard.py:85",
-        "Worker/conditions.js:1145"
+        "Worker/conditions.js:1141"
       ],
       "side": [
         "pipeline",
@@ -18695,7 +18694,7 @@
         "Scripts/pull_usgs_dashboard.py:286",
         "test/arcgis-filter-guard.test.js:176",
         "test/conditions-bindings.test.js:238",
-        "test/conditions-bindings.test.js:345",
+        "test/conditions-bindings.test.js:348",
         "test/regulations-wiring.test.js:431",
         "test/regulations-wiring.test.js:458",
         "test/search-cascade.test.js:53",
@@ -18827,8 +18826,8 @@
       "host": "api.water.noaa.gov",
       "hits": 2,
       "files": [
-        "Worker/conditions.js:808",
-        "Worker/conditions.js:3586"
+        "Worker/conditions.js:804",
+        "Worker/conditions.js:3582"
       ],
       "side": [
         "worker"
@@ -18838,7 +18837,7 @@
       "host": "azapp-lakespublic-prd-001.azurewebsites.net",
       "hits": 2,
       "files": [
-        "Worker/conditions.js:1530",
+        "Worker/conditions.js:1526",
         "Worker/operators.js:327"
       ],
       "side": [
@@ -18849,7 +18848,7 @@
       "host": "publicservice.dominionenergyse.com",
       "hits": 1,
       "files": [
-        "Worker/conditions.js:1540"
+        "Worker/conditions.js:1536"
       ],
       "side": [
         "worker"
@@ -18859,10 +18858,10 @@
       "host": "api.hydro-derived.duke-energy.app",
       "hits": 6,
       "files": [
-        "Worker/conditions.js:1767",
-        "Worker/conditions.js:2374",
-        "Worker/conditions.js:2810",
-        "Worker/conditions.js:3949",
+        "Worker/conditions.js:1763",
+        "Worker/conditions.js:2370",
+        "Worker/conditions.js:2806",
+        "Worker/conditions.js:3945",
         "Worker/worker-data.js:463",
         "Worker/worker-data.js:597"
       ],
@@ -20272,7 +20271,7 @@
       "Scripts/build_water_features.py:100"
     ],
     "registry/gauge_overrides.json": [
-      "Scripts/build_water_bindings.py:1457"
+      "Scripts/build_water_bindings.py:1575"
     ],
     "registry/water_chain.json": [
       "Scripts/build_water_chain.py:67"
@@ -22547,7 +22546,7 @@
     {
       "name": "kmBetween",
       "at": [
-        "Worker/conditions.js:595",
+        "Worker/conditions.js:591",
         "js/utils/cameras.js:40"
       ]
     },

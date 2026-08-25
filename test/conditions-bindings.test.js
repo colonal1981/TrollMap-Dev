@@ -284,7 +284,10 @@ check('tidal false', r.water?.tidal === false, r.water?.tidal);
 check('tide null', r.tide === null, r.tide);
 check('no pending key (water is bound)', !('pending' in r), r.pending);
 check('water in sources[] ok', r.sources.find((s) => s.name === 'water')?.ok === true);
-check('dead neighbours still reported failed', r.sources.filter((s) => !s.ok).length === 5,
+// FOUR, NOT FIVE, SINCE 2026-08-25. The SPC convective fetch was removed -- a documented
+// refusal to render it sat next to a live request for it for weeks. One fewer dead upstream
+// here is the removal showing up where it should.
+check('dead neighbours still reported failed', r.sources.filter((s) => !s.ok).length === 4,
   r.sources.filter((s) => !s.ok).map((s) => s.name));
 
 console.log('\n== coast_pamlico_sound_nc (tide + currents + measured level) ==');

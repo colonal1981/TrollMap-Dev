@@ -80,7 +80,7 @@ const UA = 'TrollMap/1.0 (personal fishing app)';
 // same row. `tide` is six hours because a high-water time is astronomy — it was correct last
 // week and will be correct next week. `level` is a MEASURED water level, which is weather.
 const TTL = {
-  usno: 6 * 3600, point: 1800, spc: 900, wwa: 300, nwm: 900,
+  usno: 6 * 3600, point: 1800, wwa: 300, nwm: 900,
   bindings: 3600, gauge: 900, tide: 6 * 3600, level: 600,
 };
 
@@ -294,32 +294,28 @@ async function pointForecast(lat, lon) {
   };
 }
 
-// ── convective outlook ──────────────────────────────────────────────────────────────────────
-
-/**
- * SPC Day 1 categorical outlook, filtered to a point.
- *
- * This is the lightning answer, and on an SC afternoon it is a safety field rather than a
- * fishing one. NOAA ships the render colours with the risk categories, so anything drawn from
- * this matches SPC's own map instead of inventing a scale.
- */
-async function convective(lat, lon) {
-  const url = 'https://mapservices.weather.noaa.gov/vector/rest/services/outlooks/'
-            + 'SPC_wx_outlks/MapServer/1/query'
-            + `?geometry=${lon},${lat}&geometryType=esriGeometryPoint&inSR=4326`
-            + '&spatialRel=esriSpatialRelIntersects&outFields=*&returnGeometry=false&f=json';
-  const j = await cached(`spc:${lat.toFixed(2)},${lon.toFixed(2)}`, TTL.spc, () => getJson(url));
-  const feats = (j && j.features) || [];
-  if (!feats.length) return { risk: null, label: 'no categorical risk area over this point' };
-  const a = feats[0].attributes || {};
-  return {
-    risk: a.label || a.LABEL || null,
-    label: a.label2 || a.LABEL2 || null,
-    valid: a.valid || a.VALID || null,
-    expire: a.expire || a.EXPIRE || null,
-    stroke: a.stroke || null, fill: a.fill || null,
-  };
-}
+// ── the SPC convective outlook, and why it is not here ──────────────────────────────────────
+//
+// REMOVED 2026-08-25, by Ryan's call: "remove the convective fetch unless you can give me a use
+// case for it being added to somewhere." There isn't one, and this note exists so the next
+// reader does not helpfully add it back.
+//
+// It was fetched on every /conditions request from the day it was written and read by nobody.
+// The client-side refusal was written down first, in js/utils/water-conditions.js, and a
+// documented refusal sitting next to a live fetch is the exact defect this project keeps
+// finding -- money spent on a field with a standing decision never to look at it.
+//
+// IT IS ALSO THE WRONG INSTRUMENT. The Day 1 CATEGORICAL outlook grades SEVERE risk --
+// Thunderstorm, Marginal, Slight, Enhanced, Moderate, High -- over a broad area, once or twice a
+// day. Only the first category means "storms expected" at all, and the absence of a polygon does
+// NOT mean no lightning. Two sharper answers for the same question are already wired: the hourly
+// forecast's thunder flag, which is per-hour and per-lake and drives the strongest cue in the
+// plan, and the live WWA poll, which escalates a thunderstorm Special Weather Statement to a
+// stop and reaches the phone while Ryan is on the water.
+//
+// A REAL LIGHTNING FEED IS STILL OPEN. The GLM (Geostationary Lightning Mapper) probe Ryan ran
+// on 2026-08-25 came back 403 from nowCOAST, which retired that path in April 2023. Strike data
+// is worth having; the SPC outlook was never it.
 
 // ── active watches, warnings and advisories ─────────────────────────────────────────────────
 
@@ -4446,7 +4442,6 @@ export async function handleConditions(request, env, url) {
   const jobs = [
     ['almanac', skyAlmanac(lat, lon, date, tz)],
     ['forecast', pointForecast(lat, lon)],
-    ['convective', convective(lat, lon)],
     ['hazards', hazards(lat, lon)],
     ['rivers', rivers(lat, lon, Number(url.searchParams.get('box')))],
     ['water', bindingsP.then(({ all, err }) => {
