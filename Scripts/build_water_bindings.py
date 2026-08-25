@@ -2009,7 +2009,9 @@ def main():
     # So: carry forward, per slug, any key in FOREIGN_KEYS that this script did not compute, and
     # SAY HOW MANY. Silence is how it went unnoticed for nine days. A slug that no longer exists
     # drops its block with it, which is correct -- the binding was about that water.
-    FOREIGN_KEYS = ('operator',)
+    # `ndbc` joined this list on 2026-08-25, the day it was created, rather than nine days
+    # later after a rebind quietly ate it. That is the whole lesson of the operator block.
+    FOREIGN_KEYS = ('operator', 'ndbc')
     carried = 0
     if os.path.exists(out):
         try:
