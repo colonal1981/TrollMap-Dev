@@ -1489,11 +1489,16 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
                     # number is kept rather than dropped -- so nothing is lost, it is reordered.
                     if (pool is None and g_pool_grade and hit is not tail
                             and not str(hit.get('usgs_site_type') or '').startswith(('LK', 'ES'))):
-                        hit.setdefault('usgs_also', []).append(hit['usgs_site'])
+                        # The displaced number, once. Its own catalogue row arrives later,
+                        # finds this record holding a DIFFERENT site now, and lands in the
+                        # branch below -- which would append it a second time.
+                        if hit['usgs_site'] not in (hit.get('usgs_also') or []):
+                            hit.setdefault('usgs_also', []).append(hit['usgs_site'])
                         _take_catalogue(hit)
                         tally['usgs_lake_site_outranked_stream'] += 1
                         continue
-                    hit.setdefault('usgs_also', []).append(g['site'])
+                    if g['site'] not in (hit.get('usgs_also') or []):
+                        hit.setdefault('usgs_also', []).append(g['site'])
                     tally['usgs_second_site_at_same_spot'] += 1
                     continue
                 _take_catalogue(hit)
