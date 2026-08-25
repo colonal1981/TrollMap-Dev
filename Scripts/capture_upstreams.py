@@ -132,11 +132,33 @@ COMPLETIONS = [
      'https://www.tva.com/RestApi/locations?format=json',
      'the base 404s; ?format=json or ServiceStack serves an HTML snapshot page',
      ('/RestApi/',)),
+    # THE TIMESERIES RESPONSE, NOT THE CATALOGUE. Both `usaceRelease` and the level readers build
+    # their URLs from the bare `CWMS` constant at call time, so the scan finds one base literal
+    # and gets one request out of it -- and the catalogue's field set is already captured in
+    # `_captures/cwms-data..._catalog_TIMESERIES...json`, while the DATA envelope's is not.
+    # That envelope is where the trap lives: it carries `value-columns`, `quality-code`, and a
+    # `units` that DISAGREES WITH THE CATALOGUE'S for the same series -- "m" there, "ft" here,
+    # verified live 2026-08-25. An auditor that has never seen it cannot report on it.
     ('cwms-data.usace.army.mil/cwms-data',
-     'https://cwms-data.usace.army.mil/cwms-data/catalog/TIMESERIES?office=${office}'
-     '&page-size=50',
-     'the base returns a 544-byte stub; the catalogue is the thing worth auditing',
-     ('/cwms-data/',)),
+     'https://cwms-data.usace.army.mil/cwms-data/timeseries'
+     '?name=Hartwell.Elev-Pool.Inst.1Hour.0.Raw-SHEF_SAS&office=SAS',
+     'NO unit= on purpose: the catalogue says "m" and this endpoint says "ft" for the SAME '
+     'series, and converting on the catalogue would report 2,138 ft for a lake at 651.59',
+     ('/timeseries',)),
+    # The National Water Dashboard's OData service. `dashboardUrl` builds the $filter from the
+    # binding's own site numbers, so the literal in the source is a bare collection URL that
+    # returns the whole national feed or an error depending on the day.
+    ('dashboard.waterdata.usgs.gov/service/cwis/1.0/odata/CurrentConditions',
+     "https://dashboard.waterdata.usgs.gov/service/cwis/1.0/odata/CurrentConditions"
+     "?%24filter=(AccessLevelCode%20eq%20'P')%20and%20(SiteNumber%20in('02168500'%2C'02175148'))"
+     '&%24select=SiteNumber%2CParameterCode%2CTimeLocal%2CTimeZoneCode%2CValue%2CValueFlagCode'
+     '%2CRateOfChangeUnitPerHour%2CFloodStageStatusCode&%24top=500&caller=TrollMap%20personal%20use',
+     'verified live 2026-08-25: the SiteNumber filter answers. Bounded to two bound sites so '
+     'the sweep stays small -- unfiltered this collection is the whole country',
+     # ONE required token, not two. `any(tok not in u)` with both spellings would fire on a URL
+     # that already carries %24filter, overwriting a complete request -- which is the exact case
+     # this file's self-test was written to catch.
+     ('%24filter',)),
 ]
 
 
