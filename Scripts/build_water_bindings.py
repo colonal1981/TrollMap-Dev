@@ -551,30 +551,81 @@ def load_boundary(path):
         return None
     pts = [pt for poly in polys for ring in poly for pt in ring]
     step = max(1, len(pts) // VERTEX_SAMPLE_CAP)
-    return polys, pts[::step]
+    # Flattened to plain (x, y) pairs ONCE, here, instead of by a generator expression inside
+    # the distance loop. GeoJSON positions are allowed a third element and that genexpr was the
+    # only thing coping with it; doing it at load costs one pass and saved 25,007,359 of them.
+    verts = [(q[0], q[1]) for q in pts[::step]]
+    return [_Poly(poly) for poly in polys if poly and poly[0]], verts
+
+
+class _Poly:
+    """An outer ring, its holes, and the boxes that let a ray cast refuse to run.
+
+    THE RAY CAST WALKED EVERY VERTEX OF EVERY RING FOR EVERY SITE. Profiled 2026-08-25 over a
+    full bind: `_in_ring` burned 19.4 of 33 seconds in SELF time across 35,549 calls, because a
+    gauge 200 km from a lake was tested against that lake's full-resolution shoreline exactly
+    the way a gauge floating in the middle of it was. Almost every call was a walk to `False`.
+
+    A bounding box settles those in four comparisons, and it is not an approximation: a point
+    outside a ring's box is outside the ring, always. Same answer, same code path for anything
+    that actually lands near the water.
+
+    Built once at load, because the geometry does not change and the sites do.
+    """
+    __slots__ = ('outer', 'holes', 'w', 's', 'e', 'n', 'hbox')
+
+    def __init__(self, rings):
+        self.outer = rings[0]
+        self.holes = rings[1:]
+        self.w = min(q[0] for q in self.outer)
+        self.e = max(q[0] for q in self.outer)
+        self.s = min(q[1] for q in self.outer)
+        self.n = max(q[1] for q in self.outer)
+        self.hbox = [(min(q[0] for q in h), min(q[1] for q in h),
+                      max(q[0] for q in h), max(q[1] for q in h)) for h in self.holes]
 
 
 def km_to_shore(lon, lat, verts):
-    """Great-circle-ish km to the nearest sampled shoreline vertex."""
+    """Great-circle-ish km to the nearest sampled shoreline vertex.
+
+    SQUARED DISTANCES WHILE SCANNING, ONE hypot ON THE WINNER. Ordering by d^2 is the same
+    ordering as by d, so the vertex that wins is the vertex that used to win -- and the number
+    returned is then computed by the ORIGINAL expression on that same vertex, so this reports
+    the same float it always did. 25,070,396 hypot calls became one per site.
+    """
     best = float('inf')
+    bvx = bvy = None
     cos = math.cos(math.radians(lat))
-    for vx, vy in ((p[0], p[1]) for p in verts):
-        d = math.hypot((vx - lon) * 111.32 * cos, (vy - lat) * 110.57)
+    kx = 111.32 * cos
+    for vx, vy in verts:
+        dx = (vx - lon) * kx
+        dy = (vy - lat) * 110.57
+        d = dx * dx + dy * dy
         if d < best:
             best = d
-            if best < 0.05:
+            bvx, bvy = vx, vy
+            if best < 0.0025:                       # 0.05 km, squared
                 break
-    return best
+    if bvx is None:
+        return float('inf')
+    return math.hypot((bvx - lon) * 111.32 * cos, (bvy - lat) * 110.57)
 
 
 def point_in_polys(lon, lat, polys):
-    """Ray casting, outer ring minus holes."""
+    """Ray casting, outer ring minus holes, with a box in front of every ring."""
     for poly in polys:
-        if not poly:
+        if lon < poly.w or lon > poly.e or lat < poly.s or lat > poly.n:
             continue
-        if not _in_ring(lon, lat, poly[0]):
+        if not _in_ring(lon, lat, poly.outer):
             continue
-        if any(_in_ring(lon, lat, h) for h in poly[1:]):
+        hole = False
+        for hb, h in zip(poly.hbox, poly.holes):
+            if lon < hb[0] or lon > hb[2] or lat < hb[1] or lat > hb[3]:
+                continue
+            if _in_ring(lon, lat, h):
+                hole = True
+                break
+        if hole:
             continue                                # in a hole -> not in the water
         return True
     return False
@@ -1315,6 +1366,12 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
                     return e
             return None
 
+        def _by_site(site, _p=placed):
+            for e in _p:
+                if e.get('usgs_site') == site:
+                    return e
+            return None
+
         # ORDER DECIDES WHO BECOMES `pool`, SO IT MUST NOT BE CELL-ITERATION ORDER. Table Rock
         # has two sites 350 m apart -- the reservoir (LK, stage) and its TAILRACE (ST) -- and
         # whichever arrived first took the slot. Sort by evidence instead: a lake site reporting
@@ -1358,6 +1415,34 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
             # installation carrying two agency records; a tailrace 350 m below the dam is a
             # second, different measurement and belongs in `tailwater`, not folded into pool.
             g_tail = bool(TAILWATER_RE.search(gname))
+
+            # THE SAME SITE, ARRIVING BY THE SECOND ROUTE, IS NOT A SECOND SITE.
+            #
+            # `nwps_roster` carries `usgs_site` straight off the bulk CSV, so a record can
+            # already know its own site number by the time the USGS catalogue reaches it. Both
+            # paths below then read that as a DIFFERENT gauge and threw the catalogue away:
+            #
+            #   - colocated: filed the site under `usgs_also` -- 248 of 306 `usgs_also` entries
+            #     on the 2026-08-25 rebind named the entry's OWN site -- and `continue`d past
+            #     the line that records what it publishes.
+            #   - a tailrace whose slot was already filled: `tail = entry if tail is None else
+            #     tail` kept the NWPS record and dropped the USGS entry on the floor. That is
+            #     why MURS1 came back with site 02168504 and no parameter list, on the one
+            #     water where the parameter list is the whole point.
+            #
+            # Bound sites carrying a parm list: 760 of 760 before the rebind, 503 of 801 after.
+            # WHAT A SITE PUBLISHES IS KNOWN ONLY TO THE CATALOGUE, and it is what lets the
+            # Worker skip a per-site catalogue request and rank which four sites to ask.
+            same = _by_site(g['site'])
+            if same is not None:
+                same['usgs_name'] = gname
+                same['usgs_parms'] = g_level
+                if g_hist:
+                    same['usgs_parms_dv'] = g_hist
+                same['usgs_site_type'] = g['site_type']
+                tally['usgs_catalogue_merged_by_site'] += 1
+                continue
+
             hit = None if g_tail else _colocated(glon, glat)
             if hit is not None:
                 if hit.get('usgs_site'):
@@ -1365,6 +1450,7 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
                     # colocation radius, and the second one silently replacing the first put
                     # Table Rock's tailrace site number on a record still named for the
                     # reservoir -- a row that reads as one gauge and cites another.
+                    #
                     hit.setdefault('usgs_also', []).append(g['site'])
                     tally['usgs_second_site_at_same_spot'] += 1
                     continue
