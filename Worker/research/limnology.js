@@ -147,8 +147,22 @@ async function handleResearchLimnologyData(request, env, opts = {}) {
   const iResultDepth = col('resultdepthheightmeasure/measurevalue');
   const iResultDepthU = col('resultdepthheightmeasure/measureunitcode');
   const iDate = col('activitystartdate');
-  const iProject = col('projectname');
-  const iLoc = col('monitoringlocationname');
+  // `programs` HAS BEEN AN EMPTY ARRAY SINCE IT WAS WRITTEN.
+  //
+  // `col()` is a case-insensitive SUBSTRING match against the header row, and the resultPhysChem
+  // profile has no column containing "projectname" -- it has `ProjectIdentifier`. So iProject was
+  // -1, `cols[-1]` is undefined in JavaScript rather than an error, `project` was '' on every
+  // record, and `.filter(Boolean)` then emptied both `programs` lists. The surfaceWater block has
+  // been reporting "no monitoring programs" for every lake in the app.
+  //
+  // ProjectIdentifier is a code like `SC-DES-AMB`; OrganizationFormalName is the readable name of
+  // whoever runs it. Take the code when there is one and the organisation when there is not,
+  // matching how depth already falls back from ActivityDepth to ResultDepth two lines below.
+  //
+  // Found 2026-08-25 by audit_upstream_fields.py, once it was taught that a column can be looked
+  // up by name instead of reached by one.
+  const iProject = col('projectidentifier');
+  const iOrg = col('organizationformalname');
 
   const records = [];
   for (let i = 1; i < lines.length; i++) {
@@ -160,8 +174,7 @@ async function handleResearchLimnologyData(request, env, opts = {}) {
     const depRaw = cols[iDepth] || cols[iResultDepth] || '';
     const depUnit = cols[iDepthU] || cols[iResultDepthU] || '';
     const date = cols[iDate] || '';
-    const project = cols[iProject] || '';
-    const location = cols[iLoc] || '';
+    const project = cols[iProject] || cols[iOrg] || '';
     const val = parseFloat(valRaw);
     if (isNaN(val)) continue;
     let dep = parseFloat(depRaw);
@@ -189,7 +202,10 @@ async function handleResearchLimnologyData(request, env, opts = {}) {
       outUnit = 'deg F';
     }
     const month = date ? parseInt(date.split('-')[1], 10) : null;
-    records.push({ type, value: Math.round(value * 100) / 100, unit: outUnit, depthFt, month, date, project, location });
+    // `location` was captured here from a column lookup that never resolved either, and nothing
+    // has ever read it. Removed rather than repaired: an unread field on every record is how the
+    // next person loses ten minutes deciding whether it matters.
+    records.push({ type, value: Math.round(value * 100) / 100, unit: outUnit, depthFt, month, date, project });
   }
 
   if (records.length === 0) {

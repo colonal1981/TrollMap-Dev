@@ -206,8 +206,51 @@ def load_capture(path):
     return out, 'json'
 
 
+DECISIONS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              'upstream_field_decisions.json')
+
+
+def load_decisions(path=None):
+    """WHY A FIELD IS NOT READ, written down so it is decided once instead of every run.
+
+    Ryan, 2026-08-24: *"i have asked this same question about 50 times... and get assured that
+    we have everything useful but every time i look somewhere i found more stuff."*
+
+    The first version of this report answered that with a 186-line NOT-FOUND list. A list that
+    long gets re-judged from scratch on every run, which means it gets skimmed, which means a
+    real finding sits in it indefinitely wearing the same clothes as thirty serialisation
+    artefacts. So: a name with a recorded decision is still counted and still shown, but under
+    DECIDED. NEW then means what it says -- this upstream is sending something nobody has looked
+    at yet -- and NEW is the number worth reading.
+
+    A decision is a claim, not a dismissal. `why` has to say what question the field would have
+    answered, so the next person can disagree with a specific sentence.
+    """
+    p = path or DECISIONS_FILE
+    try:
+        with open(p, encoding='utf-8') as fh:
+            raw = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return {k: v for k, v in raw.items() if not k.startswith('_')}
+
+
+def capture_host(filename):
+    """`api.water.noaa.gov_nwps_v1_gauges_ERJS1.json` -> `api.water.noaa.gov`.
+
+    capture_upstreams.py writes every file host-first and a host never contains an underscore,
+    so the first segment is the host and it stays stable while the path after it does not.
+    """
+    return os.path.basename(filename).split('_')[0]
+
+
+def decision_for(decisions, host, key):
+    """Host-specific first, then a `*::` rule that applies to every upstream."""
+    return decisions.get('%s::%s' % (host, key)) or decisions.get('*::%s' % key)
+
+
 def index_repo(repo, extra_skip=None):
-    """One pass over the repo. Returns (blob_by_file, dynamic_files)."""
+    """One pass over the repo. Returns (blob_by_file, dynamic_files, lower_by_file)."""
     blobs, dyn = {}, []
     skip = set(SKIP_DIRS) | set(extra_skip or ())
     for root, dirs, files in os.walk(repo):
@@ -223,10 +266,10 @@ def index_repo(repo, extra_skip=None):
             blobs[os.path.relpath(p, repo)] = t
             if DYNAMIC.search(t):
                 dyn.append(os.path.relpath(p, repo))
-    return blobs, dyn
+    return blobs, dyn, {k: v.lower() for k, v in blobs.items()}
 
 
-def readers_of(key, blobs, limit=4):
+def readers_of(key, blobs, limit=4, lower=None):
     """(read_in, mentioned_in) -- and the difference between them is the whole point.
 
     READ means the code performs a PROPERTY ACCESS on that name: `row.ParameterUnit` or
@@ -237,7 +280,9 @@ def readers_of(key, blobs, limit=4):
     that the response is read.
     """
     access = [re.compile(r'\.%s\b%s' % (re.escape(key), NOT_ASSIGNED)),
-              re.compile(r'''\[\s*['"]%s['"]\s*\]%s''' % (re.escape(key), NOT_ASSIGNED)),
+              # `(?<=[\w)\]])` keeps `row['Foo']` and drops `['Foo']` -- an array literal of
+              # field names is a list we wrote, not a value we read off a response.
+              re.compile(r'''(?<=[\w)\]])\[\s*['"]%s['"]\s*\]%s''' % (re.escape(key), NOT_ASSIGNED)),
               # destructuring: const { ParameterUnit, Value } = row
               re.compile(r'\{[^{}\n]*\b%s\b[^{}\n]*\}\s*=' % re.escape(key)),
               # PYTHON READS A DICT BY NAME, NOT BY DOT. `t.get('TopOfGatesFt')` is every bit a
@@ -246,10 +291,29 @@ def readers_of(key, blobs, limit=4):
               # of them into a `tva{}` block on 13 waters. The pipeline is written in Python; an
               # auditor that only understands JavaScript syntax is half an auditor.
               re.compile(r'''\.get\(\s*['"]%s['"]''' % re.escape(key)),
-              re.compile(r'''\.pop\(\s*['"]%s['"]''' % re.escape(key))]
+              re.compile(r'''\.pop\(\s*['"]%s['"]''' % re.escape(key)),
+              # A COLUMN IS OFTEN LOOKED UP BY NAME, NOT REACHED BY ONE.
+              #
+              # Worker/research/limnology.js resolves every WQP column through
+              # `col('characteristicname')`, a case-insensitive substring match against the
+              # header row. Eight columns it reads on every limnology request were reported
+              # NOT FOUND -- CharacteristicName and ResultMeasureValue among them -- because
+              # the name never appears as a property access anywhere.
+              #
+              # The rule that keeps this from re-admitting the $select false positive: the key
+              # must be the WHOLE quoted string AND that string must be a call argument. A
+              # request list is 'AgencyCode,RateOfChangeUnitPerHour' -- one quoted string
+              # holding many names -- so no single name is ever the whole of it. Case-
+              # insensitive, because a header lookup lower-cases both sides.
+              re.compile(r'''\(\s*['"]%s['"]\s*[,)]''' % re.escape(key), re.I)]
     read, mentioned = [], []
+    # The cheap reject has to be CASE-INSENSITIVE or the column-lookup pattern above can never
+    # fire: `col('characteristicname')` does not contain the string `CharacteristicName`. The
+    # lower-cased index is built once per run in index_repo rather than per key, because doing
+    # it here would lower-case the whole repo 455 times.
+    kl = key.lower()
     for rel, t in blobs.items():
-        if key not in t:
+        if kl not in (lower.get(rel, '') if lower else t.lower()):
             continue
         if any(p.search(t) for p in access):
             read.append(rel)
@@ -300,6 +364,15 @@ def self_test():
     check('destructured read found', readers_of('LatencyMinutes', blobs)[0], ['Worker/z.js'])
     # THE BUG THE FIRST REAL RUN FOUND: a field listed in our own request string is not read.
     check('request-string name is NOT read', readers_of('RateOfChangeUnitPerHour', blobs)[0], [])
+    colb = {'lim.js': "const iChar = col('characteristicname');",
+            'sel.py': "SELECT = 'CharacteristicName,ResultMeasureValue'",
+            'arr.js': "const KEYS = ['CharacteristicName'];"}
+    check('a lower-cased column lookup is a read',
+          readers_of('CharacteristicName', colb)[0], ['lim.js'])
+    check('a name inside a comma list is still not a read',
+          readers_of('ResultMeasureValue', colb)[0], [])
+    check('a name in an ARRAY literal is not a call argument',
+          readers_of('CharacteristicName', {'arr.js': colb['arr.js']})[0], [])
     pyb = {'build.py': "entry['tva'] = {'top': t.get('TopOfGatesFt'), 'rm': t.get('RiverMile')}"}
     check('python .get() counts as a read', readers_of('TopOfGatesFt', pyb)[0], ['build.py'])
     check('python .get() on a second key too', readers_of('RiverMile', pyb)[0], ['build.py'])
@@ -327,6 +400,29 @@ def self_test():
     check('arr[i] no longer counts as dynamic', bool(DYNAMIC.search('a = arr[i];')), False)
     check('Object.keys still counts', bool(DYNAMIC.search('Object.keys(o)')), True)
     check('generic guard holds a common name', 'value' in GENERIC, True)
+    check('host comes off the capture filename',
+          capture_host('api.water.noaa.gov_nwps_v1_gauges_ERJS1.json'), 'api.water.noaa.gov')
+    check('host survives a query-string filename',
+          capture_host('waterservices.usgs.gov_nwis_iv__sites02175148parameterCd.json'),
+          'waterservices.usgs.gov')
+    dec = {'a.gov::Foo': {'verdict': 'declined'}, '*::Bar': {'verdict': 'envelope'}}
+    check('host-specific decision found', decision_for(dec, 'a.gov', 'Foo')['verdict'], 'declined')
+    check('a decision for one host does not cover another',
+          decision_for(dec, 'b.gov', 'Foo'), None)
+    check('a *:: decision covers every host', decision_for(dec, 'b.gov', 'Bar')['verdict'],
+          'envelope')
+    check('an undecided key stays undecided', decision_for(dec, 'a.gov', 'Baz'), None)
+    # The registry ships with this script and is the reason the NEW column can be trusted; a
+    # typo in it fails silently as "nothing is decided", which reads as a pile of new findings.
+    shipped = load_decisions()
+    check('the shipped registry parses and is not empty', len(shipped) > 0, True)
+    check('every shipped decision states a reason',
+          sorted(k for k, v in shipped.items() if not v.get('why')), [])
+    check('every shipped decision uses a known verdict',
+          sorted({v.get('verdict') for v in shipped.values()}
+                 - {'declined', 'envelope', 'wired-elsewhere'}), [])
+    check('every shipped key is host-scoped',
+          sorted(k for k in shipped if '::' not in k), [])
     print('\n%s' % ('SELF-TEST PASSED' if ok else 'SELF-TEST FAILED'))
     return 0 if ok else 1
 
@@ -340,6 +436,10 @@ def main():
     ap.add_argument('--out', default=None, help='report path (default: beside the repo)')
     ap.add_argument('--exclude', action='append', default=[],
                     help='extra directory name to skip (test/ is skipped already)')
+    ap.add_argument('--decisions', default=None,
+                    help='field-decision registry (default: scripts/upstream_field_decisions.json)')
+    ap.add_argument('--show-decided', action='store_true',
+                    help='list the already-judged NOT-FOUND keys as well as the new ones')
     ap.add_argument('--self-test', action='store_true')
     a = ap.parse_args()
     if a.self_test:
@@ -362,8 +462,10 @@ def main():
         print('FATAL: --repo %s is not a folder.' % a.repo)
         return 2
 
+    decisions = load_decisions(a.decisions)
+    print('%d recorded field decisions' % len(decisions))
     print('indexing %s ...' % os.path.abspath(a.repo))
-    blobs, dyn = index_repo(a.repo, a.exclude)
+    blobs, dyn, lower = index_repo(a.repo, a.exclude)
     print('  %d source files, %d of them use dynamic property access\n' % (len(blobs), len(dyn)))
 
     report = {'_note': 'Keys an upstream sent that nothing in the repo reads. A grep knows names, '
@@ -385,7 +487,7 @@ def main():
             if k.lower() in GENERIC or len(k) < 3:
                 ambig.append((k, rec['n'], rec['sample']))
                 continue
-            r, m = readers_of(k, blobs)
+            r, m = readers_of(k, blobs, lower=lower)
             if r:
                 read.append((k, rec['n'], rec['sample'], r))
             elif m:
@@ -394,9 +496,21 @@ def main():
                 unread.append((k, rec['n'], rec['sample'], []))
         for L in (read, ment, unread):
             L.sort(key=lambda x: -x[1])
+        # A name with a recorded decision is still not read -- it is not read ON PURPOSE, and
+        # saying which is the difference between a report and a list.
+        host = capture_host(cap)
+        decided, fresh = [], []
+        for row in unread:
+            d = decision_for(decisions, host, row[0])
+            if d:
+                decided.append(row + (d,))
+            else:
+                fresh.append(row)
         grand['read'] += len(read)
         grand['mentioned'] += len(ment)
         grand['unread'] += len(unread)
+        grand['decided'] += len(decided)
+        grand['new'] += len(fresh)
         grand['ambiguous'] += len(ambig)
 
         def dump(title, rows):
@@ -409,15 +523,27 @@ def main():
                 w = ('  <- %s' % ', '.join(where[:2])) if where else ''
                 print('      %-32s x%-5d%s%s' % (k, n, ex, w))
 
+        def dump_decided(rows):
+            if not rows:
+                return
+            print('    --- ALREADY JUDGED (%d) ---' % len(rows))
+            for k, n, sv, where, d in rows:
+                print('      %-32s %-15s %s' % (k, d.get('verdict', '?'), d.get('why', '')[:78]))
+
         print('=== %s  (%s, %d distinct keys)' % (os.path.basename(cap), kind, len(keys)))
-        print('    READ %d   MENTIONED-ONLY %d   NOT FOUND %d   AMBIGUOUS %d'
-              % (len(read), len(ment), len(unread), len(ambig)))
-        dump('NOT FOUND ANYWHERE IN THE REPO', unread)
+        print('    READ %d   MENTIONED-ONLY %d   NOT FOUND %d (%d NEW)   AMBIGUOUS %d'
+              % (len(read), len(ment), len(unread), len(fresh), len(ambig)))
+        dump('NOT FOUND AND NOT YET JUDGED', fresh)
+        if a.show_decided:
+            dump_decided(decided)
         dump('MENTIONED BUT NEVER READ AS A PROPERTY', ment)
         print()
         report['captures'][os.path.basename(cap)] = {
             'kind': kind, 'distinct_keys': len(keys),
-            'not_found': [{'key': k, 'occurrences': n, 'sample': s} for k, n, s, _ in unread],
+            'not_found': [{'key': k, 'occurrences': n, 'sample': s} for k, n, s, _ in fresh],
+            'decided': [{'key': k, 'occurrences': n, 'verdict': d.get('verdict'),
+                         'why': d.get('why'), 'when': d.get('when')}
+                        for k, n, s, _, d in decided],
             'mentioned_only': [{'key': k, 'occurrences': n, 'files': w}
                                for k, n, s, w in ment],
             'read': [{'key': k, 'occurrences': n, 'readers': w} for k, n, s, w in read],
@@ -425,6 +551,11 @@ def main():
 
     print('TOTAL   read %d   mentioned-only %d   not found %d   ambiguous %d'
           % (grand['read'], grand['mentioned'], grand['unread'], grand['ambiguous']))
+    print('        of the not-found: %d already judged, %d NEW.'
+          % (grand['decided'], grand['new']))
+    print('NEW is the number to read. A judged key is still not read -- it is not read on')
+    print('purpose, and %s says whose purpose and why.'
+          % os.path.basename(a.decisions or DECISIONS_FILE))
     print('\nMENTIONED-ONLY is the interesting column: the name occurs in the repo but nothing')
     print('performs a property access on it. A field named in our own request string and never')
     print('read off the response lands here -- that is data we ask for and throw away.')
