@@ -581,12 +581,26 @@ export function readConditions(j) {
     out.hazardsAllClear = hz.all_clear === true;
   }
 
-  // SPC Day 1 categorical outlook. A forecast, unambiguously, and the lightning answer.
-  const cv = j.convective || null;
-  if (cv && (cv.risk || cv.label)) {
-    out.convective = { risk: cv.risk || null, label: cv.label || null,
-                       valid: cv.valid || null, expire: cv.expire || null };
-  }
+  // THE SPC CONVECTIVE OUTLOOK IS DELIBERATELY NOT MAPPED, and this note is here so the next
+  // reader does not "fix" that.
+  //
+  // It was mapped for about an hour on 2026-08-25 and nothing read it, which is the same defect
+  // this file was caught committing against `hazards` -- a field carried one layer further and
+  // still consumed by nobody. Moving a corpse is not burying it.
+  //
+  // It is also the wrong instrument. The Day 1 CATEGORICAL outlook grades SEVERE risk --
+  // Thunderstorm, Marginal, Slight, Enhanced, Moderate, High -- over a broad area, once or twice
+  // a day. Only the first category means "storms expected" at all, and no polygon does NOT mean
+  // no lightning. This app already holds two sharper answers for the same question: the hourly
+  // forecast's thunder flag, which is per-hour and per-lake and already drives the strongest cue
+  // in the plan, and the live WWA poll, which now escalates a thunderstorm Special Weather
+  // Statement to a stop. SPC sits between them and is coarser than both.
+  //
+  // Ryan, on forecast weather generally: "if there is a forecast that is going to drive a watch
+  // or warning i am not going to plan to be on the water."
+  //
+  // The Worker still fetches it on /conditions. That it reaches nothing is a real open item and
+  // is recorded as one; it is not fixed by pretending here.
 
   // ── ALMANAC ─────────────────────────────────────────────────────────────────────────────
   // CIVIL TWILIGHT, NOT SUNRISE. The fishing day starts when you can see to launch and ends

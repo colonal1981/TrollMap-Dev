@@ -317,10 +317,8 @@ export async function fetchWaterState(lakeName, dateStr, o = {}) {
   // everything else.
   const hazards = (c && Array.isArray(c.hazards) && c.hazards.length) ? c.hazards : null;
   const allClear = c && c.hazardsAllClear === true;
-  const convective = (c && c.convective) || null;
-
-  if (!river && !tidal && !hazards && !convective) return null;
-  return { featureType, river, tidal, hazards, hazardsAllClear: allClear, convective };
+  if (!river && !tidal && !hazards) return null;
+  return { featureType, river, tidal, hazards, hazardsAllClear: allClear };
 }
 
 function round1(v) {
