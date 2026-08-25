@@ -5,7 +5,8 @@
 // series for one lake and exactly one of them is "how high is the water".
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pickElevSeries, cwmsToFeet, cwmsPoolElevation } from '../Worker/conditions.js';
+import { pickElevSeries, pickCwmsSeries, cwmsToFeet, cwmsToCfs, usaceRelease,
+         releaseShape } from '../Worker/conditions.js';
 
 const e = (name, interval, latest) => ({
   office: 'SAS', name, units: 'm', interval, 'interval-offset': 0, 'time-zone': 'US/Central',
@@ -193,18 +194,18 @@ test('a malformed envelope is null rather than half-parsed', () => {
 });
 
 
-// ── the fetch that was never wired ──────────────────────────────────────────────────────────
-//
-// pickElevSeries, parseCwmsTimeseries and cwmsLevel were written on 2026-08-16 and tested right
-// here, and NOTHING EVER CALLED THEM. The CWMS reader that WAS wired lived in worker-data.js and
-// asked for `Hartwell.Elev.Inst.0.0.USACE-RAW` on office `SA` in feet -- wrong parameter, wrong
-// interval, wrong version, wrong office, wrong unit. It returned nothing on every call, and the
-// /lakes route fell through to scraping a district web page for a three-digit number.
-//
-// These tests pin the request as well as the answer, because four of those five mistakes were
-// in the URL rather than in the parsing.
 
-/** Swap global fetch for one call, always restoring it, and record what was asked for. */
+// ── what is going through the dam ────────────────────────────────────────────────────────────
+//
+// Ryan, 2026-08-25: *"any data that is available for any and all lakes should be available for
+// any and all lakes"*.
+//
+// releaseShape has answered for Duke and for TVA since those were wired. A Corps lake got
+// nothing — not because the Corps publishes nothing, but because nothing here asked. Savannah
+// District publishes Flow-Out, Flow-Power, Flow-Spill and Flow-In hourly on every project,
+// alongside Elev-Tail. The ts-ids below are transcribed from registry/_cwms_inventory.json,
+// which holds all 3,328 catalogued series for these districts.
+
 async function withFetch(impl, fn) {
   const real = globalThis.fetch;
   const seen = [];
@@ -212,141 +213,140 @@ async function withFetch(impl, fn) {
   try { return { out: await fn(), seen }; } finally { globalThis.fetch = real; }
 }
 
-const CAT_FOR = (loc) => ({ total: 42, 'page-size': 500, entries: [
-  e(`${loc}.Elev-GC.Inst.1Day.0.ARCHIVE-DAILY`, '1Day', '2030-01-01T00:00:00Z'),
-  e(`${loc}.Elev-Head.Inst.1Hour.0.Raw-SHEF_SAS`, '1Hour', '2026-08-21T18:00:00Z'),
-  e(`${loc}.Elev-Pool_p50.Inst.1Day.0.ARCHIVE-DAILY`, '1Day', '2031-12-31T00:00:00Z'),
-  e(`${loc}.Elev-Pool.Inst.1Day.0.Raw-SHEF_SAS`, '1Day', '2026-08-21T00:00:00Z'),
-  e(`${loc}.Elev-Pool.Inst.1Hour.0.Raw-SHEF_SAS`, '1Hour', '2026-08-21T18:00:00Z'),
+// EVERY TEST BELOW USES ITS OWN PROJECT NAME, AND THAT IS NOT COSMETIC. usaceRelease caches both
+// the catalogue and each series read by name, which is correct -- two waters on one Corps project
+// should not be two requests -- but it means two tests sharing a project share a cached answer,
+// and the second one passes on the first one's numbers. Caught by exactly that, twice.
+const REL_CAT = (proj) => ({ total: 41, 'page-size': 500, entries: [
+  e(`${proj}.Flow-In.Ave.1Day.1Day.Raw-SHEF_SAS`, '1Day', '2026-08-21T00:00:00Z'),
+  e(`${proj}.Flow-In.Ave.1Hour.1Hour.Raw-SHEF_SAS`, '1Hour', '2026-08-25T01:00:00Z'),
+  e(`${proj}.Flow-Out.Ave.1Hour.1Hour.Raw-SHEF_SAS`, '1Hour', '2026-08-25T01:00:00Z'),
+  e(`${proj}.Flow-Power.Ave.1Hour.1Hour.Raw-SHEF_SAS`, '1Hour', '2026-08-25T01:00:00Z'),
+  e(`${proj}.Flow-Spill.Ave.1Hour.1Hour.Raw-SHEF_SAS`, '1Hour', '2026-08-25T01:00:00Z'),
+  e(`${proj}.Elev-Tail.Inst.1Hour.0.HISTORIAN_SAS`, '1Hour', '2025-09-05T12:00:00Z'),
+  e(`${proj}.Elev-Tail.Inst.1Hour.0.Raw-SHEF_SAS`, '1Hour', '2026-08-25T01:00:00Z'),
 ] });
 
-const NOW = Date.parse('2026-08-21T20:00:00Z');
+const T1 = Date.parse('2026-08-25T01:00:00Z');
+const NOW2 = Date.parse('2026-08-25T01:30:00Z');
 
-/** A catalogue-then-timeseries responder. `metres` is what the Corps actually publishes. */
-const responder = (loc, metres) => async (url) => {
+/** cms on the catalogue, cfs on the data — the trap this whole path exists to avoid. */
+const relResponder = (units, vals, proj = 'Hartwell') => async (url) => {
   if (url.includes('/catalog/TIMESERIES')) {
-    return { ok: true, status: 200, json: async () => CAT_FOR(loc) };
+    return { ok: true, status: 200, json: async () => REL_CAT(proj) };
   }
-  const env = ENVELOPE([[Date.parse('2026-08-21T18:00:00Z'), metres, 0]]);
-  env.units = 'm';
-  env.name = `${loc}.Elev-Pool.Inst.1Hour.0.Raw-SHEF_SAS`;
+  const name = decodeURIComponent((url.match(/name=([^&]+)/) || [])[1] || '');
+  const v = vals[Object.keys(vals).find((k) => name.includes(k))];
+  if (v === undefined) return { ok: false, status: 404, json: async () => ({}) };
+  const env = ENVELOPE([[T1, v, 0]]);
+  env.name = name;
+  env.units = name.includes('Elev') ? 'ft' : units;
+  env['office-id'] = 'SAS';
   return { ok: true, status: 200, json: async () => env };
 };
 
-// EVERY FIXTURE PROJECT NAME BELOW IS DISTINCT, AND THAT IS NOT COSMETIC. cwmsPoolElevation
-// caches the series read by the SERIES NAME the catalogue handed back, which is correct -- two
-// waters on one Corps series should not be two requests -- but it means two tests sharing a
-// project name share a cached answer, and the second one passes on the first one's numbers. The
-// real `Hartwell.*` names are reserved for the live-response test further down.
-
-test('a metres payload is converted, and the hourly series is the one discovered', async () => {
-  // 201.17 m is 660.01 ft. Hartwell's full pool is 660 ft; reading the metres as feet would put
-  // the lake 459 feet below the bottom of its conservation pool. (Synthetic: the live service
-  // answered this series in FEET on 2026-08-25 while its catalogue said metres -- see below.)
-  const { out, seen } = await withFetch(responder('HartwellMetres', 201.17),
-    () => cwmsPoolElevation('HartwellMetres', 'SAS', NOW));
-  assert.equal(out.elevation_ft, 660.01);
-  assert.equal(out.location, 'HartwellMetres');
-  assert.equal(out.series, 'HartwellMetres.Elev-Pool.Inst.1Hour.0.Raw-SHEF_SAS');
-  assert.equal(out.units_reported, 'm');
-  assert.equal(out.stale, false);
-  assert.equal(seen.length, 2, 'one catalogue request, one series request');
+test('cwmsToCfs converts cms and passes cfs, and refuses anything else', () => {
+  assert.equal(cwmsToCfs(100, 'cms'), 3531);
+  assert.equal(cwmsToCfs(100, 'm3/s'), 3531);
+  assert.equal(cwmsToCfs(4000, 'cfs'), 4000);
+  assert.equal(cwmsToCfs(4000, 'ft3/s'), 4000);
+  // A silent pass-through of an unknown unit is how 201.2 becomes a lake level.
+  assert.equal(cwmsToCfs(100, 'furlongs/fortnight'), null);
+  assert.equal(cwmsToCfs(100, ''), null);
+  assert.equal(cwmsToCfs(NaN, 'cfs'), null);
 });
 
-test('the like pattern is upper-case, because CWMS upper-cases the id before matching', async () => {
-  const { seen } = await withFetch(responder('Russell', 101.5),
-    () => cwmsPoolElevation('Russell', 'SAS', NOW));
+test('pickCwmsSeries picks the live Elev-Tail over the HISTORIAN copy', () => {
+  // Same tie the pool series has: two 1Hour candidates, one of them eleven months behind.
+  const p = pickCwmsSeries(REL_CAT('Hartwell'), /\.Elev-Tail\./i);
+  assert.equal(p.name, 'Hartwell.Elev-Tail.Inst.1Hour.0.Raw-SHEF_SAS');
+});
+
+test('pickCwmsSeries prefers the hourly flow over the daily one', () => {
+  assert.equal(pickCwmsSeries(REL_CAT('Hartwell'), /\.Flow-In\./i).name,
+    'Hartwell.Flow-In.Ave.1Hour.1Hour.Raw-SHEF_SAS');
+});
+
+test('usaceRelease reads all four flows and the tailwater, in cfs', async () => {
+  const { out } = await withFetch(
+    relResponder('cms', { 'Flow-Out': 200, 'Flow-Power': 180, 'Flow-Spill': 20,
+                          'Flow-In': 150, 'Elev-Tail': 480.2 }),
+    () => usaceRelease('Hartwell', 'SAS', NOW2));
+  assert.equal(out.outflow.value, 7063, '200 cms is 7,063 cfs — reading it as cfs is a 35x error');
+  assert.equal(out.through_turbines.value, 6357);
+  assert.equal(out.spill.value, 706);
+  assert.equal(out.inflow.value, 5297);
+  assert.equal(out.tailwater_ft, 480.2);
+  assert.equal(out.flow_units, 'ft3/s');
+  assert.equal(out.project, 'Hartwell');
+  assert.equal(out.age_hours, 0.5, 'the age travels, because this district can run behind');
+});
+
+test('the like pattern is upper-case and asks the district, not the division', async () => {
+  const { seen } = await withFetch(
+    relResponder('cms', { 'Flow-Out': 200 }, 'Russell'), () => usaceRelease('Russell', 'SAS', NOW2));
   const cat = decodeURIComponent(seen[0]);
   assert.ok(cat.includes('office=SAS'), cat);
-  assert.ok(cat.includes('^RUSSELL\\.ELEV'), cat);
-  assert.ok(cat.includes('page-size=500'), cat);
+  assert.ok(cat.includes('^RUSSELL\\.(FLOW|ELEV-TAIL)'), cat);
 });
 
-test('no unit= is requested, so whatever arrives is what gets converted', async () => {
-  // Asking for feet and being answered in metres is the exact failure this path exists to
-  // avoid. The response carries its unit; the request must not presume one.
-  const { seen } = await withFetch(responder('Thurmond', 100.6),
-    () => cwmsPoolElevation('Thurmond', 'SAS', NOW));
-  assert.ok(!seen[1].includes('unit='), seen[1]);
-  assert.ok(seen[1].includes('office=SAS'), seen[1]);
+test('a project publishing only one flow still answers', async () => {
+  const { out } = await withFetch(
+    relResponder('cms', { 'Flow-Out': 100 }, 'Thurmond'), () => usaceRelease('Thurmond', 'SAS', NOW2));
+  assert.equal(out.outflow.value, 3531);
+  assert.equal(out.through_turbines, undefined);
+  assert.equal(out.tailwater_ft, null);
 });
 
-// ── the live shape, read 2026-08-25 ─────────────────────────────────────────────────────────
-//
-// Both calls made against cwms-data.usace.army.mil with exactly the URLs cwmsPoolElevation
-// builds. Everything below is transcribed from those two responses.
-
-test('the live Hartwell response: catalogue says metres, the DATA says feet', async () => {
-  // ONE SERVICE, TWO ANSWERS, AND ONLY THE SECOND IS BESIDE THE NUMBERS.
-  //   catalog/TIMESERIES  Hartwell.Elev-Pool.Inst.1Hour.0.Raw-SHEF_SAS  "units": "m"
-  //   timeseries          the same name                                 "units": "ft"
-  // Converting on the catalogue's metres would report 2,138 feet for a lake sitting at 651.59.
-  const live = async (url) => {
-    if (url.includes('/catalog/TIMESERIES')) {
-      return { ok: true, status: 200, json: async () => ({ 'page-size': 500, total: 42, entries: [
-        // Real names, real extents, real units -- the tie between the two 1Hour candidates is
-        // broken by latest-time, and HISTORIAN_SAS is four months behind.
-        e('Hartwell.Elev-Pool.Inst.1Day.0.Raw-SHEF_SAS', '1Day', '2026-08-21T00:00:00Z'),
-        e('Hartwell.Elev-Pool.Inst.1Hour.0.HISTORIAN_SAS', '1Hour', '2026-05-07T14:00:00Z'),
-        e('Hartwell.Elev-Pool.Inst.1Hour.0.Raw-SHEF_SAS', '1Hour', '2026-08-21T18:00:00Z'),
-        e('Hartwell.Elev-Pool_p50.Inst.1Day.0.ARCHIVE-DAILY', '1Day', '2031-12-31T00:00:00Z'),
-        e('Hartwell.Elev-Tail.Inst.1Hour.0.Raw-SHEF_SAS', '1Hour', '2026-08-21T18:00:00Z'),
-      ] }) };
-    }
-    const env = ENVELOPE([[1787616000000, 651.62, 3], [1787619600000, 651.5899999999999, 3]]);
-    env.name = 'Hartwell.Elev-Pool.Inst.1Hour.0.Raw-SHEF_SAS';
-    env.units = 'ft';                       // <- the data endpoint's answer, not the catalogue's
-    env['office-id'] = 'SAS';
-    return { ok: true, status: 200, json: async () => env };
-  };
-  const now = Date.parse('2026-08-25T01:30:00Z');
-  const { out, seen } = await withFetch(live, () => cwmsPoolElevation('Hartwell', 'SAS', now));
-  assert.equal(out.elevation_ft, 651.59, 'feet passed through, not multiplied by 3.28');
-  assert.equal(out.units_reported, 'ft');
-  assert.equal(out.series, 'Hartwell.Elev-Pool.Inst.1Hour.0.Raw-SHEF_SAS',
-    'the HISTORIAN copy is four months behind and must lose the tie');
-  assert.equal(out.of_total, 42, 'the whole catalogue fits in one page at page-size=500');
-  assert.equal(out.stale, false, 'the newest point was half an hour old');
-  assert.equal(out.age_hours, 0.5);
-  assert.equal(seen.length, 2);
-});
-
-test('the catalogue extent is NOT the age of the data', () => {
-  // The extent for that series said latest-time 2026-08-21T18:00 while its newest value was
-  // 2026-08-25T01:00 -- three and a half days apart. Staleness is computed from the VALUE's
-  // timestamp for exactly this reason; reading it off the catalogue would have called a
-  // half-hour-old reading stale and thrown it away in favour of a scraped web page.
-  const env = ENVELOPE([[1787619600000, 651.59, 3]]);
-  env.units = 'ft';
-  const l = cwmsLevel(parseCwmsTimeseries(env), Date.parse('2026-08-25T01:30:00Z'));
-  assert.equal(l.observed_at, '2026-08-25T01:00:00.000Z');
-  assert.equal(l.stale, false);
-});
-
-test('a stale reading is still returned, and says so', async () => {
-  const week = Date.parse('2026-08-28T20:00:00Z');
-  const { out } = await withFetch(responder('HartwellStale', 201.17),
-    () => cwmsPoolElevation('HartwellStale', 'SAS', week));
-  assert.equal(out.stale, true, 'seven days old is past the 48-hour bar');
-  assert.equal(out.elevation_ft, 660.01, 'the value is carried; the caller decides');
-});
-
-test('an empty catalogue is null rather than a guess', async () => {
+test('a project publishing nothing is null, not an empty block', async () => {
   const { out } = await withFetch(
     async () => ({ ok: true, status: 200, json: async () => ({ total: 0, entries: [] }) }),
-    () => cwmsPoolElevation('Nowhere', 'SAS', NOW));
+    () => usaceRelease('Nowhere', 'SAS', NOW2));
   assert.equal(out, null);
 });
 
-test('a failed catalogue request does not throw into the route', async () => {
-  const { out } = await withFetch(async () => ({ ok: false, status: 503, json: async () => ({}) }),
-    () => cwmsPoolElevation('Offline', 'SAS', NOW));
-  assert.equal(out, null);
-});
-
-test('no location, no request', async () => {
+test('no project or no office, no request', async () => {
   const { out, seen } = await withFetch(async () => { throw new Error('should not fetch'); },
-    () => cwmsPoolElevation('', 'SAS', NOW));
+    () => usaceRelease('', 'SAS', NOW2));
   assert.equal(out, null);
   assert.equal(seen.length, 0);
+  const b = await withFetch(async () => { throw new Error('should not fetch'); },
+    () => usaceRelease('Hartwell', '', NOW2));
+  assert.equal(b.out, null);
+  assert.equal(b.seen.length, 0);
+});
+
+test('an unreachable district does not throw into the route', async () => {
+  const { out } = await withFetch(async () => ({ ok: false, status: 503, json: async () => ({}) }),
+    () => usaceRelease('HartwellOffline', 'SAS', NOW2));
+  assert.equal(out, null);
+});
+
+test('releaseShape gives a Corps lake a release where it used to give nothing', () => {
+  const usace = { project: 'Hartwell', outflow: { value: 7063, at: '2026-08-25T01:00:00Z' },
+                  through_turbines: { value: 6357, at: '2026-08-25T01:00:00Z' },
+                  spill: { value: 706, at: '2026-08-25T01:00:00Z' },
+                  tailwater_ft: 480.2, age_hours: 0.5, observed_at: '2026-08-25T01:00:00Z',
+                  source: 'x' };
+  const r = releaseShape({ usace });
+  assert.equal(r.operator, 'US Army Corps of Engineers');
+  // Observed, not scheduled: this is the hour that just passed, not the trip you have not taken.
+  assert.equal(r.kind, 'observed');
+  assert.equal(r.items.length, 3);
+  assert.equal(r.items[0].label, 'Total release');
+  assert.equal(r.items[0].cfs, 7063);
+  assert.equal(r.tailwater_ft, 480.2);
+  assert.equal(r.age_hours, 0.5);
+});
+
+test('a SCHEDULE still outranks the Corps, because a schedule is about a trip not yet taken', () => {
+  const usace = { project: 'Hartwell', outflow: { value: 7063, at: 'x' }, source: 'x' };
+  const tva = { generation: [{ hour: '08:00', cfs: 4000 }], observed_at: 'y', source: 'z' };
+  assert.equal(releaseShape({ usace, tva }).operator, 'TVA');
+  const duke = { arrivals: [{ at: 'noon' }], basinName: 'Catawba' };
+  assert.equal(releaseShape({ usace, duke }).operator, 'Duke Energy');
+});
+
+test('no Corps flows, no Corps release — a tailwater alone is not a release', () => {
+  assert.equal(releaseShape({ usace: { project: 'Hartwell', tailwater_ft: 480.2 } }), null);
 });

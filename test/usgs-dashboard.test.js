@@ -118,7 +118,8 @@ describe('dashboardTrend — the same shape a caller already knows', () => {
       row({ SiteNumber: '02175148', ParameterCode: '00060', Value: 412, RateOfChangeUnitPerHour: 3 }),
       row({ SiteNumber: '02175148', ParameterCode: '00062', Value: 76.4, RateOfChangeUnitPerHour: -0.02 }),
     ]));
-    expect(t.measures).toBe('Reservoir elevation');
+    expect(t.measures).toBe('Reservoir elevation above datum');
+    expect(t.parameter_code).toBe('00062');
     expect(t.latest).toBe(76.4);
     expect(t.rate_per_hour).toBe(-0.02);
     expect(t.units).toBe('ft');
@@ -160,6 +161,33 @@ describe('dashboardTrend — the same shape a caller already knows', () => {
     expect(dashboardTrend(ix([
       row({ SiteNumber: '02175148', ParameterCode: '00010', Value: 27.4, RateOfChangeUnitPerHour: 0.2 }),
     ]))).toBe(null);
+  });
+
+  it('names the datum apart, because two elevation codes can be 400 ft apart', () => {
+    // Site 02077280 on Hyco Lake (Person Co, NC) answered live on 2026-08-25 with 00062 = 8.81
+    // and 62614 = 408.6 in the same response. Both are "the reservoir's elevation". Only one is
+    // a number anybody would recognise as Hyco, and nothing here can know which in general —
+    // on Lake Murray the same pair reads 356.57 and 355.26 against a 358 ft full pool, and there
+    // it is the UNNAMED datum that matches the operator. So the label says which.
+    const above = dashboardTrend(ix([
+      row({ SiteNumber: '02175148', ParameterCode: '00062', Value: 8.81, RateOfChangeUnitPerHour: 0 }),
+    ]));
+    const ngvd = dashboardTrend(ix([
+      row({ SiteNumber: '02175148', ParameterCode: '62614', Value: 408.6, RateOfChangeUnitPerHour: 0 }),
+    ]));
+    expect(above.measures).toBe('Reservoir elevation above datum');
+    expect(ngvd.measures).toBe('Reservoir elevation, NGVD29');
+    expect(`${above.measures} !== ${ngvd.measures}`).toBe(
+      'Reservoir elevation above datum !== Reservoir elevation, NGVD29');
+  });
+
+  it('a rate of exactly zero is a reading — it means holding steady', () => {
+    // Lake Murray answered rate 0.0 live. Collapsing that to falsy would drop the trend on every
+    // lake that is doing the most common thing a lake does.
+    const t = dashboardTrend(ix([
+      row({ SiteNumber: '02175148', ParameterCode: '00062', Value: 356.57, RateOfChangeUnitPerHour: 0 }),
+    ]));
+    expect(t.rate_per_hour).toBe(0);
   });
 
   it('nothing in, null out', () => {

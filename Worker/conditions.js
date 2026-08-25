@@ -874,11 +874,22 @@ const USGS_DASHBOARD =
 // Units are fixed per parameter code on this service — it publishes a code and a bare number,
 // never a unit string. Only the codes whose readings this app already shows are mapped; anything
 // else travels with a null unit rather than a guessed one.
+//
+// THE THREE ELEVATION CODES ARE NAMED APART, AND THAT IS NOT PEDANTRY. Site 02077280 on Hyco
+// Lake (Person Co, NC) answered this service with 00062 = 8.81 and 62614 = 408.6 in the same
+// response, read live 2026-08-25. Both are "the reservoir's elevation"; 00062 is above a datum
+// USGS does not name, which at that site is a local staff gage, and 62614 is above NGVD 1929.
+// Four hundred feet apart, and only one of them is a number anybody would recognise as Hyco.
+//
+// There is no universal winner, which is why nothing here picks one. On Lake Murray the same
+// pair reads 00062 = 356.57 and 62615 = 355.26 against a 358 ft full pool, and there it is the
+// UNNAMED datum that matches what the operator publishes. So the label carries the datum and the
+// reader can see which they were handed, instead of two different questions sharing one answer.
 const DASHBOARD_UNITS = {
   '00065': { units: 'ft', measures: 'Gage height' },
-  '00062': { units: 'ft', measures: 'Reservoir elevation' },
-  '62614': { units: 'ft', measures: 'Reservoir elevation' },
-  '62615': { units: 'ft', measures: 'Reservoir elevation' },
+  '00062': { units: 'ft', measures: 'Reservoir elevation above datum' },
+  '62614': { units: 'ft', measures: 'Reservoir elevation, NGVD29' },
+  '62615': { units: 'ft', measures: 'Reservoir elevation, NAVD88' },
   '63160': { units: 'ft', measures: 'Water level, NAVD88' },
   '00060': { units: 'ft3/s', measures: 'Streamflow' },
   '00010': { units: 'degC', measures: 'Water temperature' },
@@ -944,6 +955,9 @@ export function dashboardTrend(byParm) {
       at: row.at,
       units: u.units,
       measures: u.measures,
+      // The code, beside its label, so a consumer comparing two waters can tell whether it is
+      // comparing the same measurement.
+      parameter_code: parm,
       // NOT DERIVED FROM THE RATE. See the block comment above.
       change_24h: null,
       change_7d: null,
@@ -1339,7 +1353,7 @@ async function operatorLevel(b) {
  * number that says what it IS doing are not interchangeable, and collapsing them is how a
  * person launches into a surge that already passed.
  */
-export function releaseShape({ duke, dukeRun, tva, operator } = {}) {
+export function releaseShape({ duke, dukeRun, tva, operator, usace } = {}) {
   if (duke && Array.isArray(duke.arrivals) && duke.arrivals.length) {
     return {
       kind: 'projected',
@@ -1400,6 +1414,30 @@ export function releaseShape({ duke, dukeRun, tva, operator } = {}) {
       next: tva.generation[0] || null,
       items: tva.generation.slice(0, 6),
       source: tva.source || null,
+    };
+  }
+  // THE CORPS, WHICH PUBLISHES WHAT WENT THROUGH AND NOT WHAT WILL. Ranked below anything
+  // SCHEDULED, because a schedule tells you about the trip you have not taken yet and this tells
+  // you about the hour that just passed. Ranked above nothing, which is what a Corps lake used to
+  // get. Same `kind: 'observed'` as safewaters, for the same reason.
+  if (usace && (usace.outflow || usace.through_turbines || usace.spill)) {
+    const item = (key, label) => (usace[key]
+      ? { label, cfs: usace[key].value, at: usace[key].at, series: usace[key].series } : null);
+    const items = [item('outflow', 'Total release'), item('through_turbines', 'Through turbines'),
+                   item('spill', 'Spillway'), item('inflow', 'Inflow')].filter(Boolean);
+    return {
+      kind: 'observed',
+      operator: 'US Army Corps of Engineers',
+      basin: usace.project || null,
+      last_updated: usace.observed_at || null,
+      next: null,
+      items,
+      flow_units: 'ft3/s',
+      tailwater_ft: usace.tailwater_ft ?? null,
+      // Reported, never hidden. This district's SHEF feed can run behind, and a caller that is
+      // not told how old a release figure is cannot decide whether to use it.
+      age_hours: usace.age_hours ?? null,
+      source: usace.source || null,
     };
   }
   if (operator && Array.isArray(operator.discharges) && operator.discharges.length) {
@@ -2713,8 +2751,23 @@ export function cwmsLevel(parsed, nowMs, maxAgeHours = 48) {
  * checked, sitting in a table, being wrong quietly.
  */
 export function pickElevSeries(catalog) {
+  return pickCwmsSeries(catalog, /\.Elev-Pool\./i);
+}
+
+/**
+ * The same choice, for any parameter. `want` is matched against the whole ts-id.
+ *
+ * Generalised out of pickElevSeries on 2026-08-25 so the release series can use the identical
+ * ranking. A Corps project publishes Flow-In, Flow-Out, Flow-Power and Flow-Spill alongside its
+ * pool, in the same shapes and with the same HISTORIAN copies four months behind the live ones,
+ * so a second implementation would be a second chance to pick the dead one.
+ *
+ * THE TRAILING DOT IN THE CALLER'S PATTERN IS LOAD-BEARING. `Elev-Pool_p10` is a tenth-percentile
+ * statistic and `Elev-Pool` is today's water; they differ by one underscore.
+ */
+export function pickCwmsSeries(catalog, want) {
   const entries = (catalog && Array.isArray(catalog.entries)) ? catalog.entries : [];
-  const pool = entries.filter((e) => /\.Elev-Pool\./i.test(String(e && e.name || '')));
+  const pool = entries.filter((e) => want.test(String(e && e.name || '')));
   if (!pool.length) return null;
 
   const rank = (e) => {
@@ -2783,42 +2836,109 @@ export function pickElevSeries(catalog) {
  * which carries the pattern verbatim. An upper-case pattern matches whether or not the
  * comparison itself is case-sensitive; `^Hartwell\.` gambles on it not being.
  */
-export async function cwmsPoolElevation(location, office = 'SAS', nowMs = Date.now()) {
-  const loc = String(location || '').trim();
-  if (!loc) return null;
-  const base = 'https://cwms-data.usace.army.mil/cwms-data';
-  const like = encodeURIComponent('^' + loc.toUpperCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\.ELEV');
-  // page-size large enough that one lake's Elev series cannot paginate: Hartwell publishes 84
-  // series in total and about half of them are Elev-something.
-  const catUrl = `${base}/catalog/TIMESERIES?office=${encodeURIComponent(office)}`
-               + `&like=${like}&page-size=500`;
-  let picked;
+/**
+ * THE CORPS' RELEASE, WHICH DUKE LAKES AND TVA LAKES HAVE HAD AND CORPS LAKES HAVE NOT.
+ *
+ * Ryan, 2026-08-25: *"any data that is available for any and all lakes should be available for
+ * any and all lakes"*.
+ *
+ * `releaseShape` has answered for Duke (flow arrivals, then the run schedule) and for TVA
+ * (generation-releases) since those were wired. A Corps lake got nothing — not because the Corps
+ * publishes nothing, but because nothing here asked. Savannah District publishes Flow-Out,
+ * Flow-Power, Flow-Spill and Flow-In hourly on every project, alongside Elev-Tail, and the
+ * inventory of 3,328 catalogued series shows the same shape on Russell and Thurmond.
+ *
+ * THE PROJECT NAME IS NOT TYPED ANYWHERE. It arrives as `out.usace.project`, which `usaceLevels`
+ * already derived by intersecting the binding's own `usace[].cwms_name` list with the district's
+ * published roster of conservation pools. A new Corps lake added to the registry tomorrow gets
+ * this with nothing here to edit, which is the whole point.
+ *
+ * NO `unit=` PARAMETER, AND THE CATALOGUE'S UNIT IS NOT THE DATA'S UNIT. Verified against the
+ * live service 2026-08-25, both calls, same series:
+ *
+ *   catalog/TIMESERIES   Hartwell.Elev-Pool.Inst.1Hour.0.Raw-SHEF_SAS   "units": "m"
+ *   timeseries           the same name                                  "units": "ft"
+ *
+ * One service, two answers, and only the second one is beside the numbers. Whatever unit arrives
+ * with the values is the unit the converter is handed, and an unrecognised one is refused.
+ *
+ * THE `like` PATTERN IS UPPERCASE ON PURPOSE. CWMS matches it as a regex against the ts-id AFTER
+ * upper-casing the id — proven by base64-decoding the pagination cursor, which carries the
+ * pattern verbatim — so `^Hartwell\\.` gambles on a case-sensitivity that is not there.
+ */
+const CWMS_FLOW_SERIES = [
+  ['outflow', /\.Flow-Out\./i, 'total release'],
+  ['through_turbines', /\.Flow-Power\./i, 'generation'],
+  ['spill', /\.Flow-Spill\./i, 'spillway'],
+  ['inflow', /\.Flow-In\./i, 'inflow'],
+];
+
+/** m3/s as ft3/s, or null. CWMS publishes cms on the catalogue and sometimes cfs on the data. */
+export function cwmsToCfs(value, units) {
+  if (!Number.isFinite(value)) return null;
+  const u = String(units || '').trim().toLowerCase();
+  if (u === 'cfs' || u === 'ft3/s' || u === 'ft^3/s') return Math.round(value);
+  if (u === 'cms' || u === 'm3/s' || u === 'm^3/s') return Math.round(value * 35.3147);
+  return null;
+}
+
+/**
+ * One project's release picture, or null. Pure apart from the two fetches.
+ *
+ * A series that answers and a series that does not are different facts, so a project publishing
+ * only Flow-Out still returns a block rather than nothing.
+ */
+export async function usaceRelease(project, office, nowMs = Date.now()) {
+  const proj = String(project || '').trim();
+  const off = String(office || '').trim();
+  if (!proj || !off) return null;
+  const like = encodeURIComponent(
+    '^' + proj.toUpperCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\.(FLOW|ELEV-TAIL)');
+  let catalog;
   try {
-    picked = pickElevSeries(await cached(`cwms:cat:${office}:${loc}`, TTL.bindings, () => getJson(catUrl)));
+    catalog = await cached(`cwms:rel:${off}:${proj}`, TTL.bindings,
+      () => getJson(`${CWMS}/catalog/TIMESERIES?office=${encodeURIComponent(off)}`
+                  + `&like=${like}&page-size=500`));
   } catch (_) {
     return null;
   }
-  if (!picked || !picked.name) return null;
-  const tsUrl = `${base}/timeseries?name=${encodeURIComponent(picked.name)}`
-              + `&office=${encodeURIComponent(picked.office || office)}`;
-  try {
-    // NO `unit=` PARAMETER, AND THE CATALOGUE'S UNIT IS NOT THE DATA'S UNIT.
-    //
-    // Verified against the live service 2026-08-25, both calls, same series:
-    //   catalog/TIMESERIES   Hartwell.Elev-Pool.Inst.1Hour.0.Raw-SHEF_SAS   "units": "m"
-    //   timeseries           the same name                                  "units": "ft"
-    //
-    // One service, two answers, and only the second one is beside the numbers. Converting on
-    // the catalogue's metres would turn 651.59 into 2,138 feet. Whatever unit arrives with the
-    // values is the unit cwmsToFeet is handed, and an unrecognised one is refused rather than
-    // assumed.
-    const level = cwmsLevel(parseCwmsTimeseries(
-      await cached(`cwms:ts:${picked.name}`, TTL.level, () => getJson(tsUrl))), nowMs);
-    if (!level) return null;
-    return { ...level, location: loc, series: picked.name, of_total: picked.of_total };
-  } catch (_) {
-    return null;
+  const read = async (picked, convert) => {
+    if (!picked || !picked.name) return null;
+    try {
+      const parsed = parseCwmsTimeseries(await cached(`cwms:ts:${picked.name}`, TTL.level,
+        () => getJson(`${CWMS}/timeseries?name=${encodeURIComponent(picked.name)}`
+                    + `&office=${encodeURIComponent(picked.office || off)}`)));
+      if (!parsed || !parsed.latest) return null;
+      const v = convert(parsed.latest.value, parsed.units);
+      if (v === null) return null;
+      return { value: v, at: parsed.latest.at, series: picked.name,
+               units_reported: parsed.units };
+    } catch (_) {
+      return null;
+    }
+  };
+  const flows = {};
+  for (const [key, re] of CWMS_FLOW_SERIES) {
+    const got = await read(pickCwmsSeries(catalog, re), cwmsToCfs);
+    if (got) flows[key] = got;
   }
+  const tail = await read(pickCwmsSeries(catalog, /\.Elev-Tail\./i), cwmsToFeet);
+  if (!Object.keys(flows).length && !tail) return null;
+  const newest = [...Object.values(flows), tail].filter(Boolean)
+    .map((x) => Date.parse(x.at)).filter(Number.isFinite).sort().slice(-1)[0] || null;
+  return {
+    project: proj,
+    office: off,
+    // Every flow in ft3/s, converted at the point the unit is known rather than left for a
+    // consumer to remember — the same rule nwpsFlowCfs follows for NWPS kcfs.
+    flow_units: 'ft3/s',
+    ...flows,
+    tailwater_ft: tail ? tail.value : null,
+    tailwater: tail,
+    observed_at: newest ? new Date(newest).toISOString() : null,
+    age_hours: newest ? Math.round(((nowMs - newest) / 3600000) * 10) / 10 : null,
+    source: `${CWMS}/timeseries — ${proj}`,
+  };
 }
 
 /**
@@ -3068,8 +3188,10 @@ async function waterBlock(b, lat, lon, env) {
     .sort((x, y) => x.km_from_point - y.km_from_point);
 
   // Declared, not fetched. The NWM reach and the CWMS locations already have callers elsewhere
-  // (`cwmsPoolElevation` above, reached from the /lakes route, and /rivers); repeating those
-  // fetches here would be two code paths that can disagree about the same number.
+  // (`/rivers`); repeating those fetches here would be two code paths that can disagree about
+  // the same number. The Corps' own numbers arrive below through usaceLevels and usaceRelease,
+  // which answer questions no gauge does: what the pool is SUPPOSED to be today, and what is
+  // going through the dam.
   out.reach = b.reach || null;
   out.usace = b.usace || null;
   out.curated = b.curated || null;
@@ -3093,6 +3215,14 @@ async function waterBlock(b, lat, lon, env) {
   // answer from "we did not look" -- `usace_candidates` says whether there was anything to try.
   out.usace = await usaceLevels(b.usace, Date.now()).catch(() => null);
   out.usace_candidates = (b.usace || []).length;
+
+  // AND WHAT IS GOING THROUGH THE DAM. Duke lakes and TVA lakes have had a release since those
+  // were wired; a Corps lake got nothing, not because the Corps publishes nothing but because
+  // nothing asked. The project name is the one usaceLevels already derived from the binding and
+  // the district's own roster, so this reaches a Corps lake added tomorrow with nothing to edit.
+  out.usace_release = (out.usace && out.usace.project)
+    ? await usaceRelease(out.usace.project, out.usace.office).catch(() => null)
+    : null;
 
   // Cube, Southern Company and Brookfield. Null when the pipeline bound no operator to this
   // water -- which for Cube's "Falls" is the correct answer, not a gap.
@@ -3210,6 +3340,7 @@ async function waterBlock(b, lat, lon, env) {
     };
   }
   out.releases = releaseShape({ duke, dukeRun: dukeRunLabelled, tva: out.tva,
+                                usace: out.usace_release,
                                operator: out.operator });
 
   // WHAT IS SHUT, AND WHY THE WATER IS WHERE IT IS.

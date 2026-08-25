@@ -60,16 +60,16 @@ const DECLARED = [
   // ── foreign keys: cannot be derived, CAN be verified ──────────────────────────────────────
   ['Worker/worker-data.js', 'LAKEMONSTER_IDS', 5, 'foreign-key',
    "another site's slug, used to build a URL. Nothing in the registry replaces it."],
-  // RENAMED AND SHRUNK, 2026-08-25. Was CWMS_LOCATIONS, sitting beside a fetch that asked for
-  // `Hartwell.Elev.Inst.0.0.USACE-RAW` on office `SA` in feet -- a series that does not exist,
-  // on a division rather than a district, in the wrong unit. What was wrong was the SERIES id,
-  // not the project name, so the fetch went and the six-row map stayed: cwmsPoolElevation
-  // discovers the series from the district catalogue and needs only which project a lake is.
-  ['Worker/worker-data.js', 'CWMS_PROJECT', 6, 'foreign-key',
-   "the Corps' own name for a project -- 'Hartwell', 'Russell', 'Thurmond' -- which is the "
-   + 'location half of every ts-id in that district. water_bindings.json carries it per water '
-   + 'as usace[].cwms_name, so this becomes a registry lookup the day the /lakes route reads '
-   + 'the registry; today that route knows lakes only through the LAKES table.'],
+  // GONE, 2026-08-25. Was CWMS_LOCATIONS, then CWMS_PROJECT: six typed rows naming the Corps
+  // project behind five lakes, reachable only through `path === "/lake"` -- a route with no
+  // caller anywhere in js/. Ryan, the same day: *"nothing hand written... everything
+  // expandable... if i decide to add every single lake that garmin has in the US into the app
+  // tomorrow this stuff should be able to expand with it"*. Six rows could not.
+  //
+  // `/conditions` had already been doing it properly and derived: usaceLevels() intersects the
+  // binding's own usace[].cwms_name list with the district's published roster of conservation
+  // pools, so the project is discovered per water and a Corps lake added tomorrow is covered.
+  // usaceRelease() now reads that same derived project for the release. Nothing typed remains.
 
   // ── data: belongs in the registry or the research pipeline ────────────────────────────────
   ['Worker/worker-data.js', 'LAKE_INTEL', 9, 'data',

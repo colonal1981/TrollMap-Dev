@@ -6,11 +6,11 @@ import { CORS, JSON_HEADERS, TEXT_HEADERS, callLLM, isAuthorized, chartpackKey, 
 // Bump on every edit to this file. See ARCGIS_BUILD in core/arcgis.js.
 const WORKER_BUILD = 'worker-2026-08-07a';
 
-import { fetchDukeFlowArrivals, dukeRowForNames, LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, CWMS_PROJECT, fetchDukeDashboard } from './worker-data.js';
+import { fetchDukeFlowArrivals, dukeRowForNames, LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchDukeDashboard } from './worker-data.js';
 import { SPECIES_MIDLANDS_SANTEE, SPECIES_UPSTATE, SPECIES_COASTAL_SALTWATER, SPECIES_ALL_TROLLMAP, MAX_BIOLOGICAL_LENGTH, PURE_SALTWATER, PURE_FRESHWATER, getSpeciesListForGps, checkBiologicalLength, checkEcologicalReality } from './worker-species.js';
 import { handleGisRoute, flagIsYes, hasText, ARCGIS_BUILD } from './core/arcgis.js';
 import { handleWaterRoute } from './water.js';
-import { handleConditions, cwmsPoolElevation } from './conditions.js';
+import { handleConditions } from './conditions.js';
 import { handleCameras } from './cameras.js';
 import { handleReports } from './reports.js';
 import { fetchStateRegulations, getLakeRegulations } from './research/clients.js';
@@ -478,59 +478,28 @@ async function resolveLake(lakeName) {
       if (lake.specialMessage) out.special_message = lake.specialMessage;
     }
   }
-  if (out.elevation_ft == null && cfg.sepa) {
-    if (cfg.sepa === "marion" || cfg.sepa === "moultrie") {
-      const sc = await fetchSanteeCooper();
-      if (sc?.[cfg.sepa] != null) {
-        out.elevation_ft = sc[cfg.sepa];
-        out.sources.push("Santee Cooper");
-      }
-    } else {
-      // THE CORPS' OWN READING, through the discovered-series path in conditions.js. This used
-      // to call a second CWMS reader in worker-data.js that asked for
-      // `Hartwell.Elev.Inst.0.0.USACE-RAW` on office `SA` in feet -- a series that does not
-      // exist, on a division rather than a district, in the wrong unit. See cwmsPoolElevation.
-      //
-      // FRESH CORPS BEATS THE SCRAPE; STALE CORPS LOSES TO IT BUT STILL BEATS NOTHING.
-      //
-      // Measured against the live service 2026-08-25: Hartwell's hourly pool series answered
-      // with 24 points ending 30 MINUTES earlier, reading 651.59 ft -- 8.4 ft under its 660 ft
-      // full pool, which is what a Stage 2 drought August looks like. So the fresh branch is the
-      // one that normally runs.
-      //
-      // The stale branch exists because the CATALOGUE'S `latest-time` extent lags the data by
-      // days -- it said 2026-08-21T18:00 for a series whose newest point was 2026-08-25T01:00 --
-      // and because a district that stops reporting looks exactly like one that is merely slow.
-      // A three-day-old elevation is not a current reading and must not outrank a page scraped
-      // today, but it is a real number from the operator and beats the normalPool constant this
-      // route otherwise falls back to. The age travels with it either way.
-      const cwms = await cwmsPoolElevation(CWMS_PROJECT[cfg.sepa] || CWMS_PROJECT[key]);
-      const useCwms = (why) => {
-        out.elevation_ft = round2(cwms.elevation_ft);
-        out.sources.push(`USACE CWMS ${cwms.location}${why}`);
-        out.cwms = {
-          location: cwms.location,
-          series: cwms.series,
-          source: cwms.source,
-          timestamp: cwms.observed_at,
-          age_hours: cwms.age_hours,
-          stale: cwms.stale,
-          units_reported: cwms.units_reported
-        };
-      };
-      if (cwms?.elevation_ft != null && !cwms.stale) useCwms('');
-      if (out.elevation_ft == null) {
-        const us = await fetchUsaceSavannah(cfg.sepa);
-        if (us?.elevation != null) {
-          out.elevation_ft = us.elevation;
-          out.sources.push("USACE Savannah District");
-        }
-      }
-      if (out.elevation_ft == null && cwms?.elevation_ft != null) {
-        useCwms(` (${cwms.age_hours}h old)`);
-      }
-    }
-  }
+  // THE SEPA BRANCH IS GONE, AND SO IS EVERYTHING ONLY IT REACHED.
+  //
+  // Ryan, 2026-08-25: *"nothing hand written... everything expandable... if i decide to add
+  // every single lake that garmin has in the US into the app tomorrow this stuff should be able
+  // to expand with it"*.
+  //
+  // What stood here was three hard-coded Corps lakes plus Marion and Moultrie, reached only
+  // through `path === "/lake"` -- a route with no caller anywhere in js/. Behind it: a six-row
+  // CWMS_PROJECT table, a scrape of water.sas.usace.army.mil for a three-digit number sitting
+  // next to a lake name, and a CWMS series fetch. None of it could ever run, and none of it
+  // could have grown past the five lakes somebody typed.
+  //
+  // `/conditions` already answers all five off `water_bindings.json` with nothing typed:
+  // usaceLevels() picks the project from the district's own roster of published conservation
+  // pools and evaluates the seasonal curve for today, so Hartwell knows it is meant to be at
+  // 660 in summer and 656 in winter without a constant anywhere. Marion and Moultrie resolve
+  // through their bound USGS sites.
+  //
+  // resolveLake() stays because getRiver() calls it for the two rivers that name a dam lake,
+  // Wateree River and Saluda. Neither of those lakes carried `sepa`, which is why this branch
+  // was unreachable in the first place.
+
   if (out.water_temperature_F == null && cfg.river) {
     const u = await fetchUsgs(cfg.river, "00010,00065,00060,63160");
     if (u?.tempC != null) {
@@ -1580,33 +1549,6 @@ var trollmap_worker_default = {
           primaryGauge: (v.gauges.find((g) => g.primary) || v.gauges[0]).site
         }));
         return new Response(JSON.stringify(list, null, 2), { headers: JSON_HEADERS });
-      }
-      if (path === "/lake") {
-        if (!lake) return new Response('{"error":"missing lake"}', { headers: JSON_HEADERS, status: 400 });
-        const result = await resolveLake(lake);
-        // resolveLake refuses anything outside the fifteen LAKES keys. The Duke feed carries
-        // thirty-four, so a water Duke publishes and the table does not name has always come
-        // back "unknown lake". Ask the FEED before answering that -- ?names=A|B|C when the
-        // client has the registry aliases, the bare lake name otherwise.
-        if (result && result.error) {
-          const names = (url.searchParams.get("names") || lake).split("|")
-            .map((x) => x.trim()).filter(Boolean);
-          const d = await dukeRowForNames(names).catch(() => null);
-          if (d) {
-            return new Response(JSON.stringify({
-              waterbody: lake, elevation_ft: d.ft, below_full_pool_ft: d.belowFullPoolFt,
-              full_pool_ft: d.fullPool, display_level: d.index, display_full_pool: 100,
-              display_unit: "ft below full pond scale (100 = full)",
-              target: isFinite(d.target) ? d.target : undefined,
-              special_message: d.specialMessage || undefined,
-              duke_feed_name: d.duke_feed_name, matched_registry_name: d.matched_registry_name,
-              resolved_by: "duke-feed-name-match",
-              sources: ["Duke API /lakes/current-level"],
-              timestamp: (new Date()).toISOString(),
-            }, null, 2), { headers: JSON_HEADERS });
-          }
-        }
-        return new Response(JSON.stringify(result, null, 2), { headers: JSON_HEADERS });
       }
       if (path.startsWith("/sync")) {
         if (!env.DB) return new Response(JSON.stringify({ error: "D1 not configured" }), { headers: JSON_HEADERS, status: 503 });

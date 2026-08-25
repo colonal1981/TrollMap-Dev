@@ -796,62 +796,21 @@ async function fetchDukeDashboard(basin = "1") {
 // kayak sits on, and returning it as `water_temperature_F` would be wrong by a wide margin in
 // exactly the season it matters. Elevation only.
 const SANTEE_MARION_BACKUP_SITE = "02171000";
-async function fetchSanteeCooper() {
-  const u = await fetchUsgs(SANTEE_MARION_BACKUP_SITE, "00062,62615");
-  const ft = u?.elevation != null ? u.elevation
-           : u?.elevationNavd88 != null ? u.elevationNavd88 : null;
-  if (ft == null) return null;
-  return {
-    marion: ft,
-    moultrie: null,
-    source: `USGS ${SANTEE_MARION_BACKUP_SITE} (Lake Marion near Pineville, reservoir elevation)`
-  };
-}
-async function fetchUsaceSavannah(lakeKey) {
-  const urls = [
-    "https://water.sas.usace.army.mil/Lakes.htm",
-    "https://water.sas.usace.army.mil/"
-  ];
-  for (const u of urls) {
-    const r = await fetchText(u);
-    if (r.ok && r.text) {
-      const name = { thurmond: "Thurmond", hartwell: "Hartwell", russell: "Russell" }[lakeKey];
-      if (!name) return null;
-      const m = r.text.match(new RegExp(name + "[^0-9]{0,80}([0-9]{3}\\.[0-9]{1,2})", "i"));
-      if (m) return { elevation: parseFloat(m[1]), source: u };
-    }
-  }
-  return null;
-}
+// REMOVED 2026-08-25: fetchSanteeCooper, fetchUsaceSavannah and CWMS_PROJECT.
+//
+// All three were reachable only through `path === "/lake"`, a route with no caller
+// anywhere in js/. Between them they were a six-row table of Corps project names, a
+// scrape of water.sas.usace.army.mil for a three-digit number sitting next to a lake
+// name, and a Santee Cooper reader that had already been rewritten to read USGS 02171000
+// under a different name.
+//
+// Ryan, 2026-08-25: *"nothing hand written... everything expandable... if i decide to add
+// every single lake that garmin has in the US into the app tomorrow this stuff should be
+// able to expand with it"*. None of the three could have grown past the five lakes
+// somebody typed. `/conditions` answers all five off water_bindings.json with nothing
+// typed: usaceLevels() picks the project from the district's own roster of published
+// conservation pools, and Marion and Moultrie resolve through their bound USGS sites.
 
-// THE CORPS' CWMS LOCATION NAME FOR A LAKE THIS APP KNOWS.
-//
-// A function called fetchCwmsLakeLevel used to live here, and it asked CWMS for
-// `Hartwell.Elev.Inst.0.0.USACE-RAW` on office `SA` in feet. Savannah District publishes
-// `Hartwell.Elev-Pool.Inst.1Hour.0.Raw-SHEF_SAS` on office `SAS` in METRES. Wrong parameter,
-// wrong interval, wrong version, wrong office, wrong unit — five ways wrong, so it returned
-// nothing on every call and the route fell through to scraping water.sas.usace.army.mil for a
-// three-digit number sitting next to a lake name.
-//
-// conditions.js has had the correct reader since 2026-08-16 — pickElevSeries,
-// parseCwmsTimeseries and cwmsLevel, tested against a real 42-entry catalogue — and NOTHING
-// EVER CALLED IT. Two implementations of one thing: one right and dead, one wired and wrong.
-// `cwmsPoolElevation` now fetches through the right one, and all that survives here is the part
-// that was never in question — which Corps project a lake key names.
-//
-// Verified 2026-08-25 against registry/_cwms_inventory.json, all 3,328 catalogued series for
-// these districts. The PROJECT locations carry Hartwell 84, Russell 104 and Thurmond 82 series
-// apiece — pool and tailwater elevation, guide curve, inflow, turbine and spill release,
-// storage, scheduled generation, and a day-of-year percentile envelope back to 1954 — none of
-// which the site-number join ever reached.
-var CWMS_PROJECT = {
-  hartwell: 'Hartwell',
-  russell: 'Russell',
-  thurmond: 'Thurmond',
-  'clarks hill': 'Thurmond',
-  'clark hill': 'Thurmond',
-  'j strom thurmond': 'Thurmond'
-};
 async function fetchAhqWaterTemp(slug) {
   if (!slug) return null;
   const url = `https://www.anglersheadquarters.com/pages/${slug}-fishing-report`;
@@ -1972,4 +1931,4 @@ var RIVERS = {
   }
 };
 
-export { normalizeDukeRow, dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun, fetchDukeAccessAlerts, fetchDukeOperatingRange, LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, seriesRank, rdbSeriesDescriptions, newerStamp, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchSanteeCooper, fetchUsaceSavannah, CWMS_PROJECT, fetchDukeDashboard };
+export { normalizeDukeRow, dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun, fetchDukeAccessAlerts, fetchDukeOperatingRange, LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, seriesRank, rdbSeriesDescriptions, newerStamp, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchDukeDashboard };
