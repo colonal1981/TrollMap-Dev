@@ -96,3 +96,56 @@ test('a date with no guide row falls back to the last row rather than reporting 
   const t = tvaShape(OBSERVED, GUIDE, RELEASES, MESSAGES, '02/29');
   assert.equal(t.guide_curve_ft, 1924.29);
 });
+
+// ── /predicted-data ─────────────────────────────────────────────────────────────────────────
+//
+// Verbatim from tva.com/RestApi/predicted-data/DUGT1?format=json, fetched 2026-08-24 for
+// Douglas Dam. TWO CONVENTIONS IN ONE OBJECT: the flows are display strings carrying a
+// thousands separator, MidnightElevation is a bare number. That is TVA's doing, not a typo
+// here, and it is the reason tvaNum has to take both.
+const PREDICTED = [
+  { Day: '08/24/2026', AverageInflow: '2,422', MidnightElevation: 989.03, AverageOutflow: '6,088' },
+  { Day: '08/25/2026', AverageInflow: '2,633', MidnightElevation: 988.850037, AverageOutflow: '5,000' },
+  { Day: '08/26/2026', AverageInflow: '2,113', MidnightElevation: 988.630066, AverageOutflow: '5,000' },
+];
+
+test('the forecast parses comma-separated flows as numbers, not NaN', () => {
+  const t = tvaShape([], null, [], [], '08/24', PREDICTED);
+  assert.equal(t.forecast[0].inflow_cfs, 2422);
+  assert.equal(t.forecast[0].outflow_cfs, 6088);
+});
+
+test('MidnightElevation is taken even though it arrives as a bare number', () => {
+  const t = tvaShape([], null, [], [], '08/24', PREDICTED);
+  assert.equal(t.forecast[0].midnight_elevation_ft, 989.03);
+  assert.equal(t.forecast[2].midnight_elevation_ft, 988.630066);
+});
+
+test('days keep their order, so a falling lake reads as falling', () => {
+  const t = tvaShape([], null, [], [], '08/24', PREDICTED);
+  assert.deepEqual(t.forecast.map((r) => r.day),
+    ['08/24/2026', '08/25/2026', '08/26/2026']);
+  assert.ok(t.forecast[0].midnight_elevation_ft > t.forecast[2].midnight_elevation_ft);
+});
+
+test('the forecast is an empty list, never undefined, when TVA sends nothing', () => {
+  assert.deepEqual(tvaShape([], null, [], [], '08/24', null).forecast, []);
+  assert.deepEqual(tvaShape([], null, [], [], '08/24').forecast, []);
+  assert.deepEqual(tvaShape([], null, [], [], '08/24', []).forecast, []);
+});
+
+test('a forecast row carrying a day and no numbers at all is dropped', () => {
+  const t = tvaShape([], null, [], [], '08/24',
+    [{ Day: '08/24/2026' }, { Day: '08/25/2026', AverageInflow: '1,000' }]);
+  assert.equal(t.forecast.length, 1);
+  assert.equal(t.forecast[0].day, '08/25/2026');
+});
+
+// The five-argument form is what every call before 2026-08-25 used. Adding `predicted` last
+// keeps them working; this pins that so the next person to extend the signature knows why the
+// order is what it is.
+test('the five-argument signature still behaves', () => {
+  const t = tvaShape(OBSERVED, GUIDE, RELEASES, MESSAGES, '08/15');
+  assert.ok(Array.isArray(t.forecast));
+  assert.equal(t.forecast.length, 0);
+});

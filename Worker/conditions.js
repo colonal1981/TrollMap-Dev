@@ -763,7 +763,7 @@ const mmdd = (day) => String(day || '').slice(0, 5);   // "08/15/2026" -> "08/15
  * be tested against captured fixtures without a network -- which is the only way this file gets
  * verified at all from a sandbox that cannot reach tva.com.
  */
-export function tvaShape(observed, guide, releases, messages, todayMmDd) {
+export function tvaShape(observed, guide, releases, messages, todayMmDd, predicted) {
   const rows = Array.isArray(observed) ? observed : [];
   const last = rows.length ? rows[rows.length - 1] : null;
   const items = (guide && Array.isArray(guide.items)) ? guide.items : [];
@@ -801,6 +801,23 @@ export function tvaShape(observed, guide, releases, messages, todayMmDd) {
     generation: gen.slice(0, 12),
     generating_now: gen.length ? gen[0].generators > 0 : null,
     message: msg,
+    // THE ONLY LAKE-LEVEL FORECAST THIS APP HAS. /predicted-data runs three days out and says
+    // what TVA intends the water to do: average inflow, average outflow, and the elevation it
+    // expects at midnight. Everything else here is what the lake IS; this is what it is about
+    // to be, which is the question a trip planned for tomorrow actually asks.
+    //
+    // MidnightElevation arrives as a bare NUMBER while the two flows arrive as display strings
+    // with thousands separators -- "2,422". Same object, two conventions. tvaNum takes both.
+    forecast: (Array.isArray(predicted) ? predicted : [])
+      .map((r) => ({
+        day: r.Day || null,
+        inflow_cfs: tvaNum(r.AverageInflow),
+        outflow_cfs: tvaNum(r.AverageOutflow),
+        midnight_elevation_ft: tvaNum(r.MidnightElevation),
+      }))
+      .filter((r) => r.day && (r.inflow_cfs !== null || r.outflow_cfs !== null
+                               || r.midnight_elevation_ft !== null))
+      .slice(0, 5),
     source: 'TVA — tva.com/RestApi',
   };
 }
@@ -809,12 +826,12 @@ async function tvaReservoir(lid, todayMmDd) {
   const one = (route) => cached(`tva:${route}:${lid}`, TTL.gauge,
     () => getJson(`${TVA_API}/${route}/${encodeURIComponent(lid)}?format=json`))
     .catch(() => null);
-  const [observed, guide, releases, messages] = await Promise.all([
+  const [observed, guide, releases, messages, predicted] = await Promise.all([
     one('observed-data-48-hours'), one('operating-guide'),
-    one('generation-releases'), one('lake-messages'),
+    one('generation-releases'), one('lake-messages'), one('predicted-data'),
   ]);
   if (!observed && !guide) return null;
-  return { lid, ...tvaShape(observed, guide, releases, messages, todayMmDd) };
+  return { lid, ...tvaShape(observed, guide, releases, messages, todayMmDd, predicted) };
 }
 
 function gaugeId(g) {
