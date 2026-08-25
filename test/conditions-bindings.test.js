@@ -41,6 +41,23 @@ const BINDINGS = {
       gauges: [{ lid: 'BOOMS1', name: 'gauge that 500s', lat: 33, lon: -83 }],
       ramps: [],
     },
+    // A CORPS LAKE. `usace[]` is what the binder writes: the project sits in the list beside the
+    // turbine units and the transmission lines, and usaceLevels() is what tells them apart, by
+    // intersecting these names against the district's OWN published roster of conservation
+    // pools. Nothing here is typed into the Worker, which is the property this fixture pins.
+    corps_lake: {
+      slug: 'corps_lake', display_name: 'Hartwell-shaped Lake (Anderson Co, SC/GA)',
+      state: 'SC', feature_type: 'lake', centroid: [-82.82, 34.42],
+      pool: { lid: 'HWDS1', name: 'Savannah River at the dam', lat: 34.42, lon: -82.82,
+              confidence: 'name+geom' },
+      usace: [
+        { office: 'SAS', cwms_name: '02187010', name: 'a bare site number' },
+        { office: 'SAS', cwms_name: 'Hartwell-Unit1', name: 'a turbine' },
+        { office: 'SAS', cwms_name: 'HartwellPowerhouse', name: 'the powerhouse' },
+        { office: 'SAS', cwms_name: 'Hartwell', name: 'HARTWELL DAM' },
+      ],
+      ramps: [],
+    },
     // A WATER WITH NO NWS LID ANYWHERE. 34 of the 204 bound waters look like this -- Monticello
     // Reservoir, Hyco Lake, Randleman, John H. Moss -- and until 2026-08-25 every one of them
     // got `trend: null`, because the only trend this app had came from NWPS /stageflow and that
@@ -151,6 +168,44 @@ globalThis.fetch = async (url) => {
     if (u.includes('product=currents_predictions')) return ok(CURRENTS);
     if (u.includes('product=water_level')) return ok(WATER_LEVEL);
     if (u.includes('product=predictions')) return ok(TIDE_HILO);
+  }
+  // THE CORPS. Four calls in order: the district roster of everything publishing a conservation
+  // pool, that project's own levels, its Flow/Elev-Tail catalogue, then one series read each.
+  // Values transcribed from the live service on 2026-08-25 where they were read, and the units
+  // are the real trap: the CATALOGUE says "m" and the DATA endpoint says "ft" for the same
+  // series, so the flows arrive as cms and have to come out as cfs.
+  if (u.includes('cwms-data.usace.army.mil')) {
+    if (u.includes('/levels') && !u.includes('level-id-mask=Hartwell')) {
+      // The roster. Savannah publishes four, and 'Hartwell-Unit1' is not one of them.
+      return ok({ levels: ['Hartwell', 'NSBLD', 'Russell', 'Thurmond'].map((p) => ({
+        'office-id': 'SAS', 'location-level-id': `${p}.Elev.Inst.0.Top of Conservation`,
+        'specified-level-id': 'Top of Conservation' })) });
+    }
+    if (u.includes('/levels')) {
+      return ok({ levels: [{
+        'office-id': 'SAS', 'location-level-id': 'Hartwell.Elev.Inst.0.Top of Conservation',
+        'specified-level-id': 'Top of Conservation', 'constant-value': 660 }] });
+    }
+    if (u.includes('/catalog/TIMESERIES')) {
+      return ok({ total: 5, 'page-size': 500, entries: [
+        'Flow-Out.Ave.1Hour.1Hour.Raw-SHEF_SAS', 'Flow-Power.Ave.1Hour.1Hour.Raw-SHEF_SAS',
+        'Flow-Spill.Ave.1Hour.1Hour.Raw-SHEF_SAS', 'Flow-In.Ave.1Hour.1Hour.Raw-SHEF_SAS',
+        'Elev-Tail.Inst.1Hour.0.Raw-SHEF_SAS',
+      ].map((n) => ({ office: 'SAS', name: `Hartwell.${n}`, units: 'm', interval: '1Hour',
+        extents: [{ 'latest-time': '2026-08-25T01:00:00Z' }] })) });
+    }
+    if (u.includes('/timeseries')) {
+      const name = decodeURIComponent((u.match(/name=([^&]+)/) || [])[1] || '');
+      const v = { 'Flow-Out': 200, 'Flow-Power': 180, 'Flow-Spill': 20, 'Flow-In': 150,
+                  'Elev-Tail': 480.2 }[Object.keys({ 'Flow-Out': 0, 'Flow-Power': 0,
+                  'Flow-Spill': 0, 'Flow-In': 0, 'Elev-Tail': 0 })
+                  .find((k) => name.includes(k))];
+      if (v === undefined) return { ok: false, status: 404, json: async () => ({}) };
+      return ok({ name, 'office-id': 'SAS', units: name.includes('Elev') ? 'ft' : 'cms',
+        'value-columns': [{ name: 'date-time', ordinal: 1 }, { name: 'value', ordinal: 2 },
+                          { name: 'quality-code', ordinal: 3 }],
+        values: [[Date.parse('2026-08-25T01:00:00Z'), v, 0]] });
+    }
   }
   // THE NATIONAL WATER DASHBOARD, for the no-lid water. Two rows transcribed from a live read
   // of site 02160900 on 2026-08-25: 00062 = 422.77 falling 0.3 ft/h, and the 62615 companion
@@ -278,7 +333,7 @@ console.log('\n== unbound slug ==');
 r = await run('some_pond_nobody_bound', 34, -81, env);
 check('water null', r.water === null);
 check('pending names the slug and the count',
-  /some_pond_nobody_bound/.test(r.pending?.water || '') && /4 waters are bound/.test(r.pending?.water || ''),
+  /some_pond_nobody_bound/.test(r.pending?.water || '') && /5 waters are bound/.test(r.pending?.water || ''),
   r.pending);
 check('pending has no tide key for an inland miss', !('tide' in (r.pending || {})), r.pending);
 
@@ -316,6 +371,31 @@ console.log('\n== a water with no NWS lid still gets a trend and a flood categor
   check('and says which agency said so',
     w.pool?.flood_category_source === 'USGS National Water Dashboard',
     w.pool?.flood_category_source);
+}
+
+console.log('\n== a Corps lake gets a target and a release, both off the registry ==');
+{
+  const rc = await run('corps_lake', 34.42, -82.82, env);
+  const w = rc.water || {};
+  // THE PROJECT IS DISCOVERED, NOT TYPED. `usace[]` carries a bare site number, a turbine and a
+  // powerhouse alongside the project, and only the district's own roster says which is the lake.
+  check('the project is picked out of the binding by the roster',
+    w.usace?.project === 'Hartwell', w.usace?.project);
+  check('and the target for today comes with it — a Corps lake has no single full pool',
+    w.usace?.conservation_pool_ft === 660, w.usace?.conservation_pool_ft);
+  check('the release is not null on a Corps lake', !!w.usace_release, w.usace_release);
+  check('cms out of the data endpoint arrives as cfs — 200 cms is 7,063 cfs',
+    w.usace_release?.outflow?.value === 7063, w.usace_release?.outflow);
+  check('turbines and spillway are separate facts, not one number',
+    w.usace_release?.through_turbines?.value === 6357
+      && w.usace_release?.spill?.value === 706, w.usace_release);
+  check('the tailwater comes back in feet, because the DATA said ft',
+    w.usace_release?.tailwater_ft === 480.2, w.usace_release?.tailwater_ft);
+  check('and it reaches `releases`, where Duke and TVA lakes already were',
+    rc.water?.releases?.operator === 'US Army Corps of Engineers',
+    rc.water?.releases?.operator);
+  check('observed, not scheduled — this is the hour that just passed',
+    rc.water?.releases?.kind === 'observed', rc.water?.releases?.kind);
 }
 
 console.log('\n== an NWPS water still prefers NWPS for its trend ==');
