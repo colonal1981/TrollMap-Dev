@@ -350,3 +350,84 @@ test('a SCHEDULE still outranks the Corps, because a schedule is about a trip no
 test('no Corps flows, no Corps release — a tailwater alone is not a release', () => {
   assert.equal(releaseShape({ usace: { project: 'Hartwell', tailwater_ft: 480.2 } }), null);
 });
+
+
+// ── AND THE SAMPLE WAS ONE LAKE ───────────────────────────────────────────────────────────────
+//
+// Everything above is Hartwell's own 42 series. That is a sample, and a census answers a
+// question about the thing it counted -- a lesson this project has paid for more than once.
+//
+// `/cwms-data/parameters?office=SAS`, fetched 2026-08-25, is the POPULATION: 199 registered
+// parameters, of which 54 are `Elev`. The manual calls it "a hardwired list of parameter IDs in
+// the CWMS database", so this is the whole vocabulary a Corps project can publish under, not
+// the subset one reservoir happens to use.
+//
+// Transcribed verbatim. THIRTY-FOUR of them begin with the literal text `Elev-Pool`, and the
+// comment on `usaceElevation` claims the trailing dot separates the reading from all of them.
+// Claimed against 42; proved here against 54.
+const OFFICIAL_ELEV = [
+  'Elev', 'Elev-Pool', 'Elev-Head', 'Elev-Tail', 'Elev-Tail-Sen2',
+  'Elev-Level1', 'Elev-Level2', 'Elev-Level3', 'Elev-Rule',
+  'Elev-Trigger-Level1', 'Elev-Trigger_Level1', 'Elev-Trigger_Level2', 'Elev-Trigger_Level3',
+  'Elev-Pool-Level1', 'Elev-Pool-Level2', 'Elev-Pool-Level3', 'Elev-Pool-Level4',
+  'Elev-Pool-Rule', 'Elev-Pool-Ave', 'Elev-Pool-Aver',
+  'Elev-Pool_Avg', 'Elev-Pool_Max', 'Elev-Pool_Min', 'Elev-Pool_DOY', 'Elev-Pool_AVER',
+  'Elev-Pool_p02', 'Elev-Pool_p05', 'Elev-Pool_p10', 'Elev-Pool_p15', 'Elev-Pool_p20',
+  'Elev-Pool_p25', 'Elev-Pool_p30', 'Elev-Pool_p35', 'Elev-Pool_p40', 'Elev-Pool_p45',
+  'Elev-Pool_p50', 'Elev-Pool_p55', 'Elev-Pool_p60', 'Elev-Pool_p65', 'Elev-Pool_p70',
+  'Elev-Pool_p75', 'Elev-Pool_p80', 'Elev-Pool_p85', 'Elev-Pool_p90', 'Elev-Pool_p95',
+  'Elev-Pool_p98',
+  'Elev-88', 'Elev-Guide-Curve', 'Elev-Guide_Curve', 'Elev-GC',
+  'Elev-L1', 'Elev-L2', 'Elev-L3', 'Elev-AVER',
+];
+
+const OFFICIAL_CATALOG = { entries: OFFICIAL_ELEV.map(
+  (param) => e(`Somelake.${param}.Inst.1Hour.0.Raw-SHEF_SAS`, '1Hour', '2026-08-25T12:00:00Z')) };
+
+test('the whole registered Elev vocabulary, and only one of it is the water', () => {
+  assert.equal(OFFICIAL_ELEV.length, 54, 'the fetch returned 54 Elev parameters');
+  const hit = pickCwmsSeries(OFFICIAL_CATALOG, /\.Elev-Pool\./i);
+  assert.ok(hit, 'something matched');
+  assert.equal(hit.name, 'Somelake.Elev-Pool.Inst.1Hour.0.Raw-SHEF_SAS');
+});
+
+test('thirty-four registered parameters start with the text Elev-Pool', () => {
+  // If this number moves, the vocabulary moved and the anchor is worth re-proving. It was
+  // written as 33 first, by counting the transcribed list by eye; the count came off the fetch.
+  const family = OFFICIAL_ELEV.filter((p) => p.startsWith('Elev-Pool'));
+  assert.equal(family.length, 34);
+  // Every one of them is excluded by the trailing dot, which is the whole claim.
+  for (const param of family) {
+    if (param === 'Elev-Pool') continue;
+    assert.equal(/\.Elev-Pool\./i.test(`Somelake.${param}.Inst.1Hour.0.Raw-SHEF_SAS`), false,
+      `${param} must not read as the pool`);
+  }
+});
+
+test('a percentile is one underscore away from the reading', () => {
+  // The pair the original comment named, now with its 20 siblings behind it.
+  assert.equal(/\.Elev-Pool\./i.test('X.Elev-Pool_p10.Inst.1Hour.0.R'), false);
+  assert.equal(/\.Elev-Pool\./i.test('X.Elev-Pool.Inst.1Hour.0.R'), true);
+});
+
+test('the guide curve has THREE registered spellings, which is why none is hard-coded here', () => {
+  // Elev-GC, Elev-Guide-Curve and Elev-Guide_Curve are all in the Corps' own list -- Hartwell
+  // publishes all three. Nothing in the Worker reads a guide curve from CWMS (usaceLevels does
+  // it), so no matcher is built for them; this records that any future one needs all three and
+  // that the hyphen/underscore inconsistency is the Corps', not a typo.
+  const spellings = OFFICIAL_ELEV.filter((p) => /^Elev-(GC|Guide[-_]Curve)$/.test(p));
+  assert.deepEqual(spellings.sort(), ['Elev-GC', 'Elev-Guide-Curve', 'Elev-Guide_Curve']);
+  // And none of them is the pool.
+  for (const param of spellings) {
+    assert.equal(/\.Elev-Pool\./i.test(`X.${param}.Inst.1Hour.0.R`), false);
+  }
+});
+
+test('the drought-level family is inconsistent in the Corps vocabulary itself', () => {
+  // Elev-Trigger-Level1 is hyphenated; Elev-Trigger_Level2 and _Level3 are underscored. One
+  // family, two punctuations, in the published list. This is exactly why a hand-written pattern
+  // over these names rots, and it is recorded rather than matched.
+  assert.ok(OFFICIAL_ELEV.includes('Elev-Trigger-Level1'));
+  assert.ok(OFFICIAL_ELEV.includes('Elev-Trigger_Level2'));
+  assert.ok(OFFICIAL_ELEV.includes('Elev-Trigger_Level3'));
+});
