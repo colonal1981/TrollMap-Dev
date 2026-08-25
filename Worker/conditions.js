@@ -834,6 +834,167 @@ async function tvaReservoir(lid, todayMmDd) {
   return { lid, ...tvaShape(observed, guide, releases, messages, todayMmDd, predicted) };
 }
 
+/* ══ THE USGS NATIONAL WATER DASHBOARD ════════════════════════════════════════════════════════
+ *
+ * TWO FACTS THIS APP HAD FOR SOME WATERS AND NOT OTHERS, FOR NO REASON A PERSON WOULD ACCEPT.
+ *
+ * Ryan, 2026-08-25: *"any data that is available for any and all lakes should be available for
+ * any and all lakes"* and *"nothing hand written... everything expandable... if i decide to add
+ * every single lake that garmin has in the US into the app tomorrow this stuff should be able to
+ * expand with it"*.
+ *
+ *   WHICH WAY THE WATER IS GOING. `out.trend` comes from NWPS /stageflow, which needs an NWS
+ *   handbook-5 lid. Measured against the bindings on 2026-08-25: 45 of 221 waters carry NO lid
+ *   on any gauge, so they got no trend at all — and every one of those 45 has a USGS site
+ *   number. Issaqueena, Chauga River, Hyco Lake, John H. Moss, Fort Gordon Reservoir.
+ *
+ *   WHETHER IT IS IN FLOOD. `usgsSite()` writes `flood_category: null` with a comment saying
+ *   USGS does not publish one. Not through /nwis/iv, it does not. It publishes one here.
+ *
+ * FILTERED ON THE BINDING'S OWN SITE NUMBERS — no bounding box, no state list, no table of
+ * lakes. `water_bindings.json` says which USGS sites belong to this water; those site numbers go
+ * into the `$filter` verbatim. Add a lake in Montana tomorrow and the binder gives it sites and
+ * this call covers it, with nothing here to edit. A bbox would have had to be widened by hand,
+ * which is the thing that was asked not to exist.
+ *
+ * AN ACCELERATOR, NEVER A SOLE DEPENDENCY. Every VALUE on the card still comes from fetchUsgs
+ * and NWPS. This fills two fields that are otherwise null and touches nothing else, so the day
+ * this endpoint is renamed the app loses a trend arrow on 45 waters and nothing more. That
+ * matters because `@odata.context` points at `int-noms.er.usgs.gov`: it is the dashboard's own
+ * backing service, exposed publicly but documented nowhere this project can cite.
+ *
+ * NO 24-HOUR CHANGE IS SYNTHESISED. The dashboard gives `RateOfChangeUnitPerHour` and nothing
+ * else, and multiplying a rate by 24 to fill `change_24h` would be inventing a trend — the same
+ * refusal stageflowTrend already makes when its window is too short. The rate travels under its
+ * own name and the change fields stay null.
+ */
+const USGS_DASHBOARD =
+  'https://dashboard.waterdata.usgs.gov/service/cwis/1.0/odata/CurrentConditions';
+
+// Units are fixed per parameter code on this service — it publishes a code and a bare number,
+// never a unit string. Only the codes whose readings this app already shows are mapped; anything
+// else travels with a null unit rather than a guessed one.
+const DASHBOARD_UNITS = {
+  '00065': { units: 'ft', measures: 'Gage height' },
+  '00062': { units: 'ft', measures: 'Reservoir elevation' },
+  '62614': { units: 'ft', measures: 'Reservoir elevation' },
+  '62615': { units: 'ft', measures: 'Reservoir elevation' },
+  '63160': { units: 'ft', measures: 'Water level, NAVD88' },
+  '00060': { units: 'ft3/s', measures: 'Streamflow' },
+  '00010': { units: 'degC', measures: 'Water temperature' },
+};
+// The level codes a trend is worth having on, best first. A lake wants its elevation and a river
+// wants its stage; discharge is the fallback because a rising flow is still a fact about the day.
+const DASHBOARD_TREND_PARMS = ['00062', '62615', '62614', '00065', '63160', '00060'];
+
+/**
+ * The dashboard's rows, indexed site -> parameter code. Pure.
+ *
+ * `Value` is absent on 10 of 320 rows in the capture this was written against, and a row with a
+ * rate of change and no reading is not a reading. Those are dropped rather than carried as
+ * nulls that read like zeroes downstream.
+ */
+export function dashboardIndex(rows) {
+  const out = new Map();
+  for (const r of Array.isArray(rows) ? rows : []) {
+    const site = String((r && r.SiteNumber) || '').trim();
+    const parm = String((r && r.ParameterCode) || '').trim();
+    // `num()`, not `Number()`. Number(null) is 0, and a null reading that arrives as a zero is
+    // a phantom dry river — the same class as the '' -> 0 guard in js/modules/usgs-gauges.js.
+    // It rejects the -999 family too, which this service has no documented position on.
+    const value = num(r && r.Value);
+    if (!site || !parm || value === null) continue;
+    const rate = num(r.RateOfChangeUnitPerHour);
+    if (!out.has(site)) out.set(site, new Map());
+    out.get(site).set(parm, {
+      value: round2(value),
+      at: r.TimeLocal || null,
+      tz: r.TimeZoneCode || null,
+      // A rate of exactly zero IS a reading — it means holding steady — so this cannot collapse
+      // to a falsy test.
+      rate_per_hour: rate === null ? null : round2(rate),
+      // "NOFLOOD" and the flood classes. Null means USGS states nothing for this site, which is
+      // not the same as "not flooding" and must not render as it.
+      flood: r.FloodStageStatusCode || null,
+      // A quality flag on 10 of 320 rows in the capture ("DIS"). Carried, never interpreted —
+      // this codebase has no reference for the vocabulary, same call as the CWMS quality code.
+      flag: r.ValueFlagCode || null,
+      parameter: parm,
+    });
+  }
+  return out;
+}
+
+/**
+ * A trend from a rate of change, in the same shape stageflowTrend returns, or null.
+ *
+ * The shape matches on purpose: a caller that already knows how to render a trend must not need
+ * to learn a second layout to render this one. What differs is honest — `change_24h` and
+ * `change_7d` are null because this source publishes no history, and `rate_per_hour` carries
+ * what it does publish.
+ */
+export function dashboardTrend(byParm) {
+  if (!byParm) return null;
+  for (const parm of DASHBOARD_TREND_PARMS) {
+    const row = byParm.get(parm);
+    if (!row || row.rate_per_hour === null) continue;
+    const u = DASHBOARD_UNITS[parm] || { units: null, measures: null };
+    return {
+      latest: row.value,
+      at: row.at,
+      units: u.units,
+      measures: u.measures,
+      // NOT DERIVED FROM THE RATE. See the block comment above.
+      change_24h: null,
+      change_7d: null,
+      rate_per_hour: row.rate_per_hour,
+      points: 1,
+      covers_hours: null,
+      source: 'USGS National Water Dashboard — CurrentConditions',
+    };
+  }
+  return null;
+}
+
+/** The OData request for one set of site numbers. Pure, so the filter can be asserted. */
+export function dashboardUrl(sites) {
+  const list = [...new Set((sites || []).map((s) => String(s || '').trim()).filter(Boolean))]
+    // A site number is digits. Anything else is not one, and it would go into a filter string.
+    .filter((s) => /^\d{8,15}$/.test(s))
+    .sort();
+  if (!list.length) return null;
+  // BUILT BY HAND, NOT BY URLSearchParams, WHICH ENCODES A SPACE AS `+`. An OData $filter is
+  // full of spaces, and this codebase has already been bitten once by that exact substitution --
+  // see the WQP URL in Worker/research/limnology.js, which says so in a comment. %20 throughout.
+  const enc = (v) => encodeURIComponent(v).replace(/%20/g, '%20');
+  const q = [
+    // AccessLevelCode 'P' is the public tier. Without it the service answers with rows this app
+    // has no right to and USGS has no obligation to keep serving.
+    ['$filter', `(AccessLevelCode eq 'P') and (SiteNumber in(${list.map((s) => `'${s}'`).join(',')}))`],
+    ['$select', 'SiteNumber,ParameterCode,TimeLocal,TimeZoneCode,Value,ValueFlagCode,'
+              + 'RateOfChangeUnitPerHour,FloodStageStatusCode'],
+    ['$orderby', 'SiteNumber,ParameterCode'],
+    // Every parameter this app maps, times a handful of sites, cannot approach this. A ceiling
+    // that can be hit silently is worse than one that cannot be reached.
+    ['$top', '500'],
+    ['caller', 'TrollMap personal use'],
+  ].map(([k, v]) => `${enc(k)}=${enc(v)}`).join('&');
+  return `${USGS_DASHBOARD}?${q}`;
+}
+
+/** One call for a whole water. Null on anything at all going wrong — this is never load-bearing. */
+async function dashboardFor(sites) {
+  const url = dashboardUrl(sites);
+  if (!url) return null;
+  try {
+    const j = await cached(`dash:${url}`, TTL.gauge, () => getJson(url));
+    const rows = (j && j.value) || null;
+    return rows ? dashboardIndex(rows) : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 function gaugeId(g) {
   if (!g) return null;
   return g.lid || (g.usgs_site ? `usgs:${g.usgs_site}` : null);
@@ -2872,6 +3033,32 @@ async function waterBlock(b, lat, lon, env) {
                            error: String((r.reason && r.reason.message) || r.reason) });
   });
 
+  // THE DASHBOARD, ONCE, FOR EVERY USGS SITE THIS WATER BINDS. Filled in below wherever a
+  // reading is missing something the dashboard has and nothing else does. One request per water
+  // regardless of how many gauges it carries, and skipped entirely for a water with no USGS
+  // site — which costs nothing and covers every water the binder will ever produce.
+  const dashSites = [b.pool, b.tailwater, ...(b.gauges || [])]
+    .map((g) => g && g.usgs_site).filter(Boolean);
+  const dash = await dashboardFor(dashSites);
+
+  // WHETHER IT IS IN FLOOD, on the gauges that had no way to say. usgsSite() writes null here
+  // because /nwis/iv publishes no flood category; the dashboard publishes one for the same site.
+  // NWPS readings are left alone — they already carry their own, from the agency that sets the
+  // thresholds, and a second opinion on one fact is how two numbers start disagreeing on a card.
+  if (dash) {
+    for (const role of ['pool', 'tailwater', 'gauge']) {
+      const r = out[role];
+      if (!r || !r.usgs_site || r.flood_category != null) continue;
+      const row = (dash.get(r.usgs_site) || new Map());
+      const flood = ['00065', '00062', '62615', '62614', '63160', '00060']
+        .map((pc) => (row.get(pc) || {}).flood).find(Boolean) || null;
+      if (flood) {
+        r.flood_category = flood;
+        r.flood_category_source = 'USGS National Water Dashboard';
+      }
+    }
+  }
+
   const used = new Set(picks.map(([, g]) => gaugeId(g)));
   out.other_gauges = (b.gauges || [])
     .filter((g) => g && gaugeId(g) && !used.has(gaugeId(g)) && Number.isFinite(g.lat))
@@ -3106,6 +3293,17 @@ async function waterBlock(b, lat, lon, env) {
                 || (picks.find(([role]) => role === 'gauge') || [])[1]?.lid
                 || (b.tailwater && b.tailwater.lid) || null;
   out.trend = await gaugeTrend(trendLid).catch(() => null);
+  // AND WHEN THERE IS NO LID, WHICH IS 45 OF 221 WATERS. NWPS is preferred whenever it answers
+  // — a month of observations beats a single rate — but a water with no handbook-5 id anywhere
+  // in its binding could never reach it, and used to get nothing rather than something. Same
+  // shape either way; `source` says which answered.
+  if (!out.trend && dash) {
+    const trendSite = [b.pool, ...(b.gauges || []), b.tailwater]
+      .map((g) => g && g.usgs_site).filter(Boolean)
+      .find((site) => dashboardTrend(dash.get(site)));
+    out.trend = trendSite ? dashboardTrend(dash.get(trendSite)) : null;
+    if (out.trend) out.trend.usgs_site = trendSite;
+  }
 
   // Only where there is a flow to place. A lake's percentile of discharge is not a question
   // anyone is asking, and the fetch is skipped rather than made and discarded.
