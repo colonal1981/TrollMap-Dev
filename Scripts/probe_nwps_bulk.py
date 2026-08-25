@@ -248,6 +248,84 @@ def compare_reaches(docs, bulk):
     }
 
 
+# NWPS NAMES THE SAME GAUGE TWO WAYS, and the difference is not cosmetic on a dam.
+#
+#     tile  `name`            Saluda River at Lake Murray Dam near Irmo
+#     CSV   `location name`   Lake Murray
+#
+# Measured 2026-08-25: 32 of 1,443 shared gauges disagree. Most are a dropped state suffix and
+# harmless. Six replace the RIVER with the LAKE, and `bind()` matches gauge names against a
+# water's own name tokens -- so IRMS1 under the CSV's name still reaches `lake_murray` and stops
+# reaching `saluda_river_lower_saluda`, which is the Lower Saluda tailwater.
+#
+# The CSV carries two more name columns, `proximity` and `river/water-body name`, empty on the
+# two rows this file's fixtures came from. If they are populated on the dam gauges then the
+# COMPOSITION of the three is a superset of both names and matching gets strictly better. If
+# they are empty everywhere, the tile sweep keeps earning its place for `name` alone -- and the
+# 306 per-gauge calls can still go, because that half is settled on its own evidence.
+NAME_COLS = ('location name', 'proximity', 'river/water-body name')
+
+
+def compose_name(row):
+    """Every name-bearing column this row has, joined. A superset, not a replacement."""
+    parts = [text(row.get(c)) for c in NAME_COLS]
+    return ' '.join(p for p in parts if p) or None
+
+
+def _tokens(s):
+    out, cur = set(), []
+    for ch in (s or '').lower():
+        if ch.isalnum():
+            cur.append(ch)
+        elif cur:
+            out.add(''.join(cur))
+            cur = []
+    if cur:
+        out.add(''.join(cur))
+    return out
+
+
+# Words that carry no water identity. A gauge losing "sc" is not losing anything a bind uses.
+NAME_NOISE = {'sc', 'nc', 'ga', 'tn', 'va', 'al', 'ky', 'at', 'near', 'nr', 'above', 'below',
+              'the', 'of', 'in', 'on', 'and', 'st', 'us', 'hwy', 'rd', 'road', 'dr', 'street',
+              'bridge', 'dam', 'county', 'co'}
+
+
+def name_analysis(tiles_in_box, bulk_in_box, disagreements):
+    """For every name that differs: does the CSV still carry the tile name's real tokens?
+
+    LOST TOKENS ARE THE WHOLE QUESTION. A dropped ", SC" is noise. A dropped "Saluda" is a
+    binding.
+    """
+    rows = []
+    for d in disagreements:
+        lid = d['lid']
+        r = bulk_in_box.get(lid) or {}
+        tile_t = _tokens(d['tiles']) - NAME_NOISE
+        loc_t = _tokens(text(r.get('location name'))) - NAME_NOISE
+        comp_t = _tokens(compose_name(r)) - NAME_NOISE
+        rows.append({
+            'lid': lid,
+            'tile_name': d['tiles'],
+            'location name': text(r.get('location name')),
+            'proximity': text(r.get('proximity')),
+            'river/water-body name': text(r.get('river/water-body name')),
+            'composed': compose_name(r),
+            'lost_by_location_name': sorted(tile_t - loc_t),
+            'lost_by_composition': sorted(tile_t - comp_t),
+        })
+    populated = {c: sum(1 for r in bulk_in_box.values() if text(r.get(c)) is not None)
+                 for c in NAME_COLS}
+    return {
+        'rows': rows,
+        'name_columns_populated': populated,
+        'in_box': len(bulk_in_box),
+        'cosmetic': sum(1 for r in rows if not r['lost_by_location_name']),
+        'structural': sum(1 for r in rows if r['lost_by_location_name']),
+        'structural_after_composition': sum(1 for r in rows if r['lost_by_composition']),
+    }
+
+
 def in_box(lat, lon, box):
     w, s, e, n = box
     return (lat is not None and lon is not None
@@ -321,6 +399,7 @@ def compare(tiles, bulk, box):
         'disagreements': {k: v for k, v in disagree.items() if v},
         'disagreement_counts': {k: len(v) for k, v in disagree.items()},
         'gained_field_coverage': gained,
+        'names': name_analysis(tiles_in_box, bulk_in_box, disagree['name']),
     }
 
 
@@ -496,6 +575,41 @@ def self_test():
     check('a lid the bulk file does not carry is reported, not silently agreed',
           r['lids_not_in_bulk'] == ['NOPE1'] and r['agree'] == 0)
 
+    # THE NAME QUESTION. A dropped ", SC" is noise; a dropped "Saluda" is a binding.
+    cosmetic = {'X1': {'location name': 'Shaw Creek near Aiken', 'proximity': '',
+                       'river/water-body name': ''}}
+    na = name_analysis({}, cosmetic,
+                       [{'lid': 'X1', 'tiles': 'Shaw Creek near Aiken SC', 'bulk': None}])
+    check('a dropped state suffix is cosmetic, not a loss',
+          na['cosmetic'] == 1 and na['structural'] == 0,
+          str(na['rows'][0]['lost_by_location_name']))
+
+    structural = {'IRMS1': {'location name': 'Lake Murray', 'proximity': '',
+                            'river/water-body name': ''}}
+    na = name_analysis({}, structural,
+                       [{'lid': 'IRMS1',
+                         'tiles': 'Saluda River at Lake Murray Dam near Irmo', 'bulk': None}])
+    check('a dropped RIVER name is structural',
+          na['structural'] == 1 and 'saluda' in na['rows'][0]['lost_by_location_name'],
+          str(na['rows'][0]['lost_by_location_name']))
+    check('and composition cannot save it when the other columns are empty',
+          na['structural_after_composition'] == 1)
+
+    composed = {'IRMS1': {'location name': 'Lake Murray',
+                          'proximity': 'at Lake Murray Dam near Irmo',
+                          'river/water-body name': 'Saluda River'}}
+    na = name_analysis({}, composed,
+                       [{'lid': 'IRMS1',
+                         'tiles': 'Saluda River at Lake Murray Dam near Irmo', 'bulk': None}])
+    check('composition recovers the river when the columns carry it',
+          na['structural'] == 1 and na['structural_after_composition'] == 0,
+          str(na['rows'][0]['lost_by_composition']))
+    check('the composed name is a superset, not a swap',
+          'Saluda River' in (na['rows'][0]['composed'] or '')
+          and 'Lake Murray' in (na['rows'][0]['composed'] or ''))
+    check('name columns are counted so an all-empty column is visible',
+          na['name_columns_populated']['river/water-body name'] == 1)
+
     print('\n  %d ok, %d failed\n' % (ok, fail))
     return 1 if fail else 0
 
@@ -508,6 +622,8 @@ def main():
     ap.add_argument('--registry', default=None, help='default <cwd>\\registry')
     ap.add_argument('--cache', default=None, help='default <registry>\\_bindings_cache')
     ap.add_argument('--out', default=None, help='default <registry>\\_nwps_bulk_probe.json')
+    ap.add_argument('--keep-csv', default=None,
+                    help='where to save the download; default <registry>\\_nwps_all_gauges.csv')
     ap.add_argument('--self-test', action='store_true', help='parser only, no network')
     a = ap.parse_args()
 
@@ -543,8 +659,17 @@ def main():
         req = urllib.request.Request(BULK_URL, headers={'User-Agent': UA})
         with urllib.request.urlopen(req, timeout=180) as r:
             raw = r.read().decode('utf-8-sig', 'replace')
+        # THE RESPONSE GOES ON DISK. The binder's own `fetch` docstring says why: "the cache is
+        # the point, not an optimisation -- it puts every response on disk where it can be
+        # counted, re-read and diffed, instead of living only in memory where a truncated read
+        # looks identical to a short one." The first run of this probe kept nothing, and the
+        # first question its own report raised could not be answered without downloading again.
+        keep = a.keep_csv or os.path.join(reg, '_nwps_all_gauges.csv')
+        with io.open(keep, 'w', encoding='utf-8', newline='') as fh:
+            fh.write(raw)
+        print('  kept %s' % keep)
         bulk, header, dupes = parse_bulk(io.StringIO(raw))
-        note = '%d bytes, one request' % len(raw)
+        note = '%d bytes, one request, saved to %s' % (len(raw), keep)
 
     tiles, ntiles = load_tiles(cache)
     docs = load_gauge_docs(cache)
@@ -587,6 +712,30 @@ def main():
         print('    %-10s %s' % (field, 'agree' if not n else '%d DISAGREE' % n))
         for d in res['disagreements'].get(field, [])[:5]:
             print('        %-8s tiles=%r  bulk=%r' % (d['lid'], d['tiles'], d['bulk']))
+    nm = res['names']
+    print('')
+    print('  NAMES: %d of %d shared gauges are named differently'
+          % (len(nm['rows']), res['shared']))
+    print('    %d cosmetic (a dropped state suffix or locator -- no token a bind uses)'
+          % nm['cosmetic'])
+    print('    %d STRUCTURAL -- the CSV name loses a token the tile name had' % nm['structural'])
+    print('    %d still structural after composing all three name columns'
+          % nm['structural_after_composition'])
+    print('    name columns populated, of %d in-box rows:' % nm['in_box'])
+    for c in NAME_COLS:
+        print('      %-24s %d' % (c, nm['name_columns_populated'][c]))
+    for r in nm['rows']:
+        if not r['lost_by_location_name']:
+            continue
+        print('    %-8s loses %s' % (r['lid'], ', '.join(r['lost_by_location_name'])))
+        print('             tile      %s' % r['tile_name'])
+        print('             location  %s' % r['location name'])
+        print('             proximity %s' % r['proximity'])
+        print('             river     %s' % r['river/water-body name'])
+        print('             composed  %s%s'
+              % (r['composed'], '' if not r['lost_by_composition']
+                 else '   STILL LOSES ' + ', '.join(r['lost_by_composition'])))
+
     rr = res['reaches']
     print('')
     print('  THE 306: reachId, the only field those per-gauge documents were fetched for')
