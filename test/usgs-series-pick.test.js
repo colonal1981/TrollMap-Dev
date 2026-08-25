@@ -16,7 +16,8 @@
 // from the bottom, and Lake Marion's pool level, where the two series are in vertical datums
 // about a foot apart.
 import { describe, it, expect } from './expect-shim.mjs';
-import { seriesRank, rdbSeriesDescriptions, newerStamp, fetchUsgs } from '../Worker/worker-data.js';
+import { seriesRank, rdbSeriesDescriptions, newerStamp, applyElevation, fetchUsgs }
+  from '../Worker/worker-data.js';
 
 /** Swap global fetch for one call, always restoring it. */
 async function withFetch(impl, fn) {
@@ -208,5 +209,77 @@ describe('fetchUsgs — the two waters where the coin flip cost something', () =
     ]), () => fetchUsgs('02175148', '00065,00060'));
     expect(res.gageHeight).toBe(6.89);
     expect(res.streamflow).toBe(412);
+  });
+});
+
+
+describe('applyElevation — three codes, one field, and it used to be arrival order', () => {
+  // Site 02077280 at the Hyco Lake dam (Person Co, NC) answered live on 2026-08-25 with
+  // 00062 = 8.81 AND 62614 = 408.6 in the same response. Four hundred feet apart, and which one
+  // reached `out.elevation` depended on the order USGS happened to serialise them.
+  const hyco = [{ code: '00062', value: 8.81 }, { code: '62614', value: 408.6 }];
+
+  it('is stable whichever order the codes arrive in', () => {
+    const a = applyElevation({}, hyco);
+    const b = applyElevation({}, hyco.slice().reverse());
+    expect(a.elevation).toBe(b.elevation);
+    expect(a.elevation_code).toBe(b.elevation_code);
+  });
+
+  it('carries the loser instead of discarding it', () => {
+    const out = applyElevation({}, hyco);
+    expect(out.elevation_alternatives.length).toBe(1);
+    expect(out.elevation_alternatives[0].code).toBe('62614');
+    expect(out.elevation_alternatives[0].value).toBe(408.6);
+  });
+
+  it('names the datum on both, because they are not the same measurement', () => {
+    const out = applyElevation({}, hyco);
+    expect(out.elevation_datum).toBe('above datum (USGS does not name it in the code)');
+    expect(out.elevation_alternatives[0].datum).toBe('NGVD 1929');
+  });
+
+  it('says how far apart they are, because 400 ft is a different problem from 1 ft', () => {
+    expect(applyElevation({}, hyco).elevation_disagrees_ft).toBe(399.79);
+    // Lake Murray (Lexington Co, SC): 00062 = 356.57 against 62615 = 355.26, a datum question.
+    expect(applyElevation({}, [{ code: '00062', value: 356.57 }, { code: '62615', value: 355.26 }])
+      .elevation_disagrees_ft).toBe(1.31);
+  });
+
+  it('a single code says nothing about a disagreement that is not there', () => {
+    const out = applyElevation({}, [{ code: '00062', value: 76.42 }]);
+    expect(out.elevation).toBe(76.42);
+    expect(out.elevation_alternatives).toBe(undefined);
+    expect(out.elevation_disagrees_ft).toBe(undefined);
+  });
+
+  it('preserves what this app has shown: the unnamed datum wins', () => {
+    // NOT a claim that it is the better datum. Murray, Marion and the other operator lakes
+    // publish a full pool on that scale, and preferring the named datum would move every one of
+    // them to fix Hyco.
+    expect(applyElevation({}, [{ code: '62615', value: 355.26 }, { code: '00062', value: 356.57 }])
+      .elevation).toBe(356.57);
+    expect(applyElevation({}, [{ code: '62614', value: 408.6 }, { code: '62615', value: 407.3 }])
+      .elevation_code).toBe('62615');
+  });
+
+  it('nothing usable in, nothing written', () => {
+    expect(applyElevation({}, []).elevation).toBe(undefined);
+    expect(applyElevation({}, null).elevation).toBe(undefined);
+    expect(applyElevation({}, [{ code: '00062', value: NaN }]).elevation).toBe(undefined);
+  });
+
+  it('end to end: fetchUsgs no longer flips on the Hyco pair', async () => {
+    const pair = (first, second) => jsonOf([
+      series(first.code, '', [[String(first.v), '2026-08-25T01:00:00-04:00']]),
+      series(second.code, '', [[String(second.v), '2026-08-25T01:00:00-04:00']]),
+    ]);
+    const a = await withFetch(pair({ code: '00062', v: 8.81 }, { code: '62614', v: 408.6 }),
+      () => fetchUsgs('02077280', '00062,62614'));
+    const b = await withFetch(pair({ code: '62614', v: 408.6 }, { code: '00062', v: 8.81 }),
+      () => fetchUsgs('02077280b', '00062,62614'));
+    expect(a.elevation).toBe(8.81);
+    expect(b.elevation).toBe(8.81);
+    expect(a.elevation_disagrees_ft).toBe(399.79);
   });
 });

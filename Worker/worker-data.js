@@ -211,6 +211,51 @@ function seriesRank(code, desc) {
   return d ? 1 : 0;
 }
 
+/**
+ * WHICH ELEVATION CODE IS THE LAKE, WHEN A SITE PUBLISHES MORE THAN ONE.
+ *
+ * Stable, documented, and it carries the losers rather than discarding them. See the block in
+ * fetchUsgs for why no datum is preferred: Hyco needs the named one and Murray needs the unnamed
+ * one, and picking either everywhere breaks the other.
+ *
+ * 00062 first because it is what this app has shown on every lake whose operator publishes a
+ * full pool on the same scale -- Murray at 358, Marion at 75. The order is the point; being
+ * first is not a claim that it is the better datum.
+ */
+const ELEV_CODE_ORDER = ['00062', '62615', '62614'];
+const ELEV_CODE_DATUM = {
+  '00062': 'above datum (USGS does not name it in the code)',
+  '62614': 'NGVD 1929',
+  '62615': 'NAVD 1988',
+};
+
+function applyElevation(out, candidates) {
+  const list = (candidates || []).filter((c) => c && Number.isFinite(c.value));
+  if (!list.length) return out;
+  const rank = (c) => {
+    const i = ELEV_CODE_ORDER.indexOf(c.code);
+    return i < 0 ? ELEV_CODE_ORDER.length : i;
+  };
+  const sorted = list.slice().sort((a, b) => rank(a) - rank(b) || a.code.localeCompare(b.code));
+  const win = sorted[0];
+  out.elevation = win.value;
+  out.elevation_code = win.code;
+  out.elevation_datum = ELEV_CODE_DATUM[win.code] || null;
+  const others = sorted.slice(1);
+  if (others.length) {
+    out.elevation_alternatives = others.map((c) => ({
+      code: c.code, value: c.value, datum: ELEV_CODE_DATUM[c.code] || null,
+      sublocation: c.desc || null,
+    }));
+    // SAID OUT LOUD WHEN IT MATTERS. Two datums a foot apart is a datum question; two readings
+    // four hundred feet apart is a local gage datum being read as a sea-level elevation, and a
+    // consumer that is never told cannot tell those apart from the number alone.
+    const spread = Math.abs(win.value - others[others.length - 1].value);
+    out.elevation_disagrees_ft = Math.round(spread * 100) / 100;
+  }
+  return out;
+}
+
 /** The newer of two USGS timestamps, either of which may be missing or unparseable. */
 function newerStamp(a, b) {
   if (!a) return b || null;
@@ -247,6 +292,7 @@ async function fetchUsgs(site, paramCd, periodDays = 2) {
       // the sensor; a site with one series per code lands here unchanged.
       const best = new Map();
       let navd88Elev = null;
+      const elevCandidates = [];
       for (const ts of j?.value?.timeSeries || []) {
         const code = ts?.variable?.variableCode?.[0]?.value;
         // ONE LETTER, AND THIS WHOLE BRANCH HAS NEVER RETURNED A READING.
@@ -282,9 +328,31 @@ async function fetchUsgs(site, paramCd, periodDays = 2) {
         const latest = pick.value;
         if (code === "00010") out.tempC = latest;
         if (code === "00065") out.gageHeight = latest;
-        if (code === "00062") out.elevation = latest;
-        if (code === "62614") out.elevation = latest;
-        if (code === "62615") out.elevation = latest;
+        // THREE ELEVATION CODES, ONE FIELD, AND WHICHEVER ARRIVED LAST USED TO WIN.
+        //
+        // 00062, 62614 and 62615 all wrote `out.elevation` unconditionally, so a site publishing
+        // more than one of them produced a different answer depending on the order USGS happened
+        // to serialise the response. Not hypothetical: site 02077280 at the Hyco Lake dam
+        // (Person Co, NC) answered live on 2026-08-25 with 00062 = 8.81 AND 62614 = 408.6 in the
+        // same response. FOUR HUNDRED FEET APART, on a coin flip.
+        //
+        // They disagree because they are not the same measurement. 62614 is above NGVD 1929 and
+        // 62615 is above NAVD 1988 -- both named national datums. 00062 is "elevation of
+        // reservoir water surface ABOVE DATUM", and USGS does not say which datum in the code; at
+        // Hyco it is a local staff gage sitting around the 400 ft contour, which is why 8.81.
+        //
+        // NOTHING HERE PICKS A DATUM FOR A LAKE, because there is no answer that is right
+        // everywhere. On Lake Murray (Lexington Co, SC) the same pair reads 00062 = 356.57 and
+        // 62615 = 355.26 against a published 358 ft full pool, and there it is the UNNAMED datum
+        // that matches what the operator publishes. Preferring the named one would move Murray
+        // by 1.3 ft to fix Hyco by 400.
+        //
+        // So: a STABLE order, which is strictly better than a coin flip and preserves what this
+        // app has been showing; and `elevation_alternatives`, so when a site publishes two that
+        // disagree the disagreement is visible instead of resolved by serialisation order.
+        if (ELEV_PARMS.has(code)) {
+          elevCandidates.push({ code, value: latest, desc: pick.desc || null });
+        }
         if (code === "63160") out.elevationNavd88 = latest;
         if (code === "00060") out.streamflow = latest;
         // ADDED 2026-08-16 after Ryan asked whether we use every applicable data type USGS
@@ -316,6 +384,7 @@ async function fetchUsgs(site, paramCd, periodDays = 2) {
       // this app already has a field and readers for. 63160 fills it when the site publishes
       // one; this is the same number from a site that states its datum in the descriptor.
       if (out.elevationNavd88 == null && navd88Elev != null) out.elevationNavd88 = navd88Elev;
+      applyElevation(out, elevCandidates);
     }
   } catch (_) {
     // Intentionally silent: this is the JSON attempt, and the RDB request immediately below
@@ -346,6 +415,7 @@ async function fetchUsgs(site, paramCd, periodDays = 2) {
     // decide it here and arrival order decided it above.
     const best = new Map();
     let navd88Elev = null;
+    const elevCandidates = [];
     for (let i = 4; i < header.length; i++) {
       const h = header[i];
       if (!h || h.endsWith("_cd")) continue;
@@ -365,9 +435,9 @@ async function fetchUsgs(site, paramCd, periodDays = 2) {
       const v = pick.value;
       if (code === "00010" && out.tempC == null) out.tempC = v;
       if (code === "00065" && out.gageHeight == null) out.gageHeight = v;
-      if (code === "00062" && out.elevation == null) out.elevation = v;
-      if (code === "62614" && out.elevation == null) out.elevation = v;
-      if (code === "62615" && out.elevation == null) out.elevation = v;
+      // Same choice as the JSON path, made the same way. First-wins by column order was as
+      // arbitrary as last-wins by serialisation order; see applyElevation.
+      if (ELEV_PARMS.has(code)) elevCandidates.push({ code, value: v, desc: null });
       if (code === "63160" && out.elevationNavd88 == null) out.elevationNavd88 = v;
       if (code === "00060" && out.streamflow == null) out.streamflow = v;
       if (code === "00300" && out.doMgL == null) out.doMgL = v;
@@ -377,6 +447,7 @@ async function fetchUsgs(site, paramCd, periodDays = 2) {
       if (code === "00480" && out.salinityPpt == null) out.salinityPpt = v;
     }
     if (out.elevationNavd88 == null && navd88Elev != null) out.elevationNavd88 = navd88Elev;
+    if (out.elevation == null) applyElevation(out, elevCandidates);
     if (!out.timestamp && last[2]) out.timestamp = `${last[2]} ${last[3] || ""}`.trim();
   } catch (err) {
     // Unlike the JSON attempt above, this one has nothing after it. Whatever `out` holds at
@@ -1931,4 +2002,4 @@ var RIVERS = {
   }
 };
 
-export { normalizeDukeRow, dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun, fetchDukeAccessAlerts, fetchDukeOperatingRange, LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, seriesRank, rdbSeriesDescriptions, newerStamp, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchDukeDashboard };
+export { normalizeDukeRow, dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun, fetchDukeAccessAlerts, fetchDukeOperatingRange, LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, seriesRank, rdbSeriesDescriptions, newerStamp, applyElevation, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake, fetchDukeDashboard };
