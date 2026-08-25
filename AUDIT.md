@@ -12,14 +12,14 @@ Python side will read as dead here and may not be. See the `lakes.js` near miss 
 
 | metric | count |
 |---|---|
-| files | 462 |
-| jsModules | 292 |
+| files | 463 |
+| jsModules | 293 |
 | pyScripts | 164 |
 | routes | 57 |
 | routesUncalled | 0 |
 | routesMutatingUngated | 18 |
-| feeds | 107 |
-| deadExports | 211 |
+| feeds | 108 |
+| deadExports | 213 |
 | orphanModules | 4 |
 | duplicateFnNames | 42 |
 | crossModuleGlobals | 39 |
@@ -121,8 +121,8 @@ _none_
 |---|---|---|---|
 | pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev | worker | 42 | Worker/research/clients.js:506 |
 | www.dnr.sc.gov | worker, browser | 23 | Worker/research/agency-pages.js:34 |
+| x | pipeline, browser | 20 | Scripts/capture_upstreams.py:260 |
 | w | browser | 20 | test/coastal-regulations-live.test.js:50 |
-| x | pipeline, browser | 19 | Scripts/capture_upstreams.py:260 |
 | lakes.hydro-derived.duke-energy.app | pipeline, worker | 18 | Scripts/capture_upstreams.py:184 |
 | www.anglersheadquarters.com | worker, browser | 16 | Worker/reports.js:63 |
 | georgiawildlife.blog | worker, browser | 15 | Worker/reports.js:51 |
@@ -182,6 +182,7 @@ _none_
 | server.arcgisonline.com | browser | 2 | js/core/map-init.js:29 |
 | 127.0.0.1 | browser | 2 | js/modules/capture-panel.js:14 |
 | cofc.edu | browser | 2 | test/discover-authority.test.js:45 |
+| worker.example | browser | 2 | test/notification-delivery.test.js:144 |
 | x.pdf | browser | 2 | test/search-cascade.test.js:240 |
 | hydro.nationalmap.gov | pipeline | 1 | Scripts/build_lake_drainage.py:61 |
 | api.epa.gov | pipeline | 1 | Scripts/build_water_advisories.py:56 |
@@ -421,7 +422,7 @@ _none_
 | `js/modules/layers-panel.js` | 105 | 4 | 1 | **2** | layers-panel.js — the one place every map overlay is turned on and off. |
 | `js/modules/measure-tool.js` | 106 | 0 | 1 | 0 | Distance & Bearing Measurement Tool — click two points on the |
 | `js/modules/noaa-tides.js` | 228 | 1 | 1 | **1** | NOAA Coastal Tides — Plan-tab tide panel. |
-| `js/modules/notifications.js` | 548 | 7 | 3 | **5** | notifications.js — On-water alerts for TrollMap |
+| `js/modules/notifications.js` | 671 | 9 | 3 | **7** | notifications.js — On-water alerts for TrollMap |
 | `js/modules/osm-structure.js` | 145 | 0 | 1 | 0 | osm-structure.js — OSM Structure Layer Toggle |
 | `js/modules/plan-assemble.js` | 872 | 8 | 10 | 0 | plan-assemble.js — ordered candidates + the model's judgement → a plan v2 object. |
 | `js/modules/plan-builder.js` | 2547 | 10 | 7 | 0 | Plan Builder — the Plan tab form, save/load, preview rendering, |
@@ -436,7 +437,7 @@ _none_
 | `js/modules/plan-to-timeline.js` | 407 | 6 | 6 | **1** | plan-to-timeline.js — a v2 plan, in the shape the rest of the Plan tab already reads. |
 | `js/modules/plan-tracks.js` | 220 | 6 | 4 | **1** | plan-tracks.js — a v2 plan, materialised into the tracks and waypoints the export path rea |
 | `js/modules/plan-water-index.js` | 134 | 2 | 2 | 0 | plan-water-index.js — the two spatial lookups the water reasons need, and nothing else. |
-| `js/modules/plan-water-ui.js` | 912 | 4 | 1 | **3** | plan-water-ui.js — the Water tab. The screen where the fisherman chooses. |
+| `js/modules/plan-water-ui.js` | 924 | 4 | 1 | **3** | plan-water-ui.js — the Water tab. The screen where the fisherman chooses. |
 | `js/modules/plan-water.js` | 1287 | 21 | 5 | 0 | plan-water.js — offer the water, with reasons, and let the fisherman choose. |
 | `js/modules/qdc-decoder.js` | 520 | 6 | 2 | 0 | qdc-decoder.js — pure functions: raw .qdc folder → grid → contour GeoJSON. |
 | `js/modules/quickdraw-key.js` | 95 | 0 | 1 | 0 | Depth key — the legend for the one depth ladder. |
@@ -544,6 +545,7 @@ _none_
 | `test/layers-panel.test.js` | 166 | 0 | 0 | 0 | test/layers-panel.test.js — the bar stays slim and no toggle goes missing. |
 | `test/live-ramps-reach-the-filter.test.js` | 344 | 0 | 0 | 0 |  |
 | `test/ndbc-realtime2.test.js` | 161 | 0 | 0 | 0 | NDBC realtime2, against rows transcribed from the LIVE files on 2026-08-25. |
+| `test/notification-delivery.test.js` | 156 | 0 | 0 | 0 | THE ONLY PATH IN THIS APP THAT INTERRUPTS RYAN, AND IT HAS NEVER RUN IN THE FIELD. |
 | `test/nwps-flood-context.test.js` | 208 | 0 | 0 | 0 | WHAT FLOODS AT WHAT STAGE, AND WHERE TODAY SITS AGAINST THIS GAUGE'S OWN RECORD. |
 | `test/nwps-flow-units.test.js` | 72 | 0 | 0 | 0 | The unit that travels with the value, and nothing else. |
 | `test/obs-bearing.test.js` | 82 | 0 | 0 | 0 | "WIND 5 MPH FROM 999°" |
@@ -678,7 +680,7 @@ _none_
 - `js/modules/lake-research.js`: initLakeResearch, loadProfile, saveCurrentResearchProfile, populateResearchLakeDropdown, runFullPipeline, runResume
 - `js/modules/layers-panel.js`: isOpen, close
 - `js/modules/noaa-tides.js`: stageLabel
-- `js/modules/notifications.js`: requestNotificationPermission, checkWindAlert, loadSessionFromSmartPlan, enableNotifications, disableNotifications
+- `js/modules/notifications.js`: requestNotificationPermission, lastFire, checkWindAlert, loadSessionFromSmartPlan, enableNotifications, disableNotifications, selfTest
 - `js/modules/plan-candidates.js`: AMPS_REF_MPH, AMPS_REF_A, AMPS_EXP, ampsAtMph, groupDocks, eligibleForHolding, sliceLine, catchSupport, pointToSegmentM
 - `js/modules/plan-inputs.js`: normaliseHolding
 - `js/modules/plan-pieces.js`: stretchCoords
@@ -728,7 +730,7 @@ _none_
 - `legacyStorageName()` — Worker/research/keys.js:95, js/data/research-ids.js:67
 - `researchStorageIdCandidates()` — Worker/research/keys.js:112, js/data/research-ids.js:77
 - `resolveLakeKey()` — Worker/trollmap-worker.js:428, js/data/species-intel.js:87
-- `isEnabled()` — js/core/layer-registry.js:97, js/modules/notifications.js:460
+- `isEnabled()` — js/core/layer-registry.js:97, js/modules/notifications.js:498
 - `toggle()` — js/core/layer-registry.js:167, js/modules/layers-panel.js:68
 - `getWorkerBase()` — js/data/access-index.js:73, js/modules/gis-toggles.js:51
 - `formatAccessLabel()` — js/data/access-index.js:360, js/modules/lake-ramp-select.js:328

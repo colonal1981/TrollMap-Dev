@@ -1,14 +1,14 @@
 {
   "generatedFrom": "tools/audit.mjs",
   "summary": {
-    "files": 462,
-    "jsModules": 292,
+    "files": 463,
+    "jsModules": 293,
     "pyScripts": 164,
     "routes": 57,
     "routesUncalled": 0,
     "routesMutatingUngated": 18,
-    "feeds": 107,
-    "deadExports": 211,
+    "feeds": 108,
+    "deadExports": 213,
     "orphanModules": 4,
     "duplicateFnNames": 42,
     "crossModuleGlobals": 39,
@@ -7874,15 +7874,17 @@
     },
     "js/modules/notifications.js": {
       "purpose": "notifications.js — On-water alerts for TrollMap",
-      "lines": 548,
+      "lines": 671,
       "exports": [
         "requestNotificationPermission",
+        "lastFire",
         "loadSessionFromPlan",
         "checkWindAlert",
         "loadSessionFromSmartPlan",
         "enableNotifications",
         "disableNotifications",
-        "isEnabled"
+        "isEnabled",
+        "selfTest"
       ],
       "imports": [
         {
@@ -7936,10 +7938,12 @@
       ],
       "deadExports": [
         "requestNotificationPermission",
+        "lastFire",
         "checkWindAlert",
         "loadSessionFromSmartPlan",
         "enableNotifications",
-        "disableNotifications"
+        "disableNotifications",
+        "selfTest"
       ],
       "globalsWritten": [],
       "globalsRead": [
@@ -9078,7 +9082,7 @@
     },
     "js/modules/plan-water-ui.js": {
       "purpose": "plan-water-ui.js — the Water tab. The screen where the fisherman chooses.",
-      "lines": 912,
+      "lines": 924,
       "exports": [
         "findWater",
         "pickedWater",
@@ -15049,6 +15053,29 @@
       "globalsWritten": [],
       "globalsRead": []
     },
+    "test/notification-delivery.test.js": {
+      "purpose": "THE ONLY PATH IN THIS APP THAT INTERRUPTS RYAN, AND IT HAS NEVER RUN IN THE FIELD.",
+      "lines": 156,
+      "exports": [],
+      "imports": [
+        {
+          "from": "node:test",
+          "names": [
+            "test"
+          ]
+        },
+        {
+          "from": "node:assert",
+          "names": [
+            "assert"
+          ]
+        }
+      ],
+      "importedBy": [],
+      "deadExports": [],
+      "globalsWritten": [],
+      "globalsRead": []
+    },
     "test/nwps-flood-context.test.js": {
       "purpose": "WHAT FLOODS AT WHAT STAGE, AND WHERE TODAY SITS AGAINST THIS GAUGE'S OWN RECORD.",
       "lines": 208,
@@ -18780,7 +18807,7 @@
     },
     "x": {
       "host": "x",
-      "hits": 19,
+      "hits": 20,
       "files": [
         "Scripts/capture_upstreams.py:260",
         "Scripts/capture_upstreams.py:356",
@@ -18791,6 +18818,7 @@
         "test/arcgis-filter-guard.test.js:176",
         "test/conditions-bindings.test.js:238",
         "test/conditions-bindings.test.js:348",
+        "test/notification-delivery.test.js:42",
         "test/regulations-wiring.test.js:431",
         "test/regulations-wiring.test.js:458",
         "test/search-cascade.test.js:53",
@@ -19746,6 +19774,17 @@
       "hits": 1,
       "files": [
         "test/duke-access-alerts.test.js:39"
+      ],
+      "side": [
+        "browser"
+      ]
+    },
+    "worker.example": {
+      "host": "worker.example",
+      "hits": 2,
+      "files": [
+        "test/notification-delivery.test.js:144",
+        "test/notification-delivery.test.js:152"
       ],
       "side": [
         "browser"
@@ -22699,7 +22738,7 @@
       "name": "isEnabled",
       "at": [
         "js/core/layer-registry.js:97",
-        "js/modules/notifications.js:460"
+        "js/modules/notifications.js:498"
       ]
     },
     {

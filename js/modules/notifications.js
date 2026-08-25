@@ -70,17 +70,55 @@ export async function requestNotificationPermission() {
 }
 
 // ── Core fire function ────────────────────────────────────────────────────────
-function fire(title, body, tag = null) {
-  if (!_enabled) return;
-  if (Notification.permission !== 'granted') return;
+
+// WHAT THE LAST fire() ACTUALLY DID, so selfTest() can report it instead of guessing. A
+// console.warn on a phone is a message nobody will ever read.
+let _lastFire = { at: null, via: null, ok: null, error: null };
+export function lastFire() { return { ..._lastFire }; }
+
+/**
+ * ANDROID CHROME DOES NOT SUPPORT `new Notification()` AND HAS NOT SINCE 2016.
+ *
+ * On a phone the page-level constructor throws `TypeError: Illegal constructor`, and the catch
+ * below turned that into a console.warn — on a device with no console open, in a dry bag, which
+ * is the exact situation this feature exists for. The supported path is the SERVICE WORKER's
+ * showNotification(), and this app already registers a service worker in sw-register.js; it
+ * simply was never asked to show anything.
+ *
+ * Service worker first, page constructor second. Desktop keeps working either way, and the
+ * fallback is what makes this safe to ship without a device in hand to test on.
+ */
+async function fire(title, body, tag = null) {
+  if (!_enabled) return false;
+  if (!('Notification' in window) || Notification.permission !== 'granted') {
+    _lastFire = { at: Date.now(), via: null, ok: false,
+                  error: ('Notification' in window) ? `permission=${Notification.permission}` : 'no Notification API' };
+    return false;
+  }
+  const opts = { body, icon: './icons/icon-192.png', silent: false };
+  if (tag) opts.tag = tag;
   try {
-    const opts = { body, icon: './icons/icon-192.png', silent: false };
-    if (tag) opts.tag = tag;
-    const n = new Notification(title, opts);
-    // Auto-close after 8 seconds
-    setTimeout(() => n.close(), 8000);
+    const reg = ('serviceWorker' in navigator)
+      ? await navigator.serviceWorker.getRegistration() : null;
+    if (reg && typeof reg.showNotification === 'function') {
+      await reg.showNotification(title, opts);
+      _lastFire = { at: Date.now(), via: 'serviceWorker', ok: true, error: null };
+      return true;
+    }
   } catch (e) {
-    console.warn('[notifications] fire failed:', e.message);
+    // Fall through to the page constructor rather than giving up: a registration that exists
+    // but is not yet active throws here, and on desktop the constructor still works.
+    _lastFire = { at: Date.now(), via: 'serviceWorker', ok: false, error: e && e.message };
+  }
+  try {
+    const n = new Notification(title, opts);
+    setTimeout(() => { try { n.close(); } catch (_) {} }, 8000);
+    _lastFire = { at: Date.now(), via: 'page', ok: true, error: null };
+    return true;
+  } catch (e) {
+    _lastFire = { at: Date.now(), via: 'page', ok: false, error: e && e.message };
+    console.warn('[notifications] fire failed:', e && e.message);
+    return false;
   }
 }
 
@@ -460,6 +498,91 @@ export function disableNotifications() {
 }
 
 export function isEnabled() { return _enabled; }
+
+/**
+ * PROVE THE CHAIN IN THE DRIVEWAY, NOT IN A STORM.
+ *
+ * Ryan, 2026-08-25: "honestly completely untested... i have not actually been on the water since
+ * we turned that feature on." This is the only path in the app that INTERRUPTS him, it is the
+ * one carrying weather warnings, and every link in it fails silently by design — a permission
+ * that was never granted, a constructor that throws on Android, a poll whose worker URL was
+ * never passed, a fetch that 502s. None of those show up as anything on a phone screen.
+ *
+ * So: exercise every link for real and return what each one did. Run it from the console or
+ * from `window.trollmapNotificationSelfTest()`. It fires a REAL notification, because a test
+ * that stubs the last step tests everything except the part that breaks.
+ */
+export async function selfTest() {
+  const out = { at: new Date().toISOString(), checks: [] };
+  const add = (name, ok, detail) => out.checks.push({ name, ok, detail });
+
+  add('notifications enabled in this session', !!_enabled,
+      _enabled ? 'on' : 'off — press the bell first, nothing below will fire');
+  const hasApi = 'Notification' in window;
+  add('Notification API present', hasApi, hasApi ? '' : 'this browser has none');
+  add('permission granted', hasApi && Notification.permission === 'granted',
+      hasApi ? Notification.permission : 'n/a');
+
+  let reg = null;
+  try {
+    reg = ('serviceWorker' in navigator) ? await navigator.serviceWorker.getRegistration() : null;
+  } catch (e) { /* reported below */ }
+  // THE ONE THAT MATTERS ON ANDROID. Without an active registration the page constructor is the
+  // only route left, and on Android Chrome that route throws.
+  add('service worker registered and active', !!(reg && reg.active),
+      reg ? (reg.active ? (reg.scope || 'active') : 'registered but not active yet — reload once')
+          : 'none — on Android no notification can be shown at all');
+
+  add('geolocation available', 'geolocation' in navigator,
+      ('geolocation' in navigator) ? '' : 'proximity and live position will not work');
+  add('position known', !!(_lastPos || _session.launchPos),
+      _lastPos ? 'live fix' : (_session.launchPos ? 'launch point only, no live fix yet' : 'none'));
+
+  add('a plan is loaded', !!(_session.weatherCues || _session.solunarMajors || []).length
+      || !!_session.returnTimeH, 'cues: ' + ((_session.weatherCues || []).length)
+      + ' weather, ' + ((_session.solunarMajors || []).length) + ' solunar major');
+
+  // The live hazard poll, end to end, against the real Worker.
+  const at = _lastPos || _session.launchPos;
+  if (!_session.hazardWorker) {
+    add('hazard poll configured', false,
+        'no worker URL on this session — the poll returns immediately and has never run.'
+        + ' loadSessionFromPlan() was called without { worker }');
+  } else if (!at) {
+    add('hazard poll configured', false, 'worker set but no position to ask about');
+  } else {
+    add('hazard poll configured', true, _session.hazardWorker);
+    try {
+      const u = `${_session.hazardWorker}/hazards?lat=${at.lat.toFixed(4)}&lon=${at.lon.toFixed(4)}&_=${Date.now()}`;
+      const r = await fetch(u, { cache: 'no-store' });
+      const j = r.ok ? await r.json() : null;
+      add('hazard endpoint answers', !!(j && Array.isArray(j.items)),
+          r.ok ? `HTTP ${r.status}, ${j && Array.isArray(j.items) ? j.items.length : '?'} hazard(s) here now`
+               : `HTTP ${r.status}`);
+    } catch (e) {
+      add('hazard endpoint answers', false, e && e.message);
+    }
+  }
+
+  add('poll timer running', !!_hazardPoll, _hazardPoll ? `every ${HAZARD_POLL_MS / 60000} min` : 'stopped');
+  add('cue timer running', !!_tickInterval, _tickInterval ? 'every 30 s' : 'stopped');
+
+  // THE REAL THING, THROUGH THE REAL PATH. Everything above can pass while this fails.
+  const wasEnabled = _enabled;
+  _enabled = true;
+  const fired = await fire('✅ TrollMap self-test',
+    'If you can read this on your phone, the alert path works end to end.', 'selftest');
+  _enabled = wasEnabled;
+  add('notification actually shown', !!fired,
+      fired ? `via ${_lastFire.via}` : (_lastFire.error || 'no route worked'));
+
+  out.ok = out.checks.every((c) => c.ok);
+  // Printed as a table because this is read on a phone, where a wall of JSON is unreadable.
+  try { console.table(out.checks); } catch (_) { console.log(out.checks); }
+  return out;
+}
+
+if (typeof window !== 'undefined') window.trollmapNotificationSelfTest = selfTest;
 
 // ── Settings UI ───────────────────────────────────────────────────────────────
 function updateUI() {

@@ -823,7 +823,19 @@ export async function buildFromPicked() {
   // "other than using it to take photos i really do not use it much... that is why we have the
   // notifications being sent to the echomap". notifications.js forwards to the Echomap over
   // ActiveCaptain and had zero importers, so every cue this plan produces had nowhere to go.
-  const cues = loadSessionFromPlan(r.plan, { weatherByHour: T.weatherByHour });
+  // THE LIVE HAZARD POLL WAS NEVER STARTED ON THIS PATH. `loadSessionFromPlan` only arms it
+  // when it is handed a worker URL and somewhere to ask about, and this call passed neither --
+  // so `pollHazards()` returned on its first line, every five minutes, forever, while the Smart
+  // Plan path a few files away polled correctly. Two entry points into one feature and only one
+  // of them switched it on; found 2026-08-25 auditing the alert chain, which had never run in
+  // the field. `T.ramp` is the launch this day was costed from, so it is the right place to ask
+  // about until the boat reports a position of its own.
+  const cues = loadSessionFromPlan(r.plan, {
+    weatherByHour: T.weatherByHour,
+    worker: CF_WORKER_URL,
+    launch: (T.ramp && Number.isFinite(T.ramp.lat) && Number.isFinite(T.ramp.lon))
+      ? { lat: T.ramp.lat, lon: T.ramp.lon } : null,
+  });
 
   // SAY THE ORDER OUT LOUD AND SAY IT IS NOT THE SHORT ONE. Silently reordering what he ticked is
   // how a search reads as a mistake -- § 14 gives him veto, and a veto needs something to look at.
