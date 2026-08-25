@@ -66,7 +66,8 @@ import { waterChain, damTable } from './registry.js';
 import { dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun,
          fetchDukeAccessAlerts, fetchDukeOperatingRange, fetchUsgs, getLakeClarity }
   from './worker-data.js';
-import { parseCubeLevels, parseSouthernCoLevels, parseBrookfieldFacility } from './operators.js';
+import { parseCubeLevels, parseSouthernCoLevels, parseBrookfieldFacility,
+         parseSanteeCooper } from './operators.js';
 import { reportTokens } from './reports.js';
 
 const UA = 'TrollMap/1.0 (personal fishing app)';
@@ -1504,9 +1505,43 @@ async function usaceLevels(candidates, nowMs) {
  * ONE FETCH PER OPERATOR PER ISOLATE. Cube publishes four lakes on one page and Southern
  * Company twenty on another, so a per-lake fetch would pull the same table over and over.
  */
+//
+// THE DISPATCH IS DATA, NOT A TERNARY. It was `key === 'cube' ? parseCubeLevels : parseSouthern`,
+// which is fine for two and wrong for four -- adding an operator meant editing a conditional in
+// the middle of a fetch. Each row now carries its own parser, so the next utility is one line.
+//
+// AND ONE OF THEM IS NOT HTML. Dominion publishes JSON at a real endpoint; Santee Cooper, Cube
+// and Southern Company render server-side. `json: true` is the only difference and it lives in
+// the row rather than in a branch.
 const OPERATOR_PAGES = {
-  cube: { url: 'https://ww4.cubecarolinas.com/lake/levels?orgID=3', label: 'Cube Carolinas' },
-  southernco: { url: 'https://lakes.southernco.com/default.aspx', label: 'Southern Company / Georgia Power' },
+  cube: {
+    url: 'https://ww4.cubecarolinas.com/lake/levels?orgID=3',
+    label: 'Cube Carolinas', parse: parseCubeLevels,
+  },
+  southernco: {
+    url: 'https://lakes.southernco.com/default.aspx',
+    label: 'Southern Company / Georgia Power', parse: parseSouthernCoLevels,
+  },
+  // ONE PAGE, EVERY SANTEE COOPER ANSWER. A ten-day forward generation schedule per hydro,
+  // Marion and Moultrie against the rule curve, discharge and spill per facility, and upstream
+  // inflows for four rivers. santeecooper.com itself only links out to USGS -- the data is in
+  // this iframe, which is why it went unfound for so long.
+  santeecooper: {
+    url: 'https://azapp-lakespublic-prd-001.azurewebsites.net/',
+    label: 'Santee Cooper', parse: parseSanteeCooper,
+  },
+  // Lake Murray's operating band. USGS gives the level; only Dominion gives the 345-360 range it
+  // is judged against, and `Difference` is already computed against full pond.
+  //
+  // `LakeDischarge?lake=saluda` is NOT here on purpose: its `LakeName` is literally the USGS
+  // station name and it returns the same number as site 02168504, which the binder now binds to
+  // the Lower Saluda directly. A second request for a number already on the wire is not a source.
+  dominion: {
+    url: 'https://publicservice.dominionenergyse.com/api/lakeMurray',
+    label: 'Dominion Energy South Carolina', json: true,
+    parse: (j) => (j && j.Status === 'successful' && Number.isFinite(Number(j.CurrentLevel)))
+      ? j : null,
+  },
 };
 const _opCache = new Map();
 
@@ -1518,10 +1553,7 @@ async function operatorPage(key) {
   let parsed = null;
   try {
     const r = await fetch(cfg.url, { headers: { 'User-Agent': 'TrollMap/1.0 (personal fishing app)' } });
-    if (r.ok) {
-      const html = await r.text();
-      parsed = key === 'cube' ? parseCubeLevels(html) : parseSouthernCoLevels(html);
-    }
+    if (r.ok) parsed = cfg.parse(cfg.json ? await r.json() : await r.text());
   } catch (_) { parsed = null; }
   _opCache.set(key, { t: Date.now(), v: parsed });
   return parsed;
@@ -1573,6 +1605,64 @@ async function operatorLevel(b) {
       if (!r.ok) return null;
       return brookfieldShape(parseBrookfieldFacility(await r.text()), op);
     } catch (_) { return null; }
+  }
+
+  // TWO OPERATORS DO NOT PUBLISH A LIST OF LAKES, so they are answered before the guard that
+  // requires one. Cube and Southern Company each render one table of many lakes; Santee Cooper
+  // renders one page about two lakes and two hydros, and Dominion answers one lake per endpoint.
+  if (op.operator === 'santeecooper') {
+    const page = await operatorPage('santeecooper');
+    if (!page || !page.elevations || !page.elevations.length) return null;
+    const cfg = OPERATOR_PAGES.santeecooper;
+    const last = page.elevations[page.elevations.length - 1];
+    const moultrie = /moultrie/i.test(op.feed_name);
+    const level = moultrie ? last.moultrie_ft : last.marion_ft;
+    if (level == null) return null;
+    const flow = page.flows[page.flows.length - 1] || null;
+    return {
+      source: cfg.label, url: cfg.url, feed_name: op.feed_name,
+      elevation_ft: level,
+      // THE RULE CURVE IS THE POINT. USGS gives Marion's level and only Santee Cooper says what
+      // it is supposed to be, which is the same line this app already draws on Duke and Corps
+      // lakes. Moultrie has NO rule curve and that is deliberate, not missing -- its elevation
+      // is dependent on Marion's, in Santee Cooper's own words -- so it reports null rather
+      // than borrowing Marion's target and reading as if it had one.
+      rule_curve_ft: moultrie ? null : last.rule_curve_ft,
+      vs_rule_curve_ft: moultrie ? null : last.marion_vs_rule_ft,
+      rule_curve_note: moultrie
+        ? 'Lake Moultrie has no rule curve of its own; its elevation follows Lake Marion.' : null,
+      spilling_cfs: flow ? flow.spilling_cfs : null,
+      inflow_cfs: flow ? flow.inflow_cfs : null,
+      discharge_cfs: flow ? flow.discharge_cfs : null,
+      observed_at: last.date,
+      last_updated: page.updated,
+      bound_by: op.why,
+    };
+  }
+
+  if (op.operator === 'dominion') {
+    const j = await operatorPage('dominion');
+    if (!j) return null;
+    const cfg = OPERATOR_PAGES.dominion;
+    const cur = Number(j.CurrentLevel);
+    const full = Number(j.FullLevel);
+    const low = Number(j.LowLevel);
+    return {
+      source: cfg.label, url: cfg.url, feed_name: op.feed_name,
+      elevation_ft: Number.isFinite(cur) ? cur : null,
+      full_pond_ft: Number.isFinite(full) ? full : null,
+      // `Difference` is current MINUS full, so it is negative when the lake is down. Every other
+      // operator in this file reports below-full as a POSITIVE number of feet, and one field
+      // meaning opposite things by operator is how a drawdown reads as a rise.
+      below_full_pond_ft: Number.isFinite(Number(j.Difference))
+        ? Math.round(-Number(j.Difference) * 100) / 100
+        : (Number.isFinite(full) && Number.isFinite(cur)
+            ? Math.round((full - cur) * 100) / 100 : null),
+      // The floor Dominion operates to. USGS publishes the level and nothing publishes this.
+      low_level_ft: Number.isFinite(low) ? low : null,
+      observed_at: j.FileDate || null,
+      bound_by: op.why,
+    };
   }
 
   const page = await operatorPage(op.operator);
