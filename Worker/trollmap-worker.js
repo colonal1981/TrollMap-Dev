@@ -485,7 +485,7 @@ async function resolveLake(lakeName) {
   // to expand with it"*.
   //
   // What stood here was three hard-coded Corps lakes plus Marion and Moultrie, reached only
-  // through `path === "/lake"` -- a route with no caller anywhere in js/. Behind it: a six-row
+  // through the `/lake` route -- which had no caller anywhere in js/. Behind it: a six-row
   // CWMS_PROJECT table, a scrape of water.sas.usace.army.mil for a three-digit number sitting
   // next to a lake name, and a CWMS series fetch. None of it could ever run, and none of it
   // could have grown past the five lakes somebody typed.
@@ -1403,7 +1403,11 @@ var trollmap_worker_default = {
           }),
         });
       }
-      if (path === "/duke" || url.searchParams.has("duke")) {
+      // `|| url.searchParams.has("duke")` used to be the second half of this condition, which
+      // meant ANY request carrying a `?duke` parameter on ANY path was answered with a Duke
+      // dashboard dump instead of the route it asked for. Nothing builds such a URL today, which
+      // is the only reason it never bit. A route is its path.
+      if (path === "/duke") {
         const format = (url.searchParams.get("format") || "text").toLowerCase();
         const d = await fetchDukeDashboard(url.searchParams.get("basin") || "1");
         if (!d) {

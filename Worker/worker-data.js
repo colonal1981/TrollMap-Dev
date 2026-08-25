@@ -869,7 +869,7 @@ async function fetchDukeDashboard(basin = "1") {
 const SANTEE_MARION_BACKUP_SITE = "02171000";
 // REMOVED 2026-08-25: fetchSanteeCooper, fetchUsaceSavannah and CWMS_PROJECT.
 //
-// All three were reachable only through `path === "/lake"`, a route with no caller
+// All three were reachable only through the `/lake` route, which had no caller
 // anywhere in js/. Between them they were a six-row table of Corps project names, a
 // scrape of water.sas.usace.army.mil for a three-digit number sitting next to a lake
 // name, and a Santee Cooper reader that had already been rewritten to read USGS 02171000

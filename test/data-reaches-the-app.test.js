@@ -268,9 +268,16 @@ describe('every route in trollmap-worker.js has a caller', () => {
     '/debug/regs-cache': 'a debug route, curled by hand when the regulations digest looks wrong.',
 
     // ── no caller, no internal use found. THE RUNNING TAB. ────────────────────────────────────
-    '/lake': 'DEAD. The only public door to resolveLake(), and so to LAKES.normalPool. Nothing in '
-           + 'js/ builds this URL; /conditions/{slug} does the same job for 228 bound waters '
-           + 'instead of 15. Deletion tab, 2026-08-17.',
+    // '/lake' was here from 2026-08-17 with the note "Deletion tab". Deleted 2026-08-25, along
+    // with the CWMS_PROJECT table, the water.sas.usace.army.mil scrape and the Santee Cooper
+    // reader that only it reached. The tab worked; it just needed someone to act on it.
+    '/duke': 'no caller, and fetchDukeDashboard() behind it has no other caller either — unlike '
+           + '/duke-flow-arrivals, whose function conditions.js imports directly. It is a raw '
+           + 'per-basin dump advertised in this Worker\'s own route help, so it reads as a '
+           + 'hand-curled debug door rather than a mistake. Same tab as /lake was on: it works, '
+           + 'nothing asks for it, and it needs a decision rather than a guess. Its `?duke` '
+           + 'search-param trigger — which hijacked ANY path carrying that parameter — was '
+           + 'removed 2026-08-25.',
     '/lake-research': 'no caller. Superseded by /research/get, which three modules do call.',
     '/lake-intel-sources': 'no caller. Goes with LAKE_INTEL_SOURCE_REGISTRY, already on the tab.',
     '/lakes/': 'no caller. A shortcut alias for /research/get.',
