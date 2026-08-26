@@ -1,19 +1,48 @@
 /**
  * Web Push, because the phone is asleep in a PFD pocket.
  *
- * WHAT THIS REPLACES. `js/modules/notifications.js` polls `/hazards` on a five-minute
- * `setInterval` in the page. Ryan, 2026-08-25: his phone "stays in my PFD pocket with a tether
- * except for pics". A backgrounded phone browser throttles that interval and then freezes it, so
- * the in-page poll runs on the drive to the ramp and stops the moment the phone goes away —
- * which is the entire window the feature exists for. The page poll is kept: it is instant while
- * the app IS open. This is what covers the other twelve hours.
+ * WHAT THIS REPLACES, AND WHY THE THING IT REPLACES COULD NEVER HAVE WORKED.
  *
- * THE SHAPE. On trip start the client subscribes and posts a watch: the push subscription, the
- * launch point, and the time he said he would be back. A Cloudflare cron wakes this Worker every
- * five minutes, asks `handleHazards` — THE SAME FUNCTION THE CLIENT CALLS, not a second copy —
- * for each active watch's point, diffs against what that watch has already been told, and sends
- * an empty push for anything new. The service worker wakes, asks `/alerts/pending` what
- * happened, and shows it. The watch expires itself at the return time.
+ * `js/modules/notifications.js` polls `/hazards` on a five-minute `setInterval` IN THE PAGE.
+ * That requires the page to be open. Ryan, 2026-08-26: "i do not use trollmap on the water."
+ * His phone rides in a PFD pocket, tethered, screen off, and comes out for photographs; the
+ * Echomap is the thing he actually looks at. So the in-page poll was not merely throttled on the
+ * water — it was never running at all, because nothing had it open.
+ *
+ * This is not the other half of that feature. It is the only half that can exist. A push wakes
+ * a service worker with no page, no tab and a locked screen, and the notification it raises is
+ * an ordinary OS notification — which is what Garmin Connect mirrors to the Echomap, the chain
+ * Ryan described on 2026-08-25: "the notifications.js that sends alerts from my phone to the
+ * garmin echomap".
+ *
+ * THE PHONE MUST HAVE OPENED THE APP ONCE, EVER, to register a service worker and a
+ * subscription. Once. On the couch. Never on the water.
+ *
+ * A DEVICE AND A TRIP ARE TWO DIFFERENT THINGS, AND CONFLATING THEM PUT THE ALERTS ON THE WRONG
+ * MACHINE. The first version of this file subscribed whichever browser loaded the plan. Ryan,
+ * 2026-08-26: "but i dont plan from my phone." He plans at a desk and fishes with a phone in a
+ * PFD pocket, so that design would have delivered every warning to a computer at home while he
+ * was on the water. Caught before deployment, and only because he said so.
+ *
+ * So:
+ *
+ *   A DEVICE registers ONCE and stays registered. The phone opens the app, grants permission,
+ *   and says "send alerts here". `device:<id>` outlives every trip.
+ *
+ *   A TRIP WATCH is created by whatever machine does the planning and names a place and a time,
+ *   never a browser. `watch:<id>` expires at the return time.
+ *
+ * The cron joins them: for each active watch it asks `handleHazards` — THE SAME FUNCTION THE
+ * CLIENT CALLS, not a second copy — diffs against what that watch has already reported, and
+ * pushes anything new to EVERY registered device. The service worker wakes, asks
+ * `/alerts/pending` what happened, and shows it.
+ *
+ * A WATCH WITH NO DEVICES IS REPORTED, NOT SILENT. `/alerts/watch` returns the device count, so
+ * the desk that created it can say "nothing will receive this" instead of looking like it armed
+ * something. A safety feature that quietly protects nobody is worse than one that is off.
+ *
+ * BOTH ROUTES THAT WRITE ARE BEHIND `X-Sync-Token`, the same guard the sync routes already use.
+ * Without it anyone who learned the URL could point Ryan's phone at a lake he is not on.
  *
  * WHY THE PUSH CARRIES NO PAYLOAD. Encrypting one means implementing aes128gcm — ECDH, HKDF,
  * AES-GCM — by hand, and getting it subtly wrong produces a push that silently never displays.
@@ -36,7 +65,7 @@
  * `/alerts/vapid-public`, so nothing has to be copied into the client and nothing can drift.
  */
 
-import { CORS, JSON_HEADERS } from './worker-core.js';
+import { CORS, JSON_HEADERS, isAuthorized } from './worker-core.js';
 import { handleHazards } from './conditions.js';
 
 const TTL_SECONDS = 900;          // how long the push service should hold an undelivered push
@@ -165,12 +194,6 @@ export async function vapidAuth(endpoint, env, nowMs) {
   return { Authorization: `vapid t=${jwt}, k=${applicationServerKey(jwk)}` };
 }
 
-/** KV key for a subscription. The endpoint is long and contains '/', so it is hashed. */
-export async function watchKey(endpoint) {
-  const h = await crypto.subtle.digest('SHA-256', utf8(String(endpoint)));
-  return `watch:${b64urlFromBytes(new Uint8Array(h)).slice(0, 32)}`;
-}
-
 const json = (o, status = 200) =>
   new Response(JSON.stringify(o), { status, headers: { ...JSON_HEADERS, ...CORS } });
 
@@ -189,13 +212,35 @@ async function hazardsAt(lat, lon, env) {
   return (j && Array.isArray(j.items)) ? j : null;
 }
 
-/** The words that reach the phone. Severity decides the verb, not the app's own guess. */
+/**
+ * THE TARGET DISPLAY IS A CHARTPLOTTER, NOT A PHONE SCREEN.
+ *
+ * Ryan photographed a live notification on the Echomap on 2026-08-26: a title line and two
+ * smaller body lines, in plain marine type, with Review and Dismiss. That is where these words
+ * land — the phone is only the courier, and he does not look at it.
+ *
+ * So the emoji come off. Every title in this app carries one (a warning sign, a fish, a stopwatch)
+ * and they are decoration for a notification tray. A Garmin marine unit renders a limited glyph
+ * set, and a leading character that lands as an empty box costs the first and most-read position
+ * on the line. Not measured on his unit, and that is exactly why it is not risked: a box tells him
+ * nothing and a word tells him everything.
+ *
+ * Anything above Latin-1 goes, then the whitespace it left behind.
+ */
+export function forEchomap(text) {
+  return String(text == null ? '' : text)
+    .replace(/[^\x20-\xFF]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** The words that reach the Echomap. Severity decides the verb, not the app's own guess. */
 function alertFor(h) {
   const stop = h.severity === 'Warning' || (h.severity === 'Statement' && h.storm === true);
   return {
-    title: stop ? '⚠️ NWS WARNING' : `⚠️ NWS ${h.severity || 'alert'}`,
-    body: [h.type, h.ends ? `until ${String(h.ends).replace('T', ' ').slice(0, 16)}` : null]
-      .filter(Boolean).join(' — '),
+    title: forEchomap(stop ? 'NWS WARNING' : `NWS ${h.severity || 'alert'}`),
+    body: forEchomap([h.type, h.ends ? `until ${String(h.ends).replace('T', ' ').slice(0, 16)}` : null]
+      .filter(Boolean).join(' - ')),
     tag: `nws-${h.id || h.type}`,
     severity: stop ? 'stop' : 'note',
     url: h.url || './',
@@ -219,6 +264,20 @@ async function pushTo(endpoint, env, nowMs) {
   return r.ok ? 'ok' : 'fail';
 }
 
+const CUE_LEAD_MS = 5 * 60 * 1000;   // one cron period: cues fire early, never late
+
+const nowIso = () => new Date().toISOString();
+
+async function shortHash(s) {
+  const h = await crypto.subtle.digest('SHA-256', utf8(String(s)));
+  return b64urlFromBytes(new Uint8Array(h)).slice(0, 24);
+}
+
+/** KV key for a DEVICE. The endpoint is long and contains '/', so it is hashed. */
+export async function deviceKey(endpoint) {
+  return `device:${await shortHash(endpoint)}`;
+}
+
 // ── routes ──────────────────────────────────────────────────────────────────────────────────
 
 export async function handleAlerts(request, env, url) {
@@ -227,90 +286,139 @@ export async function handleAlerts(request, env, url) {
   if (request.method === 'OPTIONS') return new Response(null, { headers: CORS });
   if (!env || !env.KV) return json({ error: 'KV not bound' }, 500);
 
+  const body = request.method === 'POST'
+    ? await request.json().catch(() => null) : null;
+
   if (p === '/alerts/vapid-public') {
     const key = applicationServerKey(readJwk(env));
-    // AN ABSENT KEY IS A CONFIGURATION FACT, NOT A CRASH. Say so plainly, because the client
-    // will show this to Ryan and "not configured" is a different job from "broken".
-    return key ? json({ key })
-               : json({ key: null, error: vapidProblem(env) }, 503);
+    // AN ABSENT KEY IS A CONFIGURATION FACT, NOT A CRASH. Say which piece is missing, because
+    // Ryan sets these secrets himself and "not configured" and "configured wrong" are different
+    // jobs with different fixes.
+    return key ? json({ key }) : json({ key: null, error: vapidProblem(env) }, 503);
   }
 
-  if (p === '/alerts/subscribe' && request.method === 'POST') {
-    let body;
-    try { body = await request.json(); } catch (_) { return json({ error: 'bad json' }, 400); }
+  // ── A DEVICE. Registered ONCE, from the phone, and never again ────────────────────────────
+  //
+  // This is the correction that mattered most in this whole build. The first version subscribed
+  // whichever browser loaded the plan, and Ryan plans at a desk — so every warning would have
+  // arrived on a computer at home. A device is a place alerts GO. It has nothing to do with
+  // where planning happens and it outlives every trip.
+  if (p === '/alerts/device' && request.method === 'POST') {
+    if (!await isAuthorized(request, env)) return json({ error: 'unauthorized' }, 401);
     const sub = body && body.subscription;
-    const lat = Number(body && body.lat);
-    const lon = Number(body && body.lon);
     if (!sub || !sub.endpoint) return json({ error: 'subscription required' }, 400);
-    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return json({ error: 'lat/lon required' }, 400);
-
-    const now = Date.now();
-    // A WATCH THAT OUTLIVES A TRIP IS A BUG THAT BUZZES. Honour the plan's return time, cap it,
-    // and let KV expire the record itself so nothing has to remember to clean up.
-    const askedUntil = Date.parse(body.until || '');
-    const until = Math.min(
-      Number.isFinite(askedUntil) ? askedUntil : now + MAX_WATCH_HOURS * 3600e3,
-      now + MAX_WATCH_HOURS * 3600e3);
+    const k = await deviceKey(sub.endpoint);
+    const prev = await env.KV.get(k);
     const rec = {
-      endpoint: sub.endpoint, lat, lon,
-      water: (body.water || null), slug: (body.slug || null),
-      until: new Date(until).toISOString(),
-      seen: [], pending: [], created: new Date(now).toISOString(),
+      endpoint: sub.endpoint,
+      // A LABEL, NEVER A FINGERPRINT. Enough to tell "the Pixel" from "the desktop" in a list
+      // of two, and nothing that identifies a person or follows one anywhere.
+      label: String((body && body.label) || 'device').slice(0, 40),
+      created: prev ? (JSON.parse(prev).created || nowIso()) : nowIso(),
+      seen_at: nowIso(),
+      pending: prev ? (JSON.parse(prev).pending || []) : [],
     };
-    const k = await watchKey(sub.endpoint);
-    await env.KV.put(k, JSON.stringify(rec),
-                     { expirationTtl: Math.max(120, Math.ceil((until - now) / 1000) + 900) });
-    return json({ ok: true, until: rec.until, watching: rec.water || `${lat},${lon}` });
+    await env.KV.put(k, JSON.stringify(rec));
+    return json({ ok: true, label: rec.label, registered: rec.created });
   }
 
-  if ((p === '/alerts/unsubscribe' || p === '/alerts/resubscribe') && request.method === 'POST') {
-    let body;
-    try { body = await request.json(); } catch (_) { return json({ error: 'bad json' }, 400); }
-    const oldEp = body && (body.endpoint || body.old);
-    if (oldEp) await env.KV.delete(await watchKey(oldEp));
-    if (p === '/alerts/resubscribe' && body && body.subscription && body.subscription.endpoint) {
-      // The browser rotated the subscription mid-trip. Carry the watch across rather than
-      // dropping it: the trip did not end, the endpoint did.
-      const prev = oldEp ? null : null;
-      const rec = {
-        endpoint: body.subscription.endpoint,
-        lat: Number(body.lat), lon: Number(body.lon),
-        until: body.until || new Date(Date.now() + 3600e3).toISOString(),
-        seen: [], pending: [], created: new Date().toISOString(), rotated: true, prev,
-      };
-      if (Number.isFinite(rec.lat) && Number.isFinite(rec.lon)) {
-        await env.KV.put(await watchKey(rec.endpoint), JSON.stringify(rec), { expirationTtl: 3600 });
-      }
-    }
+  if (p === '/alerts/device' && request.method === 'DELETE') {
+    if (!await isAuthorized(request, env)) return json({ error: 'unauthorized' }, 401);
+    const ep = url.searchParams.get('endpoint');
+    if (ep) await env.KV.delete(await deviceKey(ep));
     return json({ ok: true });
   }
 
+  if (p === '/alerts/devices') {
+    const list = await env.KV.list({ prefix: 'device:' });
+    const out = [];
+    for (const e of list.keys) {
+      const raw = await env.KV.get(e.name);
+      if (!raw) continue;
+      try {
+        const d = JSON.parse(raw);
+        // THE ENDPOINT NEVER LEAVES. It is the address of Ryan's phone; a list that shows it
+        // hands anyone who can read this route the ability to push to it.
+        out.push({ label: d.label, registered: d.created, pending: (d.pending || []).length });
+      } catch (_) { /* skip a corrupt record rather than failing the list */ }
+    }
+    return json({ devices: out, count: out.length });
+  }
+
+  // ── A TRIP WATCH. Created by whatever machine plans, targets every device ─────────────────
+  if (p === '/alerts/watch' && request.method === 'POST') {
+    if (!await isAuthorized(request, env)) return json({ error: 'unauthorized' }, 401);
+    const lat = Number(body && body.lat);
+    const lon = Number(body && body.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return json({ error: 'lat/lon required' }, 400);
+
+    const now = Date.now();
+    const asked = Date.parse((body && body.until) || '');
+    const until = Math.min(Number.isFinite(asked) ? asked : now + MAX_WATCH_HOURS * 3600e3,
+                           now + MAX_WATCH_HOURS * 3600e3);
+
+    // THE PLAN'S OWN SCHEDULE, CARRIED SERVER-SIDE. Ryan, 2026-08-26: "i want bait changes, and
+    // everything else sent as notifications to the echomap." Those cues fire today from a
+    // 30-second interval in the page, and the page is not open on the water — so band changes,
+    // solunar windows and the return-time warning have never been deliverable either. They are
+    // not weather, so no poll can rediscover them; they have to travel with the watch.
+    const cues = Array.isArray(body && body.cues) ? body.cues.slice(0, 60).map((c) => ({
+      at: c && c.at ? String(c.at) : null,
+      // Stripped HERE, at the one place every cue enters, rather than trusting each producer.
+      title: forEchomap((c && c.title) || 'TrollMap').slice(0, 80),
+      body: forEchomap((c && c.body) || '').slice(0, 240),
+      tag: String((c && c.tag) || 'cue').slice(0, 40),
+      severity: c && c.severity === 'stop' ? 'stop' : 'note',
+      fired: false,
+    })).filter((c) => c.at && Number.isFinite(Date.parse(c.at))) : [];
+
+    const rec = {
+      lat, lon, until: new Date(until).toISOString(),
+      water: (body && body.water) || null, slug: (body && body.slug) || null,
+      seen: [], cues, created: nowIso(),
+    };
+    const k = `watch:${await shortHash(`${lat},${lon},${rec.until}`)}`;
+    await env.KV.put(k, JSON.stringify(rec),
+                     { expirationTtl: Math.max(120, Math.ceil((until - now) / 1000) + 900) });
+
+    // A WATCH WITH NO DEVICES PROTECTS NOBODY, and the desk that created it must be told so
+    // rather than shown a tick. This return value is the only place that can say it.
+    const devices = (await env.KV.list({ prefix: 'device:' })).keys.length;
+    return json({ ok: true, watch: k, until: rec.until, cues: cues.length, devices,
+                  warning: devices ? null : 'no device is registered to receive these alerts' });
+  }
+
   if (p === '/alerts/pending' && request.method === 'POST') {
-    let body;
-    try { body = await request.json(); } catch (_) { return json({ error: 'bad json' }, 400); }
+    // NOT TOKEN-GUARDED, ON PURPOSE. The service worker calls this on wake and has no way to
+    // hold a secret that a page can. Knowing an endpoint is already the capability to push to
+    // it, so this grants nothing that endpoint did not already have — and it returns only that
+    // one device's queue.
     const ep = body && body.endpoint;
     if (!ep) return json({ error: 'endpoint required' }, 400);
-    const k = await watchKey(ep);
+    const k = await deviceKey(ep);
     const raw = await env.KV.get(k);
     if (!raw) return json({ alerts: [] });
     let rec;
     try { rec = JSON.parse(raw); } catch (_) { return json({ alerts: [] }); }
     const alerts = rec.pending || [];
     if (alerts.length) {
-      // DRAINED ON READ. A pending list that is not cleared re-shows the same warning on every
-      // subsequent push, which trains him to ignore it.
+      // DRAINED ON READ. A queue that is not cleared re-shows the same warning on every
+      // subsequent push, which teaches him to ignore the one that matters.
       rec.pending = [];
-      const left = Math.max(60, Math.ceil((Date.parse(rec.until) - Date.now()) / 1000));
-      await env.KV.put(k, JSON.stringify(rec), { expirationTtl: left });
+      rec.seen_at = nowIso();
+      await env.KV.put(k, JSON.stringify(rec));
     }
     return json({ alerts });
   }
 
   if (p === '/alerts/status') {
-    const list = await env.KV.list({ prefix: 'watch:' });
+    const [devices, watches] = await Promise.all([
+      env.KV.list({ prefix: 'device:' }), env.KV.list({ prefix: 'watch:' }),
+    ]);
     return json({
       configured: !!applicationServerKey(readJwk(env)),
-      active_watches: list.keys.length,
+      devices: devices.keys.length,
+      active_watches: watches.keys.length,
     });
   }
 
@@ -320,52 +428,88 @@ export async function handleAlerts(request, env, url) {
 // ── the cron ────────────────────────────────────────────────────────────────────────────────
 
 /**
- * Every active watch, once per firing. Returns a summary so a manual run says what it did.
+ * Every active watch, once per firing: due cues first, then new weather.
  *
- * NOTHING IS SENT FOR A HAZARD ALREADY REPORTED. `seen` is per watch and grows for the life of
- * the trip, so an eight-hour Severe Thunderstorm Watch buzzes once when it is issued rather than
- * ninety-six times.
+ * CUES FIRE EARLY, NEVER LATE. The cron granularity is five minutes, so a cue timed for 09:07
+ * would be delivered at 09:10 — three minutes after the band he was told to change into. The
+ * window below is the CRON PERIOD itself, not a number anybody picked: a cue becomes due one
+ * period before its time, which turns worst-case-late into worst-case-early. "Switch to the
+ * 15-20 ft band in ten minutes" arriving fifteen minutes out is useful; arriving three minutes
+ * after the change is noise.
+ *
+ * NOTHING IS SENT TWICE. `fired` is per cue and `seen` is per hazard, both stored with the
+ * watch, so an eight-hour Severe Thunderstorm Watch buzzes once when it is issued rather than
+ * ninety-six times, and a band change fires once rather than on every sweep until the trip ends.
  */
 export async function runAlertSweep(env, nowMs) {
   const now = nowMs || Date.now();
-  const out = { checked: 0, expired: 0, pushed: 0, gone: 0, failed: 0, new_alerts: 0 };
+  const out = { checked: 0, expired: 0, cues: 0, new_alerts: 0, pushed: 0, gone: 0, failed: 0, devices: 0 };
   if (!env || !env.KV) return out;
-  const list = await env.KV.list({ prefix: 'watch:' });
 
-  const work = list.keys.map((entry) => async () => {
-    const raw = await env.KV.get(entry.name);
-    if (!raw) return;
-    let rec;
-    try { rec = JSON.parse(raw); } catch (_) { await env.KV.delete(entry.name); return; }
+  const devKeys = (await env.KV.list({ prefix: 'device:' })).keys;
+  out.devices = devKeys.length;
+  const watchKeys = (await env.KV.list({ prefix: 'watch:' })).keys;
+
+  // Collected per sweep rather than per watch: two watches on one day should not each pay for
+  // the device list, and a device that dies mid-sweep should be retired once.
+  const devices = [];
+  for (const e of devKeys) {
+    const raw = await env.KV.get(e.name);
+    if (!raw) continue;
+    try { devices.push({ key: e.name, rec: JSON.parse(raw) }); } catch (_) { /* skip */ }
+  }
+
+  const queued = [];                                  // [{ alert }] for THIS firing
+  for (const e of watchKeys) {
+    const raw = await env.KV.get(e.name);
+    if (!raw) continue;
+    let w;
+    try { w = JSON.parse(raw); } catch (_) { await env.KV.delete(e.name); continue; }
     out.checked += 1;
 
-    if (Date.parse(rec.until) <= now) { await env.KV.delete(entry.name); out.expired += 1; return; }
+    if (Date.parse(w.until) <= now) { await env.KV.delete(e.name); out.expired += 1; continue; }
 
-    const j = await hazardsAt(rec.lat, rec.lon, env);
-    if (!j) return;                                  // upstream had a bad minute; try next firing
-    const seen = new Set(rec.seen || []);
-    const fresh = (j.items || []).filter((h) => h && h.id && !seen.has(h.id));
-    if (!fresh.length) return;
+    let dirty = false;
+    for (const c of (w.cues || [])) {
+      if (c.fired) continue;
+      if (Date.parse(c.at) - CUE_LEAD_MS > now) continue;
+      c.fired = true; dirty = true; out.cues += 1;
+      queued.push({ title: c.title, body: c.body, tag: c.tag, severity: c.severity, url: './' });
+    }
 
-    for (const h of fresh) seen.add(h.id);
-    rec.seen = [...seen].slice(-200);
-    rec.pending = [...(rec.pending || []), ...fresh.map(alertFor)].slice(-20);
-    out.new_alerts += fresh.length;
+    const j = await hazardsAt(w.lat, w.lon, env);
+    if (j) {
+      const seen = new Set(w.seen || []);
+      const fresh = (j.items || []).filter((h) => h && h.id && !seen.has(h.id));
+      if (fresh.length) {
+        for (const h of fresh) seen.add(h.id);
+        w.seen = [...seen].slice(-200);
+        dirty = true;
+        out.new_alerts += fresh.length;
+        for (const h of fresh) queued.push(alertFor(h));
+      }
+    }
 
-    // WRITE BEFORE PUSHING. If the push succeeds and the write has not landed, the phone wakes,
-    // asks what happened and is told nothing — the worst outcome available, because it looks
-    // like a false alarm.
-    const left = Math.max(60, Math.ceil((Date.parse(rec.until) - now) / 1000));
-    await env.KV.put(entry.name, JSON.stringify(rec), { expirationTtl: left });
+    if (dirty) {
+      const left = Math.max(60, Math.ceil((Date.parse(w.until) - now) / 1000));
+      await env.KV.put(e.name, JSON.stringify(w), { expirationTtl: left });
+    }
+  }
 
-    const res = await pushTo(rec.endpoint, env, now);
+  if (!queued.length || !devices.length) return out;
+
+  // WRITE THE QUEUE BEFORE PUSHING. If a push lands and the write has not, the phone wakes,
+  // asks what happened and is told nothing — which reads as a false alarm and is the fastest
+  // way to teach him to ignore this channel.
+  for (const d of devices) {
+    d.rec.pending = [...(d.rec.pending || []), ...queued].slice(-20);
+    await env.KV.put(d.key, JSON.stringify(d.rec));
+  }
+  for (const d of devices) {
+    const res = await pushTo(d.rec.endpoint, env, now);
     if (res === 'ok') out.pushed += 1;
-    else if (res === 'gone') { await env.KV.delete(entry.name); out.gone += 1; }
+    else if (res === 'gone') { await env.KV.delete(d.key); out.gone += 1; }
     else out.failed += 1;
-  });
-
-  for (let i = 0; i < work.length; i += SWEEP_CONCURRENCY) {
-    await Promise.all(work.slice(i, i + SWEEP_CONCURRENCY).map((f) => f()));
   }
   return out;
 }

@@ -8,7 +8,7 @@
     "routesUncalled": 0,
     "routesMutatingUngated": 18,
     "feeds": 111,
-    "deadExports": 216,
+    "deadExports": 217,
     "orphanModules": 4,
     "duplicateFnNames": 43,
     "crossModuleGlobals": 39,
@@ -944,11 +944,12 @@
     },
     "Worker/alerts.js": {
       "purpose": "Web Push, because the phone is asleep in a PFD pocket.",
-      "lines": 372,
+      "lines": 516,
       "exports": [
         "applicationServerKey",
         "vapidAuth",
-        "watchKey",
+        "forEchomap",
+        "deviceKey",
         "handleAlerts",
         "runAlertSweep"
       ],
@@ -957,7 +958,8 @@
           "from": "./worker-core.js",
           "names": [
             "CORS",
-            "JSON_HEADERS"
+            "JSON_HEADERS",
+            "isAuthorized"
           ],
           "resolved": "Worker/worker-core.js"
         },
@@ -982,8 +984,10 @@
           "names": [
             "applicationServerKey",
             "vapidAuth",
-            "watchKey",
-            "runAlertSweep"
+            "deviceKey",
+            "handleAlerts",
+            "runAlertSweep",
+            "forEchomap"
           ]
         }
       ],
@@ -3226,7 +3230,8 @@
           "file": "Worker/alerts.js",
           "names": [
             "CORS",
-            "JSON_HEADERS"
+            "JSON_HEADERS",
+            "isAuthorized"
           ]
         },
         {
@@ -7944,7 +7949,7 @@
     },
     "js/modules/notifications.js": {
       "purpose": "notifications.js — On-water alerts for TrollMap",
-      "lines": 780,
+      "lines": 834,
       "exports": [
         "requestNotificationPermission",
         "lastFire",
@@ -7955,8 +7960,9 @@
         "disableNotifications",
         "isEnabled",
         "pushState",
-        "subscribePush",
-        "unsubscribePush",
+        "watchState",
+        "registerAlertDevice",
+        "startTripWatch",
         "selfTest"
       ],
       "imports": [
@@ -7988,6 +7994,13 @@
             "callGlobal"
           ],
           "resolved": "js/utils/call-global.js"
+        },
+        {
+          "from": "../utils/worker-auth.js",
+          "names": [
+            "workerHeaders"
+          ],
+          "resolved": "js/utils/worker-auth.js"
         }
       ],
       "importedBy": [
@@ -8017,8 +8030,9 @@
         "enableNotifications",
         "disableNotifications",
         "pushState",
-        "subscribePush",
-        "unsubscribePush",
+        "watchState",
+        "registerAlertDevice",
+        "startTripWatch",
         "selfTest"
       ],
       "globalsWritten": [],
@@ -12043,6 +12057,12 @@
         },
         {
           "file": "js/modules/lake-research-ui.js",
+          "names": [
+            "workerHeaders"
+          ]
+        },
+        {
+          "file": "js/modules/notifications.js",
           "names": [
             "workerHeaders"
           ]
@@ -16148,8 +16168,8 @@
       "globalsRead": []
     },
     "test/push-alerts.test.js": {
-      "purpose": "WEB PUSH: THE HALF THAT WORKS WITH THE PHONE ASLEEP.",
-      "lines": 184,
+      "purpose": "WEB PUSH: THE ONLY PATH THAT REACHES RYAN ON THE WATER.",
+      "lines": 290,
       "exports": [],
       "imports": [
         {
@@ -16175,8 +16195,10 @@
           "names": [
             "applicationServerKey",
             "vapidAuth",
-            "watchKey",
-            "runAlertSweep"
+            "deviceKey",
+            "handleAlerts",
+            "runAlertSweep",
+            "forEchomap"
           ],
           "resolved": "Worker/alerts.js"
         }
@@ -18934,7 +18956,7 @@
         "test/conditions-bindings.test.js:238",
         "test/conditions-bindings.test.js:348",
         "test/notification-delivery.test.js:42",
-        "test/push-alerts.test.js:91",
+        "test/push-alerts.test.js:62",
         "test/regulations-wiring.test.js:431",
         "test/regulations-wiring.test.js:458",
         "test/search-cascade.test.js:53",
@@ -19045,7 +19067,7 @@
       "host": "trollmap.pages.dev",
       "hits": 1,
       "files": [
-        "Worker/alerts.js:156"
+        "Worker/alerts.js:185"
       ],
       "side": [
         "worker"
@@ -19055,7 +19077,7 @@
       "host": "internal",
       "hits": 1,
       "files": [
-        "Worker/alerts.js:185"
+        "Worker/alerts.js:208"
       ],
       "side": [
         "worker"
@@ -19963,14 +19985,34 @@
     },
     "fcm.googleapis.com": {
       "host": "fcm.googleapis.com",
-      "hits": 6,
+      "hits": 4,
       "files": [
-        "test/push-alerts.test.js:59",
-        "test/push-alerts.test.js:66",
-        "test/push-alerts.test.js:73",
-        "test/push-alerts.test.js:81",
-        "test/push-alerts.test.js:83",
-        "test/push-alerts.test.js:117"
+        "test/push-alerts.test.js:47",
+        "test/push-alerts.test.js:103",
+        "test/push-alerts.test.js:108",
+        "test/push-alerts.test.js:114"
+      ],
+      "side": [
+        "browser"
+      ]
+    },
+    "w.example": {
+      "host": "w.example",
+      "hits": 14,
+      "files": [
+        "test/push-alerts.test.js:70",
+        "test/smart-plan-v2.test.js:411",
+        "test/smart-plan-v2.test.js:412",
+        "test/smart-plan-v2.test.js:423",
+        "test/water-conditions.test.js:18",
+        "test/water-conditions.test.js:25",
+        "test/water-conditions.test.js:26",
+        "test/water-conditions.test.js:31",
+        "test/water-conditions.test.js:35",
+        "test/water-conditions.test.js:36",
+        "test/water-conditions.test.js:129",
+        "test/water-conditions.test.js:141",
+        "test/water-conditions.test.js:148"
       ],
       "side": [
         "browser"
@@ -20014,27 +20056,6 @@
         "test/shared-latest-pointer.test.js:73",
         "test/shared-latest-pointer.test.js:201",
         "test/shared-latest-pointer.test.js:209"
-      ],
-      "side": [
-        "browser"
-      ]
-    },
-    "w.example": {
-      "host": "w.example",
-      "hits": 13,
-      "files": [
-        "test/smart-plan-v2.test.js:411",
-        "test/smart-plan-v2.test.js:412",
-        "test/smart-plan-v2.test.js:423",
-        "test/water-conditions.test.js:18",
-        "test/water-conditions.test.js:25",
-        "test/water-conditions.test.js:26",
-        "test/water-conditions.test.js:31",
-        "test/water-conditions.test.js:35",
-        "test/water-conditions.test.js:36",
-        "test/water-conditions.test.js:129",
-        "test/water-conditions.test.js:141",
-        "test/water-conditions.test.js:148"
       ],
       "side": [
         "browser"
@@ -22889,7 +22910,7 @@
       "name": "isEnabled",
       "at": [
         "js/core/layer-registry.js:97",
-        "js/modules/notifications.js:516"
+        "js/modules/notifications.js:542"
       ]
     },
     {

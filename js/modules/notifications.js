@@ -22,6 +22,10 @@ import { planCues, weatherCues } from './plan-assemble.js';
 import { geoDistanceFt as distFt } from '../utils/geo.js';
 
 import { callGlobal } from '../utils/call-global.js';
+// The same guard the sync routes use. Registering a device and arming a watch are
+// WRITES -- without it anyone who learned the URL could point Ryan's phone at a lake
+// he is not on.
+import { workerHeaders } from '../utils/worker-auth.js';
 // ── Config ────────────────────────────────────────────────────────────────────
 const PROXIMITY_RADIUS_FT = 300;   // fire when within 300ft of a pin
 const PROXIMITY_CHECK_MS  = 15000; // check position every 15 seconds
@@ -355,9 +359,25 @@ export function loadSessionFromPlan(plan, o = {}) {
         ? (() => { const d = new Date(); d.setHours(0, 0, 0, 0);
                    return new Date(d.getTime() + _session.returnTimeH * 3600e3).toISOString(); })()
         : null;
-      subscribePush(_session.hazardWorker, {
+      // EVERYTHING THE DAY HAS TO SAY, not just the weather. The cue list this session already
+      // built is uploaded with the watch so the cron can fire it while the app is closed.
+      const isoAt = (h) => { const d = new Date(); d.setHours(0, 0, 0, 0);
+                             return new Date(d.getTime() + h * 3600e3).toISOString(); };
+      const cues = [
+        ..._session.solunarMajors.map((m) => ({ at: isoAt(m.h), title: 'Solunar Major',
+          body: `Peak bite window at ${hToStr(m.h)}`, tag: 'solunar-major', severity: 'note' })),
+        ..._session.bandChangeTimes.map((b) => ({ at: isoAt(b.h), title: 'Band Change',
+          body: `Switch to ${b.label}`, tag: `band-${b.label}`, severity: 'note' })),
+        ..._session.weatherCues.map((w) => ({ at: isoAt(w.h), title: w.severity === 'stop'
+          ? 'Get off the water' : 'Weather', body: w.label, tag: `weather-${w.severity}`,
+          severity: w.severity })),
+        ...(Number.isFinite(_session.returnTimeH) ? [{ at: isoAt(_session.returnTimeH - RETURN_WARN_MIN / 60),
+          title: 'Head back soon', body: `Return time is ${hToStr(_session.returnTimeH)}`,
+          tag: 'return-time', severity: 'note' }] : []),
+      ];
+      startTripWatch(_session.hazardWorker, {
         lat: _session.launchPos.lat, lon: _session.launchPos.lon,
-        until, water: o.water || null, slug: o.slug || null,
+        until, water: o.water || null, slug: o.slug || null, cues,
       });
     }
   } catch (e) {
@@ -498,6 +518,12 @@ export async function enableNotifications() {
   _firedPins.clear();
   loadSessionFromSmartPlan();
   _tickInterval = setInterval(tick, 30000);
+  // THE BELL MEANS "ALERTS ON", AND IT MEANS THE SAME THING EVERYWHERE. Pressed on the phone it
+  // registers the device that will receive them -- the one moment the app has to be open there.
+  // Pressed at the desk it registers the desk too, which is harmless and occasionally useful.
+  // Ryan asked directly whether this button was all he needed; it is, once, per device.
+  registerAlertDevice(state && state.CF_WORKER_URL ? state.CF_WORKER_URL
+                                                   : (window.CF_WORKER_URL || null));
   startProximityWatch();
   // The unforecast case. Runs whether or not a plan was loaded -- weather does not wait for one.
   startHazardPoll();
@@ -526,8 +552,10 @@ export function isEnabled() { return _enabled; }
 // BOTH PATHS STAY. They are not redundant: the poll is immediate and free while he is looking
 // at the app, and push is the only thing that reaches him when he is not.
 
-let _pushState = { subscribed: false, endpoint: null, error: null, until: null };
+let _pushState = { registered: false, endpoint: null, error: null, label: null };
+let _watchState = { armed: false, until: null, cues: 0, devices: 0, warning: null };
 export function pushState() { return { ..._pushState }; }
+export function watchState() { return { ..._watchState }; }
 
 /** base64url -> Uint8Array, which is what pushManager.subscribe wants for the server key. */
 function keyBytes(b64) {
@@ -537,70 +565,90 @@ function keyBytes(b64) {
 }
 
 /**
- * Subscribe this device and register a watch for THIS trip.
+ * REGISTER THIS DEVICE. Once, ever, from the phone.
  *
- * Called from loadSessionFromPlan when a plan carries a worker and a launch point. Failure is
- * never fatal to the plan: the page poll still works, and `_pushState.error` is what selfTest
- * reports so a silent absence becomes a stated one.
+ * Ryan, 2026-08-26: "i dont plan from my phone" and "i do not use trollmap on the water." A
+ * device is a place alerts GO; it has nothing to do with where planning happens and it outlives
+ * every trip. Registering the browser that loads the plan — which is what the first version of
+ * this did — delivers every warning to a desk at home.
+ *
+ * This is the ONLY moment the app needs to be open on the phone. After it, never again.
  */
-export async function subscribePush(worker, { lat, lon, until, water, slug } = {}) {
-  _pushState = { subscribed: false, endpoint: null, error: null, until: null };
+export async function registerAlertDevice(worker) {
+  _pushState = { registered: false, endpoint: null, error: null, label: null };
   try {
     if (!worker) throw new Error('no worker URL');
     if (!('serviceWorker' in navigator)) throw new Error('no service worker support');
     if (!('PushManager' in window)) throw new Error('no push support in this browser');
-    if (!Number.isFinite(lat) || !Number.isFinite(lon)) throw new Error('no launch point');
-    const base = String(worker).replace(/\/+$/, '');
+    if (!(await requestNotificationPermission())) throw new Error('notification permission denied');
+    const workerBase = String(worker).replace(/\/+$/, '');
 
-    // THE SERVICE WORKER NEEDS THIS AND CANNOT IMPORT IT. It wakes with no page, no module
-    // graph and no state.js, so the base URL is left where it can find it on its own.
+    // THE SERVICE WORKER NEEDS THIS AND CANNOT IMPORT IT. It wakes with no page, no module graph
+    // and no state.js, so the base URL is left where it can find it on its own.
     try {
       const c = await caches.open('trollmap-cfg');
-      await c.put('/__worker_url', new Response(base));
-    } catch (_) { /* private mode; push still works, the SW just shows the degraded text */ }
+      await c.put('/__worker_url', new Response(workerBase));
+    } catch (_) { /* private mode; the SW falls back to its degraded text */ }
 
     const reg = await navigator.serviceWorker.ready;
-    const r = await fetch(`${base}/alerts/vapid-public`, { cache: 'no-store' });
+    const r = await fetch(`${workerBase}/alerts/vapid-public`, { cache: 'no-store' });
     const j = await r.json().catch(() => null);
-    // A CONFIGURATION PROBLEM IS NOT A BUG AND SAYS SO. The Worker returns which piece is
-    // missing; passing that through verbatim is the difference between "push is off because
-    // nobody set the keys" and "push is broken".
+    // A CONFIGURATION PROBLEM IS NOT A BUG AND SAYS SO. The Worker names which key is missing;
+    // passing it through verbatim is the difference between "nobody set the keys" and "broken".
     if (!r.ok || !j || !j.key) throw new Error((j && j.error) || `vapid key unavailable (HTTP ${r.status})`);
 
-    const sub = await reg.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: keyBytes(j.key),
+    const existing = await reg.pushManager.getSubscription();
+    const sub = existing || await reg.pushManager.subscribe({
+      userVisibleOnly: true, applicationServerKey: keyBytes(j.key),
     });
-    const post = await fetch(`${base}/alerts/subscribe`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ subscription: sub.toJSON(), lat, lon, until, water, slug }),
+    // A LABEL, NOT A FINGERPRINT. Enough to tell the Pixel from the desktop in a list of two.
+    const label = /Android/i.test(navigator.userAgent) ? 'phone'
+                : /iPhone|iPad/i.test(navigator.userAgent) ? 'phone' : 'desktop';
+    const post = await fetch(`${workerBase}/alerts/device`, {
+      method: 'POST', headers: workerHeaders(),
+      body: JSON.stringify({ subscription: sub.toJSON(), label }),
     });
-    if (!post.ok) throw new Error(`subscribe rejected (HTTP ${post.status})`);
+    if (!post.ok) throw new Error(`device registration rejected (HTTP ${post.status})`);
     const ok = await post.json().catch(() => ({}));
-    _pushState = { subscribed: true, endpoint: sub.endpoint, error: null, until: ok.until || until || null };
+    _pushState = { registered: true, endpoint: sub.endpoint, error: null, label: ok.label || label };
     return true;
   } catch (e) {
     _pushState.error = (e && e.message) || String(e);
-    console.warn('[notifications] push subscribe failed:', _pushState.error);
+    console.warn('[notifications] device registration failed:', _pushState.error);
     return false;
   }
 }
 
-/** End the watch. The trip is over; nothing should buzz about that water any more. */
-export async function unsubscribePush(worker) {
+/**
+ * ARM A WATCH FOR THIS TRIP, from whatever machine is doing the planning.
+ *
+ * Carries the plan's OWN cue schedule as well as the place. Ryan: "i want bait changes, and
+ * everything else sent as notifications to the echomap." Those cues fire today from a 30-second
+ * timer in a page that is never open on the water, so they travel with the watch or they do not
+ * happen.
+ */
+export async function startTripWatch(worker, { lat, lon, until, water, slug, cues } = {}) {
   try {
-    const base = String(worker || '').replace(/\/+$/, '');
-    const reg = await navigator.serviceWorker.getRegistration();
-    const sub = reg && await reg.pushManager.getSubscription();
-    if (base && sub) {
-      await fetch(`${base}/alerts/unsubscribe`, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ endpoint: sub.endpoint }),
-      });
-    }
-  } catch (_) { /* the watch expires on its own at the return time regardless */ }
-  _pushState = { subscribed: false, endpoint: null, error: null, until: null };
+    const workerBase = String(worker || '').replace(/\/+$/, '');
+    if (!workerBase || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+    const r = await fetch(`${workerBase}/alerts/watch`, {
+      method: 'POST', headers: workerHeaders(),
+      body: JSON.stringify({ lat, lon, until, water, slug, cues: cues || [] }),
+    });
+    const j = await r.json().catch(() => null);
+    if (!r.ok || !j) throw new Error(`watch rejected (HTTP ${r.status})`);
+    _watchState = { armed: true, until: j.until, cues: j.cues, devices: j.devices, warning: j.warning || null };
+    // A WATCH THAT PROTECTS NOBODY IS SAID OUT LOUD. The Worker counts the registered devices
+    // and returns it precisely so this cannot look armed when nothing will receive it.
+    if (j.warning) console.warn('[notifications]', j.warning);
+    return j;
+  } catch (e) {
+    _watchState = { armed: false, until: null, cues: 0, devices: 0, warning: (e && e.message) || String(e) };
+    console.warn('[notifications] trip watch failed:', _watchState.warning);
+    return null;
+  }
 }
+
 
 /**
  * PROVE THE CHAIN IN THE DRIVEWAY, NOT IN A STORM.
@@ -669,9 +717,15 @@ export async function selfTest() {
 
   // PUSH IS THE ONLY LINE HERE THAT MATTERS WITH THE PHONE IN A POCKET. Everything else in this
   // list describes a chain that runs only while the app is open and awake.
-  add('push subscribed for this trip', _pushState.subscribed,
-      _pushState.subscribed ? `until ${_pushState.until || 'unknown'}`
-                            : (_pushState.error || 'not subscribed — alerts stop when the screen locks'));
+  // THE TWO LINES THAT MATTER WITH THE PHONE IN A POCKET. Everything else in this list describes
+  // a chain that only runs while the app is open and awake, which on the water it never is.
+  add('THIS DEVICE registered for alerts', _pushState.registered,
+      _pushState.registered ? `as "${_pushState.label}"`
+        : (_pushState.error || 'not registered — nothing will reach this device'));
+  add('trip watch armed', _watchState.armed,
+      _watchState.armed
+        ? `${_watchState.cues} cue(s), ${_watchState.devices} device(s), until ${_watchState.until}`
+        : (_watchState.warning || 'no plan has armed one'));
 
   add('poll timer running', !!_hazardPoll, _hazardPoll ? `every ${HAZARD_POLL_MS / 60000} min` : 'stopped');
   add('cue timer running', !!_tickInterval, _tickInterval ? 'every 30 s' : 'stopped');

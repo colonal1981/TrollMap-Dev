@@ -19,7 +19,7 @@ Python side will read as dead here and may not be. See the `lakes.js` near miss 
 | routesUncalled | 0 |
 | routesMutatingUngated | 18 |
 | feeds | 111 |
-| deadExports | 216 |
+| deadExports | 217 |
 | orphanModules | 4 |
 | duplicateFnNames | 43 |
 | crossModuleGlobals | 39 |
@@ -127,8 +127,8 @@ _none_
 | www.anglersheadquarters.com | worker, browser | 16 | Worker/reports.js:63 |
 | georgiawildlife.blog | worker, browser | 15 | Worker/reports.js:51 |
 | trollmap-worker.colonal1981.workers.dev | pipeline, browser | 14 | Scripts/audit_research_fields.py:43 |
+| w.example | browser | 14 | test/push-alerts.test.js:70 |
 | www.eregulations.com | worker, browser | 13 | Worker/worker-data.js:909 |
-| w.example | browser | 13 | test/smart-plan-v2.test.js:411 |
 | waterservices.usgs.gov | pipeline, worker | 12 | Scripts/build_water_bindings.py:123 |
 | www.carolinasportsman.com | worker, browser | 12 | Worker/reports.js:57 |
 | www.tn.gov | worker, browser | 12 | Worker/reports.js:69 |
@@ -148,7 +148,6 @@ _none_
 | waterdata.usgs.gov | worker, browser | 6 | Worker/worker-data.js:933 |
 | lakemonster.com | worker | 6 | Worker/worker-data.js:957 |
 | www.topografix.com | browser | 6 | js/modules/garmin-export.js:65 |
-| fcm.googleapis.com | browser | 6 | test/push-alerts.test.js:59 |
 | api.waterdata.usgs.gov | pipeline, worker, browser | 5 | Scripts/build_camera_index.py:59 |
 | www.waterqualitydata.us | pipeline, worker, browser | 5 | Scripts/capture_upstreams.py:125 |
 | worker | pipeline, browser | 5 | Scripts/capture_upstreams.py:260 |
@@ -160,6 +159,7 @@ _none_
 | grokipedia.com | worker | 4 | Worker/research/discover.js:544 |
 | unpkg.com | browser | 4 | index.html:8 |
 | x.gov | browser | 4 | test/proxy-target-type.test.js:31 |
+| fcm.googleapis.com | browser | 4 | test/push-alerts.test.js:47 |
 | www.google.com | pipeline | 3 | Scripts/build_garmin_water_inventory.py:649 |
 | mapservices.weather.noaa.gov | pipeline, worker | 3 | Scripts/build_lake_drainage.py:152 |
 | dash.cloudflare.com | pipeline | 3 | Scripts/trollmap_r2_clean.py:6 |
@@ -192,8 +192,8 @@ _none_
 | www.weather.gov | pipeline | 1 | Scripts/probe_ndbc_stations.py:11 |
 | prd-tnm.s3.amazonaws.com | pipeline | 1 | Scripts/trollmap_nhd_boundaries.py:34 |
 | api.cloudflare.com | pipeline | 1 | Scripts/trollmap_r2_clean.py:39 |
-| trollmap.pages.dev | worker | 1 | Worker/alerts.js:156 |
-| internal | worker | 1 | Worker/alerts.js:185 |
+| trollmap.pages.dev | worker | 1 | Worker/alerts.js:185 |
+| internal | worker | 1 | Worker/alerts.js:208 |
 | forecast.weather.gov | worker | 1 | Worker/conditions.js:238 |
 | publicservice.dominionenergyse.com | worker | 1 | Worker/conditions.js:1541 |
 | api.tavily.com | worker | 1 | Worker/research/clients.js:239 |
@@ -343,7 +343,7 @@ _none_
 | module | lines | exports | imported by | dead exports | purpose |
 |---|---|---|---|---|---|
 | `Scripts/make_counties.mjs` | 49 | 0 | 0 | 0 | make_counties.mjs -- flatten us-atlas counties-10m TopoJSON into a GeoJSON the Python |
-| `Worker/alerts.js` | 372 | 5 | 2 | 0 | Web Push, because the phone is asleep in a PFD pocket. |
+| `Worker/alerts.js` | 516 | 6 | 2 | 0 | Web Push, because the phone is asleep in a PFD pocket. |
 | `Worker/cameras.js` | 176 | 5 | 1 | **4** | Worker/cameras.js — the current frame from a USGS NIMS camera. |
 | `Worker/conditions.js` | 4549 | 63 | 33 | **2** | Worker/conditions.js — one call that answers "what is this water doing right now". |
 | `Worker/core/arcgis.js` | 401 | 7 | 2 | **2** | Worker/core/arcgis.js — shared ArcGIS helper for ramps/paddle/bank-pier/attractors |
@@ -426,7 +426,7 @@ _none_
 | `js/modules/layers-panel.js` | 105 | 4 | 1 | **2** | layers-panel.js — the one place every map overlay is turned on and off. |
 | `js/modules/measure-tool.js` | 106 | 0 | 1 | 0 | Distance & Bearing Measurement Tool — click two points on the |
 | `js/modules/noaa-tides.js` | 228 | 1 | 1 | **1** | NOAA Coastal Tides — Plan-tab tide panel. |
-| `js/modules/notifications.js` | 780 | 12 | 3 | **10** | notifications.js — On-water alerts for TrollMap |
+| `js/modules/notifications.js` | 834 | 13 | 3 | **11** | notifications.js — On-water alerts for TrollMap |
 | `js/modules/osm-structure.js` | 145 | 0 | 1 | 0 | osm-structure.js — OSM Structure Layer Toggle |
 | `js/modules/plan-assemble.js` | 872 | 8 | 10 | 0 | plan-assemble.js — ordered candidates + the model's judgement → a plan v2 object. |
 | `js/modules/plan-builder.js` | 2547 | 10 | 7 | 0 | Plan Builder — the Plan tab form, save/load, preview rendering, |
@@ -486,7 +486,7 @@ _none_
 | `js/utils/structure-markers.js` | 103 | 3 | 2 | 0 | structure-markers.js — humps and ledges, read from the pack the pipeline builds. |
 | `js/utils/viewport-cull.js` | 129 | 7 | 5 | **1** | Viewport culling for big GeoJSON layers. |
 | `js/utils/water-conditions.js` | 842 | 7 | 7 | 0 | ONE READ FOR THE STATE OF THE WATER. |
-| `js/utils/worker-auth.js` | 63 | 3 | 5 | 0 | utils/worker-auth.js — the shared secret for TrollMap's own Worker, in one place. |
+| `js/utils/worker-auth.js` | 63 | 3 | 6 | 0 | utils/worker-auth.js — the shared secret for TrollMap's own Worker, in one place. |
 | `sw.js` | 228 | 0 | 0 | 0 | TrollMap service worker — v18 (the shell was frozen at v17, 2026-08-16) |
 | `test/agency-domains.test.js` | 85 | 0 | 0 | 0 | A TABLE THAT LOOKS LIKE A KNOB AND IS NOT CONNECTED. |
 | `test/agency-pages.test.js` | 224 | 0 | 0 | 0 | The state's own lake index, resolved to the water this app ships. |
@@ -573,7 +573,7 @@ _none_
 | `test/pressure-trend.test.js` | 91 | 0 | 0 | 0 | The barometer, and the eleven-day-old reading that made the staleness guard necessary. |
 | `test/prompt-budget.test.js` | 73 | 0 | 0 | 0 | The prompt budget guard, which used to report success and do nothing. |
 | `test/proxy-target-type.test.js` | 57 | 0 | 0 | 0 | Whether a proxy target is a PDF, and why the URL has to outrank the caller's type param. |
-| `test/push-alerts.test.js` | 184 | 0 | 0 | 0 | WEB PUSH: THE HALF THAT WORKS WITH THE PHONE ASLEEP. |
+| `test/push-alerts.test.js` | 290 | 0 | 0 | 0 | WEB PUSH: THE ONLY PATH THAT REACHES RYAN ON THE WATER. |
 | `test/qdc-decoder.test.js` | 139 | 0 | 0 | 0 | Behaviour tests for the raw QDC reader and the contour engine on top of it. |
 | `test/r2-gzip.test.js` | 149 | 0 | 0 | 0 | r2-gzip.test.js — the Worker must unwrap what the pipeline compresses. |
 | `test/ramps-reach-research.test.js` | 56 | 0 | 0 | 0 | Why a 41,000-acre reservoir reported "ramps: 0". |
@@ -685,7 +685,7 @@ _none_
 - `js/modules/lake-research.js`: initLakeResearch, loadProfile, saveCurrentResearchProfile, populateResearchLakeDropdown, runFullPipeline, runResume
 - `js/modules/layers-panel.js`: isOpen, close
 - `js/modules/noaa-tides.js`: stageLabel
-- `js/modules/notifications.js`: requestNotificationPermission, lastFire, checkWindAlert, loadSessionFromSmartPlan, enableNotifications, disableNotifications, pushState, subscribePush, unsubscribePush, selfTest
+- `js/modules/notifications.js`: requestNotificationPermission, lastFire, checkWindAlert, loadSessionFromSmartPlan, enableNotifications, disableNotifications, pushState, watchState, registerAlertDevice, startTripWatch, selfTest
 - `js/modules/plan-candidates.js`: AMPS_REF_MPH, AMPS_REF_A, AMPS_EXP, ampsAtMph, groupDocks, eligibleForHolding, sliceLine, catchSupport, pointToSegmentM
 - `js/modules/plan-inputs.js`: normaliseHolding
 - `js/modules/plan-pieces.js`: stretchCoords
@@ -735,7 +735,7 @@ _none_
 - `legacyStorageName()` — Worker/research/keys.js:95, js/data/research-ids.js:67
 - `researchStorageIdCandidates()` — Worker/research/keys.js:112, js/data/research-ids.js:77
 - `resolveLakeKey()` — Worker/trollmap-worker.js:429, js/data/species-intel.js:87
-- `isEnabled()` — js/core/layer-registry.js:97, js/modules/notifications.js:516
+- `isEnabled()` — js/core/layer-registry.js:97, js/modules/notifications.js:542
 - `toggle()` — js/core/layer-registry.js:167, js/modules/layers-panel.js:68
 - `getWorkerBase()` — js/data/access-index.js:73, js/modules/gis-toggles.js:51
 - `formatAccessLabel()` — js/data/access-index.js:360, js/modules/lake-ramp-select.js:328
