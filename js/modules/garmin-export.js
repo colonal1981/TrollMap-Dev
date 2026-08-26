@@ -33,6 +33,38 @@ function garminSymbol(s) {
  * with CAST: stop-and-cast waypoints). This satisfies the “GPX export should
  * include stop-and-cast waypoints interleaved with trolling waypoints in route order” rule.
  */
+/**
+ * A LEG'S COLOUR, IN THE ONLY VOCABULARY THE UNIT ACCEPTS.
+ *
+ * `<gpxx:DisplayColor>` takes one of a fixed set of NAMES, not a hex value, so a palette built for
+ * a web map has to be mapped rather than passed through. Below is the nearest Garmin name for
+ * each colour plan-tracks.js actually assigns.
+ *
+ * WHAT THIS REPLACES: the literal `Cyan`, written into every track of every export ever made.
+ * plan-tracks.js computes `t.color` per leg and carries a comment explaining why it must --
+ * "renderMap() used to derive one by matching the track NAME against v1's phase names, which no
+ * v2 track has, so every leg of every v2 plan drew in the same fallback magenta -- troll,
+ * deadhead and the run home indistinguishable."
+ *
+ * That was fixed for the map. The export went on discarding the value at the door, so the
+ * IDENTICAL defect survived on the ECHOMAP -- the screen Ryan actually reads on the water, and
+ * the only one he reads. A deadhead, a trolling pass and the run home all drawing the same cyan
+ * is the difference between knowing which line to follow and guessing at it.
+ */
+const GARMIN_COLORS = {
+  '#00e5ff': 'Cyan',
+  '#ff6d00': 'DarkYellow',      // Garmin has no orange; DarkYellow is the nearest warm tone
+  '#7c4dff': 'Magenta',
+  '#76ff03': 'Green',
+  '#ff4081': 'Red',
+  '#ffea00': 'Yellow',
+  '#78909c': 'DarkGray',        // a deadhead recedes on the unit exactly as it does on the map
+  '#00e676': 'DarkGreen',       // the run home, and nothing else in a normal day
+};
+export function displayColor(hex) {
+  return GARMIN_COLORS[String(hex || '').toLowerCase()] || 'Cyan';
+}
+
 export function exportGarminGPX() {
   if (!state.DATA.waypoints.length && !state.DATA.tracks.length) {
     alert('No waypoints or tracks to export');
@@ -61,7 +93,7 @@ export function exportGarminGPX() {
 
   const trkXml = state.DATA.tracks.map((t) => `  <trk>
     <name>${esc(t.name || 'Track')}</name>
-    <extensions><gpxx:TrackExtension><gpxx:DisplayColor>Cyan</gpxx:DisplayColor></gpxx:TrackExtension></extensions>
+    <extensions><gpxx:TrackExtension><gpxx:DisplayColor>${displayColor(t.color)}</gpxx:DisplayColor></gpxx:TrackExtension></extensions>
     <trkseg>
 ${t.pts.map((p) => `      <trkpt lat="${p[0].toFixed(7)}" lon="${p[1].toFixed(7)}"></trkpt>`).join('\n')}
     </trkseg>
@@ -92,4 +124,10 @@ ${trkXml}
   URL.revokeObjectURL(a.href);
 }
 
-document.getElementById('exportGarminBtn')?.addEventListener('click', exportGarminGPX);
+// GUARDED SO THE MODULE CAN BE IMPORTED WITHOUT A BROWSER. This line ran at module scope and
+// threw `ReferenceError: document is not defined` under node, which meant nothing in this file
+// could be unit-tested — including displayColor(), whose whole job is being correct about a
+// vocabulary nobody can check by eye. Same guard notifications.js already uses.
+if (typeof document !== 'undefined') {
+  document.getElementById('exportGarminBtn')?.addEventListener('click', exportGarminGPX);
+}

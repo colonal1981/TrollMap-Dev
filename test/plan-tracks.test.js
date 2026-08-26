@@ -6,6 +6,7 @@ import { materialisePlan, planTracks, planWaypoints, trackName, legColor } from 
 import { metresBetween } from '../js/modules/plan-candidates.js';
 import { planToTimeline, LEG_COLORS, TRANSIT_COLOR, RETURN_COLOR }
   from '../js/modules/plan-to-timeline.js';
+import { displayColor } from '../js/modules/garmin-export.js';
 
 // ---------------------------------------------------------------------------
 // Why this test exists
@@ -471,5 +472,41 @@ describe('planWaypoints — the lure change, which had no waypoint at all', () =
 
   it('a plan with no changes adds nothing', () => {
     expect(planWaypoints({ legs }, null, 'r1').filter((x) => x.lureChange).length).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE COLOUR HAS TO REACH THE UNIT — 2026-08-26
+//
+// plan-tracks.js computes `t.color` per leg and says why in a comment: every v2 leg used to draw
+// in one fallback colour, "troll, deadhead and the run home indistinguishable." That was fixed
+// for the map. garmin-export.js went on writing the literal `Cyan` into every track of every
+// export, so the identical defect survived on the ECHOMAP — the only screen Ryan reads on the
+// water. Ryan, 2026-08-26: "what is the purpose of the plan and having queues if none of it can
+// be shown."
+// ---------------------------------------------------------------------------
+describe('a leg colour survives the trip to the chartplotter', () => {
+  it('maps every colour plan-tracks actually assigns to a distinct Garmin name', () => {
+    const all = [...LEG_COLORS, TRANSIT_COLOR, RETURN_COLOR];
+    const names = all.map(displayColor);
+    // Distinct is the whole point. Two legs sharing a name on the unit is the bug this fixes.
+    expect(new Set(names).size).toBe(all.length);
+    // `Cyan` is the fallback, so anything else mapping to it means an unmapped colour that would
+    // have gone out looking correct.
+    expect(names.filter((n) => n === 'Cyan').length).toBe(1);
+  });
+
+  it('the deadhead and the run home do not draw as a trolling pass', () => {
+    expect(displayColor(TRANSIT_COLOR)).not.toBe(displayColor(LEG_COLORS[0]));
+    expect(displayColor(RETURN_COLOR)).not.toBe(displayColor(LEG_COLORS[0]));
+    expect(displayColor(RETURN_COLOR)).not.toBe(displayColor(TRANSIT_COLOR));
+  });
+
+  it('falls back rather than emitting something the unit will reject', () => {
+    // gpxx takes a fixed vocabulary of NAMES. A hex value here is silently ignored by the unit,
+    // which is worse than a wrong-but-valid colour.
+    expect(displayColor('#123456')).toBe('Cyan');
+    expect(displayColor(null)).toBe('Cyan');
+    expect(displayColor(undefined)).toBe('Cyan');
   });
 });
