@@ -343,7 +343,7 @@ _none_
 | module | lines | exports | imported by | dead exports | purpose |
 |---|---|---|---|---|---|
 | `Scripts/make_counties.mjs` | 49 | 0 | 0 | 0 | make_counties.mjs -- flatten us-atlas counties-10m TopoJSON into a GeoJSON the Python |
-| `Worker/alerts.js` | 516 | 6 | 2 | 0 | Web Push, because the phone is asleep in a PFD pocket. |
+| `Worker/alerts.js` | 532 | 6 | 2 | 0 | Web Push, because the phone is asleep in a PFD pocket. |
 | `Worker/cameras.js` | 176 | 5 | 1 | **4** | Worker/cameras.js — the current frame from a USGS NIMS camera. |
 | `Worker/conditions.js` | 4549 | 63 | 33 | **2** | Worker/conditions.js — one call that answers "what is this water doing right now". |
 | `Worker/core/arcgis.js` | 401 | 7 | 2 | **2** | Worker/core/arcgis.js — shared ArcGIS helper for ramps/paddle/bank-pier/attractors |
@@ -426,7 +426,7 @@ _none_
 | `js/modules/layers-panel.js` | 105 | 4 | 1 | **2** | layers-panel.js — the one place every map overlay is turned on and off. |
 | `js/modules/measure-tool.js` | 106 | 0 | 1 | 0 | Distance & Bearing Measurement Tool — click two points on the |
 | `js/modules/noaa-tides.js` | 228 | 1 | 1 | **1** | NOAA Coastal Tides — Plan-tab tide panel. |
-| `js/modules/notifications.js` | 841 | 13 | 3 | **11** | notifications.js — On-water alerts for TrollMap |
+| `js/modules/notifications.js` | 845 | 13 | 3 | **11** | notifications.js — On-water alerts for TrollMap |
 | `js/modules/osm-structure.js` | 145 | 0 | 1 | 0 | osm-structure.js — OSM Structure Layer Toggle |
 | `js/modules/plan-assemble.js` | 872 | 8 | 10 | 0 | plan-assemble.js — ordered candidates + the model's judgement → a plan v2 object. |
 | `js/modules/plan-builder.js` | 2547 | 10 | 7 | 0 | Plan Builder — the Plan tab form, save/load, preview rendering, |
@@ -530,7 +530,7 @@ _none_
 | `test/duke-lake-row.test.js` | 83 | 0 | 0 | 0 | normalizeDukeRow against the REAL /lakes/current-level response. |
 | `test/duke-operating-range.test.js` | 278 | 0 | 0 | 0 | The guide curve, the drought stage as a NUMBER, and where this date usually sits. |
 | `test/duke-release-direction.test.js` | 396 | 0 | 0 | 0 | Inflow or outflow: which side of a lake a Duke release comes from. |
-| `test/echomap-text.test.js` | 40 | 0 | 0 | 0 | THE TARGET DISPLAY IS A CHARTPLOTTER, NOT A PHONE TRAY. |
+| `test/echomap-text.test.js` | 61 | 0 | 0 | 0 | THE TARGET DISPLAY IS A CHARTPLOTTER, NOT A PHONE TRAY. |
 | `test/expect-shim.mjs` | 221 | 8 | 89 | 0 | test/expect-shim.mjs -- `describe`/`it`/`expect` on top of node:test and node:assert. |
 | `test/facts-are-not-agent-scoped.test.js` | 86 | 0 | 0 | 0 | A FIX BUILT ON A PREMISE NOBODY MEASURED. |
 | `test/fake-indexeddb.mjs` | 186 | 2 | 4 | 0 | test/fake-indexeddb.mjs — a small in-memory IndexedDB, enough for utils/db.js. |
@@ -736,7 +736,7 @@ _none_
 - `legacyStorageName()` — Worker/research/keys.js:95, js/data/research-ids.js:67
 - `researchStorageIdCandidates()` — Worker/research/keys.js:112, js/data/research-ids.js:77
 - `resolveLakeKey()` — Worker/trollmap-worker.js:429, js/data/species-intel.js:87
-- `isEnabled()` — js/core/layer-registry.js:97, js/modules/notifications.js:549
+- `isEnabled()` — js/core/layer-registry.js:97, js/modules/notifications.js:553
 - `toggle()` — js/core/layer-registry.js:167, js/modules/layers-panel.js:68
 - `getWorkerBase()` — js/data/access-index.js:73, js/modules/gis-toggles.js:51
 - `formatAccessLabel()` — js/data/access-index.js:360, js/modules/lake-ramp-select.js:328

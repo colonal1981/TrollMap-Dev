@@ -944,7 +944,7 @@
     },
     "Worker/alerts.js": {
       "purpose": "Web Push, because the phone is asleep in a PFD pocket.",
-      "lines": 516,
+      "lines": 532,
       "exports": [
         "applicationServerKey",
         "vapidAuth",
@@ -4238,7 +4238,8 @@
         {
           "file": "js/modules/notifications.js",
           "names": [
-            "state"
+            "state",
+            "CF_WORKER_URL"
           ]
         },
         {
@@ -7949,7 +7950,7 @@
     },
     "js/modules/notifications.js": {
       "purpose": "notifications.js — On-water alerts for TrollMap",
-      "lines": 841,
+      "lines": 845,
       "exports": [
         "requestNotificationPermission",
         "lastFire",
@@ -7969,7 +7970,8 @@
         {
           "from": "../core/state.js",
           "names": [
-            "state"
+            "state",
+            "CF_WORKER_URL"
           ],
           "resolved": "js/core/state.js"
         },
@@ -13737,7 +13739,7 @@
     },
     "test/echomap-text.test.js": {
       "purpose": "THE TARGET DISPLAY IS A CHARTPLOTTER, NOT A PHONE TRAY.",
-      "lines": 40,
+      "lines": 61,
       "exports": [],
       "imports": [
         {
@@ -22952,7 +22954,7 @@
       "name": "isEnabled",
       "at": [
         "js/core/layer-registry.js:97",
-        "js/modules/notifications.js:549"
+        "js/modules/notifications.js:553"
       ]
     },
     {

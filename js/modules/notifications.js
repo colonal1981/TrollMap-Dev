@@ -17,7 +17,7 @@
  * is closed.
  */
 
-import { state } from '../core/state.js';
+import { state, CF_WORKER_URL } from '../core/state.js';
 import { planCues, weatherCues } from './plan-assemble.js';
 import { geoDistanceFt as distFt } from '../utils/geo.js';
 
@@ -529,8 +529,12 @@ export async function enableNotifications() {
   // registers the device that will receive them -- the one moment the app has to be open there.
   // Pressed at the desk it registers the desk too, which is harmless and occasionally useful.
   // Ryan asked directly whether this button was all he needed; it is, once, per device.
-  registerAlertDevice(state && state.CF_WORKER_URL ? state.CF_WORKER_URL
-                                                   : (window.CF_WORKER_URL || null));
+  // CF_WORKER_URL IS A NAMED EXPORT OF state.js, NOT A PROPERTY ON `state`. The first version
+  // of this line read `state.CF_WORKER_URL`, which is undefined, so registerAlertDevice() bailed
+  // on its first line -- silently, every time, no matter how often the bell was toggled. Ryan
+  // toggled it three times against a Worker that was correctly configured and watched `devices`
+  // stay at 0. Every other file in this app imports the constant; this one guessed at it.
+  registerAlertDevice(CF_WORKER_URL);
   startProximityWatch();
   // The unforecast case. Runs whether or not a plan was loaded -- weather does not wait for one.
   startHazardPoll();

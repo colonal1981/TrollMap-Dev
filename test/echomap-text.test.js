@@ -37,3 +37,24 @@ test('degrees and the rest of Latin-1 are still allowed', () => {
   assert.ok('°'.codePointAt(0) <= 255);
   assert.ok('–'.codePointAt(0) > 255, 'an en dash is NOT Latin-1 and would box');
 });
+
+test('the worker URL is imported, never guessed at off `state`', () => {
+  // CF_WORKER_URL is a NAMED EXPORT of js/core/state.js. `state.CF_WORKER_URL` is undefined, and
+  // reading it fails the way undefined always fails in this app: silently, at a call that then
+  // returns early. It cost three rounds of Ryan toggling the notification bell on his phone
+  // against a correctly configured Worker while `devices` stayed at 0.
+  //
+  // Every other module imports the constant. This asserts none of them stops.
+  const files = ['js/modules/notifications.js', 'js/modules/plan-water-ui.js',
+                 'js/modules/smart-plan-v2-wiring.js', 'js/modules/cloud-sync.js'];
+  const bad = [];
+  for (const f of files) {
+    let src;
+    try { src = readFileSync(join(ROOT, f), 'utf8'); } catch (_) { continue; }
+    for (const [i, line] of src.split('\n').entries()) {
+      if (/^\s*(\/\/|\*)/.test(line)) continue;            // the comment explaining this rule
+      if (/\bstate\s*\.\s*CF_WORKER_URL\b/.test(line)) bad.push(`${f}:${i + 1}`);
+    }
+  }
+  assert.deepEqual(bad, [], 'CF_WORKER_URL is a named export, not a property of state');
+});
