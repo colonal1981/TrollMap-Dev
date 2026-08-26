@@ -534,11 +534,33 @@ export async function enableNotifications() {
   // on its first line -- silently, every time, no matter how often the bell was toggled. Ryan
   // toggled it three times against a Worker that was correctly configured and watched `devices`
   // stay at 0. Every other file in this app imports the constant; this one guessed at it.
-  registerAlertDevice(CF_WORKER_URL);
   startProximityWatch();
   // The unforecast case. Runs whether or not a plan was loaded -- weather does not wait for one.
   startHazardPoll();
-  fire('TrollMap Alerts On', 'You\'ll get notified for solunar windows, band changes, and nearby structure.', 'startup');
+
+  // THE PHONE HAS NO CONSOLE, SO THE PHONE HAS TO SAY IT OUT LOUD.
+  //
+  // Registration failed silently three times in a row on Ryan's Pixel while the bell showed ON
+  // and the Worker reported `configured: true`. The reason existed the whole time, in
+  // pushState().error, reachable only from a JavaScript console -- which does not exist on the
+  // device this feature is FOR. A diagnostic you cannot reach from where the fault happens is
+  // not a diagnostic.
+  //
+  // So the startup notification stops being an advertisement and starts being a status line. It
+  // travels the one channel already proven to work on that phone, and it reaches the Echomap
+  // too. "Alerts On" said nothing true; this says whether anything will actually arrive.
+  registerAlertDevice(CF_WORKER_URL).then((ok) => {
+    if (ok) {
+      fire('TrollMap alerts ready',
+           `This device will receive solunar windows, band changes and weather warnings.`,
+           'startup');
+    } else {
+      // NAMED, NOT "something went wrong". The reason is the whole point of the message.
+      fire('TrollMap alerts NOT armed',
+           `Nothing will reach this device. ${pushState().error || 'reason unknown'}`,
+           'startup');
+    }
+  });
   updateUI();
   return true;
 }
