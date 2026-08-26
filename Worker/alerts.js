@@ -423,6 +423,44 @@ export async function handleAlerts(request, env, url) {
     return json({ alerts });
   }
 
+  // ── THE LAST MILE, ON DEMAND ──────────────────────────────────────────────────────────────
+  //
+  // Everything else can be verified from a desk: the keys resolve, the token is accepted, the
+  // subscription is in KV, `devices` counts 2. NONE OF THAT PROVES A PUSH ARRIVES. The only
+  // untested link is Cloudflare -> Google's push service -> a phone with the app closed and the
+  // screen off, and that is the entire reason this feature exists.
+  //
+  // The cron cannot prove it on demand: it fires only when a cue comes due or NWS issues
+  // something, so waiting for it means waiting for weather. This queues one real alert to every
+  // registered device and pushes it through the real path, and RETURNS WHAT EACH DEVICE SAID --
+  // 'ok', 'gone' for a retired subscription, or 'fail' for anything else. A silent 403 from a
+  // mis-signed JWT looks identical to calm weather until somebody asks.
+  if (p === '/alerts/test' && request.method === 'POST') {
+    if (!await isAuthorized(request, env)) return json({ error: 'unauthorized' }, 401);
+    const alert = {
+      title: forEchomap((body && body.title) || 'TrollMap push test'),
+      body: forEchomap((body && body.body)
+        || 'If this reached the Echomap with the app closed, the alert path works.'),
+      tag: 'push-test', severity: 'note', url: './',
+    };
+    const list = (await env.KV.list({ prefix: 'device:' })).keys;
+    const results = [];
+    for (const e of list) {
+      const raw = await env.KV.get(e.name);
+      if (!raw) continue;
+      let d;
+      try { d = JSON.parse(raw); } catch (_) { continue; }
+      // Queued BEFORE the push, same as the sweep: a phone that wakes and is told nothing reads
+      // as a false alarm, which is the fastest way to teach him to ignore this channel.
+      d.pending = [...(d.pending || []), alert].slice(-20);
+      await env.KV.put(e.name, JSON.stringify(d));
+      const res = await pushTo(d.endpoint, env, Date.now());
+      if (res === 'gone') await env.KV.delete(e.name);
+      results.push({ label: d.label, result: res });
+    }
+    return json({ sent: results.length, results });
+  }
+
   if (p === '/alerts/status') {
     const [devices, watches] = await Promise.all([
       env.KV.list({ prefix: 'device:' }), env.KV.list({ prefix: 'watch:' }),

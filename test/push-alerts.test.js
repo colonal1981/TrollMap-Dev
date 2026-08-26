@@ -282,6 +282,40 @@ test('nothing above Latin-1 reaches a marine display', () => {
   assert.equal(forEchomap(null), '');
 });
 
+test('the on-demand test pushes to every device and reports what each said', async () => {
+  // The only link that cannot be checked from a desk is whether a push ARRIVES. This route is
+  // the one way to ask without waiting for weather, so it has to report per-device rather than
+  // return a cheerful 200 -- a silent 403 from a mis-signed JWT looks exactly like calm weather.
+  const env = { KV: kvStub(), ...vapidEnv() };
+  stubUpstreams();
+  await registerDevice(env);
+  const [r, u] = req('/alerts/test', { method: 'POST', body: {} });
+  const j = await (await handleAlerts(r, env, u)).json();
+  assert.equal(j.sent, 1);
+  assert.equal(j.results[0].result, 'ok');
+  assert.equal(j.results[0].label, 'Pixel 10 Pro');
+  // And it queues, so the woken service worker has something true to show.
+  const dev = JSON.parse(env.KV.store.get(await deviceKey(ENDPOINT)));
+  assert.equal(dev.pending.length, 1);
+  assert.ok(!/[^\x20-\xFF]/.test(dev.pending[0].title), 'plain text for the plotter');
+});
+
+test('a dead subscription is retired by the test route too, and said out loud', async () => {
+  const env = { KV: kvStub(), ...vapidEnv() };
+  stubUpstreams({ pushStatus: 410 });
+  await registerDevice(env);
+  const [r, u] = req('/alerts/test', { method: 'POST', body: {} });
+  const j = await (await handleAlerts(r, env, u)).json();
+  assert.equal(j.results[0].result, 'gone');
+  assert.equal((await env.KV.list({ prefix: 'device:' })).keys.length, 0);
+});
+
+test('the test route requires the token', async () => {
+  const env = { KV: kvStub(), ...vapidEnv() };
+  const [r, u] = req('/alerts/test', { method: 'POST', token: null, body: {} });
+  assert.equal((await handleAlerts(r, env, u)).status, 401);
+});
+
 test('no KV binding is an empty summary, not a crash in a cron nobody watches', async () => {
   const r = await runAlertSweep({});
   assert.equal(r.checked, 0);

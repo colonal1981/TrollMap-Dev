@@ -944,7 +944,7 @@
     },
     "Worker/alerts.js": {
       "purpose": "Web Push, because the phone is asleep in a PFD pocket.",
-      "lines": 532,
+      "lines": 582,
       "exports": [
         "applicationServerKey",
         "vapidAuth",
@@ -7950,7 +7950,7 @@
     },
     "js/modules/notifications.js": {
       "purpose": "notifications.js — On-water alerts for TrollMap",
-      "lines": 845,
+      "lines": 867,
       "exports": [
         "requestNotificationPermission",
         "lastFire",
@@ -16213,7 +16213,7 @@
     },
     "test/push-alerts.test.js": {
       "purpose": "WEB PUSH: THE ONLY PATH THAT REACHES RYAN ON THE WATER.",
-      "lines": 290,
+      "lines": 324,
       "exports": [],
       "imports": [
         {
@@ -19121,7 +19121,7 @@
       "host": "internal",
       "hits": 1,
       "files": [
-        "Worker/alerts.js:208"
+        "Worker/alerts.js:220"
       ],
       "side": [
         "worker"
@@ -22954,7 +22954,7 @@
       "name": "isEnabled",
       "at": [
         "js/core/layer-registry.js:97",
-        "js/modules/notifications.js:553"
+        "js/modules/notifications.js:575"
       ]
     },
     {
