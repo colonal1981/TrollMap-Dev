@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>TrollMap · background GPS test</title>
+<!--
+  DOES THIS PHONE KEEP A GPS WATCH ALIVE IN A POCKET WITH THE SCREEN OFF?
+
+  Personal use only, not for distribution or resale; not for navigation.
+
+  Ryan, 2026-08-26: "for the bait changes and other fishing notifications those need to be
+  location based using gps." Both delivery paths are closed. The ECHOMAP's Arrival alarm needs a
+  route and a route costs the track -- his call: "using the echomap for this is not going to
+  work." And the documented web platform answer is that a PWA cannot have background location:
+  Chrome never shipped it, the Geofencing API was abandoned, and a service worker cannot call
+  navigator.geolocation at all.
+
+  WHAT IS NOT SETTLED is what THIS phone does with a page that is still open, backgrounded, with
+  the screen off. Two exemptions are documented, and they are separate mechanisms:
+
+    FREEZING     a page holding a Web Lock is exempt (Chrome, "Freezing on Energy Saver")
+    THROTTLING   "Applications playing audio are considered foreground and aren't throttled"
+                 (Chrome, "Background tabs in Chrome 57")
+
+  Both are desktop-documented, and Android's own process management sits on top of them. So this
+  is a measurement, not a feature. It turns everything on at once because that is the cheapest
+  decisive test: if this fails, nothing weaker works and the question is answered.
+
+  HOW TO RUN IT
+    1. Open on the phone. Tap START and allow location.
+    2. Lock the screen, put the phone where it normally rides, and drive or paddle 20 minutes.
+    3. Come back, unlock, read the two GAP numbers.
+
+  WHAT THE NUMBERS MEAN
+    fix gap        longest silence from watchPosition. If this stays near your fix interval,
+                   the GPS watch survived. If it jumps to the length of the drive, it did not.
+    tick gap       longest silence from a plain 10-second setInterval. This separates the two
+                   failures: timers throttled (tick gap grows, page alive) from page frozen
+                   (both grow together).
+
+  THE AUDIO IS NOT SILENT, IT IS INAUDIBLE. A truly silent track is classified as inaudible and
+  earns no exemption, so this loops a 20 Hz tone at about 1/16000 of full scale. It may take
+  audio focus and pause music -- that is worth knowing too, so the toggle is here rather than
+  hidden.
+-->
+<style>
+  :root { color-scheme: dark; --bg:#0d1117; --fg:#e6edf3; --mut:#8b949e; --ok:#3fb950;
+          --warn:#d29922; --bad:#f85149; --line:#30363d; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:16px; background:var(--bg); color:var(--fg);
+         font:16px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  h1 { font-size:17px; margin:0 0 4px; letter-spacing:.02em; }
+  p.sub { margin:0 0 16px; color:var(--mut); font-size:13px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:14px 0; }
+  .card { border:1px solid var(--line); border-radius:10px; padding:10px 12px; }
+  .card .k { color:var(--mut); font-size:11px; text-transform:uppercase; letter-spacing:.08em; }
+  .card .v { font-size:26px; font-variant-numeric:tabular-nums; margin-top:2px; }
+  .wide { grid-column:1 / -1; }
+  button { font:inherit; font-weight:600; padding:12px 16px; border-radius:10px;
+           border:1px solid var(--line); background:#161b22; color:var(--fg); width:100%; }
+  button.go { background:var(--ok); color:#04140a; border-color:transparent; }
+  button.stop { background:var(--bad); color:#1a0505; border-color:transparent; }
+  .row { display:flex; gap:10px; margin-top:10px; }
+  label.tog { display:flex; align-items:center; gap:10px; font-size:14px; color:var(--mut);
+              border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin-top:10px; }
+  pre { background:#010409; border:1px solid var(--line); border-radius:10px; padding:10px;
+        font-size:11px; max-height:34vh; overflow:auto; white-space:pre; }
+  .ok { color:var(--ok); } .warn { color:var(--warn); } .bad { color:var(--bad); }
+</style>
+
+<h1>Background GPS test</h1>
+<p class="sub">Start it, lock the screen, put the phone where it rides, come back in 20 minutes.</p>
+
+<div class="grid">
+  <div class="card"><div class="k">elapsed</div><div class="v" id="el">—</div></div>
+  <div class="card"><div class="k">state</div><div class="v" id="vis" style="font-size:18px">—</div></div>
+  <div class="card"><div class="k">fixes</div><div class="v" id="nfix">0</div></div>
+  <div class="card"><div class="k">ticks</div><div class="v" id="ntick">0</div></div>
+  <div class="card"><div class="k">longest fix gap</div><div class="v" id="gfix">—</div></div>
+  <div class="card"><div class="k">longest tick gap</div><div class="v" id="gtick">—</div></div>
+  <div class="card wide"><div class="k">verdict</div><div class="v" id="verdict" style="font-size:15px">not started</div></div>
+</div>
+
+<button id="go" class="go">START</button>
+<label class="tog"><input type="checkbox" id="aud" checked> keep an inaudible tone playing (may pause music)</label>
+<div class="row"><button id="dl">download log</button><button id="clr">clear</button></div>
+<pre id="log">nothing recorded yet</pre>
+
+<script>
+'use strict';
+const $ = (id) => document.getElementById(id);
+const KEY = 'trollmap_gpstest_v1';
+const TICK_MS = 10000;
+
+let ev = [];                       // [{t, kind, ...}] kind: fix | tick | vis | err
+let started = null, watchId = null, ticker = null, audio = null, lockRelease = null;
+
+function load() { try { ev = JSON.parse(localStorage.getItem(KEY) || '[]'); } catch (_) { ev = []; } }
+function save() {
+  // Capped so a forgotten run cannot fill the origin's quota and start throwing mid-drive --
+  // which would look exactly like the page having been frozen.
+  if (ev.length > 4000) ev = ev.slice(-4000);
+  try { localStorage.setItem(KEY, JSON.stringify(ev)); } catch (_) { /* keep running regardless */ }
+}
+function push(rec) { ev.push({ t: Date.now(), vis: document.visibilityState, ...rec }); save(); render(); }
+
+const secs = (ms) => (ms / 1000).toFixed(0) + ' s';
+function longestGap(kind) {
+  const ts = ev.filter((e) => e.kind === kind).map((e) => e.t);
+  if (started) ts.unshift(started);
+  let g = 0;
+  for (let i = 1; i < ts.length; i++) g = Math.max(g, ts[i] - ts[i - 1]);
+  // The silence since the last one counts: a watch that died five minutes ago has a five-minute
+  // gap right now, and waiting for the next fix to reveal it is how you miss it entirely.
+  if (ts.length) g = Math.max(g, Date.now() - ts[ts.length - 1]);
+  return g;
+}
+
+function render() {
+  const nf = ev.filter((e) => e.kind === 'fix').length;
+  const nt = ev.filter((e) => e.kind === 'tick').length;
+  $('nfix').textContent = nf;
+  $('ntick').textContent = nt;
+  $('vis').textContent = document.visibilityState;
+  $('el').textContent = started ? secs(Date.now() - started) : '—';
+  const gf = longestGap('fix'), gt = longestGap('tick');
+  $('gfix').textContent = started ? secs(gf) : '—';
+  $('gtick').textContent = started ? secs(gt) : '—';
+
+  const v = $('verdict');
+  if (!started) { v.textContent = 'not started'; v.className = 'v'; }
+  else if (Date.now() - started < 120000) { v.textContent = 'running — needs 20 min in a pocket'; v.className = 'v'; }
+  else if (gf < 90000 && gt < 90000) { v.textContent = 'ALIVE — both survived backgrounding'; v.className = 'v ok'; }
+  else if (gf < 90000) { v.textContent = 'GPS alive, timers throttled — cues would fire late'; v.className = 'v warn'; }
+  else if (gt < 90000) { v.textContent = 'timers alive, GPS stopped — position cues impossible'; v.className = 'v bad'; }
+  else { v.textContent = 'FROZEN — the page stopped entirely'; v.className = 'v bad'; }
+
+  $('log').textContent = ev.length ? ev.slice(-60).map(fmt).join('\n') : 'nothing recorded yet';
+}
+function fmt(e) {
+  const ts = new Date(e.t).toLocaleTimeString();
+  if (e.kind === 'fix') return `${ts}  fix   ${e.lat.toFixed(5)},${e.lon.toFixed(5)}  ±${Math.round(e.acc)}m  ${e.vis}`;
+  if (e.kind === 'tick') return `${ts}  tick  ${e.vis}`;
+  if (e.kind === 'vis') return `${ts}  VIS   -> ${e.vis}`;
+  return `${ts}  ERR   ${e.msg}`;
+}
+
+// A near-silent loop, generated rather than shipped as base64. 20 Hz at 1/16000 of full scale:
+// non-zero samples, so the page counts as audible, and nothing a human hears through a pocket.
+function makeAudio() {
+  const rate = 8000, n = rate;                       // one second, looped
+  const buf = new ArrayBuffer(44 + n * 2), dv = new DataView(buf);
+  const str = (o, s) => { for (let i = 0; i < s.length; i++) dv.setUint8(o + i, s.charCodeAt(i)); };
+  str(0, 'RIFF'); dv.setUint32(4, 36 + n * 2, true); str(8, 'WAVEfmt ');
+  dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true);
+  dv.setUint32(24, rate, true); dv.setUint32(28, rate * 2, true);
+  dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
+  str(36, 'data'); dv.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) dv.setInt16(44 + i * 2, Math.round(2 * Math.sin(2 * Math.PI * 20 * i / rate)), true);
+  const url = URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+  const a = new Audio(url);
+  a.loop = true;
+  return a;
+}
+
+async function start() {
+  if (!navigator.geolocation) { push({ kind: 'err', msg: 'no geolocation on this browser' }); return; }
+  started = Date.now();
+  ev = []; save();
+
+  if ($('aud').checked) {
+    try { audio = makeAudio(); await audio.play(); }
+    catch (e) { push({ kind: 'err', msg: 'audio refused: ' + e.message }); }
+  }
+
+  // A Web Lock held for the duration. Documented as a freeze exemption; requested inside a
+  // promise that never settles, which is the only way to HOLD one rather than take and drop it.
+  if (navigator.locks) {
+    navigator.locks.request('trollmap-gpstest', () => new Promise((res) => { lockRelease = res; }))
+      .catch((e) => push({ kind: 'err', msg: 'weblock: ' + e.message }));
+  }
+
+  watchId = navigator.geolocation.watchPosition(
+    (p) => push({ kind: 'fix', lat: p.coords.latitude, lon: p.coords.longitude,
+                  acc: p.coords.accuracy }),
+    (e) => push({ kind: 'err', msg: 'geo: ' + e.message }),
+    { enableHighAccuracy: true, maximumAge: 0, timeout: 60000 });
+
+  ticker = setInterval(() => push({ kind: 'tick' }), TICK_MS);
+  $('go').textContent = 'STOP';
+  $('go').className = 'stop';
+  render();
+}
+
+function stop() {
+  if (watchId != null) navigator.geolocation.clearWatch(watchId);
+  if (ticker) clearInterval(ticker);
+  if (audio) { audio.pause(); audio = null; }
+  if (lockRelease) { lockRelease(); lockRelease = null; }
+  watchId = null; ticker = null;
+  $('go').textContent = 'START';
+  $('go').className = 'go';
+  render();
+}
+
+$('go').onclick = () => (watchId == null && ticker == null ? start() : stop());
+$('clr').onclick = () => { ev = []; started = null; save(); render(); };
+$('dl').onclick = () => {
+  const rows = ['iso,epoch_ms,kind,lat,lon,accuracy_m,visibility,note'];
+  for (const e of ev) rows.push([new Date(e.t).toISOString(), e.t, e.kind,
+    e.lat ?? '', e.lon ?? '', e.acc ?? '', e.vis ?? '', (e.msg || '').replace(/,/g, ';')].join(','));
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([rows.join('\n')], { type: 'text/csv' }));
+  a.download = 'gpstest.csv';
+  a.click();
+};
+
+document.addEventListener('visibilitychange', () => {
+  // Recorded rather than inferred: this is the only line that says when the phone actually went
+  // away, and every gap has to be read against it.
+  if (started) push({ kind: 'vis' });
+});
+
+load();
+render();
+setInterval(render, 1000);
+</script>
