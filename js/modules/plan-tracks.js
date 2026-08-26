@@ -78,7 +78,14 @@ export function trackName(leg) {
 /** `S1.1 · hump 14ft`. The id first, because that is what the timeline calls it. */
 export function stopName(stop) {
   const what = String(stop.structureType || stop.structure || 'cast').split(',')[0];
-  const ft = Number.isFinite(Number(stop.depthFt)) ? ` ${Math.round(Number(stop.depthFt))}ft` : '';
+  // `Number(null)` IS 0, AND 0 IS FINITE, so a structure with no depth printed as `0ft`.
+  // Ryan, 2026-08-26, on `S1.1 \u00b7 dock_cluster 0ft`: "dock clusters are a land object... they
+  // probably do not have depth." They do not, and plan-candidates.js already agrees -- it writes
+  // `depthFt: null` for anything whose depth did not resolve (`depth > 0 ? ... : null`). The null
+  // travelled the whole plan intact and died at this one coercion, one step from the card, where
+  // it turned into a claim that the boat can troll a dock in no water.
+  const d = stop.depthFt == null ? NaN : Number(stop.depthFt);
+  const ft = Number.isFinite(d) && d > 0 ? ` ${Math.round(d)}ft` : '';
   return trim(`${stop.id} · ${what}${ft}`, 24);
 }
 
