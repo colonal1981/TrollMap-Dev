@@ -362,14 +362,24 @@ export function loadSessionFromPlan(plan, o = {}) {
     // to turn it off and a trip that runs long simply stops being watched rather than buzzing
     // about a lake he left hours ago.
     if (_enabled && _session.hazardWorker && _session.launchPos) {
-      const until = Number.isFinite(_session.returnTimeH)
-        ? (() => { const d = new Date(); d.setHours(0, 0, 0, 0);
-                   return new Date(d.getTime() + _session.returnTimeH * 3600e3).toISOString(); })()
-        : null;
+      // THE PLAN'S DATE, NOT TODAY'S.
+      //
+      // These hours are hours-of-day on the day being FISHED, and this built them against local
+      // midnight of the day the plan was BUILT. Measured 2026-08-26 01:25Z: Ryan planned tomorrow
+      // and the watch armed `until 2026-08-25T19:00:00Z` -- already six hours expired, so the
+      // next cron sweep would have deleted it before the trip existed. It reported "armed" and
+      // it was, briefly, for a window that had already closed.
+      const dayStart = () => {
+        const d = o.date ? new Date(`${o.date}T00:00:00`) : new Date();
+        if (Number.isNaN(d.getTime())) return new Date(new Date().setHours(0, 0, 0, 0));
+        d.setHours(0, 0, 0, 0);
+        return d;
+      };
+      const isoAt = (h) => new Date(dayStart().getTime() + h * 3600e3).toISOString();
+      const until = Number.isFinite(_session.returnTimeH) ? isoAt(_session.returnTimeH) : null;
       // EVERYTHING THE DAY HAS TO SAY, not just the weather. The cue list this session already
-      // built is uploaded with the watch so the cron can fire it while the app is closed.
-      const isoAt = (h) => { const d = new Date(); d.setHours(0, 0, 0, 0);
-                             return new Date(d.getTime() + h * 3600e3).toISOString(); };
+      // built is uploaded with the watch so the cron can fire it while the app is closed. Every
+      // one of these is an hour-of-day on the FISHING day, placed by the same dayStart().
       const cues = [
         ..._session.solunarMajors.map((m) => ({ at: isoAt(m.h), title: 'Solunar Major',
           body: `Peak bite window at ${hToStr(m.h)}`, tag: 'solunar-major', severity: 'note' })),

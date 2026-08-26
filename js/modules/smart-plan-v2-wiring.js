@@ -326,6 +326,8 @@ export async function runSmartPlanV2() {
     worker: CF_WORKER_URL,
     // `ramp` is [lon, lat] here -- see rampCoords(). launchFrom() takes either shape.
     launch: launchFrom(ramp),
+    // The day being FISHED. Without it the watch expires against the day it was BUILT.
+    date: inp.dateStr,
   });
   try { renderAll(); } catch (e) { console.warn('[plan-v2] map redraw failed:', e.message); }
 

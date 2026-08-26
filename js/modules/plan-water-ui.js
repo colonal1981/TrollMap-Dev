@@ -834,6 +834,7 @@ export async function buildFromPicked() {
     weatherByHour: T.weatherByHour,
     worker: CF_WORKER_URL,
     launch: launchFrom(T.ramp),
+    date: T.dateStr || T.date || null,
   });
 
   // SAY THE ORDER OUT LOUD AND SAY IT IS NOT THE SHORT ONE. Silently reordering what he ticked is
