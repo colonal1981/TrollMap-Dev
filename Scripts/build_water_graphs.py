@@ -175,6 +175,7 @@ def index_tiles(roots, quiet=False):
         roots = [roots]
     idx, score, collisions = {}, {}, []
     per_root = collections.Counter()
+    root_of = {}                       # tile id -> which root it was taken from
     for rank, root in enumerate(roots):
         if not root or not os.path.isdir(root):
             continue
@@ -191,24 +192,33 @@ def index_tiles(roots, quiet=False):
                     # lower is better: the earlier root, then the fuller directory
                     cand = (rank, -len(_tile_files(p)))
                     if tid not in score:
-                        idx[tid], score[tid] = p, cand
+                        idx[tid], score[tid], root_of[tid] = p, cand, root
                     elif cand < score[tid]:
-                        collisions.append((tid, idx[tid], p))
-                        idx[tid], score[tid] = p, cand
+                        collisions.append((tid, idx[tid], p, score[tid][0], rank))
+                        idx[tid], score[tid], root_of[tid] = p, cand, root
                     else:
-                        collisions.append((tid, p, idx[tid]))
-    for tid, p in idx.items():
-        per_root[p.split(os.sep)[0] if os.sep in p else p] = per_root.get(
-            p.split(os.sep)[0] if os.sep in p else p, 0) + 1
+                        collisions.append((tid, p, idx[tid], rank, score[tid][0]))
+    for tid in idx: per_root[root_of[tid]] += 1
     if not quiet:
         print('%d tile directories indexed from %d root(s)' % (len(idx), len(roots)))
-        for r, n in per_root.most_common():
-            print('      %5d from %s' % (n, r))
-        if collisions:
-            empties = sum(1 for _t, lost, _w in collisions if not _tile_files(lost))
-            print('      %d tile id(s) claimed by more than one directory; %d of the losers were '
-                  'EMPTY' % (len(collisions), empties))
-            for tid, lost, won in collisions[:6]:
+        for r in roots:
+            if r in per_root: print('      %5d from %s' % (per_root[r], r))
+        # TWO KINDS OF COLLISION, AND ONLY ONE IS A PROBLEM.
+        #
+        # A tile present in BOTH roots collides every time and taking the earlier root is the
+        # whole point of --tiles-fallback -- reporting those together with the real defect turned
+        # "23 shadowed tiles" into "264 collisions", which reads like an emergency and is not one.
+        # A collision WITHIN one root is the empty-directory bug and is the only line worth acting on.
+        same = [c for c in collisions if c[3] == c[4]]
+        cross = len(collisions) - len(same)
+        if cross:
+            print('      %d tile(s) present in more than one root; the earlier root won, which is '
+                  'what the fallback is for' % cross)
+        if same:
+            empties = sum(1 for c in same if not _tile_files(c[1]))
+            print('      !! %d tile id(s) claimed TWICE WITHIN ONE ROOT; %d of the losers were '
+                  'EMPTY' % (len(same), empties))
+            for tid, lost, won, _a, _b in same[:6]:
                 print('         %-8s kept %s  (dropped %s, %d file(s))'
                       % (tid, won, lost, len(_tile_files(lost))))
     return idx
