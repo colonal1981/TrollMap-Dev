@@ -12,16 +12,16 @@ Python side will read as dead here and may not be. See the `lakes.js` near miss 
 
 | metric | count |
 |---|---|
-| files | 463 |
-| jsModules | 293 |
+| files | 465 |
+| jsModules | 295 |
 | pyScripts | 164 |
 | routes | 57 |
 | routesUncalled | 0 |
 | routesMutatingUngated | 18 |
-| feeds | 108 |
-| deadExports | 213 |
+| feeds | 111 |
+| deadExports | 216 |
 | orphanModules | 4 |
-| duplicateFnNames | 42 |
+| duplicateFnNames | 43 |
 | crossModuleGlobals | 39 |
 | unresolvedImports | 0 |
 
@@ -92,24 +92,24 @@ Python side will read as dead here and may not be. See the `lakes.js` near miss 
 Read-shaped POSTs (LLM proxies, search) are deliberately open — see the comment above
 `MUTATING_ROUTES`. Anything here that WRITES is a hole.
 
-- `POST /build` — Worker/trollmap-worker.js:978
-- `POST /identify-catch` — Worker/trollmap-worker.js:984
-- `POST /identify-catch-v2` — Worker/trollmap-worker.js:992
-- `POST /groq-query` — Worker/trollmap-worker.js:999
-- `POST /research/thermocline-search` — Worker/trollmap-worker.js:1016
-- `POST /research/limnology-data` — Worker/trollmap-worker.js:1021
-- `POST /research/deterministic-facts` — Worker/trollmap-worker.js:1024
-- `POST /research/discover` — Worker/trollmap-worker.js:1027
-- `POST /research/analyze-facts` — Worker/trollmap-worker.js:1044
-- `POST /research/dedupe-contradictions` — Worker/trollmap-worker.js:1047
-- `POST /research/map-facts` — Worker/trollmap-worker.js:1050
-- `POST /research/gap-analysis` — Worker/trollmap-worker.js:1053
-- `POST /research/gap-search` — Worker/trollmap-worker.js:1056
-- `POST /research/agent-llm` — Worker/trollmap-worker.js:1059
-- `POST /research/proxy-download-batch` — Worker/trollmap-worker.js:1082
-- `POST /research/shared/check` — Worker/trollmap-worker.js:1086
-- `POST /research/shared/query` — Worker/trollmap-worker.js:1092
-- `POST /research/validation-pass` — Worker/trollmap-worker.js:1124
+- `POST /build` — Worker/trollmap-worker.js:996
+- `POST /identify-catch` — Worker/trollmap-worker.js:1002
+- `POST /identify-catch-v2` — Worker/trollmap-worker.js:1010
+- `POST /groq-query` — Worker/trollmap-worker.js:1017
+- `POST /research/thermocline-search` — Worker/trollmap-worker.js:1034
+- `POST /research/limnology-data` — Worker/trollmap-worker.js:1039
+- `POST /research/deterministic-facts` — Worker/trollmap-worker.js:1042
+- `POST /research/discover` — Worker/trollmap-worker.js:1045
+- `POST /research/analyze-facts` — Worker/trollmap-worker.js:1062
+- `POST /research/dedupe-contradictions` — Worker/trollmap-worker.js:1065
+- `POST /research/map-facts` — Worker/trollmap-worker.js:1068
+- `POST /research/gap-analysis` — Worker/trollmap-worker.js:1071
+- `POST /research/gap-search` — Worker/trollmap-worker.js:1074
+- `POST /research/agent-llm` — Worker/trollmap-worker.js:1077
+- `POST /research/proxy-download-batch` — Worker/trollmap-worker.js:1100
+- `POST /research/shared/check` — Worker/trollmap-worker.js:1104
+- `POST /research/shared/query` — Worker/trollmap-worker.js:1110
+- `POST /research/validation-pass` — Worker/trollmap-worker.js:1142
 
 ## Routes nothing calls
 
@@ -121,7 +121,7 @@ _none_
 |---|---|---|---|
 | pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev | worker | 42 | Worker/research/clients.js:506 |
 | www.dnr.sc.gov | worker, browser | 23 | Worker/research/agency-pages.js:34 |
-| x | pipeline, browser | 20 | Scripts/capture_upstreams.py:260 |
+| x | pipeline, browser | 21 | Scripts/capture_upstreams.py:260 |
 | w | browser | 20 | test/coastal-regulations-live.test.js:50 |
 | lakes.hydro-derived.duke-energy.app | pipeline, worker | 18 | Scripts/capture_upstreams.py:184 |
 | www.anglersheadquarters.com | worker, browser | 16 | Worker/reports.js:63 |
@@ -148,6 +148,7 @@ _none_
 | waterdata.usgs.gov | worker, browser | 6 | Worker/worker-data.js:933 |
 | lakemonster.com | worker | 6 | Worker/worker-data.js:957 |
 | www.topografix.com | browser | 6 | js/modules/garmin-export.js:65 |
+| fcm.googleapis.com | browser | 6 | test/push-alerts.test.js:59 |
 | api.waterdata.usgs.gov | pipeline, worker, browser | 5 | Scripts/build_camera_index.py:59 |
 | www.waterqualitydata.us | pipeline, worker, browser | 5 | Scripts/capture_upstreams.py:125 |
 | worker | pipeline, browser | 5 | Scripts/capture_upstreams.py:260 |
@@ -163,7 +164,7 @@ _none_
 | mapservices.weather.noaa.gov | pipeline, worker | 3 | Scripts/build_lake_drainage.py:152 |
 | dash.cloudflare.com | pipeline | 3 | Scripts/trollmap_r2_clean.py:6 |
 | api.scrape.do | worker | 3 | Worker/research/clients.js:475 |
-| www.dominionenergy.com | worker | 3 | Worker/trollmap-worker.js:387 |
+| www.dominionenergy.com | worker | 3 | Worker/trollmap-worker.js:388 |
 | www.santeecooper.com | worker, browser | 3 | Worker/worker-data.js:1016 |
 | water.sas.usace.army.mil | worker | 3 | Worker/worker-data.js:1125 |
 | api.open-meteo.com | worker, browser | 3 | Worker/worker-data.js:1448 |
@@ -176,7 +177,7 @@ _none_
 | api.water.noaa.gov | worker | 2 | Worker/conditions.js:809 |
 | azapp-lakespublic-prd-001.azurewebsites.net | worker | 2 | Worker/conditions.js:1531 |
 | georgiawildlife.com | worker, browser | 2 | Worker/research/dataset.js:17 |
-| generativelanguage.googleapis.com | worker | 2 | Worker/trollmap-worker.js:800 |
+| generativelanguage.googleapis.com | worker | 2 | Worker/trollmap-worker.js:801 |
 | coastalgadnr.org | worker, browser | 2 | Worker/worker-data.js:1717 |
 | deq.nc.gov | worker, browser | 2 | Worker/worker-data.js:1718 |
 | server.arcgisonline.com | browser | 2 | js/core/map-init.js:29 |
@@ -191,6 +192,8 @@ _none_
 | www.weather.gov | pipeline | 1 | Scripts/probe_ndbc_stations.py:11 |
 | prd-tnm.s3.amazonaws.com | pipeline | 1 | Scripts/trollmap_nhd_boundaries.py:34 |
 | api.cloudflare.com | pipeline | 1 | Scripts/trollmap_r2_clean.py:39 |
+| trollmap.pages.dev | worker | 1 | Worker/alerts.js:156 |
+| internal | worker | 1 | Worker/alerts.js:185 |
 | forecast.weather.gov | worker | 1 | Worker/conditions.js:238 |
 | publicservice.dominionenergyse.com | worker | 1 | Worker/conditions.js:1541 |
 | api.tavily.com | worker | 1 | Worker/research/clients.js:239 |
@@ -287,12 +290,12 @@ _none_
 | get | ``lake_packages/${id}/${filename}`` | Worker/research/storage.js:406 |
 | get | ``lakes/${safe}.json`` | Worker/research/storage.js:425 |
 | get | ``lakes/${safeKey}.json`` | Worker/research/storage.js:428 |
-| get | `key` | Worker/trollmap-worker.js:641 |
-| put | `key` | Worker/trollmap-worker.js:656 |
-| get | `key` | Worker/trollmap-worker.js:1633 |
-| list | `{ prefix }` | Worker/trollmap-worker.js:1654 |
-| get | `key` | Worker/trollmap-worker.js:1683 |
-| put | `key` | Worker/trollmap-worker.js:1719 |
+| get | `key` | Worker/trollmap-worker.js:642 |
+| put | `key` | Worker/trollmap-worker.js:657 |
+| get | `key` | Worker/trollmap-worker.js:1656 |
+| list | `{ prefix }` | Worker/trollmap-worker.js:1677 |
+| get | `key` | Worker/trollmap-worker.js:1706 |
+| put | `key` | Worker/trollmap-worker.js:1742 |
 | get | `chartpackKey(slug` | Worker/water.js:76 |
 | get | `chartpackKey(slug` | Worker/water.js:87 |
 | list | `{ cursor` | Worker/worker-core.js:342 |
@@ -340,8 +343,9 @@ _none_
 | module | lines | exports | imported by | dead exports | purpose |
 |---|---|---|---|---|---|
 | `Scripts/make_counties.mjs` | 49 | 0 | 0 | 0 | make_counties.mjs -- flatten us-atlas counties-10m TopoJSON into a GeoJSON the Python |
+| `Worker/alerts.js` | 372 | 5 | 2 | 0 | Web Push, because the phone is asleep in a PFD pocket. |
 | `Worker/cameras.js` | 176 | 5 | 1 | **4** | Worker/cameras.js — the current frame from a USGS NIMS camera. |
-| `Worker/conditions.js` | 4549 | 63 | 32 | **2** | Worker/conditions.js — one call that answers "what is this water doing right now". |
+| `Worker/conditions.js` | 4549 | 63 | 33 | **2** | Worker/conditions.js — one call that answers "what is this water doing right now". |
 | `Worker/core/arcgis.js` | 401 | 7 | 2 | **2** | Worker/core/arcgis.js — shared ArcGIS helper for ramps/paddle/bank-pier/attractors |
 | `Worker/ndbc.js` | 236 | 6 | 2 | **1** | NDBC realtime2 — the measured half of the weather this app shows. |
 | `Worker/operators.js` | 331 | 6 | 3 | 0 | operators.js — the three utility operators that publish HTML tables instead of JSON. |
@@ -362,9 +366,9 @@ _none_
 | `Worker/research/limnology.js` | 513 | 4 | 4 | 0 | research/limnology.js — split from worker-research.js (behavior-preserving) |
 | `Worker/research/shared.js` | 714 | 29 | 3 | **13** | research/shared.js — split from worker-research.js (behavior-preserving) |
 | `Worker/research/storage.js` | 639 | 11 | 2 | 0 | research/storage.js — split from worker-research.js (behavior-preserving) |
-| `Worker/trollmap-worker.js` | 1785 | 1 | 0 | 0 | r2Text is used by /chartpacks/lake-boundary (line ~1711). It was added to worker-core.js |
+| `Worker/trollmap-worker.js` | 1808 | 1 | 0 | 0 | r2Text is used by /chartpacks/lake-boundary (line ~1711). It was added to worker-core.js |
 | `Worker/water.js` | 925 | 2 | 2 | **1** | Worker/water.js — the compute plane over the static pack layers. |
-| `Worker/worker-core.js` | 433 | 10 | 22 | 0 | worker-core.js — Shared infrastructure: CORS headers, LLM provider chain, fetchText |
+| `Worker/worker-core.js` | 433 | 10 | 23 | 0 | worker-core.js — Shared infrastructure: CORS headers, LLM provider chain, fetchText |
 | `Worker/worker-data.js` | 1995 | 27 | 7 | 0 | worker-data.js — Static lake/river data extracted from trollmap-worker.js |
 | `Worker/worker-research.js` | 14 | 37 | 1 | 0 | worker-research.js — public API barrel (impl in Worker/research/*) |
 | `Worker/worker-species.js` | 230 | 10 | 1 | 0 | worker-species.js — Species lists and ecological validation |
@@ -422,7 +426,7 @@ _none_
 | `js/modules/layers-panel.js` | 105 | 4 | 1 | **2** | layers-panel.js — the one place every map overlay is turned on and off. |
 | `js/modules/measure-tool.js` | 106 | 0 | 1 | 0 | Distance & Bearing Measurement Tool — click two points on the |
 | `js/modules/noaa-tides.js` | 228 | 1 | 1 | **1** | NOAA Coastal Tides — Plan-tab tide panel. |
-| `js/modules/notifications.js` | 671 | 9 | 3 | **7** | notifications.js — On-water alerts for TrollMap |
+| `js/modules/notifications.js` | 780 | 12 | 3 | **10** | notifications.js — On-water alerts for TrollMap |
 | `js/modules/osm-structure.js` | 145 | 0 | 1 | 0 | osm-structure.js — OSM Structure Layer Toggle |
 | `js/modules/plan-assemble.js` | 872 | 8 | 10 | 0 | plan-assemble.js — ordered candidates + the model's judgement → a plan v2 object. |
 | `js/modules/plan-builder.js` | 2547 | 10 | 7 | 0 | Plan Builder — the Plan tab form, save/load, preview rendering, |
@@ -483,7 +487,7 @@ _none_
 | `js/utils/viewport-cull.js` | 129 | 7 | 5 | **1** | Viewport culling for big GeoJSON layers. |
 | `js/utils/water-conditions.js` | 842 | 7 | 7 | 0 | ONE READ FOR THE STATE OF THE WATER. |
 | `js/utils/worker-auth.js` | 63 | 3 | 5 | 0 | utils/worker-auth.js — the shared secret for TrollMap's own Worker, in one place. |
-| `sw.js` | 94 | 0 | 0 | 0 | TrollMap service worker — v18 (the shell was frozen at v17, 2026-08-16) |
+| `sw.js` | 228 | 0 | 0 | 0 | TrollMap service worker — v18 (the shell was frozen at v17, 2026-08-16) |
 | `test/agency-domains.test.js` | 85 | 0 | 0 | 0 | A TABLE THAT LOOKS LIKE A KNOB AND IS NOT CONNECTED. |
 | `test/agency-pages.test.js` | 224 | 0 | 0 | 0 | The state's own lake index, resolved to the water this app ships. |
 | `test/agency-table-lookup.test.js` | 90 | 0 | 0 | 0 | The agency profile tables are keyed by the AGENCY's name for the lake, not by ours. |
@@ -569,6 +573,7 @@ _none_
 | `test/pressure-trend.test.js` | 91 | 0 | 0 | 0 | The barometer, and the eleven-day-old reading that made the staleness guard necessary. |
 | `test/prompt-budget.test.js` | 73 | 0 | 0 | 0 | The prompt budget guard, which used to report success and do nothing. |
 | `test/proxy-target-type.test.js` | 57 | 0 | 0 | 0 | Whether a proxy target is a PDF, and why the URL has to outrank the caller's type param. |
+| `test/push-alerts.test.js` | 184 | 0 | 0 | 0 | WEB PUSH: THE HALF THAT WORKS WITH THE PHONE ASLEEP. |
 | `test/qdc-decoder.test.js` | 139 | 0 | 0 | 0 | Behaviour tests for the raw QDC reader and the contour engine on top of it. |
 | `test/r2-gzip.test.js` | 149 | 0 | 0 | 0 | r2-gzip.test.js — the Worker must unwrap what the pipeline compresses. |
 | `test/ramps-reach-research.test.js` | 56 | 0 | 0 | 0 | Why a 41,000-acre reservoir reported "ramps: 0". |
@@ -638,7 +643,7 @@ _none_
 - `Scripts/make_counties.mjs` — 49 lines, 0 exports
 - `js/data/species-strategies.js` — 549 lines, 11 exports
 - `js/modules/smart-plan-route.js` — 190 lines, 3 exports
-- `sw.js` — 94 lines, 0 exports
+- `sw.js` — 228 lines, 0 exports
 
 ### Exported but never imported by name
 
@@ -680,7 +685,7 @@ _none_
 - `js/modules/lake-research.js`: initLakeResearch, loadProfile, saveCurrentResearchProfile, populateResearchLakeDropdown, runFullPipeline, runResume
 - `js/modules/layers-panel.js`: isOpen, close
 - `js/modules/noaa-tides.js`: stageLabel
-- `js/modules/notifications.js`: requestNotificationPermission, lastFire, checkWindAlert, loadSessionFromSmartPlan, enableNotifications, disableNotifications, selfTest
+- `js/modules/notifications.js`: requestNotificationPermission, lastFire, checkWindAlert, loadSessionFromSmartPlan, enableNotifications, disableNotifications, pushState, subscribePush, unsubscribePush, selfTest
 - `js/modules/plan-candidates.js`: AMPS_REF_MPH, AMPS_REF_A, AMPS_EXP, ampsAtMph, groupDocks, eligibleForHolding, sliceLine, catchSupport, pointToSegmentM
 - `js/modules/plan-inputs.js`: normaliseHolding
 - `js/modules/plan-pieces.js`: stretchCoords
@@ -729,11 +734,12 @@ _none_
 - `researchStorageId()` — Worker/research/keys.js:74, js/data/research-ids.js:50
 - `legacyStorageName()` — Worker/research/keys.js:95, js/data/research-ids.js:67
 - `researchStorageIdCandidates()` — Worker/research/keys.js:112, js/data/research-ids.js:77
-- `resolveLakeKey()` — Worker/trollmap-worker.js:428, js/data/species-intel.js:87
-- `isEnabled()` — js/core/layer-registry.js:97, js/modules/notifications.js:498
+- `resolveLakeKey()` — Worker/trollmap-worker.js:429, js/data/species-intel.js:87
+- `isEnabled()` — js/core/layer-registry.js:97, js/modules/notifications.js:516
 - `toggle()` — js/core/layer-registry.js:167, js/modules/layers-panel.js:68
 - `getWorkerBase()` — js/data/access-index.js:73, js/modules/gis-toggles.js:51
 - `formatAccessLabel()` — js/data/access-index.js:360, js/modules/lake-ramp-select.js:328
+- `workerBase()` — js/data/lake-registry.js:82, sw.js:115
 - `getSeason()` — js/data/lure-knowledge.js:740, js/data/species-intel.js:66
 - `openDB()` — js/data/tackle-inventory.js:249, js/utils/db.js:28
 - `normalizeRows()` — js/lazy-data.js:1, js/modules/gis-toggles.js:47
@@ -744,7 +750,6 @@ _none_
 - `norm()` — js/modules/supplemental-layers.js:703, js/modules/water-search.js:42
 - `depthColor()` — js/utils/depth-palette.js:50, js/utils/geo.js:279
 - `fakeMap()` — test/coastal-landing.test.js:4, test/layer-registry.test.js:26
-- `fakeKV()` — test/credit-guards.test.js:14, test/regulations-wiring.test.js:99
 
 ## Cross-module state on `window`
 

@@ -20,3 +20,10 @@ preview_id = "eab61871419f49ff923d8e2f6bbe4d9f"
 
 [env.preview]
 name = "trollmap-worker-preview"
+
+# THE ONLY THING IN THIS APP THAT RUNS WITHOUT A BROWSER ASKING.
+# Five minutes matches the in-page hazard poll, so the two paths agree on how current an
+# alert is. See Worker/alerts.js -- this is what reaches Ryan with the phone asleep in a
+# PFD pocket.
+[triggers]
+crons = ["*/5 * * * *"]

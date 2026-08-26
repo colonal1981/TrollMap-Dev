@@ -342,6 +342,24 @@ export function loadSessionFromPlan(plan, o = {}) {
     for (const h of (o.hazards || [])) if (h && h.id) _seenHazards.add(h.id);
     console.log('[notifications] plan loaded:', _planPins.length, 'position cues,',
                 _session.weatherCues.length, 'weather cues');
+
+    // REGISTER THE SERVER-SIDE WATCH FOR THIS TRIP. Deliberately not awaited: a plan must render
+    // whether or not a push subscription succeeds, and every failure is recorded in pushState()
+    // for selfTest() to report rather than thrown into a plan that was otherwise fine.
+    //
+    // The watch expires at the RETURN TIME this plan already computed, so nothing has to remember
+    // to turn it off and a trip that runs long simply stops being watched rather than buzzing
+    // about a lake he left hours ago.
+    if (_enabled && _session.hazardWorker && _session.launchPos) {
+      const until = Number.isFinite(_session.returnTimeH)
+        ? (() => { const d = new Date(); d.setHours(0, 0, 0, 0);
+                   return new Date(d.getTime() + _session.returnTimeH * 3600e3).toISOString(); })()
+        : null;
+      subscribePush(_session.hazardWorker, {
+        lat: _session.launchPos.lat, lon: _session.launchPos.lon,
+        until, water: o.water || null, slug: o.slug || null,
+      });
+    }
   } catch (e) {
     console.warn('[notifications] loadSessionFromPlan failed:', e && e.message);
   }
@@ -499,6 +517,91 @@ export function disableNotifications() {
 
 export function isEnabled() { return _enabled; }
 
+// ── Push: the half that works with the phone asleep ───────────────────────────
+//
+// The in-page poll above is instant WHILE THE APP IS OPEN and frozen the moment it is not.
+// Ryan's phone rides in a PFD pocket with the screen off. This registers a server-side watch so
+// Cloudflare can wake the phone instead of the phone having to stay awake to ask.
+//
+// BOTH PATHS STAY. They are not redundant: the poll is immediate and free while he is looking
+// at the app, and push is the only thing that reaches him when he is not.
+
+let _pushState = { subscribed: false, endpoint: null, error: null, until: null };
+export function pushState() { return { ..._pushState }; }
+
+/** base64url -> Uint8Array, which is what pushManager.subscribe wants for the server key. */
+function keyBytes(b64) {
+  const pad = '='.repeat((4 - (b64.length % 4)) % 4);
+  const bin = atob(String(b64).replace(/-/g, '+').replace(/_/g, '/') + pad);
+  return Uint8Array.from(bin, (c) => c.charCodeAt(0));
+}
+
+/**
+ * Subscribe this device and register a watch for THIS trip.
+ *
+ * Called from loadSessionFromPlan when a plan carries a worker and a launch point. Failure is
+ * never fatal to the plan: the page poll still works, and `_pushState.error` is what selfTest
+ * reports so a silent absence becomes a stated one.
+ */
+export async function subscribePush(worker, { lat, lon, until, water, slug } = {}) {
+  _pushState = { subscribed: false, endpoint: null, error: null, until: null };
+  try {
+    if (!worker) throw new Error('no worker URL');
+    if (!('serviceWorker' in navigator)) throw new Error('no service worker support');
+    if (!('PushManager' in window)) throw new Error('no push support in this browser');
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) throw new Error('no launch point');
+    const base = String(worker).replace(/\/+$/, '');
+
+    // THE SERVICE WORKER NEEDS THIS AND CANNOT IMPORT IT. It wakes with no page, no module
+    // graph and no state.js, so the base URL is left where it can find it on its own.
+    try {
+      const c = await caches.open('trollmap-cfg');
+      await c.put('/__worker_url', new Response(base));
+    } catch (_) { /* private mode; push still works, the SW just shows the degraded text */ }
+
+    const reg = await navigator.serviceWorker.ready;
+    const r = await fetch(`${base}/alerts/vapid-public`, { cache: 'no-store' });
+    const j = await r.json().catch(() => null);
+    // A CONFIGURATION PROBLEM IS NOT A BUG AND SAYS SO. The Worker returns which piece is
+    // missing; passing that through verbatim is the difference between "push is off because
+    // nobody set the keys" and "push is broken".
+    if (!r.ok || !j || !j.key) throw new Error((j && j.error) || `vapid key unavailable (HTTP ${r.status})`);
+
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: keyBytes(j.key),
+    });
+    const post = await fetch(`${base}/alerts/subscribe`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ subscription: sub.toJSON(), lat, lon, until, water, slug }),
+    });
+    if (!post.ok) throw new Error(`subscribe rejected (HTTP ${post.status})`);
+    const ok = await post.json().catch(() => ({}));
+    _pushState = { subscribed: true, endpoint: sub.endpoint, error: null, until: ok.until || until || null };
+    return true;
+  } catch (e) {
+    _pushState.error = (e && e.message) || String(e);
+    console.warn('[notifications] push subscribe failed:', _pushState.error);
+    return false;
+  }
+}
+
+/** End the watch. The trip is over; nothing should buzz about that water any more. */
+export async function unsubscribePush(worker) {
+  try {
+    const base = String(worker || '').replace(/\/+$/, '');
+    const reg = await navigator.serviceWorker.getRegistration();
+    const sub = reg && await reg.pushManager.getSubscription();
+    if (base && sub) {
+      await fetch(`${base}/alerts/unsubscribe`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ endpoint: sub.endpoint }),
+      });
+    }
+  } catch (_) { /* the watch expires on its own at the return time regardless */ }
+  _pushState = { subscribed: false, endpoint: null, error: null, until: null };
+}
+
 /**
  * PROVE THE CHAIN IN THE DRIVEWAY, NOT IN A STORM.
  *
@@ -563,6 +666,12 @@ export async function selfTest() {
       add('hazard endpoint answers', false, e && e.message);
     }
   }
+
+  // PUSH IS THE ONLY LINE HERE THAT MATTERS WITH THE PHONE IN A POCKET. Everything else in this
+  // list describes a chain that runs only while the app is open and awake.
+  add('push subscribed for this trip', _pushState.subscribed,
+      _pushState.subscribed ? `until ${_pushState.until || 'unknown'}`
+                            : (_pushState.error || 'not subscribed — alerts stop when the screen locks'));
 
   add('poll timer running', !!_hazardPoll, _hazardPoll ? `every ${HAZARD_POLL_MS / 60000} min` : 'stopped');
   add('cue timer running', !!_tickInterval, _tickInterval ? 'every 30 s' : 'stopped');

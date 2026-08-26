@@ -1,16 +1,16 @@
 {
   "generatedFrom": "tools/audit.mjs",
   "summary": {
-    "files": 463,
-    "jsModules": 293,
+    "files": 465,
+    "jsModules": 295,
     "pyScripts": 164,
     "routes": 57,
     "routesUncalled": 0,
     "routesMutatingUngated": 18,
-    "feeds": 108,
-    "deadExports": 213,
+    "feeds": 111,
+    "deadExports": 216,
     "orphanModules": 4,
-    "duplicateFnNames": 42,
+    "duplicateFnNames": 43,
     "crossModuleGlobals": 39,
     "unresolvedImports": 0
   },
@@ -18,7 +18,7 @@
     {
       "route": "/attractors",
       "file": "Worker/trollmap-worker.js",
-      "line": 1331,
+      "line": 1349,
       "method": "ANY",
       "auth": "open",
       "fetches": [
@@ -38,7 +38,7 @@
     {
       "route": "/bank-pier",
       "file": "Worker/trollmap-worker.js",
-      "line": 1267,
+      "line": 1285,
       "method": "ANY",
       "auth": "open",
       "fetches": [
@@ -56,7 +56,7 @@
     {
       "route": "/build",
       "file": "Worker/trollmap-worker.js",
-      "line": 978,
+      "line": 996,
       "method": "POST",
       "auth": "open",
       "fetches": [],
@@ -69,7 +69,7 @@
     {
       "route": "/chartpacks/lake-boundary",
       "file": "Worker/trollmap-worker.js",
-      "line": 1619,
+      "line": 1642,
       "method": "GET",
       "auth": "open",
       "fetches": [],
@@ -88,7 +88,7 @@
     {
       "route": "/chartpacks/list",
       "file": "Worker/trollmap-worker.js",
-      "line": 1641,
+      "line": 1664,
       "method": "ANY",
       "auth": "open",
       "fetches": [],
@@ -106,7 +106,7 @@
     {
       "route": "/debug/regs-cache",
       "file": "Worker/trollmap-worker.js",
-      "line": 62,
+      "line": 63,
       "method": "ANY",
       "auth": "REQUIRED (inline)",
       "fetches": [],
@@ -120,7 +120,7 @@
     {
       "route": "/dominion-saluda",
       "file": "Worker/trollmap-worker.js",
-      "line": 1539,
+      "line": 1557,
       "method": "ANY",
       "auth": "REQUIRED (inline)",
       "fetches": [],
@@ -133,7 +133,7 @@
     {
       "route": "/duke-flow-arrivals",
       "file": "Worker/trollmap-worker.js",
-      "line": 1533,
+      "line": 1551,
       "method": "ANY",
       "auth": "REQUIRED (inline)",
       "fetches": [],
@@ -146,7 +146,7 @@
     {
       "route": "/groq-query",
       "file": "Worker/trollmap-worker.js",
-      "line": 999,
+      "line": 1017,
       "method": "POST",
       "auth": "open",
       "fetches": [],
@@ -159,7 +159,7 @@
     {
       "route": "/hazards",
       "file": "Worker/trollmap-worker.js",
-      "line": 1414,
+      "line": 1432,
       "method": "ANY",
       "auth": "open",
       "fetches": [
@@ -176,7 +176,7 @@
     {
       "route": "/identify-catch",
       "file": "Worker/trollmap-worker.js",
-      "line": 984,
+      "line": 1002,
       "method": "POST",
       "auth": "open",
       "fetches": [],
@@ -191,7 +191,7 @@
     {
       "route": "/identify-catch-v2",
       "file": "Worker/trollmap-worker.js",
-      "line": 992,
+      "line": 1010,
       "method": "POST",
       "auth": "open",
       "fetches": [],
@@ -204,7 +204,7 @@
     {
       "route": "/lake-clarity",
       "file": "Worker/trollmap-worker.js",
-      "line": 1479,
+      "line": 1497,
       "method": "ANY",
       "auth": "open",
       "fetches": [],
@@ -217,7 +217,7 @@
     {
       "route": "/lake-intel",
       "file": "Worker/trollmap-worker.js",
-      "line": 1494,
+      "line": 1512,
       "method": "ANY",
       "auth": "open",
       "fetches": [],
@@ -231,7 +231,7 @@
     {
       "route": "/lake-intel-sources",
       "file": "Worker/trollmap-worker.js",
-      "line": 1486,
+      "line": 1504,
       "method": "ANY",
       "auth": "open",
       "fetches": [],
@@ -244,7 +244,7 @@
     {
       "route": "/lake-research",
       "file": "Worker/trollmap-worker.js",
-      "line": 1111,
+      "line": 1129,
       "method": "GET",
       "auth": "open",
       "fetches": [
@@ -263,7 +263,7 @@
     {
       "route": "/lakes/",
       "file": "Worker/trollmap-worker.js",
-      "line": 1117,
+      "line": 1135,
       "method": "GET",
       "auth": "open",
       "fetches": [
@@ -282,7 +282,7 @@
     {
       "route": "/lakes/list",
       "file": "Worker/trollmap-worker.js",
-      "line": 1062,
+      "line": 1080,
       "method": "GET",
       "auth": "open",
       "fetches": [],
@@ -295,7 +295,7 @@
     {
       "route": "/paddle",
       "file": "Worker/trollmap-worker.js",
-      "line": 1192,
+      "line": 1210,
       "method": "ANY",
       "auth": "open",
       "fetches": [
@@ -317,7 +317,7 @@
     {
       "route": "/ramps",
       "file": "Worker/trollmap-worker.js",
-      "line": 1127,
+      "line": 1145,
       "method": "ANY",
       "auth": "open",
       "fetches": [
@@ -341,7 +341,7 @@
     {
       "route": "/regulations",
       "file": "Worker/trollmap-worker.js",
-      "line": 1440,
+      "line": 1458,
       "method": "ANY",
       "auth": "open",
       "fetches": [],
@@ -355,7 +355,7 @@
     {
       "route": "/research/agent-llm",
       "file": "Worker/trollmap-worker.js",
-      "line": 1059,
+      "line": 1077,
       "method": "POST",
       "auth": "open",
       "fetches": [],
@@ -370,7 +370,7 @@
     {
       "route": "/research/analyze-facts",
       "file": "Worker/trollmap-worker.js",
-      "line": 1044,
+      "line": 1062,
       "method": "POST",
       "auth": "open",
       "fetches": [],
@@ -385,7 +385,7 @@
     {
       "route": "/research/approve",
       "file": "Worker/trollmap-worker.js",
-      "line": 1073,
+      "line": 1091,
       "method": "POST",
       "auth": "REQUIRED (list)",
       "fetches": [
@@ -401,7 +401,7 @@
     {
       "route": "/research/dataset-hunt",
       "file": "Worker/trollmap-worker.js",
-      "line": 1030,
+      "line": 1048,
       "method": "POST",
       "auth": "REQUIRED (list)",
       "fetches": [],
@@ -414,7 +414,7 @@
     {
       "route": "/research/dedupe-contradictions",
       "file": "Worker/trollmap-worker.js",
-      "line": 1047,
+      "line": 1065,
       "method": "POST",
       "auth": "open",
       "fetches": [],
@@ -427,7 +427,7 @@
     {
       "route": "/research/delete",
       "file": "Worker/trollmap-worker.js",
-      "line": 1076,
+      "line": 1094,
       "method": "POST",
       "auth": "REQUIRED (list)",
       "fetches": [
@@ -444,7 +444,7 @@
     {
       "route": "/research/delete-normalized-doc",
       "file": "Worker/trollmap-worker.js",
-      "line": 1079,
+      "line": 1097,
       "method": "POST",
       "auth": "REQUIRED (list)",
       "fetches": [
@@ -461,7 +461,7 @@
     {
       "route": "/research/deterministic-facts",
       "file": "Worker/trollmap-worker.js",
-      "line": 1024,
+      "line": 1042,
       "method": "POST",
       "auth": "open",
       "fetches": [],
@@ -476,7 +476,7 @@
     {
       "route": "/research/discover",
       "file": "Worker/trollmap-worker.js",
-      "line": 1027,
+      "line": 1045,
       "method": "POST",
       "auth": "open",
       "fetches": [],
@@ -497,7 +497,7 @@
     {
       "route": "/research/gap-analysis",
       "file": "Worker/trollmap-worker.js",
-      "line": 1053,
+      "line": 1071,
       "method": "POST",
       "auth": "open",
       "fetches": [],
@@ -510,7 +510,7 @@
     {
       "route": "/research/gap-search",
       "file": "Worker/trollmap-worker.js",
-      "line": 1056,
+      "line": 1074,
       "method": "POST",
       "auth": "open",
       "fetches": [],
@@ -523,7 +523,7 @@
     {
       "route": "/research/get",
       "file": "Worker/trollmap-worker.js",
-      "line": 1065,
+      "line": 1083,
       "method": "GET",
       "auth": "open",
       "fetches": [],
@@ -542,7 +542,7 @@
     {
       "route": "/research/get-normalized",
       "file": "Worker/trollmap-worker.js",
-      "line": 1036,
+      "line": 1054,
       "method": "GET",
       "auth": "open",
       "fetches": [],
@@ -557,7 +557,7 @@
     {
       "route": "/research/limnology-data",
       "file": "Worker/trollmap-worker.js",
-      "line": 1021,
+      "line": 1039,
       "method": "POST",
       "auth": "open",
       "fetches": [],
@@ -573,7 +573,7 @@
     {
       "route": "/research/list",
       "file": "Worker/trollmap-worker.js",
-      "line": 1062,
+      "line": 1080,
       "method": "GET",
       "auth": "open",
       "fetches": [],
@@ -589,7 +589,7 @@
     {
       "route": "/research/map-facts",
       "file": "Worker/trollmap-worker.js",
-      "line": 1050,
+      "line": 1068,
       "method": "POST",
       "auth": "open",
       "fetches": [],
@@ -602,7 +602,7 @@
     {
       "route": "/research/package",
       "file": "Worker/trollmap-worker.js",
-      "line": 1104,
+      "line": 1122,
       "method": "GET",
       "auth": "open",
       "fetches": [
@@ -619,7 +619,7 @@
     {
       "route": "/research/proxy-download",
       "file": "Worker/trollmap-worker.js",
-      "line": 1033,
+      "line": 1051,
       "method": "GET",
       "auth": "open",
       "fetches": [],
@@ -632,7 +632,7 @@
     {
       "route": "/research/proxy-download-batch",
       "file": "Worker/trollmap-worker.js",
-      "line": 1082,
+      "line": 1100,
       "method": "POST",
       "auth": "open",
       "fetches": [
@@ -647,7 +647,7 @@
     {
       "route": "/research/save",
       "file": "Worker/trollmap-worker.js",
-      "line": 1070,
+      "line": 1088,
       "method": "POST",
       "auth": "REQUIRED (list)",
       "fetches": [
@@ -665,7 +665,7 @@
     {
       "route": "/research/save-normalized",
       "file": "Worker/trollmap-worker.js",
-      "line": 1041,
+      "line": 1059,
       "method": "POST",
       "auth": "REQUIRED (list)",
       "fetches": [],
@@ -680,7 +680,7 @@
     {
       "route": "/research/shared/check",
       "file": "Worker/trollmap-worker.js",
-      "line": 1086,
+      "line": 1104,
       "method": "POST",
       "auth": "open",
       "fetches": [
@@ -696,7 +696,7 @@
     {
       "route": "/research/shared/publish",
       "file": "Worker/trollmap-worker.js",
-      "line": 1095,
+      "line": 1113,
       "method": "POST",
       "auth": "REQUIRED (list)",
       "fetches": [
@@ -714,7 +714,7 @@
     {
       "route": "/research/shared/quarantine",
       "file": "Worker/trollmap-worker.js",
-      "line": 1101,
+      "line": 1119,
       "method": "POST",
       "auth": "REQUIRED (list)",
       "fetches": [
@@ -732,7 +732,7 @@
     {
       "route": "/research/shared/query",
       "file": "Worker/trollmap-worker.js",
-      "line": 1092,
+      "line": 1110,
       "method": "POST",
       "auth": "open",
       "fetches": [
@@ -748,7 +748,7 @@
     {
       "route": "/research/shared/status",
       "file": "Worker/trollmap-worker.js",
-      "line": 1098,
+      "line": 1116,
       "method": "GET",
       "auth": "open",
       "fetches": [
@@ -764,7 +764,7 @@
     {
       "route": "/research/shared/store",
       "file": "Worker/trollmap-worker.js",
-      "line": 1089,
+      "line": 1107,
       "method": "POST",
       "auth": "REQUIRED (list)",
       "fetches": [
@@ -782,7 +782,7 @@
     {
       "route": "/research/thermocline-search",
       "file": "Worker/trollmap-worker.js",
-      "line": 1016,
+      "line": 1034,
       "method": "POST",
       "auth": "open",
       "fetches": [],
@@ -795,7 +795,7 @@
     {
       "route": "/research/validation-pass",
       "file": "Worker/trollmap-worker.js",
-      "line": 1124,
+      "line": 1142,
       "method": "POST",
       "auth": "open",
       "fetches": [
@@ -813,7 +813,7 @@
     {
       "route": "/river",
       "file": "Worker/trollmap-worker.js",
-      "line": 1512,
+      "line": 1530,
       "method": "ANY",
       "auth": "REQUIRED (inline)",
       "fetches": [],
@@ -829,7 +829,7 @@
     {
       "route": "/rivers",
       "file": "Worker/trollmap-worker.js",
-      "line": 1544,
+      "line": 1562,
       "method": "ANY",
       "auth": "REQUIRED (inline)",
       "fetches": [],
@@ -844,7 +844,7 @@
     {
       "route": "/sync",
       "file": "Worker/trollmap-worker.js",
-      "line": 1554,
+      "line": 1572,
       "method": "ANY",
       "auth": "REQUIRED (prefix)",
       "fetches": [],
@@ -861,7 +861,7 @@
     {
       "route": "/sync/list-updates",
       "file": "Worker/trollmap-worker.js",
-      "line": 1570,
+      "line": 1588,
       "method": "GET",
       "auth": "REQUIRED (prefix)",
       "fetches": [],
@@ -874,7 +874,7 @@
     {
       "route": "/sync/migrate",
       "file": "Worker/trollmap-worker.js",
-      "line": 1560,
+      "line": 1578,
       "method": "POST",
       "auth": "REQUIRED (prefix)",
       "fetches": [],
@@ -887,7 +887,7 @@
     {
       "route": "/usgs",
       "file": "Worker/trollmap-worker.js",
-      "line": 1418,
+      "line": 1436,
       "method": "ANY",
       "auth": "open",
       "fetches": [
@@ -938,6 +938,55 @@
         }
       ],
       "importedBy": [],
+      "deadExports": [],
+      "globalsWritten": [],
+      "globalsRead": []
+    },
+    "Worker/alerts.js": {
+      "purpose": "Web Push, because the phone is asleep in a PFD pocket.",
+      "lines": 372,
+      "exports": [
+        "applicationServerKey",
+        "vapidAuth",
+        "watchKey",
+        "handleAlerts",
+        "runAlertSweep"
+      ],
+      "imports": [
+        {
+          "from": "./worker-core.js",
+          "names": [
+            "CORS",
+            "JSON_HEADERS"
+          ],
+          "resolved": "Worker/worker-core.js"
+        },
+        {
+          "from": "./conditions.js",
+          "names": [
+            "handleHazards"
+          ],
+          "resolved": "Worker/conditions.js"
+        }
+      ],
+      "importedBy": [
+        {
+          "file": "Worker/trollmap-worker.js",
+          "names": [
+            "handleAlerts",
+            "runAlertSweep"
+          ]
+        },
+        {
+          "file": "test/push-alerts.test.js",
+          "names": [
+            "applicationServerKey",
+            "vapidAuth",
+            "watchKey",
+            "runAlertSweep"
+          ]
+        }
+      ],
       "deadExports": [],
       "globalsWritten": [],
       "globalsRead": []
@@ -1105,6 +1154,12 @@
         }
       ],
       "importedBy": [
+        {
+          "file": "Worker/alerts.js",
+          "names": [
+            "handleHazards"
+          ]
+        },
         {
           "file": "Worker/research/agents.js",
           "names": [
@@ -2947,7 +3002,7 @@
     },
     "Worker/trollmap-worker.js": {
       "purpose": "r2Text is used by /chartpacks/lake-boundary (line ~1711). It was added to worker-core.js",
-      "lines": 1785,
+      "lines": 1808,
       "exports": [
         "default"
       ],
@@ -3038,6 +3093,14 @@
             "handleCameras"
           ],
           "resolved": "Worker/cameras.js"
+        },
+        {
+          "from": "./alerts.js",
+          "names": [
+            "handleAlerts",
+            "runAlertSweep"
+          ],
+          "resolved": "Worker/alerts.js"
         },
         {
           "from": "./reports.js",
@@ -3159,6 +3222,13 @@
       ],
       "imports": [],
       "importedBy": [
+        {
+          "file": "Worker/alerts.js",
+          "names": [
+            "CORS",
+            "JSON_HEADERS"
+          ]
+        },
         {
           "file": "Worker/cameras.js",
           "names": [
@@ -7874,7 +7944,7 @@
     },
     "js/modules/notifications.js": {
       "purpose": "notifications.js — On-water alerts for TrollMap",
-      "lines": 671,
+      "lines": 780,
       "exports": [
         "requestNotificationPermission",
         "lastFire",
@@ -7884,6 +7954,9 @@
         "enableNotifications",
         "disableNotifications",
         "isEnabled",
+        "pushState",
+        "subscribePush",
+        "unsubscribePush",
         "selfTest"
       ],
       "imports": [
@@ -7943,6 +8016,9 @@
         "loadSessionFromSmartPlan",
         "enableNotifications",
         "disableNotifications",
+        "pushState",
+        "subscribePush",
+        "unsubscribePush",
         "selfTest"
       ],
       "globalsWritten": [],
@@ -11992,7 +12068,7 @@
     },
     "sw.js": {
       "purpose": "TrollMap service worker — v18 (the shell was frozen at v17, 2026-08-16)",
-      "lines": 94,
+      "lines": 228,
       "exports": [],
       "imports": [],
       "importedBy": [],
@@ -16071,6 +16147,45 @@
       "globalsWritten": [],
       "globalsRead": []
     },
+    "test/push-alerts.test.js": {
+      "purpose": "WEB PUSH: THE HALF THAT WORKS WITH THE PHONE ASLEEP.",
+      "lines": 184,
+      "exports": [],
+      "imports": [
+        {
+          "from": "node:test",
+          "names": [
+            "test"
+          ]
+        },
+        {
+          "from": "node:assert",
+          "names": [
+            "assert"
+          ]
+        },
+        {
+          "from": "node:module",
+          "names": [
+            "createRequire"
+          ]
+        },
+        {
+          "from": "../Worker/alerts.js",
+          "names": [
+            "applicationServerKey",
+            "vapidAuth",
+            "watchKey",
+            "runAlertSweep"
+          ],
+          "resolved": "Worker/alerts.js"
+        }
+      ],
+      "importedBy": [],
+      "deadExports": [],
+      "globalsWritten": [],
+      "globalsRead": []
+    },
     "test/qdc-decoder.test.js": {
       "purpose": "Behaviour tests for the raw QDC reader and the contour engine on top of it.",
       "lines": 139,
@@ -18498,10 +18613,10 @@
         "Scripts/fetch_dnr_paddle.py:64",
         "Worker/research/facts-util.js:275",
         "Worker/research/facts-util.js:322",
-        "Worker/trollmap-worker.js:1130",
-        "Worker/trollmap-worker.js:1195",
-        "Worker/trollmap-worker.js:1270",
-        "Worker/trollmap-worker.js:1342"
+        "Worker/trollmap-worker.js:1148",
+        "Worker/trollmap-worker.js:1213",
+        "Worker/trollmap-worker.js:1288",
+        "Worker/trollmap-worker.js:1360"
       ],
       "side": [
         "pipeline",
@@ -18516,10 +18631,10 @@
         "Scripts/fetch_dnr_paddle.py:92",
         "Worker/research/facts-util.js:286",
         "Worker/research/facts-util.js:337",
-        "Worker/trollmap-worker.js:1141",
-        "Worker/trollmap-worker.js:1205",
-        "Worker/trollmap-worker.js:1280",
-        "Worker/trollmap-worker.js:1357"
+        "Worker/trollmap-worker.js:1159",
+        "Worker/trollmap-worker.js:1223",
+        "Worker/trollmap-worker.js:1298",
+        "Worker/trollmap-worker.js:1375"
       ],
       "side": [
         "pipeline",
@@ -18534,10 +18649,10 @@
         "Scripts/fetch_dnr_paddle.py:76",
         "Worker/research/facts-util.js:297",
         "Worker/research/facts-util.js:348",
-        "Worker/trollmap-worker.js:1153",
-        "Worker/trollmap-worker.js:1216",
-        "Worker/trollmap-worker.js:1291",
-        "Worker/trollmap-worker.js:1372"
+        "Worker/trollmap-worker.js:1171",
+        "Worker/trollmap-worker.js:1234",
+        "Worker/trollmap-worker.js:1309",
+        "Worker/trollmap-worker.js:1390"
       ],
       "side": [
         "pipeline",
@@ -18552,10 +18667,10 @@
         "Scripts/fetch_dnr_paddle.py:102",
         "Worker/research/facts-util.js:308",
         "Worker/research/facts-util.js:359",
-        "Worker/trollmap-worker.js:1164",
-        "Worker/trollmap-worker.js:1232",
-        "Worker/trollmap-worker.js:1301",
-        "Worker/trollmap-worker.js:1382"
+        "Worker/trollmap-worker.js:1182",
+        "Worker/trollmap-worker.js:1250",
+        "Worker/trollmap-worker.js:1319",
+        "Worker/trollmap-worker.js:1400"
       ],
       "side": [
         "pipeline",
@@ -18680,8 +18795,8 @@
         "Scripts/capture_upstreams.py:384",
         "Worker/conditions.js:2979",
         "Worker/conditions.js:3687",
-        "Worker/trollmap-worker.js:336",
-        "Worker/trollmap-worker.js:1422",
+        "Worker/trollmap-worker.js:337",
+        "Worker/trollmap-worker.js:1440",
         "Worker/worker-data.js:286",
         "Worker/worker-data.js:402"
       ],
@@ -18807,7 +18922,7 @@
     },
     "x": {
       "host": "x",
-      "hits": 20,
+      "hits": 21,
       "files": [
         "Scripts/capture_upstreams.py:260",
         "Scripts/capture_upstreams.py:356",
@@ -18819,6 +18934,7 @@
         "test/conditions-bindings.test.js:238",
         "test/conditions-bindings.test.js:348",
         "test/notification-delivery.test.js:42",
+        "test/push-alerts.test.js:91",
         "test/regulations-wiring.test.js:431",
         "test/regulations-wiring.test.js:458",
         "test/search-cascade.test.js:53",
@@ -18923,6 +19039,26 @@
       ],
       "side": [
         "pipeline"
+      ]
+    },
+    "trollmap.pages.dev": {
+      "host": "trollmap.pages.dev",
+      "hits": 1,
+      "files": [
+        "Worker/alerts.js:156"
+      ],
+      "side": [
+        "worker"
+      ]
+    },
+    "internal": {
+      "host": "internal",
+      "hits": 1,
+      "files": [
+        "Worker/alerts.js:185"
+      ],
+      "side": [
+        "worker"
       ]
     },
     "forecast.weather.gov": {
@@ -19282,8 +19418,8 @@
       "host": "www.dominionenergy.com",
       "hits": 3,
       "files": [
-        "Worker/trollmap-worker.js:387",
-        "Worker/trollmap-worker.js:404",
+        "Worker/trollmap-worker.js:388",
+        "Worker/trollmap-worker.js:405",
         "Worker/worker-data.js:973"
       ],
       "side": [
@@ -19294,7 +19430,7 @@
       "host": "generativelanguage.googleapis.com",
       "hits": 2,
       "files": [
-        "Worker/trollmap-worker.js:800",
+        "Worker/trollmap-worker.js:801",
         "Worker/worker-core.js:222"
       ],
       "side": [
@@ -19825,6 +19961,21 @@
         "browser"
       ]
     },
+    "fcm.googleapis.com": {
+      "host": "fcm.googleapis.com",
+      "hits": 6,
+      "files": [
+        "test/push-alerts.test.js:59",
+        "test/push-alerts.test.js:66",
+        "test/push-alerts.test.js:73",
+        "test/push-alerts.test.js:81",
+        "test/push-alerts.test.js:83",
+        "test/push-alerts.test.js:117"
+      ],
+      "side": [
+        "browser"
+      ]
+    },
     "api.search.tinyfish.ai": {
       "host": "api.search.tinyfish.ai",
       "hits": 1,
@@ -20288,42 +20439,42 @@
     },
     {
       "file": "Worker/trollmap-worker.js",
-      "line": 641,
+      "line": 642,
       "binding": "R2_TROLLMAP_CHARTPACKS",
       "op": "get",
       "key": "key"
     },
     {
       "file": "Worker/trollmap-worker.js",
-      "line": 656,
+      "line": 657,
       "binding": "R2_TROLLMAP_CHARTPACKS",
       "op": "put",
       "key": "key"
     },
     {
       "file": "Worker/trollmap-worker.js",
-      "line": 1633,
+      "line": 1656,
       "binding": "R2_TROLLMAP_CHARTPACKS",
       "op": "get",
       "key": "key"
     },
     {
       "file": "Worker/trollmap-worker.js",
-      "line": 1654,
+      "line": 1677,
       "binding": "R2_TROLLMAP_CHARTPACKS",
       "op": "list",
       "key": "{ prefix }"
     },
     {
       "file": "Worker/trollmap-worker.js",
-      "line": 1683,
+      "line": 1706,
       "binding": "R2_TROLLMAP_CHARTPACKS",
       "op": "get",
       "key": "key"
     },
     {
       "file": "Worker/trollmap-worker.js",
-      "line": 1719,
+      "line": 1742,
       "binding": "R2_TROLLMAP_CHARTPACKS",
       "op": "put",
       "key": "key"
@@ -22730,7 +22881,7 @@
     {
       "name": "resolveLakeKey",
       "at": [
-        "Worker/trollmap-worker.js:428",
+        "Worker/trollmap-worker.js:429",
         "js/data/species-intel.js:87"
       ]
     },
@@ -22738,7 +22889,7 @@
       "name": "isEnabled",
       "at": [
         "js/core/layer-registry.js:97",
-        "js/modules/notifications.js:498"
+        "js/modules/notifications.js:516"
       ]
     },
     {
@@ -22760,6 +22911,13 @@
       "at": [
         "js/data/access-index.js:360",
         "js/modules/lake-ramp-select.js:328"
+      ]
+    },
+    {
+      "name": "workerBase",
+      "at": [
+        "js/data/lake-registry.js:82",
+        "sw.js:115"
       ]
     },
     {
@@ -23140,7 +23298,7 @@
     },
     {
       "file": "sw.js",
-      "lines": 94,
+      "lines": 228,
       "exports": 0
     }
   ],

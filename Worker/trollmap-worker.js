@@ -12,6 +12,7 @@ import { handleGisRoute, flagIsYes, hasText, ARCGIS_BUILD } from './core/arcgis.
 import { handleWaterRoute } from './water.js';
 import { handleConditions, handleHazards } from './conditions.js';
 import { handleCameras } from './cameras.js';
+import { handleAlerts, runAlertSweep } from './alerts.js';
 import { handleReports } from './reports.js';
 import { fetchStateRegulations, getLakeRegulations } from './research/clients.js';
 import { handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchRegsDebug, handleResearchApprove, handleResearchDelete, handleResearchDeleteNormalizedDoc, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleResearchValidationPass, handleSharedCheck, handleSharedStore, handleSharedQuery, handleSharedPublish, handleSharedStatus, handleSharedQuarantine } from './worker-research.js';
@@ -958,6 +959,23 @@ async function handleIdentifyCatchV2(request, env) {
 
 
 var trollmap_worker_default = {
+  /**
+   * THE CRON, AND THE REASON THERE IS ONE.
+   *
+   * Every other thing this Worker does happens because a browser asked. This one happens because
+   * a clock did, and it is the only path that can reach Ryan with the app closed and the phone
+   * asleep. Wired to a five-minute cron in wrangler.toml, matching the cadence the
+   * in-page poll already used, so the two paths cannot disagree about how current an alert is.
+   *
+   * A THROW HERE IS SILENT. Cloudflare does not retry a failed scheduled run and nothing is
+   * watching it, so the sweep swallows per-watch failures internally and this logs the summary —
+   * `wrangler tail` is the only place a bad sweep is visible.
+   */
+  async scheduled(event, env, ctx) {
+    const summary = await runAlertSweep(env).catch((e) => ({ error: e && e.message }));
+    console.log('[alerts] sweep', JSON.stringify(summary));
+  },
+
   async fetch(request, env, ctx) {
     if (request.method === "OPTIONS") return new Response(null, { headers: CORS });
     const url = new URL(request.url);
@@ -1610,6 +1628,11 @@ var trollmap_worker_default = {
       // into js/data/cameras.js at build time -- this serves only the CURRENT FRAME.
       const camRes = await handleCameras(request, env, url);
       if (camRes) return camRes;
+      // PUSH ALERTS. Same null-when-not-ours contract. This is the only route family whose
+      // point is to work while the app is CLOSED -- Ryan's phone rides in a PFD pocket with the
+      // screen off, which is exactly the state that freezes the in-page hazard poll.
+      const alertRes = await handleAlerts(request, env, url);
+      if (alertRes) return alertRes;
       // Recent fishing reports for one water. Same null-when-not-ours contract. Nothing here
       // goes to an LLM -- Ryan, 2026-08-15: "this doesn't need to go to the llm for anything
       // maybe just to me in the trip html report".
