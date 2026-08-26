@@ -345,7 +345,7 @@ _none_
 | `Scripts/make_counties.mjs` | 49 | 0 | 0 | 0 | make_counties.mjs -- flatten us-atlas counties-10m TopoJSON into a GeoJSON the Python |
 | `Worker/alerts.js` | 582 | 6 | 2 | 0 | Web Push, because the phone is asleep in a PFD pocket. |
 | `Worker/cameras.js` | 176 | 5 | 1 | **4** | Worker/cameras.js — the current frame from a USGS NIMS camera. |
-| `Worker/conditions.js` | 4549 | 63 | 33 | **2** | Worker/conditions.js — one call that answers "what is this water doing right now". |
+| `Worker/conditions.js` | 4635 | 63 | 33 | **2** | Worker/conditions.js — one call that answers "what is this water doing right now". |
 | `Worker/core/arcgis.js` | 401 | 7 | 2 | **2** | Worker/core/arcgis.js — shared ArcGIS helper for ramps/paddle/bank-pier/attractors |
 | `Worker/ndbc.js` | 236 | 6 | 2 | **1** | NDBC realtime2 — the measured half of the weather this app shows. |
 | `Worker/operators.js` | 331 | 6 | 3 | 0 | operators.js — the three utility operators that publish HTML tables instead of JSON. |
@@ -407,7 +407,7 @@ _none_
 | `js/modules/cloud-sync.js` | 389 | 4 | 3 | 0 | Cloud Sync — auto-push on save, auto-pull on load. |
 | `js/modules/coastal-layers.js` | 345 | 5 | 1 | **5** | coastal-layers.js — oyster beds, marsh edges and depth soundings. |
 | `js/modules/coastal-scoring.js` | 289 | 15 | 3 | **1** | coastal-scoring.js — tide- and structure-aware spot scoring for inshore |
-| `js/modules/conditions-strip.js` | 724 | 2 | 1 | **2** | The state of the water, above the map, before you plan anything. |
+| `js/modules/conditions-strip.js` | 731 | 2 | 1 | **2** | The state of the water, above the map, before you plan anything. |
 | `js/modules/contour-data.js` | 645 | 10 | 5 | **6** | contour-data.js — Contour dataset lazy loader + lake selector integration. |
 | `js/modules/custom-vectors.js` | 146 | 4 | 2 | **2** | custom-vectors.js — imported GeoJSON layers. |
 | `js/modules/edit.js` | 253 | 1 | 2 | 0 | Edit tab — table-based view of waypoints + tracks with inline |
@@ -426,7 +426,7 @@ _none_
 | `js/modules/layers-panel.js` | 105 | 4 | 1 | **2** | layers-panel.js — the one place every map overlay is turned on and off. |
 | `js/modules/measure-tool.js` | 106 | 0 | 1 | 0 | Distance & Bearing Measurement Tool — click two points on the |
 | `js/modules/noaa-tides.js` | 228 | 1 | 1 | **1** | NOAA Coastal Tides — Plan-tab tide panel. |
-| `js/modules/notifications.js` | 867 | 13 | 3 | **11** | notifications.js — On-water alerts for TrollMap |
+| `js/modules/notifications.js` | 909 | 13 | 3 | **11** | notifications.js — On-water alerts for TrollMap |
 | `js/modules/osm-structure.js` | 145 | 0 | 1 | 0 | osm-structure.js — OSM Structure Layer Toggle |
 | `js/modules/plan-assemble.js` | 872 | 8 | 10 | 0 | plan-assemble.js — ordered candidates + the model's judgement → a plan v2 object. |
 | `js/modules/plan-builder.js` | 2547 | 10 | 7 | 0 | Plan Builder — the Plan tab form, save/load, preview rendering, |
@@ -485,7 +485,7 @@ _none_
 | `js/utils/species-phase.js` | 102 | 3 | 1 | 0 | WHAT THE FISH ARE DOING AT THIS HOUR — a stated rule, not invented per-lake numbers. |
 | `js/utils/structure-markers.js` | 103 | 3 | 2 | 0 | structure-markers.js — humps and ledges, read from the pack the pipeline builds. |
 | `js/utils/viewport-cull.js` | 129 | 7 | 5 | **1** | Viewport culling for big GeoJSON layers. |
-| `js/utils/water-conditions.js` | 842 | 7 | 7 | 0 | ONE READ FOR THE STATE OF THE WATER. |
+| `js/utils/water-conditions.js` | 848 | 7 | 7 | 0 | ONE READ FOR THE STATE OF THE WATER. |
 | `js/utils/worker-auth.js` | 63 | 3 | 6 | 0 | utils/worker-auth.js — the shared secret for TrollMap's own Worker, in one place. |
 | `sw.js` | 228 | 0 | 0 | 0 | TrollMap service worker — v18 (the shell was frozen at v17, 2026-08-16) |
 | `test/agency-domains.test.js` | 85 | 0 | 0 | 0 | A TABLE THAT LOOKS LIKE A KNOB AND IS NOT CONNECTED. |
@@ -623,7 +623,7 @@ _none_
 | `test/water-aliases.test.js` | 126 | 0 | 0 | 0 |  |
 | `test/water-cameras.test.js` | 144 | 0 | 0 | 0 | One camera roster, two questions, and they are not the same question. |
 | `test/water-chain-loader.test.js` | 91 | 0 | 0 | 0 | The chain has to reach the Worker, and a missing object must not look like an empty chain. |
-| `test/water-conditions.test.js` | 840 | 0 | 0 | 0 | One read for the state of the water. |
+| `test/water-conditions.test.js` | 867 | 0 | 0 | 0 | One read for the state of the water. |
 | `test/water-endpoints.test.js` | 305 | 0 | 0 | 0 | water-endpoints.test.js — the compute plane, pinned against the ways it has already broken |
 | `test/water-filter.test.js` | 178 | 0 | 0 | 0 |  |
 | `test/water-search.test.js` | 96 | 0 | 0 | 0 |  |
@@ -721,7 +721,7 @@ _none_
 - `mapReady()` — js/modules/coastal-layers.js:38, js/modules/gis-toggles.js:20, js/modules/osm-structure.js:42, js/modules/supplemental-layers.js:175
 - `say()` — js/modules/lake-intel.js:20, js/modules/lake-intel.js:260, js/modules/noaa-tides.js:77, js/modules/utility-sync.js:25
 - `esc()` — js/modules/conditions-strip.js:72, js/modules/lake-research-ui.js:354, js/utils/escape.js:1
-- `wire()` — js/modules/conditions-strip.js:698, js/modules/lake-ramp-select.js:593, js/modules/noaa-tides.js:64
+- `wire()` — js/modules/conditions-strip.js:705, js/modules/lake-ramp-select.js:593, js/modules/noaa-tides.js:64
 - `withFetch()` — test/credit-guards.test.js:26, test/cwms-series.test.js:194, test/usgs-series-pick.test.js:20
 - `leg()` — test/plan-assemble.test.js:26, test/plan-export-reads-the-plan.test.js:28, test/plan-tracks.test.js:28
 - `json()` — Worker/cameras.js:48, Worker/water.js:61
@@ -736,7 +736,7 @@ _none_
 - `legacyStorageName()` — Worker/research/keys.js:95, js/data/research-ids.js:67
 - `researchStorageIdCandidates()` — Worker/research/keys.js:112, js/data/research-ids.js:77
 - `resolveLakeKey()` — Worker/trollmap-worker.js:429, js/data/species-intel.js:87
-- `isEnabled()` — js/core/layer-registry.js:97, js/modules/notifications.js:575
+- `isEnabled()` — js/core/layer-registry.js:97, js/modules/notifications.js:607
 - `toggle()` — js/core/layer-registry.js:167, js/modules/layers-panel.js:68
 - `getWorkerBase()` — js/data/access-index.js:73, js/modules/gis-toggles.js:51
 - `formatAccessLabel()` — js/data/access-index.js:360, js/modules/lake-ramp-select.js:328
@@ -745,7 +745,7 @@ _none_
 - `openDB()` — js/data/tackle-inventory.js:249, js/utils/db.js:28
 - `normalizeRows()` — js/lazy-data.js:1, js/modules/gis-toggles.js:47
 - `row()` — js/modules/conditions-strip.js:98, js/modules/plan-water-ui.js:215
-- `paint()` — js/modules/conditions-strip.js:616, js/modules/plan-water-ui.js:464
+- `paint()` — js/modules/conditions-strip.js:623, js/modules/plan-water-ui.js:464
 - `setAtPath()` — js/modules/lake-research-engine.js:1222, js/modules/lake-research-ui.js:66
 - `put()` — js/modules/plan-builder.js:2276, js/utils/db.js:113
 - `norm()` — js/modules/supplemental-layers.js:703, js/modules/water-search.js:42

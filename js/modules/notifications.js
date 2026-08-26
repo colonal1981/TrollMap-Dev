@@ -515,13 +515,40 @@ function parseTimeStr(str) {
 }
 
 // ── Enable / disable ──────────────────────────────────────────────────────────
-export async function enableNotifications() {
+// ── The bell survives a reload ────────────────────────────────────────────────
+//
+// `_enabled` was module state and nothing else, so every page load turned alerts off again
+// WITHOUT SAYING SO. The bell had been pressed; the app had forgotten.
+//
+// Measured 2026-08-26: Ryan pressed the bell on his desktop -- the device registered
+// server-side, which persists -- then built a SmartPlan for Wateree and no trip watch was
+// armed, because arming one is gated on `_enabled` and a reload had silently cleared it. On
+// the phone it is worse: the registration sticks, so `devices` counts it and everything LOOKS
+// armed while the cue schedule that has to travel with a plan never leaves.
+//
+// A toggle that forgets is a toggle that lies about its own state.
+const ENABLED_KEY = 'trollmap_notifications_on';
+function rememberEnabled(on) {
+  try {
+    if (on) localStorage.setItem(ENABLED_KEY, '1');
+    else localStorage.removeItem(ENABLED_KEY);
+  } catch (_) { /* private mode: the bell works, it just will not survive a reload */ }
+}
+function wasEnabled() {
+  try { return localStorage.getItem(ENABLED_KEY) === '1'; } catch (_) { return false; }
+}
+
+export async function enableNotifications(opts = {}) {
   const granted = await requestNotificationPermission();
   if (!granted) {
-    alert('Notification permission denied. Enable notifications in your browser settings.');
+    // A RESTORE MUST NOT POP AN ALERT BOX. Permission can be revoked between visits, and a
+    // modal on page load is not how he should learn that.
+    if (!opts.silent) alert('Notification permission denied. Enable notifications in your browser settings.');
+    rememberEnabled(false);
     return false;
   }
   _enabled = true;
+  rememberEnabled(true);
   _firedPins.clear();
   loadSessionFromSmartPlan();
   _tickInterval = setInterval(tick, 30000);
@@ -550,6 +577,10 @@ export async function enableNotifications() {
   // travels the one channel already proven to work on that phone, and it reaches the Echomap
   // too. "Alerts On" said nothing true; this says whether anything will actually arrive.
   registerAlertDevice(CF_WORKER_URL).then((ok) => {
+    // A RESTORE IS NOT A DECISION. Announcing "alerts ready" on every page load trains him to
+    // ignore the one that says NOT armed, so a silent restore stays quiet unless it FAILED --
+    // a failure is news whether or not he just pressed something.
+    if (ok && opts.silent) return;
     if (ok) {
       fire('TrollMap alerts ready',
            `This device will receive solunar windows, band changes and weather warnings.`,
@@ -567,6 +598,7 @@ export async function enableNotifications() {
 
 export function disableNotifications() {
   _enabled = false;
+  rememberEnabled(false);
   clearInterval(_tickInterval);
   _tickInterval = null;
   stopProximityWatch();
@@ -862,5 +894,15 @@ window.trollmapReloadNotificationSession = function() {
   _firedPins.clear(); // reset proximity on new plan
   console.log('[notifications] Session reloaded after Smart Plan');
 };
+
+// RESTORE THE BELL. Only when permission is still granted -- a stored flag is a memory of a
+// decision, not a substitute for the permission itself, and asking again on page load would be
+// its own kind of rude.
+if (typeof window !== 'undefined' && wasEnabled()
+    && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+  enableNotifications({ silent: true }).then((ok) => {
+    console.log('[notifications] restored from last session:', ok ? 'on' : 'failed');
+  });
+}
 
 console.log('[notifications] module ready');

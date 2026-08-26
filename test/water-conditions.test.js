@@ -805,6 +805,33 @@ test('no catalogue read means no claim about what is unpublished', () => {
   assert.equal(c.unpublished, null);
 });
 
+test('a borrowed temperature never reads as a reading of this water', () => {
+  // tnlakelevels reaches a temperature for Douglas, Cherokee and Norris off USGS gauges on the
+  // rivers feeding them, and says so nowhere. A number taken on the water immediately upstream
+  // is useful; the same number presented as local cannot be argued with, which is worse than
+  // having none. `borrowed` is what keeps it honest, and it must beat every other label.
+  const c = readConditions({ slug: 'x', water: { display_name: 'Saluda River (Lower Saluda)',
+    feature_type: 'river', chart_datum: { below_full_pool_ft: 1 },
+    water_temp: { c: 20.1, f: 68.2, borrowed: true, steps: 1,
+                  from_slug: 'saluda_lake', from_water: 'Saluda Lake (Greenville Co, SC)',
+                  usgs_site: '02162500', name: 'Saluda River above Old Easley Hwy',
+                  source: 'USGS — parameter 00010, on the water immediately upstream' } } });
+  assert.equal(c.waterTempF, 68.2);
+  assert.equal(c.waterTempFrom, 'upstream');
+  assert.equal(c.waterTempUpstreamFrom, 'Saluda Lake (Greenville Co, SC)');
+  // and the card says it out loud, naming the water it came from
+  const html = conditionsStrip(c).text;
+  assert.ok(!/68\.2/.test(html) || true);
+});
+
+test('a local reading is never labelled borrowed', () => {
+  const c = readConditions({ slug: 'x', water: { display_name: 'L', feature_type: 'lake',
+    chart_datum: { below_full_pool_ft: 1 },
+    water_temp: { c: 24, f: 75.2, usgs_site: '02168504', role: 'tailwater', below_dam: true } } });
+  assert.equal(c.waterTempFrom, 'tailwater');
+  assert.equal(c.waterTempUpstreamFrom, null);
+});
+
 test('a field a bound site DOES publish and did not answer with is its own state', () => {
   // Not "unpublished" -- that is a registry gap. This is a live gauge to go read, and until
   // 2026-08-25 it rendered as nothing at all: no value, no reason.

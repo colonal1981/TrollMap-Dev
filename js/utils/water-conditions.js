@@ -109,6 +109,7 @@ export function readConditions(j) {
     waterTempGauge: null,
     waterTempSite: null,
     waterTempStation: null,
+    waterTempUpstreamFrom: null,
     waterTempAgeMin: null,
     windFrom: null,
     windStation: null,
@@ -248,8 +249,13 @@ export function readConditions(j) {
     out.waterTempF = wt.f;
     // A SONDE IS NOT A GAUGE ROLE. An NDBC reading carries no `role` and no `below_dam`, and
     // falling through to 'gauge' would label a NERRS water-quality sonde as a river gauge.
-    out.waterTempFrom = wt.ndbc_station ? 'ndbc'
+    // BORROWED IS ITS OWN STATE AND OUTRANKS EVERY OTHER LABEL. A reading taken on the water
+    // immediately upstream is not a reading of THIS water, and the only thing that keeps it
+    // honest on screen is that it never inherits a label meaning "measured here".
+    out.waterTempFrom = wt.borrowed ? 'upstream'
+      : wt.ndbc_station ? 'ndbc'
       : (wt.below_dam ? 'tailwater' : (wt.role || 'gauge'));
+    out.waterTempUpstreamFrom = wt.borrowed ? (wt.from_water || null) : null;
     out.waterTempGauge = wt.name || null;
     out.waterTempSite = wt.usgs_site || null;
     out.waterTempStation = wt.ndbc_station || null;

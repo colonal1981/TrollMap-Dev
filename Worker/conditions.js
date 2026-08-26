@@ -3131,6 +3131,81 @@ async function waterProbe(b, lat, lon, seededTemp) {
   return out;
 }
 
+
+/**
+ * THE TEMPERATURE OF THE WATER THAT FEEDS THIS ONE, when this one has none of its own.
+ *
+ * Ryan asked on 2026-08-24 how tnlakelevels.com reaches a water temperature for Douglas,
+ * Cherokee and Norris when TVA publishes none. The answer is that it does not read the lake at
+ * all -- it reads USGS gauges on the RIVERS FEEDING IT. This app's census asked a different
+ * question, "is there a gauge within 8 km", which is a question about distance rather than
+ * about water, and it is why so many lakes come back with nothing.
+ *
+ * NOT A NEW SOURCE. Same USGS parameter 00010 this file already reads, asked of a water the
+ * registry already knows is adjacent. `water_chain.json` carries an explicit `upstream` list per
+ * slug, derived by build_water_chain.py from NHDPlus HR by following HydroSeq -- so "the river
+ * that feeds it" is a fact in the data and not an inference made here.
+ *
+ * ONE STEP, AND ONLY ONE. Ryan's own open question is "how many river miles is still honest",
+ * and that is his to answer, not mine to tune. So this borrows only from a water the chain calls
+ * IMMEDIATELY upstream, which is a property of the graph rather than a threshold somebody chose.
+ * Two hops is a decision to make later with evidence in hand; picking a number now is exactly
+ * the invention this project refuses.
+ *
+ * THE BIGGEST INFLOW FIRST, for the same reason. Where a water has several upstream neighbours,
+ * `drainage_km2` says which one actually supplies it. That is ordering by measured basin, not by
+ * whichever slug sorted first.
+ *
+ * IT IS MARKED BORROWED AND IT NAMES THE WATER IT CAME FROM. A reading taken on Saluda Lake is
+ * not a reading of the Saluda River, and `borrowed: true` plus `from_water` exist so that no
+ * renderer downstream can present it as one. That is the whole risk of this route and the only
+ * thing that makes it safe.
+ */
+async function upstreamTemp(slug, all, env, budget = 3) {
+  if (!slug || !all) return null;
+  let chain;
+  try { chain = await waterChain(env); } catch (_) { return null; }
+  const row = chain && chain[slug];
+  const ups = (row && Array.isArray(row.upstream)) ? row.upstream : [];
+  if (!ups.length) return null;
+
+  const ranked = ups
+    .filter((u) => u && u !== slug && all[u])
+    .map((u) => ({ u, km2: Number((chain[u] || {}).drainage_km2) || 0 }))
+    .sort((a, z) => z.km2 - a.km2);
+
+  let spent = 0;
+  for (const { u, km2 } of ranked) {
+    const ub = all[u];
+    const c = Array.isArray(ub.centroid) ? ub.centroid : null;
+    if (!c) continue;
+    for (const site of usgsSitesFor(ub, c[1], c[0])) {
+      if (spent >= budget) return null;
+      // THE REGISTRY ANSWERS THIS WITHOUT A REQUEST. Only sites the bindings already record as
+      // publishing 00010 are worth a fetch; anything else spends the budget on a guess.
+      const cat = registryCatalog(site.parms);
+      if (!cat || !cat['00010']) continue;
+      spent += 1;
+      let r = null;
+      try { r = await cached(`usgs:${site.site}`, TTL.gauge, () => fetchUsgs(site.site, USGS_PARMS)); }
+      catch (_) { continue; }
+      if (!r || !Number.isFinite(r.tempC)) continue;
+      return {
+        c: round2(r.tempC), f: round1(r.tempC * 9 / 5 + 32),
+        usgs_site: site.site, name: site.name,
+        from_slug: u, from_water: ub.display_name || u,
+        drainage_km2: km2 || null,
+        steps: 1,
+        // BORROWED, AND SAYING SO IN THE FIELD ITSELF. Nothing downstream may render this as a
+        // reading of the water the card is about.
+        borrowed: true,
+        source: 'USGS — parameter 00010, on the water immediately upstream',
+      };
+    }
+  }
+  return null;
+}
+
 /**
  * A CWMS time series as points, in the unit CWMS SAYS IT SENT.
  *
@@ -4043,6 +4118,9 @@ async function waterBlock(b, lat, lon, env) {
   // sonde answers it outright, so where USGS gave nothing and a sonde gave a number, the number
   // wins over the explanation. It carries its own provenance and never borrows the USGS shape:
   // there is no `usgs_site` on it because there is no USGS site behind it.
+  // LAST, AND ONLY IF NOTHING ON THIS WATER ANSWERED. The order is deliberate: a reading taken
+  // ON the water beats a sonde beside it, which beats one taken upstream. Each of the three says
+  // where it came from, so a card is never quietly upgraded from borrowed to measured.
   if (!out.water_temp && out.ndbc && out.ndbc.ocean && Number.isFinite(out.ndbc.ocean.water_c)) {
     const o = out.ndbc.ocean;
     out.water_temp = {
@@ -4053,6 +4131,14 @@ async function waterBlock(b, lat, lon, env) {
       source: 'NDBC — realtime2 ocean, OTMP',
     };
   }
+  // THE INFLOW ROUTE. Only when this water produced nothing of its own -- not as a second
+  // opinion, because two temperatures on one card is two numbers that can disagree.
+  if (!out.water_temp) {
+    const borrowed = await upstreamTemp(b.slug, await waterBindings(env, false).catch(() => null),
+                                        env).catch(() => null);
+    if (borrowed) out.water_temp = borrowed;
+  }
+
   // Whether `tide: null` on this response is a FACT or a GAP. An inland lake has no tide and
   // that is the right answer; a coastal zone with no station bound is a hole in the registry.
   out.tidal = !!(b.tides || []).length;

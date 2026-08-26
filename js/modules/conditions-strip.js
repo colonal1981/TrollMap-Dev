@@ -360,7 +360,14 @@ function cardHtml(rec, c) {
 
   if (c.waterTempF != null) {
     out.push(row('Water temp', `${c.waterTempF} °F`
-      + (c.waterTempFrom === 'ndbc'
+      + (c.waterTempFrom === 'upstream'
+        // NAMED, AND SAID FIRST. tnlakelevels reaches a temperature for Douglas and Norris this
+        // way and never says so; a borrowed number that reads as a local one is worse than no
+        // number, because it cannot be argued with.
+        ? `<span class="cond-sub"> — measured on ${esc(c.waterTempUpstreamFrom || 'the water upstream')},`
+          + ` immediately upstream. NOT a reading from this water.`
+          + `${c.waterTempGauge ? ` (${esc(c.waterTempGauge)})` : ''}</span>`
+        : c.waterTempFrom === 'ndbc'
         // A NERRS reserve sonde, not a river gauge. It is IN the water on a 15-minute clock,
         // and on most of these coastal waters there is no USGS site to ask at all.
         ? `<span class="cond-sub"> — measured by NDBC sonde${c.waterTempStation ? ` ${esc(c.waterTempStation)}` : ''}`

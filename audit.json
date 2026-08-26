@@ -1034,7 +1034,7 @@
     },
     "Worker/conditions.js": {
       "purpose": "Worker/conditions.js — one call that answers \"what is this water doing right now\".",
-      "lines": 4549,
+      "lines": 4635,
       "exports": [
         "obsBearing",
         "wwaText",
@@ -6782,7 +6782,7 @@
     },
     "js/modules/conditions-strip.js": {
       "purpose": "The state of the water, above the map, before you plan anything.",
-      "lines": 724,
+      "lines": 731,
       "exports": [
         "showConditionsFor",
         "refreshConditions"
@@ -7950,7 +7950,7 @@
     },
     "js/modules/notifications.js": {
       "purpose": "notifications.js — On-water alerts for TrollMap",
-      "lines": 867,
+      "lines": 909,
       "exports": [
         "requestNotificationPermission",
         "lastFire",
@@ -11967,7 +11967,7 @@
     },
     "js/utils/water-conditions.js": {
       "purpose": "ONE READ FOR THE STATE OF THE WATER.",
-      "lines": 842,
+      "lines": 848,
       "exports": [
         "cToF",
         "conditionsUrl",
@@ -18020,7 +18020,7 @@
     },
     "test/water-conditions.test.js": {
       "purpose": "One read for the state of the water.",
-      "lines": 840,
+      "lines": 867,
       "exports": [],
       "imports": [
         {
@@ -18840,7 +18840,7 @@
         "Scripts/capture_upstreams.py:120",
         "Scripts/capture_upstreams.py:366",
         "Scripts/capture_upstreams.py:386",
-        "Worker/conditions.js:4227",
+        "Worker/conditions.js:4313",
         "js/modules/tide-engine.js:22"
       ],
       "side": [
@@ -18860,7 +18860,7 @@
         "Scripts/capture_upstreams.py:379",
         "Scripts/capture_upstreams.py:384",
         "Worker/conditions.js:2979",
-        "Worker/conditions.js:3687",
+        "Worker/conditions.js:3762",
         "Worker/trollmap-worker.js:337",
         "Worker/trollmap-worker.js:1440",
         "Worker/worker-data.js:286",
@@ -19142,7 +19142,7 @@
       "hits": 2,
       "files": [
         "Worker/conditions.js:809",
-        "Worker/conditions.js:3587"
+        "Worker/conditions.js:3662"
       ],
       "side": [
         "worker"
@@ -19176,7 +19176,7 @@
         "Worker/conditions.js:1768",
         "Worker/conditions.js:2375",
         "Worker/conditions.js:2811",
-        "Worker/conditions.js:3950",
+        "Worker/conditions.js:4025",
         "Worker/worker-data.js:463",
         "Worker/worker-data.js:597"
       ],
@@ -22845,7 +22845,7 @@
     {
       "name": "wire",
       "at": [
-        "js/modules/conditions-strip.js:698",
+        "js/modules/conditions-strip.js:705",
         "js/modules/lake-ramp-select.js:593",
         "js/modules/noaa-tides.js:64"
       ]
@@ -22954,7 +22954,7 @@
       "name": "isEnabled",
       "at": [
         "js/core/layer-registry.js:97",
-        "js/modules/notifications.js:575"
+        "js/modules/notifications.js:607"
       ]
     },
     {
@@ -23016,7 +23016,7 @@
     {
       "name": "paint",
       "at": [
-        "js/modules/conditions-strip.js:616",
+        "js/modules/conditions-strip.js:623",
         "js/modules/plan-water-ui.js:464"
       ]
     },
