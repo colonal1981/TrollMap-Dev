@@ -12,8 +12,8 @@ Python side will read as dead here and may not be. See the `lakes.js` near miss 
 
 | metric | count |
 |---|---|
-| files | 465 |
-| jsModules | 295 |
+| files | 466 |
+| jsModules | 296 |
 | pyScripts | 164 |
 | routes | 57 |
 | routesUncalled | 0 |
@@ -326,7 +326,7 @@ _none_
 | `registry/_water_bindings_review.json` | Scripts/triage_water_bindings.py:10 |
 | `registry/charted.json` | Scripts/build_structure.py:51<br>Scripts/build_trolling_runs.py:62<br>Scripts/build_water_features.py:100 |
 | `registry/curated_lakes.json` | Scripts/remove_registry_water.py:48 |
-| `registry/gauge_overrides.json` | Scripts/build_water_bindings.py:1575 |
+| `registry/gauge_overrides.json` | Scripts/build_water_bindings.py:1594 |
 | `registry/lake_aliases.json` | Scripts/build_dnr_ramps_by_lake.py:66<br>Scripts/remove_registry_water.py:48 |
 | `registry/lake_display_names.json` | Scripts/merge_duplicate_waters.py:61 |
 | `registry/lake_index.json` | Scripts/bind_dams_to_waters.py:43<br>Scripts/build_dnr_ramps_by_lake.py:32<br>Scripts/build_duke_dam_table.py:37<br>Scripts/build_water_chain.py:66<br>Scripts/find_duplicate_waters.py:39<br>Scripts/gen_water_aliases_js.py:109<br>Scripts/lookup_3dhp.py:11<br>Scripts/match_waters_to_nhd.py:41<br>Scripts/merge_duplicate_waters.py:40<br>Scripts/migrate_merged_slugs.py:50<br>Scripts/sweep_unclaimed.py:52<br>Scripts/sweep_unclaimed.py:226 |
@@ -426,7 +426,7 @@ _none_
 | `js/modules/layers-panel.js` | 105 | 4 | 1 | **2** | layers-panel.js — the one place every map overlay is turned on and off. |
 | `js/modules/measure-tool.js` | 106 | 0 | 1 | 0 | Distance & Bearing Measurement Tool — click two points on the |
 | `js/modules/noaa-tides.js` | 228 | 1 | 1 | **1** | NOAA Coastal Tides — Plan-tab tide panel. |
-| `js/modules/notifications.js` | 834 | 13 | 3 | **11** | notifications.js — On-water alerts for TrollMap |
+| `js/modules/notifications.js` | 841 | 13 | 3 | **11** | notifications.js — On-water alerts for TrollMap |
 | `js/modules/osm-structure.js` | 145 | 0 | 1 | 0 | osm-structure.js — OSM Structure Layer Toggle |
 | `js/modules/plan-assemble.js` | 872 | 8 | 10 | 0 | plan-assemble.js — ordered candidates + the model's judgement → a plan v2 object. |
 | `js/modules/plan-builder.js` | 2547 | 10 | 7 | 0 | Plan Builder — the Plan tab form, save/load, preview rendering, |
@@ -530,6 +530,7 @@ _none_
 | `test/duke-lake-row.test.js` | 83 | 0 | 0 | 0 | normalizeDukeRow against the REAL /lakes/current-level response. |
 | `test/duke-operating-range.test.js` | 278 | 0 | 0 | 0 | The guide curve, the drought stage as a NUMBER, and where this date usually sits. |
 | `test/duke-release-direction.test.js` | 396 | 0 | 0 | 0 | Inflow or outflow: which side of a lake a Duke release comes from. |
+| `test/echomap-text.test.js` | 40 | 0 | 0 | 0 | THE TARGET DISPLAY IS A CHARTPLOTTER, NOT A PHONE TRAY. |
 | `test/expect-shim.mjs` | 221 | 8 | 89 | 0 | test/expect-shim.mjs -- `describe`/`it`/`expect` on top of node:test and node:assert. |
 | `test/facts-are-not-agent-scoped.test.js` | 86 | 0 | 0 | 0 | A FIX BUILT ON A PREMISE NOBODY MEASURED. |
 | `test/fake-indexeddb.mjs` | 186 | 2 | 4 | 0 | test/fake-indexeddb.mjs — a small in-memory IndexedDB, enough for utils/db.js. |
@@ -735,7 +736,7 @@ _none_
 - `legacyStorageName()` — Worker/research/keys.js:95, js/data/research-ids.js:67
 - `researchStorageIdCandidates()` — Worker/research/keys.js:112, js/data/research-ids.js:77
 - `resolveLakeKey()` — Worker/trollmap-worker.js:429, js/data/species-intel.js:87
-- `isEnabled()` — js/core/layer-registry.js:97, js/modules/notifications.js:542
+- `isEnabled()` — js/core/layer-registry.js:97, js/modules/notifications.js:549
 - `toggle()` — js/core/layer-registry.js:167, js/modules/layers-panel.js:68
 - `getWorkerBase()` — js/data/access-index.js:73, js/modules/gis-toggles.js:51
 - `formatAccessLabel()` — js/data/access-index.js:360, js/modules/lake-ramp-select.js:328

@@ -92,6 +92,13 @@ export function lastFire() { return { ..._lastFire }; }
  * Service worker first, page constructor second. Desktop keeps working either way, and the
  * fallback is what makes this safe to ship without a device in hand to test on.
  */
+// NO EMOJI IN ANY OF THESE STRINGS, AND THE TEST BELOW ENFORCES IT.
+//
+// Ryan photographed a live notification on the Echomap on 2026-08-26. Every notification this
+// app raises relays there through Garmin Connect, and a marine chartplotter renders a limited
+// glyph set -- a leading emoji costs the first and most-read position on the line to draw an
+// empty box. The phone tray is not the audience; the plotter is. Worker/alerts.js strips the
+// same characters from the PUSH path at its own boundary; this half simply does not write them.
 async function fire(title, body, tag = null) {
   if (!_enabled) return false;
   if (!('Notification' in window) || Notification.permission !== 'granted') {
@@ -150,7 +157,7 @@ function tick() {
   for (const m of _session.solunarMajors) {
     if (!m.fired && now >= m.h - warnH && now < m.h) {
       m.fired = true;
-      fire('🌕 Solunar Major Starting', `Peak bite window at ${hToStr(m.h)} — be on fish.`, 'solunar-major');
+      fire('Solunar Major Starting', `Peak bite window at ${hToStr(m.h)} - be on fish.`, 'solunar-major');
     }
   }
 
@@ -158,7 +165,7 @@ function tick() {
   for (const m of _session.solunarMinors) {
     if (!m.fired && now >= m.h - warnH && now < m.h) {
       m.fired = true;
-      fire('🌙 Solunar Minor', `Secondary bite window at ${hToStr(m.h)}.`, 'solunar-minor');
+      fire('Solunar Minor', `Secondary bite window at ${hToStr(m.h)}.`, 'solunar-minor');
     }
   }
 
@@ -166,7 +173,7 @@ function tick() {
   for (const b of _session.bandChangeTimes) {
     if (!b.fired && now >= b.h - (10 / 60) && now < b.h) {
       b.fired = true;
-      fire('🎣 Band Change', `Switch to ${b.label} in ~10 minutes.`, 'band-change');
+      fire('Band Change', `Switch to ${b.label} in ~10 minutes.`, 'band-change');
     }
   }
 
@@ -184,8 +191,8 @@ function tick() {
     // inferred from a forecast; it is the wrong words for a Small Craft Advisory, and it buries
     // the one thing that came from a forecaster rather than from us.
     const title = w.kind === 'hazard'
-      ? (w.severity === 'stop' ? '⚠️ NWS warning' : '⚠️ NWS advisory')
-      : (w.severity === 'stop' ? '⛈️ Get off the water' : '🌧️ Weather');
+      ? (w.severity === 'stop' ? 'NWS warning' : 'NWS advisory')
+      : (w.severity === 'stop' ? 'Get off the water' : 'Weather');
     fire(title, w.label, `${w.kind || 'weather'}-${w.severity}`);
   }
 
@@ -194,7 +201,7 @@ function tick() {
     const warnReturnH = RETURN_WARN_MIN / 60;
     if (now >= _session.returnTimeH - warnReturnH && now < _session.returnTimeH) {
       _session.returnFired = true;
-      fire('⏱ Head Back Soon', `Return time is ${hToStr(_session.returnTimeH)} — ${RETURN_WARN_MIN} min remaining.`, 'return-time');
+      fire('Head Back Soon', `Return time is ${hToStr(_session.returnTimeH)} - ${RETURN_WARN_MIN} min remaining.`, 'return-time');
     }
   }
 }
@@ -416,7 +423,7 @@ function checkProximity(lat, lon) {
         const ft = distFt(lat, lon, spot.lat, spot.lon);
         if (ft <= PROXIMITY_RADIUS_FT) {
           _firedPins.add(id);
-          fire('🎣 Fishing Spot Nearby', `Community spot ${Math.round(ft)}ft ahead.`, id);
+          fire('Fishing Spot Nearby', `Community spot ${Math.round(ft)}ft ahead.`, id);
         }
       }
       for (const att of (ctx.attractors || [])) {
@@ -426,7 +433,7 @@ function checkProximity(lat, lon) {
         if (ft <= PROXIMITY_RADIUS_FT) {
           _firedPins.add(id);
           const name = att.name || 'Fish Attractor';
-          fire(`🪵 ${name}`, `${Math.round(ft)}ft ahead.`, id);
+          fire(`${name}`, `${Math.round(ft)}ft ahead.`, id);
         }
       }
     } catch (err) {
@@ -443,7 +450,7 @@ export function checkWindAlert(windMph) {
   _session.lastWindMph = windMph;
   if (!_session.windFired && windMph >= WIND_THRESHOLD_MPH) {
     _session.windFired = true;
-    fire('💨 Wind Alert', `Wind now ${Math.round(windMph)} mph — conditions changing.`, 'wind-alert');
+    fire('Wind Alert', `Wind now ${Math.round(windMph)} mph - conditions changing.`, 'wind-alert');
   }
   // Reset so it can fire again if wind drops and rises again
   if (windMph < WIND_THRESHOLD_MPH - 3) {
@@ -527,7 +534,7 @@ export async function enableNotifications() {
   startProximityWatch();
   // The unforecast case. Runs whether or not a plan was loaded -- weather does not wait for one.
   startHazardPoll();
-  fire('🎣 TrollMap Alerts On', 'You\'ll get notified for solunar windows, band changes, and nearby structure.', 'startup');
+  fire('TrollMap Alerts On', 'You\'ll get notified for solunar windows, band changes, and nearby structure.', 'startup');
   updateUI();
   return true;
 }
@@ -733,7 +740,7 @@ export async function selfTest() {
   // THE REAL THING, THROUGH THE REAL PATH. Everything above can pass while this fails.
   const wasEnabled = _enabled;
   _enabled = true;
-  const fired = await fire('✅ TrollMap self-test',
+  const fired = await fire('TrollMap self-test',
     'If you can read this on your phone, the alert path works end to end.', 'selftest');
   _enabled = wasEnabled;
   add('notification actually shown', !!fired,

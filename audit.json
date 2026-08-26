@@ -1,8 +1,8 @@
 {
   "generatedFrom": "tools/audit.mjs",
   "summary": {
-    "files": 465,
-    "jsModules": 295,
+    "files": 466,
+    "jsModules": 296,
     "pyScripts": 164,
     "routes": 57,
     "routesUncalled": 0,
@@ -7949,7 +7949,7 @@
     },
     "js/modules/notifications.js": {
       "purpose": "notifications.js — On-water alerts for TrollMap",
-      "lines": 834,
+      "lines": 841,
       "exports": [
         "requestNotificationPermission",
         "lastFire",
@@ -13728,6 +13728,48 @@
             "releaseShape"
           ],
           "resolved": "Worker/conditions.js"
+        }
+      ],
+      "importedBy": [],
+      "deadExports": [],
+      "globalsWritten": [],
+      "globalsRead": []
+    },
+    "test/echomap-text.test.js": {
+      "purpose": "THE TARGET DISPLAY IS A CHARTPLOTTER, NOT A PHONE TRAY.",
+      "lines": 40,
+      "exports": [],
+      "imports": [
+        {
+          "from": "node:test",
+          "names": [
+            "test"
+          ]
+        },
+        {
+          "from": "node:assert",
+          "names": [
+            "assert"
+          ]
+        },
+        {
+          "from": "node:fs",
+          "names": [
+            "readFileSync"
+          ]
+        },
+        {
+          "from": "node:url",
+          "names": [
+            "fileURLToPath"
+          ]
+        },
+        {
+          "from": "node:path",
+          "names": [
+            "dirname",
+            "join"
+          ]
         }
       ],
       "importedBy": [],
@@ -20567,7 +20609,7 @@
       "Scripts/build_water_features.py:100"
     ],
     "registry/gauge_overrides.json": [
-      "Scripts/build_water_bindings.py:1575"
+      "Scripts/build_water_bindings.py:1594"
     ],
     "registry/water_chain.json": [
       "Scripts/build_water_chain.py:67"
@@ -22910,7 +22952,7 @@
       "name": "isEnabled",
       "at": [
         "js/core/layer-registry.js:97",
-        "js/modules/notifications.js:542"
+        "js/modules/notifications.js:549"
       ]
     },
     {

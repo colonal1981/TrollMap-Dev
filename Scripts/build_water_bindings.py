@@ -1032,6 +1032,25 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
     # in a field called `pool` -- Pamlico Sound, 3,000 km2 of tidal water, was reading "Neuse
     # River at Cherry Branch Ferry Terminal". The depth palette shifts coastal contours by the
     # tide, so coastal wants a tide station and nothing else will do.
+    # EVERY PRODUCT A STATION OFFERS, BEFORE ANY OF THEM IS CHOSEN.
+    #
+    # A CO-OPS station id appears once per PRODUCT, and the bind below dedupes by id -- so the
+    # first product seen won and the rest of what that station publishes became invisible.
+    # Measured 2026-08-26: 5 of 124 bound stations offer `met` and `physocean` on top of the
+    # water levels they were bound for, and all five are recorded as offering only water levels.
+    # They are Charleston, Fort Pulaski, Springmaid Pier, Wilmington and Wrightsville Beach --
+    # the five real instrumented stations on this coast.
+    #
+    # `physocean` is WATER TEMPERATURE, conductivity and salinity. `met` is wind and pressure,
+    # measured, where the app shows a model. `kind` is not a station's identity; it is one thing
+    # the station does.
+    coops_products = defaultdict(set)
+    for kind, rows in (src.get('coops') or {}).items():
+        for st in rows:
+            sid = str(st.get('id') or '')
+            if sid:
+                coops_products[sid].add(kind)
+
     tide_cell = defaultdict(list)
     for kind, rows in (src.get('coops') or {}).items():
         for st in rows:
@@ -1721,8 +1740,15 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
             if not (ins_t or d_t <= max(margin_km, 5.0)):
                 continue
             seen_t.add(sid)
+            products = sorted(coops_products.get(sid) or {kind})
             tides.append({'id': sid, 'name': st.get('name'), 'lat': slat, 'lon': slon,
-                          'kind': kind, 'measured': kind == 'waterlevels',
+                          # `kind` is the product this row was bound THROUGH and is kept so
+                          # every existing reader is untouched. `products` is what the station
+                          # actually offers, which is the thing that was being thrown away.
+                          'kind': kind, 'products': products,
+                          # DERIVED FROM THE SET, not from the row. A station that publishes
+                          # measured water levels is measured whichever product bound it.
+                          'measured': 'waterlevels' in products,
                           'shefcode': st.get('shefcode'), 'km_outside': round(d_t, 1)})
         if tides:
             b['tides'] = sorted(tides, key=lambda x: (not x['measured'], x['km_outside']))[:6]
