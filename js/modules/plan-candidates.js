@@ -867,7 +867,10 @@ export function selectCandidates(runs, o) {
   // Counted so the caller can say WHY nothing came back. "nothing is inside 15-40 ft" and "every
   // pass on this lake is shallower than 15 ft" are different problems with different fixes, and
   // the old code could only report the first because it never knew which test it had applied.
-  const rejected = { depth: 0, unroutable: 0, noWindow: 0, scoreless: 0 };
+  const rejected = { depth: 0, unroutable: 0, noWindow: 0, scoreless: 0,
+                     // Filled below, after scoring. Declared here so every bucket lives in one
+                     // object and the total can be checked against `considered`.
+                     battery: 0, window: 0, dedupe: 0, limit: 0 };
   let depthRule = null;
   const straight = (a, b) => metresBetween(a, b);
   const transitM = o.transitM || straight;
@@ -964,8 +967,8 @@ export function selectCandidates(runs, o) {
 
     // Reachable means: fish this one thing and get home, inside the day. A plan chains several,
     // so this is a ceiling on what is worth offering, not a promise the whole set fits.
-    if (o.usableAh && totalAh > o.usableAh) continue;
-    if (o.windowMin && totalMin > o.windowMin) continue;
+    if (o.usableAh && totalAh > o.usableAh) { rejected.battery++; continue; }
+    if (o.windowMin && totalMin > o.windowMin) { rejected.window++; continue; }
 
     out.push({
       // THE PACK'S OWN ID WHEN IT HAS ONE, the array index only as a fallback.
@@ -1084,8 +1087,18 @@ export function selectCandidates(runs, o) {
       metresBetween(k.start, c.start) < apart
       || overlapFraction(c.coordinates, k.coordinates, corridorM) >= maxOverlap
       || overlapFraction(k.coordinates, c.coordinates, corridorM) >= maxOverlap);
-    if (!duplicate) kept.push(c);
-    if (o.limit && kept.length >= o.limit) break;
+    // COUNTED, BECAUSE THIS IS THE BIGGEST FILTER IN THE FUNCTION AND IT WAS THE ONLY SILENT ONE.
+    //
+    // Measured 2026-08-26 on the real Wateree pack: 1,750 runs in, 504 cut on depth, 639 as
+    // unroutable, 301 for no scoring window -- all three counted and reportable -- leaving 306
+    // scored candidates, of which 22 came out. The other 284 went here, and `selection.rejected`
+    // said nothing about them. So a thin day looked like a depth problem or a routing problem
+    // when it was neither, and the diagnostic whose whole job is explaining absence was blind to
+    // the step that removed 93% of what survived everything else.
+    if (!duplicate) kept.push(c); else rejected.dedupe++;
+    // The cap is a cut like any other, and a cut nobody can see is how "top N" gets mistaken for
+    // "all of them" -- see the same rule in build_water_bindings.py and planCueRoute.
+    if (o.limit && kept.length >= o.limit) { rejected.limit = out.length - kept.length - rejected.dedupe; break; }
   }
 
   // ── WHAT IT COSTS TO GO FROM THIS LEG TO THE NEXT ONE ────────────────────────────────────────
@@ -1147,6 +1160,11 @@ export function selectCandidates(runs, o) {
   kept.selection = {
     considered: runs.length,
     rejected,
+    // EVERY RUN ACCOUNTED FOR. If this does not equal `considered` a filter has been added
+    // without a counter, which is exactly how the dedupe went unreported for as long as it did.
+    accountedFor: kept.length + rejected.depth + rejected.unroutable + rejected.noWindow
+                + rejected.scoreless + rejected.battery + rejected.window + rejected.dedupe
+                + rejected.limit,
     depthRule: depthRule || 'no runs reached the depth test',
     holding: holding || null,
     // SAID OUT LOUD, NOT ASSUMED. When holding is unknown the old fish-band-vs-water-depth

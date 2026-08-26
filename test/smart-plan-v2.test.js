@@ -424,3 +424,58 @@ describe('smart-plan-v2 — transits are routed over water, or they say they are
     } finally { delete globalThis.fetch; }
   });
 });
+
+// ---------------------------------------------------------------------------
+// EVERY RUN ACCOUNTED FOR — 2026-08-26
+//
+// `selection.rejected` exists for one reason: to say why nothing came back. It counted the depth
+// rule, the routing flag and the scoring window, and said nothing at all about the spatial
+// dedupe -- which is the largest cut in the function.
+//
+// Measured on the real Wateree pack the day this was written: 1,750 runs considered, 504 cut on
+// depth, 639 unroutable, 301 with no scoring window, 22 offered. The remaining 284 were eaten by
+// the dedupe and appeared in no bucket, so a thin day read as a depth problem or a routing
+// problem when it was neither.
+//
+// This was already known and already written down. The eligibility fixture above carries the
+// note: "That is what happened on the first cut of this test: 55 ft vanished and it looked like
+// the suspended rule had rejected it." Diagnosed by hand, twice, because the number was not there
+// to read.
+// ---------------------------------------------------------------------------
+describe('the selection report accounts for every run it was given', () => {
+  const near = Array.from({ length: 16 }, (_, k) => ({ s: 200 + k * 240, t: 'hump', d: 25 }));
+  const base = { ramp: RAMP, slug: 'w', usableAh: 200, windowMin: 600,
+                 fishDepthFt: [0, 99], holding: 'bottom' };
+
+  it('counts the dedupe, which used to remove candidates into silence', () => {
+    // Four runs laid on the SAME line. The first is kept and the other three are the same water.
+    const stacked = [0, 1, 2, 3].map((i) => run(i, -80.720, 34.380, 4000, near));
+    const out = selectCandidates(stacked, base);
+    expect(out.length).toBe(1);
+    expect(out.selection.rejected.dedupe).toBe(3);
+  });
+
+  it('adds up: kept plus every rejection bucket equals what it was handed', () => {
+    const mixed = [
+      ...[0, 1, 2].map((i) => run(i, -80.720, 34.380, 4000, near)),        // dedupe
+      run(3, -80.720, 34.440, 4000, near),                                  // kept
+      { type: 'Feature', geometry: { type: 'LineString', coordinates: [[-80.72, 34.5], [-80.71, 34.5]] },
+        properties: { depth_ft: 22, length_m: 900, routable: false, near } }, // unroutable
+    ];
+    const out = selectCandidates(mixed, base);
+    const r = out.selection.rejected;
+    expect(out.selection.considered).toBe(mixed.length);
+    expect(out.selection.accountedFor).toBe(mixed.length);
+    expect(r.unroutable >= 1).toBe(true);
+  });
+
+  it('counts the battery and the day, which were also silent continues', () => {
+    // A leg that cannot be reached and fished inside the day is a real answer -- "your battery
+    // is the constraint" is a different sentence from "there is no water at that depth".
+    const far = [run(0, -80.300, 34.380, 8000, near)];
+    const out = selectCandidates(far, { ...base, usableAh: 0.5, windowMin: 600 });
+    expect(out.length).toBe(0);
+    expect(out.selection.rejected.battery + out.selection.rejected.window >= 1).toBe(true);
+    expect(out.selection.accountedFor).toBe(1);
+  });
+});
