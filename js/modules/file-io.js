@@ -4,8 +4,9 @@
  * Load: opens a file picker for .gpx/.txt/.xml/.geojson/.json/.kml,
  *        parses it via parsers.js, replaces state.DATA.
  * New:  resets state.DATA to empty.
- * Save: triggers a download of state.DATA serialized as a standard
- *       GPX file (not the Garmin-flavored variant — see garmin-export).
+ * Save: triggers a download of state.DATA serialized by buildGPX() in parsers.js --
+ *       the only GPX writer in the app. It emits the Garmin gpxx extensions, so this
+ *       one file is what ActiveCaptain and the Echomap read.
  */
 
 import { state } from '../core/state.js';

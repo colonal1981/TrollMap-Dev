@@ -87,6 +87,52 @@ export function parseGPX(text) {
 }
 
 /**
+ * A LEG'S COLOUR, IN THE ONLY VOCABULARY THE UNIT ACCEPTS.
+ *
+ * <gpxx:DisplayColor> takes one of a fixed set of NAMES, not a hex value, so a palette built
+ * for a web map has to be mapped rather than passed through. Below is the nearest Garmin name
+ * for each colour plan-tracks.js actually assigns. Ryan's ActiveCaptain palette (screenshot,
+ * 2026-08-26) is exactly the gpxx v3 sixteen, so every name here is one the unit will take.
+ *
+ * WHY IT LIVES HERE AND NOT IN A GARMIN-ONLY MODULE: it used to live in garmin-export.js,
+ * whose exportGarminGPX() was wired to a button -- `exportGarminBtn` -- that does not exist in
+ * index.html and never has. The only GPX this app can produce comes from `saveBtn`, which calls
+ * buildGPX() below. So the colour fix of 2026-08-26 went into a file that has never run, and
+ * Ryan's export of that same day came out with no <extensions> at all and drew five green
+ * tracks in ActiveCaptain. garmin-export.js is deleted; this is the one writer.
+ *
+ * WHAT IT REPLACES: nothing -- no TrollMap export has ever carried a track colour. plan-tracks.js
+ * computes `t.color` per leg and says why it must: renderMap() used to derive one by matching the
+ * track NAME against v1's phase names, which no v2 track has, so every leg of every v2 plan drew
+ * in the same fallback magenta -- troll, deadhead and the run home indistinguishable. That was
+ * fixed for the map. The export dropped the value at the door, so the IDENTICAL defect survived
+ * on the ECHOMAP -- the screen Ryan reads on the water, and the only one he reads.
+ */
+const GARMIN_COLORS = {
+  '#00e5ff': 'Cyan',
+  '#ff6d00': 'DarkYellow',      // Garmin has no orange; DarkYellow is the nearest warm tone
+  '#7c4dff': 'Magenta',
+  '#76ff03': 'Green',
+  '#ff4081': 'Red',
+  '#ffea00': 'Yellow',
+  '#78909c': 'DarkGray',        // a deadhead recedes on the unit exactly as it does on the map
+  '#00e676': 'DarkGreen',       // the run home, and nothing else in a normal day
+};
+
+/**
+ * @param {string} hex
+ * @returns {string} the gpxx name for that colour, or '' when there is no colour to write.
+ *
+ * EMPTY, NOT A FALLBACK. The old version answered 'Cyan' for anything unmapped, so a track that
+ * never had a colour -- every track in a GPX loaded off the card and saved back -- would go out
+ * asserting one. A track with no colour leaves without an <extensions> block, and the unit keeps
+ * its own default instead of being told something untrue.
+ */
+export function displayColor(hex) {
+  return GARMIN_COLORS[String(hex || '').toLowerCase()] || '';
+}
+
+/**
  * Serialize a working GPX file from the given waypoints/tracks.
  * Supports unified timeline: when state.DATA.waypoints has been sorted
  * by smart-plan-ui to interleave CAST waypoints with trolling waypoints
@@ -100,6 +146,7 @@ export function buildGPX(data) {
     `<?xml version="1.0" encoding="UTF-8"?>`,
     `<gpx version="1.1" creator="TrollMap GPX Studio — Unified Timeline"`,
     `  xmlns="http://www.topografix.com/GPX/1/1"`,
+    `  xmlns:gpxx="http://www.garmin.com/xmlschemas/GpxExtensions/v3"`,
     `  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"`,
     `  xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">`,
   ];
@@ -125,7 +172,13 @@ export function buildGPX(data) {
   }
 
   for (const t of data.tracks) {
-    lines.push(`  <trk>`, `    <name>${esc(t.name)}</name>`, `    <trkseg>`);
+    lines.push(`  <trk>`, `    <name>${esc(t.name)}</name>`);
+    // A colour only when the leg has one -- see displayColor above for why '' is not 'Cyan'.
+    const color = displayColor(t.color);
+    if (color) {
+      lines.push(`    <extensions><gpxx:TrackExtension><gpxx:DisplayColor>${color}</gpxx:DisplayColor></gpxx:TrackExtension></extensions>`);
+    }
+    lines.push(`    <trkseg>`);
     for (const p of t.pts) {
       lines.push(`      <trkpt lat="${p[0].toFixed(7)}" lon="${p[1].toFixed(7)}"/>`);
     }

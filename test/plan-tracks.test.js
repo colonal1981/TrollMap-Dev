@@ -6,7 +6,7 @@ import { materialisePlan, planTracks, planWaypoints, trackName, legColor } from 
 import { metresBetween } from '../js/modules/plan-candidates.js';
 import { planToTimeline, LEG_COLORS, TRANSIT_COLOR, RETURN_COLOR }
   from '../js/modules/plan-to-timeline.js';
-import { displayColor } from '../js/modules/garmin-export.js';
+import { displayColor, buildGPX } from '../js/utils/parsers.js';
 
 // ---------------------------------------------------------------------------
 // Why this test exists
@@ -480,10 +480,15 @@ describe('planWaypoints — the lure change, which had no waypoint at all', () =
 //
 // plan-tracks.js computes `t.color` per leg and says why in a comment: every v2 leg used to draw
 // in one fallback colour, "troll, deadhead and the run home indistinguishable." That was fixed
-// for the map. garmin-export.js went on writing the literal `Cyan` into every track of every
-// export, so the identical defect survived on the ECHOMAP — the only screen Ryan reads on the
-// water. Ryan, 2026-08-26: "what is the purpose of the plan and having queues if none of it can
-// be shown."
+// for the map. The export dropped the value at the door, so the identical defect survived on the
+// ECHOMAP — the only screen Ryan reads on the water. Ryan, 2026-08-26: "what is the purpose of
+// the plan and having queues if none of it can be shown."
+//
+// AND THE FIX LANDED IN A FILE THAT HAS NEVER RUN. It went into garmin-export.js, whose
+// exportGarminGPX() listened on `exportGarminBtn` — a button that is not in index.html. Ryan
+// exported the same day and got five green tracks: his GPX had no <extensions> and no gpxx
+// namespace, because `saveBtn` calls buildGPX() in parsers.js and always has. garmin-export.js
+// is deleted; buildGPX is the one writer, and the last two cases below test IT, not a helper.
 // ---------------------------------------------------------------------------
 describe('a leg colour survives the trip to the chartplotter', () => {
   it('maps every colour plan-tracks actually assigns to a distinct Garmin name', () => {
@@ -502,11 +507,37 @@ describe('a leg colour survives the trip to the chartplotter', () => {
     expect(displayColor(RETURN_COLOR)).not.toBe(displayColor(TRANSIT_COLOR));
   });
 
-  it('falls back rather than emitting something the unit will reject', () => {
-    // gpxx takes a fixed vocabulary of NAMES. A hex value here is silently ignored by the unit,
-    // which is worse than a wrong-but-valid colour.
-    expect(displayColor('#123456')).toBe('Cyan');
-    expect(displayColor(null)).toBe('Cyan');
-    expect(displayColor(undefined)).toBe('Cyan');
+  it('says nothing rather than inventing a colour it was never given', () => {
+    // gpxx takes a fixed vocabulary of NAMES, so a hex value written here is silently dropped by
+    // the unit. The old answer for an unmapped colour was 'Cyan', which meant every track of a
+    // GPX loaded off the card and saved back would go out asserting a colour nobody chose.
+    expect(displayColor('#123456')).toBe('');
+    expect(displayColor(null)).toBe('');
+    expect(displayColor(undefined)).toBe('');
+  });
+
+  it('the file the Save GPX button writes carries the namespace and the colours', () => {
+    const gpx = buildGPX({
+      waypoints: [],
+      tracks: [
+        { name: 'T1 · transit', color: TRANSIT_COLOR, pts: [[34.3, -80.7], [34.31, -80.71]] },
+        { name: 'L1 · 15.1 ft', color: LEG_COLORS[0], pts: [[34.32, -80.72], [34.33, -80.73]] },
+        { name: 'T3 · home', color: RETURN_COLOR, pts: [[34.34, -80.74], [34.35, -80.75]] },
+      ],
+    });
+    // Without the declaration the extension elements are unbound and ActiveCaptain ignores them.
+    expect(gpx.includes('xmlns:gpxx="http://www.garmin.com/xmlschemas/GpxExtensions/v3"')).toBe(true);
+    expect((gpx.match(/<gpxx:DisplayColor>/g) || []).length).toBe(3);
+    expect(gpx.includes(`<gpxx:DisplayColor>${displayColor(TRANSIT_COLOR)}</gpxx:DisplayColor>`)).toBe(true);
+    expect(gpx.includes(`<gpxx:DisplayColor>${displayColor(RETURN_COLOR)}</gpxx:DisplayColor>`)).toBe(true);
+    // The names still have to survive — they are the second cue channel on the unit's track list.
+    expect(gpx.includes('<name>T1 · transit</name>')).toBe(true);
+  });
+
+  it('a track with no colour is written without an extensions block', () => {
+    // A GPX loaded from the card and saved back: nothing chose these colours, so nothing asserts one.
+    const gpx = buildGPX({ waypoints: [], tracks: [{ name: 'LOADED', pts: [[34.3, -80.7]] }] });
+    expect(gpx.includes('<gpxx:')).toBe(false);
+    expect(gpx.includes('<name>LOADED</name>')).toBe(true);
   });
 });

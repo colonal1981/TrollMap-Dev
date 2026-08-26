@@ -53,7 +53,6 @@ import './modules/spread-builder.js';
 import './modules/saved-spreads.js';
 import './modules/catch-journal.js';
 import './modules/garmin-parser.js';
-import './modules/garmin-export.js';
 import './modules/file-io.js';
 import './modules/topbar.js';
 import './modules/lake-ramp-select.js';
