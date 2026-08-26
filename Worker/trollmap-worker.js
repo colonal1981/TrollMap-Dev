@@ -557,15 +557,27 @@ async function handleSyncPush(request, env, type, id) {
   const body = await request.json();
   const { lastModified = (new Date()).toISOString(), deleted = false, ...data } = body;
   await ensureSyncSchema(env.DB);
-  await env.DB.prepare(
-    `INSERT INTO sync_items (id, type, payload, lastModified, deleted)
-     VALUES (?1, ?2, ?3, ?4, ?5)
-     ON CONFLICT(type, id) DO UPDATE SET
-       payload=excluded.payload,
-       lastModified=excluded.lastModified,
-       deleted=excluded.deleted`
-  ).bind(id, type, JSON.stringify(data), lastModified, deleted ? 1 : 0).run();
-  return new Response(JSON.stringify({ ok: true, type, id, lastModified }), { headers: JSON_HEADERS });
+  const payload = JSON.stringify(data);
+  try {
+    await env.DB.prepare(
+      `INSERT INTO sync_items (id, type, payload, lastModified, deleted)
+       VALUES (?1, ?2, ?3, ?4, ?5)
+       ON CONFLICT(type, id) DO UPDATE SET
+         payload=excluded.payload,
+         lastModified=excluded.lastModified,
+         deleted=excluded.deleted`
+    ).bind(id, type, payload, lastModified, deleted ? 1 : 0).run();
+  } catch (dbErr) {
+    // NAME THE ROW AND ITS SIZE. `/sync/item/catch/catches` has been returning a bare 500 on
+    // every page load, and D1's own message ("D1_ERROR", a constraint name, a limit) says
+    // nothing about WHICH record hit it. The catch journal is stored as ONE row holding every
+    // catch ever logged, so it grows without bound and is the first candidate for any size
+    // limit -- but that is a guess until the number is in the error, so here is the number.
+    const kb = (payload.length / 1024).toFixed(1);
+    throw new Error(`${type}/${id} insert failed at ${kb} KB payload: ${dbErr.message}`);
+  }
+  return new Response(JSON.stringify({ ok: true, type, id, lastModified, bytes: payload.length }),
+                      { headers: JSON_HEADERS });
 }
 async function handleSyncListUpdates(url, env) {
   await ensureSyncSchema(env.DB);

@@ -60,6 +60,8 @@ function setStatus(msg, isError = false) {
  * Drain the pending-sync queue. Called after a successful online sync.
  * Each entry is { type, id, payload, attempts }.
  */
+const MAX_SYNC_ATTEMPTS = 10;
+
 async function drainPendingQueue() {
   if (!dbIsReady()) return;
   let queue = [];
@@ -90,18 +92,52 @@ async function drainPendingQueue() {
             body: JSON.stringify({ ...item.payload, lastModified: new Date().toISOString() }),
           });
       if (!r.ok) {
-        item.attempts = (item.attempts || 0) + 1;
-        if (item.attempts < 10) remaining.push(item);
+        await reportSyncFailure(r, item.type, item.id, 'drain');
+        keepOrGiveUp(item, remaining);
       }
-    } catch (_) {
-      item.attempts = (item.attempts || 0) + 1;
-      if (item.attempts < 10) remaining.push(item);
+    } catch (err) {
+      console.warn(`[cloud-sync] ${item.type}/${item.id} could not be sent:`, err && err.message);
+      keepOrGiveUp(item, remaining);
     }
   }
   // If this write is lost the queue reverts to its pre-drain contents on the next load and
   // every item already pushed is pushed again.
   await tryPut('settings', { key: 'pending_sync', queue: remaining }, 'pending sync queue');
   if (remaining.length === 0) setStatus('☁️ Queued items synced');
+}
+
+/**
+ * WHY THE PUSH FAILED, IN THE WORDS OF THE THING THAT REFUSED IT.
+ *
+ * Every failure path here used to collapse to "queued (offline?)" with the response discarded.
+ * The Worker's /sync block catches its own errors and returns `sync error: <message>` — the
+ * reason has been travelling back on every one of these and being dropped at the door.
+ */
+async function reportSyncFailure(res, type, id, phase) {
+  let why = '';
+  try { why = (await res.text()).slice(0, 300); } catch (_) { /* body already consumed or empty */ }
+  console.warn(`[cloud-sync] ${phase} ${type}/${id} refused: HTTP ${res.status} ${why}`);
+  // 5xx is the server failing, 4xx is us sending something it will never accept. Retrying the
+  // second forever is what turns one bad record into a permanent console error.
+  setStatus(res.status >= 500 ? `☁️ Cloud refused ${type} (HTTP ${res.status})`
+                              : `☁️ ${type} rejected (HTTP ${res.status}) — not retrying blindly`, true);
+}
+
+/**
+ * Keep retrying, or give up out loud.
+ *
+ * THE CAP WAS SILENT. `if (item.attempts < 10) remaining.push(item)` dropped the item on the
+ * tenth failure with nothing logged anywhere — a catch journal that never reached the cloud and
+ * no line saying it had been abandoned. Ten quiet retries then silent data loss is worse than
+ * one loud failure.
+ */
+function keepOrGiveUp(item, remaining) {
+  item.attempts = (item.attempts || 0) + 1;
+  if (item.attempts < MAX_SYNC_ATTEMPTS) { remaining.push(item); return; }
+  console.error(`[cloud-sync] GIVING UP on ${item.type}/${item.id} after `
+              + `${item.attempts} attempts — this item is being DROPPED and will not reach the `
+              + 'cloud. It is still in local IndexedDB.');
+  setStatus(`☁️ Gave up syncing ${item.type}/${item.id} — see console`, true);
 }
 
 /**
@@ -156,10 +192,11 @@ export function pushItemOnSave(type, id, data) {
         setStatus('☁️ Saved to cloud');
         drainPendingQueue().catch((_) => {});
       } else {
-        // Don't spam the console on expected missing routes (e.g. /sync/item/chart)
-        if (type !== 'chart' && type !== 'charts') {
-          setStatus('☁️ Save queued (offline?)', true);
-        }
+        // A SERVER THAT ANSWERED IS NOT AN OFFLINE SERVER, and it already said what went wrong.
+        // This branch used to print "Save queued (offline?)" for a 500 and throw the body away,
+        // so `/sync/item/catch/catches` has been failing on every load with the reason sitting
+        // unread in the response. The Worker returns `{ error: "sync error: ..." }`; read it.
+        reportSyncFailure(r, type, id, 'push');
         queueForLater(type, id, data);
       }
     })
