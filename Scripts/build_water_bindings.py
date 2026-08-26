@@ -147,7 +147,21 @@ DAM_RE = re.compile(r'\bdam\b', re.I)
 # The same five the NWIS request asks for, so `--compare` is apples to apples. Widening this
 # set is a separate decision from migrating: change it and the two catalogues stop being
 # comparable on the one run where you most want them to be.
-USGS_PARMS = ('00060', '00065', '00010', '00062', '63680')
+# WHAT THE APP WANTS, NOT A SUBSET OF IT.
+#
+# This catalogued five codes while Worker/conditions.js `waterProbe` wants six things, and four
+# of the missing ones were never recorded at all: dissolved oxygen, specific conductance,
+# salinity and tidally filtered discharge. `registryCatalog` therefore reported that a site does
+# not publish them -- confidently, for every site in the registry.
+#
+# Measured on Ryan's Wateree card 2026-08-26: the response carried
+# `dissolved_oxygen_mg_l: 5.5` from site 02147801 AND listed dissolved oxygen under "no USGS
+# site bound to this water reports these". The same gauge, in the same response, both ways.
+#
+# A catalogue narrower than the questions asked of it does not produce "unknown". It produces a
+# confident no.
+USGS_PARMS = ('00060', '00065', '00010', '00062', '63680',
+              '00300', '00095', '00480', '72137')
 
 STATE_NAMES = {'SC': 'South Carolina', 'NC': 'North Carolina',
                'GA': 'Georgia', 'TN': 'Tennessee'}

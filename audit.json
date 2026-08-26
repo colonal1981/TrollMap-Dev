@@ -1034,7 +1034,7 @@
     },
     "Worker/conditions.js": {
       "purpose": "Worker/conditions.js — one call that answers \"what is this water doing right now\".",
-      "lines": 4657,
+      "lines": 4673,
       "exports": [
         "obsBearing",
         "wwaText",
@@ -18842,7 +18842,7 @@
         "Scripts/capture_upstreams.py:120",
         "Scripts/capture_upstreams.py:366",
         "Scripts/capture_upstreams.py:386",
-        "Worker/conditions.js:4335",
+        "Worker/conditions.js:4351",
         "js/modules/tide-engine.js:22"
       ],
       "side": [
@@ -18862,7 +18862,7 @@
         "Scripts/capture_upstreams.py:379",
         "Scripts/capture_upstreams.py:384",
         "Worker/conditions.js:2999",
-        "Worker/conditions.js:3782",
+        "Worker/conditions.js:3798",
         "Worker/trollmap-worker.js:337",
         "Worker/trollmap-worker.js:1440",
         "Worker/worker-data.js:286",
@@ -18877,7 +18877,7 @@
       "host": "water.noaa.gov",
       "hits": 6,
       "files": [
-        "Scripts/build_water_bindings.py:660",
+        "Scripts/build_water_bindings.py:674",
         "Scripts/probe_nwps_bulk.py:28",
         "Scripts/probe_nwps_bulk.py:98",
         "Scripts/probe_nwps_bulk.py:426",
@@ -19144,7 +19144,7 @@
       "hits": 2,
       "files": [
         "Worker/conditions.js:809",
-        "Worker/conditions.js:3682"
+        "Worker/conditions.js:3698"
       ],
       "side": [
         "worker"
@@ -19178,7 +19178,7 @@
         "Worker/conditions.js:1768",
         "Worker/conditions.js:2375",
         "Worker/conditions.js:2811",
-        "Worker/conditions.js:4045",
+        "Worker/conditions.js:4061",
         "Worker/worker-data.js:463",
         "Worker/worker-data.js:597"
       ],
@@ -20613,7 +20613,7 @@
       "Scripts/build_water_features.py:100"
     ],
     "registry/gauge_overrides.json": [
-      "Scripts/build_water_bindings.py:1594"
+      "Scripts/build_water_bindings.py:1608"
     ],
     "registry/water_chain.json": [
       "Scripts/build_water_chain.py:67"

@@ -143,7 +143,7 @@ _none_
 | www.tva.com | pipeline, worker, browser | 8 | Scripts/build_water_bindings.py:118 |
 | usgs-nims-images.s3.amazonaws.com | pipeline, worker, browser | 6 | Scripts/build_camera_index.py:61 |
 | api.tidesandcurrents.noaa.gov | pipeline, worker, browser | 6 | Scripts/build_water_bindings.py:121 |
-| water.noaa.gov | pipeline | 6 | Scripts/build_water_bindings.py:660 |
+| water.noaa.gov | pipeline | 6 | Scripts/build_water_bindings.py:674 |
 | api.hydro-derived.duke-energy.app | worker | 6 | Worker/conditions.js:1768 |
 | waterdata.usgs.gov | worker, browser | 6 | Worker/worker-data.js:933 |
 | lakemonster.com | worker | 6 | Worker/worker-data.js:957 |
@@ -326,7 +326,7 @@ _none_
 | `registry/_water_bindings_review.json` | Scripts/triage_water_bindings.py:10 |
 | `registry/charted.json` | Scripts/build_structure.py:51<br>Scripts/build_trolling_runs.py:62<br>Scripts/build_water_features.py:100 |
 | `registry/curated_lakes.json` | Scripts/remove_registry_water.py:48 |
-| `registry/gauge_overrides.json` | Scripts/build_water_bindings.py:1594 |
+| `registry/gauge_overrides.json` | Scripts/build_water_bindings.py:1608 |
 | `registry/lake_aliases.json` | Scripts/build_dnr_ramps_by_lake.py:66<br>Scripts/remove_registry_water.py:48 |
 | `registry/lake_display_names.json` | Scripts/merge_duplicate_waters.py:61 |
 | `registry/lake_index.json` | Scripts/bind_dams_to_waters.py:43<br>Scripts/build_dnr_ramps_by_lake.py:32<br>Scripts/build_duke_dam_table.py:37<br>Scripts/build_water_chain.py:66<br>Scripts/find_duplicate_waters.py:39<br>Scripts/gen_water_aliases_js.py:109<br>Scripts/lookup_3dhp.py:11<br>Scripts/match_waters_to_nhd.py:41<br>Scripts/merge_duplicate_waters.py:40<br>Scripts/migrate_merged_slugs.py:50<br>Scripts/sweep_unclaimed.py:52<br>Scripts/sweep_unclaimed.py:226 |
@@ -345,7 +345,7 @@ _none_
 | `Scripts/make_counties.mjs` | 49 | 0 | 0 | 0 | make_counties.mjs -- flatten us-atlas counties-10m TopoJSON into a GeoJSON the Python |
 | `Worker/alerts.js` | 582 | 6 | 2 | 0 | Web Push, because the phone is asleep in a PFD pocket. |
 | `Worker/cameras.js` | 176 | 5 | 1 | **4** | Worker/cameras.js — the current frame from a USGS NIMS camera. |
-| `Worker/conditions.js` | 4657 | 64 | 33 | **3** | Worker/conditions.js — one call that answers "what is this water doing right now". |
+| `Worker/conditions.js` | 4673 | 64 | 33 | **3** | Worker/conditions.js — one call that answers "what is this water doing right now". |
 | `Worker/core/arcgis.js` | 401 | 7 | 2 | **2** | Worker/core/arcgis.js — shared ArcGIS helper for ramps/paddle/bank-pier/attractors |
 | `Worker/ndbc.js` | 236 | 6 | 2 | **1** | NDBC realtime2 — the measured half of the weather this app shows. |
 | `Worker/operators.js` | 331 | 6 | 3 | 0 | operators.js — the three utility operators that publish HTML tables instead of JSON. |

@@ -3119,6 +3119,24 @@ async function waterProbe(b, lat, lon, seededTemp) {
   }
   // Only claimed where a catalogue was actually read. Without one, silence about a field means
   // "not fetched", and saying "nobody publishes it" would be a stronger claim than we hold.
+  // A CODE THAT PRODUCED A READING IS PUBLISHED, WHATEVER THE CATALOGUE SAYS.
+  //
+  // The catalogue is evidence, not truth, and it can be narrower than reality: until 2026-08-26
+  // build_water_bindings.py catalogued five parameter codes while this function asks about six
+  // things, so dissolved oxygen, conductance, salinity and tidal flow were recorded for NO site
+  // anywhere. `registryCatalog` then answered "does not publish it" -- confidently, everywhere.
+  //
+  // Measured on Ryan's Wateree card: the response carried dissolved_oxygen_mg_l 5.5 from site
+  // 02147801 and, in the same body, listed dissolved oxygen under "no USGS site bound to this
+  // water reports these". A reading and a denial of that reading, side by side.
+  //
+  // The binder is fixed. This is the invariant that makes the contradiction impossible anyway,
+  // because a registry can always be older than the code reading it: what we HAVE outranks what
+  // we were told to expect.
+  const FIELD_FOR = { '00010': 'temp', '00300': 'oxygen', '63680': 'turbidity',
+                      '00095': 'salt', '00480': 'salt', '72137': 'tidalFlow' };
+  for (const [code, field] of Object.entries(FIELD_FOR)) if (out[field]) published.add(code);
+
   if (out.catalogued) {
     out.unpublished = Object.entries(WANT)
       .filter(([code]) => !published.has(code))
@@ -3138,10 +3156,8 @@ async function waterProbe(b, lat, lon, seededTemp) {
     // NOTHING HERE IS GUESSED. `last` is the period of record USGS publishes for that exact
     // series, and it is null when the catalogue came from the registry, which does not record
     // one. A null `last` says we do not know, not that the series is dead.
-    const FIELD = { '00010': 'temp', '00300': 'oxygen', '63680': 'turbidity',
-                    '00095': 'salt', '00480': 'salt', '72137': 'tidalFlow' };
     out.silent = Object.entries(WANT)
-      .filter(([code]) => !out[FIELD[code]] && cataloguedBy.has(code))
+      .filter(([code]) => !out[FIELD_FOR[code]] && cataloguedBy.has(code))
       .map(([code, label]) => {
         const at = cataloguedBy.get(code);
         return { code, label, ...at,
