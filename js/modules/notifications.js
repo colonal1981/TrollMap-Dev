@@ -354,6 +354,32 @@ export function loadSessionFromPlan(plan, o = {}) {
     console.log('[notifications] plan loaded:', _planPins.length, 'position cues,',
                 _session.weatherCues.length, 'weather cues');
 
+    // THE DAY'S CLOCK FACTS, HANDED IN RATHER THAN FISHED OUT OF `window`.
+    //
+    // These reached the session through loadSessionFromSmartPlan(), which reads
+    // `window._trollmapSolunar` and `window._trollmapPhases`. Audited 2026-08-26 against Ryan's
+    // console: the first is written only by plan-builder.js:981, on the v1 path, and the second
+    // is WRITTEN BY NOTHING IN THE APP — two functions read it, no line anywhere assigns it. So
+    // on the SmartPlan v2 path he actually uses, `solunarMajors` was empty every time, and his
+    // trip watch armed with `1 cue(s)` — the return-time warning, alone.
+    //
+    // A GLOBAL WRITTEN BY ONE BUILDER AND READ BY ANOTHER IS THE FAILURE, not the symptom.
+    // runSmartPlanV2 already computes `sol` for the plan it renders; it is handed over here in
+    // the same call that hands over the launch point and the date, and nothing has to be on
+    // `window` at the right moment for the day's bite windows to be deliverable.
+    if (o.solunar) {
+      _session.solunarMajors = [o.solunar.major1, o.solunar.major2]
+        .filter((h) => Number.isFinite(h)).map((h) => ({ h, fired: false }));
+      _session.solunarMinors = [o.solunar.minor1, o.solunar.minor2]
+        .filter((h) => Number.isFinite(h)).map((h) => ({ h, fired: false }));
+    }
+    // The return time likewise: read off the form by loadSessionFromSmartPlan() only if the bell
+    // happened to be pressed after the form was already filled. The plan knows it outright.
+    if (o.returnTime != null) {
+      const rh = typeof o.returnTime === 'number' ? o.returnTime : parseTimeStr(o.returnTime);
+      if (Number.isFinite(rh)) { _session.returnTimeH = rh; _session.returnFired = false; }
+    }
+
     // REGISTER THE SERVER-SIDE WATCH FOR THIS TRIP. Deliberately not awaited: a plan must render
     // whether or not a push subscription succeeds, and every failure is recorded in pushState()
     // for selfTest() to report rather than thrown into a plan that was otherwise fine.
@@ -383,6 +409,15 @@ export function loadSessionFromPlan(plan, o = {}) {
       const cues = [
         ..._session.solunarMajors.map((m) => ({ at: isoAt(m.h), title: 'Solunar Major',
           body: `Peak bite window at ${hToStr(m.h)}`, tag: 'solunar-major', severity: 'note' })),
+        // BAND CHANGES ARE EMPTY, AND THIS IS WHY. Ryan, 2026-08-26: "i want bait changes, and
+        // everything else sent as notifications to the echomap." They are the one item on this
+        // list with no clock. PLAN_SCHEMA_V2 keys every change to DISTANCE on purpose — his
+        // words, 2026-08-05: "every time i catch a fish i am going to slow down or stop
+        // completely so more like it needs to be a distance from thing not a time to thing" —
+        // and a cue with no time cannot ride a cron. They ride the proximity watcher instead,
+        // which needs the app open, which is never. Giving them an estimated hour here would
+        // invent exactly the number the schema refuses. Open question, and his to answer; the
+        // spread stays so that the day they have a producer they are already wired.
         ..._session.bandChangeTimes.map((b) => ({ at: isoAt(b.h), title: 'Band Change',
           body: `Switch to ${b.label}`, tag: `band-${b.label}`, severity: 'note' })),
         ..._session.weatherCues.map((w) => ({ at: isoAt(w.h), title: w.severity === 'stop'
@@ -480,19 +515,11 @@ export function loadSessionFromSmartPlan() {
         .filter(h => h != null).map(h => ({ h, fired: false }));
     }
 
-    // Band change times from global set by smart-plan after phases computed
-    const phases = window._trollmapPhases || [];
-    _session.bandChangeTimes = [];
-    for (let i = 1; i < phases.length; i++) {
-      const routes = window._smartPlanPhaseRoutes || [];
-      const route = routes[i] || {};
-      const depthLabel = route.depthMin != null ? `${route.depthMin}–${route.depthMax}ft` : '';
-      _session.bandChangeTimes.push({
-        h: phases[i].startH,
-        label: `Band ${i + 1}${depthLabel ? ' (' + depthLabel + ')' : ''}`,
-        fired: false,
-      });
-    }
+    // THE BAND LOOP THAT USED TO BE HERE READ `window._trollmapPhases`, WHICH NOTHING WRITES.
+    // Grepped across js/ and index.html on 2026-08-26: two readers, zero writers, in a file whose
+    // comment said "set by smart-plan after phases computed". It never was. The loop is gone
+    // rather than left looking like a feature; see the band-change note in loadSessionFromPlan
+    // for what would have to be true for these to be deliverable at all.
 
     // Return time from plan form
     const returnVal = document.getElementById('planReturnTime')?.value;
@@ -796,9 +823,18 @@ export async function selfTest() {
       _session.launchPos ? `${_session.launchPos.lat.toFixed(4)}, ${_session.launchPos.lon.toFixed(4)}`
                          : 'none — a trip watch cannot arm without one');
 
-  add('a plan is loaded', !!(_session.weatherCues || _session.solunarMajors || []).length
-      || !!_session.returnTimeH, 'cues: ' + ((_session.weatherCues || []).length)
-      + ' weather, ' + ((_session.solunarMajors || []).length) + ' solunar major');
+  // COUNT EACH KIND, AND DO NOT LET ONE STAND IN FOR ANOTHER. This read
+  // `(_session.weatherCues || _session.solunarMajors || [])`, and an empty array is truthy — so
+  // the moment a plan set `weatherCues = []` the solunar arm of that `||` became unreachable and
+  // the line reported the weather count under a label that claimed to cover both. A calm day and
+  // a broken handover printed the same thing.
+  const nWeather = (_session.weatherCues || []).length;
+  const nSolunar = (_session.solunarMajors || []).length;
+  const nBands = (_session.bandChangeTimes || []).length;
+  add('a plan is loaded', !!(nWeather + nSolunar + nBands) || !!_session.returnTimeH,
+      `cues: ${nWeather} weather, ${nSolunar} solunar major, ${nBands} band change`
+      + (_planPins.length ? `, ${_planPins.length} position` : '')
+      + (_session.returnTimeH ? '' : ' — and NO return time, so the watch cannot expire on one'));
 
   // The live hazard poll, end to end, against the real Worker.
   const at = _lastPos || _session.launchPos;
@@ -884,19 +920,13 @@ setTimeout(() => {
     });
   }
 
-  // Hook into Smart Plan completion to auto-reload session data
-  const smartPlanBtn = document.getElementById('runSmartPlanBtn');
-  if (smartPlanBtn) {
-    // Re-load session 3 seconds after Smart Plan runs (data will be rendered by then)
-    const orig = window.runSmartPlan;
-    if (orig) {
-      window.runSmartPlan = async function(...args) {
-        const result = await orig(...args);
-        if (_enabled) setTimeout(loadSessionFromSmartPlan, 3000);
-        return result;
-      };
-    }
-  }
+  // A WRAPPER FOR `window.runSmartPlan` STOOD HERE. The app exports `runSmartPlanV2`, and
+  // `window.runSmartPlan` is assigned nowhere, so `orig` was always undefined and the whole
+  // block was a no-op guarded by an `if` that made it look defensive. It also waited three
+  // seconds for the DOM to catch up, which is the tell: the session was being reconstructed by
+  // reading the page instead of being handed the plan. runSmartPlanV2 calls
+  // loadSessionFromPlan() directly with the plan, the launch, the date and the solunar, so
+  // there is nothing left to re-read. Removed 2026-08-26.
 
   updateUI();
 }, 800);
@@ -913,29 +943,13 @@ window.trollmapLoadSolunarNotifications = function(sol) {
     .filter(h => h != null).map(h => ({ h, fired: false }));
 };
 
-// Called by smart-plan after phases computed
-window.trollmapLoadPhaseNotifications = function(phases) {
-  if (!_enabled) return;
-  _session.bandChangeTimes = [];
-  const routes = window._smartPlanPhaseRoutes || [];
-  for (let i = 1; i < phases.length; i++) {
-    const route = routes[i] || {};
-    const depthLabel = route.depthMin != null ? `${route.depthMin}–${route.depthMax}ft` : '';
-    _session.bandChangeTimes.push({
-      h: phases[i].start,
-      label: `Band ${i + 1}${depthLabel ? ' (' + depthLabel + ')' : ''}`,
-      fired: false,
-    });
-  }
-};
-
-// Called by smart-plan when plan completes
-window.trollmapReloadNotificationSession = function() {
-  if (!_enabled) return;
-  loadSessionFromSmartPlan();
-  _firedPins.clear(); // reset proximity on new plan
-  console.log('[notifications] Session reloaded after Smart Plan');
-};
+// THREE MORE ENTRY POINTS STOOD HERE AND NONE OF THEM WAS EVER CALLED.
+// `trollmapLoadPhaseNotifications` and `trollmapReloadNotificationSession` each carried a comment
+// naming the caller — "called by smart-plan" — and neither name appears anywhere else in js/ or
+// index.html. They read the same absent `_trollmapPhases` and differed from each other only in
+// whether they used `phases[i].start` or `phases[i].startH`, which is the signature of code that
+// was never run by either. Removed 2026-08-26. `trollmapLoadSolunarNotifications` below stays:
+// plan-builder.js:982 does call it.
 
 // RESTORE THE BELL. Only when permission is still granted -- a stored flag is a memory of a
 // decision, not a substitute for the permission itself, and asking again on page load would be

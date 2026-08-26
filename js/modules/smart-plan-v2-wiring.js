@@ -328,6 +328,11 @@ export async function runSmartPlanV2() {
     launch: launchFrom(ramp),
     // The day being FISHED. Without it the watch expires against the day it was BUILT.
     date: inp.dateStr,
+    // THE SAME `sol` THIS PLAN WAS BUILT WITH, handed over rather than left on `window` for
+    // notifications.js to find. It read `window._trollmapSolunar`, which only the v1 builder
+    // writes, so every v2 trip watch armed without a single bite window in it.
+    solunar: sol,
+    returnTime: inp.returnTime,
   });
   try { renderAll(); } catch (e) { console.warn('[plan-v2] map redraw failed:', e.message); }
 

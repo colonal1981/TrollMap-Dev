@@ -153,3 +153,93 @@ test('given a worker and a launch point, the poll is configured and the endpoint
     assert.equal(st.checks.find((c) => c.name === 'hazard endpoint answers').ok, true);
   } finally { m.disableNotifications(); }
 });
+
+// ── WHAT THE WATCH ACTUALLY CARRIES ─────────────────────────────────────────────────────────
+//
+// Ryan's self-test on 2026-08-26 read `trip watch armed true, 1 cue(s), 2 device(s), until
+// 2026-08-25T19:00:00.000Z`. Both numbers were wrong in the same direction: the window had
+// already closed, and the one cue was the return-time warning. The bite windows and the day's
+// clock came from `window._trollmapSolunar` and `window._trollmapPhases`, written by the v1
+// builder and by nothing at all respectively.
+
+function watchPosts() {
+  const posts = [];
+  const prior = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    if (String(url).endsWith('/alerts/watch')) {
+      posts.push(JSON.parse((init && init.body) || '{}'));
+      return { ok: true, status: 200,
+               json: async () => ({ ok: true, until: null, cues: 0, devices: 1 }) };
+    }
+    return prior(url, init);
+  };
+  return posts;
+}
+
+const PLAN = { legs: [], spots: [] };
+const AT_LAUNCH = { worker: 'https://w.example', launch: { lat: 34.38, lon: -80.73 } };
+
+test('the bite windows travel with the watch instead of waiting on a window global', async () => {
+  stubEnv();
+  const posts = watchPosts();
+  const m = await load();
+  await m.enableNotifications();
+  try {
+    m.loadSessionFromPlan(PLAN, { ...AT_LAUNCH, date: '2026-09-01', returnTime: '15:00',
+      solunar: { major1: 7.5, major2: 19.5, minor1: 1.5, minor2: 13.5 } });
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(posts.length, 1, 'exactly one watch was registered');
+    const majors = posts[0].cues.filter((c) => c.title === 'Solunar Major');
+    assert.equal(majors.length, 2, 'both majors, not zero');
+    const first = new Date(majors[0].at);
+    assert.equal(first.getHours(), 7);
+    assert.equal(first.getMinutes(), 30);
+  } finally { m.disableNotifications(); }
+});
+
+test('every cue is placed on the day being FISHED, not the day the plan was built', async () => {
+  // The bug exactly: hours-of-day resolved against local midnight of the build day, so a plan
+  // made the night before armed a watch that the next cron sweep deleted as expired.
+  stubEnv();
+  const posts = watchPosts();
+  const m = await load();
+  await m.enableNotifications();
+  try {
+    m.loadSessionFromPlan(PLAN, { ...AT_LAUNCH, date: '2026-09-01', returnTime: '15:00',
+      solunar: { major1: 7.5, major2: 19.5 } });
+    await new Promise((r) => setTimeout(r, 20));
+    const until = new Date(posts[0].until);
+    assert.equal(until.getFullYear(), 2026);
+    assert.equal(until.getMonth(), 8);           // September, zero-based
+    assert.equal(until.getDate(), 1);
+    assert.equal(until.getHours(), 15);
+    for (const c of posts[0].cues) assert.equal(new Date(c.at).getDate(), 1);
+  } finally { m.disableNotifications(); }
+});
+
+test('no solunar handed over means no solunar cues, silently invented by nothing', async () => {
+  stubEnv();
+  const posts = watchPosts();
+  const m = await load();
+  await m.enableNotifications();
+  try {
+    m.loadSessionFromPlan(PLAN, { ...AT_LAUNCH, date: '2026-09-01', returnTime: '15:00' });
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(posts[0].cues.filter((c) => c.title === 'Solunar Major').length, 0);
+    assert.equal(posts[0].cues.length, 1, 'the return-time warning, and only that');
+  } finally { m.disableNotifications(); }
+});
+
+test('a plan with no date still arms, against today, rather than throwing', async () => {
+  stubEnv();
+  const posts = watchPosts();
+  const m = await load();
+  await m.enableNotifications();
+  try {
+    m.loadSessionFromPlan(PLAN, { ...AT_LAUNCH, returnTime: '23:30' });
+    await new Promise((r) => setTimeout(r, 20));
+    assert.equal(posts.length, 1);
+    const until = new Date(posts[0].until);
+    assert.equal(until.getDate(), new Date().getDate());
+  } finally { m.disableNotifications(); }
+});

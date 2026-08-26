@@ -835,6 +835,9 @@ export async function buildFromPicked() {
     worker: CF_WORKER_URL,
     launch: launchFrom(T.ramp),
     date: T.dateStr || T.date || null,
+    // This path computes no solunar, so it hands over none. The return time it does know, and
+    // that is what the watch expires on.
+    returnTime: T.returnTime || null,
   });
 
   // SAY THE ORDER OUT LOUD AND SAY IT IS NOT THE SHORT ONE. Silently reordering what he ticked is
