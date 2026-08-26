@@ -415,8 +415,24 @@ export async function handleAlerts(request, env, url) {
     const [devices, watches] = await Promise.all([
       env.KV.list({ prefix: 'device:' }), env.KV.list({ prefix: 'watch:' }),
     ]);
+    const key = applicationServerKey(readJwk(env));
+    // THE REASON TRAVELS ON THE 200, NOT ONLY ON THE 503.
+    //
+    // `/alerts/vapid-public` answers 503 when it cannot build a key, which is the correct status
+    // and makes the body unreadable to most tooling -- a diagnostic nobody can read is not a
+    // diagnostic. Found 2026-08-26 trying to tell Ryan why his configured secrets were not
+    // taking, and being unable to see my own error message.
+    //
+    // `seen` reports PRESENCE ONLY -- never a value, never a prefix, never a length that could
+    // narrow one. Whether a variable is set is a configuration fact; what it contains is a secret.
     return json({
-      configured: !!applicationServerKey(readJwk(env)),
+      configured: !!key,
+      problem: key ? null : vapidProblem(env),
+      seen: {
+        VAPID_PUBLIC_KEY: !!(env && env.VAPID_PUBLIC_KEY),
+        VAPID_PRIVATE_KEY: !!(env && env.VAPID_PRIVATE_KEY),
+        VAPID_PRIVATE_JWK: !!(env && env.VAPID_PRIVATE_JWK),
+      },
       devices: devices.keys.length,
       active_watches: watches.keys.length,
     });
