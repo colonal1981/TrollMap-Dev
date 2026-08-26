@@ -469,3 +469,51 @@ describe('the app chooses which way round each pass is trolled', () => {
   });
 });
 
+describe('the phrases the profiles actually use', () => {
+  // Measured on 2026-08-26 across registry/_research_profiles_cache.json: 3,036 structure
+  // phrases on 59 researched waters, 939 of which reached no type at all. Every case below is
+  // a phrase counted in that pile, not one invented for a test.
+
+  it('leads the dock types, which the ranker has scored all along', () => {
+    // The single biggest hole: 190 phrases named docks and STRUCTURE_PHRASES had no dock rule,
+    // so a profile that said "target the docks" led nothing. Nothing new is scored here --
+    // DEFAULT_WEIGHTS already carries all three and every pack ships docks.geojson.
+    const { weights, matched, unmatched } = structureWeights(
+      DEFAULT_WEIGHTS, DEFAULT_RELIEF_WEIGHTS, ['docks', 'boat docks', 'deep docks', 'boathouses']);
+    expect(weights.dock_line).toBe(DEFAULT_WEIGHTS.dock_line + RESEARCH_LEAD);
+    expect(weights.dock_cluster).toBe(DEFAULT_WEIGHTS.dock_cluster + RESEARCH_LEAD);
+    expect(weights.dock).toBe(DEFAULT_WEIGHTS.dock + RESEARCH_LEAD);
+    expect(matched.includes('dock_line')).toBe(true);
+    expect(unmatched.length).toBe(0);
+  });
+
+  it('reads the plural the profiles write, not the singular the regex assumed', () => {
+    // "creek arms" 27x, "main lake basins" 15x, "pockets" 7x. Each named a cove and each fell
+    // through a \b anchor written around the singular.
+    for (const phrase of ['creek arms', 'main lake basins', 'pockets', 'coves']) {
+      const { weights, unmatched } = structureWeights(
+        DEFAULT_WEIGHTS, DEFAULT_RELIEF_WEIGHTS, [phrase]);
+      expect(weights.cove).toBe(DEFAULT_WEIGHTS.cove + RESEARCH_LEAD);
+      expect(unmatched.length).toBe(0);
+    }
+  });
+
+  it('does not read a cove into a word that merely starts with one', () => {
+    // The old anchor was `\bcove`, so "covering water" lifted coves. Tightening the plural
+    // fixed this too, and it is asserted so a later loosening cannot bring it back.
+    const { weights, unmatched } = structureWeights(
+      DEFAULT_WEIGHTS, DEFAULT_RELIEF_WEIGHTS, ['covering water quickly']);
+    expect(weights.cove).toBe(DEFAULT_WEIGHTS.cove);
+    expect(unmatched.length).toBe(1);
+  });
+
+  it('leaves cover the chartpack does not carry in the open', () => {
+    // 645 phrases still land nowhere, and these are the four largest groups. They are NOT a
+    // regex gap -- there is no riprap, weed, cypress or deep-hole type for a lead to point at,
+    // and inventing one would score a type the pipeline never emits. `unmatched` is where that
+    // stays visible.
+    const { unmatched } = structureWeights(DEFAULT_WEIGHTS, DEFAULT_RELIEF_WEIGHTS,
+      ['riprap', 'weed edges', 'cypress tree clusters', 'deep holes']);
+    expect(unmatched.length).toBe(4);
+  });
+});

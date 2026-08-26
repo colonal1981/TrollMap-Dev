@@ -326,12 +326,13 @@ export const RESEARCH_LEAD = 27;
 const STRUCTURE_PHRASES = [
   [/creek\s*mouth|tributary mouth|feeder creek/i, ['creek_mouth']],
   [/\bpoint/i, ['point']],
-  [/\bcove|pocket\b|\bbasin\b|\barm\b/i, ['cove']],
+  [/\bcoves?\b|\bpockets?\b|\bbasins?\b|\barms?\b/i, ['cove']],
   [/hump|offshore structure|sunken island|shoal|high spot/i, ['hump']],
   [/ledge|drop\s*-?\s*off|break\s*line|breakline|\bbluff/i, ['ledge']],
   [/timber|laydown|stump|brush|wood|treetop/i, ['timber', 'attractor']],
   [/attractor|fish habitat|reef ball|brush\s*pile/i, ['attractor', 'pile']],
   [/bridge|causeway|piling/i, ['bridge', 'pile']],
+  [/\bdocks?\b|boat\s*house/i, ['dock_line', 'dock_cluster', 'dock']],
   [/\bflat|shallow|shoreline/i, ['shallow']],
 ];
 
@@ -358,8 +359,12 @@ const RELIEF_PHRASES = [
  * complete ranking, and zeroing everything it failed to mention would throw away a timber stand
  * because an LLM wrote three bullet points instead of five.
  *
- * Phrases that map to nothing are RETURNED, not dropped. "lower lake basin" and "current breaks"
- * had no equivalent when this was written, and that gap belongs in the open.
+ * Phrases that map to nothing are RETURNED, not dropped, and the size of that pile is measured
+ * rather than guessed: 3,036 structure phrases across 59 researched waters, 645 of them (21%)
+ * still landing on no type as of 2026-08-26. What is left is not a regex problem — rock and
+ * riprap (94 phrases), deep holes (66), weed and vegetation (53) and cypress (38) name real cover
+ * that the CHARTPACK does not carry, so leading them here would raise a weight for a type nothing
+ * emits. That gap stays in `unmatched`, in the open, where it can be counted.
  *
  * @param {object}   base           DEFAULT_WEIGHTS
  * @param {object}   baseRelief     DEFAULT_RELIEF_WEIGHTS
@@ -380,8 +385,8 @@ export function structureWeights(base, baseRelief, structures) {
       if (!re.test(text)) continue;
       for (const t of types) {
         // Only lead something the ranker already scores. Inventing a weight for a type the
-        // pipeline never emits would look like it worked and do nothing — which is exactly the
-        // shape of the docks gap, and that one is recorded rather than faked.
+        // pipeline never emits would look like it worked and do nothing — riprap and cypress are
+        // named by 132 phrases between them and are recorded in `unmatched` rather than faked.
         if (base[t] > 0) { weights[t] = base[t] + RESEARCH_LEAD; matched.add(t); hit = true; }
       }
     }
