@@ -19,7 +19,7 @@ Python side will read as dead here and may not be. See the `lakes.js` near miss 
 | routesUncalled | 0 |
 | routesMutatingUngated | 18 |
 | feeds | 111 |
-| deadExports | 218 |
+| deadExports | 207 |
 | orphanModules | 4 |
 | duplicateFnNames | 43 |
 | crossModuleGlobals | 39 |
@@ -426,7 +426,7 @@ _none_
 | `js/modules/layers-panel.js` | 105 | 4 | 1 | **2** | layers-panel.js — the one place every map overlay is turned on and off. |
 | `js/modules/measure-tool.js` | 106 | 0 | 1 | 0 | Distance & Bearing Measurement Tool — click two points on the |
 | `js/modules/noaa-tides.js` | 228 | 1 | 1 | **1** | NOAA Coastal Tides — Plan-tab tide panel. |
-| `js/modules/notifications.js` | 909 | 13 | 3 | **11** | notifications.js — On-water alerts for TrollMap |
+| `js/modules/notifications.js` | 941 | 14 | 4 | 0 | notifications.js — On-water alerts for TrollMap |
 | `js/modules/osm-structure.js` | 145 | 0 | 1 | 0 | osm-structure.js — OSM Structure Layer Toggle |
 | `js/modules/plan-assemble.js` | 872 | 8 | 10 | 0 | plan-assemble.js — ordered candidates + the model's judgement → a plan v2 object. |
 | `js/modules/plan-builder.js` | 2547 | 10 | 7 | 0 | Plan Builder — the Plan tab form, save/load, preview rendering, |
@@ -441,7 +441,7 @@ _none_
 | `js/modules/plan-to-timeline.js` | 407 | 6 | 6 | **1** | plan-to-timeline.js — a v2 plan, in the shape the rest of the Plan tab already reads. |
 | `js/modules/plan-tracks.js` | 220 | 6 | 4 | **1** | plan-tracks.js — a v2 plan, materialised into the tracks and waypoints the export path rea |
 | `js/modules/plan-water-index.js` | 134 | 2 | 2 | 0 | plan-water-index.js — the two spatial lookups the water reasons need, and nothing else. |
-| `js/modules/plan-water-ui.js` | 924 | 4 | 1 | **3** | plan-water-ui.js — the Water tab. The screen where the fisherman chooses. |
+| `js/modules/plan-water-ui.js` | 923 | 4 | 1 | **3** | plan-water-ui.js — the Water tab. The screen where the fisherman chooses. |
 | `js/modules/plan-water.js` | 1287 | 21 | 5 | 0 | plan-water.js — offer the water, with reasons, and let the fisherman choose. |
 | `js/modules/qdc-decoder.js` | 520 | 6 | 2 | 0 | qdc-decoder.js — pure functions: raw .qdc folder → grid → contour GeoJSON. |
 | `js/modules/quickdraw-key.js` | 95 | 0 | 1 | 0 | Depth key — the legend for the one depth ladder. |
@@ -530,7 +530,7 @@ _none_
 | `test/duke-lake-row.test.js` | 83 | 0 | 0 | 0 | normalizeDukeRow against the REAL /lakes/current-level response. |
 | `test/duke-operating-range.test.js` | 278 | 0 | 0 | 0 | The guide curve, the drought stage as a NUMBER, and where this date usually sits. |
 | `test/duke-release-direction.test.js` | 396 | 0 | 0 | 0 | Inflow or outflow: which side of a lake a Duke release comes from. |
-| `test/echomap-text.test.js` | 61 | 0 | 0 | 0 | THE TARGET DISPLAY IS A CHARTPLOTTER, NOT A PHONE TRAY. |
+| `test/echomap-text.test.js` | 87 | 0 | 0 | 0 | THE TARGET DISPLAY IS A CHARTPLOTTER, NOT A PHONE TRAY. |
 | `test/expect-shim.mjs` | 221 | 8 | 89 | 0 | test/expect-shim.mjs -- `describe`/`it`/`expect` on top of node:test and node:assert. |
 | `test/facts-are-not-agent-scoped.test.js` | 86 | 0 | 0 | 0 | A FIX BUILT ON A PREMISE NOBODY MEASURED. |
 | `test/fake-indexeddb.mjs` | 186 | 2 | 4 | 0 | test/fake-indexeddb.mjs — a small in-memory IndexedDB, enough for utils/db.js. |
@@ -686,7 +686,6 @@ _none_
 - `js/modules/lake-research.js`: initLakeResearch, loadProfile, saveCurrentResearchProfile, populateResearchLakeDropdown, runFullPipeline, runResume
 - `js/modules/layers-panel.js`: isOpen, close
 - `js/modules/noaa-tides.js`: stageLabel
-- `js/modules/notifications.js`: requestNotificationPermission, lastFire, checkWindAlert, loadSessionFromSmartPlan, enableNotifications, disableNotifications, pushState, watchState, registerAlertDevice, startTripWatch, selfTest
 - `js/modules/plan-candidates.js`: AMPS_REF_MPH, AMPS_REF_A, AMPS_EXP, ampsAtMph, groupDocks, eligibleForHolding, sliceLine, catchSupport, pointToSegmentM
 - `js/modules/plan-inputs.js`: normaliseHolding
 - `js/modules/plan-pieces.js`: stretchCoords

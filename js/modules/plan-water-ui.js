@@ -45,7 +45,7 @@ import { poiSpotFeatures, attractorSpotFeatures } from './plan-candidates.js';
 import { planToTimeline, installTimeline } from './plan-to-timeline.js';
 import { renderSmartPlanUI, syncSpread } from './smart-plan-ui.js';
 import { materialisePlan } from './plan-tracks.js';
-import { loadSessionFromPlan, isEnabled } from './notifications.js';
+import { loadSessionFromPlan, isEnabled, launchFrom } from './notifications.js';
 import { renderAll } from '../core/map-init.js';
 import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
 import { connectionFor } from '../data/lure-knowledge.js';
@@ -833,8 +833,7 @@ export async function buildFromPicked() {
   const cues = loadSessionFromPlan(r.plan, {
     weatherByHour: T.weatherByHour,
     worker: CF_WORKER_URL,
-    launch: (T.ramp && Number.isFinite(T.ramp.lat) && Number.isFinite(T.ramp.lon))
-      ? { lat: T.ramp.lat, lon: T.ramp.lon } : null,
+    launch: launchFrom(T.ramp),
   });
 
   // SAY THE ORDER OUT LOUD AND SAY IT IS NOT THE SHORT ONE. Silently reordering what he ticked is

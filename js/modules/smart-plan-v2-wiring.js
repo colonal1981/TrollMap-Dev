@@ -24,7 +24,7 @@ import { buildSmartPlanV2, packFetcher, modelAsker, waterRouter } from './smart-
 import { planToTimeline, installTimeline } from './plan-to-timeline.js';
 import { renderSmartPlanUI, syncSpread } from './smart-plan-ui.js';
 import { materialisePlan } from './plan-tracks.js';
-import { loadSessionFromPlan } from './notifications.js';
+import { loadSessionFromPlan, launchFrom } from './notifications.js';
 import { planIssuesHtml } from './plan-issues.js';
 import { renderAll } from '../core/map-init.js';
 
@@ -324,8 +324,8 @@ export async function runSmartPlanV2() {
     // position of its own. Ryan's case is weather that was not forecast, which no snapshot taken
     // at load can ever contain.
     worker: CF_WORKER_URL,
-    launch: (ramp && Number.isFinite(ramp.lat) && Number.isFinite(ramp.lon))
-      ? { lat: ramp.lat, lon: ramp.lon } : null,
+    // `ramp` is [lon, lat] here -- see rampCoords(). launchFrom() takes either shape.
+    launch: launchFrom(ramp),
   });
   try { renderAll(); } catch (e) { console.warn('[plan-v2] map redraw failed:', e.message); }
 

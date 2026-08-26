@@ -58,3 +58,29 @@ test('the worker URL is imported, never guessed at off `state`', () => {
   }
   assert.deepEqual(bad, [], 'CF_WORKER_URL is a named export, not a property of state');
 });
+
+test('a launch point is read from EITHER shape a ramp arrives in', async () => {
+  // rampCoords() returns [lon, lat] -- "the order every geometry in this app uses", per its own
+  // doc comment. A DNR ramp record is {lat, lon}. Both reach loadSessionFromPlan through
+  // different call sites, and asking for `.lat` on the array yields undefined, which passed
+  // `launch: null` and silently prevented every trip watch from arming.
+  globalThis.window = globalThis;
+  globalThis.document = { getElementById: () => null, querySelector: () => null,
+                          querySelectorAll: () => [], addEventListener: () => {} };
+  const { launchFrom } = await import('../js/modules/notifications.js');
+
+  // Wateree State Park, in both conventions. Same point, same answer.
+  assert.deepEqual(launchFrom([-80.70, 34.44]), { lat: 34.44, lon: -80.70 });
+  assert.deepEqual(launchFrom({ lat: 34.44, lon: -80.70 }), { lat: 34.44, lon: -80.70 });
+
+  // AND THE ORDER IS NOT GUESSED. [lon, lat] must not come back as {lat: -80.7}.
+  assert.equal(launchFrom([-80.70, 34.44]).lat, 34.44);
+
+  // Anything that is not a placeable point is null, not a half-filled object: a watch armed on
+  // NaN would report weather for the Gulf of Guinea.
+  assert.equal(launchFrom(null), null);
+  assert.equal(launchFrom([]), null);
+  assert.equal(launchFrom([-80.70]), null);
+  assert.equal(launchFrom({ lat: 34.44 }), null);
+  assert.equal(launchFrom({ lat: 'x', lon: 'y' }), null);
+});

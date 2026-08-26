@@ -630,6 +630,33 @@ function keyBytes(b64) {
 }
 
 /**
+ * A LAUNCH POINT, FROM EITHER SHAPE A RAMP ARRIVES IN.
+ *
+ * `rampCoords()` in smart-plan-v2-wiring returns `[lon, lat]` -- "the order every geometry in
+ * this app uses", says its own doc comment on the line above it. A DNR ramp record is an object
+ * with `.lat` and `.lon`. Both reach loadSessionFromPlan, through different call sites.
+ *
+ * Both of my call sites asked for `.lat` on the array, got undefined, and passed `launch: null`
+ * -- so the gate that arms a trip watch never opened. Ryan toggled the bell, refreshed, rebuilt
+ * the plan and watched `active_watches` stay at 0 four separate times, while every other line of
+ * the self-test came back green. The file documented the shape and I guessed at it anyway; this
+ * is the second time tonight the same mistake cost him a round trip.
+ *
+ * One function that knows both conventions beats two call sites that each assume one.
+ */
+export function launchFrom(ramp) {
+  if (!ramp) return null;
+  if (Array.isArray(ramp)) {
+    const lon = Number(ramp[0]);
+    const lat = Number(ramp[1]);
+    return (Number.isFinite(lat) && Number.isFinite(lon)) ? { lat, lon } : null;
+  }
+  const lat = Number(ramp.lat);
+  const lon = Number(ramp.lon);
+  return (Number.isFinite(lat) && Number.isFinite(lon)) ? { lat, lon } : null;
+}
+
+/**
  * REGISTER THIS DEVICE. Once, ever, from the phone.
  *
  * Ryan, 2026-08-26: "i dont plan from my phone" and "i do not use trollmap on the water." A
@@ -751,8 +778,13 @@ export async function selfTest() {
 
   add('geolocation available', 'geolocation' in navigator,
       ('geolocation' in navigator) ? '' : 'proximity and live position will not work');
-  add('position known', !!(_lastPos || _session.launchPos),
-      _lastPos ? 'live fix' : (_session.launchPos ? 'launch point only, no live fix yet' : 'none'));
+  // TWO DIFFERENT FACTS, AND REPORTING THEM AS ONE HID THE BUG. A live browser fix says where
+  // the phone is; a launch point says what the watch is ABOUT. This line said "live fix" and
+  // looked green while `launchPos` was null and the watch could never arm.
+  add('live position fix', !!_lastPos, _lastPos ? 'yes' : 'none yet');
+  add('plan launch point known', !!_session.launchPos,
+      _session.launchPos ? `${_session.launchPos.lat.toFixed(4)}, ${_session.launchPos.lon.toFixed(4)}`
+                         : 'none — a trip watch cannot arm without one');
 
   add('a plan is loaded', !!(_session.weatherCues || _session.solunarMajors || []).length
       || !!_session.returnTimeH, 'cues: ' + ((_session.weatherCues || []).length)

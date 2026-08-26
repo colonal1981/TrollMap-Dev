@@ -8,7 +8,7 @@
     "routesUncalled": 0,
     "routesMutatingUngated": 18,
     "feeds": 111,
-    "deadExports": 218,
+    "deadExports": 207,
     "orphanModules": 4,
     "duplicateFnNames": 43,
     "crossModuleGlobals": 39,
@@ -7952,7 +7952,7 @@
     },
     "js/modules/notifications.js": {
       "purpose": "notifications.js — On-water alerts for TrollMap",
-      "lines": 909,
+      "lines": 941,
       "exports": [
         "requestNotificationPermission",
         "lastFire",
@@ -7964,6 +7964,7 @@
         "isEnabled",
         "pushState",
         "watchState",
+        "launchFrom",
         "registerAlertDevice",
         "startTripWatch",
         "selfTest"
@@ -8016,29 +8017,25 @@
           "file": "js/modules/plan-water-ui.js",
           "names": [
             "loadSessionFromPlan",
-            "isEnabled"
+            "isEnabled",
+            "launchFrom"
           ]
         },
         {
           "file": "js/modules/smart-plan-v2-wiring.js",
           "names": [
-            "loadSessionFromPlan"
+            "loadSessionFromPlan",
+            "launchFrom"
+          ]
+        },
+        {
+          "file": "test/echomap-text.test.js",
+          "names": [
+            "*dynamic*"
           ]
         }
       ],
-      "deadExports": [
-        "requestNotificationPermission",
-        "lastFire",
-        "checkWindAlert",
-        "loadSessionFromSmartPlan",
-        "enableNotifications",
-        "disableNotifications",
-        "pushState",
-        "watchState",
-        "registerAlertDevice",
-        "startTripWatch",
-        "selfTest"
-      ],
+      "deadExports": [],
       "globalsWritten": [],
       "globalsRead": [
         "_trollmapSolunar",
@@ -9176,7 +9173,7 @@
     },
     "js/modules/plan-water-ui.js": {
       "purpose": "plan-water-ui.js — the Water tab. The screen where the fisherman chooses.",
-      "lines": 924,
+      "lines": 923,
       "exports": [
         "findWater",
         "pickedWater",
@@ -9300,7 +9297,8 @@
           "from": "./notifications.js",
           "names": [
             "loadSessionFromPlan",
-            "isEnabled"
+            "isEnabled",
+            "launchFrom"
           ],
           "resolved": "js/modules/notifications.js"
         },
@@ -9999,7 +9997,8 @@
         {
           "from": "./notifications.js",
           "names": [
-            "loadSessionFromPlan"
+            "loadSessionFromPlan",
+            "launchFrom"
           ],
           "resolved": "js/modules/notifications.js"
         },
@@ -13741,7 +13740,7 @@
     },
     "test/echomap-text.test.js": {
       "purpose": "THE TARGET DISPLAY IS A CHARTPLOTTER, NOT A PHONE TRAY.",
-      "lines": 61,
+      "lines": 87,
       "exports": [],
       "imports": [
         {
@@ -13774,6 +13773,14 @@
             "dirname",
             "join"
           ]
+        },
+        {
+          "from": "../js/modules/notifications.js",
+          "names": [
+            "*dynamic*"
+          ],
+          "dynamic": true,
+          "resolved": "js/modules/notifications.js"
         }
       ],
       "importedBy": [],
