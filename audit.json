@@ -8,7 +8,7 @@
     "routesUncalled": 0,
     "routesMutatingUngated": 18,
     "feeds": 111,
-    "deadExports": 217,
+    "deadExports": 218,
     "orphanModules": 4,
     "duplicateFnNames": 43,
     "crossModuleGlobals": 39,
@@ -1034,7 +1034,7 @@
     },
     "Worker/conditions.js": {
       "purpose": "Worker/conditions.js — one call that answers \"what is this water doing right now\".",
-      "lines": 4635,
+      "lines": 4657,
       "exports": [
         "obsBearing",
         "wwaText",
@@ -1081,6 +1081,7 @@
         "arrivalDams",
         "dukeBasinAgrees",
         "registryCatalog",
+        "isBelowDam",
         "usgsSitesFor",
         "parseSiteCatalog",
         "parseCwmsTimeseries",
@@ -1402,6 +1403,7 @@
       ],
       "deadExports": [
         "dukeBasinWhy",
+        "isBelowDam",
         "CONDITIONS_ROUTES"
       ],
       "globalsWritten": [],
@@ -18020,7 +18022,7 @@
     },
     "test/water-conditions.test.js": {
       "purpose": "One read for the state of the water.",
-      "lines": 867,
+      "lines": 884,
       "exports": [],
       "imports": [
         {
@@ -18840,7 +18842,7 @@
         "Scripts/capture_upstreams.py:120",
         "Scripts/capture_upstreams.py:366",
         "Scripts/capture_upstreams.py:386",
-        "Worker/conditions.js:4313",
+        "Worker/conditions.js:4335",
         "js/modules/tide-engine.js:22"
       ],
       "side": [
@@ -18859,8 +18861,8 @@
         "Scripts/capture_upstreams.py:367",
         "Scripts/capture_upstreams.py:379",
         "Scripts/capture_upstreams.py:384",
-        "Worker/conditions.js:2979",
-        "Worker/conditions.js:3762",
+        "Worker/conditions.js:2999",
+        "Worker/conditions.js:3782",
         "Worker/trollmap-worker.js:337",
         "Worker/trollmap-worker.js:1440",
         "Worker/worker-data.js:286",
@@ -19142,7 +19144,7 @@
       "hits": 2,
       "files": [
         "Worker/conditions.js:809",
-        "Worker/conditions.js:3662"
+        "Worker/conditions.js:3682"
       ],
       "side": [
         "worker"
@@ -19176,7 +19178,7 @@
         "Worker/conditions.js:1768",
         "Worker/conditions.js:2375",
         "Worker/conditions.js:2811",
-        "Worker/conditions.js:4025",
+        "Worker/conditions.js:4045",
         "Worker/worker-data.js:463",
         "Worker/worker-data.js:597"
       ],

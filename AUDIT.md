@@ -19,7 +19,7 @@ Python side will read as dead here and may not be. See the `lakes.js` near miss 
 | routesUncalled | 0 |
 | routesMutatingUngated | 18 |
 | feeds | 111 |
-| deadExports | 217 |
+| deadExports | 218 |
 | orphanModules | 4 |
 | duplicateFnNames | 43 |
 | crossModuleGlobals | 39 |
@@ -345,7 +345,7 @@ _none_
 | `Scripts/make_counties.mjs` | 49 | 0 | 0 | 0 | make_counties.mjs -- flatten us-atlas counties-10m TopoJSON into a GeoJSON the Python |
 | `Worker/alerts.js` | 582 | 6 | 2 | 0 | Web Push, because the phone is asleep in a PFD pocket. |
 | `Worker/cameras.js` | 176 | 5 | 1 | **4** | Worker/cameras.js — the current frame from a USGS NIMS camera. |
-| `Worker/conditions.js` | 4635 | 63 | 33 | **2** | Worker/conditions.js — one call that answers "what is this water doing right now". |
+| `Worker/conditions.js` | 4657 | 64 | 33 | **3** | Worker/conditions.js — one call that answers "what is this water doing right now". |
 | `Worker/core/arcgis.js` | 401 | 7 | 2 | **2** | Worker/core/arcgis.js — shared ArcGIS helper for ramps/paddle/bank-pier/attractors |
 | `Worker/ndbc.js` | 236 | 6 | 2 | **1** | NDBC realtime2 — the measured half of the weather this app shows. |
 | `Worker/operators.js` | 331 | 6 | 3 | 0 | operators.js — the three utility operators that publish HTML tables instead of JSON. |
@@ -623,7 +623,7 @@ _none_
 | `test/water-aliases.test.js` | 126 | 0 | 0 | 0 |  |
 | `test/water-cameras.test.js` | 144 | 0 | 0 | 0 | One camera roster, two questions, and they are not the same question. |
 | `test/water-chain-loader.test.js` | 91 | 0 | 0 | 0 | The chain has to reach the Worker, and a missing object must not look like an empty chain. |
-| `test/water-conditions.test.js` | 867 | 0 | 0 | 0 | One read for the state of the water. |
+| `test/water-conditions.test.js` | 884 | 0 | 0 | 0 | One read for the state of the water. |
 | `test/water-endpoints.test.js` | 305 | 0 | 0 | 0 | water-endpoints.test.js — the compute plane, pinned against the ways it has already broken |
 | `test/water-filter.test.js` | 178 | 0 | 0 | 0 |  |
 | `test/water-search.test.js` | 96 | 0 | 0 | 0 |  |
@@ -649,7 +649,7 @@ _none_
 ### Exported but never imported by name
 
 - `Worker/cameras.js`: frameStamp, frameUrls, handleCameraFrame, CAMERA_ROUTES
-- `Worker/conditions.js`: dukeBasinWhy, CONDITIONS_ROUTES
+- `Worker/conditions.js`: dukeBasinWhy, isBelowDam, CONDITIONS_ROUTES
 - `Worker/core/arcgis.js`: fetchArcGisAllFeatures, getCachedGis
 - `Worker/ndbc.js`: NDBC_BASE
 - `Worker/registry.js`: DAM_TABLE_KEY, NC_SPECIES_KEY, INDEX_TTL_S

@@ -805,6 +805,23 @@ test('no catalogue read means no claim about what is unpublished', () => {
   assert.equal(c.unpublished, null);
 });
 
+test('a tailrace bound as a GAUGE is still below the dam', () => {
+  // Measured on Ryan's Wateree card, 2026-08-26. Site 02147801, "LAKE WATEREE TAILRACE ABOVE
+  // CAMDEN, SC", is bound to wateree_lake in the GAUGE role. `usgsSitesFor` tested role OR name
+  // and called it below-dam; the seeded-temperature builder tested `role === 'tailwater'` alone
+  // and did not. The seeded path won, and the lake showed 85.8 degF with no mention that the
+  // water had come out of the bottom of the dam.
+  //
+  // On a stratified reservoir in August those are different bodies of water.
+  const c = readConditions({ slug: 'x', water: { display_name: 'Wateree Lake (Kershaw Co, SC)',
+    feature_type: 'lake', chart_datum: { below_full_pool_ft: 2.6 },
+    water_temp: { c: 29.9, f: 85.8, usgs_site: '02147801', role: 'gauge', below_dam: true,
+                  name: 'LAKE WATEREE TAILRACE ABOVE CAMDEN, SC' } } });
+  assert.equal(c.waterTempFrom, 'tailwater');
+  // and the card has to say it, not merely know it
+  assert.equal(c.waterTempGauge, 'LAKE WATEREE TAILRACE ABOVE CAMDEN, SC');
+});
+
 test('a borrowed temperature never reads as a reading of this water', () => {
   // tnlakelevels reaches a temperature for Douglas, Cherokee and Norris off USGS gauges on the
   // rivers feeding them, and says so nowhere. A number taken on the water immediately upstream

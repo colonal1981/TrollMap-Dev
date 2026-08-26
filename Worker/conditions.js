@@ -2901,6 +2901,26 @@ export function registryCatalog(parms) {
   return out;
 }
 
+/**
+ * BELOW THE DAM, BY ROLE **OR** BY NAME, AND IT HAS TO BE THE SAME TEST EVERYWHERE.
+ *
+ * A tailrace temperature is not the lake's temperature. On a stratified reservoir in August the
+ * water leaving the dam came off the bottom; presenting it as the pool is presenting a different
+ * body of water under the lake's name.
+ *
+ * This existed twice and the two copies disagreed. `usgsSitesFor` tested role OR name; the
+ * seeded-temperature builder tested `role === 'tailwater'` alone. Measured 2026-08-26 on Ryan's
+ * Wateree card: site 02147801, "LAKE WATEREE TAILRACE ABOVE CAMDEN, SC", is bound to
+ * `wateree_lake` in the GAUGE role -- so the name test says below-dam, the role test says not,
+ * and the seeded path is the one that reached the card. It showed 85.8 degF for the lake with no
+ * mention that the reading came from below the dam.
+ *
+ * One definition, called from both.
+ */
+export function isBelowDam(role, name) {
+  return role === 'tailwater' || /tailrace|tailwater|below\b/i.test(String(name || ''));
+}
+
 export function usgsSitesFor(b, lat, lon) {
   const seen = new Set();
   const out = [];
@@ -2913,7 +2933,7 @@ export function usgsSitesFor(b, lat, lon) {
       name: g.name || null,
       role,
       km: (Number.isFinite(g.lat) && Number.isFinite(g.lon)) ? kmBetween(lat, lon, g.lat, g.lon) : Infinity,
-      below_dam: role === 'tailwater' || /tailrace|tailwater|below\b/i.test(String(g.name || '')),
+      below_dam: isBelowDam(role, g.name),
       // WHAT THE REGISTRY ALREADY KNOWS THIS SITE PUBLISHES. `build_water_bindings.py` fetches
       // the full series catalogue for every site; until 2026-08-25 it intersected the answer
       // down to level and flow one line before writing, so the Worker re-fetched a catalogue
@@ -4053,7 +4073,9 @@ async function waterBlock(b, lat, lon, env) {
     .map((role) => (out[role] && Number.isFinite(out[role].water_temp_c))
       ? { c: out[role].water_temp_c, f: round1(out[role].water_temp_c * 9 / 5 + 32),
           usgs_site: out[role].usgs_site || null, name: out[role].name || null, role,
-          below_dam: role === 'tailwater', km_from_point: null, source: 'USGS — parameter 00010' }
+          // THE SAME TEST usgsSitesFor USES. Role alone missed every tailrace bound as a gauge.
+          below_dam: isBelowDam(role, out[role].name), km_from_point: null,
+          source: 'USGS — parameter 00010' }
       : null)
     .find(Boolean) || null;
   // ONE gauge, not three. The series is a month long and this Worker has a 10 ms CPU ceiling on
