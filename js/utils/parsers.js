@@ -108,17 +108,19 @@ export function buildGPX(data) {
   // (see smart-plan-ui.js). Preserve that order verbatim.
   for (const w of data.waypoints) {
     const sym = w.castingStop ? 'Fishing Area' : (w.sym || 'Waypoint');
-    const typeVal = w.castingStop ? 'CAST' : (w.role === 'launch_ramp' ? 'LAUNCH' : 'TROLL');
+    const typeVal = w.castingStop ? 'CAST'
+                  : w.lureChange ? 'CHANGE'
+                  : (w.role === 'launch_ramp' ? 'LAUNCH' : 'TROLL');
     lines.push(
       `  <wpt lat="${w.lat.toFixed(7)}" lon="${w.lon.toFixed(7)}">`,
       `    <name>${esc(w.name)}</name>`,
       `    <sym>${esc(sym)}</sym>`,
       `    <type>${esc(typeVal)}</type>`,
     );
-    if (w.castingStop) {
-      if (w.structureType) lines.push(`    <cmt>${esc(w.structureType)}${w.depth ? ` ${w.depth}ft` : ''}</cmt>`);
-      if (w.tacticalNote) lines.push(`    <desc>${esc(w.tacticalNote.slice(0, 200))}</desc>`);
-    }
+    // Not gated on `castingStop` — see the same note in garmin-export.js. A waypoint that
+    // carries a note has a note to write, whatever class it is.
+    if (w.structureType) lines.push(`    <cmt>${esc(w.structureType)}${w.depth ? ` ${w.depth}ft` : ''}</cmt>`);
+    if (w.tacticalNote) lines.push(`    <desc>${esc(String(w.tacticalNote).slice(0, 200))}</desc>`);
     lines.push(`  </wpt>`);
   }
 

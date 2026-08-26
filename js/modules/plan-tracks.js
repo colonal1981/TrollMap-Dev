@@ -111,6 +111,41 @@ export function planTracks(plan, runId = null) {
 }
 
 /** The launch, then one waypoint per stop at its own `at`, in the order the boat meets them. */
+/**
+ * The coordinate at an absolute distance along the day.
+ *
+ * `plan.changes[].atM` is cumulative metres from the launch, because a change is a thing that
+ * happens at a PLACE on the run and PLAN_SCHEMA_V2 refuses to give it a time — Ryan, 2026-08-05:
+ * "every time i catch a fish i am going to slow down or stop completely so more like it needs to
+ * be a distance from thing not a time to thing." A distance is only useful to a chartplotter as
+ * a coordinate, and this is the conversion.
+ *
+ * Walks the legs in order rather than trusting `startM` alone, so a plan whose legs were
+ * reordered after assembly cannot silently place a change on the wrong water.
+ */
+function pointAtM(plan, atM) {
+  if (!Number.isFinite(atM)) return null;
+  for (const leg of ((plan && plan.legs) || [])) {
+    const co = leg.coordinates || [];
+    if (co.length < 2) continue;
+    const s0 = leg.startM || 0;
+    const len = leg.lengthM || 0;
+    if (atM < s0 || atM > s0 + len) continue;
+    if (!(len > 0)) return co[0];
+    const k = Math.max(0, Math.min(co.length - 1,
+                                   Math.round(((atM - s0) / len) * (co.length - 1))));
+    return co[k];
+  }
+  // Past the end of the last leg, or before the first: the nearest end of the day is still a
+  // real place, and a change with no coordinate cannot be loaded onto the unit at all.
+  const legs = (plan && plan.legs) || [];
+  const first = (legs[0] || {}).coordinates || [];
+  const last = (legs[legs.length - 1] || {}).coordinates || [];
+  if (!first.length) return null;
+  return atM <= 0 ? first[0] : (last[last.length - 1] || first[0]);
+}
+
+
 export function planWaypoints(plan, launch = null, runId = null, opts = {}) {
   const out = [];
   if (Array.isArray(launch) && Number.isFinite(launch[0]) && Number.isFinite(launch[1])) {
@@ -134,6 +169,50 @@ export function planWaypoints(plan, launch = null, runId = null, opts = {}) {
       });
     }
   }
+  // ── EVERY LURE CHANGE, AS A MARK AT THE PLACE IT HAPPENS ─────────────────────────────────
+  //
+  // Ryan, 2026-08-26: "for the bait changes and other fishing notifications those need to be
+  // location based using gps."
+  //
+  // THIS IS NOT THAT, AND IT IS NOT PRETENDING TO BE. Nothing here alarms. What it fixes is
+  // narrower and was true regardless: `plan.changes` has carried `atM` since assemblePlan() was
+  // written, and nothing ever turned one into a place. Stops were exported as waypoints, chart
+  // marks were exported as waypoints, and the changes — the one cue class he actually asked to be
+  // told about — had no waypoint at all. So the spot where the plan says to retie was the one
+  // spot on the day that was blank on the chart.
+  //
+  // WHAT DELIVERY LOOKED LIKE WHEN THIS WAS WRITTEN, so the next session does not re-walk it:
+  //   - The phone cannot do it with the app closed. Chrome never shipped background geolocation
+  //     for a PWA, a service worker cannot call navigator.geolocation, and the Geofencing API was
+  //     abandoned. `watchPosition()` runs only in the foreground; his phone rides in a PFD pocket
+  //     with the screen off.
+  //   - The ECHOMAP cannot do it either. Its Arrival alarm fires on "a turn or a destination",
+  //     which means a route — and Ryan, who owns the unit: "arrival alarms only work on routes
+  //     not tracks... they do not work for just random waypoints", and "you can't have a route
+  //     and a track displayed at the same time". A route carrying the alarms costs the track
+  //     carrying the path. His call, 2026-08-26: "using the echomap for this is not going to
+  //     work."
+  //
+  // Unresolved on purpose. A mark at the place is worth having on its own.
+  for (const c of ((plan && plan.changes) || [])) {
+    const at = pointAtM(plan, c.atM);
+    if (!at || !Number.isFinite(at[0]) || !Number.isFinite(at[1])) continue;
+    const rod = String(c.rodId || 'rod').replace(/^rod\s*/i, 'R');
+    const to = String(c.to || '').trim();
+    out.push({
+      // SHORT, AND THE LURE LAST SO TRUNCATION EATS THE LEAST USEFUL END. The 93sv clips a long
+      // name, and this is read at 2 mph with wet hands: which rod, then what goes on it.
+      name: `${rod} \u00b7 ${to}`.slice(0, 30),
+      lat: at[1], lon: at[0], sym: 'Fish',
+      lureChange: true, scoutWaypoint: true, planRunId: runId,
+      changeId: c.id, atM: c.atM,
+      structureType: null,
+      tacticalNote: [to ? `tie on ${to}` : null, c.from ? `off ${c.from}` : null,
+                     c.cost === 'fluoro' ? 'fluoro leader — retie' : 'snap swap',
+                     c.why || null].filter(Boolean).join(' · '),
+    });
+  }
+
   // STRUCTURE THE LEGS GO BY, as its own waypoint class.
   //
   // Opt-in, because it is a different job from the stops. A stop is somewhere to fish; these are

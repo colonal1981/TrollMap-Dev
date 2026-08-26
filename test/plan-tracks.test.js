@@ -419,3 +419,57 @@ describe('planWaypoints — charted marks', () => {
     expect(w.length).toBe(2);
   });
 });
+
+describe('planWaypoints — the lure change, which had no waypoint at all', () => {
+  // Ryan, 2026-08-26: "for the bait changes and other fishing notifications those need to be
+  // location based using gps." Stops were exported. Chart marks were exported. The changes --
+  // the one cue class he actually asked to be told about -- were not, so the spot where the plan
+  // says to retie was the only thing on the day with no position on the chart.
+  const legs = [
+    { id: 'L1', type: 'troll', startM: 0, lengthM: 1000, stops: [], marks: [],
+      coordinates: [[-80.80, 34.40], [-80.79, 34.40], [-80.78, 34.40]] },
+    { id: 'L2', type: 'troll', startM: 1000, lengthM: 1000, stops: [], marks: [],
+      coordinates: [[-80.78, 34.40], [-80.77, 34.40], [-80.76, 34.40]] },
+  ];
+  const plan = { legs, changes: [
+    { id: 'C1', atM: 1000, rodId: 'rod2', cost: 'fluoro', from: 'shad rap', to: 'Bandit 300 chart' },
+  ] };
+
+  it('writes one waypoint per change, at the place the change happens', () => {
+    const w = planWaypoints(plan, null, 'r1').filter((x) => x.lureChange);
+    expect(w.length).toBe(1);
+    expect(w[0].changeId).toBe('C1');
+    // atM 1000 is the boundary between the two legs, which is where assemblePlan puts a change:
+    // it happens where the boat is, before the next leg starts.
+    expect(Math.abs(w[0].lon - (-80.78)) < 1e-9).toBe(true);
+    expect(Math.abs(w[0].lat - 34.40) < 1e-9).toBe(true);
+  });
+
+  it('names it short, rod first, because the 93sv truncates', () => {
+    const w = planWaypoints(plan, null, 'r1').find((x) => x.lureChange);
+    expect(w.name.startsWith('R2')).toBe(true);
+    expect(w.name.length <= 30).toBe(true);
+  });
+
+  it('carries the whole instruction in the note, including whether it is a retie', () => {
+    const w = planWaypoints(plan, null, 'r1').find((x) => x.lureChange);
+    expect(w.tacticalNote.includes('Bandit 300 chart')).toBe(true);
+    expect(w.tacticalNote.includes('shad rap')).toBe(true);
+    expect(w.tacticalNote.includes('fluoro')).toBe(true);
+  });
+
+  it('is not a casting stop and not a chart mark, so nothing downstream reclassifies it', () => {
+    const w = planWaypoints(plan, null, 'r1').find((x) => x.lureChange);
+    expect(!!w.castingStop).toBe(false);
+    expect(!!w.chartMark).toBe(false);
+  });
+
+  it('a change with no resolvable position is dropped rather than placed at 0,0', () => {
+    const broken = { legs: [], changes: [{ id: 'C1', atM: 500, rodId: 'rod1', to: 'x' }] };
+    expect(planWaypoints(broken, null, 'r1').filter((x) => x.lureChange).length).toBe(0);
+  });
+
+  it('a plan with no changes adds nothing', () => {
+    expect(planWaypoints({ legs }, null, 'r1').filter((x) => x.lureChange).length).toBe(0);
+  });
+});

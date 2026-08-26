@@ -42,9 +42,16 @@ export function exportGarminGPX() {
   const wptXml = state.DATA.waypoints.map((w) => {
     const isCast = !!w.castingStop;
     const sym = isCast ? (GARMIN_SYMBOL_MAP['Fishing Hot Spot Facility'] || 'Fishing Hot Spot Facility') : garminSymbol(w.sym);
-    const typeVal = isCast ? 'CAST' : (w.role === 'launch_ramp' ? 'LAUNCH' : 'TROLL');
-    const cmt = isCast && w.structureType ? `\n    <cmt>${esc(w.structureType)}${w.depth ? ` ${w.depth}ft` : ''}</cmt>` : '';
-    const desc = isCast && w.tacticalNote ? `\n    <desc>${esc(w.tacticalNote.slice(0,200))}</desc>` : '';
+    const typeVal = isCast ? 'CAST'
+                  : w.lureChange ? 'CHANGE'
+                  : (w.role === 'launch_ramp' ? 'LAUNCH' : 'TROLL');
+    // COMMENT AND DESCRIPTION WERE GATED ON `isCast`, so every other waypoint's note was built
+    // and then dropped at the door. The chart marks have carried "charted position — compare with
+    // the sounder" since the day they were written and not one ever reached the card; a lure
+    // change carries the actual instruction — which lure, off which rod, snap or retie — and
+    // would have gone the same way. The gate is now "does this waypoint have something to say".
+    const cmt = w.structureType ? `\n    <cmt>${esc(w.structureType)}${w.depth ? ` ${w.depth}ft` : ''}</cmt>` : '';
+    const desc = w.tacticalNote ? `\n    <desc>${esc(String(w.tacticalNote).slice(0, 200))}</desc>` : '';
     return `  <wpt lat="${w.lat.toFixed(7)}" lon="${w.lon.toFixed(7)}">
     <name>${esc(w.name || 'WPT')}</name>
     <sym>${esc(sym)}</sym>
