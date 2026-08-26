@@ -194,8 +194,20 @@ export async function vapidAuth(endpoint, env, nowMs) {
   return { Authorization: `vapid t=${jwt}, k=${applicationServerKey(jwk)}` };
 }
 
+// NO-STORE ON EVERY ONE OF THESE, AND IT IS NOT A MICRO-OPTIMISATION.
+//
+// A status endpoint that can be cached lies for as long as the cache lives. On 2026-08-26 both
+// Ryan and this session read `devices: 0` from a cached /alerts/status while the Worker had
+// already stored the device -- he re-toggled the bell, I re-checked my own wiring, and the
+// answer had been correct the whole time. Twice, independently, from the same stale body.
+//
+// Every route in this file reports LIVE STATE or drains a queue. None of it is cacheable, and
+// the cost of a stale answer here is somebody debugging a system that is already working.
 const json = (o, status = 200) =>
-  new Response(JSON.stringify(o), { status, headers: { ...JSON_HEADERS, ...CORS } });
+  new Response(JSON.stringify(o), {
+    status,
+    headers: { ...JSON_HEADERS, ...CORS, 'Cache-Control': 'no-store, max-age=0' },
+  });
 
 /**
  * Ask the SAME hazard code the client asks. Not a copy of it.
