@@ -1886,6 +1886,82 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
 
 # ── main ────────────────────────────────────────────────────────────────────────────────────
 
+# ── KEYS THIS SCRIPT DOES NOT OWN, AND USED TO DESTROY ──────────────────────────────────────
+#
+# `bind_operator_lakes.py` writes `operator: {operator, feed_name, url, why}` into the registry --
+# it says so in its own docstring, and Worker/conditions.js reads it to decide which utility page
+# a lake's level comes from. `bind_ndbc_stations.py` writes `ndbc` the same way. This script then
+# rewrote the file wholesale and took every one of those blocks with it.
+#
+# MEASURED 2026-08-25: ZERO of 204 bound waters carried an operator block, while
+# Worker/operators.js held working parsers for Cube Carolinas, Southern Company and Brookfield and
+# conditions.js imported all three. Three parsers, a purpose-built binder and a documented
+# contract, unreachable for every water -- because a rebind erased the join and nothing anywhere
+# recorded the dependency.
+#
+# A FULL RUN OF ONE SCRIPT MUST NOT SILENTLY DESTROY ANOTHER'S OUTPUT. The registry already
+# carries the inverse rule -- a partial run must not write a whole file -- and this is the same
+# lesson from the other side.
+#
+# IT READS THE REGISTRY, NOT `--out`. The first version of this carry-forward read only the file
+# it was about to write, which is correct exactly when `--out` IS the registry and wrong every
+# other time. Measured twice, on 2026-08-25 and again on 2026-08-26: a rebind staged to
+# `_wb_NEW.json` carried nothing, because the staging file had never been visited by either
+# binder. Overwriting the registry with that result dropped 18 operator blocks and 12 NDBC blocks
+# -- the same loss this function exists to prevent, reintroduced by the safe habit of staging to
+# a scratch path first.
+#
+# `registry/water_bindings.json` is where both binders write, so it is the only file that can
+# answer "what did they join". `--out` is consulted second, so a foreign block that exists ONLY
+# in a staging file is still kept rather than dropped. A slug that no longer exists drops its
+# block with it, which is correct -- the binding was about that water.
+FOREIGN_KEYS = ('operator', 'ndbc')
+
+
+def carry_foreign(bindings, reg, out, quiet=False):
+    """Restore, per slug, any FOREIGN_KEYS block this script did not compute. Returns the count.
+
+    SAY HOW MANY, AND FROM WHERE. Silence is how the operator loss went unnoticed for nine days.
+    """
+    prevs, seen_paths = [], set()
+    for path in (os.path.join(reg, 'water_bindings.json'), out):
+        norm = os.path.normcase(os.path.abspath(path))
+        if norm in seen_paths or not os.path.exists(path):
+            continue
+        seen_paths.add(norm)
+        try:
+            with open(path, encoding='utf-8') as fh:
+                prevs.append((path, (json.load(fh) or {}).get('bindings') or {}))
+        except Exception:
+            pass                                # a corrupt copy is not a reason to lose the rest
+
+    carried = 0
+    from_file = {}
+    for slug, b in bindings.items():
+        for k in FOREIGN_KEYS:
+            if k in b:
+                continue
+            for path, prev in prevs:
+                old_b = prev.get(slug)
+                if isinstance(old_b, dict) and k in old_b:
+                    b[k] = old_b[k]
+                    carried += 1
+                    from_file[path] = from_file.get(path, 0) + 1
+                    break                       # first source wins; the registry is first
+    if quiet:
+        return carried
+    print('   carried forward %d block(s) this script does not own (%s)'
+          % (carried, ', '.join(FOREIGN_KEYS)))
+    for path, n in sorted(from_file.items()):
+        print('       %4d from %s' % (n, path))
+    if not carried:
+        print('   !! none found. If bind_operator_lakes.py or bind_ndbc_stations.py has ever run,'
+              ' its output is missing -- re-run both, or the utility-page parsers and the buoy'
+              ' join stay unreachable.')
+    return carried
+
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -2051,26 +2127,7 @@ def main():
     # drops its block with it, which is correct -- the binding was about that water.
     # `ndbc` joined this list on 2026-08-25, the day it was created, rather than nine days
     # later after a rebind quietly ate it. That is the whole lesson of the operator block.
-    FOREIGN_KEYS = ('operator', 'ndbc')
-    carried = 0
-    if os.path.exists(out):
-        try:
-            with open(out, encoding='utf-8') as fh:
-                prev = (json.load(fh) or {}).get('bindings') or {}
-        except Exception:
-            prev = {}
-        for slug, old_b in prev.items():
-            if slug not in bindings or not isinstance(old_b, dict):
-                continue
-            for k in FOREIGN_KEYS:
-                if k in old_b and k not in bindings[slug]:
-                    bindings[slug][k] = old_b[k]
-                    carried += 1
-    print('   carried forward %d block(s) this script does not own (%s)'
-          % (carried, ', '.join(FOREIGN_KEYS)))
-    if not carried and os.path.exists(out):
-        print('   !! none found. If bind_operator_lakes.py has run, its output is missing --'
-              ' re-run it, or the utility-page parsers stay unreachable.')
+    carry_foreign(bindings, reg, out)
 
     with open(out, 'w', encoding='utf-8') as fh:
         json.dump({'_note': 'built by build_water_bindings.py; name AND geometry, never either '
