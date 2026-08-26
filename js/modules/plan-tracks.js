@@ -72,7 +72,19 @@ export function trackName(leg) {
   // The run home is the leg he most needs to find on the unit at 19:00, so it says so rather
   // than being the third thing called "transit".
   if (leg.type === 'transit') return `${leg.id} · ${leg.role === 'return' ? 'home' : 'transit'}`;
-  return leg.depthFt != null ? `${leg.id} · ${leg.depthFt} ft` : `${leg.id} · troll`;
+  // WHOLE FEET, BECAUSE THE UNIT EATS THE PERIOD. Ryan photographed the route list on the 93sv,
+  // 2026-08-26: `L1 · 15.1 ft` renders as `L1 151 FT` -- separator gone, decimal gone, upcased --
+  // while `T1 · transit` two rows above it keeps both. A name that reads 151 on the fifteen-foot
+  // line is worse than no name at all, and it is read at 2 mph in the dark.
+  //
+  // Nothing is lost by rounding. `depth_ft` is already a display rounding of `depth_dm`, the
+  // authoritative integer -- build_trolling_runs.py: "the contours are metric-derived, so round
+  // foot values mostly do not exist... near twelve feet the charted lines are 11.2 ft (34 dm) and
+  // 12.1 ft (37 dm) and there is nothing between them." A tenth of a foot was never a real
+  // distinction; it was a decimal point standing between him and the right number.
+  return leg.depthFt != null
+    ? `${leg.id} · ${Math.round(Number(leg.depthFt))} ft`
+    : `${leg.id} · troll`;
 }
 
 /** `S1.1 · hump 14ft`. The id first, because that is what the timeline calls it. */

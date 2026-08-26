@@ -92,13 +92,22 @@ describe('plan-tracks — the route reaches state.DATA', () => {
   });
 
   it('names a track for a 4-inch screen, not for a report', () => {
-    expect(trackName({ id: 'L1', type: 'troll', depthFt: 16.1 })).toBe('L1 · 16.1 ft');
+    // WHOLE FEET. Ryan photographed the 93sv route list on 2026-08-26: `L1 · 15.1 ft` renders
+    // there as `L1 151 FT` -- the unit drops the period and the separator and upcases -- while
+    // `T1 · transit` in the row above keeps both. A name that says 151 on the fifteen-foot line
+    // is worse than no name. `depth_ft` was always a display rounding of the authoritative
+    // `depth_dm`, so the tenth was never a real distinction.
+    expect(trackName({ id: 'L1', type: 'troll', depthFt: 16.1 })).toBe('L1 · 16 ft');
+    expect(trackName({ id: 'L1', type: 'troll', depthFt: 15.1 })).toBe('L1 · 15 ft');
     expect(trackName({ id: 'T2', type: 'transit' })).toBe('T2 · transit');
     // The run home is the leg he most needs to find on the unit at the end of the day.
     expect(trackName({ id: 'T3', type: 'transit', role: 'return' })).toBe('T3 · home');
     // A leg the pack could not sound keeps its identity rather than printing a bare "ft".
     expect(trackName({ id: 'L3', type: 'troll', depthFt: null })).toBe('L3 · troll');
     for (const t of planTracks(plan())) expect(t.name.length).toBeLessThanOrEqual(24);
+    // THE REGRESSION GUARD: not one leg name may contain a period. This is the character the
+    // unit silently eats, and it is the only one that can turn a depth into a different depth.
+    for (const t of planTracks(plan())) expect(t.name.includes('.')).toBe(false);
   });
 
   it('every track carries the run id, so the cleaner cannot delete this run', () => {
