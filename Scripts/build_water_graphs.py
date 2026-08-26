@@ -105,6 +105,7 @@ re-upload of contours or depth areas.
 """
 from __future__ import annotations
 import argparse, json, math, os, struct, sys, time
+import collections
 from collections import defaultdict
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -140,19 +141,76 @@ def load_boundary(registry, slug):
     return r or None
 
 
-def index_tiles(root):
-    """tile id -> directory. The card nests Tiles/<xx>/<yy>/<ID>/, and a recursive walk of the
-    whole tree is slow enough to time out, so index the three known levels directly."""
-    idx = {}
-    for a in os.listdir(root):
-        pa = os.path.join(root, a)
-        if not os.path.isdir(pa): continue
-        for b in os.listdir(pa):
-            pb = os.path.join(pa, b)
-            if not os.path.isdir(pb): continue
-            for c in os.listdir(pb):
-                if os.path.isdir(os.path.join(pb, c)):
-                    idx[c.upper()] = os.path.join(pb, c)
+def _tile_files(d):
+    try:
+        return os.listdir(d)
+    except OSError:
+        return []
+
+
+def index_tiles(roots, quiet=False):
+    """tile id -> directory, across one or more card roots IN PRIORITY ORDER.
+
+    The card nests Tiles/<xx>/<yy>/<ID>/, and a recursive walk of the whole tree is slow enough
+    to time out, so index the three known levels directly.
+
+    TWO DIRECTORIES CAN CLAIM ONE TILE ID AND ONE OF THEM CAN BE EMPTY.
+
+    Measured 2026-08-26 on the ActiveCaptain pull of 21 Aug: 264 tile directories, 241 distinct
+    ids, and all 23 of the duplicates are an EMPTY lowercase directory sitting beside a populated
+    uppercase one -- `Tiles/f0/53/4e0f0` next to `Tiles/20/69/4E0F0`. This function keyed on
+    `c.upper()` and assigned unconditionally, so whichever came later in the directory walk won.
+    When the empty one won, the tile read as "no .MAR" and the caller skipped it in silence.
+
+    That is what cost Wateree tile 4E0F0 -- 34,304 navmesh cells, its single largest -- and the
+    pack's own `_stamps.json` records the graph being built from three MAR files instead of four.
+    A whole third of the lake had no routing graph because an empty folder sorted after a full
+    one.
+
+    SO THE PICK IS EXPLICIT AND THE LOSER IS REPORTED. Earlier root wins; within a root, the
+    directory with more files wins; ties keep the first seen. Every collision is printed, because
+    a silent tie-break is how this survived in the first place.
+    """
+    if isinstance(roots, str):
+        roots = [roots]
+    idx, score, collisions = {}, {}, []
+    per_root = collections.Counter()
+    for rank, root in enumerate(roots):
+        if not root or not os.path.isdir(root):
+            continue
+        for a in os.listdir(root):
+            pa = os.path.join(root, a)
+            if not os.path.isdir(pa): continue
+            for b in os.listdir(pa):
+                pb = os.path.join(pa, b)
+                if not os.path.isdir(pb): continue
+                for c in os.listdir(pb):
+                    p = os.path.join(pb, c)
+                    if not os.path.isdir(p): continue
+                    tid = c.upper()
+                    # lower is better: the earlier root, then the fuller directory
+                    cand = (rank, -len(_tile_files(p)))
+                    if tid not in score:
+                        idx[tid], score[tid] = p, cand
+                    elif cand < score[tid]:
+                        collisions.append((tid, idx[tid], p))
+                        idx[tid], score[tid] = p, cand
+                    else:
+                        collisions.append((tid, p, idx[tid]))
+    for tid, p in idx.items():
+        per_root[p.split(os.sep)[0] if os.sep in p else p] = per_root.get(
+            p.split(os.sep)[0] if os.sep in p else p, 0) + 1
+    if not quiet:
+        print('%d tile directories indexed from %d root(s)' % (len(idx), len(roots)))
+        for r, n in per_root.most_common():
+            print('      %5d from %s' % (n, r))
+        if collisions:
+            empties = sum(1 for _t, lost, _w in collisions if not _tile_files(lost))
+            print('      %d tile id(s) claimed by more than one directory; %d of the losers were '
+                  'EMPTY' % (len(collisions), empties))
+            for tid, lost, won in collisions[:6]:
+                print('         %-8s kept %s  (dropped %s, %d file(s))'
+                      % (tid, won, lost, len(_tile_files(lost))))
     return idx
 
 
@@ -291,6 +349,13 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--tiles', required=True, help='the card Tiles root')
+    # A PULL IS NOT A CARD. The ActiveCaptain pull carries 241 tiles; the full card carries
+    # 2,525. Ryan, 2026-08-26: "we need to build a fallback to use the full card when something
+    # is missing from the activecaptain pull... i plan to pull a new card every 3 months or so".
+    # Roots are tried IN ORDER, so the pull stays authoritative for the tiles it has and the card
+    # only fills what it lacks -- and index_tiles() prints how many tiles came from each.
+    ap.add_argument('--tiles-fallback', action='append', default=[],
+                    help='another Tiles root to fall back to, lowest priority last; repeatable')
     ap.add_argument('--registry', required=True)
     ap.add_argument('--map', required=True, help='tile_lake_map.json')
     ap.add_argument('--out', required=True, help='chartpack root; writes <slug>/water_graph.bin')
@@ -324,8 +389,7 @@ def main():
         elif os.path.exists(src): src = open(src, encoding='utf-8').read()
         want = {s.strip() for s in src.replace('\n', ',').split(',') if s.strip()}
 
-    idx = index_tiles(a.tiles)
-    print('%d tile directories indexed' % len(idx))
+    idx = index_tiles([a.tiles] + list(a.tiles_fallback))
     slugs = sorted(s for s in by_lake if want is None or s in want)
     if a.limit: slugs = slugs[:a.limit]
     print('%d lakes' % len(slugs))
