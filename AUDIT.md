@@ -22,7 +22,7 @@ Python side will read as dead here and may not be. See the `lakes.js` near miss 
 | deadExports | 207 |
 | orphanModules | 4 |
 | duplicateFnNames | 43 |
-| crossModuleGlobals | 39 |
+| crossModuleGlobals | 38 |
 | unresolvedImports | 0 |
 
 ## Worker routes
@@ -92,24 +92,24 @@ Python side will read as dead here and may not be. See the `lakes.js` near miss 
 Read-shaped POSTs (LLM proxies, search) are deliberately open — see the comment above
 `MUTATING_ROUTES`. Anything here that WRITES is a hole.
 
-- `POST /build` — Worker/trollmap-worker.js:996
-- `POST /identify-catch` — Worker/trollmap-worker.js:1002
-- `POST /identify-catch-v2` — Worker/trollmap-worker.js:1010
-- `POST /groq-query` — Worker/trollmap-worker.js:1017
-- `POST /research/thermocline-search` — Worker/trollmap-worker.js:1034
-- `POST /research/limnology-data` — Worker/trollmap-worker.js:1039
-- `POST /research/deterministic-facts` — Worker/trollmap-worker.js:1042
-- `POST /research/discover` — Worker/trollmap-worker.js:1045
-- `POST /research/analyze-facts` — Worker/trollmap-worker.js:1062
-- `POST /research/dedupe-contradictions` — Worker/trollmap-worker.js:1065
-- `POST /research/map-facts` — Worker/trollmap-worker.js:1068
-- `POST /research/gap-analysis` — Worker/trollmap-worker.js:1071
-- `POST /research/gap-search` — Worker/trollmap-worker.js:1074
-- `POST /research/agent-llm` — Worker/trollmap-worker.js:1077
-- `POST /research/proxy-download-batch` — Worker/trollmap-worker.js:1100
-- `POST /research/shared/check` — Worker/trollmap-worker.js:1104
-- `POST /research/shared/query` — Worker/trollmap-worker.js:1110
-- `POST /research/validation-pass` — Worker/trollmap-worker.js:1142
+- `POST /build` — Worker/trollmap-worker.js:1008
+- `POST /identify-catch` — Worker/trollmap-worker.js:1014
+- `POST /identify-catch-v2` — Worker/trollmap-worker.js:1022
+- `POST /groq-query` — Worker/trollmap-worker.js:1029
+- `POST /research/thermocline-search` — Worker/trollmap-worker.js:1046
+- `POST /research/limnology-data` — Worker/trollmap-worker.js:1051
+- `POST /research/deterministic-facts` — Worker/trollmap-worker.js:1054
+- `POST /research/discover` — Worker/trollmap-worker.js:1057
+- `POST /research/analyze-facts` — Worker/trollmap-worker.js:1074
+- `POST /research/dedupe-contradictions` — Worker/trollmap-worker.js:1077
+- `POST /research/map-facts` — Worker/trollmap-worker.js:1080
+- `POST /research/gap-analysis` — Worker/trollmap-worker.js:1083
+- `POST /research/gap-search` — Worker/trollmap-worker.js:1086
+- `POST /research/agent-llm` — Worker/trollmap-worker.js:1089
+- `POST /research/proxy-download-batch` — Worker/trollmap-worker.js:1112
+- `POST /research/shared/check` — Worker/trollmap-worker.js:1116
+- `POST /research/shared/query` — Worker/trollmap-worker.js:1122
+- `POST /research/validation-pass` — Worker/trollmap-worker.js:1154
 
 ## Routes nothing calls
 
@@ -126,8 +126,8 @@ _none_
 | lakes.hydro-derived.duke-energy.app | pipeline, worker | 18 | Scripts/capture_upstreams.py:184 |
 | www.anglersheadquarters.com | worker, browser | 16 | Worker/reports.js:63 |
 | georgiawildlife.blog | worker, browser | 15 | Worker/reports.js:51 |
+| w.example | browser | 15 | test/notification-delivery.test.js:180 |
 | trollmap-worker.colonal1981.workers.dev | pipeline, browser | 14 | Scripts/audit_research_fields.py:43 |
-| w.example | browser | 14 | test/push-alerts.test.js:70 |
 | www.eregulations.com | worker, browser | 13 | Worker/worker-data.js:909 |
 | waterservices.usgs.gov | pipeline, worker | 12 | Scripts/build_water_bindings.py:123 |
 | www.carolinasportsman.com | worker, browser | 12 | Worker/reports.js:57 |
@@ -147,7 +147,7 @@ _none_
 | api.hydro-derived.duke-energy.app | worker | 6 | Worker/conditions.js:1768 |
 | waterdata.usgs.gov | worker, browser | 6 | Worker/worker-data.js:933 |
 | lakemonster.com | worker | 6 | Worker/worker-data.js:957 |
-| www.topografix.com | browser | 6 | js/modules/garmin-export.js:65 |
+| www.topografix.com | browser | 6 | js/modules/garmin-export.js:72 |
 | api.waterdata.usgs.gov | pipeline, worker, browser | 5 | Scripts/build_camera_index.py:59 |
 | www.waterqualitydata.us | pipeline, worker, browser | 5 | Scripts/capture_upstreams.py:125 |
 | worker | pipeline, browser | 5 | Scripts/capture_upstreams.py:260 |
@@ -177,7 +177,7 @@ _none_
 | api.water.noaa.gov | worker | 2 | Worker/conditions.js:809 |
 | azapp-lakespublic-prd-001.azurewebsites.net | worker | 2 | Worker/conditions.js:1531 |
 | georgiawildlife.com | worker, browser | 2 | Worker/research/dataset.js:17 |
-| generativelanguage.googleapis.com | worker | 2 | Worker/trollmap-worker.js:801 |
+| generativelanguage.googleapis.com | worker | 2 | Worker/trollmap-worker.js:813 |
 | coastalgadnr.org | worker, browser | 2 | Worker/worker-data.js:1717 |
 | deq.nc.gov | worker, browser | 2 | Worker/worker-data.js:1718 |
 | server.arcgisonline.com | browser | 2 | js/core/map-init.js:29 |
@@ -210,7 +210,7 @@ _none_
 | fishing-app.gpsnauticalcharts.com | browser | 1 | js/modules/capture-panel.js:15 |
 | archive-api.open-meteo.com | browser | 1 | js/modules/catch-journal.js:159 |
 | cdn.jsdelivr.net | browser | 1 | js/modules/catch-journal.js:1067 |
-| www.garmin.com | browser | 1 | js/modules/garmin-export.js:66 |
+| www.garmin.com | browser | 1 | js/modules/garmin-export.js:73 |
 | www.openstreetmap.org | browser | 1 | js/modules/ramps.js:59 |
 | nominatim.openstreetmap.org | browser | 1 | js/modules/topbar.js:106 |
 | www.sad.usace.army.mil | browser | 1 | test/discover-authority.test.js:20 |
@@ -290,12 +290,12 @@ _none_
 | get | ``lake_packages/${id}/${filename}`` | Worker/research/storage.js:406 |
 | get | ``lakes/${safe}.json`` | Worker/research/storage.js:425 |
 | get | ``lakes/${safeKey}.json`` | Worker/research/storage.js:428 |
-| get | `key` | Worker/trollmap-worker.js:642 |
-| put | `key` | Worker/trollmap-worker.js:657 |
-| get | `key` | Worker/trollmap-worker.js:1656 |
-| list | `{ prefix }` | Worker/trollmap-worker.js:1677 |
-| get | `key` | Worker/trollmap-worker.js:1706 |
-| put | `key` | Worker/trollmap-worker.js:1742 |
+| get | `key` | Worker/trollmap-worker.js:654 |
+| put | `key` | Worker/trollmap-worker.js:669 |
+| get | `key` | Worker/trollmap-worker.js:1668 |
+| list | `{ prefix }` | Worker/trollmap-worker.js:1689 |
+| get | `key` | Worker/trollmap-worker.js:1718 |
+| put | `key` | Worker/trollmap-worker.js:1754 |
 | get | `chartpackKey(slug` | Worker/water.js:76 |
 | get | `chartpackKey(slug` | Worker/water.js:87 |
 | list | `{ cursor` | Worker/worker-core.js:342 |
@@ -335,7 +335,7 @@ _none_
 | `registry/osm_ramps_by_lake.json` | Scripts/make_osm_ramps_by_lake.py:12 |
 | `registry/region_mask.json` | Scripts/build_coverage_cache.py:37<br>Scripts/make_region_mask.py:8<br>Scripts/sweep_unclaimed.py:61 |
 | `registry/tile_lake_map.json` | Scripts/find_affected_tiles.py:104 |
-| `registry/water_bindings.json` | Scripts/triage_water_bindings.py:18 |
+| `registry/water_bindings.json` | Scripts/build_water_bindings.py:1914<br>Scripts/triage_water_bindings.py:18 |
 | `registry/water_chain.json` | Scripts/build_water_chain.py:67 |
 
 ## JS modules
@@ -366,7 +366,7 @@ _none_
 | `Worker/research/limnology.js` | 513 | 4 | 4 | 0 | research/limnology.js — split from worker-research.js (behavior-preserving) |
 | `Worker/research/shared.js` | 714 | 29 | 3 | **13** | research/shared.js — split from worker-research.js (behavior-preserving) |
 | `Worker/research/storage.js` | 639 | 11 | 2 | 0 | research/storage.js — split from worker-research.js (behavior-preserving) |
-| `Worker/trollmap-worker.js` | 1808 | 1 | 0 | 0 | r2Text is used by /chartpacks/lake-boundary (line ~1711). It was added to worker-core.js |
+| `Worker/trollmap-worker.js` | 1820 | 1 | 0 | 0 | r2Text is used by /chartpacks/lake-boundary (line ~1711). It was added to worker-core.js |
 | `Worker/water.js` | 925 | 2 | 2 | **1** | Worker/water.js — the compute plane over the static pack layers. |
 | `Worker/worker-core.js` | 433 | 10 | 23 | 0 | worker-core.js — Shared infrastructure: CORS headers, LLM provider chain, fetchText |
 | `Worker/worker-data.js` | 1995 | 27 | 7 | 0 | worker-data.js — Static lake/river data extracted from trollmap-worker.js |
@@ -404,7 +404,7 @@ _none_
 | `js/modules/chart-import.js` | 435 | 2 | 2 | **1** | Contour / GIS layer import — load a KML, GPX, or GeoJSON file |
 | `js/modules/chart-mosaic.js` | 435 | 5 | 3 | **2** | Chart mosaic — saved depth-contour overlay layers. |
 | `js/modules/chart-overlay.js` | 492 | 1 | 1 | **1** | Chart overlay — the SINGLE working image being georeferenced. |
-| `js/modules/cloud-sync.js` | 389 | 4 | 3 | 0 | Cloud Sync — auto-push on save, auto-pull on load. |
+| `js/modules/cloud-sync.js` | 426 | 4 | 3 | 0 | Cloud Sync — auto-push on save, auto-pull on load. |
 | `js/modules/coastal-layers.js` | 345 | 5 | 1 | **5** | coastal-layers.js — oyster beds, marsh edges and depth soundings. |
 | `js/modules/coastal-scoring.js` | 289 | 15 | 3 | **1** | coastal-scoring.js — tide- and structure-aware spot scoring for inshore |
 | `js/modules/conditions-strip.js` | 731 | 2 | 1 | **2** | The state of the water, above the map, before you plan anything. |
@@ -413,7 +413,7 @@ _none_
 | `js/modules/edit.js` | 253 | 1 | 2 | 0 | Edit tab — table-based view of waypoints + tracks with inline |
 | `js/modules/file-io.js` | 86 | 0 | 1 | 0 | Top-bar File I/O — Load / New / Save GPX. |
 | `js/modules/fishing-index.js` | 309 | 0 | 1 | 0 | fishing-index.js — Fisherman-friendly overlay on top of SCDNR data |
-| `js/modules/garmin-export.js` | 89 | 1 | 1 | **1** | Garmin-formatted GPX export. |
+| `js/modules/garmin-export.js` | 96 | 1 | 1 | **1** | Garmin-formatted GPX export. |
 | `js/modules/garmin-parser.js` | 119 | 0 | 1 | 0 | Garmin Catch Parser — import a GPX file from a Garmin chartplotter |
 | `js/modules/gear-autopilot.js` | 45 | 0 | 1 | 0 |  |
 | `js/modules/gis-toggles.js` | 289 | 1 | 1 | **1** |  |
@@ -426,22 +426,22 @@ _none_
 | `js/modules/layers-panel.js` | 105 | 4 | 1 | **2** | layers-panel.js — the one place every map overlay is turned on and off. |
 | `js/modules/measure-tool.js` | 106 | 0 | 1 | 0 | Distance & Bearing Measurement Tool — click two points on the |
 | `js/modules/noaa-tides.js` | 228 | 1 | 1 | **1** | NOAA Coastal Tides — Plan-tab tide panel. |
-| `js/modules/notifications.js` | 941 | 14 | 4 | 0 | notifications.js — On-water alerts for TrollMap |
+| `js/modules/notifications.js` | 965 | 14 | 4 | 0 | notifications.js — On-water alerts for TrollMap |
 | `js/modules/osm-structure.js` | 145 | 0 | 1 | 0 | osm-structure.js — OSM Structure Layer Toggle |
 | `js/modules/plan-assemble.js` | 872 | 8 | 10 | 0 | plan-assemble.js — ordered candidates + the model's judgement → a plan v2 object. |
 | `js/modules/plan-builder.js` | 2547 | 10 | 7 | 0 | Plan Builder — the Plan tab form, save/load, preview rendering, |
-| `js/modules/plan-candidates.js` | 1410 | 26 | 16 | **9** | Candidate legs for a day's plan — the payload the model chooses from. |
+| `js/modules/plan-candidates.js` | 1428 | 26 | 16 | **9** | Candidate legs for a day's plan — the payload the model chooses from. |
 | `js/modules/plan-from-water.js` | 306 | 1 | 2 | 0 | plan-from-water.js — the water is already chosen. Build the day around it. |
-| `js/modules/plan-inputs.js` | 527 | 9 | 5 | **1** | plan-inputs.js — the parts of "what am I planning" that are not the DOM. |
+| `js/modules/plan-inputs.js` | 532 | 9 | 5 | **1** | plan-inputs.js — the parts of "what am I planning" that are not the DOM. |
 | `js/modules/plan-issues.js` | 78 | 1 | 2 | 0 | plan-issues.js — what the plan says about itself, in the shape the tab can show. |
 | `js/modules/plan-pieces.js` | 361 | 4 | 3 | **1** | plan-pieces.js — turning charted lanes into the water a fisherman actually chooses from. |
 | `js/modules/plan-preflight.js` | 413 | 8 | 4 | **2** | plan-preflight.js — the two things that must happen before a plan is worth building. |
 | `js/modules/plan-prompt.js` | 755 | 13 | 5 | **1** | plan-prompt.js — what the model is asked, and what comes back. |
 | `js/modules/plan-tab-wiring.js` | 68 | 0 | 1 | 0 | plan-tab-wiring.js |
 | `js/modules/plan-to-timeline.js` | 407 | 6 | 6 | **1** | plan-to-timeline.js — a v2 plan, in the shape the rest of the Plan tab already reads. |
-| `js/modules/plan-tracks.js` | 220 | 6 | 4 | **1** | plan-tracks.js — a v2 plan, materialised into the tracks and waypoints the export path rea |
+| `js/modules/plan-tracks.js` | 299 | 6 | 4 | **1** | plan-tracks.js — a v2 plan, materialised into the tracks and waypoints the export path rea |
 | `js/modules/plan-water-index.js` | 134 | 2 | 2 | 0 | plan-water-index.js — the two spatial lookups the water reasons need, and nothing else. |
-| `js/modules/plan-water-ui.js` | 923 | 4 | 1 | **3** | plan-water-ui.js — the Water tab. The screen where the fisherman chooses. |
+| `js/modules/plan-water-ui.js` | 927 | 4 | 1 | **3** | plan-water-ui.js — the Water tab. The screen where the fisherman chooses. |
 | `js/modules/plan-water.js` | 1287 | 21 | 5 | 0 | plan-water.js — offer the water, with reasons, and let the fisherman choose. |
 | `js/modules/qdc-decoder.js` | 520 | 6 | 2 | 0 | qdc-decoder.js — pure functions: raw .qdc folder → grid → contour GeoJSON. |
 | `js/modules/quickdraw-key.js` | 95 | 0 | 1 | 0 | Depth key — the legend for the one depth ladder. |
@@ -452,7 +452,7 @@ _none_
 | `js/modules/saved-spreads.js` | 82 | 1 | 2 | 0 | Saved rod spreads — name a rod configuration and persist it |
 | `js/modules/smart-plan-route.js` | 190 | 3 | 0 | **3** | smart-plan-route.js — turn SmartPlan's intent into geometry the Worker built. |
 | `js/modules/smart-plan-ui.js` | 911 | 5 | 2 | **3** | smart-plan-ui.js — Unified Trip Timeline (Trolling + Stop-and-Cast interleaved) |
-| `js/modules/smart-plan-v2-wiring.js` | 424 | 7 | 2 | **4** | smart-plan-v2-wiring.js — the DOM end of SmartPlan v2. |
+| `js/modules/smart-plan-v2-wiring.js` | 431 | 7 | 2 | **4** | smart-plan-v2-wiring.js — the DOM end of SmartPlan v2. |
 | `js/modules/smart-plan-v2.js` | 295 | 6 | 5 | 0 | smart-plan-v2.js — the whole plan, one path. |
 | `js/modules/species-selector.js` | 298 | 3 | 2 | **1** | species-selector.js — swap the Plan tab's target-species checkboxes between |
 | `js/modules/spot-repositioning.js` | 33 | 0 | 1 | 0 | Spot Repositioning — drag a marker (GIS spot, ramp, attractor) |
@@ -479,7 +479,7 @@ _none_
 | `js/utils/escape.js` | 17 | 1 | 24 | 0 | HTML-escape a string for safe interpolation into innerHTML. |
 | `js/utils/geo.js` | 401 | 17 | 9 | **8** | Pure geographic / coordinate math helpers. |
 | `js/utils/geojson-coords.js` | 128 | 4 | 4 | 0 | Walking GeoJSON coordinates, and the bounding box that falls out of it. |
-| `js/utils/parsers.js` | 228 | 5 | 3 | 0 | Format parsers — GPX, KML, GeoJSON. |
+| `js/utils/parsers.js` | 230 | 5 | 3 | 0 | Format parsers — GPX, KML, GeoJSON. |
 | `js/utils/rod-row.js` | 39 | 1 | 4 | 0 | Build a single rod-spread row with sensible defaults. |
 | `js/utils/solunar.js` | 145 | 2 | 3 | 0 | utils/solunar.js — moon-driven feeding windows. ONE implementation. |
 | `js/utils/species-phase.js` | 102 | 3 | 1 | 0 | WHAT THE FISH ARE DOING AT THIS HOUR — a stated rule, not invented per-lake numbers. |
@@ -550,7 +550,7 @@ _none_
 | `test/layers-panel.test.js` | 166 | 0 | 0 | 0 | test/layers-panel.test.js — the bar stays slim and no toggle goes missing. |
 | `test/live-ramps-reach-the-filter.test.js` | 344 | 0 | 0 | 0 |  |
 | `test/ndbc-realtime2.test.js` | 161 | 0 | 0 | 0 | NDBC realtime2, against rows transcribed from the LIVE files on 2026-08-25. |
-| `test/notification-delivery.test.js` | 156 | 0 | 0 | 0 | THE ONLY PATH IN THIS APP THAT INTERRUPTS RYAN, AND IT HAS NEVER RUN IN THE FIELD. |
+| `test/notification-delivery.test.js` | 246 | 0 | 0 | 0 | THE ONLY PATH IN THIS APP THAT INTERRUPTS RYAN, AND IT HAS NEVER RUN IN THE FIELD. |
 | `test/nwps-flood-context.test.js` | 208 | 0 | 0 | 0 | WHAT FLOODS AT WHAT STAGE, AND WHERE TODAY SITS AGAINST THIS GAUGE'S OWN RECORD. |
 | `test/nwps-flow-units.test.js` | 72 | 0 | 0 | 0 | The unit that travels with the value, and nothing else. |
 | `test/obs-bearing.test.js` | 82 | 0 | 0 | 0 | "WIND 5 MPH FROM 999°" |
@@ -566,11 +566,11 @@ _none_
 | `test/plan-preflight.test.js` | 170 | 0 | 0 | 0 |  |
 | `test/plan-prompt.test.js` | 496 | 0 | 0 | 0 |  |
 | `test/plan-to-timeline.test.js` | 281 | 0 | 0 | 0 |  |
-| `test/plan-tracks.test.js` | 422 | 0 | 0 | 0 |  |
+| `test/plan-tracks.test.js` | 476 | 0 | 0 | 0 |  |
 | `test/plan-water-geometry.test.js` | 240 | 0 | 0 | 0 |  |
 | `test/plan-water-state.test.js` | 250 | 0 | 0 | 0 | WHAT THE WATER IS DOING TODAY, and the two prompts it writes. |
 | `test/plan-water.test.js` | 255 | 0 | 0 | 0 |  |
-| `test/plan-weights.test.js` | 472 | 0 | 0 | 0 |  |
+| `test/plan-weights.test.js` | 520 | 0 | 0 | 0 |  |
 | `test/pressure-trend.test.js` | 91 | 0 | 0 | 0 | The barometer, and the eleven-day-old reading that made the staleness guard necessary. |
 | `test/prompt-budget.test.js` | 73 | 0 | 0 | 0 | The prompt budget guard, which used to report success and do nothing. |
 | `test/proxy-target-type.test.js` | 57 | 0 | 0 | 0 | Whether a proxy target is a PDF, and why the URL has to outrank the caller's type param. |
@@ -598,7 +598,7 @@ _none_
 | `test/site-catalog.test.js` | 75 | 0 | 0 | 0 | Which parameters a site actually publishes, instead of asking for twelve and seeing what |
 | `test/smart-plan-coastal.test.js` | 200 | 0 | 0 | 0 |  |
 | `test/smart-plan-route.test.js` | 92 | 0 | 0 | 0 |  |
-| `test/smart-plan-v2.test.js` | 427 | 0 | 0 | 0 |  |
+| `test/smart-plan-v2.test.js` | 482 | 0 | 0 | 0 |  |
 | `test/solunar.test.js` | 124 | 0 | 0 | 0 | test/solunar.test.js — one solunar model, and the two consumers cannot drift apart again. |
 | `test/species-phase.test.js` | 103 | 0 | 0 | 0 | A stated rule instead of invented per-lake numbers. |
 | `test/species-selector.test.js` | 138 | 0 | 0 | 0 |  |
@@ -735,7 +735,7 @@ _none_
 - `legacyStorageName()` — Worker/research/keys.js:95, js/data/research-ids.js:67
 - `researchStorageIdCandidates()` — Worker/research/keys.js:112, js/data/research-ids.js:77
 - `resolveLakeKey()` — Worker/trollmap-worker.js:429, js/data/species-intel.js:87
-- `isEnabled()` — js/core/layer-registry.js:97, js/modules/notifications.js:607
+- `isEnabled()` — js/core/layer-registry.js:97, js/modules/notifications.js:644
 - `toggle()` — js/core/layer-registry.js:167, js/modules/layers-panel.js:68
 - `getWorkerBase()` — js/data/access-index.js:73, js/modules/gis-toggles.js:51
 - `formatAccessLabel()` — js/data/access-index.js:360, js/modules/lake-ramp-select.js:328
@@ -781,7 +781,7 @@ _none_
 | `window._planV2Result` | js/modules/plan-water-ui.js<br>js/modules/smart-plan-v2-wiring.js | **nothing** |
 | `window._seedOsmStructureData` | js/modules/supplemental-layers.js | **nothing** |
 | `window._smartPlanCastRods` | — | js/modules/plan-builder.js |
-| `window._smartPlanPhaseRoutes` | js/modules/plan-builder.js | js/modules/notifications.js<br>js/modules/plan-builder.js |
+| `window._smartPlanPhaseRoutes` | js/modules/plan-builder.js | js/modules/plan-builder.js |
 | `window._smartPlanRationale` | — | js/modules/plan-builder.js |
 | `window._smartPlanRouteRods` | js/modules/smart-plan-ui.js | js/modules/plan-builder.js |
 | `window._smartPlanRouteSpeeds` | js/modules/smart-plan-ui.js | js/modules/plan-builder.js |
@@ -791,7 +791,6 @@ _none_
 | `window._smartPlanTimeline` | js/modules/smart-plan-ui.js | js/modules/plan-builder.js<br>js/modules/smart-plan-ui.js |
 | `window._smartRouteGeoJSON` | js/modules/contour-data.js | **nothing** |
 | `window._spEditRod` | js/modules/smart-plan-ui.js | js/modules/smart-plan-ui.js |
-| `window._trollmapPhases` | — | js/modules/notifications.js |
 | `window._trollmapSolunar` | js/modules/plan-builder.js | js/modules/notifications.js<br>test/solunar.test.js |
 | `window._trollmapTide` | js/modules/noaa-tides.js<br>js/modules/supplemental-layers.js | js/modules/noaa-tides.js<br>js/modules/supplemental-layers.js |
 

@@ -2,6 +2,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>TrollMap · background GPS test</title>
+<link rel="manifest" href="./manifest.webmanifest">
+<meta name="theme-color" content="#0d1117">
+<link rel="apple-touch-icon" href="./icons/icon-192.png">
 <!--
   DOES THIS PHONE KEEP A GPS WATCH ALIVE IN A POCKET WITH THE SCREEN OFF?
 
@@ -25,10 +28,24 @@
   is a measurement, not a feature. It turns everything on at once because that is the cheapest
   decisive test: if this fails, nothing weaker works and the question is answered.
 
+  RUN 1 (2026-08-26, Chrome tab): BOTH GAPS GREW ON MINIMIZE. Not on screen-off -- on
+  minimize. So the Web Lock bought nothing and the audio exemption bought nothing, which is what
+  the desktop-only provenance of both should have suggested. Chrome on Android suspends a
+  backgrounded tab regardless.
+
+  RUN 2 IS THE CONTROL THIS PAGE COULD NOT RUN. Ryan: "your test doesn't have an install pwa
+  capability so I can only run it in chrome as it is written." Correct, and an omission rather
+  than a limit -- there was no manifest and no service worker, so Chrome would never offer to
+  install it. Both exist now, in this folder, at a scope that cannot disturb the app's own.
+  An installed PWA is a separate Android task rather than a tab in the browser's task, and
+  whether Android treats it differently is a fact about Android, not something to reason out.
+  The page records which mode it is running in so the two runs cannot be confused later.
+
   HOW TO RUN IT
-    1. Open on the phone. Tap START and allow location.
-    2. Lock the screen, put the phone where it normally rides, and drive or paddle 20 minutes.
-    3. Come back, unlock, read the two GAP numbers.
+    1. Open on the phone. If the INSTALL button appears, tap it and open from the home screen.
+    2. Tap START and allow location. Check the state card says `standalone`, not `browser`.
+    3. Lock the screen, put the phone where it normally rides, and drive or paddle 20 minutes.
+    4. Come back, unlock, read the two GAP numbers.
 
   WHAT THE NUMBERS MEAN
     fix gap        longest silence from watchPosition. If this stays near your fix interval,
@@ -72,7 +89,7 @@
 
 <div class="grid">
   <div class="card"><div class="k">elapsed</div><div class="v" id="el">—</div></div>
-  <div class="card"><div class="k">state</div><div class="v" id="vis" style="font-size:18px">—</div></div>
+  <div class="card"><div class="k">state</div><div class="v" id="vis" style="font-size:15px">—</div></div>
   <div class="card"><div class="k">fixes</div><div class="v" id="nfix">0</div></div>
   <div class="card"><div class="k">ticks</div><div class="v" id="ntick">0</div></div>
   <div class="card"><div class="k">longest fix gap</div><div class="v" id="gfix">—</div></div>
@@ -80,6 +97,7 @@
   <div class="card wide"><div class="k">verdict</div><div class="v" id="verdict" style="font-size:15px">not started</div></div>
 </div>
 
+<button id="install" style="display:none;margin-bottom:10px">INSTALL TO HOME SCREEN</button>
 <button id="go" class="go">START</button>
 <label class="tog"><input type="checkbox" id="aud" checked> keep an inaudible tone playing (may pause music)</label>
 <div class="row"><button id="dl">download log</button><button id="clr">clear</button></div>
@@ -101,7 +119,25 @@ function save() {
   if (ev.length > 4000) ev = ev.slice(-4000);
   try { localStorage.setItem(KEY, JSON.stringify(ev)); } catch (_) { /* keep running regardless */ }
 }
-function push(rec) { ev.push({ t: Date.now(), vis: document.visibilityState, ...rec }); save(); render(); }
+/**
+ * WHICH WINDOW THIS IS RUNNING IN, recorded on every single event.
+ *
+ * The whole point of run 2 is comparing an installed app against a browser tab, and a log that
+ * does not say which one it came from is two runs that can be mixed up a week later. `standalone`
+ * is the installed case; `browser` is a Chrome tab.
+ */
+function displayMode() {
+  try {
+    for (const m of ['standalone', 'fullscreen', 'minimal-ui', 'window-controls-overlay']) {
+      if (window.matchMedia(`(display-mode: ${m})`).matches) return m;
+    }
+  } catch (_) { /* fall through */ }
+  return 'browser';
+}
+function push(rec) {
+  ev.push({ t: Date.now(), vis: document.visibilityState, mode: displayMode(), ...rec });
+  save(); render();
+}
 
 const secs = (ms) => (ms / 1000).toFixed(0) + ' s';
 function longestGap(kind) {
@@ -120,7 +156,7 @@ function render() {
   const nt = ev.filter((e) => e.kind === 'tick').length;
   $('nfix').textContent = nf;
   $('ntick').textContent = nt;
-  $('vis').textContent = document.visibilityState;
+  $('vis').textContent = `${document.visibilityState} · ${displayMode()}`;
   $('el').textContent = started ? secs(Date.now() - started) : '—';
   const gf = longestGap('fix'), gt = longestGap('tick');
   $('gfix').textContent = started ? secs(gf) : '—';
@@ -138,9 +174,10 @@ function render() {
 }
 function fmt(e) {
   const ts = new Date(e.t).toLocaleTimeString();
-  if (e.kind === 'fix') return `${ts}  fix   ${e.lat.toFixed(5)},${e.lon.toFixed(5)}  ±${Math.round(e.acc)}m  ${e.vis}`;
-  if (e.kind === 'tick') return `${ts}  tick  ${e.vis}`;
-  if (e.kind === 'vis') return `${ts}  VIS   -> ${e.vis}`;
+  const where = `${e.vis}/${e.mode || '?'}`;
+  if (e.kind === 'fix') return `${ts}  fix   ${e.lat.toFixed(5)},${e.lon.toFixed(5)}  ±${Math.round(e.acc)}m  ${where}`;
+  if (e.kind === 'tick') return `${ts}  tick  ${where}`;
+  if (e.kind === 'vis') return `${ts}  VIS   -> ${where}`;
   return `${ts}  ERR   ${e.msg}`;
 }
 
@@ -205,9 +242,10 @@ function stop() {
 $('go').onclick = () => (watchId == null && ticker == null ? start() : stop());
 $('clr').onclick = () => { ev = []; started = null; save(); render(); };
 $('dl').onclick = () => {
-  const rows = ['iso,epoch_ms,kind,lat,lon,accuracy_m,visibility,note'];
+  const rows = ['iso,epoch_ms,kind,lat,lon,accuracy_m,visibility,display_mode,note'];
   for (const e of ev) rows.push([new Date(e.t).toISOString(), e.t, e.kind,
-    e.lat ?? '', e.lon ?? '', e.acc ?? '', e.vis ?? '', (e.msg || '').replace(/,/g, ';')].join(','));
+    e.lat ?? '', e.lon ?? '', e.acc ?? '', e.vis ?? '', e.mode ?? '',
+    (e.msg || '').replace(/,/g, ';')].join(','));
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([rows.join('\n')], { type: 'text/csv' }));
   a.download = 'gpstest.csv';
@@ -219,6 +257,31 @@ document.addEventListener('visibilitychange', () => {
   // away, and every gap has to be read against it.
   if (started) push({ kind: 'vis' });
 });
+
+// THE SERVICE WORKER EXISTS TO MAKE THIS INSTALLABLE, and for no other reason. Registered from
+// this folder so its scope is /gpstest/ and the app's own root-scoped worker is untouched.
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js')
+    .catch((e) => console.warn('[gpstest] service worker refused:', e.message));
+}
+
+// Chrome fires this only when it considers the page installable, so the button appearing IS the
+// signal that the manifest and worker are good. It is never shown when the app is already
+// installed and opened from the home screen.
+let deferredPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredPrompt = e;
+  $('install').style.display = 'block';
+});
+$('install').onclick = async () => {
+  if (!deferredPrompt) return;
+  $('install').style.display = 'none';
+  deferredPrompt.prompt();
+  await deferredPrompt.userChoice.catch(() => {});
+  deferredPrompt = null;
+};
+window.addEventListener('appinstalled', () => { $('install').style.display = 'none'; });
 
 load();
 render();
