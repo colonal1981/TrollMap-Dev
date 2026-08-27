@@ -404,6 +404,54 @@ def cross_check(measures, held):
     return measures
 
 
+def deepest_charted(chartpack, slug):
+    """The deepest contour in this water's own pack, or None if there is no pack to ask."""
+    if not chartpack:
+        return None
+    fp = os.path.join(chartpack, slug, 'contours.geojson')
+    if not os.path.exists(fp):
+        return None
+    try:
+        d = json.load(open(fp, encoding='utf-8'))
+    except (ValueError, OSError):
+        return None
+    vals = [f.get('properties', {}).get('depth_ft') for f in (d.get('features') or [])]
+    vals = [v for v in vals if isinstance(v, (int, float))]
+    return max(vals) if vals else None
+
+
+def depth_check(measure, slug, registry, chartpack):
+    """Is this a depth, or is it the full pool elevation wearing a depth's label?
+
+    SCDNR's Maximum Depth agrees with our own charted deepest contour on most of the fourteen
+    -- Hartwell 185 against 180.1, Jocassee 351 against 348.1, Keowee 155 against 155.8. Lake
+    Wateree's says 225 feet. Our chart's deepest contour there is 65.0 ft and full_pool.json
+    holds wateree_lake at 225.5 ft above sea level. Wateree is not two hundred feet deep; the
+    elevation is in the depth field.
+
+    TWO CONDITIONS, BOTH OFF THE DATA, and neither is a threshold anybody chose. It matches
+    the water's own full pool AND it is deeper than the deepest contour on the chart. Marion
+    and Moultrie also sit near their 76.8 ft pool -- and their charts read 79.1 and 68.9 ft,
+    so those numbers are real depths that happen to look like the elevation. One test would
+    have libelled them.
+    """
+    fpp = os.path.join(registry, 'full_pool.json')
+    pool = None
+    if os.path.exists(fpp):
+        row = (json.load(open(fpp, encoding='utf-8')).get('rows') or {}).get(slug) or {}
+        pool = row.get('full_pool_ft')
+    charted = deepest_charted(chartpack, slug)
+    v = float(measure['value'])
+    measure['charted_deepest_ft'] = charted
+    measure['full_pool_ft'] = pool
+    if (pool and charted and abs(v - float(pool)) < 2.0 and v > charted + 10):
+        measure['looks_like'] = ('the full pool ELEVATION, not a depth -- it matches this '
+                                 "water's own full pool and is %.1f ft deeper than the "
+                                 'deepest contour on the chart' % (v - charted))
+    elif charted:
+        measure['agrees_with_chart_within_ft'] = round(abs(v - charted), 1)
+
+
 def source_url(raw_html):
     """The URL the page was saved from. A snapshot without its address cannot be refreshed, and
     a stale agency page is worse than no agency page because it looks current."""
@@ -424,22 +472,132 @@ def saved_at(path):
 SOURCES = [
     {'state': 'TN', 'agency': 'TWRA', 'dir': 'Tennessee_Lakes', 'reader': 'tn'},
     {'state': 'GA', 'agency': 'GA DNR', 'dir': 'Georgia_Lakes', 'reader': 'ga'},
+    {'state': 'SC', 'agency': 'SCDNR', 'dir': 'SC_Lakes', 'reader': 'sc'},
 ]
 
 
-def read_one(path, spec, name_map):
+def build_name_multimap(idx):
+    """Every name a water answers to -> EVERY slug that answers to it.
+
+    build_regulations_table.build_name_map() keeps the first slug per name, which is right for
+    the regulations books because a book address is a legal one. A page title is not: SCDNR
+    titles Richard B. Russell's page `Lake Russell`, and so does an 88.5-acre lake in Habersham
+    County, Georgia. First-wins picked the pond, and the pond's chart is 33 ft deep against the
+    page's published 167.3.
+    """
+    m = {}
+    for slug, row in idx.items():
+        cands = [slug, row.get('name'), row.get('display_name'), row.get('legacy_display_name')]
+        cands += list(row.get('legacy_display_names') or [])
+        for c in cands:
+            if not c:
+                continue
+            k = slugify(re.sub(r'\s*\(.*?\)\s*', ' ', str(c)))
+            # A BORDER LAKE CARRIES TWO STATES, SO STRIP UNTIL THERE ARE NONE LEFT.
+            # `Lake Russell, SC/GA` slugifies to lake_russell_sc_ga, and taking one suffix off
+            # leaves lake_russell_sc -- which never matches the page titled `Lake Russell`, so
+            # SCDNR's Richard B. Russell page resolved to an 88.5-acre pond in Habersham
+            # County instead. Same for `Lake Thurmond, GA/SC`.
+            while True:
+                k2 = re.sub(r'_(al|ga|nc|sc|tn|va)$', '', k)
+                if k2 == k:
+                    break
+                k = k2
+            if k:
+                m.setdefault(k, []).append(slug)
+    return {k: sorted(set(v)) for k, v in m.items()}
+
+
+def _tries(name):
+    base = slugify(re.sub(r'\s*\(.*?\)\s*', ' ', name))
+    out = [base]
+    for a, b in (('_reservoir', '_lake'), ('_lake', '_reservoir')):
+        if base.endswith(a):
+            out.append(base[: -len(a)] + b)
+    stem = re.sub(r'_(reservoir|lake)$', '', base)
+    return out + [stem, 'lake_' + stem, stem + '_lake', stem + '_reservoir']
+
+
+COUNTY_SPLIT = re.compile(r'\s*(?:,|\band\b|/)\s*')
+TWO_STATES = re.compile(r'\b(AL|GA|NC|SC|TN|VA)\s*/\s*(AL|GA|NC|SC|TN|VA)\b')
+
+
+def _spans_a_line(row):
+    """Does the registry itself say this water is in two states?"""
+    blob = '%s %s' % (row.get('display_name') or '', row.get('state') or '')
+    return bool(TWO_STATES.search(blob))
+
+
+def resolve_with_county(name, counties, idx, multimap):
+    """The registry slug, disambiguated by the counties the page itself names.
+
+    THE PAGE ANSWERS ITS OWN AMBIGUITY. SCDNR prints `Counties Lake is Within: Anderson,
+    Abbeville` two lines under the title; the registry files Richard B. Russell under Abbeville
+    and the Georgia pond under Habersham. No fuzzy matching and no geometry -- one exact name
+    match narrowed by a county both sources state.
+
+    Returns (slug, why). `why` is None on a clean single match, and otherwise says what went
+    wrong so it can be reported instead of guessed at.
+    """
+    want = {c.strip().lower() for c in COUNTY_SPLIT.split(counties or '') if c.strip()}
+    seen = []
+    for t in _tries(name):
+        for slug in multimap.get(t, []):
+            if slug not in seen:
+                seen.append(slug)
+        if seen:
+            break
+    if not seen:
+        return None, 'no exact name match'
+    if len(seen) == 1:
+        only = seen[0]
+        if want:
+            row = idx.get(only) or {}
+            county = str(row.get('county') or '').strip().lower()
+            if county and county not in want:
+                # A BORDER LAKE IS FILED UNDER ONE COUNTY IN ONE STATE, AND THE OTHER STATE'S
+                # AGENCY NAMES ITS OWN. The registry files J. Strom Thurmond under Lincoln
+                # County, Georgia; SCDNR's page for the same water says Abbeville and
+                # McCormick. Both are true and neither is the other's. So on a water the index
+                # itself marks as spanning a line, a county disagreement is not evidence of a
+                # wrong match -- and it is recorded rather than passed over in silence.
+                if _spans_a_line(row):
+                    return only, ('accepted across the state line: the registry files it in '
+                                  '%s and the page names %s'
+                                  % (county.title(),
+                                     ', '.join(sorted(c.title() for c in want))))
+                return None, ('the only name match is in %s and the page says %s'
+                              % (county.title(), ', '.join(sorted(c.title() for c in want))))
+        return only, None
+    if not want:
+        return None, 'ambiguous: %s, and the page names no county' % ', '.join(seen)
+    keep = [s for s in seen
+            if str((idx.get(s) or {}).get('county') or '').strip().lower() in want]
+    if len(keep) == 1:
+        return keep[0], None
+    return None, ('ambiguous: %s; the page names %s'
+                  % (', '.join(seen), ', '.join(sorted(c.title() for c in want)) or 'no county'))
+
+
+def read_one(path, spec, idx, multimap):
     blocks, raw = blocks_of(path)
-    page = tn_page(blocks) if spec['reader'] == 'tn' else ga_page(blocks)
+    reader = spec['reader']
+    page = (tn_page(blocks) if reader == 'tn'
+            else sc_page(blocks, raw) if reader == 'sc'
+            else ga_page(blocks))
     # TWRA's <h1> and its filename disagree on Calderwood -- "Calderwood Reservoir" against
     # "Calderwood Lake" -- so both are offered to the resolver and the first exact match wins.
     fallback = os.path.basename(path).split(' in Tennessee')[0].strip()
-    slug = None
+    slug, why = None, None
+    counties = (page.get('general') or {}).get('Counties Lake is Within') \
+        or (page.get('general') or {}).get('County') or ''
     for cand in (page.get('name'), fallback):
-        if cand:
-            slug = REG.resolve(cand, name_map)
-            if slug:
-                break
-    return slug, page, raw
+        if not cand:
+            continue
+        slug, why = resolve_with_county(cand, counties, idx, multimap)
+        if slug:
+            break
+    return slug, why, page, raw
 
 
 def main():
@@ -448,16 +606,22 @@ def main():
     ap.add_argument('--root', default='.', help='the pipeline root holding the page folders')
     ap.add_argument('--registry', default=None, help='default <root>/registry')
     ap.add_argument('--out', default=None, help='default <registry>/agency_lake_facts.json')
+    ap.add_argument('--chartpack', default=None,
+                    help='default <root>/chartpack -- read only to sanity-check a published depth')
     a = ap.parse_args()
     root = os.path.abspath(a.root)
     registry = a.registry or os.path.join(root, 'registry')
     out = a.out or os.path.join(registry, 'agency_lake_facts.json')
+    chartpack = a.chartpack or os.path.join(root, 'chartpack')
+    if not os.path.isdir(chartpack):
+        chartpack = None
+        print('   (no chartpack dir -- published depths will not be checked against the chart)')
 
     idx = REG.load_index(registry)
     if not idx:
         print('!! no lake_index.json under %s -- nothing can be resolved' % registry)
         return 2
-    name_map = REG.build_name_map(idx)
+    multimap = build_name_multimap(idx)
 
     rows, unmatched, pages = {}, [], 0
     for spec in SOURCES:
@@ -466,13 +630,18 @@ def main():
         print('%s: %d page(s) under %s' % (spec['agency'], len(files), spec['dir']), flush=True)
         for p in files:
             pages += 1
-            slug, page, raw = read_one(p, spec, name_map)
-            measures = cross_check(measures_in(page['overview']),
-                                   held_values(registry, slug, idx) if slug else {})
+            slug, why, page, raw = read_one(p, spec, idx, multimap)
+            found = dict(page.get('measures') or {})
+            for k, v in measures_in(page['overview']).items():
+                found.setdefault(k, v)
+            measures = cross_check(found, held_values(registry, slug, idx) if slug else {})
+            if slug and 'max_depth_ft' in measures:
+                depth_check(measures['max_depth_ft'], slug, registry, chartpack)
             rec = {
                 'state': spec['state'], 'agency': spec['agency'],
                 'page_name': page['name'],
                 'display_name': (idx.get(slug) or {}).get('display_name') if slug else None,
+                'match_note': why if slug else None,
                 'source': {'file': os.path.basename(p), 'url': source_url(raw),
                            'saved_at': saved_at(p), 'published': page.get('published')},
                 'measures': measures,
@@ -485,13 +654,21 @@ def main():
             if spec['reader'] == 'ga':
                 rec['best_bets'] = page['best_bets']
                 rec['additional_information'] = page['additional_information']
+            if spec['reader'] == 'sc':
+                # The whole labelled list travels, not only the labels this script maps. A
+                # field nobody has a use for yet is still a field the agency published, and
+                # dropping it here is how it gets re-derived later.
+                rec['general'] = page['general']
+                rec['sections'] = page['sections']
             if slug:
-                if slug in rows:
-                    print('   !! %s already read from %s' % (slug, rows[slug]['source']['file']))
-                rows[slug] = rec
+                # TWO AGENCIES PUBLISH ABOUT A BORDER LAKE AND BOTH ARE RIGHT. Hartwell has a
+                # GA DNR forecast and an SCDNR description; Thurmond has GA's `clarks-hill`
+                # and SC's `thurmond`. Keeping one silently overwrote the other -- and the two
+                # do not even agree on acreage. A water holds a LIST of agency readings.
+                rows.setdefault(slug, []).append(rec)
             else:
                 unmatched.append({'page_name': page['name'], 'file': os.path.basename(p),
-                                  'state': spec['state'], 'measures': measures})
+                                  'state': spec['state'], 'why': why, 'measures': measures})
 
     # THE SURFACE-ACRES DISAGREEMENT IS SYSTEMATIC, AND THAT IS THE FINDING.
     #
@@ -501,8 +678,11 @@ def main():
     # area_acres is the area of the polygon the chartpack actually covers, which is bounded by
     # what Garmin meshed. So neither replaces the other, and any row that breaks the pattern is
     # the one worth looking at, because the pattern does not explain it.
-    ac = [(s, r['measures']['surface_acres']['cross_check'])
-          for s, r in rows.items()
+    # One row per AGENCY READING, not per water: where two agencies publish an acreage for the
+    # same lake, both are compared, because they disagree with each other as well as with us.
+    reads = [(s, r) for s, recs in rows.items() for r in recs]
+    ac = [('%s (%s)' % (s, r['agency']), r['measures']['surface_acres']['cross_check'])
+          for s, r in reads
           if r['measures'].get('surface_acres', {}).get('cross_check')]
     against = [(s, c) for s, c in ac
                if c['agency_minus_held'] < 0 and not c['within_agency_rounding']]
@@ -519,8 +699,8 @@ def main():
                'the polygon the chartpack covers, bounded by what Garmin meshed. Two '
                'measurements of two things. Neither is written over the other.',
     }
-    fp = [(s, r['measures']['full_pool_ft']['cross_check'])
-          for s, r in rows.items()
+    fp = [('%s (%s)' % (s, r['agency']), r['measures']['full_pool_ft']['cross_check'])
+          for s, r in reads
           if r['measures'].get('full_pool_ft', {}).get('cross_check')]
 
     doc = {
@@ -541,9 +721,9 @@ def main():
                             'identical': [s for s, c in fp if c['identical']],
                             'differ': {s: c for s, c in fp if not c['identical']}},
         'mentioned_but_not_parsed': {
-            k: sorted(s2 for s2, r in rows.items() if k in r['mentioned_but_not_parsed'])
+            k: sorted({s2 for s2, r in reads if k in r['mentioned_but_not_parsed']})
             for k in MENTIONS
-            if any(k in r['mentioned_but_not_parsed'] for r in rows.values())
+            if any(k in r['mentioned_but_not_parsed'] for _, r in reads)
         },
         'not_read': {
             'growth_at_age': 'The TWRA pages carry a common-length-at-age table per species. '
@@ -559,6 +739,10 @@ def main():
 
     print('\n%d page(s) read, %d landed on an offered water, %d did not'
           % (pages, len(rows), len(unmatched)))
+    both = {s: [r['agency'] for r in recs] for s, recs in rows.items() if len(recs) > 1}
+    if both:
+        print('   %d water(s) have a page from more than one agency: %s'
+              % (len(both), '; '.join('%s %s' % (s, '+'.join(a)) for s, a in both.items())))
     print('surface acres: %d compared, agency larger on %d, smaller on %d, %d inside the '
           'agency\'s own rounding, median %+.1f%%'
           % (acres_note['compared'], acres_note['agency_larger'], acres_note['agency_smaller'],
@@ -569,16 +753,130 @@ def main():
     if unmatched:
         print('\nnot an offered water (or the name did not resolve exactly):')
         for u in unmatched:
-            print('   %-5s %-28s %s' % (u['state'], u['page_name'][:28], u['file']))
+            print('   %-5s %-26s %-24s %s'
+                  % (u['state'], u['page_name'][:26], u['file'][:24], u.get('why') or ''))
     gaps = doc['mentioned_but_not_parsed']
     if gaps:
         print('\nraised on the page and no number taken off it:')
         for k in sorted(gaps):
             print('   %-16s %d water(s): %s' % (k, len(gaps[k]), ', '.join(gaps[k][:6])))
-    sp = sum(len(r['species']) for r in rows.values())
+    sp = sum(len(r['species']) for _, r in reads)
     print('\n%d species section(s) across %d waters -> %s' % (sp, len(rows), out))
     return 0
 
+
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+# SOUTH CAROLINA -- SCDNR lake pages
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+#
+# A THIRD SHAPE, AND THE EASIEST OF THE THREE. Tennessee and Georgia write prose and the numbers
+# have to be found in sentences. SCDNR writes a labelled list:
+#
+#     <strong>Miles of Shoreline:</strong> 620 <br />
+#     <strong>Acres of Surface Water:</strong> 13,025 <br />
+#     <strong>Maximum Depth:</strong> Approximately 225 feet <br />
+#
+# so the label IS the field name and no regex has to guess what a number means. Two families
+# under one template: 14 major reservoirs at <name>/description.html, and 18 state lakes at
+# state/<name>/index.html which carry Property Location / Latitude / Longitude / Acreage /
+# County / Property Type instead, plus Hours of Operation and Directions as their own headings.
+#
+# WHAT SC DOES NOT CARRY is per-species tactics. Georgia's `Target` paragraphs have no
+# equivalent here, so these pages feed identity and limnology and not trollingIntelligence.
+
+SC_LABELS = {
+    'acres of surface water': ('surface_acres', 'acres'),
+    'acreage': ('surface_acres', 'acres'),
+    'miles of shoreline': ('shoreline_miles', 'miles'),
+    'average depth': ('average_depth_ft', 'ft'),
+    'maximum depth': ('max_depth_ft', 'ft'),
+    'boat ramps': ('boat_ramps', 'count'),
+    'fish attractors': ('fish_attractors', 'count'),
+    'fishing access locations': ('fishing_access_locations', 'count'),
+}
+SC_PARA = re.compile(r'<p\b[^>]*>(.*?)</p>', re.I | re.S)
+SC_PAIR = re.compile(r'<strong[^>]*>(.*?)</strong>\s*:?\s*(.*?)(?=<br\s*/?>|</p>|<strong|$)',
+                     re.I | re.S)
+SC_H2 = re.compile(r'<h2[^>]*>(.*?)</h2>', re.I | re.S)
+SC_MAIN_END = re.compile(r'<!--\s*end #mainContent|<div id="footer"', re.I)
+SC_NUM = re.compile(r'([\d,]+(?:\.\d+)?)')
+
+
+def _flat(x):
+    return re.sub(r'\s+', ' ', html_unescape(re.sub(r'<[^>]+>', ' ', x))).strip()
+
+
+def html_unescape(s):
+    import html as _h
+    return _h.unescape(s)
+
+
+def sc_page(blocks, raw):
+    """The SCDNR page, by its own labels.
+
+    THE SECOND <h1> IS THE LAKE. The first is the site banner, 'South Carolina Lakes and
+    Waterways', on every page in the folder -- taking the first h1 names all thirty-two pages
+    the same thing and the name map then resolves all of them to nothing.
+    """
+    body = raw
+    m = SC_MAIN_END.search(body)
+    if m:
+        body = body[:m.start()]
+    h1s = list(re.finditer(r'<h1[^>]*>(.*?)</h1>', body, re.I | re.S))
+    name = _flat(h1s[-1].group(1)) if h1s else ''
+    region = body[h1s[-1].end():] if h1s else body
+
+    general, sections, overview = {}, {}, []
+    heads = list(SC_H2.finditer(region))
+    spans = [(None, region[:heads[0].start()] if heads else region)]
+    for i, h in enumerate(heads):
+        end = heads[i + 1].start() if i + 1 < len(heads) else len(region)
+        spans.append((_flat(h.group(1)).rstrip(':').strip(), region[h.end():end]))
+
+    for head, chunk in spans:
+        prose = []
+        for p in SC_PARA.finditer(chunk):
+            inner = p.group(1)
+            # A LABEL LIST STARTS WITH ITS LABEL. Merely containing a <strong> is not enough:
+            # the state lakes' Hours of Operation paragraph bolds `every day except Tuesday`
+            # mid-sentence, which read as a field called "every day except Tuesday" with the
+            # value "." -- and cost the sentence itself, because the paragraph was then treated
+            # as a list and never kept as prose.
+            if re.match(r'\s*(?:<a[^>]*>\s*)?<strong', inner, re.I):
+                for pr in SC_PAIR.finditer(inner):
+                    k = _flat(pr.group(1)).strip()
+                    v = _flat(pr.group(2)).lstrip(':').strip()
+                    # `Owned and Managed by: Duke-Energy` puts the value INSIDE the <strong>.
+                    if ':' in k and not v:
+                        k, v = k.split(':', 1)
+                    k = k.rstrip(':').strip()
+                    if k and len(k) < 60:
+                        general.setdefault(k, v.strip())
+                continue
+            t = _flat(inner)
+            if len(t) > 60:
+                prose.append(t)
+        if head is None:
+            overview += prose
+        elif prose:
+            sections[head] = prose
+
+    measures = {}
+    for label, value in general.items():
+        key_units = SC_LABELS.get(label.lower())
+        if not key_units or not value:
+            continue
+        key, units = key_units
+        n = SC_NUM.search(value)
+        if not n:
+            continue
+        v = float(n.group(1).replace(',', ''))
+        measures.setdefault(key, {
+            'value': int(v) if v == int(v) and units == 'count' else v,
+            'units': units, 'text': '%s: %s' % (label, value)})
+    return {'name': name, 'overview': overview, 'general': general,
+            'sections': sections, 'measures': measures, 'species': []}
 
 if __name__ == '__main__':
     sys.exit(main())

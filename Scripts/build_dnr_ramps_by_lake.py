@@ -157,8 +157,17 @@ RAMP_SOURCES = {
                              and _s(p.get('PublicAccess')).lower() != 'closed'),
         'name': lambda p: p.get('WaterAccessName'),
         'wb': lambda p: p.get('Waterbody'),
+        # SpeciesList AND Comments ARE ON THIS LAYER AND WERE BEING DROPPED HERE.
+        # Worker/research/facts-util.js reads the identical feed and keeps both; this file
+        # kept four fields of seven, so dnr_ramps_by_lake.json shipped 849 ramp rows with
+        # ZERO species while registry/_dnr/ramps_sc.json, off the same fetch, carried them
+        # on 337 of 438. getRampSpeciesFacts() then re-fetched ArcGIS for a string already
+        # on the drive. One feed, one definition of it. Comments is the same kind of fact --
+        # "Limited Parking Available", "Fishing pier and access to Rail Trail" -- non-empty
+        # on 200 of 438 and nowhere in the registry.
         'meta': lambda p: {'lanes': p.get('LaunchLanes'), 'dock': p.get('CourtesyDock'),
-                           'county': p.get('County'), 'owner': p.get('Owner')},
+                           'county': p.get('County'), 'owner': p.get('Owner'),
+                           'species': p.get('SpeciesList'), 'comments': p.get('Comments')},
         'src': 'SCDNR South Carolina Public Water Access',
     },
     'ga': {
@@ -169,8 +178,12 @@ RAMP_SOURCES = {
                              and _s(p.get('Status')).lower() not in ('closed', 'inactive')),
         'name': lambda p: p.get('Name'),
         'wb': lambda p: p.get('Waterbody'),
+        # Same layer the Worker reads, same SpeciesList. Georgia's saved dump has no species
+        # column at all -- it was written before this field was noticed -- so GA needs a live
+        # re-fetch to fill, where SC can come --from-dump.
         'meta': lambda p: {'lanes': p.get('NumLanes'), 'dock': p.get('Dock'),
-                           'county': p.get('County'), 'owner': p.get('Owner')},
+                           'county': p.get('County'), 'owner': p.get('Owner'),
+                           'species': p.get('SpeciesList')},
         'src': 'Georgia DNR WRD Water Access Points',
     },
     'nc': {
@@ -179,6 +192,10 @@ RAMP_SOURCES = {
         'filter': lambda p: 'CLOSED' not in _s(p.get('Site_Status') or 'OPEN').upper(),
         'name': lambda p: p.get('BAA_Name'),
         'wb': lambda p: p.get('Water_Access') or p.get('BAA_Alias'),
+        # NO SPECIES HERE, AND DO NOT ADD THE KEY. This layer publishes 42 fields and none
+        # of them is a species list; NC's species come from the ncpaws map app instead, via
+        # build_nc_species_by_lake.py. A `'species': None` added here for symmetry would be a
+        # column that is null on every NC row forever.
         'meta': lambda p: {'lanes': p.get('Launch_Lane_No'),
                            'dock': p.get('Courtesy_Dock_No') or p.get('Fix_Dock_No'),
                            'county': p.get('County'), 'owner': p.get('Owner')},
