@@ -80,7 +80,21 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--root', default='.')
     ap.add_argument('--pack', default=None)
-    ap.add_argument('--only-lakes', default=None, help='comma-separated slugs')
+    ap.add_argument('--only-lakes', default=None, help='comma-separated slugs. Overrides --scope.')
+    ap.add_argument('--from-report', default=None,
+                    help="a bathy_graph.py report, e.g. registry/_bathy_graphs.json. Re-flags "
+                         "ONLY the waters that report says were built, which is what pairs the "
+                         "two scripts. Use this after a bathy build: the alternative scopes also "
+                         "pick up waters whose GARMIN graph moved for unrelated reasons, and on "
+                         "2026-08-27 that was -121,442 runs on out-of-region lakes against "
+                         "+14,754 on the waters actually built.")
+    ap.add_argument('--scope', default='newer', choices=['newer', 'all'],
+                    help="'newer' (DEFAULT) does only the waters whose water_graph.bin is NEWER "
+                         "than their trolling_runs.geojson -- i.e. the graph changed since the "
+                         "runs were last flagged. That is derived from the files themselves, so "
+                         "it needs no list and catches any graph rebuild, not just bathy_graph's. "
+                         "'all' re-checks every water, which walks the whole card to confirm "
+                         "graphs that never moved.")
     ap.add_argument('--reach-m', type=float, default=120.0,
                     help="must match build_trolling_runs.py's --reach-m. Default 120.0, same.")
     ap.add_argument('--report', default='registry/_reflag_routable.json')
@@ -92,10 +106,29 @@ def main():
 
     if a.only_lakes:
         slugs = [s.strip() for s in a.only_lakes.split(',') if s.strip()]
+    elif a.from_report:
+        rp = a.from_report if os.path.isabs(a.from_report) else os.path.join(a.root, a.from_report)
+        built = json.load(open(rp, encoding='utf-8')).get('lakes') or {}
+        slugs = sorted(k for k, v in built.items() if isinstance(v, dict) and 'nodes' in v)
+        print('  %d waters built in %s' % (len(slugs), a.from_report), flush=True)
     else:
-        slugs = sorted(d for d in os.listdir(pack)
-                       if os.path.isfile(os.path.join(pack, d, 'trolling_runs.geojson'))
-                       and os.path.isfile(os.path.join(pack, d, 'water_graph.bin')))
+        both = sorted(d for d in os.listdir(pack)
+                      if os.path.isfile(os.path.join(pack, d, 'trolling_runs.geojson'))
+                      and os.path.isfile(os.path.join(pack, d, 'water_graph.bin')))
+        if a.scope == 'all':
+            slugs = both
+        else:
+            # A run's `routable` was decided by the graph that existed when it was built. If the
+            # graph has not been rewritten since, the answer cannot have changed, so asking again
+            # is a full pass over the card to confirm what it already says.
+            slugs = []
+            for d in both:
+                gt = os.path.getmtime(os.path.join(pack, d, 'water_graph.bin'))
+                rt = os.path.getmtime(os.path.join(pack, d, 'trolling_runs.geojson'))
+                if gt > rt:
+                    slugs.append(d)
+            print('  %d waters have runs and a graph; %d have a graph NEWER than their runs'
+                  % (len(both), len(slugs)), flush=True)
     print('reflag: %d water%s  %s' % (len(slugs), '' if len(slugs) == 1 else 's',
                                       '' if a.write else '(DRY RUN -- pass --write to save)'),
           flush=True)
