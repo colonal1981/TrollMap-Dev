@@ -402,12 +402,28 @@ def main():
     tn = read_tn(R(a.tn_html), name_map)
     offered_tn = sorted(s for s, r in idx.items()
                         if r.get('state') == 'TN' and r.get('feature_type') == 'lake')
-    gap = [s for s in offered_tn if s not in tn['waters']]
+    gap = [s for s in offered_tn if s not in tn['waters']]  # refined below once the digest is read
     tn['offered_lakes'] = offered_tn
     tn['no_agency_page'] = {s: (absent_doc.get('absent') or {})[s] for s in gap if s in absent}
     tn['page_exists_not_saved'] = {s: (absent_doc.get('page_exists_not_saved') or {})[s]
                                    for s in gap if s in unsaved}
     tn['unexplained_gap'] = [s for s in gap if s not in absent and s not in unsaved]
+    dg_path = R(a.regs, 'tn_digest_2026_2027.pdf')
+    if os.path.exists(dg_path):
+        dg = read_tn_digest(dg_path, idx, name_map)
+        tn['digest'] = dg
+        for slug in dg['waters']:
+            tn['offered_lakes'] = tn.get('offered_lakes') or []
+        covered = set(tn['waters']) | set(dg['waters'])
+        tn['covered_by_digest_only'] = sorted(set(dg['waters']) - set(tn['waters']))
+        print('TN digest: %d blocks on pages %s, %d matched (%s), %d refused for want of a '
+              'county' % (dg['blocks_found'], '%d-%d' % (DIGEST_PAGES[0], DIGEST_PAGES[-1]),
+                          len(dg['waters']), ', '.join(sorted(dg['waters'])) or '-',
+                          len(dg['rejected_on_county'])), flush=True)
+    else:
+        covered = set(tn['waters'])
+        doc['problems'].append({'state': 'TN', 'why': 'digest not found', 'path': dg_path})
+
     doc['states']['TN'] = tn
     if tn['unexplained_gap']:
         doc['problems'].append({'state': 'TN', 'why': 'offered water with no page and no '
@@ -449,6 +465,238 @@ def main():
     if doc['problems']:
         print('%d problem(s) recorded in the file' % len(doc['problems']), flush=True)
     return 0
+
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+# TENNESSEE -- the digest's own exceptions pages
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+#
+# The TWRA reservoir pages cover ten reservoirs. The digest covers everything else, including
+# river reaches and the small lakes, and it is NOT a table -- it is a three-column magazine
+# layout of headings and bullets. `pdftotext -layout` interleaves the columns into nonsense:
+# it renders one reach as "ENKA Dam South Fork Holston River (confluence upstream to Great
+# Smoky Mountains upstream to state line, includes with North Fork Holston River National P)",
+# which is three separate entries spliced together.
+#
+# So columns are recovered from word coordinates. NOT by largest gap -- that under-splits a
+# page whose columns sit closer together, and on the exceptions page it merged two columns into
+# the single line "day, no length limit. Davy Crockett Lake (Greene County):". Columns are
+# found by their LEFT EDGE: the x0 values that many words start at.
+
+BULLET = re.compile(r'^\s*[•▪·]\s*')
+
+
+def _left_edges(words, tol=3.0, min_share=0.04):
+    from collections import Counter
+    c = Counter(round(w['x0'] / tol) * tol for w in words)
+    n = len(words)
+    edges, merged = sorted(x for x, k in c.items() if k >= max(4, n * min_share)), []
+    for e in edges:
+        if merged and e - merged[-1] < 12:
+            continue
+        merged.append(e)
+    return merged or [0.0]
+
+
+def _column_lines(page, ytol=2.5):
+    """Lines per column, each tagged by the FONT it is set in.
+
+    TWRA's own typography is the structure, so it is read rather than guessed at. Measured on
+    the 2026-2027 book, every reservoir and exceptions page:
+
+        Agenda-Bold      10.5   the water's name          `Boone`  `Davy Crockett Lake`
+        Agenda-Medium    10.5   its qualifier             `(Greene County):`  `(Rockford Dam
+                                                          upstream to ... boundary):`
+        Agenda-Semibold   8.5   the species inside a rule `Largemouth Bass:`
+        Agenda-Regular    8.5   body
+        Agenda-Bold      18.0   the section title         `Exceptions on State Park Lakes`
+
+    An earlier version required a heading to end in a colon. The reservoir pages do not use
+    one -- the heading is the bare word `Boone` -- so it found 53 blocks in an 18-page book and
+    silently skipped every reservoir in Region 4.
+    """
+    from collections import defaultdict, Counter
+    words = page.extract_words(extra_attrs=['fontname', 'size'])
+    if not words:
+        return []
+    sizes = Counter(round(w['size'], 1) for w in words)
+    body_size = sizes.most_common(1)[0][0]
+
+    def kind(w):
+        fn = w['fontname'].split('+')[-1]
+        sz = round(w['size'], 1)
+        if sz < body_size - 2.0:
+            # The Region 4 page carries its locator map as live text -- county names and
+            # reservoir labels set at 2.8pt against an 8.5pt body. Left in, they append
+            # themselves to whatever rule was open and put JOHNSON HAWKINS SULLIVAN inside a
+            # creel limit.
+            return 'drop'
+        if sz <= body_size:
+            return 'body'
+        if sz >= body_size + 7:
+            return 'section'
+        if 'Bold' in fn:
+            return 'heading'
+        if 'Medium' in fn:
+            return 'qualifier'
+        return 'body'
+
+    edges = _left_edges(words)
+    cols = defaultdict(list)
+    for w in words:
+        cands = [e for e in edges if e <= w['x0'] + 1.0]
+        cols[max(cands) if cands else edges[0]].append(w)
+    out = []
+    for edge in sorted(cols):
+        rows = defaultdict(list)
+        for w in cols[edge]:
+            rows[round(w['top'] / ytol)].append(w)
+        lines = []
+        for k in sorted(rows):
+            ws = sorted(rows[k], key=lambda x: x['x0'])
+            kinds = Counter(kind(w) for w in ws)
+            lines.append({'text': norm(' '.join(w['text'] for w in ws)),
+                          'kind': kinds.most_common(1)[0][0],
+                          'top': min(w['top'] for w in ws)})
+        out.append(lines)
+    return out
+
+
+SUB = re.compile(r'^\s*[»›-]\s+')
+
+# TWRA prints this on every page. Left in the stream it appends itself to whichever rule was
+# open when the page turned.
+RUNNING = re.compile(r'^\s*\d*\s*\|?\s*(Reservoir REGULATIONS|Trout REGULATIONS|'
+                     r'Exceptions TO STATEWIDE REGULATIONS|TWRA Fishing Lakes INFORMATION|'
+                     r'\d{4}[–-]\d{4}\s+T\s?E\s?N\s?N)', re.I)
+
+
+def _blocks(lines):
+    """One block per water: its heading, any preamble, and its rules.
+
+    Three shapes have to survive here, all of them real in this book:
+      - a bare heading            `Boone`
+      - heading plus qualifier    `Davy Crockett Lake` + `(Greene County):`
+      - a preamble before rules   Norris's `Extends from the dam upstream to the Hwy. 25E
+                                  bridge on the Clinch River arm...`
+    Sub-bullets (`»` and `-`) belong to the bullet above them -- Cherokee's smallmouth rule is
+    a parent bullet with two dated children, and promoting them to siblings loses which
+    species they modify.
+    """
+    out, cur = [], None
+    for ln in lines:
+        t, k = ln['text'], ln['kind']
+        if not t or k in ('section', 'drop'):
+            continue
+        if k == 'heading':
+            if cur:
+                out.append(cur)
+            cur = {'heading': t, 'preamble': [], 'rules': [], 'page': ln.get('page')}
+            continue
+        if cur is None:
+            continue
+        if k == 'qualifier':
+            cur['heading'] = (cur['heading'] + ' ' + t).strip()
+            continue
+        if BULLET.match(t):
+            cur['rules'].append(BULLET.sub('', t))
+        elif SUB.match(t) and cur['rules']:
+            cur['rules'][-1] += ' ' + SUB.sub('', t)
+        elif cur['rules']:
+            cur['rules'][-1] += ' ' + t
+        else:
+            cur['preamble'].append(t)
+    if cur:
+        out.append(cur)
+    return [b for b in out if b['heading'] and b['rules']]
+
+
+COUNTY = re.compile(r'\(([^)]*?)\s*(?:County|Co\.)\s*\)', re.I)
+
+
+# The digest's RESERVOIR pages are deliberately not read here.
+#
+# Those pages head each water with a bare word -- `Cherokee`, `Boone`, `Norris` -- and a bare
+# word is not enough to identify a water. Matching `Cherokee` against the registry returned
+# `lake_cherokee_3`, which is a different lake in a different state, and TWRA means Cherokee
+# Reservoir in Hawkins County. Their multi-column flow also runs a water's rules past the
+# column edge and onto the next page, which needs reading-order work this does not do yet.
+#
+# It costs nothing to leave them out: all ten reservoirs on those pages are covered by TWRA's
+# own per-reservoir HTML, where each page is unambiguously one water and the rules are a
+# plain <ul>. The digest is read for what the HTML does NOT cover -- the exceptions pages, the
+# state park lakes, and the river reaches, where every heading carries a county or a described
+# reach and can be identified.
+DIGEST_PAGES = list(range(11, 18))
+
+
+def read_tn_digest(path, idx, name_map, pages=None):
+    """Every heading-and-bullets block on the TN digest's reservoir and exceptions pages.
+
+    COUNTY DISAMBIGUATES, AND IT IS NOT OPTIONAL. Tennessee has two Davy Crockett Lakes: an
+    87-acre one in Crockett County in the west, and the one we ship in Greene County on the
+    Nolichucky. Their rules differ -- the Crockett Co. entry says "Largemouth Bass: no creel
+    limit, only one over 18 inches", the Greene County entry says "Smallmouth/Largemouth Bass:
+    five per day in combination". Matching on the name alone picks whichever is read first and
+    puts a west Tennessee lake's law on an east Tennessee lake. So when a heading carries a
+    county, the registry row's county MUST agree or the block is left unmatched.
+    """
+    import pdfplumber
+    blocks, matched, unmatched = [], {}, []
+    # ONE STREAM FOR THE WHOLE BOOK, in reading order: page, then column, then line.
+    #
+    # A water's rules do not stop at the column edge. Cherokee's thirteen rules start in the
+    # first column of page 6 and finish in the second, and Ft. Loudoun's run off the bottom of
+    # page 6 onto page 7. Parsing each column in isolation gave Cherokee three rules and
+    # orphaned the rest -- they had no heading above them in their own column, so they were
+    # silently dropped rather than reported.
+    stream = []
+    want = set(pages or DIGEST_PAGES)
+    with pdfplumber.open(path) as pdf:
+        for pi, page in enumerate(pdf.pages, start=1):
+            if pi not in want:
+                continue
+            for col in _column_lines(page):
+                for ln in col:
+                    if RUNNING.match(ln['text']):
+                        continue
+                    ln['page'] = pi
+                    stream.append(ln)
+    for b in _blocks(stream):
+        blocks.append(b)
+    for b in blocks:
+        head = b['heading'].rstrip(':').strip()
+        m = COUNTY.search(head)
+        county = norm(m.group(1)) if m else None
+        name = norm(re.sub(r'\s*\(.*', '', head))
+        slug = resolve(name, name_map)
+        rec = {'heading': b['heading'], 'page': b.get('page'), 'county_in_book': county,
+               'rules': tn_parse(b['rules'])}
+        if slug and county:
+            reg_county = norm((idx.get(slug) or {}).get('county') or '')
+            if reg_county and reg_county.lower() != county.lower():
+                rec['rejected'] = ('county mismatch: book says %s, registry says %s'
+                                   % (county, reg_county))
+                unmatched.append(rec)
+                continue
+        elif slug and not county:
+            # A NAME WITHOUT A COUNTY IS NOT AN IDENTIFICATION. Tennessee has two Davy Crockett
+            # Lakes -- 87 acres in Crockett County and the one we ship in Greene County on the
+            # Nolichucky -- and their rules differ. `Pine Lake:` and `Dogwood Lake:` are names
+            # a dozen states share. The registry row is only accepted when the book says which
+            # county it means.
+            rec['rejected'] = 'no county in the heading; name alone does not identify a water'
+            unmatched.append(rec)
+            continue
+        if slug:
+            matched.setdefault(slug, []).append(rec)
+        else:
+            unmatched.append(rec)
+    return {'blocks_found': len(blocks), 'waters': matched,
+            'unmatched_blocks': len(unmatched),
+            'rejected_on_county': [u for u in unmatched if u.get('rejected')]}
 
 
 if __name__ == '__main__':
