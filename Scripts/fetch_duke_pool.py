@@ -47,6 +47,9 @@ BASE = 'https://api.hydro-derived.duke-energy.app'
 UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
       '(KHTML, like Gecko) Chrome/128.0 Safari/537.36')
 NUM = re.compile(r'([0-9]+(?:\.[0-9]+)?)')
+# --offline and a dry run both skip the network; only the reason differs, and the
+# reason is what the line printed beside each lake has to say.
+a_offline = [False]
 DATUM = re.compile(r'\(([^)]*)', re.I)
 
 
@@ -106,7 +109,7 @@ def pull(rec, cache, go, delay):
         except ValueError:
             pass
     if not go:
-        return (None, None, None), 'not fetched (dry run)'
+        return (None, None, None), ('not in the cache' if a_offline[0] else 'not fetched (dry run)')
     try:
         payload = get('%s/lakes/operating-range/%s' % (BASE, rec['location_id']))
     except (urllib.error.URLError, urllib.error.HTTPError, OSError) as e:
@@ -136,6 +139,7 @@ def main():
     cache = a.cache or os.path.join(registry, '_duke_pool_cache')
     out = a.out or os.path.join(registry, '_duke_pool.json')
     go = a.go and not a.offline
+    a_offline[0] = a.offline
 
     gate, gap, nolid = targets(registry, captures)
     print('%d Duke lake(s) bound to a water: %d we already hold (the gate), %d we do not'
@@ -160,10 +164,24 @@ def main():
                              'full_pond_ft': ft, 'datum': datum, 'held_ft': rec['held_ft'],
                              'agrees': not flag, 'source': how}
     read = len(gate) - unread
-    if bad or read < 4:
-        print('\nTHE GATE FAILED (%d disagreement(s), %d read). Nothing written.' % (len(bad), read))
-        if not go and not a.offline:
-            print('This is a DRY RUN and nothing was fetched -- add --go.')
+    # A RUN THAT NEVER ASKED HAS NOT FAILED. The first version printed "THE GATE FAILED" at the
+    # end of a dry run, where by construction nothing is fetched and only whatever happens to be
+    # cached can read. That is an alarming sentence about a run that did exactly what it was
+    # told, and it cost Ryan a minute the first time he ran it. Not attempted, attempted and
+    # disagreed, and attempted and short are three different outcomes.
+    if not (go or a.offline):
+        print('\nDRY RUN -- %d of %d gate lake(s) were already cached and nothing was fetched.'
+              % (read, len(gate)))
+        print('Add --go to fetch. The gate is checked then, against all %d.' % len(gate))
+        return 0
+    if bad:
+        print('\nTHE GATE FAILED: %d lake(s) disagree with a number we already hold by more '
+              'than half a foot. Nothing written -- a parser that has stopped understanding the '
+              'payload must not emit twelve more.' % len(bad))
+        return 1
+    if read < 4:
+        print('\nTHE GATE COULD NOT RUN: only %d of %d gate lake(s) returned an elevation. '
+              'Nothing written; this is a fetch problem, not a disagreement.' % (read, len(gate)))
         return 1
     print('\ngate passed on %d lake(s), every one within half a foot.' % read)
 
@@ -187,9 +205,6 @@ def main():
            'read': date.today().isoformat(),
            'endpoint': BASE + '/lakes/operating-range/{LocationId}',
            'gate_lakes': read, 'waters': len(rows), 'rows': rows}
-    if not (a.go or a.offline):
-        print('\nDRY RUN -- nothing written. Add --go.')
-        return 0
     with open(out, 'w', encoding='utf-8') as f:
         json.dump(doc, f, indent=1, ensure_ascii=False)
     print('\n-> %s' % out)
