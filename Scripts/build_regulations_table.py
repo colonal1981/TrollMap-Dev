@@ -332,7 +332,7 @@ def read_pdf_state(path, specs):
     got, missing = {}, []
     with pdfplumber.open(path) as pdf:
         last = len(pdf.pages)
-        for key, headers, pages in specs:
+        for key, headers, pages, _opts in specs:
             pages = [p for p in pages if 1 <= p <= last]
             found = collect_tables(pdf, headers, pages)
             if not found:
@@ -340,8 +340,8 @@ def read_pdf_state(path, specs):
                 continue
             got[key] = found
         sc_lakes = None
-        if any(k == 'state_lakes' for k, _, _ in specs):
-            pages = [p for k, _, p in specs if k == 'state_lakes'][0]
+        if any(k == 'state_lakes' for k, _, _, _ in specs):
+            pages = [p for k, _, p, _ in specs if k == 'state_lakes'][0]
             pages = [p for p in pages if 1 <= p <= last]
             sc_lakes, err = read_sc_state_lakes(pdf, pages, [p + 1 for p in pages])
             if err:
@@ -349,20 +349,38 @@ def read_pdf_state(path, specs):
     return got, missing, sc_lakes
 
 
+# WHICH COLUMN HOLDS THE ADDRESS is not the same in every book, and assuming column 0 put 104
+# NC and GA rows into `unresolved` when the books were read perfectly well.
+#
+#   SC   column 0 is the water body                    `Santee River system`
+#   NC   column 0 is the water SCOPE under an all-caps SPECIES BAND -- `WHITE BASS` heads the
+#        band and `All inland fishing waters and...` is the address under it. The band rows are
+#        headings, not addresses, and reading them as waters looks for a lake called WHITE BASS.
+#   GA   the statewide table's column 0 is a SPECIES and carries no address at all; the rule is
+#        statewide by construction. Only its water-body exceptions table has an address, in
+#        column 1.
+BAND = re.compile(r'^[A-Z][A-Z0-9 &/\.\'(),-]{3,}$')
+
 SPECS = {
     'SC': ('Regs2627.pdf', [
-        ('striped_white_hybrid_bass', ['water body', 'fish', 'size limit'], list(range(28, 40))),
-        ('state_lakes', ['county', 'water body', 'open days'], list(range(32, 42))),
+        ('striped_white_hybrid_bass', ['water body', 'fish', 'size limit'], list(range(28, 40)),
+         {'water_col': 0}),
+        ('state_lakes', ['county', 'water body', 'open days'], list(range(32, 42)),
+         {'water_col': 1}),
     ]),
     'NC': ('nc_digest_2026_2027.pdf', [
         # NC's header text is cut by the column rules -- `SIZE LIMIT` arrives as `SIZE LIM`
         # plus `IT` in two cells -- so the match is on fragments that survive the split.
-        ('warmwater_game_fish', ['species', 'size lim', 'creel'], list(range(1, 9))),
+        ('warmwater_game_fish', ['species', 'size lim', 'creel'], list(range(1, 9)),
+         {'water_col': 0, 'species_bands': True}),
     ]),
     'GA': ('ga_digest_2026_2027.pdf', [
-        ('statewide', ['species', 'daily limit'], list(range(1, 12))),
-        ('water_body_exceptions', ['species', 'water body', 'possession limit'], list(range(1, 12))),
-        ('saltwater', ['species', 'open season'], list(range(18, 30))),
+        ('statewide', ['species', 'daily limit'], list(range(1, 12)),
+         {'water_col': None, 'species_col': 0, 'implicitly': 'statewide'}),
+        ('water_body_exceptions', ['species', 'water body', 'possession limit'], list(range(1, 12)),
+         {'water_col': 1, 'species_col': 0}),
+        ('saltwater', ['species', 'open season'], list(range(18, 30)),
+         {'water_col': None, 'species_col': 0, 'implicitly': 'statewide coastal'}),
     ]),
 }
 
@@ -452,7 +470,7 @@ def main():
         doc['states'][st] = blk
         for m in missing:
             doc['problems'].append(dict(m, state=st))
-        res = resolve_state_tables(blk, st, name_map, idx, systems, chain)
+        res = resolve_state_tables(blk, st, name_map, idx, systems, chain, specs)
         blk['resolution'] = res
         for f in res['system_assertion_failures']:
             doc['problems'].append(dict(f, state=st))
@@ -733,7 +751,76 @@ def read_tn_digest(path, idx, name_map, pages=None):
 
 SYSTEM_RE = re.compile(r'^(.*?)\s+system\b', re.I)
 SEE_MAP = re.compile(r'\s*\(see map[^)]*\)', re.I)
-STATEWIDE = re.compile(r'^\s*statewide\b', re.I)
+# `Statewide` is only SC's word for it. NC says `All public fishing waters`, `All inland fishing
+# waters and joint fishing waters`, `All public waters except those listed below:` -- 18 rows
+# that are the default rule and were being looked up as if they named a lake.
+STATEWIDE = re.compile(r'^\s*(statewide|all\s+(public|inland)\s+(fishing\s+)?waters'
+                       r'|all\s+waters\s+of\s+the\s+state)\b', re.I)
+
+# Table furniture that is not an address at all -- a header cell the ruled grid picked up, a
+# species band, or the bullet paragraph above the table.
+NOT_AN_ADDRESS = re.compile(r'^(water body|fish|species|size limit|possession limit|'
+                            r'daily limit|creel|county|open days|game fish|•)', re.I)
+
+# `Lakes Hartwell, Keowee, Russell (including the Lake Hartwell tailwater), Thurmond and
+# Tugaloo` is one cell naming five waters. `the Chattooga and Savannah Rivers` is two. Neither
+# uses a semicolon, which is what the first splitter looked for.
+PLURAL_LEAD = re.compile(r'^\s*(?:the\s+)?(Lakes|Rivers|Reservoirs)\s+', re.I)
+TRAIL_PLURAL = re.compile(r'\s+(Rivers|Lakes|Creeks|Reservoirs)\s*$', re.I)
+LEAD_JUNK = re.compile(r'^\s*(and|includes|including)\s+', re.I)
+TRIB_TAIL = re.compile(r'\s+and\s+(its\s+)?tributaries\b.*$', re.I)
+# `Saluda River (Middle Reach) All waters of Saluda River from backwaters of Lake Murray at SC
+# Hwy 395 upstream to Lake Greenwood Dam` -- the cell is the name AND the reach description. The
+# name is what can be looked up; the description is provenance.
+DESC_TAIL = re.compile(r'\s+All waters of\b.*$', re.I)
+# The plural lead stops carrying once the list turns into a described reach:
+# `Lakes Blalock, Greenwood, ... and the middle reach of the Saluda River` -- `the middle reach`
+# is not a lake, and prefixing it produced the water `Lake the middle reach of the Saluda River`.
+NOT_A_BARE_NAME = re.compile(r'^(the|upper|lower|middle)\b', re.I)
+
+
+def _atoms(part):
+    """One address fragment -> the individual water names inside it.
+
+    Applied to EVERY semicolon part, not just to a cell with no semicolons. The first version
+    split on `;` and stopped, so `Great Pee Dee and Little Pee Dee Rivers` -- one part of a
+    22-water list -- stayed a single lump and matched nothing.
+    """
+    t = DESC_TAIL.sub('', TRIB_TAIL.sub('', LEAD_JUNK.sub('', norm(part)))).strip(' .,;')
+    if not t:
+        return []
+    # `In the following waters and their tributaries: • B. Everett Jordan Reservoir • Cape Fear
+    # River • ...` -- NC puts a bulleted list inside one cell.
+    if '•' in t:
+        out = []
+        for b in t.split('•')[1:]:
+            out.extend(_atoms(b))
+        return out
+    if ' & ' in t:
+        out = []
+        for b in t.split(' & '):
+            out.extend(_atoms(b))
+        return out
+    m = PLURAL_LEAD.match(t)
+    if m:
+        noun = {'lakes': 'Lake', 'rivers': 'River', 'reservoirs': 'Reservoir'}[m.group(1).lower()]
+        bits = [b.strip() for b in re.split(r',|\s+and\s+', t[m.end():]) if b.strip()]
+        out = []
+        for b in bits:
+            b = re.sub(r'\s*\(.*?\)', '', b).strip()
+            if not b or NOT_A_BARE_NAME.match(b):
+                continue
+            out.append('%s %s' % (noun, b) if noun == 'Lake' else '%s %s' % (b, noun))
+        return out
+    m2 = TRAIL_PLURAL.search(t)
+    if m2 and re.search(r'\s+and\s+|,', t[:m2.start()]):
+        noun = m2.group(1)[:-1]
+        bits = [re.sub(r'^the\s+', '', b.strip(), flags=re.I)
+                for b in re.split(r',|\s+and\s+', t[:m2.start()]) if b.strip()]
+        return ['%s %s' % (b, noun) for b in bits if b]
+    if re.search(r'\s+and\s+(?=(Lake|Little|Big)\b)', t):
+        return [b.strip() for b in re.split(r'\s+and\s+(?=(?:Lake|Little|Big)\b)', t) if b.strip()]
+    return [t]
 
 
 def load_systems(registry):
@@ -776,12 +863,16 @@ def resolve_water_body(text, state, name_map, idx, systems, chain, sysmembers):
     t = norm(text)
     if not t:
         return None
+    if NOT_AN_ADDRESS.match(t):
+        return {'kind': 'not_an_address', 'text': t, 'waters': [],
+                'note': 'table furniture, not a water body'}
     if STATEWIDE.match(t):
         return {'kind': 'statewide', 'text': t, 'waters': [],
                 'note': 'applies to every water in the state except those the book lists'}
-    parts = [p.strip() for p in re.split(r';', t) if p.strip()]
-    if len(parts) == 1:
-        parts = [p.strip() for p in re.split(r'\s+&\s+|\s+and\s+(?=Lake\b)', t) if p.strip()]
+    parts = []
+    for chunk in re.split(r';', t):
+        parts.extend(_atoms(chunk))
+
     waters, unresolved, kinds = [], [], set()
     for part in parts:
         p = SEE_MAP.sub('', part).strip(' .,;')
@@ -813,7 +904,14 @@ def resolve_water_body(text, state, name_map, idx, systems, chain, sysmembers):
             'waters': ordered, 'unresolved': unresolved}
 
 
-def resolve_state_tables(block, state, name_map, idx, systems, chain):
+def opts_for(specs, key):
+    for k, _h, _p, o in specs:
+        if k == key:
+            return o or {}
+    return {}
+
+
+def resolve_state_tables(block, state, name_map, idx, systems, chain, specs=()):
     """Attach resolved waters to every row of every table already read for a state."""
     sysmembers, sysproblems = {}, []
     for key, defn in (systems.get('systems') or {}).items():
@@ -825,13 +923,34 @@ def resolve_state_tables(block, state, name_map, idx, systems, chain):
         if bad:
             sysproblems.append({'system': key, 'assertions_failed': bad})
     stats = Counter()
-    for tables in (block.get('tables') or {}).values():
+    for key, tables in (block.get('tables') or {}).items():
+        o = opts_for(specs, key)
+        wcol = o.get('water_col', 0)
         for tb in tables:
+            band = None
             for row in tb['rows']:
+                cells = row['cells']
+                first = cells[0] if cells else ''
+                if o.get('species_bands') and first and BAND.match(first) \
+                        and not any(c for c in cells[1:]):
+                    # `WHITE BASS` heads the band; the addresses live in the rows beneath it.
+                    band = first
+                    row['species_band'] = first
+                    row['is_band_heading'] = True
+                    stats['species_band'] += 1
+                    continue
+                if band:
+                    row['species_band'] = band
+                if wcol is None:
+                    row['resolved'] = {'kind': 'implicit', 'text': o.get('implicitly', 'statewide'),
+                                       'waters': [], 'note': 'this table carries no water '
+                                       'address; the rule applies by construction'}
+                    stats['implicit'] += 1
+                    continue
                 if row.get('continuation'):
                     continue
-                r = resolve_water_body(row['water_body'], state, name_map, idx,
-                                       systems, chain, sysmembers)
+                addr = cells[wcol] if len(cells) > wcol else ''
+                r = resolve_water_body(addr, state, name_map, idx, systems, chain, sysmembers)
                 if r:
                     row['resolved'] = r
                     stats[r['kind']] += 1
