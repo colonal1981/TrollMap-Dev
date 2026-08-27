@@ -25,6 +25,7 @@ NOTHING HERE IS AN LLM. Two readers, by source shape:
 Personal use only, not for distribution or resale; not for navigation.
 """
 import argparse, json, os, re, sys, unicodedata
+from collections import Counter
 
 DASH = re.compile(r'[‐-―−]')
 
@@ -381,6 +382,10 @@ def main():
 
     idx = load_index(R(a.registry))
     name_map = build_name_map(idx)
+    systems = load_systems(R(a.registry))
+    wcp = os.path.join(R(a.registry), 'water_chain.json')
+    chain = (json.load(open(wcp, encoding='utf-8')).get('waters') or {}) if os.path.exists(wcp) else {}
+    print('chain:    %d waters, %d book systems defined' % (len(chain), len(systems.get('systems') or {})), flush=True)
     print('index:    %d waters, %d name keys' % (len(idx), len(name_map)), flush=True)
 
     doc = {'_note': 'Personal use only, not for distribution or resale; not for navigation. '
@@ -447,6 +452,10 @@ def main():
         doc['states'][st] = blk
         for m in missing:
             doc['problems'].append(dict(m, state=st))
+        res = resolve_state_tables(blk, st, name_map, idx, systems, chain)
+        blk['resolution'] = res
+        for f in res['system_assertion_failures']:
+            doc['problems'].append(dict(f, state=st))
         counts = ', '.join('%s %d tables/%d rows' % (k, len(v), sum(len(x['rows']) for x in v))
                            for k, v in got.items())
         print('%s:       %s%s' % (st, counts or '(no tables found)',
@@ -454,6 +463,9 @@ def main():
                if sc_lakes else '')), flush=True)
         for m in missing:
             print('   !! missing %s' % m, flush=True)
+        print('   resolved: %s' % (res['stats'] or 'nothing'), flush=True)
+        for f in res['system_assertion_failures']:
+            print('   !! SYSTEM ASSERTION FAILED %s' % f, flush=True)
 
     if a.dry_run:
         print('\n[DRY] would write %s' % R(a.out), flush=True)
@@ -697,6 +709,136 @@ def read_tn_digest(path, idx, name_map, pages=None):
     return {'blocks_found': len(blocks), 'waters': matched,
             'unmatched_blocks': len(unmatched),
             'rejected_on_county': [u for u in unmatched if u.get('rejected')]}
+
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+# RESOLUTION -- what water does a book row actually address?
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+#
+# The books address rules four different ways and only one of them is a lake name:
+#
+#   a name          `Lake Murray`, `Lake Russell`, `Lake Hartwell & Lake Thurmond`
+#   a semicolon list `Ashepoo River; Ashley River; Back River in Jasper County; ... ` -- 22 waters
+#                    sharing one closure
+#   a SYSTEM        `Santee River system (see map, page 31)` -- the address of the striper
+#                    closure that governs Lake Marion and Lake Moultrie, neither of which is
+#                    named anywhere in that row. Resolved by walking water_chain.json upstream
+#                    from the system's root, stopping at the dams the book itself names.
+#   a default       `Statewide except the water bodies list below:`
+#
+# Reading the book correctly and then not knowing which of our waters it speaks to leaves 166
+# rows of law addressed to nobody, which is where this stood before today.
+
+SYSTEM_RE = re.compile(r'^(.*?)\s+system\b', re.I)
+SEE_MAP = re.compile(r'\s*\(see map[^)]*\)', re.I)
+STATEWIDE = re.compile(r'^\s*statewide\b', re.I)
+
+
+def load_systems(registry):
+    p = os.path.join(registry, 'reg_systems.json')
+    return json.load(open(p, encoding='utf-8')) if os.path.exists(p) else {'systems': {}}
+
+
+def system_members(chain, defn):
+    """Waters inside a book system: walk upstream from the root, stop at the named dams."""
+    stops = set((defn.get('stop_at') or {}).keys())
+    seen, out, q = set(), [], [defn['root']]
+    while q:
+        s = q.pop()
+        if s in seen or s in stops:
+            continue
+        seen.add(s)
+        if s in chain:
+            out.append(s)
+        for u in (chain.get(s) or {}).get('upstream') or []:
+            q.append(u)
+    return sorted(out)
+
+
+def check_system(members, defn):
+    """The boundary assertions. A walk that quietly stops meaning what the book means is worse
+    than no walk, so the definition carries the waters that must and must not be in it."""
+    bad = []
+    for s in defn.get('must_include') or []:
+        if s not in members:
+            bad.append('missing ' + s)
+    for s in defn.get('must_exclude') or []:
+        if s in members:
+            bad.append('wrongly included ' + s)
+    return bad
+
+
+def resolve_water_body(text, state, name_map, idx, systems, chain, sysmembers):
+    """One book address -> {kind, waters, unresolved}. Never a guess: anything that does not
+    resolve is named in `unresolved` so it can be seen rather than silently dropped."""
+    t = norm(text)
+    if not t:
+        return None
+    if STATEWIDE.match(t):
+        return {'kind': 'statewide', 'text': t, 'waters': [],
+                'note': 'applies to every water in the state except those the book lists'}
+    parts = [p.strip() for p in re.split(r';', t) if p.strip()]
+    if len(parts) == 1:
+        parts = [p.strip() for p in re.split(r'\s+&\s+|\s+and\s+(?=Lake\b)', t) if p.strip()]
+    waters, unresolved, kinds = [], [], set()
+    for part in parts:
+        p = SEE_MAP.sub('', part).strip(' .,;')
+        m = SYSTEM_RE.match(p)
+        if m:
+            key = '%s:%s_system' % (state, slugify(m.group(1)))
+            defn = (systems.get('systems') or {}).get(key)
+            if defn:
+                waters.extend(sysmembers[key])
+                kinds.add('system')
+            else:
+                unresolved.append({'text': p, 'why': 'system %s is not defined in '
+                                   'reg_systems.json' % key})
+            continue
+        # `Back River in Jasper County` / `Pocotaligo in Beaufort, Jasper, and Hampton Counties`
+        p2 = re.sub(r'\s+in\s+[A-Z][A-Za-z, ]*Count(?:y|ies)\b.*$', '', p).strip()
+        slug = resolve(p2, name_map)
+        if slug:
+            waters.append(slug)
+            kinds.add('name')
+        else:
+            unresolved.append({'text': p, 'why': 'no registry water of that name'})
+    seen, ordered = set(), []
+    for w in waters:
+        if w not in seen:
+            seen.add(w)
+            ordered.append(w)
+    return {'kind': '+'.join(sorted(kinds)) or 'unresolved', 'text': t,
+            'waters': ordered, 'unresolved': unresolved}
+
+
+def resolve_state_tables(block, state, name_map, idx, systems, chain):
+    """Attach resolved waters to every row of every table already read for a state."""
+    sysmembers, sysproblems = {}, []
+    for key, defn in (systems.get('systems') or {}).items():
+        if not key.startswith(state + ':'):
+            continue
+        mem = system_members(chain, defn)
+        bad = check_system(mem, defn)
+        sysmembers[key] = mem
+        if bad:
+            sysproblems.append({'system': key, 'assertions_failed': bad})
+    stats = Counter()
+    for tables in (block.get('tables') or {}).values():
+        for tb in tables:
+            for row in tb['rows']:
+                if row.get('continuation'):
+                    continue
+                r = resolve_water_body(row['water_body'], state, name_map, idx,
+                                       systems, chain, sysmembers)
+                if r:
+                    row['resolved'] = r
+                    stats[r['kind']] += 1
+                    stats['waters'] += len(r['waters'])
+                    stats['unresolved_parts'] += len(r.get('unresolved') or [])
+    return {'system_members': {k: len(v) for k, v in sysmembers.items()},
+            'system_assertion_failures': sysproblems, 'stats': dict(stats)}
 
 
 if __name__ == '__main__':
