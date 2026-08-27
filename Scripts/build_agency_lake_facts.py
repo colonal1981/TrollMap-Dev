@@ -585,6 +585,8 @@ def read_one(path, spec, idx, multimap):
     page = (tn_page(blocks) if reader == 'tn'
             else sc_page(blocks, raw) if reader == 'sc'
             else ga_page(blocks))
+    if page is None:
+        return None, 'not an %s page -- no reader for this template' % spec['agency'], None, raw
     # TWRA's <h1> and its filename disagree on Calderwood -- "Calderwood Reservoir" against
     # "Calderwood Lake" -- so both are offered to the resolver and the first exact match wins.
     fallback = os.path.basename(path).split(' in Tennessee')[0].strip()
@@ -623,7 +625,7 @@ def main():
         return 2
     multimap = build_name_multimap(idx)
 
-    rows, unmatched, pages = {}, [], 0
+    rows, unmatched, unread, pages = {}, [], [], 0
     for spec in SOURCES:
         d = os.path.join(root, spec['dir'])
         files = sorted(glob.glob(os.path.join(d, '*.html')))
@@ -631,6 +633,10 @@ def main():
         for p in files:
             pages += 1
             slug, why, page, raw = read_one(p, spec, idx, multimap)
+            if page is None:
+                unread.append({'file': os.path.basename(p), 'state': spec['state'],
+                               'url': source_url(raw), 'why': why})
+                continue
             found = dict(page.get('measures') or {})
             for k, v in measures_in(page['overview']).items():
                 found.setdefault(k, v)
@@ -716,6 +722,10 @@ def main():
         'waters': len(rows),
         'rows': rows,
         'unmatched_pages': unmatched,
+        # PRESENT AND NOT READ IS ITS OWN ANSWER, and it has to be tellable apart from absent.
+        # A page saved into a state's folder from a site this script has no reader for is not
+        # a page that says nothing.
+        'pages_with_no_reader': unread,
         'surface_acres_check': acres_note,
         'full_pool_check': {'compared': len(fp),
                             'identical': [s for s, c in fp if c['identical']],
@@ -750,6 +760,10 @@ def main():
     print('full pool:     %d compared, %d identical, %d differ'
           % (len(fp), len(doc['full_pool_check']['identical']),
              len(doc['full_pool_check']['differ'])))
+    if unread:
+        print('\nsaved but not read -- no reader for that site\'s template:')
+        for u in unread:
+            print('   %-5s %-46s %s' % (u['state'], u['file'][:46], u['url'] or ''))
     if unmatched:
         print('\nnot an offered water (or the name did not resolve exactly):')
         for u in unmatched:
@@ -812,18 +826,34 @@ def html_unescape(s):
     return _h.unescape(s)
 
 
+SC_TEMPLATE = re.compile(r'<h2[^>]*>\s*General Information\s*</h2>', re.I)
+SC_BANNER = re.compile(r'South Carolina Lakes and Waterways', re.I)
+
+
 def sc_page(blocks, raw):
     """The SCDNR page, by its own labels.
 
     THE SECOND <h1> IS THE LAKE. The first is the site banner, 'South Carolina Lakes and
     Waterways', on every page in the folder -- taking the first h1 names all thirty-two pages
     the same thing and the name map then resolves all of them to nothing.
+
+    AND THE FOLDER IS NOT ONLY SCDNR'S. An operator page saved beside them -- the City of
+    Abbeville's Lake Secession page is the first -- is a different site with a different
+    template: h1 used for every section heading, so 'last h1' names it `Lake Levels &
+    Drawdowns - FAQ`, and no General Information block at all. Reading it with this reader
+    produces a confident row about a lake that does not exist. So the reader checks for the
+    template it was written against and returns None when it is not there; read_one reports
+    the page by name instead of inventing a water.
     """
+    if not SC_TEMPLATE.search(raw):
+        return None
     body = raw
     m = SC_MAIN_END.search(body)
     if m:
         body = body[:m.start()]
-    h1s = list(re.finditer(r'<h1[^>]*>(.*?)</h1>', body, re.I | re.S))
+    # The lake's own h1 is the one that is not the site banner.
+    h1s = [m for m in re.finditer(r'<h1[^>]*>(.*?)</h1>', body, re.I | re.S)
+           if not SC_BANNER.search(m.group(1))]
     name = _flat(h1s[-1].group(1)) if h1s else ''
     region = body[h1s[-1].end():] if h1s else body
 
