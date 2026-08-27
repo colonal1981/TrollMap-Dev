@@ -102,10 +102,10 @@ FILES = [
     #
     # Each is slimmed by the uploader, so there is no local file with the same shape to diff --
     # presence and a shape assertion is what can honestly be checked from here.
-    ("full_pool.json", None, "presence",
+    ("full_pool.json", "full_pool.json", "pool",
      "Worker/registry.js:fullPoolTable() serves the chart datum off this -- without it the plan "
      "panel can show today's level and cannot say what it is below"),
-    ("regulations.json", None, "presence",
+    ("regulations.json", "regulations_table.json", "regs",
      "Worker/registry.js:regulationsTable() answers /regulations closures off this -- without it "
      "checkRegulations() falls back to a hand-typed table of six waters"),
     ("nc_species_by_lake.json", None, "presence",
@@ -196,6 +196,8 @@ def main() -> int:
         import upload_garmin_to_r2 as ug
         slim_registry = ug.slim_registry
         slim_chain = getattr(ug, 'slim_chain', None)
+        slim_full_pool = getattr(ug, 'slim_full_pool', None)
+        slim_regulations = getattr(ug, 'slim_regulations', None)
         # The retired set comes from the uploader too, not from a second reader of the deletion
         # tab written here. slim_registry() filters on it, so a checker that computed its own
         # would report lakes.json stale forever while the uploader kept saying it just wrote it.
@@ -206,6 +208,10 @@ def main() -> int:
         print('!! lakes.json will be checked for PRESENCE only, not for currency.')
         slim_registry = None
         slim_chain = None
+        # Left unset, these NameError inside the loop and take the whole verify down -- which
+        # would turn "I could not check for currency" into "the check crashed".
+        slim_full_pool = None
+        slim_regulations = None
         retired_slugs = None
 
     gone = set()
@@ -244,6 +250,17 @@ def main() -> int:
             local = slim_registry(local, gone) if slim_registry else None
         if local is not None and kind == 'chain':
             local = slim_chain(local) if slim_chain else None
+        # PRESENCE IS NOT CURRENCY, and these two are the files that move most. They are slimmed
+        # on the way up, so a raw diff would always disagree -- but the uploader's own slim is
+        # importable, which is the whole reason this script imports it rather than restating it.
+        # Left at presence-only, a stale full_pool.json would have read "OK" while the Worker
+        # served yesterday's datums.
+        if local is not None and kind == 'pool':
+            nop = os.path.join(a.registry, 'no_full_pool.json')
+            nopool = json.load(open(nop, encoding='utf-8')) if os.path.exists(nop) else {}
+            local = slim_full_pool(local, nopool) if slim_full_pool else None
+        if local is not None and kind == 'regs':
+            local = slim_regulations(local) if slim_regulations else None
 
         if err:
             print('%-22s %-9s %-11s %-22s %s'
