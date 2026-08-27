@@ -15,6 +15,7 @@ import { handleCameras } from './cameras.js';
 import { handleAlerts, runAlertSweep } from './alerts.js';
 import { handleReports } from './reports.js';
 import { fetchStateRegulations, getLakeRegulations } from './research/clients.js';
+import { regulationsTable, lakeIndex, resolveRegistryRow } from './registry.js';
 import { handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchRegsDebug, handleResearchApprove, handleResearchDelete, handleResearchDeleteNormalizedDoc, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleResearchValidationPass, handleSharedCheck, handleSharedStore, handleSharedQuery, handleSharedPublish, handleSharedStatus, handleSharedQuarantine } from './worker-research.js';
 
 
@@ -1476,6 +1477,50 @@ var trollmap_worker_default = {
         try {
           const stateRegs = await fetchStateRegulations(st, env);
           const forLake = lake ? getLakeRegulations(stateRegs, lake) : null;
+
+          // THE BOOKS, PARSED. Separate from the digest parse above and deliberately so: this
+          // half is built offline by build_regulations_table.py, deterministically, and read
+          // from R2. The LLM digest parse answers "what are the limits"; this answers "is it
+          // shut", which the route could not do at all until now.
+          //
+          // ITS FAILURE MUST NOT TAKE THE DIGEST DOWN WITH IT. A missing R2 object is a
+          // pipeline state, not a request error, so it is reported in `closures_error` and the
+          // limits still travel.
+          let bookRules = null, closures = [], booksError = null, bookSlug = null;
+          try {
+            const [table, index] = await Promise.all([
+              regulationsTable(env), lakeIndex(env),
+            ]);
+            const row = lake ? resolveRegistryRow(index, lake) : null;
+            bookSlug = row && row.slug ? row.slug : null;
+            const entry = bookSlug ? (table.by_water || {})[bookSlug] : null;
+            bookRules = entry || null;
+            // Flattened so a caller never walks a tree to answer one question. Each record
+            // keeps its species and the sentence it came from -- the sentence is what a person
+            // can check, and it is the only thing that survives a disagreement.
+            const walk = (recs) => {
+              for (const r of (recs || [])) {
+                for (const c of (r.closures || [])) {
+                  closures.push({
+                    effect: c.effect, applies_to: c.applies_to,
+                    start: c.start || null, end: c.end || null,
+                    species: c.species || null, species_known: !!c.species_known,
+                    // Resolved at BUILD time from registry/species_map.json, so neither this
+                    // route nor the browser does the judgement. `Striped or Hybrid Bass or a
+                    // combination` arrives already knowing it governs two checkboxes.
+                    plan_species: Array.isArray(c.plan_species) ? c.plan_species : [],
+                    species_basis: c.species_basis || null,
+                    also_covers: Array.isArray(c.also_covers) ? c.also_covers : undefined,
+                    text: c.text, source: r.source || null,
+                  });
+                }
+                walk(r.rules);
+              }
+            };
+            walk(entry && entry.rules);
+          } catch (err) {
+            booksError = String((err && err.message) || err);
+          }
           return new Response(JSON.stringify({
             state: st,
             lake: lake || null,
@@ -1497,9 +1542,23 @@ var trollmap_worker_default = {
             // caller must not read either as permission.
             saltwater: stateRegs.saltwater || {},
             saltwater_source: stateRegs.saltwaterSource || null,
-            note: "Parsed from the state digest PDF. Limits are published text, not a legality "
-                + "ruling: a size and creel limit is not a closure, and this route cannot tell "
-                + "you a season is shut. Verify before you keep one.",
+
+            // THE CLOSURES. `book_slug` is null when the name did not resolve to a registry
+            // water, which is a DIFFERENT answer from a water with no closures and has to stay
+            // tellable apart -- resolveRegistryRow refuses an ambiguous name rather than
+            // guessing, and a refusal must not read as "open".
+            book_slug: bookSlug,
+            book_rules: bookRules,
+            closures,
+            closures_error: booksError,
+
+            note: "Limits come from the state digest PDF, parsed at request time. Closures come "
+                + "from registry/regulations.json, parsed offline from the same books with no "
+                + "LLM in the path. A size and creel limit is still not a closure -- but this "
+                + "route CAN now tell you a season is shut, where the book says so and the "
+                + "water resolved. `closures` is empty both when a water has none and when the "
+                + "name did not resolve; `book_slug` is what tells those apart. Verify before "
+                + "you keep one.",
           }, null, 2), { headers: { ...JSON_HEADERS, "Cache-Control": "public, max-age=3600" } });
         } catch (err) {
           return new Response(JSON.stringify({ error: String(err && err.message || err), state: st }),

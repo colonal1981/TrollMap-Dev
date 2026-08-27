@@ -583,7 +583,8 @@ def main():
         for f in res['system_assertion_failures']:
             print('   !! SYSTEM ASSERTION FAILED %s' % f, flush=True)
 
-    by_water, statewide = project_by_water(doc, idx, SPECS)
+    smap = load_species_map(R(a.registry))
+    by_water, statewide = project_by_water(doc, idx, SPECS, smap)
     doc['by_water'] = by_water
     doc['statewide'] = statewide
     print('\nby water: %d of %d offered waters carry at least one rule; statewide defaults for '
@@ -1139,7 +1140,36 @@ def resolve_state_tables(block, state, name_map, idx, systems, chain, specs=()):
 # one livePolicyFor() already draws between `scope: none` and null, and it is the reason a
 # statewide default has to ship alongside the exceptions rather than instead of them.
 
-def project_by_water(doc, idx, all_specs=None):
+def load_species_map(registry):
+    p = os.path.join(registry, 'species_map.json')
+    return json.load(open(p, encoding='utf-8')) if os.path.exists(p) else {}
+
+
+def expand_species(phrase, smap):
+    """A book phrase -> the plan form's species, plus what the book covers and the form cannot.
+
+    RESOLVED HERE, ONCE, NOT AT RUNTIME IN TWO PLACES. The Worker and the browser both need this
+    answer and neither should be doing the judgement -- it lives in registry/species_map.json and
+    is baked into the record, so a closure arrives already knowing which checkboxes it governs.
+    """
+    if not phrase:
+        return {'plan_species': [], 'basis': 'no species named'}
+    bp = (smap.get('book_phrases') or {})
+    if phrase in bp:
+        return {'plan_species': list(bp[phrase]), 'basis': 'exact'}
+    pm = (smap.get('partly_mapped') or {})
+    if phrase in pm and isinstance(pm[phrase], dict):
+        return {'plan_species': list(pm[phrase].get('plan') or []),
+                'also_covers': list(pm[phrase].get('also_covers') or []),
+                'basis': 'partial -- the book is wider than the form'}
+    nh = (smap.get('no_home_in_the_form') or {})
+    if phrase in nh:
+        return {'plan_species': [], 'basis': 'no checkbox for this fish',
+                'note': nh[phrase]}
+    return {'plan_species': [], 'basis': 'UNMAPPED'}
+
+
+def project_by_water(doc, idx, all_specs=None, smap=None):
     by = {}
 
     def add(slug, rec):
@@ -1205,6 +1235,15 @@ def project_by_water(doc, idx, all_specs=None):
                             if all_species:
                                 c['applies_to'] = 'all_fishing'
                                 c['note'] = 'no species column in this table -- shuts the water'
+                                c['plan_species'] = list((smap or {}).get('plan_species', {})
+                                                         .get('values') or [])
+                                c['species_basis'] = 'every species -- the water is shut'
+                            else:
+                                ex = expand_species(sp, smap or {})
+                                c['plan_species'] = ex['plan_species']
+                                c['species_basis'] = ex['basis']
+                                if ex.get('also_covers'):
+                                    c['also_covers'] = ex['also_covers']
                         rec['closures'] = cl
                     if sp and not row.get('continuation'):
                         last_species = sp

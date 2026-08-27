@@ -188,6 +188,58 @@ export function livePolicyFor(state, lakeName, species) {
 }
 
 /** Whether the digest has been read for this water at all. */
+/**
+ * Closures the books put on this water for this species on this date, or null if the digest has
+ * not been primed.
+ *
+ * ONLY TWO KINDS MAY EVER GATE A TRIP. `all_fishing` shuts the water and `harvest` shuts the
+ * take; both are returned as blocking. A method closure -- `closed to snagging from March 1-31`
+ * -- and anything the parser could not type are returned as WARNINGS carrying the book's own
+ * sentence, because the sentence is what a person can check and a method closure does not stop
+ * you fishing.
+ *
+ * THE SPECIES MATCH IS A LIST MEMBERSHIP, NOT A STRING TEST. `plan_species` is resolved offline
+ * from registry/species_map.json, so `Striped or Hybrid Bass or a combination` arrives already
+ * naming the two checkboxes it governs. The containment matching used elsewhere in this app
+ * reported `Walleye/Sauger or Walleye/Sauger Hybrids` as a match for the Hybrid box, which means
+ * striped bass hybrid -- a walleye rule on a striper trip.
+ */
+export function closuresFor(state, lakeName, species, date) {
+  const hit = _cache.get(keyFor(state, lakeName));
+  if (!hit || !hit.payload) return null;
+  const all = Array.isArray(hit.payload.closures) ? hit.payload.closures : [];
+  const want = String(species || '').trim();
+  const d = date instanceof Date ? date : (date ? new Date(date) : new Date());
+  const md = (d.getMonth() + 1) * 100 + d.getDate();
+  const inWindow = (c) => {
+    if (!c.start || !c.end) return true;   // closed outright, no dates
+    const [sm, sd] = c.start.split('-').map(Number);
+    const [em, ed] = c.end.split('-').map(Number);
+    const a = sm * 100 + sd, b = em * 100 + ed;
+    return a <= b ? (md >= a && md <= b) : (md >= a || md <= b);
+  };
+  const forSpecies = (c) => !want || (c.plan_species || []).includes(want);
+  // A SENTENCE THE PARSER COULD NOT TYPE IS NOT "NO CLOSURE". `effect: 'unknown'` means the
+  // builder saw a date window it could not classify -- Lake Murray's `June 1 - Sept. 30: any
+  // length` is one, on the same species and the same months as Marion's real shutdown. Dropping
+  // it entirely is the mistake this whole file exists to correct: an unread rule displayed
+  // nothing, which reads as "checked, you are fine". It cannot block, because we do not know
+  // what it says; it can and must be quoted.
+  const active = all.filter(
+    (c) => (c.effect === 'closed' || c.effect === 'unknown') && forSpecies(c) && inWindow(c));
+  const gates = (c) => c.effect === 'closed'
+    && (c.applies_to === 'all_fishing' || c.applies_to === 'harvest');
+  return {
+    // `book_slug` null means the NAME did not resolve, which is not the same as "no closures".
+    resolved: !!hit.payload.book_slug,
+    slug: hit.payload.book_slug || null,
+    blocking: active.filter(gates),
+    warnings: active.filter((c) => !gates(c)),
+    all,
+    error: hit.payload.closures_error || null,
+  };
+}
+
 export function regulationsPrimed(state, lakeName) {
   return _cache.has(keyFor(state, lakeName));
 }

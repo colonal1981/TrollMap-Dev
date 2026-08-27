@@ -29,6 +29,7 @@ export const LAKE_INDEX_KEY = '_registry/lake_index.json';
 export const WATER_CHAIN_KEY = '_registry/water_chain.json';
 export const DAM_TABLE_KEY = '_registry/dam_table.json';
 export const NC_SPECIES_KEY = '_registry/nc_species_by_lake.json';
+export const REGULATIONS_KEY = '_registry/regulations.json';
 export const INDEX_TTL_S = 3600;
 
 let _index = null;
@@ -42,6 +43,7 @@ let _ncSpeciesAt = 0;
 
 /** Exposed for tests. Nothing in the Worker should need to call this. */
 export function _resetIndexCache() {
+  _regs = null; _regsAt = 0;
   _index = null; _indexAt = 0; _chain = null; _chainAt = 0; _dams = null; _damsAt = 0;
   _ncSpecies = null; _ncSpeciesAt = 0;
 }
@@ -192,6 +194,42 @@ export async function ncSpeciesByLake(env, opts = {}) {
   _ncSpecies = rows;
   _ncSpeciesAt = now;
   return rows;
+}
+
+let _regs = null;
+let _regsAt = 0;
+
+/**
+ * The law, parsed from the state books by build_regulations_table.py.
+ *
+ * Fifth object in this family and the same contract as the four above it: read from R2, cached
+ * per isolate for an hour, and a missing object is an error naming the script that writes it
+ * rather than a silent empty map. It changes when the PIPELINE uploads, not when the Worker
+ * deploys.
+ *
+ * WHY IT EXISTS AT ALL. Regulations were being re-derived per lake by an LLM. Four Santee-area
+ * lakes reading one South Carolina book returned four different subsets of it in three different
+ * shapes, and `June 16 - Sept. 30 closed` -- the rule governing Lake Marion and Lake Moultrie --
+ * survived into ONE of 63 saved profiles with the word "closed" stripped off it. The law is not
+ * per-lake research; it is a handful of tables that change once a year.
+ */
+export async function regulationsTable(env, opts = {}) {
+  const now = Number.isFinite(opts.now) ? opts.now : Date.now();
+  if (!opts.fresh && _regs && now - _regsAt < INDEX_TTL_S * 1000) return _regs;
+  const bucket = (env && env.R2_TROLLMAP_CHARTPACKS) || opts.bucket;
+  if (!bucket) throw new Error('R2_TROLLMAP_CHARTPACKS is not bound to this Worker');
+  const obj = await bucket.get(REGULATIONS_KEY);
+  if (!obj) {
+    throw new Error(`${REGULATIONS_KEY} is not in the bucket -- run build_regulations_table.py, `
+                  + 'then upload_garmin_to_r2.py');
+  }
+  const parsed = JSON.parse(await r2Text(obj));
+  if (!parsed || typeof parsed.by_water !== 'object' || !parsed.by_water) {
+    throw new Error(`${REGULATIONS_KEY} has no "by_water" object keyed by registry slug`);
+  }
+  _regs = parsed;
+  _regsAt = now;
+  return parsed;
 }
 
 const lower = (v) => String(v == null ? '' : v).trim().toLowerCase();

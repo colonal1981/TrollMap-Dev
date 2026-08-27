@@ -1,4 +1,4 @@
-import { livePolicyFor } from './regulations-live.js';
+import { livePolicyFor, closuresFor } from './regulations-live.js';
 /**
  * species-intel.js — TrollMap Unified Species behavior + regulations knowledge base.
  * Sourced from SCDNR regulations, Carolina Sportsman, and Angler's Headquarters.
@@ -124,6 +124,45 @@ export function checkRegulations(lakeName, species, date, state = null) {
         source: `${live.state || 'state'} regulations digest` }
     : null;
 
+  // THE BOOKS COME FIRST, AND THEY CAN SAY NO.
+  //
+  // Until now `legal: false` came only from REGULATIONS below -- six hand-typed waters against
+  // 448 that got "we do not know" and displayed nothing. registry/regulations.json is the same
+  // law parsed offline from the state digests with no LLM in the path, and it reaches 74 waters
+  // so far, Lake Marion and Lake Moultrie among them. Marion is the case that matters: its
+  // striped bass closure is real, the research pipeline lost it entirely, and the hand table is
+  // the only reason the app knew about it.
+  //
+  // Only `all_fishing` and `harvest` block. A method closure warns and does not stop a trip.
+  const books = state ? closuresFor(state, lakeName, species, date) : null;
+  const bookWarnings = [];
+  if (books && books.blocking && books.blocking.length) {
+    const c = books.blocking[0];
+    const when = c.start && c.end ? ` (${c.start} to ${c.end})` : '';
+    const who = c.applies_to === 'all_fishing' ? 'This water is closed' : `${species} harvest is closed`;
+    return {
+      legal: false,
+      reason: `${who}${when}: "${c.text}"`,
+      regInfo: null,
+      limits,
+      // THE OTHER BLOCKING ROWS ARE NOT REDUNDANT. Lake Edwin B. Johnson carries two:
+      // `Closed to Boating and Fishing` and `Closed to Boating and Fishing until July 1, 2027`.
+      // Only the second one says when it reopens, and reporting the first alone throws that
+      // away. Everything the books put on this water and this fish on this day gets said.
+      warnings: [
+        ...books.blocking.slice(1).map((w) => `Also in effect: "${w.text}"`),
+        ...books.warnings.map((w) => `Also in effect: "${w.text}"`),
+      ],
+      source: c.source || 'state regulations book',
+    };
+  }
+  if (books && books.warnings && books.warnings.length) {
+    for (const w of books.warnings) bookWarnings.push(`In effect here: "${w.text}"`);
+  }
+  if (books && books.error) {
+    bookWarnings.push('Closure data could not be read for this water — verify before you keep one.');
+  }
+
   if (!lakeRegs || !lakeRegs[species]) {
     const warnings = [];
     if (limits) {
@@ -137,13 +176,13 @@ export function checkRegulations(lakeName, species, date, state = null) {
     } else {
       warnings.push(`No regulation data for ${lakeName} — verify with the state before you keep one.`);
     }
-    return { legal: true, reason: null, regInfo: null, limits, warnings,
-             note: warnings[0] };
+    return { legal: true, reason: null, regInfo: null, limits,
+             warnings: [...bookWarnings, ...warnings], note: warnings[0] };
   }
   const reg = lakeRegs[species];
 
   if (reg.notPresent) {
-    return { legal: false, reason: reg.note, regInfo: reg, limits, warnings: [] };
+    return { legal: false, reason: reg.note, regInfo: reg, limits, warnings: bookWarnings };
   }
 
   if (reg.closedSeason) {
@@ -158,13 +197,18 @@ export function checkRegulations(lakeName, species, date, state = null) {
       ? (mdVal >= startVal && mdVal <= endVal)
       : (mdVal >= startVal || mdVal <= endVal); // wraps year boundary
     if (inClosedWindow) {
-      return { legal: false, reason: `Closed season: ${reg.note}`, regInfo: reg, limits, warnings: [] };
+      return { legal: false, reason: `Closed season: ${reg.note}`, regInfo: reg, limits,
+               warnings: bookWarnings };
     }
   }
 
   // A CURATED ROW AND THE DIGEST DISAGREEING IS WORTH SAYING OUT LOUD rather than silently
   // preferring one. The curated table is hand-typed and dated; the digest is this year's book.
-  const warnings = [];
+  // SIX WATERS HAVE A HAND ROW AND THE BOOKS TALK ABOUT ALL OF THEM. Building a fresh array
+  // here dropped every book warning on exactly the waters most likely to have one: Lake Murray's
+  // `June 1 - Sept. 30: any length` is a real record the parser could not type, on the same fish
+  // and nearly the same months as Marion's shutdown, and it reached nobody.
+  const warnings = [...bookWarnings];
   if (limits && reg.sizeLimit && reg.sizeLimit.min != null
       && limits.sizeLimit && !String(limits.sizeLimit).includes(String(reg.sizeLimit.min))) {
     warnings.push(`Built-in table says ${reg.sizeLimit.min}" minimum for ${species} here; the `
