@@ -107,81 +107,92 @@ def collect(root, repo):
                    if s in idx and not v.get('shipped') and v.get('skipped') and not v.get('charted'))
     safe('unbuildable_rows_in_index', unbuildable_in_index)
 
-    # ── THE GAUGES. THE QUESTION IS "CAN THIS LAKE TELL ME ITS LEVEL TODAY" ──────────────
+    # ── CAN THIS LAKE TELL ME ITS LEVEL TODAY? FOUR SOURCES, FOUR SPELLINGS ─────────────
     #
-    # Ryan, 2026-08-27, after being handed nine different counts: "how many lakes have a gauge
-    # that tells you its current operating level?" That is the only version of the question the
-    # app cares about, and every earlier answer measured something adjacent to it.
+    # Ryan, 2026-08-27, after five wrong answers in one session: "this is why i want this
+    # written down". Every wrong answer had the same cause -- a level source keyed differently
+    # from the one being read -- so all four are read here and none of them is optional.
     #
-    # WHAT MAKES A GAUGE A LAKE-LEVEL GAUGE IS THE SHEF PHYSICAL ELEMENT, not a USGS parameter
-    # code. `HP` is POOL HEIGHT and `HG` is river stage, and build_water_bindings.py already
-    # ranks HP first for a lake -- but `pedts` does not survive into water_bindings.json, so
-    # this reads it back off the NWPS roster the binder itself cached. An earlier attempt tested
-    # for USGS `00062` instead and returned 11, which is wrong twice over: it is a different
-    # question, and 36 of the lake pool bindings are NWS-only with no USGS site at all.
+    #   nws:HP        The SHEF physical element on the bound `pool` gauge. HP is POOL HEIGHT,
+    #                 HG is river stage. build_water_bindings.py already ranks HP first for a
+    #                 lake, but `pedts` does not survive into water_bindings.json, so it is read
+    #                 back off registry/_nwps_all_gauges.csv, the roster the binder cached.
+    #   usgs:00062    A USGS reservoir-elevation gauge. AND IT IS KEYED TWO WAYS: a
+    #                 USGS-sourced pool writes `parms` and carries `pool_from`, an NWS-sourced
+    #                 one writes `usgs_parms`. Reading only one spelling silently dropped five
+    #                 real lake gauges -- Monticello, Hyco, William C. Bowen, Black Shoals and
+    #                 Fort Gordon -- and reading only `parms` on the NWS side returned zero for
+    #                 every water and was reported as a finding twice.
+    #   operator      The `operator` block, written by bind_operator_lakes.py. Tuckertown has
+    #                 one and no gauge at all.
+    #   duke          NOT IN water_bindings.json AT ALL -- the Worker fetches Duke at request
+    #                 time. registry/duke_lake_levels.json is the durable copy, 34 rows with 27
+    #                 bound to a slug, and it exists because that chart was pasted into a
+    #                 session ten times. Duke alone covers seven lakes nothing else reaches:
+    #                 Belews, Cedar Cliff, Julian, Robinson, Sutton, Mayo, Waterville.
     #
-    # A `pool` binding is NOT enough on its own. Eight lakes carry one graded `HG` -- a river
-    # stage that happens to be the nearest gauge, which does not tell you where the lake is.
+    # A `pool` binding on its own is NOT a level. Eight lakes carry one graded HG -- the nearest
+    # gauge, which does not say where the lake is. Lake Robinson (Chesterfield Co, SC) is the
+    # example: its pool binding is Black Creek above Hartsville, river stage, and its real level
+    # comes from Duke.
     #
-    # Measured 2026-08-27: 62 lakes on an HP pool gauge, all in service; one more (Tuckertown)
-    # on an operator feed alone; 63 in total out of 284 offered lakes. TWO HUNDRED AND
-    # TWENTY-ONE LAKES CANNOT TELL YOU THEIR LEVEL TODAY.
-    #
-    # 00_START_HERE.md says "221 waters bound" under `gauges`. 221 is this file's complement --
-    # the lakes with NO level -- and 204 is the number of bound waters. The page has the right
-    # number against the wrong sentence, which is where a year of confusion came from.
-    def gauge_counts():
+    # Measured 2026-08-27: 75 of 284 offered lakes can report a level. 209 cannot.
+    # 00_START_HERE.md says "221 waters bound" under `gauges`. Bound waters is 204; 221 was an
+    # earlier version of the CANNOT number. The page has never had this right.
+    def _levels():
         import csv as _csv
         roster = R('registry', '_nwps_all_gauges.csv')
         if not os.path.exists(roster):
-            return 'ERROR: registry/_nwps_all_gauges.csv is missing -- pedts cannot be read ' \
-                   'and no lake-level count can be made without guessing'
+            raise RuntimeError('registry/_nwps_all_gauges.csv is missing -- pedts cannot be '
+                               'read and no honest level count can be made')
         with open(roster, encoding='utf-8-sig') as fh:
             ped = {(r.get('nws shef id') or '').strip().upper(): (r.get('pedts') or '')
                    for r in _csv.DictReader(fh)}
         wb = (_j(R('registry', 'water_bindings.json')).get('bindings') or {})
         idx = _j(R('registry', 'lake_index.json'))
-        lakes = [s for s, r in idx.items() if str((r or {}).get('feature_type')) == 'lake']
-        hp, hg, op = set(), set(), set()
-        for s in lakes:
-            r = wb.get(s) or {}
-            lid = ((r.get('pool') or {}).get('lid') or '').upper()
-            if lid:
-                pe = (ped.get(lid) or '')[:2].upper()
-                (hp if pe == 'HP' else hg).add(s)
-            if r.get('operator'):
-                op.add(s)
-        live = hp | op
-        return {'offered_lakes': len(lakes),
+        dukep = R('registry', 'duke_lake_levels.json')
+        duke = set()
+        if os.path.exists(dukep):
+            for row in (_j(dukep).get('rows') or {}).values():
+                if row.get('slug'):
+                    duke.add(row['slug'])
+        out = {}
+        for slug, row in idx.items():
+            if str((row or {}).get('feature_type')) != 'lake':
+                continue
+            r = wb.get(slug) or {}
+            p = r.get('pool') or {}
+            lid = (p.get('lid') or '').upper()
+            how = None
+            if lid and (ped.get(lid) or '')[:2].upper() == 'HP':
+                how = 'nws:HP'
+            elif str(p.get('pool_from') or '').startswith('usgs:00062') or any(
+                    str(x) == '00062' for k in ('parms', 'usgs_parms') for x in (p.get(k) or [])):
+                how = 'usgs:00062'
+            elif slug in duke:
+                how = 'duke'
+            elif r.get('operator'):
+                how = 'operator'
+            out[slug] = how
+        return out, wb
+
+    def gauge_counts():
+        lv, wb = _levels()
+        live = {s: h for s, h in lv.items() if h}
+        by = {}
+        for h in live.values():
+            by[h] = by.get(h, 0) + 1
+        return {'offered_lakes': len(lv),
                 'lakes_with_a_current_level': len(live),
-                'hp_pool_gauge': len(hp),
-                'operator_feed': len(op),
-                'pool_binding_but_river_stage': len(hg),
-                'lakes_with_no_level_at_all': len(lakes) - len(live),
+                'by_source': by,
+                'lakes_with_no_level_at_all': len(lv) - len(live),
                 'bound_waters': len(wb)}
     safe('gauges', gauge_counts)
 
-    # The lakes that CAN answer, by name. A count that drifts says something changed; the names
-    # say what, and sixty-three of them is a list worth keeping.
+    # By name, because a count that drifts says something changed and only the names say what.
     def lakes_with_level_slugs():
-        import csv as _csv
-        roster = R('registry', '_nwps_all_gauges.csv')
-        if not os.path.exists(roster):
-            return 'ERROR: registry/_nwps_all_gauges.csv is missing'
-        with open(roster, encoding='utf-8-sig') as fh:
-            ped = {(r.get('nws shef id') or '').strip().upper(): (r.get('pedts') or '')
-                   for r in _csv.DictReader(fh)}
-        wb = (_j(R('registry', 'water_bindings.json')).get('bindings') or {})
-        idx = _j(R('registry', 'lake_index.json'))
-        out = []
-        for s, row in idx.items():
-            if str((row or {}).get('feature_type')) != 'lake':
-                continue
-            r = wb.get(s) or {}
-            lid = ((r.get('pool') or {}).get('lid') or '').upper()
-            if (lid and (ped.get(lid) or '')[:2].upper() == 'HP') or r.get('operator'):
-                out.append(s)
-        return sorted(out)
+        lv, _ = _levels()
+        return sorted(s for s, h in lv.items() if h)
     safe('lakes_with_level_slugs', lakes_with_level_slugs)
 
     # ── constants with a rule attached ────────────────────────────────────────────────────
