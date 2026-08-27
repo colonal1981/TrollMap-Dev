@@ -1915,7 +1915,11 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
 # answer "what did they join". `--out` is consulted second, so a foreign block that exists ONLY
 # in a staging file is still kept rather than dropped. A slug that no longer exists drops its
 # block with it, which is correct -- the binding was about that water.
-FOREIGN_KEYS = ('operator', 'ndbc')
+# `levels` joined them on 2026-08-27, written by bind_water_levels.py. It is the answer to
+# "how does this water report its level today" across four networks that agree on nothing,
+# and this script computes none of it -- Duke and the operator-run sensors are joined by
+# slug, not by geometry, so they cannot come out of the spatial bind at all.
+FOREIGN_KEYS = ('operator', 'ndbc', 'levels')
 
 
 def carry_foreign(bindings, reg, out, quiet=False):
