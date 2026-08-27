@@ -395,6 +395,55 @@ def slim_dams(hand, derived):
         (derived or {}).get("dams") or {}), "_overridden": sorted(overridden)}
 
 
+def slim_full_pool(doc, nopool):
+    """registry/full_pool.json + no_full_pool.json -> the object at _registry/full_pool.json.
+
+    ONE OBJECT, NOT TWO, because they answer the same question. "What is full pool on this
+    water?" has three answers and the Worker has to tell them apart: a number, an explicit
+    "there is no such thing here", and "nobody has looked yet". Publishing only the rows
+    collapses the last two into `pending`, which is how an oxbow ends up looking like a gap in
+    the data instead of a category error.
+
+    The full file is 61 KB and most of it is the hunt's own working notes -- refusals,
+    conflicts, name collisions, unit traps, the closure record. None of that is a runtime
+    question. What ships is the number, its units, who published it and when it was read,
+    plus `no_full_pool` with the water to watch instead. `datum_rule` ships as its one-line
+    statement because it is the rule a consumer has to honour: full pool is the MAXIMUM of the
+    operating target, not today's value of it.
+
+    Nothing reads this object yet. It is published so that chartDatumShape() can, once the
+    vertical-datum question is settled -- see the usace.conservation_pool_ft comment in
+    Worker/conditions.js for the objection that applies equally here.
+    """
+    rows = (doc or {}).get("rows") or {}
+    out = {}
+    for slug, r in rows.items():
+        if not isinstance(r, dict):
+            continue
+        v = r.get("full_pool_ft")
+        if not isinstance(v, (int, float)) or isinstance(v, bool):
+            continue
+        row = {"full_pool_ft": round(float(v), 2),
+               "units": r.get("units") or "ft above sea level",
+               "source": r.get("source"),
+               "source_credits": r.get("source_credits"),
+               "read": r.get("read")}
+        if r.get("full_pool_status"):
+            row["status"] = r["full_pool_status"]
+        out[slug] = row
+    none_ = {}
+    for slug, why in ((nopool or {}).get("confirmed") or {}).items():
+        if isinstance(why, dict):
+            none_[slug] = {k: why[k] for k in ("why", "watch_instead") if why.get(k)}
+        elif why:
+            none_[slug] = {"why": str(why)}
+    return {"_note": (doc or {}).get("_note"),
+            "read": (doc or {}).get("read"),
+            "datum_rule": ((doc or {}).get("datum_rule") or {}).get("statement"),
+            "rows": out,
+            "no_full_pool": none_}
+
+
 def put(local, key, gz, dry, timeout):
     """One wrangler put. Returns (ok, bytes_sent, message)."""
     try:
@@ -548,10 +597,15 @@ def main():
     # as the static layers -- the whole point of the registry.
     # --registry DEFAULTS AS OF 2026-08-12, AND SAYS SO EITHER WAY.
     #
-    # It gates all three files the APP reads out of _registry/ -- lakes.json, lake_index.json
-    # and water_bindings.json -- and every "!! not found" warning for those three was written
-    # INSIDE this block. So a run without the flag published none of them and printed nothing
-    # at all about it. The run looked completely normal.
+    # It gates EVERY file the APP reads out of _registry/ -- lakes.json, lake_index.json,
+    # water_bindings.json, water_chain.json, dam_table.json, nc_species_by_lake.json and
+    # full_pool.json -- and every "!! not found" warning for them was written INSIDE this
+    # block. So a run without the flag published none of them and printed nothing at all about
+    # it. The run looked completely normal.
+    #
+    # That list started at three and has grown four times. If you are adding the eighth, add
+    # it here too -- a stale count in this comment is what made a reader believe on 2026-08-27
+    # that R2 carried three registry objects when it carried six.
     #
     # Ryan, 2026-08-12: "water bindings should be in r2 this was fixed like 3 different
     # times... this shit is getting old." It WAS fixed three times -- each fix went inside the
@@ -569,8 +623,9 @@ def main():
                 break
     if regdir is None:
         print("!! NO REGISTRY DIR -- looked beside --root and in ./registry.")
-        print("!! _registry/lakes.json, _registry/lake_index.json and "
-              "_registry/water_bindings.json will NOT be published.")
+        print("!! NONE of the _registry/ objects will be published -- lakes.json, "
+              "lake_index.json, water_bindings.json, water_chain.json, dam_table.json, "
+              "nc_species_by_lake.json, full_pool.json.")
         print("!! The app reads all three: lake-registry.js loads the index, and "
               "Worker/conditions.js")
         print("!! answers every level, flow and tide request off the bindings.")
@@ -706,6 +761,42 @@ def main():
         else:
             print(f"!! {ns.name} not found -- every NC water researches with an empty species "
                   f"list; build it with build_nc_species_by_lake.py --go")
+
+
+        # FULL POOL -- the elevation each Garmin chart is sounded to.
+        #
+        # The fifth file to learn the lesson the four above it carry in their own comments: a
+        # registry file the app needs and the uploader does not ship is indistinguishable from
+        # work that was never done. This one was built on 2026-08-26 and closed on 2026-08-27 at
+        # 55 waters, and it sat on the drive through a full pack upload the next morning because
+        # nothing named it here.
+        #
+        # It is also the answer to a field just deleted from the research profile. The identity
+        # agent used to guess normalPoolFt: measured on 2026-08-27 across the 19 saved profiles
+        # where both existed, 7 were within a foot and 12 were not -- Jocassee 22538711101080
+        # against 1110, Watauga 44 on a 1,959 ft lake, Lake Robinson carrying the OTHER Lake
+        # Robinson's 900. Full pool is an operator fact and this is where it lives.
+        fp = regdir / "full_pool.json"
+        if fp.exists():
+            _np = regdir / "no_full_pool.json"
+            _fpd = json.load(open(fp, encoding="utf-8"))
+            _npd = json.load(open(_np, encoding="utf-8")) if _np.exists() else {}
+            fp_slim = slim_full_pool(_fpd, _npd)
+            tmpf = Path(tempfile.gettempdir()) / "trollmap_full_pool_slim.json"
+            tmpf.write_text(json.dumps(fp_slim, separators=(",", ":")), encoding="utf-8")
+            reg_jobs.append((str(tmpf), f"{args.prefix}_registry/full_pool.json",
+                             "_registry", "full_pool"))
+            print(f"pool:     {len(fp_slim['rows']):,} waters with a full pool, "
+                  f"{len(fp_slim['no_full_pool']):,} confirmed to have none -> "
+                  f"{args.prefix}_registry/full_pool.json "
+                  f"({tmpf.stat().st_size/1024:.0f} KB before gzip, "
+                  f"{fp.stat().st_size/1024:.0f} KB full)")
+            if not _np.exists():
+                print(f"!! {_np.name} not found -- a water with no full pool will be "
+                      f"indistinguishable from one nobody has looked at yet")
+        else:
+            print(f"!! {fp.name} not found -- no water can be told how far below full pool it "
+                  f"is; build it with harvest_operator_pools.py and build_full_pool_hunt.py")
 
     # ── ONLY WHAT THE APP CAN ASK FOR ────────────────────────────────────────────────────────
     #
