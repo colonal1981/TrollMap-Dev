@@ -160,6 +160,9 @@ def tn_parse(items):
             rec['mentions_closure'] = True
         if DATED.search(line):
             rec['dated'] = True
+        cl = closures_in(line)
+        if cl:
+            rec['closures'] = cl
         out.append(rec)
     return out
 
@@ -485,7 +488,7 @@ def main():
         for f in res['system_assertion_failures']:
             print('   !! SYSTEM ASSERTION FAILED %s' % f, flush=True)
 
-    by_water, statewide = project_by_water(doc, idx)
+    by_water, statewide = project_by_water(doc, idx, SPECS)
     doc['by_water'] = by_water
     doc['statewide'] = statewide
     print('\nby water: %d of %d offered waters carry at least one rule; statewide defaults for '
@@ -934,6 +937,7 @@ def resolve_state_tables(block, state, name_map, idx, systems, chain, specs=()):
         wcol = o.get('water_col', 0)
         for tb in tables:
             band = None
+            last = None
             for row in tb['rows']:
                 cells = row['cells']
                 first = cells[0] if cells else ''
@@ -954,11 +958,20 @@ def resolve_state_tables(block, state, name_map, idx, systems, chain, specs=()):
                     stats['implicit'] += 1
                     continue
                 if row.get('continuation'):
+                    # A CONTINUATION ROW INHERITS THE ADDRESS ABOVE IT, and this is the row
+                    # that matters. `June 16 - Sept. 30 closed` is its own row under the Santee
+                    # River system with no water body of its own. Skipping it left the closure
+                    # attached to nothing -- the whole card showed ONE hard closure, and it was
+                    # a state park lake, while Marion and Moultrie showed none.
+                    if last is not None:
+                        row['resolved'] = dict(last, inherited_from_row_above=True)
                     continue
                 addr = cells[wcol] if len(cells) > wcol else ''
                 r = resolve_water_body(addr, state, name_map, idx, systems, chain, sysmembers)
                 if r:
                     row['resolved'] = r
+                    if r.get('waters') or r['kind'] in ('statewide', 'implicit'):
+                        last = r
                     stats[r['kind']] += 1
                     stats['waters'] += len(r['waters'])
                     stats['unresolved_parts'] += len(r.get('unresolved') or [])
@@ -982,7 +995,7 @@ def resolve_state_tables(block, state, name_map, idx, systems, chain, specs=()):
 # one livePolicyFor() already draws between `scope: none` and null, and it is the reason a
 # statewide default has to ship alongside the exceptions rather than instead of them.
 
-def project_by_water(doc, idx):
+def project_by_water(doc, idx, all_specs=None):
     by = {}
 
     def add(slug, rec):
@@ -1004,9 +1017,11 @@ def project_by_water(doc, idx):
 
     statewide = {}
     for st, blk in doc['states'].items():
+        specs = (all_specs or {}).get(st, ('', []))[1]
         for key, tables in (blk.get('tables') or {}).items():
             for tb in tables:
                 band = None
+                last_species = None
                 for row in tb['rows']:
                     if row.get('is_band_heading'):
                         band = row.get('species_band')
@@ -1018,6 +1033,37 @@ def project_by_water(doc, idx):
                     rec = {'source': '%s %s' % (st, blk.get('source_file')),
                            'table': key, 'label': tb.get('label'), 'page': tb.get('page'),
                            'address': r.get('text'), 'cells': row['cells']}
+                    # WHICH SPECIES IS SHUT, carried onto every closure record.
+                    #
+                    # `June 16 - Sept. 30 closed` is the STRIPED BASS row. Without the species
+                    # on the record a consumer reads it as "Lake Marion is closed" and refuses
+                    # a crappie trip in July on a lake that is open. The species sits in the
+                    # FISH column of the SC tables and in the all-caps band on NC's.
+                    # Column 1 is the FISH column only where column 0 is the address. On the
+                    # SC state lakes table column 1 IS the water body, and reading it as a
+                    # species gave Lake Edwin B. Johnson a closure on the species
+                    # "Lake Edwin B. Johnson". Where no species column exists the closure is
+                    # not species-scoped -- it shuts the water, which is what those rows say.
+                    o2 = opts_for(specs, key)
+                    sp = None
+                    if o2.get('water_col', 0) == 0 and len(row['cells']) > 1 \
+                            and row['cells'][1] and not row.get('continuation'):
+                        sp = row['cells'][1]
+                    sp = sp or band or (last_species if row.get('continuation') else None)
+                    all_species = o2.get('water_col', 0) != 0
+                    cl = []
+                    for c in cells:
+                        cl.extend(closures_in(c))
+                    if cl:
+                        for c in cl:
+                            c['species'] = None if all_species else sp
+                            c['species_known'] = bool(sp) and not all_species
+                            if all_species:
+                                c['applies_to'] = 'all_fishing'
+                                c['note'] = 'no species column in this table -- shuts the water'
+                        rec['closures'] = cl
+                    if sp and not row.get('continuation'):
+                        last_species = sp
                     if band:
                         rec['species_band'] = band
                     if row.get('continuation'):
@@ -1031,6 +1077,95 @@ def project_by_water(doc, idx):
             if hit:
                 add(hit, {'source': '%s state lakes table' % st, 'state_lake': lake})
     return by, statewide
+
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+# CLOSURES -- a sentence turned into a window, WITHOUT deciding what it forbids
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+#
+# This is the one piece here with a citation on the end of it, so it is deliberately timid.
+#
+# A date range in these books is not self-describing. `Oct. 1 - June 15: 26 inches min` is an
+# open season with a slot. `June 16 - Sept. 30 closed` is a closure. `Season is open from
+# April 1-15` is a closure everywhere outside it. `closed to snagging from March 1-31` closes
+# one METHOD on one reach and nothing else. Reading the dates without reading what they govern
+# is how a planner tells you a lake is shut when it is open, or open when it is shut.
+#
+# So a window is emitted only when the sentence says so, and `applies_to` records WHAT is shut.
+# Only `all_fishing` and `harvest` should ever produce a hard block; everything else is a
+# warning with the sentence attached, because the sentence is what a person can actually check.
+
+MONTHS = {'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6, 'jul': 7,
+          'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12}
+MD = r'(?:(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sept?|Oct|Nov|Dec)[a-z]*\.?\s*(\d{1,2}))'
+RANGE = re.compile(MD + r'\s*(?:through|thru|to|[-–—])\s*' + MD, re.I)
+# `Season is open from April 1-15` and `closed to snagging from March 1-31` -- one month, two
+# days. Missing this dropped the paddlefish season entirely and found only the second half of
+# Cherokee's two-part snagging closure.
+SAME_MONTH = re.compile(r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sept?|Oct|Nov|Dec)[a-z]*\.?\s*'
+                        r'(\d{1,2})\s*(?:through|thru|to|[-–—])\s*(\d{1,2})\b', re.I)
+LIMIT_TAIL = re.compile(r'\b(inch|inches|minimum|maximum|per day|no length limit|PLR|slot)\b', re.I)
+CLOSED_WORD = re.compile(r'\bclosed\b|\bprohibit(?:ed)?\b|\bno harvest\b|\bunlawful\b', re.I)
+OPEN_WORD = re.compile(r'\bseason is open\b|\bopen from\b|\bmay be harvested\b', re.I)
+METHOD = re.compile(r'\bclosed to (\w+)', re.I)
+NO_FISHING = re.compile(r'\b(all watercraft and fishing|no fishing|closed to (?:boating and )?'
+                        r'fishing|fishing (?:is )?prohibited|closed fishing zone|'
+                        r'closed to boating and fishing)\b', re.I)
+
+
+def _md(mon, day):
+    return '%02d-%02d' % (MONTHS[mon[:3].lower()], int(day))
+
+
+def closures_in(text):
+    """Every date-bounded rule in one sentence, typed by what it governs."""
+    t = norm(text)
+    if not t:
+        return []
+    out = []
+    spans = [(m.start(), m.end(), _md(m.group(1), m.group(2)), _md(m.group(3), m.group(4)))
+             for m in RANGE.finditer(t)]
+    for m in SAME_MONTH.finditer(t):
+        if any(a <= m.start() < b for a, b, _s, _e in spans):
+            continue
+        spans.append((m.start(), m.end(), _md(m.group(1), m.group(2)),
+                      _md(m.group(1), m.group(3))))
+    for _s0, _e0, start, end in sorted(spans):
+        m = type('M', (), {'start': lambda self, _v=_s0: _v, 'end': lambda self, _v=_e0: _v})()
+        tail = t[m.end():m.end() + 90]
+        head = t[max(0, m.start() - 90):m.start()]
+        near = head + ' ' + tail
+        rec = {'start': start, 'end': end, 'text': t}
+        meth = METHOD.search(near)
+        if NO_FISHING.search(near):
+            rec.update(effect='closed', applies_to='all_fishing')
+        elif meth and meth.group(1).lower() not in ('fishing', 'boating'):
+            rec.update(effect='closed', applies_to='method:' + meth.group(1).lower())
+        elif OPEN_WORD.search(head[-34:]):
+            # THE PHRASE THAT GOVERNS A RANGE SITS AGAINST IT, and the open one comes BEFORE:
+            # `Season is open from April 1-15`. Checking the tail first read the paddlefish
+            # season as a closure, because `Culling is prohibited.` follows it in the same
+            # sentence -- calling an open season shut, which is the failure direction that
+            # actually costs a trip.
+            rec.update(effect='open_only', applies_to='harvest')
+        elif CLOSED_WORD.search(tail[:30]) or CLOSED_WORD.search(t[m.end():m.end() + 12]):
+            rec.update(effect='closed', applies_to='harvest')
+        elif OPEN_WORD.search(near):
+            rec.update(effect='open_only', applies_to='harvest')
+        elif LIMIT_TAIL.search(tail[:70]):
+            # `Oct. 1 - June 15: 26 inches min` -- a window with a size or creel limit inside
+            # it. Real, useful, and NOT a closure. Typed so it can be shown without ever
+            # blocking a trip.
+            rec.update(effect='limit_window', applies_to='harvest')
+        else:
+            rec.update(effect='unknown', applies_to='unknown')
+        out.append(rec)
+    if not out and NO_FISHING.search(t) and re.search(r'\bclosed\b', t, re.I):
+        out.append({'effect': 'closed', 'applies_to': 'all_fishing', 'start': None,
+                    'end': None, 'text': t, 'note': 'no dates given -- closed outright'})
+    return out
 
 
 if __name__ == '__main__':
