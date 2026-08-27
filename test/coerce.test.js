@@ -291,7 +291,7 @@ describe('pruneRetiredFields', () => {
     // A row goes in when a producer is deleted and comes out once every saved profile has been
     // through one assembly. If this ever needs raising, the reason belongs in the comment
     // above the list, not in the number.
-    expect(RETIRED_PROFILE_FIELDS.length <= 4).toBe(true);
+    expect(RETIRED_PROFILE_FIELDS.length <= 6).toBe(true);
     for (const path of RETIRED_PROFILE_FIELDS) expect(Array.isArray(path)).toBe(true);
   });
 });

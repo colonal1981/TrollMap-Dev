@@ -76,7 +76,6 @@ const NOT_FOR_THE_PLANNER = {
   'identity.riverSystem': 'administrative; the water graph already knows the shape',
   'identity.yearImpounded': 'history, not today',
   'identity.surfaceAreaAcres': 'the pack geometry is authoritative for size',
-  'identity.normalPoolFt': 'pool level comes from the live gauge, not the profile',
   'biology.invasiveSpecies': 'regulatory and ecological, does not change where to troll',
   'biology.speciesAbundance': 'prose about the fishery; the catch journal is the local truth',
   'biology.predatorSpecies': 'the species being targeted is chosen in the form',

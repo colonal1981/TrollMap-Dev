@@ -58,7 +58,7 @@ const RESEARCH_LABELS = {
 const AGENT_DEFINITIONS = {
   identity: {
     label: '🆔 Identity',
-    targetFields: ['identity.surfaceAreaAcres', 'identity.maxDepthFt', 'identity.averageDepthFt', 'identity.normalPoolFt', 'identity.reservoirOwner', 'identity.riverSystem', 'identity.damName', 'identity.yearImpounded', 'identity.county', 'identity.archetype'],
+    targetFields: ['identity.surfaceAreaAcres', 'identity.maxDepthFt', 'identity.averageDepthFt', 'identity.reservoirOwner', 'identity.riverSystem', 'identity.damName', 'identity.yearImpounded', 'identity.county', 'identity.archetype'],
   },
   limnology: {
     label: '🌊 Limnology',
@@ -1180,7 +1180,7 @@ function scoreDocuments(normalizedDocuments, baseName, lakeName) {
 
 const VALIDATION_FIELD_PATHS = [
   'identity.surfaceAreaAcres', 'identity.maxDepthFt', 'identity.averageDepthFt',
-  'identity.normalPoolFt', 'identity.reservoirOwner', 'identity.riverSystem',
+  'identity.reservoirOwner', 'identity.riverSystem',
   'identity.damName', 'identity.yearImpounded', 'identity.county', 'identity.archetype',
   'limnology.waterClarity.typical', 'limnology.waterClarity.color',
   'limnology.waterClarity.secchiFt', 'limnology.thermocline.summerDepthFt',
@@ -1256,7 +1256,7 @@ async function validateExistingFacts(lakeName, callbacks = {}) {
       lakeName: profile.lakeName, state: profile.state, aliases: profile.aliases || [],
       county: profile.county, riverSystem: profile.riverSystem, reservoirOwner: profile.reservoirOwner,
       surfaceAreaAcres: profile.surfaceAreaAcres, maxDepthFt: profile.maxDepthFt,
-      averageDepthFt: profile.averageDepthFt, normalPoolFt: profile.normalPoolFt,
+      averageDepthFt: profile.averageDepthFt,
       damName: profile.damName, yearImpounded: profile.yearImpounded, archetype: profile.archetype
     };
     profile.biology = profile.biology || {};
@@ -1304,7 +1304,7 @@ async function validateExistingFacts(lakeName, callbacks = {}) {
     }
     // Keep master-profile identity convenience fields synchronized with values
     // filled under the normalized identity object.
-    for (const key of ['surfaceAreaAcres', 'maxDepthFt', 'averageDepthFt', 'normalPoolFt', 'reservoirOwner', 'riverSystem', 'damName', 'yearImpounded', 'county', 'archetype']) {
+    for (const key of ['surfaceAreaAcres', 'maxDepthFt', 'averageDepthFt', 'reservoirOwner', 'riverSystem', 'damName', 'yearImpounded', 'county', 'archetype']) {
       if (profile.identity[key] != null) profile[key] = profile.identity[key];
     }
     profile.metadata = profile.metadata || {};
@@ -1347,7 +1347,7 @@ function normalizeMasterForRecovery(profile) {
   profile.identity = profile.identity || {
     lakeName: profile.lakeName, state: profile.state, aliases: profile.aliases || [], county: profile.county,
     riverSystem: profile.riverSystem, reservoirOwner: profile.reservoirOwner, surfaceAreaAcres: profile.surfaceAreaAcres,
-    maxDepthFt: profile.maxDepthFt, averageDepthFt: profile.averageDepthFt, normalPoolFt: profile.normalPoolFt,
+    maxDepthFt: profile.maxDepthFt, averageDepthFt: profile.averageDepthFt,
     damName: profile.damName, yearImpounded: profile.yearImpounded, archetype: profile.archetype
   };
   profile.biology = profile.biology || {};
@@ -1496,7 +1496,7 @@ async function recoverSmartPlanFacts(lakeName, callbacks = {}) {
       profile.fieldStatus[path] = { status: 'not_available_after_targeted_review', reason: `No defensible value found after targeted extraction of ${selected.length} highest-value saved Smart Plan source(s).` };
       finalized++;
     }
-    for (const key of ['surfaceAreaAcres','maxDepthFt','averageDepthFt','normalPoolFt','reservoirOwner','riverSystem','damName','yearImpounded','county','archetype']) if (profile.identity[key] != null) profile[key] = profile.identity[key];
+    for (const key of ['surfaceAreaAcres','maxDepthFt','averageDepthFt','reservoirOwner','riverSystem','damName','yearImpounded','county','archetype']) if (profile.identity[key] != null) profile[key] = profile.identity[key];
     // Preserve trollingIntelligence — recovery should never wipe fisheries data
     if (!profile.trollingIntelligence && profileData.profile?.trollingIntelligence) {
       profile.trollingIntelligence = profileData.profile.trollingIntelligence;
@@ -2707,7 +2707,6 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
       surfaceAreaAcres:  existingSavedProfile.surfaceAreaAcres  ?? null,
       maxDepthFt:        existingSavedProfile.maxDepthFt        ?? null,
       averageDepthFt:    existingSavedProfile.averageDepthFt    ?? null,
-      normalPoolFt:      existingSavedProfile.normalPoolFt      ?? null,
       damName:           existingSavedProfile.damName           ?? null,
       yearImpounded:     existingSavedProfile.yearImpounded     ?? null,
       reservoirOwner:    existingSavedProfile.reservoirOwner    ?? null,
@@ -2803,7 +2802,6 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
     if (id.yearImpounded == null)    id.yearImpounded    = factNumber(['yearImpounded'], IDENTITY_MEASURES.yearImpounded);
     if (!id.reservoirOwner)          id.reservoirOwner   = getFactVal(['reservoirOwner']);
     if (!id.riverSystem)             id.riverSystem      = getFactVal(['riverSystem']);
-    if (id.normalPoolFt == null)     id.normalPoolFt     = factNumber(['poolLevel','normalPoolFt'], IDENTITY_MEASURES.normalPoolFt);
     const lim = agentSections.limnology;
     if (!lim.thermocline) lim.thermocline = {};
     if (lim.thermocline.summerDepthFt == null) { const tv = getFactVal(['thermocline']); if (tv) lim.thermocline.note = (lim.thermocline.note ? lim.thermocline.note + ' ' : '') + tv; }
@@ -2962,17 +2960,11 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
       log(`  🔄 identity.yearImpounded: LLM ${id.yearImpounded} → fact ${yearFact.value} (quote: "${yearFact.quote?.slice(0,60)}")`);
       id.yearImpounded = yearFact.value;
     }
-    const poolFact = factBackfill(['poolLevel','normalPoolFt'], IDENTITY_MEASURES.normalPoolFt);
-    if (poolFact && id.normalPoolFt != null && id.normalPoolFt !== poolFact.value) {
-      log(`  🔄 identity.normalPoolFt: LLM ${id.normalPoolFt} → fact ${poolFact.value} (quote: "${poolFact.quote?.slice(0,60)}")`);
-      id.normalPoolFt = poolFact.value;
-    }
     // Also fill null fields that the deterministic fill didn't cover (facts from non-identity agents)
     if (id.surfaceAreaAcres == null && surfaceFact) id.surfaceAreaAcres = surfaceFact.value;
     if (id.maxDepthFt == null && depthFact) id.maxDepthFt = depthFact.value;
     if (id.averageDepthFt == null && avgFact) id.averageDepthFt = avgFact.value;
     if (id.yearImpounded == null && yearFact) id.yearImpounded = yearFact.value;
-    if (id.normalPoolFt == null && poolFact) id.normalPoolFt = poolFact.value;
   }
 
   // ── Geometry-derived bathymetry override (FINAL AUTHORITY) ─────────────
@@ -3261,7 +3253,7 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
 
   // Validation pass — only runs when we have facts, only checks fields for agents that ran
   const ALL_VALIDATION_FIELDS = {
-    identity:   ['identity.surfaceAreaAcres','identity.maxDepthFt','identity.averageDepthFt','identity.normalPoolFt','identity.reservoirOwner','identity.riverSystem','identity.damName','identity.yearImpounded','identity.county','identity.archetype'],
+    identity:   ['identity.surfaceAreaAcres','identity.maxDepthFt','identity.averageDepthFt','identity.reservoirOwner','identity.riverSystem','identity.damName','identity.yearImpounded','identity.county','identity.archetype'],
     limnology:  ['limnology.waterClarity.typical','limnology.waterClarity.color','limnology.waterClarity.secchiFt','limnology.thermocline.summerDepthFt','limnology.thermocline.strength','limnology.thermocline.winterMix','limnology.oxygen.depletionDepthFt','limnology.oxygen.anoxicBelowFt','limnology.trophicStatus','limnology.flowCharacteristics','limnology.seasonalDrawdownFt'],
     biology:    ['biology.primaryForage','biology.secondaryForage','biology.predatorSpecies','biology.speciesAbundance','biology.knownStockings','biology.baitfishMovement','biology.invasiveSpecies','biology.spawnTiming','biology.forageSpatial'],
     habitat:    ['habitat.bottomComposition','habitat.cover','habitat.vegetation','habitat.standingTimber','habitat.dockDensity','habitat.riprapLocations','habitat.namedCreekMouths','habitat.timberFields','habitat.shallowFlatAreas','habitat.artificialHabitat','habitat.artificialHabitatDetails.attractorCount','habitat.artificialHabitatDetails.attractorTypes'],

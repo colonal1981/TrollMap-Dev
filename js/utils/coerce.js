@@ -241,6 +241,11 @@ export const IDENTITY_MEASURES = {
                       prefer: /(?:max(?:imum)?|deepest|deep)[^.]{0,40}$/i },
   averageDepthFt:   { unit: /^(?:feet|ft|foot)$/i,  exclude: /acre-?feet/i,
                       prefer: /(?:average|mean)[^.]{0,40}$/i },
+  // ORPHAN, DELIBERATELY LEFT, 2026-08-27. Its only callers were the identity agent's
+  // normalPoolFt backfill, deleted in research refactor step 2. It survives as the vehicle
+  // for the numberFromText regression tests below it -- the acre-feet trap, the licensed-range
+  // trap, and Jocassee's 22538711101080 -- and goes out with step 7's no-reader cut once those
+  // have somewhere else to live. Full pool itself is now registry/full_pool.json's job.
   normalPoolFt:     { unit: /^(?:feet|ft|foot)$/i,  exclude: /acre-?feet/i,
                       prefer: /(?:full[\s-]?pool|normal\s+(?:maximum|pool))[^.]{0,40}$/i,
                       reject: /(?:minimum|drought|lowest|low\s+inflow)[^.]{0,40}$/i },
@@ -272,6 +277,18 @@ export const IDENTITY_MEASURES = {
 export const RETIRED_PROFILE_FIELDS = [
   ['habitat', 'structuralElements', 'humpCoordinates'],
   ['habitat', 'structuralElements', 'ledgeCoordinates'],
+  // 2026-08-27, research refactor steps 1-2.
+  // `forage` and `trolling` were byte-identical aliases of `biology` and
+  // `trollingIntelligence` on every one of the 63 saved profiles.
+  ['forage'],
+  ['trolling'],
+  // normalPoolFt was the identity agent's guess at full pool. Measured against
+  // registry/full_pool.json on 2026-08-27: of the 19 profiles where both exist,
+  // 7 agree within a foot and 12 do not -- Jocassee stored 22538711101080,
+  // Blalock 102006, Watauga 44 ft on a 1,959 ft lake, Norman 1.5. Full pool is
+  // an operator fact; it belongs in registry/full_pool.json, not an LLM field.
+  ['identity', 'normalPoolFt'],
+  ['normalPoolFt'],
 ];
 
 export function pruneRetiredFields(profile) {

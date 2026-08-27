@@ -104,7 +104,7 @@ function renderContradictionsAlert(contradictions, lakeName) {
         const profilePath = fieldMap[c.field] || c.field;
 
         // For numeric fields, extract the number from the fact sentence
-        const numericFields = new Set(['surfaceAreaAcres','maxDepthFt','averageDepthFt','hydraulicRetentionDays','normalPoolFt']);
+        const numericFields = new Set(['surfaceAreaAcres','maxDepthFt','averageDepthFt','hydraulicRetentionDays']);
         let valueToSet = winner;
         if (numericFields.has(profilePath)) {
           const numMatch = winner.match(/[\d,]+(?:\.\d+)?/);
@@ -444,7 +444,6 @@ function formatHumanReadableSection(key, data) {
       <div><b>Surface Area:</b> ${d.surfaceAreaAcres ? `${Number(d.surfaceAreaAcres).toLocaleString()} acres${d._geometryDerived ? ' 🗺️' : ''}` : '—'}</div>
       <div><b>Max Depth:</b> ${d.maxDepthFt ? `${d.maxDepthFt} ft${d._geometryDerived ? ' 🗺️' : ''}` : '—'}</div>
       <div><b>Average Depth:</b> ${d.averageDepthFt ? `${d.averageDepthFt} ft${d._geometryDerived ? ' 🗺️' : ''}` : '—'}${d._geometryDerived && d._bathymetryMeta?.coverage ? `<span class="muted" style="font-size:10px;margin-left:4px">(${Math.round(d._bathymetryMeta.coverage*100)}% bathy coverage)</span>` : ''}</div>
-      <div><b>Normal Pool:</b> ${d.normalPoolFt ? `${d.normalPoolFt} ft` : '—'}</div>
       <div><b>Dam Name:</b> ${esc(d.damName || '—')}</div>
       <div><b>Year Impounded:</b> ${d.yearImpounded ? d.yearImpounded : '—'}</div>
       <div style="grid-column:1/-1"><b>Type & Archetype:</b> ${esc(d.type || '—')} • <i>${esc(d.archetype || '—')}</i></div>
@@ -1010,7 +1009,6 @@ function renderSections(profile) {
         surfaceAreaAcres: profile.surfaceAreaAcres,
         maxDepthFt: profile.maxDepthFt,
         averageDepthFt: profile.averageDepthFt,
-        normalPoolFt: profile.normalPoolFt,
         reservoirOwner: profile.reservoirOwner,
         damName: profile.damName,
         yearImpounded: profile.yearImpounded,
