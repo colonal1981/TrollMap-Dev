@@ -310,9 +310,12 @@ def build_lake(registry, pack, slug, cell=None, quiet=False):
     rep['tagged_zero_pct'] = round(100.0 * rep['tagged_zero_ft'] / len(depths), 1)
     rep['seconds'] = round(time.time() - t0, 1)
     if not quiet:
+        # flush=True because a 196-lake run redirected to a file otherwise shows nothing for
+        # minutes at a time -- stdout buffers in 8 KB blocks and the log lags the work, which
+        # reads exactly like a hang. It cost twenty minutes of chasing one on 2026-08-27.
         print('  %-30s %7d nodes %8d edges  %5.2f%% largest  %4.1f%% at 0 ft  %ss'
               % (slug, len(nodes), len(edges), rep['largest_component_pct'],
-                 rep['tagged_zero_pct'], rep['seconds']))
+                 rep['tagged_zero_pct'], rep['seconds']), flush=True)
     return rep, (nodes, edges, depths)
 
 
@@ -373,7 +376,7 @@ def main():
     if not a.all_packs:
         ix = os.path.join(reg, 'lake_index.json')
         if os.path.exists(ix):
-            indexed = set(read_json(ix))
+            indexed = set(json.load(open(ix, encoding='utf-8')))
             withdepth = [d for d in withdepth if d in indexed]
     missing = [d for d in withdepth
                if not os.path.exists(os.path.join(pack, d, 'water_graph.bin'))]
@@ -391,19 +394,21 @@ def main():
           (on_disk, '' if indexed is None else
            '   in lake_index: %d' % len(withdepth)))
     print('  of those, no Garmin graph: %d' % len(missing))
-    report, built, failed, left = {}, 0, 0, 0
+    report, built, failed, left, measured = {}, 0, 0, 0, 0
     for s in slugs:
         try:
             rep, graph = build_lake(reg, pack, s)
         except Exception as e:
             rep, graph = {'slug': s, 'error': '%s: %s' % (type(e).__name__, e)}, None
-            print('  %-30s ERROR %s' % (s, rep['error']))
+            print('  %-30s ERROR %s' % (s, rep['error']), flush=True)
         report[s] = rep
+        if graph:
+            measured += 1
         if graph and not a.dry_run:
             dest = os.path.join(pack, s, a.out_name)
             if os.path.exists(dest) and not a.overwrite:
                 rep['skipped'] = "Garmin's graph is here; --overwrite to replace"
-                print('  %-30s HAS A GARMIN GRAPH, left alone' % s)
+                print('  %-30s HAS A GARMIN GRAPH, left alone' % s, flush=True)
                 left += 1
                 continue
             n, e2, d = graph
@@ -417,8 +422,16 @@ def main():
                'datum': 'chart -- full pool. Drawdown is applied live at route time.',
                'depth_rule': 'depth_min_ft, the SHALLOW end of each 1 ft band',
                'lakes': report}, open(rp, 'w'), indent=1)
-    print('built %d   left alone %d   skipped/failed %d   -> %s'
-          % (built, left, failed, a.report))
+    # MEASURED IS COUNTED SEPARATELY FROM BUILT. The first version incremented `built` only
+    # inside `if graph and not a.dry_run`, so a --dry-run that measured all 196 waters
+    # successfully printed "built 0 left alone 0 skipped/failed 0" under 196 lines of real
+    # output. A summary that reads zero after a clean run is worse than no summary.
+    if a.dry_run:
+        print('measured %d   could not build %d   (dry run, nothing written)   -> %s'
+              % (measured, failed, a.report))
+    else:
+        print('built %d   left alone %d   could not build %d   -> %s'
+              % (built, left, failed, a.report))
     return 0
 
 
