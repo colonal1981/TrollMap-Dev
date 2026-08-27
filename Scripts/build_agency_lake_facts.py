@@ -144,12 +144,19 @@ MEASURES = [
     # up to the 1,075-ft. elevation mark" -- and the pool as a plain elevation -- Douglas's
     # "the summer elevation of 1000 feet above sea level". A reader that took only the first
     # found this number on one page of nine while a second page printed it plainly.
+    #
+    # DUKE WRITES IT A THIRD WAY, on every one of its lake pages: "The full pond elevation is
+    # 178.1 feet above mean sea level." POND not POOL, IS not OF, and MEAN sea level. Three
+    # words, and any one of them missing loses fifteen waters -- thirteen of which Duke's levels
+    # table can never supply, because they print on its 0-100 index whose Max column just reads
+    # 100. Two digits minimum, because Lake Sutton's pond is 10.5 ft.
     ('full_pool_ft', 'ft above sea level', re.compile(
         r'(?:owns?|up\s+to|full\s+pool\s+(?:elevation\s+)?(?:of|is|at))\s*(?:up\s+to\s*)?'
         r'(?:the\s*)?([\d,]{3,5}(?:\.\d+)?)[\s-]*(?:ft|feet)\.?\s*'
         r'(?:elevation|contour|mark|msl)'
-        r'|(?:summer\s+|full[\s-]pool\s+)?elevation\s+of\s+([\d,]{3,5}(?:\.\d+)?)\s*'
-        r'(?:ft|feet)\.?\s*(?:above\s+sea\s+level|msl)', re.I)),
+        r'|(?:summer\s+|full[\s-]po(?:ol|nd)\s+)?elevation\s+(?:of|is|at)\s+'
+        r'([\d,]{2,5}(?:\.\d+)?)\s*(?:ft|feet)\.?\s*'
+        r'(?:above\s+(?:mean\s+)?sea\s+level|above\s+msl|msl)', re.I)),
     # THE SAME FACT, FOUR SENTENCES. Cherokee writes "Drawdowns of up to 40 feet", Fort Loudoun
     # "the annual drawdown is only six vertical feet", Douglas "can fluctuate 60 feet from the
     # summer elevation", Watauga "fluctuate as much as 44 feet between the summer full pool and
