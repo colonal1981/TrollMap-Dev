@@ -485,6 +485,12 @@ def main():
         for f in res['system_assertion_failures']:
             print('   !! SYSTEM ASSERTION FAILED %s' % f, flush=True)
 
+    by_water, statewide = project_by_water(doc, idx)
+    doc['by_water'] = by_water
+    doc['statewide'] = statewide
+    print('\nby water: %d of %d offered waters carry at least one rule; statewide defaults for '
+          '%s' % (len(by_water), len(idx), ', '.join(sorted(statewide)) or '-'), flush=True)
+
     if a.dry_run:
         print('\n[DRY] would write %s' % R(a.out), flush=True)
         return 0
@@ -958,6 +964,73 @@ def resolve_state_tables(block, state, name_map, idx, systems, chain, specs=()):
                     stats['unresolved_parts'] += len(r.get('unresolved') or [])
     return {'system_members': {k: len(v) for k, v in sysmembers.items()},
             'system_assertion_failures': sysproblems, 'stats': dict(stats)}
+
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+# THE PROJECTION -- what a consumer actually asks for
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+#
+# The table above is shaped like the BOOKS: by state, by table, by row, addressed the way the
+# book addresses things. A consumer never asks that. It asks "what applies on this water", and
+# it asks at plan time with a slug in its hand.
+#
+# So the published object is keyed by slug, with each state's default carried separately --
+# because "the digest was read and it says nothing lake-specific here" and "nobody has read the
+# digest" are different sentences and only one of them is a gap. That distinction is the same
+# one livePolicyFor() already draws between `scope: none` and null, and it is the reason a
+# statewide default has to ship alongside the exceptions rather than instead of them.
+
+def project_by_water(doc, idx):
+    by = {}
+
+    def add(slug, rec):
+        if slug not in idx:
+            return
+        by.setdefault(slug, {'state': idx[slug].get('state'),
+                             'display_name': idx[slug].get('display_name'),
+                             'rules': []})['rules'].append(rec)
+
+    for slug, recs in ((doc['states'].get('TN') or {}).get('waters') or {}).items():
+        for r in recs if isinstance(recs, list) else [recs]:
+            add(slug, {'source': 'TWRA reservoir page', 'source_ref': r.get('source_file'),
+                       'preamble': r.get('preamble') or [], 'rules': r.get('rules') or []})
+    for slug, recs in (((doc['states'].get('TN') or {}).get('digest') or {}).get('waters')
+                       or {}).items():
+        for r in recs:
+            add(slug, {'source': 'TN digest exceptions', 'source_ref': 'page %s' % r.get('page'),
+                       'heading': r.get('heading'), 'rules': r.get('rules') or []})
+
+    statewide = {}
+    for st, blk in doc['states'].items():
+        for key, tables in (blk.get('tables') or {}).items():
+            for tb in tables:
+                band = None
+                for row in tb['rows']:
+                    if row.get('is_band_heading'):
+                        band = row.get('species_band')
+                        continue
+                    r = row.get('resolved') or {}
+                    cells = [c for c in row['cells'] if c]
+                    if not cells:
+                        continue
+                    rec = {'source': '%s %s' % (st, blk.get('source_file')),
+                           'table': key, 'label': tb.get('label'), 'page': tb.get('page'),
+                           'address': r.get('text'), 'cells': row['cells']}
+                    if band:
+                        rec['species_band'] = band
+                    if row.get('continuation'):
+                        rec['continues_the_row_above'] = True
+                    if r.get('kind') in ('statewide', 'implicit'):
+                        statewide.setdefault(st, []).append(rec)
+                    for slug in r.get('waters') or []:
+                        add(slug, dict(rec, matched_via=r.get('kind')))
+        for slug, lake in ((blk.get('state_lakes') or {}).get('lakes') or {}).items():
+            hit = resolve(lake['water_body'], build_name_map(idx))
+            if hit:
+                add(hit, {'source': '%s state lakes table' % st, 'state_lake': lake})
+    return by, statewide
 
 
 if __name__ == '__main__':

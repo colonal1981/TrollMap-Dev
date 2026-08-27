@@ -444,6 +444,56 @@ def slim_full_pool(doc, nopool):
             "no_full_pool": none_}
 
 
+def slim_regulations(doc):
+    """registry/regulations_table.json -> the object at _registry/regulations.json.
+
+    THE BOOK SHAPE IS NOT THE CONSUMER SHAPE. The built file is organised the way the books are
+    -- by state, by table, by row, addressed however the book chose to address it ("Santee River
+    system (see map, page 31)"). Nothing at plan time asks a question in that shape. It asks
+    what applies on one water, holding a slug.
+
+    So what ships is `by_water` plus each state's `statewide` default, and the raw book tables
+    stay on the drive. The default ships ALONGSIDE the exceptions, not instead of them, because
+    "the book was read and says nothing lake-specific here" and "nobody read the book" are
+    different answers -- the same distinction livePolicyFor() already draws between
+    `scope: none` and null.
+
+    `unresolved` ships too, deliberately. Seven addresses touch water we offer and could not be
+    resolved -- reaches bounded by a dam, and two defined terms whose definitions have not been
+    read. A consumer that cannot see them will believe the table is complete for those waters.
+    """
+    out = {
+        "_note": (doc.get("_note") or "") + " Book tables are kept on the drive; this is the "
+                 "by-water projection the app reads.",
+        "read": doc.get("read"),
+        "by_water": doc.get("by_water") or {},
+        "statewide": doc.get("statewide") or {},
+        "problems": doc.get("problems") or [],
+    }
+    tn = (doc.get("states") or {}).get("TN") or {}
+    out["tn_coverage"] = {
+        "no_agency_page": sorted((tn.get("no_agency_page") or {}).keys()),
+        "page_exists_not_saved": sorted((tn.get("page_exists_not_saved") or {}).keys()),
+        "unexplained_gap": tn.get("unexplained_gap") or [],
+    }
+    unresolved = []
+    for st, blk in (doc.get("states") or {}).items():
+        for tables in (blk.get("tables") or {}).values():
+            for tb in tables:
+                for row in tb.get("rows") or []:
+                    for u in ((row.get("resolved") or {}).get("unresolved") or []):
+                        unresolved.append({"state": st, "address": u.get("text"),
+                                           "why": u.get("why")})
+    seen, uniq = set(), []
+    for u in unresolved:
+        k = (u["state"], u["address"])
+        if k not in seen:
+            seen.add(k)
+            uniq.append(u)
+    out["unresolved_addresses"] = uniq
+    return out
+
+
 def put(local, key, gz, dry, timeout):
     """One wrangler put. Returns (ok, bytes_sent, message)."""
     try:
@@ -598,8 +648,8 @@ def main():
     # --registry DEFAULTS AS OF 2026-08-12, AND SAYS SO EITHER WAY.
     #
     # It gates EVERY file the APP reads out of _registry/ -- lakes.json, lake_index.json,
-    # water_bindings.json, water_chain.json, dam_table.json, nc_species_by_lake.json and
-    # full_pool.json -- and every "!! not found" warning for them was written INSIDE this
+    # water_bindings.json, water_chain.json, dam_table.json, nc_species_by_lake.json,
+    # full_pool.json and regulations.json -- and every "!! not found" warning for them was written INSIDE this
     # block. So a run without the flag published none of them and printed nothing at all about
     # it. The run looked completely normal.
     #
@@ -797,6 +847,31 @@ def main():
         else:
             print(f"!! {fp.name} not found -- no water can be told how far below full pool it "
                   f"is; build it with harvest_operator_pools.py and build_full_pool_hunt.py")
+
+
+        # THE LAW, parsed from the state books by build_regulations_table.py.
+        #
+        # Sixth registry file, same lesson as the five above it. This one replaces per-lake LLM
+        # research: four Santee-area lakes reading one SC book returned four different subsets
+        # of it in three different shapes, and the closure that governs Marion and Moultrie
+        # survived into one saved profile out of 63 with the word "closed" stripped off.
+        rg = regdir / "regulations_table.json"
+        if rg.exists():
+            _rgd = json.load(open(rg, encoding="utf-8"))
+            rg_slim = slim_regulations(_rgd)
+            tmpr = Path(tempfile.gettempdir()) / "trollmap_regulations_slim.json"
+            tmpr.write_text(json.dumps(rg_slim, separators=(",", ":")), encoding="utf-8")
+            reg_jobs.append((str(tmpr), f"{args.prefix}_registry/regulations.json",
+                             "_registry", "regulations"))
+            print(f"regs:     {len(rg_slim['by_water']):,} waters with lake-specific rules, "
+                  f"statewide defaults for {', '.join(sorted(rg_slim['statewide'])) or '-'}, "
+                  f"{len(rg_slim['unresolved_addresses'])} unresolved address(es) -> "
+                  f"{args.prefix}_registry/regulations.json "
+                  f"({tmpr.stat().st_size/1024:.0f} KB before gzip, "
+                  f"{rg.stat().st_size/1024:.0f} KB full)")
+        else:
+            print(f"!! {rg.name} not found -- every water falls back to the six-water hand "
+                  f"table in species-intel.js; build it with build_regulations_table.py")
 
     # ── ONLY WHAT THE APP CAN ASK FOR ────────────────────────────────────────────────────────
     #
