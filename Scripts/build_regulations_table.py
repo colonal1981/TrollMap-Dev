@@ -589,6 +589,21 @@ def main():
     print('\nby water: %d of %d offered waters carry at least one rule; statewide defaults for '
           '%s' % (len(by_water), len(idx), ', '.join(sorted(statewide)) or '-'), flush=True)
 
+    sm = check_species_map(doc, R(a.registry))
+    doc['species_map_check'] = sm
+    if sm.get('checked'):
+        print('species:  %d phrases in the books, %d unmapped; %d closure(s) cannot fire because '
+              'the plan form has no checkbox for the fish'
+              % (sm['phrases_in_the_books'], len(sm['unmapped']),
+                 len(sm['closures_that_cannot_fire'])), flush=True)
+        if sm['unmapped']:
+            for u in sm['unmapped']:
+                print('   !! UNMAPPED SPECIES PHRASE: %r' % u, flush=True)
+            doc['problems'].append({'why': 'species phrases with no entry in species_map.json',
+                                    'phrases': sm['unmapped']})
+    else:
+        print('!! species map not checked: %s' % sm.get('why'), flush=True)
+
     if a.dry_run:
         print('\n[DRY] would write %s' % R(a.out), flush=True)
         return 0
@@ -1295,6 +1310,55 @@ def closures_in(text):
         out.append({'effect': 'closed', 'applies_to': 'all_fishing', 'start': None,
                     'end': None, 'text': t, 'note': 'no dates given -- closed outright'})
     return out
+
+
+
+
+def check_species_map(doc, registry):
+    """Every species phrase the books use must be in registry/species_map.json.
+
+    A PHRASE THE MAP DOES NOT KNOW IS A BUILD ERROR, NOT A SILENT SKIP. The alternative is a
+    closure that quietly matches no species and therefore never fires -- which looks exactly
+    like a lake with no closure. The books add and reword species between editions, so this
+    will trip, and it should.
+    """
+    p = os.path.join(registry, 'species_map.json')
+    if not os.path.exists(p):
+        return {'checked': False, 'why': 'species_map.json not found'}
+    m = json.load(open(p, encoding='utf-8'))
+    known = set(m.get('book_phrases') or {})
+    known |= {k for k in (m.get('partly_mapped') or {}) if not k.startswith('_')}
+    known |= {k for k in (m.get('no_home_in_the_form') or {}) if not k.startswith('_')}
+    plan = set((m.get('plan_species') or {}).get('values') or [])
+    seen = set()
+
+    def walk(recs):
+        for r in recs:
+            if r.get('species'):
+                seen.add(r['species'])
+            for c in (r.get('closures') or []):
+                if c.get('species'):
+                    seen.add(c['species'])
+            walk(r.get('rules') or [])
+    for w in (doc.get('by_water') or {}).values():
+        walk(w.get('rules') or [])
+    unmapped = sorted(seen - known)
+    # A closure that gates nothing because the form cannot name its fish is the planner gap,
+    # counted here so it is a number rather than an impression.
+    homeless = {k for k in (m.get('no_home_in_the_form') or {}) if not k.startswith('_')}
+    cannot_fire = []
+    for slug, w in (doc.get('by_water') or {}).items():
+        def cw(recs):
+            for r in recs:
+                for c in (r.get('closures') or []):
+                    if c.get('effect') == 'closed' and c.get('species') in homeless:
+                        cannot_fire.append({'water': slug, 'species': c['species'],
+                                            'window': '%s..%s' % (c.get('start'), c.get('end'))})
+                cw(r.get('rules') or [])
+        cw(w.get('rules') or [])
+    return {'checked': True, 'phrases_in_the_books': len(seen), 'unmapped': unmapped,
+            'plan_species': sorted(plan), 'species_with_no_home': sorted(homeless),
+            'closures_that_cannot_fire': cannot_fire}
 
 
 if __name__ == '__main__':
