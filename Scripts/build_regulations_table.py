@@ -25,6 +25,7 @@ NOTHING HERE IS AN LLM. Two readers, by source shape:
 Personal use only, not for distribution or resale; not for navigation.
 """
 import argparse, json, os, re, sys, unicodedata
+from html.parser import HTMLParser
 from collections import Counter
 
 DASH = re.compile(r'[‐-―−]')
@@ -53,6 +54,17 @@ def slugify(s):
     s = re.sub(r"[’'`]", '', s)
     s = re.sub(r'[^a-z0-9]+', '_', s)
     return s.strip('_')
+
+
+def _pdfplumber():
+    """pdfplumber is the one dependency this script cannot do without. Say so in one line
+    naming the install, rather than dropping a traceback on whoever runs it."""
+    try:
+        import pdfplumber
+        return pdfplumber
+    except ImportError:
+        sys.exit('pdfplumber is required to read the state books.\n'
+                 '  py -m pip install pdfplumber')
 
 
 def load_index(registry):
@@ -110,35 +122,96 @@ DATED = re.compile(
     r'\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s*\d{1,2}\b', re.I)
 
 
-def tn_rules(path):
-    """The <ul> under the `Regulations` heading on a TWRA reservoir page.
+class _TwraParser(HTMLParser):
+    """The `Regulations` section of a TWRA reservoir page, using the standard library only.
 
-    LEAF <li> ONLY. TWRA nests the per-species detail inside the combination rule, so
-    `Largemouth/Smallmouth Bass: Five (5) per day in combination` contains its own
-    `Largemouth Bass: 15-inch minimum` child. Taking every <li> returns the bass rule three
-    times and inflates every count on the page.
+    bs4 is not installed on the pipeline box and this script should not require an install to
+    run -- it failed there on `ModuleNotFoundError: No module named 'bs4'` after parsing nothing.
+    The page is regular enough that html.parser is sufficient: find the heading whose text is
+    exactly `Regulations`, then take the <li> and <p> that follow it until the next heading.
+
+    LEAF <li> ONLY, which is why depth is tracked. TWRA nests the per-species detail inside the
+    combination rule, so an <li> that contains another <li> is a wrapper and its text is the
+    concatenation of its children -- counting it returns every bass rule three times.
     """
-    from bs4 import BeautifulSoup
-    soup = BeautifulSoup(open(path, encoding='utf-8', errors='replace').read(), 'html.parser')
-    for t in soup(['script', 'style', 'nav', 'footer', 'svg']):
-        t.decompose()
-    head = soup.find(lambda e: e.name in ('h1', 'h2', 'h3')
-                     and e.get_text(strip=True).lower() == 'regulations')
-    if not head:
+    HEAD = ('h1', 'h2', 'h3', 'h4')
+
+    def __init__(self):
+        HTMLParser.__init__(self, convert_charrefs=True)
+        self.in_head = None
+        self.head_text = []
+        self.started = False
+        self.done = False
+        self.li_depth = 0
+        self.li_had_child = []
+        self.buf = []
+        self.items = []
+        self.paras = []
+        self.in_p = False
+
+    def handle_starttag(self, tag, attrs):
+        if self.done:
+            return
+        if tag in ('script', 'style'):
+            self.skip = True
+        if tag in self.HEAD:
+            self.in_head = tag
+            self.head_text = []
+            if self.started:
+                self.done = True
+            return
+        if not self.started:
+            return
+        if tag == 'li':
+            if self.li_depth:
+                self.li_had_child[-1] = True
+            self.li_depth += 1
+            self.li_had_child.append(False)
+            self.buf.append([])
+        elif tag == 'p':
+            self.in_p = True
+            self.buf.append([])
+
+    def handle_endtag(self, tag):
+        if tag in self.HEAD and self.in_head:
+            txt = norm(' '.join(self.head_text))
+            if txt.lower() == 'regulations':
+                self.started = True
+            self.in_head = None
+            return
+        if not self.started or self.done:
+            return
+        if tag == 'li' and self.li_depth:
+            txt = norm(' '.join(self.buf.pop()))
+            leaf = not self.li_had_child.pop()
+            self.li_depth -= 1
+            if leaf and txt and txt not in self.items:
+                self.items.append(txt)
+        elif tag == 'p' and self.in_p:
+            txt = norm(' '.join(self.buf.pop()))
+            self.in_p = False
+            if txt and txt not in self.paras:
+                self.paras.append(txt)
+
+    def handle_data(self, data):
+        if self.in_head is not None:
+            self.head_text.append(data)
+        elif self.started and self.buf:
+            self.buf[-1].append(data)
+
+
+def tn_rules(path):
+    """The rules under the `Regulations` heading on a TWRA reservoir page."""
+    html = open(path, encoding='utf-8', errors='replace').read()
+    html = re.sub(r'(?is)<(script|style)[^>]*>.*?</\1>', ' ', html)
+    p = _TwraParser()
+    try:
+        p.feed(html)
+    except Exception:
+        pass
+    if not p.started:
         return None, None
-    intro, items = [], []
-    for el in head.find_all_next():
-        if el.name in ('h1', 'h2', 'h3') and el is not head:
-            break
-        if el.name == 'p':
-            t = norm(el.get_text(' ', strip=True))
-            if t and t not in intro:
-                intro.append(t)
-        if el.name == 'li' and not el.find('li'):
-            t = norm(el.get_text(' ', strip=True))
-            if t and t not in items:
-                items.append(t)
-    return intro, items
+    return p.paras, p.items
 
 
 def tn_parse(items):
@@ -331,7 +404,7 @@ def read_pdf_state(path, specs):
     """`specs` is a list of (key, header-words, candidate-pages). Anything not found is
     reported by name rather than silently omitted -- a table that quietly vanishes between
     editions is how a book gets read wrong for a year."""
-    import pdfplumber
+    pdfplumber = _pdfplumber()
     got, missing = {}, []
     with pdfplumber.open(path) as pdf:
         last = len(pdf.pages)
@@ -682,7 +755,7 @@ def read_tn_digest(path, idx, name_map, pages=None):
     puts a west Tennessee lake's law on an east Tennessee lake. So when a heading carries a
     county, the registry row's county MUST agree or the block is left unmatched.
     """
-    import pdfplumber
+    pdfplumber = _pdfplumber()
     blocks, matched, unmatched = [], {}, []
     # ONE STREAM FOR THE WHOLE BOOK, in reading order: page, then column, then line.
     #
