@@ -1259,7 +1259,7 @@ async function validateExistingFacts(lakeName, callbacks = {}) {
       averageDepthFt: profile.averageDepthFt, normalPoolFt: profile.normalPoolFt,
       damName: profile.damName, yearImpounded: profile.yearImpounded, archetype: profile.archetype
     };
-    profile.biology = profile.biology || profile.forage || {};
+    profile.biology = profile.biology || {};
     profile.limnology = profile.limnology || {};
     profile.habitat = profile.habitat || {};
     profile.navigation = profile.navigation || {};
@@ -1350,7 +1350,7 @@ function normalizeMasterForRecovery(profile) {
     maxDepthFt: profile.maxDepthFt, averageDepthFt: profile.averageDepthFt, normalPoolFt: profile.normalPoolFt,
     damName: profile.damName, yearImpounded: profile.yearImpounded, archetype: profile.archetype
   };
-  profile.biology = profile.biology || profile.forage || {};
+  profile.biology = profile.biology || {};
   profile.limnology = profile.limnology || {};
   profile.limnology.waterClarity = profile.limnology.waterClarity || {};
   profile.limnology.thermocline = profile.limnology.thermocline || {};
@@ -1500,9 +1500,6 @@ async function recoverSmartPlanFacts(lakeName, callbacks = {}) {
     // Preserve trollingIntelligence — recovery should never wipe fisheries data
     if (!profile.trollingIntelligence && profileData.profile?.trollingIntelligence) {
       profile.trollingIntelligence = profileData.profile.trollingIntelligence;
-    }
-    if (!profile.trollingIntelligence && profileData.profile?.trolling) {
-      profile.trollingIntelligence = profileData.profile.trolling;
     }
     profile.metadata = profile.metadata || {};
     profile.metadata.lastSmartPlanRecoveryAt = new Date().toISOString();
@@ -1676,7 +1673,7 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
         const savedRes = await fetch(`${CF_WORKER_URL}/research/get?lake=${encodeURIComponent(lakeName)}`);
         if (savedRes.ok) {
           const savedData = await savedRes.json();
-          const savedBiology = savedData.profile?.biology || savedData.profile?.forage || null;
+          const savedBiology = savedData.profile?.biology || null;
           if (savedBiology?.predatorSpecies?.length) {
             previousResults = { ...previousResults, biology: savedBiology, predatorSpecies: savedBiology.predatorSpecies };
             log(`  [fisheries] Loaded ${savedBiology.predatorSpecies.length} species from saved profile for LLM context`);
@@ -1704,8 +1701,7 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
               ...previousResults,
               ...savedProfile,
               identity: savedProfile.identity || previousResults.identity || {},
-              biology: savedProfile.biology || savedProfile.forage || previousResults.biology || {},
-              forage: savedProfile.forage || savedProfile.biology || previousResults.forage || {},
+              biology: savedProfile.biology || previousResults.biology || {},
               limnology: savedProfile.limnology || previousResults.limnology || {},
               habitat: savedProfile.habitat || previousResults.habitat || {},
               navigation: savedProfile.navigation || previousResults.navigation || {},
@@ -3363,8 +3359,6 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
     lakeName, baseName, state: stateName,
     ...agentSections,
     biology: safeBiology,
-    forage: safeBiology,
-    trolling: null,
     trollingIntelligence: agentSections.trollingIntelligence || null,
     _extractedFacts: allFacts,
     _extractedFactsCount: allFacts.length,

@@ -145,7 +145,6 @@ async function handleResearchSave(request, env) {
     }
   }
   // Remove any aliased duplicate confidence keys that would bloat the object
-  delete confidence.forage;
   delete confidence.trollingIntelligence; delete confidence.fisheries;
   let overallConf = confCount ? Math.round(confSum/confCount) : 75;
 
@@ -181,12 +180,11 @@ async function handleResearchSave(request, env) {
     // cycles and resume runs can re-apply them correctly.
     identity: _id,
     limnology: incomingProfile.limnology || packageParts.limnology || {},
-    forage: incomingProfile.forage || incomingProfile.biology || packageParts.biology || packageParts.forage || {},
-    biology: incomingProfile.biology || incomingProfile.forage || {},
+    biology: incomingProfile.biology || packageParts.biology || {},
     habitat: incomingProfile.habitat || packageParts.habitat || {},
     navigation: incomingProfile.navigation || packageParts.navigation || {},
     regulations: incomingProfile.regulations || packageParts.regulations || {},
-    trollingIntelligence: incomingProfile.trollingIntelligence || incomingProfile.trolling || incomingProfile.fisheries || packageParts.trollingIntelligence || packageParts.trolling || packageParts.fisheries || null,
+    trollingIntelligence: incomingProfile.trollingIntelligence || incomingProfile.fisheries || packageParts.trollingIntelligence || packageParts.fisheries || null,
     summary: incomingProfile.summary || packageParts.summary || {},
     evidence: incomingProfile.evidence || packageParts.evidence || {},
     fieldStatus: incomingProfile.fieldStatus || {},

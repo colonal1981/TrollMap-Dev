@@ -108,7 +108,7 @@ function flatten(groups) {
  * fish this water holds and the app could not ask for.
  */
 export function researchedExtras(profile, groups) {
-  const ti = profile && (profile.trollingIntelligence || profile.trolling);
+  const ti = profile && profile.trollingIntelligence;
   if (!ti || typeof ti !== 'object') return [];
 
   const known = {};

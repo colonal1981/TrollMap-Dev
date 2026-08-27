@@ -552,7 +552,7 @@ JSON only. Never output a string or array for creelLimits or sizeLimits.`;
     order: 7,
     system: "You are a fisheries biologist and professional fishing guide. You are given a verified lake profile AND raw text from source documents (fishing guides, reports, agency surveys). Extract seasonal species behavior from BOTH the profile AND the source documents. DEPTH MEANS THE FISH, NOT THE BOTTOM — THIS IS THE MOST IMPORTANT RULE HERE. preferredDepth is the depth BELOW THE SURFACE at which the fish are holding. It is NEVER the depth of the water they are over. Those are different numbers and sources routinely give both: 'suspended at 20 ft over 35 ft of water' means preferredDepth [20,20] and waterDepthFt [35,35]. Record both when both are stated; never collapse them into one range and never substitute one for the other. holding says what the fish are relating to: 'bottom' when they are on or within a few feet of the bottom, 'suspended' when they are up in the water column with open water beneath them, 'both' when a source describes two groups. Bottom-relating and suspended fish at the SAME stated depth call for completely different water, so if the sources do not say, return null for holding rather than inferring it. EVERY SEASON ENTRY MUST CITE THE SENTENCE IT CAME FROM. sourceQuote is the verbatim sentence from a source document or a PARSED OBSERVATION that supports the depth and holding you are reporting. Copy it exactly; do not paraphrase it, do not stitch two sentences together, and do not write a quote that is not in the material you were given. If you are reporting a value from general knowledge of the species rather than from anything in front of you, set sourceQuote to null -- that is a legitimate answer and it is far more useful than an invented citation. A quoted range and a reported range must MATCH: if the sentence says 12 to 22 feet, preferredDepth is [12,22] and not [15,40]. CONSENSUS RULE: When multiple sources cover the same species/season, use the depth range and structure that appears in the majority of sources. If sources contradict (e.g. 3 say 15-25ft and 1 says 5ft), use the majority position and note the discrepancy in the notes field. Do not average contradicting values — pick the consensus. Do not invent data when sources are silent — return null for that season. Prioritize official agency documents over fishing guide content when they conflict. Do NOT recommend routes, speeds, or specific lure colors. CRITICAL: Only include species listed in the biology.predatorSpecies array. SPECIES NAME RESOLUTION — CRITICAL: Agency documents frequently use GROUP TERMS that cover multiple species. You MUST split these into individual species keys. NEVER use a group term as a JSON key. Group terms and their individual species mappings: 'Black Bass' or 'black bass (largemouth, smallmouth, spotted)' → split into Largemouth Bass, Smallmouth Bass, Spotted Bass individually. 'Catfish (all species)' or 'Catfish' → split into Blue Catfish, Channel Catfish, Flathead Catfish as applicable. 'Crappie (all species)' → split into Crappie (or Black Crappie / White Crappie if individually listed). 'Bream/Sunfish' or 'Bluegill/Warmouth and other sunfishes' → split into Bluegill, Redear Sunfish (Shellcracker), Warmouth as applicable. When a document has a group heading like 'Black Bass' followed by individual species tips (e.g. 'Largemouthbass - Spring: ... Summer: ... Fall: ... Winter: ...'), parse EACH species line separately and assign to the correct individual species key. If generic group-level data has no species-specific breakdown, replicate that data to each individual species from the confirmed list that belongs to that group. NEVER output 'Black Bass', 'Catfish (all species)', or any other group term as a species key — always use the exact individual species name from the confirmed species list. Return JSON only.",
     userTemplate: (lakeName, state, prev) => {
-      const bio = prev?.biology || prev?.forage || {};
+      const bio = prev?.biology || {};
       const confirmedSpecies = Array.isArray(bio.predatorSpecies) ? bio.predatorSpecies : [];
       const speciesList = confirmedSpecies.length > 0 ? confirmedSpecies : ['(none confirmed — biology section empty)'];
       const speciesArrayStr = speciesList.map(s => `"${s}"`).join(', ');
@@ -739,7 +739,7 @@ function calculateSectionConfidence(sources, hasData, sectionType) {
   // Trolling has no citable sources (fishing tactics aren't USGS-published),
   // so source-count scoring always under-reports. Instead, validate the output
   // structure: does it have species × season entries with depth/structure/forage?
-  if (sectionType === 'trolling' || sectionType === 'trollingIntelligence') {
+  if (sectionType === 'trollingIntelligence') {
     const sectionData = arguments[3]; // passed by handleResearchAgent
     let speciesCount = 0, structuredSeasons = 0;
     if (sectionData && typeof sectionData === 'object') {
@@ -879,9 +879,9 @@ function hasStructuredTrollingIntel(trolling) {
  */
 function gateOverallConfidence(rawOverall, profile, fieldStatus = {}) {
   const lim = profile.limnology || {};
-  const bio = profile.biology || profile.forage || {};
+  const bio = profile.biology || {};
   const id = profile.identity || {};
-  const trolling = profile.trollingIntelligence || profile.trolling || profile.fisheries || {};
+  const trolling = profile.trollingIntelligence || profile.fisheries || {};
   const penalties = [];
   const exempt = (path) => ['not_applicable', 'not_available_after_targeted_review'].includes(fieldStatus[path]?.status);
   let conf = rawOverall;
@@ -1452,7 +1452,7 @@ holding: coerceHolding(entry.holding, holdingRejects),
       { role: "user", content: userPrompt }
     ],
     temperature: 0.1,
-    max_tokens: agentKey === 'trolling' ? 2000 : agentKey === 'summary' ? 800 : agentKey === 'fisheries' ? 8000 : 3000,
+    max_tokens: agentKey === 'summary' ? 800 : agentKey === 'fisheries' ? 8000 : 3000,
     response_format: { type: "json_object" }
   };
 

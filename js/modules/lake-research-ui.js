@@ -412,8 +412,8 @@ function renderProfile(profile) {
     else if (key === 'estuary') parts[key] = profile.estuary || {};
     else if (key === 'tidal') parts[key] = profile.tidal || {};
     else if (key === 'saltwater_regulations' || key === 'saltwaterRegulations') parts[key] = profile.saltwaterRegulations || profile.saltwater_regulations || profile.regulations || {};
-    else if (key === 'biology') parts[key] = profile.forage || profile.biology || {};
-    else if (key === 'fisheries') parts[key] = profile.trollingIntelligence || profile.trolling || {};
+    else if (key === 'biology') parts[key] = profile.biology || {};
+    else if (key === 'fisheries') parts[key] = profile.trollingIntelligence || {};
     else parts[key] = profile[key] || {};
   }
   _state.profileParts = parts;
@@ -488,7 +488,7 @@ function formatHumanReadableSection(key, data) {
   }
 
   if (key === 'biology') {
-    const d = data.forage || data.biology || data;
+    const d = data.biology || data;
     const primary = d.primaryForage || d.primary || [];
     const secondary = d.secondaryForage || d.secondary || [];
     const predators = d.predatorSpecies || d.predators || [];
@@ -757,7 +757,7 @@ function formatHumanReadableSection(key, data) {
   }
 
   if (key === 'fisheries') {
-    const d = data.trollingIntelligence || data.trolling || data;
+    const d = data.trollingIntelligence || data;
     let html = `<div style="font-size:12px;">`;
     // Handle various trolling data shapes
     if (d.routes || d.corridors || d.trollingCorridors) {
@@ -1024,14 +1024,14 @@ function renderSections(profile) {
     } else if (key === 'saltwater_regulations') {
       sectionData = profile.saltwaterRegulations || profile.saltwater_regulations || profile.regulations || {};
     } else {
-      sectionData = profile[key] || (key === 'biology' ? profile.forage : '') || (key === 'fisheries' ? (profile.trollingIntelligence || profile.trolling) : null) || {};
+      sectionData = profile[key] || (key === 'fisheries' ? profile.trollingIntelligence : null) || {};
     }
     const has = !!(key === 'identity'
       ? (profile.identity || profile.lakeName)
       : key === 'estuary' ? (profile.estuary && Object.keys(profile.estuary).length)
       : key === 'tidal' ? (profile.tidal && Object.keys(profile.tidal).length)
       : key === 'saltwater_regulations' ? (profile.saltwaterRegulations || profile.saltwater_regulations || profile.regulations)
-      : (profile[key] || (key === 'biology' ? profile.forage : null) || (key === 'fisheries' ? (profile.trollingIntelligence || profile.trolling) : null)));
+      : (profile[key] || (key === 'fisheries' ? profile.trollingIntelligence : null)));
     const okIcon = has ? '✔' : '◻';
 
     html += `<div class="section-row" style="flex-wrap:wrap;justify-content:space-between;align-items:center;">
@@ -1089,7 +1089,6 @@ function renderSections(profile) {
         const curMerged = _state.mergedProfile ? cloneJson(_state.mergedProfile) : {};
         const curParts = _state.profileParts ? cloneJson(_state.profileParts) : {};
         curMerged[agent] = parsed;
-        if (agent === 'biology') curMerged.forage = parsed;
         if (agent === 'fisheries') curMerged.trollingIntelligence = parsed;
         curParts[agent] = parsed;
         _state.mergedProfile = curMerged;
@@ -1110,7 +1109,6 @@ function renderSections(profile) {
             // Merge the edited section into the full profile so un-edited
             // sections are preserved on save.
             fullProfile[agent] = parsed;
-            if (agent === 'biology') fullProfile.forage = parsed;
             if (agent === 'fisheries') fullProfile.trollingIntelligence = parsed;
             const res = await fetch(`${CF_WORKER_URL}/research/save`, {
               method: 'POST', headers: workerHeaders(),
@@ -1213,7 +1211,7 @@ function renderSummary(profile) {
   if (!card || !textEl) return;
   const summary = profile.summary?.text || profile.summary || '';
   const summaryText = typeof summary === 'string' ? summary : (summary.text || JSON.stringify(summary, null, 2));
-  const biology = profile.biology || profile.forage || {};
+  const biology = profile.biology || {};
   const habitat = profile.habitat || {};
   const casting = [];
   const add = (label, value) => {

@@ -238,7 +238,7 @@ export function matchSpeciesKeys(table, species) {
 }
 
 export function researchedBand(profile, species, seasonKey) {
-  const ti = profile && (profile.trollingIntelligence || profile.trolling);
+  const ti = profile && profile.trollingIntelligence;
   if (!ti || typeof ti !== 'object') return null;
 
   const hit = matchSpeciesKeys(ti, species)[0];
@@ -473,7 +473,7 @@ export function researchIntel(profile, species, season, now = Date.now()) {
 
   // The fisheries agent's own words for this species and season, beyond the depth band.
   const band = researchedBand(profile, species, s);
-  const ti = profile.trollingIntelligence || profile.trolling;
+  const ti = profile.trollingIntelligence;
   if (ti && band) {
     const norm = (v) => String(v || '').toLowerCase().replace(/[^a-z]/g, '');
     const key = Object.keys(ti).find((k) => norm(k).includes(norm(species)) || norm(species).includes(norm(k)));
