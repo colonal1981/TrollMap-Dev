@@ -335,7 +335,18 @@ def main():
     ap.add_argument('--registry', default=None)
     ap.add_argument('--pack', default=None)
     ap.add_argument('--only-lakes', default=None,
-                    help='comma-separated slugs. Default: every pack with depth_areas.geojson.')
+                    help='comma-separated slugs. Overrides --scope.')
+    ap.add_argument('--all-packs', action='store_true',
+                    help='do not restrict to waters in lake_index.json. There are 1,706 packs on '
+                         'disk with depth_areas and only 358 waters in the index -- the rest are '
+                         'retired, out-of-region or never shipped, and building graphs for them '
+                         'is work nothing reads.')
+    ap.add_argument('--scope', default='missing', choices=['missing', 'all'],
+                    help="'missing' (DEFAULT) builds ONLY where the pack has depth_areas.geojson "
+                         "and NO water_graph.bin -- the waters Garmin never meshed, which have no "
+                         "routing at all today. Nothing that already works is touched. 'all' "
+                         "considers every pack with depth_areas.geojson, and still refuses to "
+                         "replace an existing graph without --overwrite.")
     ap.add_argument('--out-name', default='water_graph.bin')
     ap.add_argument('--report', default='registry/_bathy_graphs.json')
     ap.add_argument('--dry-run', action='store_true', help='measure, write no .bin')
@@ -347,14 +358,40 @@ def main():
     reg = a.registry or os.path.join(a.root, 'registry')
     pack = a.pack or os.path.join(a.root, 'chartpack')
 
+    #
+    # SCOPE IS 'missing' BY DEFAULT, AND THAT IS THE DESIGN, NOT A CONVENIENCE.
+    #
+    # Garmin's portals were asserted by a survey; ours are inferred from what the chart draws.
+    # Where he did the work, use his work. This script exists for the waters he never meshed --
+    # they have no routing at all, so there is nothing to lose and no lake that currently works
+    # can be affected by a defect in here.
+    #
+    withdepth = sorted(d for d in os.listdir(pack)
+                       if os.path.exists(os.path.join(pack, d, 'depth_areas.geojson')))
+    on_disk = len(withdepth)
+    indexed = None
+    if not a.all_packs:
+        ix = os.path.join(reg, 'lake_index.json')
+        if os.path.exists(ix):
+            indexed = set(read_json(ix))
+            withdepth = [d for d in withdepth if d in indexed]
+    missing = [d for d in withdepth
+               if not os.path.exists(os.path.join(pack, d, 'water_graph.bin'))]
     if a.only_lakes:
         slugs = [s.strip() for s in a.only_lakes.split(',') if s.strip()]
+        scope = 'named'
+    elif a.scope == 'missing':
+        slugs, scope = missing, 'missing'
     else:
-        slugs = sorted(d for d in os.listdir(pack)
-                       if os.path.exists(os.path.join(pack, d, 'depth_areas.geojson')))
-    print('bathy_graph: %d water%s  %s' % (len(slugs), '' if len(slugs) == 1 else 's',
-                                           '(dry run)' if a.dry_run else ''))
-    report, built, failed = {}, 0, 0
+        slugs, scope = withdepth, 'all'
+    print('bathy_graph: %d water%s  [scope=%s]  %s'
+          % (len(slugs), '' if len(slugs) == 1 else 's', scope,
+             '(dry run)' if a.dry_run else ''))
+    print('  packs with depth_areas on disk: %d%s' %
+          (on_disk, '' if indexed is None else
+           '   in lake_index: %d' % len(withdepth)))
+    print('  of those, no Garmin graph: %d' % len(missing))
+    report, built, failed, left = {}, 0, 0, 0
     for s in slugs:
         try:
             rep, graph = build_lake(reg, pack, s)
@@ -365,9 +402,9 @@ def main():
         if graph and not a.dry_run:
             dest = os.path.join(pack, s, a.out_name)
             if os.path.exists(dest) and not a.overwrite:
-                rep['skipped'] = 'exists; pass --overwrite to replace'
-                print('  %-30s EXISTS, not overwritten' % s)
-                failed += 1
+                rep['skipped'] = "Garmin's graph is here; --overwrite to replace"
+                print('  %-30s HAS A GARMIN GRAPH, left alone' % s)
+                left += 1
                 continue
             n, e2, d = graph
             rep['bytes'] = write_graph(dest, n, e2, d)
@@ -376,11 +413,12 @@ def main():
             failed += 1
     rp = os.path.join(a.root, a.report)
     os.makedirs(os.path.dirname(rp), exist_ok=True)
-    json.dump({'_note': NOTE, 'built_by': 'scripts/bathy_graph.py',
+    json.dump({'_note': NOTE, 'built_by': 'scripts/bathy_graph.py', 'scope': scope,
                'datum': 'chart -- full pool. Drawdown is applied live at route time.',
                'depth_rule': 'depth_min_ft, the SHALLOW end of each 1 ft band',
                'lakes': report}, open(rp, 'w'), indent=1)
-    print('built %d   skipped/failed %d   -> %s' % (built, failed, a.report))
+    print('built %d   left alone %d   skipped/failed %d   -> %s'
+          % (built, left, failed, a.report))
     return 0
 
 
