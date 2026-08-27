@@ -281,6 +281,24 @@ def tables_on(pdf, page_no, min_rows=4, min_cols=3):
 SECTION = re.compile(r'GAME FISH SIZE & POSSESSION LIMITS\s+(.{4,70}?)\s*(?:•|$)', re.S)
 
 
+IN_TABLE_TITLE = re.compile(r'((?:NONGAME|GAME) FISH SIZE & POSSESSION LIMITS)\s*(.{0,60})')
+
+
+def row_section(cells):
+    """The section title when it arrives as a table row rather than page text.
+
+    Page 30 of the SC book carries TWO sections in one ruled grid -- NONGAME FISH, then GAME
+    FISH: BREAM, REDBREAST SUNFISH, CRAPPIE... -- so a single label per page is wrong there.
+    It also means the earlier labels `page 30` and `page 31` were not unidentified tables; they
+    were correctly extracted tables whose title happened to live in a cell.
+    """
+    for c in cells:
+        m = IN_TABLE_TITLE.search(c or '')
+        if m:
+            return norm((m.group(1) + ' ' + (m.group(2) or '')).strip())
+    return None
+
+
 def page_label(pdf, n):
     """The species-group title above the table.
 
@@ -311,9 +329,13 @@ def collect_tables(pdf, headers, pages):
             for hdr_i in range(0, min(6, len(t))):
                 joined = ' | '.join(c.lower() for c in t[hdr_i])
                 if all(w in joined for w in want):
-                    out.append({'page': n, 'label': page_label(pdf, n),
+                    rows = rows_after(t, hdr_i)
+                    sect = None
+                    for r in t[:hdr_i + 1]:
+                        sect = row_section(r) or sect
+                    out.append({'page': n, 'label': sect or page_label(pdf, n),
                                 'header': t[hdr_i],
-                                'rows': carry_water_body(rows_after(t, hdr_i))})
+                                'rows': carry_water_body(rows)})
                     break
     return out
 
@@ -971,7 +993,41 @@ def resolve_water_body(text, state, name_map, idx, systems, chain, sysmembers):
             continue
         # `Back River in Jasper County` / `Pocotaligo in Beaufort, Jasper, and Hampton Counties`
         p2 = re.sub(r'\s+in\s+[A-Z][A-Za-z, ]*Count(?:y|ies)\b.*$', '', p).strip()
+        # THE COUNTY IN THE BOOK IS THERE BECAUSE THE NAME IS NOT ENOUGH.
+        # `Lake Robinson (Greenville County)` is one of two Lake Robinsons we carry, and
+        # dropping the parenthetical is exactly how the OTHER Lake Robinson's full pool of
+        # 900 ft ended up on this one. If the book names a county, the registry row must agree.
+        cm = COUNTY.search(p)
+        want_county = norm(cm.group(1)) if cm else None
         slug = resolve(p2, name_map)
+        if slug and want_county:
+            got = norm((idx.get(slug) or {}).get('county') or '')
+            if got and got.lower() != want_county.lower():
+                # The prefix has to be the BARE name. Built from the string with the
+                # parenthetical still on it, `lake_robinson_greenville_county` prefixes
+                # nothing and the right water -- lake_robinson_greer -- was rejected along
+                # with the wrong one.
+                stem = slugify(re.sub(r'\s*\(.*?\)', '', p2))
+                alt = None
+                for cand, cslug in name_map.items():
+                    if (cand == stem or cand.startswith(stem + '_')) and \
+                            norm((idx.get(cslug) or {}).get('county') or '').lower() \
+                            == want_county.lower():
+                        alt = cslug
+                        break
+                if alt:
+                    slug = alt
+                elif (idx.get(slug) or {}).get('state') != state:
+                    # A BORDER WATER HAS TWO COUNTIES AND TWO BOOKS. North Carolina's book
+                    # addresses `Lake Chatuge (Clay Co.)`; the registry places it in Towns Co,
+                    # Georgia, because that is where its centroid falls. Both are correct --
+                    # the lake straddles the line -- and NC's rules govern the NC portion.
+                    # Rejecting on county here would drop a real rule on a real water.
+                    kinds.add('across_state_line')
+                else:
+                    unresolved.append({'text': p, 'why': 'county mismatch: book says %s, '
+                                       '%s is in %s' % (want_county, slug, got)})
+                    continue
         if slug:
             waters.append(slug)
             kinds.add('name')
