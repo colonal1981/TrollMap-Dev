@@ -387,15 +387,36 @@ def main():
                     'Fishing law parsed from the state books. Nothing here is LLM output.',
            'read': a.read, 'states': {}, 'problems': []}
 
+    # A WATER WITH NO PAGE IS TWO DIFFERENT ANSWERS and only one of them is work.
+    # Calderwood has a TWRA page nobody saved -- fixable by saving it. The Davy Crockett we
+    # ship, on the Nolichucky in Greene County, is absent from TWRA entirely; it takes the
+    # statewide table, which is what TWRA itself says happens. Reporting both as `missing`
+    # every run turns a closed question back into an open one.
+    absent_doc = {}
+    ap_path = R(a.registry, 'no_agency_page.json')
+    if os.path.exists(ap_path):
+        absent_doc = json.load(open(ap_path, encoding='utf-8'))
+    absent = set((absent_doc.get('absent') or {}).keys())
+    unsaved = set((absent_doc.get('page_exists_not_saved') or {}).keys())
+
     tn = read_tn(R(a.tn_html), name_map)
     offered_tn = sorted(s for s, r in idx.items()
                         if r.get('state') == 'TN' and r.get('feature_type') == 'lake')
+    gap = [s for s in offered_tn if s not in tn['waters']]
     tn['offered_lakes'] = offered_tn
-    tn['offered_without_a_page'] = [s for s in offered_tn if s not in tn['waters']]
+    tn['no_agency_page'] = {s: (absent_doc.get('absent') or {})[s] for s in gap if s in absent}
+    tn['page_exists_not_saved'] = {s: (absent_doc.get('page_exists_not_saved') or {})[s]
+                                   for s in gap if s in unsaved}
+    tn['unexplained_gap'] = [s for s in gap if s not in absent and s not in unsaved]
     doc['states']['TN'] = tn
-    print('TN:       %d pages, %d matched to offered water, %d offered lakes with no page %s'
-          % (tn['pages_read'], len(tn['waters']), len(tn['offered_without_a_page']),
-             tn['offered_without_a_page']), flush=True)
+    if tn['unexplained_gap']:
+        doc['problems'].append({'state': 'TN', 'why': 'offered water with no page and no '
+                                'entry in no_agency_page.json', 'waters': tn['unexplained_gap']})
+    print('TN:       %d pages, %d matched | statewide-only (no agency page): %s | page not '
+          'saved: %s | unexplained: %s'
+          % (tn['pages_read'], len(tn['waters']), sorted(tn['no_agency_page']) or '-',
+             sorted(tn['page_exists_not_saved']) or '-', tn['unexplained_gap'] or '-'),
+          flush=True)
 
     for st, (fname, specs) in SPECS.items():
         path = R(a.regs, fname)
