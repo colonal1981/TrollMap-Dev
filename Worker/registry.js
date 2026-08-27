@@ -30,6 +30,7 @@ export const WATER_CHAIN_KEY = '_registry/water_chain.json';
 export const DAM_TABLE_KEY = '_registry/dam_table.json';
 export const NC_SPECIES_KEY = '_registry/nc_species_by_lake.json';
 export const REGULATIONS_KEY = '_registry/regulations.json';
+export const FULL_POOL_KEY = '_registry/full_pool.json';
 export const INDEX_TTL_S = 3600;
 
 let _index = null;
@@ -44,6 +45,7 @@ let _ncSpeciesAt = 0;
 /** Exposed for tests. Nothing in the Worker should need to call this. */
 export function _resetIndexCache() {
   _regs = null; _regsAt = 0;
+  _pool = null; _poolAt = 0;
   _index = null; _indexAt = 0; _chain = null; _chainAt = 0; _dams = null; _damsAt = 0;
   _ncSpecies = null; _ncSpeciesAt = 0;
 }
@@ -198,6 +200,8 @@ export async function ncSpeciesByLake(env, opts = {}) {
 
 let _regs = null;
 let _regsAt = 0;
+let _pool = null;
+let _poolAt = 0;
 
 /**
  * The law, parsed from the state books by build_regulations_table.py.
@@ -213,6 +217,41 @@ let _regsAt = 0;
  * survived into ONE of 63 saved profiles with the word "closed" stripped off it. The law is not
  * per-lake research; it is a handful of tables that change once a year.
  */
+/**
+ * FULL POOL PER WATER -- the elevation a Garmin chart was sounded to.
+ *
+ * Built offline into registry/full_pool.json and published slim. 71 waters as of 2026-08-27,
+ * up from 55 that morning: twelve Duke lakes read off the operator's own
+ * /lakes/operating-range payload, and Secession from the City of Abbeville's FERC rule curve.
+ *
+ * WHY IT SHIPS AS `{ft, units, source, datum}` AND NOT A BARE NUMBER. The datum is half the
+ * fact. Duke states NGVD 29; the NWS gauges state NAVD88 on 38 waters and NGVD29 on 15; the two
+ * differ by roughly half a foot to a foot in the Carolinas, which is the same size as a real
+ * drawdown on a lake held near full. Subtracting across them produces a number that looks like
+ * feet and is not -- so a caller that means to subtract has to be able to check first.
+ *
+ * ABSENT IS NOT ZERO. A water with no row has never been looked up, and `no_full_pool` carries
+ * the ones where the question is a category error -- a river and a tidal zone have no pool.
+ */
+export async function fullPoolTable(env, opts = {}) {
+  const now = Number.isFinite(opts.now) ? opts.now : Date.now();
+  if (!opts.fresh && _pool && now - _poolAt < INDEX_TTL_S * 1000) return _pool;
+  const bucket = (env && env.R2_TROLLMAP_CHARTPACKS) || opts.bucket;
+  if (!bucket) throw new Error('R2_TROLLMAP_CHARTPACKS is not bound to this Worker');
+  const obj = await bucket.get(FULL_POOL_KEY);
+  if (!obj) {
+    throw new Error(`${FULL_POOL_KEY} is not in the bucket -- run upload_garmin_to_r2.py`);
+  }
+  const parsed = JSON.parse(await r2Text(obj));
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error(`${FULL_POOL_KEY} did not parse to an object`);
+  }
+  _pool = parsed;
+  _poolAt = now;
+  return parsed;
+}
+
+
 export async function regulationsTable(env, opts = {}) {
   const now = Number.isFinite(opts.now) ? opts.now : Date.now();
   if (!opts.fresh && _regs && now - _regsAt < INDEX_TTL_S * 1000) return _regs;

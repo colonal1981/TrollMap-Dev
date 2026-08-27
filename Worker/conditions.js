@@ -61,7 +61,7 @@
  */
 import { CORS, JSON_HEADERS, r2Text } from './worker-core.js';
 import { ndbcReadings } from './ndbc.js';
-import { waterChain, damTable } from './registry.js';
+import { waterChain, damTable, fullPoolTable } from './registry.js';
 // RIVERS and lakeKeyFromName came out with dukeBasinFor: the basin is resolved from Duke's own
 // /rivers/get-rivers roster now, so this file no longer reads the six-entry hand table at all.
 import { dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun,
@@ -4181,7 +4181,7 @@ async function waterBlock(b, lat, lon, env) {
   // that is the right answer; a coastal zone with no station bound is a hole in the registry.
   out.tidal = !!(b.tides || []).length;
   out.source = 'NWPS — api.water.noaa.gov/nwps/v1/gauges/{lid}';
-  out.chart_datum = await chartDatum(b, out.operator);
+  out.chart_datum = await chartDatum(b, out.operator, out.pool, env);
   return out;
 }
 
@@ -4244,6 +4244,11 @@ export function chartDatumShape(b, sources = {}) {
     applied: false,
     below_full_pool_ft: null,
     full_pool_ft: null,
+    // Set when full pool came from the registry rather than from a level feed, and when the
+    // difference had to be withheld. `datum_note` is the sentence a caller shows instead of Z.
+    full_pool_source: null,
+    datum: null,
+    datum_note: null,
     level_ft: null,
     source: null,
     pending: null,
@@ -4307,6 +4312,79 @@ export function chartDatumShape(b, sources = {}) {
     return out;
   }
 
+  // THE GAUGE, WITH FULL POOL FROM THE REGISTRY -- and the difference ONLY when the two numbers
+  // are measured from the same mark.
+  //
+  // Ryan, 2026-08-27: "i want to see full pool is x lake level is y and the difference is z."
+  // Z is the ask, and Z is the part that cannot always be honest. Measured across the 76 lakes
+  // that can report a level at all: the bound gauges state NAVD88 on 38 and NGVD29 on 15, our
+  // full pools state NGVD29 on 14 and say nothing on 57, and both are stated AND equal on TWO.
+  // NAVD88 and NGVD29 differ by roughly half a foot to a foot in the Carolinas, which is the
+  // same size as a real drawdown on a lake held near full -- so a subtraction across them can
+  // flip the sign on the only question being asked.
+  //
+  // SO X AND Y ALWAYS, Z WHEN IT IS EARNED. The two arms above earn it by never subtracting at
+  // all: an operator publishes `below_full_pond_ft` directly, and Duke's index IS feet under
+  // full pond. This arm earns it a third way -- the NWS roster records each gauge's own datum
+  // elevation in `nrldb`, and on the Duke-index gauges that value is exactly full pool minus
+  // 100 (Rhodhiss 895.1, Norman 660, Hickory 835, Lookout Shoals 738.1 against 995.1, 760.0,
+  // 935.0, 838.1). Where the gauge carries its datum, level and full pool land in one frame and
+  // the difference is real. Where it does not, `below_full_pool_ft` stays null and
+  // `datum_note` says why, because two honest numbers beat one invented one.
+  const lv = (b.levels && b.levels.primary) || null;
+  const fp = sources.fullPool || null;
+  if (fp && Number.isFinite(fp.ft)) {
+    out.full_pool_ft = fp.ft;
+    out.full_pool_source = fp.source || null;
+    out.source = out.source || (lv ? `registry levels: ${lv}` : null);
+
+    // THE GAUGE'S OWN DATUM ELEVATION IS IN THE BINDING, and it is what makes a reading an
+    // elevation. NWPS publishes `datum: {name, nrldb}` per gauge -- nrldb is where the gauge's
+    // zero sits. A gauge reading is a height above that zero, so
+    //
+    //     elevation = stage + nrldb
+    //
+    // Lake Marion carries nrldb 0.0 and reads elevation directly. Lake Norman carries 660.0 and
+    // reads Duke's 0-100 index on top of it: 97 + 660 = 757 ft.
+    const gd = (b.pool && b.pool.datum) || null;
+    const nrldb = gd && Number.isFinite(gd.nrldb) ? gd.nrldb : null;
+    const stage = Number.isFinite(sources.gaugeStageFt) ? sources.gaugeStageFt : null;
+    const level = stage == null ? null : (nrldb == null ? stage : round2(stage + nrldb));
+    if (level != null) out.level_ft = level;
+
+    const gaugeDatum = gd && gd.name ? String(gd.name).toUpperCase().replace(/[^A-Z0-9]/g, '') : null;
+    const poolDatum = fp.datum ? String(fp.datum).toUpperCase().replace(/[^A-Z0-9]/g, '') : null;
+
+    // TWO WAYS TO EARN THE SUBTRACTION, AND THE SECOND IS THE USEFUL ONE.
+    //
+    // The first is the obvious one: both sources name a datum and name the same one. Measured
+    // across the 76 lakes that can report a level, that is true of exactly TWO.
+    //
+    // The second needs no label at all. On a Duke-index gauge the roster's nrldb is exactly the
+    // full pool we hold minus 100 -- Rhodhiss 895.1, Norman 660, Hickory 835, Lookout Shoals
+    // 738.1 against 995.1, 760.0, 935.0, 838.1, four for four to the tenth. That identity is
+    // itself the proof the two numbers share a frame: they cannot agree to a tenth by accident
+    // across a datum shift of half a foot to a foot. So where the gauge's zero reconciles with
+    // the full pool, the difference is real whether or not anybody wrote the datum's name down.
+    const reconciles = nrldb != null && Math.abs((nrldb + 100) - fp.ft) < 0.6;
+    if (level == null) {
+      out.datum_note = 'full pool is known; today\'s level is not';
+    } else if (reconciles || (gaugeDatum && poolDatum && gaugeDatum === poolDatum)) {
+      out.below_full_pool_ft = round2(fp.ft - level);
+      out.datum = (gd && gd.name) || (fp.datum || null);
+      if (reconciles && !(gaugeDatum && poolDatum)) {
+        out.datum_note = 'datum names are not stated on both, but the gauge zero and full pool '
+                       + 'reconcile to within a tenth, which is what makes the difference real';
+      }
+    } else {
+      out.datum_note = 'the level and full pool are measured from different marks'
+        + `${gd && gd.name ? ` (gauge ${gd.name}` : ' (gauge datum unstated'}`
+        + `${fp.datum ? `, full pool ${fp.datum})` : ', full pool datum unstated)'}`
+        + ' — both are shown, the difference is not, because across datums it can flip sign';
+    }
+    return out;
+  }
+
   // NOT LISTED HERE ON PURPOSE: the Corps. `usace.conservation_pool_ft` is a TARGET, not a
   // reading, and turning it into a drawdown needs today's elevation from a gauge whose vertical
   // datum is not guaranteed to be the Corps'. Subtracting across two datums produces a number
@@ -4317,7 +4395,7 @@ export function chartDatumShape(b, sources = {}) {
   return out;
 }
 
-async function chartDatum(b, operator) {
+async function chartDatum(b, operator, poolReading, env) {
   if ((b.feature_type && b.feature_type !== 'lake') || !String(b.display_name || '').trim()) {
     return chartDatumShape(b, {});
   }
@@ -4343,7 +4421,26 @@ async function chartDatum(b, operator) {
     out.pending = `level feed failed: ${String((e && e.message) || e)}`;
     return out;
   }
-  return chartDatumShape(b, { duke: d });
+  if (d) return chartDatumShape(b, { duke: d });
+
+  // NEITHER FEED NAMES THIS WATER -- so fall to the water's own gauge and the registry's full
+  // pool. Before 2026-08-27 this was the end of the road and 200-odd lakes answered `pending`.
+  // A missing full_pool.json is a pipeline state and must not take the rest of the card with
+  // it, so it is caught and reported rather than thrown.
+  let fp = null;
+  try {
+    const table = await fullPoolTable(env);
+    const row = ((table && table.rows) || {})[b.slug];
+    if (row && Number.isFinite(row.full_pool_ft)) {
+      fp = { ft: row.full_pool_ft, source: row.source || null, datum: row.datum || null };
+    }
+  } catch (e) {
+    const out = chartDatumShape(b, {});
+    out.pending = `full pool table unavailable: ${String((e && e.message) || e)}`;
+    return out;
+  }
+  const stage = poolReading && Number.isFinite(poolReading.stage) ? poolReading.stage : null;
+  return chartDatumShape(b, { fullPool: fp, gaugeStageFt: stage });
 }
 
 // ── tide and currents ───────────────────────────────────────────────────────────────────────

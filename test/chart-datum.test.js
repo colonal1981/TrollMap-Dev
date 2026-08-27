@@ -575,3 +575,73 @@ test('releaseShape renders a no-release schedule instead of dropping it', () => 
   const both = releaseShape({ duke: { arrivals: [{ damName: 'Wateree', arrival: 'x' }] }, dukeRun: rows });
   assert.equal(both.kind, 'projected');
 });
+
+// ── THE REGISTRY ARM, AND WHY Z IS NOT ALWAYS EARNED ──────────────────────────────────────────
+//
+// Ryan, 2026-08-27: "i want to see full pool is x lake level is y and the difference is z."
+//
+// Z is the ask and Z is the part that can lie. The bound gauges state NAVD88 on 38 waters and
+// NGVD29 on 15; our full pools state NGVD29 on 14 and say nothing on 57; both are stated AND
+// equal on TWO. NAVD88 and NGVD29 differ by roughly half a foot to a foot in the Carolinas,
+// which is the size of a real drawdown on a lake held near full — so a subtraction across them
+// can flip the sign on the only question being asked.
+//
+// So this arm shows X and Y always and Z only when it is earned, two ways: the datums agree by
+// name, or the gauge's own zero reconciles with the full pool, which is proof without a label.
+
+const NORMAN = { slug: 'lake_norman', display_name: 'Lake Norman (Catawba Co, NC)',
+                 feature_type: 'lake', state: 'NC',
+                 // Verbatim from water_bindings.json: NWPS publishes the gauge's zero, and on a
+                 // Duke-index gauge that zero is full pool minus 100.
+                 pool: { lid: 'CWAN7', datum: { name: 'NGVD29', nrldb: 660.0 } },
+                 levels: { primary: 'nws:HP' } };
+
+test('the gauge zero turns an index reading into an elevation', () => {
+  const r = chartDatumShape(NORMAN, { fullPool: { ft: 760.0, source: 'x' }, gaugeStageFt: 97.0 });
+  // 97 is Duke's index, not an elevation. 97 + 660 is.
+  assert.equal(r.level_ft, 757.0);
+  assert.equal(r.full_pool_ft, 760.0);
+  assert.equal(r.below_full_pool_ft, 3.0);
+});
+
+test('a reconciling gauge zero earns the subtraction with no datum named on the pool', () => {
+  const r = chartDatumShape(NORMAN, { fullPool: { ft: 760.0, source: 'x', datum: null },
+                                      gaugeStageFt: 97.0 });
+  assert.equal(r.below_full_pool_ft, 3.0);
+  // and it says WHY it was allowed, rather than looking like a datum check that passed
+  assert.match(r.datum_note, /reconcile/);
+});
+
+test('datums that disagree withhold Z and keep X and Y', () => {
+  const b = { ...NORMAN, pool: { lid: 'X', datum: { name: 'NAVD88', nrldb: 12.0 } } };
+  const r = chartDatumShape(b, { fullPool: { ft: 760.0, source: 'x', datum: 'NGVD 29' },
+                                 gaugeStageFt: 97.0 });
+  assert.equal(r.full_pool_ft, 760.0);
+  assert.equal(r.level_ft, 109.0);
+  assert.equal(r.below_full_pool_ft, null, 'a cross-datum subtraction is never published');
+  assert.match(r.datum_note, /different marks/);
+  assert.match(r.datum_note, /flip sign/);
+});
+
+test('matching datum names earn it even when the zero does not reconcile', () => {
+  const b = { ...NORMAN, pool: { lid: 'X', datum: { name: 'NAVD88', nrldb: 0.0 } } };
+  const r = chartDatumShape(b, { fullPool: { ft: 76.8, source: 'x', datum: 'NAVD88' },
+                                 gaugeStageFt: 74.0 });
+  assert.equal(r.below_full_pool_ft, 2.8);
+  assert.equal(r.datum, 'NAVD88');
+});
+
+test('full pool with no reading says so instead of reading as zero drawdown', () => {
+  const r = chartDatumShape(NORMAN, { fullPool: { ft: 760.0, source: 'x' }, gaugeStageFt: null });
+  assert.equal(r.full_pool_ft, 760.0);
+  assert.equal(r.level_ft, null);
+  assert.equal(r.below_full_pool_ft, null);
+  assert.match(r.datum_note, /level is not/);
+});
+
+test('no full pool falls through to pending, not to a silent zero', () => {
+  const r = chartDatumShape(NORMAN, { fullPool: null, gaugeStageFt: 97.0 });
+  assert.equal(r.full_pool_ft, null);
+  assert.equal(r.below_full_pool_ft, null);
+  assert.ok(r.pending, 'a water with no full pool must say why, not return nulls');
+});

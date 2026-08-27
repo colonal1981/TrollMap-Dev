@@ -94,6 +94,23 @@ FILES = [
     ("dam_table.json", None, "presence",
      "Worker/conditions.js:releaseDirection() resolves a Duke dam name to a water off this "
      "-- without it 'Cedar Creek' means nothing and no release can be placed above or below"),
+    # ADDED 2026-08-27, and the same lesson as water_chain.json on 08-17: three objects the app
+    # had come to depend on were being published and never checked, so this script printed
+    # "All 5 registry objects are published and match" over a bucket that could have been
+    # missing any of them. A checker that does not know about a file agrees that everything is
+    # fine while the app is missing it.
+    #
+    # Each is slimmed by the uploader, so there is no local file with the same shape to diff --
+    # presence and a shape assertion is what can honestly be checked from here.
+    ("full_pool.json", None, "presence",
+     "Worker/registry.js:fullPoolTable() serves the chart datum off this -- without it the plan "
+     "panel can show today's level and cannot say what it is below"),
+    ("regulations.json", None, "presence",
+     "Worker/registry.js:regulationsTable() answers /regulations closures off this -- without it "
+     "checkRegulations() falls back to a hand-typed table of six waters"),
+    ("nc_species_by_lake.json", None, "presence",
+     "Worker/registry.js:ncSpeciesByLake() seeds biology.predatorSpecies for 77 NC waters -- "
+     "without it every NC lake's species list falls to the web agents"),
 ]
 
 
@@ -147,7 +164,9 @@ def count_of(obj) -> str:
         # "2 keys" -- _meta and waters -- for a file holding 283 of them, so a truncated chain
         # would have matched a truncated chain and read as fine. A count that does not count
         # the thing is worse than no count.
-        for k in ('bindings', 'lakes', 'dams', 'waters'):
+        # `rows` for full_pool.json, `by_water` for regulations.json. A file whose count
+        # key is unknown reports "N keys", which for full_pool would have been 2.
+        for k in ('bindings', 'lakes', 'dams', 'waters', 'rows', 'by_water'):
             if isinstance(obj.get(k), (dict, list)):
                 return '%d %s' % (len(obj[k]), k)
         return '%d keys' % len(obj)
