@@ -53,6 +53,7 @@ export function parseGPX(text) {
   const all = [...doc.getElementsByTagName('*')];
   const wpts = [];
   const trks = [];
+  const rtes = [];
 
   for (const el of all) {
     const ln = localName(el.tagName);
@@ -80,10 +81,23 @@ export function parseGPX(text) {
         }
       }
       trks.push({ name, pts });
+    } else if (ln === 'rte') {
+      // ROUTES ARE READ BACK because the app now writes them -- the cue lines of
+      // plan-tracks.js. A loader that drops them would lose a plan's cues on the first
+      // save-and-reload, and the smart-plan cleaner would never see the run it must wipe.
+      const name = ctext(el, 'name');
+      const pts = [];
+      for (const p of el.children) {
+        if (localName(p.tagName) !== 'rtept') continue;
+        const lat = parseFloat(p.getAttribute('lat'));
+        const lon = parseFloat(p.getAttribute('lon'));
+        if (!isNaN(lat) && !isNaN(lon)) pts.push([lat, lon]);
+      }
+      rtes.push({ name, pts });
     }
   }
 
-  return { waypoints: wpts, tracks: trks };
+  return { waypoints: wpts, tracks: trks, routes: rtes };
 }
 
 /**
@@ -147,6 +161,7 @@ export function buildGPX(data) {
     `<gpx version="1.1" creator="TrollMap GPX Studio — Unified Timeline"`,
     `  xmlns="http://www.topografix.com/GPX/1/1"`,
     `  xmlns:gpxx="http://www.garmin.com/xmlschemas/GpxExtensions/v3"`,
+    `  xmlns:trp="http://www.garmin.com/xmlschemas/TripExtensions/v1"`,
     `  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"`,
     `  xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">`,
   ];
@@ -183,6 +198,33 @@ export function buildGPX(data) {
       lines.push(`      <trkpt lat="${p[0].toFixed(7)}" lon="${p[1].toFixed(7)}"/>`);
     }
     lines.push(`    </trkseg>`, `  </trk>`);
+  }
+
+  // -- CUE LINES, WRITTEN AS ROUTES ---------------------------------------------------
+  //
+  // Not because a route is wanted on the unit, but because a route is the only thing it
+  // will convert into a BOUNDARY, and a boundary is the only object on a 93sv that alarms
+  // on a place you are not navigating to. `Edit Route > Save as Boundary`, then
+  // `Alarm > Warning Dist.` -- two taps, per cue he cares about.
+  //
+  // `CalculationMode: Direct` on every point is what stops the unit trying to auto-route
+  // between them. It is what Garmin's own desktop app writes, read off the predecessor's
+  // export on 2026-08-26.
+  //
+  // NO NAME ON A ROUTE POINT. Named ones are drawn as labelled marks: 425 of them across
+  // one plan turned the north shore of Wateree into a bead chain, and Ryan's verdict on
+  // that file was \"full looked very busy\".
+  for (const r of (data.routes || [])) {
+    if (!Array.isArray(r.pts) || r.pts.length < 2) continue;
+    lines.push(`  <rte>`, `    <name>${esc(r.name)}</name>`);
+    for (const p of r.pts) {
+      lines.push(
+        `    <rtept lat="${p[0].toFixed(7)}" lon="${p[1].toFixed(7)}">`,
+        `      <extensions><trp:ViaPoint><trp:CalculationMode>Direct`
+        + `</trp:CalculationMode></trp:ViaPoint></extensions>`,
+        `    </rtept>`);
+    }
+    lines.push(`  </rte>`);
   }
 
   lines.push(`</gpx>`, '');

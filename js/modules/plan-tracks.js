@@ -40,6 +40,7 @@
 
 import { state } from '../core/state.js';
 import { LEG_COLORS, TRANSIT_COLOR, RETURN_COLOR } from './plan-to-timeline.js';
+import { metresBetween } from './plan-candidates.js';
 
 /**
  * The colour a leg draws in, on the map and on its card. One palette, one function, so a line on
@@ -99,6 +100,121 @@ export function stopName(stop) {
   const d = stop.depthFt == null ? NaN : Number(stop.depthFt);
   const ft = Number.isFinite(d) && d > 0 ? ` ${Math.round(d)}ft` : '';
   return trim(`${stop.id} · ${what}${ft}`, 24);
+}
+
+
+// -- THE CUES, AS LINES THE UNIT CAN MAKE A BOUNDARY FROM ---------------------------------
+//
+// A waypoint on this unit is scenery. Measured against the whole 172-page manual on 2026-08-26:
+// the word "proximity" does not appear in it, no waypoint carries an alarm, and the only
+// distance-to-a-place alarm is Arrival, which fires on the ONE destination you are actively
+// navigating to. Ryan, who owns it: "they do not work for just random waypoints."
+//
+// A BOUNDARY IS THE ONLY OBJECT THAT CAN SAY "YOU ARE NEAR A PLACE YOU ARE NOT GOING TO",
+// and a hundred of them can be armed at once. It cannot be shipped -- his unit's own export
+// contains waypoints, routes and tracks and no boundary at all -- but it can be MADE from a
+// route in two taps: Where To > Routes > Edit Route > Save as Boundary. So the app writes the
+// route and he converts the ones he wants. His framing, and it is the whole design in six
+// words: "so you have trolling tracks and notification boundaries."
+//
+// WHY A TRIANGLE AND NOT THE LEG ITSELF. Converting closes the shape, and a leg closed end-to-
+// start crosses itself on the return chord -- measured on his 8/26 plan, all five legs clean as
+// open lines and every one of them gaining exactly one intersection when closed, which is the
+// `Conversion failed. A boundary cannot have any intersections.` he hit. A small triangle has
+// nothing to cross. Six 12-point rings converted on his unit at radii from 10 m to 100 m, four
+// of them sitting on top of a leg, so neither size nor overlapping another object is a rule.
+//
+// The alarm on a converted object is Warning Dist. only -- all six came back offering no
+// Entering/Exiting, because those belong to areas and circles drawn on the map. So the shape
+// wants to be SMALL and the warning distance does the work: a 20 m triangle with a 50 yd
+// warning is a disc, where a big ring would have been a doughnut.
+const CUE_LINE_M = 20;
+
+/**
+ * How far a stop can sit from a leg's start before both deserve their own alarm. Two cues firing
+ * in the same fifty yards is one cue and one nuisance.
+ */
+const CUE_FOLD_M = 100;
+
+/**
+ * The Contour alarm's half-width, in feet. Ryan, 2026-08-26: "i would probably give at least 5 ft
+ * offset because i am hand steering." That is not a taste and not a guess -- it is the width of
+ * the error he puts in himself, quoted from the man doing the steering. The same pair of numbers
+ * sets `Sonar Setup > Alarms > Contour` (Shallow, Deep) and `Layers > Chart > Depth > Depth
+ * Shading`, so one band is heard and seen.
+ */
+export const HAND_STEER_BAND_FT = 5;
+
+/**
+ * A NAME THE UNIT WILL NOT EAT. His route list showed `L1 · 15.1 ft` stored and displayed as
+ * `L1  151 FT` -- separator gone, decimal gone, upcased -- while `L2 · 25.9 ft` beside it came
+ * through whole. The period is the character that can turn one number into another, so no name
+ * built here contains one.
+ */
+function cueSafe(s) {
+  return String(s == null ? '' : s)
+    .replace(/\./g, '-')
+    .replace(/\u00b7/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 24);
+}
+
+/** A triangle CUE_LINE_M across, centred on the cue. Closed by the unit it has no crossings. */
+function cueTriangle(name, lat, lon, cueKind, legId, runId) {
+  const dLat = (CUE_LINE_M / 2) / 111320;
+  const dLon = (CUE_LINE_M / 2) / (111320 * Math.cos(lat * Math.PI / 180) || 1);
+  return {
+    name: cueSafe(name),
+    pts: [[lat - dLat, lon - dLon], [lat + dLat, lon], [lat - dLat, lon + dLon]],
+    cueKind, legId, planRunId: runId, smartPlan: true,
+  };
+}
+
+/**
+ * One cue line per stop, per lure change, and per trolling leg start.
+ *
+ * DERIVED FROM THE WAYPOINTS, NOT FROM A SECOND WALK OF THE PLAN. planWaypoints() already
+ * resolved every one of these positions; walking the plan again would be a second source of the
+ * same fact and the two would drift.
+ *
+ * The leg-start line carries the band in its NAME, because the alarm's job there is to remind him
+ * to change a setting and the setting is what he needs to read: `L1 10-20ft`.
+ *
+ * `depth` cues get no line on purpose. Once the Contour alarm is set the sounder answers them
+ * from the actual bottom, which is better than a place the plan guessed at.
+ *
+ * @param {object} plan
+ * @param {Array}  waypoints  the output of planWaypoints()
+ * @param {string} [runId]
+ */
+export function planCueLines(plan, waypoints = [], runId = null) {
+  const out = [];
+  const band = new Map();          // waypoint -> the band its name should also carry
+  for (const leg of ((plan && plan.legs) || [])) {
+    if (leg.type === 'transit' || leg.depthFt == null) continue;
+    const co = leg.coordinates || [];
+    if (co.length < 2) continue;
+    const d = Math.round(Number(leg.depthFt));
+    if (!Number.isFinite(d)) continue;
+    const text = `${d - HAND_STEER_BAND_FT}-${d + HAND_STEER_BAND_FT}ft`;
+    const near = waypoints.find((w) => w.castingStop && !band.has(w)
+      && metresBetween(co[0], [w.lon, w.lat]) <= CUE_FOLD_M);
+    if (near) band.set(near, text);
+    else out.push(cueTriangle(`${leg.id} ${text}`, co[0][1], co[0][0], 'band', leg.id, runId));
+  }
+  for (const w of waypoints) {
+    if (!(w.castingStop || w.lureChange)) continue;
+    // A FOLDED STOP IS RENAMED, NOT APPENDED TO. `S1-1 hump 12ft 10-20ft` puts two depths in one
+    // name and neither of them reads. The band is the half he has to act on -- it is why this
+    // alarm exists -- and the stop's own structure and depth are already on the waypoint sitting
+    // at the same spot, with the note. So the id identifies it and the band tells him what to do.
+    const b = band.get(w);
+    const id = cueSafe(w.name).split(' ')[0];
+    out.push(cueTriangle(b ? `${id} ${b}` : w.name, w.lat, w.lon,
+                         w.lureChange ? 'change' : 'stop', w.legId || null, runId));
+  }
+  return out;
 }
 
 /**
@@ -302,16 +418,21 @@ export function materialisePlan(plan, o = {}) {
   if (!state.DATA) state.DATA = {};
   if (!Array.isArray(state.DATA.tracks)) state.DATA.tracks = [];
   if (!Array.isArray(state.DATA.waypoints)) state.DATA.waypoints = [];
+  if (!Array.isArray(state.DATA.routes)) state.DATA.routes = [];
 
   const tracks = planTracks(plan, runId);
   const waypoints = planWaypoints(plan, o.launch, runId, { marks: o.marks });
+  const cueLines = planCueLines(plan, waypoints, runId);
 
   // Everything this app generated goes; everything the user loaded stays.
   state.DATA.tracks = [...state.DATA.tracks.filter((t) => !t.scoutRoute && !t.smartPlan), ...tracks];
   state.DATA.waypoints = [...state.DATA.waypoints.filter((w) => !w.scoutWaypoint && !w.castingStop
                                                                 && !w.chartMark),
                           ...waypoints];
+  // The cue lines are ours the same way the tracks are, so the cleaner treats them the same.
+  state.DATA.routes = [...state.DATA.routes.filter((r) => !r.smartPlan), ...cueLines];
 
   return { runId, tracks: tracks.length, waypoints: waypoints.length,
+           cueLines: cueLines.length,
            trackPoints: tracks.reduce((a, t) => a + t.pts.length, 0) };
 }

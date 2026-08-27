@@ -2,7 +2,8 @@ import { describe, it, expect } from './expect-shim.mjs';
 import { readFileSync } from 'node:fs';
 import { assemblePlan, planRoute } from '../js/modules/plan-assemble.js';
 import { state } from '../js/core/state.js';
-import { materialisePlan, planTracks, planWaypoints, trackName, legColor } from '../js/modules/plan-tracks.js';
+import { materialisePlan, planTracks, planWaypoints, trackName, legColor, planCueLines,
+         HAND_STEER_BAND_FT } from '../js/modules/plan-tracks.js';
 import { metresBetween } from '../js/modules/plan-candidates.js';
 import { planToTimeline, LEG_COLORS, TRANSIT_COLOR, RETURN_COLOR }
   from '../js/modules/plan-to-timeline.js';
@@ -548,5 +549,102 @@ describe('a leg colour survives the trip to the chartplotter', () => {
     const gpx = buildGPX({ waypoints: [], tracks: [{ name: 'LOADED', pts: [[34.3, -80.7]] }] });
     expect(gpx.includes('<gpxx:')).toBe(false);
     expect(gpx.includes('<name>LOADED</name>')).toBe(true);
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// TROLLING TRACKS AND NOTIFICATION BOUNDARIES — 2026-08-26
+//
+// Ryan named the architecture in six words after an evening of measuring his 93sv:
+// "so you have trolling tracks and notification boundaries." The legs stay tracks, because a
+// track is the only shipped object that keeps a colour and it is what Follow Track reads. The
+// CUES become boundaries — the only object on that unit that alarms on a place you are not
+// navigating to, and the only one you can have a hundred of at once.
+//
+// A boundary cannot be shipped: his unit's own export held waypoints, routes and tracks and no
+// boundary at all. It can only be MADE, from a route, on the device. So the app writes routes.
+//
+// The rule these tests exist for is the one that actually refused him:
+// "Conversion failed. A boundary cannot have any intersections." Converting closes the shape,
+// and a trolling leg closed end-to-start crosses its own return chord — all five legs of his
+// 8/26 plan were clean as open lines and every one gained exactly one crossing when closed.
+// ---------------------------------------------------------------------------
+describe('the cues ship as lines the unit can make boundaries from', () => {
+  const legs = [
+    { id: 'L1', type: 'troll', depthFt: 15.1, startM: 0, lengthM: 1000, stops: [], marks: [],
+      coordinates: [[-80.80, 34.40], [-80.79, 34.40], [-80.78, 34.40]] },
+    { id: 'T1', type: 'transit', startM: 1000, lengthM: 100, stops: [], marks: [],
+      coordinates: [[-80.78, 34.40], [-80.775, 34.40]] },
+    { id: 'L2', type: 'troll', depthFt: 25.9, startM: 1100, lengthM: 1000, stops: [], marks: [],
+      coordinates: [[-80.775, 34.40], [-80.77, 34.40], [-80.76, 34.40]] },
+  ];
+  const p = { legs, changes: [
+    { id: 'C1', atM: 1050, rodId: 'rod2', cost: 'snap', from: 'shad rap', to: 'umbrella rig' }] };
+  const lines = () => planCueLines(p, planWaypoints(p, null, 'r1'), 'r1');
+
+  it('writes one per trolling leg start and one per lure change, and none for a transit', () => {
+    const L = lines();
+    expect(L.filter((x) => x.cueKind === 'band').map((x) => x.legId)).toEqual(['L1', 'L2']);
+    expect(L.filter((x) => x.cueKind === 'change').length).toBe(1);
+    // A depth cue never becomes a boundary. Once the Contour alarm is set the sounder answers it
+    // from the actual bottom, which beats a place the plan guessed at.
+    expect(L.some((x) => x.cueKind === 'depth')).toBe(false);
+  });
+
+  it('the leg line carries the band to set, at the offset he asked for', () => {
+    const b = lines().filter((x) => x.cueKind === 'band');
+    // Ryan: "i would probably give at least 5 ft offset because i am hand steering."
+    expect(HAND_STEER_BAND_FT).toBe(5);
+    expect(b[0].name).toBe('L1 10-20ft');
+    expect(b[1].name).toBe('L2 21-31ft');
+  });
+
+  it('no cue name contains a period — that is the character the unit eats', () => {
+    // `L1 · 15.1 ft` came back off his unit as `L1  151 FT`. A name that turns fifteen feet into
+    // a hundred and fifty-one is worse than no name, so none of these can carry the character.
+    for (const x of lines()) expect(x.name.includes('.')).toBe(false);
+    for (const x of lines()) expect(x.name.length).toBeLessThanOrEqual(24);
+  });
+
+  it('every cue line is a shape the unit will accept, closed', () => {
+    // The exact test the 93sv applies. A leg fails it; these must not.
+    const cross = (a, b, c, d) => {
+      const cw = (p1, p2, p3) => (p3[1] - p1[1]) * (p2[0] - p1[0]) > (p2[1] - p1[1]) * (p3[0] - p1[0]);
+      return cw(a, c, d) !== cw(b, c, d) && cw(a, b, c) !== cw(a, b, d);
+    };
+    for (const x of lines()) {
+      expect(x.pts.length).toBeGreaterThanOrEqual(3);
+      const q = [...x.pts, x.pts[0]];               // closed, the way conversion closes it
+      let hits = 0;
+      for (let i = 0; i < q.length - 1; i++) {
+        for (let j = i + 2; j < q.length - 1; j++) {
+          if (i === 0 && j === q.length - 2) continue;
+          if (cross(q[i], q[i + 1], q[j], q[j + 1])) hits++;
+        }
+      }
+      expect(hits).toBe(0);
+    }
+  });
+
+  it('a stop on top of the leg start absorbs the band instead of alarming twice', () => {
+    const withStop = { legs: [{ ...legs[0],
+      stops: [{ id: 'S1.1', atM: 5, structure: 'hump', depthFt: 12, rods: ['R6'],
+                at: [-80.80, 34.40] }] }], changes: [] };
+    const L = planCueLines(withStop, planWaypoints(withStop, null, 'r1'), 'r1');
+    expect(L.filter((x) => x.cueKind === 'band').length).toBe(0);
+    const stop = L.find((x) => x.cueKind === 'stop');
+    expect(stop.name.endsWith('10-20ft')).toBe(true);
+    expect(stop.name.includes('.')).toBe(false);      // S1.1 becomes S1-1
+  });
+
+  it('materialisePlan puts them on state.DATA.routes and wipes only the previous run', () => {
+    state.DATA = { waypoints: [], tracks: [],
+                   routes: [{ name: 'mine', pts: [[1, 2], [3, 4]] },
+                            { name: 'old cue', pts: [[1, 2], [3, 4]], smartPlan: true }] };
+    const r = materialisePlan(p, { runId: 'r2' });
+    expect(r.cueLines).toBe(planCueLines(p, planWaypoints(p, null, 'r2'), 'r2').length);
+    expect(state.DATA.routes.some((x) => x.name === 'mine')).toBe(true);
+    expect(state.DATA.routes.some((x) => x.name === 'old cue')).toBe(false);
   });
 });

@@ -18,6 +18,8 @@ import { COASTAL_ZONES, isCoastalKey } from "../data/coastal-zones.js";
 import { landOnCoastalZone, focusRamp } from "../utils/viewport-cull.js";
 import { appendCoastalOptgroups } from "../utils/coastal-optgroups.js";
 import { resolveR2Key } from "../data/lake-keys.js";
+// The band is defined once, where the cue line that carries it is built.
+import { HAND_STEER_BAND_FT } from "./plan-tracks.js";
 import { makePredicate } from "../data/water-filter.js";
 import { registryRecordFor } from "../data/access-index.js";
 // distFt() was CALLED below and never imported -- a latent ReferenceError predating the
@@ -127,6 +129,27 @@ function contourRange(plan) {
   if (!ft.length) return '';
   const lo = Math.min(...ft), hi = Math.max(...ft);
   return lo === hi ? String(lo) : `${lo}–${hi}`;
+}
+
+/**
+ * THE SAME WALK AS contourRange(), KEPT PER LEG.
+ *
+ * `Sonar Setup > Alarms > Contour` takes a Shallow and a Deep limit in feet and sounds when the
+ * transducer leaves the band -- the manual: "calling attention when encountering a steep drop-off
+ * or a sudden shallow area." `Layers > Chart > Depth > Depth Shading` takes the same pair and
+ * paints the water between them. One band, heard and seen, per leg.
+ *
+ * The half-width is HAND_STEER_BAND_FT and it is Ryan's, not a tuning: "i would probably give at
+ * least 5 ft offset because i am hand steering."
+ */
+function contourBands(plan) {
+  return (plan.legs || [])
+    .filter((l) => l.type === 'troll' && l.depthFt != null && Number.isFinite(Number(l.depthFt)))
+    .map((l) => {
+      const d = Math.round(Number(l.depthFt));
+      return { legId: l.id, depthFt: d,
+               shallow: d - HAND_STEER_BAND_FT, deep: d + HAND_STEER_BAND_FT };
+    });
 }
 
 /** The day's speeds as a range. There is no plan-level trolling speed -- each leg has its own. */
@@ -436,6 +459,7 @@ export function collectPlan(){
       speed: speedRange(v2 || {}) || gV('planSpeed', '2.4'),
       phaseSpeeds,
       targetDepth: contourRange(v2 || {}) || gV('planTargetDepth'),
+      bands: contourBands(v2 || {}),
       speciesBandFt: (v2 && v2.conditions && v2.conditions.depthBand
                       && v2.conditions.depthBand.ft) || null,
       legSpeeds: v2 ? (v2.legs || []).map((l) => ({ legId: l.id, type: l.type, speedMph: l.speedMph })) : null,
@@ -783,15 +807,23 @@ export async function buildPlanPreviewHtml(p){
   // No literal fallback. A depth this document cannot read off the plan is a depth it does not
   // know, and printing a plausible number for it is how the same document ended up claiming
   // 15–27, 18–28 and 25–35 ft on one morning.
-  const targetDepth = p.trolling.targetDepth || '';
-  const sonarRange = targetDepth ? `${targetDepth} ft` : 'Full depth';
-  const sonarRows = [
-    ['Dawn / Structure scan',   '2D 200kHz CHIRP', sonarRange, '8–9', 'Auto', 'On — structure ID'],
-    ['Mid-morning troll lanes', '2D 77kHz CHIRP',  sonarRange, '7–8', 'Auto', 'Zoom 2× bottom third'],
-    ['Locating school',         'Down Imaging',    'Full depth', '9',   'Auto', 'Max sensitivity, look for bait cloud'],
-    ['On fish / fighting',      '2D 200kHz',       sonarRange, '7',   'Manual lock', 'Bottom lock off — watch split screen'],
-  ].map(([phase, freq, range, sens, scroll, notes])=>
-    `<tr><td><b>${phase}</b></td><td>${freq}</td><td>${range}</td><td>${sens}</td><td>${scroll}</td><td class="rp-small">${notes}</td></tr>`
+  // WHAT WAS HERE WAS INVENTED, AND IT WAS DELETED ON 2026-08-26.
+  //
+  // Four hand-written rows told him what frequency, sensitivity and scroll speed to run at
+  // "Dawn / Structure scan", "Mid-morning troll lanes", "Locating school" and
+  // "On fish / fighting". Not one value came off the plan; the only plan-derived cell was Range.
+  // Two of the keys were v1 phase names, which SMARTPLAN_REBUILD_DESIGN abandoned -- "no phase
+  // names, no outbound and inbound" -- and test/hand-written-tables.test.js never knew the table
+  // existed. Ryan, reading it back: "all of that is made up AI stuff trying to tell me how to set
+  // my sonar for each period of the day... and who changes sonar settings while trying to reel in
+  // a fish?"
+  //
+  // What replaces it is derived, per leg, and is a setting the unit actually has. Nothing here is
+  // advice -- it is two numbers the plan already knows, in the units the alarm screen asks for.
+  const sonarRows = (p.trolling.bands || []).map(({ legId, depthFt, shallow, deep }) =>
+    `<tr><td><b>${esc(legId)}</b></td><td>${depthFt} ft</td>`
+    + `<td style="font-family:monospace">${shallow} / ${deep}</td>`
+    + `<td style="font-family:monospace">${shallow}–${deep} ft</td></tr>`
   ).join('');
 
   // ── Solunar timing table ──────────────────────────────────────────────────
@@ -1772,11 +1804,12 @@ ${(p.gpx.waypoints||p.gpx.tracks) ? `
 </table>
 <p class="rp-small">Reserve 20% (${Math.round(battAh*0.2)}Ah) — never run below 20% on LiFePO4. Return when indicator hits 20%.</p>
 
-<h2>📡 Sonar Settings — ${esc(sonarUnit)}</h2>
+${sonarRows?`<h2>📡 Set These On The ${esc(sonarUnit)}</h2>
+<p class="rp-small">Sonar Setup &gt; Alarms &gt; Contour, and Layers &gt; Chart &gt; Depth &gt; Depth Shading. Reset both at each leg change — the cue line at the leg start carries the numbers.</p>
 <table>
-  <thead><tr style="background:#eef4fa"><th>Phase</th><th>Frequency</th><th>Range</th><th>Sensitivity</th><th>Scroll</th><th>Notes</th></tr></thead>
+  <thead><tr style="background:#eef4fa"><th>Leg</th><th>Charted line</th><th>Contour alarm (shallow / deep)</th><th>Depth shading</th></tr></thead>
   <tbody>${sonarRows}</tbody>
-</table>
+</table>`:''}
 
 ${regsRows?`<h2>📋 SC Fishing Regulations — ${esc(lakeForRegs.split(',')[0]||'Selected Lake')}</h2>
 <table>

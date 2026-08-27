@@ -128,8 +128,34 @@ describe('the HTML has no depth of its own to fall back to', () => {
     expect(/\|\|\s*'18–28'/.test(BUILDER)).toBe(false);
   });
 
-  it('the sonar range reads the same field the summary does', () => {
-    expect(BUILDER).toContain('const sonarRange = targetDepth');
+  it('the sonar table reads the same field the summary does', () => {
+    // WAS: expect(BUILDER).toContain('const sonarRange = targetDepth').
+    //
+    // That asserted the MECHANISM -- one shared variable feeding both -- and the mechanism
+    // changed on 2026-08-26, when the four hand-written sonar rows ("Dawn / Structure scan",
+    // and the rest, which were invented advice) were replaced by a per-leg contour alarm and
+    // depth shading band. The INVARIANT did not change and is what is guarded here: the sonar
+    // section and the summary row must both read the legs' own `depthFt`, so one document can
+    // never again carry two target depths.
+    const p = collectPlan();
+    const legFt = PLAN.legs.filter((l) => l.type === 'troll' && l.depthFt != null)
+      .map((l) => Number(l.depthFt));
+    // the sonar table, rounded to the whole feet the alarm screen takes
+    expect(p.trolling.bands.map((b) => b.depthFt)).toEqual(legFt.map((n) => Math.round(n)));
+    // the summary row, the same walk, unrounded
+    expect(p.trolling.targetDepth).toBe(`${Math.min(...legFt)}\u2013${Math.max(...legFt)}`);
+    // and the band is symmetric about the leg's own charted line -- never a species band
+    for (const b of p.trolling.bands) {
+      expect(b.deep - b.depthFt).toBe(b.depthFt - b.shallow);
+    }
+  });
+
+  it('the sonar table cannot render without legs to read', () => {
+    // The defect was a table printing a plausible number where the plan was silent. No legs,
+    // no rows; no rows, no section. There is nothing left for it to fall back to.
+    expect(BUILDER).toContain('(p.trolling.bands || []).map');
+    expect(/\$\{sonarRows\?`/.test(BUILDER)).toBe(true);
+    expect(collectPlan().trolling.bands.length > 0).toBe(true);
   });
 });
 
