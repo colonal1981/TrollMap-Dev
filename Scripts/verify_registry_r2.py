@@ -91,7 +91,7 @@ FILES = [
     # releaseDirection() needs both, so a checker that knows one and not the other is half a
     # checker. Built by merging the hand table with the position-derived one, so it has no
     # single local file to compare against and is checked for presence and shape only.
-    ("dam_table.json", None, "presence",
+    ("dam_table.json", "_duke_dams.json", "dams",
      "Worker/conditions.js:releaseDirection() resolves a Duke dam name to a water off this "
      "-- without it 'Cedar Creek' means nothing and no release can be placed above or below"),
     # ADDED 2026-08-27, and the same lesson as water_chain.json on 08-17: three objects the app
@@ -101,14 +101,21 @@ FILES = [
     # fine while the app is missing it.
     #
     # Each is slimmed by the uploader, so there is no local file with the same shape to diff --
-    # presence and a shape assertion is what can honestly be checked from here.
+    # the uploader's own slim is imported and applied here instead, so the diff is real.
+    #
+    # UPGRADED 2026-08-28. Two of these eight were left at presence and the footer still said
+    # "All 8 registry objects are published and match the local files" over six that were
+    # actually compared. nc_species_by_lake.json is uploaded verbatim -- there was never
+    # anything to slim -- and dam_table.json is slim_dams() over two local files, which is
+    # importable exactly like the other three. Presence is not currency, and a checker that
+    # says everything matches while skipping two is the failure this file was written against.
     ("full_pool.json", "full_pool.json", "pool",
      "Worker/registry.js:fullPoolTable() serves the chart datum off this -- without it the plan "
      "panel can show today's level and cannot say what it is below"),
     ("regulations.json", "regulations_table.json", "regs",
      "Worker/registry.js:regulationsTable() answers /regulations closures off this -- without it "
      "checkRegulations() falls back to a hand-typed table of six waters"),
-    ("nc_species_by_lake.json", None, "presence",
+    ("nc_species_by_lake.json", "nc_species_by_lake.json", "verbatim",
      "Worker/registry.js:ncSpeciesByLake() seeds biology.predatorSpecies for 77 NC waters -- "
      "without it every NC lake's species list falls to the web agents"),
 ]
@@ -198,6 +205,7 @@ def main() -> int:
         slim_chain = getattr(ug, 'slim_chain', None)
         slim_full_pool = getattr(ug, 'slim_full_pool', None)
         slim_regulations = getattr(ug, 'slim_regulations', None)
+        slim_dams = getattr(ug, 'slim_dams', None)
         # The retired set comes from the uploader too, not from a second reader of the deletion
         # tab written here. slim_registry() filters on it, so a checker that computed its own
         # would report lakes.json stale forever while the uploader kept saying it just wrote it.
@@ -212,6 +220,7 @@ def main() -> int:
         # would turn "I could not check for currency" into "the check crashed".
         slim_full_pool = None
         slim_regulations = None
+        slim_dams = None
         retired_slugs = None
 
     gone = set()
@@ -261,6 +270,12 @@ def main() -> int:
             local = slim_full_pool(local, nopool) if slim_full_pool else None
         if local is not None and kind == 'regs':
             local = slim_regulations(local) if slim_regulations else None
+        if local is not None and kind == 'dams':
+            # `local` here is _duke_dams.json; the served object is the two files merged.
+            dbp = os.path.join(a.registry, '_dam_bindings.json')
+            derived = json.load(open(dbp, encoding='utf-8')) if os.path.exists(dbp) else {}
+            local = slim_dams(local, derived) if slim_dams else None
+        # kind == 'verbatim': uploaded byte-for-byte, so the file on disk IS the shape served.
 
         if err:
             print('%-22s %-9s %-11s %-22s %s'
