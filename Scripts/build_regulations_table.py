@@ -1328,6 +1328,11 @@ def project_by_water(doc, idx, all_specs=None, smap=None):
                         rec['species_band'] = band
                     if row.get('continuation'):
                         rec['continues_the_row_above'] = True
+                    if o2.get('implicitly') == 'statewide coastal':
+                        # SAID ON THE RECORD, NOT INFERRED FROM THE TABLE'S NAME. A consumer
+                        # asking "what shuts a season on this coast" should not have to know
+                        # that GA's happens to be the table called `saltwater`.
+                        rec['scope'] = 'statewide coastal'
                     if r.get('kind') in ('statewide', 'implicit'):
                         statewide.setdefault(st, []).append(rec)
                     for slug in r.get('waters') or []:

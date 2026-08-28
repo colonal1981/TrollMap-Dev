@@ -1487,6 +1487,7 @@ var trollmap_worker_default = {
           // pipeline state, not a request error, so it is reported in `closures_error` and the
           // limits still travel.
           let bookRules = null, closures = [], booksError = null, bookSlug = null;
+          let coastalClosures = [], coastalSource = null;
           try {
             const [table, index] = await Promise.all([
               regulationsTable(env), lakeIndex(env),
@@ -1518,6 +1519,29 @@ var trollmap_worker_default = {
               }
             };
             walk(entry && entry.rules);
+
+            // THE COAST HAS NO WATER TO RESOLVE, so a coastal closure can never arrive through
+            // by_water. A saltwater rule is set per STATE -- the same reason `saltwater` limits
+            // below are filed by state -- and before this it arrived nowhere at all:
+            // checkCoastalRegulations() had a hand-written table of fifteen species and no
+            // book behind it. GA's OPEN SEASON column is the first real source; SC's and NC's
+            // saltwater pages are not in the offline specs yet, so those two states still get
+            // an empty list and MUST NOT read it as permission -- `coastal_source` is what
+            // tells "read, nothing to say" from "never read".
+            for (const r of ((table.statewide || {})[st] || [])) {
+              if (r.scope !== 'statewide coastal') continue;
+              coastalSource = r.source || coastalSource;
+              for (const c of (r.closures || [])) {
+                coastalClosures.push({
+                  effect: c.effect, applies_to: c.applies_to,
+                  start: c.start || null, end: c.end || null,
+                  species: c.species || null, species_known: !!c.species_known,
+                  plan_species: Array.isArray(c.plan_species) ? c.plan_species : [],
+                  species_basis: c.species_basis || null,
+                  text: c.text, note: c.note || null, source: r.source || null,
+                });
+              }
+            }
           } catch (err) {
             booksError = String((err && err.message) || err);
           }
@@ -1542,6 +1566,12 @@ var trollmap_worker_default = {
             // caller must not read either as permission.
             saltwater: stateRegs.saltwater || {},
             saltwater_source: stateRegs.saltwaterSource || null,
+
+            // Parsed offline from the same book as `closures`, and filed by STATE because that
+            // is how a saltwater rule is set. `coastal_source` null means no state's coastal
+            // pages have been parsed into the offline table yet -- not that the coast is open.
+            coastal_closures: coastalClosures,
+            coastal_source: coastalSource,
 
             // THE CLOSURES. `book_slug` is null when the name did not resolve to a registry
             // water, which is a DIFFERENT answer from a water with no closures and has to stay

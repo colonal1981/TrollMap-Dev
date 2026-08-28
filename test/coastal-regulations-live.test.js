@@ -342,8 +342,15 @@ describe('it reaches the app', () => {
   });
 
   it('the coastal check imports the live layer', () => {
+    // WRITTEN ON THE BEHAVIOUR, NOT ON THE IMPORT LINE. This asserted one exact string and
+    // broke the day a second symbol was imported beside it, which is the placeholder-for-a-
+    // contract failure 00_START_HERE names. What matters is that the file consults the live
+    // layer for BOTH things it can now answer -- limits and closures -- not how the import
+    // happens to be spelled.
     const src = readFileSync(path.join(REPO, 'js/data/coastal-regulations.js'), 'utf8');
-    expect(src).toContain("import { liveCoastalPolicyFor } from './regulations-live.js'");
+    expect(src).toContain('liveCoastalPolicyFor');
+    expect(src).toContain('coastalClosuresFor');
+    expect(src).toContain("from './regulations-live.js'");
   });
 
   it('the Worker returns the saltwater half of the same parse', () => {
@@ -364,5 +371,91 @@ describe('it reaches the app', () => {
   it('the parser is told the app’s own species keys', () => {
     const src = readFileSync(path.join(REPO, 'Worker/research/clients.js'), 'utf8');
     expect(src).toContain("'Speckled Trout (Spotted Seatrout)'");
+  });
+});
+
+
+// ── THE BOOK CAN NOW SHUT A SALTWATER SEASON ────────────────────────────────────────────────
+//
+// Refactor scope section 8 step 4. Before this the coastal closure path was a five-species
+// hand table per state, and a fish it had never heard of came back `legal: true` with "No
+// closure information for this species" -- including Atlantic sturgeon, which GA's book marks
+// NO HARVEST in a column headed OPEN SEASON.
+describe('coastal closures come off the book', () => {
+  const withClosures = (closures, source = 'GA ga_digest_2026_2027.pdf') => ({
+    ...payload(SC_BOOK),
+    coastal_closures: closures,
+    coastal_source: source,
+  });
+  const primeC = async (closures, source) => {
+    _resetRegulationsCache();
+    await primeRegulations('GA', 'Wassaw Sound, GA', {
+      worker: 'https://w', now: AUG.getTime(),
+      fetch: async () => ({ ok: true, json: async () => withClosures(closures, source) }),
+    });
+  };
+  const NO_HARVEST = {
+    effect: 'closed', applies_to: 'harvest', start: null, end: null,
+    species: 'Atlantic sturgeon', species_known: true, plan_species: [],
+    species_basis: 'coastal species -- the freshwater plan form has no checkbox for it',
+    text: 'No Harvest', note: 'the OPEN SEASON column says so',
+  };
+  const COBIA_OPEN = {
+    effect: 'open_only', applies_to: 'harvest', start: '03-01', end: '10-31',
+    species: 'Cobia', species_known: true, plan_species: [],
+    text: 'Mar. 1 - Oct. 31',
+    note: 'the OPEN SEASON column names the window the take is allowed in',
+  };
+
+  it('a no-harvest species is refused even though the hand table never heard of it', async () => {
+    await primeC([NO_HARVEST]);
+    expect(COASTAL_REGULATIONS.GA['Atlantic sturgeon']).toBe(undefined);
+    const r = checkCoastalRegulations('GA', 'Atlantic sturgeon', AUG, AUG);
+    expect(r.legal).toBe(false);
+    expect(r.reason).toContain('No Harvest');
+    expect(r.reason).toContain('Harvest closed');
+  });
+
+  it('and the closure does not leak onto another fish', async () => {
+    await primeC([NO_HARVEST]);
+    const r = checkCoastalRegulations('GA', 'Red Drum (Redfish)', AUG, AUG);
+    expect(r.legal).toBe(true);
+  });
+
+  it('an OPEN season is not a closure inside its window', async () => {
+    await primeC([COBIA_OPEN]);
+    const r = checkCoastalRegulations('GA', 'Cobia', new Date('2026-06-15T12:00:00'), AUG);
+    expect(r.legal).toBe(true);
+    expect(r.warnings.join(' ')).not.toContain('OPEN season');
+  });
+
+  it('and outside its window it warns with the book sentence, never blocks', async () => {
+    await primeC([COBIA_OPEN]);
+    const r = checkCoastalRegulations('GA', 'Cobia', new Date('2026-12-15T12:00:00'), AUG);
+    expect(r.legal).toBe(true);
+    expect(r.warnings.join(' ')).toContain('Mar. 1 - Oct. 31');
+    expect(r.warnings.join(' ')).toContain('outside it');
+  });
+
+  it('ALL of the blocking closures are reported, not the first', async () => {
+    await primeC([NO_HARVEST, { ...NO_HARVEST, text: 'Closed to all harvest by proclamation' }]);
+    const r = checkCoastalRegulations('GA', 'Atlantic sturgeon', AUG, AUG);
+    expect(r.legal).toBe(false);
+    expect(r.reason).toContain('No Harvest');
+    expect(r.reason).toContain('proclamation');
+  });
+
+  it('an unread coastal book is not permission', async () => {
+    _resetRegulationsCache();
+    await primeRegulations('GA', 'Wassaw Sound, GA', {
+      worker: 'https://w', now: AUG.getTime(),
+      fetch: async () => ({ ok: true, json: async () => ({ ...payload(SC_BOOK),
+        coastal_closures: [], coastal_source: null }) }),
+    });
+    // No source means nobody parsed a coastal book. The fish is simply unknown here, and the
+    // answer must not be a confident yes built on an empty list.
+    const r = checkCoastalRegulations('GA', 'Atlantic sturgeon', AUG, AUG);
+    expect(r.legal).toBe(true);
+    expect(String(r.note)).toContain('verify');
   });
 });

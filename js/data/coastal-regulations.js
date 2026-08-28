@@ -56,7 +56,7 @@
  * than the data.
  */
 
-import { liveCoastalPolicyFor } from './regulations-live.js';
+import { liveCoastalPolicyFor, coastalClosuresFor } from './regulations-live.js';
 
 export const COASTAL_SPECIES_LIST = [
   'Red Drum (Redfish)',
@@ -402,6 +402,39 @@ export function checkCoastalRegulations(stateCode, species, date, now = new Date
   // limits and closed-season prose live here, and dropping them because a species is missing from
   // a five-row table is how a published rule goes unsaid.
   if (limits) for (const r of limits.specialRules) if (r) warnings.push(`${limits.source}: ${r}`);
+
+  const d0 = date instanceof Date ? date : new Date(date);
+
+  // THE BOOK COMES FIRST, AND THE TABLE BELOW IS THE FLOOR -- the same order species-intel.js
+  // now uses for freshwater.
+  //
+  // This table has FIVE species per state and the coast has dozens. Atlantic sturgeon is the
+  // case that shows it: GA's book says `No Harvest` in a column headed OPEN SEASON, the fish is
+  // nowhere in the rows below, and the `!reg` branch answered `legal: true` with "No closure
+  // information for this species". A no-harvest species reading as legal is the wrong direction.
+  //
+  // ALL of them, not the first. A freshwater water with two blocking closures reported one and
+  // dropped the other on 2026-08-27; the same mistake is available here and this does not make
+  // it. Everything not blocking is still carried, because the book's sentence is what a person
+  // can check.
+  const book = coastalClosuresFor(st, species, d0);
+  if (book) {
+    for (const c of book.warnings) {
+      warnings.push(`${book.source || 'the state book'}: ${c.text}`
+        + (c.effect === 'open_only' ? ' — that is the OPEN season, and today is outside it.' : ''));
+    }
+    if (book.blocking.length) {
+      const shut = book.blocking.map((c) => c.text).join('; ');
+      const who = book.blocking.every((c) => c.applies_to === 'harvest') ? 'Harvest closed'
+        : 'Closed';
+      return {
+        legal: false,
+        reason: `${who} — ${book.source || 'the state book'}: ${shut}`,
+        regInfo: (table && key) ? (table[key] || null) : null,
+        limits, warnings, stale: false, note: shut, source: book.source || null,
+      };
+    }
+  }
 
   if (!table) {
     if (limits) warnings.push(limitsSentence(species, limits));

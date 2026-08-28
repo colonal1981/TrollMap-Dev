@@ -51,9 +51,10 @@ const _cache = new Map();               // 'SC|lake murray' -> { at, payload }
  * One fetch, both halves, no second endpoint and no second prime.
  */
 const _saltwater = new Map();           // 'SC' -> { at, table, source, state }
+const _coastal = new Map();             // 'SC' -> { at, closures, source }
 
 /** Exposed for tests. */
-export function _resetRegulationsCache() { _cache.clear(); _saltwater.clear(); }
+export function _resetRegulationsCache() { _cache.clear(); _saltwater.clear(); _coastal.clear(); }
 
 export function normalizeWaterName(v) {
   return String(v == null ? '' : v)
@@ -104,6 +105,14 @@ export async function primeRegulations(state, lakeName, opts = {}) {
     const salt = payload && payload.saltwater;
     if (payload && payload.saltwater_source && salt && Object.keys(salt).length) {
       _saltwater.set(st, { at: now, table: salt, source: payload.saltwater_source, state: st });
+    }
+    // COASTAL CLOSURES ARE FILED BY STATE, not by water, because that is how the book sets them.
+    // Filed only when `coastal_source` is present -- a null source means no state's coastal
+    // pages have been parsed into the offline table, and an empty list must never read as
+    // permission. Same gate as the saltwater limits above and for the same reason.
+    if (payload && payload.coastal_source && Array.isArray(payload.coastal_closures)) {
+      _coastal.set(st, { at: now, closures: payload.coastal_closures,
+                         source: payload.coastal_source });
     }
     return payload;
   } catch (_) {
@@ -271,6 +280,61 @@ export function liveCoastalPolicyFor(state, species) {
   }
   return { scope: 'none', species: null, state: st, sizeLimit: null, creelLimit: null,
            specialRules: [], source };
+}
+
+/**
+ * The book's closures on the SALTWATER side, for one state, one species, one date.
+ *
+ * THE SIBLING OF closuresFor(), and it takes no lake, because there is nothing to resolve. GA
+ * heads a column OPEN SEASON and answers it for every species; the answer belongs to the whole
+ * coast, so `by_water` can never carry it and this had no path to the app at all until now.
+ *
+ * `null` means NOT PRIMED -- nobody has read a coastal book. An empty `blocking` on a primed
+ * state means the book was read and says nothing shut for this fish today. Those are different
+ * sentences and only one of them is about the fish.
+ *
+ * WHAT MAY BLOCK, and it is deliberately the same rule as freshwater: `all_fishing` shuts the
+ * water and `harvest` shuts the take. `open_only` is NOT a block even outside its window --
+ * Cobia's `Mar. 1 - Oct. 31` genuinely means the take is closed in November, but the freshwater
+ * side does not gate on that shape either and a planner that starts refusing trips on a rule the
+ * parser inferred rather than read is the failure direction that costs a day. It is returned as
+ * a warning carrying the book's own sentence, which is what a person can check.
+ */
+export function coastalClosuresFor(state, species, date) {
+  const st = String(state || '').trim().toUpperCase();
+  const hit = _coastal.get(st);
+  if (!hit) return null;
+  const all = Array.isArray(hit.closures) ? hit.closures : [];
+  const d = date instanceof Date ? date : (date ? new Date(date) : new Date());
+  const md = (d.getMonth() + 1) * 100 + d.getDate();
+  const inWindow = (c) => {
+    if (!c.start || !c.end) return true;
+    const [sm, sd] = c.start.split('-').map(Number);
+    const [em, ed] = c.end.split('-').map(Number);
+    const a = sm * 100 + sd, b = em * 100 + ed;
+    return a <= b ? (md >= a && md <= b) : (md >= a || md <= b);
+  };
+  // A RECORD WITH NO SPECIES GOVERNS EVERYTHING; one with a species governs that fish only.
+  // Matching goes through nameForms so `Red Drum (Redfish)` answers to both, which is the
+  // failure this file already documents for the limits table.
+  const want = new Set(nameForms(species));
+  const forSpecies = (c) => {
+    if (!c.species) return true;
+    if (!want.size) return true;
+    return nameForms(c.species).some((f) => want.has(f));
+  };
+  const active = all.filter((c) => forSpecies(c)
+    && (((c.effect === 'closed' || c.effect === 'unknown') && inWindow(c))
+        || (c.effect === 'open_only' && !inWindow(c))));
+  const gates = (c) => c.effect === 'closed'
+    && (c.applies_to === 'all_fishing' || c.applies_to === 'harvest');
+  return {
+    state: st,
+    source: hit.source || null,
+    blocking: active.filter(gates),
+    warnings: active.filter((c) => !gates(c)),
+    all,
+  };
 }
 
 /** Whether the saltwater half of the digest has been read for this state at all. */
