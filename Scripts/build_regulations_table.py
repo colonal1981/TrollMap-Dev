@@ -3041,7 +3041,16 @@ RANGE = re.compile(MD + r'\s*(?:through|thru|to|[-–—])\s*' + MD, re.I)
 # Cherokee's two-part snagging closure.
 SAME_MONTH = re.compile(r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sept?|Oct|Nov|Dec)[a-z]*\.?\s*'
                         r'(\d{1,2})\s*(?:through|thru|to|[-–—])\s*(\d{1,2})\b', re.I)
-LIMIT_TAIL = re.compile(r'\b(inch|inches|minimum|maximum|per day|no length limit|PLR|slot)\b', re.I)
+# A WINDOW THAT STATES A LIMIT IS NOT A CLOSURE, and a permissive limit is still a limit.
+# `June 1 - Sept. 30: any length` is Lake Murray's striped bass rule for the summer -- no
+# minimum length in that window -- and it typed as `unknown` because this pattern knew
+# `no length limit` and not `any length`. Ryan, reading it on the card: "what does unknown mean
+# here". It meant the parser found a date range and could not tell what it did, which was
+# honest about the Hatchery WMA's Saturday mornings and plainly wrong about a size limit that
+# RELAXES in that window. Typed unknown it reads as a restriction the app cannot express, which
+# is the opposite of what the book says.
+LIMIT_TAIL = re.compile(r'\b(inch|inches|minimum|maximum|per day|no length limit|PLR|slot'
+                        r'|any length|any size|no size limit|no daily limit|no creel)\b', re.I)
 CLOSED_WORD = re.compile(r'\bclosed\b|\bprohibit(?:ed)?\b|\bno harvest\b|\bunlawful\b', re.I)
 OPEN_WORD = re.compile(r'\bseason is open\b|\bopen from\b|\bmay be harvested\b', re.I)
 METHOD = re.compile(r'\bclosed to (\w+)', re.I)
