@@ -1274,18 +1274,22 @@ def main():
         covered = set(tn['waters']) | set(dg['waters'])
         tn['covered_by_digest_only'] = sorted(set(dg['waters']) - set(tn['waters']))
         print('TN digest: %d blocks on pages %s, %d matched (%s), %d refused for want of a '
-              'county' % (dg['blocks_found'], '%d-%d' % (DIGEST_PAGES[0], DIGEST_PAGES[-1]),
+              'county' % (dg['blocks_found'], _runs(DIGEST_PAGES),
                           len(dg['waters']), ', '.join(sorted(dg['waters'])) or '-',
                           len(dg['rejected_on_county'])), flush=True)
         # TENNESSEE'S BOOK WAS OUTSIDE THE LEDGER ENTIRELY, and "TN is 100% covered" hid it:
         # true of the ten lakes the card offers, and silent about the other ten pages of the
         # digest. Ryan, seeing the total: "168 pages is this the combined page count from all 4
-        # states?" It was three. TN reads pages 11-17 of a 17-page book through its own reader,
-        # so it never passed through read_pdf_state() and never got counted.
+        # states?" It was three. TN reads its pages through its own reader, so it never passed
+        # through read_pdf_state() and never got counted. When it finally ran it reported eight
+        # unaccounted pages, seven of which were the reservoir regulations.
         try:
             pdfplumber = _pdfplumber()
             with pdfplumber.open(dg_path) as tnpdf:
-                tn['pages'] = page_ledger(tnpdf, set(DIGEST_PAGES), smap,
+                # Page 1 is read too -- by read_tn_statewide(), not by the block reader --
+                # so it goes in with the rest or the ledger reports the statewide table as a
+                # page carrying law that nothing looked at.
+                tn['pages'] = page_ledger(tnpdf, set(DIGEST_PAGES) | {1}, smap,
                                           (not_law.get('TN') or {}))
             led = tn['pages']
             if led:
@@ -1415,16 +1419,16 @@ def main():
 BULLET = re.compile(r'^\s*[•▪·]\s*')
 
 
-def _left_edges(words, tol=3.0, min_share=0.04):
-    from collections import Counter
-    c = Counter(round(w['x0'] / tol) * tol for w in words)
-    n = len(words)
-    edges, merged = sorted(x for x, k in c.items() if k >= max(4, n * min_share)), []
-    for e in edges:
-        if merged and e - merged[-1] < 12:
-            continue
-        merged.append(e)
-    return merged or [0.0]
+def _runs_of_a_kind(words, kind):
+    """Consecutive words of one kind, in reading order, as (kind, words) runs."""
+    out = []
+    for w in words:
+        k = kind(w)
+        if out and out[-1][0] == k:
+            out[-1][1].append(w)
+        else:
+            out.append((k, [w]))
+    return out
 
 
 def _column_lines(page, ytol=2.5):
@@ -1462,7 +1466,12 @@ def _column_lines(page, ytol=2.5):
             return 'drop'
         if sz <= body_size:
             return 'body'
-        if sz >= body_size + 7:
+        if sz >= body_size + 4:
+            # SECTION TITLE, NOT A WATER. The threshold was body + 7, tuned on the 18pt
+            # `Exceptions on State Park Lakes`, and the reservoir pages carry 15pt sidebar
+            # titles -- `Commercial Fishing in Tennessee` -- which fell through to the Bold
+            # test and were read as reservoirs. Nothing on this book is set between 10.5 and
+            # 15, so the line goes in the gap rather than on either edge of it.
             return 'section'
         if 'Bold' in fn:
             return 'heading'
@@ -1470,26 +1479,57 @@ def _column_lines(page, ytol=2.5):
             return 'qualifier'
         return 'body'
 
-    edges = _left_edges(words)
+    # ONE COLUMN FINDER FOR THE WHOLE FILE. This used to have its own, _left_edges(), which
+    # kept a bucket of word-x0s only if it held more than 4% of the page's words -- a threshold
+    # that rises with the text on the page, so the denser a page got the fewer columns it
+    # found. On the 2026-2027 book it returned ONE column for pages 6 and 8, a single column
+    # starting at x=378 for page 13 (discarding two-thirds of the page), and two of three for
+    # page 3, where it cut the heading `Tims Ford` down the middle and lost Percy Priest
+    # entirely. Pages 11-17 have been read through it since the TN reader was written.
+    #
+    # column_starts() reads the bullets instead, and a bullet only ever sits at a column's left
+    # edge. It returns [36, 207, 378] on every rules page of this book, and nothing on the
+    # pages that carry no bullets -- which are the pages that carry no rules.
+    edges = [float(x) for x in column_starts([page])] or [0.0]
     cols = defaultdict(list)
     for w in words:
         cands = [e for e in edges if e <= w['x0'] + 1.0]
         cols[max(cands) if cands else edges[0]].append(w)
     out = []
     for edge in sorted(cols):
-        rows = defaultdict(list)
-        for w in cols[edge]:
-            rows[round(w['top'] / ytol)].append(w)
+        # CLUSTERED, NOT BUCKETED. `round(top / ytol)` puts two words on the same printed line
+        # in different rows whenever that line happens to straddle a bucket edge, which is
+        # exactly what happened to `Guntersville` at top=423.4 and its `(Tennessee Section
+        # Only)` at 424.4 -- one point apart, two buckets, and the reservoir lost its name to
+        # its own qualifier. Grouping by distance from the row already open has no edges.
+        rows = []
+        for w in sorted(cols[edge], key=lambda x: x['top']):
+            if rows and w['top'] - rows[-1][0] <= ytol:
+                rows[-1][1].append(w)
+            else:
+                rows.append((w['top'], [w]))
         lines = []
-        for k in sorted(rows):
-            ws = sorted(rows[k], key=lambda x: x['x0'])
-            kinds = Counter(kind(w) for w in ws)
-            lines.append({'text': norm(' '.join(w['text'] for w in ws)),
-                          'kind': kinds.most_common(1)[0][0],
-                          'top': min(w['top'] for w in ws)})
+        for _top, row in rows:
+            ws = sorted(row, key=lambda x: x['x0'])
+            # A CHANGE OF KIND MID-LINE IS A BOUNDARY, because on this book the typography IS
+            # the structure. Taking the majority kind for the whole line glued whatever shared
+            # a baseline with a heading onto the heading: `28 | South Holston (TN + VA Rules)`
+            # kept the folio, and Melton Hill and Watauga each came out with a sentence of the
+            # facing advertisement inside the water's name. Splitting the run is safe both ways
+            # -- _blocks() rejoins a `qualifier` onto the heading above it, so `South Holston`
+            # and `(TN + VA Rules)` still arrive as one water.
+            for kd, seg in _runs_of_a_kind(ws, kind):
+                txt = norm(' '.join(w['text'] for w in seg))
+                if not txt:
+                    continue
+                lines.append({'text': txt, 'kind': kd,
+                              'top': min(w['top'] for w in seg)})
         out.append(lines)
     return out
 
+
+# `(Greene County):`, `(TN + VA Rules)`, `(Rockford Dam upstream to ... boundary):`
+QUALIFIER = re.compile(r'^\(|:\s*$')
 
 SUB = re.compile(r'^\s*[»›-]\s+')
 
@@ -1498,6 +1538,27 @@ SUB = re.compile(r'^\s*[»›-]\s+')
 RUNNING = re.compile(r'^\s*\d*\s*\|?\s*(Reservoir REGULATIONS|Trout REGULATIONS|'
                      r'Exceptions TO STATEWIDE REGULATIONS|TWRA Fishing Lakes INFORMATION|'
                      r'\d{4}[–-]\d{4}\s+T\s?E\s?N\s?N)', re.I)
+
+# The folio on its own. Splitting a line where its typography changes leaves the page number
+# standing by itself in whichever column the running head crossed, and a bare `23` set in the
+# heading face reads as a water called 23.
+FOLIO = re.compile(r'^\s*\|?\s*\d{1,3}\s*\|?\s*$')
+
+
+def _join_wrapped(a, b):
+    """Join a line to the one it continues, healing a word the typesetter broke.
+
+    TWRA's columns are narrow and it hyphenates freely: `combina- tion`, `mini- mum`,
+    `restric- tions`. Joined with a space those reach the record as two words that are neither,
+    and every consumer downstream -- species matching, the plan card, anything grepping a creel
+    limit -- sees a word that does not exist. A trailing hyphen before a lower-case
+    continuation is a broken word; a trailing hyphen before anything else is a real one, as in
+    `catch-` at the end of a phrase, so the test looks at what follows.
+    """
+    a, b = (a or '').rstrip(), (b or '').lstrip()
+    if a.endswith('-') and b[:1].islower():
+        return a[:-1] + b
+    return (a + ' ' + b).strip()
 
 
 def _blocks(lines):
@@ -1524,39 +1585,60 @@ def _blocks(lines):
             continue
         if cur is None:
             continue
-        if k == 'qualifier':
+        if k == 'qualifier' and QUALIFIER.match(t):
             cur['heading'] = (cur['heading'] + ' ' + t).strip()
+            continue
+        if k == 'qualifier':
+            # SET LIKE A QUALIFIER IS NOT THE SAME AS BEING ONE. The facing advertisements on
+            # the reservoir pages are set in the same 10.5pt Medium as `(Greene County):`, so
+            # joining every one of them to the heading above gave Melton Hill and Watauga a
+            # sentence of ad copy inside the water's name. A real qualifier is bracketed or
+            # ends in a colon; anything else set that way is somebody else's paragraph.
             continue
         if BULLET.match(t):
             cur['rules'].append(BULLET.sub('', t))
         elif SUB.match(t) and cur['rules']:
-            cur['rules'][-1] += ' ' + SUB.sub('', t)
+            cur['rules'][-1] = _join_wrapped(cur['rules'][-1], SUB.sub('', t))
         elif cur['rules']:
-            cur['rules'][-1] += ' ' + t
+            cur['rules'][-1] = _join_wrapped(cur['rules'][-1], t)
         else:
             cur['preamble'].append(t)
     if cur:
         out.append(cur)
-    return [b for b in out if b['heading'] and b['rules']]
+    # A HEADING WITH NO LETTERS IN IT IS NOT A NAME. Splitting a line where its typography
+    # changes leaves a stray `:` standing alone wherever the colon after a name was set in the
+    # body face; four of them arrived as waters called `:`.
+    return [b for b in out if re.search(r'[A-Za-z]', b['heading'] or '') and b['rules']]
 
 
 COUNTY = re.compile(r'\(([^)]*?)\s*(?:County|Co\.)\s*\)', re.I)
 
 
-# The digest's RESERVOIR pages are deliberately not read here.
+# THE RESERVOIR PAGES ARE READ HERE NOW, and until 2026-08-28 they were not.
 #
-# Those pages head each water with a bare word -- `Cherokee`, `Boone`, `Norris` -- and a bare
-# word is not enough to identify a water. Matching `Cherokee` against the registry returned
-# `lake_cherokee_3`, which is a different lake in a different state, and TWRA means Cherokee
-# Reservoir in Hawkins County. Their multi-column flow also runs a water's rules past the
-# column edge and onto the next page, which needs reading-order work this does not do yet.
+# The reasoning for leaving them out is still on this page and it was not silly: TWRA publishes
+# a per-reservoir HTML page for each of these waters, where the page is unambiguously one water
+# and the rules are a plain <ul>, so the digest was read only for what the HTML does not cover.
+# What that missed is that the HTML is TWRA's summary and the digest is the law, and nothing
+# ever compared them. It also left pages 2-8 -- Regions 1 through 4, every TVA reservoir in the
+# state -- outside the page ledger, which is how they went seven editions without being read.
 #
-# It costs nothing to leave them out: all ten reservoirs on those pages are covered by TWRA's
-# own per-reservoir HTML, where each page is unambiguously one water and the rules are a
-# plain <ul>. The digest is read for what the HTML does NOT cover -- the exceptions pages, the
-# state park lakes, and the river reaches, where every heading carries a county or a described
-# reach and can be identified.
-DIGEST_PAGES = list(range(11, 18))
+# They head each water with a bare word, `Cherokee`, `Boone`, `Norris`, and the rule that a
+# heading without a county cannot identify a water refused all thirty-two of them. That rule is
+# now two tests instead of one: the name must be used once in the book AND match exactly one
+# lake in the state. Both Davy Crockett Lakes still refuse, on the county they each print.
+DIGEST_PAGES = list(range(2, 9)) + list(range(11, 18))
+
+
+def _runs(pages):
+    """`[2..8, 11..17]` as `2-8, 11-17` -- the page list the run prints for itself."""
+    out, ps = [], sorted(set(pages))
+    for n in ps:
+        if out and n == out[-1][1] + 1:
+            out[-1][1] = n
+        else:
+            out.append([n, n])
+    return ', '.join('%d' % a if a == b else '%d-%d' % (a, b) for a, b in out)
 
 
 def read_tn_digest(path, idx, name_map, pages=None):
@@ -1570,6 +1652,7 @@ def read_tn_digest(path, idx, name_map, pages=None):
     puts a west Tennessee lake's law on an east Tennessee lake. So when a heading carries a
     county, the registry row's county MUST agree or the block is left unmatched.
     """
+    from collections import Counter
     pdfplumber = _pdfplumber()
     blocks, matched, unmatched = [], {}, []
     # ONE STREAM FOR THE WHOLE BOOK, in reading order: page, then column, then line.
@@ -1587,12 +1670,18 @@ def read_tn_digest(path, idx, name_map, pages=None):
                 continue
             for col in _column_lines(page):
                 for ln in col:
-                    if RUNNING.match(ln['text']):
+                    if RUNNING.match(ln['text']) or FOLIO.match(ln['text']):
                         continue
                     ln['page'] = pi
                     stream.append(ln)
     for b in _blocks(stream):
         blocks.append(b)
+    # HOW OFTEN THE BOOK USES EACH NAME, counted before anything is bound. This is what makes a
+    # heading without a county safe to read: `Cherokee` appears once in the whole digest and
+    # `Davy Crockett Lake` appears twice. Counted from the book rather than assumed, so a
+    # future edition that adds a second Cherokee starts refusing instead of guessing.
+    used = Counter(norm(re.sub(r'\s*\(.*', '', b['heading'].rstrip(':').strip())).lower()
+                   for b in blocks)
     for b in blocks:
         head = b['heading'].rstrip(':').strip()
         m = COUNTY.search(head)
@@ -1608,15 +1697,26 @@ def read_tn_digest(path, idx, name_map, pages=None):
                                    % (county, reg_county))
                 unmatched.append(rec)
                 continue
-        elif slug and not county:
-            # A NAME WITHOUT A COUNTY IS NOT AN IDENTIFICATION. Tennessee has two Davy Crockett
-            # Lakes -- 87 acres in Crockett County and the one we ship in Greene County on the
-            # Nolichucky -- and their rules differ. `Pine Lake:` and `Dogwood Lake:` are names
-            # a dozen states share. The registry row is only accepted when the book says which
-            # county it means.
-            rec['rejected'] = 'no county in the heading; name alone does not identify a water'
-            unmatched.append(rec)
-            continue
+        elif not county:
+            # A NAME WITHOUT A COUNTY IS NOT AN IDENTIFICATION -- UNLESS NOTHING ELSE ANSWERS
+            # TO IT. Tennessee has two Davy Crockett Lakes, 87 acres in Crockett County and the
+            # one we ship in Greene County on the Nolichucky, and their rules differ. But the
+            # reservoir pages head every water with a bare word -- `Cherokee`, `Boone`,
+            # `Norris` -- and refusing all of them left seven pages of law for almost every
+            # Tennessee water this app offers sitting unread behind a rule written for
+            # `Pine Lake:`.
+            #
+            # So the name has to be alone twice over: once in the book, which `used` counts,
+            # and once in the state, which resolve_in_state() checks by requiring exactly one
+            # registry lake whose name contains every word of the book's. Either one failing is
+            # a refusal with its reason, not a coin toss. Note this deliberately does NOT use
+            # resolve(), which is state-blind and answered `Cherokee` with a lake in Texas.
+            if used[name.lower()] > 1:
+                rec['rejected'] = ('the book heads %d blocks with this name and none of them '
+                                   'says which county' % used[name.lower()])
+                unmatched.append(rec)
+                continue
+            slug = resolve_in_state(name, 'TN', idx)
         if slug:
             matched.setdefault(slug, []).append(rec)
         else:
@@ -1761,9 +1861,18 @@ def check_system(members, defn):
 COUNTY_NAME_STOP = frozenset(('lake', 'lakes', 'reservoir', 'pond', 'the', 'of'))
 
 
+# The books abbreviate what the registry spells out. TWRA heads a reservoir `Ft. Loudoun` and
+# the registry calls it `Fort Loudoun Lake`, so the word-subset test failed on `ft` vs `fort`
+# and a water we ship read as one we do not offer. Expanded on the way in, in the one place
+# both sides of every comparison pass through, rather than aliased per reader.
+ABBREV = {'ft': 'fort', 'mt': 'mount', 'st': 'saint', 'jr': 'junior', 'n': 'north',
+          's': 'south', 'e': 'east', 'w': 'west', 'no': 'north', 'so': 'south'}
+
+
 def _bare_words(s):
     s = re.sub(r'\s*\([^)]*\)\s*$', '', s or '').lower().replace(u'\u2019', "'")
-    return set(w for w in re.findall(r"[a-z0-9]+", s) if w not in COUNTY_NAME_STOP)
+    return set(ABBREV.get(w, w) for w in re.findall(r"[a-z0-9]+", s)
+               if w not in COUNTY_NAME_STOP)
 
 
 def resolve_by_county(name, county, state, idx):
