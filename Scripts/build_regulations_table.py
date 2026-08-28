@@ -2445,6 +2445,27 @@ def resolve_water_body(text, state, name_map, idx, systems, chain, sysmembers,
         # column instead, so the caller hands it in -- same fact, different place on the page.
         want_county = norm(cm.group(1)) if cm else (norm(county) if county else None)
         slug = resolve(p2, name_map)
+        # A PARENTHETICAL THAT IS NOT A COUNTY IS STILL THERE TO TELL TWO WATERS APART.
+        # `Saluda River (Lower Reach)` is one of two Saluda Rivers we carry, and the other one
+        # is in Greenville County ABOVE the Lake Murray dam -- outside the Santee system the
+        # book is describing in the very sentence that names it. Stripping the bracket the way
+        # the county branch below strips its own handed SCDNR's striper closure to the wrong
+        # river. So when the bracket carries words the registry can see, a water whose own name
+        # contains them wins over the bare match.
+        qual = re.search(r'\(([^)]+)\)', p)
+        if qual and not COUNTY.search(p):
+            want = _bare_words(qual.group(1))
+            stem = _bare_words(p2)
+            if want and stem:
+                # ONE WORD IN COMMON, NOT ALL OF THEM. The book says `(Lower Reach)` and the
+                # registry says `(Lower Saluda)`; they share `lower` and nothing else, so
+                # demanding the whole bracket matched kept the wrong river. What makes this
+                # safe is not how much of the bracket matches but that exactly ONE candidate
+                # matches at all -- every other Saluda we carry shares none of it.
+                better = {name_map[c] for c in name_map
+                          if stem <= _bare_words(c) and (want & _bare_words(c))}
+                if len(better) == 1:
+                    slug = better.pop()
         if slug and want_county:
             got = norm((idx.get(slug) or {}).get('county') or '')
             if got and got.lower() != want_county.lower():
