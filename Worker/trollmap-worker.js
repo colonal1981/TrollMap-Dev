@@ -1488,6 +1488,7 @@ var trollmap_worker_default = {
           // limits still travel.
           let bookRules = null, closures = [], booksError = null, bookSlug = null;
           let coastalClosures = [], coastalSource = null;
+          let bookStatewide = [], bookStatewideSource = null;
           try {
             const [table, index] = await Promise.all([
               regulationsTable(env), lakeIndex(env),
@@ -1528,8 +1529,38 @@ var trollmap_worker_default = {
             // saltwater pages are not in the offline specs yet, so those two states still get
             // an empty list and MUST NOT read it as permission -- `coastal_source` is what
             // tells "read, nothing to say" from "never read".
+            //
+            // THE BOOK'S OWN STATEWIDE LIMITS, which until now were built and never served.
+            //
+            // `general` above is the digest parsed by an LLM at request time; this is the same
+            // book parsed offline, deterministically, and it carries the sentence it came from
+            // and the plan checkboxes it governs, both resolved at build time. Ryan's framing
+            // of why it matters: "most lakes do not have a specific limit... unless you are
+            // extracting the general regulation for each species and assigning that to each
+            // lake". This is that extraction, reaching a caller for the first time.
+            //
+            // It does NOT replace `general`. The two are separate answers from the same book
+            // and a disagreement between them is worth seeing, not hiding -- so both travel and
+            // neither is silently preferred.
             for (const r of ((table.statewide || {})[st] || [])) {
-              if (r.scope !== 'statewide coastal') continue;
+              if (r.scope !== 'statewide coastal') {
+                bookStatewideSource = r.source || bookStatewideSource;
+                bookStatewide.push({
+                  species: r.species || null,
+                  // Resolved at BUILD time from registry/species_map.json. An empty array here
+                  // means the book named a fish the plan form has no checkbox for -- NOT that
+                  // the lookup failed; `species_basis` is what says which.
+                  plan_species: Array.isArray(r.plan_species) ? r.plan_species : [],
+                  species_basis: r.species_basis || null,
+                  also_covers: Array.isArray(r.also_covers) ? r.also_covers : undefined,
+                  // The sentence is what a person can check, and the only thing that survives
+                  // a disagreement with the digest parse.
+                  cells: Array.isArray(r.cells) ? r.cells : [],
+                  address: r.address || null,
+                  source: r.source || null, page: r.page || null,
+                });
+                continue;
+              }
               coastalSource = r.source || coastalSource;
               for (const c of (r.closures || [])) {
                 coastalClosures.push({
@@ -1573,6 +1604,13 @@ var trollmap_worker_default = {
             coastal_closures: coastalClosures,
             coastal_source: coastalSource,
 
+            // ABSENT AND EMPTY ARE DIFFERENT ANSWERS, the same discipline `saltwater_source`
+            // keeps: a null source means no book has been parsed into the offline table for
+            // this state, which is not the same as a state whose book sets no statewide limit.
+            // A caller must not read either as permission.
+            book_statewide: bookStatewide,
+            book_statewide_source: bookStatewideSource,
+
             // THE CLOSURES. `book_slug` is null when the name did not resolve to a registry
             // water, which is a DIFFERENT answer from a water with no closures and has to stay
             // tellable apart -- resolveRegistryRow refuses an ambiguous name rather than
@@ -1582,13 +1620,16 @@ var trollmap_worker_default = {
             closures,
             closures_error: booksError,
 
-            note: "Limits come from the state digest PDF, parsed at request time. Closures come "
-                + "from registry/regulations.json, parsed offline from the same books with no "
-                + "LLM in the path. A size and creel limit is still not a closure -- but this "
-                + "route CAN now tell you a season is shut, where the book says so and the "
-                + "water resolved. `closures` is empty both when a water has none and when the "
-                + "name did not resolve; `book_slug` is what tells those apart. Verify before "
-                + "you keep one.",
+            note: "This route answers from the same book twice. `general` and `saltwater` are "
+                + "the state digest parsed by an LLM at request time. `book_statewide`, "
+                + "`book_rules`, `closures` and `coastal_closures` are that book parsed "
+                + "offline by build_regulations_table.py with no LLM in the path, each record "
+                + "carrying the sentence it came from and the plan checkboxes it governs. "
+                + "Where the two disagree the sentence is the thing to check. `closures` is "
+                + "empty both when a water has none and when the name did not resolve; "
+                + "`book_slug` is what tells those apart, and a null `book_statewide_source` "
+                + "means no book was read for this state rather than a state that sets no "
+                + "limit. Verify before you keep one.",
           }, null, 2), { headers: { ...JSON_HEADERS, "Cache-Control": "public, max-age=3600" } });
         } catch (err) {
           return new Response(JSON.stringify({ error: String(err && err.message || err), state: st }),

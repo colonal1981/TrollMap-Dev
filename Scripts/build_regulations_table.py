@@ -2313,6 +2313,17 @@ def project_by_water(doc, idx, all_specs=None, smap=None):
     # page says so itself: "If you are fishing a location that does not have exceptions listed
     # in this guide, then the statewide limits apply."
     for rec in ((doc['states'].get('TN') or {}).get('statewide_table') or []):
+        # THROUGH THE SAME SPECIES RESOLUTION AS EVERY OTHER ROW. These records are built by
+        # read_tn_statewide() and appended straight here, so they never met the row loop below
+        # and never met expand_species() -- all eighteen arrived with a species and no
+        # plan_species, which means TWRA's entire statewide table reached the plan form as
+        # nothing. The phrases were in species_map.json the whole time; nothing was asking it.
+        if rec.get('species') and not rec.get('plan_species'):
+            ex = expand_species(rec['species'], smap or {})
+            rec['plan_species'] = ex['plan_species']
+            rec['species_basis'] = ex['basis']
+            if ex.get('also_covers'):
+                rec['also_covers'] = ex['also_covers']
         statewide.setdefault('TN', []).append(rec)
 
     for slug, recs in ((doc['states'].get('TN') or {}).get('waters') or {}).items():
@@ -2441,6 +2452,28 @@ def project_by_water(doc, idx, all_specs=None, smap=None):
                                 if ex.get('also_covers'):
                                     c['also_covers'] = ex['also_covers']
                         rec['closures'] = cl
+                    # THE SPECIES ON THE RECORD, not only on its closures. `sp` has been
+                    # computed here all along and was spent entirely on closure records, so a
+                    # rule that carries a limit and no closure -- which is most of them, and
+                    # all 103 statewide rows -- reached a consumer as an anonymous list of
+                    # cells. Anything wanting to answer "what may I keep" had to guess which
+                    # cell was the fish, which is the judgement this file resolves once at
+                    # build time precisely so neither the Worker nor the browser makes it.
+                    if sp and not all_species:
+                        rec['species'] = sp
+                        if o2.get('implicitly') == 'statewide coastal':
+                            # Same reasoning as the closure branch: species_map.json is the
+                            # FRESHWATER plan form's fifteen checkboxes and a saltwater fish
+                            # has no business in it. Says so rather than reading as UNMAPPED.
+                            rec['plan_species'] = []
+                            rec['species_basis'] = ('coastal species -- the freshwater plan '
+                                                    'form has no checkbox for it')
+                        else:
+                            ex = expand_species(sp, smap or {})
+                            rec['plan_species'] = ex['plan_species']
+                            rec['species_basis'] = ex['basis']
+                            if ex.get('also_covers'):
+                                rec['also_covers'] = ex['also_covers']
                     if sp and not row.get('continuation'):
                         last_species = sp
                     if band:
