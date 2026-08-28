@@ -29,11 +29,8 @@ const WORKER = readFileSync(path.join(REPO, 'Worker/trollmap-worker.js'), 'utf8'
 test('the check judges a cell against the page that printed it', () => {
   const fn = SRC.slice(SRC.indexOf('def cells_that_cut_a_word'),
                        SRC.indexOf('def read_pdf_state'));
-  assert.match(fn, /page_words \|= set\(re\.findall\(r'\[a-z\]\{3,\}'/);
+  assert.match(fn, /page_words = page_word_oracle\(pdf, n\)/);
   assert.match(fn, /if w not in page_words/);
-  // The facing page counts too -- a row can run past the foot of its own page, and judging it
-  // against one page reported the continuation as damage.
-  assert.match(fn, /for k in \(n, n \+ 1\):/);
   // Two-letter runs are skipped: initials and units as often as damage.
   assert.match(fn, /\[a-z\]\{3,\}/);
 });
@@ -80,4 +77,43 @@ test('the repair is gated on the damage it repairs, so it cannot make a page wor
   // NC page 1 was being rescued by borrowing page 2's cell corners, themselves polluted.
   assert.match(fn, /got = by_drawn_rules\(n\)/);
   assert.match(fn, /xs = rules_only_edges\(pdf, src\) or column_edges\(pdf, src\)/);
+});
+
+test('a sentence the book wrote across two columns is put back together', () => {
+  // NC writes `No freshwater mussels including the Asian clam may be taken or possessed.`
+  // across SIZE LIMIT and DAILY CREEL LIMIT as one merged cell, with no rule drawn between
+  // them on that row -- but an explicit vertical applies to every row, so both of its lines
+  // are cut and the two cells come back interleaved.
+  assert.match(SRC, /def heal_merged_cells\(cells, page_words\)/);
+  const fn = SRC.slice(SRC.indexOf('def heal_merged_cells'), SRC.indexOf('def tables_on'));
+  // The line breaks survive extraction, which is why this needs no geometry. Joining the
+  // strings whole would give `...inclu taken or pding...`.
+  assert.match(fn, /la, lb = str\(a\)\.split\('\\n'\), str\(b\)\.split\('\\n'\)/);
+  assert.match(fn, /_join_fragments\(x, y, page_words\) for x, y in zip\(la, lb\)/);
+  // Merging is decided, not assumed: only if it removes words the page does not print.
+  assert.match(fn, /if len\(cut\(trial\)\) < len\(cut\(cells\)\):/);
+  // Column indices a spec declares must still point where they did.
+  assert.match(fn, /cells\[:i\] \+ \[joined, ''\] \+ cells\[i \+ 2:\]/);
+});
+
+test('the separator is chosen line by line, not once for the pair', () => {
+  // Same two cells: `No margined madtom` + `and tadpole madtom` needs the space, and
+  // `may be p` + `ossessed.` must not have one. Picking once gave `madtomand` or `p ossessed`.
+  const fn = SRC.slice(SRC.indexOf('def _join_fragments'), SRC.indexOf('def heal_merged_cells'));
+  assert.match(fn, /for sep in \('', ' '\):/);
+  assert.match(fn, /if w not in page_words/);
+});
+
+test('one oracle judges both repairs, normalised the way the cells are', () => {
+  // heal_merged_cells() decides whether to join and cells_that_cut_a_word() decides whether
+  // anything is still wrong; on different word sets the second undoes the first's verdict.
+  assert.match(SRC, /def page_word_oracle\(pdf, page_no, spread=1\)/);
+  const fn = SRC.slice(SRC.indexOf('def page_word_oracle'), SRC.indexOf('def _join_fragments'));
+  // norm() de-hyphenates across a line break, so a cell holding `Intra-\ncoastal` becomes
+  // `intracoastal` while the raw page reads `Intra` and `coastal`.
+  assert.match(fn, /norm\(pdf\.pages\[k - 1\]\.extract_text\(\) or ''\)\.lower\(\)/);
+  // Both facing pages: a row can begin above the head of its page or run past its foot.
+  assert.match(fn, /for k in range\(page_no - spread, page_no \+ spread \+ 1\)/);
+  assert.match(SRC, /words = page_word_oracle\(pdf, page_no\)/);
+  assert.match(SRC, /page_words = page_word_oracle\(pdf, n\)/);
 });

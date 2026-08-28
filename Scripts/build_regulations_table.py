@@ -316,12 +316,114 @@ def column_edges(pdf, page_no):
     return sorted(x for x in xs if -1 <= x <= pg.width + 1)
 
 
+def page_word_oracle(pdf, page_no, spread=1):
+    """Every word the book actually prints around this page, as the judge of an extraction.
+
+    ONE ORACLE, USED BY BOTH REPAIRS. extract_text() reads glyph runs in reading order without
+    the ruled grid, so a word that appears in a cell and not here was made by the grid rather
+    than printed by the book. heal_merged_cells() uses it to decide whether to join two cells
+    and cells_that_cut_a_word() uses it to decide whether anything is still wrong; they must
+    agree or the second undoes the first's verdict.
+
+    Normalised the SAME WAY the cells are. norm() de-hyphenates across a line break, so a cell
+    holding `Intra-\ncoastal` becomes `intracoastal` while the raw page still reads `Intra` and
+    `coastal` -- and NC page 1's Intracoastal Waterway was reported as damage on every run for
+    no other reason.
+
+    The facing pages count, both of them. A table row can begin above the head of its page or
+    run past its foot, and NC's list of community fishing waters does both -- judged against
+    one page alone, Lake Corriher and Tumbling Rock Reservoir read as invented.
+    """
+    out = set()
+    for k in range(page_no - spread, page_no + spread + 1):
+        if k < 1 or k > len(pdf.pages):
+            continue
+        try:
+            out |= set(re.findall(r'[a-z]{3,}', norm(pdf.pages[k - 1].extract_text() or '').lower()))
+        except Exception:
+            pass
+    return out
+
+
+def _join_fragments(x, y, page_words):
+    """Two halves of one printed line, joined the way the page says they were."""
+    best, best_bad = None, None
+    for sep in ('', ' '):
+        cand = x + sep + y
+        bad = sum(1 for w in re.findall(r'[a-z]{3,}', cand.lower()) if w not in page_words)
+        if best_bad is None or bad < best_bad:
+            best, best_bad = cand, bad
+    return best
+
+
+def heal_merged_cells(cells, page_words):
+    """Put back a sentence the book wrote across two columns and the grid cut in half.
+
+    A ruled reader applies every vertical to every row, and a book does not. NC writes
+
+        No freshwater mussels including the Asian clam may be taken or possessed.
+
+    across the SIZE LIMIT and DAILY CREEL LIMIT columns as one merged cell, with no rule drawn
+    between them on that row -- so the vertical at x=435.6 cuts both of its lines and the two
+    cells come back interleaved:
+
+        cell 1: `No freshwater mussels inclu` / `taken or p`
+        cell 2: `ding the Asian clam may be`  / `ossessed.`
+
+    THE LINE BREAKS SURVIVE EXTRACTION, which is the whole reason this needs no geometry.
+    Joining the two cells line for line -- first line to first line, second to second --
+    restores exactly what the book printed. Joining the strings whole would give
+    `...inclu taken or pding...`, which is why the naive repair is wrong.
+
+    WHETHER to join is not guessed either: a pair is merged only if merging removes words that
+    the page does not print. The page is the oracle here as it is in cells_that_cut_a_word(),
+    and a row nothing is wrong with is returned untouched.
+
+    The merged text lands in the FIRST cell of the pair and the second is emptied, so every
+    column index a spec declares still points where it did. That is also what the book means:
+    there is no separate creel value on a row where the creel column is part of the sentence.
+    """
+    def cut(cs):
+        return {w for c in cs if c
+                for w in re.findall(r'[a-z]{3,}', str(c).lower()) if w not in page_words}
+
+    if not page_words or not cut(cells):
+        return cells
+    cells = list(cells)
+    for i in range(len(cells) - 1):
+        a, b = cells[i], cells[i + 1]
+        if not a or not b:
+            continue
+        la, lb = str(a).split('\n'), str(b).split('\n')
+        if len(la) != len(lb):
+            continue                      # not two halves of the same wrapped block
+        # WITH A SPACE OR WITHOUT IT, DECIDED LINE BY LINE. The cut falls inside a word on one
+        # line and between two words on the next, in the same pair of cells:
+        #
+        #     No margined madtom | and tadpole madtom      -> needs the space
+        #     may be p          | ossessed.                -> must not have one
+        #
+        # so a separator chosen once for the pair is wrong on half of it, and NC's madtom rule
+        # came out either as `madtomand` or as `p ossessed.` depending which was picked. The
+        # page decides each line, the same judge that decided to join the cells at all.
+        joined = '\n'.join(_join_fragments(x, y, page_words) for x, y in zip(la, lb))
+        trial = cells[:i] + [joined, ''] + cells[i + 2:]
+        if len(cut(trial)) < len(cut(cells)):
+            cells = trial
+    return cells
+
+
 def tables_on(pdf, page_no, min_rows=4, min_cols=3, settings=None):
     pg = pdf.pages[page_no - 1]
+    # Computed once per page and only if a table is found. Healing happens BEFORE norm(),
+    # which collapses the line breaks the repair depends on.
+    words = None
     out = []
     for t in (pg.extract_tables(table_settings=settings or LINES) or []):
         if len(t) >= min_rows and max(len(r) for r in t) >= min_cols:
-            out.append([[norm(c) for c in row] for row in t])
+            if words is None:
+                words = page_word_oracle(pdf, page_no)
+            out.append([[norm(c) for c in heal_merged_cells(row, words)] for row in t])
     return out
 
 
@@ -1185,16 +1287,7 @@ def cells_that_cut_a_word(pdf, tables):
     bad = []
     for tb in tables:
         n = tb.get('page')
-        page_words = set()
-        # THE FACING PAGE COUNTS TOO. A row can run past the foot of its own page -- NC's list
-        # of community fishing waters names Lake Corriher and Tumbling Rock Reservoir on the
-        # next one -- and judging it against a single page reported the continuation as damage.
-        for k in (n, n + 1):
-            try:
-                page_words |= set(re.findall(r'[a-z]{3,}',
-                                             (pdf.pages[k - 1].extract_text() or '').lower()))
-            except Exception:
-                pass
+        page_words = page_word_oracle(pdf, n)
         if not page_words:
             continue
         for row in tb.get('rows') or []:
