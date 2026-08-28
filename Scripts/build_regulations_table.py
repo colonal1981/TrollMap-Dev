@@ -1278,6 +1278,48 @@ def read_tn_statewide(path, page=1):
     return []
 
 
+def _is_a_cut_word(w, page_words):
+    """Is this word a PIECE of something the page prints, or just a word the page lacks?
+
+    THE DIFFERENCE IS THE WHOLE TEST, and getting it wrong costs law. `a word the page does not
+    print` was the first cut of this rule and it was too loose: SC's book returned `hardhead`,
+    `southern`, `hamilton`, `american` and `permitting` as damage, from cells that are perfectly
+    well formed -- `Flounders (Southern, Summer & Gulf)`, `Dunn's Pond on Hamilton Ridge`. Those
+    rows were then WITHHELD from /regulations as untrustworthy, which is a worse failure than
+    the one this function exists to catch: real law, read correctly, refused.
+
+    Why they are absent at all is pdfplumber's business, not this file's -- extract_text() and
+    extract_tables() do not always recover the same glyphs from a page, and on SC page 50 the
+    first word inside a parenthesis is one of the ones text mode drops. This function cannot
+    assume the two agree. What it CAN say precisely is what a grid cut looks like:
+
+    A CUT WORD IS A FRAGMENT: the page prints a longer word that this is the front or back of.
+    `xcept` of `except`, `inche` of `inches`, `mit` of `limit`, `regardle` of `regardless`,
+    `posse` of `possessed`. That is the entire test.
+
+    The obvious companion test -- does it split into two words the page prints, catching a
+    fusion like `archeryequipment` -- is deliberately NOT here. `hardhead` splits into `hard`
+    and `head`, and a page that says "landed with head and tail intact" prints both, so the
+    test would condemn a real species name. It is also no longer needed: _join_fragments()
+    consults this same page before choosing whether to close a join, and takes the closed form
+    only when it strictly reduces unknown words -- so a wrong fusion cannot be produced in the
+    first place.
+    """
+    for pw in page_words:
+        if len(pw) <= len(w):
+            continue
+        # THE ORACLE HAS SEAMS OF ITS OWN. extract_text() fuses words across a line or column
+        # break, and SC page 50's neighbour yields `permitamerican` -- which ends in `american`
+        # and so made `American Shad` look like a fragment of something. A longer page word
+        # that decomposes into the candidate plus ANOTHER page word is an artifact of the same
+        # kind this function is trying to detect, and cannot be the evidence for it.
+        if pw.startswith(w) and pw[len(w):] not in page_words:
+            return True
+        if pw.endswith(w) and pw[:len(pw) - len(w)] not in page_words:
+            return True
+    return False
+
+
 def cells_that_cut_a_word(pdf, tables):
     """Rows whose ruled extraction sliced through a word, judged against the page's own text.
 
@@ -1306,7 +1348,7 @@ def cells_that_cut_a_word(pdf, tables):
         for row in tb.get('rows') or []:
             cut = sorted({w for c in (row.get('cells') or []) if c
                           for w in re.findall(r'[a-z]{3,}', str(c).lower())
-                          if w not in page_words})
+                          if w not in page_words and _is_a_cut_word(w, page_words)})
             if cut:
                 # MARKED ON THE ROW, not only counted in a report. These records are served
                 # now, and a limit that reads `14-inch minimum, e` must not reach somebody

@@ -121,3 +121,36 @@ test('one oracle judges both repairs, normalised the way the cells are', () => {
   assert.match(SRC, /words = page_word_oracle\(pdf, page_no\)/);
   assert.match(SRC, /page_words = page_word_oracle\(pdf, n\)/);
 });
+
+test('a word the page lacks is not the same as a word the grid cut', () => {
+  // The first cut of this rule was `a word the page does not print`, and it was too loose.
+  // SC's book returned `hardhead`, `southern`, `hamilton`, `american` and `permitting` as
+  // damage from cells that are perfectly well formed -- `Flounders (Southern, Summer & Gulf)`,
+  // `Dunn's Pond on Hamilton Ridge`. Those eight rows were then WITHHELD from /regulations as
+  // untrustworthy, which is worse than the failure this exists to catch: real law, read
+  // correctly, refused. extract_text() and extract_tables() do not always recover the same
+  // glyphs, so absence alone proves nothing.
+  assert.match(SRC, /def _is_a_cut_word\(w, page_words\)/);
+  const fn = SRC.slice(SRC.indexOf('def _is_a_cut_word'), SRC.indexOf('def cells_that_cut_a_word'));
+  // A cut word is a FRAGMENT: the page prints a longer word this is the front or back of.
+  assert.match(fn, /pw\.startswith\(w\)/);
+  assert.match(fn, /pw\.endswith\(w\)/);
+  assert.match(SRC, /if w not in page_words and _is_a_cut_word\(w, page_words\)/);
+});
+
+test('the fusion test is deliberately absent, and says why', () => {
+  const fn = SRC.slice(SRC.indexOf('def _is_a_cut_word'), SRC.indexOf('def cells_that_cut_a_word'));
+  // `hardhead` splits into `hard` and `head`, and a page that says "landed with head and tail
+  // intact" prints both -- the test would condemn a real species name. It is also unnecessary:
+  // _join_fragments() consults this same page before closing a join.
+  assert.match(fn, /hardhead` splits into `hard`/);
+  assert.ok(!/w\[:i\] in page_words and w\[i:\] in page_words/.test(fn), 'no split-into-two test');
+});
+
+test("the oracle's own fused artifacts are not evidence", () => {
+  // extract_text() fuses words across a line or column break. SC page 50's neighbour yields
+  // `permitamerican`, which ends in `american` and made `American Shad` look like a fragment.
+  const fn = SRC.slice(SRC.indexOf('def _is_a_cut_word'), SRC.indexOf('def cells_that_cut_a_word'));
+  assert.match(fn, /pw\.startswith\(w\) and pw\[len\(w\):\] not in page_words/);
+  assert.match(fn, /pw\.endswith\(w\) and pw\[:len\(pw\) - len\(w\)\] not in page_words/);
+});
