@@ -1707,6 +1707,35 @@ def season_column(text, species, sense='open'):
              'text': t, 'note': 'the OPEN SEASON column holds something that is not a season'}]
 
 
+def statewide_records(doc):
+    """Statewide rows re-shaped so check_species_map() can walk them like any other record.
+
+    The species sits in a different place per table -- an all-caps band on NC's, column 0 on
+    GA's, column 1 on SC's -- and the SPEC already says which. Read it from there rather than
+    guessing, which is the mistake that put `15-inch minimum` in a species field.
+    """
+    out = []
+    for st, recs in (doc.get('statewide') or {}).items():
+        by_key = {k: (o or {}) for k, _h, _p, o in (SPECS.get(st, ('', []))[1] or [])}
+        for r in recs:
+            if r.get('scope') == 'statewide coastal':
+                continue          # a coastal species has no checkbox in a freshwater form
+            o = by_key.get(r.get('table'), {})
+            cells = r.get('cells') or []
+            if o.get('species_bands') and r.get('species_band'):
+                nm = r['species_band']
+            elif o.get('species_col') is not None and len(cells) > o['species_col']:
+                nm = cells[o['species_col']]
+            elif o.get('water_col', 0) == 0 and len(cells) > 1:
+                nm = cells[1]
+            else:
+                nm = None
+            nm = (nm or '').strip()
+            if nm:
+                out.append({'species': nm, 'closures': [], 'rules': []})
+    return out
+
+
 def check_species_map(doc, registry):
     """Every species phrase the books use must be in registry/species_map.json.
 
@@ -1735,6 +1764,19 @@ def check_species_map(doc, registry):
             walk(r.get('rules') or [])
     for w in (doc.get('by_water') or {}).values():
         walk(w.get('rules') or [])
+    # AND THE STATEWIDE RECORDS, WHICH ARE THE ONES THAT GOVERN ALMOST EVERY LAKE.
+    #
+    # This walked by_water only, so it reported `0 unmapped` for a year while the statewide
+    # table -- the answer for every water without an exception -- mapped to ONE of the fifteen
+    # plan species in Georgia, NONE in North Carolina and six in South Carolina. Ryan:
+    # "most lakes do not have a specific limit... a per lake number isn't ever going to work...
+    # unless you are extracting the general regulation for each species and assigning that to
+    # each lake". He is right, and the statewide half was the half nothing checked.
+    #
+    # `Bream (includes bluegill, flier, warmouth, pumpkinseed, green sunfish, redear
+    # (shellcracker) and spotted sunfish)` is the case that shows the cost: SC's own definition
+    # of six plan species, sitting unmapped and therefore answering for none of them.
+    walk(statewide_records(doc))
     unmapped = sorted(seen - known)
     # A closure that gates nothing because the form cannot name its fish is the planner gap,
     # counted here so it is a number rather than an impression.
