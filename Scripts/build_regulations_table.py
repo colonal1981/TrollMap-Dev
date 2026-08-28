@@ -26,7 +26,7 @@ Personal use only, not for distribution or resale; not for navigation.
 """
 import argparse, json, os, re, sys, unicodedata
 from html.parser import HTMLParser
-from collections import Counter
+from collections import Counter, defaultdict
 
 DASH = re.compile(r'[‐-―−]')
 
@@ -512,6 +512,165 @@ def read_sc_state_lakes(pdf, pages_left, pages_right):
     return {'lakes': lakes, 'rows': len(lakes), 'closed_waters': guard}, None
 
 
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+# PROSE -- the law GA keeps in sentences instead of cells
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+#
+# Georgia is at four waters with a rule while South Carolina is at thirty-four, and the reason
+# is not that Georgia regulates less. Its per-water length limits are a bulleted list under an
+# all-caps species heading, and its seasons are four sentences. No table reader can ever see
+# either. Ryan, reading the page this comes off: "size limits for georgia are not on the chart,
+# they are on the page before that".
+#
+# THE COLUMNS OVERLAP, SO THEY CANNOT BE FOUND BY LOOKING FOR WHITE SPACE. extract_text() reads
+# straight across a three-column page and returns `There is no closed season for fishing in
+# • Lake Blue Ridge: no minimum (0 inches) River; Oconee` as one line. There is no vertical
+# gutter to split on either -- the ink histogram is unbroken from x=13 to x=540, because lines
+# wrap to different widths. What IS clean is where each column STARTS: every bullet on the page
+# begins at x=36, 207 or 378, and so does every heading. The grid is read off those marks, once
+# for the whole section, because the book uses one grid.
+
+BULLET = re.compile(r'^\s*[•\u2022\u25cf\u00b7]\s*')
+CAPS_LINE = re.compile(r'^[A-Z][A-Z0-9 ,&/\.\'()-]{3,}$')
+STATEWIDE_DEFAULT = re.compile(r'^(?P<rule>[^:]*\b(?:inch|inches)\b[^:]*)\s+statewide\b', re.I)
+
+
+def column_starts(pages, min_sep=120.0):
+    """Where each column begins, read off the bullets of the pages themselves.
+
+    BULLETS ONLY, AND ONLY WHERE THEY START A LINE. A first pass counted every all-caps word,
+    which on this page includes CLOSED and GA sitting mid-sentence at x=77 and x=113; the grid
+    came out at those and the crops cut through `Spring` and `BASS`. A bullet glyph is only ever
+    at a column's left edge, and there are twenty-two of them on the page.
+    """
+    marks = Counter()
+    for pg in pages:
+        for w in pg.extract_words():
+            if BULLET.match(w['text']):
+                marks[round(w['x0'])] += 1
+    # NOT the leftmost word of each line. extract_words() reads straight across a three-column
+    # page, so the third column's bullets never begin a line -- taking only line-initial words
+    # found two columns of three and the crop then merged the last two.
+    starts = []
+    for x in sorted(marks):
+        if marks[x] < 2:
+            continue                       # one bullet is an indent, not a column
+        if not starts or x - starts[-1] >= min_sep:
+            starts.append(x)
+    return starts
+
+
+def column_lines(page, starts):
+    """The page's text, column by column, in reading order."""
+    if len(starts) < 2:
+        return (page.extract_text() or '').splitlines()
+    out = []
+    for i, x in enumerate(starts):
+        x1 = (starts[i + 1] if i + 1 < len(starts) else int(page.width)) - 4
+        seg = page.crop((max(0, x - 4), 0, min(page.width, x1), page.height))
+        out.extend((seg.extract_text() or '').splitlines())
+    return out
+
+
+def _paras(lines):
+    """Bullets and headings as whole units, with their wrapped continuations folded in."""
+    out = []
+    for raw in lines:
+        t = norm(raw)
+        if not t:
+            continue
+        if BULLET.match(t):
+            out.append(['bullet', BULLET.sub('', t)])
+        elif CAPS_LINE.match(t):
+            # `STRIPED BASS, WHITE BASS, &` and `HYBRID WHITE-STRIPED BASS` are one heading.
+            if out and out[-1][0] == 'head':
+                out[-1][1] += ' ' + t
+            else:
+                out.append(['head', t])
+        else:
+            if out and out[-1][0] in ('bullet', 'text'):
+                out[-1][1] += ' ' + t
+            else:
+                out.append(['text', t])
+    return out
+
+
+def read_ga_prose(pdf, pages):
+    """GA's LENGTH LIMITS and SEASONS, as rows a resolver can bind.
+
+    Returns rows shaped like a table's, so everything downstream -- resolve_water_body,
+    closures_in, expand_species -- treats them exactly like a ruled row and nothing special
+    has to know they came out of a paragraph.
+    """
+    live = [pdf.pages[n - 1] for n in pages if 1 <= n <= len(pdf.pages)]
+    if not live:
+        return []
+    starts = column_starts(live)
+    rows, section, species, default = [], None, None, None
+    for pg in live:
+        for kind, text in _paras(column_lines(pg, starts)):
+            if kind == 'head':
+                up = text.upper()
+                if up.startswith('SEASONS'):
+                    section, species, default = 'seasons', None, None
+                elif up.startswith('LENGTH LIMITS'):
+                    section, species, default = 'length_limits', None, None
+                elif section == 'length_limits':
+                    species, default = text, None
+                continue
+            if section == 'length_limits' and kind == 'text' and species:
+                md = STATEWIDE_DEFAULT.match(text)
+                if md:
+                    default = md.group('rule').strip()
+                    rows.append({'cells': ['Statewide', species, default, text],
+                                 'species': species, 'statewide_default': True})
+                continue
+            if kind != 'bullet':
+                continue
+            if section == 'seasons':
+                where, _, rule = text.partition(':')
+                rows.append({'cells': [where.strip(), None, (rule or text).strip(), text],
+                             'species': None, 'season': True})
+            elif section == 'length_limits' and species:
+                where, _, rule = text.partition(':')
+                if not rule:
+                    # NO COLON IS NOT NO RULE. `The minimum length is 27 inches on the Savannah
+                    # River and its tributaries downstream of J. Strom Thurmond Dam` names a
+                    # water we ship, inside a sentence. The whole bullet goes to the resolver,
+                    # which pulls water names out of prose or reports it unresolved -- both are
+                    # better than dropping it. A pointer like `See table on page 63` resolves to
+                    # nothing and says so.
+                    rows.append({'cells': [text, species, text, text],
+                                 'species': species, 'statewide_default': False,
+                                 'named_in_a_sentence': True})
+                    continue
+                rows.append({'cells': [where.strip(), species, rule.strip(), text],
+                             'species': species, 'statewide_default': False})
+    return rows
+
+
+PROSE = {
+    # (key, pages, reader, opts). Shaped exactly like a ruled table on the way out, so
+    # resolve_state_tables(), project_by_water() and closures_in() need to know nothing about
+    # where the rows came from.
+    'GA': [('length_limits_and_seasons', [3], 'ga',
+            {'water_col': 0, 'species_col': 1})],
+}
+
+
+def read_prose_state(path, state):
+    pdfplumber = _pdfplumber()
+    out = {}
+    with pdfplumber.open(path) as pdf:
+        for key, pages, reader, _opts in PROSE.get(state) or []:
+            rows = read_ga_prose(pdf, pages) if reader == 'ga' else []
+            if rows:
+                out[key] = [{'page': pages[0], 'label': 'prose: %s' % key,
+                             'header': ['water', 'species', 'rule', 'sentence'],
+                             'rows': rows}]
+    return out
+
+
 def read_pdf_state(path, specs):
     """`specs` is a list of (key, header-words, candidate-pages). Anything not found is
     reported by name rather than silently omitted -- a table that quietly vanishes between
@@ -694,6 +853,8 @@ def main():
             print('!! %s: %s not found' % (st, path), flush=True)
             continue
         got, missing, sc_lakes = read_pdf_state(path, specs)
+        got.update(read_prose_state(path, st))
+        specs = list(specs) + [(k, [], p, o) for k, p, _r, o in (PROSE.get(st) or [])]
         blk = {'source_file': fname, 'tables': got}
         if sc_lakes:
             blk['state_lakes'] = sc_lakes
@@ -1149,6 +1310,30 @@ def resolve_by_county(name, county, state, idx):
     return keep[0] if len(keep) == 1 else None
 
 
+TWO_STATE = re.compile(r'\b(AL|GA|NC|SC|TN|VA)\s*/\s*(AL|GA|NC|SC|TN|VA)\b')
+
+
+def _spans_two_states(row):
+    """Does the registry itself say this water is in two states?"""
+    return bool(TWO_STATE.search('%s %s' % (row.get('display_name') or '', row.get('state') or '')))
+
+
+def resolve_in_state(name, state, idx):
+    """One water in the book's own state whose name contains every word of the book's.
+
+    `Lake Lanier` is inside `Lake Sidney Lanier` and there is exactly one of those in Georgia.
+    Exact-set membership, not fuzzy scoring, and it must be ALONE -- two candidates is an
+    ambiguity to report, not a coin to toss.
+    """
+    pw = _bare_words(name)
+    if not pw or not state:
+        return None
+    keep = [slug for slug, row in idx.items()
+            if row.get('feature_type') == 'lake' and state in (row.get('state') or '')
+            and _bare_words(row.get('name')) and pw <= _bare_words(row.get('name'))]
+    return keep[0] if len(keep) == 1 else None
+
+
 def resolve_water_body(text, state, name_map, idx, systems, chain, sysmembers,
                        county=None):
     """One book address -> {kind, waters, unresolved}. Never a guess: anything that does not
@@ -1225,6 +1410,31 @@ def resolve_water_body(text, state, name_map, idx, systems, chain, sysmembers,
                 waters.append(slug)
                 kinds.add('name+county')
                 continue
+        # A BOOK MAY NOT NAME A WATER IN ANOTHER STATE. Georgia's length limits say `Lake
+        # Lanier: 14 inches`; the registry's `Lake Lanier` is an 84.8-acre pond in Greenville
+        # County, South Carolina, and Georgia's is `Lake Sidney Lanier`. An exact match with no
+        # county to check it against put a Georgia bass limit on a South Carolina pond -- the
+        # same failure the agency reader had this morning, in a second reader.
+        #
+        # A genuine border water is kept: the index marks it as spanning a line, and NC's book
+        # addressing Lake Chatuge in Clay County is a real rule on a real water.
+        # LAKES ONLY. A river genuinely flows through more than one state and the registry files
+        # it by its centroid -- the Savannah is `Aiken Co, GA` and South Carolina's book governs
+        # it, the Lumber is `Robeson Co, NC` and South Carolina's book governs its own reach.
+        # Gating those dropped four real rules. A LAKE sits in one place, so a lake in the wrong
+        # state is the Lanier mistake and nothing else.
+        row_ = idx.get(slug) or {}
+        if slug and row_.get('feature_type') == 'lake' \
+                and state not in (row_.get('state') or '') \
+                and not _spans_two_states(row_):
+            alt = resolve_in_state(p2, state, idx)
+            if alt:
+                waters.append(alt)
+                kinds.add('name+state')
+                continue
+            unresolved.append({'text': p, 'why': 'the only lake of that name is in %s and this '
+                               'is the %s book' % (row_.get('state'), state)})
+            continue
         if slug:
             waters.append(slug)
             kinds.add('name')
