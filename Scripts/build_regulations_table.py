@@ -632,12 +632,12 @@ def read_ga_prose(pdf, pages):
     closures_in, expand_species -- treats them exactly like a ruled row and nothing special
     has to know they came out of a paragraph.
     """
-    live = [pdf.pages[n - 1] for n in pages if 1 <= n <= len(pdf.pages)]
+    live = [(n, pdf.pages[n - 1]) for n in pages if 1 <= n <= len(pdf.pages)]
     if not live:
         return []
-    starts = column_starts(live)
+    starts = column_starts([p for _n, p in live])
     rows, section, species, default = [], None, None, None
-    for pg in live:
+    for pageno, pg in live:
       for col in column_lines(pg, starts):
         for kind, text in _paras(col):
             if kind == 'head':
@@ -654,14 +654,15 @@ def read_ga_prose(pdf, pages):
                 if md:
                     default = md.group('rule').strip()
                     rows.append({'cells': ['Statewide', species, default, text],
-                                 'species': species, 'statewide_default': True})
+                                 'species': species, 'statewide_default': True,
+                                 'page': pageno})
                 continue
             if kind != 'bullet':
                 continue
             if section == 'seasons':
                 where, _, rule = text.partition(':')
                 rows.append({'cells': [where.strip(), None, (rule or text).strip(), text],
-                             'species': None, 'season': True})
+                             'species': None, 'season': True, 'page': pageno})
             elif section == 'length_limits' and species:
                 where, _, rule = text.partition(':')
                 if not rule:
@@ -673,10 +674,10 @@ def read_ga_prose(pdf, pages):
                     # nothing and says so.
                     rows.append({'cells': [text, species, text, text],
                                  'species': species, 'statewide_default': False,
-                                 'named_in_a_sentence': True})
+                                 'named_in_a_sentence': True, 'page': pageno})
                     continue
                 rows.append({'cells': [where.strip(), species, rule.strip(), text],
-                             'species': species, 'statewide_default': False})
+                             'species': species, 'statewide_default': False, 'page': pageno})
     return rows
 
 
@@ -702,10 +703,10 @@ def read_ga_pfa(pdf, pages):
     species list the research side has been short of, and dropping it because this reader is
     about limits is how it gets re-derived later.
     """
-    live = [pdf.pages[n - 1] for n in pages if 1 <= n <= len(pdf.pages)]
+    live = [(n, pdf.pages[n - 1]) for n in pages if 1 <= n <= len(pdf.pages)]
     if not live:
         return []
-    starts = column_starts(live)
+    starts = column_starts([p for _n, p in live])
     rows, head, pending, county = [], None, None, None
 
     def labelled(lines):
@@ -733,22 +734,22 @@ def read_ga_pfa(pdf, pages):
                 out.append(['text', t])
         return out
 
-    def flush():
+    def flush(pageno=None):
         if pending and pending.get('notes'):
             for nt in pending['notes']:
                 rows.append({'cells': [pending['area'], None, nt, nt,
                                        pending.get('county')],
-                             'species': None, 'pfa': True,
+                             'species': None, 'pfa': True, 'page': pending.get('page'),
                              'fish_species': pending.get('species'),
                              'water': pending.get('water')})
         elif pending:
             rows.append({'cells': [pending['area'], None, '', pending.get('species') or '',
                                    pending.get('county')],
-                         'species': None, 'pfa': True,
+                         'species': None, 'pfa': True, 'page': pending.get('page'),
                          'fish_species': pending.get('species'),
                          'water': pending.get('water')})
 
-    for pg in live:
+    for pageno, pg in live:
       for col in column_lines(pg, starts):
         flush(); pending, head, county = None, None, None
         for kind, text in labelled(col):
@@ -760,7 +761,7 @@ def read_ga_pfa(pdf, pages):
             if m_sp and head:
                 flush()
                 pending = {'area': head, 'species': m_sp.group('list').strip(),
-                           'notes': [], 'county': county}
+                           'notes': [], 'county': county, 'page': pageno}
                 continue
             m_c = PFA_COUNTY.match(text)
             if m_c and head and not pending:
@@ -798,18 +799,72 @@ def read_prose_state(path, state):
             rows = (read_ga_prose(pdf, pages) if reader == 'ga'
                     else read_ga_pfa(pdf, pages) if reader == 'ga_pfa' else [])
             if rows:
-                out[key] = [{'page': pages[0], 'label': 'prose: %s' % key,
+                # ONE PSEUDO-TABLE PER PAGE, not one for the section. The page ledger asks which
+                # pages were read, and a three-page PFA listing filed under `pages[0]` reported
+                # two of its own pages as never read.
+                by_page = {}
+                for r in rows:
+                    by_page.setdefault(r.get('page') or pages[0], []).append(r)
+                out[key] = [{'page': p, 'label': 'prose: %s' % key,
                              'header': ['water', 'species', 'rule', 'sentence'],
-                             'rows': rows}]
+                             'rows': rs}
+                            for p, rs in sorted(by_page.items())]
     return out
 
 
-def read_pdf_state(path, specs):
+LAW_WORDS = re.compile(r'\b(inch|inches|creel|per day|daily limit|possession limit|'
+                       r'size limit|closed season|open season|minimum length|no minimum)\b', re.I)
+
+
+def page_ledger(pdf, read_pages, smap, declared):
+    """Every page of the book placed in exactly one bucket, so `read` means something.
+
+    THE COUNT THAT MATTERS IS NOT HOW MANY PAGES WERE READ. It is how many carry fishing law and
+    were NOT. Before this, 18 of 168 pages across the three books had been read and nothing in
+    the pipeline could tell "not a regulation page" from "a regulation page nobody read" -- so
+    every gap found on 2026-08-28 was found by a person turning pages.
+
+    A page carries law if it names at least TWO species the map knows AND a limit or season
+    word. Two, not one: a species profile or a records table names one fish in passing. The test
+    over-reports and that is the safe direction -- an over-reported page is one judgement, made
+    once, and recorded in registry/pages_not_law.json with its reason.
+
+    `declared` is that file. It is written by whoever reads the page, never by this script, and
+    a page in it is accounted for rather than silently skipped.
+    """
+    phrases = sorted({p.lower() for p in smap_phrases(smap) if len(p) > 4},
+                     key=len, reverse=True)
+    if not phrases:
+        return None
+    rx = re.compile('|'.join(re.escape(p) for p in phrases))
+    out = {'read': [], 'not_law': [], 'blank': [], 'declared': [], 'unaccounted': []}
+    for n in range(1, len(pdf.pages) + 1):
+        if n in read_pages:
+            out['read'].append(n)
+            continue
+        try:
+            text = pdf.pages[n - 1].extract_text() or ''
+        except Exception:
+            text = ''
+        if not text.strip():
+            out['blank'].append(n)
+            continue
+        law = len(set(rx.findall(text.lower()))) >= 2 and bool(LAW_WORDS.search(text))
+        if not law:
+            out['not_law'].append(n)
+        elif str(n) in declared:
+            out['declared'].append({'page': n, 'why': declared[str(n)]})
+        else:
+            out['unaccounted'].append(n)
+    return out
+
+
+def read_pdf_state(path, specs, smap=None, declared=None, extra_read=()):
     """`specs` is a list of (key, header-words, candidate-pages). Anything not found is
     reported by name rather than silently omitted -- a table that quietly vanishes between
     editions is how a book gets read wrong for a year."""
     pdfplumber = _pdfplumber()
-    got, missing = {}, []
+    got, missing, ledger = {}, [], None
     with pdfplumber.open(path) as pdf:
         last = len(pdf.pages)
         for key, headers, pages, _opts in specs:
@@ -837,7 +892,16 @@ def read_pdf_state(path, specs):
             sc_lakes, err = read_sc_state_lakes(pdf, pages, [p + 1 for p in pages])
             if err:
                 missing.append({'table': 'state_lakes_join', 'why': err})
-    return got, missing, sc_lakes
+        read_pages = {f['page'] for tabs in got.values() for f in tabs} | set(extra_read)
+        if sc_lakes:
+            # The spread's RIGHT page is read by read_sc_state_lakes() by position rather than
+            # by header, so it is read -- just not by collect_tables. ONLY the state lakes
+            # table's own pages get the +1: applying it to every read page marked the page after
+            # each striped-bass table as read too, which is three pages this has no business
+            # vouching for.
+            read_pages |= {f['page'] + 1 for f in (got.get('state_lakes') or [])}
+        ledger = page_ledger(pdf, read_pages, smap or {}, declared or {})
+    return got, missing, sc_lakes, ledger
 
 
 # WHICH COLUMN HOLDS THE ADDRESS is not the same in every book, and assuming column 0 put 104
@@ -978,6 +1042,9 @@ def main():
     # Loaded before the state loop because resolve_state_tables() needs it: a band phrase
     # the map already knows is a species, and only an unknown one is tested for water nouns.
     smap = load_species_map(R(a.registry))
+    nlp = os.path.join(R(a.registry), 'pages_not_law.json')
+    not_law = (json.load(open(nlp, encoding='utf-8')).get('pages') or {}) \
+        if os.path.exists(nlp) else {}
 
     for st, (fname, specs) in SPECS.items():
         path = R(a.regs, fname)
@@ -985,10 +1052,24 @@ def main():
             doc['problems'].append({'state': st, 'why': 'digest not found', 'path': path})
             print('!! %s: %s not found' % (st, path), flush=True)
             continue
-        got, missing, sc_lakes = read_pdf_state(path, specs)
-        got.update(read_prose_state(path, st))
+        prose = read_prose_state(path, st)
+        declared = (not_law.get(st) or {})
+        prose_pages = {t['page'] for tabs in prose.values() for t in tabs}
+        got, missing, sc_lakes, ledger = read_pdf_state(path, specs, smap, declared,
+                                                        extra_read=prose_pages)
+        got.update(prose)
         specs = list(specs) + [(k, [], p, o) for k, p, _r, o in (PROSE.get(st) or [])]
-        blk = {'source_file': fname, 'tables': got}
+        blk = {'source_file': fname, 'tables': got, 'pages': ledger}
+        if ledger:
+            print('%-9s pages: %d read, %d carry no fishing law, %d blank, %d declared, '
+                  '%d UNACCOUNTED %s'
+                  % ('', len(ledger['read']), len(ledger['not_law']), len(ledger['blank']),
+                     len(ledger['declared']), len(ledger['unaccounted']),
+                     ledger['unaccounted'] or ''), flush=True)
+            for n in ledger['unaccounted']:
+                doc['problems'].append({'state': st, 'why': 'this page carries fishing law and '
+                                        'nothing read it -- read it, or record why not in '
+                                        'registry/pages_not_law.json', 'page': n})
         if sc_lakes:
             blk['state_lakes'] = sc_lakes
         doc['states'][st] = blk
