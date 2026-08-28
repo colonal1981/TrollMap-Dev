@@ -51,7 +51,14 @@ def collect(doc, idx):
         row = idx.get(slug) or {}
         rules = []
         facts = None
+        # THE SAME LAKE TWICE. SC's state lakes spread arrives both as a ruled row and as the
+        # structured payload read_sc_state_lakes() builds from it, and the ruled one has no
+        # species and no numbers -- so it printed as `no fish named on this row` beside the
+        # record that says everything. One water, one card.
+        has_payload = any(r.get('state_lake') for r in (w.get('rules') or []))
         for r in (w.get('rules') or []):
+            if has_payload and r.get('table') == 'state_lakes' and not r.get('state_lake'):
+                continue
             # SC'S STATE LAKES TABLE IS THE RICHEST RECORD IN THE BOOK AND THIS PRINTED NONE OF
             # IT. Lake Ashwood carries catfish 5, bass 3, bream 15, the days it is open, the
             # hours, and the motor it allows -- and the first version of this page showed two
@@ -65,15 +72,32 @@ def collect(doc, idx):
                     'motor': clean(sl.get('max_boat_motor_hp')),
                     'closed': bool(sl.get('closed')),
                 }
-                for fish, v in (sl.get('limits') or {}).items():
-                    v = clean(v)
+                # THESE NUMBERS ARE CREEL LIMITS AND THIS TABLE SETS NO SIZES. Ryan: "the
+                # state waters have the creel limit in the size column and do not have the size
+                # limit listed at all". They were being printed across both columns, which put
+                # `5` under the heading Size limit -- a catfish limit of five per day reading as
+                # a five-inch fish. The book's columns here are county, water, acres, the days
+                # and hours it is open, the motor allowed, and a creel number per fish.
+                lim = sl.get('limits') or {}
+                for fish in ('bass', 'bream', 'catfish'):
+                    v = clean(lim.get(fish))
                     if not v:
                         continue
                     rules.append({
-                        'species': fish.replace('_', ' ').title(), 'size': None, 'creel': None,
-                        'whole': v, 'text': None, 'source': 'SC state lakes table',
-                        'page': None, 'closures': [], 'plan': [], 'via': 'state lakes table',
+                        'species': fish.title(), 'size': 'none in this table', 'creel': v,
+                        'text': None, 'source': 'SC state lakes table', 'page': None,
+                        'closures': [], 'plan': [], 'via': 'state lakes table',
                     })
+                # The other two are not creel numbers and must not sit in that column.
+                cr = clean(lim.get('statewide_crappie_applies'))
+                if cr:
+                    rules.append({
+                        'species': 'Crappie', 'size': None, 'creel': None,
+                        'whole': 'statewide crappie limit applies here — %s' % cr,
+                        'text': None, 'source': 'SC state lakes table', 'page': None,
+                        'closures': [], 'plan': [], 'via': 'state lakes table',
+                    })
+                facts['minnows'] = clean(lim.get('minnows_as_bait'))
                 continue
             # TN's agency-page records nest their own rules; flatten so the page has one shape.
             inner = r.get('rules')
@@ -357,9 +381,13 @@ def render_water(w):
         for k in ('open_days', 'hours', 'motor'):
             if f.get(k):
                 bits.append(f[k])
+        if f.get('minnows'):
+            bits.append('minnows as bait: %s' % f['minnows'])
         if f.get('closed'):
             bits.insert(0, 'CLOSED')
-        out.append('<p class="facts">%s</p>' % E(' &middot; '.join(bits)))
+        # ESCAPE THE PARTS, NOT THE JOIN. Running the whole string through E() turned the
+        # separator into `&amp;middot;` on every state lake card.
+        out.append('<p class="facts">%s</p>' % ' &middot; '.join(E(b) for b in bits))
 
     if not w['rules']:
         out.append('<p class="facts">No rule of its own in the book. Smart plan answers from '

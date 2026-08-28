@@ -2251,7 +2251,20 @@ def system_members(chain, defn, idx=None):
         # what they are.
         return (idx.get(slug) or {}).get('feature_type') == 'lake'
 
+    # WATERS THE CHAIN CANNOT REACH BUT THE BOOK'S BOUNDS PLAINLY CONTAIN.
+    #
+    # The Diversion Canal joins Lake Marion to Lake Moultrie and the Rediversion Canal carries
+    # Moultrie back to the Santee at St. Stephen. Both are waters we offer, both sit inside the
+    # bounds this system's own definition states, and NEITHER HAS A NODE IN water_chain.json --
+    # the chain collapses them into a direct Marion-to-Moultrie link, so no walk can ever arrive
+    # at them. Ryan: "this should have the santee striper rules / same with the rediversion
+    # canal".
+    #
+    # Declared here with the reason rather than hand-patched into the chain, which is generated
+    # from NHD and is not this file's to edit. If the chain later grows the nodes the walk finds
+    # them anyway and this becomes a no-op.
     inside = {s for s in reach if not is_lake(s)}
+    inside |= set((defn.get('also_includes') or {}).keys())
     changed = True
     while changed:
         changed = False
