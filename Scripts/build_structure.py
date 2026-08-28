@@ -46,6 +46,39 @@ Also worth recording: switching to Garmin contours made hump detection **7.5x be
 Wateree (84 candidates from i-Boating, 632 from Garmin) because closed loops actually close in
 the Garmin decode. All of that gain was being thrown away by the cap.
 
+WHAT WAS WRONG WITH THIS ONE -- 2026-08-28
+
+Ryan, looking at Wateree on the map: *"i am seeing humps on islands... i am seeing humps piled
+up on top of other humps and the same with ledges... i think every depth change is being called
+a hump or ledge on wateree"*. All three were true, and the file said 7,315 structures on one
+lake. Three separate faults, one per complaint:
+
+1. **Islands were humps.** outer_ring() takes p[0] and drops every hole, so the 54 islands
+   Wateree has were invisible. A closed contour drawn around an island is a closed loop far
+   from the SHORELINE, which was the only test, so all 54 became humps.
+
+2. **Every contour inside a hump was another hump.** A high spot draws one closed loop per foot
+   of relief, and each was emitted separately as well as counted in its parent's `levels`. 59%
+   of humps sat within 50 m of another. Only the outermost loop of a nest is a hump now; the
+   ones inside it are what `levels` and `relief` have always been counting.
+
+3. **A ledge meant any slope at all.** Every 90 m cell with a five-foot drop somewhere within
+   400 m qualified, which on a lake that shelves is every cell -- 6,923 of them, median slope
+   5 ft per 100 ft, a quarter under 1.9, and 99% within 100 m of another. A break is not a
+   slope, it is a slope steeper than the bottom AROUND it, so a ledge is now a local maximum in
+   the slope field, scored by how far it stands above its own neighbourhood. That needs no
+   threshold chosen by anybody: a gentle shelf still has local maxima and they score near zero.
+
+And one the complaints did not name: find_ledges() trusted a comment saying the contours were
+clipped to the lake. They are clipped to the lake PLUS A 250 m BUFFER, islands included, so 90
+ledges sat outside the shoreline and two on islands. The few hundred survivors are tested for
+being in the water, which is the same check the old comment refused at a thousandth of the cost.
+
+    Wateree      7,315 -> 740        humps 392 -> 167, ledges 6,923 -> 573
+    on islands      54 -> 0
+    outside lake    90 -> 0
+    piled within 50 m   59% -> 1%   (humps)      99% -> 2% within 100 m (ledges)
+
 --SHIP-ONLY, AND WHAT IT ACTUALLY SAVES HERE
 
 `registry/charted.json` carries the ship decision `build_all_chartpacks.py` already made:
@@ -186,6 +219,37 @@ def outer_ring(boundary):
     return best
 
 
+def island_rings(boundary):
+    """Every hole in the lake polygon -- the islands.
+
+    outer_ring() takes p[0] and drops p[1:], which is every island the lake has. Wateree has 54
+    of them, from a third of an acre to 229, and the hump detector could not see one: a closed
+    contour loop drawn around an island is a closed loop offshore of the SHORELINE, so it passed
+    the only test there was and became a hump. 54 of Wateree's 392 humps were islands, which is
+    every island it has. Ryan: "i am seeing humps on islands".
+
+    Returned for both jobs a hole does here -- rejecting a loop that sits on land, and standing
+    in as shoreline for the offshore test, because a bar ten metres off an island is shoreline
+    structure exactly as it is ten metres off the bank.
+    """
+    if not boundary:
+        return []
+    geoms = ([f.get('geometry') for f in (boundary.get('features') or [])]
+             if boundary.get('type') == 'FeatureCollection'
+             else [boundary.get('geometry') or boundary])
+    out = []
+    for g in geoms:
+        if not g:
+            continue
+        t = g.get('type')
+        polys = [g['coordinates']] if t == 'Polygon' else (g['coordinates'] if t == 'MultiPolygon' else [])
+        for poly in polys:
+            for hole in (poly[1:] if poly else []):
+                if is_closed(hole) and len(hole) > 3:
+                    out.append(hole)
+    return out
+
+
 class Grid:
     """Point bucket for nearest-neighbour inside a radius. A lake's contours are hundreds of
     thousands of vertices and the slope pass asks a nearest-other-depth question for tens of
@@ -205,7 +269,7 @@ class Grid:
                     yield it
 
 
-def find_humps(contours, ring):
+def find_humps(contours, ring, islands=()):
     """Closed contour loops offshore. Score by size and by how many levels stack inside.
 
     A loop with three deeper loops nested inside it is a real high spot with relief; a single
@@ -221,6 +285,9 @@ def find_humps(contours, ring):
             if not (HUMP_MIN_ACRES <= a <= HUMP_MAX_ACRES): continue
             lon, lat = centroid(c)
             if ring and not point_in_ring(lon, lat, ring): continue
+            # ON AN ISLAND IS NOT OFFSHORE. Inside the outer ring and inside a hole are both
+            # "inside the lake" to a point-in-polygon test that only ever saw the outer ring.
+            if any(point_in_ring(lon, lat, h) for h in islands): continue
             loops.append({'lon': lon, 'lat': lat, 'acres': a, 'depth': float(d), 'ring': c})
     # nesting: a loop whose centroid falls inside another, deeper loop
     loops.sort(key=lambda h: -h['acres'])
@@ -233,6 +300,15 @@ def find_humps(contours, ring):
     for h in loops:
         xs = [p[0] for p in h['ring']]; ys = [p[1] for p in h['ring']]
         h['bbox'] = (min(xs), min(ys), max(xs), max(ys))
+    # A LOOP INSIDE A HUMP IS THAT HUMP, NOT ANOTHER ONE. Ryan: "i am seeing humps piled up on
+    # top of other humps and the same with ledges". A high spot draws one closed contour per
+    # foot of relief, so a hump with fifteen levels was emitted as the outer loop AND as
+    # fourteen more humps standing on it -- 59% of Wateree's 392 were within 50 m of another.
+    #
+    # `levels` and `relief` were already counting the nested loops, which is what makes them
+    # levels of one hump rather than humps of their own. They are marked here and dropped below.
+    for h in loops:
+        h['nested_in'] = None
     for i, h in enumerate(loops):
         x0, y0, x1, y1 = h['bbox']
         for j in range(i + 1, len(loops)):
@@ -242,12 +318,21 @@ def find_humps(contours, ring):
             if point_in_ring(k['lon'], k['lat'], h['ring']):
                 h['levels'] += 1
                 h['relief'] = max(h['relief'], abs(k['depth'] - h['depth']))
+                # The loops are sorted biggest first, so the first container found is the
+                # tightest one that has already been seen -- keep the outermost by overwriting
+                # only when nothing claimed it yet.
+                if k['nested_in'] is None:
+                    k['nested_in'] = i
+    loops = [h for h in loops if h['nested_in'] is None]
     out = []
     if ring:
         # Offshore test through a grid. Scanning a 17,282-vertex ring per candidate is 11M
         # distance calls; bucketing the ring once makes each test a handful.
         rg = Grid(MIN_OFFSHORE_DEG * 2)
         for p in ring: rg.add(p[0], p[1], None)
+        # An island's shore is shore. A loop hugging one is the tip of a point by another name.
+        for h in islands:
+            for p in h: rg.add(p[0], p[1], None)
         lim = MIN_OFFSHORE_DEG * 111320.0
         for h in loops:
             close = any(metres((h['lon'], h['lat']), (qx, qy)) < lim
@@ -259,7 +344,7 @@ def find_humps(contours, ring):
     return out
 
 
-def find_ledges(contours, ring=None):
+def find_ledges(contours, ring=None, islands=()):
     """Real bottom slope: horizontal distance between ADJACENT depth levels.
 
     Ten feet of drop in 30 m is a wall; ten feet in 300 m is a taper. That is the number an
@@ -271,10 +356,15 @@ def find_ledges(contours, ring=None):
     sampled vertices; pairing every level against every other did not finish in two minutes.
     Walking consecutive pairs is 64 passes over two point sets.
 
-    NO POINT-IN-POLYGON HERE. `build_all_chartpacks.py` already clipped these contours to the
-    lake boundary plus its 250 m buffer, so every vertex is in the lake by construction.
-    Re-testing 300,000 vertices against a 17,282-vertex ring is a billion operations to confirm
-    something the file already guarantees.
+    NO POINT-IN-POLYGON DURING THE SWEEP. Re-testing 300,000 sampled vertices against a
+    17,282-vertex ring is a billion operations. But the file guarantees less than the original
+    version of this comment claimed: build_all_chartpacks.py clips to the lake boundary PLUS A
+    250 m BUFFER, and it keeps the contours drawn around islands. So `every vertex is in the
+    lake by construction` was not true -- 90 of Wateree's ledges sat outside the shoreline in
+    the buffer and two sat on islands.
+    
+    The survivors are tested instead of the samples. There are a few hundred of them rather
+    than hundreds of thousands, which is the same check for a thousandth of the work.
 
     The steepest sample in each ~90 m cell represents that cell, so one break yields one ledge
     rather than four hundred vertices' worth.
@@ -313,7 +403,42 @@ def find_ledges(contours, ring=None):
             if cur is None or slope > cur['slope']:
                 best[k] = {'lon': x, 'lat': y, 'slope': slope, 'drop': drop,
                            'run_ft': run / 0.3048, 'depth': d2}
-    return list(best.values())
+
+    # A LEDGE IS WHERE THE BOTTOM BREAKS, NOT WHEREVER IT SLOPES.
+    #
+    # Every cell that got this far has a five-foot drop somewhere within 400 m, and on a lake
+    # that shelves at all, that is every cell. Wateree returned 6,923 ledges with a median slope
+    # of 5 ft per 100 ft and a quarter of them under 1.9 -- a two-foot fall across a hundred
+    # feet, which is a taper a boat drifts over without noticing. 99% of them sat within 100 m
+    # of another. Ryan: "i think every depth change is being called a hump or ledge on wateree".
+    #
+    # What makes a break is not the slope's size but that it is steeper than the bottom AROUND
+    # it. That needs no threshold to be chosen: keep the cells that are a local maximum in the
+    # slope field, and score each by how far it stands above its own neighbourhood. A gently
+    # shelving flat still has local maxima, and they score near zero and rank last, which is
+    # what they deserve -- rather than being cut by a number somebody picked.
+    if not best:
+        return []
+    out = []
+    for (cx, cy), rec in best.items():
+        ring1 = [best[(cx + dx, cy + dy)]['slope']
+                 for dx in (-1, 0, 1) for dy in (-1, 0, 1)
+                 if (dx or dy) and (cx + dx, cy + dy) in best]
+        if not ring1 or rec['slope'] < max(ring1):
+            continue                      # something beside it is steeper; that is the break
+        wide = [best[(cx + dx, cy + dy)]['slope']
+                for dx in range(-2, 3) for dy in range(-2, 3)
+                if (dx or dy) and (cx + dx, cy + dy) in best]
+        around = sorted(wide)[len(wide) // 2] if wide else 0.0
+        rec['prominence'] = round(max(0.0, rec['slope'] - around), 2)
+        # In the water, and not on an island. Cheap here and nowhere else: this list is the few
+        # hundred breaks that survived, not the vertices they were found among.
+        if ring and not point_in_ring(rec['lon'], rec['lat'], ring):
+            continue
+        if any(point_in_ring(rec['lon'], rec['lat'], h) for h in islands):
+            continue
+        out.append(rec)
+    return out
 
 
 def score_humps(humps):
@@ -330,11 +455,17 @@ def score_humps(humps):
 
 
 def score_ledges(ledges):
+    """PROMINENCE LEADS. How far this break stands above the bottom around it is what makes it
+    a break; raw steepness follows, because a lake with a steep basin would otherwise rank its
+    whole shoreline above a genuine drop on a flat one."""
     if not ledges: return
     smax = max(l['slope'] for l in ledges) or 1
     dmax = max(l['drop'] for l in ledges) or 1
+    pmax = max(l.get('prominence', 0.0) for l in ledges) or 1
     for l in ledges:
-        l['score'] = round(100 * (0.7 * (l['slope'] / smax) + 0.3 * (l['drop'] / dmax)), 1)
+        l['score'] = round(100 * (0.5 * (l.get('prominence', 0.0) / pmax)
+                                  + 0.3 * (l['slope'] / smax)
+                                  + 0.2 * (l['drop'] / dmax)), 1)
 
 
 def read_json(p):
@@ -472,7 +603,13 @@ def main():
     made = skipped = current = 0
     # Inputs it actually reads: the contours it derives from, and the boundary that gives it the
     # outer ring. The registry boundary is absolute, so it is stamped by full path.
-    ST_PARAMS = (a.min_score,)
+    # THE RULES ARE PART OF THE STAMP. The inputs did not change on 2026-08-28 and the answers
+    # did: islands stopped being humps, a hump stopped being emitted once per contour inside it,
+    # and a ledge stopped meaning any slope at all. Stamped on the contours alone, every pack
+    # would have reported itself up to date and kept the old file. Bump this when the geometry
+    # rules change and every lake rebuilds without anybody remembering --force.
+    RULES_VERSION = '2026-08-28-prominence'
+    ST_PARAMS = (a.min_score, RULES_VERSION)
     for n, slug in enumerate(slugs, 1):
         pack = os.path.join(a.packs, slug)
         st_inputs = ('contours.geojson',
@@ -488,9 +625,11 @@ def main():
         contours = read_json(cpath)
         if not contours or not (contours.get('features') or []):
             report[slug] = {'skipped': 'no contours'}; skipped += 1; continue
-        ring = outer_ring(read_json(os.path.join(a.registry, 'boundaries', slug + '.geojson')))
-        humps = find_humps(contours, ring)
-        ledges = find_ledges(contours)
+        bnd = read_json(os.path.join(a.registry, 'boundaries', slug + '.geojson'))
+        ring = outer_ring(bnd)
+        islands = island_rings(bnd)
+        humps = find_humps(contours, ring, islands)
+        ledges = find_ledges(contours, ring, islands)
         score_humps(humps); score_ledges(ledges)
         feats = []
         for i, h in enumerate(sorted(humps, key=lambda x: -x['score'])):
@@ -509,6 +648,11 @@ def main():
                           'properties': {'kind': 'ledge', 'id': 'ledge_%d' % (i + 1),
                                          'score': l['score'], 'depth_ft': round(l['depth'], 1),
                                          'slope_ft_per_100ft': round(l['slope'], 1),
+                                         # HOW FAR THIS BREAK STANDS ABOVE THE BOTTOM AROUND
+                                         # IT, which is what makes it a break and what leads
+                                         # the score. A steep bank in a steep basin has a low
+                                         # one; a wall on a flat has a high one.
+                                         'steeper_than_around_by': l.get('prominence', 0.0),
                                          'drop_ft': round(l['drop'], 1),
                                          'run_ft': round(l['run_ft'], 0)},
                           'geometry': {'type': 'Point',
