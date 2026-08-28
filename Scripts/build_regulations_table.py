@@ -478,7 +478,8 @@ SPECS = {
         ('water_body_exceptions', ['species', 'water body', 'possession limit'], list(range(1, 12)),
          {'water_col': 1, 'species_col': 0}),
         ('saltwater', ['species', 'open season'], list(range(18, 30)),
-         {'water_col': None, 'species_col': 0, 'implicitly': 'statewide coastal'}),
+         {'water_col': None, 'species_col': 0, 'season_col': 1,
+          'implicitly': 'statewide coastal'}),
     ]),
 }
 
@@ -1273,13 +1274,26 @@ def project_by_water(doc, idx, all_specs=None, smap=None):
                     # not species-scoped -- it shuts the water, which is what those rows say.
                     o2 = opts_for(specs, key)
                     sp = None
-                    if o2.get('water_col', 0) == 0 and len(row['cells']) > 1 \
+                    # A SPEC THAT SAYS WHERE THE SPECIES IS MUST BE BELIEVED. GA's saltwater
+                    # table declares species_col: 0 and this code read column 1 anyway, because
+                    # the rule was written as "column 1 where column 0 is the address". So all
+                    # 31 saltwater rows came out with no species and `shuts the water`.
+                    scol = o2.get('species_col')
+                    if scol is not None and len(row['cells']) > scol \
+                            and row['cells'][scol] and not row.get('continuation'):
+                        sp = row['cells'][scol]
+                    elif o2.get('water_col', 0) == 0 and len(row['cells']) > 1 \
                             and row['cells'][1] and not row.get('continuation'):
                         sp = row['cells'][1]
                     sp = sp or band or (last_species if row.get('continuation') else None)
-                    all_species = o2.get('water_col', 0) != 0
+                    all_species = o2.get('water_col', 0) != 0 and scol is None
                     cl = []
+                    seas = o2.get('season_col')
+                    if seas is not None and len(row['cells']) > seas:
+                        cl.extend(season_column(row['cells'][seas], sp))
                     for c in cells:
+                        if seas is not None and c == row['cells'][seas]:
+                            continue          # the column already answered; do not read it twice
                         cl.extend(closures_in(c))
                     if cl:
                         for c in cl:
@@ -1291,6 +1305,16 @@ def project_by_water(doc, idx, all_specs=None, smap=None):
                                 c['plan_species'] = list((smap or {}).get('plan_species', {})
                                                          .get('values') or [])
                                 c['species_basis'] = 'every species -- the water is shut'
+                            elif o2.get('implicitly') == 'statewide coastal':
+                                # NOT AN UNMAPPED PHRASE, AND NOT A SILENT ZERO. Cobia and
+                                # Atlantic sturgeon are not missing from species_map.json --
+                                # that map is the FRESHWATER plan form's fifteen checkboxes and
+                                # a saltwater fish has no business in it. So these gate nothing
+                                # by construction and say why, rather than arriving as UNMAPPED
+                                # and reading like a lookup that failed.
+                                c['plan_species'] = []
+                                c['species_basis'] = ('coastal species -- the freshwater plan '
+                                                      'form has no checkbox for it')
                             else:
                                 ex = expand_species(sp, smap or {})
                                 c['plan_species'] = ex['plan_species']
@@ -1437,6 +1461,50 @@ def closures_in(text):
     return out
 
 
+
+
+ALL_YEAR = re.compile(r'^\s*all\s*year\s*\.?\s*$', re.I)
+NO_HARVEST = re.compile(r'^\s*no\s+harvest\s*\.?\s*$', re.I)
+
+
+def season_column(text, species):
+    """A column that states a season, typed from the column instead of from prose.
+
+    THE SAME LESSON AS THE STATE LAKES OPEN DAYS COLUMN, one table over. GA's saltwater table
+    heads a column `OPEN SEASON` and answers it 31 times; closures_in() reads prose and found
+    one thing in all 31 -- Cobia's `Mar. 1 - Oct. 31` -- and typed it `unknown / all_fishing`,
+    which is both the wrong effect and the wrong scope. That string is Cobia's OPEN season. A
+    parser that reads an open season as a closure of the whole coast is the failure direction
+    that costs a trip, and it got there by reading the sentence instead of the column.
+
+    Four answers, and the vocabulary was counted before it was written, not guessed:
+    `All year` 23 times, blank 3, `No Harvest` once, one date range, and three sentences that
+    are not seasons at all (federal quota language, a spilled species list).
+
+      All year          -> nothing to emit, and that is an ANSWER, not silence
+      No Harvest        -> closed, and to HARVEST -- the book does not forbid catching it
+      a date range      -> open_only, the window the take is allowed in
+      anything else     -> unknown, carrying the book's sentence so it can be quoted
+
+    Returns a list, so a caller can extend() it the way it extends closures_in().
+    """
+    t = norm(text)
+    if not t or ALL_YEAR.match(t):
+        return []
+    if NO_HARVEST.match(t):
+        return [{'effect': 'closed', 'applies_to': 'harvest', 'start': None, 'end': None,
+                 'text': t, 'note': 'the OPEN SEASON column says so'}]
+    windows = closures_in(t)
+    if windows:
+        for w in windows:
+            # The column is headed OPEN SEASON. A window in it is the open one, whatever the
+            # prose typer made of it.
+            w['effect'] = 'open_only'
+            w['applies_to'] = 'harvest'
+            w['note'] = 'the OPEN SEASON column names the window the take is allowed in'
+        return windows
+    return [{'effect': 'unknown', 'applies_to': 'unknown', 'start': None, 'end': None,
+             'text': t, 'note': 'the OPEN SEASON column holds something that is not a season'}]
 
 
 def check_species_map(doc, registry):
