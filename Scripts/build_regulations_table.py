@@ -729,8 +729,21 @@ def read_sc_state_lakes(pdf, pages_left, pages_right):
         lakes[slugify(l[1])] = {
             'county': l[0], 'water_body': l[1], 'acres': l[2],
             'open_days': l[3], 'open_to_fishing': l[4], 'max_boat_motor_hp': l[5],
+            # THE BOOK HEADS THESE COLUMNS `CREEL/ SIZE LIMITS`, both in one cell. Lake Edgar
+            # Brown's bass is `3 (16" or longer)` -- three a day, sixteen inches. Anything that
+            # calls this a creel number and reports no size limit for the lake is wrong twice.
             'limits': {'catfish': r[1], 'bass': r[2], 'bream': r[3],
                        'statewide_crappie_applies': r[4], 'minnows_as_bait': r[5]},
+            'limits_are': 'creel and size in one value, as the book prints them',
+            # THREE COLUMNS NOBODY WAS READING. The right half of the spread ends with BOAT
+            # RAMP, FISHING PIER and HANDICAP ACCESS, marked with an X. On a table of state
+            # lakes for a man who launches a kayak, whether the water has a ramp is not a
+            # footnote. Ryan found them by doing the thing this pipeline cannot: comparing the
+            # card against the page.
+            'facilities': {k: bool((v or '').strip())
+                           for k, v in (('boat_ramp', r[6] if len(r) > 6 else ''),
+                                        ('fishing_pier', r[7] if len(r) > 7 else ''),
+                                        ('handicap_access', r[8] if len(r) > 8 else ''))},
             'closed': bool(re.search(r'closed', (l[3] or '') + ' ' + (l[4] or ''), re.I)),
         }
     guard = [k for k, v in lakes.items() if v['closed']]

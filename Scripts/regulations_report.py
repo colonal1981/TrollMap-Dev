@@ -78,15 +78,21 @@ def collect(doc, idx):
                 # `5` under the heading Size limit -- a catfish limit of five per day reading as
                 # a five-inch fish. The book's columns here are county, water, acres, the days
                 # and hours it is open, the motor allowed, and a creel number per fish.
+                # THE BOOK HEADS THESE `CREEL/ SIZE LIMITS` AND MEANS BOTH. Lake Edgar Brown's
+                # bass is `3 (16" or longer)` -- three a day, sixteen inches. Calling that a
+                # creel number and printing `none in this table` under Size was wrong twice on
+                # one row, which is what Ryan found by doing the thing this script cannot:
+                # holding the card up against page 37.
                 lim = sl.get('limits') or {}
                 for fish in ('bass', 'bream', 'catfish'):
                     v = clean(lim.get(fish))
                     if not v:
                         continue
                     rules.append({
-                        'species': fish.title(), 'size': 'none in this table', 'creel': v,
-                        'text': None, 'source': 'SC state lakes table', 'page': None,
-                        'closures': [], 'plan': [], 'via': 'state lakes table',
+                        'species': fish.title(), 'size': None, 'creel': None, 'whole': v,
+                        'text': None, 'source': 'SC state lakes table — creel and size in one '
+                                                'value, as the book prints them',
+                        'page': None, 'closures': [], 'plan': [], 'via': 'state lakes table',
                     })
                 # The other two are not creel numbers and must not sit in that column.
                 cr = clean(lim.get('statewide_crappie_applies'))
@@ -98,6 +104,12 @@ def collect(doc, idx):
                         'closures': [], 'plan': [], 'via': 'state lakes table',
                     })
                 facts['minnows'] = clean(lim.get('minnows_as_bait'))
+                # WHETHER, NOT WHERE. Ryan: "it doesn't tell you where the ramp is but tells you
+                # if it has one". The DNR ramps feed answers the other half, and on seven of
+                # these eighteen the two disagree -- the book marks a ramp and the feed has no
+                # record of it. Both are printed and neither is silently preferred.
+                facts['has'] = [k.replace('_', ' ') for k, v in
+                                (sl.get('facilities') or {}).items() if v]
                 continue
             # TN's agency-page records nest their own rules; flatten so the page has one shape.
             inner = r.get('rules')
@@ -383,6 +395,8 @@ def render_water(w):
                 bits.append(f[k])
         if f.get('minnows'):
             bits.append('minnows as bait: %s' % f['minnows'])
+        if f.get('has'):
+            bits.append('the book marks: ' + ', '.join(f['has']))
         if f.get('closed'):
             bits.insert(0, 'CLOSED')
         # ESCAPE THE PARTS, NOT THE JOIN. Running the whole string through E() turned the
