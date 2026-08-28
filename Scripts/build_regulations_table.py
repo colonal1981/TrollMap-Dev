@@ -560,16 +560,46 @@ def column_starts(pages, min_sep=120.0):
     return starts
 
 
-def column_lines(page, starts):
-    """The page's text, column by column, in reading order."""
+def column_lines(page, starts, top=0.0, bottom=1.0):
+    """The page's text, column by column, in reading order.
+
+    ONE LIST PER COLUMN, because nothing may join across a column boundary. The banner
+    `FRESHWATER FISHING REGULATIONS` is split by the boundary into `FRESHWATER FISHING REGULA`
+    and `ATIONS`; both are all-caps, so with the columns concatenated the heading-joining rule
+    glued them onto the next real heading and EVANS COUNTY arrived as `FRESHWATER FISHING REGULA
+    PUBLIC FISHING AREAS`. Two other fixes were tried first and both were worse: a height crop
+    cut through the banner's glyphs and returned interleaved text, and dropping lines that
+    repeat across pages dropped four real areas, because several PFAs publish the same species
+    list word for word.
+    """
+    y0, y1 = page.height * top, page.height * bottom
     if len(starts) < 2:
-        return (page.extract_text() or '').splitlines()
+        return [(page.crop((0, y0, page.width, y1)).extract_text() or '').splitlines()]
     out = []
     for i, x in enumerate(starts):
         x1 = (starts[i + 1] if i + 1 < len(starts) else int(page.width)) - 4
-        seg = page.crop((max(0, x - 4), 0, min(page.width, x1), page.height))
-        out.extend((seg.extract_text() or '').splitlines())
+        seg = page.crop((max(0, x - 4), y0, min(page.width, x1), y1))
+        out.append((seg.extract_text() or '').splitlines())
     return out
+
+
+UNFINISHED = re.compile(r'(?:[,&/-]|\([^)]*)$')
+
+
+def _joins_up(prev, nxt):
+    """Is `nxt` the rest of the heading `prev`, or a new heading under a banner?
+
+    A HEADING WRAPS ONLY WHERE IT IS VISIBLY UNFINISHED. `MARBEN PFA (CHARLIE ELLIOTT` has an
+    open bracket and `STRIPED BASS, WHITE BASS, &` ends on an ampersand; both continue. The
+    page banner `FRESHWATER FISHING REGULA` ends on nothing, and joining it swallowed EVANS
+    COUNTY -- as its other half, `ATIONS`, prefixed HUGH M. GILLIS.
+
+    Three cleverer versions of this were tried and all three were worse: cropping by height cut
+    through the banner's glyphs, dropping lines that repeat across pages dropped four real areas
+    because several PFAs publish the same species list word for word, and refusing to join
+    across a column boundary did nothing because the banner sits inside one column.
+    """
+    return bool(UNFINISHED.search(prev.strip()))
 
 
 def _paras(lines):
@@ -583,7 +613,7 @@ def _paras(lines):
             out.append(['bullet', BULLET.sub('', t)])
         elif CAPS_LINE.match(t):
             # `STRIPED BASS, WHITE BASS, &` and `HYBRID WHITE-STRIPED BASS` are one heading.
-            if out and out[-1][0] == 'head':
+            if out and out[-1][0] == 'head' and _joins_up(out[-1][1], t):
                 out[-1][1] += ' ' + t
             else:
                 out.append(['head', t])
@@ -608,7 +638,8 @@ def read_ga_prose(pdf, pages):
     starts = column_starts(live)
     rows, section, species, default = [], None, None, None
     for pg in live:
-        for kind, text in _paras(column_lines(pg, starts)):
+      for col in column_lines(pg, starts):
+        for kind, text in _paras(col):
             if kind == 'head':
                 up = text.upper()
                 if up.startswith('SEASONS'):
@@ -649,12 +680,113 @@ def read_ga_prose(pdf, pages):
     return rows
 
 
+PFA_COUNTY = re.compile(r'^(?P<county>[A-Z][A-Za-z\. ]+?(?:/[A-Z][A-Za-z\. ]+?)*)\s+Count(?:y|ies)\b')
+PFA_LABEL = re.compile(r'^(Fish\s+[Ss]pecies|Note|Water|Facilities|Directions|Fee|Restrictions|From|LICENSES)\s*:', )
+FISH_SPECIES = re.compile(r'^Fish\s+[Ss]pecies\s*:\s*(?P<list>.+)$')
+PFA_NOTE = re.compile(r'^Note\s*:\s*(?P<note>.+)$')
+PFA_WATER = re.compile(r'^Water\s*:\s*(?P<water>.+)$')
+
+
+def read_ga_pfa(pdf, pages):
+    """Georgia's Public Fishing Areas -- its answer to SC's state lakes table.
+
+    Ryan: "this looks to be the sc state lake equivalent in georgia... are we reading it".
+    It was not. Same shape as SC's: an area-wide default with per-area overrides, except
+    Georgia writes it as headed paragraphs instead of a ruled table.
+
+    A HEADING IS ONLY A PFA IF A `Fish Species:` LINE FOLLOWS IT. The same pages carry a county
+    map whose labels are live text -- `DECATUR GRADY THOMAS BROOKS LOWNDES CLINCH CHARLTON
+    CAMDEN` is one all-caps line -- and every one of them would otherwise read as an area.
+
+    The `Fish Species:` list rides on the row. Nothing consumes it here; it is the per-water
+    species list the research side has been short of, and dropping it because this reader is
+    about limits is how it gets re-derived later.
+    """
+    live = [pdf.pages[n - 1] for n in pages if 1 <= n <= len(pdf.pages)]
+    if not live:
+        return []
+    starts = column_starts(live)
+    rows, head, pending, county = [], None, None, None
+
+    def labelled(lines):
+        """Paragraphs that break on a LABEL as well as on a bullet or a heading.
+
+        _paras() folds every non-bullet, non-heading line into the one above it, which is right
+        for a wrapped sentence and wrong here: `Fish Species: Largemouth bass, ...` arrived
+        glued to the phone number above it and no area was ever recognised.
+        """
+        out = []
+        for raw in lines:
+            t = norm(raw)
+            if not t:
+                continue
+            if CAPS_LINE.match(t):
+                if out and out[-1][0] == 'head' and _joins_up(out[-1][1], t):
+                    out[-1][1] += ' ' + t
+                else:
+                    out.append(['head', t])
+            elif PFA_LABEL.match(t):
+                out.append(['label', t])
+            elif out and out[-1][0] in ('label', 'text'):
+                out[-1][1] += ' ' + t
+            else:
+                out.append(['text', t])
+        return out
+
+    def flush():
+        if pending and pending.get('notes'):
+            for nt in pending['notes']:
+                rows.append({'cells': [pending['area'], None, nt, nt,
+                                       pending.get('county')],
+                             'species': None, 'pfa': True,
+                             'fish_species': pending.get('species'),
+                             'water': pending.get('water')})
+        elif pending:
+            rows.append({'cells': [pending['area'], None, '', pending.get('species') or '',
+                                   pending.get('county')],
+                         'species': None, 'pfa': True,
+                         'fish_species': pending.get('species'),
+                         'water': pending.get('water')})
+
+    for pg in live:
+      for col in column_lines(pg, starts):
+        flush(); pending, head, county = None, None, None
+        for kind, text in labelled(col):
+            if kind == 'head':
+                flush()
+                pending, head, county = None, text, None
+                continue
+            m_sp = FISH_SPECIES.match(text)
+            if m_sp and head:
+                flush()
+                pending = {'area': head, 'species': m_sp.group('list').strip(),
+                           'notes': [], 'county': county}
+                continue
+            m_c = PFA_COUNTY.match(text)
+            if m_c and head and not pending:
+                county = m_c.group('county').strip()
+                continue
+            if not pending:
+                continue
+            m_n = PFA_NOTE.match(text)
+            if m_n:
+                pending['notes'].append(m_n.group('note').strip())
+                continue
+            m_w = PFA_WATER.match(text)
+            if m_w:
+                pending['water'] = m_w.group('water').strip()
+    flush()
+    return rows
+
+
 PROSE = {
     # (key, pages, reader, opts). Shaped exactly like a ruled table on the way out, so
     # resolve_state_tables(), project_by_water() and closures_in() need to know nothing about
     # where the rows came from.
     'GA': [('length_limits_and_seasons', [3], 'ga',
-            {'water_col': 0, 'species_col': 1})],
+            {'water_col': 0, 'species_col': 1}),
+           ('public_fishing_areas', [8, 9, 10], 'ga_pfa',
+            {'water_col': 0, 'species_col': 1, 'county_col': 4})],
 }
 
 
@@ -663,7 +795,8 @@ def read_prose_state(path, state):
     out = {}
     with pdfplumber.open(path) as pdf:
         for key, pages, reader, _opts in PROSE.get(state) or []:
-            rows = read_ga_prose(pdf, pages) if reader == 'ga' else []
+            rows = (read_ga_prose(pdf, pages) if reader == 'ga'
+                    else read_ga_pfa(pdf, pages) if reader == 'ga_pfa' else [])
             if rows:
                 out[key] = [{'page': pages[0], 'label': 'prose: %s' % key,
                              'header': ['water', 'species', 'rule', 'sentence'],
@@ -1435,6 +1568,23 @@ def resolve_water_body(text, state, name_map, idx, systems, chain, sysmembers,
             unresolved.append({'text': p, 'why': 'the only lake of that name is in %s and this '
                                'is the %s book' % (row_.get('state'), state)})
             continue
+        if not slug and not want_county:
+            # NOTHING MATCHED EXACTLY AND THE BOOK NAMES NO COUNTY, so try the same rule the
+            # wrong-state branch uses: one
+            # lake in this book's state whose name contains every word of the book's. Georgia
+            # heads its Public Fishing Area entries `HUGH M. GILLIS` and `DODGE COUNTY` while
+            # the registry names them `Hugh M. Gillis PFA` and `Dodge County PFA Lake`. It must
+            # be ALONE in the state -- two candidates is an ambiguity to report, not a guess.
+            #
+            # AND ONLY WHERE NO COUNTY IS STATED. `OCMULGEE` is unique-in-Georgia against `Little
+            # Ocmulgee Lake`, and they are different waters: the PFA is in Bleckley and Pulaski,
+            # Little Ocmulgee is in Telfair. The book prints the county on the line under the
+            # heading, so it is read rather than guessed past.
+            alt = resolve_in_state(p2, state, idx)
+            if alt:
+                waters.append(alt)
+                kinds.add('name+state')
+                continue
         if slug:
             waters.append(slug)
             kinds.add('name')
