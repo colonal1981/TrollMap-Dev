@@ -98,9 +98,12 @@ const DECLARED = [
   // of this information if we just have hand written tables that cover slightly more than 1% of
   // our water".
   //
-  // Eleven of thirteen rows were duplicates; the two that were not are BIOLOGY, not law, and
-  // moved to registry/_water_notes.json where consolidate_lake_index.py carries them onto the
-  // index row as `species_absent`. See the block comment where the table used to be.
+  // Eleven of thirteen rows were duplicates. The two that were not said a lake has no striped
+  // bass, and on 2026-08-28 they stopped gating anything at all: Ryan, "i do not want to block
+  // the plan based on our species lists". The sourced sentences stay in
+  // registry/_water_notes.json as facts about what an agency published; nothing carries them
+  // onto an index row and nothing refuses a trip on them. See the block comment where the table
+  // used to be, and the contract test in test/regulations-closures.test.js.
   // 24 since 2026-08-19, down six. The map is slug -> label and the six out-of-region zones
   // no longer have slugs: cutting them from coastal_catalog.py without cutting them here would
   // leave six labels for water the picker cannot offer.

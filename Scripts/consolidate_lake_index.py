@@ -1047,28 +1047,30 @@ def main():
             print('!! could not read _water_notes.json (%s) -- NOTHING was gated on it'
                   % exc.__class__.__name__)
 
-    # SPECIES A WATER DOES NOT HAVE, WHICH IS BIOLOGY AND NOT LAW.
+    # THERE IS NO `species_absent` CARRY-THROUGH, AND THERE MUST NOT BE ONE.
     #
-    # `species_absent` moved here on 2026-08-27 out of a hand-typed REGULATIONS table in
-    # js/data/species-intel.js that gated legality on SIX of 358 waters. Eleven of its thirteen
-    # rows duplicated the parsed books or the live digest and were deleted; these two did not,
-    # because no regulations book will ever say "there are no stripers in this lake".
+    # One was added here on 2026-08-27, moving two rows out of a hand-typed REGULATIONS table in
+    # js/data/species-intel.js so checkRegulations() could still refuse a striped bass trip on
+    # Monticello and Parr Shoals. It was removed the next day without ever having reached the
+    # index, so nothing shipped on it.
     #
-    # IT HAS TO REACH THE ROW OR IT IS THE SAME MISTAKE. That table was read by
-    # checkRegulations(); a fact parked in _water_notes.json and never carried onto the index row
-    # is a fact nobody has, which is what this file's own comment above says about
-    # `fishable: false` sitting unread for weeks.
-    absent = 0
-    for slug, note in notes.items():
-        if slug == '_README' or not isinstance(note, dict):
-            continue
-        sp = note.get('species_absent')
-        if not sp or slug not in idx:
-            continue
-        idx[slug]['species_absent'] = sorted(sp)
-        absent += 1
-    if absent:
-        print('   %d water(s) carry species_absent from _water_notes.json' % absent)
+    # Ryan: *"i do not want to block the plan based on our species lists"*, and before that
+    # *"that random note about parr not having striped bass isn't needed... we have a species
+    # list"*.
+    #
+    # ABSENCE IS NOT ENUMERABLE. Nobody can write down what is not in a lake, which is why that
+    # list was two waters and one fish and could never have grown. 130 of 358 waters have any
+    # species list at all.
+    #
+    # AND A PUBLISHED LIST IS A SNAPSHOT, NOT A CENSUS -- the reason filling the gaps would not
+    # help. Ryan: "just because spotted bass isn't mentioned today doesn't mean they didn't end
+    # up getting in and reproducing like mad like they like to do... smallmouth are in parr and
+    # monticello because they made it in through the broad river". Fish arrive on their own.
+    #
+    # What is knowable is PRESENCE, with the source and the year it was published. A species
+    # missing from a list is a fact about the list, never a verdict on a trip.
+    #
+    # If this looks like a gap again: it is not. Read the header of species-intel.js.
 
     if not a.keep_closed:
         for slug, note in notes.items():

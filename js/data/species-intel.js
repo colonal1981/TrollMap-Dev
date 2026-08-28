@@ -22,16 +22,35 @@ import { livePolicyFor, closuresFor } from './regulations-live.js';
 //   it out of the book itself, and test/regulations-closures.test.js checks the hand row and the
 //   parsed one against each other on 36 sample days: they agree on every one.
 //
-// THE OTHER TWO WERE NOT LAW AT ALL. `notPresent` on Monticello and Parr Shoals says there are
-// no striped bass in those lakes, which no regulations book will ever carry. Those moved to
-// registry/_water_notes.json -- the settled-facts store, each fact with how it was settled --
-// and consolidate_lake_index.py carries `species_absent` onto the index row, where
-// checkRegulations() reads it. Monticello's is now sourced to SCDNR's own lake page, which lists
-// the sport fish and does not include striped bass. Parr's is still hand-asserted and the note
-// says so instead of laundering it.
+// THE OTHER TWO WERE NOT LAW AT ALL, AND THEY DO NOT BELONG ANYWHERE. `notPresent` on Monticello
+// and Parr Shoals said there are no striped bass in those lakes. That was rebuilt here on
+// 2026-08-27 as a `species_absent` list read off the registry row, and removed on 2026-08-28.
+//
+// Ryan, twice: *"that random note about parr not having striped bass isn't needed... we have a
+// species list"*, and then *"i do not want to block the plan based on our species lists"*.
+//
+// THREE REASONS, AND THE THIRD ONE NEVER GOES AWAY.
+//
+// Absence is not enumerable -- nobody can write down what is not in a lake, which is why that
+// list was two waters and one fish and could never have been more.
+//
+// Our lists are short: 130 of 358 waters have one at all.
+//
+// AND A PUBLISHED LIST IS A SNAPSHOT, NOT A CENSUS. Ryan, 2026-08-28: *"species lists are
+// incomplete... and just because spotted bass isn't mentioned today doesn't mean they didn't end
+// up getting in and reproducing like mad like they like to do... smallmouth are in parr and
+// monticello because they made it in through the broad river"*. Fish arrive on their own. An
+// agency page names what somebody sampled in the year they wrote it. Even a complete list would
+// go stale, so no amount of filling the gaps makes the complement safe.
+//
+// So OUR SPECIES DATA DOES NOT GATE A TRIP. What we know about a lake's fish INFORMS a plan --
+// ranks it, warns on it, says where the number came from -- and never blocks one.
+//
+// `legal: false` comes from law: a closure the book states, parsed by build_regulations_table.py.
+// Nothing else in this file may produce it.
 //
 // DO NOT ADD A WATER HERE. There is nothing to add it to. A closure belongs in the book parser,
-// a limit in the digest, and a species a lake does not have in _water_notes.json.
+// a limit in the digest, and what swims in a lake in the species merge, which does not gate.
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 export function getSeason(date) {
@@ -82,33 +101,13 @@ export function resolveLakeKey(lakeName, table) {
  * is shut, which is what `legal: false` means. Legality still comes from the curated table's
  * notPresent / closedSeason rows, and the returned `limits` says which book it came out of.
  */
-export function checkRegulations(lakeName, species, date, state = null, speciesAbsent = null) {
+export function checkRegulations(lakeName, species, date, state = null) {
   const live = state ? livePolicyFor(state, lakeName, species) : null;
   const limits = live && live.scope !== 'none'
     ? { sizeLimit: live.sizeLimit, creelLimit: live.creelLimit, scope: live.scope,
         species: live.species, state: live.state,
         source: `${live.state || 'state'} regulations digest` }
     : null;
-
-  // A FISH THAT IS NOT IN THE LAKE IS THE FIRST ANSWER, BEFORE ANY BOOK.
-  //
-  // `species_absent` rides on the registry row, put there by consolidate_lake_index.py out of
-  // registry/_water_notes.json. It is BIOLOGY, NOT LAW -- no regulations book will ever say
-  // "there are no stripers in this lake" -- which is why it is the one thing that survived when
-  // the hand-typed REGULATIONS table was deleted on 2026-08-27. That table gated legality on SIX
-  // of 358 waters; eleven of its thirteen rows duplicated the parsed books or the live digest,
-  // and these two did not.
-  //
-  // Monticello is sourced: SCDNR's own lake page lists the sport fish and striped bass is not
-  // among them. Parr Shoals is weaker and _water_notes.json says so rather than smoothing it.
-  const absent = Array.isArray(speciesAbsent) ? speciesAbsent : [];
-  if (absent.some((x) => String(x).toLowerCase() === String(species).toLowerCase())) {
-    return {
-      legal: false,
-      reason: `${species} is not present in ${lakeName} — pick another target species.`,
-      regInfo: null, limits, warnings: [], source: 'registry/_water_notes.json',
-    };
-  }
 
   // THE BOOKS COME FIRST, AND THEY CAN SAY NO.
   //

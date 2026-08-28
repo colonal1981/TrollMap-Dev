@@ -118,23 +118,40 @@ console.log('\n== the hand table is gone, and the books answer alone ==');
   check('and leave it open on the rest', openDays === 26, openDays);
 }
 
-console.log('\n== a species the lake does not have ==');
+console.log('\n== our species data never blocks a trip ==');
 {
-  // BIOLOGY, NOT LAW, and the last thing the hand table held that nothing else could. It rides
-  // on the registry row now, out of registry/_water_notes.json via consolidate_lake_index.py.
+  // A CONTRACT, NOT A NAME. `notPresent` on Monticello and Parr Shoals was the last thing the
+  // hand-typed REGULATIONS table held that nothing else could. It was rebuilt on 2026-08-27 as a
+  // `species_absent` list carried onto the registry row and read here, and removed on 2026-08-28
+  // before it ever reached lake_index.json.
+  //
+  // Ryan: "i do not want to block the plan based on our species lists".
+  //
+  // Three reasons, and the third is the one that never goes away. Absence is not enumerable --
+  // that list was two waters and one fish and could never have grown. 130 of 358 waters have any
+  // species list at all. And A PUBLISHED LIST IS A SNAPSHOT, NOT A CENSUS: Ryan, "just because
+  // spotted bass isn't mentioned today doesn't mean they didn't end up getting in and reproducing
+  // like mad like they like to do... smallmouth are in parr and monticello because they made it
+  // in through the broad river". Fish arrive. A list written in 2015 is evidence about 2015.
+  //
+  // `legal: false` means the BOOK says the season is shut. Nothing about what we think swims
+  // there may produce it. This asserts the behaviour, so a reintroduction fails here rather than
+  // in a boat.
   _resetRegulationsCache();
-  const r = checkRegulations('Lake Monticello', 'Striped Bass', new Date('2026-07-15'), 'SC',
-                             ['Striped Bass']);
-  check('refused, because the fish is not there', r.legal === false, r.legal);
-  check('and says so in those words, not as a closure',
-    /not present/i.test(r.reason) && !/closed/i.test(r.reason), r.reason);
-  check('sourced to the notes file rather than a table in the code',
-    r.source === 'registry/_water_notes.json', r.source);
-  const other = checkRegulations('Lake Monticello', 'Crappie', new Date('2026-07-15'), 'SC',
-                                 ['Striped Bass']);
-  check('a species that IS there is unaffected', other.legal === true, other.legal);
-  const none = checkRegulations('Lake Monticello', 'Striped Bass', new Date('2026-07-15'), 'SC');
-  check('and a water with no absence list is not silently refused', none.legal === true);
+  const r = checkRegulations('Lake Monticello', 'Striped Bass', new Date('2026-07-15'), 'SC');
+  check('a striper trip on Monticello is not refused', r.legal !== false, r.legal);
+  check('and nothing calls the fish missing', !/not present|not in the lake/i.test(r.reason || ''),
+    r.reason);
+  // The fifth argument is gone. If someone re-adds one, this catches it: an absence list handed
+  // in must change nothing at all.
+  const withList = checkRegulations('Lake Monticello', 'Striped Bass', new Date('2026-07-15'),
+                                    'SC', ['Striped Bass']);
+  check('an absence list passed in is ignored', withList.legal === r.legal, withList.legal);
+  check('word for word', (withList.reason || '') === (r.reason || ''), withList.reason);
+  // 3, not 4: `state = null` has a default and Function.length stops at the first one. The
+  // point of the assertion is that nothing was appended AFTER state.
+  check('checkRegulations declares no argument past state', checkRegulations.length === 3,
+    checkRegulations.length);
 }
 
 console.log('\n== a water that is simply shut ==');
