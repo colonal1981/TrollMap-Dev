@@ -1488,7 +1488,7 @@ var trollmap_worker_default = {
           // limits still travel.
           let bookRules = null, closures = [], booksError = null, bookSlug = null;
           let coastalClosures = [], coastalSource = null;
-          let bookStatewide = [], bookStatewideSource = null;
+          let bookStatewide = [], bookStatewideSource = null, bookStatewideDamaged = 0;
           try {
             const [table, index] = await Promise.all([
               regulationsTable(env), lakeIndex(env),
@@ -1545,6 +1545,17 @@ var trollmap_worker_default = {
             for (const r of ((table.statewide || {})[st] || [])) {
               if (r.scope !== 'statewide coastal') {
                 bookStatewideSource = r.source || bookStatewideSource;
+                // A ROW THE GRID CUT THROUGH IS NOT A LIMIT. NC's statewide largemouth rule
+                // reads `14-inch minimum, except 2 may be less than 14 inches` and the ruled
+                // reader returns `14-inch minimum, e` / `xcept 2 may be`. The build marks those
+                // rows by checking every word against the page's own text, and they are counted
+                // here rather than served: a mangled limit in front of somebody about to keep a
+                // fish is worse than no limit, because it looks like an answer. The count
+                // travels so this reads as a known gap and not as a book that says nothing.
+                if (Array.isArray(r.text_cut_by_the_grid) && r.text_cut_by_the_grid.length) {
+                  bookStatewideDamaged += 1;
+                  continue;
+                }
                 bookStatewide.push({
                   species: r.species || null,
                   // Resolved at BUILD time from registry/species_map.json. An empty array here
@@ -1610,6 +1621,11 @@ var trollmap_worker_default = {
             // A caller must not read either as permission.
             book_statewide: bookStatewide,
             book_statewide_source: bookStatewideSource,
+            // Rows the book prints and this pipeline could not read cleanly. Not served, but
+            // said out loud -- `book_statewide: []` with a non-zero count here means the book
+            // was read and the reading is not trustworthy yet, which is a third answer from
+            // both "no rule" and "never read".
+            book_statewide_damaged: bookStatewideDamaged,
 
             // THE CLOSURES. `book_slug` is null when the name did not resolve to a registry
             // water, which is a DIFFERENT answer from a water with no closures and has to stay
@@ -1629,7 +1645,10 @@ var trollmap_worker_default = {
                 + "empty both when a water has none and when the name did not resolve; "
                 + "`book_slug` is what tells those apart, and a null `book_statewide_source` "
                 + "means no book was read for this state rather than a state that sets no "
-                + "limit. Verify before you keep one.",
+                + "limit. `book_statewide_damaged` counts rows the book prints that the ruled "
+                + "reader sliced through mid-word; they are withheld rather than served, so a "
+                + "non-zero count is a known gap and not an open season. Verify before you "
+                + "keep one.",
           }, null, 2), { headers: { ...JSON_HEADERS, "Cache-Control": "public, max-age=3600" } });
         } catch (err) {
           return new Response(JSON.stringify({ error: String(err && err.message || err), state: st }),

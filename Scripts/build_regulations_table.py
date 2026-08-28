@@ -1099,6 +1099,53 @@ def read_tn_statewide(path, page=1):
     return []
 
 
+def cells_that_cut_a_word(pdf, tables):
+    """Rows whose ruled extraction sliced through a word, judged against the page's own text.
+
+    NC's statewide largemouth bass limit reads `14-inch minimum, except 2 may be less than 14
+    inches`. The ruled reader returns it as four cells: `14-inch minimum, e`, `xcept 2 may be`,
+    `less than 14`, `inches`. The row is there, the row is wrong, and nothing said so -- the
+    same failure page ledger was built for, one level down. It matters more now that these
+    records are served: shipping a mangled limit is worse than shipping none, because it looks
+    like an answer.
+
+    THE PAGE IS ITS OWN ORACLE. extract_text() reads glyph runs in reading order without the
+    ruled grid, so a word that appears in a cell and NOT in the page's own text was cut by the
+    grid, not printed by the book. `xcept`, `inche`, `onl` and `hes` are in the cells and in no
+    book. No heuristic, no dictionary, no threshold -- just the two readings of one page
+    disagreeing, which is exactly the thing worth reporting.
+
+    Two-letter and shorter runs are skipped: they are initials and units as often as damage,
+    and the damage this catches is never that small.
+    """
+    bad = []
+    for tb in tables:
+        n = tb.get('page')
+        page_words = set()
+        # THE FACING PAGE COUNTS TOO. A row can run past the foot of its own page -- NC's list
+        # of community fishing waters names Lake Corriher and Tumbling Rock Reservoir on the
+        # next one -- and judging it against a single page reported the continuation as damage.
+        for k in (n, n + 1):
+            try:
+                page_words |= set(re.findall(r'[a-z]{3,}',
+                                             (pdf.pages[k - 1].extract_text() or '').lower()))
+            except Exception:
+                pass
+        if not page_words:
+            continue
+        for row in tb.get('rows') or []:
+            cut = sorted({w for c in (row.get('cells') or []) if c
+                          for w in re.findall(r'[a-z]{3,}', str(c).lower())
+                          if w not in page_words})
+            if cut:
+                # MARKED ON THE ROW, not only counted in a report. These records are served
+                # now, and a limit that reads `14-inch minimum, e` must not reach somebody
+                # about to keep a fish looking like an answer.
+                row['text_cut_by_the_grid'] = cut
+                bad.append({'page': n, 'cells': row.get('cells'), 'not_on_the_page': cut})
+    return bad
+
+
 def read_pdf_state(path, specs, smap=None, declared=None, extra_read=()):
     """`specs` is a list of (key, header-words, candidate-pages). Anything not found is
     reported by name rather than silently omitted -- a table that quietly vanishes between
@@ -1125,6 +1172,12 @@ def read_pdf_state(path, specs, smap=None, declared=None, extra_read=()):
                                 'and its ruling yields no matching row -- READ BUT NOT ALL OF '
                                 'IT', 'pages_not_read': hid,
                                 'pages_read': sorted({f['page'] for f in found})})
+            cut = cells_that_cut_a_word(pdf, found)
+            if cut:
+                missing.append({'table': key, 'why': 'the ruled grid sliced through words that '
+                                'the page itself prints whole -- the row was found and what it '
+                                'says is wrong', 'rows_cut': len(cut),
+                                'examples': cut[:4]})
             got[key] = found
         sc_lakes = None
         if any(k == 'state_lakes' for k, _, _, _ in specs):
@@ -2480,6 +2533,10 @@ def project_by_water(doc, idx, all_specs=None, smap=None):
                         rec['species_band'] = band
                     if row.get('continuation'):
                         rec['continues_the_row_above'] = True
+                    if row.get('text_cut_by_the_grid'):
+                        # Carried so a consumer can refuse it. The row is real and its address
+                        # resolved; what the book SAYS in it did not survive extraction.
+                        rec['text_cut_by_the_grid'] = row['text_cut_by_the_grid']
                     if o2.get('implicitly') == 'statewide coastal':
                         # SAID ON THE RECORD, NOT INFERRED FROM THE TABLE'S NAME. A consumer
                         # asking "what shuts a season on this coast" should not have to know
