@@ -1556,8 +1556,24 @@ var trollmap_worker_default = {
                   bookStatewideDamaged += 1;
                   continue;
                 }
+                // A DEFAULT THAT COVERS ONE KIND OF WATER MUST NOT ANSWER FOR THE OTHERS.
+                // NC's statewide striped bass rule is written for `Impounded inland waters and
+                // their tributaries`, and NC sets its rivers and sounds separately by
+                // management area. We offer 17 rivers and 3 coastal waters in that state; served
+                // without this filter every one of them would be handed an impoundment's 20-inch
+                // minimum that the book gives them nowhere. Where the water did not resolve
+                // there is no feature type to test, so a scoped record is withheld rather than
+                // guessed at -- the same direction every other unknown here is resolved in.
+                if (Array.isArray(r.applies_to_feature_types) && r.applies_to_feature_types.length) {
+                  const ft = row && row.feature_type ? String(row.feature_type) : null;
+                  if (!ft || !r.applies_to_feature_types.includes(ft)) continue;
+                }
                 bookStatewide.push({
                   species: r.species || null,
+                  // Carried so a card can say WHY this default applies here -- `impounded
+                  // inland waters` is a narrower sentence than `statewide` and reads as one.
+                  applies_to_feature_types: Array.isArray(r.applies_to_feature_types)
+                    ? r.applies_to_feature_types : undefined,
                   // The two numbers a caller actually asks for, pulled out at build time by
                   // reading which column is which off the book's own header. livePolicyFor()
                   // reads sizeLimit and creelLimit and nothing else, so a record carrying only

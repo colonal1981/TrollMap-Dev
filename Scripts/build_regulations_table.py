@@ -2023,6 +2023,24 @@ REACH = re.compile(r'\b(down|up)stream of\b|\bseaward of\b|\b(above|below)\s+(th
 STATEWIDE = re.compile(r'^\s*(statewide|all\s+(public|inland)\s+(fishing\s+)?waters'
                        r'|all\s+waters\s+of\s+the\s+state)\b', re.I)
 
+# A DEFAULT THAT COVERS ONE KIND OF WATER, NOT ALL OF THEM.
+#
+# North Carolina writes its statewide striped bass rule as `Impounded inland waters and their
+# tributaries except those listed below:` -- the same shape as `all inland waters except those
+# listed below`, but true only of impoundments. NC sets its rivers and sounds separately, by
+# management area (Roanoke, Albemarle, Central-Southern).
+#
+# The matcher did not recognise the phrasing at all, so NC's striped bass and hybrid limits --
+# the app's own main species -- reached no water in the state. Widening STATEWIDE to admit it
+# would have been worse than leaving it: 17 rivers and 3 coastal waters we offer in NC would
+# have been handed an impoundment's limit, which the book gives them nowhere.
+#
+# So the scope travels with the record and the feature type is what answers it.
+SCOPED_STATEWIDE = [
+    (re.compile(r'^\s*impounded\s+inland\s+waters\b', re.I), ['lake'],
+     'impounded inland waters -- the book sets rivers and sounds separately'),
+]
+
 # Table furniture that is not an address at all -- a header cell the ruled grid picked up, a
 # species band, or the bullet paragraph above the table.
 NOT_AN_ADDRESS = re.compile(r'^(water body|fish|species|size limit|possession limit|'
@@ -2043,6 +2061,9 @@ DESC_TAIL = re.compile(r'\s+All waters of\b.*$', re.I)
 # `Lakes Blalock, Greenwood, ... and the middle reach of the Saluda River` -- `the middle reach`
 # is not a lake, and prefixing it produced the water `Lake the middle reach of the Saluda River`.
 NOT_A_BARE_NAME = re.compile(r'^(the|upper|lower|middle)\b', re.I)
+# A described reach rather than a name: the words a book uses to bound one.
+QUALIFIER_PHRASE = re.compile(r'\b(of|above|below|up|down|upstream|downstream|from|to|'
+                              r'including|except|between|within|portion|waters)\b', re.I)
 
 
 def _atoms(part):
@@ -2278,9 +2299,35 @@ def resolve_water_body(text, state, name_map, idx, systems, chain, sysmembers,
     if STATEWIDE.match(t):
         return {'kind': 'statewide', 'text': t, 'waters': [],
                 'note': 'applies to every water in the state except those the book lists'}
+    for rx, kinds, why in SCOPED_STATEWIDE:
+        if rx.match(t):
+            return {'kind': 'statewide', 'text': t, 'waters': [],
+                    'applies_to_feature_types': list(kinds),
+                    'note': 'applies to every %s in the state except those the book lists -- %s'
+                            % (' or '.join(kinds), why)}
     parts = []
     for chunk in re.split(r';', t):
         parts.extend(_atoms(chunk))
+    # A PLAIN COMMA LIST OF NAMES, split only when every piece is a water we know.
+    #
+    # `Hyco Lake, Moss Lake, Oak Hollow Lake, Lake Townsend, Farmer Lake and Salem Lake` is one
+    # cell naming six lakes, four of which we offer, and _atoms() leaves it whole because each
+    # item carries its own noun -- there is no `Lakes X, Y and Z` lead for PLURAL_LEAD to catch
+    # and no semicolon. Splitting every address on commas would shatter `Dan River (Caswell
+    # Co.), downstream of Danville, VA`, so the split is kept ONLY if each piece resolves on its
+    # own. A list that does not fully resolve is left exactly as it was and reported unresolved,
+    # which is the answer it had before.
+    if len(parts) == 1 and not resolve(parts[0], name_map):
+        bits = [b.strip(' .') for b in re.split(r',|\s+and\s+', parts[0]) if b.strip(' .')]
+        # A NAME WE DO NOT OFFER IS NOT A REASON TO REFUSE THE ONES WE DO. Requiring every
+        # piece to resolve was the first rule here and it kept the list whole, because the
+        # book names Farmer Lake and Salem Lake and we carry neither -- so Hyco, Oak Hollow
+        # and Townsend went on answering nothing. What must not be split is a described reach,
+        # and a reach says so: `Dan River (Caswell Co.), downstream of Danville, VA` has a
+        # preposition in it and a list of names does not.
+        if len(bits) > 1 and not any(QUALIFIER_PHRASE.search(b) for b in bits) \
+                and sum(1 for b in bits if resolve(b, name_map)) >= 2:
+            parts = bits
 
     waters, unresolved, kinds = [], [], set()
     for part in parts:
@@ -2799,6 +2846,13 @@ def project_by_water(doc, idx, all_specs=None, smap=None):
                         rec['crossings'] = row.get('crossings') or []
                         rec['governs'] = ('crab pots only' if row.get('clause') == 'crabbing only'
                                           else 'finfish')
+                    if r.get('applies_to_feature_types'):
+                        # THE SCOPE TRAVELS OR THE RECORD IS A LIE. NC's striped bass default
+                        # covers impounded inland waters, and we offer 17 rivers and 3 coastal
+                        # waters in that state which the book governs by management area
+                        # instead. Served without this, every one of them would be handed an
+                        # impoundment's 20-inch minimum that the book gives them nowhere.
+                        rec['applies_to_feature_types'] = list(r['applies_to_feature_types'])
                     if r.get('address_is_a_reach'):
                         # THE BOOK ADDRESSED PART OF THIS RIVER, and the registry has one slug
                         # for the whole of it. Said out loud so a card can print the sentence
