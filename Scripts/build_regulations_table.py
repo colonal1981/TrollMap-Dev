@@ -465,6 +465,12 @@ SPECS = {
          {'water_col': 0}),
         ('state_lakes', ['county', 'water body', 'open days'], list(range(32, 42)),
          {'water_col': 1, 'county_col': 0}),
+        # SC's coast, out of the same book. Its column is headed CLOSED SEASON where GA's is
+        # OPEN SEASON -- the opposite sense on identical-looking strings, which is exactly why
+        # the sense is declared here beside the column rather than guessed from the contents.
+        ('saltwater', ['species', 'closed season', 'bag limit'], list(range(45, 60)),
+         {'water_col': None, 'species_col': 0, 'season_col': 1, 'season_sense': 'closed',
+          'implicitly': 'statewide coastal'}),
     ]),
     'NC': ('nc_digest_2026_2027.pdf', [
         # NC's header text is cut by the column rules -- `SIZE LIMIT` arrives as `SIZE LIM`
@@ -1285,12 +1291,19 @@ def project_by_water(doc, idx, all_specs=None, smap=None):
                     elif o2.get('water_col', 0) == 0 and len(row['cells']) > 1 \
                             and row['cells'][1] and not row.get('continuation'):
                         sp = row['cells'][1]
+                    # A SPREAD REPEATS ITS HEADER AND rows_after() ONLY SKIPS THE FIRST ONE.
+                    # SC's saltwater table runs over five pages and prints `SPECIES | CLOSED
+                    # SEASON IN FEDERAL WATERS` again partway down, which arrived as a closure
+                    # on a fish called SPECIES. Furniture, not a row.
+                    if sp and norm(sp).strip().lower() in ('species', 'water body', 'county'):
+                        continue
                     sp = sp or band or (last_species if row.get('continuation') else None)
                     all_species = o2.get('water_col', 0) != 0 and scol is None
                     cl = []
                     seas = o2.get('season_col')
                     if seas is not None and len(row['cells']) > seas:
-                        cl.extend(season_column(row['cells'][seas], sp))
+                        cl.extend(season_column(row['cells'][seas], sp,
+                                                o2.get('season_sense', 'open')))
                     for c in cells:
                         if seas is not None and c == row['cells'][seas]:
                             continue          # the column already answered; do not read it twice
@@ -1472,7 +1485,22 @@ ALL_YEAR = re.compile(r'^\s*all\s*year\s*\.?\s*$', re.I)
 NO_HARVEST = re.compile(r'^\s*no\s+harvest\s*\.?\s*$', re.I)
 
 
-def season_column(text, species):
+NO_RULE = re.compile(r'^\s*no\s+associated\s+regulations\.?\s*$', re.I)
+FEDERAL = re.compile(r'\bfederal\s+waters\b', re.I)
+# A CLOSURE WITH A PLACE IN IT IS NOT A STATEWIDE CLOSURE. `May 1 to May 31 in state waters
+# south of 032 31.0 N latitude (Jeremy Inlet, Edisto Island)` shuts one stretch of coast, and
+# nothing here knows where the boat is.
+SUB_AREA = re.compile(r'\b(except in|south of|north of|east of|west of|latitude|inlet|'
+                      r'lower reach|upper reach|river\b)', re.I)
+# A GEAR RESTRICTION IS NOT A CLOSED SEASON, and it sits in the CLOSED SEASON column anyway.
+# `May not be harvested by gig Dec. 1 - Feb. 28` leaves rod and reel entirely alone. Retyping
+# its window as a harvest closure -- which is what the bare-window rule below does if this does
+# not catch it first -- shuts red drum and seatrout for three months of legal fishing.
+BY_GEAR = re.compile(r'\bby\s+(gig|gigs|spear|spearing|spear\s*gun|net|nets|cast\s*net|'
+                     r'trawl|seine|snagging|snatch\w*)\b', re.I)
+
+
+def season_column(text, species, sense='open'):
     """A column that states a season, typed from the column instead of from prose.
 
     THE SAME LESSON AS THE STATE LAKES OPEN DAYS COLUMN, one table over. GA's saltwater table
@@ -1491,10 +1519,55 @@ def season_column(text, species):
       a date range      -> open_only, the window the take is allowed in
       anything else     -> unknown, carrying the book's sentence so it can be quoted
 
+    AND THE TWO STATES HEAD THE COLUMN THE OPPOSITE WAY ROUND. Georgia's says OPEN SEASON and
+    South Carolina's says CLOSED SEASON, so the same string means opposite things and the sense
+    is read off the header rather than assumed. `sense='closed'` is SC's, where the column is
+    prose about a closure and closures_in() is the right reader for it -- what is added is the
+    undated `Possession prohibited`, which has no window and no NO_FISHING phrase, and the two
+    scopes that must NEVER block:
+
+      federal waters   we fish inside the 3-mile line; a federal closure is not ours to enforce
+      a sub-area       `south of 032 31.0 N latitude`, `except in lower reach of the Savannah
+                       River` -- real closures on one stretch of coast, and nothing here knows
+                       where the boat is. Both warn, carrying the book's sentence.
+
     Returns a list, so a caller can extend() it the way it extends closures_in().
     """
     t = norm(text)
-    if not t or ALL_YEAR.match(t):
+    if not t or NO_RULE.match(t):
+        return []
+    if sense == 'closed':
+        unk = [{'effect': 'unknown', 'applies_to': 'unknown', 'start': None, 'end': None,
+                'text': t}]
+        if FEDERAL.search(t):
+            unk[0]['note'] = ('the CLOSED SEASON column names FEDERAL waters -- outside the '
+                              '3-mile line, and not what this app plans on')
+            return unk
+        if SUB_AREA.search(t):
+            unk[0]['note'] = ('the CLOSED SEASON column names one stretch of coast, and nothing '
+                              'here knows where the boat is')
+            return unk
+        got = closures_in(t)
+        if got:
+            for c in got:
+                # A BARE WINDOW IN A COLUMN HEADED `CLOSED SEASON` IS THE CLOSURE. closures_in()
+                # reads the sentence around a date range and `Jan. 1 - Apr. 30` has no sentence
+                # around it, so it comes back `unknown` -- correct for prose and wrong here,
+                # because the header already said what the window means. Only a window is
+                # retyped; undated prose it could not classify stays unknown and warns.
+                gear = BY_GEAR.search(t)
+                if gear and c.get('applies_to') in (None, 'unknown', 'harvest'):
+                    c['effect'] = 'closed'
+                    c['applies_to'] = 'method:' + re.sub(r'\s+', '', gear.group(1).lower())
+                elif c.get('effect') == 'unknown' and c.get('start') and c.get('end'):
+                    c['effect'], c['applies_to'] = 'closed', 'harvest'
+                c.setdefault('note', 'the CLOSED SEASON column says so')
+            return got
+        if CLOSED_WORD.search(t):
+            return [{'effect': 'closed', 'applies_to': 'harvest', 'start': None, 'end': None,
+                     'text': t, 'note': 'the CLOSED SEASON column says so, with no dates given'}]
+        return unk
+    if ALL_YEAR.match(t):
         return []
     if NO_HARVEST.match(t):
         return [{'effect': 'closed', 'applies_to': 'harvest', 'start': None, 'end': None,
