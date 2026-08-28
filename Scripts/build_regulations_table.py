@@ -269,10 +269,21 @@ def read_tn(html_dir, name_map):
 LINES = {"vertical_strategy": "lines", "horizontal_strategy": "lines"}
 
 
-def tables_on(pdf, page_no, min_rows=4, min_cols=3):
+def column_edges(pdf, page_no):
+    """The vertical rules of the biggest ruled table on a page, inside the page box."""
+    pg = pdf.pages[page_no - 1]
+    found = pg.find_tables(table_settings=LINES)
+    if not found:
+        return []
+    t = max(found, key=lambda x: len(x.cells))
+    xs = {round(c[0], 1) for c in t.cells if c} | {round(c[2], 1) for c in t.cells if c}
+    return sorted(x for x in xs if -1 <= x <= pg.width + 1)
+
+
+def tables_on(pdf, page_no, min_rows=4, min_cols=3, settings=None):
     pg = pdf.pages[page_no - 1]
     out = []
-    for t in (pg.extract_tables(table_settings=LINES) or []):
+    for t in (pg.extract_tables(table_settings=settings or LINES) or []):
         if len(t) >= min_rows and max(len(r) for r in t) >= min_cols:
             out.append([[norm(c) for c in row] for row in t])
     return out
@@ -324,8 +335,14 @@ def collect_tables(pdf, headers, pages):
     """
     want = [h.lower() for h in headers]
     out = []
-    for n in pages:
-        for t in tables_on(pdf, n):
+
+    def take(n, tabs):
+        """EVERY matching table on the page, not the first. The species groups are separate
+        tables with identical headers -- SC's saltwater spread carries two on one page -- and
+        stopping at the first silently drops the rest of the law. That is this function's
+        whole reason for existing and it was briefly undone on 2026-08-28."""
+        got = 0
+        for t in tabs:
             for hdr_i in range(0, min(6, len(t))):
                 joined = ' | '.join(c.lower() for c in t[hdr_i])
                 if all(w in joined for w in want):
@@ -334,10 +351,40 @@ def collect_tables(pdf, headers, pages):
                     for r in t[:hdr_i + 1]:
                         sect = row_section(r) or sect
                     out.append({'page': n, 'label': sect or page_label(pdf, n),
-                                'header': t[hdr_i],
-                                'rows': carry_water_body(rows)})
+                                'header': t[hdr_i], 'rows': carry_water_body(rows)})
+                    got += 1
                     break
-    return out
+        return got
+
+    read = []
+    for n in pages:
+        if take(n, tables_on(pdf, n)):
+            read.append(n)
+
+    # A CONTINUATION PAGE OF THE SAME TABLE IS THE SAME TABLE, and its columns are in the same
+    # places. NC's WARMWATER GAME FISH and NONGAME tables each run over two pages; the second
+    # page of each carries extra vertical rules -- at x 3.5, 13.6, 77.8, 88.1 and 230 -- that
+    # the first does not, and they cut straight through the text. `Lake Santeetlah (Graham Co.)`
+    # came back as `Lake Sante` + `etl` + `ah (Graham Co.)`, so no header matched, no rows were
+    # read, and the run still said it had found the table.
+    #
+    # THE GEOMETRY COMES OUT OF THE BOOK, NOT OUT OF A GUESS: the columns of a page that DID
+    # read are handed to the page that did not, as explicit verticals. Striped bass and bodie
+    # bass with their per-water rules are on one of those pages.
+    if read:
+        for n in [p for p in pages if p not in read]:
+            for src in read:
+                xs = column_edges(pdf, src)
+                if len(xs) < 3:
+                    continue
+                st = {'vertical_strategy': 'explicit', 'explicit_vertical_lines': xs,
+                      'horizontal_strategy': 'lines'}
+                got = take(n, tables_on(pdf, n, settings=st))
+                if got:
+                    for rec in out[-got:]:
+                        rec['columns_from_page'] = src
+                    break
+    return sorted(out, key=lambda r: r['page'])
 
 
 def pages_the_rules_hid(pdf, headers, pages, taken):
