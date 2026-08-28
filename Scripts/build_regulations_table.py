@@ -780,7 +780,76 @@ def read_ga_pfa(pdf, pages):
     return rows
 
 
+SC_SECTION = re.compile(r'^(Seasons|Prohibited Practices|Selling and Importing|'
+                        r'Methods and Devices|Freshwater Game Fish)\s*$')
+# A CLOSURE THAT REPEATS IS NOT A CLOSURE THIS APP CAN EXPRESS, and typing it as one shuts a
+# lake for good. `Hatchery WMA on Lake Moultrie is closed to fishing each Saturday until 12:00
+# noon` matches the undated branch of closures_in() exactly -- `closed to fishing` plus the word
+# closed, no dates -- and would have come out as Lake Moultrie, all fishing, permanently shut.
+RECURRING = re.compile(r'\b(each|every|weekly|daily)\s+(mon|tues|wednes|thurs|fri|satur|sun)day\b'
+                       r'|\b(mon|tues|wednes|thurs|fri|satur|sun)days\b'
+                       r'|\bweeks?\s+(prior|before|after)\b'
+                       r'|\b(prior to|after)\s+the\b', re.I)
+
+
+def read_sc_prose(pdf, pages):
+    """SCDNR's `Seasons` block, which is where South Carolina says what is shut.
+
+    The ruled tables carry the per-species windows; this page carries the AREA closures, and
+    they name real water: Cantey Bay, Black Bottom and Savannah Branch on Lake Marion shut
+    Nov. 1 through Feb. 28, and the Hatchery WMA on Lake Moultrie.
+
+    Its headings are title case -- `Seasons`, `Prohibited Practices` -- so the all-caps rule the
+    GA reader uses does not see them, and its bullets carry the water inside the sentence rather
+    than before a colon. Both are handled here rather than by loosening the GA reader onto a
+    book it was not read against.
+    """
+    live = [(n, pdf.pages[n - 1]) for n in pages if 1 <= n <= len(pdf.pages)]
+    if not live:
+        return []
+    starts = column_starts([p for _n, p in live])
+    def blocks(lines):
+        """_paras() folds a short title-case line into the paragraph above it, which is right
+        for a wrapped sentence and wrong for `Seasons` -- so the section headings break the
+        stream themselves. Same shape of fix as the PFA labels one page-family over."""
+        out = []
+        for raw in lines:
+            t = norm(raw)
+            if not t:
+                continue
+            if SC_SECTION.match(t):
+                out.append(['section', t])
+            elif BULLET.match(t):
+                out.append(['bullet', BULLET.sub('', t)])
+            elif out and out[-1][0] in ('bullet', 'text'):
+                out[-1][1] += ' ' + t
+            else:
+                out.append(['text', t])
+        return out
+
+    rows = []
+    for pageno, pg in live:
+        for col in column_lines(pg, starts):
+            section = None
+            for kind, text in blocks(col):
+                if kind == 'section':
+                    section = text.strip()
+                    continue
+                if section != 'Seasons' or kind != 'bullet':
+                    continue
+                if re.search(r'\bsee\b.*\bpage\s+\d+', text, re.I) and 'prohibit' not in text.lower():
+                    continue          # `see Freshwater Fish Size and Possession limits page 30`
+                # THE SENTENCE ONCE. Carrying it in three cells made closures_in() read it
+                # three times and Lake Marion's area closure arrived in triplicate.
+                rows.append({'cells': [text, None, ''], 'species': None,
+                             'season': True, 'page': pageno,
+                             'recurring': bool(RECURRING.search(text))})
+    return rows
+
+
 PROSE = {
+    'SC': [('seasons', [20], 'sc',
+            {'water_col': 0, 'species_col': 1, 'name_in_sentence': True})],
     # (key, pages, reader, opts). Shaped exactly like a ruled table on the way out, so
     # resolve_state_tables(), project_by_water() and closures_in() need to know nothing about
     # where the rows came from.
@@ -797,7 +866,8 @@ def read_prose_state(path, state):
     with pdfplumber.open(path) as pdf:
         for key, pages, reader, _opts in PROSE.get(state) or []:
             rows = (read_ga_prose(pdf, pages) if reader == 'ga'
-                    else read_ga_pfa(pdf, pages) if reader == 'ga_pfa' else [])
+                    else read_ga_pfa(pdf, pages) if reader == 'ga_pfa'
+                    else read_sc_prose(pdf, pages) if reader == 'sc' else [])
             if rows:
                 # ONE PSEUDO-TABLE PER PAGE, not one for the section. The page ledger asks which
                 # pages were read, and a three-page PFA listing filed under `pages[0]` reported
@@ -1592,6 +1662,42 @@ def _spans_two_states(row):
     return bool(TWO_STATE.search('%s %s' % (row.get('display_name') or '', row.get('state') or '')))
 
 
+def waters_named_in(text, state, idx):
+    """Registry waters whose FULL NAME appears as a phrase inside a sentence.
+
+    NOT SUBSTRING MATCHING, which this project has ruled out and was right to. The unit here is
+    the registry's whole name -- `Lake Marion`, `Lake Moultrie` -- matched on word boundaries,
+    scoped to the book's own state, and only for names of two words or more. A single
+    distinctive token like `Marion` is never matched on its own, which is the failure that rule
+    exists to stop.
+
+    It exists because SCDNR writes its area closures as sentences with the water inside them:
+    `All watercraft and fishing are prohibited Nov. 1 through Feb. 28 on Cantey Bay, Black
+    Bottom and Savannah Branch in Lake Marion`. There is no address column to read; the address
+    is in the prose, and the alternative is throwing a real closure away.
+    """
+    t = norm(text)
+    if not t or not state:
+        return []
+    hits = []
+    for slug, row in idx.items():
+        if state not in (row.get('state') or ''):
+            continue
+        name = re.sub(r'\s*\([^)]*\)\s*$', '', str(row.get('name') or '')).strip()
+        if len(name.split()) < 2:
+            continue
+        if re.search(r'\b%s\b' % re.escape(name), t, re.I):
+            hits.append((len(name), slug))
+    # Longest name first, so `Richard B Russell Lake` is preferred over a shorter one inside it.
+    hits.sort(reverse=True)
+    out, seen = [], set()
+    for _n, slug in hits:
+        if slug not in seen:
+            seen.add(slug)
+            out.append(slug)
+    return out
+
+
 def resolve_in_state(name, state, idx):
     """One water in the book's own state whose name contains every word of the book's.
 
@@ -1821,6 +1927,14 @@ def resolve_state_tables(block, state, name_map, idx, systems, chain, specs=(),
                 cty = cells[ccol] if (ccol is not None and len(cells) > ccol) else None
                 r = resolve_water_body(addr, state, name_map, idx, systems, chain, sysmembers,
                                        county=cty)
+                # THE ADDRESS IS THE SENTENCE on SC's seasons bullets, so the water is found by
+                # its whole name inside the prose rather than by an address column. Applied here
+                # so the run's own stats say `name+in a sentence` rather than `unresolved` for a
+                # row that did in fact resolve.
+                if r and o.get('name_in_sentence') and not (r.get('waters') or []):
+                    named = waters_named_in(addr, state, idx)
+                    if named:
+                        r = dict(r, waters=named, kind='name+in a sentence', unresolved=[])
                 if r:
                     row['resolved'] = r
                     if r.get('waters') or r['kind'] in ('statewide', 'implicit'):
@@ -1964,6 +2078,27 @@ def project_by_water(doc, idx, all_specs=None, smap=None):
                     sp = sp or band or (last_species if row.get('continuation') else None)
                     all_species = o2.get('water_col', 0) != 0 and scol is None
                     cl = []
+                    if row.get('recurring'):
+                        # Typed `unknown` so it warns with the book's own sentence and can never
+                        # gate. A Saturday-morning closure is real and this app cannot say it.
+                        for c in closures_in(' '.join(cells)):
+                            c['effect'], c['applies_to'] = 'unknown', 'unknown'
+                            c['note'] = ('the book states this closure as a repeating one -- a '
+                                         'weekday or a window relative to another season -- '
+                                         'which this app cannot express, so it warns rather '
+                                         'than shutting the water')
+                            c['species'] = None
+                            c['species_known'] = False
+                            c['plan_species'] = []
+                            c['species_basis'] = 'not species-scoped'
+                            cl.append(c)
+                        if cl:
+                            rec['closures'] = cl
+                        if r.get('kind') in ('statewide', 'implicit'):
+                            statewide.setdefault(st, []).append(rec)
+                        for slug in r.get('waters') or []:
+                            add(slug, dict(rec, matched_via=r.get('kind')))
+                        continue
                     seas = o2.get('season_col')
                     if seas is not None and len(row['cells']) > seas:
                         cl.extend(season_column(row['cells'][seas], sp,
