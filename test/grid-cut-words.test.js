@@ -90,8 +90,9 @@ test('a sentence the book wrote across two columns is put back together', () => 
   // strings whole would give `...inclu taken or pding...`.
   assert.match(fn, /la, lb = str\(a\)\.split\('\\n'\), str\(b\)\.split\('\\n'\)/);
   assert.match(fn, /_join_fragments\(x, y, page_words\) for x, y in zip\(la, lb\)/);
-  // Merging is decided, not assumed: only if it removes words the page does not print.
-  assert.match(fn, /if len\(cut\(trial\)\) < len\(cut\(cells\)\):/);
+  // Merging is decided, not assumed: only if it removes words the page does not print, or
+  // closes a seam that spelled one -- never merely because two cells sit next to each other.
+  assert.match(fn, /if len\(cut\(trial\)\) < len\(cut\(cells\)\) or \(/);
   // Column indices a spec declares must still point where they did.
   assert.match(fn, /cells\[:i\] \+ \[joined, ''\] \+ cells\[i \+ 2:\]/);
 });
@@ -153,4 +154,33 @@ test("the oracle's own fused artifacts are not evidence", () => {
   const fn = SRC.slice(SRC.indexOf('def _is_a_cut_word'), SRC.indexOf('def cells_that_cut_a_word'));
   assert.match(fn, /pw\.startswith\(w\) and pw\[len\(w\):\] not in page_words/);
   assert.match(fn, /pw\.endswith\(w\) and pw\[:len\(pw\) - len\(w\)\] not in page_words/);
+});
+
+test('a seam too short for the oracle to see is still a cut', () => {
+  // NC writes Cape Fear River's striped bass rule as `No striped bass may be possessed.` across
+  // the SIZE and CREEL columns. The vertical cuts it into `No striped bass ma` and
+  // `y be possessed.` -- fragments of two characters and one. The oracle only reads letter runs
+  // of three or more, so neither is ever tested, every other word in the row is real, and the
+  // row passes as undamaged. A TOTAL PROHIBITION then reaches a consumer as a size limit
+  // reading `No striped bass ma`: not a gap, an answer that is wrong.
+  assert.match(SRC, /def _seam_spells_a_word\(a, b, page_words\)/);
+  const fn = SRC.slice(SRC.indexOf('def _seam_spells_a_word'), SRC.indexOf('def heal_merged_cells'));
+  // `ma` + `y` spells `may`. Neither half being a word on its own is what stops this firing on
+  // `14-inch minimum` beside `5`, where nothing joins.
+  assert.match(fn, /if t in page_words or h in page_words:/);
+  assert.match(fn, /if \(t \+ h\) in page_words:/);
+  // And the heal is entered on that signal, not only on a detectable cut word.
+  assert.match(SRC, /if not cut\(cells\) and not any\(/);
+  assert.match(SRC, /_seam_spells_a_word\(a, b, page_words\)\s*\n\s*and len\(cut\(trial\)\) <= len\(cut\(cells\)\)/);
+});
+
+test('a tie asks the page whether to close the seam', () => {
+  // `14` + `inches` and `inch` + `es` score the same joined either way and want OPPOSITE
+  // answers. Preferring the space gave `less than 14 inch es` on Lake Santeetlah; preferring
+  // the closed form gave `14inches` on page 2.
+  const fn = SRC.slice(SRC.indexOf('def _join_fragments'), SRC.indexOf('def _seam_spells_a_word'));
+  assert.match(fn, /tied = \[c for b, c in scored if b == best_bad\]/);
+  assert.match(fn, /if tail and head and \(tail\[-1\] \+ head\[0\]\)\.lower\(\) in page_words:/);
+  assert.match(fn, /return x \+ y/);
+  assert.match(fn, /return x \+ ' ' \+ y/);
 });

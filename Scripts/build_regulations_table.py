@@ -347,18 +347,58 @@ def page_word_oracle(pdf, page_no, spread=1):
 
 def _join_fragments(x, y, page_words):
     """Two halves of one printed line, joined the way the page says they were."""
-    # THE SPACE IS TRIED FIRST SO IT WINS A TIE, and ties are the common case: `14` + `inches`
-    # scores the same either way, because the oracle only looks at letter runs and `14inches`
-    # still yields `inches`. Joining them gave `less than 14inches` on NC's page 2. Where the
-    # cut really is mid-word the closed form wins outright -- `inclu` + `ding` is two unknown
-    # words apart and one known word together -- so preferring the space costs nothing there.
-    best, best_bad = None, None
+    # TIES ARE THE COMMON CASE and the tie-break is where this gets decided. `14` + `inches`
+    # scores the same joined either way, because the oracle only reads letter runs of three or
+    # more and `14inches` still yields `inches`. So does `inch` + `es` -- and those two want
+    # OPPOSITE answers. A blanket preference for the space produced `less than 14 inch es` on
+    # Lake Santeetlah's largemouth rule; a blanket preference for closing produced `14inches`.
+    #
+    # So on a tie, ask the page: if closing the seam spells a word it prints, close it.
+    scored = []
     for sep in (' ', ''):
         cand = x + sep + y
         bad = sum(1 for w in re.findall(r'[a-z]{3,}', cand.lower()) if w not in page_words)
-        if best_bad is None or bad < best_bad:
-            best, best_bad = cand, bad
-    return best
+        scored.append((bad, cand))
+    best_bad = min(b for b, _c in scored)
+    tied = [c for b, c in scored if b == best_bad]
+    if len(tied) == 1:
+        return tied[0]
+    tail = re.findall(r'[A-Za-z]+', x)
+    head = re.findall(r'[A-Za-z]+', y)
+    if tail and head and (tail[-1] + head[0]).lower() in page_words:
+        return x + y
+    return x + ' ' + y
+
+
+def _seam_spells_a_word(a, b, page_words):
+    """Do these two cells meet in the middle of a word?
+
+    THE CUT-WORD CHECK CANNOT SEE THIS ONE. NC writes Cape Fear River's striped bass rule as
+    `No striped bass may be possessed.` across the SIZE and CREEL columns, and the vertical cuts
+    it into `No striped bass ma` and `y be possessed.` -- fragments of two characters and one.
+    The oracle only reads letter runs of three or more, so neither is ever tested, every other
+    word in the row is real, and the row passes as undamaged. A total prohibition then reaches a
+    consumer as a size limit reading `No striped bass ma`, which is the worst thing this file
+    can produce: not a gap, but an answer that is wrong.
+
+    The seam is visible even when the fragments are not. `ma` + `y` spells `may`, which the page
+    prints, and neither half is a word on its own -- that last part is what stops it firing on
+    `14-inch minimum` beside `5`, where nothing joins.
+    """
+    la, lb = str(a).split('\n'), str(b).split('\n')
+    if len(la) != len(lb):
+        return False
+    for x, y in zip(la, lb):
+        tail = re.findall(r'[A-Za-z]+', x)
+        head = re.findall(r'[A-Za-z]+', y)
+        if not tail or not head:
+            continue
+        t, h = tail[-1].lower(), head[0].lower()
+        if t in page_words or h in page_words:
+            continue                      # both sides are whole words; nothing was cut
+        if (t + h) in page_words:
+            return True
+    return False
 
 
 def heal_merged_cells(cells, page_words):
@@ -392,7 +432,11 @@ def heal_merged_cells(cells, page_words):
         return {w for c in cs if c
                 for w in re.findall(r'[a-z]{3,}', str(c).lower()) if w not in page_words}
 
-    if not page_words or not cut(cells):
+    if not page_words:
+        return cells
+    if not cut(cells) and not any(
+            a and b and _seam_spells_a_word(a, b, page_words)
+            for a, b in zip(cells, cells[1:])):
         return cells
     cells = list(cells)
     for i in range(len(cells) - 1):
@@ -413,7 +457,11 @@ def heal_merged_cells(cells, page_words):
         # page decides each line, the same judge that decided to join the cells at all.
         joined = '\n'.join(_join_fragments(x, y, page_words) for x, y in zip(la, lb))
         trial = cells[:i] + [joined, ''] + cells[i + 2:]
-        if len(cut(trial)) < len(cut(cells)):
+        # Fewer cut words, OR a seam that spelled a word and no longer does. The second clause
+        # is the only thing that can repair a cut the three-character floor hides.
+        if len(cut(trial)) < len(cut(cells)) or (
+                _seam_spells_a_word(a, b, page_words)
+                and len(cut(trial)) <= len(cut(cells))):
             cells = trial
     return cells
 
