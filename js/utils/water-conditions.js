@@ -595,6 +595,30 @@ export function readConditions(j) {
     out.windAgeMin = Number.isFinite(nd.met.age_minutes) ? nd.met.age_minutes : null;
   } else if (out.windMph != null) {
     out.windFrom = 'model';
+    // A STALE MEASUREMENT IS NOT NO MEASUREMENT, and dropping it outright is how Lake Wateree
+    // came to show a model from an airport 54 km away while NDBC WATS1 -- a met station 0.1 km
+    // from the water, owned by the Columbia forecast office -- was in the very same response
+    // reporting 1.1 mph gusting 2.2 from 160 degrees.
+    //
+    // Ryan, 2026-08-28: "Lake wateree is not showing WATS1 weather reports anywhere on its map
+    // page". It was in the payload the whole time; this line is where it stopped.
+    //
+    // The staleness is real -- the station's own file was 66 minutes behind a 10-minute
+    // interval -- so the FRESHER number stays the headline and the measured one is shown beside
+    // it with its age. An hour-old anemometer on the lake is a fact a person can weigh against
+    // a model from another county. Which one they trust is theirs to decide; hiding one of them
+    // is not.
+    if (nd && nd.met && Number.isFinite(nd.met.wind_mph)) {
+      out.windMeasured = {
+        mph: nd.met.wind_mph,
+        dirDeg: Number.isFinite(nd.met.wind_dir_deg) ? nd.met.wind_dir_deg : null,
+        gustMph: Number.isFinite(nd.met.gust_mph) ? nd.met.gust_mph : null,
+        station: nd.met.station || null,
+        kmFromWater: Number.isFinite(nd.met.km_from_water) ? nd.met.km_from_water : null,
+        ageMin: Number.isFinite(nd.met.age_minutes) ? nd.met.age_minutes : null,
+        stale: nd.met.stale === true,
+      };
+    }
   }
 
   if (out.pressureMb != null && out.pressureFrom == null) out.pressureFrom = 'tide_station';

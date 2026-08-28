@@ -61,6 +61,7 @@
  */
 import { CORS, JSON_HEADERS, r2Text } from './worker-core.js';
 import { ndbcReadings } from './ndbc.js';
+import { sensorReading, sensorSourceOf } from './sensor.js';
 import { waterChain, damTable, fullPoolTable } from './registry.js';
 // RIVERS and lakeKeyFromName came out with dukeBasinFor: the basin is resolved from Duke's own
 // /rivers/get-rivers roster now, so this file no longer reads the six-entry hand table at all.
@@ -113,6 +114,35 @@ async function getText(url) {
   const r = await fetch(url, { headers: { 'User-Agent': UA, Accept: 'text/plain' } });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.text();
+}
+
+/**
+ * A JSON POST, for the one feed that needs one.
+ *
+ * NO CREDENTIALS EVER. A public LI-COR dashboard authorises the call with its own public id in
+ * the BODY, not with a header, which is why this takes a Referer and nothing else. If a feed
+ * ever needs an Authorization header it does not belong in this app.
+ */
+async function postJson(url, body, referer) {
+  // Built inline on purpose. worker-cors.test.js flags any assignment to a header variable that
+  // names a content type without spreading CORS, because a hand-rolled RESPONSE header object is
+  // exactly what shipped broken once. These are REQUEST headers going out and CORS has no
+  // meaning on them, so the shape the guard watches for is simply not used -- rather than the
+  // guard being widened to let a real one through.
+  //
+  // The first version of this comment SPELLED OUT that shape as an example and tripped the
+  // guard on itself, which is a fair thing for a text search to do and worth leaving recorded.
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: referer
+      ? { 'User-Agent': UA, Accept: 'application/json',
+          'Content-Type': 'application/json', Referer: referer }
+      : { 'User-Agent': UA, Accept: 'application/json',
+          'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
 }
 
 // ── sun, moon and the solunar periods ───────────────────────────────────────────────────────
@@ -4440,6 +4470,42 @@ async function chartDatum(b, operator, poolReading, env) {
     return out;
   }
   const stage = poolReading && Number.isFinite(poolReading.stage) ? poolReading.stage : null;
+
+  // AN OPERATOR'S OWN SENSOR, WHERE NO NETWORK GAUGE EXISTS. Randleman is 2,919 acres with no
+  // USGS, CWMS or NWS level gauge on the lake; PTRWA runs one and publishes it. The binding has
+  // carried it since 2026-08-27 as `levels.primary: 'sensor'` and nothing read it, so the card
+  // said `full pool is known; today's level is not` over a live feed.
+  //
+  // THE MAGNITUDE EARNS THE SUBTRACTION, exactly as the nrldb reconciliation does above. This
+  // sensor reads 681.46 feet against a full pool of 682 -- an ELEVATION in the same frame, not
+  // a stage above a local zero. A reading that does not land near full pool is reported as a
+  // raw sensor value with its units and NOT subtracted, because a number in an unknown frame is
+  // how a drawdown gets its sign flipped.
+  if (stage == null && fp && Number.isFinite(fp.ft)) {
+    const src = sensorSourceOf(b);
+    if (src) {
+      let sr = null;
+      try {
+        sr = await cached(`sensor:${b.slug}`, 900, () => sensorReading(src, postJson));
+      } catch (_) { sr = null; }
+      if (sr && Number.isFinite(sr.level_ft)) {
+        const out = chartDatumShape(b, { fullPool: fp });
+        out.sensor = sr;
+        if (Math.abs(sr.level_ft - fp.ft) < 50) {
+          out.level_ft = sr.level_ft;
+          out.below_full_pool_ft = round2(fp.ft - sr.level_ft);
+          out.applied = true;
+          out.source = `registry levels: sensor (${sr.name || 'operator sensor'})`;
+          out.datum_note = null;
+        } else {
+          out.datum_note = `the operator's sensor reads ${sr.level_ft} ${sr.units || 'ft'}, `
+            + `which is not in the same frame as a full pool of ${fp.ft} ft -- reported, not `
+            + 'subtracted';
+        }
+        return out;
+      }
+    }
+  }
   return chartDatumShape(b, { fullPool: fp, gaugeStageFt: stage });
 }
 

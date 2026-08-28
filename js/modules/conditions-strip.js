@@ -397,6 +397,21 @@ function cardHtml(rec, c) {
           + `${c.obsKmAway != null ? `, ${c.obsKmAway} km from this water` : ''}.</span>`)));
   }
 
+  // THE MEASUREMENT THAT LOST, SHOWN ANYWAY. Where an anemometer on the water reported but its
+  // reading is older than the model's, the model stays the headline and this says what the
+  // instrument saw and when. Wateree had WATS1 sitting 0.1 km out and showed neither its number
+  // nor its existence.
+  if (c.windMeasured && c.windFrom !== 'ndbc') {
+    const w = c.windMeasured;
+    out.push(row('Wind measured', `${Math.round(w.mph)} mph`
+      + `${w.gustMph != null ? ` gusting ${Math.round(w.gustMph)}` : ''}`
+      + `${w.dirDeg != null ? ` from ${Math.round(w.dirDeg)}°` : ''}`
+      + `<span class="cond-sub"> — NDBC ${esc(w.station || 'station')}`
+      + `${w.kmFromWater != null ? `, ${w.kmFromWater} km from this water` : ''}`
+      + `${w.ageMin != null ? `, ${w.ageMin} min old` : ''}`
+      + `${w.stale ? '. Older than the station\'s own reporting interval, so the modelled wind above is the fresher number.' : '.'}</span>`));
+  }
+
   // SALINITY, WHERE A SONDE MEASURES IT. On a tidal creek this is a fishing fact, not a
   // water-quality one: at Oyster Landing on 2026-08-25 it ran 32.4 to 36.7 psu across four
   // hours as the tide flooded. The rest of the sonde -- conductance, pH, chlorophyll, oxygen
