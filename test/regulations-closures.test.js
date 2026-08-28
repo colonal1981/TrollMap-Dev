@@ -18,7 +18,7 @@
 //
 // The fixtures below are COPIED FROM registry/regulations_table.json, not invented, except where
 // a comment says otherwise and says why.
-import { checkRegulations, REGULATIONS } from '../js/data/species-intel.js';
+import { checkRegulations } from '../js/data/species-intel.js';
 import { primeRegulations, closuresFor, _resetRegulationsCache } from '../js/data/regulations-live.js';
 
 let fails = 0;
@@ -94,24 +94,47 @@ console.log('== Lake Marion, the water that made this necessary ==');
     closuresFor('SC', 'Lake Marion', 'Striped Bass', outside).blocking.length === 0);
 }
 
-console.log('\n== the curated row and the book, on the same water ==');
+console.log('\n== the hand table is gone, and the books answer alone ==');
 {
-  // This is the retirement evidence. REGULATIONS['Lake Marion'] carries closedSeason [6,16,9,30];
-  // the book parses to 06-16..09-30. If they agree on every day of the year, the hand row is a
-  // duplicate and can go. If they ever disagree, this test says which day and stops the delete.
-  check('the hand table still has the row', !!REGULATIONS['Lake Marion']['Striped Bass'].closedSeason);
-  const days = [];
-  for (let m = 1; m <= 12; m++) for (const d of [1, 15, 28]) days.push([m, d]);
-  let disagree = 0, sample = null;
-  for (const [m, d] of days) {
-    const when = new Date(2026, m - 1, d);
-    _resetRegulationsCache();
-    const hand = checkRegulations('Lake Marion', 'Striped Bass', when);        // no state: books off
-    await prime('SC', 'Lake Marion', MARION);
-    const book = checkRegulations('Lake Marion', 'Striped Bass', when, 'SC');  // books on
-    if (hand.legal !== book.legal) { disagree++; sample = sample || [m, d, hand.legal, book.legal]; }
+  // THIS BLOCK USED TO BE THE RETIREMENT EVIDENCE. It ran Marion through checkRegulations twice
+  // on 36 sample days -- once with the books off, hitting the hand-typed closedSeason
+  // [6,16,9,30], and once with them on -- and they agreed on every day. That is what made the
+  // deletion safe, and on 2026-08-27 it happened: REGULATIONS is gone and there is no second
+  // path left to compare against.
+  //
+  // So the assertion inverts. The books must now carry Marion on their own.
+  _resetRegulationsCache();
+  await prime('SC', 'Lake Marion', MARION);
+  let closedDays = 0, openDays = 0;
+  for (let m = 1; m <= 12; m++) {
+    for (const d of [1, 15, 28]) {
+      const r = checkRegulations('Lake Marion', 'Striped Bass', new Date(2026, m - 1, d), 'SC');
+      (r.legal === false ? () => closedDays++ : () => openDays++)();
+    }
   }
-  check('hand row and parsed book agree on all 36 sample days', disagree === 0, sample);
+  // Ten, not eight: Jun 28 is inside the window and Jun 15 is not.
+  check('the books shut Marion on the sample days inside Jun 16 - Sep 30',
+    closedDays === 10, closedDays);
+  check('and leave it open on the rest', openDays === 26, openDays);
+}
+
+console.log('\n== a species the lake does not have ==');
+{
+  // BIOLOGY, NOT LAW, and the last thing the hand table held that nothing else could. It rides
+  // on the registry row now, out of registry/_water_notes.json via consolidate_lake_index.py.
+  _resetRegulationsCache();
+  const r = checkRegulations('Lake Monticello', 'Striped Bass', new Date('2026-07-15'), 'SC',
+                             ['Striped Bass']);
+  check('refused, because the fish is not there', r.legal === false, r.legal);
+  check('and says so in those words, not as a closure',
+    /not present/i.test(r.reason) && !/closed/i.test(r.reason), r.reason);
+  check('sourced to the notes file rather than a table in the code',
+    r.source === 'registry/_water_notes.json', r.source);
+  const other = checkRegulations('Lake Monticello', 'Crappie', new Date('2026-07-15'), 'SC',
+                                 ['Striped Bass']);
+  check('a species that IS there is unaffected', other.legal === true, other.legal);
+  const none = checkRegulations('Lake Monticello', 'Striped Bass', new Date('2026-07-15'), 'SC');
+  check('and a water with no absence list is not silently refused', none.legal === true);
 }
 
 console.log('\n== a water that is simply shut ==');
@@ -257,9 +280,20 @@ console.log('\n== the four ways silence could be mistaken for permission ==');
   _resetRegulationsCache();
   check('a cold cache is null, not an empty answer',
     closuresFor('SC', 'Lake Marion', 'Striped Bass', new Date('2026-07-15')) === null);
+  // THIS IS THE PRICE OF DELETING THE HAND TABLE, AND IT IS ASSERTED RATHER THAN DISCOVERED.
+  //
+  // Until 2026-08-27 a cold cache on Lake Marion still refused, because REGULATIONS held its
+  // closure hand-typed. It does not any more. primeRegulations() is fire-and-forget and
+  // unawaited, so a slow worker or no network means Marion's real Jun 16 - Sep 30 shutdown is
+  // NOT enforced -- the trip is warned, not stopped.
+  //
+  // That is the honest consequence of one source instead of two, and the warning is the whole
+  // mitigation. If this ever returns `legal: false` again, something has quietly grown a second
+  // offline table and it should be found rather than celebrated.
   const r4 = checkRegulations('Lake Marion', 'Striped Bass', new Date('2026-07-15'), 'SC');
-  check('and Marion falls back to the hand row, which still says no',
-    r4.legal === false && /Closed season/.test(r4.reason), r4.reason);
+  check('a cold cache no longer refuses -- it warns', r4.legal === true, r4.legal);
+  check('and the warning says to verify rather than saying nothing',
+    r4.warnings.length >= 1 && /verify/i.test(r4.warnings.join(' ')), r4.warnings);
 }
 
 console.log('\n== calling it the old way still works ==');
@@ -271,7 +305,8 @@ console.log('\n== calling it the old way still works ==');
   check('three arguments, no throw', r && typeof r.legal === 'boolean');
   check('warnings is an array even here', Array.isArray(r.warnings));
   const bad = checkRegulations('Lake Marion', 'Striped Bass', new Date('2026-07-15'), null);
-  check('an explicit null state does not reach the books', bad.legal === false && !bad.source);
+  check('an explicit null state does not reach the books, and warns rather than refusing',
+    bad.legal === true && bad.warnings.length >= 1, bad.warnings);
 }
 
 console.log(`\n${fails === 0 ? 'ALL PASS' : fails + ' FAILURES'}`);

@@ -6,64 +6,32 @@ import { livePolicyFor, closuresFor } from './regulations-live.js';
  */
 
 // ── Regulations ────────────────────────────────────────────────────────────
-export const REGULATIONS = {
-  lastVerified: '2026-07-03',
-  source: 'SCDNR Freshwater + Saltwater regs, Title 50 Ch.13',
-
-  'Lake Wateree': {
-    'Striped Bass': { closedSeason: null, creelLimit: null, sizeLimit: null, note: 'Stocked striper-only, verify statewide limit', stocked: true },
-    'Largemouth Bass': { creelLimit: 5, sizeLimit: { min: 14 }, note: '14" min, 5/day – statewide black bass' },
-    'Crappie': { creelLimit: null, sizeLimit: null, note: 'No size/bag limit statewide' },
-    'Blue Catfish': { creelLimit: null, sizeLimit: null, note: 'No limit – statewide catfish' },
-    'Channel Catfish': { creelLimit: null, sizeLimit: null },
-    'Flathead Catfish': { creelLimit: null, sizeLimit: null },
-    'Bowfin': { creelLimit: null, sizeLimit: null, note: 'Nongame – no limit' },
-    'Chain Pickerel': { creelLimit: null, sizeLimit: null },
-  },
-
-  'Lake Murray': {
-    'Striped Bass': { creelLimit: 5, sizeLimit: { byMonth: { 1: { min: 21 }, 2: { min: 21 }, 3: { min: 21 }, 4: { min: 21 }, 5: { min: 21 }, 6: { min: null }, 7: { min: null }, 8: { min: null }, 9: { min: null }, 10: { min: 21 }, 11: { min: 21 }, 12: { min: 21 } } }, note: '5/day combined striper+hybrid' },
-  },
-
-  'Lake Marion': {
-    'Striped Bass': { closedSeason: [6, 16, 9, 30], creelLimit: 2, sizeLimit: { min: 23, max: 25, exception: 'one fish per day may exceed 26 inches' }, note: 'Santee Cooper slot – CLOSED Jun16-Sep30' },
-  },
-
-  'Lake Moultrie': {
-    'Striped Bass': { closedSeason: [6, 16, 9, 30], creelLimit: 2, sizeLimit: { min: 23, max: 25, exception: 'one fish per day may exceed 26 inches' } },
-  },
-
-  'Lake Monticello': {
-    'Striped Bass': {
-      notPresent: true,
-      note: 'Lake Monticello has NO stocked striped bass population. Target species here are largemouth bass, smallmouth bass, crappie, and catfish instead.',
-    },
-  },
-
-  'Parr Reservoir': {
-    'Striped Bass': {
-      notPresent: true,
-      note: 'Parr Reservoir has no managed/dedicated striper fishery. Smallmouth bass is the primary target species; largemouth and crappie also present.',
-    },
-  },
-
-  // 'Coastal SC Inshore' WAS HERE AND IS GONE — 2026-08-20.
-  //
-  // It was kept "only so any legacy caller passing the literal string still resolves", and
-  // measured rather than assumed: every display name, legacy name and slug in lake_index.json
-  // — 1,363 strings — was run through resolveLakeKey() against this table. SIX resolve, and
-  // they are the six waters above. ZERO reached this key, and no caller passes the literal.
-  //
-  // Saltwater is keyed by STATE in js/data/coastal-regulations.js and reached through
-  // checkCoastalRegulations(), which since 2026-08-20 reads the live digest first. This entry
-  // held three species of numbers, one of which its own note called SUPERSEDED, under a
-  // 'Flounder' key that canonicalCoastalSpecies() never produces.
-  //
-  // DO NOT ADD COASTAL ZONES HERE. resolveLakeKey() has never matched a real zone name
-  // ('Charleston Harbor, SC' and the other fifteen) against anything in this table, so a row
-  // added here does not gate a coastal trip — it just sits where somebody will later read it as
-  // though it did.
-};
+// REGULATIONS WAS HERE AND IS GONE -- 2026-08-27.
+//
+// A hand-written table of SIX waters that gated `legal: false` for all 358. Ryan: "what is the
+// point of having all of this information if we just have hand written tables that cover
+// slightly more than 1% of our water".
+//
+// Thirteen rows. ELEVEN WERE DUPLICATES:
+//
+//   Wateree, 8 species, and Murray, 1 -- limits and notes. livePolicyFor() answers limits from
+//   the state digest for every water in four states, not six, and says whether the rule it found
+//   was lake-specific or statewide.
+//
+//   Marion and Moultrie -- the Jun 16 - Sep 30 striper closure. registry/regulations.json parses
+//   it out of the book itself, and test/regulations-closures.test.js checks the hand row and the
+//   parsed one against each other on 36 sample days: they agree on every one.
+//
+// THE OTHER TWO WERE NOT LAW AT ALL. `notPresent` on Monticello and Parr Shoals says there are
+// no striped bass in those lakes, which no regulations book will ever carry. Those moved to
+// registry/_water_notes.json -- the settled-facts store, each fact with how it was settled --
+// and consolidate_lake_index.py carries `species_absent` onto the index row, where
+// checkRegulations() reads it. Monticello's is now sourced to SCDNR's own lake page, which lists
+// the sport fish and does not include striped bass. Parr's is still hand-asserted and the note
+// says so instead of laundering it.
+//
+// DO NOT ADD A WATER HERE. There is nothing to add it to. A closure belongs in the book parser,
+// a limit in the digest, and a species a lake does not have in _water_notes.json.
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 export function getSeason(date) {
@@ -114,15 +82,33 @@ export function resolveLakeKey(lakeName, table) {
  * is shut, which is what `legal: false` means. Legality still comes from the curated table's
  * notPresent / closedSeason rows, and the returned `limits` says which book it came out of.
  */
-export function checkRegulations(lakeName, species, date, state = null) {
-  const key = resolveLakeKey(lakeName, REGULATIONS);
-  const lakeRegs = key ? REGULATIONS[key] : null;
+export function checkRegulations(lakeName, species, date, state = null, speciesAbsent = null) {
   const live = state ? livePolicyFor(state, lakeName, species) : null;
   const limits = live && live.scope !== 'none'
     ? { sizeLimit: live.sizeLimit, creelLimit: live.creelLimit, scope: live.scope,
         species: live.species, state: live.state,
         source: `${live.state || 'state'} regulations digest` }
     : null;
+
+  // A FISH THAT IS NOT IN THE LAKE IS THE FIRST ANSWER, BEFORE ANY BOOK.
+  //
+  // `species_absent` rides on the registry row, put there by consolidate_lake_index.py out of
+  // registry/_water_notes.json. It is BIOLOGY, NOT LAW -- no regulations book will ever say
+  // "there are no stripers in this lake" -- which is why it is the one thing that survived when
+  // the hand-typed REGULATIONS table was deleted on 2026-08-27. That table gated legality on SIX
+  // of 358 waters; eleven of its thirteen rows duplicated the parsed books or the live digest,
+  // and these two did not.
+  //
+  // Monticello is sourced: SCDNR's own lake page lists the sport fish and striped bass is not
+  // among them. Parr Shoals is weaker and _water_notes.json says so rather than smoothing it.
+  const absent = Array.isArray(speciesAbsent) ? speciesAbsent : [];
+  if (absent.some((x) => String(x).toLowerCase() === String(species).toLowerCase())) {
+    return {
+      legal: false,
+      reason: `${species} is not present in ${lakeName} — pick another target species.`,
+      regInfo: null, limits, warnings: [], source: 'registry/_water_notes.json',
+    };
+  }
 
   // THE BOOKS COME FIRST, AND THEY CAN SAY NO.
   //
@@ -163,7 +149,7 @@ export function checkRegulations(lakeName, species, date, state = null) {
     bookWarnings.push('Closure data could not be read for this water — verify before you keep one.');
   }
 
-  if (!lakeRegs || !lakeRegs[species]) {
+  {
     const warnings = [];
     if (limits) {
       warnings.push(`${species} on ${lakeName}: ${limits.scope === 'lake' ? 'lake-specific' : 'statewide'} `
@@ -179,42 +165,6 @@ export function checkRegulations(lakeName, species, date, state = null) {
     return { legal: true, reason: null, regInfo: null, limits,
              warnings: [...bookWarnings, ...warnings], note: warnings[0] };
   }
-  const reg = lakeRegs[species];
-
-  if (reg.notPresent) {
-    return { legal: false, reason: reg.note, regInfo: reg, limits, warnings: bookWarnings };
-  }
-
-  if (reg.closedSeason) {
-    const [sm, sd, em, ed] = reg.closedSeason;
-    const d = date instanceof Date ? date : new Date(date);
-    const month = d.getMonth() + 1;
-    const day = d.getDate();
-    const mdVal = month * 100 + day;
-    const startVal = sm * 100 + sd;
-    const endVal = em * 100 + ed;
-    const inClosedWindow = startVal <= endVal
-      ? (mdVal >= startVal && mdVal <= endVal)
-      : (mdVal >= startVal || mdVal <= endVal); // wraps year boundary
-    if (inClosedWindow) {
-      return { legal: false, reason: `Closed season: ${reg.note}`, regInfo: reg, limits,
-               warnings: bookWarnings };
-    }
-  }
-
-  // A CURATED ROW AND THE DIGEST DISAGREEING IS WORTH SAYING OUT LOUD rather than silently
-  // preferring one. The curated table is hand-typed and dated; the digest is this year's book.
-  // SIX WATERS HAVE A HAND ROW AND THE BOOKS TALK ABOUT ALL OF THEM. Building a fresh array
-  // here dropped every book warning on exactly the waters most likely to have one: Lake Murray's
-  // `June 1 - Sept. 30: any length` is a real record the parser could not type, on the same fish
-  // and nearly the same months as Marion's shutdown, and it reached nobody.
-  const warnings = [...bookWarnings];
-  if (limits && reg.sizeLimit && reg.sizeLimit.min != null
-      && limits.sizeLimit && !String(limits.sizeLimit).includes(String(reg.sizeLimit.min))) {
-    warnings.push(`Built-in table says ${reg.sizeLimit.min}" minimum for ${species} here; the `
-      + `${limits.source} says "${limits.sizeLimit}". Verify before you keep one.`);
-  }
-  return { legal: true, reason: null, regInfo: reg, limits, warnings };
 }
 
 // SPECIES_BEHAVIOR and getBehaviorV1Compat were deleted 2026-08-20.

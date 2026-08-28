@@ -89,17 +89,18 @@ const DECLARED = [
   // this table; six resolve and they are the six waters, and zero ever reached that key. It held
   // three species of numbers, one of which its own note called SUPERSEDED.
   //
-  // (NINE, NOT FOURTEEN, was the earlier correction: the old scanner ran past the end of this
-  // literal and counted five `name:` pairs out of the code below it, so editing
-  // checkRegulations() moved the count of a table nobody had touched.)
+  // REGULATIONS IS GONE -- 2026-08-27, and this row is its headstone rather than its count.
   //
-  // Six waters gate checkRegulations() for all 452, and plan-preflight.js calls it before a plan
-  // is built. As of 2026-08-17 the statewide half comes from the live digest through
-  // /regulations; the closures — notPresent and closedSeason — are still only here, because a
-  // size and creel limit is not a closure. THAT is what keeps this table alive.
-  ['js/data/species-intel.js', 'REGULATIONS', 8, 'data',
-   'six waters plus lastVerified/source. The digest supplies statewide limits for all 452; '
-   + 'this table is the only source of CLOSURES.'],
+  // It gated `legal: false` on six waters for all 358 and its own entry here said why it stayed
+  // alive: "this table is the only source of CLOSURES". That stopped being true when
+  // registry/regulations.json landed -- 74 waters parsed out of the four state books with no LLM
+  // in the path -- and Ryan put the remaining question plainly: "what is the point of having all
+  // of this information if we just have hand written tables that cover slightly more than 1% of
+  // our water".
+  //
+  // Eleven of thirteen rows were duplicates; the two that were not are BIOLOGY, not law, and
+  // moved to registry/_water_notes.json where consolidate_lake_index.py carries them onto the
+  // index row as `species_absent`. See the block comment where the table used to be.
   // 24 since 2026-08-19, down six. The map is slug -> label and the six out-of-region zones
   // no longer have slugs: cutting them from coastal_catalog.py without cutting them here would
   // leave six labels for water the picker cannot offer.

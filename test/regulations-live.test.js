@@ -109,13 +109,22 @@ console.log('\n== a broken parse is not an answer ==');
   check('cold cache still warns', r.warnings.length === 1 && /verify/i.test(r.warnings[0]));
 }
 
-console.log('\n== the curated table still owns closures ==');
+console.log('\n== the curated table owned closures, and does not exist any more ==');
 {
   _resetRegulationsCache();
-  // Only the hand-typed rows carry notPresent / closedSeason, which is the only thing that can
-  // make legal false. The digest cannot say a season is shut.
+  // This block asserted that only the hand-typed rows could make `legal` false, because "the
+  // digest cannot say a season is shut". That was true of the DIGEST and stopped being true of
+  // the pipeline: registry/regulations.json parses closures straight out of the four state books
+  // and reaches 74 waters, so REGULATIONS was deleted on 2026-08-27.
+  //
+  // Lake Wateree was a curated water and is now an ordinary one. `regInfo` is null for every
+  // water, and the check is that it degrades to a WARNING rather than to silence -- which is the
+  // failure this whole file was written about.
   const r = checkRegulations('Lake Wateree', 'Striped Bass', new Date('2026-08-17'), 'SC');
-  check('a curated water returns its own row', !!r.regInfo);
+  check('no curated row survives for anybody', r.regInfo === null, r.regInfo);
+  check('and the water is not refused on a cold cache', r.legal === true, r.legal);
+  check('it warns instead', r.warnings.length >= 1 && /verify/i.test(r.warnings.join(' ')),
+    r.warnings);
   check('warnings is always an array, never undefined', Array.isArray(r.warnings));
 }
 

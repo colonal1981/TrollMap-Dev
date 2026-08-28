@@ -59,8 +59,12 @@ export function checkPlanLegality(lakeName, species, date) {
   const inlandState = st || (lakeDbEntryFor(lakeName) || {}).state || null;
   let r;
   try {
+    // `species_absent` rides on the registry row -- biology, not law, and the last thing the
+    // deleted REGULATIONS table held that no book can carry. This is the caller that already
+    // resolves the row for its state, so it is the one that hands it over.
+    const absent = (lakeDbEntryFor(lakeName) || {}).species_absent || null;
     r = st ? checkCoastalRegulations(st, species, date)
-           : checkRegulations(lakeName, species, date, inlandState);
+           : checkRegulations(lakeName, species, date, inlandState, absent);
   } catch (e) {
     // A THROWN LOOKUP IS NOT PERMISSION. But it is also not a refusal — blocking every plan
     // because a table has a bad row would be worse than the thing it guards against. Say so
