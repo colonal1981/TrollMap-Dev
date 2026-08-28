@@ -859,6 +859,40 @@ def page_ledger(pdf, read_pages, smap, declared):
     return out
 
 
+def read_tn_statewide(path, page=1):
+    """TWRA's `Statewide Creel and Length Limits`, which nothing had ever read.
+
+    TENNESSEE HAD NO STATEWIDE DEFAULTS AT ALL, and "TN is 100% covered" hid it: true of the
+    ten lakes the card offers, and silent about the book. Every TN water without a
+    lake-specific exception answered nothing, on a page that says in its own words -- "If you
+    are fishing a location that does not have exceptions listed in this guide, then the
+    statewide limits apply."
+
+    Found because Ryan asked whether 168 pages was all four states. It was three: TN reads
+    pages 11-17 through its own reader and never passed through the page ledger.
+    """
+    pdfplumber = _pdfplumber()
+    with pdfplumber.open(path) as pdf:
+        if page > len(pdf.pages):
+            return []
+        for t in tables_on(pdf, page, min_rows=4, min_cols=3):
+            for hdr_i in range(0, min(4, len(t))):
+                joined = ' | '.join(c.lower() for c in t[hdr_i])
+                if 'species' in joined and 'creel' in joined:
+                    out = []
+                    for row in rows_after(t, hdr_i):
+                        cells = row['cells'] if isinstance(row, dict) else row
+                        sp = (cells[0] or '').strip() if cells else ''
+                        if not sp:
+                            continue
+                        out.append({'source': 'TN tn_digest_2026_2027.pdf',
+                                    'table': 'tn_statewide', 'label': 'page %d' % page,
+                                    'page': page, 'address': 'Statewide',
+                                    'cells': list(cells), 'species': sp})
+                    return out
+    return []
+
+
 def read_pdf_state(path, specs, smap=None, declared=None, extra_read=()):
     """`specs` is a list of (key, header-words, candidate-pages). Anything not found is
     reported by name rather than silently omitted -- a table that quietly vanishes between
@@ -1025,6 +1059,32 @@ def main():
               'county' % (dg['blocks_found'], '%d-%d' % (DIGEST_PAGES[0], DIGEST_PAGES[-1]),
                           len(dg['waters']), ', '.join(sorted(dg['waters'])) or '-',
                           len(dg['rejected_on_county'])), flush=True)
+        # TENNESSEE'S BOOK WAS OUTSIDE THE LEDGER ENTIRELY, and "TN is 100% covered" hid it:
+        # true of the ten lakes the card offers, and silent about the other ten pages of the
+        # digest. Ryan, seeing the total: "168 pages is this the combined page count from all 4
+        # states?" It was three. TN reads pages 11-17 of a 17-page book through its own reader,
+        # so it never passed through read_pdf_state() and never got counted.
+        try:
+            pdfplumber = _pdfplumber()
+            with pdfplumber.open(dg_path) as tnpdf:
+                tn['pages'] = page_ledger(tnpdf, set(DIGEST_PAGES), smap,
+                                          (not_law.get('TN') or {}))
+            led = tn['pages']
+            if led:
+                print('          pages: %d read, %d carry no fishing law, %d blank, %d '
+                      'declared, %d UNACCOUNTED %s'
+                      % (len(led['read']), len(led['not_law']), len(led['blank']),
+                         len(led['declared']), len(led['unaccounted']),
+                         led['unaccounted'] or ''), flush=True)
+                for n in led['unaccounted']:
+                    doc['problems'].append({'state': 'TN', 'why': 'this page carries fishing '
+                                            'law and nothing read it -- read it, or record why '
+                                            'not in registry/pages_not_law.json', 'page': n})
+        except Exception as exc:
+            doc['problems'].append({'state': 'TN', 'why': 'page ledger failed: %s' % exc})
+        tn['statewide_table'] = read_tn_statewide(dg_path)
+        print('TN statewide: %d rows off page 1 of the digest'
+              % len(tn['statewide_table']), flush=True)
     else:
         covered = set(tn['waters'])
         doc['problems'].append({'state': 'TN', 'why': 'digest not found', 'path': dg_path})
@@ -1827,6 +1887,12 @@ def project_by_water(doc, idx, all_specs=None, smap=None):
                              'display_name': idx[slug].get('display_name'),
                              'rules': []})['rules'].append(rec)
 
+    # TENNESSEE'S STATEWIDE DEFAULTS, which the other three states have had all along. The
+    # page says so itself: "If you are fishing a location that does not have exceptions listed
+    # in this guide, then the statewide limits apply."
+    for rec in ((doc['states'].get('TN') or {}).get('statewide_table') or []):
+        statewide.setdefault('TN', []).append(rec)
+
     for slug, recs in ((doc['states'].get('TN') or {}).get('waters') or {}).items():
         for r in recs if isinstance(recs, list) else [recs]:
             add(slug, {'source': 'TWRA reservoir page', 'source_ref': r.get('source_file'),
@@ -2196,6 +2262,11 @@ def statewide_records(doc):
         for r in recs:
             if r.get('scope') == 'statewide coastal':
                 continue          # a coastal species has no checkbox in a freshwater form
+            if r.get('species'):
+                # A record that already names its own species -- the TN statewide table builds
+                # them that way -- does not need the spec consulted at all.
+                out.append({'species': r['species'], 'closures': [], 'rules': []})
+                continue
             o = by_key.get(r.get('table'), {})
             cells = r.get('cells') or []
             if o.get('species_bands') and r.get('species_band'):
