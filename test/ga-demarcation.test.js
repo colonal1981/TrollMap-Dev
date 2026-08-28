@@ -90,6 +90,21 @@ test("a prose row's own sentence flag is honoured, not just the table's", () => 
   assert.match(SRC, /o\.get\('name_in_sentence'\) or row\.get\('named_in_a_sentence'\)/);
 });
 
+test('main() binds smap and not_law before Tennessee, which is read first', () => {
+  // TN is read forty lines above the state loop and its page ledger needs both names. Bound
+  // down beside the loop, they were local-before-assignment and TN's ledger threw on every run
+  // since it was added -- inside a try that files the failure as a `problem`, so the book came
+  // out looking like a data question rather than the line-ordering bug it was.
+  const main = SRC.slice(SRC.indexOf('def main():'), SRC.indexOf('def load_index') > 0
+    ? SRC.length : SRC.length);
+  const bound = main.indexOf('smap = load_species_map(R(a.registry))');
+  const use = main.indexOf('page_ledger(tnpdf');
+  assert.ok(bound > -1 && use > -1, 'both the binding and the TN ledger call are present');
+  assert.ok(bound < use, 'smap is bound before the TN page ledger reads it');
+  const nl = main.indexOf('not_law = (json.load(');
+  assert.ok(nl > -1 && nl < use, 'not_law is bound before the TN page ledger reads it');
+});
+
 test('statewide is bound before the first thing that writes to it', () => {
   // The TN block appends to `statewide` and the binding sat forty lines under it, which makes
   // the name local for the whole function and raises UnboundLocalError on the first TN row.

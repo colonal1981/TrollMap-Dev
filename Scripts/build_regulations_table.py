@@ -411,6 +411,12 @@ def pages_the_rules_hid(pdf, headers, pages, taken):
 
     This is deliberately a TEXT test, not another table strategy: if the words are on the page
     and no ruled row matched them, that is a page a person needs to know about.
+
+    `taken` is every page already read BY ANY READER, not just by this table's ruling. GA page 3
+    prints the words SPECIES and DAILY LIMIT in the prose above the statewide table, which sits
+    on page 4, so this reported page 3 as `READ BUT NOT ALL OF IT` on every run since the ledger
+    was built -- while read_ga_prose() was reading all twenty-two of its rules. A warning that is
+    wrong every time is the same failure as no warning at all.
     """
     want = [h.lower() for h in headers]
     hid = []
@@ -1109,9 +1115,10 @@ def read_pdf_state(path, specs, smap=None, declared=None, extra_read=()):
                 continue
             # The state lakes spread's RIGHT page is read by read_sc_state_lakes() below, by
             # position rather than by header, so it is not unread -- it is read elsewhere.
-            seen_pages = {f['page'] for f in found}
+            found_pages = {f['page'] for f in found}
+            seen_pages = found_pages | set(extra_read)
             if key == 'state_lakes':
-                seen_pages |= {p + 1 for p in seen_pages}
+                seen_pages |= {p + 1 for p in found_pages}
             hid = pages_the_rules_hid(pdf, headers, pages, seen_pages)
             if hid:
                 missing.append({'table': key, 'why': 'the page carries this table in its text '
@@ -1217,6 +1224,17 @@ def main():
     idx = load_index(R(a.registry))
     name_map = build_name_map(idx)
     systems = load_systems(R(a.registry))
+    # LOADED BEFORE THE FIRST READER, not before the state loop. resolve_state_tables() needs
+    # the species map -- a band phrase the map already knows is a species, and only an unknown
+    # one is tested for water nouns -- but so does Tennessee's page ledger, and TN is read forty
+    # lines above the state loop. Bound down there, both names were local-before-assignment and
+    # TN's ledger threw on every run since it was added. It threw inside a try that files the
+    # failure as a `problem`, so the book came out looking like a data question -- `page ledger
+    # failed` -- rather than the line-ordering bug it was. Second one of these found today.
+    smap = load_species_map(R(a.registry))
+    nlp = os.path.join(R(a.registry), 'pages_not_law.json')
+    not_law = (json.load(open(nlp, encoding='utf-8')).get('pages') or {}) \
+        if os.path.exists(nlp) else {}
     wcp = os.path.join(R(a.registry), 'water_chain.json')
     chain = (json.load(open(wcp, encoding='utf-8')).get('waters') or {}) if os.path.exists(wcp) else {}
     print('chain:    %d waters, %d book systems defined' % (len(chain), len(systems.get('systems') or {})), flush=True)
@@ -1298,13 +1316,6 @@ def main():
           % (tn['pages_read'], len(tn['waters']), sorted(tn['no_agency_page']) or '-',
              sorted(tn['page_exists_not_saved']) or '-', tn['unexplained_gap'] or '-'),
           flush=True)
-
-    # Loaded before the state loop because resolve_state_tables() needs it: a band phrase
-    # the map already knows is a species, and only an unknown one is tested for water nouns.
-    smap = load_species_map(R(a.registry))
-    nlp = os.path.join(R(a.registry), 'pages_not_law.json')
-    not_law = (json.load(open(nlp, encoding='utf-8')).get('pages') or {}) \
-        if os.path.exists(nlp) else {}
 
     for st, (fname, specs) in SPECS.items():
         path = R(a.regs, fname)
