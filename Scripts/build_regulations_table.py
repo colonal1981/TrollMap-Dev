@@ -278,6 +278,33 @@ def read_tn(html_dir, name_map):
 LINES = {"vertical_strategy": "lines", "horizontal_strategy": "lines"}
 
 
+def rules_only_edges(pdf, page_no, min_len=40.0):
+    """The vertical rules the book actually DREW on this page.
+
+    column_edges() takes the corners of pdfplumber's own cells, and those come from rects as
+    well as lines -- so every row-shading block and colour panel on the page contributes two
+    more `column boundaries`, and several of them land in the middle of a sentence. On NC's
+    page 1 that gave nine verticals where the table has four, with 77.8 and 88.1 inside the
+    WATER BODY column and 230.0 inside SIZE LIMIT. It is where `14-inch minimum, except 2 may
+    be less than 14 inches` came apart into `14-inch minimum, e` and `xcept 2 may be`.
+
+    A drawn vertical line is a rule somebody put there on purpose. Filtered by length, because
+    a two-point tick is a bullet or a fraction bar and not a column.
+    """
+    pg = pdf.pages[page_no - 1]
+    # LENGTH IS MEASURED AT THE X, NOT PER SEGMENT. A book draws a column rule either as one
+    # line down the table or as one short segment beside every row, and NC does both -- its
+    # page 1 rules run the full height while page 4's are per-row, none of them 40 points long.
+    # Requiring a single long segment threw page 4's entire grid away and left it borrowing
+    # another page's, which is how `8-inch min` / `imum` survived the first repair.
+    drawn = defaultdict(float)
+    for l in pg.lines:
+        if abs(l['x0'] - l['x1']) < 0.6:
+            drawn[round(l['x0'], 1)] += abs(l['y1'] - l['y0'])
+    return sorted(x for x, total in drawn.items()
+                  if total >= min_len and -1 <= x <= pg.width + 1)
+
+
 def column_edges(pdf, page_no):
     """The vertical rules of the biggest ruled table on a page, inside the page box."""
     pg = pdf.pages[page_no - 1]
@@ -350,7 +377,7 @@ def collect_tables(pdf, headers, pages):
         tables with identical headers -- SC's saltwater spread carries two on one page -- and
         stopping at the first silently drops the rest of the law. That is this function's
         whole reason for existing and it was briefly undone on 2026-08-28."""
-        got = 0
+        got = []
         for t in tabs:
             for hdr_i in range(0, min(6, len(t))):
                 joined = ' | '.join(c.lower() for c in t[hdr_i])
@@ -359,15 +386,49 @@ def collect_tables(pdf, headers, pages):
                     sect = None
                     for r in t[:hdr_i + 1]:
                         sect = row_section(r) or sect
-                    out.append({'page': n, 'label': sect or page_label(pdf, n),
+                    got.append({'page': n, 'label': sect or page_label(pdf, n),
                                 'header': t[hdr_i], 'rows': carry_water_body(rows)})
-                    got += 1
                     break
         return got
 
+    def by_drawn_rules(n):
+        """The page re-read against the rules the book actually drew on it."""
+        xs = rules_only_edges(pdf, n)
+        if len(xs) < 3:
+            return []
+        return take(n, tables_on(pdf, n, settings={
+            'vertical_strategy': 'explicit', 'explicit_vertical_lines': xs,
+            'horizontal_strategy': 'lines'}))
+
     read = []
     for n in pages:
-        if take(n, tables_on(pdf, n)):
+        got = take(n, tables_on(pdf, n))
+        if got:
+            # A GRID THAT CUT A WORD WAS NOT THE TABLE'S GRID. The default reading takes its
+            # verticals from pdfplumber's cell corners, which include the edges of every
+            # shading rect on the page, and on NC's pages five of those land inside sentences.
+            # Re-read against the drawn rules and keep that reading only if it is measurably
+            # less damaged -- the page's own text is the judge either way, so this can never
+            # make a page worse and never touches a page that was already clean.
+            hurt = len(cells_that_cut_a_word(pdf, got))
+            if hurt:
+                retry = by_drawn_rules(n)
+                if retry and len(cells_that_cut_a_word(pdf, retry)) < hurt:
+                    for rec in retry:
+                        rec['columns_from_drawn_rules'] = True
+                    got = retry
+        else:
+            # NO HEADER MATCHED, AND THE GRID IS WHY. NC page 1 has five spurious verticals
+            # and they cut `DAILY CREEL LIMIT*` into `DAILY CR` and `EEL LIMIT`, so nothing
+            # matched and the page fell through to the continuation path -- which rescued it by
+            # borrowing the NEXT page's cell corners, themselves polluted by two more. That is
+            # where every cut row on page 1 came from. A page's own drawn rules are tried before
+            # any other page's anything.
+            got = by_drawn_rules(n)
+            for rec in got:
+                rec['columns_from_drawn_rules'] = True
+        if got:
+            out.extend(got)
             read.append(n)
 
     # A CONTINUATION PAGE OF THE SAME TABLE IS THE SAME TABLE, and its columns are in the same
@@ -383,15 +444,18 @@ def collect_tables(pdf, headers, pages):
     if read:
         for n in [p for p in pages if p not in read]:
             for src in read:
-                xs = column_edges(pdf, src)
+                # The drawn rules first here too, for the same reason: the cell corners of the
+                # source page carry its shading rects along with its columns.
+                xs = rules_only_edges(pdf, src) or column_edges(pdf, src)
                 if len(xs) < 3:
                     continue
                 st = {'vertical_strategy': 'explicit', 'explicit_vertical_lines': xs,
                       'horizontal_strategy': 'lines'}
                 got = take(n, tables_on(pdf, n, settings=st))
                 if got:
-                    for rec in out[-got:]:
+                    for rec in got:
                         rec['columns_from_page'] = src
+                    out.extend(got)
                     break
     return sorted(out, key=lambda r: r['page'])
 

@@ -58,3 +58,26 @@ test('withholding is said out loud, so it cannot read as an open season', () => 
   // Three answers have to stay tellable apart: no rule, never read, and read-but-not-trusted.
   assert.match(WORKER, /which is a third answer from/);
 });
+
+test('a page is read against the rules the book actually drew on it', () => {
+  // column_edges() takes pdfplumber's cell corners, and those come from rects as well as
+  // lines -- so every shading block contributes two more "column boundaries". NC page 1 had
+  // nine verticals where the table has four, with 77.8 and 88.1 inside the WATER BODY column
+  // and 230.0 inside SIZE LIMIT.
+  assert.match(SRC, /def rules_only_edges\(pdf, page_no, min_len=40\.0\)/);
+  const fn = SRC.slice(SRC.indexOf('def rules_only_edges'), SRC.indexOf('def column_edges'));
+  // Length is measured at the x, summed across segments: a book draws a column rule either as
+  // one line down the table or as one short segment beside every row, and NC does both.
+  assert.match(fn, /drawn\[round\(l\['x0'\], 1\)\] \+= abs\(l\['y1'\] - l\['y0'\]\)/);
+  assert.match(fn, /if total >= min_len/);
+});
+
+test('the repair is gated on the damage it repairs, so it cannot make a page worse', () => {
+  const fn = SRC.slice(SRC.indexOf('def collect_tables'), SRC.indexOf('    return sorted(out, key'));
+  assert.match(fn, /hurt = len\(cells_that_cut_a_word\(pdf, got\)\)/);
+  assert.match(fn, /if retry and len\(cells_that_cut_a_word\(pdf, retry\)\) < hurt:/);
+  // A page whose header matched nothing gets its own drawn rules BEFORE another page's --
+  // NC page 1 was being rescued by borrowing page 2's cell corners, themselves polluted.
+  assert.match(fn, /got = by_drawn_rules\(n\)/);
+  assert.match(fn, /xs = rules_only_edges\(pdf, src\) or column_edges\(pdf, src\)/);
+});
