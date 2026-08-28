@@ -1033,6 +1033,46 @@ RECURRING = re.compile(r'\b(each|every|weekly|daily)\s+(mon|tues|wednes|thurs|fr
                        r'|\b(prior to|after)\s+the\b', re.I)
 
 
+# THE PART OF THE LAKE THE BOOK IS SHUTTING, pulled out of its own sentence.
+#
+# Ryan, on being told the app could not express Moultrie's Hatchery closure: "i disagree that we
+# cant express that... hatchery is a boat launch... i mean they are waters... but they have boat
+# ramps at them". He is right twice over. These sentences do not shut a lake -- they shut a named
+# arm of one, and every one of those arms is somewhere a person launches. Lake Moultrie has a
+# ramp called Hatchery in registry/_dnr_ramps_sc.json, at the coordinates the closure is about.
+#
+# Typed as a closure on the WATER it could only ever be wrong: either it shuts Lake Moultrie,
+# which is absurd, or it is filed `unknown` and warns about a lake that is open. Typed as a
+# closure on an AREA it is exactly what the book says, it can never gate the water, and it can
+# name the ramp a person would otherwise drive to.
+AREA_ON_IN = re.compile(r'\bon\s+(?P<area>.{3,90}?)\s+in\s+(?:the\s+)?[A-Z]', re.I)
+AREA_SUBJECT = re.compile(r'^\s*(?P<area>.{3,70}?)\s+(?:on\s+.{3,40}?\s+)?is\s+closed\b', re.I)
+
+
+def area_closed(text):
+    """The named area a closure sentence is about, or None if it speaks of the whole water."""
+    t = norm(text)
+    m = AREA_ON_IN.search(t) or AREA_SUBJECT.match(t)
+    if not m:
+        return None
+    area = m.group('area').strip(' .,;')
+    # `on Lake Moultrie is closed` would hand back the lake itself; an area is never the water.
+    return area or None
+
+
+def ramps_named(area, slug, ramps):
+    """Ramps on this water whose name the closure's area contains -- where a person launches."""
+    if not area or not slug:
+        return []
+    want = _bare_words(area)
+    out = []
+    for r in (ramps.get(slug) or []):
+        nm = _bare_words(r.get('name'))
+        if nm and nm <= want:
+            out.append(r.get('name'))
+    return sorted(set(out))
+
+
 def read_sc_prose(pdf, pages):
     """SCDNR's `Seasons` block, which is where South Carolina says what is shut.
 
@@ -1084,6 +1124,7 @@ def read_sc_prose(pdf, pages):
                 # three times and Lake Marion's area closure arrived in triplicate.
                 rows.append({'cells': [text, None, ''], 'species': None,
                              'season': True, 'page': pageno,
+                             'area': area_closed(text),
                              'recurring': bool(RECURRING.search(text))})
     return rows
 
@@ -1678,7 +1719,8 @@ def main():
         for f in res['system_assertion_failures']:
             print('   !! SYSTEM ASSERTION FAILED %s' % f, flush=True)
 
-    by_water, statewide = project_by_water(doc, idx, SPECS, smap)
+    by_water, statewide = project_by_water(doc, idx, SPECS, smap,
+                                           load_ramps(R(a.registry), name_map))
     doc['by_water'] = by_water
     doc['statewide'] = statewide
     print('\nby water: %d of %d offered waters carry at least one rule; statewide defaults for '
@@ -2743,7 +2785,29 @@ def limit_columns(header):
     return size, creel
 
 
-def project_by_water(doc, idx, all_specs=None, smap=None):
+def load_ramps(registry, name_map):
+    """Public ramps by registry slug, from the DNR feeds already on disk.
+
+    Only used to say WHERE a closed area is -- a closure on the Hatchery arm of Lake Moultrie is
+    a closure on the ramp somebody was going to launch from, and the file already knows it.
+    """
+    out = {}
+    for st in ('sc', 'nc', 'ga', 'tn'):
+        p = os.path.join(registry, '_dnr_ramps_%s.json' % st)
+        if not os.path.exists(p):
+            continue
+        try:
+            doc = json.load(open(p, encoding='utf-8'))
+        except Exception:
+            continue
+        for water, ramps in (doc.get('waterbodies') or {}).items():
+            slug = resolve(water, name_map)
+            if slug and isinstance(ramps, list):
+                out.setdefault(slug, []).extend(ramps)
+    return out
+
+
+def project_by_water(doc, idx, all_specs=None, smap=None, ramps=None):
     by = {}
     # DECLARED BEFORE THE FIRST WRITER, not beside the loop that writes it most. The TN block
     # below appends to `statewide` and the binding sat forty lines under it, which makes the
@@ -2751,6 +2815,7 @@ def project_by_water(doc, idx, all_specs=None, smap=None):
     # never fired while TN's statewide table was empty, so the commit that added the table
     # shipped a build that could not run.
     statewide = {}
+    ramps = ramps or {}
 
     def add(slug, rec):
         if slug not in idx:
@@ -2855,15 +2920,37 @@ def project_by_water(doc, idx, all_specs=None, smap=None):
                     sp = sp or band or (last_species if row.get('continuation') else None)
                     all_species = o2.get('water_col', 0) != 0 and scol is None
                     cl = []
-                    if row.get('recurring'):
-                        # Typed `unknown` so it warns with the book's own sentence and can never
-                        # gate. A Saturday-morning closure is real and this app cannot say it.
+                    area = row.get('area')
+                    if area or row.get('recurring'):
+                        # A NAMED ARM OF A LAKE IS NOT THE LAKE. Ryan: "hatchery is a boat
+                        # launch... i mean they are waters... but they have boat ramps at them".
+                        # These sentences shut Cantey Bay, the Hatchery WMA, Potato Creek -- all
+                        # of them places on a lake that is otherwise open, and all of them
+                        # somewhere a person launches. Scoped to the water there were only two
+                        # possible answers and both were wrong: shut Lake Moultrie, which is
+                        # absurd, or file it `unknown` and warn about a lake nobody closed.
+                        #
+                        # Scoped to the AREA it is what the book says, it can never gate the
+                        # water, and where the ramps file knows that name it can point at the
+                        # ramp instead of leaving somebody to drive there and find out.
                         for c in closures_in(' '.join(cells)):
-                            c['effect'], c['applies_to'] = 'unknown', 'unknown'
-                            c['note'] = ('the book states this closure as a repeating one -- a '
-                                         'weekday or a window relative to another season -- '
-                                         'which this app cannot express, so it warns rather '
-                                         'than shutting the water')
+                            if area:
+                                c['applies_to'] = 'area'
+                                c['area'] = area
+                                rr = ramps_named(area, (r.get('waters') or [None])[0], ramps)
+                                if rr:
+                                    c['ramps_closed'] = rr
+                            else:
+                                c['effect'], c['applies_to'] = 'unknown', 'unknown'
+                            if row.get('recurring'):
+                                # The DATES are what cannot be expressed -- `each Saturday until
+                                # noon`, `one week prior to the Federal Waterfowl Season`. Said
+                                # here rather than by throwing the whole record away.
+                                c['dates_not_expressible'] = True
+                                c['note'] = ('the book states this as a repeating window -- a '
+                                             'weekday, or a window relative to another season '
+                                             '-- so the dates on this record cannot be trusted '
+                                             'to open and close it; read the sentence')
                             c['species'] = None
                             c['species_known'] = False
                             c['plan_species'] = []

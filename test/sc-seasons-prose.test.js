@@ -23,13 +23,41 @@ import path from 'node:path';
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SRC = readFileSync(path.join(REPO, 'Scripts/build_regulations_table.py'), 'utf8');
 
-test('a repeating closure is typed unknown, never closed', () => {
-  // The guard exists and says why.
+test('an area closure shuts the arm, not the lake', () => {
+  // SUPERSEDES the original rule here, which forced every repeating closure to `unknown` so it
+  // could not gate a lake. That was the right instinct and the wrong scope. Ryan: "i disagree
+  // that we cant express that... hatchery is a boat launch... i mean they are waters... but they
+  // have boat ramps at them". These sentences shut Cantey Bay, the Hatchery WMA, Potato Creek --
+  // named arms of a lake that is otherwise open, each of them somewhere a person launches.
+  //
+  // Scoped to the WATER there were only two answers and both were wrong: shut Lake Moultrie,
+  // which is absurd, or file it unknown and warn about a lake nobody closed. Scoped to the AREA
+  // it is what the book says and it can never gate the water.
   assert.match(SRC, /RECURRING = re\.compile/);
   assert.match(SRC, /each\|every\|weekly\|daily/);
-  // And where it fires, the effect is forced to unknown so it can never gate.
-  const block = SRC.slice(SRC.indexOf("if row.get('recurring')"));
-  assert.match(block.slice(0, 900), /c\['effect'\], c\['applies_to'\] = 'unknown', 'unknown'/);
+  assert.match(SRC, /def area_closed\(text\)/);
+  const block = SRC.slice(SRC.indexOf("area = row.get('area')"));
+  assert.match(block.slice(0, 3000), /c\['applies_to'\] = 'area'/);
+  assert.match(block.slice(0, 3000), /c\['area'\] = area/);
+  // With no area to name, the old guard still stands -- unknown rather than shutting a water.
+  assert.match(block.slice(0, 3000), /c\['effect'\], c\['applies_to'\] = 'unknown', 'unknown'/);
+});
+
+test('what cannot be expressed is the dates, and it says so', () => {
+  // `each Saturday until noon` and `one week prior to the Federal Waterfowl Season` are not date
+  // ranges. The record keeps its start and end but marks them untrustworthy, rather than the
+  // whole closure being thrown away as unreadable.
+  const block = SRC.slice(SRC.indexOf("area = row.get('area')"));
+  assert.match(block.slice(0, 3000), /c\['dates_not_expressible'\] = True/);
+  assert.match(block.slice(0, 3000), /cannot be trusted/);
+});
+
+test('a closed arm names the ramp somebody would have launched from', () => {
+  // Lake Moultrie has a ramp called Hatchery in registry/_dnr_ramps_sc.json, which is the
+  // closure's own subject. Better to name it than to let somebody drive there and find out.
+  assert.match(SRC, /def ramps_named\(area, slug, ramps\)/);
+  assert.match(SRC, /def load_ramps\(registry, name_map\)/);
+  assert.match(SRC, /c\['ramps_closed'\] = rr/);
 });
 
 test('the sentence is carried once, not repeated across cells', () => {
