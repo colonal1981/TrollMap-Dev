@@ -105,6 +105,15 @@ def resolve(name, name_map):
             tries.append(base[: -len(a)] + b)
     stem = re.sub(r'_(reservoir|lake)$', '', base)
     tries += [stem, 'lake_' + stem, stem + '_lake', stem + '_reservoir']
+    # `Lake Tugaloo` IS `Tugaloo Lake`. The books put the word first and the registry puts it
+    # last, and neither spelling reaches the other through the suffix swaps above -- `Lake
+    # Tugaloo` slugifies to lake_tugaloo, which ends in no suffix to swap, so tugaloo_lake was
+    # never tried and four SC rules on a water we ship went unresolved. Still an EXACT lookup:
+    # this adds one more spelling to ask for, not a fuzzy match.
+    if base.startswith('lake_'):
+        tries.append(base[len('lake_'):] + '_lake')
+    if base.endswith('_lake'):
+        tries.append('lake_' + base[:-len('_lake')])
     for t in tries:
         if t in name_map:
             return name_map[t]
