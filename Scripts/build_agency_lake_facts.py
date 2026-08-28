@@ -535,7 +535,70 @@ def _spans_a_line(row):
     return bool(TWO_STATES.search(blob))
 
 
-def resolve_with_county(name, counties, idx, multimap):
+NAME_STOP = frozenset(('lake', 'lakes', 'reservoir', 'pond', 'the', 'of'))
+
+
+def _name_words(s):
+    s = re.sub(r'\s*\([^)]*\)\s*$', '', s or '').lower()
+    return set(w for w in re.findall(r'[a-z0-9]+', s) if w not in NAME_STOP)
+
+
+def resolve_by_stated_fact(name, state, counties, acres, idx):
+    """The water a short title means, settled by the size the page itself prints.
+
+    GA DNR titles Lake Sidney Lanier's page `Lake Lanier`. So does the registry, for an
+    84.8-acre pond in Greenville County, South Carolina. An exact match on the title lands on
+    the pond, the pond is in the wrong state, and the 38,292-acre reservoir -- the second
+    largest water the card offers -- got no page, no species and no measures at all.
+
+    This is the county rule again with a different fact doing the narrowing, because the GA
+    pages print no county. One name word-for-word inside the other, in the page's own state,
+    ALONE in being both, and a published acreage inside half the step the agency itself
+    rounded to. The agency chose that step when it wrote 38,000 instead of 38,247, so nothing
+    here is a threshold anybody invented: `Lake Paul Wallace` at 300 acres against a held
+    273.3 passes on a number published to the nearest 100, and `Bonneau Ferry WMA Lake` at 100
+    against the 25-acre `Ferry Lake` fails on the same test.
+
+    Returns (slug, why) with `why` always set on a match -- a match made this way should never
+    read like an exact one.
+    """
+    if not (name and state):
+        return None, None
+    pw = _name_words(name)
+    if not pw:
+        return None, None
+    cands = []
+    for slug, row in idx.items():
+        if row.get('feature_type') != 'lake' or state not in (row.get('state') or ''):
+            continue
+        rw = _name_words(row.get('name'))
+        if rw and (pw <= rw or rw <= pw):
+            cands.append(slug)
+    if not cands:
+        return None, None
+    want = {c.strip().lower() for c in COUNTY_SPLIT.split(counties or '') if c.strip()}
+    if want:
+        keep = [s for s in cands
+                if str((idx[s].get('county') or '')).strip().lower() in want]
+        if len(keep) == 1:
+            return keep[0], ('matched on the county both sources name: titled %s, the registry '
+                             'names it %s in %s County'
+                             % (name, idx[keep[0]].get('name'), idx[keep[0]].get('county')))
+    if acres:
+        keep = [s for s in cands
+                if s and idx[s].get('area_acres')
+                and abs(float(acres) - float(idx[s]['area_acres']))
+                <= granularity(float(acres)) / 2.0]
+        if len(keep) == 1:
+            return keep[0], ('matched on the size the page prints: titled %s, the registry '
+                             'names it %s at %.1f acres against the page\'s %g -- inside the '
+                             '%g the page rounded to'
+                             % (name, idx[keep[0]].get('name'), idx[keep[0]]['area_acres'],
+                                float(acres), granularity(float(acres))))
+    return None, None
+
+
+def resolve_with_county(name, counties, state, idx, multimap):
     """The registry slug, disambiguated by the counties the page itself names.
 
     THE PAGE ANSWERS ITS OWN AMBIGUITY. SCDNR prints `Counties Lake is Within: Anderson,
@@ -554,6 +617,15 @@ def resolve_with_county(name, counties, idx, multimap):
                 seen.append(slug)
         if seen:
             break
+    # A PAGE MAY NOT NAME A WATER IN ANOTHER STATE unless the registry says the water is in
+    # both. GA DNR titles Lake Sidney Lanier's page `Lake Lanier`; so does the registry, for
+    # an 84.8-acre pond in Greenville County, South Carolina. With no county printed on the GA
+    # pages there was nothing to catch it, and 38,000 acres of Georgia reservoir was written
+    # onto a South Carolina pond -- silently, because one name match and no county reads as
+    # clean. Every real cross-line match here (Thurmond, Hartwell, Russell, Tugaloo, Yonah,
+    # Wylie) is a water the index itself marks as spanning a line, so they all survive this.
+    seen = [s for s in seen
+            if state in ((idx.get(s) or {}).get('state') or '') or _spans_a_line(idx.get(s) or {})]
     if not seen:
         return None, 'no exact name match'
     if len(seen) == 1:
@@ -603,9 +675,23 @@ def read_one(path, spec, idx, multimap):
     for cand in (page.get('name'), fallback):
         if not cand:
             continue
-        slug, why = resolve_with_county(cand, counties, idx, multimap)
+        slug, why = resolve_with_county(cand, counties, spec['state'], idx, multimap)
         if slug:
             break
+    if not slug:
+        # THE PAGE PRINTS ITS OWN SIZE. Only reached when the title matched nothing, so this
+        # can never re-route a page the name and county already settled.
+        found = dict(page.get('measures') or {})
+        for k, v in measures_in(page['overview']).items():
+            found.setdefault(k, v)
+        acres = (found.get('surface_acres') or {}).get('value')
+        for cand in (page.get('name'), fallback):
+            if not cand:
+                continue
+            slug, note = resolve_by_stated_fact(cand, spec['state'], counties, acres, idx)
+            if slug:
+                why = note
+                break
     return slug, why, page, raw
 
 
