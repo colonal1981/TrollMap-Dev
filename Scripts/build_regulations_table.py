@@ -559,6 +559,15 @@ def read_pdf_state(path, specs):
 #        statewide by construction. Only its water-body exceptions table has an address, in
 #        column 1.
 BAND = re.compile(r'^[A-Z][A-Z0-9 &/\.\'(),-]{3,}$')
+# A BAND THAT NAMES WATER IS A SUB-HEADING, NOT A FISH.
+#
+# NC heads its striped bass block `STRIPED BASS AND BODIE BASS (STRIPED BASS HYBRID)` and then
+# splits it with `INLAND IMPOUNDMENTS AND TRIBUTARIES` and `COASTAL RIVERS AND IMPOUNDMENTS`.
+# Both are all-caps rows with an empty rest, so both read as a new species and overwrote the
+# real one -- which is why North Carolina answered for zero of the fifteen plan species on
+# striped bass while its book plainly sets one.
+ADDRESS_BAND = re.compile(r'\b(WATERS?|IMPOUNDMENTS?|RIVERS?|TRIBUTARIES|LAKES?|RESERVOIRS?|'
+                          r'CREEKS?|SOUNDS?|COASTAL|INLAND|JOINT|STATEWIDE)\b')
 
 SPECS = {
     'SC': ('Regs2627.pdf', [
@@ -674,6 +683,10 @@ def main():
              sorted(tn['page_exists_not_saved']) or '-', tn['unexplained_gap'] or '-'),
           flush=True)
 
+    # Loaded before the state loop because resolve_state_tables() needs it: a band phrase
+    # the map already knows is a species, and only an unknown one is tested for water nouns.
+    smap = load_species_map(R(a.registry))
+
     for st, (fname, specs) in SPECS.items():
         path = R(a.regs, fname)
         if not os.path.exists(path):
@@ -687,7 +700,7 @@ def main():
         doc['states'][st] = blk
         for m in missing:
             doc['problems'].append(dict(m, state=st))
-        res = resolve_state_tables(blk, st, name_map, idx, systems, chain, specs)
+        res = resolve_state_tables(blk, st, name_map, idx, systems, chain, specs, smap)
         blk['resolution'] = res
         for f in res['system_assertion_failures']:
             doc['problems'].append(dict(f, state=st))
@@ -702,7 +715,6 @@ def main():
         for f in res['system_assertion_failures']:
             print('   !! SYSTEM ASSERTION FAILED %s' % f, flush=True)
 
-    smap = load_species_map(R(a.registry))
     by_water, statewide = project_by_water(doc, idx, SPECS, smap)
     doc['by_water'] = by_water
     doc['statewide'] = statewide
@@ -1234,7 +1246,16 @@ def opts_for(specs, key):
     return {}
 
 
-def resolve_state_tables(block, state, name_map, idx, systems, chain, specs=()):
+def smap_phrases(smap):
+    """Every phrase registry/species_map.json knows, in one set."""
+    out = set(smap.get('book_phrases') or {})
+    for blk in ('partly_mapped', 'no_home_in_the_form'):
+        out |= {k for k in (smap.get(blk) or {}) if not k.startswith('_')}
+    return out
+
+
+def resolve_state_tables(block, state, name_map, idx, systems, chain, specs=(),
+                         smap=None):
     """Attach resolved waters to every row of every table already read for a state."""
     sysmembers, sysproblems = {}, []
     for key, defn in (systems.get('systems') or {}).items():
@@ -1258,6 +1279,20 @@ def resolve_state_tables(block, state, name_map, idx, systems, chain, specs=()):
                 if o.get('species_bands') and first and BAND.match(first) \
                         and not any(c for c in cells[1:]):
                     # `WHITE BASS` heads the band; the addresses live in the rows beneath it.
+                    #
+                    # ORDER MATTERS AND KEEPS THE UNMAPPED CHECK HONEST. A phrase the species
+                    # map already knows is a species, whatever words are in it. Only a phrase
+                    # the map does NOT know is tested for water nouns, so a genuinely new
+                    # species band still reaches check_species_map() and fails loudly there
+                    # instead of being quietly demoted to a sub-heading.
+                    known = smap_phrases(smap)
+                    if first not in known and ADDRESS_BAND.search(first):
+                        row['address_band'] = first
+                        row['is_band_heading'] = True
+                        if band:
+                            row['species_band'] = band
+                        stats['address_band'] += 1
+                        continue
                     band = first
                     row['species_band'] = first
                     row['is_band_heading'] = True
@@ -1758,6 +1793,12 @@ def check_species_map(doc, registry):
         for r in recs:
             if r.get('species'):
                 seen.add(r['species'])
+            # AND THE BAND, which is where a banded table keeps its species. by_water records
+            # carry it as `species_band`, so every NC species reached this check as nothing at
+            # all -- `STRIPED BASS AND BODIE BASS (STRIPED BASS HYBRID)` among them, on three
+            # waters, while the run reported 0 unmapped.
+            if r.get('species_band'):
+                seen.add(r['species_band'])
             for c in (r.get('closures') or []):
                 if c.get('species'):
                     seen.add(c['species'])
