@@ -464,7 +464,7 @@ SPECS = {
         ('striped_white_hybrid_bass', ['water body', 'fish', 'size limit'], list(range(28, 40)),
          {'water_col': 0}),
         ('state_lakes', ['county', 'water body', 'open days'], list(range(32, 42)),
-         {'water_col': 1}),
+         {'water_col': 1, 'county_col': 0}),
     ]),
     'NC': ('nc_digest_2026_2027.pdf', [
         # NC's header text is cut by the column rules -- `SIZE LIMIT` arrives as `SIZE LIM`
@@ -977,7 +977,49 @@ def check_system(members, defn):
     return bad
 
 
-def resolve_water_body(text, state, name_map, idx, systems, chain, sysmembers):
+COUNTY_NAME_STOP = frozenset(('lake', 'lakes', 'reservoir', 'pond', 'the', 'of'))
+
+
+def _bare_words(s):
+    s = re.sub(r'\s*\([^)]*\)\s*$', '', s or '').lower().replace(u'\u2019', "'")
+    return set(w for w in re.findall(r"[a-z0-9]+", s) if w not in COUNTY_NAME_STOP)
+
+
+def resolve_by_county(name, county, state, idx):
+    """A book name word-for-word inside the registry's, settled by the county the row prints.
+
+    THE BOOK AND THE REGISTRY DO NOT HAVE TO AGREE ON A NAME TO BE TALKING ABOUT THE SAME
+    WATER. SCDNR's state lakes table says `Lake Paul Wallace`; the registry says `Lake
+    Wallace`, Marlboro County. resolve() is exact by design and found nothing, the join
+    dropped the row without a word, and the 2026-2027 book's `Currently closed pending
+    repairs` -- the dam went out after the 2025-2026 book was printed -- never reached the
+    water. The card showed it open.
+
+    This is not a fuzzy match. Every word of one name is in the other, the water is in the
+    book's state, the county the book prints in its own column equals the county the registry
+    holds, and EXACTLY ONE water survives all three. Anything else returns None and is
+    reported.
+    """
+    if not (name and county and state):
+        return None
+    pw = _bare_words(name)
+    if not pw:
+        return None
+    want = norm(county).strip().lower()
+    keep = []
+    for slug, row in idx.items():
+        if row.get('feature_type') != 'lake' or state not in (row.get('state') or ''):
+            continue
+        if norm(str(row.get('county') or '')).strip().lower() != want:
+            continue
+        rw = _bare_words(row.get('name'))
+        if rw and (pw <= rw or rw <= pw):
+            keep.append(slug)
+    return keep[0] if len(keep) == 1 else None
+
+
+def resolve_water_body(text, state, name_map, idx, systems, chain, sysmembers,
+                       county=None):
     """One book address -> {kind, waters, unresolved}. Never a guess: anything that does not
     resolve is named in `unresolved` so it can be seen rather than silently dropped."""
     t = norm(text)
@@ -1014,7 +1056,9 @@ def resolve_water_body(text, state, name_map, idx, systems, chain, sysmembers):
         # dropping the parenthetical is exactly how the OTHER Lake Robinson's full pool of
         # 900 ft ended up on this one. If the book names a county, the registry row must agree.
         cm = COUNTY.search(p)
-        want_county = norm(cm.group(1)) if cm else None
+        # The address carries its own county in NC and GA. SC's state lakes table puts it in a
+        # column instead, so the caller hands it in -- same fact, different place on the page.
+        want_county = norm(cm.group(1)) if cm else (norm(county) if county else None)
         slug = resolve(p2, name_map)
         if slug and want_county:
             got = norm((idx.get(slug) or {}).get('county') or '')
@@ -1044,6 +1088,12 @@ def resolve_water_body(text, state, name_map, idx, systems, chain, sysmembers):
                     unresolved.append({'text': p, 'why': 'county mismatch: book says %s, '
                                        '%s is in %s' % (want_county, slug, got)})
                     continue
+        if not slug and want_county:
+            slug = resolve_by_county(p2, want_county, state, idx)
+            if slug:
+                waters.append(slug)
+                kinds.add('name+county')
+                continue
         if slug:
             waters.append(slug)
             kinds.add('name')
@@ -1112,7 +1162,10 @@ def resolve_state_tables(block, state, name_map, idx, systems, chain, specs=()):
                         row['resolved'] = dict(last, inherited_from_row_above=True)
                     continue
                 addr = cells[wcol] if len(cells) > wcol else ''
-                r = resolve_water_body(addr, state, name_map, idx, systems, chain, sysmembers)
+                ccol = o.get('county_col')
+                cty = cells[ccol] if (ccol is not None and len(cells) > ccol) else None
+                r = resolve_water_body(addr, state, name_map, idx, systems, chain, sysmembers,
+                                       county=cty)
                 if r:
                     row['resolved'] = r
                     if r.get('waters') or r['kind'] in ('statewide', 'implicit'):
@@ -1255,10 +1308,43 @@ def project_by_water(doc, idx, all_specs=None, smap=None):
                         statewide.setdefault(st, []).append(rec)
                     for slug in r.get('waters') or []:
                         add(slug, dict(rec, matched_via=r.get('kind')))
+        nmap = build_name_map(idx)
         for slug, lake in ((blk.get('state_lakes') or {}).get('lakes') or {}).items():
-            hit = resolve(lake['water_body'], build_name_map(idx))
+            hit = resolve(lake['water_body'], nmap) \
+                or resolve_by_county(lake['water_body'], lake.get('county'), st, idx)
             if hit:
-                add(hit, {'source': '%s state lakes table' % st, 'state_lake': lake})
+                rec = {'source': '%s state lakes table' % st, 'state_lake': lake}
+                # THE COLUMN SAYS IT, SO THE SENTENCE DOES NOT HAVE TO. closures_in() reads
+                # prose and is deliberately tight -- it wants `closed to boating and fishing`
+                # or a date window. The 2026-2027 book shuts Lake Paul Wallace with
+                # `Every day (Currently closed pending repairs)`, which is neither, so the
+                # water bound and still read as open. This table has a column whose whole job
+                # is to say which days the water is open; when that column says closed, that
+                # IS the closure, and the book's own sentence travels with it. Loosening the
+                # prose regex instead would have put false closures through 124 pages.
+                shut = re.search(r'\bclosed\b', lake.get('open_days') or '', re.I)
+                already = {c.get('text') for r in (by.get(hit, {}).get('rules') or [])
+                           for c in (r.get('closures') or [])}
+                if shut and lake['open_days'] not in already:
+                    rec['closures'] = [{
+                        'effect': 'closed', 'applies_to': 'all_fishing',
+                        'start': None, 'end': None, 'text': lake['open_days'],
+                        'note': 'the OPEN DAYS column of the state lakes table says so, and '
+                                'this table has no species column -- it shuts the water',
+                        'species': None, 'species_known': False,
+                        'plan_species': list((smap or {}).get('plan_species', {})
+                                             .get('values') or []),
+                        'species_basis': 'every species -- the water is shut',
+                    }]
+                add(hit, rec)
+            else:
+                # A STATE LAKE THAT BINDS TO NOTHING USED TO VANISH HERE. Three of these
+                # eighteen rows say the water is shut; one of the three is a water the card
+                # offers. Silence is what let it ship open.
+                doc.setdefault('problems', []).append(
+                    {'state': st, 'why': 'state lakes row bound to no registry water',
+                     'water_body': lake.get('water_body'), 'county': lake.get('county'),
+                     'closed': lake.get('closed')})
     return by, statewide
 
 
