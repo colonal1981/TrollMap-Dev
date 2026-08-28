@@ -340,6 +340,40 @@ def collect_tables(pdf, headers, pages):
     return out
 
 
+def pages_the_rules_hid(pdf, headers, pages, taken):
+    """Pages whose TEXT carries this table and whose RULING would not give it up.
+
+    ABSENCE HAS TO BE PART OF THE VERDICT, NOT A FOOTNOTE UNDER IT -- the same lesson
+    chart_currency.py learned about a tile the current store does not have.
+
+    NC's nongame table runs over two pages. Page 14 extracts cleanly. Page 15 -- GRASS CARP,
+    KING MACKEREL, MULLET, RIVER HERRING, and the grass carp possession bans naming Lake James,
+    Lookout Shoals, Mountain Island, Wylie, Gaston, Kerr, Norman and Roanoke Rapids -- comes back
+    from the ruled reader as single merged cells like `Inland Fi NONG SPECIES GRASS C`. The
+    table was found, the run said so, and half of it was never read. Nothing reported that,
+    because "found a table" and "read the table" were the same sentence.
+
+    This is deliberately a TEXT test, not another table strategy: if the words are on the page
+    and no ruled row matched them, that is a page a person needs to know about.
+    """
+    want = [h.lower() for h in headers]
+    hid = []
+    for n in pages:
+        if n in taken:
+            continue
+        try:
+            txt = (pdf.pages[n - 1].extract_text() or '').lower()
+        except Exception:
+            continue
+        # ON ONE LINE, because a header row is one line. Against the whole page this fired on
+        # six tables at once, including NC page 1 -- an introduction that happens to use the
+        # words species, size limit and creel in prose. A list that cries wolf is a list nobody
+        # reads, which is the same failure as reporting nothing.
+        if any(all(w in line for w in want) for line in txt.splitlines()):
+            hid.append(n)
+    return hid
+
+
 def find_table(pdf, headers, pages):
     """The first table whose header row contains all of `headers`. Page numbers move between
     editions; column headings do not, so the table is found by its own header, not by page."""
@@ -436,6 +470,17 @@ def read_pdf_state(path, specs):
             if not found:
                 missing.append({'table': key, 'looked_for': headers, 'pages_searched': pages})
                 continue
+            # The state lakes spread's RIGHT page is read by read_sc_state_lakes() below, by
+            # position rather than by header, so it is not unread -- it is read elsewhere.
+            seen_pages = {f['page'] for f in found}
+            if key == 'state_lakes':
+                seen_pages |= {p + 1 for p in seen_pages}
+            hid = pages_the_rules_hid(pdf, headers, pages, seen_pages)
+            if hid:
+                missing.append({'table': key, 'why': 'the page carries this table in its text '
+                                'and its ruling yields no matching row -- READ BUT NOT ALL OF '
+                                'IT', 'pages_not_read': hid,
+                                'pages_read': sorted({f['page'] for f in found})})
             got[key] = found
         sc_lakes = None
         if any(k == 'state_lakes' for k, _, _, _ in specs):
@@ -476,6 +521,17 @@ SPECS = {
         # NC's header text is cut by the column rules -- `SIZE LIMIT` arrives as `SIZE LIM`
         # plus `IT` in two cells -- so the match is on fragments that survive the split.
         ('warmwater_game_fish', ['species', 'size lim', 'creel'], list(range(1, 9)),
+         {'water_col': 0, 'species_bands': True}),
+        # NONGAME, added 2026-08-28 because Ryan asked whether it was being read. It was not,
+        # and it carries a PLAN SPECIES: `CATFISH (BLUE, CHANNEL, & FLATHEAD)` with named-water
+        # exceptions -- the Pee Dee below Blewett Falls at 5 in combination, Badin Lake and the
+        # Dan River with no creel limit on blue catfish. Cobia carries a season in its creel
+        # cell, `1 (May 1 - Dec. 31)`, the same shape as flounder's in the game table.
+        #
+        # `creel` is NOT a usable header fragment here: the column rule cuts DAILY CREEL LIMIT
+        # into `DAILY CR` and `EEL LIMIT`, so the word creel survives in neither cell. Matching
+        # on it found nothing and read as "this table does not exist".
+        ('nongame_fish', ['species', 'size lim', 'daily cr'], list(range(12, 16)),
          {'water_col': 0, 'species_bands': True}),
     ]),
     'GA': ('ga_digest_2026_2027.pdf', [
@@ -1285,7 +1341,17 @@ def project_by_water(doc, idx, all_specs=None, smap=None):
                     # the rule was written as "column 1 where column 0 is the address". So all
                     # 31 saltwater rows came out with no species and `shuts the water`.
                     scol = o2.get('species_col')
-                    if scol is not None and len(row['cells']) > scol \
+                    if o2.get('species_bands') and band:
+                        # THE BAND IS THE SPECIES ON A BANDED TABLE, and column 1 is a size
+                        # limit. NC heads each block with an all-caps species -- FLOUNDER, RED
+                        # DRUM, SPOTTED SEATROUT -- and puts the water in column 0 and the
+                        # length in column 1. The "column 1 is the fish where column 0 is the
+                        # address" rule took the length, so NC's only closure in the whole book,
+                        # flounder's two-week season `1 (Sept. 1 - Sept. 14.)`, arrived on a
+                        # species called `15-inch minimum`. The spec already said species_bands;
+                        # this believes it.
+                        sp = band
+                    elif scol is not None and len(row['cells']) > scol \
                             and row['cells'][scol] and not row.get('continuation'):
                         sp = row['cells'][scol]
                     elif o2.get('water_col', 0) == 0 and len(row['cells']) > 1 \
