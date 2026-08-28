@@ -50,7 +50,31 @@ def collect(doc, idx):
     for slug, w in doc.get('by_water', {}).items():
         row = idx.get(slug) or {}
         rules = []
+        facts = None
         for r in (w.get('rules') or []):
+            # SC'S STATE LAKES TABLE IS THE RICHEST RECORD IN THE BOOK AND THIS PRINTED NONE OF
+            # IT. Lake Ashwood carries catfish 5, bass 3, bream 15, the days it is open, the
+            # hours, and the motor it allows -- and the first version of this page showed two
+            # rows of `no fish named` and a pair of dashes, because it only ever looked at
+            # species/size/creel. Ryan opened it on the second water he checked.
+            sl = r.get('state_lake')
+            if sl:
+                facts = {
+                    'acres': clean(sl.get('acres')), 'open_days': clean(sl.get('open_days')),
+                    'hours': clean(sl.get('open_to_fishing')),
+                    'motor': clean(sl.get('max_boat_motor_hp')),
+                    'closed': bool(sl.get('closed')),
+                }
+                for fish, v in (sl.get('limits') or {}).items():
+                    v = clean(v)
+                    if not v:
+                        continue
+                    rules.append({
+                        'species': fish.replace('_', ' ').title(), 'size': None, 'creel': None,
+                        'whole': v, 'text': None, 'source': 'SC state lakes table',
+                        'page': None, 'closures': [], 'plan': [], 'via': 'state lakes table',
+                    })
+                continue
             # TN's agency-page records nest their own rules; flatten so the page has one shape.
             inner = r.get('rules')
             if isinstance(inner, list) and inner and isinstance(inner[0], dict) \
@@ -76,10 +100,16 @@ def collect(doc, idx):
                         'plan': ir.get('plan_species') or [], 'via': 'agency page',
                     })
                 continue
+            body = clean(' | '.join(str(c) for c in (r.get('cells') or []) if c))
+            sp0 = clean(r.get('species')) or clean(r.get('species_band'))
+            sz0, cr0 = clean(r.get('size_limit')), clean(r.get('creel_limit'))
             rules.append({
-                'species': clean(r.get('species')) or clean(r.get('species_band')),
-                'size': clean(r.get('size_limit')), 'creel': clean(r.get('creel_limit')),
-                'text': clean(' | '.join(str(c) for c in (r.get('cells') or []) if c)),
+                'species': sp0, 'size': sz0, 'creel': cr0,
+                # WHAT THE ROW SAYS, when it says it in a sentence instead of two columns. The
+                # demarcation clauses and SC's seasons bullets have no species and no numbers;
+                # printed as dashes they read as a record with nothing in it.
+                'whole': None if (sz0 or cr0) else body,
+                'text': body,
                 'source': clean(r.get('source')), 'page': r.get('page'),
                 'via': clean(r.get('matched_via')) or clean(r.get('table')),
                 'reach': bool(r.get('address_is_a_reach')),
@@ -97,8 +127,20 @@ def collect(doc, idx):
         waters.append({
             'slug': slug, 'name': w.get('display_name') or slug,
             'state': w.get('state') or row.get('state') or '?',
-            'kind': row.get('feature_type') or '?', 'rules': rules,
+            'kind': row.get('feature_type') or '?', 'rules': rules, 'facts': facts,
         })
+    # EVERY WATER WE OFFER, NOT ONLY THE ONES THE BOOKS NAME. Ryan: "how does smart plan put
+    # out the size limit on a lake that does not have an exception... this seems to only list
+    # exceptions to the rule". It did, and that is half the answer: a lake with no rule of its
+    # own is not a lake with no law, it is a lake the state default governs. Listing only the
+    # exceptions makes the other 257 look unanswered when they are the ordinary case.
+    have = {w['slug'] for w in waters}
+    for slug, row in idx.items():
+        if slug in have or not row.get('state'):
+            continue
+        waters.append({'slug': slug, 'name': row.get('display_name') or slug,
+                       'state': row['state'], 'kind': row.get('feature_type') or '?',
+                       'rules': [], 'facts': None})
     waters.sort(key=lambda x: (x['state'], x['name'].lower()))
 
     statewide = {}
@@ -223,6 +265,8 @@ h2{font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted
 .warnline{background:var(--warn-soft);color:var(--warn)}
 .noteline{background:var(--ground);color:var(--muted);border:1px solid var(--line)}
 .shutx{color:var(--shut);font-weight:600}
+.facts{margin:9px 0 0;font-size:13px;color:var(--muted)}
+.facts a{color:var(--accent)}
 .shutline b,.warnline b,.noteline b{font-family:"JetBrains Mono",monospace;font-size:12.5px;
   text-transform:uppercase;letter-spacing:.04em}
 details{margin-top:9px}
@@ -241,6 +285,7 @@ details p{margin:7px 0 0;font-size:13px;color:var(--muted);
 
 JS = """
 const q=document.getElementById('q'), only=document.getElementById('only');
+const ownBtn=document.getElementById('ownonly'); let ownOnly=false;
 const stateBtns=[...document.querySelectorAll('[data-state]')];
 let st='ALL', shutOnly=false;
 function apply(){
@@ -250,7 +295,8 @@ function apply(){
     const okS = st==='ALL' || el.dataset.state===st;
     const okT = !t || el.dataset.find.includes(t);
     const okC = !shutOnly || el.dataset.shut==='1';
-    const on = okS && okT && okC;
+    const okO = !ownOnly || el.dataset.own==='1';
+    const on = okS && okT && okC && okO;
     el.hidden = !on; if(on) shown++;
   });
   document.querySelectorAll('section[data-state]').forEach(el=>{
@@ -261,6 +307,7 @@ function apply(){
 }
 q.addEventListener('input',apply);
 only.addEventListener('click',()=>{shutOnly=!shutOnly;only.setAttribute('aria-pressed',shutOnly);apply();});
+ownBtn.addEventListener('click',()=>{ownOnly=!ownOnly;ownBtn.setAttribute('aria-pressed',ownOnly);apply();});
 stateBtns.forEach(b=>b.addEventListener('click',()=>{
   st=b.dataset.state; stateBtns.forEach(x=>x.setAttribute('aria-pressed',x===b)); apply();
 }));
@@ -288,8 +335,10 @@ def render_water(w):
     unknown = any(c.get('effect') == 'unknown' for r in w['rules'] for c in r['closures'])
     find = (w['name'] + ' ' + w['slug'] + ' ' + ' '.join(
         (r['species'] or '') for r in w['rules'])).lower()
-    out = ['<article class="water%s" data-state="%s" data-shut="%s" data-find="%s">'
-           % (' shut' if shut else '', E(w['state']), '1' if (shut or unknown) else '0', E(find))]
+    own = '1' if w['rules'] else '0'
+    out = ['<article class="water%s" data-state="%s" data-shut="%s" data-own="%s" data-find="%s">'
+           % (' shut' if shut else '', E(w['state']), '1' if (shut or unknown) else '0',
+              own, E(find))]
     out.append('<div class="wname"><h3>%s</h3><span class="chip">%s</span>'
                % (E(w['name']), E(w['kind'])))
     if shut:
@@ -300,6 +349,27 @@ def render_water(w):
         out.append('<span class="chip warn">text not read cleanly</span>')
     out.append('</div>')
 
+    f = w.get('facts')
+    if f:
+        bits = []
+        if f.get('acres'):
+            bits.append('%s acres' % f['acres'])
+        for k in ('open_days', 'hours', 'motor'):
+            if f.get(k):
+                bits.append(f[k])
+        if f.get('closed'):
+            bits.insert(0, 'CLOSED')
+        out.append('<p class="facts">%s</p>' % E(' &middot; '.join(bits)))
+
+    if not w['rules']:
+        out.append('<p class="facts">No rule of its own in the book. Smart plan answers from '
+                   'the <a href="#sw-%s">%s statewide limits</a> below &mdash; that is the law '
+                   'here, not a gap.</p></article>' % (E(w['state']), E(w['state'])))
+        return ''.join(out)
+
+    out.append('<p class="facts">Its own rules, which beat the state default. Anything not '
+               'listed falls to the <a href="#sw-%s">%s statewide limits</a>.</p>' 
+               % (E(w['state']), E(w['state'])))
     out.append('<table class="tbl"><thead><tr><th class="sp">Fish</th>'
                '<th class="lim">Size limit</th><th class="lim">Creel limit</th>'
                '<th class="src">From</th></tr></thead><tbody>')
@@ -369,8 +439,7 @@ def render(doc, waters, statewide, unbound, offered):
         % (st, sum(1 for w in waters if w['state'] == st), offered.get(st, 0))
         for st in states)
 
-    parts = ['<h2>Waters the books name directly &mdash; <span id="count" class="mono"></span> '
-             'shown</h2>']
+    parts = ['<h2>Every water we offer &mdash; <span id="count" class="mono"></span> shown</h2>']
     parts += [render_water(w) for w in waters]
     parts.append('<p class="empty" id="none" hidden>Nothing matches that.</p>')
 
@@ -379,10 +448,11 @@ def render(doc, waters, statewide, unbound, offered):
         rows = [r for r in statewide.get(st, []) if not r['coastal']]
         if not rows:
             continue
-        sw.append('<section data-state="%s"><h2>%s &mdash; what every other water gets</h2>'
+        sw.append('<section data-state="%s" id="sw-%s"><h2>%s &mdash; the statewide limits, '
+                  'which govern every water above that has no rule of its own</h2>'
                   '<table class="tbl"><thead><tr><th class="sp">Fish</th>'
                   '<th class="lim">Size limit</th><th class="lim">Creel limit</th>'
-                  '<th class="src">Reaches the plan as</th></tr></thead><tbody>' % (st, st))
+                  '<th class="src">Reaches the plan as</th></tr></thead><tbody>' % (st, st, st))
         for r in rows:
             plan = ', '.join(r['plan']) if r['plan'] else \
                 '<span style="color:var(--muted)">no checkbox for this fish</span>'
@@ -413,11 +483,25 @@ def render(doc, waters, statewide, unbound, offered):
     chips = '<button data-state="ALL" aria-pressed="true">All states</button>' + ''.join(
         '<button data-state="%s" aria-pressed="false">%s</button>' % (st, st) for st in states)
 
-    return """<title>TrollMap Regulations Check</title>
+    # A COMPLETE DOCUMENT, because this is opened as a file on a disk.
+    #
+    # The first cut of this emitted a body fragment -- no doctype, no charset, no viewport --
+    # which is the right shape for a hosted page that gets wrapped, and completely wrong for
+    # the thing this script actually writes. A browser opening it from F:\ falls back to the
+    # system code page, so every em dash and bullet in it renders as mojibake, and with no
+    # doctype the whole layout renders in quirks mode. It looked broken because it was.
+    return """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TrollMap Regulations Check</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;600&family=JetBrains+Mono:wght@400;500&family=Source+Sans+3:wght@400;600&display=swap">
 <style>%s</style>
+</head>
+<body>
 <header><div class="wrap">
   <h1>What the books say about our waters</h1>
   <p class="sub">Every rule the four state digests set on a water TrollMap offers, printed the
@@ -431,9 +515,12 @@ def render(doc, waters, statewide, unbound, offered):
   <input type="search" id="q" placeholder="Find a lake, river or fish&hellip;" aria-label="Find a water">
   %s
   <button id="only" aria-pressed="false">Closures only</button>
+  <button id="ownonly" aria-pressed="false">Has its own rule</button>
 </div></div>
 <main><div class="wrap"><section>%s</section>%s%s</div></main>
 <script>%s</script>
+</body>
+</html>
 """ % (CSS, tiles, E(str(doc.get('read') or 'unknown')), chips,
        ''.join(parts), ''.join(sw), ''.join(ub), JS)
 
@@ -444,14 +531,23 @@ def main():
     ap.add_argument('--root', default='.')
     ap.add_argument('--registry', default='registry')
     ap.add_argument('--out', default=None, help='default <registry>/_regulations_check.html')
+    ap.add_argument('--fragment', action='store_true',
+                    help='emit the body only, for a host that supplies its own <head>. The '
+                         'default is a complete document, which is what a file on a disk has '
+                         'to be.')
     a = ap.parse_args()
     reg = os.path.join(a.root, a.registry)
     doc = load(os.path.join(reg, 'regulations_table.json'))
     idx = load(os.path.join(reg, 'lake_index.json'))
     waters, statewide, unbound, offered = collect(doc, idx)
     out = a.out or os.path.join(reg, '_regulations_check.html')
+    page = render(doc, waters, statewide, unbound, offered)
+    if a.fragment:
+        page = page[page.index('<style>'):].replace('</head>\n<body>', '', 1) \
+                                           .replace('</body>\n</html>', '', 1)
+        page = '<title>TrollMap Regulations Check</title>\n' + page
     with open(out, 'w', encoding='utf-8', newline='\n') as fh:
-        fh.write(render(doc, waters, statewide, unbound, offered))
+        fh.write(page)
     print('%d waters with a rule of their own, %d statewide rows, %d unbound addresses'
           % (len(waters), sum(len(v) for v in statewide.values()),
              sum(len(v) for v in unbound.values())), flush=True)

@@ -2163,20 +2163,63 @@ def load_systems(registry):
     return json.load(open(p, encoding='utf-8')) if os.path.exists(p) else {'systems': {}}
 
 
-def system_members(chain, defn):
-    """Waters inside a book system: walk upstream from the root, stop at the named dams."""
+def system_members(chain, defn, idx=None):
+    """Waters inside a book system: walk upstream from the root, stop at the named dams, and
+    keep the river -- not everything that drains into it.
+
+    A TRIBUTARY IS FLOWING WATER. Ryan, when this handed Adams Mill Pond a striped bass closure:
+    "including tributaries means creeks and rivers of that lake or river". The first version
+    took every node the upstream walk reached, and SCDNR's Santee system reaches a long way --
+    so a striper closure landed on Sesquicentennial Pond in a Columbia state park, on Hunt Pond,
+    on Lake Katherine, on Adams Mill Pond off the Wateree. Nine waters carried law written for
+    a river system they merely drain into, which is the kind of wrong that costs the whole table
+    its credibility.
+
+    The chain already knows the difference and nothing had asked it. A pond hangs off the
+    mainstem as a leaf; the river runs THROUGH its own impoundments. So:
+
+        every reachable water that is not a lake is in -- those are the creeks and rivers
+        a lake is in only if the river reaches it, which is to say one of its own upstream
+          waters is already in
+
+    The second test has to settle rather than fire once: Lake Moultrie's only upstream is Lake
+    Marion, and Marion is in because the Congaree and the Wateree run into it. One pass would
+    keep Marion and drop Moultrie, so this runs to a fixpoint and the mainstem comes in whole
+    however many impoundments the river was cut into.
+
+    Lake Katherine is the case that proves it is not just "has any upstream at all": its one
+    upstream is Sesquicentennial Pond, which is itself out, so Katherine stays out too.
+    """
     stops = set((defn.get('stop_at') or {}).keys())
-    seen, out, q = set(), [], [defn['root']]
+    seen, reach, q = set(), [], [defn['root']]
     while q:
         s = q.pop()
         if s in seen or s in stops:
             continue
         seen.add(s)
         if s in chain:
-            out.append(s)
+            reach.append(s)
         for u in (chain.get(s) or {}).get('upstream') or []:
             q.append(u)
-    return sorted(out)
+
+    idx = idx or {}
+    def is_lake(slug):
+        # A water the registry does not carry cannot be judged, and the ones in this position
+        # are unnamed NHD nodes the chain uses to route -- treated as flowing water, which is
+        # what they are.
+        return (idx.get(slug) or {}).get('feature_type') == 'lake'
+
+    inside = {s for s in reach if not is_lake(s)}
+    changed = True
+    while changed:
+        changed = False
+        for s in reach:
+            if s in inside:
+                continue
+            if any(u in inside for u in ((chain.get(s) or {}).get('upstream') or [])):
+                inside.add(s)
+                changed = True
+    return sorted(inside)
 
 
 def check_system(members, defn):
@@ -2514,7 +2557,7 @@ def resolve_state_tables(block, state, name_map, idx, systems, chain, specs=(),
     for key, defn in (systems.get('systems') or {}).items():
         if not key.startswith(state + ':'):
             continue
-        mem = system_members(chain, defn)
+        mem = system_members(chain, defn, idx)
         bad = check_system(mem, defn)
         sysmembers[key] = mem
         if bad:
