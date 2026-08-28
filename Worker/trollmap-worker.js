@@ -1558,6 +1558,12 @@ var trollmap_worker_default = {
                 }
                 bookStatewide.push({
                   species: r.species || null,
+                  // The two numbers a caller actually asks for, pulled out at build time by
+                  // reading which column is which off the book's own header. livePolicyFor()
+                  // reads sizeLimit and creelLimit and nothing else, so a record carrying only
+                  // `cells` would arrive and be dropped.
+                  size_limit: r.size_limit || null,
+                  creel_limit: r.creel_limit || null,
                   // Resolved at BUILD time from registry/species_map.json. An empty array here
                   // means the book named a fish the plan form has no checkbox for -- NOT that
                   // the lookup failed; `species_basis` is what says which.

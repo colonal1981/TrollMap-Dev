@@ -347,8 +347,13 @@ def page_word_oracle(pdf, page_no, spread=1):
 
 def _join_fragments(x, y, page_words):
     """Two halves of one printed line, joined the way the page says they were."""
+    # THE SPACE IS TRIED FIRST SO IT WINS A TIE, and ties are the common case: `14` + `inches`
+    # scores the same either way, because the oracle only looks at letter runs and `14inches`
+    # still yields `inches`. Joining them gave `less than 14inches` on NC's page 2. Where the
+    # cut really is mid-word the closed form wins outright -- `inclu` + `ding` is two unknown
+    # words apart and one known word together -- so preferring the space costs nothing there.
     best, best_bad = None, None
-    for sep in ('', ' '):
+    for sep in (' ', ''):
         cand = x + sep + y
         bad = sum(1 for w in re.findall(r'[a-z]{3,}', cand.lower()) if w not in page_words)
         if best_bad is None or bad < best_bad:
@@ -1251,16 +1256,24 @@ def read_tn_statewide(path, page=1):
             for hdr_i in range(0, min(4, len(t))):
                 joined = ' | '.join(c.lower() for c in t[hdr_i])
                 if 'species' in joined and 'creel' in joined:
+                    # Off the same header every other table's are read from. These records are
+                    # built here rather than in the row loop, which is twice now the reason
+                    # they missed something the rest of the pipeline does for free.
+                    scol, ccol = limit_columns(t[hdr_i])
                     out = []
                     for row in rows_after(t, hdr_i):
                         cells = row['cells'] if isinstance(row, dict) else row
                         sp = (cells[0] or '').strip() if cells else ''
                         if not sp:
                             continue
-                        out.append({'source': 'TN tn_digest_2026_2027.pdf',
-                                    'table': 'tn_statewide', 'label': 'page %d' % page,
-                                    'page': page, 'address': 'Statewide',
-                                    'cells': list(cells), 'species': sp})
+                        rec = {'source': 'TN tn_digest_2026_2027.pdf',
+                               'table': 'tn_statewide', 'label': 'page %d' % page,
+                               'page': page, 'address': 'Statewide',
+                               'cells': list(cells), 'species': sp}
+                        for fld, ix in (('size_limit', scol), ('creel_limit', ccol)):
+                            if ix is not None and ix < len(cells) and cells[ix]:
+                                rec[fld] = cells[ix]
+                        out.append(rec)
                     return out
     return []
 
@@ -2503,6 +2516,32 @@ def expand_species(phrase, smap):
     return {'plan_species': [], 'basis': 'UNMAPPED'}
 
 
+# WHICH COLUMN IS THE SIZE AND WHICH IS THE CREEL, read off the header the table prints.
+#
+# Declaring them per spec was the obvious alternative and it is worse: SC's book is 124 pages
+# nobody in this session could open, and a column index typed for a table you have not seen is
+# a guess wearing a fact's clothes. The header says it in the book's own words, it survives the
+# column rules splitting it -- `DAILY CR` + `EEL LIMIT` still starts in the cell the value is
+# in -- and a book that renames its columns next year fails loudly instead of quietly reading
+# the wrong one.
+SIZE_COL = re.compile(r'size lim|minimum size|length lim|\bsize\b', re.I)
+CREEL_COL = re.compile(r'creel|daily cr|daily limit|possession limit|bag limit', re.I)
+
+
+def limit_columns(header):
+    """(size, creel) column indexes for a table, or None where the book prints no such column.
+
+    GA's statewide table has a DAILY LIMIT and no size column at all -- its length limits are on
+    the prose page, which is what Ryan said when he sent it: "size limits for georgia are not on
+    the chart, they are on the page before that". None here means the book does not print one,
+    which is a different answer from a column nobody looked for.
+    """
+    h = [str(c or '') for c in (header or [])]
+    size = next((i for i, c in enumerate(h) if SIZE_COL.search(c)), None)
+    creel = next((i for i, c in enumerate(h) if CREEL_COL.search(c)), None)
+    return size, creel
+
+
 def project_by_water(doc, idx, all_specs=None, smap=None):
     by = {}
     # DECLARED BEFORE THE FIRST WRITER, not beside the loop that writes it most. The TN block
@@ -2563,6 +2602,15 @@ def project_by_water(doc, idx, all_specs=None, smap=None):
                     rec = {'source': '%s %s' % (st, blk.get('source_file')),
                            'table': key, 'label': tb.get('label'), 'page': tb.get('page'),
                            'address': r.get('text'), 'cells': row['cells']}
+                    # THE TWO NUMBERS A PERSON ACTUALLY ASKS FOR, pulled out at build time so
+                    # no consumer has to work out which cell is which. The browser's callers
+                    # read sizeLimit and creelLimit and nothing else; a record that carries
+                    # only `cells` reaches them as an anonymous list and is dropped, which is
+                    # the same shape of failure as the note that neither caller read.
+                    scol_i, ccol_i = limit_columns(tb.get('header'))
+                    for fld, ix in (('size_limit', scol_i), ('creel_limit', ccol_i)):
+                        if ix is not None and ix < len(row['cells']) and row['cells'][ix]:
+                            rec[fld] = row['cells'][ix]
                     # WHICH SPECIES IS SHUT, carried onto every closure record.
                     #
                     # `June 16 - Sept. 30 closed` is the STRIPED BASS row. Without the species

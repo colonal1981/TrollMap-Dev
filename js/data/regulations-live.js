@@ -171,6 +171,36 @@ function findSpecies(table, species) {
 }
 
 /**
+ * The book's own statewide record for this species, or null.
+ *
+ * MATCHED ON THE CHECKBOX, NOT ON THE STRING. Every record carries `plan_species`, resolved
+ * offline from registry/species_map.json, so `Black Bass (includes Largemouth, Smallmouth,
+ * Spotted, Alabama, Coosa and all hybrids)` arrives already naming the Largemouth Bass box.
+ * Matching that phrase by text against `Largemouth Bass` is the containment mistake findSpecies
+ * exists to avoid, and here it is not needed at all -- the answer was computed at build time.
+ *
+ * A record whose grid cut a word never reaches the browser; the Worker withholds those. So
+ * anything arriving here is a limit the book prints and this pipeline read whole.
+ */
+function bookStatewideFor(payload, species) {
+  const rows = Array.isArray(payload && payload.book_statewide) ? payload.book_statewide : [];
+  if (!rows.length) return null;
+  const want = String(species || '').trim().toLowerCase();
+  if (!want) return null;
+  for (const r of rows) {
+    const boxes = Array.isArray(r.plan_species) ? r.plan_species : [];
+    if (boxes.some(b => String(b).trim().toLowerCase() === want)) return r;
+  }
+  // Failing that, the book's own phrase read as a whole -- the same whole-form equality
+  // findSpecies() uses, and never a bare substring.
+  for (const r of rows) {
+    const k = String(r.species || '').trim().toLowerCase();
+    if (k && k === want) return r;
+  }
+  return null;
+}
+
+/**
  * The published limits for this species on this water, if the digest has been primed.
  *
  * LAKE-SPECIFIC BEATS STATEWIDE and says which it was, because "this lake has its own rule" and
@@ -190,6 +220,25 @@ export function livePolicyFor(state, lakeName, species) {
   if (genHit) {
     return { scope: 'state', species: genHit.key, state: p.state || null,
              sizeLimit: genHit.entry.sizeLimit ?? null, creelLimit: genHit.entry.creelLimit ?? null };
+  }
+  // THE SAME BOOK, PARSED WITHOUT AN LLM. `general` above is the digest read at request time by
+  // a model; this is build_regulations_table.py's reading of the same pages, deterministic,
+  // carrying the sentence it came from and the plan checkboxes it governs -- both resolved
+  // offline so nothing here does the judgement.
+  //
+  // IT IS TRIED LAST, NOT FIRST, and that is deliberate. `general` works and is what this app
+  // has shipped; changing which answer wins is a different decision from making a second answer
+  // reachable, and only the second one is being made here. Where the LLM found the fish, its
+  // answer still stands. Where it found nothing -- which is every species TWRA's statewide
+  // table names, because Tennessee's half of that parse has never returned anything -- the
+  // book now answers instead of the app saying it does not know.
+  const bookHit = bookStatewideFor(p, species);
+  if (bookHit) {
+    return { scope: 'state', species: bookHit.species, state: p.state || null,
+             sizeLimit: bookHit.size_limit ?? null, creelLimit: bookHit.creel_limit ?? null,
+             source: bookHit.source || null, fromBook: true,
+             // The book's own sentence, for a card that wants to show what it is quoting.
+             text: Array.isArray(bookHit.cells) ? bookHit.cells.filter(Boolean).join(' — ') : null };
   }
   // PRIMED AND THE SPECIES IS NOT IN THE BOOK is a different answer from not primed. The digest
   // was read and it says nothing about this fish here.

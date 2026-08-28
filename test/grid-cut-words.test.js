@@ -100,8 +100,12 @@ test('the separator is chosen line by line, not once for the pair', () => {
   // Same two cells: `No margined madtom` + `and tadpole madtom` needs the space, and
   // `may be p` + `ossessed.` must not have one. Picking once gave `madtomand` or `p ossessed`.
   const fn = SRC.slice(SRC.indexOf('def _join_fragments'), SRC.indexOf('def heal_merged_cells'));
-  assert.match(fn, /for sep in \('', ' '\):/);
   assert.match(fn, /if w not in page_words/);
+  // THE SPACE IS TRIED FIRST SO IT WINS A TIE, and ties are the common case: `14` + `inches`
+  // scores the same either way, because the oracle only looks at letter runs and `14inches`
+  // still yields `inches`. Joining them gave `less than 14inches` on NC's page 2. Where the cut
+  // really is mid-word the closed form wins outright, so preferring the space costs nothing.
+  assert.match(fn, /for sep in \(' ', ''\):/);
 });
 
 test('one oracle judges both repairs, normalised the way the cells are', () => {
