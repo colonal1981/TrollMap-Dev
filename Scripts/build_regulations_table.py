@@ -535,7 +535,7 @@ CAPS_LINE = re.compile(r'^[A-Z][A-Z0-9 ,&/\.\'()-]{3,}$')
 STATEWIDE_DEFAULT = re.compile(r'^(?P<rule>[^:]*\b(?:inch|inches)\b[^:]*)\s+statewide\b', re.I)
 
 
-def column_starts(pages, min_sep=120.0):
+def column_starts(pages, min_sep=120.0, expect=None):
     """Where each column begins, read off the bullets of the pages themselves.
 
     BULLETS ONLY, AND ONLY WHERE THEY START A LINE. A first pass counted every all-caps word,
@@ -548,15 +548,31 @@ def column_starts(pages, min_sep=120.0):
         for w in pg.extract_words():
             if BULLET.match(w['text']):
                 marks[round(w['x0'])] += 1
+
     # NOT the leftmost word of each line. extract_words() reads straight across a three-column
     # page, so the third column's bullets never begin a line -- taking only line-initial words
     # found two columns of three and the crop then merged the last two.
-    starts = []
-    for x in sorted(marks):
-        if marks[x] < 2:
-            continue                       # one bullet is an indent, not a column
-        if not starts or x - starts[-1] >= min_sep:
-            starts.append(x)
+    def grid(floor):
+        starts = []
+        for x in sorted(marks):
+            if marks[x] < floor:
+                continue
+            if not starts or x - starts[-1] >= min_sep:
+                starts.append(x)
+        return starts
+
+    starts = grid(2)                       # one bullet is an indent, not a column
+    # A DECLARED COLUMN COUNT OUTRANKS THAT RULE, and only where it is declared. GA's
+    # demarcation page has three columns and one of them carries a single bullet, so the
+    # >= 2 test found two edges and the crop cut the middle column's text in half -- the first
+    # clause named four rivers and lost six. Where the caller says how many columns the page
+    # has, a lone bullet is allowed to be a column, but only if that produces exactly the
+    # declared number. Anything else falls back, because a count that does not come out is
+    # evidence the grid is wrong, not licence to use a worse one.
+    if expect and len(starts) != expect:
+        loose = grid(1)
+        if len(loose) == expect:
+            starts = loose
     return starts
 
 
@@ -847,6 +863,116 @@ def read_sc_prose(pdf, pages):
     return rows
 
 
+DEMARCATION_HEAD = re.compile(r'SALTWATER DEMARCATION LINE', re.I)
+# Which of the three clauses a sentence is. The book writes them as three bullets and they do
+# not mean the same thing, so they are not flattened into one list of river names.
+DEMARC_CLAUSE = [
+    # ORDER IS THE TIE-BREAK, most specific first. The crabbing bullet also contains the words
+    # `seaward of the points at which`, so a looser test placed above it would file GA's crab
+    # line as the finfish line and move the boundary by a railroad.
+    ('crabbing only', re.compile(r'for purposes of crabbing', re.I)),
+    ('salt for its entire length',
+     re.compile(r'designated as salt water for (?:their|its) entire length', re.I)),
+    ('salt seaward of a named crossing',
+     re.compile(r'\bline of demarcation\b|\bseaward of these points\b', re.I)),
+]
+# The landmark a clause draws its line at. `Georgia Highway 25/South Carolina 170` is ONE
+# crossing written as two route numbers, so the second half is part of the match rather than a
+# designation of its own -- split, it reads as two lines on a river the book gives one.
+CROSSING = re.compile(r'\b((?:U\.?S\.?|Georgia|South Carolina|Interstate|I)[- ]?'
+                      r'(?:Highway\s*)?\d+(?:\s*/\s*(?:South Carolina|Georgia|SC|GA)'
+                      r'\s*(?:Highway\s*)?\d+)?'
+                      r'|Seaboard Coastline Railroad)\b')
+
+
+def read_ga_demarcation(pdf, pages, columns=3):
+    """Georgia's saltwater demarcation line -- the page that says which water is which.
+
+    THIS PAGE DEFINES A WORD THE TABLES ALREADY USE. GA's freshwater striped bass rule ends
+    `...and from saltwater`, and its saltwater table carries a separate `Striped bass
+    (Saltwater)` row at 22 inches. Both turn on a term neither page defines. This one does:
+    the line is where U.S. 17 crosses ten named rivers, where GA 25 / SC 170 crosses the
+    Savannah, and seven more streams that are salt end to end.
+
+    WHAT IT DOES NOT DO IS CLASSIFY A WATER. The Satilla is named here, and the Satilla we
+    offer is bound in Pierce County, tens of miles above US 17. Calling it saltwater on the
+    strength of the name would be an inference from a county, not a reading of the book. So
+    each clause is emitted as an address with its sentence attached, resolve_water_body() binds
+    the names the way it binds every other address, and the record says where the line is
+    rather than which side of it a water sits on.
+
+    The crabbing clause is read and kept as its own clause rather than dropped, because it is
+    the one place the book draws a DIFFERENT line for the same rivers -- the Seaboard Coastline
+    Railroad, not US 17. Nothing in the planner asks it today; misfiling it under the finfish
+    line later would be worse than carrying it labelled.
+
+    Three columns, declared. column_starts() reads bullets, and on this page the bullets are in
+    the demarcation column and the FIVE THINGS box only -- two of the three -- so the automatic
+    grid merged the definitions column into the first and cut the first bullet in half. A
+    column COUNT is a fact about the page's layout, in the same class as the page numbers and
+    column indices already declared in SPECS, and unlike a pixel it survives a reflow.
+    """
+    live = [(n, pdf.pages[n - 1]) for n in pages if 1 <= n <= len(pdf.pages)]
+    rows = []
+    for pageno, pg in live:
+        # THE BULLETS ARE THE COLUMN EDGES, with the count declared because one of the three
+        # columns holds a single bullet. An even split of the text block was tried first and
+        # was wrong by about ten points: these bullets hang outside the text indent, so every
+        # computed edge landed to the right of its own bullet and orphaned it.
+        starts = column_starts([pg], expect=columns)
+        if len(starts) != columns:
+            continue
+
+        # THE SECTION, IN READING ORDER, ACROSS THE COLUMN BREAK. It begins under its own
+        # heading in one column and finishes at the top of the next, and both halves are needed
+        # -- the first bullet names four rivers before the break and six after it. Collection
+        # stops at the next heading in each column, which is what keeps the FIVE THINGS YOU CAN
+        # DO sidebar out; the leading heading of a later column is the page banner, split down
+        # the middle by the same boundary, and is skipped rather than treated as a stop.
+        run, started = [], False
+        for col in column_lines(pg, starts):
+            taken = 0
+            for kind, text in _paras(col):
+                if not started:
+                    if kind == 'head' and DEMARCATION_HEAD.search(text):
+                        started = True
+                    continue
+                if kind == 'head':
+                    if taken == 0:
+                        continue          # the banner, cut in half by the column boundary
+                    break                 # a real heading -- the section is over
+                run.append((kind, text))
+                taken += 1
+        if not run:
+            continue
+
+        # ONE CLAUSE PER BULLET, TAKEN FROM THE PARAGRAPH STREAM. Splitting the joined text on
+        # the glyph was tried and cannot work: _paras() strips the glyph when it recognises the
+        # bullet, so by the time the text is joined the boundaries are gone and all three
+        # clauses arrive as one. A `text` paragraph before the first bullet is the section's
+        # own lead-in; after one, it is that bullet continuing -- which is how the first clause
+        # gets the six rivers that sit on the other side of the column break.
+        clauses = []
+        for kind, text in run:
+            if kind == 'bullet':
+                clauses.append(text)
+            elif clauses:
+                clauses[-1] += ' ' + text
+        for part in clauses:
+            part = norm(re.sub(r'^[,;\s]+', '', part))
+            part = re.sub(r'\s+\d{1,3}$', '', part)   # the folio, swept up by the last clause
+            if len(part) < 40:
+                continue
+            clause = next((name for name, rx in DEMARC_CLAUSE if rx.search(part)), None)
+            if not clause:
+                continue
+            rows.append({'cells': [part, None, part], 'species': None,
+                         'demarcation': True, 'clause': clause,
+                         'crossings': sorted(set(CROSSING.findall(part))),
+                         'named_in_a_sentence': True, 'page': pageno})
+    return rows
+
+
 PROSE = {
     'SC': [('seasons', [20], 'sc',
             {'water_col': 0, 'species_col': 1, 'name_in_sentence': True})],
@@ -856,7 +982,10 @@ PROSE = {
     'GA': [('length_limits_and_seasons', [3], 'ga',
             {'water_col': 0, 'species_col': 1}),
            ('public_fishing_areas', [8, 9, 10], 'ga_pfa',
-            {'water_col': 0, 'species_col': 1, 'county_col': 4})],
+            {'water_col': 0, 'species_col': 1, 'county_col': 4}),
+           # The definition behind `and from saltwater`, which two tables already lean on.
+           ('saltwater_demarcation', [22], 'ga_demarc',
+            {'water_col': 0, 'species_col': None})],
 }
 
 
@@ -867,6 +996,7 @@ def read_prose_state(path, state):
         for key, pages, reader, _opts in PROSE.get(state) or []:
             rows = (read_ga_prose(pdf, pages) if reader == 'ga'
                     else read_ga_pfa(pdf, pages) if reader == 'ga_pfa'
+                    else read_ga_demarcation(pdf, pages) if reader == 'ga_demarc'
                     else read_sc_prose(pdf, pages) if reader == 'sc' else [])
             if rows:
                 # ONE PSEUDO-TABLE PER PAGE, not one for the section. The page ledger asks which
@@ -1510,6 +1640,10 @@ SEE_MAP = re.compile(r'\s*\(see map[^)]*\)', re.I)
 # `Statewide` is only SC's word for it. NC says `All public fishing waters`, `All inland fishing
 # waters and joint fishing waters`, `All public waters except those listed below:` -- 18 rows
 # that are the default rule and were being looked up as if they named a lake.
+# A river address that names where it starts or stops. Not a rejection -- a qualification.
+REACH = re.compile(r'\b(down|up)stream of\b|\bseaward of\b|\b(above|below)\s+(the\s+)?'
+                   r'[A-Z]|\bfrom\s+.{0,40}\bto\b', re.I)
+
 STATEWIDE = re.compile(r'^\s*(statewide|all\s+(public|inland)\s+(fishing\s+)?waters'
                        r'|all\s+waters\s+of\s+the\s+state)\b', re.I)
 
@@ -1662,6 +1796,35 @@ def _spans_two_states(row):
     return bool(TWO_STATE.search('%s %s' % (row.get('display_name') or '', row.get('state') or '')))
 
 
+# Words that may sit capitalised in front of a water's name without making it a different
+# water: sentence openers and function words. Anything else in front of `Satilla River` --
+# `Little`, `South`, `Big`, `North` -- names another river, and GA's demarcation list uses five
+# of them. Function words are a closed class of English; unlike a list of modifiers it cannot
+# fall behind the books, and the failure it allows is dropping a bind rather than inventing one.
+NAME_LEADERS = {'the', 'a', 'an', 'and', 'or', 'in', 'on', 'at', 'of', 'to', 'from', 'for',
+                'all', 'both', 'its', 'their', 'this', 'these', 'those', 'any', 'each',
+                'above', 'below', 'near', 'upon', 'into', 'onto', 'with', 'by', 'is', 'are',
+                'was', 'were', 'be', 'that', 'which', 'including', 'includes', 'included',
+                'except', 'between', 'along', 'across', 'up', 'down', 'via'}
+
+
+def _part_of_a_longer_name(text, at):
+    """Is the name at this position the tail of a longer proper name?
+
+    `Little Satilla River` contains `Satilla River` on clean word boundaries, and the two are
+    different rivers -- the book puts the Little Satilla in the clause that is salt water end
+    to end and the Satilla in the clause that is salt only below U.S. 17. Matching the tail
+    said the Satilla we offer is saltwater for its whole length, which is not what the page
+    says about it anywhere.
+    """
+    before = text[:at]
+    m = re.search(r"([A-Za-z][A-Za-z'\-]*)\s+$", before)
+    if not m:
+        return False                        # start of the string, or punctuation in between
+    w = m.group(1)
+    return w[:1].isupper() and w.lower() not in NAME_LEADERS
+
+
 def waters_named_in(text, state, idx):
     """Registry waters whose FULL NAME appears as a phrase inside a sentence.
 
@@ -1686,8 +1849,11 @@ def waters_named_in(text, state, idx):
         name = re.sub(r'\s*\([^)]*\)\s*$', '', str(row.get('name') or '')).strip()
         if len(name.split()) < 2:
             continue
-        if re.search(r'\b%s\b' % re.escape(name), t, re.I):
+        for m in re.finditer(r'\b%s\b' % re.escape(name), t, re.I):
+            if _part_of_a_longer_name(t, m.start()):
+                continue
             hits.append((len(name), slug))
+            break
     # Longest name first, so `Richard B Russell Lake` is preferred over a shorter one inside it.
     hits.sort(reverse=True)
     out, seen = [], set()
@@ -1931,10 +2097,26 @@ def resolve_state_tables(block, state, name_map, idx, systems, chain, specs=(),
                 # its whole name inside the prose rather than by an address column. Applied here
                 # so the run's own stats say `name+in a sentence` rather than `unresolved` for a
                 # row that did in fact resolve.
-                if r and o.get('name_in_sentence') and not (r.get('waters') or []):
+                #
+                # THE ROW'S OWN FLAG COUNTS, not only the table's. read_ga_prose already marks
+                # the bullets whose address is a sentence -- a length-limit bullet with no colon
+                # in it -- and only those. The table-level option would turn the treatment on
+                # for every GA length-limit row including `Lake Blackshear: 14 inches`, which
+                # has a perfectly good address column. Believing the row is both narrower and
+                # already computed; GA needed no new declaration at all.
+                if r and (o.get('name_in_sentence') or row.get('named_in_a_sentence')) \
+                        and not (r.get('waters') or []):
                     named = waters_named_in(addr, state, idx)
                     if named:
                         r = dict(r, waters=named, kind='name+in a sentence', unresolved=[])
+                        # A REACH IS NOT THE WHOLE RIVER. GA's 22-inch striped bass rule binds
+                        # `Ocmulgee River downstream of the GA Hwy 96 bridge`, and the registry
+                        # water it matches is the whole Ocmulgee. The bind is still worth
+                        # having -- the alternative is the rule reaching nothing -- but a
+                        # consumer must not read it as covering every mile. The sentence is
+                        # carried whole in `text`; this says out loud that it qualifies itself.
+                        if REACH.search(addr):
+                            r['address_is_a_reach'] = True
                 if r:
                     row['resolved'] = r
                     if r.get('waters') or r['kind'] in ('statewide', 'implicit'):
@@ -1993,6 +2175,12 @@ def expand_species(phrase, smap):
 
 def project_by_water(doc, idx, all_specs=None, smap=None):
     by = {}
+    # DECLARED BEFORE THE FIRST WRITER, not beside the loop that writes it most. The TN block
+    # below appends to `statewide` and the binding sat forty lines under it, which makes the
+    # name local for the whole function and raises UnboundLocalError on the first TN row. It
+    # never fired while TN's statewide table was empty, so the commit that added the table
+    # shipped a build that could not run.
+    statewide = {}
 
     def add(slug, rec):
         if slug not in idx:
@@ -2017,7 +2205,6 @@ def project_by_water(doc, idx, all_specs=None, smap=None):
             add(slug, {'source': 'TN digest exceptions', 'source_ref': 'page %s' % r.get('page'),
                        'heading': r.get('heading'), 'rules': r.get('rules') or []})
 
-    statewide = {}
     for st, blk in doc['states'].items():
         specs = (all_specs or {}).get(st, ('', []))[1]
         for key, tables in (blk.get('tables') or {}).items():
@@ -2145,6 +2332,21 @@ def project_by_water(doc, idx, all_specs=None, smap=None):
                         # asking "what shuts a season on this coast" should not have to know
                         # that GA's happens to be the table called `saltwater`.
                         rec['scope'] = 'statewide coastal'
+                    if row.get('demarcation'):
+                        # A BOUNDARY, NOT A LIMIT, and which boundary matters. Two of GA's three
+                        # clauses draw the finfish line and the third draws a different one for
+                        # crab pots, at a railroad instead of U.S. 17. Flattened together they
+                        # would move the line by miles on the two rivers named in both.
+                        rec['kind_of_rule'] = 'where saltwater begins'
+                        rec['clause'] = row.get('clause')
+                        rec['crossings'] = row.get('crossings') or []
+                        rec['governs'] = ('crab pots only' if row.get('clause') == 'crabbing only'
+                                          else 'finfish')
+                    if r.get('address_is_a_reach'):
+                        # THE BOOK ADDRESSED PART OF THIS RIVER, and the registry has one slug
+                        # for the whole of it. Said out loud so a card can print the sentence
+                        # instead of implying the rule runs bank to bank.
+                        rec['address_is_a_reach'] = True
                     if r.get('kind') in ('statewide', 'implicit'):
                         statewide.setdefault(st, []).append(rec)
                     for slug in r.get('waters') or []:
