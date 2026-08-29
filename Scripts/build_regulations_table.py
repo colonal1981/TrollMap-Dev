@@ -913,6 +913,31 @@ def _paras(lines):
     return out
 
 
+def species_in_sentence(text, smap):
+    """The fish a prose rule is about, found by the book's own vocabulary and nothing else.
+
+    GA writes its Public Fishing Area rules as sentences -- `Largemouth bass between 16 and 24
+    inches must be released immediately` -- with no species column anywhere. The row arrived with
+    species None and the card said `no fish named on this row` beside a sentence that names one.
+    Ryan: "fish is definitely named".
+
+    MATCHED AGAINST registry/species_map.json, LONGEST PHRASE FIRST, and never by pattern. The
+    vocabulary is 182 phrases across four books and it is already curated; inventing a regex for
+    fish names over it is how `Hammerhead Sharks (Great, Scalloped, and Smooth)` became a scallop.
+    Longest first so `Largemouth Bass` wins over `Bass` in the same sentence.
+    """
+    t = ' %s ' % norm(text or '').lower()
+    best = None
+    for phrase in sorted(smap_phrases(smap or {}), key=len, reverse=True):
+        p = norm(phrase).lower()
+        if len(p) < 4:
+            continue
+        if (' %s ' % p) in t or t.startswith(' %s' % p) or ('%s ' % p) in t:
+            best = phrase
+            break
+    return best
+
+
 def read_ga_prose(pdf, pages):
     """GA's LENGTH LIMITS and SEASONS, as rows a resolver can bind.
 
@@ -943,7 +968,7 @@ def read_ga_prose(pdf, pages):
                     default = md.group('rule').strip()
                     rows.append({'cells': ['Statewide', species, default, text],
                                  'species': species, 'statewide_default': True,
-                                 'page': pageno})
+                                 'size_col': 2, 'page': pageno})
                 continue
             if kind != 'bullet':
                 continue
@@ -962,10 +987,16 @@ def read_ga_prose(pdf, pages):
                     # nothing and says so.
                     rows.append({'cells': [text, species, text, text],
                                  'species': species, 'statewide_default': False,
-                                 'named_in_a_sentence': True, 'page': pageno})
+                                 'named_in_a_sentence': True, 'size_col': 2, 'page': pageno})
                     continue
                 rows.append({'cells': [where.strip(), species, rule.strip(), text],
-                             'species': species, 'statewide_default': False, 'page': pageno})
+                             'species': species, 'statewide_default': False,
+                             # THE SECTION IS CALLED LENGTH LIMITS, so cell 2 is a size limit.
+                             # Nothing said so before, the header sniff found no column named
+                             # `size` among ['water','species','rule','sentence'], and the rule
+                             # never reached size_limit -- so the row arrived carrying only an
+                             # address and the report printed the address under Size limit.
+                             'size_col': 2, 'page': pageno})
     return rows
 
 
@@ -1028,6 +1059,10 @@ def read_ga_pfa(pdf, pages):
                 rows.append({'cells': [pending['area'], None, nt, nt,
                                        pending.get('county')],
                              'species': None, 'pfa': True, 'page': pending.get('page'),
+                             # A PFA NOTE IS THE RULE, and Georgia writes the fish into it
+                             # rather than into a column. Both are said here so the projection
+                             # does not have to guess from the shape of the row.
+                             'size_col': 2, 'species_in_sentence': True,
                              'fish_species': pending.get('species'),
                              'water': pending.get('water')})
         elif pending:
@@ -1392,7 +1427,8 @@ def read_sc_nongame(pdf, pages):
                                  'sentence': b})
                     for part in _nongame_parts(m.group('waters')):
                         rows.append({'cells': [part, sp, '', m.group('creel')],
-                                     'species': sp, 'page': pageno, 'sentence': b})
+                                     'species': sp, 'page': pageno, 'sentence': b,
+                                     'size_col': 2, 'creel_col': 3})
                 m2 = NONGAME_OVER.search(b)
                 if m2 and ('over', m2.group('len')) not in seen:
                     seen.add(('over', m2.group('len')))
@@ -1782,6 +1818,20 @@ SPECS = {
         ('saltwater', ['species', 'open season'], list(range(79, 92)),
          {'water_col': None, 'species_col': 0, 'season_col': 1,
           'implicitly': 'statewide coastal'}),
+        # THE BORDER-WATER AGREEMENT, AND IT OUTRANKS BOTH BOOKS ON THE WATER IT COVERS.
+        #
+        # Ryan asked whether the books carry agreement pages for border waters. Georgia's is on
+        # PDF page 68, printed 66, and its own note is the reason it matters: "Regulations under
+        # these agreements may differ from Georgia's general laws and regulations. If this is the
+        # case, the laws and regulations of the agreement explained in this section are to be
+        # followed."
+        #
+        # It is a ruled table -- SPECIES, WATER BODY, POSSESSION LIMIT, SIZE LIMIT -- and it sets
+        # striped bass on Hartwell and Clarks Hill at 10 with only 3 over 26 inches, Russell at 2
+        # with only 1 over 34, and the Savannah below Clarks Hill at 2 with a 27-inch minimum.
+        # Every one of those is a water we carry and measured as spanning GA and SC.
+        ('ga_sc_border_agreement', ['species', 'water body', 'possession'], [68],
+         {'water_col': 1, 'species_col': 0, 'overrides_general': True}),
     ]),
 }
 
@@ -2734,6 +2784,18 @@ def resolve_in_state(name, state, idx):
     return keep[0] if len(keep) == 1 else None
 
 
+def _reach_head(text):
+    """The water a reach description is about: everything before the clause that narrows it.
+
+    `Savannah River downstream of Clarks Hill dam` -> `Savannah River`. Only the head is returned
+    and the caller marks the record `address_is_a_reach`, so nothing reads the bind as the whole
+    river -- which is the same contract GA's Ocmulgee rule has had since 2026-08-28.
+    """
+    t = re.split(r'\b(?:down\s?stream of|up\s?stream of|seaward of|below|above|from)\b',
+                 text or '', 1, flags=re.I)[0]
+    return t.strip(' .,;')
+
+
 def resolve_water_body(text, state, name_map, idx, systems, chain, sysmembers,
                        county=None):
     """One book address -> {kind, waters, unresolved}. Never a guess: anything that does not
@@ -2780,6 +2842,55 @@ def resolve_water_body(text, state, name_map, idx, systems, chain, sysmembers,
     waters, unresolved, kinds = [], [], set()
     for part in parts:
         p = SEE_MAP.sub('', part).strip(' .,;')
+        # A PHRASE THE BOOK DEFINES IN PROSE AND THEN USES AS AN ADDRESS.
+        #
+        # Georgia's border agreement addresses five of its eight rows to `All border waters
+        # covered`, which is not a river system, so SYSTEM_RE never matched it and those rows
+        # bound nothing at all -- on an agreement that by its own words outranks both states'
+        # general tables. The definition is transcribed in reg_systems.json under defined_terms
+        # with the book's sentence beside it; this reads it before anything else, because a
+        # defined term is the book telling us what it means and nothing should get to guess
+        # first.
+        # `X EXCEPT FOR Y` IS X, MINUS Y, AND BOTH HALVES MATTER. Georgia's border agreement
+        # addresses white bass to `All border waters covered except for Savannah River downstream
+        # of Clarks Hill dam` -- a defined term with a hole in it. Read whole it resolved to
+        # nothing, so the row bound no water at all; read as the term alone it would set a limit
+        # on the one water the book took out. The exception is resolved too and subtracted.
+        excepted = []
+        m_ex = re.search(r'\s+except(?:\s+for)?\s+(?P<out>.+)$', p, re.I)
+        if m_ex:
+            head = p[:m_ex.start()].strip(' .,;')
+            if head:
+                excepted = [x.strip(' .,;') for x in re.split(r',\s*|\s+and\s+', m_ex.group('out'))
+                            if len(x.strip()) > 3]
+                p = head
+        terms = systems.get('defined_terms') or {}
+        # A NAME THIS BOOK USES THAT MEANS ANOTHER WATER. Georgia's agreement says `Lake Russell`
+        # and means Richard B. Russell; the registry also holds an 84-acre `lake_russell` pond in
+        # South Carolina, and an exact match hands Georgia's 2-fish striped bass limit to it.
+        # Declared per state in reg_systems.json rather than guessed, and applied before the name
+        # map so the exact match never gets the chance.
+        alias = (terms.get('%s:__aliases__' % state) or {}).get(norm(p).strip(' .,;'))
+        if alias:
+            waters.append(alias)
+            kinds.add('name (book alias)')
+            continue
+        dkey = '%s:%s' % (state, norm(p).lower().strip(' .,;'))
+        dterm = terms.get(dkey)
+        if dterm:
+            got = list(dterm.get('waters') or [])
+            for x in excepted:
+                out = _reach_head(x)
+                gone = resolve(out, name_map) if out else None
+                if gone and gone in got:
+                    got.remove(gone)
+                    kinds.add('defined term minus an exception')
+                elif x:
+                    unresolved.append({'text': x, 'why': 'the book took this water out of the '
+                                       'term and it did not resolve, so it may still be in'})
+            waters.extend(got)
+            kinds.add('defined term')
+            continue
         m = SYSTEM_RE.match(p)
         if m:
             key = '%s:%s_system' % (state, slugify(m.group(1)))
@@ -2902,7 +3013,18 @@ def resolve_water_body(text, state, name_map, idx, systems, chain, sysmembers,
             waters.append(slug)
             kinds.add('name')
         else:
-            unresolved.append({'text': p, 'why': 'no registry water of that name'})
+            # A REACH STILL NAMES ITS RIVER. `Savannah River downstream of Clarks Hill dam` is
+            # the Savannah; the clause after the river says which part. Resolving the head is
+            # what the address_is_a_reach flag has always assumed happened, and for an address
+            # whose reach clause sits INSIDE it rather than after a comma, it never did -- so
+            # Georgia's 27-inch minimum on the lower Savannah bound nothing.
+            head = _reach_head(p)
+            alt = resolve(head, name_map) if head and head != p else None
+            if alt:
+                waters.append(alt)
+                kinds.add('name (a reach of it)')
+            else:
+                unresolved.append({'text': p, 'why': 'no registry water of that name'})
     seen, ordered = set(), []
     for w in waters:
         if w not in seen:
@@ -3070,6 +3192,25 @@ def expand_species(phrase, smap):
     if phrase in nh:
         return {'plan_species': [], 'basis': 'no checkbox for this fish',
                 'note': nh[phrase]}
+    # THE SAME FISH, SPELLED THE WAY THIS BOOK SPELLS IT. Every map above is an exact string
+    # test, so `WHITE BASS` was mapped and `White bass` was not -- and Georgia's border agreement
+    # writes it in title case. A fish's name does not change meaning with its capitals or its
+    # spacing, and leaving one casing unmapped reports a phrase the file already knows as a hole
+    # in the vocabulary. Tried only after every exact test, so nothing here can shadow a
+    # deliberate entry.
+    want = norm(phrase).strip().lower()
+    for table, basis in ((bp, 'exact, matched without regard to case'),
+                         (pm, 'partial -- the book is wider than the form'),
+                         (nh, 'no checkbox for this fish')):
+        for k, v in table.items():
+            if k.startswith('_') or norm(k).strip().lower() != want:
+                continue
+            if table is bp:
+                return {'plan_species': list(v), 'basis': basis}
+            if table is pm and isinstance(v, dict):
+                return {'plan_species': list(v.get('plan') or []),
+                        'also_covers': list(v.get('also_covers') or []), 'basis': basis}
+            return {'plan_species': [], 'basis': basis, 'note': v}
     return {'plan_species': [], 'basis': 'UNMAPPED'}
 
 
@@ -3205,6 +3346,20 @@ def project_by_water(doc, idx, all_specs=None, smap=None, ramps=None, not_fish=(
                     # only `cells` reaches them as an anonymous list and is dropped, which is
                     # the same shape of failure as the note that neither caller read.
                     scol_i, ccol_i = limit_columns(tb.get('header'))
+                    # A ROW THAT SAYS WHERE ITS RULE SITS MUST BE BELIEVED, the same way a spec
+                    # that declares species_col is. limit_columns() sniffs a header, and a prose
+                    # row has no header worth sniffing -- read_prose_state labels its cells
+                    # ['water','species','rule','sentence'] and nothing in there matches `size`.
+                    # So every GA length-limit bullet, every Public Fishing Area note and every
+                    # blue catfish row out of SC's nongame page arrived with no size and no creel,
+                    # and the report fell back to printing the joined cells across both limit
+                    # columns. That is why a lake's own name appeared under Size limit on Cane
+                    # Creek, and Georgia's 22-inch striped bass rule on five rivers, and the
+                    # Savannah's 27-inch minimum, were carried as addresses rather than limits.
+                    if row.get('size_col') is not None:
+                        scol_i = row['size_col']
+                    if row.get('creel_col') is not None:
+                        ccol_i = row['creel_col']
                     for fld, ix in (('size_limit', scol_i), ('creel_limit', ccol_i)):
                         if ix is not None and ix < len(row['cells']) and row['cells'][ix]:
                             rec[fld] = row['cells'][ix]
@@ -3221,12 +3376,30 @@ def project_by_water(doc, idx, all_specs=None, smap=None, ramps=None, not_fish=(
                     # not species-scoped -- it shuts the water, which is what those rows say.
                     o2 = opts_for(specs, key)
                     sp = None
+                    # THE FISH IS IN THE SENTENCE ON A PFA NOTE. Georgia gives its Public Fishing
+                    # Areas no species column at all, so the row said `no fish named` beside
+                    # `Largemouth bass between 16 and 24 inches must be released immediately`.
+                    # Matched against the book's own vocabulary, longest phrase first -- never a
+                    # pattern over fish names.
+                    if row.get('species_in_sentence'):
+                        for cell in (row.get('cells') or []):
+                            sp = species_in_sentence(cell, smap)
+                            if sp:
+                                break
+                        if sp:
+                            rec['species_found_in'] = 'the sentence, not a column'
                     # A SPEC THAT SAYS WHERE THE SPECIES IS MUST BE BELIEVED. GA's saltwater
                     # table declares species_col: 0 and this code read column 1 anyway, because
                     # the rule was written as "column 1 where column 0 is the address". So all
                     # 31 saltwater rows came out with no species and `shuts the water`.
                     scol = o2.get('species_col')
-                    if o2.get('species_bands') and band:
+                    if sp:
+                        # ALREADY FOUND, IN THE SENTENCE. Guarded rather than left to luck: the
+                        # branches below happen not to fire on a PFA row today because its
+                        # species cell is None, and that is a coincidence of this row's shape,
+                        # not a decision.
+                        pass
+                    elif o2.get('species_bands') and band:
                         # THE BAND IS THE SPECIES ON A BANDED TABLE, and column 1 is a size
                         # limit. NC heads each block with an all-caps species -- FLOUNDER, RED
                         # DRUM, SPOTTED SEATROUT -- and puts the water in column 0 and the
@@ -3402,6 +3575,15 @@ def project_by_water(doc, idx, all_specs=None, smap=None, ramps=None, not_fish=(
                         rec['crossings'] = row.get('crossings') or []
                         rec['governs'] = ('crab pots only' if row.get('clause') == 'crabbing only'
                                           else 'finfish')
+                    # AN AGREEMENT OUTRANKS BOTH BOOKS ON THE WATER IT COVERS, and says so in
+                    # its own words. Carried onto the record so a consumer can prefer it rather
+                    # than showing two contradictory limits and leaving somebody to choose.
+                    if o2.get('overrides_general'):
+                        rec['overrides_general'] = True
+                        rec['overrides_note'] = (
+                            "the book's own note: regulations under these agreements may differ "
+                            "from the state's general laws, and where they do the agreement is "
+                            "the one to follow")
                     if r.get('applies_to_feature_types'):
                         # THE SCOPE TRAVELS OR THE RECORD IS A LIE. NC's striped bass default
                         # covers impounded inland waters, and we offer 17 rivers and 3 coastal
