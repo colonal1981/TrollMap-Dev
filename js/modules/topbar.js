@@ -6,6 +6,7 @@
 import { setBase, fitMap, renderMap } from '../core/map-init.js';
 import { searchWaters, selectWater, invalidateWaterIndex } from './water-search.js';
 import { state } from '../core/state.js';
+import { parseLatLonPair } from '../utils/geo.js';
 import { pushAllLocalToCloud, pullUpdatesOnLoad } from './cloud-sync.js';
 
 function wireButtons() {
@@ -134,29 +135,44 @@ function wireButtons() {
     if (e.key === 'Enter') document.getElementById('searchGo')?.click();
   });
 
-  // Jump to coordinates — accepts "34.377, -80.731" or "34.377 -80.731" or DMS
-  document.getElementById('coordGo')?.addEventListener('click', () => {
-    const raw = document.getElementById('coordInput')?.value?.trim();
-    if (!raw || !state.MAP) return;
-    // Split on comma or whitespace, but keep negative signs attached to numbers
-    const parts = raw.split(/[,\s]+/).filter(Boolean);
-    if (parts.length >= 2) {
-      const lat = parseFloat(parts[0]);
-      const lon = parseFloat(parts[1]);
-      if (!isNaN(lat) && !isNaN(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180) {
-        state.MAP.setView([lat, lon], 16);
-        closeModal();
-      } else {
-        const coordEl = document.getElementById('coordInput');
-        if (coordEl) coordEl.style.borderColor = 'var(--bad)';
-        setTimeout(() => { if (coordEl) coordEl.style.borderColor = ''; }, 2000);
-      }
-    }
-  });
+  // ── Jump to coordinates ──────────────────────────────────────────────
+  //
+  // THIS READ AN ELEMENT THAT HAS NOT EXISTED FOR WEEKS. The handler asked for `coordInput`,
+  // a single combined box; the modal has had two, `coordLat` and `coordLon`, since it was
+  // rebuilt. `?.value` on null is undefined and the next line was `if (!raw) return`, so every
+  // click did precisely nothing and said nothing. Ryan found it the only way it could be found.
+  //
+  // The parsing is not done here. `parseCoord` in utils/geo.js already handles decimal, DMM,
+  // DMS, hemispheres and signs, and had NO CALLERS -- written for this and never wired.
+  // `parseLatLonPair` beside it decides which box is which. Both are pure and both are tested.
+  const coordEls = () => [document.getElementById('coordLat'),
+                          document.getElementById('coordLon')];
 
-  document.getElementById('coordInput')?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') document.getElementById('coordGo')?.click();
-  });
+  function jumpToCoords() {
+    const [latEl, lonEl] = coordEls();
+    if (!latEl || !state.MAP) return;
+    const statusEl = document.getElementById('searchStatus');
+    for (const el of [latEl, lonEl]) { if (el) el.style.borderColor = ''; }
+
+    const r = parseLatLonPair(latEl.value, lonEl && lonEl.value);
+    if (r.why) {
+      // SAY WHY. The old handler flashed a red border for two seconds and left the reason to be
+      // guessed at, which is most of a mile from "that is 810 degrees of longitude".
+      if (statusEl) statusEl.textContent = r.why;
+      const bad = r.blame === 'lon' ? (lonEl || latEl) : latEl;
+      if (bad) bad.style.borderColor = 'var(--bad)';
+      setTimeout(() => { if (bad) bad.style.borderColor = ''; }, 2500);
+      return;
+    }
+    if (statusEl) statusEl.textContent = '';
+    state.MAP.setView([r.lat, r.lon], 16);
+    closeModal();
+  }
+
+  document.getElementById('coordGo')?.addEventListener('click', jumpToCoords);
+  for (const el of coordEls()) {
+    el?.addEventListener('keydown', (e) => { if (e.key === 'Enter') jumpToCoords(); });
+  }
 }
 
 wireButtons();

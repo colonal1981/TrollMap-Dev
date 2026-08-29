@@ -229,6 +229,63 @@ export function parseCoord(s) {
 }
 
 /**
+ * Two boxes, or one box with a pair pasted into it, to a lat/lon.
+ *
+ * THE JUMP BUTTON RETURNED ON ITS FIRST LINE FOR WEEKS. `topbar.js` read a single element
+ * called `coordInput`; the page has had two, `coordLat` and `coordLon`, since the search modal
+ * was rebuilt. `getElementById` returned null, `?.value` gave undefined, and the handler's own
+ * `if (!raw) return;` swallowed every click. Ryan: "you put coords in and hit go or whatever
+ * the button says and nothing happens". The button was wired the whole time.
+ *
+ * A COMMA SEPARATES LAT FROM LON; WHITESPACE DOES NOT. Whitespace inside one coordinate is how
+ * degrees, minutes and seconds are written -- `34 05 39` -- so splitting a box on spaces would
+ * read a pasted `34.377 -80.731` correctly and a typed `34 05 39` as two coordinates. The one
+ * exception is a leading minus on the second token, because minutes are never negative: that
+ * can only be a longitude. Anything else ambiguous is REFUSED with a reason rather than jumping
+ * somewhere plausible and wrong, which on a chartplotter's numbers is the worse failure.
+ *
+ * @param {string|null} latText  the Lat box
+ * @param {string|null} lonText  the Lon box, empty when a pair was pasted into the first
+ * @returns {{lat:number, lon:number}|{why:string, blame:'lat'|'lon'}}
+ */
+export function parseLatLonPair(latText, lonText) {
+  const a = String(latText == null ? '' : latText).trim();
+  const b = String(lonText == null ? '' : lonText).trim();
+  if (!a && !b) return { why: 'Enter a latitude and a longitude.', blame: 'lat' };
+
+  let latRaw = a, lonRaw = b;
+  if (!b) {
+    // One box holding both. A comma is the separator; failing that, a negative second token.
+    const i = a.indexOf(',');
+    if (i >= 0) {
+      latRaw = a.slice(0, i);
+      lonRaw = a.slice(i + 1);
+    } else {
+      const t = a.split(/\s+/).filter(Boolean);
+      const cut = t.findIndex((x, k) => k > 0 && /^-/.test(x));
+      if (cut > 0) {
+        latRaw = t.slice(0, cut).join(' ');
+        lonRaw = t.slice(cut).join(' ');
+      } else {
+        return { why: 'Put the longitude in its own box, or separate the pair with a comma.',
+                 blame: 'lon' };
+      }
+    }
+  }
+
+  const lat = parseCoord(latRaw);
+  const lon = parseCoord(lonRaw);
+  if (!Number.isFinite(lat) || Math.abs(lat) > 90) {
+    return { why: `"${latRaw.trim()}" is not a latitude between -90 and 90.`, blame: 'lat' };
+  }
+  if (!Number.isFinite(lon) || Math.abs(lon) > 180) {
+    return { why: `"${lonRaw.trim()}" is not a longitude between -180 and 180.`, blame: 'lon' };
+  }
+  return { lat, lon };
+}
+
+
+/**
  * Ramer-Douglas-Peucker line simplification.
  * `pts` is an array of [lat, lon]; `tol` is the max squared-distance
  * from a vertex to the chord in DEGREE² units (multiply by ~3.6e7 to
