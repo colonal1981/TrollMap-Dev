@@ -69,6 +69,12 @@ lake. Three separate faults, one per complaint:
    the slope field, scored by how far it stands above its own neighbourhood. That needs no
    threshold chosen by anybody: a gentle shelf still has local maxima and they score near zero.
 
+4. **A bump with no height was still a bump.** Fixing 1 and 2 took Wateree from 7,315 to 740
+   and stopped there. It never asked whether what survived had any relief: a single closed
+   contour with no loop nested inside it has nothing to measure a rise against, reports
+   `relief_ft` 0.0, and shipped anyway -- 115 of the 167 humps left on Wateree. A hump now
+   needs a second level, which is the smallest number of contours that can express a rise.
+
 And one the complaints did not name: find_ledges() trusted a comment saying the contours were
 clipped to the lake. They are clipped to the lake PLUS A 250 m BUFFER, islands included, so 90
 ledges sat outside the shoreline and two on islands. The few hundred survivors are tested for
@@ -324,6 +330,21 @@ def find_humps(contours, ring, islands=()):
                 if k['nested_in'] is None:
                     k['nested_in'] = i
     loops = [h for h in loops if h['nested_in'] is None]
+    # A LOOP WITH NOTHING INSIDE IT HAS NO MEASURABLE RELIEF, so it is not a hump.
+    #
+    # `relief` is the depth difference between this loop and the deepest loop nested inside it.
+    # With one level there is no second ring to measure against, so the field comes out 0.0 --
+    # and 0.0 was being shipped as a fact. It does not mean flat. It means "somewhere between
+    # nothing and one contour interval, unmeasured", and the honest answer to that is not to
+    # put a waypoint on it.
+    #
+    # NOT A THRESHOLD ANYBODY PICKED. Two levels is the smallest number of contours that can
+    # express a rise at all; below that the question is unanswerable from this data. Counted
+    # 2026-08-29, before this line existed: relief_ft 0.0 on 68.9% of Wateree's 167 humps,
+    # 65.0% of Kentucky Lake's 4,063, 46.1% of Murray's 1,011 and 89.0% of Pamlico Sound's
+    # 10,814 -- and `levels <= 1` matched that count exactly in every pack, which is the
+    # mechanism rather than a correlation.
+    loops = [h for h in loops if h['levels'] > 1]
     out = []
     if ring:
         # Offshore test through a grid. Scanning a 17,282-vertex ring per candidate is 11M
@@ -569,6 +590,13 @@ def main():
                          '(734 of 1732 today). Off by default. Exits if charted.json cannot be '
                          'read rather than quietly building every pack. --only-lakes names lakes '
                          'explicitly and wins over this.')
+    ap.add_argument('--all-packs', action='store_true',
+                    help='ignore the index gate and build every pack dir under --packs. Off by '
+                         'default: the app offers 358 of the 1,709 pack dirs on disk and the '
+                         'rest is half an hour nothing reads.')
+    ap.add_argument('--index',
+                    help='registry/lake_index.json -- ONLY these slugs are built. Defaults '
+                         'beside --registry.')
     ap.add_argument('--min-score', type=float, default=0.0,
                     help='drop candidates below this. Default 0 -- ship everything ranked and '
                          'let the client choose, because a cap in the data is a decision made '
@@ -583,6 +611,34 @@ def main():
         elif os.path.exists(src): src = open(src, encoding='utf-8').read()
         want = {s.strip() for s in src.replace('\n', ',').split(',') if s.strip()}
         slugs = [s for s in slugs if s in want]
+    # THE INDEX GATE, AND IT IS THE ONE upload_garmin_to_r2.py ALREADY USES. 1,709 pack dirs on
+    # disk, 358 slugs the app offers. Ryan, 2026-08-29, after a 35-minute run: "thanks for making
+    # me do structures on all of the extracted lakes even the ones we don't offer in the app".
+    # The uploader has gated on registry/lake_index.json with this flag name for two weeks; this
+    # is the same gate reading the same file, so the two scripts agree on what "a lake we ship"
+    # means instead of disagreeing by 1,351 packs.
+    #
+    # FAILS CLOSED, for the reason the uploader's does: a builder that reads "I cannot find the
+    # list of what to build" as "build everything" turns a missing input into half an hour of
+    # work. --only-lakes names lakes explicitly and wins over this, the same way it wins over
+    # --ship-only.
+    if not a.all_packs and not a.only_lakes:
+        ipath = a.index or os.path.join(a.registry, 'lake_index.json')
+        try:
+            _idx = json.load(open(ipath, encoding='utf-8'))
+            offered = set(_idx if isinstance(_idx, dict) else
+                          (r.get('slug') or r.get('key') for r in _idx))
+        except Exception as exc:
+            sys.exit('NO USABLE INDEX at %s (%s).\n'
+                     'Refusing to build: without it this walks every pack dir under %s, most of '
+                     'which the app does not offer.\n'
+                     'Pass --index explicitly, or --all-packs if a full archive build is what '
+                     'you actually want.' % (ipath, exc.__class__.__name__, a.packs))
+        kept = [x for x in slugs if x in offered]
+        print('index gate: %d of %d pack dirs are slugs the app offers; %d passed over '
+              '(--all-packs to ignore it)' % (len(kept), len(slugs), len(slugs) - len(kept)))
+        slugs = kept
+
     if a.ship_only:
         if a.only_lakes:
             print('--ship-only: not applied, --only-lakes already names the lakes to build')
@@ -608,7 +664,7 @@ def main():
     # and a ledge stopped meaning any slope at all. Stamped on the contours alone, every pack
     # would have reported itself up to date and kept the old file. Bump this when the geometry
     # rules change and every lake rebuilds without anybody remembering --force.
-    RULES_VERSION = '2026-08-28-prominence'
+    RULES_VERSION = '2026-08-29-relief'
     ST_PARAMS = (a.min_score, RULES_VERSION)
     for n, slug in enumerate(slugs, 1):
         pack = os.path.join(a.packs, slug)
