@@ -690,7 +690,43 @@ def carry_water_body(rows, col=0):
             out.append({'water_body': cur, 'cells': r, 'continuation': False})
         elif cur:
             out.append({'water_body': cur, 'cells': r, 'continuation': True})
-    return out
+
+    # A ROW THE GRID SPLIT IN TWO IS ONE ROW.
+    #
+    # NC prints its nongame catfish rule as an address on one line and `7 Channel Catfish` on the
+    # next, and both became records: one carrying fifty county park ponds and no limit at all,
+    # one carrying a limit and no address. The report had nothing to put in the limit columns for
+    # the first, fell back to printing the joined cells, and a county list appeared under `Size
+    # limit` on Lake Julian and Lake Raleigh. Ryan, on the same shape one water over: "i didn't
+    # know a lake was a size limit".
+    #
+    # ONLY INTO AN EMPTY CELL, and that is what makes this safe. SC's striped bass table keeps its
+    # second window -- `June 16 - Sept. 30 closed` -- on a continuation row too, and that is a
+    # SECOND RULE, not a wrapped one. Its parent's size cell is already full, so nothing merges
+    # and the row stands on its own. A continuation is folded away only when every non-empty cell
+    # it holds found an empty cell to fill; anything left over means it was never a wrap.
+    folded = []
+    for rec in out:
+        if not rec['continuation'] or not folded:
+            folded.append(rec)
+            continue
+        prev = folded[-1]
+        pc, cc = list(prev['cells']), list(rec['cells'])
+        spare = False
+        for i in range(1, max(len(pc), len(cc))):
+            here = cc[i] if i < len(cc) else None
+            if not (here and str(here).strip()):
+                continue
+            if i < len(pc) and not (pc[i] and str(pc[i]).strip()):
+                pc[i] = here
+            else:
+                spare = True
+        if spare:
+            folded.append(rec)
+        else:
+            prev['cells'] = pc
+            prev['absorbed_a_wrapped_row'] = True
+    return folded
 
 
 STATE_LAKE_LIMIT = re.compile(r'^\s*(?P<creel>\d+)\s*(?:\(\s*(?P<size>[^)]*?)\s*\))?\s*$')
@@ -1686,6 +1722,30 @@ def cells_that_cut_a_word(pdf, tables):
             cut = sorted({w for c in (row.get('cells') or []) if c
                           for w in re.findall(r'[a-z]{3,}', str(c).lower())
                           if w not in page_words and _is_a_cut_word(w, page_words)})
+            # A SENTENCE CUT BETWEEN TWO CELLS IS STILL ONE SENTENCE.
+            #
+            # `No sharks may` sat in the size column and `be possessed.` in the creel column, and
+            # both survived every test above: every word in them is a real word the page prints,
+            # nothing is a fragment, and `may` + `be` is too short to join. So NC's shark and
+            # tarpon prohibitions, and its black drum row -- `14b` beside `inch minimum, none may
+            # e greater than 25 inches` -- were served as limits.
+            #
+            # The tell is grammar, not vocabulary: a cell that does not end a sentence, followed
+            # by a cell that begins in lower case, is one sentence the grid cut in half. A real
+            # pair of limit columns never reads that way -- a creel cell starts with a digit, a
+            # `None`, or a capital -- so this asks the shape of the writing and needs no
+            # dictionary and no threshold.
+            cs = [str(c or '').strip() for c in (row.get('cells') or [])]
+            for i in range(len(cs) - 1):
+                left, right = cs[i], cs[i + 1]
+                if len(left) < 3 or len(right) < 3:
+                    continue
+                if left[-1] in '.;:!?' or not left[-1].isalnum():
+                    continue
+                if not right[0].isalpha() or not right[0].islower():
+                    continue
+                cut = sorted(set(cut) | {left.split()[-1].lower(), right.split()[0].lower()})
+                break
             if cut:
                 # MARKED ON THE ROW, not only counted in a report. These records are served
                 # now, and a limit that reads `14-inch minimum, e` must not reach somebody
