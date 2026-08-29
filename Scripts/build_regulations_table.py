@@ -1317,7 +1317,7 @@ LAW_WORDS = re.compile(r'\b(inch|inches|creel|per day|daily limit|possession lim
                        r'size limit|closed season|open season|minimum length|no minimum)\b', re.I)
 
 
-def page_ledger(pdf, read_pages, smap, declared):
+def page_ledger(pdf, read_pages, smap, declared, resolve=None):
     """Every page of the book placed in exactly one bucket, so `read` means something.
 
     THE COUNT THAT MATTERS IS NOT HOW MANY PAGES WERE READ. It is how many carry fishing law and
@@ -1332,6 +1332,16 @@ def page_ledger(pdf, read_pages, smap, declared):
 
     `declared` is that file. It is written by whoever reads the page, never by this script, and
     a page in it is accounted for rather than silently skipped.
+
+    A DECLARATION CAN BE TRUE TODAY AND FALSE LATER. Some pages are set aside not because they
+    carry no law but because every water they name is one this app does not offer -- Pickwick
+    Lake, the Big South Fork, the Mississippi oxbows. That is a fact about OUR registry, not
+    about the book, and it stops being true the day somebody adds one of those waters. Such an
+    entry names what it depends on in `only_because_we_do_not_offer`, and every run re-tests it
+    against the index: if one of those names now resolves, the page goes back to UNACCOUNTED
+    saying which water re-opened it. Ryan, 2026-08-29, on three pages left open because their
+    law reached nothing we ship: "if they do not apply to our waters then how is it still open?"
+    They are not. They are closed, with the condition that closed them written down and checked.
     """
     phrases = sorted({p.lower() for p in smap_phrases(smap) if len(p) > 4},
                      key=len, reverse=True)
@@ -1354,7 +1364,19 @@ def page_ledger(pdf, read_pages, smap, declared):
         if not law:
             out['not_law'].append(n)
         elif str(n) in declared:
-            out['declared'].append({'page': n, 'why': declared[str(n)]})
+            d = declared[str(n)]
+            why = d if isinstance(d, str) else (d.get('why') or '')
+            depends = [] if isinstance(d, str) else list(d.get('only_because_we_do_not_offer') or [])
+            back = [w for w in depends if resolve and resolve(w)]
+            if back:
+                out['unaccounted'].append(n)
+                out.setdefault('reopened', []).append(
+                    {'page': n, 'now_offered': back,
+                     'why': 'this page was set aside because none of the waters it names were '
+                            'offered, and that is no longer true'})
+            else:
+                out['declared'].append({'page': n, 'why': why,
+                                        'held_only_while_unoffered': depends or None})
         else:
             out['unaccounted'].append(n)
     return out
@@ -1482,7 +1504,7 @@ def cells_that_cut_a_word(pdf, tables):
     return bad
 
 
-def read_pdf_state(path, specs, smap=None, declared=None, extra_read=()):
+def read_pdf_state(path, specs, smap=None, declared=None, extra_read=(), resolve=None):
     """`specs` is a list of (key, header-words, candidate-pages). Anything not found is
     reported by name rather than silently omitted -- a table that quietly vanishes between
     editions is how a book gets read wrong for a year."""
@@ -1530,7 +1552,7 @@ def read_pdf_state(path, specs, smap=None, declared=None, extra_read=()):
             # each striped-bass table as read too, which is three pages this has no business
             # vouching for.
             read_pages |= {f['page'] + 1 for f in (got.get('state_lakes') or [])}
-        ledger = page_ledger(pdf, read_pages, smap or {}, declared or {})
+        ledger = page_ledger(pdf, read_pages, smap or {}, declared or {}, resolve=resolve)
     return got, missing, sc_lakes, ledger
 
 
@@ -1701,7 +1723,8 @@ def main():
                 # so it goes in with the rest or the ledger reports the statewide table as a
                 # page carrying law that nothing looked at.
                 tn['pages'] = page_ledger(tnpdf, set(DIGEST_PAGES) | {TN_STATEWIDE_PAGE}, smap,
-                                          (not_law.get('TN') or {}))
+                                          (not_law.get('TN') or {}),
+                                          resolve=lambda w: resolve(w, name_map))
             led = tn['pages']
             if led:
                 print('          pages: %d read, %d carry no fishing law, %d blank, %d '
@@ -1742,11 +1765,14 @@ def main():
         declared = (not_law.get(st) or {})
         prose_pages = {t['page'] for tabs in prose.values() for t in tabs}
         got, missing, sc_lakes, ledger = read_pdf_state(path, specs, smap, declared,
-                                                        extra_read=prose_pages)
+                                                        extra_read=prose_pages,
+                                                        resolve=lambda w: resolve(w, name_map))
         got.update(prose)
         specs = list(specs) + [(k, [], p, o) for k, p, _r, o in (PROSE.get(st) or [])]
         blk = {'source_file': fname, 'tables': got, 'pages': ledger}
         if ledger:
+            for r in (ledger.get('reopened') or []):
+                doc['problems'].append(dict(r, state=st))
             for n in ledger['unaccounted']:
                 doc['problems'].append({'state': st, 'why': 'this page carries fishing law and '
                                         'nothing read it -- read it, or record why not in '
