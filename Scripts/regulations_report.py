@@ -213,6 +213,11 @@ def collect(doc, idx):
                 'source': clean(r.get('source')), 'page': r.get('page'),
                 'via': clean(r.get('matched_via')) or clean(r.get('table')),
                 'reach': bool(r.get('address_is_a_reach')),
+                # ONE RIVER, TWO STATES, ONE SLUG. SC's book governs the Lumber River's
+                # South Carolina reach; our slug is filed in Robeson County, NC. The rule
+                # is real and it is not the law where somebody launches on this water, so
+                # the card says whose it is instead of leaving Ryan to ask "sc?".
+                'other_state': r.get('other_state_reach'),
                 'scope': r.get('applies_to_feature_types') or None,
                 'damaged': r.get('text_cut_by_the_grid') or None,
                 'address': clean(r.get('address')),
@@ -499,7 +504,10 @@ def render_water(w):
         if isinstance(pg, int) or (isinstance(pg, str) and pg.isdigit()):
             src += ' p%s' % pg
         flags = ''
-        if r.get('reach'):
+        if r.get('other_state'):
+            flags += ('  <span class="chip warn">%s\'s rule, for the %s reach of this river'
+                      '</span>' % (E(r['other_state']), E(r['other_state'])))
+        elif r.get('reach'):
             flags += ' <span class="chip warn">part of this water only</span>'
         if r.get('scope'):
             flags += ' <span class="chip on">%s only</span>' % E(', '.join(r['scope']))

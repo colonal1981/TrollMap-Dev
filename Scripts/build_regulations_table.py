@@ -1844,8 +1844,10 @@ def main():
         for f in res['system_assertion_failures']:
             print('   !! SYSTEM ASSERTION FAILED %s' % f, flush=True)
 
+    not_fish = {k for k in (smap.get('not_a_fish') or {}) if not k.startswith('_')}
     by_water, statewide = project_by_water(doc, idx, SPECS, smap,
-                                           load_ramps(R(a.registry), name_map))
+                                           load_ramps(R(a.registry), name_map),
+                                           not_fish=not_fish)
     doc['by_water'] = by_water
     doc['statewide'] = statewide
     print('\nby water: %d of %d offered waters carry at least one rule; statewide defaults for '
@@ -2966,7 +2968,7 @@ def load_ramps(registry, name_map):
     return out
 
 
-def project_by_water(doc, idx, all_specs=None, smap=None, ramps=None):
+def project_by_water(doc, idx, all_specs=None, smap=None, ramps=None, not_fish=()):
     by = {}
     # DECLARED BEFORE THE FIRST WRITER, not beside the loop that writes it most. The TN block
     # below appends to `statewide` and the binding sat forty lines under it, which makes the
@@ -3000,15 +3002,32 @@ def project_by_water(doc, idx, all_specs=None, smap=None, ramps=None):
                 rec['also_covers'] = ex['also_covers']
         statewide.setdefault('TN', []).append(rec)
 
-    for slug, recs in ((doc['states'].get('TN') or {}).get('waters') or {}).items():
-        for r in recs if isinstance(recs, list) else [recs]:
-            add(slug, {'source': 'TWRA reservoir page', 'source_ref': r.get('source_file'),
-                       'preamble': r.get('preamble') or [], 'rules': r.get('rules') or []})
-    for slug, recs in (((doc['states'].get('TN') or {}).get('digest') or {}).get('waters')
-                       or {}).items():
+    # THE BOOK WINS, AND THE SCRAPE IS THE FALLBACK.
+    #
+    # TWRA publishes Boone's exceptions twice -- in the printed digest and on the reservoir's own
+    # web page -- and we were carrying both, so every rule on the card appeared twice in slightly
+    # different words: `15-inch minimum length limit.` beside `15 inch minimum length limit.`
+    # Ryan, on the Boone card: "this has issues". Nothing was wrong with either reading; there
+    # were simply two of them.
+    #
+    # Same order as everywhere else in this file: the deterministic read of the published book
+    # first, the other source only where the book is silent. The digest covers ten reservoirs and
+    # the scraped pages cover ten, and they are not the same ten -- `covered_by_digest_only` and
+    # `no_agency_page` in the TN block name the difference -- so the fallback is not decoration.
+    digest_waters = (((doc['states'].get('TN') or {}).get('digest') or {}).get('waters') or {})
+    for slug, recs in digest_waters.items():
         for r in recs:
             add(slug, {'source': 'TN digest exceptions', 'source_ref': 'page %s' % r.get('page'),
                        'heading': r.get('heading'), 'rules': r.get('rules') or []})
+    for slug, recs in ((doc['states'].get('TN') or {}).get('waters') or {}).items():
+        if slug in digest_waters:
+            doc.setdefault('tn_agency_page_not_carried', []).append(
+                {'water': slug, 'why': 'the printed digest covers this reservoir, and the book '
+                                       'is the source; the scraped page restates it'})
+            continue
+        for r in recs if isinstance(recs, list) else [recs]:
+            add(slug, {'source': 'TWRA reservoir page', 'source_ref': r.get('source_file'),
+                       'preamble': r.get('preamble') or [], 'rules': r.get('rules') or []})
 
     for st, blk in doc['states'].items():
         specs = (all_specs or {}).get(st, ('', []))[1]
@@ -3245,7 +3264,29 @@ def project_by_water(doc, idx, all_specs=None, smap=None, ramps=None):
                     if r.get('kind') in ('statewide', 'implicit'):
                         statewide.setdefault(st, []).append(rec)
                     for slug in r.get('waters') or []:
-                        add(slug, dict(rec, matched_via=r.get('kind')))
+                        # NOT A FISH, NOT A CARD. `FRESHWATER MUSSELS INCLUDING THE ASIAN CLAM`
+                        # is read, counted and kept in the state block; it does not become a rule
+                        # on Lake Waccamaw. The list is exact strings in species_map.json and not
+                        # a pattern, because a pattern over the 182 species phrases in these four
+                        # books calls a snail bullhead a snail and a scalloped hammerhead a
+                        # scallop. Ryan: "why is this in a rod/reel fishing app?"
+                        if (rec.get('species') or '') in not_fish:
+                            doc.setdefault('not_a_fish_not_carried', []).append(
+                                {'state': st, 'species': rec.get('species'), 'water': slug})
+                            continue
+                        one = dict(rec, matched_via=r.get('kind'))
+                        # ONE RIVER, TWO STATES, ONE SLUG. A river genuinely flows across the
+                        # line and the registry files it by its centroid, so South Carolina's
+                        # striper rule on the Lumber River lands on a slug that reads
+                        # `Robeson Co, NC`. The rule is real -- it governs the reach in SC -- and
+                        # dropping it would lose four of them. But unlabelled it reads as the law
+                        # where somebody launches, which for this water is North Carolina. Ryan,
+                        # seeing SC's page 32 on a Robeson County river: "sc?"
+                        row_ = idx.get(slug) or {}
+                        if row_.get('feature_type') == 'river' and st not in states_of(row_):
+                            one['other_state_reach'] = st
+                            one['address_is_a_reach'] = True
+                        add(slug, one)
         nmap = build_name_map(idx)
         for slug, lake in ((blk.get('state_lakes') or {}).get('lakes') or {}).items():
             hit = resolve(lake['water_body'], nmap) \
