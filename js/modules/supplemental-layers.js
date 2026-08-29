@@ -59,7 +59,17 @@ const CACHE_TTL = 24 * 60 * 60 * 1000;
 // returns the IndexedDB copy before it ever fetches, so an upload followed by a reload shows
 // the OLD data and reads as "the upload didn't work". That is the single most likely way a
 // correct chartpack looks broken. v2 = the Garmin RGN2/RGN3/RGN4 pack (2026-08-01).
-const CACHE_SCHEMA = 2;
+//
+// v3 = the 2026-08-29 structure rebuild, and this comment predicted its own failure exactly.
+// build_structure.py changed what a hump IS -- an island is not a hump, a loop nested inside
+// another is the same hump, and a closed contour with nothing inside it has no measurable relief
+// so it is not one either -- and it changed what a ledge carries, adding
+// `steeper_than_around_by`. Wateree went 7,315 features to 625, the packs were rebuilt, the
+// upload ran, and R2 serves the new file: 52 humps, `relief_ft: 14.1, levels: 15`. Ryan opened
+// the map to plan his first trip in two months and every deleted hump was still there, because
+// loadLayer() answered out of IndexedDB before it ever asked R2. The shape changed and nobody
+// bumped the number the comment above exists to tell them to bump.
+const CACHE_SCHEMA = 3;
 
 async function fetchSupplemental(lakeKey, layer) {
   const url = `${CF_WORKER_URL}/chartpacks/${lakeKey}/${layer}.geojson?v=${Date.now()}`;
