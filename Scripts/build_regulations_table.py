@@ -1840,6 +1840,15 @@ def cells_that_cut_a_word(pdf, tables):
     return bad
 
 
+def _row_shapes(rows):
+    """A table's rows as comparable tuples, whichever shape collect_tables handed back."""
+    out = []
+    for r in rows:
+        cells = r.get('cells') if isinstance(r, dict) else r
+        out.append(tuple((c or '').strip() for c in (cells or [])))
+    return out
+
+
 def read_pdf_state(path, specs, smap=None, declared=None, extra_read=(), resolve=None):
     """`specs` is a list of (key, header-words, candidate-pages). Anything not found is
     reported by name rather than silently omitted -- a table that quietly vanishes between
@@ -1873,6 +1882,35 @@ def read_pdf_state(path, specs, smap=None, declared=None, extra_read=(), resolve
                                 'says is wrong', 'rows_cut': len(cut),
                                 'examples': cut[:4]})
             got[key] = found
+        # ONE PAGE, ONE TABLE -- AND IF NOT, SAY SO.
+        #
+        # Two specs whose header words both match the same page read the same rows twice, and
+        # the record that survives is whichever a consumer reaches first. That is not a
+        # hypothetical: GA's `water_body_exceptions` searched 62-76 and its only hit in the whole
+        # digest was page 68, the GA/SC border agreement -- so the 2026-08-29 build carried every
+        # one of those 38 rows twice, once flagged as superseding Georgia's general law and once
+        # not. Nothing reported it, because each reader on its own worked perfectly.
+        #
+        # A page belonging to two tables is either one table under two names, or two specs that
+        # need narrowing. Both are build errors and neither is visible any other way.
+        seen_on = {}
+        for key, found in got.items():
+            for f in found:
+                seen_on.setdefault(f['page'], {})[key] = _row_shapes(f.get('rows') or [])
+        for pg, tabs in sorted(seen_on.items()):
+            if len(tabs) < 2:
+                continue
+            names = sorted(tabs)
+            same = len({tuple(tabs[k]) for k in names}) == 1
+            missing.append({'table': ' + '.join(names), 'page': pg,
+                            'why': ('these specs read the SAME rows off the same page -- they '
+                                    'are one table under two names, and only one of them '
+                                    'carries whatever made the second spec necessary'
+                                    if same else
+                                    'two tables were read off one page -- the rows differ, so '
+                                    'one spec is reaching into the other\'s table'),
+                            'rows_each': {k: len(tabs[k]) for k in names},
+                            'identical_rows': same})
         sc_lakes = None
         if any(k == 'state_lakes' for k, _, _, _ in specs):
             pages = [p for k, _, p, _ in specs if k == 'state_lakes'][0]
@@ -1958,8 +1996,19 @@ SPECS = {
     'GA': ('26GAAB-LR.pdf', [
         ('statewide', ['species', 'daily limit'], list(range(62, 76)),
          {'water_col': None, 'species_col': 0, 'implicitly': 'statewide'}),
-        ('water_body_exceptions', ['species', 'water body', 'possession limit'], list(range(62, 76)),
-         {'water_col': 1, 'species_col': 0}),
+        # `water_body_exceptions` WAS THIS BOOK'S BORDER AGREEMENT, READ WITHOUT KNOWING IT.
+        #
+        # It searched 62-76 for SPECIES | WATER BODY | POSSESSION LIMIT and found that header on
+        # exactly ONE page in the whole digest -- 68 -- which is the GA/SC agreement page below.
+        # Georgia has no other water-body exception table. So the two specs were one table under
+        # two names, and the 2026-08-29 build carried all 38 projected rows TWICE: once as an
+        # agreement that supersedes Georgia's general law, and once as an ordinary exception
+        # with `overrides_general: null`. One rule, two records, and only one of them says which
+        # law wins on Hartwell, Russell, Thurmond, Tugaloo, Yonah, the Chattooga and the
+        # Savannah. Whichever a consumer reached first decided it.
+        #
+        # Deleted rather than narrowed. A spec that finds the same page as another spec is not a
+        # table; check_one_page_one_table() below now says so out loud when it happens again.
         ('saltwater', ['species', 'open season'], list(range(79, 92)),
          {'water_col': None, 'species_col': 0, 'season_col': 1,
           'implicitly': 'statewide coastal'}),
@@ -3356,6 +3405,29 @@ def expand_species(phrase, smap):
                 return {'plan_species': list(v.get('plan') or []),
                         'also_covers': list(v.get('also_covers') or []), 'basis': basis}
             return {'plan_species': [], 'basis': basis, 'note': v}
+    # AND WITHOUT THE FOOTNOTE MARKER THE PAGE HANGS OFF THE NAME.
+    #
+    # Georgia stars ten species to point at a note further down the page, and the star came
+    # through as part of the name: `Aggregate of all game fish (does not include catfish)*` read
+    # as UNMAPPED on all seven GA/SC border waters while the identical phrase without the star
+    # sits declared in `no_home_in_the_form`, and `King mackerel*` and `Spanish mackerel*` did
+    # the same. A marker is typography. It is stripped only here, after every exact and
+    # case-blind test has failed, so a deliberate entry that really does end in a star still
+    # wins; and only from the END, because a name does not begin with a footnote.
+    bare = want.rstrip('*†‡ ').strip()
+    if bare and bare != want:
+        for table, basis in ((bp, 'exact, footnote marker not part of the name'),
+                             (pm, 'partial -- the book is wider than the form'),
+                             (nh, 'no checkbox for this fish')):
+            for k, v in table.items():
+                if k.startswith('_') or norm(k).strip().lower() != bare:
+                    continue
+                if table is bp:
+                    return {'plan_species': list(v), 'basis': basis}
+                if table is pm and isinstance(v, dict):
+                    return {'plan_species': list(v.get('plan') or []),
+                            'also_covers': list(v.get('also_covers') or []), 'basis': basis}
+                return {'plan_species': [], 'basis': basis, 'note': v}
     return {'plan_species': [], 'basis': 'UNMAPPED'}
 
 
@@ -4057,8 +4129,16 @@ def statewide_records(doc):
     for st, recs in (doc.get('statewide') or {}).items():
         by_key = {k: (o or {}) for k, _h, _p, o in (SPECS.get(st, ('', []))[1] or [])}
         for r in recs:
-            if r.get('scope') == 'statewide coastal':
-                continue          # a coastal species has no checkbox in a freshwater form
+            # THE COASTAL ROWS ARE CHECKED TOO, AND THAT IS THE WHOLE POINT OF CHECKING.
+            #
+            # This used to `continue` here, reasoning that a coastal species has no checkbox in
+            # a freshwater form. True, and it is the conclusion the vocabulary file exists to
+            # RECORD -- `no_home_in_the_form` is the place to say it, per species, once. Skipping
+            # instead meant Georgia's saltwater table never reached the check at all: nine
+            # species -- amberjack, billfish, black sea bass, dolphin, gag grouper, red porgy,
+            # red snapper and two mackerel -- were read out of the book, mapped to nothing, and
+            # reported as no problem, because the only test that would have noticed was told not
+            # to look. The check is now the same for both halves of the same book.
             if r.get('species'):
                 # A record that already names its own species -- the TN statewide table builds
                 # them that way -- does not need the spec consulted at all.
@@ -4092,9 +4172,6 @@ def check_species_map(doc, registry):
     if not os.path.exists(p):
         return {'checked': False, 'why': 'species_map.json not found'}
     m = json.load(open(p, encoding='utf-8'))
-    known = set(m.get('book_phrases') or {})
-    known |= {k for k in (m.get('partly_mapped') or {}) if not k.startswith('_')}
-    known |= {k for k in (m.get('no_home_in_the_form') or {}) if not k.startswith('_')}
     plan = set((m.get('plan_species') or {}).get('values') or [])
     seen = set()
 
@@ -4127,10 +4204,28 @@ def check_species_map(doc, registry):
     # (shellcracker) and spotted sunfish)` is the case that shows the cost: SC's own definition
     # of six plan species, sitting unmapped and therefore answering for none of them.
     walk(statewide_records(doc))
-    unmapped = sorted(seen - known)
-    # A closure that gates nothing because the form cannot name its fish is the planner gap,
-    # counted here so it is a number rather than an impression.
-    homeless = {k for k in (m.get('no_home_in_the_form') or {}) if not k.startswith('_')}
+    # THE CHECK ASKS THE RESOLVER. IT DOES NOT RE-DERIVE THE ANSWER.
+    #
+    # This was `sorted(seen - known)` -- a set difference over the three map tables, and an exact
+    # string test, which is not what the pipeline does. expand_species() falls back to a
+    # case-blind match and then to one without the footnote marker, so the build resolved
+    # `White bass` perfectly well and the ledger reported it as a hole in the vocabulary anyway.
+    # A report that names a fish the pipeline already handles teaches the reader to distrust the
+    # rest of the list, which is worse than saying nothing. One resolver, one answer, and the
+    # check reads the same one the records were built from.
+    #
+    # `species_with_no_home` gets the same discipline. It used to be the whole
+    # `no_home_in_the_form` table -- 68 declarations, printed as though 68 fish in these books
+    # had no checkbox, when it is the length of a file. It is now the phrases THIS RUN actually
+    # read out of THESE books and found no home for, which is a measurement.
+    unmapped, homeless = [], []
+    for ph in sorted(seen):
+        basis = (expand_species(ph, m) or {}).get('basis')
+        if basis == 'UNMAPPED':
+            unmapped.append(ph)
+        elif basis == 'no checkbox for this fish':
+            homeless.append(ph)
+    homeless = set(homeless)
     cannot_fire = []
     for slug, w in (doc.get('by_water') or {}).items():
         def cw(recs):
@@ -4141,8 +4236,10 @@ def check_species_map(doc, registry):
                                             'window': '%s..%s' % (c.get('start'), c.get('end'))})
                 cw(r.get('rules') or [])
         cw(w.get('rules') or [])
-    return {'checked': True, 'phrases_in_the_books': len(seen), 'unmapped': unmapped,
+    return {'checked': True, 'phrases_in_the_books': len(seen), 'unmapped': sorted(unmapped),
             'plan_species': sorted(plan), 'species_with_no_home': sorted(homeless),
+            'no_home_declared_in_the_map': len({k for k in (m.get('no_home_in_the_form') or {})
+                                                if not k.startswith('_')}),
             'closures_that_cannot_fire': cannot_fire}
 
 
