@@ -1289,7 +1289,11 @@ def read_ga_demarcation(pdf, pages, columns=3):
 PROSE = {
     'SC': [('seasons', [20], 'sc',
             {'water_col': 0, 'species_col': 1, 'name_in_sentence': True,
-             'expect': 'SEASONS'})],
+             'expect': 'SEASONS'}),
+           # The section the game-fish table points at for blue catfish and never read.
+           ('nongame_limits', [38], 'sc_nongame',
+            {'water_col': 0, 'species_col': 1,
+             'expect': 'FRESHWATER NONGAME FISHING REGULATIONS'})],
     # (key, pages, reader, opts). Shaped exactly like a ruled table on the way out, so
     # resolve_state_tables(), project_by_water() and closures_in() need to know nothing about
     # where the rows came from.
@@ -1306,6 +1310,101 @@ PROSE = {
             {'water_col': 0, 'species_col': None,
              'expect': 'SALTWATER FINFISH RELATED DEFINITIONS'})],
 }
+
+
+# SC's FRESHWATER NONGAME FISHING REGULATIONS page, which the game-fish table points AT and
+# nothing had ever read. `Blue Catfish` in the game table carries no limit at all -- its cell
+# says `See limits in Freshwater Nongame Fishing Regulations section.` -- so until now the app's
+# only answer for blue catfish in South Carolina came from the LLM digest, which returned 150 and
+# nothing else. 150 is the statewide half of a rule with a 25-fish exception on Marion, Moultrie,
+# a reach of the Pee Dee and the upper Santee, and a two-fish cap over 32 inches that also covers
+# the Congaree and the Wateree. The two sentences govern DIFFERENT water sets, which is why they
+# are read as two rules and not flattened -- the same reason GA's three demarcation clauses are.
+NONGAME_BAG = re.compile(
+    r'daily bag limit for (?P<species>[a-z]+ catfish) harvest is (?P<statewide>\d+) fish per day '
+    r'per person on all state waterways except the daily bag limit remains (?P<creel>\d+) fish '
+    r'per day for (?P<waters>.+?)\.', re.I)
+NONGAME_OVER = re.compile(
+    r'unlawful to possess more than (?P<n>[a-z]+) (?P<species>[a-z]+ catfish) greater than '
+    r'(?P<len>[a-z-]+) inches in length in any one day in (?P<waters>.+?)\.', re.I)
+
+
+def _nongame_parts(waters):
+    """One water per row, split on the sentence's own commas.
+
+    HANDED IN WHOLE, THIS LIST BINDS NOTHING. The comma-split in resolve_water_body() refuses to
+    run when a piece carries a preposition -- a guard that exists because loosening it invented
+    binds -- and `the section of the Pee Dee River from the state border with North Carolina south
+    to the Highway 301 bridge` carries two. So the whole of `Lake Marion, Lake Moultrie, ... and
+    the upper reach of the Santee River` came back unresolved and the 25-fish exception reached no
+    water at all. Measured 2026-08-29 before this existed: 0 waters bound from the bag-limit
+    sentence, and the over-32-inch sentence bound the Congaree and the Wateree while turning the
+    other four into `Lake Marion river` and `Lake Moultrie river`.
+
+    The trailing `and the Congaree and Wateree rivers` is left as ONE piece on purpose -- the
+    resolver already reads a shared plural head correctly, and splitting it here would hand it
+    `the Congaree` with nothing to say what kind of water that is.
+    """
+    out = []
+    for p in re.split(r',\s*', waters or ''):
+        p = re.sub(r'^\s*(?:and\s+)?', '', p).strip(' .;')
+        if len(p) > 3:
+            out.append(p)
+    return out
+
+
+def read_sc_nongame(pdf, pages):
+    """Blue catfish, out of the section the game table sends you to.
+
+    Returns rows shaped like a ruled table's so resolve_state_tables() needs to know nothing about
+    where they came from -- an address, a species, a size cell and a creel cell.
+
+    THE PAGE IS TWO COLUMNS AND BOTH RETURN THE SAME BULLET, so the sentence is taken once. The
+    columns overlap because this page's text spans them; deduplicating on the sentence rather than
+    trusting the column split is the safe direction, and the alternative -- reading it twice --
+    is how Lake Marion's area closure once arrived in triplicate.
+    """
+    live = [(n, pdf.pages[n - 1]) for n in pages if 1 <= n <= len(pdf.pages)]
+    if not live:
+        return []
+    starts = column_starts([p for _n, p in live])
+    rows, seen = [], set()
+    for pageno, pg in live:
+        for col in column_lines(pg, starts):
+            joined = []
+            for raw in col:
+                t = norm(raw)
+                if not t:
+                    continue
+                if BULLET.match(t):
+                    joined.append(BULLET.sub('', t))
+                elif joined:
+                    joined[-1] += ' ' + t
+            for b in joined:
+                m = NONGAME_BAG.search(b)
+                if m and ('bag', m.group('creel')) not in seen:
+                    seen.add(('bag', m.group('creel')))
+                    sp = m.group('species').title()
+                    # THE STATEWIDE HALF AND THE EXCEPTION ARE TWO ROWS. Served as one they would
+                    # answer 150 on Lake Marion, where the book says 25.
+                    rows.append({'cells': [None, sp, '', m.group('statewide')],
+                                 'species': sp, 'page': pageno, 'implicitly': 'statewide',
+                                 'sentence': b})
+                    for part in _nongame_parts(m.group('waters')):
+                        rows.append({'cells': [part, sp, '', m.group('creel')],
+                                     'species': sp, 'page': pageno, 'sentence': b})
+                m2 = NONGAME_OVER.search(b)
+                if m2 and ('over', m2.group('len')) not in seen:
+                    seen.add(('over', m2.group('len')))
+                    sp = m2.group('species').title()
+                    # A DIFFERENT LIST OF WATERS from the bag-limit sentence -- it adds the
+                    # Congaree and the Wateree. Carried as its own row for that reason.
+                    for part in _nongame_parts(m2.group('waters')):
+                        rows.append({'cells': [part, sp,
+                                               'no more than %s greater than %s inches in any '
+                                               'one day' % (m2.group('n'), m2.group('len')), ''],
+                                     'species': sp, 'page': pageno, 'sentence': b})
+    return rows
 
 
 def read_prose_state(path, state):
@@ -1332,7 +1431,8 @@ def read_prose_state(path, state):
             rows = (read_ga_prose(pdf, pages) if reader == 'ga'
                     else read_ga_pfa(pdf, pages) if reader == 'ga_pfa'
                     else read_ga_demarcation(pdf, pages) if reader == 'ga_demarc'
-                    else read_sc_prose(pdf, pages) if reader == 'sc' else [])
+                    else read_sc_prose(pdf, pages) if reader == 'sc'
+                    else read_sc_nongame(pdf, pages) if reader == 'sc_nongame' else [])
             if rows:
                 # ONE PSEUDO-TABLE PER PAGE, not one for the section. The page ledger asks which
                 # pages were read, and a three-page PFA listing filed under `pages[0]` reported
