@@ -550,8 +550,12 @@ def render_water(w):
             if id(c) in folded:
                 continue
             eff = c.get('effect') or 'unknown'
+            # A LIMIT WINDOW AND A TACKLE WINDOW ARE NOTES, NOT SHUTLINES. Neither stops a
+            # trip; both change what you may keep or tie on inside a set of dates, and printing
+            # them in the same red as a closure is how a card stops being read.
             tone = {'closed': 'shutline', 'no_harvest': 'shutline', 'open_only': 'shutline',
-                    'unknown': 'warnline'}.get(eff, 'noteline')
+                    'unknown': 'warnline', 'limit_window': 'noteline',
+                    'gear_window': 'noteline'}.get(eff, 'noteline')
             extra = folded.get(('with', id(c)))
             out.append('<div class="%s"><b>%s</b> &nbsp;%s%s<br>%s%s%s</div>'
                        % (tone, E('harvest window' if extra else eff.replace('_', ' ')),

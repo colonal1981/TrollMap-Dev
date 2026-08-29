@@ -3774,6 +3774,15 @@ LIMIT_TAIL = re.compile(r'\b(inch|inches|minimum|maximum|per day|no length limit
 CLOSED_WORD = re.compile(r'\bclosed\b|\bprohibit(?:ed)?\b|\bno harvest\b|\bunlawful\b', re.I)
 OPEN_WORD = re.compile(r'\bseason is open\b|\bopen from\b|\bmay be harvested\b', re.I)
 METHOD = re.compile(r'\bclosed to (\w+)', re.I)
+# A RESTRICTION ON TACKLE INSIDE A WINDOW. Watauga's walleye run is `Jan 1-April 30: restricted to
+# the use of one (1) hook having a single point or one (1) lure having no more than one (1) hook
+# with a single point`, on four named tributaries. It shuts nothing and limits nothing -- it says
+# what you may tie on -- and with no word for it the record came out `unknown`, which put a
+# `date-bound rule the app cannot express` badge on the lake. Ryan: "why is this unknown?"
+GEAR_WINDOW = re.compile(r'\brestricted to the use of\b|\bsingle point\b|\bhook gap\b'
+                         r'|\bartificial (?:lure|bait)s?\b|\bcircle hooks?\b|\bbarbless\b'
+                         r'|\bmay only be taken by\b|\bonly .{0,20}\bhooks?\b', re.I)
+
 NO_FISHING = re.compile(r'\b(all watercraft and fishing|no fishing|closed to (?:boating and )?'
                         r'fishing|fishing (?:is )?prohibited|closed fishing zone|'
                         r'closed to boating and fishing)\b', re.I)
@@ -3818,11 +3827,25 @@ def closures_in(text):
             rec.update(effect='closed', applies_to='harvest')
         elif OPEN_WORD.search(near):
             rec.update(effect='open_only', applies_to='harvest')
+        elif GEAR_WINDOW.search(near):
+            # WHAT YOU MAY TIE ON, not whether you may fish. Typed so it can be shown and can
+            # never gate a trip -- the same treatment a method closure gets, one step milder.
+            rec.update(effect='gear_window', applies_to='tackle')
         elif LIMIT_TAIL.search(tail[:70]):
             # `Oct. 1 - June 15: 26 inches min` -- a window with a size or creel limit inside
             # it. Real, useful, and NOT a closure. Typed so it can be shown without ever
             # blocking a trip.
             rec.update(effect='limit_window', applies_to='harvest')
+        elif LIMIT_TAIL.search(head[-70:]):
+            # THE LIMIT CAN SIT IN FRONT OF THE DATES. `Only one (1) Smallmouth Bass June 1
+            # through Oct. 15` and `Five (5) per day in combination. Only one (1) Smallmouth Bass
+            # June 1 through Oct. 15` both put the number first and the window last, and looking
+            # only at the tail called them `unknown` -- so Norris Lake, which simply allows one
+            # smallmouth instead of five for four and a half months, carried a badge saying the
+            # app could not express its dates. It can. The dates were never the problem; the
+            # sentence reads right to left.
+            rec.update(effect='limit_window', applies_to='harvest',
+                       note='the limit is stated before the window it applies to')
         else:
             rec.update(effect='unknown', applies_to='unknown')
         out.append(rec)

@@ -375,8 +375,21 @@ export function closuresFor(state, lakeName, species, date) {
   // it entirely is the mistake this whole file exists to correct: an unread rule displayed
   // nothing, which reads as "checked, you are fine". It cannot block, because we do not know
   // what it says; it can and must be quoted.
+  //
+  // A WINDOW THAT CHANGES THE LIMIT IS NOT A CLOSURE AND IS NOT NOTHING. Norris Lake allows five
+  // black bass a day and `Only one (1) Smallmouth Bass June 1 through Oct. 15`; Tennessee's
+  // striped bass go from two a day to one on November 1. The flat size and creel on the row say
+  // five and two all year, so dropping the window loses the only place the seasonal half is
+  // written down. Watauga's walleye run is the same shape one step milder -- `restricted to the
+  // use of one (1) hook having a single point` from January to April, which changes what you tie
+  // on rather than what you keep.
+  //
+  // Both are carried and NEITHER CAN EVER GATE A TRIP: `gates` still asks for effect `closed`,
+  // so a limit or a tackle rule reaches the angler as something to read and never as a refusal.
   const active = all.filter(
-    (c) => (c.effect === 'closed' || c.effect === 'unknown') && forSpecies(c) && inWindow(c));
+    (c) => (c.effect === 'closed' || c.effect === 'unknown'
+            || c.effect === 'limit_window' || c.effect === 'gear_window')
+           && forSpecies(c) && inWindow(c));
   const gates = (c) => c.effect === 'closed'
     && (c.applies_to === 'all_fishing' || c.applies_to === 'harvest');
   return {
