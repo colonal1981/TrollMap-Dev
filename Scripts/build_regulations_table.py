@@ -1447,6 +1447,10 @@ def read_prose_state(path, state):
     return out
 
 
+# Sentences that forbid rather than describe. Counted, not merely found: a page of general
+# information may say `unlawful` once in passing, and a regulations page says it in a list.
+PROHIBITION = re.compile(r'\b(?:it is unlawful to|may not be (?:possessed|taken|harvested)|no \w+ may be (?:possessed|taken|harvested)|is prohibited|are prohibited|unlawful to possess)\b', re.I)
+
 LAW_WORDS = re.compile(r'\b(inch|inches|creel|per day|daily limit|possession limit|'
                        r'size limit|closed season|open season|minimum length|no minimum)\b', re.I)
 
@@ -1494,7 +1498,24 @@ def page_ledger(pdf, read_pages, smap, declared, resolve=None):
         if not text.strip():
             out['blank'].append(n)
             continue
-        law = len(set(rx.findall(text.lower()))) >= 2 and bool(LAW_WORDS.search(text))
+        named = len(set(rx.findall(text.lower())))
+        # A PAGE ABOUT ONE FISH CAN STILL BE LAW.
+        #
+        # The two-species rule exists so a species profile or a records table -- which say one
+        # fish's name over and over beside a length -- do not read as regulation pages. It works,
+        # and it silently swallowed NC page 25, `Special Regulations for Joint Fishing Waters`:
+        # six sentences beginning `It is unlawful to possess striped bass or Bodie bass`, carrying
+        # the Cape Fear joint-waters prohibition, a May 1 - September 30 closed season, an 18-inch
+        # minimum in the Albemarle Sound area and an 18-inch-plus-22-to-27-inch slot in the
+        # Central-Southern area. One species, so the test never looked, and the ledger filed the
+        # page as carrying no fishing law.
+        #
+        # A profile does not say `It is unlawful to` six times. So one named species plus repeated
+        # PROHIBITION SENTENCES is law too, and the count is what separates the two -- a single
+        # stray `unlawful` in a paragraph of general information does not qualify.
+        forbids = len(PROHIBITION.findall(text))
+        law = ((named >= 2 and bool(LAW_WORDS.search(text)))
+               or (named >= 1 and forbids >= 2))
         if not law:
             out['not_law'].append(n)
         elif str(n) in declared:
@@ -1779,6 +1800,33 @@ def main():
     R = lambda *p: os.path.join(a.root, *p)
 
     idx = load_index(R(a.registry))
+    # WHICH STATES A WATER IS IN, MEASURED FROM ITS OWN SHAPE. label_water_states.py tests every
+    # boundary against the Census state outlines and writes registry/water_states.json. Merged
+    # onto the index row here so states_of() reads a measurement instead of scraping letters out
+    # of a display name -- which is how `Lumber River (Robeson Co, NC)` hid the fact that it also
+    # runs through South Carolina, and how 19 of the 29 multi-state waters we offer went unmarked.
+    # Absent is not an error: the file is optional and states_of() falls back to the name.
+    _ws = R(a.registry, 'water_states.json')
+    if os.path.exists(_ws):
+        _wsd = (json.load(open(_ws, encoding='utf-8')) or {}).get('waters') or {}
+        hit = 0
+        for slug, row in idx.items():
+            got = (_wsd.get(slug) or {}).get('states')
+            if got:
+                row['states_measured'] = got
+                # AND HOW MUCH OF IT IS IN EACH. A water can be in two states and be 94% in one
+                # of them -- the Lumber is -- and `NC/SC` alone says the SC rule applies without
+                # saying it applies to the last few miles. The share is a measurement, so it can
+                # travel onto the record and let the card be specific instead of the reader
+                # guessing which half they are launching into.
+                row['state_shares'] = {d['state']: d['share']
+                                       for d in ((_wsd.get(slug) or {}).get('detail') or [])}
+                hit += 1
+        print('states:   %d of %d waters carry a measured state list (%s)'
+              % (hit, len(idx), os.path.basename(_ws)), flush=True)
+    else:
+        print('states:   %s absent -- falling back to reading states out of display names; run '
+              'label_water_states.py' % os.path.basename(_ws), flush=True)
     name_map = build_name_map(idx)
     systems = load_systems(R(a.registry))
     # LOADED BEFORE THE FIRST READER, not before the state loop. resolve_state_tables() needs
@@ -2591,6 +2639,11 @@ def states_of(row):
     itself to Hartwell -- an SC/GA lake three states of book away -- and printed on its card.
     Spanning SC and GA is not a reason to accept the NC book. It is a reason to accept SC and GA.
     """
+    # THE MEASUREMENT WINS WHERE THERE IS ONE. A display name is a label somebody wrote; this is
+    # the water's own boundary tested against the Census state outlines.
+    got = row.get('states_measured')
+    if got:
+        return {str(x).strip().upper() for x in got if x}
     out = {(row.get('state') or '').strip().upper()}
     for m in re.finditer(r'\b(AL|GA|NC|SC|TN|VA|KY|MS)\b', (row.get('display_name') or '').upper()):
         out.add(m.group(1))
@@ -3383,9 +3436,21 @@ def project_by_water(doc, idx, all_specs=None, smap=None, ramps=None, not_fish=(
                         # where somebody launches, which for this water is North Carolina. Ryan,
                         # seeing SC's page 32 on a Robeson County river: "sc?"
                         row_ = idx.get(slug) or {}
-                        if row_.get('feature_type') == 'river' and st not in states_of(row_):
+                        sts = states_of(row_)
+                        if row_.get('feature_type') == 'river' and st not in sts:
                             one['other_state_reach'] = st
                             one['address_is_a_reach'] = True
+                        elif len(sts) > 1 and st in sts:
+                            # BOTH BOOKS ARE THE LAW HERE, ON DIFFERENT PARTS. Ryan asked for two
+                            # rule entries on the Lumber and he gets them -- but 94% of that river
+                            # is in North Carolina, so SC's page 32 governs the last few miles and
+                            # nothing above them. The share says which is which without anybody
+                            # picking a word for it.
+                            share = (row_.get('state_shares') or {}).get(st)
+                            if share is not None:
+                                one['state_share'] = share
+                                one['state_share_of'] = st
+                                one['water_spans'] = sorted(sts)
                         add(slug, one)
         nmap = build_name_map(idx)
         for slug, lake in ((blk.get('state_lakes') or {}).get('lakes') or {}).items():

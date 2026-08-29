@@ -218,6 +218,8 @@ def collect(doc, idx):
                 # is real and it is not the law where somebody launches on this water, so
                 # the card says whose it is instead of leaving Ryan to ask "sc?".
                 'other_state': r.get('other_state_reach'),
+                'share': r.get('state_share'), 'spans': r.get('water_spans'),
+                'share_of': r.get('state_share_of'),
                 'scope': r.get('applies_to_feature_types') or None,
                 'damaged': r.get('text_cut_by_the_grid') or None,
                 'address': clean(r.get('address')),
@@ -504,6 +506,13 @@ def render_water(w):
         if isinstance(pg, int) or (isinstance(pg, str) and pg.isdigit()):
             src += ' p%s' % pg
         flags = ''
+        # A WATER IN TWO STATES GETS BOTH BOOKS, ON DIFFERENT PARTS OF IT. The share is measured
+        # from the water's own shape against the Census state outlines, so the card can say how
+        # much of it this rule reaches rather than leaving `NC/SC` to imply all of it.
+        if r.get('share') is not None and r.get('share_of'):
+            flags += ('  <span class="chip warn">%s\'s rule &mdash; %s of this water is in %s'
+                      '</span>' % (E(r['share_of']), '%.0f%%' % (r['share'] * 100),
+                                   E(r['share_of'])))
         if r.get('other_state'):
             flags += ('  <span class="chip warn">%s\'s rule, for the %s reach of this river'
                       '</span>' % (E(r['other_state']), E(r['other_state'])))
