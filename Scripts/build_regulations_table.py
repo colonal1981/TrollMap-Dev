@@ -1371,6 +1371,10 @@ PROSE = {
     # GA's pages are the full book's now (the cut's number plus 61). `expect` is what the page
     # must still say: a book gets re-laid-out every year and a page number that is silently wrong
     # reads the wrong page and reports rows, which is worse than reading nothing.
+    # Six striped bass prohibitions the ledger called `no fishing law` for a month.
+    'NC': [('joint_waters', [25], 'nc_joint',
+            {'water_col': 0, 'species_col': 1,
+             'expect': 'Special Regulations for Joint Fishing Waters'})],
     'GA': [('length_limits_and_seasons', [64], 'ga',
             {'water_col': 0, 'species_col': 1, 'expect': 'FRESHWATER FISHING'}),
            ('public_fishing_areas', [69, 70, 71], 'ga_pfa',
@@ -1479,6 +1483,86 @@ def read_sc_nongame(pdf, pages):
     return rows
 
 
+# NC's SPECIAL REGULATIONS FOR JOINT FISHING WATERS -- six prohibition sentences the page ledger
+# called `no fishing law` until the one-species test was widened on 2026-08-29. They are real,
+# per-water, dated and size-bounded striped bass rules and they belong in the table.
+NC_FORBIDS = re.compile(r'^It is unlawful to possess\s+(?P<what>.+?)\s*\.\s*$', re.I)
+NC_NET = re.compile(r'\b(net fish|seines|gill nets|trawl nets|net stakes|electrical fishing)\b', re.I)
+
+
+def read_nc_joint_prose(pdf, pages):
+    """The joint-waters prohibitions, as rows a resolver can bind.
+
+    `It is unlawful to possess striped bass or Bodie bass (striped bass hybrid) less than 18 inches
+    or between 22 and 27 inches in length in the Central-Southern Striped Bass Management Area` is
+    a size limit with an address on the end of it. The address is the LAST `in ...` clause -- the
+    sentences put `in length` in the middle and the water at the end, so the first one is never the
+    right one.
+
+    THE NET AND GEAR SENTENCES ARE READ AND NOT CARRIED, in the class SC 40 established: seines,
+    gill nets, trawl nets and electrical devices are not something this app plans around, and a
+    method rule on a card is noise. They are counted so the page is not half-read in silence.
+    """
+    live = [(n, pdf.pages[n - 1]) for n in pages if 1 <= n <= len(pdf.pages)]
+    if not live:
+        return []
+    starts = column_starts([p for _n, p in live])
+    rows, seen = [], set()
+    for pageno, pg in live:
+        for col in column_lines(pg, starts):
+            joined = []
+            for raw in col:
+                t = norm(raw)
+                if not t:
+                    continue
+                if BULLET.match(t):
+                    joined.append(BULLET.sub('', t))
+                elif joined:
+                    joined[-1] += ' ' + t
+            for b in joined:
+                b = re.sub(r'(\w)-\s+(\w)', r'\1\2', b)          # `com- bination`
+                m = NC_FORBIDS.match(b.strip())
+                if not m or b.strip() in seen:
+                    continue
+                seen.add(b.strip())
+                if NC_NET.search(b):
+                    rows.append({'cells': [None, None, '', ''], 'page': pageno,
+                                 'method_only': True, 'sentence': b})
+                    continue
+                what = m.group('what')
+                cut = what.lower().rfind(' in ')
+                where = what[cut + 4:].strip(' .,;') if cut > 0 else None
+                rule = what[:cut].strip(' .,;') if cut > 0 else what
+                if where:
+                    where = re.sub(r'\s+unless changed by proclamation\s*$', '', where, flags=re.I)
+                    where = re.sub(r'^the\s+', '', where).strip(' .,;')
+                # THE LAST `in` IS NOT ALWAYS A PLACE. Two of these six sentences end in prose --
+                # `in combination, per person per day, regardless of the number of management
+                # areas fished` -- and the clause reader handed that back as a water body. A rule
+                # with no water is a rule about all joint waters, and saying so is better than
+                # inventing an address out of an adverb.
+                if where and not re.search(r'\b(waters?|river|sound|lake|creek|canal|reservoir'
+                                           r'|management area)\b', where, re.I):
+                    where = None
+                # `JOINT WATERS OF THE CAPE FEAR RIVER` IS THE CAPE FEAR RIVER, in part.
+                # NC divides its water into inland, joint and coastal and marks the boundaries
+                # on the ground; we carry the river, not the three portions of it. Stripping the
+                # qualifier binds the rule to the water it is about, and `address_is_a_reach`
+                # says out loud that it governs a stretch -- the same contract GA's Ocmulgee rule
+                # has had since 2026-08-28. Left whole it bound nothing at all, which on a rule
+                # reading `no striped bass regardless of size` is the worst way to be wrong.
+                reach = False
+                if where:
+                    m_j = re.match(r'^joint\s+(?:fishing\s+)?waters\s+of\s+(?:the\s+)?(?P<w>.+)$',
+                                   where, re.I)
+                    if m_j:
+                        where, reach = m_j.group('w').strip(' .,;'), True
+                rows.append({'cells': [where, None, 'no ' + rule, ''],
+                             'page': pageno, 'size_col': 2, 'species_in_sentence': True,
+                             'address_is_a_reach': reach, 'sentence': b})
+    return rows
+
+
 def read_prose_state(path, state):
     pdfplumber = _pdfplumber()
     out = {}
@@ -1504,7 +1588,8 @@ def read_prose_state(path, state):
                     else read_ga_pfa(pdf, pages) if reader == 'ga_pfa'
                     else read_ga_demarcation(pdf, pages) if reader == 'ga_demarc'
                     else read_sc_prose(pdf, pages) if reader == 'sc'
-                    else read_sc_nongame(pdf, pages) if reader == 'sc_nongame' else [])
+                    else read_sc_nongame(pdf, pages) if reader == 'sc_nongame'
+                    else read_nc_joint_prose(pdf, pages) if reader == 'nc_joint' else [])
             if rows:
                 # ONE PSEUDO-TABLE PER PAGE, not one for the section. The page ledger asks which
                 # pages were read, and a three-page PFA listing filed under `pages[0]` reported
