@@ -26,6 +26,55 @@ import argparse, html, json, os, sys
 from collections import defaultdict
 
 
+
+def _md(v):
+    """`06-15` -> 615, for day arithmetic that does not need a year."""
+    try:
+        m, d = str(v).split('-')
+        return int(m) * 100 + int(d)
+    except Exception:
+        return None
+
+
+def _next_day(md):
+    """The day after, in the same MM-DD space. Month ends are all that matter here."""
+    LAST = {1: 31, 2: 29, 3: 31, 4: 30, 5: 31, 6: 30,
+            7: 31, 8: 31, 9: 30, 10: 31, 11: 30, 12: 31}
+    m, d = md // 100, md % 100
+    return (m + 1 if m < 12 else 1) * 100 + 1 if d >= LAST[m] else m * 100 + d + 1
+
+
+def _fold_complementary(rules):
+    """Which closure records say the same thing as another one, inverted.
+
+    Returns a set of ids to SKIP, plus ('with', id) -> the skipped record's sentence, so the
+    surviving line can carry it. Only an `open_only` and a `closed` on the same species that tile
+    the year exactly are folded -- anything that leaves a gap, or overlaps, is two different facts
+    and both are printed.
+    """
+    skip = {}
+    by_species = {}
+    for r in rules:
+        for c in r.get('closures') or []:
+            by_species.setdefault(str(c.get('species') or ''), []).append(c)
+    for cs in by_species.values():
+        opens = [c for c in cs if c.get('effect') == 'open_only']
+        shuts = [c for c in cs if c.get('effect') == 'closed']
+        for o in opens:
+            os_, oe = _md(o.get('start')), _md(o.get('end'))
+            if os_ is None or oe is None:
+                continue
+            for c in shuts:
+                cs_, ce = _md(c.get('start')), _md(c.get('end'))
+                if cs_ is None or ce is None:
+                    continue
+                if _next_day(oe) == cs_ and _next_day(ce) == os_:
+                    skip[id(c)] = True
+                    skip[('with', id(o))] = c.get('text') or ''
+                    break
+    return skip
+
+
 def load(path):
     if not os.path.exists(path):
         sys.exit('not found: %s -- run build_regulations_table.py first' % path)
@@ -83,15 +132,30 @@ def collect(doc, idx):
                 # creel number and printing `none in this table` under Size was wrong twice on
                 # one row, which is what Ryan found by doing the thing this script cannot:
                 # holding the card up against page 37.
+                # AND THE BOOK'S ORDER IS CREEL FIRST. Printing the joined value across both
+                # columns put `3` and `3 (16" or longer)` under the heading Size limit with the
+                # Creel column empty -- the first thing Ryan checked, twice: "this looks like it
+                # is still showing up in the size limit instead of creel ... and it is because
+                # the state page does it creel (size)". The build splits it now on the book's own
+                # punctuation, so each number goes under its own heading and the joined value is
+                # quoted in the source cell where it belongs.
                 lim = sl.get('limits') or {}
+                spl = sl.get('limits_split') or {}
                 for fish in ('bass', 'bream', 'catfish'):
-                    v = clean(lim.get(fish))
-                    if not v:
+                    p = spl.get(fish) or {}
+                    creel, size = clean(p.get('creel')), clean(p.get('size'))
+                    if not creel and not size:
                         continue
+                    # NO SIZE HERE IS NOT NO SIZE LIMIT. This table sets one on some lakes and
+                    # says nothing on the rest, and the statewide table still applies to the
+                    # rest -- so the cell says which of those two it is.
+                    src = ('SC state lakes table — the book prints this as one value, "%s"'
+                           % p.get('as_printed') if size else
+                           'SC state lakes table — it sets no size here, so the statewide '
+                           'size limit is the one that applies')
                     rules.append({
-                        'species': fish.title(), 'size': None, 'creel': None, 'whole': v,
-                        'text': None, 'source': 'SC state lakes table — creel and size in one '
-                                                'value, as the book prints them',
+                        'species': fish.title(), 'size': size, 'creel': creel, 'whole': None,
+                        'text': None, 'source': src,
                         'page': None, 'closures': [], 'plan': [], 'via': 'state lakes table',
                     })
                 # The other two are not creel numbers and must not sit in that column.
@@ -440,7 +504,13 @@ def render_water(w):
         if r.get('scope'):
             flags += ' <span class="chip on">%s only</span>' % E(', '.join(r['scope']))
         if r.get('whole'):
-            out.append('<tr><td class="sp">%s%s</td><td class="lim mono" colspan="2">%s</td>'
+            # A SPANNING CELL STARTS UNDER `Size limit` AND READS AS ONE. Ryan found this twice
+            # in one sitting -- a creel of 3 printed under Size, and then NC's whole county-pond
+            # address printed there because that row parsed no limit at all. The cell is labelled
+            # now, so a sentence cannot be mistaken for a number in the column it happens to
+            # start in.
+            out.append('<tr><td class="sp">%s%s</td><td class="lim mono" colspan="2">'
+                       '<span class="chip">the book\'s own sentence</span> %s</td>'
                        '<td class="src">%s</td></tr>'
                        % (sp, flags, E(r['whole']), E(src.strip())))
         else:
@@ -449,15 +519,30 @@ def render_water(w):
                        % (sp, flags, E(r['size'] or '—'), E(r['creel'] or '—'), E(src.strip())))
     out.append('</tbody></table>')
 
+    # AN OPEN WINDOW AND ITS OWN COMPLEMENT ARE ONE RULE, NOT TWO. Ryan: "why is there an open
+    # and close notice... if it isn't closed it must be open???" SC prints the Santee striper rule
+    # as two lines in one cell -- harvest Oct 1 to Jun 15, closed Jun 16 to Sept 30 -- and they
+    # tile the year exactly. Both records are real and closuresFor() needs both to gate a date;
+    # printing both tells a person the same fact twice and makes them work out that it is the
+    # same fact. The complement is folded into the open line, keeping its sentence, because that
+    # is where the exceptions live: the Lower Saluda catch-and-release and its hook-gap rule are
+    # only on the closed half.
+    folded = _fold_complementary(w['rules'])
     for r in w['rules']:
         for c in r['closures']:
+            if id(c) in folded:
+                continue
             eff = c.get('effect') or 'unknown'
             tone = {'closed': 'shutline', 'no_harvest': 'shutline', 'open_only': 'shutline',
                     'unknown': 'warnline'}.get(eff, 'noteline')
-            out.append('<div class="%s"><b>%s</b> &nbsp;%s%s<br>%s%s</div>'
-                       % (tone, E(eff.replace('_', ' ')), E(dates(c)),
+            extra = folded.get(('with', id(c)))
+            out.append('<div class="%s"><b>%s</b> &nbsp;%s%s<br>%s%s%s</div>'
+                       % (tone, E('harvest window' if extra else eff.replace('_', ' ')),
+                          E(dates(c)),
                           ' &middot; ' + E(c['species']) if c.get('species') else '',
                           E(c.get('text') or ''),
+                          '<br><span class="chip">shut the rest of the year</span> %s'
+                          % E(extra) if extra else '',
                           '<br><em>%s</em>' % E(c['note']) if c.get('note') else ''))
 
     body = [r for r in w['rules'] if r.get('address') or r.get('text')]

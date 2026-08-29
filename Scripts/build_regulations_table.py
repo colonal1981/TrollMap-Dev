@@ -693,6 +693,30 @@ def carry_water_body(rows, col=0):
     return out
 
 
+STATE_LAKE_LIMIT = re.compile(r'^\s*(?P<creel>\d+)\s*(?:\(\s*(?P<size>[^)]*?)\s*\))?\s*$')
+
+
+def split_state_lake_limit(v):
+    """`3 (16" or longer)` -> creel 3, size 16" or longer. The book's own punctuation.
+
+    SC's state lakes table heads one column `CREEL/ SIZE LIMITS` and prints both in it, creel
+    first. Four shapes appear across the eighteen lakes and nothing else: a bare number, a number
+    with a parenthetical size, `No limit`, and `N/A`. A bare number is a creel with NO SIZE STATED
+    IN THIS TABLE -- which is not the same as no size limit, because the statewide table may still
+    set one, and `as_printed` is kept so the card can show what the page actually says.
+    """
+    t = (v or '').strip()
+    if not t or t.upper() == 'N/A':
+        return {'creel': None, 'size': None, 'as_printed': t or None}
+    m = STATE_LAKE_LIMIT.match(t)
+    if m:
+        return {'creel': m.group('creel'), 'size': (m.group('size') or None),
+                'as_printed': t}
+    # `No limit` and anything else the book prints in words: it is a creel statement, and
+    # inventing a size out of it would be the mistake this function exists to stop.
+    return {'creel': t, 'size': None, 'as_printed': t}
+
+
 def read_sc_state_lakes(pdf, pages_left, pages_right):
     """The state lakes table is split across a spread and the right half has NO water body.
 
@@ -734,7 +758,17 @@ def read_sc_state_lakes(pdf, pages_left, pages_right):
             # calls this a creel number and reports no size limit for the lake is wrong twice.
             'limits': {'catfish': r[1], 'bass': r[2], 'bream': r[3],
                        'statewide_crappie_applies': r[4], 'minnows_as_bait': r[5]},
-            'limits_are': 'creel and size in one value, as the book prints them',
+            # AND SPLIT, BECAUSE THE BOOK'S ORDER IS CREEL FIRST. Ryan, 2026-08-29, holding the
+            # card against page 37: "this looks like it is still showing up in the size limit
+            # instead of creel ... and it is because the state page does it creel (size)".
+            # Every value in the column is one of four shapes -- `3`, `3 (16" or longer)`,
+            # `No limit`, `N/A` -- so the split is the book's own punctuation, not a guess.
+            # `limits` above stays exactly as printed; this is the same fact in the two columns
+            # a person reads.
+            'limits_split': {k: split_state_lake_limit(v) for k, v in
+                             (('catfish', r[1]), ('bass', r[2]), ('bream', r[3]))},
+            'limits_are': 'creel first, size in parentheses -- as the book prints them, and '
+                          'split into limits_split',
             # THREE COLUMNS NOBODY WAS READING. The right half of the spread ends with BOAT
             # RAMP, FISHING PIER and HANDICAP ACCESS, marked with an X. On a table of state
             # lakes for a man who launches a kayak, whether the water has a ramp is not a
@@ -2445,6 +2479,22 @@ def _spans_two_states(row):
     return bool(TWO_STATE.search('%s %s' % (row.get('display_name') or '', row.get('state') or '')))
 
 
+def states_of(row):
+    """WHICH states, not how many. `Hartwell Lake (Anderson Co, SC/GA)` -> {'SC', 'GA'}.
+
+    The wrong-state guard used to ask `_spans_two_states` and step aside for anything that did,
+    which reads "this water is in two states" as "this water is in ANY state". North Carolina's
+    nongame table lists fifty-odd county park ponds, one of them `Lake Louise` in Buncombe
+    County; `Lake Louise` is also a legacy name on hartwell_lake, so NC's catfish rule bound
+    itself to Hartwell -- an SC/GA lake three states of book away -- and printed on its card.
+    Spanning SC and GA is not a reason to accept the NC book. It is a reason to accept SC and GA.
+    """
+    out = {(row.get('state') or '').strip().upper()}
+    for m in re.finditer(r'\b(AL|GA|NC|SC|TN|VA|KY|MS)\b', (row.get('display_name') or '').upper()):
+        out.add(m.group(1))
+    return {x for x in out if x}
+
+
 # Words that may sit capitalised in front of a water's name without making it a different
 # water: sentence openers and function words. Anything else in front of `Satilla River` --
 # `Little`, `South`, `Big`, `North` -- names another river, and GA's demarcation list uses five
@@ -2667,15 +2717,14 @@ def resolve_water_body(text, state, name_map, idx, systems, chain, sysmembers,
         # state is the Lanier mistake and nothing else.
         row_ = idx.get(slug) or {}
         if slug and row_.get('feature_type') == 'lake' \
-                and state not in (row_.get('state') or '') \
-                and not _spans_two_states(row_):
+                and state not in states_of(row_):
             alt = resolve_in_state(p2, state, idx)
             if alt:
                 waters.append(alt)
                 kinds.add('name+state')
                 continue
             unresolved.append({'text': p, 'why': 'the only lake of that name is in %s and this '
-                               'is the %s book' % (row_.get('state'), state)})
+                               'is the %s book' % ('/'.join(sorted(states_of(row_))), state)})
             continue
         if not slug and not want_county:
             # NOTHING MATCHED EXACTLY AND THE BOOK NAMES NO COUNTY, so try the same rule the
@@ -3045,11 +3094,28 @@ def project_by_water(doc, idx, all_specs=None, smap=None, ramps=None):
                         # ramp instead of leaving somebody to drive there and find out.
                         for c in closures_in(' '.join(cells)):
                             if area:
-                                c['applies_to'] = 'area'
-                                c['area'] = area
-                                rr = ramps_named(area, (r.get('waters') or [None])[0], ramps)
-                                if rr:
-                                    c['ramps_closed'] = rr
+                                # AN ARM IS NOT A LAKE, AND WE ARE NOT CARRYING ARMS.
+                                #
+                                # Ryan, 2026-08-29: "forget about the partial closures... i dont
+                                # even want them in the app", and again on seeing one survive
+                                # into the report: "this is a partial closure for waterfowl
+                                # management... why is it here". Two sentences reach this branch,
+                                # both on the Santee lakes, and the mechanism that made them
+                                # expressible was naming the ramps inside the closed area -- which
+                                # cannot work where the only access is not public, as Potato Creek
+                                # turned out to be.
+                                #
+                                # DROPPED AT THE SOURCE, not filtered downstream. It was withheld
+                                # in the Worker first and the report reads this file directly, so
+                                # the sentence Ryan had already told me to remove was still on his
+                                # screen. One producer, one answer.
+                                #
+                                # The sentence is not lost: it stays in `cells` on the row, and
+                                # `area_scoped_dropped` counts them out loud in the build.
+                                doc.setdefault('area_scoped_dropped', []).append(
+                                    {'water': (r.get('waters') or [None])[0], 'area': area,
+                                     'text': c.get('text'), 'source': rec.get('source')})
+                                continue
                             else:
                                 c['effect'], c['applies_to'] = 'unknown', 'unknown'
                             if row.get('recurring'):
@@ -3150,6 +3216,15 @@ def project_by_water(doc, idx, all_specs=None, smap=None, ramps=None):
                         # clauses draw the finfish line and the third draws a different one for
                         # crab pots, at a railroad instead of U.S. 17. Flattened together they
                         # would move the line by miles on the two rivers named in both.
+                        #
+                        # THE CRAB CLAUSE IS READ AND NOT CARRIED. Its only job here is to exist
+                        # separately so it cannot be mistaken for the finfish line -- that was
+                        # the whole point of splitting the three. It has no second job. Ryan,
+                        # 2026-08-29, seeing it on a water card: "why is this in a rod/reel
+                        # fishing app?" It stays in the states block, where the separation is
+                        # provable; it does not become a rule on a water.
+                        if row.get('clause') == 'crabbing only':
+                            continue
                         rec['kind_of_rule'] = 'where saltwater begins'
                         rec['clause'] = row.get('clause')
                         rec['crossings'] = row.get('crossings') or []

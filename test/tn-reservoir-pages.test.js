@@ -28,9 +28,15 @@ const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SRC = readFileSync(path.join(REPO, 'Scripts/build_regulations_table.py'), 'utf8');
 
 test('the reservoir pages are in the read set', () => {
-  assert.match(SRC, /DIGEST_PAGES = list\(range\(2, 9\)\) \+ list\(range\(11, 18\)\)/);
-  // Page 1 is read by read_tn_statewide(), not the block reader, so the ledger is told.
-  assert.match(SRC, /page_ledger\(tnpdf, set\(DIGEST_PAGES\) \| \{1\}, smap,/);
+  // PAGES OF THE FULL BOOK NOW, not of a 17-page cut. TWRA publishes one combined guide;
+  // printed page N is PDF N+2, so the reservoir tables at printed 22-28 are PDF 24-30 and the
+  // TWRA lakes, exceptions and trout at printed 31-37 are PDF 33-39.
+  assert.match(SRC, /DIGEST_PAGES = list\(range\(24, 31\)\) \+ list\(range\(33, 40\)\)/);
+  assert.match(SRC, /TN_STATEWIDE_PAGE = 17/);
+  // The statewide page is read by read_tn_statewide(), not the block reader, so the ledger is
+  // told about it or it reports the statewide table as a page carrying law nobody looked at.
+  assert.match(SRC, /page_ledger\(tnpdf, set\(DIGEST_PAGES\) \| \{TN_STATEWIDE_PAGE\}, smap,/);
+  assert.match(SRC, /read_tn_statewide\(dg_path, page=TN_STATEWIDE_PAGE\)/);
 });
 
 test('there is one column finder, and it is the bullet one', () => {
