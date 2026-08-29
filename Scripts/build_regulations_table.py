@@ -1747,11 +1747,6 @@ def main():
         specs = list(specs) + [(k, [], p, o) for k, p, _r, o in (PROSE.get(st) or [])]
         blk = {'source_file': fname, 'tables': got, 'pages': ledger}
         if ledger:
-            print('%-9s pages: %d read, %d carry no fishing law, %d blank, %d declared, '
-                  '%d UNACCOUNTED %s'
-                  % ('', len(ledger['read']), len(ledger['not_law']), len(ledger['blank']),
-                     len(ledger['declared']), len(ledger['unaccounted']),
-                     ledger['unaccounted'] or ''), flush=True)
             for n in ledger['unaccounted']:
                 doc['problems'].append({'state': st, 'why': 'this page carries fishing law and '
                                         'nothing read it -- read it, or record why not in '
@@ -1773,6 +1768,19 @@ def main():
         for m in missing:
             print('   !! missing %s' % m, flush=True)
         print('   resolved: %s' % (res['stats'] or 'nothing'), flush=True)
+        # THE LEDGER PRINTS UNDER ITS OWN STATE, AND SAYS WHICH BOOK IT COUNTED.
+        # It used to print before this state's heading with a blank name field, so it read as
+        # belonging to the state ABOVE it: on 2026-08-29 NC's seven unaccounted pages appeared
+        # under `SC:` and SC's clean ledger appeared under `TN:`. Nothing was wrong with the
+        # counting; the output attributed every one of them to the wrong book.
+        if ledger:
+            tot = (len(ledger['read']) + len(ledger['not_law']) + len(ledger['blank'])
+                   + len(ledger['declared']) + len(ledger['unaccounted']))
+            print('   pages in %s: %d of %d read, %d carry no fishing law, %d blank, '
+                  '%d declared, %d UNACCOUNTED %s'
+                  % (fname, len(ledger['read']), tot, len(ledger['not_law']),
+                     len(ledger['blank']), len(ledger['declared']),
+                     len(ledger['unaccounted']), ledger['unaccounted'] or ''), flush=True)
         for f in res['system_assertion_failures']:
             print('   !! SYSTEM ASSERTION FAILED %s' % f, flush=True)
 
