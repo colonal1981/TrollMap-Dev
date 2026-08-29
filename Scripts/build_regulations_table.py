@@ -1254,17 +1254,23 @@ def read_ga_demarcation(pdf, pages, columns=3):
 
 PROSE = {
     'SC': [('seasons', [20], 'sc',
-            {'water_col': 0, 'species_col': 1, 'name_in_sentence': True})],
+            {'water_col': 0, 'species_col': 1, 'name_in_sentence': True,
+             'expect': 'SEASONS'})],
     # (key, pages, reader, opts). Shaped exactly like a ruled table on the way out, so
     # resolve_state_tables(), project_by_water() and closures_in() need to know nothing about
     # where the rows came from.
-    'GA': [('length_limits_and_seasons', [3], 'ga',
-            {'water_col': 0, 'species_col': 1}),
-           ('public_fishing_areas', [8, 9, 10], 'ga_pfa',
-            {'water_col': 0, 'species_col': 1, 'county_col': 4}),
+    # GA's pages are the full book's now (the cut's number plus 61). `expect` is what the page
+    # must still say: a book gets re-laid-out every year and a page number that is silently wrong
+    # reads the wrong page and reports rows, which is worse than reading nothing.
+    'GA': [('length_limits_and_seasons', [64], 'ga',
+            {'water_col': 0, 'species_col': 1, 'expect': 'FRESHWATER FISHING'}),
+           ('public_fishing_areas', [69, 70, 71], 'ga_pfa',
+            {'water_col': 0, 'species_col': 1, 'county_col': 4,
+             'expect': 'PUBLIC FISHING AREAS'}),
            # The definition behind `and from saltwater`, which two tables already lean on.
-           ('saltwater_demarcation', [22], 'ga_demarc',
-            {'water_col': 0, 'species_col': None})],
+           ('saltwater_demarcation', [83], 'ga_demarc',
+            {'water_col': 0, 'species_col': None,
+             'expect': 'SALTWATER FINFISH RELATED DEFINITIONS'})],
 }
 
 
@@ -1273,6 +1279,22 @@ def read_prose_state(path, state):
     out = {}
     with pdfplumber.open(path) as pdf:
         for key, pages, reader, _opts in PROSE.get(state) or []:
+            # A PAGE NUMBER THAT IS SILENTLY WRONG IS WORSE THAN A MISSING ONE. These are hand
+            # declared, and a book is re-laid-out every year -- a shifted page still parses, still
+            # returns rows, and reports law off the wrong page. `expect` is what the page must
+            # still say. Checked here rather than trusted, and a miss is a recorded problem, not
+            # a crash: one bad page must not take the other three states down with it.
+            want = (_opts or {}).get('expect')
+            if want:
+                bad = [p for p in pages
+                       if not (1 <= p <= len(pdf.pages))
+                       or want.lower() not in ((pdf.pages[p - 1].extract_text() or '').lower())]
+                if bad:
+                    out.setdefault('_page_check_failed', []).append(
+                        {'table': key, 'pages': bad, 'expected_to_say': want,
+                         'why': 'the declared page does not carry this heading any more -- the '
+                                'book was probably re-laid-out. Nothing was read from it.'})
+                    continue
             rows = (read_ga_prose(pdf, pages) if reader == 'ga'
                     else read_ga_pfa(pdf, pages) if reader == 'ga_pfa'
                     else read_ga_demarcation(pdf, pages) if reader == 'ga_demarc'
@@ -1546,10 +1568,16 @@ SPECS = {
          {'water_col': None, 'species_col': 0, 'season_col': 1, 'season_sense': 'closed',
           'implicitly': 'statewide coastal'}),
     ]),
-    'NC': ('nc_digest_2026_2027.pdf', [
+    # THE BOOK, NOT SOMEBODY'S CUT OF IT. Until 2026-08-29 this read a 15-page excerpt and the
+    # page ledger reported `0 unaccounted` over it -- which measured a window, not a book. The
+    # excerpt is not even a contiguous slice: four pages of warmwater, nine of mountain trout,
+    # two of nongame, chosen by hand. The full digest is 108 pages, its cover reads "Effective
+    # August 1, 2026 to July 31, 2027" (which also settles a date the Worker had inherited rather
+    # than read), and the ledger can now answer for all of it.
+    'NC': ('2026-2027 NCWRC Regs Digest Final Print Proof.pdf', [
         # NC's header text is cut by the column rules -- `SIZE LIMIT` arrives as `SIZE LIM`
         # plus `IT` in two cells -- so the match is on fragments that survive the split.
-        ('warmwater_game_fish', ['species', 'size lim', 'creel'], list(range(1, 9)),
+        ('warmwater_game_fish', ['species', 'size lim', 'creel'], list(range(28, 37)),
          {'water_col': 0, 'species_bands': True}),
         # NONGAME, added 2026-08-28 because Ryan asked whether it was being read. It was not,
         # and it carries a PLAN SPECIES: `CATFISH (BLUE, CHANNEL, & FLATHEAD)` with named-water
@@ -1560,15 +1588,21 @@ SPECS = {
         # `creel` is NOT a usable header fragment here: the column rule cuts DAILY CREEL LIMIT
         # into `DAILY CR` and `EEL LIMIT`, so the word creel survives in neither cell. Matching
         # on it found nothing and read as "this table does not exist".
-        ('nongame_fish', ['species', 'size lim', 'daily cr'], list(range(12, 16)),
+        ('nongame_fish', ['species', 'size lim', 'daily cr'], list(range(41, 52)),
          {'water_col': 0, 'species_bands': True}),
     ]),
-    'GA': ('ga_digest_2026_2027.pdf', [
-        ('statewide', ['species', 'daily limit'], list(range(1, 12)),
+    # THE BOOK, NOT THE CUT. ga_digest_2026_2027.pdf is pages 62-90 of this file. That excerpt
+    # turns out to hold the whole fishing half -- FRESHWATER FISHING REGULATIONS runs 64-81 and
+    # SALTWATER FISHING REGULATIONS 82-90 -- so nothing was being missed. But nothing could SAY
+    # that, which is the point of the ledger. Page numbers here are the cut's plus 61, each one
+    # checked against the text on that page: cut 22 -> 83 is SALTWATER FINFISH RELATED
+    # DEFINITIONS, cut 5 -> 66 is Fishing Methods, cut 24 -> 85 is the Gamefish Records list.
+    'GA': ('26GAAB-LR.pdf', [
+        ('statewide', ['species', 'daily limit'], list(range(62, 76)),
          {'water_col': None, 'species_col': 0, 'implicitly': 'statewide'}),
-        ('water_body_exceptions', ['species', 'water body', 'possession limit'], list(range(1, 12)),
+        ('water_body_exceptions', ['species', 'water body', 'possession limit'], list(range(62, 76)),
          {'water_col': 1, 'species_col': 0}),
-        ('saltwater', ['species', 'open season'], list(range(18, 30)),
+        ('saltwater', ['species', 'open season'], list(range(79, 92)),
          {'water_col': None, 'species_col': 0, 'season_col': 1,
           'implicitly': 'statewide coastal'}),
     ]),
@@ -1632,7 +1666,17 @@ def main():
     tn['page_exists_not_saved'] = {s: (absent_doc.get('page_exists_not_saved') or {})[s]
                                    for s in gap if s in unsaved}
     tn['unexplained_gap'] = [s for s in gap if s not in absent and s not in unsaved]
-    dg_path = R(a.regs, 'tn_digest_2026_2027.pdf')
+    # THE BOOK, NOT THE CUT. TWRA publishes one combined guide -- the file is named
+    # TWRA-TN-Hunting-Guide.pdf and is the 2026-2027 Tennessee FISHING, Hunting & Trapping
+    # Guide, 124 pages. Its contents page places fishing at printed 12-47 and hunting from 48,
+    # and printed page N is PDF page N+2 (checked against four anchors, not assumed).
+    #
+    # The 17-page cut this used to read was well made -- printed 15 and 22-37, which is the
+    # statewide table, all four reservoir regions, the TWRA lakes, the exceptions and trout. What
+    # nobody ever looked at is printed 16-21 and 38-47, and two of those are OTHER FISHING
+    # METHODS and LIVE BAIT REGULATIONS. The ledger can answer that now instead of being asked
+    # about a window somebody drew.
+    dg_path = R(a.regs, 'TWRA-TN-Hunting-Guide.pdf')
     if os.path.exists(dg_path):
         dg = read_tn_digest(dg_path, idx, name_map)
         tn['digest'] = dg
@@ -1656,7 +1700,7 @@ def main():
                 # Page 1 is read too -- by read_tn_statewide(), not by the block reader --
                 # so it goes in with the rest or the ledger reports the statewide table as a
                 # page carrying law that nothing looked at.
-                tn['pages'] = page_ledger(tnpdf, set(DIGEST_PAGES) | {1}, smap,
+                tn['pages'] = page_ledger(tnpdf, set(DIGEST_PAGES) | {TN_STATEWIDE_PAGE}, smap,
                                           (not_law.get('TN') or {}))
             led = tn['pages']
             if led:
@@ -1671,7 +1715,7 @@ def main():
                                             'not in registry/pages_not_law.json', 'page': n})
         except Exception as exc:
             doc['problems'].append({'state': 'TN', 'why': 'page ledger failed: %s' % exc})
-        tn['statewide_table'] = read_tn_statewide(dg_path)
+        tn['statewide_table'] = read_tn_statewide(dg_path, page=TN_STATEWIDE_PAGE)
         print('TN statewide: %d rows off page 1 of the digest'
               % len(tn['statewide_table']), flush=True)
     else:
@@ -1995,7 +2039,13 @@ COUNTY = re.compile(r'\(([^)]*?)\s*(?:County|Co\.)\s*\)', re.I)
 # heading without a county cannot identify a water refused all thirty-two of them. That rule is
 # now two tests instead of one: the name must be used once in the book AND match exactly one
 # lake in the state. Both Davy Crockett Lakes still refuse, on the county they each print.
-DIGEST_PAGES = list(range(2, 9)) + list(range(11, 18))
+# PDF pages of the full TWRA guide. Printed page N is PDF N+2: the reservoir tables are printed
+# 22-28 (PDF 24-30) and the TWRA lakes, exceptions and trout are printed 31-37 (PDF 33-39).
+# Printed 29 and 30 -- the Lake Sturgeon feature and the TWRA-lakes preamble -- sit between them
+# and carry no per-water rule; the ledger files them rather than this list skipping them quietly.
+DIGEST_PAGES = list(range(24, 31)) + list(range(33, 40))
+# The statewide creel and length table, printed 15.
+TN_STATEWIDE_PAGE = 17
 
 
 def _runs(pages):
