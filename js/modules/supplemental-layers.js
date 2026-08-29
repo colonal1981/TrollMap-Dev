@@ -71,6 +71,18 @@ const CACHE_TTL = 24 * 60 * 60 * 1000;
 // bumped the number the comment above exists to tell them to bump.
 const CACHE_SCHEMA = 3;
 
+// AND WHICH BUILD THAT NUMBER WAS BUMPED FOR, so the next person cannot forget the way I did.
+//
+// build_structure.py carries RULES_VERSION in its build stamp precisely so a rules change
+// rebuilds every pack without anybody remembering --force. That solved the PIPELINE half and
+// left the BROWSER half to memory, and memory lost: the rules changed, 1,709 packs rebuilt,
+// R2 took the new files, and the map went on drawing the old humps out of IndexedDB.
+//
+// test/structure-cache-schema.test.js reads RULES_VERSION out of the Python and fails if it has
+// moved past this string. A rules change now cannot ship without someone deciding, out loud,
+// whether the browser has to forget what it is holding.
+export const STRUCTURE_RULES_AT_BUMP = '2026-08-29-relief';
+
 async function fetchSupplemental(lakeKey, layer) {
   const url = `${CF_WORKER_URL}/chartpacks/${lakeKey}/${layer}.geojson?v=${Date.now()}`;
   const r = await fetch(url, { cache: 'no-store' });
