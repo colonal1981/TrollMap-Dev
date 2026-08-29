@@ -1489,6 +1489,10 @@ var trollmap_worker_default = {
           let bookRules = null, closures = [], booksError = null, bookSlug = null;
           let coastalClosures = [], coastalSource = null;
           let bookStatewide = [], bookStatewideSource = null, bookStatewideDamaged = 0;
+          // ROWS THE BOOK HAS FOR THIS FISH AND THIS ROUTE WOULD NOT SERVE. A withheld row
+          // is not a silence, and the difference decides whether anything else may answer.
+          let bookWithheld = [];
+          let areaScopedHeld = 0;
           try {
             const [table, index] = await Promise.all([
               regulationsTable(env), lakeIndex(env),
@@ -1496,13 +1500,45 @@ var trollmap_worker_default = {
             const row = lake ? resolveRegistryRow(index, lake) : null;
             bookSlug = row && row.slug ? row.slug : null;
             const entry = bookSlug ? (table.by_water || {})[bookSlug] : null;
-            bookRules = entry || null;
+            // THE BOOK'S OWN RULE FOR THIS WATER, PROJECTED THE WAY book_statewide IS.
+            // `entry` is the build's shape. Passing the tree through and leaving the browser to
+            // re-read `cells` is the mistake the statewide block below already names: a record
+            // carrying only cells arrives and is dropped, which is exactly what happened -- the
+            // book's 14-inch largemouth rule for Wateree crossed the wire on every request and
+            // nothing could read it. Same fields, same names, so livePolicyFor can answer from a
+            // by-water rule without parsing prose.
+            bookRules = entry ? {
+              state: entry.state || null,
+              display_name: entry.display_name || null,
+              rules: (entry.rules || []).map((r) => ({
+                source: r.source || null, table: r.table || null, label: r.label || null,
+                page: r.page == null ? null : r.page, address: r.address || null,
+                address_is_a_reach: !!r.address_is_a_reach,
+                species: r.species || null,
+                plan_species: Array.isArray(r.plan_species) ? r.plan_species : [],
+                species_basis: r.species_basis || null,
+                size_limit: r.size_limit || null, creel_limit: r.creel_limit || null,
+                matched_via: r.matched_via || null,
+                cells: Array.isArray(r.cells) ? r.cells : [],
+                text_cut_by_the_grid: Array.isArray(r.text_cut_by_the_grid)
+                  ? r.text_cut_by_the_grid : undefined,
+              })),
+            } : null;
             // Flattened so a caller never walks a tree to answer one question. Each record
             // keeps its species and the sentence it came from -- the sentence is what a person
             // can check, and it is the only thing that survives a disagreement.
             const walk = (recs) => {
               for (const r of (recs || [])) {
                 for (const c of (r.closures || [])) {
+                  // AN ARM IS NOT A LAKE, AND WE ARE NOT CARRYING ARMS. Ryan, 2026-08-29:
+                  // "forget about the partial closures... i dont even want them in the app".
+                  // Two records reach this branch, both on the Santee lakes, and the mechanism
+                  // that made them expressible -- naming the ramps inside the closed area --
+                  // cannot work for an area whose only access is not public, which is what
+                  // Potato Creek turned out to be. Read at build time and counted in the report
+                  // so nothing goes quiet; not served, so nothing gates a trip on a piece of
+                  // water this app does not route anybody to.
+                  if (c.applies_to === 'area') { areaScopedHeld += 1; continue; }
                   closures.push({
                     effect: c.effect, applies_to: c.applies_to,
                     start: c.start || null, end: c.end || null,
@@ -1554,6 +1590,10 @@ var trollmap_worker_default = {
                 // travels so this reads as a known gap and not as a book that says nothing.
                 if (Array.isArray(r.text_cut_by_the_grid) && r.text_cut_by_the_grid.length) {
                   bookStatewideDamaged += 1;
+                  bookWithheld.push({
+                    species: r.species || null,
+                    plan_species: Array.isArray(r.plan_species) ? r.plan_species : [],
+                    why: 'the grid cut the text', source: r.source || null });
                   continue;
                 }
                 // A DEFAULT THAT COVERS ONE KIND OF WATER MUST NOT ANSWER FOR THE OTHERS.
@@ -1566,7 +1606,17 @@ var trollmap_worker_default = {
                 // guessed at -- the same direction every other unknown here is resolved in.
                 if (Array.isArray(r.applies_to_feature_types) && r.applies_to_feature_types.length) {
                   const ft = row && row.feature_type ? String(row.feature_type) : null;
-                  if (!ft || !r.applies_to_feature_types.includes(ft)) continue;
+                  if (!ft || !r.applies_to_feature_types.includes(ft)) {
+                    bookWithheld.push({
+                      species: r.species || null,
+                      plan_species: Array.isArray(r.plan_species) ? r.plan_species : [],
+                      why: ft ? `the book writes this for ${r.applies_to_feature_types.join(', ')} `
+                              + `and this water is a ${ft}`
+                              : 'the water did not resolve, so its type is unknown',
+                      applies_to_feature_types: r.applies_to_feature_types,
+                      source: r.source || null });
+                    continue;
+                  }
                 }
                 bookStatewide.push({
                   species: r.species || null,
@@ -1648,6 +1698,18 @@ var trollmap_worker_default = {
             // was read and the reading is not trustworthy yet, which is a third answer from
             // both "no rule" and "never read".
             book_statewide_damaged: bookStatewideDamaged,
+
+            // ROWS THE BOOK HAS FOR THIS WATER THAT THIS ROUTE WOULD NOT SERVE, and why.
+            // A SILENCE AND A REFUSAL ARE DIFFERENT ANSWERS. `general` is an LLM reading of the
+            // same book, and where it disagrees with a deliberate withholding it is not adding
+            // coverage -- it is undoing a guard. NC's statewide striped bass rule is written for
+            // `Impounded inland waters and their tributaries`; withheld from a river above, the
+            // digest then answered the river with the impoundment's 20-inch minimum anyway.
+            // Naming what was withheld is what lets livePolicyFor refuse to backfill it.
+            book_withheld: bookWithheld,
+
+            // Area-scoped closures read and not served -- see the walk() above.
+            closures_area_scoped_held: areaScopedHeld,
 
             // THE CLOSURES. `book_slug` is null when the name did not resolve to a registry
             // water, which is a DIFFERENT answer from a water with no closures and has to stay

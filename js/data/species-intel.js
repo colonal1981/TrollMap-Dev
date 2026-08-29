@@ -103,10 +103,19 @@ export function resolveLakeKey(lakeName, table) {
  */
 export function checkRegulations(lakeName, species, date, state = null) {
   const live = state ? livePolicyFor(state, lakeName, species) : null;
-  const limits = live && live.scope !== 'none'
+  // `withheld` CARRIES NO NUMBERS AND MUST NOT BECOME AN EMPTY LIMIT. The book has a row for
+  // this fish here and it could not be served -- written for another kind of water, or cut by
+  // the grid. Shaped as `limits` it would print "no stated size limit / no stated creel limit",
+  // which is the one reading it must never have: an unstatable rule rendered as no rule.
+  const limits = live && live.scope !== 'none' && live.scope !== 'withheld'
     ? { sizeLimit: live.sizeLimit, creelLimit: live.creelLimit, scope: live.scope,
-        species: live.species, state: live.state,
-        source: `${live.state || 'state'} regulations digest` }
+        species: live.species, state: live.state, fromBook: !!live.fromBook,
+        // NAME THE SOURCE THAT ACTUALLY ANSWERED. The book cites a page and the digest does not,
+        // and a person checking a limit needs to know which one they are checking.
+        source: live.fromBook
+          ? `${live.source || 'the state book'}${live.page ? `, p.${live.page}` : ''}`
+          : `${live.state || 'state'} regulations digest`,
+        addressIsAReach: !!live.addressIsAReach }
     : null;
 
   // THE BOOKS COME FIRST, AND THEY CAN SAY NO.
@@ -150,11 +159,20 @@ export function checkRegulations(lakeName, species, date, state = null) {
 
   {
     const warnings = [];
-    if (limits) {
+    // A RULE THAT EXISTS AND CANNOT BE STATED IS THE LOUDEST THING HERE, so it is said first and
+    // nothing below it gets to answer instead.
+    if (live && live.scope === 'withheld') {
+      warnings.push(`${species} on ${lakeName}: the ${live.state || 'state'} book has a rule for `
+        + `this fish that does not apply here as written — ${live.why}. No limit is published for `
+        + `this water. Check with the state before you keep one.`);
+    } else if (limits) {
       warnings.push(`${species} on ${lakeName}: ${limits.scope === 'lake' ? 'lake-specific' : 'statewide'} `
         + `limits are ${limits.sizeLimit || 'no stated size limit'} / `
-        + `${limits.creelLimit || 'no stated creel limit'} (${limits.source}). `
-        + `No closure information for this water — verify before you keep one.`);
+        + `${limits.creelLimit || 'no stated creel limit'} (${limits.source})`
+        + (limits.addressIsAReach
+            ? '. The book addresses a stretch of this water, not all of it — check you are on it'
+            : '')
+        + `. No closure information for this water — verify before you keep one.`);
     } else if (live) {
       warnings.push(`The ${live.state || 'state'} digest was read and lists nothing for ${species} `
         + `on ${lakeName}. Verify before you keep one.`);

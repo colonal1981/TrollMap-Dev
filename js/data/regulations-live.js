@@ -201,45 +201,137 @@ function bookStatewideFor(payload, species) {
 }
 
 /**
+ * The book's own rule for THIS water, or null.
+ *
+ * The Worker sends `book_rules` on every request -- the rows build_regulations_table.py bound to
+ * this slug by name, by system or by the reach the book addressed. It was being sent and never
+ * read: Wateree Lake carries `Largemouth Bass, 14 inches min, no more than 5 combined` from
+ * SC page 31, and the app answered largemouth there out of a statewide table instead.
+ *
+ * A ROW THE GRID CUT IS NOT A LIMIT, and a row with neither limit is an address with no numbers
+ * in it -- a closure-only record. Both are skipped here; closuresFor() is what reads those.
+ */
+function bookWaterFor(payload, species) {
+  const rules = (payload && payload.book_rules && Array.isArray(payload.book_rules.rules))
+    ? payload.book_rules.rules : [];
+  const want = String(species || '').trim().toLowerCase();
+  if (!rules.length || !want) return null;
+  const usable = rules.filter((r) => !(Array.isArray(r.text_cut_by_the_grid)
+                                       && r.text_cut_by_the_grid.length)
+                                  && (r.size_limit != null || r.creel_limit != null));
+  // The checkbox first, resolved offline; then the book's own phrase read whole. Never a
+  // bare substring -- the mistake findSpecies() exists to avoid.
+  for (const r of usable) {
+    const boxes = Array.isArray(r.plan_species) ? r.plan_species : [];
+    if (boxes.some((b) => String(b).trim().toLowerCase() === want)) return r;
+  }
+  for (const r of usable) {
+    if (String(r.species || '').trim().toLowerCase() === want) return r;
+  }
+  return null;
+}
+
+/**
+ * The book has a row for this fish on this water that the Worker would not serve, or null.
+ *
+ * A SILENCE AND A REFUSAL ARE DIFFERENT ANSWERS, and only one of them may be filled in by
+ * something else. NC's statewide striped bass rule is written for `Impounded inland waters and
+ * their tributaries`; the Worker withholds it from the seventeen rivers we offer in that state
+ * because the book gives them that limit nowhere -- and the digest then handed those rivers the
+ * impoundment's 20-inch minimum anyway, which is the guard being undone rather than a gap being
+ * covered. Same for a row the grid cut: the book has a limit there and we cannot state it, and
+ * a second reader's guess at it is worth less than saying so.
+ */
+function bookWithheldFor(payload, species) {
+  const rows = Array.isArray(payload && payload.book_withheld) ? payload.book_withheld : [];
+  const want = String(species || '').trim().toLowerCase();
+  if (!rows.length || !want) return null;
+  for (const r of rows) {
+    const boxes = Array.isArray(r.plan_species) ? r.plan_species : [];
+    if (boxes.some((b) => String(b).trim().toLowerCase() === want)) return r;
+    if (String(r.species || '').trim().toLowerCase() === want) return r;
+  }
+  return null;
+}
+
+/**
  * The published limits for this species on this water, if the digest has been primed.
  *
- * LAKE-SPECIFIC BEATS STATEWIDE and says which it was, because "this lake has its own rule" and
- * "the statewide rule applies here" are different sentences to put in front of somebody about to
- * keep a fish.
+ * THE BOOK ANSWERS FIRST. Until 2026-08-29 the order was: the LLM's per-lake table, the LLM's
+ * statewide table, then the book. That was not a freshness ordering -- `fetchStateRegulations`
+ * runs TinyFish over the digest PDFs in our own R2 bucket and hands the text to a model, so both
+ * tiers read the SAME document and neither can know about a statute the book predates. It was an
+ * ordering that preferred the reader which cannot cite a page.
+ *
+ * Measured against the book on all four states the day it was changed: Georgia's book prints one
+ * striped bass row with no size limit and a creel of `15, only two of which can be 22 inches or
+ * longer`, and the digest returned `sizeLimit: 22 inches, creelLimit: 15` -- a clause capping how
+ * many big fish you may keep, read as a floor under every fish you may keep, which is the
+ * opposite rule. It also gave Georgia largemouth a 12-inch minimum the statewide row does not
+ * have, and handed NC's impoundment striper limit to rivers. Every error was the same error: a
+ * scoped rule promoted to statewide. Tennessee it read correctly; South Carolina it read
+ * correctly and added one uncited number where our own parse has a known hole.
+ *
+ * So it is kept and it is put last. Where the book answers, the book answers. Where the book is
+ * SILENT, the digest may still fill it -- that is the SC blue catfish case and it is worth
+ * having. Where the book was WITHHELD, nothing fills it, because that is not a silence.
+ *
+ * LAKE-SPECIFIC BEATS STATEWIDE and every answer says which it was, because "this water has its
+ * own rule" and "the statewide rule applies here" are different sentences to put in front of
+ * somebody about to keep a fish.
  */
 export function livePolicyFor(state, lakeName, species) {
   const hit = _cache.get(keyFor(state, lakeName));
   if (!hit || !hit.payload) return null;
   const p = hit.payload;
+
+  // 1. THE BOOK, ADDRESSED TO THIS WATER BY NAME.
+  const bw = bookWaterFor(p, species);
+  if (bw) {
+    return { scope: 'lake', species: bw.species || species, state: p.state || null,
+             sizeLimit: bw.size_limit ?? null, creelLimit: bw.creel_limit ?? null,
+             source: bw.source || null, page: bw.page ?? null, address: bw.address || null,
+             // The book addressed a stretch of river and the registry has one slug for the whole
+             // of it. The bind is worth having; reading it as every mile is not.
+             addressIsAReach: !!bw.address_is_a_reach, fromBook: true,
+             text: Array.isArray(bw.cells) ? bw.cells.filter(Boolean).join(' — ') : null };
+  }
+
+  // 2. The digest's per-lake table.
   const lakeHit = findSpecies(p.lake_specific, species);
   if (lakeHit) {
     return { scope: 'lake', species: lakeHit.key, state: p.state || null,
              sizeLimit: lakeHit.entry.sizeLimit ?? null, creelLimit: lakeHit.entry.creelLimit ?? null };
   }
-  const genHit = findSpecies(p.general, species);
-  if (genHit) {
-    return { scope: 'state', species: genHit.key, state: p.state || null,
-             sizeLimit: genHit.entry.sizeLimit ?? null, creelLimit: genHit.entry.creelLimit ?? null };
-  }
-  // THE SAME BOOK, PARSED WITHOUT AN LLM. `general` above is the digest read at request time by
-  // a model; this is build_regulations_table.py's reading of the same pages, deterministic,
-  // carrying the sentence it came from and the plan checkboxes it governs -- both resolved
-  // offline so nothing here does the judgement.
-  //
-  // IT IS TRIED LAST, NOT FIRST, and that is deliberate. `general` works and is what this app
-  // has shipped; changing which answer wins is a different decision from making a second answer
-  // reachable, and only the second one is being made here. Where the LLM found the fish, its
-  // answer still stands. Where it found nothing -- which is every species TWRA's statewide
-  // table names, because Tennessee's half of that parse has never returned anything -- the
-  // book now answers instead of the app saying it does not know.
+
+  // 3. THE BOOK'S STATEWIDE DEFAULT, read offline with no LLM in the path, carrying the sentence
+  //    it came from and the plan checkboxes it governs -- both resolved at build time.
   const bookHit = bookStatewideFor(p, species);
   if (bookHit) {
     return { scope: 'state', species: bookHit.species, state: p.state || null,
              sizeLimit: bookHit.size_limit ?? null, creelLimit: bookHit.creel_limit ?? null,
              source: bookHit.source || null, fromBook: true,
-             // The book's own sentence, for a card that wants to show what it is quoting.
              text: Array.isArray(bookHit.cells) ? bookHit.cells.filter(Boolean).join(' — ') : null };
   }
+
+  // 4. A REFUSAL IS NOT A SILENCE. The book has a row for this fish here and the Worker would not
+  //    serve it. Say that; do not let the tier below paper over it.
+  const held = bookWithheldFor(p, species);
+  if (held) {
+    return { scope: 'withheld', species: held.species || null, state: p.state || null,
+             sizeLimit: null, creelLimit: null, fromBook: true,
+             why: held.why || 'the book has a rule here that could not be stated',
+             source: held.source || null };
+  }
+
+  // 5. The digest's statewide table, last, and only into a silence.
+  const genHit = findSpecies(p.general, species);
+  if (genHit) {
+    return { scope: 'state', species: genHit.key, state: p.state || null,
+             sizeLimit: genHit.entry.sizeLimit ?? null, creelLimit: genHit.entry.creelLimit ?? null,
+             fromBook: false };
+  }
+
   // PRIMED AND THE SPECIES IS NOT IN THE BOOK is a different answer from not primed. The digest
   // was read and it says nothing about this fish here.
   return { scope: 'none', species: null, state: p.state || null, sizeLimit: null, creelLimit: null };

@@ -10,9 +10,16 @@
 // Tennessee is the case that made it visible: TWRA's statewide creel and length table is
 // eighteen rows and the app had never shown one of them.
 //
-// TWO THINGS THIS DELIBERATELY DOES NOT DO. It does not outrank `general`: where the LLM found
-// the fish, its answer still stands, because making a second answer reachable and changing
-// which answer wins are different decisions. And it does not match species by string --
+// IT NOW OUTRANKS `general`, AND THAT IS A REVERSAL. When this file was written the book was
+// tried last: making a second answer reachable and changing which answer wins were different
+// decisions, and only the first had been made. The second was made on 2026-08-29, after both
+// readers were measured against the same pages. They are not two sources -- fetchStateRegulations
+// runs TinyFish over the digest PDFs in our own R2 bucket and hands the text to a model, so the
+// LLM reads the SAME document this table is built from. On GA it turned `15, only two of which
+// can be 22 inches or longer` into a 22-inch minimum size limit, which is the opposite of the
+// rule; on NC it handed the impoundment striper limit to rivers. Every error was a scoped rule
+// promoted to statewide. So the book answers first, the digest answers only into a silence, and
+// a row the Worker WITHHELD is not a silence. And it does not match species by string --
 // `plan_species` is resolved at build time, so `Black Bass (includes Largemouth, Smallmouth,
 // Spotted, Alabama, Coosa and all hybrids)` arrives already naming the Largemouth Bass box.
 import { primeRegulations, livePolicyFor, _resetRegulationsCache }
@@ -72,7 +79,7 @@ console.log('== the book answers where the model found nothing ==');
   check('a fish in neither half is still `none`, not null', bow && bow.scope === 'none', bow);
 }
 
-console.log('\n== it does not outrank the model where the model answered ==');
+console.log('\n== the book outranks the model on the same page ==');
 {
   _resetRegulationsCache();
   await primeRegulations('TN', 'Cherokee Lake (Hawkins Co, TN)', {
@@ -81,8 +88,73 @@ console.log('\n== it does not outrank the model where the model answered ==');
       general: { Crappie: { species: 'Crappie', sizeLimit: '9" TL', creelLimit: '20/day' } } }),
   });
   const cr = livePolicyFor('TN', 'Cherokee Lake', 'Crappie');
-  check('the live parse still wins where it has an answer',
-    cr.scope === 'state' && cr.sizeLimit === '9" TL' && !cr.fromBook, cr);
+  check('the book wins where both answered', cr.fromBook === true, cr);
+  check('and it is the book\'s numbers, not the digest\'s',
+    cr.sizeLimit === '10 inches' && cr.creelLimit === '15', cr);
+  check('and it carries the sentence it is quoting', typeof cr.text === 'string' && cr.text.length,
+    cr.text);
+}
+
+console.log('\n== the model still fills a silence, and never fills a refusal ==');
+{
+  // THE SC BLUE CATFISH CASE. The book's only entry for it is a pointer at a section we have
+  // not parsed, so the table has no row -- the digest's number is the only answer there is, and
+  // it is worth having.
+  _resetRegulationsCache();
+  await primeRegulations('SC', 'Lake Murray (Lexington Co, SC)', {
+    worker: 'https://w', now: 1000,
+    fetch: stub({ state: 'SC', lake: 'Lake Murray', parse_failed: false, lake_specific: {},
+      general: { 'Blue Catfish': { sizeLimit: null, creelLimit: '150' } },
+      book_statewide: [], book_statewide_source: 'SC Regs2627.pdf' }),
+  });
+  const bc = livePolicyFor('SC', 'Lake Murray', 'Blue Catfish');
+  check('into a silence the digest still answers',
+    bc.scope === 'state' && bc.creelLimit === '150' && bc.fromBook === false, bc);
+}
+{
+  // THE NC RIVER CASE. The Worker withheld the statewide striper rule from this water because
+  // the book writes it for impoundments. The digest offers 20 inches anyway; it must not land.
+  _resetRegulationsCache();
+  await primeRegulations('NC', 'Cape Fear River (Cumberland Co, NC)', {
+    worker: 'https://w', now: 1000,
+    fetch: stub({ state: 'NC', lake: 'Cape Fear River', parse_failed: false, lake_specific: {},
+      general: { 'Striped Bass / Hybrid': { sizeLimit: '20-inch minimum',
+                                            creelLimit: '4 in combination' } },
+      book_statewide: [], book_statewide_source: 'NC nc_digest_2026_2027.pdf',
+      book_withheld: [{ species: 'STRIPED BASS AND BODIE BASS (STRIPED BASS HYBRID)',
+                        plan_species: ['Striped Bass', 'Hybrid'],
+                        why: 'the book writes this for lake and this water is a river',
+                        source: 'NC nc_digest_2026_2027.pdf' }] }),
+  });
+  const sb = livePolicyFor('NC', 'Cape Fear River', 'Striped Bass');
+  check('a withheld row is reported as withheld, not answered', sb.scope === 'withheld', sb);
+  check('and it carries no numbers at all',
+    sb.sizeLimit === null && sb.creelLimit === null, sb);
+  check('and it says why', typeof sb.why === 'string' && /river/.test(sb.why), sb.why);
+}
+
+console.log('\n== the book addressed to this water beats the statewide default ==');
+{
+  _resetRegulationsCache();
+  await primeRegulations('SC', 'Wateree Lake (Kershaw Co, SC)', {
+    worker: 'https://w', now: 1000,
+    fetch: stub({ state: 'SC', lake: 'Wateree Lake', parse_failed: false, lake_specific: {},
+      general: {}, book_statewide_source: 'SC Regs2627.pdf',
+      book_statewide: [{ species: 'Largemouth Bass', plan_species: ['Largemouth Bass'],
+                         size_limit: 'Any length', creel_limit: '5', cells: [],
+                         source: 'SC Regs2627.pdf' }],
+      book_rules: { state: 'SC', display_name: 'Wateree Lake (Kershaw Co, SC)', rules: [
+        { source: 'SC Regs2627.pdf', page: 31, species: 'Largemouth Bass',
+          plan_species: ['Largemouth Bass'], size_limit: '14 inches min',
+          creel_limit: 'No more than 5 combined total of smallmouth, largemouth, redeye bass '
+                     + 'or their hybrids',
+          address: 'Lakes Blalock, Greenwood, Jocassee, Marion, Monticello, Moultrie, Murray, '
+                 + 'Secession, Wateree, Wylie', cells: ['Largemouth Bass', '14 inches min'] }] } }),
+  });
+  const lm = livePolicyFor('SC', 'Wateree Lake', 'Largemouth Bass');
+  check('the water\'s own row wins over the statewide row',
+    lm.scope === 'lake' && lm.sizeLimit === '14 inches min', lm);
+  check('and it cites the page', lm.page === 31 && lm.fromBook === true, lm);
 }
 
 console.log('\n== a payload with no book half is unchanged ==');

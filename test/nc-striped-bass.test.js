@@ -52,7 +52,15 @@ test('the Worker withholds a scoped default from the wrong kind of water', () =>
   assert.match(blk, /const ft = row && row\.feature_type \? String\(row\.feature_type\) : null;/);
   // An unresolved water has no feature type to test, so the record is withheld rather than
   // guessed at -- the same direction every other unknown in this route resolves in.
-  assert.match(blk, /if \(!ft \|\| !r\.applies_to_feature_types\.includes\(ft\)\) continue;/);
+  assert.match(blk, /if \(!ft \|\| !r\.applies_to_feature_types\.includes\(ft\)\) \{/);
+  assert.match(blk, /continue;/);
+  // AND IT SAYS SO. Withholding silently left a hole the digest walked straight into: it
+  // answered NC's rivers with the impoundment's 20-inch minimum, which is the guard being
+  // undone rather than a gap being covered. The row is named on the way out so livePolicyFor
+  // can tell a refusal from a silence and refuse to backfill the first.
+  assert.match(blk, /bookWithheld\.push\(\{/);
+  assert.match(blk, /why: ft \?/);
+  assert.match(blk, /applies_to_feature_types: r\.applies_to_feature_types/);
 });
 
 test('a plain comma list of names is split, a described reach is not', () => {
