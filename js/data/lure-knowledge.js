@@ -406,10 +406,22 @@ export const LURE_KNOWLEDGE = {
 
   cast_only: {
     label: 'Cast Only (Soft Plastics)',
-    depthMode: 'lead',
+    // NOT 'lead'. Ryan, 2026-08-30, on finding a Fluke rigged on a troll rod in his own plan:
+    // "and if it is weightless you think a fluke at 2mph is even going to sink?"
+    //
+    // It will not. A 3/8 oz soft jerkbait with no ballast planes at trolling speed -- drag beats
+    // gravity and it skis. Lead length only sets a depth for something that sinks or dives, and
+    // `depthMode: 'lead'` said this one sinks. depthWindow() then inverted leadForDepth() and
+    // answered with a straight face: 80 ft of lead "runs to 15 ft", 24 ft of lead "runs 2-6 ft".
+    // Both numbers are fiction, and `leadRatio` was using the weight of the PLASTIC as if it were
+    // a sinker. That fiction is what made a cast-only bait on a troll rod look like a plan.
+    //
+    // A cast-only bait has no trolling depth. The honest value is none, and `depthMode: 'none'`
+    // makes depthWindow() and canReachDepth() say so instead of inventing one.
+    depthMode: 'none',
     ratedDepth: null,
-    leadRatio: 4.0,
-    speedAffectsLead: true,
+    leadRatio: null,
+    speedAffectsLead: false,
     tacticalDepth: { ideal:6 },
     species:   { striped_bass:3, largemouth_bass:10, smallmouth_bass:8, crappie:5, bowfin:6, catfish:3, redfish:8, trout:7 },
     season:    { spring:9, summer:7, fall:8, winter:6 },
@@ -847,6 +859,9 @@ function resolveLeadRatio(lr, { weightOz, targetDepthFt }) {
 export function leadForDepth(lure, targetDepthFt, speedMph) {
   const k = LURE_KNOWLEDGE[lure?.type];
   if (!k) return Math.round(targetDepthFt * 4.0);
+  // No amount of line puts a planing bait at a depth. null, so a caller cannot round it into a
+  // number -- `resolveLeadRatio` on a null ratio would have produced one.
+  if (k.depthMode === 'none') return null;
   if (k.depthMode === 'surface') return 80;                 // flat-line topwater setback
   // A rated bait CANNOT be leaded past its bill. The old autoCalculateLead would
   // happily hand an SR crankbait 76ft of lead for a 20ft target, which buys you
@@ -867,6 +882,12 @@ export function leadForDepth(lure, targetDepthFt, speedMph) {
 export function depthWindow(lure, { speedMph, leadFt } = {}) {
   const k = LURE_KNOWLEDGE[lure?.type];
   if (!k) return { min: null, max: null, mode: 'unknown', controlledBy: 'unknown' };
+  // A bait that planes has no running depth to report, at any lead. Saying null is the answer;
+  // the callers already treat a non-finite max as "cannot place this" -- see capBaitDepth().
+  if (k.depthMode === 'none') {
+    return { min: null, max: null, mode: 'none',
+             controlledBy: 'nothing — this bait is not trolled and planes at trolling speed' };
+  }
   if (k.depthMode !== 'lead') {
     const d = k.ratedDepth || { min: 0, max: 1 };
     return { ...d, mode: k.depthMode,
@@ -964,6 +985,10 @@ export function canReachDepth(lure, depthFt, speedMph, { maxLeadFt } = {}) {
   if (k.speedIsHardLimit && speedMph > k.speed.max) {
     return { ok: false, limitedBy: 'speed',
              detail: `${k.label} runs outside its rated depth above ${k.speed.max}mph` };
+  }
+  if (k.depthMode === 'none') {
+    return { ok: false, leadFt: null, limitedBy: 'not a trolling bait',
+             detail: `${k.label} planes at trolling speed — it has no running depth to reach` };
   }
   if (k.depthMode === 'surface') return { ok: depthFt <= 2, leadFt: 80, limitedBy: null };
   if (k.depthMode === 'rated') {

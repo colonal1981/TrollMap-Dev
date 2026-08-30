@@ -119,15 +119,22 @@ export function markMi(atM) {
  * port slot and rods[1] starboard, regardless of what `side` says. So the ORDER here matters more
  * than the label does.
  */
-function rodView(rod, side) {
+function rodView(rod, side, over) {
   if (!rod) return null;
+  // `over` is leg.rodPlan[id] -- what capBaitDepth had to change FOR THIS LEG. It used to write
+  // straight into the rod, and the rod is one object shared by every leg through `rodsById`
+  // below, so the shallowest leg of the day set the lead for all of them. Ryan's 2026-08-30
+  // Wateree plan: leg 2 is the 6 ft line and correctly shortened the fluke to 24 ft; legs 1 and 3
+  // are the 24 ft line with the fish at 15-27 ft and inherited it.
+  const leadFt = over && over.leadFt != null ? over.leadFt : rod.leadFt;
+  const runs = (over && over.runsDepthFt) || rod.runsDepthFt;
   return {
     side,
     rod: rod.id || '',
     lure: clean(rod.lure),
     color: clean(rod.color),
-    lead: rod.leadFt ?? '',
-    depth: Array.isArray(rod.runsDepthFt) ? rod.runsDepthFt.join('–') : '',
+    lead: leadFt ?? '',
+    depth: Array.isArray(runs) ? runs.join('–') : '',
     reel: '',
     trailerSize: '', arigWeight: '', jigWeight: '',
     notes: clean(rod.why),
@@ -233,7 +240,9 @@ export function planToTimeline(plan, o = {}) {
     trollN += 1;
     const port = rodsById.get(leg.deploy && leg.deploy.port);
     const stbd = rodsById.get(leg.deploy && leg.deploy.starboard);
-    const rods = [rodView(port, 'Port'), rodView(stbd, 'Stbd')].filter(Boolean);
+    const rp = leg.rodPlan || {};
+    const rods = [rodView(port, 'Port', rp[leg.deploy && leg.deploy.port]),
+                  rodView(stbd, 'Stbd', rp[leg.deploy && leg.deploy.starboard])].filter(Boolean);
 
     // The leg's own contour depth is the specific fact; the band is what the species is using.
     // Both go in, in the place each reads best — the band in the depth column because it IS a

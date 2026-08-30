@@ -843,6 +843,9 @@ export async function buildFromPicked() {
         intel: T.intel,
         hazards: T.hazards,
         snapEligible: snapEligibleFrom(castable),
+        // `castable` is `trollable || castable` -- the whole bag. Which half may go behind the
+        // boat has to be said, or a cast-only soft plastic looks like a crankbait to the model.
+        trollable: castable.filter((l) => l.trollable).map((l) => l.name),
         conditions: { depthBand: { ft: T.band, holding: T.holding || 'unknown',
                                    meaning: 'where the fish are, not the depth of the water' } },
         waterState,

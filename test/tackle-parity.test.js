@@ -140,7 +140,7 @@ describe('speed model — hard limits only where physics breaks', () => {
   });
 });
 
-describe('depth model — one source, three modes', () => {
+describe('depth model — one source, four modes', () => {
   // Depth used to live in tackle-inventory.js, lure-knowledge.js AND
   // spread-builder.js's LURE_DIVE_DEPTHS (keyed by display name, so a rename
   // silently orphaned it — which happened). Now it lives once, on the type.
@@ -155,18 +155,30 @@ describe('depth model — one source, three modes', () => {
     expect(stragglers.map(l => l.id)).toEqual([]);
   });
 
+  // 'none' is the fourth, added 2026-08-30. A cast-only soft plastic has no trolling depth at
+  // all -- it planes at 2 mph -- and `depthMode: 'lead'` had it answering "80 ft of lead runs to
+  // 15 ft" for a Fluke. Ryan: "and if it is weightless you think a fluke at 2mph is even going to
+  // sink?" A band and a lead ratio are both meaningless for it, so it carries neither.
   it('every type declares a depthMode, and only rated/surface carry a band', () => {
     for (const [t, k] of Object.entries(LURE_KNOWLEDGE)) {
-      expect(['rated', 'lead', 'surface'], t).toContain(k.depthMode);
-      if (k.depthMode === 'lead') expect(k.ratedDepth, t).toBeNull();
+      expect(['rated', 'lead', 'surface', 'none'], t).toContain(k.depthMode);
+      if (k.depthMode === 'lead' || k.depthMode === 'none') expect(k.ratedDepth, t).toBeNull();
       else expect(k.ratedDepth, t).toBeTruthy();
     }
   });
 
-  it('every lead-controlled type has a leadRatio', () => {
+  it('every lead-controlled type has a leadRatio, and no other type does', () => {
     for (const [t, k] of Object.entries(LURE_KNOWLEDGE)) {
       if (k.depthMode === 'surface') continue;
+      if (k.depthMode === 'none') { expect(k.leadRatio, t).toBeNull(); continue; }
       expect(k.leadRatio, t).toBeDefined();
+    }
+  });
+
+  it('a mode-none type is never trollable in the inventory', () => {
+    // The two must agree or one of them is lying about the same bait.
+    for (const l of TACKLE_INVENTORY) {
+      if (LURE_KNOWLEDGE[l.type]?.depthMode === 'none') expect(l.trollable, l.id).toBe(false);
     }
   });
 

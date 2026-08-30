@@ -233,6 +233,47 @@ describe('what the chart says you may not enter, and what it says to avoid', () 
   });
 });
 
+// A FLUKE IS NOT A TROLLING BAIT AND THE PROMPT NEVER SAID SO.
+//
+// Both planners build the lure list as `TACKLE_INVENTORY.filter(l => l.trollable || l.castable)`
+// and hand the model one flat list of NAMES. The prompt split that list by snap-versus-tie-direct
+// and by nothing else, so `Fluke / Soft Jerkbait` -- trollable:false, type cast_only -- arrived
+// looking exactly like a crankbait. `trollable` was read in precisely two places in the whole plan
+// path, and both of them only used it to build that union.
+describe('which of the bag may go behind the boat', () => {
+  const BAG = ['DD2 Crankbait (16-20ft)', 'Fluke / Soft Jerkbait', 'Stick Bait (Senko)'];
+
+  it('names the cast-only ones and says why no lead saves them', () => {
+    const req = buildPlanRequest({ water: 'Lake Wateree, SC', species: ['Striped Bass'],
+                                   candidates: [], tackle: BAG,
+                                   trollable: ['DD2 Crankbait (16-20ft)'] });
+    const txt = JSON.stringify(req);
+    expect(txt.includes('CAST ONLY — NEVER BEHIND THE BOAT')).toBe(true);
+    expect(txt.includes('Fluke / Soft Jerkbait, Stick Bait (Senko)')).toBe(true);
+    expect(txt.includes('plane instead of sinking')).toBe(true);
+    expect(txt.includes('a rod\\nfishing nothing') || txt.includes('fishing nothing')).toBe(true);
+  });
+
+  it('says nothing when every lure in the bag may be trolled', () => {
+    const req = buildPlanRequest({ water: 'x', species: [], candidates: [], tackle: BAG,
+                                   trollable: BAG });
+    expect(JSON.stringify(req).includes('CAST ONLY')).toBe(false);
+  });
+
+  it('omitting it keeps the old behaviour rather than calling the whole bag cast-only', () => {
+    const req = buildPlanRequest({ water: 'x', species: [], candidates: [], tackle: BAG });
+    expect(JSON.stringify(req).includes('CAST ONLY')).toBe(false);
+  });
+
+  it('both planners derive it from the inventory flag, not from a list', () => {
+    for (const f of ['js/modules/smart-plan-v2.js', 'js/modules/plan-water-ui.js']) {
+      expect(live(src(f))).toMatch(/\.filter\(\(l\) => l(?: &&)? \.?l?\.?trollable\)|filter\(\(l\) => l && l\.trollable\)|filter\(\(l\) => l\.trollable\)/);
+    }
+    expect(live(src('js/modules/smart-plan-v2.js'))).toMatch(/tackle: o\.tackle, snapEligible, trollable/);
+    expect(live(src('js/modules/plan-water-ui.js'))).toMatch(/trollable: castable\.filter/);
+  });
+});
+
 describe('Pick Water carries the research it already loaded', () => {
   const ui = live(src('js/modules/plan-water-ui.js'));
 

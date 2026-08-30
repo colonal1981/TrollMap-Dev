@@ -323,6 +323,10 @@ export function riverPromptBlock(ws) {
  * @param {object}   o.conditions    whatever the app already gathered — passed as JSON, verbatim
  * @param {string[]} o.tackle        exact lure names the model may use
  * @param {string[]} [o.snapEligible] the subset of those that may hang off a swivel snap
+ * @param {string[]} [o.trollable]    the subset that may be trolled at all. Everything in
+ *                                    `tackle` and not in here is cast-only and the prompt says
+ *                                    so. Omitted means "assume all of them", which is the old
+ *                                    behaviour and the bug.
  * @param {number}   [o.usableAh]
  * @param {string[]} [o.hazards]     what is in the way, as sentences that name their own source.
  *                                   chartedHazards() reads the pack's POI layer in two tiers,
@@ -347,6 +351,14 @@ export function buildPlanRequest(o) {
   };
   const snapSet = new Set(o.snapEligible || []);
   const tieOnly = (o.tackle || []).filter((n) => !snapSet.has(n));
+  // WHICH OF THE BAG MAY BE TROLLED. The bag was handed over as one flat list of names and the
+  // only split it carried was snap-versus-tie -- so a Fluke, `trollable: false` in the inventory
+  // and `technique: 'Cast only'` in LURE_KNOWLEDGE, arrived looking exactly like a crankbait.
+  // Ryan found one on the starboard troll rod for all three legs of his 2026-08-30 Wateree day.
+  // `trollable` was read in exactly two places in the whole plan path, and both of them only used
+  // it to build the union that produced this list.
+  const trollSet = new Set(o.trollable || o.tackle || []);
+  const castOnly = (o.tackle || []).filter((n) => !trollSet.has(n));
 
   const system = 'You are TrollMap Smart Plan, an expert fishing guide planning one day on the '
     + 'water for a kayak angler. Return one valid JSON object and nothing else — no markdown, no '
@@ -398,7 +410,13 @@ seconds, where a leader rod is a knot with wet hands.
 
 Colour is a free string; assume any colour combination is aboard. Use ONLY these exact lure names:
 ${(o.tackle || []).join(', ') || '(inventory unavailable)'}
-
+${castOnly.length ? `
+CAST ONLY — NEVER BEHIND THE BOAT. These may go on a casting rod at a stop and NOWHERE else:
+${castOnly.join(', ')}
+They are unweighted soft plastics. At trolling speed they plane instead of sinking, so they have
+no running depth and no length of lead gives them one. A troll rod carrying one of these is a rod
+fishing nothing.
+` : ''}
 ${o.waterIsChosen ? 'THE WATER HE CHOSE' : 'THE WATER YOU MAY FISH'}
 Each candidate is a stretch of a real trolling run, already filtered to water he can reach and
 depths that matter today, and ranked by what it passes. \`structures\` lists what each leg goes by

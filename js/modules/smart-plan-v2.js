@@ -122,13 +122,15 @@ export async function buildSmartPlanV2(o) {
   // Was `connectionFor(l.type) !== 'tie'` written out here, which is canTakeSnap() with the
   // table's own name filed off -- and Pick Water, reading the same bag, had no copy at all.
   const snapEligible = snapEligibleFrom(o.inventory);
+  // The other half of the same idea: which of the bag may be trolled at all.
+  const trollable = (o.inventory || []).filter((l) => l && l.trollable).map((l) => l.name);
 
   const req = buildPlanRequest({
     candidates: candidates.map((c) => forModel(c)),
     water: o.water, ramp: o.rampName, date: o.date,
     launchTime: o.launchTime, returnTime: o.returnTime,
     species: o.species ? [].concat(o.species) : [],
-    conditions: o.conditions, tackle: o.tackle, snapEligible,
+    conditions: o.conditions, tackle: o.tackle, snapEligible, trollable,
     usableAh: o.usableAh, intel: o.intel,
     // THE CHART FIRST, THE RESEARCH SECOND. The charted ones come out of the pack this function
     // already fetched; the wiring adds the profile's prose. Each line says which it is, so when

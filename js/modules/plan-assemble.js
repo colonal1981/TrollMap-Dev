@@ -55,14 +55,45 @@ import { depthWindow, leadForDepth } from '../data/lure-knowledge.js';
  * shoreline: an absent input must not become a claim.
  */
 function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warnings) {
-  if (typeof lureByName !== 'function' || !Number.isFinite(ceilingFt) || ceilingFt <= 0) return;
+  // RETURNS WHAT THIS LEG FISHES; IT DOES NOT CHANGE THE BAG.
+  //
+  // This used to write `rod.leadFt = shorter` straight into the loadout, and the loadout is ONE
+  // array shared by every leg -- plan-to-timeline.js:151 builds `rodsById` from it and looks each
+  // leg's rods up by id. So the shallowest leg of the day set the lead for all of them.
+  //
+  // Ryan's 2026-08-30 Wateree plan is the whole bug in one line of its own warnings: "R2 on
+  // wateree_lake#362: a Fluke / Soft Jerkbait on 80 ft of lead at 2 mph runs to 15 ft, and the
+  // shallowest water on this leg is 6 ft -- shortened the lead to 24 ft so it clears". Leg 2 is
+  // the 6 ft line and that cap is right FOR LEG 2. Legs 1 and 3 are the 24 ft line with the
+  // stripers at 15-27 ft, and they inherited it: the fluke came out at 24 ft of lead running
+  // 2-6 ft for 78 of the day's 115 trolling minutes, nine to twenty-one feet above the fish.
+  // Nothing in the plan said so, because as far as the plan knew there was one lead.
+  //
+  // A lead IS per-pass -- you let line out on the deep leg and reel it in on the shallow one.
+  // The loadout is the bag; the leg is what is behind the boat on that leg.
+  if (typeof lureByName !== 'function' || !Number.isFinite(ceilingFt) || ceilingFt <= 0) return null;
   const ids = [deploy && deploy.port, deploy && deploy.starboard].filter(Boolean);
+  const forThisLeg = {};
   for (const id of ids) {
     const rod = rods.find((r) => r.id === id);
     if (!rod || !Number.isFinite(rod.leadFt)) continue;
     const lure = lureByName(rod.lure);
     if (!lure) continue;
     const w = depthWindow(lure, { speedMph, leadFt: rod.leadFt });
+
+    // A BAIT WITH NO RUNNING DEPTH IS NOT A QUIET PASS, IT IS A ROD FISHING NOTHING.
+    //
+    // This was `continue` — silence — and silence is how a Fluke ended up on the starboard troll
+    // rod for all three legs of Ryan's 2026-08-30 Wateree day. It is `trollable: false` in his own
+    // inventory and `technique: 'Cast only'` in LURE_KNOWLEDGE, and nothing between the model and
+    // the water said either of those out loud. His question when he found it: "and if it is
+    // weightless you think a fluke at 2mph is even going to sink?" It does not. It planes.
+    if (w.mode === 'none') {
+      warnings.push(`${id} on ${runId}: a ${rod.lure} is a CAST-ONLY bait. It planes at `
+                  + `${speedMph} mph instead of sinking, so it has no running depth and no lead `
+                  + `puts it at one — that rod is fishing nothing on this leg.`);
+      continue;
+    }
     if (!Number.isFinite(w.max)) continue;
 
     // The model also CLAIMS a running depth. Nothing has ever checked that claim against the
@@ -72,7 +103,7 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
       warnings.push(`${id} on ${runId} says it runs to ${rod.runsDepthFt[1]} ft, but `
                   + `${rod.leadFt} ft of lead at ${speedMph} mph puts a ${rod.lure} at `
                   + `${w.max} ft — going with the measured number`);
-      rod.runsDepthFt = [w.min, w.max];
+      forThisLeg[id] = { runsDepthFt: [w.min, w.max] };
     }
 
     if (w.max <= ceilingFt) continue;
@@ -105,15 +136,17 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
       warnings.push(`${id} on ${runId}: a ${rod.lure} on ${rod.leadFt} ft of lead at ${speedMph} `
                   + `mph runs to ${w.max} ft, and the shallowest water on this leg is ${ceilingFt} `
                   + `ft — shortened the lead to ${shorter} ft so it clears`);
-      rod.leadFt = shorter;
       const nw = depthWindow(lure, { speedMph, leadFt: shorter });
-      if (Number.isFinite(nw.max)) rod.runsDepthFt = [nw.min, nw.max];
+      forThisLeg[id] = { leadFt: shorter,
+                         runsDepthFt: Number.isFinite(nw.max) ? [nw.min, nw.max]
+                                                              : (forThisLeg[id] || {}).runsDepthFt };
     } else {
       warnings.push(`${id} on ${runId}: a ${rod.lure} runs to ${w.max} ft and the shallowest water `
                   + `on this leg is ${ceilingFt} ft. Its depth is ${w.controlledBy}, so lead will `
                   + `not lift it — it is the wrong bait for this pass`);
     }
   }
+  return Object.keys(forThisLeg).length ? forThisLeg : null;
 }
 
 /** "06:00" → minutes since midnight. */
@@ -436,8 +469,8 @@ export function assemblePlan(o) {
     // No bait may run deeper than the shallowest water on this leg. See capBaitDepth().
     // `maxRunDepthFt` is preferred over `depthFt` because a caller may know a tighter ceiling
     // than the leg's nominal depth — on the picked-water path both are the piece's `holdsFt`.
-    capBaitDepth(rods, deploy, Number(c.maxRunDepthFt ?? c.depthFt), legMph,
-                 o.lureByName, c.runId, warnings);
+    const rodPlan = capBaitDepth(rods, deploy, Number(c.maxRunDepthFt ?? c.depthFt), legMph,
+                                 o.lureByName, c.runId, warnings);
 
     legs.push({
       id: `L${++li}`, type: 'troll',
@@ -445,6 +478,10 @@ export function assemblePlan(o) {
       startM: legStartM, lengthM: legLen,
       depthFt: c.depthFt, speedMph: legMph,
       deploy,
+      // WHAT THIS LEG ACTUALLY FISHES, where it differs from the bag. Only the rods capBaitDepth
+      // had to move, keyed by rod id: { R2: { leadFt, runsDepthFt } }. Absent when the loadout's
+      // own lead clears this leg, and every reader falls back to the rod.
+      rodPlan: rodPlan || undefined,
       batteryAh: round2(a),
       estDurationMin: Math.round(mins + stopMin), estStartTime: formatClock(clock),
       why: c.why ?? null,
