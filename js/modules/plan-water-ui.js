@@ -63,6 +63,9 @@ const T = { pieces: [], picked: new Set(), ramp: null, rampName: '', usableAh: 0
             windowMin: null, band: null, holding: null, sortBy: 'ramp', lake: '', limit: 25,
             spots: [], species: '', r2Key: '', dateStr: '', launchTime: '', returnTime: '',
             windByHour: null, weatherByHour: null, pickedSpots: new Set(),
+            // WHICH KINDS OF SPOT HE WANTS TO SEE. Empty means all of them, which is what it
+            // did before there was a filter. See paintSpots().
+            spotKinds: new Set(),
             // The water-depth filter. null means no bound — see inDepthBand().
             depthMin: null, depthMax: null };
 
@@ -255,19 +258,71 @@ function spotRow(s, i) {
   </div>`;
 }
 
+/**
+ * One chip per kind of spot actually present, with how many there are.
+ *
+ * FIVE THOUSAND SPOTS AND A WINDOW ONTO THIRTY OF THEM. Ryan, doing a Pick Water on Wateree:
+ * "the entire screen is full of humps and points and no way to find any other structure —
+ * 5020 cast spots · 16 on water you have picked · showing 30".
+ *
+ * The list is ordered free-first then nearest and then cut at 30, which is the right ordering and
+ * a trapdoor: whichever kind happens to be commonest near the picked water fills the window, and
+ * every other kind is behind it with no way to reach it. Wateree carries humps, ledges, points,
+ * coves, creek mouths, timber, brush piles, charted attractors, DNR brushpiles and two kinds of
+ * dock line, and eight of those were unreachable.
+ *
+ * A filter is the whole fix, and the counts have to be on it — "brush pile 41" is the difference
+ * between choosing and guessing. Nothing is hidden by default: an empty selection is every kind,
+ * exactly as before.
+ */
+export function spotKindCounts(priced) {
+  const by = new Map();
+  for (const s of (priced || [])) {
+    if (!s || !s.type) continue;
+    const e = by.get(s.type) || { type: s.type, what: s.what || s.type, n: 0, free: 0 };
+    e.n += 1;
+    if (s.free) e.free += 1;
+    by.set(s.type, e);
+  }
+  // Kinds with spots on water already picked lead, then the commonest. A kind with nothing free
+  // is still listed -- it is the one he is hunting for when he opens the filter at all.
+  return [...by.values()].sort((a, b) => b.free - a.free || b.n - a.n || a.type.localeCompare(b.type));
+}
+
+function spotKindChips(priced) {
+  const rows = spotKindCounts(priced);
+  if (rows.length < 2) return '';      // one kind is not a choice
+  const any = T.spotKinds.size > 0;
+  return `<div class="wg-kinds">`
+    + `<button type="button" data-kind="" class="wg-kind${any ? '' : ' on'}">all ${priced.length}</button>`
+    + rows.map((e) => `<button type="button" data-kind="${esc(e.type)}" `
+        + `class="wg-kind${T.spotKinds.has(e.type) ? ' on' : ''}${e.free ? ' has-free' : ''}" `
+        + `title="${e.free} on water you have picked">${esc(e.what)} ${e.n}`
+        + `${e.free ? ` <i>${e.free}</i>` : ''}</button>`).join('')
+    + `</div>`;
+}
+
 /** The spots, priced against what is currently ticked, best-value first. */
 function paintSpots() {
   const el = $('wgSpots');
   if (!el) return [];
   const picked = T.pieces.filter((p) => T.picked.has(p.key));
   const priced = priceSpots(T.spots, picked, { ramp: T.ramp });
+  const chips = spotKindChips(priced);
+  // The filter narrows WHAT IS LISTED, never what is priced -- the chips' counts and the totals
+  // below have to keep describing the whole water or the numbers change meaning under him.
+  const shown = T.spotKinds.size ? priced.filter((x) => T.spotKinds.has(x.type)) : priced;
   // Free ones first, then nearest. A spot that costs a mile of paddling is still offered -- § 9,
   // "feasibility is feedback, not a gate" -- it just does not lead.
-  const show = priced.slice(0, 30);
+  const show = shown.slice(0, 30);
   const free = priced.filter((x) => x.free).length;
-  el.innerHTML = `<div class="wg-count">${priced.length} cast spots · ${free} on water you have `
-    + `picked${priced.length > show.length ? ` · showing ${show.length}` : ''}</div>`
-    + show.map(spotRow).join('');
+  const filtered = T.spotKinds.size
+    ? ` · ${shown.length} of the kind${T.spotKinds.size > 1 ? 's' : ''} you picked` : '';
+  el.innerHTML = chips
+    + `<div class="wg-count">${priced.length} cast spots · ${free} on water you have `
+    + `picked${filtered}${shown.length > show.length ? ` · showing ${show.length}` : ''}</div>`
+    + (show.length ? show.map(spotRow).join('')
+                   : `<div class="wg-dim">Nothing of that kind on this water.</div>`);
   return priced;
 }
 
@@ -894,6 +949,17 @@ export function initWaterTab() {
   $('wgSort')?.addEventListener('change', (e) => { T.sortBy = e.target.value; paint(); });
   $('wgLimit')?.addEventListener('change', (e) => {
     T.limit = Math.max(1, parseInt(e.target.value, 10) || 25); paint();
+  });
+  // The chips repaint the list, so they are a click and not a change. Repainting loses nothing:
+  // T.pickedSpots is the source of truth for a tick and spotRow() reads it back.
+  $('wgSpots')?.addEventListener('click', (e) => {
+    const btn = e.target?.closest?.('[data-kind]');
+    if (!btn) return;
+    const k = btn.dataset.kind;
+    if (!k) T.spotKinds.clear();
+    else if (T.spotKinds.has(k)) T.spotKinds.delete(k);
+    else T.spotKinds.add(k);
+    paintSpots();
   });
   $('wgSpots')?.addEventListener('change', (e) => {
     const k = e.target?.dataset?.spot;
