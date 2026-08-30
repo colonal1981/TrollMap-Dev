@@ -39,7 +39,10 @@ const REGS = {
     source: 'SC Regs2627.pdf', page: 20,
   }],
   book_statewide_source: 'SC Regs2627.pdf',
-  closures: [], closures_source: 'SC Regs2627.pdf',
+  // `book_slug` set means the NAME bound to a registry water in the offline table. With it, an
+  // empty `closures` list means "read, and none on this water"; without it, it means "we could
+  // not say which water this is", and those must not read as the same sentence.
+  book_slug: 'wateree_lake', closures: [], closures_error: null,
 };
 let regsCalls = 0;
 globalThis.fetch = async (url) => {
@@ -83,6 +86,23 @@ describe('the digest is primed before the law is read', () => {
     expect(/No regulation data/.test(all)).toBe(false);
     expect(all).toMatch(/26-inch minimum/);
     expect(all).toMatch(/5 per person per day/);
+  });
+
+  it('says the closures were READ and none is set, not that it has no information', () => {
+    // "No closure information for this water" reads as "we did not look". South Carolina's book
+    // was parsed offline, 70 closures came out of it across the state, the name resolved, and
+    // none is on Wateree. That is a different and much better sentence.
+    const r = pre.checkPlanLegality(LAKE, 'Striped Bass', new Date('2026-08-30T12:00:00'));
+    const all = (r.warnings || []).join(' ');
+    expect(all).toMatch(/closures were read and none is set on this water/);
+    expect(/No closure information/.test(all)).toBe(false);
+  });
+
+  it('names the columns, because "10" alone does not say ten of what', () => {
+    const r = pre.checkPlanLegality(LAKE, 'Striped Bass', new Date('2026-08-30T12:00:00'));
+    const all = (r.warnings || []).join(' ');
+    expect(all).toMatch(/size 26-inch minimum/);
+    expect(all).toMatch(/creel 5 per person per day/);
   });
 
   it('an unprimed water still warns rather than granting permission', () => {

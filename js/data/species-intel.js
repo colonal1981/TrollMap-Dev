@@ -166,13 +166,35 @@ export function checkRegulations(lakeName, species, date, state = null) {
         + `this fish that does not apply here as written — ${live.why}. No limit is published for `
         + `this water. Check with the state before you keep one.`);
     } else if (limits) {
+      // ABSENT AND EMPTY ARE DIFFERENT ANSWERS, and this sentence used to give the same one for
+      // both. "No closure information for this water" reads as "we did not look", and on Lake
+      // Wateree we HAD looked: South Carolina's book was parsed offline, 70 closures came out of
+      // it across the state, the name resolved to a registry water, and none of them is set on
+      // Wateree. That is a much better thing to be told, and it is the same discipline
+      // `saltwater_source` and `coastal_source` already keep on the Worker side — a null source
+      // means never read, an empty list beside a source means read and nothing found.
+      //
+      // `resolved` is the discriminator and it was already on the object: `book_slug` is null
+      // when the NAME did not bind to a water, which is genuinely "we cannot say". Neither
+      // branch grants anything; both say what was checked.
+      const looked = books && books.resolved && !books.error;
+      const closureNote = looked
+        ? (books.all.length
+            ? `. The ${live.state || 'state'} book's closures were read for this water; none is `
+              + `in effect today`
+            : `. The ${live.state || 'state'} book's closures were read and none is set on this `
+              + `water`)
+        : '. No closure information for this water — verify before you keep one';
       warnings.push(`${species} on ${lakeName}: ${limits.scope === 'lake' ? 'lake-specific' : 'statewide'} `
-        + `limits are ${limits.sizeLimit || 'no stated size limit'} / `
-        + `${limits.creelLimit || 'no stated creel limit'} (${limits.source})`
+        // NAME THE COLUMNS. "Any length / 10" is the book's two cells with a slash between them,
+        // and 10 of what is exactly the question a creel limit answers. The words `size` and
+        // `creel` are the table's own headers, not an interpretation of its numbers.
+        + `limits are size ${limits.sizeLimit || 'none stated'} · `
+        + `creel ${limits.creelLimit || 'none stated'} (${limits.source})`
         + (limits.addressIsAReach
             ? '. The book addresses a stretch of this water, not all of it — check you are on it'
             : '')
-        + `. No closure information for this water — verify before you keep one.`);
+        + closureNote + '.');
     } else if (live) {
       warnings.push(`The ${live.state || 'state'} digest was read and lists nothing for ${species} `
         + `on ${lakeName}. Verify before you keep one.`);
