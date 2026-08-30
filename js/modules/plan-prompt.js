@@ -398,6 +398,42 @@ export function buildPlanRequest(o) {
   };
   const depthNotes = [...trollSet].map(depthNote).filter(Boolean);
 
+  // WHICH BAITS CANNOT WORK ON WHICH LEG, SAID BEFORE THE CHOICE INSTEAD OF AFTER IT.
+  //
+  // Ryan, holding a plan that warned him a DD2 was the wrong bait for leg 2: "telling me that the
+  // baits are wrong... so they shouldn't be offered in the first place... that means that the
+  // model is not being told the right things."
+  //
+  // The model WAS told -- Pick Water has sent `maxRunDepthFt` per candidate since it was written,
+  // and since 2026-08-30 it is also told a bill cannot be lifted by lead. It got a 13 ft ceiling
+  // and put a DD2 (16-20 ft) on that leg anyway. So the diagnosis is not "it was not told the
+  // number"; it is that the app KNOWS the consequence and keeps it to itself. capBaitDepth() works
+  // this out exactly, and only once the plan exists, and then writes a warning.
+  //
+  // The same knowledge, moved in front of the decision. A lure whose depth is set by its BILL and
+  // whose shallowest rated depth is already deeper than the leg's ceiling will drag on that leg
+  // whatever lead it is given -- which is precisely capBaitDepth()'s test, asked earlier.
+  //
+  // A LEAD-CONTROLLED BAIT IS NEVER ON THIS LIST. It can always be brought up by shortening the
+  // lead, which is what capBaitDepth() does for it rather than complaining, so naming it here
+  // would delete water he can fish. Nothing is excluded that has a way of working.
+  const cannotUseOn = (ceilingFt) => {
+    if (!Number.isFinite(ceilingFt) || !o.lureByName) return undefined;
+    const out = [];
+    for (const name of trollSet) {
+      const lure = o.lureByName(name);
+      if (!lure) continue;
+      const w = depthWindow(lure, { speedMph: 2.0, leadFt: null });
+      if (w.mode !== 'rated' || !Number.isFinite(w.min)) continue;
+      if (w.min > ceilingFt) out.push(name);
+    }
+    return out.length ? out : undefined;
+  };
+  const candidates = (o.candidates || []).map((c) => (
+    c && Number.isFinite(Number(c.maxRunDepthFt))
+      ? { ...c, cannotUse: cannotUseOn(Number(c.maxRunDepthFt)) }
+      : c));
+
   const system = 'You are TrollMap Smart Plan, an expert fishing guide planning one day on the '
     + 'water for a kayak angler. Return one valid JSON object and nothing else — no markdown, no '
     + 'commentary, no code fences.';
@@ -478,7 +514,7 @@ of that leg to the START of every other leg — \`transitFromRampM\` from the ra
 \`transitToRampM\` from its end back to the ramp. Those are the only numbers that change when you
 reorder the day, and they are yours to spend: the app computes the legs, you choose the sequence.
 
-${JSON.stringify(o.candidates || [])}
+${JSON.stringify(candidates)}
 ${o.waterIsChosen ? `
 THE FISHERMAN ALREADY CHOSE THIS WATER AND THIS ORDER.
 He picked these stretches himself, off a map, with the reasons for and against in front of him —
@@ -555,6 +591,12 @@ RULES THAT ARE NOT NEGOTIABLE
    median of it. A leg is NOT one depth — these lines are fitted so a kayak can follow them, not
    traced along a single contour, so "the 27 ft line" is a name and 25-32 ft is the water. Judge a
    bait against the range, not the name.
+   \`cannotUse\` ON A LEG IS THE LIST OF BAITS THAT WILL NOT CLEAR IT. Their depth is set by a
+   bill, so no length of lead lifts them: on that leg they drag, and a dragged bait is a lost
+   bait. Do not deploy one of them there. It is not a judgement about the bait -- the same lure
+   may be the right answer on the next leg, and the list is worked out per leg for that reason.
+   Nothing appears on it that has any way of working, because a weighted bait is simply given a
+   shorter lead instead.
    \`maxRunDepthFt\` is a CEILING and nothing else. It is the SHALLOWEST water anywhere on that
    leg, measured within the boat's wander, and it exists for one purpose — so a bait does not drag
    on a rise you cannot see. A leg reading 25-31 ft of water with \`maxRunDepthFt: 20\` has a 20 ft

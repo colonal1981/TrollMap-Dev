@@ -122,3 +122,62 @@ describe('both planners hand the resolver over', () => {
     expect(live('../js/modules/smart-plan-v2-wiring.js')).toMatch(/lureByName: \(name\) =>/);
   });
 });
+
+
+describe('the baits that cannot work on a leg are named before the choice, not after it', () => {
+  // Ryan, holding a plan that warned him a DD2 was the wrong bait for leg 2: "telling me that the
+  // baits are wrong... so they shouldn't be offered in the first place... that means that the
+  // model is not being told the right things."
+  //
+  // It WAS told: Pick Water has sent `maxRunDepthFt` per candidate since it was written, and it
+  // got a 13 ft ceiling and put a DD2 (16-20 ft) on that leg regardless. The real fault is that
+  // capBaitDepth() works out exactly which lures cannot clear a leg, does it only once the plan
+  // exists, and then writes a warning. Same knowledge, moved in front of the decision.
+  const names = TACKLE_INVENTORY.filter((l) => l.trollable).map((l) => l.name);
+  const ask = (candidates) => buildPlanRequest({
+    water: 'Lake Wateree, SC', ramp: 'Clearwater Cove', date: '2026-08-30',
+    launchTime: '06:00', returnTime: '15:00', species: ['Striped Bass'], conditions: {},
+    tackle: names, trollable: names, lureByName: byName, candidates,
+  }).user;
+  const cands = (text) => {
+    const i = text.indexOf('[{"runId"');
+    return JSON.parse(text.slice(i, text.indexOf('\n', i)));
+  };
+
+  it('names every bill that is already deeper than the ceiling', () => {
+    const c = cands(ask([{ runId: 'a', depthFt: 20, maxRunDepthFt: 13, lengthM: 1954 }]))[0];
+    // 13 ft of water: every deep diver drags, including the DD2 the model actually chose.
+    expect(c.cannotUse).toContain(DD3.name);
+    expect(c.cannotUse.some((n) => /DD1/.test(n))).toBe(true);
+    expect(c.cannotUse.some((n) => /DD2/.test(n))).toBe(true);
+    expect(c.cannotUse.some((n) => /DD4/.test(n))).toBe(true);
+  });
+
+  it('and only those — a deeper leg rules out fewer', () => {
+    const c = cands(ask([{ runId: 'a', depthFt: 28, maxRunDepthFt: 24, lengthM: 1832 }]))[0];
+    expect(c.cannotUse.some((n) => /DD4/.test(n))).toBe(true);
+    expect(c.cannotUse.some((n) => /DD1|DD2/.test(n))).toBe(false);
+  });
+
+  it('never names a lead-controlled bait, because a shorter lead is always the answer', () => {
+    // Naming one would delete water he can fish. capBaitDepth() shortens the lead for these
+    // rather than complaining, so nothing appears here that has a way of working.
+    const c = cands(ask([{ runId: 'a', depthFt: 8, maxRunDepthFt: 4, lengthM: 1954 }]))[0];
+    for (const n of c.cannotUse) {
+      expect(depthWindow(byName(n), { speedMph: 2, leadFt: null }).mode).toBe('rated');
+    }
+    expect(c.cannotUse.includes(LEADED.name)).toBe(false);
+  });
+
+  it('says nothing where the app has no ceiling to go on', () => {
+    const c = cands(ask([{ runId: 'a', depthFt: 20, lengthM: 1954 }]))[0];
+    expect(c.cannotUse === undefined).toBe(true);
+  });
+
+  it('and tells the model it is per leg, not a verdict on the bait', () => {
+    const p = ask([{ runId: 'a', depthFt: 20, maxRunDepthFt: 13, lengthM: 1954 }]);
+    expect(p).toMatch(/THE LIST OF BAITS THAT WILL NOT CLEAR IT/);
+    expect(p).toMatch(/the same lure\s+may be the right answer on the next leg/);
+    expect(p).toMatch(/Nothing appears on it that has any way of working/);
+  });
+});
