@@ -38,7 +38,7 @@ import { depthBandFor, usableAhFrom, researchIntel, researchHazards, describeDep
   from './plan-inputs.js';
 import { packFetcher } from './smart-plan-v2.js';
 import { fetchForecast, fetchWaterState } from './plan-preflight.js';
-import { depthSampler, shorelineIndex } from './plan-water-index.js';
+import { depthSampler, shorelineIndex, waterMask } from './plan-water-index.js';
 import { offerWater, dayCost, priceSpots, searchOrder, optionality, reasons, TROLL_MPH, TRANSIT_MIN_DEPTH_FT, SPOT_KINDS } from './plan-water.js';
 import { joinedPiece } from './plan-pieces.js';
 import { planFromWater } from './plan-from-water.js';
@@ -724,6 +724,10 @@ export async function findWater() {
       holding: depth ? depth.holding : null,
       windByHour: forecast ? forecast.windByHour : null,
       depthAt: daFc && daFc.features ? depthSampler(daFc.features) : null,
+      // WATER-VERSUS-LAND, COARSE AND FAST. Same layer, a different question -- see waterMask().
+      // trimDeadEnd() walks sixteen bearings off every lane end, which the exact sampler cannot
+      // afford at sixty microseconds a lookup.
+      inWater: daFc && daFc.features ? waterMask(daFc.features) : null,
       shoreIndex: slFc && slFc.features ? shorelineIndex(slFc.features) : null,
       // The real points, coves, creek mouths, humps and ledges, so a cast spot snaps to the thing
       // itself rather than to a guess at where along a lane it sat. See castSpots().

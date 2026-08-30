@@ -289,3 +289,76 @@ describe('a join taken is a PIECE, because nothing downstream should learn a new
     expect(piece.rampM.x).toBe(Math.min(pieces[0].rampM.x, pieces[1].rampM.x));
   });
 });
+
+
+// A LANE THAT HOOKS INTO A DEAD END SHOULD STOP AT THE MOUTH.
+//
+// Ryan, on Leg 2 of a Wateree day: "the orange lane needs to either keep going past that cove it
+// turns into or just stop", and on the same shape earlier: "i would never turn into the cove just
+// to end the trolling run... no matter what you are pulling your lines out to get back out."
+//
+// Measured at that leg's exact end, 34.371333/-80.722038: the best way forward runs 400 m and the
+// way back runs 1,000. Across 168 of Wateree's piece ends that ratio is 1.0 at the median, 1.0 at
+// p90 and 3.1 at its worst -- so open water has the way on exactly as good as the way back, and
+// four ends in the whole lake do not. Anything from about 1.5 to 2.5 picks out the same four,
+// which is what a real gap looks like rather than a tuned number.
+//
+// THREE EARLIER VERSIONS WERE WRONG AND EACH ONE LOOKED RIGHT:
+//
+//   1. Rays against the SHORELINE index, counting a bearing closed if any shoreline vertex came
+//      within 60 m. A lane fifty metres off a straight bank read as enclosed on every bearing
+//      running alongside it, and the trim deleted a 2.68 mi piece of open water.
+//   2. Omnidirectional: is water closing in on ALL sides within 240 m. That is a question about a
+//      pond. A real cove mouth is wider, so it missed this leg entirely while costing 12.6 miles
+//      and 11 pieces to fix one bad end.
+//   3. Median of the forward arc and median of the rear arc. Ahead, one open bearing IS a way
+//      out, so the arc's MAXIMUM is the question; behind, he came down the lane, so straight
+//      astern is the question and a fan around it just measures how wide the cove is -- which
+//      made the rule quieter the deeper in the lane ran.
+//
+// The version that ships costs 0.35 mi of 84.6 and takes the flagged ends from four to one.
+describe('a pass stops where the lake does', () => {
+  // East along open water, then north into a cove 300 m wide and 420 m deep.
+  const COVE_X = 29 * STEP;
+  const hook = () => {
+    const n = 40, c = [];
+    for (let k = 0; k < 30; k++) c.push([east(k * STEP), LAT]);
+    for (let k = 1; k <= 10; k++) c.push([east(COVE_X), LAT + (k * STEP) / M_LAT]);
+    return { type: 'Feature', geometry: { type: 'LineString', coordinates: c },
+             properties: { id: 'p', fitted: true, depth_ft: 30, envelope_m: 25,
+                           envelope_step_m: STEP, envelope_ft: Array(n).fill(30),
+                           envelope_line_ft: Array(n).fill(30), envelope_deep_ft: Array(n).fill(30) } };
+  };
+  const inWater = (pt) => {
+    const n = (pt[1] - LAT) * M_LAT, e = (pt[0] - LON) * mLon(LAT);
+    if (n > 20) return Math.abs(e - COVE_X) <= 150 && n <= 420;      // the cove
+    return n > -800 && e > -800 && e < 2400;                          // the lake
+  };
+  const len = (o) => buildPieces([hook()], { clearFt: 2, minM: 600, ...o }).pieces[0]?.lengthM;
+
+  it('leaves the pass alone when nothing is told about the water', () => {
+    expect(len({})).toBe(39 * STEP);
+  });
+
+  it('and pulls it back out of the cove when it is', () => {
+    const cut = len({ inWater });
+    expect(cut < 39 * STEP).toBe(true);
+    expect(cut >= 600).toBe(true);            // still a pass by his own minimum
+  });
+
+  it('the geometry and the profile still agree afterwards', () => {
+    const p = buildPieces([hook()], { clearFt: 2, minM: 600, inWater }).pieces[0];
+    expect((p.envelope.length - 1) * p.envelopeStepM).toBe(p.lengthM);
+    expect(p.envelopeLine.length).toBe(p.envelope.length);
+  });
+
+  it('never eats more than half — a lane that LIVES up an arm is water, not a mistake', () => {
+    // Every direction is short here, so astern never opens and the rule cannot fire at all.
+    const narrow = (pt) => Math.abs((pt[1] - LAT) * M_LAT) < 80;
+    expect(len({ inWater: narrow })).toBe(39 * STEP);
+  });
+
+  it('drops the pass when what is left is under his own minimum', () => {
+    expect(buildPieces([hook()], { clearFt: 2, minM: 1400, inWater }).pieces.length).toBe(0);
+  });
+});

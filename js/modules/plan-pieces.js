@@ -529,6 +529,154 @@ function gapProfile(a, b, stepM, envM, depthAt) {
 }
 
 /**
+ * HOW FAR THE WATER RUNS from a point on a bearing, capped at `capM`.
+ *
+ * `inWater` is waterMask(), not depthSampler(): this asks water-versus-land and nothing else, and
+ * the exact sampler costs about sixty microseconds a lookup because the depth bands nest twenty-
+ * five deep. The mask agrees with it on that question 99.94% of the time over 20,000 points along
+ * Wateree's lanes, and is two thousand times faster. It returns a boolean so it cannot be
+ * mistaken for a depth -- 10.6% of its cells are 2 ft or more off the true band, which is fine
+ * for "is this lake" and nowhere near good enough to size a bait with.
+ */
+function waterRun(pt, inWater, deg, capM = 1000, stepM = 40) {
+  const th = (deg * Math.PI) / 180, dx = Math.sin(th), dy = Math.cos(th);
+  for (let m = stepM; m <= capM; m += stepM) {
+    if (!inWater([pt[0] + (dx * m) / m_per_deg_lon(pt[1]), pt[1] + (dy * m) / M_PER_DEG_LAT])) {
+      return m - stepM;
+    }
+  }
+  return capM;
+}
+
+/**
+ * DOES THIS END POINT INTO A DEAD END.
+ *
+ * Ryan, on Leg 2 of a Wateree day: "the orange lane needs to either keep going past that cove it
+ * turns into or just stop", and earlier, on the same shape: "i would never turn into the cove
+ * just to end the trolling run... no matter what you are pulling your lines out to get back out."
+ *
+ * Measured at that leg's exact end, 34.371333/-80.722038: the water runs 160 m along the heading
+ * it is travelling and 1,000 m straight back the way it came. Every bearing from 203 to 270
+ * degrees hits the cap; everything else dies inside 360 m. It is in a pocket that opens only
+ * behind it.
+ *
+ * DIRECTIONAL, AND THE FIRST VERSION OF THIS WAS NOT. That one asked whether water was closing in
+ * on ALL sides within 240 m, which is a question about a small pond rather than a cove: a real
+ * cove mouth is wider than that, so it missed this leg entirely, while flagging ordinary water
+ * often enough to cost 12.6 miles and 11 pieces to fix a single bad end. The honest question is
+ * narrower -- ahead of you the lake dies, behind you it opens -- and it cannot fire on a lane
+ * running along a shore, because open water behind is the normal case. On Wateree it picks 19 of
+ * 200 piece ends where the median end has the full 1,000 m ahead of it.
+ */
+function pointsIntoADeadEnd(coords, i, inWater, forward, baseM = 120) {
+  const n = coords.length;
+  // THE HEADING NEEDS A BASELINE IN METRES, NOT IN VERTICES. Four vertices of a stitched contour
+  // can be four metres, and a heading taken over four metres is noise -- it swings with every
+  // wiggle in the chart line and the fan then points somewhere the boat is not going.
+  let j = i, acc = 0;
+  while (acc < baseM) {
+    const k = forward ? j - 1 : j + 1;
+    if (k < 0 || k > n - 1) break;
+    acc += metresBetween(coords[j], coords[k]);
+    j = k;
+  }
+  const a = coords[j], b = coords[i];
+  if (!a || !b || (a[0] === b[0] && a[1] === b[1])) return false;
+  const head = (Math.atan2((b[0] - a[0]) * m_per_deg_lon((a[1] + b[1]) / 2),
+                           (b[1] - a[1]) * M_PER_DEG_LAT) * 180) / Math.PI;
+  // AHEAD IS THE BEST WAY ON, BEHIND IS THE WAY HE CAME. Two different questions, so two
+  // different reductions, and taking the median of both was wrong on each count.
+  //
+  // Ahead: is there ANY way onward. One open bearing in the forward arc is a way out of here, so
+  // the arc's maximum is the answer -- a median said "mostly blocked ahead" about a mouth with a
+  // perfectly good exit through it.
+  //
+  // Behind: he came down the lane, so the way back is the lane, not an arc around it. Straight
+  // astern is the exact question and a fan around it just measures how wide the cove is -- which
+  // made the rule quieter the deeper into a cove the lane ran, i.e. exactly where it should be
+  // loudest.
+  const ahead = Math.max(...[-45, -22.5, 0, 22.5, 45]
+    .map((d) => waterRun(b, inWater, (head + d + 720) % 360)));
+  const astern = waterRun(b, inWater, (head + 180 + 720) % 360);
+  // A RATIO, BECAUSE THE ABSOLUTE METRES DEPEND ON THE LAKE AND THE RATIO DOES NOT.
+  //
+  // Measured across 168 of Wateree's piece ends, astern divided by the best way forward:
+  //
+  //     p50 1.0    p75 1.0    p90 1.0    p95 1.4    max 3.1
+  //     2x or worse: 4 ends.  3x: 2.
+  //
+  // Nine ends in ten have the way on exactly as good as the way back, which is what open water
+  // looks like. Leg 2 -- the one Ryan drew -- measures 400 m ahead against 1,000 m astern, 2.5x.
+  // Anything from about 1.5 to 2.5 picks out the same handful, which is the mark of a real gap
+  // rather than a knob: the population is not spread across the range, it is piled at 1.0 with
+  // four outliers.
+  //
+  // The astern floor stops it firing on noise in a pond, where 40 m ahead and 120 m behind is 3x
+  // and means nothing.
+  // `ahead === 0` IS THE STRONGEST CASE, NOT AN EXCLUDED ONE. This read `ahead > 0` to dodge a
+  // divide by zero, and so silently exempted the one shape it exists to catch: an end with no
+  // water in front of it at all.
+  if (!(astern >= 600)) return false;
+  return ahead === 0 || astern / ahead >= 2;
+}
+
+/**
+ * WALK A DEAD-END HOOK OFF THE END OF A PIECE.
+ *
+ * Returns the station the piece should stop at. It never eats more than half: past that this is
+ * not a hook on the end of a pass, it is a pass that lives up a cove, and that is a thing to say
+ * rather than to trim away.
+ *
+ * WHAT HAPPENS NEXT IS ALREADY BUILT. Ryan, asked whether a trimmed lane should just end short or
+ * carry on: "if there is something to join to it should pick it up... yes". Pulling the end back
+ * to the bend puts it in open water, which is exactly where joinsFor() can see across to the next
+ * lane -- so the carrying-on is the join machinery doing its job, not a second mechanism.
+ */
+function trimDeadEnd(coords, inWater, from, to, stepM) {
+  // BOTH ENDS, because a lane that STARTS up a cove is the same mistake facing the other way --
+  // he would have to get into the pocket before he could begin. Returns { from, to }.
+  if (typeof inWater !== 'function' || to - from < 4) return to;
+  // A STATION IS AN ARC LENGTH, NOT A FRACTION OF THE VERTEX LIST, and the first cut used the
+  // fraction. stretchCoords() cuts the geometry at `station * stepM` metres along the lane; a
+  // lane whose vertices are unevenly spaced -- which is all of them, they are stitched contours
+  // -- puts the two in different places. The walk was therefore testing a point the trim would
+  // not actually cut at, and stopped after a single station on wateree_lake#362 while its end
+  // was still a dead end.
+  const cum = [0];
+  for (let i = 1; i < coords.length; i++) {
+    cum.push(cum[i - 1] + metresBetween(coords[i - 1], coords[i]));
+  }
+  const at = (station) => {
+    const want = station * stepM;
+    let lo = 0, hi = coords.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (cum[mid] < want) lo = mid + 1; else hi = mid;
+    }
+    return lo;
+  };
+  const half = Math.ceil((to - from) / 2);
+  let t = to, h = from;
+  if (pointsIntoADeadEnd(coords, at(to), inWater, true)) {
+    const floor = from + half;
+    while (t > floor) {
+      t -= 1;
+      if (!pointsIntoADeadEnd(coords, at(t), inWater, true)) break;
+    }
+  }
+  if (pointsIntoADeadEnd(coords, at(from), inWater, false)) {
+    const ceiling = to - half;
+    while (h < ceiling) {
+      h += 1;
+      if (!pointsIntoADeadEnd(coords, at(h), inWater, false)) break;
+    }
+  }
+  // Never both to the point of meeting: if each end wants half, this lane lives in a pocket and
+  // that is water rather than a mistake.
+  return (t - h) >= half ? { from: h, to: t } : { from, to };
+}
+
+/**
  * COLLAPSE THE DUPLICATES.
  *
  * Contours nest. Around one Wateree shoreline there are eighty-two of them, and by his own
@@ -621,6 +769,9 @@ export function buildPieces(lanes, o) {
   const clearFt = o && o.clearFt;
   const minM = (o && o.minM) ?? 600;
   const depths = (o && o.depths) || Array.from({ length: 18 }, (_, i) => 6 + i * 2);
+  // OPTIONAL AND SILENT WHEN ABSENT. Without it a dead-end hook cannot be seen, and inferring
+  // where the land is from the contours would be a guess. See trimDeadEnd().
+  const inWater = (o && o.inWater) || null;
 
   const usable = (lanes || []).filter(
     (f) => f && f.properties && f.properties.fitted && Array.isArray(f.properties.envelope_ft),
@@ -650,8 +801,16 @@ export function buildPieces(lanes, o) {
     // instead of ~900, and the extra ones were all stubs. Stubs chain. Two stubs 40 m apart merge,
     // that pair reaches a third, and the union walks the shoreline — one Wateree group came back
     // holding 981 members, which is not a piece of water, it is most of the lake.
-    const best = deepestUsable(curve, minM);
+    let best = deepestUsable(curve, minM);
     if (!best) continue;
+    // A HOOK INTO A DEAD END IS NOT PART OF THE PASS. reachCurve trims where the water runs out
+    // for the BAIT; it has no idea the last stretch turns into a pocket he would have to pull the
+    // rods to get out of. See trimDeadEnd().
+    const cut = trimDeadEnd(f.geometry.coordinates, inWater, best.from, best.to, step);
+    if (cut.from > best.from || cut.to < best.to) {
+      best = { ...best, from: cut.from, to: cut.to, lengthM: (cut.to - cut.from) * step };
+      if (best.lengthM < minM) continue;   // what is left is not a pass by his own measure
+    }
     const coords = stretchCoords(f.geometry.coordinates, step, best.from, best.to);
     entries.push({
       runId: p.id || null,

@@ -79,6 +79,98 @@ export function depthSampler(features, { cellDeg = 0.002 } = {}) {
 }
 
 /**
+ * IS THERE CHARTED WATER HERE — a different question from how deep it is, and a much cheaper one.
+ *
+ * depthSampler() answers "how deep", exactly, by testing the point against the depth bands that
+ * cover it. Bands NEST, so a point in 30 ft of water sits inside the 30 ft band and outside the
+ * twenty-nine shallower ones, and finding that out costs about twenty-five polygon tests -- 57 to
+ * 72 microseconds however the index is arranged. Measured: shrinking the index cells from 223 m
+ * to 28 m changed nothing at all, and flattening every ring into typed arrays bought 21%. The
+ * work is real and it is not going away.
+ *
+ * That is affordable for the nine samples a leg takes and unaffordable in bulk. trimHook() walks
+ * sixteen bearings off a lane end until the water runs out, and on Wateree that put the Water tab
+ * at TWELVE SECONDS. Ryan: "whatever gets the job done most efficiently without increasing time
+ * on an already long process."
+ *
+ * SO THIS ANSWERS THE COARSE QUESTION COARSELY. One rasterised bitmap of the charted water, 20 m
+ * cells, built once. Lookups are an array index -- 20,000 of them in one millisecond against two
+ * seconds for the exact test, two thousand times faster.
+ *
+ * AND IT IS ONLY HONEST FOR THIS ONE QUESTION. Measured against depthSampler() over 20,000 points
+ * along Wateree's fitted lanes:
+ *
+ *   water-vs-land          99.94% agreement -- 11 points of 20,000
+ *   the DEPTH it implies   10.6% differ by 2 ft or more, median -1 ft, p10 -2, p90 +2
+ *
+ * The depth error is symmetric (mean -0.15 ft) so it is resolution rather than a bug, and it is
+ * still far too much to size a bait with -- two feet is the difference between a crankbait
+ * clearing a shoal and being left on it. So this returns a BOOLEAN and cannot be mistaken for a
+ * depth. Anything that needs feet still pays for depthSampler().
+ */
+export function waterMask(features, { cellM = 20 } = {}) {
+  const polys = [];
+  let x0 = 180, y0 = 90, x1 = -180, y1 = -90;
+  for (const f of (features || [])) {
+    const g = f && f.geometry;
+    if (!g || g.type !== 'Polygon' || !Array.isArray(g.coordinates)) continue;
+    if (!Number.isFinite(Number((f.properties || {}).depth_max_ft))) continue;
+    polys.push(g.coordinates);
+    for (const pt of g.coordinates[0]) {
+      if (pt[0] < x0) x0 = pt[0]; if (pt[1] < y0) y0 = pt[1];
+      if (pt[0] > x1) x1 = pt[0]; if (pt[1] > y1) y1 = pt[1];
+    }
+  }
+  if (!polys.length) return () => false;
+
+  // Square cells in METRES, so a step of `cellM` means the same distance in both directions.
+  const dLat = cellM / M_PER_DEG_LAT;
+  const dLon = cellM / m_per_deg_lon((y0 + y1) / 2);
+  const w = Math.max(1, Math.ceil((x1 - x0) / dLon) + 1);
+  const h = Math.max(1, Math.ceil((y1 - y0) / dLat) + 1);
+  const grid = new Uint8Array(w * h);
+
+  // Scanline fill, every ring of a polygon at once: outer and holes together, so even-odd cancels
+  // an island inside a band without it being a case of its own. Nothing is painted OFF here --
+  // the union of every band is the charted water, and a hole in one band is another band's fill.
+  const xs = [];
+  for (const rings of polys) {
+    let ry0 = 90, ry1 = -90;
+    for (const r of rings) for (const pt of r) { if (pt[1] < ry0) ry0 = pt[1]; if (pt[1] > ry1) ry1 = pt[1]; }
+    const jFrom = Math.max(0, Math.floor((ry0 - y0) / dLat));
+    const jTo = Math.min(h - 1, Math.ceil((ry1 - y0) / dLat));
+    for (let j = jFrom; j <= jTo; j++) {
+      const yc = y0 + (j + 0.5) * dLat;
+      xs.length = 0;
+      for (const r of rings) {
+        for (let i = 0, k = r.length - 1; i < r.length; k = i++) {
+          const yi = r[i][1], yk = r[k][1];
+          if ((yi > yc) !== (yk > yc)) xs.push(r[k][0] + ((yc - yk) / (yi - yk)) * (r[i][0] - r[k][0]));
+        }
+      }
+      if (xs.length < 2) continue;
+      xs.sort((a, b) => a - b);
+      const row = j * w;
+      for (let n = 0; n + 1 < xs.length; n += 2) {
+        let iFrom = Math.ceil((xs[n] - x0) / dLon - 0.5);
+        let iTo = Math.floor((xs[n + 1] - x0) / dLon - 0.5);
+        if (iTo < 0 || iFrom > w - 1) continue;
+        if (iFrom < 0) iFrom = 0;
+        if (iTo > w - 1) iTo = w - 1;
+        grid.fill(1, row + iFrom, row + iTo + 1);
+      }
+    }
+  }
+
+  return (pt) => {
+    const i = Math.round((pt[0] - x0) / dLon - 0.5);
+    const j = Math.round((pt[1] - y0) / dLat - 0.5);
+    if (i < 0 || j < 0 || i >= w || j >= h) return false;
+    return grid[j * w + i] === 1;
+  };
+}
+
+/**
  * Nearest-shoreline lookup from garmin_shoreline.geojson.
  *
  * VERTICES, NOT SEGMENTS. The shoreline is sampled every few metres, so the nearest vertex is

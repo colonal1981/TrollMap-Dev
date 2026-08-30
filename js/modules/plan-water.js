@@ -1370,6 +1370,8 @@ export function offerWater(lanes, o) {
     minM,
     depths: depthLadder(o.fishBandFt),
     ramps: o.ramps,
+    // So a pass stops where the lake does instead of hooking into a cove. See trimDeadEnd().
+    inWater: o.inWater,
   });
   // OPTIONAL AND SILENT WHEN ABSENT. `depthAt` comes from depth_areas.geojson, which every pack
   // already ships and R2 already holds -- no refit, no pipeline change. Without it the wind
