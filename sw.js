@@ -102,14 +102,34 @@ self.addEventListener('fetch', event => {
 // A service worker woken by a push runs with the app closed and the screen off. That is the
 // whole reason this block exists.
 //
-// NO PAYLOAD, ON PURPOSE. A Web Push message CAN carry encrypted data, and doing so means
-// implementing aes128gcm — ECDH, HKDF, AES-GCM — by hand in the Worker. This sends an empty
-// push instead ("a tickle"), and the service worker then ASKS what happened. Two consequences,
-// both good: there is no payload crypto to get wrong, and the text shown is fetched at the
-// moment of waking rather than at the moment of sending, so a warning that was upgraded or
-// cancelled in the interval says what is true now.
+// THE PAYLOAD CARRIES THE WORDS, AND IT DID NOT USE TO.
 //
-// The cost is that waking requires network. So does every other part of this.
+// This sent an empty push -- "a tickle" -- and the service worker asked `/alerts/pending` what
+// had happened. The stated reasons were that there was no payload crypto to get wrong, and that
+// text fetched at wake is current rather than five minutes old. Both were true and neither
+// survived contact with the water. Ryan, 2026-08-30:
+//
+//   > the alert that i got said that there is a weather alert and to open trollmap for more
+//   > information... but opening trollmap did not show any popup or anything else... that
+//   > notification needs to carry all of the pertinent info, i should not have to open the app
+//   > to get it
+//
+// He is quoting the fallback below. It fires when the fetch returns an empty queue, and it did
+// because that queue is in Workers KV, which is eventually consistent -- "up to 60 seconds or
+// more", and longer "in locations that have recently accessed an older version of the key". This
+// worker reads that key on every single push, so his nearest edge always has a stale copy of it.
+// The Worker wrote the queue before pushing and could not have helped: the push takes a second
+// and the write takes up to a minute to be visible.
+//
+// So Worker/webpush.js encrypts the alert into the push (RFC 8291 over RFC 8188, checked against
+// the RFC's own worked example). Nothing is fetched, nothing can be stale, and the notification
+// is drawn from bytes that are already on the phone.
+//
+// AND THE SECOND HALF OF WHAT HE FOUND. "Open TrollMap for the details" was not just unhelpful,
+// it was untrue: nothing in the app reads that queue. The in-page path polls NWS live and only
+// while a trip is running, so a phone told to open the app for details is told to do something
+// that cannot work. The fallbacks below now say what is actually wrong and what actually fixes
+// it, and they only ever run for a device registered before payloads existed.
 
 const CFG_CACHE = 'trollmap-cfg';
 const CFG_KEY = '/__worker_url';
@@ -126,6 +146,14 @@ async function workerBase() {
 
 self.addEventListener('push', (event) => {
   event.waitUntil((async () => {
+    // THE ORDINARY PATH, AND IT NEEDS NOTHING ELSE. One alert, already decrypted by the browser.
+    let carried = null;
+    try { carried = event.data ? event.data.json() : null; } catch (_) { carried = null; }
+    if (carried && (carried.title || carried.body)) {
+      await show(carried);
+      return;
+    }
+
     const base = await workerBase();
     // IDENTIFY BY THE SUBSCRIPTION ITSELF. The endpoint is the only stable name this worker and
     // the server both already know, so nothing extra has to be stored or kept in sync.
@@ -141,8 +169,9 @@ self.addEventListener('push', (event) => {
     // something true.
     if (!base || !endpoint) {
       await self.registration.showNotification('⚠️ TrollMap alert', {
-        body: 'A weather alert fired but this device could not read the details. Open TrollMap.',
-        icon: './icons/icon-192.svg', tag: 'alert-degraded',
+        body: 'An alert fired and this device cannot read the details. '
+            + 'Switch notifications off and on again in TrollMap to fix it.',
+        icon: './icons/icon-192.svg', tag: 'alert-degraded', requireInteraction: true,
       });
       return;
     }
@@ -162,29 +191,35 @@ self.addEventListener('push', (event) => {
     } catch (_) { /* handled below */ }
 
     if (!alerts.length) {
+      // THIS IS THE ONE HE READ, and it used to say "Open TrollMap for the details" -- which the
+      // app cannot supply. It now names the real problem and the one action that ends it.
       await self.registration.showNotification('⚠️ TrollMap alert', {
-        body: 'A weather alert fired. Open TrollMap for the details.',
-        icon: './icons/icon-192.svg', tag: 'alert-unread',
+        body: 'An alert fired but its text did not reach this device. '
+            + 'Switch notifications off and on again in TrollMap so alerts arrive in full.',
+        icon: './icons/icon-192.svg', tag: 'alert-unread', requireInteraction: true,
       });
       return;
     }
 
-    for (const a of alerts) {
-      await self.registration.showNotification(a.title || '⚠️ NWS alert', {
-        body: a.body || '',
-        icon: './icons/icon-192.svg',
-        // `renotify` needs a tag, and both together are what make a SECOND, worse warning buzz
-        // again instead of silently replacing the first one in the tray.
-        tag: a.tag || 'nws-hazard',
-        renotify: true,
-        // A weather warning does not dismiss itself while he is deciding whether to run for the
-        // ramp. Everything else in this app auto-closes after 8 seconds; this must not.
-        requireInteraction: a.severity === 'stop',
-        data: { url: a.url || './' },
-      });
-    }
+    for (const a of alerts) await show(a);
   })());
 });
+
+/** One notification, however it arrived — carried in the push or fetched by a legacy device. */
+async function show(a) {
+  await self.registration.showNotification(a.title || '⚠️ NWS alert', {
+    body: a.body || '',
+    icon: './icons/icon-192.svg',
+    // `renotify` needs a tag, and both together are what make a SECOND, worse warning buzz
+    // again instead of silently replacing the first one in the tray.
+    tag: a.tag || 'nws-hazard',
+    renotify: true,
+    // A weather warning does not dismiss itself while he is deciding whether to run for the
+    // ramp. Everything else in this app auto-closes after 8 seconds; this must not.
+    requireInteraction: a.severity === 'stop',
+    data: { url: a.url || './' },
+  });
+}
 
 // Tapping the notification should land on the app, not a second copy of it.
 self.addEventListener('notificationclick', (event) => {

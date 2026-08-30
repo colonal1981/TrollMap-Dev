@@ -65,6 +65,8 @@
  * `/alerts/vapid-public`, so nothing has to be copied into the client and nothing can drift.
  */
 
+import { encryptPush, payloadHeaders } from './webpush.js';
+
 import { CORS, JSON_HEADERS, isAuthorized } from './worker-core.js';
 import { handleHazards } from './conditions.js';
 
@@ -259,15 +261,58 @@ function alertFor(h) {
   };
 }
 
-/** Send one data-less push. Returns 'ok' | 'gone' | 'fail'. */
-async function pushTo(endpoint, env, nowMs) {
+/**
+ * Send ONE alert to ONE device, with the words inside it.
+ *
+ * THIS USED TO SEND NOTHING AT ALL. It was a "tickle" -- VAPID headers and an empty body -- and
+ * the service worker fetched `/alerts/pending` on wake to find out what had happened. Ryan,
+ * 2026-08-30, holding the result: "the alert that i got said that there is a weather alert and
+ * to open trollmap for more information... but opening trollmap did not show any popup or
+ * anything else... that notification needs to carry all of the pertinent info, i should not
+ * have to open the app to get it."
+ *
+ * He read sw.js's fallback verbatim, and the reason it fired is Workers KV. The queue is written
+ * before the push and a comment below still says so, but ordering a write ahead of a push does
+ * not buy read-after-write consistency across colos and KV never offered it: "Changes may take
+ * up to 60 seconds or more to be visible in other global network locations", and longer still
+ * "in locations that have recently accessed an older version of the key" -- which is every
+ * location his phone has ever woken in, because the service worker reads that key on every push.
+ * The wake beats the write, the queue reads empty, and the phone is told to go and look somewhere
+ * that has nothing to show it.
+ *
+ * A DEVICE WITH NO KEYS STILL GETS THE OLD PATH. `subscription.keys` has always been sent by the
+ * client and was simply dropped on the floor here, so every device registered before today has a
+ * record without them and cannot be encrypted for until it re-registers -- which the app does on
+ * its own the next time notifications are switched on. Until then it gets the tickle, and the
+ * service worker's fallback now says that plainly instead of promising details the app does not
+ * have.
+ *
+ * Returns 'ok' | 'gone' | 'fail'.
+ */
+async function pushTo(device, alert, env, nowMs) {
+  const endpoint = typeof device === 'string' ? device : device.endpoint;
+  const keys = typeof device === 'string' ? null : device.keys;
   const auth = await vapidAuth(endpoint, env, nowMs);
   if (!auth) return 'fail';
+  let extra = {};
+  let payload;
+  if (alert && keys && keys.p256dh && keys.auth) {
+    try {
+      payload = await encryptPush(JSON.stringify(alert), keys.p256dh, keys.auth);
+      extra = payloadHeaders(payload.length);
+    } catch (_) {
+      // AN UNENCRYPTABLE SUBSCRIPTION IS NOT A REASON TO SEND NOTHING. Fall back to the tickle:
+      // a phone that wakes and reads a queue is worse than one that reads a payload, and far
+      // better than a warning that never leaves Cloudflare.
+      payload = undefined;
+    }
+  }
   let r;
   try {
     r = await fetch(endpoint, {
       method: 'POST',
-      headers: { ...auth, TTL: String(TTL_SECONDS), Urgency: 'high' },
+      headers: { ...auth, ...extra, TTL: String(TTL_SECONDS), Urgency: 'high' },
+      ...(payload ? { body: payload } : {}),
     });
   } catch (_) { return 'fail'; }
   // 404 and 410 are the push service saying this subscription is dead. Anything else that fails
@@ -323,6 +368,15 @@ export async function handleAlerts(request, env, url) {
     const prev = await env.KV.get(k);
     const rec = {
       endpoint: sub.endpoint,
+      // THE TWO KEYS THAT LET THE WORDS TRAVEL, and they were being dropped on the floor.
+      //
+      // The client has always sent `sub.toJSON()`, which carries `keys.p256dh` (the device's
+      // public P-256 point) and `keys.auth` (sixteen bytes of shared secret). This record kept
+      // the endpoint and the label and discarded them, so there was nothing to encrypt a payload
+      // WITH -- which is why every push was empty and every notification had to send him to the
+      // app to find out what it was about. See pushTo().
+      keys: (sub.keys && sub.keys.p256dh && sub.keys.auth)
+        ? { p256dh: String(sub.keys.p256dh), auth: String(sub.keys.auth) } : null,
       // A LABEL, NEVER A FINGERPRINT. Enough to tell "the Pixel" from "the desktop" in a list
       // of two, and nothing that identifies a person or follows one anywhere.
       label: String((body && body.label) || 'device').slice(0, 40),
@@ -351,7 +405,10 @@ export async function handleAlerts(request, env, url) {
         const d = JSON.parse(raw);
         // THE ENDPOINT NEVER LEAVES. It is the address of Ryan's phone; a list that shows it
         // hands anyone who can read this route the ability to push to it.
-        out.push({ label: d.label, registered: d.created, pending: (d.pending || []).length });
+        // `carries_words` is the one thing worth knowing about a device now: without keys it
+        // can only be tickled, and its alerts arrive as a prompt to open the app.
+        out.push({ label: d.label, registered: d.created, pending: (d.pending || []).length,
+                   carries_words: !!(d.keys && d.keys.p256dh && d.keys.auth) });
       } catch (_) { /* skip a corrupt record rather than failing the list */ }
     }
     return json({ devices: out, count: out.length });
@@ -452,11 +509,16 @@ export async function handleAlerts(request, env, url) {
       try { d = JSON.parse(raw); } catch (_) { continue; }
       // Queued BEFORE the push, same as the sweep: a phone that wakes and is told nothing reads
       // as a false alarm, which is the fastest way to teach him to ignore this channel.
-      d.pending = [...(d.pending || []), alert].slice(-20);
-      await env.KV.put(e.name, JSON.stringify(d));
-      const res = await pushTo(d.endpoint, env, Date.now());
+      const carries = !!(d.keys && d.keys.p256dh && d.keys.auth);
+      // Queued only for a device that cannot carry the words itself -- same rule as the sweep,
+      // so the test exercises the path the real alert will take rather than a friendlier one.
+      if (!carries) {
+        d.pending = [...(d.pending || []), alert].slice(-20);
+        await env.KV.put(e.name, JSON.stringify(d));
+      }
+      const res = await pushTo(d, carries ? alert : null, env, Date.now());
       if (res === 'gone') await env.KV.delete(e.name);
-      results.push({ label: d.label, result: res });
+      results.push({ label: d.label, result: res, carries_words: carries });
     }
     return json({ sent: results.length, results });
   }
@@ -564,18 +626,36 @@ export async function runAlertSweep(env, nowMs) {
 
   if (!queued.length || !devices.length) return out;
 
-  // WRITE THE QUEUE BEFORE PUSHING. If a push lands and the write has not, the phone wakes,
-  // asks what happened and is told nothing — which reads as a false alarm and is the fastest
-  // way to teach him to ignore this channel.
-  for (const d of devices) {
+  // ONE PUSH PER ALERT, WITH THE ALERT IN IT.
+  //
+  // This used to write every alert into every device's KV queue and then send one empty push per
+  // device, on the reasoning that writing first meant the phone would never wake to an empty
+  // queue. That reasoning was wrong about KV, not about ordering: a write is not visible to
+  // another colo for up to a minute, and the wake takes a second. See pushTo() for the whole
+  // account and for Ryan's report of what it produced.
+  //
+  // THE QUEUE IS STILL WRITTEN, but only for devices that cannot be encrypted for -- a device
+  // registered before today, whose record has no keys. For everything else the words are in the
+  // push and there is nothing to fetch, so nothing to be stale.
+  const legacy = devices.filter((d) => !(d.rec.keys && d.rec.keys.p256dh && d.rec.keys.auth));
+  for (const d of legacy) {
     d.rec.pending = [...(d.rec.pending || []), ...queued].slice(-20);
     await env.KV.put(d.key, JSON.stringify(d.rec));
   }
   for (const d of devices) {
-    const res = await pushTo(d.rec.endpoint, env, now);
-    if (res === 'ok') out.pushed += 1;
-    else if (res === 'gone') { await env.KV.delete(d.key); out.gone += 1; }
-    else out.failed += 1;
+    const carries = !!(d.rec.keys && d.rec.keys.p256dh && d.rec.keys.auth);
+    // A device that cannot carry words is tickled once, however many alerts fired: the service
+    // worker will read the whole queue in one wake. A device that can gets one notification per
+    // alert, because two warnings are two things to read and act on.
+    const sends = carries ? queued : [null];
+    let dead = false;
+    for (const alert of sends) {
+      const res = await pushTo(d.rec, alert, env, now);
+      if (res === 'ok') out.pushed += 1;
+      else if (res === 'gone') { dead = true; break; }
+      else out.failed += 1;
+    }
+    if (dead) { await env.KV.delete(d.key); out.gone += 1; }
   }
   return out;
 }
