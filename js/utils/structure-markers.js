@@ -58,6 +58,37 @@ export function humpsFromPack(structGeo) {
                          || ((b.areaAcres ?? 0) - (a.areaAcres ?? 0)));
 }
 
+/**
+ * HOLES from the pack, deepest first.
+ *
+ * A nest of closed contours falls as often as it rises and only the rise had a name. Ryan, on
+ * 34.49680,-80.88458: "this is a very deep hole in the river channel... it goes from very
+ * shallow to very deep pretty quickly", and then "there are actually 2 ledge labels in that
+ * section #1 and #8 and neither make it clear that the whole thing is a huge hole". Thirty-six
+ * rings stack over that point, 18 ft at the rim to 54 ft at the bottom. build_structure.py
+ * emits it as one `hole` now; this is the reader.
+ *
+ * `depth` is the BOTTOM -- where the pin is, the same rule the hump's crown follows -- and
+ * `rimFt` is the lip it drops from.
+ */
+export function holesFromPack(structGeo) {
+  const feats = (structGeo && structGeo.features) || [];
+  const out = [];
+  for (const f of feats) {
+    const p = (f && f.properties) || {};
+    if (String(p.kind || '').toLowerCase() !== 'hole') continue;
+    const pt = pointOf(f);
+    if (!pt) continue;
+    out.push({
+      id: p.id, lat: pt.lat, lon: pt.lon,
+      depth: num(p.depth_ft), rimFt: num(p.rim_ft), areaAcres: num(p.area_acres),
+      reliefFt: num(p.relief_ft), levels: num(p.levels), score: num(p.score),
+    });
+  }
+  return out.sort((a, b) => ((b.reliefFt ?? 0) - (a.reliefFt ?? 0))
+                         || ((b.areaAcres ?? 0) - (a.areaAcres ?? 0)));
+}
+
 /** Ledges from the pack, steepest first. UNCAPPED — slope is what separates a break worth
  *  stopping on from a contour that happens to be near another contour. */
 export function ledgesFromPack(structGeo) {
@@ -70,8 +101,13 @@ export function ledgesFromPack(structGeo) {
     if (!pt) continue;
     out.push({
       id: p.id, lat: pt.lat, lon: pt.lon,
+      // `depth` is the LIP -- where the pin is. `deepFt` is the first step down, `fallToFt`
+      // the foot of the whole wall, and `fallFt` how far that is. `drop_ft` measured only the
+      // first step, so a 6 ft ledge and a 28 ft wall reported the same number.
       depth: num(p.depth_ft), slopeFtPer100Ft: num(p.slope_ft_per_100ft),
-      dropFt: num(p.drop_ft), runFt: num(p.run_ft), score: num(p.score),
+      dropFt: num(p.drop_ft), deepFt: num(p.deep_ft),
+      fallToFt: num(p.fall_to_ft), fallFt: num(p.fall_ft),
+      runFt: num(p.run_ft), score: num(p.score),
     });
   }
   return out.sort((a, b) => (b.slopeFtPer100Ft ?? 0) - (a.slopeFtPer100Ft ?? 0));
@@ -91,12 +127,16 @@ export function ledgesFromPack(structGeo) {
 export function structureFor(packGeo, profileStructuralElements) {
   const humps = humpsFromPack(packGeo);
   const ledges = ledgesFromPack(packGeo);
-  if (humps.length || ledges.length) {
-    return { humps, ledges, source: 'pack', humpCount: humps.length, ledgeCount: ledges.length };
+  const holes = holesFromPack(packGeo);
+  if (humps.length || ledges.length || holes.length) {
+    return { humps, ledges, holes, source: 'pack',
+             humpCount: humps.length, ledgeCount: ledges.length, holeCount: holes.length };
   }
   const se = profileStructuralElements || {};
   const ph = Array.isArray(se.humpCoordinates) ? se.humpCoordinates : [];
   const pl = Array.isArray(se.ledgeCoordinates) ? se.ledgeCoordinates : [];
-  return { humps: ph, ledges: pl, source: (ph.length || pl.length) ? 'profile' : 'none',
-           humpCount: ph.length, ledgeCount: pl.length };
+  // A research profile has never carried holes; absent is [] rather than undefined so every
+  // caller can iterate without checking which source answered.
+  return { humps: ph, ledges: pl, holes: [], source: (ph.length || pl.length) ? 'profile' : 'none',
+           humpCount: ph.length, ledgeCount: pl.length, holeCount: 0 };
 }

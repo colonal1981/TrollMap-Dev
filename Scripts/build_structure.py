@@ -275,13 +275,15 @@ class Grid:
                     yield it
 
 
-def find_humps(contours, ring, islands=()):
+def find_nests(contours, ring, islands=()):
+    # Returns (humps, holes) -- see the nest walk below; one machine, two signs.
     """Closed contour loops offshore. Score by size and by how many levels stack inside.
 
     A loop with three deeper loops nested inside it is a real high spot with relief; a single
     loop is a bump. `levels` is what separates them and the old version did not look.
     """
     loops = []
+    crowns = []          # every closed ring, any size — candidate summits, not candidate humps
     for f in contours.get('features') or []:
         d = f.get('properties', {}).get('depth_ft')
         if d is None: continue
@@ -300,30 +302,27 @@ def find_humps(contours, ring, islands=()):
             # 12.1/0.309 -- are all under 0.4 ac, so the deepest ring the algorithm ever saw was
             # 13.1 and it reported 7.9 ft of relief on a hill that stands 12.1 ft off its base.
             #
-            # So they come in, carry `too_small`, and are barred from surviving as humps
-            # themselves further down. What they may do is be the crown of the one they sit in.
+            # THEY DO NOT JOIN THE NESTING LIST. The nesting pass is O(n^2) with a bbox
+            # reject, and letting them in took Kentucky Lake from 14,218 rings to 59,145 --
+            # seventeen times the pair work, and the card-wide run stalled on it. A small ring
+            # can never CONTAIN anything, so it is never a container; it is only ever the thing
+            # contained. They go in `crowns` and are matched to the survivors in one cheap pass
+            # below, which is O(humps x rings) instead.
             if a > HUMP_MAX_ACRES: continue
             lon, lat = centroid(c)
             if ring and not point_in_ring(lon, lat, ring): continue
             # ON AN ISLAND IS NOT OFFSHORE. Inside the outer ring and inside a hole are both
             # "inside the lake" to a point-in-polygon test that only ever saw the outer ring.
             if any(point_in_ring(lon, lat, h) for h in islands): continue
-            loops.append({'lon': lon, 'lat': lat, 'acres': a, 'depth': float(d), 'ring': c,
-                          'too_small': a < HUMP_MIN_ACRES})
+            rec = {'lon': lon, 'lat': lat, 'acres': a, 'depth': float(d), 'ring': c}
+            crowns.append(rec)
+            if a >= HUMP_MIN_ACRES: loops.append(rec)
     # nesting: a loop whose centroid falls inside another, deeper loop
     loops.sort(key=lambda h: -h['acres'])
     for h in loops:
         h['levels'] = 1
         h['relief'] = 0.0
-        # WHERE THE TOP IS. Ryan: "the hump should be marked on the shallowest spot... that is
-        # the top of the hill... the fish will be off to the sides."
-        #
-        # A hump was marked at the centroid of its OUTERMOST ring, which is the base -- on
-        # hump_7 that put the waypoint 86 m from the peak and downhill, where the rings run
-        # 18-21 ft and the structure reads as a 3 ft rise. The crown is what you idle over and
-        # what the sides hang off, so it is what carries the position.
-        h['crown_depth'] = h['depth']
-        h['crown_lon'], h['crown_lat'] = h['lon'], h['lat']
+
     # Nesting, bbox-first. point_in_ring is O(ring) and there are 632 loops on Wateree, so the
     # naive pair loop is 400,000 ring walks. A bounding-box reject costs four comparisons and
     # removes almost all of them.
@@ -347,15 +346,7 @@ def find_humps(contours, ring, islands=()):
             if not (x0 <= k['lon'] <= x1 and y0 <= k['lat'] <= y1): continue
             if point_in_ring(k['lon'], k['lat'], h['ring']):
                 h['levels'] += 1
-                # RELIEF IS BASE MINUS CROWN, and it was `max(abs(k - h))` -- an absolute
-                # value, so a ring nested inside that is DEEPER than the outer one counted as
-                # rise. That is a hole in the top of a rise, not height: Wateree's hump_2 came
-                # out crown 24.9 ft, base 24.9 ft, relief 8.2 ft, which cannot all be true.
-                # Set below from the crown, once the whole nest has been walked.
-                # The shallowest ring in the nest is the summit; its centroid is the position.
-                if k['depth'] < h['crown_depth']:
-                    h['crown_depth'] = k['depth']
-                    h['crown_lon'], h['crown_lat'] = k['lon'], k['lat']
+
                 # The loops are sorted biggest first, so the first container found is the
                 # tightest one that has already been seen -- keep the outermost by overwriting
                 # only when nothing claimed it yet.
@@ -376,19 +367,72 @@ def find_humps(contours, ring, islands=()):
     # 65.0% of Kentucky Lake's 4,063, 46.1% of Murray's 1,011 and 89.0% of Pamlico Sound's
     # 10,814 -- and `levels <= 1` matched that count exactly in every pack, which is the
     # mechanism rather than a correlation.
-    # A NEST WITH NO SHALLOWER RING INSIDE IT IS NOT A RISE. `levels > 1` counted any nested
-    # loop, including a deeper one -- see the relief note above. A hump needs a summit.
-    loops = [h for h in loops if h['levels'] > 1 and h['crown_depth'] < h['depth']]
-    # A ring under the acre floor may be the crown of a hump; it may not BE one. It reached the
-    # nesting pass so its depth could count, and anything still unclaimed here is a standalone
-    # bump too small to ship -- which is the rule HUMP_MIN_ACRES was written for.
-    loops = [h for h in loops if not h['too_small']]
-    # AND THE HUMP MOVES TO ITS SUMMIT. Everything downstream reads `lon`/`lat` as the hump's
-    # position, so the crown is written into them rather than carried alongside and ignored.
+    # `levels > 1` USED TO STAND HERE, and it counted only rings big enough to be a hump in
+    # their own right -- so a sharp peak whose inner rings are all under 0.4 acres read as
+    # levels 1 and was thrown away before anything could look at it. The question it was asking
+    # is "does this nest have a rise in it", and the crown pass below answers that directly and
+    # at any ring size. `levels` stays as the count of hump-sized rings, which is what scores it.
+
+    # WHERE THE TOP IS. Ryan: "the hump should be marked on the shallowest spot... that is the
+    # top of the hill... the fish will be off to the sides."
+    #
+    # A hump was marked at the centroid of its OUTERMOST ring -- the base. On Wateree that put
+    # hump_7's waypoint 86 m from the peak and downhill, where the rings only run 18-21 ft and
+    # the structure reads as a 3 ft rise. Ryan gave the coordinate of the real top and it landed
+    # 2 m from the centroid of the 8.9 ft ring inside it.
+    #
+    # ONE PASS OVER EVERY RING, INCLUDING THE ONES TOO SMALL TO BE A HUMP. `HUMP_MIN_ACRES`
+    # gates what may BE a hump, which is what it was written for. It must not gate what may be
+    # the TOP of one: the four innermost rings on that crown are 0.039, 0.106, 0.192 and 0.309
+    # acres, so the deepest ring the old code ever saw was 13.1 ft and it reported 7.9 ft of
+    # relief on a hill that stands 12.1 ft.
+    #
+    # RELIEF IS BASE MINUS CROWN. It was `max(abs(k - h))`, so a ring nested inside that is
+    # DEEPER than the outer one counted as rise -- a hole in the top of a rise, measured as
+    # height. Wateree's hump_2 came out crown 24.9 ft, base 24.9 ft, relief 8.2 ft, which cannot
+    # all be true.
+    # A NEST FALLS AS WELL AS RISES, AND ONLY ONE OF THE TWO HAD A NAME.
+    #
+    # Ryan, on 34.49680,-80.88458: "this is a very deep hole in the river channel... it goes
+    # from very shallow to very deep pretty quickly", and then: "there are actually 2 ledge
+    # labels in that section #1 and #8 and neither make it clear that the whole thing is a huge
+    # hole".
+    #
+    # THIRTY-SIX closed rings stack over that point, 18.0 ft at the rim down to 53.1 ft at the
+    # bottom -- a 35 ft hole across 12.8 acres. The contours had it exactly. The vocabulary had
+    # humps and ledges and nothing that falls, so it came out as two ledges each describing a
+    # 6 ft step on its flank.
+    #
+    # It is the same nest with the sign flipped, so it is the same walk. Find the shallowest
+    # ring inside and the deepest ring inside; whichever is the bigger excursion from the outer
+    # ring is what this nest IS.
     for h in loops:
-        h['base_depth'] = h['depth']
-        h['relief'] = round(h['depth'] - h['crown_depth'], 4)
-        h['lon'], h['lat'] = h['crown_lon'], h['crown_lat']
+        x0, y0, x1, y1 = h['bbox']
+        top = bot = h
+        for k in crowns:
+            if k is h: continue
+            if not (x0 <= k['lon'] <= x1 and y0 <= k['lat'] <= y1): continue
+            if k['depth'] >= top['depth'] and k['depth'] <= bot['depth']: continue
+            if not point_in_ring(k['lon'], k['lat'], h['ring']): continue
+            if k['depth'] < top['depth']: top = k
+            if k['depth'] > bot['depth']: bot = k
+        rise = h['depth'] - top['depth']
+        fall = bot['depth'] - h['depth']
+        h['rim_depth'] = h['depth']
+        if fall > rise:
+            # A HOLE. The pin goes on the DEEPEST ring for the same reason a hump's goes on the
+            # shallowest: the extreme is the thing, and the fish are off its edges.
+            h['form'] = 'hole'
+            h['relief'] = round(fall, 4)
+            h['inner_depth'] = bot['depth']
+            h['lon'], h['lat'] = bot['lon'], bot['lat']
+        else:
+            h['form'] = 'hump'
+            h['relief'] = round(rise, 4)
+            h['inner_depth'] = top['depth']
+            h['lon'], h['lat'] = top['lon'], top['lat']
+    # A NEST THAT NEITHER RISES NOR FALLS IS NOT A FEATURE.
+    loops = [h for h in loops if h['relief'] > 0]
     out = []
     if ring:
         # Offshore test through a grid. Scanning a 17,282-vertex ring per candidate is 11M
@@ -400,13 +444,26 @@ def find_humps(contours, ring, islands=()):
             for p in h: rg.add(p[0], p[1], None)
         lim = MIN_OFFSHORE_DEG * 111320.0
         for h in loops:
+            # THE OFFSHORE TEST IS FOR HILLS, NOT FOR HOLES.
+            #
+            # Its reason is written above: "An island's shore is shore. A loop hugging one is
+            # the tip of a point by another name." True of a rise. A DEEP HOLE against the bank
+            # is not the tip of anything -- it is where holes are, on the outside of a channel
+            # bend, and scouring is why it is deep.
+            #
+            # Ryan's hole at 34.49680,-80.88458 -- 36 nested rings, 18.0 ft rim to 53.1 ft
+            # bottom, 12.8 acres -- has its rim centroid 39 m from the shoreline against a
+            # 134 m limit, so the whole thing was thrown away and came back as two ledges
+            # describing 6 ft steps on its flank.
+            if h['form'] == 'hole': out.append(h); continue
             close = any(metres((h['lon'], h['lat']), (qx, qy)) < lim
                         for qx, qy, _ in rg.near(h['lon'], h['lat']))
             if not close: out.append(h)
     else:
         out = loops
     for h in out: h.pop('ring', None); h.pop('bbox', None)
-    return out
+    return ([h for h in out if h['form'] == 'hump'],
+            [h for h in out if h['form'] == 'hole'])
 
 
 def find_ledges(contours, ring=None, islands=()):
@@ -443,6 +500,17 @@ def find_ledges(contours, ring=None, islands=()):
     levels = sorted(by_depth)
     if len(levels) < 2: return []
 
+    # HOW FAR THE BOTTOM ACTUALLY FALLS, not how far to the first level below the lip.
+    #
+    # `d2` is the shallowest level at least DROP_FT deeper, which measures the FIRST STEP of a
+    # drop and stops. Ryan's hole at 34.49680,-80.88458 is charted as ledge_1, the highest-scored
+    # break on Wateree, with `drop_ft: 6.3` -- and the bottom within 100 m of that pin is 55 ft,
+    # a fall of 29.1. Measured across Wateree's 573: 350 of them have a real fall at least twice
+    # the recorded drop, median understatement 6.9 ft, worst 40.9.
+    #
+    # A wall and a step came out with the same number, and the number is the thing that tells
+    # them apart. So the fall is walked: keep going down the levels while each next one is still
+    # within the same horizontal reach, and record where it stops.
     CELL = 0.0008                       # ~90 m result cells
     search = Grid(180.0 / 111320.0)     # 180 m buckets, one ring out = 540 m reach
     best = {}
@@ -466,8 +534,23 @@ def find_ledges(contours, ring=None, islands=()):
             k = (int(x / CELL), int(y / CELL))
             cur = best.get(k)
             if cur is None or slope > cur['slope']:
+                # THE PIN IS ON THE SHALLOW CONTOUR AND THE DEPTH WAS THE DEEP ONE.
+                #
+                # `x, y` is a vertex of `d1`, the top of the drop -- the lip you troll along.
+                # `depth` was `d2`, the foot of it. So the position and the number described
+                # opposite sides of the same break, and every reader takes `depth_ft` as the
+                # depth AT the marker: supplemental-layers.js prints `@${depth}ft` on the pin,
+                # and plan-candidates.js maps ledge -> depth_ft for the same reason.
+                #
+                # Ryan, 2026-08-30: "most of them seem to be in extremely shallow water... is
+                # the wrong side of the ledge being marked?" The pins are exactly where he says.
+                # Measured on Wateree's 573: the markers sit at a median 7.9 ft with 184 of them
+                # -- 32% -- in under 5 ft of water, while the labels read a median 13.1 ft.
+                #
+                # `depth` is the lip now. `deep` is the foot. `drop` was always the difference.
                 best[k] = {'lon': x, 'lat': y, 'slope': slope, 'drop': drop,
-                           'run_ft': run / 0.3048, 'depth': d2}
+                           'run_ft': run / 0.3048, 'depth': d1, 'deep': d2,
+                           'fall_to': d2, 'fall_run_m': bdist}
 
     # A LEDGE IS WHERE THE BOTTOM BREAKS, NOT WHEREVER IT SLOPES.
     #
@@ -484,6 +567,30 @@ def find_ledges(contours, ring=None, islands=()):
     # what they deserve -- rather than being cut by a number somebody picked.
     if not best:
         return []
+    # WALK THE FALL. From each break's lip, keep stepping to the next deeper level for as long
+    # as it is no further away than MAX_RUN_M -- the same reach the break itself was found
+    # within. Where the levels stop coming that close, the drop has ended; that depth is the
+    # foot of the wall. A taper stops on the first step and reports what it always did.
+    reach = Grid(180.0 / 111320.0)
+    lvl_pts = {d: by_depth[d] for d in levels}
+    for rec in best.values():
+        cur = rec['deep']
+        while True:
+            nxt = next((d for d in levels if d > cur), None)
+            if nxt is None: break
+            pts = lvl_pts.get(nxt) or []
+            if not pts: break
+            bd = 1e18
+            for qx, qy in ((q[0], q[1]) for q in pts):
+                dd = metres((rec['lon'], rec['lat']), (qx, qy))
+                if dd < bd: bd = dd
+                if bd <= MAX_RUN_M: break
+            if bd > MAX_RUN_M: break
+            cur = nxt
+            rec['fall_to'] = cur
+            rec['fall_run_m'] = bd
+    for rec in best.values():
+        rec['fall'] = round(rec['fall_to'] - rec['depth'], 1)
     out = []
     for (cx, cy), rec in best.items():
         ring1 = [best[(cx + dx, cy + dy)]['slope']
@@ -506,7 +613,9 @@ def find_ledges(contours, ring=None, islands=()):
     return out
 
 
-def score_humps(humps):
+def score_nests(humps):
+    """Humps and holes score the same way: relief leads, then how many levels stack, then size.
+    A hole is a hump with the sign flipped and the same three things make it worth a look."""
     if not humps: return
     amax = max(h['acres'] for h in humps) or 1
     lmax = max(h['levels'] for h in humps) or 1
@@ -728,9 +837,9 @@ def main():
         bnd = read_json(os.path.join(a.registry, 'boundaries', slug + '.geojson'))
         ring = outer_ring(bnd)
         islands = island_rings(bnd)
-        humps = find_humps(contours, ring, islands)
+        humps, holes = find_nests(contours, ring, islands)
         ledges = find_ledges(contours, ring, islands)
-        score_humps(humps); score_ledges(ledges)
+        score_nests(humps); score_nests(holes); score_ledges(ledges)
         feats = []
         for i, h in enumerate(sorted(humps, key=lambda x: -x['score'])):
             if h['score'] < a.min_score: continue
@@ -743,8 +852,22 @@ def main():
                           # is the depth of the summit. `base_ft` is what it stands on.
                           'properties': {'kind': 'hump', 'id': 'hump_%d' % (i + 1),
                                          'score': h['score'],
-                                         'depth_ft': round(h['crown_depth'], 1),
-                                         'base_ft': round(h['base_depth'], 1),
+                                         'depth_ft': round(h['inner_depth'], 1),
+                                         'base_ft': round(h['rim_depth'], 1),
+                                         'area_acres': round(h['acres'], 2),
+                                         'relief_ft': round(h['relief'], 1),
+                                         'levels': h['levels']},
+                          'geometry': {'type': 'Point',
+                                       'coordinates': [round(h['lon'], 6), round(h['lat'], 6)]}})
+        # HOLES. Same shape as a hump, read the other way: `depth_ft` is the deepest point --
+        # where the pin is -- and `rim_ft` is the lip it drops from.
+        for i, h in enumerate(sorted(holes, key=lambda x: -x['score'])):
+            if h['score'] < a.min_score: continue
+            feats.append({'type': 'Feature',
+                          'properties': {'kind': 'hole', 'id': 'hole_%d' % (i + 1),
+                                         'score': h['score'],
+                                         'depth_ft': round(h['inner_depth'], 1),
+                                         'rim_ft': round(h['rim_depth'], 1),
                                          'area_acres': round(h['acres'], 2),
                                          'relief_ft': round(h['relief'], 1),
                                          'levels': h['levels']},
@@ -754,7 +877,16 @@ def main():
             if l['score'] < a.min_score: continue
             feats.append({'type': 'Feature',
                           'properties': {'kind': 'ledge', 'id': 'ledge_%d' % (i + 1),
-                                         'score': l['score'], 'depth_ft': round(l['depth'], 1),
+                                         'score': l['score'],
+                                         # AT THE PIN -- the top of the drop. `deep_ft` is what
+                                         # it falls to; `drop_ft` is the difference.
+                                         'depth_ft': round(l['depth'], 1),
+                                         'deep_ft': round(l['deep'], 1),
+                                         # WHERE THE WALL ACTUALLY BOTTOMS OUT. `drop_ft` is
+                                         # the first step; this is the whole fall, and it is
+                                         # what separates a wall from a taper.
+                                         'fall_to_ft': round(l['fall_to'], 1),
+                                         'fall_ft': l['fall'],
                                          'slope_ft_per_100ft': round(l['slope'], 1),
                                          # HOW FAR THIS BREAK STANDS ABOVE THE BOTTOM AROUND
                                          # IT, which is what makes it a break and what leads

@@ -69,7 +69,11 @@ const CACHE_TTL = 24 * 60 * 60 * 1000;
 // the map to plan his first trip in two months and every deleted hump was still there, because
 // loadLayer() answered out of IndexedDB before it ever asked R2. The shape changed and nobody
 // bumped the number the comment above exists to tell them to bump.
-const CACHE_SCHEMA = 3;
+// 3 -> 4 on 2026-08-30. The crown rules change WHICH FEATURES EXIST and WHERE THEY SIT: humps
+// move to their summit (up to 353 m on Wateree) and report the crown depth instead of the base,
+// ledges report the lip instead of the deep side and carry the whole fall, and `hole` is a kind
+// that did not exist. A browser holding yesterday's layer would draw all three wrong.
+const CACHE_SCHEMA = 4;
 
 // AND WHICH BUILD THAT NUMBER WAS BUMPED FOR, so the next person cannot forget the way I did.
 //
@@ -81,7 +85,7 @@ const CACHE_SCHEMA = 3;
 // test/structure-cache-schema.test.js reads RULES_VERSION out of the Python and fails if it has
 // moved past this string. A rules change now cannot ship without someone deciding, out loud,
 // whether the browser has to forget what it is holding.
-export const STRUCTURE_RULES_AT_BUMP = '2026-08-29-relief';
+export const STRUCTURE_RULES_AT_BUMP = '2026-08-30-crown';
 
 async function fetchSupplemental(lakeKey, layer) {
   const url = `${CF_WORKER_URL}/chartpacks/${lakeKey}/${layer}.geojson?v=${Date.now()}`;
@@ -1115,11 +1119,11 @@ function renderStructureMarkers(displayName) {
   // profile is the fallback for the 43 packs with no structure layer and for profiles saved
   // before the coordinates moved out of them.
   const profile = window.getResearchedProfile?.(displayName);
-  const { humps, ledges, source } = structureFor(_garminData.structure,
-                                                 profile?.habitat?.structuralElements);
-  if (!humps.length && !ledges.length) return;
-  console.log(`[supplemental] structure markers: ${humps.length} humps, ${ledges.length} ledges `
-            + `for ${displayName} (from the ${source})`);
+  const { humps, ledges, holes, source } = structureFor(_garminData.structure,
+                                                        profile?.habitat?.structuralElements);
+  if (!humps.length && !ledges.length && !(holes || []).length) return;
+  console.log(`[supplemental] structure markers: ${humps.length} humps, ${ledges.length} ledges, `
+            + `${(holes || []).length} holes for ${displayName} (from the ${source})`);
 
   const group = L.layerGroup();
 
@@ -1135,6 +1139,21 @@ function renderStructureMarkers(displayName) {
     ).addTo(group);
   }
 
+  // HOLES. Blue, and deliberately not the ledge cyan: a hole is a place, a ledge is an edge.
+  // The pin is the deepest point and the tooltip leads with how deep the thing is, because
+  // "36 ft deep, rim 18 ft" is the sentence -- two ledges on its flanks were not.
+  for (const h of (holes || [])) {
+    if (!h.lat || !h.lon) continue;
+    L.circleMarker([h.lat, h.lon], {
+      renderer: _canvasRenderer,
+      radius: 6, color: '#3d5afe', weight: 2,
+      fillColor: '#3d5afe', fillOpacity: 0.45,
+    }).bindTooltip(
+      `🕳 Hole${h.id ? ' ' + h.id.replace('hole_','#') : ''}${h.reliefFt ? ' — ' + h.reliefFt + 'ft deep' : ''}${h.rimFt ? ' · rim ' + h.rimFt + 'ft' : ''}${h.depth ? ' → ' + h.depth + 'ft' : ''}${h.areaAcres ? ' ~' + h.areaAcres + 'ac' : ''}`,
+      { sticky: true, direction: 'top', opacity: 0.9 }
+    ).addTo(group);
+  }
+
   for (const l of ledges) {
     if (!l.lat || !l.lon) continue;
     L.circleMarker([l.lat, l.lon], {
@@ -1142,14 +1161,15 @@ function renderStructureMarkers(displayName) {
       radius: 5, color: '#00e5ff', weight: 2,
       fillColor: '#00e5ff', fillOpacity: 0.5,
     }).bindTooltip(
-      `📐 Ledge${l.id ? ' ' + l.id.replace('ledge_','#') : ''}${l.slopeFtPer100Ft ? ' — ' + l.slopeFtPer100Ft + ' ft/100ft' : ''}${l.depth ? ' @' + l.depth + 'ft' : ''}`,
+      `📐 Ledge${l.id ? ' ' + l.id.replace('ledge_','#') : ''}${l.slopeFtPer100Ft ? ' — ' + l.slopeFtPer100Ft + ' ft/100ft' : ''}${l.depth ? ' · lip @' + l.depth + 'ft' : ''}${l.fallToFt ? ' falls to ' + l.fallToFt + 'ft' : ''}${l.fallFt ? ' (' + l.fallFt + 'ft)' : ''}`,
       { sticky: true, direction: 'top', opacity: 0.9 }
     ).addTo(group);
   }
 
   _structureMarkerLayer = group;
   group.addTo(getMap());
-  console.log(`[supplemental] structure markers: ${humps.length} humps, ${ledges.length} ledges for ${displayName}`);
+  console.log(`[supplemental] structure markers: ${humps.length} humps, ${ledges.length} ledges, `
+            + `${(holes || []).length} holes for ${displayName}`);
 }
 
 export async function loadSupplementalForLake(displayName) {
