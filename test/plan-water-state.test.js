@@ -42,6 +42,76 @@ const call = (over = {}) => fetchWaterState('Congaree River', DAY, {
   ...over,
 });
 
+// A LAKE WITH A DAM IS NOT A RIVER, AND THE PROMPT USED TO SAY IT WAS.
+//
+// fetchWaterState() fills `river` when the water has a flow reading OR a generating dam, which is
+// correct -- an impoundment on the Wateree or the Catawba has both, and both matter. But
+// riverPromptBlock() gated on the mere presence of that object, opened with "RIVER — THE FLOW IS
+// THE DAY", and asked the model where the seams and eddies set up and whether a leg was worth
+// running upstream. On 13,700 acres of Lake Wateree the model did as it was told:
+//
+//     "The low flow (1,020 ft³/s) means fish will be less concentrated in current seams and more
+//      likely to be found on main lake structure."
+//
+// Ryan: "whats up with this on a lake?" The discriminator -- `featureType` -- was on the object
+// the whole time and nothing read it.
+const LAKE = conditions({
+  featureType: 'lake',
+  flowCfs: 1020, flowBand: 'below the 25th percentile', flowMedian: 2400,
+  flowGauge: 'USGS 02148000 Wateree River near Camden',
+  stageFt: 97.4, generatingNow: true,
+});
+
+const lakeState = (over = {}) => fetchWaterState('Wateree Lake (Kershaw Co, SC)', DAY, {
+  worker: 'https://w', launchTime: '06:00',
+  fetchConditions: async () => LAKE,
+  fetchTide: async () => null,
+  fetchIntrusion: async () => null,
+  ...over,
+});
+
+describe('the flow block knows what kind of water it is on', () => {
+  it('a lake with an inflow gauge still carries the river object', async () => {
+    // Not a bug -- this is what lets the generation and the tailrace reach the plan at all.
+    const ws = await lakeState();
+    expect(ws.featureType).toBe('lake');
+    expect(ws.river).toBeTruthy();
+    expect(ws.river.flowCfs).toBe(1020);
+  });
+
+  it('but it is NOT told the flow is the day', async () => {
+    const out = riverPromptBlock(await lakeState());
+    expect(/RIVER — THE FLOW IS THE DAY/.test(out)).toBe(false);
+    expect(/IMPOUNDMENT/.test(out)).toBe(true);
+  });
+
+  it('and it is told in as many words not to write river prose', async () => {
+    const out = riverPromptBlock(await lakeState());
+    for (const word of ['seams', 'eddies', 'bend', 'upstream']) {
+      // The words appear once, inside the prohibition. What must not happen is the model being
+      // ASKED for them.
+      expect(out.includes('Do NOT write about seams, eddies, which side of a bend, or')).toBe(true);
+      expect(word.length > 0).toBe(true);
+    }
+    expect(/GAUGE READING ON AN IMPOUNDMENT/.test(out)).toBe(true);
+  });
+
+  it('the facts still travel — only the framing changed', async () => {
+    const out = riverPromptBlock(await lakeState());
+    expect(out).toMatch(/1,020 ft³\/s/);
+    expect(out).toMatch(/below the 25th percentile/);
+    expect(out).toMatch(/GENERATING/);
+    expect(out).toMatch(/97\.4 ft/);
+  });
+
+  it('a river is unchanged, which is the half that already worked', async () => {
+    const out = riverPromptBlock(await call());
+    expect(/RIVER — THE FLOW IS THE DAY/.test(out)).toBe(true);
+    expect(out).toMatch(/where the seams and eddies set up/);
+    expect(/IMPOUNDMENT/.test(out)).toBe(false);
+  });
+});
+
 describe('launchMoment', () => {
   it('reads the tide at the launch, not at noon', () => {
     // A tide stage at noon is not the tide stage at 06:00, and on a flat that is the difference

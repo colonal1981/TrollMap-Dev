@@ -235,17 +235,42 @@ export function coastalPromptBlock(ws) {
 export function riverPromptBlock(ws) {
   const r = ws && ws.river;
   if (!r) return '';
+  // A RESERVOIR IS NOT A RIVER, AND THIS BLOCK USED TO TELL THE MODEL IT WAS.
+  //
+  // fetchWaterState() fills `river` when the water has a flow reading OR a generating dam --
+  // `isRiver || c.flowCfs != null || c.generatingNow != null` -- which is right, because a
+  // Dominion or Duke impoundment genuinely has both and they genuinely matter. What was wrong is
+  // that this block then opened with "RIVER — THE FLOW IS THE DAY" and asked the model where the
+  // seams and eddies set up, which side of a bend holds fish, and whether a leg is worth running
+  // upstream. On 13,700 acres of Lake Wateree that is nonsense, and the model dutifully wrote it:
+  // "The low flow (1,020 ft³/s) means fish will be less concentrated in current seams". Ryan:
+  // "whats up with this on a lake?"
+  //
+  // The discriminator was already computed one file over and carried on the object the whole
+  // time. `ws.featureType` is 'lake' for Wateree and 'river' for the Congaree.
+  const isRiver = String((ws && ws.featureType) || '') === 'river';
   const L = [];
-  L.push('\n\u{1F3DE} RIVER — THE FLOW IS THE DAY');
+  L.push(isRiver
+    ? '\n\u{1F3DE} RIVER — THE FLOW IS THE DAY'
+    : '\n\u{1F30A} MOVING WATER ON AN IMPOUNDMENT — WHERE IT REACHES AND WHERE IT DOES NOT');
   if (r.flowCfs != null) {
     L.push(`Discharge ${Math.round(r.flowCfs).toLocaleString()} ft³/s`
       + `${r.flowIsTidallyFiltered ? ' (tidally filtered net flow — the raw gauge reverses twice a day here)' : ''}`
       + `${r.flowVsNormal ? ` · ${r.flowVsNormal}` : ''}`
       + `${r.flowMedianCfs != null ? ` · median for the date ${Math.round(r.flowMedianCfs).toLocaleString()} ft³/s` : ''}`
       + `${r.flowGauge ? ` · ${r.flowGauge}` : ''}`);
-    L.push('Say what this flow does to the day: where the seams and eddies set up, which side of '
-      + 'a bend holds fish at this water, how much of the trolling speed is the river rather than '
-      + 'the motor, and whether a leg is worth running upstream at all.');
+    L.push(isRiver
+      ? 'Say what this flow does to the day: where the seams and eddies set up, which side of '
+        + 'a bend holds fish at this water, how much of the trolling speed is the river rather '
+        + 'than the motor, and whether a leg is worth running upstream at all.'
+      // The number is a GAUGE, not the lake. It describes what comes in at the head and what
+      // goes out at the dam, and most of the water in between has no current at all.
+      : 'THIS IS A GAUGE READING ON AN IMPOUNDMENT, NOT A CURRENT ACROSS THE LAKE. It reaches '
+        + 'two places: the river arm above, where the inflow still behaves like a river, and the '
+        + 'tailrace below the dam. Everywhere else the fish are on structure, wind and '
+        + 'thermocline, not on flow. Do NOT write about seams, eddies, which side of a bend, or '
+        + 'running upstream. If the flow does not change this day, say so in one line and spend '
+        + 'the words on something that does.');
   } else if (r.gaugeOutOfService) {
     L.push('The gauge is OUT OF SERVICE — there is no flow reading today. Do not infer one from '
       + 'the stage, and say in the plan that the river was not measured.');
@@ -263,7 +288,9 @@ export function riverPromptBlock(ws) {
   if (r.generatingNow === true) {
     L.push('THE DAM IS GENERATING. That is the current: the water is rising, moving and colder, '
       + 'bait is being pushed through, and the tailrace fishes completely differently from slack '
-      + 'water. Plan around it and say where the boat can safely hold.');
+      + 'water. Plan around it and say where the boat can safely hold.'
+      + (isRiver ? '' : ' On an impoundment this pulls water toward the dam and sets up the only '
+        + 'real current on the lake — name the part of the lake it reaches.'));
   } else if (r.generatingNow === false) {
     L.push('THE DAM IS NOT GENERATING — that is why nothing is moving. Slack tailrace water is a '
       + 'different fishery from a pulse, and if generation starts mid-trip the river changes under '
@@ -299,8 +326,11 @@ export function riverPromptBlock(ws) {
  * @param {number}   [o.usableAh]
  * @param {object[]} [o.hazards]     for the safety note; stops are refused by id regardless
  * @param {string}   [o.intel]       species / research / catch-history prose the app already has
- * @param {object}   [o.waterState]  fetchWaterState() output — {featureType, river, tidal}. Absent
- *                                   on a reservoir, and absent is the same prompt as before.
+ * @param {object}   [o.waterState]  fetchWaterState() output — {featureType, river, tidal}.
+ *                                   NOT absent on a reservoir: an impoundment with an inflow
+ *                                   gauge or a generating dam carries `river` too, which is why
+ *                                   riverPromptBlock() reads `featureType` and not the mere
+ *                                   presence of the object. Absent is the same prompt as before.
  */
 export function buildPlanRequest(o) {
   const day = {
