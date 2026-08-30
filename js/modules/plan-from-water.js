@@ -124,11 +124,26 @@ function legFrom(piece, i, ramp, slug) {
     // bug: plan-candidates.js:1240 sets `depthFt: p.depth_ft`, the charted contour. Same number
     // now on both paths.
     depthFt: Number.isFinite(piece.chartedFt) ? Math.round(piece.chartedFt) : piece.holdsFt,
-    // THE CEILING ON HOW DEEP A BAIT MAY RUN HERE, named separately from `depthFt` so nothing
-    // downstream has to infer that a leg's nominal depth is also a limit. `holdsFt` is the
-    // shallowest point the whole stretch clears, which is exactly the constraint — see
-    // capBaitDepth() in plan-assemble.js. THIS one was always right.
-    maxRunDepthFt: piece.holdsFt,
+    // THE CEILING ON HOW DEEP A BAIT MAY RUN HERE — OFF THE LINE, NOT OFF THE BANK.
+    //
+    // This was `holdsFt`, which is derived from `envelope_ft`: the shallowest water within 25 m
+    // of the line. That is a wander warning. It is not the water under the boat, and sizing a
+    // bait with it means sizing it for the bank you are steering away from.
+    //
+    // wateree_lake#362 is the case. Its line never comes above 13 ft — `shallowest_line_ft` is
+    // 12.1, the on-line median is 20 — and 25 m to the shallow side it touches 7 ft. It is a
+    // channel edge; there is always shallower water beside one, which is what makes it worth
+    // fishing. The ceiling came out at 6 ft and condemned every crankbait aboard.
+    //
+    // Not one lane: across Wateree's 305 fitted lanes the shallow side reads 4+ ft shallower
+    // than the line on 237 of them, 78%, median 7 ft. Deepest bait that runs 800 m unbroken,
+    // median across 250 lanes: 22 ft off the shallow side, 26 ft off the line.
+    //
+    // `shallowest_line_ft` is the pack's own stamped answer to "how shallow does this line get".
+    // No margin invented here — how close he steers is his, and `envelope_ft` still feeds the
+    // depth cue that warns him before the shallow side arrives. See depthCues().
+    maxRunDepthFt: Number.isFinite(piece.shallowestLineFt) ? piece.shallowestLineFt
+                                                           : piece.holdsFt,
     passes,
     transitInM: ramp ? Math.round(metresBetween(ramp, a)) : 0,
     transitOutM: ramp ? Math.round(metresBetween(b, ramp)) : 0,

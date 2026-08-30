@@ -24,6 +24,7 @@ import { dirname, join } from 'node:path';
 import { describe, it, expect } from './expect-shim.mjs';
 import { planFromWater } from '../js/modules/plan-from-water.js';
 import { describeDepthBand } from '../js/modules/plan-inputs.js';
+import { TACKLE_INVENTORY } from '../js/data/tackle-inventory.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = (f) => readFileSync(join(here, '..', f), 'utf8');
@@ -34,8 +35,10 @@ const PIECE = {
   key: 'w0', runId: 'wateree_lake#362',
   coords: [[-80.7360, 34.3819], [-80.7290, 34.3760], [-80.7220, 34.3713]],
   lengthM: 1961, laneLengthM: 1962,
-  chartedFt: 15.1,      // the line the lane follows
-  holdsFt: 6,           // the shallowest water within a wander, one spot
+  chartedFt: 15.1,          // the line the lane follows
+  shallowestLineFt: 12.1,   // how shallow that line gets
+  holdsFt: 6,               // deepest bait that runs it unbroken, off the SHALLOW SIDE of the
+                            // wander -- the bank 25 m away, not the water under the boat
   near: [], partners: [],
 };
 
@@ -59,11 +62,44 @@ describe('the leg depth is the line it follows, not the one shoal on it', () => 
     expect(leg.depthFt).toBe(15);
   });
 
-  it('and still ceilings the bait on the shoal, because that is what a ceiling is', () => {
-    // The two must NOT be the same number, and that is the whole point.
+  // The ceiling is not emitted on the leg, so it is read where it is felt: the warning
+  // capBaitDepth writes names it. A DD3 runs to 25 ft and is over the ceiling either way; what
+  // the sentence says the ceiling IS, is the thing under test.
+  const DD3 = TACKLE_INVENTORY.find((l) => l.type === 'crankbait_dd3');
+  const SR = TACKLE_INVENTORY.find((l) => l.type === 'crankbait_sr');
+  const withDeepBait = (picked) => build({
+    picked,
+    tackle: [DD3.name, SR.name],
+    connectionOf: () => 'tie',
+    planArgs: { water: 'Lake Wateree, SC', species: ['Striped Bass'],
+                tackle: [DD3.name, SR.name] },
+    lureByName: (n) => TACKLE_INVENTORY.find((l) => l.name === n) || null,
+    askModel: async () => JSON.stringify({
+      loadout: { rods: [{ id: 'R1', lure: DD3.name, rig: 'fluoro', role: 'troll', leadFt: 100 },
+                        { id: 'R2', lure: SR.name, rig: 'fluoro', role: 'troll', leadFt: 40 }] },
+      legs: [{ runId: 'wateree_lake#362', speedMph: 2,
+               deploy: { port: 'R1', starboard: 'R2' } }],
+      stops: [], changes: [], notes: {},
+    }),
+  });
+
+  it('ceilings the bait on the LINE, not on the bank 25 m off it', async () => {
+    // `envelope_ft` is the shallowest water within 25 m of the line -- a wander warning. A
+    // channel edge always has shallower water beside it; that is what makes it an edge. Sizing
+    // the bait with it condemned every crankbait on a lane whose line never comes above 13 ft.
+    const r = await withDeepBait([PIECE]);
+    const said = r.problems.find((w) => /shallowest water on this leg/.test(w));
+    expect(said.includes('12.1 ft')).toBe(true);
+    expect(said.includes('6 ft')).toBe(false);
     const t = live(src('js/modules/plan-from-water.js'));
     expect(t).toMatch(/depthFt: Number\.isFinite\(piece\.chartedFt\)/);
-    expect(t).toMatch(/maxRunDepthFt: piece\.holdsFt/);
+    expect(t).toMatch(/maxRunDepthFt: Number\.isFinite\(piece\.shallowestLineFt\)/);
+  });
+
+  it('falls back to holdsFt when the pack stamped no line depth', async () => {
+    const r = await withDeepBait([{ ...PIECE, shallowestLineFt: null }]);
+    const said = r.problems.find((w) => /shallowest water on this leg/.test(w));
+    expect(said.includes('6 ft')).toBe(true);
   });
 
   it('falls back to holdsFt only when the pack charted no depth at all', async () => {
