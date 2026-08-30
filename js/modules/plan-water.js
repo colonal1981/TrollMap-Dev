@@ -48,7 +48,7 @@
  * that knows about `document`, and the fetch comes in as an argument.
  */
 
-import { buildPieces } from './plan-pieces.js';
+import { buildPieces, joinsFor, followBar } from './plan-pieces.js';
 import { ampHours, minutesFor, metresBetween } from './plan-candidates.js';
 
 /**
@@ -362,12 +362,19 @@ export function reasons(piece, o) {
                + `is a snag or the reason to be here depends on how deep the baits run`);
   }
 
-  // ALREADY STAMPED BY THE PIPELINE AND NEVER READ UNTIL NOW. "we do not actually know what is
-  // down there for a third of this" is honest and useful, and it is the difference between water
-  // that is shallow and water nobody sounded.
+  // IT IS THE LANE THAT IS PART-CHARTED, NEVER THE PIECE, AND THE SENTENCE SAID THE OPPOSITE.
+  //
+  // `charted_frac` is stamped per PASS. A piece is a trim of that pass, and reachCurve breaks its
+  // run on an uncharted station -- -1 fails `envelope[i] >= need` -- so every station on a piece
+  // is charted BY CONSTRUCTION. Measured on Wateree: 0 of 70 pieces contain one. So "only 60% of
+  // this is charted" was, whenever it fired, describing water the leg was cut to avoid.
+  //
+  // The underlying fact is still worth saying: the pass runs through water nobody sounded, and
+  // this stretch stops where the survey does. That is why the run ends where it ends.
   if (Number.isFinite(piece.chartedFrac) && piece.chartedFrac < 0.85) {
-    against.push(`only ${Math.round(piece.chartedFrac * 100)}% of this is charted — the rest is `
-               + `water nobody sounded, which is not the same as water that is deep`);
+    against.push(`the pass this was cut from is only ${Math.round(piece.chartedFrac * 100)}% `
+               + `charted — this stretch avoids the unsounded parts, which is why it ends where `
+               + `it does rather than carrying on`);
   }
 
   // THE CENTRELINE LIES AND THE PIPELINE MEASURED BY HOW MUCH. Across 5,977 Wateree passes the
@@ -1340,12 +1347,49 @@ export function offerWater(lanes, o) {
     // is absent often and every reader treats absent as "not known", never as "no bank".
     shoreAspect: o.shoreIndex ? shoreAspect(p.coords, o.shoreIndex) : null,
   }));
+  // WHERE TWO OF THESE ARE ONE RUN. Ryan: "blue and purple to me are pretty much one line...
+  // that is how i would fish that", and "they are still too short and stubby and do not link
+  // where they should". A piece ends where reachCurve ran out of water for the bait, not where
+  // the fishing ends -- see joinsFor().
+  //
+  // SILENT WITHOUT A SOUNDER, like `shallowSide` above. The gap between two pieces is water no
+  // lane was fitted through, so the only way to know what is under it is depth_areas, and
+  // claiming a join across water nobody sampled is exactly the promise this app must not make.
+  const step = (lanes.find((f) => f && f.properties && f.properties.envelope_step_m) || {})
+    .properties?.envelope_step_m || 40;
+  const joins = o.depthAt ? joinsFor(keyed, {
+    depthAt: o.depthAt,
+    clearFt: AXIS_IS_WATER_DEPTH,
+    // THE PACK'S OWN SHARPEST FITTED BEND, not an angle chosen here. See followBar().
+    bar: followBar(lanes, step),
+    minM,
+    depths: depthLadder(o.fishBandFt),
+  }) : [];
+
   // Partners first: a piece's best argument is usually the one next to it, so reasons() cannot
   // be written until the whole set is known.
   const partners = ladderPartners(keyed, { linkM: o.linkM ?? 100 });
   const pieces = keyed.map((p, i) => ({
     ...p,
     partners: partners[i],
+    // The joins this piece is an end of, each naming the other piece by key so the tab can offer
+    // it without knowing anything about indices.
+    // NOT SORTED BY LENGTH, and the first cut was. Ryan, on being shown a set of long joins:
+    // "and its not always about the longest line either." Measured on Wateree, sorting by length
+    // put `wateree_lake#157 -> #396` -- 3.13 mi on an 8 ft bait -- above `#157 -> #221`, which is
+    // 3.06 mi on a 36 ft bait. #157 holds 36 ft on its own, so the top of the list was a join
+    // that bought 0.07 of a mile for twenty-eight feet of bait depth.
+    //
+    // The order is deepest-bait-first, ties broken by length, which is not a new idea: it is
+    // exactly deepestUsable()'s ranking, the one this module already uses to choose what a lane
+    // offers at all. `costFt` rides along so the trade is on the row rather than inferred.
+    joins: joins
+      .map((j) => (j.from === i ? { j, other: j.to } : j.to === i ? { j, other: j.from } : null))
+      .filter(Boolean)
+      .map(({ j, other }) => ({ ...j, otherKey: keyed[other].key, otherRunId: keyed[other].runId,
+                                costFt: Math.max(0, (p.holdsFt ?? 0) - j.baitFt),
+                                gainM: j.lengthM - p.lengthM }))
+      .sort((x, y) => (y.baitFt - x.baitFt) || (y.lengthM - x.lengthM)),
     reasons: reasons(p, { minM, fishBandFt: o.fishBandFt, holding: o.holding,
                           partners: partners[i], wind: o.wind || worstWind(o.windByHour),
                           sunBehind: (o.dateUTC != null && o.tzOffset != null)
@@ -1357,5 +1401,7 @@ export function offerWater(lanes, o) {
   // what has been ticked and that is not known yet. Gathering is expensive; pricing is cheap.
   const spots = castSpots(lanes, { features: o.spotFeatures || null,
                                    extraSpots: o.extraSpots || null });
-  return { ...built, pieces, spots, minM, depthAxis: 'minimum water depth, ft' };
+  // `joins` also comes out whole, because joinedPiece() indexes into the piece array it was
+  // computed against and the caller needs both halves of that pair.
+  return { ...built, pieces, spots, joins, minM, depthAxis: 'minimum water depth, ft' };
 }

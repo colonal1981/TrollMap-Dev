@@ -359,7 +359,7 @@ export function joinsFor(pieces, o) {
       if (!gap) continue;                       // nobody sounded any of it -- not a claim to make
       const ea = A.side === 0 ? pa.envelope.slice().reverse() : pa.envelope.slice();
       const eb = B.side === 0 ? pb.envelope.slice() : pb.envelope.slice().reverse();
-      const joined = ea.concat(gap, eb);
+      const joined = ea.concat(gap.shallow, eb);
       const lengthM = (joined.length - 1) * step;
       const curve = reachCurve(joined, step, depths, clearFt);
       let baitFt = null;
@@ -371,6 +371,12 @@ export function joinsFor(pieces, o) {
       if (baitFt === null) continue;
 
       out.push({
+        // Only the depths that run the WHOLE joined stretch. A curve quoting the longest
+        // fragment would read like a promise about the run and be about half of it.
+        offers: [...curve.entries()]
+          .filter(([, v]) => v.lengthM >= lengthM - step)
+          .sort((x, y) => x[0] - y[0])
+          .map(([ft, v]) => ({ depthFt: ft, lengthM: v.lengthM })),
         from: A.i, fromRunId: pa.runId, fromEnd: A.side ? 'end' : 'start',
         to: B.i, toRunId: pb.runId, toEnd: B.side ? 'end' : 'start',
         gapM: Math.round(gapM),
@@ -381,11 +387,106 @@ export function joinsFor(pieces, o) {
         // one cares about nothing else, because a lure holds one depth and this is how far the
         // bottom moves out from under it.
         floorFt: spread(joined),
-        gapCoords: [A.at, B.at],
+        gapCoords: gap.coords,
+        // Everything joinedPiece() needs to build the run without sounding the gap twice.
+        _gap: gap, _step: step, _sideA: A.side, _sideB: B.side,
       });
     }
   }
   out.sort((x, y) => y.lengthM - x.lengthM);
+  return out;
+}
+
+/**
+ * A JOIN, TAKEN. Two pieces and the water between them, as ONE PIECE.
+ *
+ * It returns the same shape buildPieces() does, and that is the whole design. `legFrom()`,
+ * `waterBand()`, `optionality()`, `depthCues()`, the strip chart and the GPX all read a piece;
+ * none of them should have to learn what a join is. A joined run is not a new kind of thing, it
+ * is a longer piece of water, which is exactly what Ryan said it was: "blue and purple to me are
+ * pretty much one line".
+ *
+ * WHAT IS MEASURED AND WHAT IS INHERITED
+ *
+ * The profiles, the length, the offer curve and the band are all recomputed from the joined
+ * stations -- they are properties of the run and the run is new. `chartedFrac` is recomputed too,
+ * because the gap is water the pipeline never surveyed for a lane and the fraction has to include
+ * it or it describes something else.
+ *
+ * `relief` is kept ONLY when both halves agree. A channel edge joined to a flat is not a channel
+ * edge, and naming it one would put a reason on the card that is true of half the run.
+ * `duplicates` takes the smaller of the two: "eight charted contours run through this water" has
+ * to hold for the whole run to be said about the whole run.
+ *
+ * @param {object[]} pieces  the array joinsFor() was given -- `from` and `to` index into it
+ * @param {object}   join    one entry from joinsFor()
+ * @returns {object} a piece
+ */
+export function joinedPiece(pieces, join) {
+  const a = pieces[join.from], b = pieces[join.to];
+  const step = join._step, gap = join._gap;
+  if (!a || !b || !gap || !(step > 0)) return null;
+  // Orient each half so the two meet at the gap: a piece joined at its START is travelled
+  // backwards, and its profiles have to turn round with its geometry or every station lands on
+  // the wrong water -- the same fault that put a shoal warning on a leg trimmed to avoid it.
+  const flipA = join._sideA === 0, flipB = join._sideB === 1;
+  const take = (arr, flip) => (Array.isArray(arr) ? (flip ? arr.slice().reverse() : arr.slice())
+                                                  : null);
+  const chain = (x, mid, y) => (x && y ? x.concat(mid, y) : null);
+
+  const coords = take(a.coords, flipA).concat(gap.coords, take(b.coords, flipB));
+  const envelope = chain(take(a.envelope, flipA), gap.shallow, take(b.envelope, flipB));
+  const envelopeLine = chain(take(a.envelopeLine, flipA), gap.line, take(b.envelopeLine, flipB));
+  const envelopeDeep = chain(take(a.envelopeDeep, flipA), gap.deep, take(b.envelopeDeep, flipB));
+  const lengthM = (envelope.length - 1) * step;
+
+  return {
+    // TRACEABLE TO BOTH HALVES. Every warning, every cue and every saved plan names a run by this,
+    // so a joined run has to say which two it is -- "wateree_lake#256+wateree_lake#218" is
+    // findable on the card and in the pack; a fresh id would not be.
+    runId: `${a.runId}+${b.runId}`,
+    joinedFrom: [a.runId, b.runId],
+    holdsFt: join.baitFt,
+    lengthM,
+    gapM: join.gapM,
+    turnDeg: join.turnDeg,
+    // THE CURVE IS THE ROW, same as it is for a single piece -- what going deeper costs in
+    // unbroken water. Computed in joinsFor(), which is where the clearance he chose for the day
+    // lives; recomputing it here would need that number passed in twice.
+    offers: join.offers,
+    water: bandOf(envelopeLine, envelope),
+    envelope,
+    envelopeLine,
+    envelopeDeep,
+    envelopeStepM: step,
+    envelopeM: a.envelopeM ?? b.envelopeM ?? null,
+    // THE SMALLER OF THE TWO, NOT A RECOUNT. Recomputing it from the joined stations always
+    // returns 1 -- reachCurve breaks a run on an uncharted station, so neither half nor the gap
+    // can contain one -- and a field that is always 1 would quietly overwrite the real thing.
+    // `charted_frac` is a property of the PASS a piece was cut from; see reasons() in
+    // plan-water.js for what it is allowed to say. A claim about the whole run has to hold for
+    // both halves, so the weaker one wins.
+    chartedFrac: Math.min(a.chartedFrac ?? 1, b.chartedFrac ?? 1),
+    relief: a.relief && a.relief === b.relief ? a.relief : null,
+    near: [...(a.near || []), ...(b.near || [])],
+    duplicates: Math.min(a.duplicates || 1, b.duplicates || 1),
+    coords,
+    fullCoords: coords,
+    // The nearest point of the union is the nearer of the two, and the gap lies between them.
+    rampM: mergeRampM(a.rampM, b.rampM),
+  };
+}
+
+/** waterBand()'s answer, from profiles already in hand rather than from a pass's properties. */
+function bandOf(line, side) {
+  const l = spread(line || []), s = spread(side || []);
+  return l && s ? { line: l, side: s } : null;
+}
+
+function mergeRampM(x, y) {
+  if (!x && !y) return undefined;
+  const out = { ...(y || {}) };
+  for (const [k, v] of Object.entries(x || {})) out[k] = k in out ? Math.min(out[k], v) : v;
   return out;
 }
 
@@ -401,21 +502,30 @@ function gapProfile(a, b, stepM, envM, depthAt) {
   const n = Math.max(1, Math.round(d / stepM));
   const brg = bearingOf(a, b) * Math.PI / 180;
   const nx = Math.cos(brg), ny = -Math.sin(brg);          // unit normal, metres
-  const out = [];
+  const shallow = [], line = [], deep = [], coords = [];
   let charted = 0;
   for (let s = 1; s < n; s++) {
     const x = a[0] + (b[0] - a[0]) * s / n;
     const y = a[1] + (b[1] - a[1]) * s / n;
-    let sh = null;
+    coords.push([x, y]);
+    // THREE PROFILES OUT OF ONE SWEEP, the same three fit_trolling_runs.py stamps on a lane:
+    // shallowest within the wander (what can take a bait off), the centreline (what he is over)
+    // and the deep side (how much depth the wander buys). A joined run is handed to readers that
+    // expect all three, and a gap that carried only one would leave the strip chart and
+    // waterBand() with a hole in the middle of the run.
+    let sh = null, mid = null, dp = null;
     for (let k = -3; k <= 3; k++) {
       const off = (k * envM) / 3;
       const z = depthAt([x + (nx * off) / m_per_deg_lon(y), y + (ny * off) / M_PER_DEG_LAT]);
       if (z == null) continue;
+      if (k === 0) mid = z;
       if (sh === null || z < sh) sh = z;
+      if (dp === null || z > dp) dp = z;
     }
-    if (sh === null) out.push(-1); else { out.push(sh); charted++; }
+    if (sh === null) { shallow.push(-1); line.push(-1); deep.push(-1); }
+    else { shallow.push(sh); line.push(mid == null ? -1 : mid); deep.push(dp); charted++; }
   }
-  return (n <= 1 || charted > 0) ? out : null;
+  return (n <= 1 || charted > 0) ? { shallow, line, deep, coords } : null;
 }
 
 /**

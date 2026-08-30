@@ -119,9 +119,18 @@ describe('reasons — arguments, never a verdict', () => {
     expect(/depends on how deep the baits run/.test(line)).toBe(true);
   });
 
-  it('reads charted_frac, which the pipeline has always stamped and nothing ever read', () => {
+  it('reads charted_frac, and says it about the PASS rather than about the piece', () => {
+    // It used to read "only 60% of this is charted". `charted_frac` is stamped per pass, and a
+    // piece is a trim of one -- reachCurve breaks its run on an uncharted station, so every
+    // station on a piece is charted by construction (0 of Wateree's 70 contain one). Whenever
+    // the sentence fired it was describing water the leg had been cut to avoid.
     const r = reasons({ ...piece, chartedFrac: 0.6 }, { minM: 600, partners: [] });
-    expect(r.against.some((s) => /60% of this is charted/.test(s))).toBe(true);
+    const line = r.against.find((s) => /60%/.test(s));
+    expect(line).toBeTruthy();
+    expect(/the pass this was cut from/.test(line)).toBe(true);
+    expect(/60% of this is charted/.test(line)).toBe(false);
+    // and it says why that matters: the run stops where the survey stops.
+    expect(/ends where it does/.test(line)).toBe(true);
   });
 
   // ───────────────────────────────────────────────────────────────────────────────────────────
