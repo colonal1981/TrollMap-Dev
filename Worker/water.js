@@ -122,7 +122,13 @@ async function graph(env, slug) {
     ea[e] = a; eb[e] = b;
     if (a < nn && b < nn) { deg[a]++; deg[b]++; }
   }
-  const depth = new Uint8Array(buf, o, nn);
+  // COPIED, NOT VIEWED, AND AT THIS SIZE THAT IS THE DIFFERENCE BETWEEN 121 KB AND 4.6 MB.
+  //
+  // A Uint8Array VIEW keeps its whole backing ArrayBuffer alive, so caching one pinned the entire
+  // .bin for the life of the entry. On the Garmin mesh that was 151 KB and nobody could care. The
+  // bathymetric graph is 4.57 MB, eight of them fit in this cache, and a Worker isolate has
+  // 128 MB -- so the view alone would have retained 36 MB to hold 1 MB of depths.
+  const depth = new Uint8Array(buf, o, nn).slice();
   const head = new Uint32Array(nn + 1);
   for (let i = 0; i < nn; i++) head[i + 1] = head[i] + deg[i];
   const adj = new Uint32Array(head[nn]);
@@ -136,13 +142,18 @@ async function graph(env, slug) {
   // p99 and 1,126 m at the longest, so a point in the middle of a legitimate open-water edge
   // sits ~250 m from either end. A fixed 150 m threshold failed 11 points on a plan that an
   // independent depth-grid check found 100% over water across 1,915 samples.
-  const lens = [];
+  // A TYPED ARRAY, because this one is 448,208 entries on the bathymetric graph. A plain JS array
+  // of that many doubles is several times the memory of a Float64Array and its sort compares
+  // through a callback; the typed sort is numeric and in place. Same number out.
+  const lens = new Float64Array(ne);
+  let nl = 0;
   for (let e = 0; e < ne; e++) {
     const a = ea[e], b = eb[e];
-    if (a < nn && b < nn) lens.push(metres(lon[a], lat[a], lon[b], lat[b]));
+    if (a < nn && b < nn) lens[nl++] = metres(lon[a], lat[a], lon[b], lat[b]);
   }
-  lens.sort((x, y) => x - y);
-  const p99 = lens.length ? lens[Math.floor(lens.length * 0.99)] : 200;
+  const used = lens.subarray(0, nl);
+  used.sort();
+  const p99 = nl ? used[Math.floor(nl * 0.99)] : 200;
   return cacheSet(k, { nn, lon, lat, depth, head, adj, offWaterM: Math.max(120, Math.round(p99 / 2)) });
 }
 
