@@ -241,6 +241,48 @@ export const POI_KINDS = {
  * where dnr has dropped a brushpile." The state feed has no marks in `near[]` to resolve, so
  * feeding it in here would snap a Garmin mark onto a DNR point and call that a match.
  */
+/**
+ * WHAT GARMIN CHARTED THAT CAN HURT YOU, out of the pack the plan is already holding.
+ *
+ * The prompt's SAFETY section has always said "there are N marked hazard zones on this water" and
+ * nothing ever filled it, because the app was looking for hazards in the research profile -- prose
+ * an agent wrote -- while 91 charted, typed, positioned ones sat unread in every pois.geojson.
+ * Measured on wateree_lake: 33 danger_buoy, 32 obstruction, 13 hazard_area, 12 pile, 1
+ * caution_buoy. Off Garmin's own survey, at a position, in a file both planners already fetch.
+ *
+ * NOT IN THIS LIST, and both are Ryan's call rather than mine:
+ *   slow_no_wake (34 on Wateree)   a rule, not a danger, and slower water is SAFER in a kayak
+ *   restricted_area (13)           a legality fact -- where you may not go -- not a thing that
+ *                                  holes a hull. It belongs in the plan; it does not belong under
+ *                                  the word "hazard", and deciding which section it lands in is a
+ *                                  fishing judgement.
+ * height_marker (38) is a clearance gauge, which is a fact about a bridge and not a hazard either.
+ *
+ * Counted rather than listed: 91 buoys as 91 lines is noise in a prompt, and the model cannot act
+ * on a position it has no route geometry for. The count and the kind is what changes how a day is
+ * planned; the chart is what you look at on the water.
+ */
+export const HAZARD_POI_TYPES = {
+  danger_buoy: 'danger buoy',
+  caution_buoy: 'caution buoy',
+  obstruction: 'charted obstruction',
+  hazard_area: 'hazard area',
+  pile: 'pile',
+};
+
+export function chartedHazards(poisFc) {
+  const n = new Map();
+  for (const f of ((poisFc && poisFc.features) || [])) {
+    const t = HAZARD_POI_TYPES[(f && f.properties && f.properties.poi_type) || ''];
+    if (t) n.set(t, (n.get(t) || 0) + 1);
+  }
+  if (!n.size) return [];
+  const parts = [...n.entries()].sort((a, b) => b[1] - a[1])
+    .map(([t, c]) => `${c} ${t}${c === 1 ? '' : 's'}`);
+  return [`${parts.join(', ')} — charted on this water by Garmin's survey, each at a position on `
+        + `the chart. They are on the map; this is the count, not the list.`];
+}
+
 export function poiSpotFeatures(poisFc) {
   const out = [];
   for (const f of ((poisFc && poisFc.features) || [])) {

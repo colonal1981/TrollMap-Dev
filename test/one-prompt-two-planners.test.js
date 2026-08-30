@@ -27,6 +27,7 @@ import { dirname, join } from 'node:path';
 import { describe, it, expect } from './expect-shim.mjs';
 import { researchHazards } from '../js/modules/plan-inputs.js';
 import { snapEligibleFrom, TERMINAL_CONNECTION } from '../js/data/lure-knowledge.js';
+import { chartedHazards, HAZARD_POI_TYPES } from '../js/modules/plan-candidates.js';
 import { buildPlanRequest } from '../js/modules/plan-prompt.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -119,18 +120,75 @@ describe('what the research says will hurt you', () => {
     expect(researchHazards({ navigation: { hazards: ['a', 'a', ''] } })).toEqual(['a']);
   });
 
-  it('reaches the safety section as advisories rather than charted zones', () => {
+  it('reaches the safety section, and is kept apart from the charted kind', () => {
     const req = buildPlanRequest({ water: 'Lake Wateree, SC', species: ['Striped Bass'],
                                    tackle: [], candidates: [], hazards: researchHazards(WATEREE) });
     const txt = JSON.stringify(req);
-    expect(txt.includes('2 navigation hazards')).toBe(true);
     expect(txt.includes('S-20-101')).toBe(true);
-    expect(txt.includes('NOT charted zones')).toBe(true);
+    expect(txt.includes('WHAT IS IN THE WAY')).toBe(true);
+    expect(txt.includes('never imply an unpositioned one is marked on the chart')).toBe(true);
   });
 
-  it('and says nothing at all when the research found none', () => {
+  it('and says nothing at all when there is nothing in the way', () => {
     const req = buildPlanRequest({ water: 'x', species: [], tackle: [], candidates: [], hazards: [] });
-    expect(JSON.stringify(req).includes('navigation hazard')).toBe(false);
+    expect(JSON.stringify(req).includes('WHAT IS IN THE WAY')).toBe(false);
+  });
+});
+
+// 91 CHARTED HAZARDS PER LAKE, SITTING IN A FILE BOTH PLANNERS ALREADY FETCH.
+//
+// The prompt's hazard sentence said "marked hazard zones on this water" and no chartpack has a
+// hazards layer, so nothing ever filled it -- while pois.geojson carried them all along, typed and
+// positioned off Garmin's survey. RESEARCH_REFACTOR_END_STATE_2026-08-27.md §2 names this exact
+// pair of failures: an agent inventing prose hazards into a field whose only reader looked for a
+// different name, and 33 charted ones per lake that nothing reads.
+describe('what Garmin charted that can hurt you', () => {
+  // poi_type values counted off the real wateree_lake pack, 2026-08-30.
+  const POIS = { features: [
+    ...Array.from({ length: 33 }, () => ({ properties: { poi_type: 'danger_buoy' } })),
+    ...Array.from({ length: 32 }, () => ({ properties: { poi_type: 'obstruction' } })),
+    ...Array.from({ length: 13 }, () => ({ properties: { poi_type: 'hazard_area' } })),
+    ...Array.from({ length: 12 }, () => ({ properties: { poi_type: 'pile' } })),
+    { properties: { poi_type: 'caution_buoy' } },
+    // The three that are deliberately NOT hazards -- see chartedHazards().
+    ...Array.from({ length: 34 }, () => ({ properties: { poi_type: 'slow_no_wake' } })),
+    ...Array.from({ length: 13 }, () => ({ properties: { poi_type: 'restricted_area' } })),
+    ...Array.from({ length: 38 }, () => ({ properties: { poi_type: 'height_marker' } })),
+  ] };
+
+  it('counts the kinds that can hole a hull, commonest first', () => {
+    const [line] = chartedHazards(POIS);
+    expect(line.startsWith('33 danger buoys, 32 charted obstructions, 13 hazard areas, 12 piles, '
+                         + '1 caution buoy')).toBe(true);
+  });
+
+  it('leaves out no-wake, restricted areas and clearance gauges', () => {
+    const [line] = chartedHazards(POIS);
+    for (const t of ['no-wake', 'restricted', 'height', 'marker']) {
+      expect(line.toLowerCase().includes(t)).toBe(false);
+    }
+    for (const t of ['slow_no_wake', 'restricted_area', 'height_marker']) {
+      expect(t in HAZARD_POI_TYPES).toBe(false);
+    }
+  });
+
+  it('says the count is Garmin, so the prompt can keep it apart from the prose', () => {
+    expect(chartedHazards(POIS)[0]).toMatch(/charted on this water by Garmin's survey/);
+  });
+
+  it('is empty on a pack with no hazard POIs, and on no pack at all', () => {
+    expect(chartedHazards({ features: [{ properties: { poi_type: 'marina' } }] })).toEqual([]);
+    expect(chartedHazards(null)).toEqual([]);
+    expect(chartedHazards({})).toEqual([]);
+  });
+
+  it('is fetched from the pack both planners already hold, not a new request', () => {
+    for (const f of ['js/modules/smart-plan-v2.js', 'js/modules/plan-water-ui.js']) {
+      const t = live(src(f));
+      expect(t).toMatch(/hazards:\s*\[\s*\.\.\.chartedHazards\(/);
+      // one pois.geojson fetch per planner, the one that was already there
+      expect((t.match(/pois\.geojson/g) || []).length).toBe(1);
+    }
   });
 });
 
@@ -161,7 +219,7 @@ describe('Pick Water carries the research it already loaded', () => {
 
   it('derives the intel where the profile, the species and the date all exist', () => {
     expect(ui).toMatch(/intel:\s*researchIntel\(researched,\s*species,\s*getSeason\(date\)\)/);
-    expect(ui).toMatch(/hazards:\s*researchHazards\(researched\)/);
+    expect(ui).toMatch(/hazards:\s*\[\.\.\.chartedHazards\(poFc\), \.\.\.researchHazards\(researched\)\]/);
   });
 
   it('and hands them to the prompt from the tab state, across the two functions', () => {

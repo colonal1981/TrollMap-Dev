@@ -324,9 +324,10 @@ export function riverPromptBlock(ws) {
  * @param {string[]} o.tackle        exact lure names the model may use
  * @param {string[]} [o.snapEligible] the subset of those that may hang off a swivel snap
  * @param {number}   [o.usableAh]
- * @param {string[]} [o.hazards]     navigation hazards from the research profile, as sentences.
- *                                   researchHazards() builds them; they are advisories, not
- *                                   charted geometry, and the safety note says so.
+ * @param {string[]} [o.hazards]     what is in the way, as sentences that name their own source.
+ *                                   chartedHazards() counts the pack's typed, positioned POIs;
+ *                                   researchHazards() adds the profile's unpositioned prose. The
+ *                                   safety note keeps the two apart.
  * @param {string}   [o.intel]       species / research / catch-history prose the app already has
  * @param {object}   [o.waterState]  fetchWaterState() output — {featureType, river, tidal}.
  *                                   NOT absent on a reservoir: an impoundment with an inflow
@@ -503,11 +504,11 @@ RULES THAT ARE NOT NEGOTIABLE
 SAFETY — judge it honestly for a 12.5 ft kayak
 Sustained wind over 15 mph, or gusts over 20, is a no-go. Judge ${o.ramp || 'the ramp'} against the
 wind direction: is it a dangerous windward launch?${o.hazards && o.hazards.length
-  ? `\nThe research on this water lists ${o.hazards.length} navigation hazard`
-    + `${o.hazards.length === 1 ? '' : 's'}:\n`
+  ? `\nWHAT IS IN THE WAY on this water:\n`
     + o.hazards.map((h) => `- ${h}`).join('\n')
-    + `\nThese are written advisories, NOT charted zones with positions — say the ones that bear `
-    + `on today out loud and do not imply they are marked on the map.`
+    + `\nEach line says where it came from. A charted count is Garmin's survey and is on the map. `
+    + `A line from the research is written advice with no position — say the ones that bear on `
+    + `today out loud, and never imply an unpositioned one is marked on the chart.`
   : ''}
 ${coastalPromptBlock(o.waterState)}${riverPromptBlock(o.waterState)}
 WHAT IS ALREADY KNOWN

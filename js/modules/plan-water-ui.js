@@ -41,7 +41,7 @@ import { depthSampler, shorelineIndex } from './plan-water-index.js';
 import { offerWater, dayCost, priceSpots, searchOrder, optionality, TROLL_MPH, SPOT_KINDS } from './plan-water.js';
 import { planFromWater } from './plan-from-water.js';
 import { buildSmartPlanV2, modelAsker, waterRouter } from './smart-plan-v2.js';
-import { poiSpotFeatures, attractorSpotFeatures, dockSpotFeatures, chartedGrid }
+import { poiSpotFeatures, attractorSpotFeatures, dockSpotFeatures, chartedGrid, chartedHazards }
   from './plan-candidates.js';
 import { planToTimeline, installTimeline } from './plan-to-timeline.js';
 import { renderSmartPlanUI, syncSpread } from './smart-plan-ui.js';
@@ -716,7 +716,9 @@ export async function findWater() {
     // DERIVED HERE because this is where the profile, the species and the date all exist. The
     // profile was being loaded twelve lines above, spent on depthBandFor() alone, and dropped.
     intel: researchIntel(researched, species, getSeason(date)),
-    hazards: researchHazards(researched),
+    // THE CHART FIRST, THE RESEARCH SECOND -- same order and same reason as Smart Plan. `poFc` is
+    // the pois.geojson this function already fetched for the cast spots.
+    hazards: [...chartedHazards(poFc), ...researchHazards(researched)],
     windowMin: (() => {
       const p = (s) => { const m = /^(\d{1,2}):(\d{2})/.exec(String(s || '')); return m ? +m[1] * 60 + +m[2] : null; };
       const a = p(inp.launchTime), b = p(inp.returnTime);

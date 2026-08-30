@@ -18,7 +18,7 @@
  */
 
 import { selectCandidates, structureIndex, forModel, orientLegs, poiSpotFeatures,
-         attractorSpotFeatures, chartedGrid } from './plan-candidates.js';
+         attractorSpotFeatures, chartedGrid, chartedHazards } from './plan-candidates.js';
 import { buildPlanRequest, parsePlanResponse, planArgsFrom } from './plan-prompt.js';
 import { assemblePlan, validatePlan } from './plan-assemble.js';
 import { connectionFor, snapEligibleFrom } from '../data/lure-knowledge.js';
@@ -129,7 +129,11 @@ export async function buildSmartPlanV2(o) {
     launchTime: o.launchTime, returnTime: o.returnTime,
     species: o.species ? [].concat(o.species) : [],
     conditions: o.conditions, tackle: o.tackle, snapEligible,
-    usableAh: o.usableAh, hazards: o.hazards, intel: o.intel,
+    usableAh: o.usableAh, intel: o.intel,
+    // THE CHART FIRST, THE RESEARCH SECOND. The charted ones come out of the pack this function
+    // already fetched; the wiring adds the profile's prose. Each line says which it is, so when
+    // navigation.hazards retires this half simply goes empty and the sentence still stands.
+    hazards: [...chartedHazards(poisFc), ...(o.hazards || [])],
     // WHAT THE WATER IS DOING TODAY -- tide on the coast, flow and generation on a river.
     // Absent on a reservoir, and absent is the prompt this file has always built.
     waterState: o.waterState,
