@@ -242,45 +242,87 @@ export const POI_KINDS = {
  * feeding it in here would snap a Garmin mark onto a DNR point and call that a match.
  */
 /**
- * WHAT GARMIN CHARTED THAT CAN HURT YOU, out of the pack the plan is already holding.
+ * WHAT THE CHART SAYS YOU MAY NOT ENTER, AND WHAT IT SAYS TO AVOID.
  *
  * The prompt's SAFETY section has always said "there are N marked hazard zones on this water" and
- * nothing ever filled it, because the app was looking for hazards in the research profile -- prose
- * an agent wrote -- while 91 charted, typed, positioned ones sat unread in every pois.geojson.
- * Measured on wateree_lake: 33 danger_buoy, 32 obstruction, 13 hazard_area, 12 pile, 1
- * caution_buoy. Off Garmin's own survey, at a position, in a file both planners already fetch.
+ * nothing ever filled it, because the app looked for hazards in the research profile -- prose an
+ * agent wrote -- while the packs carried charted, typed, positioned ones nobody read.
  *
- * NOT IN THIS LIST, and both are Ryan's call rather than mine:
- *   slow_no_wake (34 on Wateree)   a rule, not a danger, and slower water is SAFER in a kayak
- *   restricted_area (13)           a legality fact -- where you may not go -- not a thing that
- *                                  holes a hull. It belongs in the plan; it does not belong under
- *                                  the word "hazard", and deciding which section it lands in is a
- *                                  fishing judgement.
- * height_marker (38) is a clearance gauge, which is a fact about a bridge and not a hazard either.
+ * THE CLASSIFICATION IS RYAN'S AND IT IS MEASURED, not mine. EVERY_POI_TYPE_ON_THE_CARD_2026-08-27
+ * counted all 39 `poi_type` values across the 281 indexed packs and he sorted them, and a first
+ * pass at this function ignored that document and got three of five wrong. `poi_type` is the
+ * vocabulary to read; `class` is 2,278 strings of raw Garmin text with typos and buoy SHAPES in it.
  *
- * Counted rather than listed: 91 buoys as 91 lines is noise in a prompt, and the model cannot act
- * on a position it has no route geometry for. The count and the kind is what changes how a day is
- * planned; the chart is what you look at on the water.
+ * CANNOT ENTER -- a hard routing constraint.
+ *   restricted_area  198 pts / 25 lakes   Entry Prohibited, No Boats, Swimming Area
+ *   dam               98 pts / 54 lakes   Ryan: "can't go here either lol"
+ *
+ * AVOID -- a routing warning.
+ *   hazard_area      587 pts / 47 lakes   Shoaling, Missing Marker, Charts Incorrect
+ *   danger_buoy    1,587 pts / 37 lakes   Hazard Buoy, Danger Shoal Marker
+ *   caution_buoy     271 pts / 15 lakes   "IDK what to do with that one... i guess be careful"
+ *
+ * NOT HAZARDS, AND THIS IS THE PART A LIST WRITTEN FROM INTUITION GETS WRONG. In a kayak these
+ * are where you are TRYING to go:
+ *   pile           1,330 / 40   bridge pilings -- Ryan: "target", confirmed at 3 m against his
+ *                               own photo
+ *   submerged_bridge 3,362 / 33  Ryan: "not a hazard it is a target"
+ *   creek_bed, road_bed, flooded_timber                     structure, belongs with structure.geojson
+ *   obstruction    3,546 / 77   MEASURED AS TARGETS, at least on Wateree: they sit a median 49 m
+ *                               from the SCDNR attractor coordinates, 59% within 150 m, against
+ *                               fish_attractor_buoy's own 39 m / 62% on the same test. They are
+ *                               brush piles that Garmin charts because they take a prop off. The
+ *                               document is explicit that this must not be routed around until it
+ *                               is checked on a second water, so it is in neither list here.
+ *   shallow_area   1,062 / 23   BOTH, and the only entry whose category depends on the activity:
+ *                               "avoid if in a deep area when trolling - target possibly when
+ *                               casting". Deciding that needs the leg type, which this function
+ *                               does not have. Left out rather than guessed.
+ *   slow_no_wake, height_marker, nav_buoy, ramps, marinas   Ryan: "a no wake buoy is not a hazard
+ *                               to a kayak fisherman"
+ *
+ * Named, not just counted, because the names are the meaning -- "No Boats", "Hazard Area", "Water
+ * Intake Keep Clear". They are quoted as charted, buoy shape and all, rather than cleaned: a rule
+ * for stripping "Spar/Spindle Buoy" off the end would also strip "Danger Shoal Marker", which is a
+ * meaning and not a shape.
  */
-export const HAZARD_POI_TYPES = {
-  danger_buoy: 'danger buoy',
-  caution_buoy: 'caution buoy',
-  obstruction: 'charted obstruction',
-  hazard_area: 'hazard area',
-  pile: 'pile',
-};
+export const NO_GO_POI_TYPES = { restricted_area: 1, dam: 1 };
+export const AVOID_POI_TYPES = { hazard_area: 1, danger_buoy: 1, caution_buoy: 1 };
 
-export function chartedHazards(poisFc) {
+// 3,453 of the 3,704 caution_buoy points card-wide carry this instead of a warning -- the source
+// disclaimer, which EVERY_POI_TYPE_ON_THE_CARD flagged as the reason caution_buoy was parked
+// ("if it survives, that string must be filtered first"). Measured across all 1,075 packs on
+// 2026-08-30: filtering this one prefix leaves 251 real warnings, including Wateree's single
+// "Water Intake Keep Clear".
+const SOURCE_DISCLAIMER = /^The location of all buoys within this cell/i;
+
+function nameCounts(poisFc, types) {
   const n = new Map();
   for (const f of ((poisFc && poisFc.features) || [])) {
-    const t = HAZARD_POI_TYPES[(f && f.properties && f.properties.poi_type) || ''];
-    if (t) n.set(t, (n.get(t) || 0) + 1);
+    const p = (f && f.properties) || {};
+    if (!types[p.poi_type]) continue;
+    const name = String(p.name || '').trim();
+    if (SOURCE_DISCLAIMER.test(name)) continue;
+    const label = name || p.poi_type;
+    n.set(label, (n.get(label) || 0) + 1);
   }
-  if (!n.size) return [];
-  const parts = [...n.entries()].sort((a, b) => b[1] - a[1])
-    .map(([t, c]) => `${c} ${t}${c === 1 ? '' : 's'}`);
-  return [`${parts.join(', ')} — charted on this water by Garmin's survey, each at a position on `
-        + `the chart. They are on the map; this is the count, not the list.`];
+  return [...n.entries()].sort((a, b) => b[1] - a[1])
+    .map(([label, c]) => `${c}× ${label}`);
+}
+
+export function chartedHazards(poisFc) {
+  const out = [];
+  const noGo = nameCounts(poisFc, NO_GO_POI_TYPES);
+  const avoid = nameCounts(poisFc, AVOID_POI_TYPES);
+  if (noGo.length) {
+    out.push(`CANNOT ENTER — charted on this water by Garmin's survey: ${noGo.join(' · ')}. `
+           + `Do not route a leg through one or put a stop in one.`);
+  }
+  if (avoid.length) {
+    out.push(`AVOID — charted warnings: ${avoid.join(' · ')}. Each is at a position on the chart; `
+           + `this is what they say, not where they are.`);
+  }
+  return out;
 }
 
 export function poiSpotFeatures(poisFc) {

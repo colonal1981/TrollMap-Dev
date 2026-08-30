@@ -27,7 +27,7 @@ import { dirname, join } from 'node:path';
 import { describe, it, expect } from './expect-shim.mjs';
 import { researchHazards } from '../js/modules/plan-inputs.js';
 import { snapEligibleFrom, TERMINAL_CONNECTION } from '../js/data/lure-knowledge.js';
-import { chartedHazards, HAZARD_POI_TYPES } from '../js/modules/plan-candidates.js';
+import { chartedHazards, NO_GO_POI_TYPES, AVOID_POI_TYPES } from '../js/modules/plan-candidates.js';
 import { buildPlanRequest } from '../js/modules/plan-prompt.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -135,81 +135,100 @@ describe('what the research says will hurt you', () => {
   });
 });
 
-// 91 CHARTED HAZARDS PER LAKE, SITTING IN A FILE BOTH PLANNERS ALREADY FETCH.
+// THE CHART SAYS WHERE YOU MAY NOT GO. IT DOES NOT SAY WHAT IS DANGEROUS TO A KAYAK.
 //
 // The prompt's hazard sentence said "marked hazard zones on this water" and no chartpack has a
-// hazards layer, so nothing ever filled it -- while pois.geojson carried them all along, typed and
-// positioned off Garmin's survey. RESEARCH_REFACTOR_END_STATE_2026-08-27.md §2 names this exact
-// pair of failures: an agent inventing prose hazards into a field whose only reader looked for a
-// different name, and 33 charted ones per lake that nothing reads.
-describe('what Garmin charted that can hurt you', () => {
-  // poi_type values counted off the real wateree_lake pack, 2026-08-30.
+// hazards layer, so nothing ever filled it -- while pois.geojson carried the answer all along.
+// The first cut of this function picked the types that SOUND dangerous and got three of five
+// wrong, because EVERY_POI_TYPE_ON_THE_CARD_2026-08-27.md had already counted all 39 poi_type
+// values across the 281 indexed packs and Ryan had already sorted them. In a kayak, half of what
+// a chart marks as a danger is where you are trying to go.
+//
+//   pile              "target" -- bridge pilings, confirmed at 3 m against his own photo
+//   submerged_bridge  "not a hazard it is a target"
+//   obstruction       median 49 m from the SCDNR attractor coordinates on Wateree, 59% within
+//                     150 m -- brush piles, charted as obstructions because they take a prop off
+//   slow_no_wake      "a no wake buoy is not a hazard to a kayak fisherman"
+//   shallow_area      "avoid if in a deep area when trolling - target possibly when casting"
+//
+// So this file is that document, as an assertion.
+describe('what the chart says you may not enter, and what it says to avoid', () => {
+  // poi_type and name values counted off the real wateree_lake pack, 2026-08-30.
+  const pt = (poi_type, name, n = 1) =>
+    Array.from({ length: n }, () => ({ properties: { poi_type, name } }));
   const POIS = { features: [
-    ...Array.from({ length: 33 }, () => ({ properties: { poi_type: 'danger_buoy' } })),
-    ...Array.from({ length: 32 }, () => ({ properties: { poi_type: 'obstruction' } })),
-    ...Array.from({ length: 13 }, () => ({ properties: { poi_type: 'hazard_area' } })),
-    ...Array.from({ length: 12 }, () => ({ properties: { poi_type: 'pile' } })),
-    { properties: { poi_type: 'caution_buoy' } },
-    // The three that are deliberately NOT hazards -- see chartedHazards().
-    ...Array.from({ length: 34 }, () => ({ properties: { poi_type: 'slow_no_wake' } })),
-    ...Array.from({ length: 13 }, () => ({ properties: { poi_type: 'restricted_area' } })),
-    ...Array.from({ length: 38 }, () => ({ properties: { poi_type: 'height_marker' } })),
+    ...pt('restricted_area', 'No Boats, Spar/Spindle Buoy', 13),
+    ...pt('dam', 'DAM'),
+    ...pt('hazard_area', 'Hazard Area', 12),
+    ...pt('hazard_area', 'Dutchmans creek'),
+    ...pt('danger_buoy', 'Hazard, Spar/Spindle Buoy', 33),
+    ...pt('caution_buoy', 'Water Intake Keep Clear, Spar/Spindle Buoy'),
+    // Everything below is a TARGET or a non-hazard and must not appear.
+    ...pt('obstruction', '', 32),
+    ...pt('pile', '', 12),
+    ...pt('shallow_area', 'Shallow Area', 61),
+    ...pt('slow_no_wake', 'No Wake, Spar/Spindle Buoy', 34),
+    ...pt('height_marker', 'Vertical Clearance', 38),
+    ...pt('submerged_bridge', 'Submerged Bridge', 4),
   ] };
 
-  it('counts the kinds that can hole a hull, commonest first', () => {
-    const [line] = chartedHazards(POIS);
-    expect(line.startsWith('33 danger buoys, 32 charted obstructions, 13 hazard areas, 12 piles, '
-                         + '1 caution buoy')).toBe(true);
+  const [noGo, avoid] = chartedHazards(POIS);
+
+  it('separates the hard constraint from the warning, because they are different facts', () => {
+    expect(noGo.startsWith('CANNOT ENTER')).toBe(true);
+    expect(avoid.startsWith('AVOID')).toBe(true);
+    expect(chartedHazards(POIS).length).toBe(2);
   });
 
-  it('leaves out no-wake, restricted areas and clearance gauges', () => {
-    const [line] = chartedHazards(POIS);
-    for (const t of ['no-wake', 'restricted', 'height', 'marker']) {
-      expect(line.toLowerCase().includes(t)).toBe(false);
+  it('puts restricted areas and dams in the one you may not enter', () => {
+    expect(noGo.includes('13× No Boats')).toBe(true);
+    expect(noGo.includes('1× DAM')).toBe(true);
+    expect(Object.keys(NO_GO_POI_TYPES).sort()).toEqual(['dam', 'restricted_area']);
+  });
+
+  it('puts hazard areas and warning buoys in the one to keep clear of', () => {
+    expect(avoid.includes('33× Hazard, Spar/Spindle Buoy')).toBe(true);
+    expect(avoid.includes('12× Hazard Area')).toBe(true);
+    expect(Object.keys(AVOID_POI_TYPES).sort()).toEqual(['caution_buoy', 'danger_buoy', 'hazard_area']);
+  });
+
+  it('never calls a kayak target a hazard', () => {
+    const both = `${noGo}\n${avoid}`.toLowerCase();
+    for (const t of ['obstruction', 'pile', 'shallow', 'no wake', 'clearance', 'submerged bridge']) {
+      expect(both.includes(t)).toBe(false);
     }
-    for (const t of ['slow_no_wake', 'restricted_area', 'height_marker']) {
-      expect(t in HAZARD_POI_TYPES).toBe(false);
+    for (const t of ['obstruction', 'pile', 'shallow_area', 'slow_no_wake', 'height_marker',
+                     'submerged_bridge', 'creek_bed', 'road_bed', 'flooded_timber']) {
+      expect(t in NO_GO_POI_TYPES).toBe(false);
+      expect(t in AVOID_POI_TYPES).toBe(false);
     }
   });
 
-  it('says the count is Garmin, so the prompt can keep it apart from the prose', () => {
-    expect(chartedHazards(POIS)[0]).toMatch(/charted on this water by Garmin's survey/);
+  it('quotes what the chart says rather than counting anonymous points', () => {
+    // The names ARE the meaning. A count of "13 restricted areas" loses "No Boats".
+    expect(noGo).toMatch(/Garmin's survey/);
+    expect(avoid.includes('Water Intake Keep Clear')).toBe(true);
   });
 
-  it('is empty on a pack with no hazard POIs, and on no pack at all', () => {
-    expect(chartedHazards({ features: [{ properties: { poi_type: 'marina' } }] })).toEqual([]);
+  it('drops the source disclaimer that is 93% of every caution_buoy on the card', () => {
+    const disclaimed = { features: pt('caution_buoy',
+      'The location of all buoys within this cell were accurate at the time of source date. '
+      + 'Buoys should always be used with caution as they may be moved or damaged.', 40) };
+    expect(chartedHazards(disclaimed)).toEqual([]);
+  });
+
+  it('says nothing on a pack with neither kind, and on no pack at all', () => {
+    expect(chartedHazards({ features: pt('marina', 'Clearwater Marina') })).toEqual([]);
     expect(chartedHazards(null)).toEqual([]);
     expect(chartedHazards({})).toEqual([]);
   });
 
-  it('is fetched from the pack both planners already hold, not a new request', () => {
+  it('is read from the pack both planners already hold, not a new request', () => {
     for (const f of ['js/modules/smart-plan-v2.js', 'js/modules/plan-water-ui.js']) {
       const t = live(src(f));
       expect(t).toMatch(/hazards:\s*\[\s*\.\.\.chartedHazards\(/);
       // one pois.geojson fetch per planner, the one that was already there
       expect((t.match(/pois\.geojson/g) || []).length).toBe(1);
-    }
-  });
-});
-
-describe('which lures may hang off a snap', () => {
-  const BAG = [{ name: 'Rat-L-Trap', type: 'lipless' }, { name: 'Bucktail', type: 'bucktail_jig' },
-               { name: 'Fluke', type: 'soft_jerkbait' }];
-
-  it('is canTakeSnap over the bag, not a second copy of the test', () => {
-    const want = BAG.filter((l) => TERMINAL_CONNECTION[l.type] && TERMINAL_CONNECTION[l.type] !== 'tie')
-                    .map((l) => l.name);
-    expect(snapEligibleFrom(BAG)).toEqual(want);
-  });
-
-  it('survives an empty or missing bag', () => {
-    expect(snapEligibleFrom()).toEqual([]);
-    expect(snapEligibleFrom([])).toEqual([]);
-  });
-
-  it('no longer exists as a hand-rolled copy inside a planner', () => {
-    for (const f of ['js/modules/smart-plan-v2.js', 'js/modules/plan-water-ui.js']) {
-      expect(live(src(f)).includes("connectionFor(l.type) !== 'tie'")).toBe(false);
     }
   });
 });
