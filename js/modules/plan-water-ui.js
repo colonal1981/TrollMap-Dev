@@ -240,10 +240,10 @@ function row(p, i) {
         ${Math.round(p.lengthM / (TROLL_MPH * 1609.34) * 60)} min to troll it${
         p.partners.length ? ` · ${p.partners.length} to turn onto` : ''}</span>
     </div>
+    ${joinsHtml(p)}
     ${strip(p, T.band)}
     <ul class="wg-for">${r.for.map((s) => `<li>${esc(s)}</li>`).join('')}</ul>
     <ul class="wg-against">${r.against.map((s) => `<li>${esc(s)}</li>`).join('')}</ul>
-    ${joinsHtml(p)}
   </div>`;
 }
 
@@ -260,6 +260,12 @@ function row(p, i) {
  * the order joinsFor() ranked them: deepest bait first, which is deepestUsable()'s own ranking.
  *
  * Three at most. A piece with nine joins is a menu, and the row is already long.
+ *
+ * DIRECTLY UNDER THE TICK, NOT AT THE FOOT OF THE ROW. The first cut put these after both reason
+ * lists, so on a lake with 25 rows they sat below every argument for and against every piece.
+ * Ryan: "You buried the buttons at the bottom of 25 trolling lanes..." Taking a join is an
+ * ALTERNATIVE TO TICKING THIS PIECE -- it is the same decision, made differently -- so it belongs
+ * beside the tick and above the evidence, not after it.
  */
 function joinsHtml(p) {
   const js = (p.joins || []).slice(0, 3);
