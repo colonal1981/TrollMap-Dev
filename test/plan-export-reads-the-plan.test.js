@@ -192,7 +192,10 @@ describe('a transit is rendered as a transit', () => {
     const branch = UI.indexOf("entry.legType === 'transit'");
     expect(branch, 'no transit branch in the timeline renderer').toBeGreaterThan(-1);
     // Everything a spread needs is drawn AFTER the branch, so the branch's `return` skips it.
-    for (const spreadMarkup of ['>Target Depth</div>', '>Spread / Leads</div>',
+    // 'Target Depth' was renamed 2026-08-30: the tile shows the WATER the leg follows, and
+    // calling it the target is what let a card read "Target Depth 6ft" above a bait running
+    // 20-25 ft. The tile is the same tile; only the label it carries is honest now.
+    for (const spreadMarkup of ['>Water on this leg</div>', '>Spread / Leads</div>',
                                 'rodSlotHtml(rods[0]']) {
       expect(UI.indexOf(spreadMarkup), `${spreadMarkup} is drawn before the transit branch`)
         .toBeGreaterThan(branch);

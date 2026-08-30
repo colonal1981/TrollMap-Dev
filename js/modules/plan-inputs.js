@@ -503,6 +503,58 @@ export function researchIntel(profile, species, season, now = Date.now()) {
 }
 
 /**
+ * THE DEPTH BAND, AS THE PROMPT HAS TO RECEIVE IT.
+ *
+ * Ryan, 2026-08-30, on a Pick Water day: "if the water is only 20 feet how is the target 20-25ft
+ * ... this thing still has no understanding of suspended fish."
+ *
+ * Smart Plan built this object inline and it is the single most carefully written thing in that
+ * file -- four branches that spell out, in words, what `holding` MEANS for the day. Pick Water
+ * sent `{ ft, holding, meaning }`: the bare word "suspended" and no instruction attached to it.
+ * Same class as `intel`, `hazards` and `snapEligible` earlier the same day, and the one with the
+ * biggest consequence, because holding is the difference between "put the bait at the fish" and
+ * "put the bait near the bottom".
+ *
+ * So it lives here, once, and both planners call it. `depth` is depthBandFor()'s return.
+ */
+export function describeDepthBand(depth, species, season) {
+  const band = (depth && depth.band) || null;
+  const holding = (depth && depth.holding) || 'unknown';
+  const sp = species || 'the target';
+  const se = season || 'this season';
+  const lo = band ? band[0] : null, hi = band ? band[1] : null;
+
+  // THE AMBIGUITY GOES ON THE PAGE, NOT INTO A THRESHOLD. Ryan, 2026-08-10, on what to do when
+  // the research says fish are doing both: "is there a way to have that pointed out... maybe a
+  // comment in the plan that says fish could be either hugging the bottom or suspended this time
+  // of year... and then yeah use the suspended number."
+  const note = holding === 'both'
+    ? `The research says ${sp} are BOTH hugging the bottom and suspended on this water in ${se}. `
+      + `Water was picked on the suspended rule, so some of these passes are deeper than the `
+      + `fish. Say this in the plan and tell me to watch the sounder for which it is on the day.`
+    : holding === 'suspended'
+    ? `${sp} are suspended here in ${se}, so the water only has to be deeper than the fish — `
+      + `depth of water is not the target, the ${lo}–${hi} ft the fish are holding at is.`
+    : holding === 'bottom'
+    ? `${sp} are on the bottom here in ${se}, so the depth of water IS the target — these passes `
+      + `run through ${lo}–${hi} ft of water.`
+    : `The research does not say whether ${sp} are on the bottom or suspended here in ${se}. `
+      + `Water was picked by matching its depth to the band, which is only right if they are on `
+      + `the bottom. Treat the depths as less certain than usual.`;
+
+  return {
+    ft: band,
+    basis: (depth && depth.basis) || null,
+    lakeSpecific: depth ? !depth.generic : false,
+    meaning: 'where the fish are, not the depth of the water',
+    holding,
+    waterDepthFt: (depth && depth.waterDepthFt) || null,
+    sourceQuote: (depth && depth.sourceQuote) || null,
+    note,
+  };
+}
+
+/**
  * WHAT THE RESEARCH SAYS WILL HURT YOU HERE.
  *
  * `buildPlanRequest` has read `o.hazards` for the SAFETY section since it was written and NO

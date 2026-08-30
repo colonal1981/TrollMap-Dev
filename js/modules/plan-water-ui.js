@@ -34,7 +34,8 @@
 import { state, CF_WORKER_URL } from '../core/state.js';
 import { resolveR2Key } from '../data/lake-keys.js';
 import { getSeason } from '../data/species-intel.js';
-import { depthBandFor, usableAhFrom, researchIntel, researchHazards } from './plan-inputs.js';
+import { depthBandFor, usableAhFrom, researchIntel, researchHazards, describeDepthBand }
+  from './plan-inputs.js';
 import { packFetcher } from './smart-plan-v2.js';
 import { fetchForecast, fetchWaterState } from './plan-preflight.js';
 import { depthSampler, shorelineIndex } from './plan-water-index.js';
@@ -846,8 +847,11 @@ export async function buildFromPicked() {
         // `castable` is `trollable || castable` -- the whole bag. Which half may go behind the
         // boat has to be said, or a cast-only soft plastic looks like a crankbait to the model.
         trollable: castable.filter((l) => l.trollable).map((l) => l.name),
-        conditions: { depthBand: { ft: T.band, holding: T.holding || 'unknown',
-                                   meaning: 'where the fish are, not the depth of the water' } },
+        // THE SAME OBJECT SMART PLAN SENDS, from the same builder. This was `{ ft, holding,
+        // meaning }` -- the word "suspended" with nothing attached to it, and no `note`, which
+        // is the only place the prompt is told what holding MEANS. Ryan, 2026-08-30: "this thing
+        // still has no understanding of suspended fish."
+        conditions: { depthBand: describeDepthBand(T.depth, T.species, getSeason(date)) },
         waterState,
       },
       askModel: modelAsker(CF_WORKER_URL),
@@ -887,6 +891,8 @@ export async function buildFromPicked() {
 
   const built = planToTimeline(r.plan, {
     depthBand: T.band,
+    holding: T.holding || null,
+    warnings: r.problems || [],
     rationale: (r.plan.notes && (r.plan.notes.scoutNotes || r.plan.notes.sonar)) || '',
   });
   installTimeline(window, built);

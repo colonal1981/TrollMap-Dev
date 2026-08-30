@@ -549,6 +549,20 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeed
       const depthLabel = entry.depthMin != null && entry.depthMax != null
         ? (entry.depthMin === entry.depthMax ? `${entry.depthMin}ft` : `${entry.depthMin}–${entry.depthMax}ft`)
         : (entry.depthMin ? `${entry.depthMin}ft` : '—');
+      // THE CARD CALLED THE WATER "TARGET DEPTH" AND NEVER SHOWED THE FISH.
+      //
+      // `depthMin/depthMax` are the charted line the leg follows -- plan-to-timeline.js:282 sets
+      // them from `leg.depthFt` on purpose, and says why. The label over them said "Target
+      // Depth", so the card announced "Target Depth 6ft" and then listed a bait running 20-25 ft
+      // underneath it, with the 15-27 ft the fish are actually holding at appearing nowhere.
+      // Ryan, 2026-08-30: "if the water is only 20 feet how is the target 20-25ft... this thing
+      // still has no understanding of suspended fish."
+      //
+      // Both numbers, each under its own name. `speciesBandFt` was already on the entry.
+      const bandLabel = Array.isArray(entry.speciesBandFt) && entry.speciesBandFt.length === 2
+        ? `fish ${entry.speciesBandFt[0]}–${entry.speciesBandFt[1]} ft`
+          + (entry.holding && entry.holding !== 'unknown' ? ` · ${entry.holding}` : '')
+        : '';
       const speedLabel = entry.speedMph ? `${entry.speedMph} mph` : `${speedMph} mph`;
       const estMin = entry.stats?.estTimeMin ?? entry.stats?.timeMin;
       const statsBadge = entry.stats?.distMi != null ? `${entry.stats.distMi}mi · est ${estMin}min` : '';
@@ -612,8 +626,9 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeed
           <!-- Body meta -->
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
             <div style="font-size:11px;background:rgba(255,255,255,0.03);border:1px solid var(--line);border-radius:6px;padding:6px 8px">
-              <div style="color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.05em">Target Depth</div>
+              <div style="color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.05em">Water on this leg</div>
               <div style="font-weight:700;color:var(--text);font-size:12px">${esc(depthLabel)}</div>
+              ${bandLabel ? `<div style="color:var(--accent);font-size:10px;margin-top:2px">${esc(bandLabel)}</div>` : ''}
             </div>
             <div style="font-size:11px;background:rgba(255,255,255,0.03);border:1px solid var(--line);border-radius:6px;padding:6px 8px">
               <div style="color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.05em">Spread / Leads</div>
@@ -627,6 +642,9 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeed
             ${rodSlotHtml(rods[0] || null, phaseOrderIndex(entry.key, cards), 0)}
             ${rodSlotHtml(rods[1] || null, phaseOrderIndex(entry.key, cards), 1)}
           </div>
+          ${(entry.warnings || []).length ? `<div style="font-size:11px;color:var(--warn);border-top:1px dashed var(--line);padding-top:6px">
+            ${entry.warnings.map((w) => `<div style="margin:2px 0">⚠ ${esc(w)}</div>`).join('')}
+          </div>` : ''}
           ${entry.why ? `<div style="font-size:11px;color:var(--muted);font-style:italic;border-top:1px dashed var(--line);padding-top:6px">💡 ${esc(entry.why)}</div>` : ''}
         </div>`;
     } else if (entry.type === 'stop_and_cast') {

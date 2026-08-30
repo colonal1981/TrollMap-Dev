@@ -157,6 +157,16 @@ export function planToTimeline(plan, o = {}) {
 
   const rodsById = new Map(((plan.loadout && plan.loadout.rods) || []).map((r) => [r.id, r]));
   const band = Array.isArray(o.depthBand) && o.depthBand.length === 2 ? o.depthBand : null;
+  // WHAT THE FISH ARE DOING, and WHAT THE APP ALREADY KNOWS IS WRONG WITH THIS LEG.
+  //
+  // The band alone does not tell a reader whether 15-27 ft is a column to fish or a bottom to
+  // follow -- that is `holding`, and the card never had it. And assemblePlan's warnings went to
+  // `console.warn` on the Pick Water path (plan-water-ui.js:884) and NOWHERE ELSE, so "R1 on
+  // wateree_lake#362: a DD3 Crankbait (20-25ft) runs to 25 ft and the shallowest water on this
+  // leg is 6 ft ... it is the wrong bait for this pass" fired three times into a console while
+  // the card drew a confident spread. The app was not blind, it was mute.
+  const holding = o.holding || null;
+  const legWarnings = Array.isArray(o.warnings) ? o.warnings : [];
 
   const routeRods = {};
   const routeSpeeds = {};
@@ -283,6 +293,9 @@ export function planToTimeline(plan, o = {}) {
       depthMax: leg.depthFt ?? (band ? band[1] : null),
       depthFt: leg.depthFt ?? null,
       speciesBandFt: band,
+      holding,
+      // The warnings that name THIS leg, by the runId they were written with.
+      warnings: leg.runId ? legWarnings.filter((w) => String(w).includes(leg.runId)) : [],
       port: rods[0] ? rods[0].lure : '', starboard: rods[1] ? rods[1].lure : '',
       portColor: rods[0] ? rods[0].color : '', starboardColor: rods[1] ? rods[1].color : '',
       portLeadFt: rods[0] ? rods[0].lead : '', starboardLeadFt: rods[1] ? rods[1].lead : '',

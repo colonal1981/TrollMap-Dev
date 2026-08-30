@@ -103,11 +103,31 @@ function legFrom(piece, i, ramp, slug) {
     start: a,
     end: b,
     lengthM,
-    depthFt: piece.holdsFt,
+    // THE LINE THIS LEG FOLLOWS, WHICH IS NOT THE SHOALEST SPOT ON IT.
+    //
+    // This was `piece.holdsFt` and so was `maxRunDepthFt` below — one number doing two jobs, and
+    // wrong at the first. `holdsFt` is a THRESHOLD: the shallowest water within a wander anywhere
+    // along the stretch, set by one spot. Pick Water's own row text says so in the same breath it
+    // reports it: "nothing may run deeper than 6 ft here — that is the shallowest water within a
+    // wander anywhere on the 1.2 mi, AND IT IS ONE SPOT, NOT THE WHOLE STRETCH".
+    //
+    // Measured on wateree_lake#362, the leg Ryan brought back on 2026-08-30. The pack says
+    // `depth_ft: 15.1`, `shallowest_ft: 7.0`, `deepest_ft: 24.9`, `mean_depth_ft: 20.0`, and the
+    // corridor medians read 17–24 ft. `holdsFt` is 6. The plan called it "The 6 ft line" and the
+    // card printed "Target Depth 6ft" over 17–24 ft of water — then warned three times that every
+    // crankbait aboard was "the wrong bait for this pass", which is what a 6 ft ceiling means.
+    // Ryan: "if the water is only 20 feet how is the target 20-25ft".
+    //
+    // plan-water-ui.js:216 already learned this for the tab's own rows -- "HOW DEEP THIS WATER IS
+    // -- from the corridor, not from holdsFt... announced a stretch of 17-24 ft water as '8 ft or
+    // deeper', which is true and useless". The PLAN never learned it. Smart Plan never had the
+    // bug: plan-candidates.js:1240 sets `depthFt: p.depth_ft`, the charted contour. Same number
+    // now on both paths.
+    depthFt: Number.isFinite(piece.chartedFt) ? Math.round(piece.chartedFt) : piece.holdsFt,
     // THE CEILING ON HOW DEEP A BAIT MAY RUN HERE, named separately from `depthFt` so nothing
     // downstream has to infer that a leg's nominal depth is also a limit. `holdsFt` is the
     // shallowest point the whole stretch clears, which is exactly the constraint — see
-    // capBaitDepth() in plan-assemble.js.
+    // capBaitDepth() in plan-assemble.js. THIS one was always right.
     maxRunDepthFt: piece.holdsFt,
     passes,
     transitInM: ramp ? Math.round(metresBetween(ramp, a)) : 0,

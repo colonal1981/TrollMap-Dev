@@ -15,8 +15,8 @@ import { state, CF_WORKER_URL } from '../core/state.js';
 import { resolveR2Key } from '../data/lake-keys.js';
 import { getLoadedAccessIndex } from '../data/access-index.js';
 import { getSeason } from '../data/species-intel.js';
-import { depthBandFor, usableAhFrom, researchIntel, researchHazards, structureWeights }
-  from './plan-inputs.js';
+import { depthBandFor, usableAhFrom, researchIntel, researchHazards, structureWeights,
+         describeDepthBand } from './plan-inputs.js';
 import { DEFAULT_WEIGHTS, DEFAULT_RELIEF_WEIGHTS } from './plan-candidates.js';
 import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
 import { solunarFor } from '../utils/solunar.js';
@@ -211,36 +211,11 @@ export async function runSmartPlanV2() {
         // about them as one number. `holding` is what separates them, `waterDepthFt` is the water
         // the research actually saw those fish over where it said so, and `sourceQuote` is the
         // sentence all of it came from.
-        depthBand: {
-          ft: depth.band, basis: depth.basis, lakeSpecific: !depth.generic,
-          meaning: 'where the fish are, not the depth of the water',
-          holding: depth.holding || 'unknown',
-          waterDepthFt: depth.waterDepthFt || null,
-          sourceQuote: depth.sourceQuote || null,
-          // THE AMBIGUITY GOES ON THE PAGE, NOT INTO A THRESHOLD. Ryan, 2026-08-10, on what to do
-          // when the research says fish are doing both: "is there a way to have that pointed
-          // out... maybe a comment in the plan that says fish could be either hugging the bottom
-          // or suspended this time of year... and then yeah use the suspended number."
-          //
-          // So the filter is permissive (see eligibleForHolding) AND the day says so in words.
-          // The permissive filter alone would be a silent decision, which is the failure mode
-          // this whole rewrite exists to undo.
-          note: depth.holding === 'both'
-            ? `The research says ${species} are BOTH hugging the bottom and suspended on this `
-              + `water in ${season}. Water was picked on the suspended rule, so some of these `
-              + `passes are deeper than the fish. Say this in the plan and tell me to watch the `
-              + `sounder for which it is on the day.`
-            : depth.holding === 'suspended'
-            ? `${species} are suspended here in ${season}, so the water only has to be deeper `
-              + `than the fish — depth of water is not the target, the ${depth.band[0]}–`
-              + `${depth.band[1]} ft the fish are holding at is.`
-            : depth.holding === 'bottom'
-            ? `${species} are on the bottom here in ${season}, so the depth of water IS the `
-              + `target — these passes run through ${depth.band[0]}–${depth.band[1]} ft of water.`
-            : `The research does not say whether ${species} are on the bottom or suspended here `
-              + `in ${season}. Water was picked by matching its depth to the band, which is only `
-              + `right if they are on the bottom. Treat the depths as less certain than usual.`,
-        },
+        // ONE BUILDER, BOTH PLANNERS. This object was assembled here and Pick Water sent a
+        // three-field stub of it -- no basis, no waterDepthFt, no sourceQuote and, worst,
+        // no `note`, which is the only place the prompt is told what `holding` MEANS.
+        // See describeDepthBand() in plan-inputs.js.
+        depthBand: describeDepthBand(depth, species, season),
       },
       waterState,
       catches: state.CATCHES || [],
@@ -283,6 +258,8 @@ export async function runSmartPlanV2() {
   // the tab already reads, and drawn by the renderer that draws everything else.
   const built = planToTimeline(r.plan, {
     depthBand: depth.band,
+    holding: depth.holding || null,
+    warnings: r.problems || [],
     rationale: (r.plan.notes && (r.plan.notes.scoutNotes || r.plan.notes.sonar)) || '',
   });
   // Regulation advisories ride WITH the plan, not into a console nobody opens. A slot limit or
