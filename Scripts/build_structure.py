@@ -550,7 +550,7 @@ def find_ledges(contours, ring=None, islands=()):
                 # `depth` is the lip now. `deep` is the foot. `drop` was always the difference.
                 best[k] = {'lon': x, 'lat': y, 'slope': slope, 'drop': drop,
                            'run_ft': run / 0.3048, 'depth': d1, 'deep': d2,
-                           'fall_to': d2, 'fall_run_m': bdist}
+                           'fall_to': d2}
 
     # A LEDGE IS WHERE THE BOTTOM BREAKS, NOT WHEREVER IT SLOPES.
     #
@@ -571,24 +571,47 @@ def find_ledges(contours, ring=None, islands=()):
     # as it is no further away than MAX_RUN_M -- the same reach the break itself was found
     # within. Where the levels stop coming that close, the drop has ended; that depth is the
     # foot of the wall. A taper stops on the first step and reports what it always did.
-    reach = Grid(180.0 / 111320.0)
-    lvl_pts = {d: by_depth[d] for d in levels}
+    #
+    # ONE BUCKET PER LEVEL, BUILT ONCE, AND IT IS THE WHOLE COST OF THIS PASS.
+    #
+    # The first cut of this walk built a `Grid` for the job, never used it, and scanned every
+    # sampled vertex at the level instead -- for every break, at every step down the fall.
+    # Measured on coast_cape_fear_nc: find_ledges went from 1.2 s to 82.1 s, sixty-eight times
+    # slower, for exactly the same 1,194 ledges. On coast_pamlico_sound_nc there are 811,545
+    # sampled vertices across 83 levels against Cape Fear's 181,869 across 65, and the card-wide
+    # run stopped moving on the coastal packs.
+    #
+    # CELLS ARE MAX_RUN_M TALL AND THE QUERY GOES TWO RINGS OUT, which is not belt and braces.
+    # Grid buckets in degrees, and a cell sized MAX_RUN_M / 111320 is 400 m north-south but only
+    # 400 * cos(lat) east-west -- 332 m at 34 N. One ring would therefore under-cover in
+    # longitude and quietly cut a fall short. Two rings guarantee 2 * 400 * cos(lat) metres,
+    # which clears 400 anywhere below 60 N and so everywhere on this card. Twenty-five
+    # dictionary lookups instead of forty thousand distance calls.
+    lvl_grid = {}
+    for d in levels:
+        g = Grid(MAX_RUN_M / 111320.0)
+        for q in by_depth[d]:
+            g.add(q[0], q[1], None)
+        lvl_grid[d] = g
+    next_level = {d: levels[i + 1] for i, d in enumerate(levels[:-1])}
     for rec in best.values():
         cur = rec['deep']
         while True:
-            nxt = next((d for d in levels if d > cur), None)
+            nxt = next_level.get(cur)
             if nxt is None: break
-            pts = lvl_pts.get(nxt) or []
-            if not pts: break
+            # THE QUESTION IS "IS THERE ONE INSIDE THE REACH", not "how far is the nearest",
+            # so the first hit ends the search. The distance itself was being recorded as
+            # `fall_run_m` and nothing ever read it -- not the feature this writes, not the app.
+            # It is gone rather than kept as a diagnostic: an unread field that changes with
+            # iteration order is how two runs over the same pack come to disagree for no reason.
             bd = 1e18
-            for qx, qy in ((q[0], q[1]) for q in pts):
+            for qx, qy, _ in lvl_grid[nxt].near(rec['lon'], rec['lat'], rings=2):
                 dd = metres((rec['lon'], rec['lat']), (qx, qy))
                 if dd < bd: bd = dd
                 if bd <= MAX_RUN_M: break
             if bd > MAX_RUN_M: break
             cur = nxt
             rec['fall_to'] = cur
-            rec['fall_run_m'] = bd
     for rec in best.values():
         rec['fall'] = round(rec['fall_to'] - rec['depth'], 1)
     out = []
