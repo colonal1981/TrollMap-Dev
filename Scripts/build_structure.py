@@ -288,18 +288,42 @@ def find_humps(contours, ring, islands=()):
         for c in flat_lines(f['geometry']):
             if not is_closed(c): continue
             a = ring_area_acres(c)
-            if not (HUMP_MIN_ACRES <= a <= HUMP_MAX_ACRES): continue
+            # THE ACRE FLOOR DECIDES WHAT MAY BE A HUMP, NOT WHAT MAY BE THE TOP OF ONE.
+            #
+            # `HUMP_MIN_ACRES` stops a 0.04-acre loop being shipped as a hump of its own, which
+            # is right. It was applied here, before nesting, so a small loop INSIDE a real hump
+            # was thrown away too -- and inside a nest the small ring is the PEAK.
+            #
+            # Measured on hump_7, Lake Wateree, the crown Ryan put a waypoint on to two metres:
+            # thirteen closed rings stack over 34.37964,-80.73507, from 21.0 ft at 5.78 ac down
+            # to 8.9 ft at 0.039 ac. The four innermost -- 8.9/0.039, 9.8/0.106, 11.2/0.192,
+            # 12.1/0.309 -- are all under 0.4 ac, so the deepest ring the algorithm ever saw was
+            # 13.1 and it reported 7.9 ft of relief on a hill that stands 12.1 ft off its base.
+            #
+            # So they come in, carry `too_small`, and are barred from surviving as humps
+            # themselves further down. What they may do is be the crown of the one they sit in.
+            if a > HUMP_MAX_ACRES: continue
             lon, lat = centroid(c)
             if ring and not point_in_ring(lon, lat, ring): continue
             # ON AN ISLAND IS NOT OFFSHORE. Inside the outer ring and inside a hole are both
             # "inside the lake" to a point-in-polygon test that only ever saw the outer ring.
             if any(point_in_ring(lon, lat, h) for h in islands): continue
-            loops.append({'lon': lon, 'lat': lat, 'acres': a, 'depth': float(d), 'ring': c})
+            loops.append({'lon': lon, 'lat': lat, 'acres': a, 'depth': float(d), 'ring': c,
+                          'too_small': a < HUMP_MIN_ACRES})
     # nesting: a loop whose centroid falls inside another, deeper loop
     loops.sort(key=lambda h: -h['acres'])
     for h in loops:
         h['levels'] = 1
         h['relief'] = 0.0
+        # WHERE THE TOP IS. Ryan: "the hump should be marked on the shallowest spot... that is
+        # the top of the hill... the fish will be off to the sides."
+        #
+        # A hump was marked at the centroid of its OUTERMOST ring, which is the base -- on
+        # hump_7 that put the waypoint 86 m from the peak and downhill, where the rings run
+        # 18-21 ft and the structure reads as a 3 ft rise. The crown is what you idle over and
+        # what the sides hang off, so it is what carries the position.
+        h['crown_depth'] = h['depth']
+        h['crown_lon'], h['crown_lat'] = h['lon'], h['lat']
     # Nesting, bbox-first. point_in_ring is O(ring) and there are 632 loops on Wateree, so the
     # naive pair loop is 400,000 ring walks. A bounding-box reject costs four comparisons and
     # removes almost all of them.
@@ -323,7 +347,15 @@ def find_humps(contours, ring, islands=()):
             if not (x0 <= k['lon'] <= x1 and y0 <= k['lat'] <= y1): continue
             if point_in_ring(k['lon'], k['lat'], h['ring']):
                 h['levels'] += 1
-                h['relief'] = max(h['relief'], abs(k['depth'] - h['depth']))
+                # RELIEF IS BASE MINUS CROWN, and it was `max(abs(k - h))` -- an absolute
+                # value, so a ring nested inside that is DEEPER than the outer one counted as
+                # rise. That is a hole in the top of a rise, not height: Wateree's hump_2 came
+                # out crown 24.9 ft, base 24.9 ft, relief 8.2 ft, which cannot all be true.
+                # Set below from the crown, once the whole nest has been walked.
+                # The shallowest ring in the nest is the summit; its centroid is the position.
+                if k['depth'] < h['crown_depth']:
+                    h['crown_depth'] = k['depth']
+                    h['crown_lon'], h['crown_lat'] = k['lon'], k['lat']
                 # The loops are sorted biggest first, so the first container found is the
                 # tightest one that has already been seen -- keep the outermost by overwriting
                 # only when nothing claimed it yet.
@@ -344,7 +376,19 @@ def find_humps(contours, ring, islands=()):
     # 65.0% of Kentucky Lake's 4,063, 46.1% of Murray's 1,011 and 89.0% of Pamlico Sound's
     # 10,814 -- and `levels <= 1` matched that count exactly in every pack, which is the
     # mechanism rather than a correlation.
-    loops = [h for h in loops if h['levels'] > 1]
+    # A NEST WITH NO SHALLOWER RING INSIDE IT IS NOT A RISE. `levels > 1` counted any nested
+    # loop, including a deeper one -- see the relief note above. A hump needs a summit.
+    loops = [h for h in loops if h['levels'] > 1 and h['crown_depth'] < h['depth']]
+    # A ring under the acre floor may be the crown of a hump; it may not BE one. It reached the
+    # nesting pass so its depth could count, and anything still unclaimed here is a standalone
+    # bump too small to ship -- which is the rule HUMP_MIN_ACRES was written for.
+    loops = [h for h in loops if not h['too_small']]
+    # AND THE HUMP MOVES TO ITS SUMMIT. Everything downstream reads `lon`/`lat` as the hump's
+    # position, so the crown is written into them rather than carried alongside and ignored.
+    for h in loops:
+        h['base_depth'] = h['depth']
+        h['relief'] = round(h['depth'] - h['crown_depth'], 4)
+        h['lon'], h['lat'] = h['crown_lon'], h['crown_lat']
     out = []
     if ring:
         # Offshore test through a grid. Scanning a 17,282-vertex ring per candidate is 11M
@@ -664,7 +708,7 @@ def main():
     # and a ledge stopped meaning any slope at all. Stamped on the contours alone, every pack
     # would have reported itself up to date and kept the old file. Bump this when the geometry
     # rules change and every lake rebuilds without anybody remembering --force.
-    RULES_VERSION = '2026-08-29-relief'
+    RULES_VERSION = '2026-08-30-crown'
     ST_PARAMS = (a.min_score, RULES_VERSION)
     for n, slug in enumerate(slugs, 1):
         pack = os.path.join(a.packs, slug)
@@ -691,8 +735,16 @@ def main():
         for i, h in enumerate(sorted(humps, key=lambda x: -x['score'])):
             if h['score'] < a.min_score: continue
             feats.append({'type': 'Feature',
+                          # `depth_ft` IS THE CROWN, which is what both readers already call it:
+                          # plan-candidates.js prints `crown ${depth_ft} ft` and
+                          # supplemental-layers.js prints `crown @${depth}ft`. The pipeline was
+                          # writing the BASE into it, so hump_1 read "crown @23ft" with its top
+                          # at 8.9 ft. The point is the summit now, and the depth at that point
+                          # is the depth of the summit. `base_ft` is what it stands on.
                           'properties': {'kind': 'hump', 'id': 'hump_%d' % (i + 1),
-                                         'score': h['score'], 'depth_ft': round(h['depth'], 1),
+                                         'score': h['score'],
+                                         'depth_ft': round(h['crown_depth'], 1),
+                                         'base_ft': round(h['base_depth'], 1),
                                          'area_acres': round(h['acres'], 2),
                                          'relief_ft': round(h['relief'], 1),
                                          'levels': h['levels']},
