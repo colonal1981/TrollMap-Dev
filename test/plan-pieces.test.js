@@ -137,3 +137,42 @@ describe('buildPieces — lanes in, water out', () => {
     expect(r.pieces[0].rampM.x < 60).toBe(true);
   });
 });
+
+// THE ARRAYS AND THE LINE HAVE TO INDEX THE SAME WATER.
+//
+// `coords` is the stretch reachCurve cut; the envelope arrays used to be the whole pass. 56 of
+// Wateree's 70 pieces start past station 0, so on most of them station i was not the water at
+// i * stepM along the leg. depthCues() indexes exactly that way and put a "3 ft in 27 m, the
+// shallowest water on this leg" warning 13 m into a piece whose own shallowest is 18 ft -- the
+// shoal it had been trimmed to avoid, announced as if it were on it.
+describe('the envelope is the piece, not the pass it was cut from', () => {
+  // Four shallow stations, then twenty deep ones. A 20 ft bait cannot start until station 4.
+  const shoaled = () => {
+    const f = lane('a', 40, 24, 0);
+    f.properties.envelope_ft = [3, 3, 3, 3, ...Array(20).fill(40)];
+    f.properties.envelope_line_ft = [4, 4, 4, 4, ...Array(20).fill(42)];
+    f.properties.envelope_deep_ft = [5, 5, 5, 5, ...Array(20).fill(45)];
+    return f;
+  };
+
+  it('drops the stations the piece does not cross', () => {
+    const p = buildPieces([shoaled()], { clearFt: 2, minM: 600 }).pieces[0];
+    expect(p.envelope.length).toBe(20);
+    expect(Math.min(...p.envelope)).toBe(40);      // not 3 -- that shoal is off this piece
+    expect(p.envelopeLine.length).toBe(20);
+    expect(p.envelopeDeep.length).toBe(20);
+  });
+
+  it('so station i is the water i * stepM along the leg', () => {
+    const p = buildPieces([shoaled()], { clearFt: 2, minM: 600 }).pieces[0];
+    // The geometry and the profile agree on how long this piece is, which is the property every
+    // reader that walks one against the other was relying on and not getting.
+    expect((p.envelope.length - 1) * p.envelopeStepM).toBe(p.lengthM);
+  });
+
+  it('and the band is measured on those stations too', () => {
+    const p = buildPieces([shoaled()], { clearFt: 2, minM: 600 }).pieces[0];
+    expect(p.water.line).toEqual({ minFt: 42, medianFt: 42, maxFt: 42 });
+    expect(p.water.side.minFt).toBe(40);
+  });
+});

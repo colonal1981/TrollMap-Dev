@@ -545,10 +545,15 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeed
     if (entry.type === 'troll') {
       const cardDef = cards.find(c => c.key === entry.key) || {};
       const rods = entry.rods || routeRods?.[entry.key] || [];
-      // One contour reads as one number. "22.4–22.4ft" is what a range formatter does to a line.
+      // THE RANGE, AND THE MIDDLE OF IT. `depthMin`/`depthMax` are the shallowest and deepest
+      // water the leg crosses and `depthFt` is the median — see plan-to-timeline.js for why the
+      // leg stopped being described by one contour. Flat water still reads as one number.
       const depthLabel = entry.depthMin != null && entry.depthMax != null
         ? (entry.depthMin === entry.depthMax ? `${entry.depthMin}ft` : `${entry.depthMin}–${entry.depthMax}ft`)
         : (entry.depthMin ? `${entry.depthMin}ft` : '—');
+      const medianLabel = entry.depthFt != null && entry.depthMin != null
+        && entry.depthMax != null && entry.depthMin !== entry.depthMax
+        ? `median ${entry.depthFt}ft` : '';
       // THE CARD CALLED THE WATER "TARGET DEPTH" AND NEVER SHOWED THE FISH.
       //
       // `depthMin/depthMax` are the charted line the leg follows -- plan-to-timeline.js:282 sets
@@ -627,7 +632,7 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeed
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
             <div style="font-size:11px;background:rgba(255,255,255,0.03);border:1px solid var(--line);border-radius:6px;padding:6px 8px">
               <div style="color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.05em">Water on this leg</div>
-              <div style="font-weight:700;color:var(--text);font-size:12px">${esc(depthLabel)}</div>
+              <div style="font-weight:700;color:var(--text);font-size:12px">${esc(depthLabel)}${medianLabel ? `<span style="font-weight:500;color:var(--muted);font-size:10px"> · ${esc(medianLabel)}</span>` : ''}</div>
               ${bandLabel ? `<div style="color:var(--accent);font-size:10px;margin-top:2px">${esc(bandLabel)}</div>` : ''}
             </div>
             <div style="font-size:11px;background:rgba(255,255,255,0.03);border:1px solid var(--line);border-radius:6px;padding:6px 8px">

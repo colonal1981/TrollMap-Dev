@@ -24,6 +24,11 @@
  * like this isn't something a script can solve."
  */
 
+// ONE MEASUREMENT, BOTH PLANNERS. plan-pieces.js owns what the envelope profiles mean and how a
+// stretch of one is summarised; Smart Plan reads the same function rather than growing its own
+// answer to the same question. Nothing else crosses between the two files.
+import { waterBand } from './plan-pieces.js';
+
 // Fitted to Ryan's own two observations, 2026-08-07, because Newport publishes no curve:
 // trolling 1.8–2.2 mph draws 3–7 A; 100% throttle (~5 mph, no wind or current) draws 25 A.
 // Anchoring 5 A at 2.0 and 25 A at 5.0 gives an exponent of ln(5)/ln(2.5) = 1.756, which lands
@@ -1184,6 +1189,10 @@ export function selectCandidates(runs, o) {
     // stop has nowhere to sit.
     const line = sliceLine(coords, cum, win.startM, win.startM + win.lengthM);
     const lineCum = cumulative(line);
+    // WHAT IS UNDER THE BOAT ON THE WINDOW ACTUALLY CHOSEN, not on the whole pass and not the
+    // name of the contour it was cut from. Null on a pack fitted before envelope profiles existed,
+    // and every reader below falls back to what it used to use.
+    const band = waterBand(p, win.startM, win.startM + win.lengthM);
 
     const inM = transitM(o.ramp, start);
     const outM = transitM(end, o.ramp);
@@ -1237,7 +1246,16 @@ export function selectCandidates(runs, o) {
       // plan-to-timeline, plan-prompt and plan-assemble all read that name and renaming it is a
       // separate change; `waterDepthFt` is emitted alongside as the unambiguous one, carrying the
       // measured value where fit_trolling_runs.py stamped one. `waterDepthMeasured` says which.
-      depthFt: p.depth_ft, wholeRun: win.whole,
+      depthFt: band ? band.line.medianFt : p.depth_ft,
+      depthMinFt: band ? band.line.minFt : null,
+      depthMaxFt: band ? band.line.maxFt : null,
+      // THE CEILING SMART PLAN NEVER HAD. plan-prompt.js has explained `maxRunDepthFt` to the
+      // model since it was written -- "A leg reading 25-31 ft of water with maxRunDepthFt: 20 has
+      // a 20 ft shoal somewhere along it" -- and only the Pick Water path ever sent one. Smart
+      // Plan legs arrived with none, plan-assemble.js fell back to `depthFt`, and the fallback
+      // was the contour's NAME, so the shallowest water on the leg was never checked at all.
+      maxRunDepthFt: band ? band.line.minFt : null,
+      wholeRun: win.whole,
       waterDepthFt: Number.isFinite(elig.waterFt) ? Number(elig.waterFt.toFixed(1)) : null,
       waterDepthMeasured: elig.measured,
       start, end, coordinates: line,
@@ -1636,7 +1654,13 @@ export function forModel(c, cap = MODEL_STRUCTURE_CAP) {
                    worthFishing: h.weight > 0 || undefined }));
   return {
     runId: c.runId,
+    // THE WATER, AS THREE NUMBERS, because it is not one. Ryan, 2026-08-30: "it runs from 25-32 ft
+    // median 29 shallowest is 25ft deepest is 32 allows me to know that the lure depth that is
+    // chosen is right or wrong". The model is judging exactly that, so it gets exactly that.
     depthFt: c.depthFt,
+    depthMinFt: c.depthMinFt ?? undefined,
+    depthMaxFt: c.depthMaxFt ?? undefined,
+    maxRunDepthFt: c.maxRunDepthFt ?? undefined,
     lengthM: c.lengthM,
     transitFromRampM: c.transitInM,
     // WHAT THE ORDERING COSTS. `transitToM` is metres of deadhead from this leg to each other leg

@@ -149,6 +149,76 @@ export function stretchCoords(coords, stepM, from, to) {
 }
 
 /**
+ * WHAT IS UNDER THE BOAT ON THIS STRETCH.
+ *
+ * Ryan, 2026-08-30, after being shown that a "lane" sits a median 29-51 m off the contour it is
+ * named for, and up to 224 m:
+ *
+ *   > a contour is 1 singular depth... so you can't be using the same countor????
+ *
+ * and, when told the fitted path is deliberately not a contour:
+ *
+ *   > the lane used to be a singular contour but it made for very short very curved and
+ *   > unfollowable lines... your second thought is more honest... it runs from 25-32 ft median 29
+ *   > shallowest is 25ft deepest is 32 allows me to know that the lure depth that is chosen is
+ *   > right or wrong
+ *
+ * That is the whole specification, and it is a DESCRIPTION fix rather than a geometry one. The
+ * fitting is doing its job -- it smooths a contour into something a kayak can actually follow --
+ * and the label was the part that lied about it. "The 26.9 ft line" names a contour the boat is
+ * never on; 25-32 median 29 names the water it is over, which is the number a lure depth is
+ * judged against.
+ *
+ * MEASURED ON THIS STRETCH, NOT THE WHOLE LANE. The pack stamps `depth_ft`, `shallowest_ft` and
+ * `shallowest_line_ft` for the pass end to end, and a piece is a TRIM of that pass -- reachCurve
+ * cuts it at the first station a bait cannot clear. Across Wateree's 70 pieces the trimmed
+ * shallowest sits a median 1 ft, and up to 8 ft, deeper than the whole-lane figure, and 41 of the
+ * 70 differ at all. wateree_lake#157 is the case that names the problem: the pack says the pass
+ * touches 8 ft, the piece the app actually offers never comes above 45. Sizing a bait off the
+ * whole lane condemns baits over water that is not on the leg -- the same fault as "The 6 ft
+ * line", pointed the other way.
+ *
+ * THE LINE AND THE SHALLOW SIDE ARE BOTH RETURNED and they answer different questions.
+ * `line` is the chart under the centreline: what he is over, and what a lure depth is judged
+ * against. `side` is the shallowest within the wander: what can take a bait off. Nothing here
+ * picks between them -- see plan-from-water.js for which one becomes the ceiling and why.
+ *
+ * @param {object} props   a fitted pass's properties, carrying `envelope_line_ft`/`envelope_ft`
+ * @param {number} fromM   start of the stretch, metres along the pass
+ * @param {number} toM     end of it
+ * @returns {?{line:{minFt,medianFt,maxFt}, side:{minFt,medianFt,maxFt}}}
+ */
+export function waterBand(props, fromM, toM) {
+  const step = props && props.envelope_step_m;
+  const line = props && props.envelope_line_ft;
+  const side = props && props.envelope_ft;
+  if (!(step > 0) || !Array.isArray(line) || !Array.isArray(side)) return null;
+  const n = Math.min(line.length, side.length);
+  const a = Math.max(0, Math.min(n - 1, Math.floor(fromM / step)));
+  const b = Math.max(a, Math.min(n - 1, Math.ceil(toM / step)));
+  const l = spread(line.slice(a, b + 1)), s = spread(side.slice(a, b + 1));
+  return l && s ? { line: l, side: s } : null;
+}
+
+/**
+ * Min, median and max of one profile, in the units the pack stamped: whole feet.
+ *
+ * -1 IS DROPPED, NOT COUNTED AS ZERO. It means nobody sounded that station, and a station nobody
+ * sounded cannot make the water shallower than it is -- the run has already been cut at uncharted
+ * water by reachCurve, so anything left here is a hole in the survey rather than a hole in the
+ * lake.
+ *
+ * The median is the LOWER middle on an even count. No interpolation: the pack rounds every probe
+ * to the foot (`int(round(x))` in fit_trolling_runs.py), so a half-foot median would be precision
+ * this never measured.
+ */
+function spread(vals) {
+  const v = vals.filter((d) => Number.isFinite(d) && d >= 0).sort((x, y) => x - y);
+  if (!v.length) return null;
+  return { minFt: v[0], medianFt: v[(v.length - 1) >> 1], maxFt: v[v.length - 1] };
+}
+
+/**
  * COLLAPSE THE DUPLICATES.
  *
  * Contours nest. Around one Wateree shoreline there are eighty-two of them, and by his own
@@ -287,18 +357,35 @@ export function buildPieces(lanes, o) {
       // threw it away -- and the strip chart drew nothing while optionality() reported every
       // corridor as "undefined-undefined ft, 0 ft span". Found by running the whole chain on a
       // real pack and reading the sentences it produced.
-      envelope: p.envelope_ft,
+      // SLICED TO THE PIECE, BECAUSE `coords` IS. Station 0 of these arrays used to be station 0
+      // of the whole PASS while the geometry beside them started wherever reachCurve cut it, and
+      // 56 of Wateree's 70 pieces start past station 0. Everything that walks the array against
+      // the line was therefore reading the wrong place on it:
+      //
+      //   depthCues() puts a cue at `i * stepM` into the leg. On #123 -- a 3.0 km piece that
+      //   begins 360 m along a 3.5 km pass -- the shallowest station on the pass is 3 ft at 40 m,
+      //   so the phone announced "3 ft in 27 m, the shallowest water on this leg" 13 m into a leg
+      //   whose own shallowest is 18 ft. A shoal warning for water the boat never goes near, on
+      //   the leg it was trimmed to avoid.
+      //
+      //   the strip chart in the Water tab drew the whole pass under a row describing the piece.
+      //
+      //   optionality() took its corridor medians across stations outside the piece.
+      //
+      // The whole pass is still on the piece as `fullCoords` for anything that wants the lane.
+      envelope: p.envelope_ft.slice(best.from, best.to + 1),
       // Deep side and centreline. `deep` minus `envelope` is how much depth 25 m of wander buys:
       // narrow means relaxed water, wide means a steep edge that wants steering. `line` is what
       // the chart says about the centreline, kept ONLY so the gap between it and the shallow side
       // stays visible -- nothing should ever decide on it.
-      envelopeDeep: p.envelope_deep_ft || null,
-      envelopeLine: p.envelope_line_ft || null,
+      envelopeDeep: p.envelope_deep_ft ? p.envelope_deep_ft.slice(best.from, best.to + 1) : null,
+      envelopeLine: p.envelope_line_ft ? p.envelope_line_ft.slice(best.from, best.to + 1) : null,
       envelopeStepM: step,
       envelopeM: p.envelope_m ?? null,
-      chartedFt: p.depth_ft ?? null,
-      shallowestFt: p.shallowest_ft ?? null,
-      shallowestLineFt: p.shallowest_line_ft ?? null,
+      // THE WATER THIS PIECE IS ACTUALLY OVER, measured on the stations it was trimmed to. It
+      // replaces `depth_ft`, `shallowest_ft` and `shallowest_line_ft` -- three whole-lane numbers
+      // that were standing in for a piece-local one. See waterBand().
+      water: waterBand(p, best.from * step, best.to * step),
       chartedFrac: p.charted_frac ?? null,
       relief: p.relief ?? null,
       near: p.near || [],
@@ -328,9 +415,7 @@ export function buildPieces(lanes, o) {
       holdsFt: win.holdsFt,
       lengthM: win.lengthM,
       offers,
-      chartedFt: win.chartedFt,
-      shallowestFt: win.shallowestFt,
-      shallowestLineFt: win.shallowestLineFt,
+      water: win.water,
       chartedFrac: win.chartedFrac,
       relief: win.relief,
       near: win.near,

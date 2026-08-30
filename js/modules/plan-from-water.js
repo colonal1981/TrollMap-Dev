@@ -57,6 +57,9 @@ function legFrom(piece, i, ramp, slug) {
   const coords = piece.coords || [];
   const cum = cumulative(coords);
   const lengthM = piece.lengthM;
+  // The chart under the centreline over this piece's own stations. Null on a pack too old to have
+  // been fitted with envelope profiles, and every reader below falls back to `holdsFt` for that.
+  const line = (piece.water && piece.water.line) || null;
   const near = piece.near || [];
   const total = cum[cum.length - 1] || lengthM || 1;
 
@@ -123,7 +126,15 @@ function legFrom(piece, i, ramp, slug) {
     // deeper', which is true and useless". The PLAN never learned it. Smart Plan never had the
     // bug: plan-candidates.js:1240 sets `depthFt: p.depth_ft`, the charted contour. Same number
     // now on both paths.
-    depthFt: Number.isFinite(piece.chartedFt) ? Math.round(piece.chartedFt) : piece.holdsFt,
+    // Ryan, 2026-08-30, on being shown that the lane is fitted rather than traced and so has no
+    // single depth: "it runs from 25-32 ft median 29 shallowest is 25ft deepest is 32 allows me to
+    // know that the lure depth that is chosen is right or wrong". The median is the leg's one
+    // number where one is wanted; the two ends ride with it so nothing has to pretend the water
+    // is flat. `chartedFt` -- the name of the contour the pass was cut from -- is gone: measured
+    // on Wateree it reads 7 ft off the water under the boat (#289: contour 23, line 27-32).
+    depthFt: line ? line.medianFt : piece.holdsFt,
+    depthMinFt: line ? line.minFt : null,
+    depthMaxFt: line ? line.maxFt : null,
     // THE CEILING ON HOW DEEP A BAIT MAY RUN HERE — OFF THE LINE, NOT OFF THE BANK.
     //
     // This was `holdsFt`, which is derived from `envelope_ft`: the shallowest water within 25 m
@@ -142,8 +153,13 @@ function legFrom(piece, i, ramp, slug) {
     // `shallowest_line_ft` is the pack's own stamped answer to "how shallow does this line get".
     // No margin invented here — how close he steers is his, and `envelope_ft` still feeds the
     // depth cue that warns him before the shallow side arrives. See depthCues().
-    maxRunDepthFt: Number.isFinite(piece.shallowestLineFt) ? piece.shallowestLineFt
-                                                           : piece.holdsFt,
+    //
+    // Now measured on THIS PIECE rather than the whole pass. `shallowest_line_ft` is the pack's
+    // answer for the pass end to end, and a piece is a trim of that pass -- on 41 of Wateree's 70
+    // pieces the two differ, by up to 8 ft, always in the direction of condemning baits over water
+    // the leg never crosses. #157 is the case: the pass touches 8 ft, the piece never comes above
+    // 45. Same field, same rule, measured where the boat actually goes. See waterBand().
+    maxRunDepthFt: line ? line.minFt : piece.holdsFt,
     passes,
     transitInM: ramp ? Math.round(metresBetween(ramp, a)) : 0,
     transitOutM: ramp ? Math.round(metresBetween(b, ramp)) : 0,
@@ -246,6 +262,8 @@ export async function planFromWater(o) {
     candidates: legs.map((l) => ({
       runId: l.runId,
       depthFt: l.depthFt,
+      depthMinFt: l.depthMinFt ?? undefined,
+      depthMaxFt: l.depthMaxFt ?? undefined,
       maxRunDepthFt: l.maxRunDepthFt,
       lengthM: l.lengthM,
       estMin: l.estMin,

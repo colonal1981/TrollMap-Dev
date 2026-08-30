@@ -254,14 +254,28 @@ export function planToTimeline(plan, o = {}) {
     const rods = [rodView(port, 'Port', rp[leg.deploy && leg.deploy.port]),
                   rodView(stbd, 'Stbd', rp[leg.deploy && leg.deploy.starboard])].filter(Boolean);
 
-    // The leg's own contour depth is the specific fact; the band is what the species is using.
-    // Both go in, in the place each reads best — the band in the depth column because it IS a
-    // band, the leg's line in the description because "trolling the 24 ft line" is the sentence.
+    // WHAT IS UNDER THE BOAT, NOT WHAT THE CONTOUR IS CALLED.
+    //
+    // This said "The 26.9 ft line", and Ryan took the fitted lanes apart to show why that is a
+    // lie: measured on Wateree they sit a median 29-51 m off the contour they are named for, and
+    // up to 224 m. Told the fitting is deliberate — a traced contour makes "very short very curved
+    // and unfollowable lines" — he wrote the replacement himself:
+    //
+    //   > your second thought is more honest... it runs from 25-32 ft median 29 shallowest is
+    //   > 25ft deepest is 32 allows me to know that the lure depth that is chosen is right or wrong
+    //
+    // So the sentence is the range and the middle of it. The species band stays in the depth
+    // column under its own name; these two are never the same number and never share a label.
+    const waterPhrase = (leg.depthMinFt != null && leg.depthMaxFt != null)
+      ? (leg.depthMinFt === leg.depthMaxFt
+          ? `${leg.depthMinFt} ft under the boat`
+          : `${leg.depthMinFt}–${leg.depthMaxFt} ft under the boat · median ${leg.depthFt}`)
+      : (leg.depthFt != null ? `${leg.depthFt} ft under the boat` : '');
     const card = {
       ...common,
       label: `Leg ${trollN} — ${mi.toFixed(1)} mi`, shortLabel: `Leg ${trollN}`,
       icon: '🎣', color: LEG_COLORS[(trollN - 1) % LEG_COLORS.length],
-      desc: (leg.depthFt != null ? `The ${leg.depthFt} ft line · ` : '')
+      desc: (waterPhrase ? `${waterPhrase} · ` : '')
           + `from ${mark} in · ${leg.speedMph} mph · ${leg.batteryAh} Ah`,
       longDesc: clean(leg.why),
       speedMph: leg.speedMph,
@@ -279,18 +293,20 @@ export function planToTimeline(plan, o = {}) {
       speed: leg.speedMph, estWindow: leg.estStartTime ? `${leg.estStartTime}+` : '',
     });
 
-    // THE LEG HEADER SHOWS THE CONTOUR THE LEG FOLLOWS, NOT THE SPECIES BAND.
+    // THE LEG HEADER SHOWS THE WATER THE LEG CROSSES, NOT THE SPECIES BAND.
     //
     // Ryan's document carried three target depths: 15–27 ft on the timeline (the band), 25–35 ft
     // in the sonar table and the summary, 18–28 ft in the reasoning box (two hardcoded literals
     // the HTML fell back to). Two of the three were wrong and none was the depth the boat is
-    // actually on. The leg follows one charted line -- 22.4 ft -- and that is the number that
-    // belongs on the leg. The band is what the fish are using; it rides along under its own name
-    // so nothing has to guess which is which.
+    // actually on. What belongs on the leg is the water under it. That was the charted contour
+    // until 2026-08-30, when the contour turned out to be a name rather than a measurement — it
+    // now comes from the depth profile along the line the boat will actually steer, so a leg that
+    // crosses 25 to 32 ft says so instead of claiming a single figure. The band is what the fish
+    // are using; it rides along under its own name so nothing has to guess which is which.
     legEntries.push({
       ...card, type: 'troll', rods,
-      depthMin: leg.depthFt ?? (band ? band[0] : null),
-      depthMax: leg.depthFt ?? (band ? band[1] : null),
+      depthMin: leg.depthMinFt ?? leg.depthFt ?? (band ? band[0] : null),
+      depthMax: leg.depthMaxFt ?? leg.depthFt ?? (band ? band[1] : null),
       depthFt: leg.depthFt ?? null,
       speciesBandFt: band,
       holding,

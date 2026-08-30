@@ -507,6 +507,11 @@ RULES THAT ARE NOT NEGOTIABLE
    20 ft — and that is CORRECT, not a compromise. You do not need a deeper bait for a deeper leg.
    Do not match the bait to the bottom. Do not skip a deep leg because nothing you rigged reaches
    the floor of it: nothing needs to.
+   READ THE THREE WATER NUMBERS ON A LEG AS THREE DIFFERENT FACTS. \`depthMinFt\` and
+   \`depthMaxFt\` are the shallowest and deepest water the leg actually crosses; \`depthFt\` is the
+   median of it. A leg is NOT one depth — these lines are fitted so a kayak can follow them, not
+   traced along a single contour, so "the 27 ft line" is a name and 25-32 ft is the water. Judge a
+   bait against the range, not the name.
    \`maxRunDepthFt\` is a CEILING and nothing else. It is the SHALLOWEST water anywhere on that
    leg, measured within the boat's wander, and it exists for one purpose — so a bait does not drag
    on a rise you cannot see. A leg reading 25-31 ft of water with \`maxRunDepthFt: 20\` has a 20 ft

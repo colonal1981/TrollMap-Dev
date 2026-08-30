@@ -467,8 +467,10 @@ export function assemblePlan(o) {
     }
 
     // No bait may run deeper than the shallowest water on this leg. See capBaitDepth().
-    // `maxRunDepthFt` is preferred over `depthFt` because a caller may know a tighter ceiling
-    // than the leg's nominal depth — on the picked-water path both are the piece's `holdsFt`.
+    // `maxRunDepthFt` is preferred over `depthFt` because the two answer different questions:
+    // the ceiling is the SHALLOWEST water on the leg, `depthFt` the MEDIAN. Both planners now
+    // measure both from the same envelope profile — see waterBand() in plan-pieces.js — so the
+    // fallback below only fires on a pack fitted before those profiles existed.
     const rodPlan = capBaitDepth(rods, deploy, Number(c.maxRunDepthFt ?? c.depthFt), legMph,
                                  o.lureByName, c.runId, warnings);
 
@@ -476,7 +478,10 @@ export function assemblePlan(o) {
       id: `L${++li}`, type: 'troll',
       runId: c.runId, runIndex: c.runIndex,
       startM: legStartM, lengthM: legLen,
-      depthFt: c.depthFt, speedMph: legMph,
+      // THE LEG IS A RANGE OF WATER AND SAYS SO. The median is what it is called; the two ends
+      // are what a lure depth is judged against. Absent on a pack with no envelope profile.
+      depthFt: c.depthFt, depthMinFt: c.depthMinFt ?? null, depthMaxFt: c.depthMaxFt ?? null,
+      speedMph: legMph,
       deploy,
       // WHAT THIS LEG ACTUALLY FISHES, where it differs from the bag. Only the rods capBaitDepth
       // had to move, keyed by rod id: { R2: { leadFt, runsDepthFt } }. Absent when the loadout's

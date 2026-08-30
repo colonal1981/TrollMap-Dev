@@ -265,10 +265,25 @@ export function reasons(piece, o) {
   //
   // It sits in `for` rather than `against` because it is not a mark against the water — it is the
   // number that makes the water fishable without hanging up.
+  //
+  // AND IT IS A BAIT DEPTH, NOT A WATER DEPTH, which this sentence used to get backwards. It said
+  // the ceiling "is the shallowest water within a wander", and it is not — it is that figure less
+  // the clearance the pick was made with. The two now appear as the two different numbers they
+  // are, which is also what makes the sentence checkable: the gap between them IS the clearance.
+  //
+  // "AND IT IS ONE SPOT" IS NOW ASKED OF THE RIGHT PAIR OF NUMBERS. It used to compare the
+  // ceiling against the corridor -- a bait depth against a water depth -- so it fired on every
+  // piece where the clearance alone was 3 ft, which is most of them. The question it is trying to
+  // ask is whether the shallowest station is unlike the rest of the stretch, and that is the
+  // shallowest against the median of the same profile.
   if (Number.isFinite(piece.holdsFt)) {
-    const tight = opt.fromFt != null && opt.fromFt - piece.holdsFt >= 3;
-    forIt.push(`nothing may run deeper than ${piece.holdsFt} ft here — that is the shallowest `
-             + `water within a wander anywhere on the ${fmtMi(piece.lengthM)}`
+    const side = piece.water && piece.water.side;
+    const tight = side && side.medianFt - side.minFt >= 3;
+    forIt.push(`nothing may run deeper than ${piece.holdsFt} ft here`
+             + (side ? ` — the shallowest water within a wander anywhere on the `
+                     + `${fmtMi(piece.lengthM)} is ${side.minFt} ft`
+                     : ` — that is the shallowest water within a wander anywhere on the `
+                     + `${fmtMi(piece.lengthM)}`)
              + (tight ? `, and it is one spot, not the whole stretch` : ''));
   }
 
@@ -358,8 +373,8 @@ export function reasons(piece, o) {
   // THE CENTRELINE LIES AND THE PIPELINE MEASURED BY HOW MUCH. Across 5,977 Wateree passes the
   // line overstates the shallowest water by a median 3.9 ft. Where the gap is big on THIS piece,
   // the edge is steep and it wants steering rather than relaxing.
-  if (Number.isFinite(piece.shallowestLineFt) && Number.isFinite(piece.shallowestFt)) {
-    const gap = piece.shallowestLineFt - piece.shallowestFt;
+  if (piece.water && piece.water.line && piece.water.side) {
+    const gap = piece.water.line.minFt - piece.water.side.minFt;
     if (gap >= 5) {
       against.push(`the chart line reads ${Math.round(gap)} ft deeper than the shallowest water `
                  + `within a wander of it — a steep edge, so this one wants steering`);

@@ -16,13 +16,31 @@
 // 6ft" over 17-24 ft of water, with three warnings that every crankbait aboard was "the wrong
 // bait for this pass".
 //
-// Smart Plan never had it: plan-candidates.js sets `depthFt: p.depth_ft`, the charted contour.
+// Smart Plan never had it: plan-candidates.js set `depthFt: p.depth_ft`, the charted contour.
 // One more place the two planners meant different things by the same field name.
+//
+// AND THE CONTOUR WAS NOT THE ANSWER EITHER. Ryan, the same day, on being shown the fitted lanes:
+// "a contour is 1 singular depth... so you can't be using the same countor????" He is right --
+// fit_trolling_runs.py smooths a contour into something a kayak can follow, and the result sits a
+// median 29-51 m off the line it is named for, up to 224 m. Told the fitting is deliberate,
+// because tracing a contour makes "very short very curved and unfollowable lines", he wrote the
+// replacement: "it runs from 25-32 ft median 29 shallowest is 25ft deepest is 32 allows me to know
+// that the lure depth that is chosen is right or wrong."
+//
+// So the leg is described by the depth profile along the line the boat will steer, measured on the
+// stations the piece was TRIMMED to. #362 again, all four answers for the same leg:
+//
+//     "The 6 ft line"     holdsFt -- a bait depth, and the shallowest spot on the whole pass
+//     "The 15 ft line"    depth_ft -- the name of the contour it was cut from
+//     "The 12 ft line"    shallowest_line_ft -- the whole pass, including water this leg skips
+//     17-25 ft, median 23 what is under the boat on the 720 m the app actually offers
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { describe, it, expect } from './expect-shim.mjs';
 import { planFromWater } from '../js/modules/plan-from-water.js';
+import { waterBand } from '../js/modules/plan-pieces.js';
+import { planToTimeline } from '../js/modules/plan-to-timeline.js';
 import { describeDepthBand } from '../js/modules/plan-inputs.js';
 import { TACKLE_INVENTORY } from '../js/data/tackle-inventory.js';
 
@@ -30,15 +48,17 @@ const here = dirname(fileURLToPath(import.meta.url));
 const src = (f) => readFileSync(join(here, '..', f), 'utf8');
 const live = (js) => js.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
-// The real numbers off wateree_lake#362, as a picked piece.
+// The real numbers off wateree_lake#362, as a picked piece. `water` is what waterBand() returns
+// for the 720 m stretch buildPieces() trims this 2 km pass down to -- NOT the whole pass, whose
+// line runs 13-25 and whose shallow side touches 7 ft on a shoal the piece stops short of.
 const PIECE = {
   key: 'w0', runId: 'wateree_lake#362',
   coords: [[-80.7360, 34.3819], [-80.7290, 34.3760], [-80.7220, 34.3713]],
-  lengthM: 1961, laneLengthM: 1962,
-  chartedFt: 15.1,          // the line the lane follows
-  shallowestLineFt: 12.1,   // how shallow that line gets
-  holdsFt: 6,               // deepest bait that runs it unbroken, off the SHALLOW SIDE of the
-                            // wander -- the bank 25 m away, not the water under the boat
+  lengthM: 720, laneLengthM: 1962,
+  water: { line: { minFt: 17, medianFt: 23, maxFt: 25 },
+           side: { minFt: 16, medianFt: 20, maxFt: 25 } },
+  holdsFt: 12,              // deepest bait that runs it unbroken, off the SHALLOW SIDE of the
+                            // wander -- 16 ft less the 4 ft of clearance the pick was made with
   near: [], partners: [],
 };
 
@@ -55,11 +75,50 @@ const build = (extra = {}) => planFromWater({
   ...extra,
 });
 
-describe('the leg depth is the line it follows, not the one shoal on it', () => {
-  it('takes the charted contour, rounded', async () => {
+describe('the leg depth is the water under it, not one shoal and not a contour name', () => {
+  it('reports the range and the median of it', async () => {
     const r = await build();
     const leg = r.plan.legs.find((l) => l.type === 'troll');
-    expect(leg.depthFt).toBe(15);
+    expect(leg.depthFt).toBe(23);
+    expect(leg.depthMinFt).toBe(17);
+    expect(leg.depthMaxFt).toBe(25);
+  });
+
+  it('and the card says so instead of naming a contour', async () => {
+    const r = await build();
+    const built = planToTimeline(r.plan, { depthBand: [15, 27] });
+    const leg = built.timeline.find((e) => e.type === 'troll' && e.legType !== 'transit');
+    expect(leg.desc).toMatch(/17–25 ft under the boat · median 23/);
+    expect(leg.desc).not.toMatch(/ft line/);
+    expect(leg.depthMin).toBe(17);
+    expect(leg.depthMax).toBe(25);
+    // and the fish band is still its own number, in its own field
+    expect(leg.speciesBandFt).toEqual([15, 27]);
+  });
+
+  it('measures on the stations the piece was trimmed to, not on the whole pass', () => {
+    // Station 0 is a 3 ft shoal. A piece that starts at station 5 never crosses it, and saying
+    // "3 ft" about that leg is the same fault as "The 6 ft line" pointed the other way -- it
+    // condemns baits over water the boat does not go near. Measured on Wateree: 41 of 70 pieces
+    // read shallower off the whole pass than off themselves, by up to 8 ft.
+    const props = { envelope_step_m: 40,
+                    envelope_line_ft: [3, 4, 6, 9, 14, 20, 21, 22, 23, 24],
+                    envelope_ft: [3, 3, 5, 8, 12, 18, 19, 20, 21, 22] };
+    expect(waterBand(props, 200, 360).line).toEqual({ minFt: 20, medianFt: 22, maxFt: 24 });
+    expect(waterBand(props, 0, 360).line.minFt).toBe(3);
+  });
+
+  it('drops uncharted stations rather than counting them as zero', () => {
+    const props = { envelope_step_m: 40,
+                    envelope_line_ft: [-1, 20, 24, -1],
+                    envelope_ft: [-1, 18, 22, -1] };
+    expect(waterBand(props, 0, 120).line).toEqual({ minFt: 20, medianFt: 20, maxFt: 24 });
+  });
+
+  it('says nothing at all when the pack carried no profile', () => {
+    expect(waterBand({ envelope_step_m: 40 }, 0, 100)).toBe(null);
+    expect(waterBand({ envelope_step_m: 40, envelope_line_ft: [-1], envelope_ft: [-1] }, 0, 40))
+      .toBe(null);
   });
 
   // The ceiling is not emitted on the leg, so it is read where it is felt: the warning
@@ -89,26 +148,31 @@ describe('the leg depth is the line it follows, not the one shoal on it', () => 
     // the bait with it condemned every crankbait on a lane whose line never comes above 13 ft.
     const r = await withDeepBait([PIECE]);
     const said = r.problems.find((w) => /shallowest water on this leg/.test(w));
-    expect(said.includes('12.1 ft')).toBe(true);
-    expect(said.includes('6 ft')).toBe(false);
+    expect(said.includes('17 ft')).toBe(true);
+    expect(said.includes('16 ft')).toBe(false);   // the shallow side, 25 m off the line
+    expect(said.includes('12 ft')).toBe(false);   // the whole pass, including water this leg skips
     const t = live(src('js/modules/plan-from-water.js'));
-    expect(t).toMatch(/depthFt: Number\.isFinite\(piece\.chartedFt\)/);
-    expect(t).toMatch(/maxRunDepthFt: Number\.isFinite\(piece\.shallowestLineFt\)/);
+    expect(t).toMatch(/maxRunDepthFt: line \? line\.minFt : piece\.holdsFt/);
   });
 
-  it('falls back to holdsFt when the pack stamped no line depth', async () => {
-    const r = await withDeepBait([{ ...PIECE, shallowestLineFt: null }]);
+  it('falls back to holdsFt when the pack stamped no profile', async () => {
+    const r = await withDeepBait([{ ...PIECE, water: null }]);
     const said = r.problems.find((w) => /shallowest water on this leg/.test(w));
-    expect(said.includes('6 ft')).toBe(true);
+    expect(said.includes('12 ft')).toBe(true);
+    const leg = r.plan.legs.find((l) => l.type === 'troll');
+    expect(leg.depthFt).toBe(12);
+    expect(leg.depthMinFt).toBe(null);
   });
 
-  it('falls back to holdsFt only when the pack charted no depth at all', async () => {
-    const r = await build({ picked: [{ ...PIECE, chartedFt: null }] });
-    expect(r.plan.legs.find((l) => l.type === 'troll').depthFt).toBe(6);
-  });
-
-  it('agrees with Smart Plan, which reads the same field off the pack', () => {
-    expect(live(src('js/modules/plan-candidates.js'))).toMatch(/depthFt: p\.depth_ft/);
+  it('agrees with Smart Plan, which calls the same function on the window it chose', () => {
+    const c = live(src('js/modules/plan-candidates.js'));
+    expect(c).toMatch(/import \{ waterBand \} from '\.\/plan-pieces\.js'/);
+    expect(c).toMatch(/waterBand\(p, win\.startM, win\.startM \+ win\.lengthM\)/);
+    expect(c).toMatch(/depthFt: band \? band\.line\.medianFt : p\.depth_ft/);
+    // and it now sends a ceiling, which it never did -- plan-prompt.js has explained
+    // `maxRunDepthFt` to the model since it was written and only Pick Water ever supplied one.
+    expect(c).toMatch(/maxRunDepthFt: band \? band\.line\.minFt : null/);
+    expect(c).toMatch(/maxRunDepthFt: c\.maxRunDepthFt/);
   });
 });
 
