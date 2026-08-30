@@ -927,7 +927,13 @@ def main():
         json.dump(doc, open(os.path.join(a.packs, slug, 'structure.geojson'), 'w',
                             encoding='utf-8'), ensure_ascii=False)
         _stamp_record(pack, 'structure.geojson', st_inputs, ST_PARAMS)
-        report[slug] = {'humps': len(humps), 'ledges': len(ledges), 'features': len(feats)}
+        # HOLES ARE SHIPPED AND WERE NOT COUNTED. find_nests() returns humps AND holes and both
+        # are written into the pack, but this line named only two of the three kinds -- so the
+        # card-wide summary read "4742 humps, 46998 ledges" over a run that also shipped 16,743
+        # holes, and the only trace of them was `features` not adding up. A kind the pipeline
+        # ships and does not name is a kind nobody goes looking for.
+        report[slug] = {'humps': len(humps), 'holes': len(holes), 'ledges': len(ledges),
+                        'features': len(feats)}
         made += 1
         if n % 25 == 0 or n == len(slugs):
             print('  %d/%d  %d written, %d up to date, %d skipped, %.1f min'
@@ -938,8 +944,9 @@ def main():
     if current and not a.force:
         print('   up to date = same contours, same boundary, same --min-score. --force overrides.')
     th = sum(r.get('humps', 0) for r in report.values())
+    to = sum(r.get('holes', 0) for r in report.values())
     tl = sum(r.get('ledges', 0) for r in report.values())
-    print('   %d humps, %d ledges across every pack' % (th, tl))
+    print('   %d humps, %d holes, %d ledges across every pack' % (th, to, tl))
     print('   the old adapter would have kept 8 and 8 per lake, in the browser, per research run')
     if a.report:
         doc = {'generatedBy': 'build_structure.py', 'note': NOTE, 'lakes': report}

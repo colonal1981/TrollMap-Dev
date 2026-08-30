@@ -219,6 +219,206 @@ function spread(vals) {
 }
 
 /**
+ * HOW HARD THIS PACK'S OWN LANES TURN.
+ *
+ * Ryan, on a plan whose legs did not connect: "it has 2 sharp v shaped turns when all it needs is
+ * a straight line between the 2", and "the trolling runs don't really make sense... they are
+ * still too short and stubby and do not link where they should".
+ *
+ * Joining two pieces means steering from the end of one to the start of the next, and a turn hard
+ * enough to tangle a spread is not a join. What counts as too hard is NOT a number to pick: the
+ * fitting has already answered it. fit_trolling_runs.py smooths a stitched contour into a line a
+ * kayak can tow a spread along, so the sharpest bend it is willing to leave INSIDE a lane is this
+ * pack's own definition of followable. Measured on Wateree: median 0.1 deg per 80 m of travel,
+ * p99 19.3, worst 42.4.
+ *
+ * Per pack, computed from the lanes in hand, so it tightens on its own if the fitting improves.
+ *
+ * @param {object[]} lanes   the same features buildPieces() was given
+ * @param {number}   stepM   the sampling interval; the envelope step, so the two agree
+ * @returns {number} degrees per 80 m of travel
+ */
+export function followBar(lanes, stepM = 40) {
+  let bar = 0;
+  for (const f of (lanes || [])) {
+    if (!f || !f.properties || !f.properties.fitted) continue;
+    const c = f.geometry && f.geometry.coordinates;
+    if (!Array.isArray(c) || c.length < 3) continue;
+    let acc = 0;
+    const pts = [c[0]];
+    for (let i = 1; i < c.length; i++) {
+      acc += metresBetween(c[i - 1], c[i]);
+      if (acc >= stepM) { pts.push(c[i]); acc = 0; }
+    }
+    for (let i = 2; i < pts.length; i++) {
+      const d = metresBetween(pts[i - 2], pts[i - 1]) + metresBetween(pts[i - 1], pts[i]);
+      if (!(d > 0)) continue;
+      const r = turnBetween(bearingOf(pts[i - 2], pts[i - 1]), bearingOf(pts[i - 1], pts[i]))
+              * (80 / d);
+      if (r > bar) bar = r;
+    }
+  }
+  return bar;
+}
+
+const metresBetween = (a, b) => Math.hypot((a[0] - b[0]) * m_per_deg_lon((a[1] + b[1]) / 2),
+                                           (a[1] - b[1]) * M_PER_DEG_LAT);
+const bearingOf = (a, b) => (Math.atan2((b[0] - a[0]) * m_per_deg_lon((a[1] + b[1]) / 2),
+                                        (b[1] - a[1]) * M_PER_DEG_LAT) * 180 / Math.PI + 360) % 360;
+const turnBetween = (x, y) => { const d = Math.abs(x - y) % 360; return d > 180 ? 360 - d : d; };
+
+/**
+ * WHERE TWO PIECES ARE ONE RUN.
+ *
+ * Ryan, looking at three legs the app had drawn across water he fishes as one line:
+ *
+ *   > blue and purple to me are pretty much one line / see how i routed around that shallow spot
+ *   > and combined the 2 lines... that is how i would fish that
+ *
+ * A piece ends where reachCurve ran out of water for the bait, not where the fishing ends. Often
+ * the next piece starts a few hundred metres on, on the same heading, over the same kind of
+ * bottom. Measured on Wateree: 103 pairs of piece-ends sit within his own `minM` of each other on
+ * a heading inside the pack's follow bar, and 57 of the 70 pieces have at least one.
+ *
+ * WHAT MAKES A JOIN, AND WHERE EACH RULE COMES FROM
+ *
+ *   the turn      the pack's own sharpest fitted bend -- see followBar(). Not a chosen angle.
+ *   the gap       no longer than `minM`, HIS number for the day. A stretch of water longer than
+ *                 the shortest thing he would call a pass is not a seam between two passes.
+ *   the bait      one bait, unbroken, the whole way. His rule, given 2026-08-30 when asked
+ *                 whether a depth change across a join makes it two runs: "One run only if one
+ *                 bait covers it." So the joined profile goes through the same reachCurve that
+ *                 judges a single lane -- A's stations, the gap's, then B's.
+ *
+ * AND NOTHING HERE DECIDES WHAT "OPEN WATER" IS, because there is no such thing. Ryan, when I
+ * called a 249 m gap over 41 ft of flat bottom open water:
+ *
+ *   > when fish are suspended there is no such thing as open water... if fish are hugging bottom
+ *   > or i am fishing for catfish that hug bottom then that might mean something... so the
+ *   > fisherman's answer is that it depends
+ *
+ * It depends on `holding`, which is researched per lake and per season and is not this module's
+ * business. So `depths` -- the bait depths worth testing -- comes IN, exactly as it does for
+ * buildPieces(), and the caller supplies the band the fish are actually in. A join reports the
+ * deepest of those that runs the whole thing, plus the floor beneath it so a bottom-relating day
+ * can see how far the floor moves and judge whether one lure tracks it. Measured on Wateree, the
+ * floor moves a median 17 ft across a joined run, which is why joining is mostly a suspended
+ * tool -- but that is a fact about the water, reported, not a rule applied here.
+ *
+ * @param {object[]} pieces      buildPieces() output
+ * @param {object}   o
+ * @param {function} o.depthAt   ([lon,lat]) -> ft, or null where nobody sounded it. The pack's
+ *                               depth_areas sampler -- see depthSampler() in plan-water-index.js.
+ * @param {number}   o.clearFt   water wanted under the bait. REQUIRED, same as buildPieces().
+ * @param {number}   o.bar       degrees per 80 m from followBar()
+ * @param {number}   [o.minM]    longest gap that is a seam rather than a stretch of water
+ * @param {number[]} [o.depths]  bait depths worth testing -- THE FISH BAND, from the caller
+ * @param {number}   [o.envelopeM] half-width of the wander, to match the pack's own envelope
+ * @returns {object[]} one entry per joinable pair, both directions collapsed into one
+ */
+export function joinsFor(pieces, o) {
+  const depthAt = o && o.depthAt;
+  const clearFt = o && o.clearFt;
+  const bar = o && o.bar;
+  if (typeof depthAt !== 'function') throw new Error('joinsFor: depthAt is required');
+  if (!Number.isFinite(clearFt)) throw new Error('joinsFor: clearFt is required');
+  if (!Number.isFinite(bar)) throw new Error('joinsFor: bar is required — see followBar()');
+  const minM = (o && o.minM) ?? 600;
+  const envM = (o && o.envelopeM) ?? 25;
+  const depths = (o && o.depths) || Array.from({ length: 18 }, (_, i) => 6 + i * 2);
+
+  // Two ends per piece, each with the heading it is travelling AS IT LEAVES.
+  const ends = [];
+  (pieces || []).forEach((p, i) => {
+    const c = p && p.coords;
+    if (!Array.isArray(c) || c.length < 3 || !Array.isArray(p.envelope)) return;
+    const n = c.length;
+    ends.push({ i, side: 0, at: c[0], out: bearingOf(c[Math.min(3, n - 1)], c[0]) });
+    ends.push({ i, side: 1, at: c[n - 1], out: bearingOf(c[Math.max(0, n - 4)], c[n - 1]) });
+  });
+
+  const out = [];
+  for (let a = 0; a < ends.length; a++) {
+    for (let b = a + 1; b < ends.length; b++) {
+      const A = ends[a], B = ends[b];
+      if (A.i === B.i) continue;
+      const gapM = metresBetween(A.at, B.at);
+      if (!(gapM >= 1) || gapM > minM) continue;
+      // THE TURN IS AT THE JUNCTION, NOT SPREAD OVER THE GAP. Dividing the angle by the gap's
+      // length was the first cut and it is wrong in the direction that matters: a 90 deg change
+      // met at the end of a 2 km straight line is still a 90 deg corner, and dividing it down
+      // made every long gap pass. The boat turns where the lane meets the gap, so the angle at
+      // each junction is compared against the bar directly.
+      const g = bearingOf(A.at, B.at);
+      const turn = Math.max(turnBetween(A.out, g), turnBetween(g, (B.out + 180) % 360));
+      if (turn > bar) continue;
+
+      const pa = pieces[A.i], pb = pieces[B.i];
+      const step = pa.envelopeStepM || 40;
+      const gap = gapProfile(A.at, B.at, step, envM, depthAt);
+      if (!gap) continue;                       // nobody sounded any of it -- not a claim to make
+      const ea = A.side === 0 ? pa.envelope.slice().reverse() : pa.envelope.slice();
+      const eb = B.side === 0 ? pb.envelope.slice() : pb.envelope.slice().reverse();
+      const joined = ea.concat(gap, eb);
+      const lengthM = (joined.length - 1) * step;
+      const curve = reachCurve(joined, step, depths, clearFt);
+      let baitFt = null;
+      for (const [ft, v] of curve) {
+        // The whole stretch, not the longest part of it: a join that needs the rods touched
+        // halfway is two runs, which is what he said when asked.
+        if (v.lengthM >= lengthM - step && (baitFt === null || ft > baitFt)) baitFt = ft;
+      }
+      if (baitFt === null) continue;
+
+      out.push({
+        from: A.i, fromRunId: pa.runId, fromEnd: A.side ? 'end' : 'start',
+        to: B.i, toRunId: pb.runId, toEnd: B.side ? 'end' : 'start',
+        gapM: Math.round(gapM),
+        turnDeg: Number(turn.toFixed(1)),
+        lengthM,
+        baitFt,
+        // The floor under the whole joined run. A suspended day does not care; a bottom-relating
+        // one cares about nothing else, because a lure holds one depth and this is how far the
+        // bottom moves out from under it.
+        floorFt: spread(joined),
+        gapCoords: [A.at, B.at],
+      });
+    }
+  }
+  out.sort((x, y) => y.lengthM - x.lengthM);
+  return out;
+}
+
+/**
+ * The shallowest water within the wander, every `stepM` across a gap, in the shape the pack
+ * stamps for a lane -- seven probes across, the shallowest wins, -1 where nobody sounded it.
+ *
+ * Matching `envelope_ft`'s definition matters: the result is concatenated with two real envelopes
+ * and handed to reachCurve, which cannot tell them apart and must not have to.
+ */
+function gapProfile(a, b, stepM, envM, depthAt) {
+  const d = metresBetween(a, b);
+  const n = Math.max(1, Math.round(d / stepM));
+  const brg = bearingOf(a, b) * Math.PI / 180;
+  const nx = Math.cos(brg), ny = -Math.sin(brg);          // unit normal, metres
+  const out = [];
+  let charted = 0;
+  for (let s = 1; s < n; s++) {
+    const x = a[0] + (b[0] - a[0]) * s / n;
+    const y = a[1] + (b[1] - a[1]) * s / n;
+    let sh = null;
+    for (let k = -3; k <= 3; k++) {
+      const off = (k * envM) / 3;
+      const z = depthAt([x + (nx * off) / m_per_deg_lon(y), y + (ny * off) / M_PER_DEG_LAT]);
+      if (z == null) continue;
+      if (sh === null || z < sh) sh = z;
+    }
+    if (sh === null) out.push(-1); else { out.push(sh); charted++; }
+  }
+  return (n <= 1 || charted > 0) ? out : null;
+}
+
+/**
  * COLLAPSE THE DUPLICATES.
  *
  * Contours nest. Around one Wateree shoreline there are eighty-two of them, and by his own
