@@ -355,6 +355,41 @@ function normalizeCsvRow(row, importedFrom = 'csv') {
   return item;
 }
 
+/**
+ * The journal as it goes to the cloud: everything except the photographs.
+ *
+ * D1 REFUSED THE WHOLE JOURNAL, EVERY TIME, FOR MONTHS.
+ *
+ *     sync error: catch/catches insert failed at 10819.5 KB payload:
+ *     D1_ERROR: string or blob too big: SQLITE_TOOBIG
+ *
+ * Two things made that one error. The journal is pushed as a SINGLE row -- every catch there has
+ * ever been, under the id `catches` -- and each catch carries `photoDataUrl`, a base64 JPEG,
+ * which is about a third larger than the file it came from. A few dozen fish photographs is ten
+ * megabytes and D1 will not take it, so nothing synced at all: not the photos, not the fish, not
+ * the lure, not the date. Every catch since this started is local-only and looks synced.
+ *
+ * A PHOTOGRAPH IS NOT A DATABASE ROW. `STORE_BY_TYPE` in cloud-sync.js already says the same
+ * thing about the other big thing this app holds -- "charts live in R2 -- excluded from D1 sync"
+ * -- and a fish photo is the same kind of object for the same reason. Stripped here, the journal
+ * is the text of the catch: species, length, lure, where, when, and which photo it belongs to.
+ * `photoName` survives, so the image is still findable on the device that has it, and the record
+ * that matters crosses to the phone.
+ *
+ * WHAT THIS DOES NOT DO is put the photos anywhere. They stay on whichever device shot them
+ * until they go to R2 like the charts, and that is a separate piece of work rather than something
+ * to smuggle into a bug fix.
+ */
+function catchesForSync() {
+  return getCatches().map((c) => {
+    if (!c || typeof c !== 'object') return c;
+    const { photoDataUrl, lurePhotoDataUrl, thumbDataUrl, ...rest } = c;
+    // Said out loud on the record, so a phone showing no picture is explained rather than broken.
+    return (photoDataUrl || lurePhotoDataUrl || thumbDataUrl)
+      ? { ...rest, photoOnDevice: true } : rest;
+  });
+}
+
 async function saveCatches() {
   // The single most costly thing this app can lose. A catch is logged once, on the water,
   // often with the phone about to go in a dry bag -- there is no second chance to re-enter it
@@ -363,7 +398,8 @@ async function saveCatches() {
   // Sync to cloud so catches are available across devices
   // Absent is fine (cloud-sync may not have loaded); throwing is not -- it means the catch
   // saved locally and never left the device, which looks identical to a synced one.
-  callGlobal('pushItemOnSave', 'catch', CATCHES_DB_KEY, { name: CATCHES_DB_KEY, data: getCatches() });
+  callGlobal('pushItemOnSave', 'catch', CATCHES_DB_KEY,
+             { name: CATCHES_DB_KEY, data: catchesForSync() });
 }
 async function saveQueue() {
   // The queue is what replays catches to the cloud once there is signal again. Losing it

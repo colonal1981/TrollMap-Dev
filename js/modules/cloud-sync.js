@@ -31,6 +31,10 @@ import { SYNC_TOKEN } from '../utils/worker-auth.js';
 
 // Map item type → IndexedDB store name. Don't pluralize by string
 // manipulation — `'catch' + 's' = 'catchs'` is wrong.
+// D1 refuses a value over 1 MB with SQLITE_TOOBIG. Held a little under it so the row's own
+// columns and the JSON envelope have somewhere to live.
+const MAX_SYNC_BYTES = 900 * 1024;
+
 const STORE_BY_TYPE = {
   plan: 'plans',
   spread: 'spreads',
@@ -78,6 +82,23 @@ async function drainPendingQueue() {
   console.log(`☁️ Draining ${queue.length} queued sync items…`);
   const remaining = [];
   for (const item of queue) {
+    // A ROW THAT CANNOT FIT WILL NOT FIT LATER EITHER, so it is dropped rather than retried.
+    //
+    // The catch journal sat in this queue at 10,819.5 KB and was replayed on EVERY page load,
+    // taking a 500 from D1 each time -- `string or blob too big: SQLITE_TOOBIG`. reportSyncFailure
+    // reads a 500 as "the server failing", which is right in general and wrong for this: the
+    // server is working perfectly and refusing something it can never accept. Retrying it forever
+    // is how one oversize record becomes a permanent error and hides every real failure behind it.
+    // Nothing is lost -- the journal is intact in IndexedDB; it just stops pretending it will send.
+    if (!item.deleted) {
+      const size = JSON.stringify(item.payload || {}).length;
+      if (size > MAX_SYNC_BYTES) {
+        console.error(`[cloud-sync] dropping queued ${item.type}/${item.id}: `
+          + `${Math.round(size / 1024)} KB exceeds the ${Math.round(MAX_SYNC_BYTES / 1024)} KB `
+          + `row cap. It is still on this device; it will never reach the cloud in this shape.`);
+        continue;
+      }
+    }
     try {
       // A queued DELETE is a tombstone, not a push -- sending it as a POST would RESURRECT
       // the record it is supposed to bury.
@@ -182,10 +203,38 @@ export function pushItemOnSave(type, id, data) {
 
   const payload = { ...data, lastModified: new Date().toISOString() };
 
+  // A ROW THAT CANNOT FIT IS NOT AN OFFLINE ROW, and queueing it retries the same
+
+  // refusal on every page load forever. D1 caps a value at 1 MB; this is measured
+
+  // before the round trip so the reason names the payload and its size instead of
+
+  // arriving as SQLITE_TOOBIG from three layers down. The catch journal spent months
+
+  // failing at 10,819.5 KB with the answer sitting unread in a 500.
+
+  const body = JSON.stringify(payload);
+
+  if (body.length > MAX_SYNC_BYTES) {
+
+    const kb = Math.round(body.length / 1024);
+
+    console.error(`[cloud-sync] ${type}/${id} is ${kb} KB and the cloud caps a row at `
+
+      + `${Math.round(MAX_SYNC_BYTES / 1024)} KB. NOT queued -- a row that cannot fit `
+
+      + `will not fit later either. Nothing was lost locally.`);
+
+    setStatus(`☁️ Too big to sync (${kb} KB)`, true);
+
+    return;
+
+  }
+
   fetch(`${CF_WORKER_URL}/sync/item/${type}/${encodeURIComponent(id)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Sync-Token': SYNC_TOKEN },
-    body: JSON.stringify(payload),
+    body: body,
   })
     .then((r) => {
       if (r.ok) {
