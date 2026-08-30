@@ -1384,11 +1384,16 @@ export function offerWater(lanes, o) {
     // exactly deepestUsable()'s ranking, the one this module already uses to choose what a lane
     // offers at all. `costFt` rides along so the trade is on the row rather than inferred.
     joins: joins
-      .map((j) => (j.from === i ? { j, other: j.to } : j.to === i ? { j, other: j.from } : null))
+      .map((j, n) => (j.from === i ? { j, n, other: j.to }
+                    : j.to === i ? { j, n, other: j.from } : null))
       .filter(Boolean)
-      .map(({ j, other }) => ({ ...j, otherKey: keyed[other].key, otherRunId: keyed[other].runId,
-                                costFt: Math.max(0, (p.holdsFt ?? 0) - j.baitFt),
-                                gainM: j.lengthM - p.lengthM }))
+      // `idx` is the join's place in the whole list, which is the only handle a caller needs:
+      // joinedPiece() takes that list and the piece array it was measured against, and a key or
+      // a runId would have to be resolved back to exactly this pair anyway.
+      .map(({ j, n, other }) => ({ ...j, idx: n,
+                                  otherKey: keyed[other].key, otherRunId: keyed[other].runId,
+                                  costFt: Math.max(0, (p.holdsFt ?? 0) - j.baitFt),
+                                  gainM: j.lengthM - p.lengthM }))
       .sort((x, y) => (y.baitFt - x.baitFt) || (y.lengthM - x.lengthM)),
     reasons: reasons(p, { minM, fishBandFt: o.fishBandFt, holding: o.holding,
                           partners: partners[i], wind: o.wind || worstWind(o.windByHour),

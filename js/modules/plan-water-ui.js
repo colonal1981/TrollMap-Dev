@@ -39,7 +39,8 @@ import { depthBandFor, usableAhFrom, researchIntel, researchHazards, describeDep
 import { packFetcher } from './smart-plan-v2.js';
 import { fetchForecast, fetchWaterState } from './plan-preflight.js';
 import { depthSampler, shorelineIndex } from './plan-water-index.js';
-import { offerWater, dayCost, priceSpots, searchOrder, optionality, TROLL_MPH, SPOT_KINDS } from './plan-water.js';
+import { offerWater, dayCost, priceSpots, searchOrder, optionality, reasons, TROLL_MPH, SPOT_KINDS } from './plan-water.js';
+import { joinedPiece } from './plan-pieces.js';
 import { planFromWater } from './plan-from-water.js';
 import { buildSmartPlanV2, modelAsker, waterRouter } from './smart-plan-v2.js';
 import { poiSpotFeatures, attractorSpotFeatures, dockSpotFeatures, chartedGrid, chartedHazards }
@@ -242,7 +243,36 @@ function row(p, i) {
     ${strip(p, T.band)}
     <ul class="wg-for">${r.for.map((s) => `<li>${esc(s)}</li>`).join('')}</ul>
     <ul class="wg-against">${r.against.map((s) => `<li>${esc(s)}</li>`).join('')}</ul>
+    ${joinsHtml(p)}
   </div>`;
+}
+
+/**
+ * CARRY ON INTO THE NEXT PIECE.
+ *
+ * Ryan, on three legs the app drew across water he fishes as one line: "blue and purple to me are
+ * pretty much one line / see how i routed around that shallow spot and combined the 2 lines...
+ * that is how i would fish that."
+ *
+ * THE COST IS ON THE BUTTON, not inferred from it. A join buys length and can spend bait depth,
+ * and which of those matters is the day's call -- "and its not always about the longest line
+ * either". So each one says what it makes, what it costs and what it crosses, and the list is in
+ * the order joinsFor() ranked them: deepest bait first, which is deepestUsable()'s own ranking.
+ *
+ * Three at most. A piece with nine joins is a menu, and the row is already long.
+ */
+function joinsHtml(p) {
+  const js = (p.joins || []).slice(0, 3);
+  if (!js.length) return '';
+  return `<div class="wg-joins">${js.map((j) => {
+    const cost = j.costFt > 0 ? ` · costs ${j.costFt} ft of bait depth` : ' · no cost in bait depth';
+    return `<button type="button" class="wg-join" data-join="${esc(String(j.idx))}">`
+         + `carry on into ${esc(String(j.otherRunId).split('#').pop())} — ${fmtMi(j.lengthM)} `
+         + `on one ${j.baitFt} ft bait${cost}`
+         + `<span class="wg-join-meta">${j.gapM} m of water between them, ${j.turnDeg}° turn`
+         + `${j.floorFt ? `, floor ${j.floorFt.minFt}\u2013${j.floorFt.maxFt} ft` : ''}</span>`
+         + `</button>`;
+  }).join('')}</div>`;
 }
 
 /**
@@ -708,6 +738,10 @@ export async function findWater() {
 
   Object.assign(T, {
     pieces: out.pieces, spots: out.spots || [], picked: new Set(),
+    // WHERE TWO OF THESE ARE ONE RUN -- see joinsFor() in plan-pieces.js. Held whole because
+    // joinedPiece() indexes into the piece array these were measured against, so the pair and
+    // the array have to stay together.
+    joins: out.joins || [], joinsTaken: 0, minM: out.minM,
     ramp, rampName: inp.rampName || 'launch',
     species, r2Key, dateStr: inp.dateStr, windByHour: forecast ? forecast.windByHour : null,
     weatherByHour: forecast ? forecast.weatherByHour : null,
@@ -851,7 +885,15 @@ export async function buildFromPicked() {
         // meaning }` -- the word "suspended" with nothing attached to it, and no `note`, which
         // is the only place the prompt is told what holding MEANS. Ryan, 2026-08-30: "this thing
         // still has no understanding of suspended fish."
-        conditions: { depthBand: describeDepthBand(T.depth, T.species, getSeason(date)) },
+        // FROM `T`, BECAUSE `date` LIVES IN findWater() AND THIS IS NOT findWater().
+        //
+        // It was `getSeason(date)` and it threw "date is not defined" on every press of Build the
+        // day from what I picked -- a ReferenceError, so the whole build died before it reached
+        // the model. Ryan found it the first time he pressed the button after I added the line.
+        // `T.dateStr` is what findWater() stored for exactly this, and line 618 builds the same
+        // Date from it the same way.
+        conditions: { depthBand: describeDepthBand(T.depth, T.species,
+                                                   getSeason(new Date(`${T.dateStr}T12:00:00`))) },
         waterState,
       },
       askModel: modelAsker(CF_WORKER_URL),
@@ -1042,6 +1084,34 @@ export function initWaterTab() {
     paintSpots();
     total();
   });
+  // TAKING A JOIN. The two halves come off the list and the run they make goes on, ticked --
+  // because the thing he chose is the run, not a pair of pieces he now has to remember belong
+  // together. joinedPiece() builds it in the same shape buildPieces() does, so nothing below
+  // this line knows a join happened.
+  $('wgList')?.addEventListener('click', (e) => {
+    const btn = e.target?.closest?.('button.wg-join');
+    if (!btn) return;
+    const j = T.joins[Number(btn.dataset.join)];
+    if (!j) return;
+    const merged = joinedPiece(T.pieces, j);
+    if (!merged) return;
+    const key = `j${T.joinsTaken++}`;
+    // Everything row() reads that a fresh piece does not carry. `partners` is [] rather than
+    // recomputed: ladderPartners() ranks the pieces it was given, and this run was not one of
+    // them -- claiming a lap onto water measured against its halves would be a guess.
+    const piece = { ...merged, key, partners: [],
+                    shallowSide: null, shoreAspect: null,
+                    reasons: reasons(merged, { minM: T.minM, fishBandFt: T.band,
+                                               holding: T.holding, partners: [] }),
+                    joins: [] };
+    T.pieces.push(piece);
+    for (const p of T.pieces) {
+      if (p.runId === merged.joinedFrom[0] || p.runId === merged.joinedFrom[1]) T.picked.delete(p.key);
+    }
+    T.picked.add(key);
+    paint();
+  });
+
   // Clicking the water is the same act as ticking the row.
   document.addEventListener('click', (e) => {
     const k = e.target?.closest?.('.wg-line')?.dataset?.key;

@@ -275,6 +275,15 @@
   #plan-water .wg-for, #plan-water .wg-against { margin:3px 0; padding-left:17px; font-size:11.5px; }
   #plan-water .wg-for li { color:#a5e887; }
   #plan-water .wg-against li { color:#ffab91; }
+  /* CARRY ON INTO THE NEXT PIECE -- see joinsHtml() in plan-water-ui.js. A button, not a tick:
+     taking one replaces the two halves with the run they make, which is a different act from
+     ticking a piece and should not look like one. */
+  #plan-water .wg-joins { display:flex; flex-direction:column; gap:4px; margin:6px 0 2px; }
+  #plan-water .wg-join { display:block; width:100%; text-align:left; cursor:pointer;
+    background:rgba(79,195,247,0.08); border:1px solid rgba(79,195,247,0.35); border-radius:6px;
+    padding:5px 8px; font-size:11.5px; color:#9fd4ff; font-family:inherit; }
+  #plan-water .wg-join:hover { background:rgba(79,195,247,0.16); border-color:rgba(79,195,247,0.6); }
+  #plan-water .wg-join-meta { display:block; color:#8fa5b8; font-size:10.5px; margin-top:2px; }
   #plan-water .wg-line { cursor:pointer; }
   #plan-water #wgSpots { margin-top:14px; }
   /* The cast-spot kind filter. Chips carry their own count; a chip with spots on water already
