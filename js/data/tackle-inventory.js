@@ -7,7 +7,14 @@
  *
  * Strict boundaries:
  *   ✅ What lures Ryan owns
- *   ✅ Physical specs (weight, sizes, jighead options)
+ *   ✅ Physical specs (weight, sizes)
+ *   ✅ WHICH JIGHEADS ARE IN THE BOX -- as `type:'jighead'` entries, and nowhere else.
+ *      Each paddle tail used to carry its own `jigWeights` list. Nothing ever read one,
+ *      all three disagreed with the box (they offered 1/8 and 3/16oz heads Ryan does not
+ *      own), and reading one is what made a session tell him a 4.6" bait tops out at
+ *      1/2oz. WHICH heads fit WHICH bait is a function of length -- lure-knowledge owns
+ *      that rule -- crossed with this list. Storing the answer is what put dive depths in
+ *      three files.
  *   ❌ NO trolling speed -- moved to lure-knowledge.js. Speed is a HARD limit only
  *      for lipped baits (>3mph and they leave their rated depth). For everything
  *      else speed is a math game against lead length, and the real ceiling is
@@ -65,28 +72,29 @@ export const TACKLE_INVENTORY = [
   // ── A-Rigs / Umbrella Rigs ────────────────────────────────────────────────
   { id:'arig_light',  name:'A-Rig Light (~1.65oz) – 3.8" Swimbait',
     type:'umbrella_rig', trollable:true, castable:true, weightOz:1.65,
-    jigWeights:[0.125,0.1875,0.25], sizes:['3.8"'] },
+    sizes:['3.8"'] },
 
   { id:'arig_medium', name:'A-Rig Medium (~2.65oz) – 4.6" Swimbait',
     type:'umbrella_rig', trollable:true, castable:true, weightOz:2.65,
-    jigWeights:[0.1875,0.25,0.375], sizes:['4.6"'] },
+    sizes:['4.6"'] },
 
   { id:'arig_heavy',  name:'A-Rig Heavy (~3.5oz) – 5" Swimbait',
     type:'umbrella_rig', trollable:true, castable:true, weightOz:3.5,
-    jigWeights:[0.25,0.375,0.5], sizes:['5"'] },
+    sizes:['5"'] },
 
   // ── Swimbaits (Paddle Tail) ───────────────────────────────────────────────
   { id:'swimbait_3in', name:'Swimbait 3.8" – Jighead',
-    type:'swimbait_paddle', trollable:true, castable:true, weightOz:null,
-    jigWeights:[0.125,0.1875,0.25], sizes:['3"'], lengthIn: 3.8 },
+    type:'swimbait_paddle', trollable:true, castable:true, weightOz:null, lengthIn: 3.8 },
 
   { id:'swimbait_4in', name:'Swimbait 4.6" – Jighead',
-    type:'swimbait_paddle', trollable:true, castable:true, weightOz:null,
-    jigWeights:[0.1875,0.25,0.375,0.5], sizes:['4"'], lengthIn: 4.6 },
+    type:'swimbait_paddle', trollable:true, castable:true, weightOz:null, lengthIn: 4.6 },
 
   { id:'swimbait_5in', name:'Swimbait 5" – Jighead',
-    type:'swimbait_paddle', trollable:true, castable:true, weightOz:null,
-    jigWeights:[0.25,0.375,0.5,0.75], sizes:['5"'], lengthIn: 5.0 },
+    type:'swimbait_paddle', trollable:true, castable:true, weightOz:null, lengthIn: 5.0 },
+
+  // Ryan, 2026-08-30: "the 6 inch that is not in the inventory that i do have".
+  { id:'swimbait_6in', name:'Swimbait 6" – Jighead',
+    type:'swimbait_paddle', trollable:true, castable:true, weightOz:null, lengthIn: 6.0 },
 
   // ── Underspins ────────────────────────────────────────────────────────────
   { id:'underspin_owner', name:'Underspin Jig (Flashy Swimmer)',
@@ -171,6 +179,10 @@ export const TACKLE_INVENTORY = [
   { id:'jighead_1_25oz', name:'1-1/4oz Jighead', type:'jighead', trollable:true, castable:true, weightOz:1.25 },
 
   { id:'jighead_1_5oz',  name:'1-1/2oz Jighead', type:'jighead', trollable:true, castable:true, weightOz:1.5 },
+
+  // ↑ Ryan, 2026-08-30: "I have everything from 1/4 oz up to i believe 1.5oz... so 1/4, 3/8,
+  // 1/2, 3/4, 1, 1 1/4, 1 1/2 is what i own". Those seven entries ARE that sentence. Add a head
+  // to the box and every picker sees it; there is no second list to remember.
 
   // ── Finesse and Heavy Casting Jigs (New Casting) ──────────────────────────
   { id:'jig_football', name:'Football Jig (Craw/Bluegill Trailer)',
@@ -352,6 +364,20 @@ export async function getInventory() {
 }
 
 // ── Planner API — delegates all scoring to lure-knowledge.js ─────────────────
+/**
+ * Every jighead weight in the box, ascending. Derived, never typed: this is the
+ * `type:'jighead'` entries above and nothing else.
+ *
+ * It lives HERE and not in lure-knowledge.js because it answers "what does Ryan own", which is
+ * this file's only job. lure-knowledge.js owns the RULE for which of these a given bait may
+ * carry, takes this list as an argument, and keeps no copy of it -- a copy is what the six
+ * deleted `jigWeights` arrays were.
+ */
+export const JIGHEADS_OWNED_OZ = TACKLE_INVENTORY
+  .filter((l) => l.type === 'jighead' && l.weightOz > 0)
+  .map((l) => l.weightOz)
+  .sort((a, b) => a - b);
+
 import { scoreLureForContext, getIdealSpeed } from './lure-knowledge.js';
 
 export async function selectBestLure(context = {}) {

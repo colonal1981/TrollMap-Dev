@@ -16,7 +16,7 @@ import { newRodRow } from '../utils/rod-row.js';
 import { depthWindow, leadForDepth, isLeadControlled, jigheadForSwimbait }
   from '../data/lure-knowledge.js';
 import { FISHING_STYLE } from '../data/fishing-style-profile.js';
-import { lureByName } from '../data/tackle-inventory.js';
+import { lureByName, JIGHEADS_OWNED_OZ } from '../data/tackle-inventory.js';
 
 // ── Catalog of presets ────────────────────────────────────────────────────
 
@@ -47,6 +47,7 @@ export const LURE_PRESETS = [
   'Swimbait 3.8" – Jighead',
   'Swimbait 4.6" – Jighead',
   'Swimbait 5" – Jighead',
+  'Swimbait 6" – Jighead',
   'Underspin Jig (Flashy Swimmer)',
   '1/8oz Road Runner / Beetle Spin',
   '1/4oz Road Runner / Beetle Spin',
@@ -232,13 +233,16 @@ export function autoCalculateLead(rod, speedMph) {
   if (isNaN(depth)) return rod.lead || '';
   const lure = lureByName(rod.lure);
   if (!lure) return Math.round((depth > 0 ? depth : 20) * 4.0);
-  // A paddle tail has no weight of its own -- the jighead is the weight, and lead
-  // scales by w^-0.4, so a 1/4oz head needs ~74% more line than a 1oz for the same
-  // depth. Without pairing first, leadForDepth sees weightOz null and falls back to
-  // the 1oz-equivalent ratio for every size of head.
+  // A paddle tail has no weight of its own -- the jighead is the weight, and lead scales by
+  // w^-0.4, so a 1/4oz head needs ~74% more line than a 1oz for the same depth. Without pairing
+  // first, `leadForDepth` sees weightOz null, `applyWeight` short-circuits, and every size of
+  // head gets the 1oz-equivalent ratio. That is exactly what the PLAN path was doing until
+  // 2026-08-30 -- it never called this -- and it priced Ryan's 4.6" swimbait as a 1oz head on
+  // every leg of every plan.
   const paired = jigheadForSwimbait(lure, depth, speedMph,
-                                    { maxLeadFt: FISHING_STYLE.rigging?.maxLeadFt });
-  if (paired) return paired.leadFt;
+                                    { jigheads: JIGHEADS_OWNED_OZ,
+                                      maxLeadFt: FISHING_STYLE.rigging?.maxLeadFt });
+  if (paired && paired.leadFt != null) return paired.leadFt;
   return leadForDepth(lure, depth, speedMph);
 }
 
@@ -252,7 +256,8 @@ export function jigheadForRod(rod, speedMph) {
   const depth = parseFloat(rod.depth);
   if (!lure || isNaN(depth)) return null;
   return jigheadForSwimbait(lure, depth, speedMph,
-                            { maxLeadFt: FISHING_STYLE.rigging?.maxLeadFt });
+                            { jigheads: JIGHEADS_OWNED_OZ,
+                              maxLeadFt: FISHING_STYLE.rigging?.maxLeadFt });
 }
 
 // ── Main renderer ─────────────────────────────────────────────────────────

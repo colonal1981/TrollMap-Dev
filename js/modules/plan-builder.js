@@ -855,7 +855,7 @@ export async function buildPlanPreviewHtml(p){
       <td>${esc(r.position)}</td>
       <td>${esc(r.rod)}</td>
       <td>${esc(r.reel)}</td>
-      <td><b>${esc(r.lure)}${r.trailerSize ? ` <span style="color:#00e5ff;font-size:12px;display:block;margin-top:2px">↳ Trailer: ${esc(r.trailerSize)}</span>` : ''}${r.jigWeight ? ` <span style="color:#76ff03;font-size:12px;display:block;margin-top:2px">↳ Keel: ${esc(r.jigWeight)}</span>` : ''}</b></td>
+      <td><b>${esc(r.lure)}${r.trailerSize ? ` <span style="color:#00e5ff;font-size:12px;display:block;margin-top:2px">↳ Trailer: ${esc(r.trailerSize)}</span>` : ''}${r.jigWeight ? ` <span style="color:#76ff03;font-size:12px;display:block;margin-top:2px">↳ Heads: ${esc(r.jigWeight)}</span>` : ''}</b></td>
       <td>${esc(r.color)}</td>
       <td><b>${esc(r.depth)}</b></td>
       <td><b style="color:var(--accent)">${esc(r.lead)}</b></td>

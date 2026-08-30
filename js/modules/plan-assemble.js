@@ -24,7 +24,59 @@
  */
 
 import { ampHours, minutesFor, metresBetween, cumulative, pointAt, orientLegs } from './plan-candidates.js';
-import { depthWindow, leadForDepth } from '../data/lure-knowledge.js';
+import { depthWindow, leadForDepth, jigheadForSwimbait } from '../data/lure-knowledge.js';
+import { JIGHEADS_OWNED_OZ } from '../data/tackle-inventory.js';
+import { FISHING_STYLE } from '../data/fishing-style-profile.js';
+import { ozLabel } from '../utils/oz.js';
+
+/**
+ * A PADDLE TAIL HAS NO WEIGHT UNTIL A HEAD IS ON IT, AND THE LEAD MATHS NEEDS ONE.
+ *
+ * Ryan, 2026-08-30, reading his own plan: "for the jig head with a 4.6in swimbait... what weight
+ * jig head is it using for the lead, speed, and depth calculations?"
+ *
+ * The answer was 1oz, and nothing chose it. `Swimbait 4.6" – Jighead` carries `weightOz: null`
+ * in the inventory -- correctly, the head IS the weight -- and `applyWeight()` short-circuits on
+ * a falsy weight and hands back the ratio unchanged. That ratio, 4.0, is quoted at refOz 1.0. So
+ * every paddle tail in every plan was silently priced as a 1oz head.
+ *
+ * The Spread tab never had this bug: `autoCalculateLead()` calls `jigheadForSwimbait()` first
+ * and leads for the head it picked. This path just never called it. Two code paths, two answers,
+ * ~44 ft of lead apart on the same bait at the same depth.
+ *
+ * WHICH DEPTH IS THE TARGET. The model's `runsDepthFt` -- where IT wants the bait -- and not the
+ * lead it asked for in the same breath. That is the division of labour this whole file is built
+ * on: depth is judgement, and the head plus the lead that reaches it is arithmetic. The model was
+ * never told a head weight, so its lead was a number about a bait with no mass. Falling back to
+ * the leg's ceiling when it names no depth is not a guess either -- it is the deepest the bait
+ * may legally run here, measured off this leg's own envelope.
+ */
+function fitJighead(lure, rod, speedMph, ceilingFt, id, runId, warnings) {
+  const runs = Array.isArray(rod.runsDepthFt) && rod.runsDepthFt.every(Number.isFinite)
+    ? (rod.runsDepthFt[0] + rod.runsDepthFt[1]) / 2 : null;
+  const target = Number.isFinite(runs) ? runs : ceilingFt;
+  if (!Number.isFinite(target) || target <= 0) return null;
+
+  const fit = jigheadForSwimbait(lure, target, speedMph,
+                                 { jigheads: JIGHEADS_OWNED_OZ,
+                                   maxLeadFt: FISHING_STYLE.rigging?.maxLeadFt });
+  if (!fit) return null;                       // not a paddle tail; the lure carries its own weight
+  if (fit.weightOz == null) {
+    warnings.push(`${id} on ${runId}: a ${rod.lure} has no head the app can fit — ${fit.note}`);
+    return null;
+  }
+  // The two ways it binds mean opposite things, so they are never said the same way.
+  if (fit.cappedBy === 'length') {
+    warnings.push(`${id} on ${runId}: a ${rod.lure} tops out at a ${fit.range.maxOz}oz head — any `
+                + `heavier and the hook tears the bait apart — so ${Math.round(target)} ft needs `
+                + `${fit.leadFt} ft of lead. Go to a longer swimbait if you want that depth.`);
+  } else if (fit.cappedBy === 'lead') {
+    warnings.push(`${id} on ${runId}: a ${rod.lure} on the heaviest head it will carry `
+                + `(${ozLabel(fit.weightOz)}) still needs ${fit.leadFt} ft of lead to make `
+                + `${Math.round(target)} ft, past the ${FISHING_STYLE.rigging?.maxLeadFt} ft you run.`);
+  }
+  return fit;
+}
 
 /**
  * THE SHALLOWEST WATER ON THE LEG IS A CEILING ON HOW DEEP THE BAIT MAY RUN.
@@ -76,10 +128,26 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
   const forThisLeg = {};
   for (const id of ids) {
     const rod = rods.find((r) => r.id === id);
-    if (!rod || !Number.isFinite(rod.leadFt)) continue;
-    const lure = lureByName(rod.lure);
-    if (!lure) continue;
-    const w = depthWindow(lure, { speedMph, leadFt: rod.leadFt });
+    if (!rod) continue;
+    const lureAsBought = lureByName(rod.lure);
+    if (!lureAsBought) continue;
+
+    // Fit a head FIRST, or every number after this is about a bait with no mass. See fitJighead().
+    //
+    // Before the lead guard, not after: a paddle tail's lead is DERIVED from the head, so a rod
+    // the model gave a depth and no lead is answerable here. Skipping it -- which is what the
+    // guard used to do to every rod without a lead -- is the same silence that let a swimbait
+    // fish a whole day at a weight nobody picked.
+    const fit = fitJighead(lureAsBought, rod, speedMph, ceilingFt, id, runId, warnings);
+    const lure = fit ? { ...lureAsBought, weightOz: fit.weightOz } : lureAsBought;
+    const leadFt = fit ? fit.leadFt : rod.leadFt;
+    if (!Number.isFinite(leadFt)) continue;
+    // A fitted head is reported whether or not anything else about this leg had to move. It is
+    // the number Ryan asked for and could not find: `jigWeight` was an empty string on every row
+    // of every plan, because nothing had ever chosen one.
+    if (fit) forThisLeg[id] = { jigheadOz: fit.weightOz, leadFt };
+
+    const w = depthWindow(lure, { speedMph, leadFt });
 
     // A BAIT WITH NO RUNNING DEPTH IS NOT A QUIET PASS, IT IS A ROD FISHING NOTHING.
     //
@@ -101,9 +169,10 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
     if (Array.isArray(rod.runsDepthFt) && Number.isFinite(rod.runsDepthFt[1])
         && Math.abs(rod.runsDepthFt[1] - w.max) > 4) {
       warnings.push(`${id} on ${runId} says it runs to ${rod.runsDepthFt[1]} ft, but `
-                  + `${rod.leadFt} ft of lead at ${speedMph} mph puts a ${rod.lure} at `
+                  + `${leadFt} ft of lead at ${speedMph} mph`
+                  + `${fit ? ` on a ${ozLabel(fit.weightOz)} head` : ''} puts a ${rod.lure} at `
                   + `${w.max} ft — going with the measured number`);
-      forThisLeg[id] = { runsDepthFt: [w.min, w.max] };
+      forThisLeg[id] = { ...(forThisLeg[id] || {}), runsDepthFt: [w.min, w.max] };
     }
 
     if (w.max <= ceilingFt) continue;
@@ -132,12 +201,13 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
     // Lead-controlled baits can be brought up by shortening the lead. A lipped or weighted bait
     // that dives on its own cannot, and there the honest answer is that it is the wrong bait for
     // this leg -- said plainly rather than corrected into something it is not.
-    if (w.mode === 'lead' && shorter && shorter < rod.leadFt) {
-      warnings.push(`${id} on ${runId}: a ${rod.lure} on ${rod.leadFt} ft of lead at ${speedMph} `
-                  + `mph runs to ${w.max} ft, and the shallowest water on this leg is ${ceilingFt} `
-                  + `ft — shortened the lead to ${shorter} ft so it clears`);
+    if (w.mode === 'lead' && shorter && shorter < leadFt) {
+      warnings.push(`${id} on ${runId}: a ${rod.lure}${fit ? ` on a ${ozLabel(fit.weightOz)} head` : ''} `
+                  + `on ${leadFt} ft of lead at ${speedMph} mph runs to ${w.max} ft, and the `
+                  + `shallowest water on this leg is ${ceilingFt} ft — shortened the lead to `
+                  + `${shorter} ft so it clears`);
       const nw = depthWindow(lure, { speedMph, leadFt: shorter });
-      forThisLeg[id] = { leadFt: shorter,
+      forThisLeg[id] = { ...(forThisLeg[id] || {}), leadFt: shorter,
                          runsDepthFt: Number.isFinite(nw.max) ? [nw.min, nw.max]
                                                               : (forThisLeg[id] || {}).runsDepthFt };
     } else {

@@ -198,15 +198,38 @@ export const LURE_KNOWLEDGE = {
     depthMode: 'lead',
     ratedDepth: null,
     leadRatio: 4.0,
-    // Ryan, 2026-08-03: "larger weights have larger hooks that would rip apart a
-    // smaller swimbait... for 2-3 inch nothing more than 1/2 oz, for 3-4 inch
-    // nothing more than 1oz... for the 1.25 or 1.5 those would go with 5+".
+    // WHAT HEAD GOES ON WHAT BAIT, AND WHICH END OF THAT IS A RULE.
     //
-    // This is a HOOK-SIZE cap, not a depth cap, and the difference decides what the
-    // app should say when it binds. The bait is not failing to reach the fish; it is
-    // being torn apart by the hook it is sitting on. So the answer when you run out
-    // of head weight is a LONGER swimbait, never a heavier head. `lengthIn <= cap`.
-    jigheadMaxOzByLengthIn: [[3.0, 0.5], [4.9, 1.0], [null, 1.5]],
+    // Ryan, 2026-08-30, after asking what weight the plan was using: "3.8 in can go with
+    // 1/4-1/2, 4.6 should go with 1/2-1, 5 inch can 3/4 - 1oz and the 6 inch that is not in
+    // the inventory that i do have can go 1-1.5oz".
+    //
+    // This replaced a max-only table seeded from his 2026-08-03 hook-size answer ("larger
+    // weights have larger hooks that would rip apart a smaller swimbait... for 2-3 inch
+    // nothing more than 1/2 oz, for 3-4 inch nothing more than 1oz... for the 1.25 or 1.5
+    // those would go with 5+"). Two of those ceilings were wrong against the sentence above --
+    // it let a 3.8" carry 1oz and a 5" carry 1-1/2oz -- and having no low end at all was the
+    // worse half: `jigheadForSwimbait` takes the lightest head that reaches, so with nothing
+    // holding it up it clipped a 1/4oz head on a 4.6" bait and asked for 104 ft of lead.
+    //
+    // The two ends are not the same kind of thing:
+    //   TOO HEAVY is a HARD LIMIT, and it is hook size. The hook tears the plastic apart. The
+    //            fix is a LONGER bait, never more weight -- reporting it as "cannot reach
+    //            depth" sends you looking for exactly the thing that destroys the bait.
+    //   TOO LIGHT is NOT a limit. Ryan, an hour later: "i mean the 1/4 can go with a 4.6 i was
+    //            just trying to make it a little easier on the app". What a lighter head costs
+    //            is line, and that is a trade rather than a failure: at 2 mph a 4.6" bait holds
+    //            15 ft on 104 ft of lead with a 1/4oz head, 79 ft with a 1/2oz, 60 ft with a
+    //            1oz. Real money behind a kayak with a spread out; still legal.
+    //
+    // Hence `[startOz, maxOz]` and NOT `[minOz, maxOz]`. The picker starts at `startOz`, steps
+    // up through the box only to reach a depth inside the lead budget, and stops at `maxOz`. It
+    // never steps DOWN on its own, because going lighter buys action rather than depth and that
+    // is his call -- any head in the box can still be set by hand in the Spread tab.
+    //
+    // `lengthIn <= bound`, ascending.
+    jigheadOzByLengthIn: [[3.9, [0.25, 0.5]], [4.9, [0.5, 1.0]],
+                          [5.5, [0.75, 1.0]], [null, [1.0, 1.5]]],
     speedAffectsLead: true,
     tacticalDepth: { ideal:14 },
     species:   { striped_bass:8, largemouth_bass:8, smallmouth_bass:7, crappie:5, bowfin:6, catfish:2, redfish:9, trout:9, flounder:7 },
@@ -732,15 +755,6 @@ export function getLureColor(lureType, clarityKey) {
   return LURE_COLORS[lureType]?.[c] || 'Natural Pearl / Smoke';
 }
 
-// ── Jighead selection ─────────────────────────────────────────────────────────
-
-export function getJigheadForDepth(availableWeights, targetDepthFt, speedMph = 1.8) {
-  if (!availableWeights?.length) return null;
-  if (targetDepthFt <= 8)  return availableWeights[0];
-  if (targetDepthFt <= 14) return availableWeights[Math.floor(availableWeights.length / 2)];
-  return availableWeights[availableWeights.length - 1];
-}
-
 // ── Speed helper ──────────────────────────────────────────────────────────────
 
 export function getIdealSpeed(lureType) {
@@ -930,58 +944,93 @@ export function depthWindow(lure, { speedMph, leadFt } = {}) {
 }
 
 /**
- * Which jighead to clip on a paddle tail, and how much lead it then needs.
- *
- * Two independent constraints, and they fail differently:
- *   * DEPTH wants the lightest head that still reaches, because a head heavier
- *     than the job kills the action for nothing.
- *   * HOOK SIZE caps how heavy you may go at all, by the bait's length. Exceed it
- *     and the hook tears the plastic apart.
- *
- * When the cap is what stops you, `cappedBy` is 'length' and the fix is a longer
- * bait -- reporting that as "cannot reach depth" would send you looking for more
- * weight, which is exactly the thing that destroys the bait.
- *
- * Weight is not cosmetic here: leadRatio 4.0 is quoted at 1oz and scales by
- * w^-0.4, so a 1/4oz head needs ~74% more lead than a 1oz head for the same depth.
+ * The head range for a bait of this length: where the picker starts and where it must stop.
+ * Returns null for a type that has no such rule, so a caller cannot mistake "no rule" for a
+ * range it can filter against.
  */
-export const JIGHEADS_OWNED_OZ = [0.25, 0.375, 0.5, 0.75, 1.0, 1.25, 1.5];
-
-export function jigheadCapOz(lengthIn, type = 'swimbait_paddle') {
-  const table = LURE_KNOWLEDGE[type]?.jigheadMaxOzByLengthIn;
-  if (!table) return Infinity;
-  if (lengthIn == null) return table[table.length - 1][1];   // unknown length: least restrictive
-  for (const [cap, maxOz] of table) if (cap == null || lengthIn <= cap) return maxOz;
-  return table[table.length - 1][1];
+export function jigheadRangeOz(lengthIn, type = 'swimbait_paddle') {
+  const table = LURE_KNOWLEDGE[type]?.jigheadOzByLengthIn;
+  if (!table) return null;
+  // An unknown length gets the LAST band, which is the most permissive. That is deliberate: the
+  // cap exists to stop the app tearing a bait apart, and it cannot judge a bait it cannot
+  // measure. Every paddle tail in the inventory declares `lengthIn`; the parity check enforces it.
+  const band = lengthIn == null
+    ? table[table.length - 1][1]
+    : (table.find(([bound]) => bound == null || lengthIn <= bound) || table[table.length - 1])[1];
+  return { startOz: band[0], maxOz: band[1] };
 }
 
+/**
+ * Which jighead to clip on a paddle tail, and how much lead it then needs.
+ *
+ * ONE RULE: start at the head Ryan would reach for on a bait that length, go heavier only to
+ * reach the depth inside the lead budget, stop at the hook-size cap.
+ *
+ * It never goes lighter than `startOz` on its own. A lighter head is legal -- he said so -- but
+ * the only thing it buys is action, and action is his judgement, not the app's arithmetic. What
+ * it costs IS arithmetic: leadRatio 4.0 is quoted at 1oz and scales by w^-0.4, so a 1/4oz head
+ * needs ~74% more lead than a 1oz for the same depth.
+ *
+ * When the cap is what stops you, `cappedBy` is 'length' and the fix is a LONGER bait. Reporting
+ * that as "cannot reach depth" would send you looking for more weight, which is the exact thing
+ * that destroys the bait.
+ *
+ * @param {object} swimbait          inventory entry; needs `type` and `lengthIn`
+ * @param {number} targetDepthFt     where the bait has to run
+ * @param {number} speedMph
+ * @param {object} opts
+ * @param {number[]} opts.jigheads   THE BOX. Required -- `JIGHEADS_OWNED_OZ` from
+ *                                   tackle-inventory.js. This file holds no copy of it on
+ *                                   purpose: a copy is what the six deleted per-lure
+ *                                   `jigWeights` arrays were, and all six had drifted.
+ * @param {number} [opts.maxLeadFt=120]
+ */
 export function jigheadForSwimbait(swimbait, targetDepthFt, speedMph, opts = {}) {
-  // Returns null for anything that is not a paddle tail. Without this the function
-  // defaults the type and happily prices a jighead for a crankbait -- and the caller
-  // in spread-builder, which uses a truthy result to override the lead, would then
-  // hand every lure in the box a swimbait's lead.
-  if (!LURE_KNOWLEDGE[swimbait?.type]?.jigheadMaxOzByLengthIn) return null;
-  const maxLeadFt = opts.maxLeadFt ?? 120;
-  const heads = [...(opts.jigheads || JIGHEADS_OWNED_OZ)].sort((a, b) => a - b);
-  const cap = jigheadCapOz(swimbait?.lengthIn, swimbait?.type || 'swimbait_paddle');
-  const legal = heads.filter(w => w <= cap);
-  const lead = w => leadForDepth({ type: swimbait?.type || 'swimbait_paddle', weightOz: w },
-                                 targetDepthFt, speedMph);
+  // Returns null for anything that is not a paddle tail. Without this the function defaults the
+  // type and happily prices a jighead for a crankbait -- and the caller in spread-builder, which
+  // uses a truthy result to override the lead, would then hand every lure in the box a
+  // swimbait's lead.
+  const range = jigheadRangeOz(swimbait?.lengthIn, swimbait?.type || 'swimbait_paddle');
+  if (!LURE_KNOWLEDGE[swimbait?.type]?.jigheadOzByLengthIn || !range) return null;
 
-  if (!legal.length) {
-    return { weightOz: null, leadFt: null, capOz: cap, cappedBy: 'length',
-             note: `no owned jighead is light enough for a ${swimbait?.lengthIn}" bait` };
+  // NO BOX IS NOT AN EMPTY BOX. Defaulting here is how the owned list came to exist in two
+  // places; saying so out loud is how a caller that forgot finds out.
+  const heads = [...(opts.jigheads || [])].sort((a, b) => a - b);
+  if (!heads.length) {
+    return { weightOz: null, leadFt: null, range, cappedBy: 'no jigheads',
+             note: 'jigheadForSwimbait was not given the box — pass JIGHEADS_OWNED_OZ' };
   }
-  for (const w of legal) {
+
+  const maxLeadFt = opts.maxLeadFt ?? 120;
+  const lead = (w) => leadForDepth({ type: swimbait.type, weightOz: w }, targetDepthFt, speedMph);
+
+  const usable = heads.filter((w) => w >= range.startOz && w <= range.maxOz);
+  if (!usable.length) {
+    // The box has nothing in the band at all. Say which end, because they mean opposite things.
+    const tooLight = heads.every((w) => w < range.startOz);
+    return { weightOz: null, leadFt: null, range,
+             cappedBy: tooLight ? 'box' : 'length',
+             note: tooLight
+               ? `nothing in the box reaches ${range.startOz}oz for a ${swimbait.lengthIn}" bait`
+               : `${range.maxOz}oz is the most a ${swimbait.lengthIn}" bait will carry and the box starts above it` };
+  }
+
+  for (const w of usable) {
     const l = lead(w);
-    if (l <= maxLeadFt) return { weightOz: w, leadFt: l, capOz: cap, cappedBy: null, note: null };
+    if (Number.isFinite(l) && l <= maxLeadFt) {
+      return { weightOz: w, leadFt: l, range, cappedBy: null, note: null };
+    }
   }
-  const w = legal[legal.length - 1];
+
+  // Nothing inside the band gets there on the lead available. The heaviest legal head is the
+  // best the bait can do, and what stopped it is the cap when a heavier head exists in the box.
+  const w = usable[usable.length - 1];
+  const cappedByLength = heads.some((h) => h > range.maxOz);
   return {
-    weightOz: w, leadFt: lead(w), capOz: cap,
-    cappedBy: cap < heads[heads.length - 1] ? 'length' : 'lead',
-    note: cap < heads[heads.length - 1]
-      ? `${cap}oz is the most a ${swimbait?.lengthIn}" bait will carry — go to a longer swimbait for ${targetDepthFt}ft`
+    weightOz: w, leadFt: lead(w), range,
+    cappedBy: cappedByLength ? 'length' : 'lead',
+    note: cappedByLength
+      ? `${range.maxOz}oz is the most a ${swimbait.lengthIn}" bait will carry — go to a longer swimbait for ${targetDepthFt}ft`
       : `even ${w}oz needs more than ${maxLeadFt}ft of lead at ${targetDepthFt}ft`
   };
 }
@@ -999,7 +1048,7 @@ export function isLeadControlled(lure) {
  * question, because for everything except a lipped bait the speed window was never
  * the real constraint.
  */
-export function canReachDepth(lure, depthFt, speedMph, { maxLeadFt } = {}) {
+export function canReachDepth(lure, depthFt, speedMph, { maxLeadFt, jigheads } = {}) {
   const k = LURE_KNOWLEDGE[lure?.type];
   if (!k) return { ok: false, limitedBy: 'unknown lure type' };
 
@@ -1018,6 +1067,22 @@ export function canReachDepth(lure, depthFt, speedMph, { maxLeadFt } = {}) {
              limitedBy: within ? null : 'rating',
              detail: within ? null : `${k.label} is rated ${k.ratedDepth.min}-${k.ratedDepth.max}ft` };
   }
+  // A PADDLE TAIL HAS NO WEIGHT UNTIL A HEAD IS ON IT, and this is the filter that decides
+  // whether the bait is OFFERED at all. Ryan, 2026-08-30, on a plan full of baits that could not
+  // work: "so they shouldn't be offered in the first place... that means that the model is not
+  // being told the right things." Priced as a bare inventory entry, `weightOz` is null,
+  // `applyWeight` short-circuits, and a 3.8" swimbait claims the reach of a 1oz head -- 30 ft
+  // inside a 120 ft lead, when the heaviest head it can carry is 1/2oz and needs 148 ft to get
+  // there. Ask the picker, the same one the plan and the Spread tab use.
+  const fit = jigheads && jigheadForSwimbait(lure, depthFt, speedMph, { jigheads, maxLeadFt });
+  if (fit && fit.weightOz != null) {
+    if (fit.cappedBy) {
+      return { ok: false, leadFt: fit.leadFt, jigheadOz: fit.weightOz,
+               limitedBy: fit.cappedBy === 'length' ? 'hook size' : 'lead', detail: fit.note };
+    }
+    return { ok: true, leadFt: fit.leadFt, jigheadOz: fit.weightOz, limitedBy: null };
+  }
+
   const leadFt = leadForDepth(lure, depthFt, speedMph);
   if (maxLeadFt != null && leadFt > maxLeadFt) {
     return { ok: false, leadFt, limitedBy: 'lead',

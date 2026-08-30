@@ -55,7 +55,7 @@
  */
 
 // ONE PLACE KNOWS HOW DEEP A BAIT RUNS, and until now the prompt was not one of its readers.
-import { depthWindow } from '../data/lure-knowledge.js';
+import { depthWindow, jigheadRangeOz } from '../data/lure-knowledge.js';
 
 // Six rods. This never changes; it is the boat, not a setting.
 export const ROD_IDS = ['R1', 'R2', 'R3', 'R4', 'R5', 'R6'];
@@ -386,6 +386,18 @@ export function buildPlanRequest(o) {
     const w = depthWindow(lure, { speedMph: 2.0, leadFt: null });
     if (w.mode === 'none') return null;                       // the CAST ONLY block says it better
     if (w.mode === 'lead') {
+      // A PADDLE TAIL HAS NO WEIGHT UNTIL A HEAD IS ON IT, and the model was never told so. It
+      // picked 60 ft of lead for Ryan's 4.6" swimbait on his 2026-08-30 Wateree plan — a number
+      // about a bait with no mass — and the app, which had also never fitted a head, priced it
+      // as a 1oz. Say plainly whose half of the job the lead is.
+      const range = jigheadRangeOz(lure.lengthIn, lure.type);
+      if (range && lure.weightOz == null) {
+        return `${name} — the JIGHEAD is the weight, and the app fits it. Say what depth you `
+             + `want this bait at and leave the lead to the app: it clips on the head this bait `
+             + `carries (${range.startOz}-${range.maxOz} oz) and works out the line from that, `
+             + `the speed and the depth you asked for. A lead you pick is a number about a bait `
+             + `with no weight on it yet.`;
+      }
       return `${name} — depth set by LEAD and SPEED. More line out or slower is deeper; `
            + `shorter or faster is shallower. No ceiling: it will go as deep as you feed it.`;
     }

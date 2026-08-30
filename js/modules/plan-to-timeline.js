@@ -63,6 +63,7 @@
  */
 
 import { planCues } from './plan-assemble.js';
+import { ozLabel } from '../utils/oz.js';
 
 // THE MAP AND THE CARD SHARE ONE PALETTE, and this is where it lives.
 //
@@ -128,6 +129,11 @@ function rodView(rod, side, over) {
   // are the 24 ft line with the fish at 15-27 ft and inherited it.
   const leadFt = over && over.leadFt != null ? over.leadFt : rod.leadFt;
   const runs = (over && over.runsDepthFt) || rod.runsDepthFt;
+  // THE HEAD THE PLAN FITTED. Ryan, 2026-08-30: "for the jig head with a 4.6in swimbait... what
+  // weight jig head is it using for the lead, speed, and depth calculations?" It was 1oz by
+  // accident and this field was an empty string on every row of every plan, so there was nowhere
+  // to look it up. capBaitDepth() picks the head now; this is where it becomes readable.
+  const head = over && over.jigheadOz != null ? ozLabel(over.jigheadOz) : '';
   return {
     side,
     rod: rod.id || '',
@@ -136,7 +142,7 @@ function rodView(rod, side, over) {
     lead: leadFt ?? '',
     depth: Array.isArray(runs) ? runs.join('–') : '',
     reel: '',
-    trailerSize: '', arigWeight: '', jigWeight: '',
+    trailerSize: '', arigWeight: '', jigWeight: head,
     notes: clean(rod.why),
   };
 }

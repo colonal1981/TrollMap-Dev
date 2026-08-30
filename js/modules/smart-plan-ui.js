@@ -17,7 +17,7 @@ import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
 import { LURE_PRESETS, autoCalculateLead } from './spread-builder.js';
 import { getLureColor, canReachDepth } from '../data/lure-knowledge.js';
-import { lureByName } from '../data/tackle-inventory.js';
+import { lureByName, JIGHEADS_OWNED_OZ } from '../data/tackle-inventory.js';
 import { FISHING_STYLE } from '../data/fishing-style-profile.js';
 
 // ── Reel assignment rule ──────────────────────────────────────────────────────
@@ -863,7 +863,8 @@ function buildOneRod(targetDepth, rec, timeOfDay, clarityKey, speedMph, slotIdx,
       const entry = lureByName(l);
       if (!entry) return true;
       return canReachDepth(entry, targetDepth, speedMph,
-                           { maxLeadFt: FISHING_STYLE.rigging.maxLeadFt }).ok;
+                           { maxLeadFt: FISHING_STYLE.rigging.maxLeadFt,
+                             jigheads: JIGHEADS_OWNED_OZ }).ok;
     });
 
   let lureName = candidates[slotIdx] || candidates[0] || fallbackLure(targetDepth, excludeLure, slotIdx);
