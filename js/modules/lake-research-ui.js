@@ -1,5 +1,5 @@
 import { state, CF_WORKER_URL } from '../core/state.js';
-import { _state, runFullPipeline, runResume, validateExistingFacts, recoverSmartPlanFacts, deriveGeospatialStructureFacts, RESEARCH_ORDER, FRESHWATER_RESEARCH_ORDER, COASTAL_RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log, renderLog, isCoastalLake, getResearchOrderForLake } from './lake-research-engine.js';
+import { _state, runFullPipeline, runResume, validateExistingFacts, recoverSmartPlanFacts, deriveGeospatialStructureFacts, RESEARCH_ORDER, FRESHWATER_RESEARCH_ORDER, COASTAL_RESEARCH_ORDER, FRESHWATER_PROFILE_SECTIONS, COASTAL_PROFILE_SECTIONS, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log, renderLog, isCoastalLake, getResearchOrderForLake } from './lake-research-engine.js';
 import { COASTAL_ZONES, isCoastalKey } from '../data/coastal-zones.js';
 import { appendCoastalOptgroups } from '../utils/coastal-optgroups.js';
 import { resolveR2Key } from '../data/lake-keys.js';
@@ -355,23 +355,27 @@ function renderEmpty(lakeName) {
 
 function esc(s) { return String(s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
+// WHAT THE CARD DRAWS, which is no longer the same list as what runs. `regulations` has no agent
+// any more -- the digest is parsed live and checkRegulations() reads its closures -- and the
+// section is still filled and still worth looking at, so it is still drawn. This returns the
+// SECTION list; the run modal below asks for the agent list.
 function getEffectiveResearchOrderForRender() {
   try {
     const name = _state.currentLakeName || '';
-    if (isCoastalLake(name)) return COASTAL_RESEARCH_ORDER;
+    if (isCoastalLake(name)) return COASTAL_PROFILE_SECTIONS;
     // Also check if profile itself looks coastal (has estuary)
     const prof = _state.currentProfile;
-    if (prof && (prof.estuary || prof.tidal || prof.saltwaterRegulations || prof.saltwater_regulations)) return COASTAL_RESEARCH_ORDER;
+    if (prof && (prof.estuary || prof.tidal || prof.saltwaterRegulations || prof.saltwater_regulations)) return COASTAL_PROFILE_SECTIONS;
     // Fallback: check R2 key via display name
     const r2 = resolveR2Key(name);
-    if (r2 && isCoastalKey(r2)) return COASTAL_RESEARCH_ORDER;
+    if (r2 && isCoastalKey(r2)) return COASTAL_PROFILE_SECTIONS;
   } catch (err) {
     // Deciding which research questions to ask about this water. Falling through to the
     // freshwater order is a reasonable default, but doing it for a coastal lake because
     // something threw means the whole saltwater question set silently never runs.
     console.warn('[lake-research-ui] coastal detection failed, using the freshwater order:', err);
   }
-  return FRESHWATER_RESEARCH_ORDER;
+  return FRESHWATER_PROFILE_SECTIONS;
 }
 
 function renderProfile(profile) {

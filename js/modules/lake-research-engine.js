@@ -35,8 +35,25 @@ import { prepareNormalizedDocuments } from '../utils/doc-relevance.js';
 // Setup global caches and references
 window.TROLLMAP_RESEARCHED_CACHE = window.TROLLMAP_RESEARCHED_CACHE || {};
 
-const FRESHWATER_RESEARCH_ORDER = ['identity', 'limnology', 'biology', 'habitat', 'navigation', 'regulations', 'fisheries', 'summary'];
-const COASTAL_RESEARCH_ORDER = ['estuary', 'tidal', 'biology', 'habitat', 'navigation', 'saltwater_regulations', 'fisheries', 'summary'];
+// WHICH AGENTS RUN. One list, and until now it was also the list of sections the research card
+// draws -- so retiring an agent would silently blank a card, and a section the pipeline fills
+// WITHOUT an agent could not be shown at all.
+//
+// Those are two different questions and the refactor needs them apart:
+// RESEARCH_REFACTOR_END_STATE_2026-08-27.md retires ten of eleven agents while several of their
+// sections keep being filled deterministically. `regulations` is the first of them --
+// deterministic.js and the live digest fill regulations.*, and checkRegulations() has read the
+// digest's closures since the hand table was deleted on 2026-08-27, so an LLM writing that
+// section is a third source of a fact we already parse out of the book.
+const FRESHWATER_RESEARCH_ORDER = ['identity', 'limnology', 'biology', 'habitat', 'navigation', 'fisheries', 'summary'];
+const COASTAL_RESEARCH_ORDER = ['estuary', 'tidal', 'biology', 'habitat', 'navigation', 'fisheries', 'summary'];
+
+// WHAT THE RESEARCH CARD DRAWS. A superset of the agent list, and it stays a superset: a section
+// with no agent is filled by the deterministic pass or the live digest, and Ryan still has to be
+// able to look at it. Retiring an agent removes it from the run list above and nothing else.
+const FRESHWATER_PROFILE_SECTIONS = ['identity', 'limnology', 'biology', 'habitat', 'navigation', 'regulations', 'fisheries', 'summary'];
+const COASTAL_PROFILE_SECTIONS = ['estuary', 'tidal', 'biology', 'habitat', 'navigation', 'saltwater_regulations', 'fisheries', 'summary'];
+
 // Default export kept for backwards compatibility — callers should use getResearchOrderForLake()
 const RESEARCH_ORDER = FRESHWATER_RESEARCH_ORDER;
 
@@ -76,10 +93,6 @@ const AGENT_DEFINITIONS = {
     label: '🧭 Navigation',
     targetFields: ['navigation.ramps', 'navigation.hazards', 'navigation.notes'],
   },
-  regulations: {
-    label: '📜 Regulations',
-    targetFields: ['regulations.generalStateRegulations', 'regulations.lakeSpecificRegulations'],
-  },
   fisheries: {
     label: '🧠 Species Intelligence',
     targetFields: ['trollingIntelligence'],
@@ -98,11 +111,6 @@ const AGENT_DEFINITIONS = {
     label: '🌊 Tidal Dynamics',
     coastal: true,
     targetFields: ['tidal.datum', 'tidal.stratificationType', 'tidal.salinityPpt', 'tidal.tidalCurrentKts', 'tidal.flushingTimeDays', 'tidal.waterTempF', 'tidal.turbidity'],
-  },
-  saltwater_regulations: {
-    label: '📜 Saltwater Regs',
-    coastal: true,
-    targetFields: ['saltwaterRegulations', 'regulations.generalStateRegulations', 'regulations.lakeSpecificRegulations'],
   },
 };
 
@@ -1208,7 +1216,10 @@ const COASTAL_VALIDATION_FIELD_PATHS = [
   'habitat.bottomComposition', 'habitat.cover', 'habitat.vegetation',
   'habitat.riprapLocations', 'habitat.namedCreekMouths', 'habitat.shallowFlatAreas',
   'navigation.ramps', 'navigation.hazards', 'navigation.notes',
-  'saltwaterRegulations', 'saltwater_regulations', 'regulations'
+  // `saltwaterRegulations`, `saltwater_regulations` and `regulations` were here, which meant the
+  // validation pass asked an LLM to fill the regulations section even with no agent targeting it.
+  // The freshwater list never had them. The coastal digest and fetchLiveRegsAmendments() answer
+  // this now, and a proclamation-driven rule is precisely the thing not to freeze into a profile.
 ];
 
 function valueAtPath(obj, path) {
@@ -1772,8 +1783,8 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
     // Sources without prefetchScore get a default of 3 so they're not unfairly cut.
     const AGENT_SOURCE_CAPS = {
       identity: 8, limnology: 12, biology: 12, habitat: 8,
-      navigation: 8, regulations: 5, fisheries: 10, summary: 0,
-      estuary: 8, tidal: 12, saltwater_regulations: 5,
+      navigation: 8, fisheries: 10, summary: 0,
+      estuary: 8, tidal: 12,
     };
     const cap = AGENT_SOURCE_CAPS[agentKey] ?? 10;
     const guaranteed = sources.filter(s => s.priority === 1);
@@ -1844,9 +1855,6 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
       const summaryDocs = existingDocs.filter(d => String(d.fullText || d.text || '').length >= 200);
       normalizedDocuments.push(...summaryDocs);
       log(`  [summary] Loaded ${summaryDocs.length} cached normalized docs for summary context`);
-    // Regulations agent: already in deterministic facts — skip fetching
-    } else if (agentKey === 'regulations') {
-      log(`  [regulations] Using KV-cached state regulations — no fetch needed`);
     } else if (mode === 'resume') {
       // Start with whatever is in the normalized cache
       // Filter to agent-tagged docs first, fall back to full cache if none
@@ -2121,7 +2129,7 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
       }
     }
 
-    if (!normalizedDocuments.length && agentKey !== 'regulations') {
+    if (!normalizedDocuments.length) {
       log(`  [${agentKey}] No documents fetched — running LLM with deterministic context only`);
     }
 
@@ -2443,13 +2451,15 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
 
   const results = [];
   // Wave structure freshwater:
-  //   Wave1: identity, limnology, habitat, navigation, regulations
+  //   Wave1: identity, limnology, habitat, navigation
   //   Wave2: biology → fisheries (serial)
   // Wave structure coastal (per COASTAL_IMPLEMENTATION_NOTES §5):
-  //   Wave1: estuary (replaces identity), tidal (replaces limnology), habitat, navigation, saltwater_regulations (replaces regulations)
+  //   Wave1: estuary (replaces identity), tidal (replaces limnology), habitat, navigation
   //   Wave2: biology, fisheries (shared, with coastal hints)
-  const FRESH_WAVE1 = ['identity', 'limnology', 'habitat', 'navigation', 'regulations'];
-  const COASTAL_WAVE1 = ['estuary', 'tidal', 'habitat', 'navigation', 'saltwater_regulations'];
+  // `regulations` and `saltwater_regulations` were the fifth member of each wave and are retired;
+  // the digest is parsed live and its closures are what checkRegulations() reads.
+  const FRESH_WAVE1 = ['identity', 'limnology', 'habitat', 'navigation'];
+  const COASTAL_WAVE1 = ['estuary', 'tidal', 'habitat', 'navigation'];
   const WAVE1_AGENTS = coastalForRun ? COASTAL_WAVE1 : FRESH_WAVE1;
   const WAVE2_AGENTS = ['biology', 'fisheries'];
   const wave1 = parallelAgents.filter(k => WAVE1_AGENTS.includes(k));
@@ -2843,14 +2853,6 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
       if (merged.waterClarity) merged.waterClarity.secchiFt = coerceNum(merged.waterClarity.secchiFt);
       if (merged.seasonalDrawdownFt != null) merged.seasonalDrawdownFt = coerceNum(merged.seasonalDrawdownFt) ?? merged.seasonalDrawdownFt;
     }
-    // Regulations: deep-merge lakeSpecificRegulations — don't let empty overwrite populated
-    if (agentKey === 'regulations' && data.section?.lakeSpecificRegulations) {
-      const existingLsr = existing.lakeSpecificRegulations || {};
-      const agentLsr    = data.section.lakeSpecificRegulations;
-      const mergedCreel = (agentLsr.creelLimits && Object.keys(agentLsr.creelLimits).length) ? agentLsr.creelLimits : (existingLsr.creelLimits || {});
-      const mergedSize  = (agentLsr.sizeLimits  && Object.keys(agentLsr.sizeLimits).length)  ? agentLsr.sizeLimits  : (existingLsr.sizeLimits  || {});
-      merged.lakeSpecificRegulations = { ...existingLsr, ...agentLsr, creelLimits: mergedCreel, sizeLimits: mergedSize };
-    }
     // Biology: species list is always additive — never let agent shrink the list.
     // Normalize to Title Case before deduplication so 'largemouth bass' and
     // 'Largemouth Bass' don't both appear. Filter blanks and baitfish/non-predators.
@@ -3137,54 +3139,12 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
         regMapCount++;
       }
     }
-    // Merge saltwaterRegulations agent structured output into generalStateRegulations
-    const swAgent = agentSections.saltwaterRegulations || {};
-    if (swAgent && typeof swAgent === 'object' && swAgent.species && typeof swAgent.species === 'object') {
-      const speciesKeyMap = {
-        redDrum: 'Red Drum (Redfish)',
-        spottedSeatrout: 'Spotted Seatrout',
-        southernFlounder: 'Southern Flounder',
-        blackDrum: 'Black Drum',
-        sheepshead: 'Sheepshead',
-        tripletail: 'Tripletail',
-        cobia: 'Cobia',
-      };
-      for (const [swKey, entry] of Object.entries(swAgent.species)) {
-        const label = speciesKeyMap[swKey] || swKey;
-        if (entry && typeof entry === 'object') {
-          if (entry.minSizeIn != null && entry.maxSizeIn != null) {
-            if (!reg.generalStateRegulations.lengthLimits[label]) {
-              reg.generalStateRegulations.lengthLimits[label] = `${entry.minSizeIn}–${entry.maxSizeIn}" slot`;
-              regMapCount++;
-            }
-          } else if (entry.minSizeIn != null) {
-            if (!reg.generalStateRegulations.lengthLimits[label]) {
-              reg.generalStateRegulations.lengthLimits[label] = `${entry.minSizeIn}" minimum`;
-              regMapCount++;
-            }
-          }
-          if (entry.dailyLimit != null && !reg.generalStateRegulations.creelLimits[label]) {
-            reg.generalStateRegulations.creelLimits[label] = `${entry.dailyLimit} per day`;
-            regMapCount++;
-          }
-          if (entry.harvestClosed && entry.closedSeason) {
-            const noteText = `${label}: closed ${entry.closedSeason}`;
-            const exists = reg.lakeSpecificRegulations.closedSeasons.some(x => (x?.note || x) === noteText);
-            if (!exists) { reg.lakeSpecificRegulations.closedSeasons.push({ note: noteText, source: 'saltwater_regulations agent' }); regMapCount++; }
-          }
-        }
-      }
-      if (Array.isArray(swAgent.gearRestrictions)) {
-        for (const gr of swAgent.gearRestrictions) {
-          const rule = String(gr || '').trim();
-          if (rule && !reg.lakeSpecificRegulations.specialRules.includes(rule)) {
-            reg.lakeSpecificRegulations.specialRules.push(rule);
-            regMapCount++;
-          }
-        }
-      }
-      if (swAgent.amendmentNote && !reg.notes) reg.notes = swAgent.amendmentNote;
-    }
+    // THE saltwater_regulations AGENT'S STRUCTURED OUTPUT WAS MERGED HERE AND THE AGENT IS GONE.
+    // Its own scope doc argued itself out of existence: NC closes southern flounder and spotted
+    // seatrout BY PROCLAMATION mid-season, so a stored saltwaterRegulations block is a snapshot of
+    // a rule that can be superseded the following week. fetchLiveRegsAmendments() already asks the
+    // state for exactly that, and coastal-regulations.js consults the live digest first.
+    // The fact-derived mapping above stays -- those come from extracted documents, not an LLM.
     // hasExceptions flag: true if we captured any lake-specific rule or closure
     if (reg.lakeSpecificRegulations.specialRules.length || reg.lakeSpecificRegulations.closedSeasons.length) {
       reg.lakeSpecificRegulations.hasExceptions = true;
@@ -3261,7 +3221,6 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
     fisheries:  ['trollingIntelligence'],
     estuary:    ['estuary.waterBodyType','estuary.meanTidalRangeFt','estuary.primaryInlets','estuary.tributaryRivers','estuary.marshAcreage','estuary.oysterPresence','identity.bodyType','identity.zoneType','identity.tideStation'],
     tidal:      ['tidal.datum','tidal.stratificationType','tidal.salinityPpt','tidal.tidalCurrentKts','tidal.flushingTimeDays','tidal.waterTempF','tidal.turbidity','limnology.salinity','limnology.tidalRange'],
-    saltwater_regulations: ['saltwaterRegulations','saltwater_regulations','regulations','regulations.generalStateRegulations.lengthLimits','regulations.generalStateRegulations.creelLimits'],
   };
   // Map agent keys to their section paths for validation — fisheries writes to trollingIntelligence
   const agentSectionPath = (section) => section === 'fisheries' ? 'trollingIntelligence' : section;
@@ -3388,4 +3347,4 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
   return { contradictions };
 }
 
-export { runFullPipeline, runAgents, runAgent, runResume, assembleAndSaveProfile, validateExistingFacts, recoverSmartPlanFacts, deriveGeospatialStructureFacts, renderLog, _state, RESEARCH_ORDER, FRESHWATER_RESEARCH_ORDER, COASTAL_RESEARCH_ORDER, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log, getCoastalR2Key, isCoastalLake, getResearchOrderForLake, getCoastalZoneMeta };
+export { runFullPipeline, runAgents, runAgent, runResume, assembleAndSaveProfile, validateExistingFacts, recoverSmartPlanFacts, deriveGeospatialStructureFacts, renderLog, _state, RESEARCH_ORDER, FRESHWATER_RESEARCH_ORDER, COASTAL_RESEARCH_ORDER, FRESHWATER_PROFILE_SECTIONS, COASTAL_PROFILE_SECTIONS, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log, getCoastalR2Key, isCoastalLake, getResearchOrderForLake, getCoastalZoneMeta };

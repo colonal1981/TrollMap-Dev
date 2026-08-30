@@ -86,10 +86,14 @@ const NOT_FOR_THE_PLANNER = {
   'habitat.artificialHabitat': 'the Details.attractorCount/Types fields carry the usable form',
   'navigation.ramps': 'the access index is authoritative and the ramp is chosen in the form',
   'navigation.notes': 'free prose, no reliable structure',
-  'navigation.hazards': 'hazards are handed to the prompt from the pack, not the profile',
-  'regulations.generalStateRegulations': 'checked separately and hard-blocks before planning',
-  'regulations.lakeSpecificRegulations': 'checked separately and hard-blocks before planning',
-  saltwaterRegulations: 'checked separately and hard-blocks before planning, coastal',
+  // `navigation.hazards` WAS EXCUSED HERE with "handed to the prompt from the pack, not the
+  // profile" -- half true and the half that was false hid a gap. The pack's charted hazards were
+  // reaching nothing, and neither was the profile's prose. Both do now, chart first, so this is a
+  // consumed field and the test below is what checks it.
+  //
+  // The three regulations entries that stood here are gone with the agents that produced them:
+  // no `targetFields` names them any more, so excusing them was a stale excuse -- which is the
+  // exact thing the last test in this file is for, and it is what caught them.
   // Coastal / tidal. v2 has only been run on reservoirs; when it plans a coastal day these
   // become real and this list should shrink.
   'estuary.marshAcreage': 'coastal — v2 is reservoir-only so far',
