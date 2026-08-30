@@ -217,7 +217,7 @@ describe('a real alert reaches a real subscription with its words intact', () =>
     } finally { globalThis.fetch = realFetch; }
   });
 
-  it('and nothing is left in a queue for it to go and fetch', async () => {
+  it('and the queue is written anyway, because the service worker may be older than us', async () => {
     const sub = await browserSubscription();
     const env = { ...vapidEnv(), KV: kvStub() };
     const realFetch = globalThis.fetch;
@@ -237,9 +237,19 @@ describe('a real alert reaches a real subscription with its words intact', () =>
         cues: [{ at: new Date().toISOString(), title: 'A', body: 'B', tag: 't', severity: 'note', fired: false }],
       }));
       await runAlertSweep(env, Date.now());
-      // THE POINT OF THE WHOLE CHANGE. The stale-queue race cannot happen if there is no queue.
+      // THE FIRST CUT OF THIS ASSERTED ZERO -- no queue, no stale-queue race -- and Ryan's phone
+      // disproved it inside the hour: 'A weather alert fired. Open TrollMap for the details.',
+      // a string that exists only in the OLD sw.js. A service worker updates when the browser
+      // next fetches it, and a push does not trigger that check, so a phone that has not opened
+      // the app is running the worker it installed weeks ago. That is the NORMAL state for this
+      // channel, which exists for when the app is closed.
+      //
+      // The Worker deploys on push and the service worker does not, so skipping the write turned
+      // "sometimes stale" into "empty, every time". A current service worker returns on the
+      // payload and never reads this; an old one finds the words.
       const rec = JSON.parse(await env.KV.get(await deviceKey(ENDPOINT)));
-      expect((rec.pending || []).length).toBe(0);
+      expect(rec.pending.length).toBe(1);
+      expect(rec.pending[0].title).toBe('A');
     } finally { globalThis.fetch = realFetch; }
   });
 

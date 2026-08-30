@@ -510,12 +510,10 @@ export async function handleAlerts(request, env, url) {
       // Queued BEFORE the push, same as the sweep: a phone that wakes and is told nothing reads
       // as a false alarm, which is the fastest way to teach him to ignore this channel.
       const carries = !!(d.keys && d.keys.p256dh && d.keys.auth);
-      // Queued only for a device that cannot carry the words itself -- same rule as the sweep,
-      // so the test exercises the path the real alert will take rather than a friendlier one.
-      if (!carries) {
-        d.pending = [...(d.pending || []), alert].slice(-20);
-        await env.KV.put(e.name, JSON.stringify(d));
-      }
+      // Queued for every device, same rule as the sweep and for the same reason: the service
+      // worker that receives this may be older than the Worker that sent it.
+      d.pending = [...(d.pending || []), alert].slice(-20);
+      await env.KV.put(e.name, JSON.stringify(d));
       const res = await pushTo(d, carries ? alert : null, env, Date.now());
       if (res === 'gone') await env.KV.delete(e.name);
       results.push({ label: d.label, result: res, carries_words: carries });
@@ -634,11 +632,27 @@ export async function runAlertSweep(env, nowMs) {
   // another colo for up to a minute, and the wake takes a second. See pushTo() for the whole
   // account and for Ryan's report of what it produced.
   //
-  // THE QUEUE IS STILL WRITTEN, but only for devices that cannot be encrypted for -- a device
-  // registered before today, whose record has no keys. For everything else the words are in the
-  // push and there is nothing to fetch, so nothing to be stale.
-  const legacy = devices.filter((d) => !(d.rec.keys && d.rec.keys.p256dh && d.rec.keys.auth));
-  for (const d of legacy) {
+  // THE QUEUE IS STILL WRITTEN FOR EVERY DEVICE, AND THE FIRST CUT OF THIS ONLY WROTE IT FOR THE
+  // ONES THAT COULD NOT BE ENCRYPTED FOR. That was tidy and it was wrong, and Ryan's phone found
+  // it inside the hour:
+  //
+  //   "and I literally just got this notification" -- 'A weather alert fired. Open TrollMap for
+  //   the details.'
+  //
+  // That string exists only in the OLD sw.js. A service worker updates when the browser next
+  // fetches it, which happens on a visit; a PUSH does not trigger an update check. So a phone
+  // that has not opened the app is still running the service worker it installed weeks ago --
+  // and that is not a transitional state, it is the normal one, because this whole channel
+  // exists for when the app is closed.
+  //
+  // The two halves ship independently. The Worker deployed the moment he pushed; the service
+  // worker on the phone did not. An old service worker ignores the payload entirely and fetches
+  // this queue, so not writing it turned "sometimes stale" into "empty, every single time" --
+  // strictly worse than what it replaced.
+  //
+  // One KV write is the whole price. A current service worker reads the payload and returns
+  // before it ever asks, so for it the queue is simply never read; an old one finds the words.
+  for (const d of devices) {
     d.rec.pending = [...(d.rec.pending || []), ...queued].slice(-20);
     await env.KV.put(d.key, JSON.stringify(d.rec));
   }
