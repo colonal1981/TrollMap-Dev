@@ -69,6 +69,27 @@ describe('castSpots lists the charted features with no lanes at all', () => {
     expect(spots.length).toBe(6);
   });
 
+  it('a lane sighting that matches nothing in the file is DROPPED, not kept', () => {
+    // `near[]` is computed when the RUNS are built. Wateree's were annotated before the
+    // 2026-08-29 relief rebuild took the lake from 7,315 structures to 625, so they carry 4,060
+    // hump sightings of humps that no longer exist. Those used to fall through to the distance
+    // merge and become spots in their own right -- 412 humps on a lake with 52. The file is the
+    // whole truth for a kind the pack has a file for.
+    const ghost = { type: 'Feature',
+      geometry: { type: 'LineString', coordinates: [[-80.60, 34.30], [-80.59, 34.31]] },
+      properties: { length_m: 200, near: [{ t: 'hump', s: 100, d: 30 }] } };
+    const spots = castSpots([ghost], { features });
+    expect(spots.filter((s) => s.type === 'hump').length).toBe(1);   // the one in the file
+  });
+
+  it('but a kind with NO file keeps its estimate, because that is all there is', () => {
+    // Timber, piles and attractors live only in near[] on packs without a pois layer.
+    const lane = { type: 'Feature',
+      geometry: { type: 'LineString', coordinates: [[-80.7355, 34.3719], [-80.7345, 34.3721]] },
+      properties: { length_m: 200, near: [{ t: 'pile', s: 100, d: 20 }] } };
+    expect(castSpots([lane], { features }).filter((s) => s.type === 'pile').length).toBe(1);
+  });
+
   it('a kind the form cannot express is not a cast spot', () => {
     // pois.geojson also yields hazards, shallows and bridges. Things to know about, not to cast at.
     const spots = castSpots([], { features: [pt('hazard', -80.73, 34.37), pt('shallow', -80.74, 34.38)] });
@@ -114,6 +135,20 @@ describe('dockSpotFeatures groups docks along the shore, not along a route', () 
     const spots = castSpots([], { features: docks });
     expect(spots.length).toBe(1);
     expect(spots[0].what).toBe(SPOT_KINDS.dock_line);
+  });
+
+  it('a dock drawn as a POLYGON collapses to its centre', () => {
+    // Every one of Wateree's 2,796 docks is a Polygon outline of the structure. The first version
+    // handled Point and LineString, so `coordinates[0]` came back as a whole ring, Number.isFinite
+    // refused it, and all 2,796 were silently dropped -- no dock chip at all on a lake full of
+    // them.
+    const poly = (lon, lat) => ({ type: 'Feature', properties: {},
+      geometry: { type: 'Polygon', coordinates: [[[lon, lat], [lon + 0.0001, lat],
+                                                  [lon + 0.0001, lat + 0.0001], [lon, lat]]] } });
+    const out = dockSpotFeatures({ features: [poly(-80.75, 34.37)] });
+    expect(out.length).toBe(1);
+    expect(out[0].geometry.coordinates[0] > -80.7502).toBe(true);
+    expect(out[0].geometry.coordinates[0] < -80.7498).toBe(true);
   });
 
   it('survives an empty or absent file', () => {

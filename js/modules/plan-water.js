@@ -1152,6 +1152,21 @@ export function castSpots(lanes, { features = null, mergeM = 60, extraSpots = nu
         at = best.at; id = best.id;
         depthFt = Number.isFinite(best.depthFt) && best.depthFt > 0 ? best.depthFt : null;
         key = `${r.type}@${at[0].toFixed(5)},${at[1].toFixed(5)}`;
+      } else {
+        // A LANE SIGHTING THAT MATCHES NOTHING IN THE FILE IS A GHOST, AND THE FILE WINS.
+        //
+        // `near[]` is computed when the RUNS are built, against whatever structure.geojson said
+        // that day. Wateree's runs were annotated before the 2026-08-29 relief rebuild took the
+        // lake from 7,315 structures to 625, so they carry 4,060 hump sightings — of which only
+        // some land within 250 m of one of the 52 humps that still exist. The rest used to fall
+        // through to the distance merge below and become spots in their own right: 412 humps on a
+        // lake with 52, and 48 phantom points and 44 phantom coves beside them. Ryan deleted
+        // those humps on the 29th and they came back through this door.
+        //
+        // For a kind the pack has a FILE for, the file is the whole truth and `near[]` may only
+        // refine a position, never invent one. Kinds with no file — timber, piles, attractors —
+        // still fall through, because for them the estimate is all there is.
+        continue;
       }
     }
     if (!key) {

@@ -625,18 +625,30 @@ const DOCK_LINE_MIN = 4;
  * Three shapes, kept from groupDocks: a line is placed at one end because that is where you start
  * running it; a pocket and a lone dock are placed at their middle because that is what you stop on.
  */
+/** The mean of every coordinate in any GeoJSON geometry, or null if it holds none. */
+function centreOf(coords) {
+  let sx = 0, sy = 0, n = 0;
+  const walk = (c) => {
+    if (!Array.isArray(c) || !c.length) return;
+    if (Number.isFinite(c[0]) && Number.isFinite(c[1])) { sx += c[0]; sy += c[1]; n += 1; return; }
+    for (const x of c) walk(x);
+  };
+  walk(coords);
+  return n ? [sx / n, sy / n] : null;
+}
+
 export function dockSpotFeatures(docksFc) {
   const pts = [];
   for (const f of ((docksFc && docksFc.features) || [])) {
     const g = f && f.geometry;
     if (!g) continue;
-    // A dock is drawn as a point in some packs and a little line in others. Either way what is
-    // wanted is where it is, so a line collapses to its first vertex.
-    const c = g.type === 'Point' ? g.coordinates
-      : (Array.isArray(g.coordinates) && Array.isArray(g.coordinates[0]) ? g.coordinates[0] : null);
-    if (Array.isArray(c) && c.length >= 2 && Number.isFinite(c[0]) && Number.isFinite(c[1])) {
-      pts.push([c[0], c[1]]);
-    }
+    // A DOCK IS A POLYGON. Every one of Wateree's 2,796 is `Polygon`, an outline of the
+    // structure — the first version of this handled Point and LineString, so `coordinates[0]`
+    // came back as a whole ring, `Number.isFinite` refused it, and all 2,796 were silently
+    // dropped. What is wanted is where the dock IS, so any shape collapses to the mean of its
+    // vertices.
+    const c = centreOf(g.coordinates);
+    if (c) pts.push(c);
   }
   if (!pts.length) return [];
 
