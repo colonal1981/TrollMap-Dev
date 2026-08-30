@@ -506,6 +506,21 @@ export function lakeDbEntryFor(query) {
   return {
     slug: r.slug,
     name: r.displayName,
+    // THE STATE, WITHOUT WHICH NO INLAND WATER HAS REGULATIONS.
+    //
+    // This projection is built field by field, and `state` was not one of them. It is on the
+    // record -- the builder sets `state: rec.state` -- and it was dropped on the way out, so
+    // `lakeDbEntryFor(x).state` has been `undefined` for every water in the app.
+    //
+    // plan-preflight.js reads exactly that: `st || (lakeDbEntryFor(lakeName) || {}).state ||
+    // null`, under a comment saying "THE STATE IS WHAT UNLOCKS THE DIGEST. Inland it comes off
+    // the registry row". The intent was right and the field was not there, so `inlandState` was
+    // null on EVERY inland lake, `livePolicyFor` was never asked, and the plan said "No
+    // regulation data for Lake Wateree, SC — verify with the state before you keep one" on a
+    // lake whose book South Carolina names by name for blue catfish. Every offline rule in
+    // registry/regulations_table.json was reaching the browser and stopping one field short of
+    // the planner. Ryan saw it in a preflight on 2026-08-30.
+    state: r.state || null,
     center: [r.lat, r.lon, r.areaAcres > 5000 ? 11 : r.areaAcres > 500 ? 12 : 13],
     bounds: Array.isArray(b) && b.length === 4 ? [[b[1], b[0]], [b[3], b[2]]] : null,
     usgs: r.usgs || null,

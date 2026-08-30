@@ -994,6 +994,23 @@
 
           <!-- INPUTS CARD -->
           <div class="card plan-section">
+            <!-- THE PLAN'S NAME, VISIBLE, BECAUSE SAVING REFUSES WITHOUT ONE.
+                 This was `<input type="hidden" id="planName">` under a comment reading "Hidden
+                 fields auto-populated by Smart Plan". Nothing populated it, and savePlanBtn opens
+                 with `if (!p.meta.name) { alert('Give the plan a name first.'); return; }` -- so
+                 the moment Save came back it refused every plan and offered no way to comply.
+                 Ryan, 2026-08-30: "can't save a plan because the save action requires the plan to
+                 be named but this version of plan tab doesn't have a plan name field".
+                 Same id, so collectPlan(), loadPlanIntoForm() and saved-spreads.js all keep
+                 working; it is only no longer invisible. -->
+            <div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:10px">
+              <div style="flex:1">
+                <label>Plan name</label>
+                <input id="planName" placeholder="Wateree – Clearwater AM Troll" style="width:100%">
+              </div>
+              <button id="autoNameBtn" class="small ghost" type="button"
+                      style="height:32px;white-space:nowrap" title="Name it from the water, ramp, date and launch time">🏷 Auto</button>
+            </div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
               <div>
                 <label>Waterbody</label>
@@ -1098,7 +1115,6 @@
             </div>
 
             <!-- Hidden fields auto-populated by Smart Plan -->
-            <input type="hidden" id="planName">
             <input type="hidden" id="planTargetDepth">
             <input type="hidden" id="planPattern" value="S-curves">
             <input type="hidden" id="planSolunar">

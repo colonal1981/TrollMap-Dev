@@ -34,6 +34,11 @@ const binds = (js, id) => js.includes(`getElementById('${id}')`);
 // them is crude -- it will eat a `//` inside a string literal -- and for asserting that a
 // selector is GONE, crude in the safe direction: a survivor inside a string still fails.
 const live = (js) => js.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+// And the same for markup, for the same reason and on the third occurrence of it: the comment
+// above the plan-name input quotes the broken tag it replaced -- `<input type="hidden"
+// id="planName">` -- so an assertion that reads the raw file finds the bug it is checking is
+// fixed, still sitting there in the explanation of how it was fixed.
+const liveHtml = html.replace(/<!--[\s\S]*?-->/g, '');
 
 describe('a plan can be saved, listed, loaded and imported', () => {
   it('the page provides every element the save path needs', () => {
@@ -65,6 +70,40 @@ describe('a plan can be saved, listed, loaded and imported', () => {
   it('saving pushes to the cloud through the one shared key', () => {
     expect(planJs.includes("window.pushItemOnSave('plan', planSyncKey(p), p)")).toBe(true);
     expect(planJs.includes('function planSyncKey')).toBe(true);
+  });
+});
+
+describe('a plan can be named, which is what saving needs', () => {
+  it('planName is a real input, not a hidden one', () => {
+    // It was `<input type="hidden" id="planName">` under "Hidden fields auto-populated by Smart
+    // Plan". Nothing populated it, and savePlanBtn refused every unnamed plan -- so the moment
+    // Save came back it was a dead end with no way to comply. Ryan: "can't save a plan because
+    // the save action requires the plan to be named but this version of plan tab doesn't have a
+    // plan name field".
+    const tag = liveHtml.match(/<input[^>]*id="planName"[^>]*>/);
+    expect(tag).toBeTruthy();
+    expect(/type="hidden"/.test(tag[0])).toBe(false);
+  });
+
+  it('exactly one element claims the id', () => {
+    expect((liveHtml.match(/<[^>]*\sid="planName"/g) || []).length).toBe(1);
+  });
+
+  it('the auto-namer is on the page and bound', () => {
+    expect(hasId('autoNameBtn')).toBe(true);
+    expect(binds(planJs, 'autoNameBtn')).toBe(true);
+  });
+
+  it('saving names an unnamed plan instead of refusing it', () => {
+    expect(live(planJs).includes("alert('Give the plan a name first.')")).toBe(false);
+    expect(planJs.includes('p.meta.name = autoPlanName()')).toBe(true);
+  });
+
+  it('and there is ONE derivation of the name, not two', () => {
+    // The name is also the sync key. Two derivations of one identifier is how the save and
+    // delete paths came to disagree about what a plan was called.
+    expect(planJs.includes('export function autoPlanName')).toBe(true);
+    expect((planJs.match(/hour < 10 \? 'AM'/g) || []).length).toBe(1);
   });
 });
 

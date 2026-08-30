@@ -2401,7 +2401,15 @@ window.getPlanRiverDef = getPlanRiverDef;
 
 // ── Button wiring (was in monolith, extracted here) ──────────────────────────
 
-document.getElementById('autoNameBtn')?.addEventListener('click', () => {
+/**
+ * A name for the plan, built from what the form already knows.
+ *
+ * ONE DERIVATION, TWO CALLERS -- the 🏷 Auto button and Save. Save used to refuse an unnamed plan
+ * outright, which was survivable while the name field was visible and impossible once it was not.
+ * Refusing is the wrong answer either way: the app knows the water, the ramp, the date and the
+ * launch time, so it can name the thing itself and let the fisherman rename it if he cares.
+ */
+export function autoPlanName() {
   const lake = document.getElementById('planLake')?.value.split(',')[0] || 'Lake';
   const ramp = document.getElementById('planRamp')?.value.split(' ')[0] || '';
   const date = document.getElementById('planDate')?.value;
@@ -2409,8 +2417,12 @@ document.getElementById('autoNameBtn')?.addEventListener('click', () => {
   const hour = time ? parseInt(time.split(':')[0]) : 6;
   const session = hour < 10 ? 'AM' : hour < 14 ? 'MID' : 'PM';
   const dateShort = date ? new Date(date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '';
+  return `${lake}${ramp ? ' – ' + ramp : ''} ${session} Troll${dateShort ? ' ' + dateShort : ''}`;
+}
+
+document.getElementById('autoNameBtn')?.addEventListener('click', () => {
   const el = document.getElementById('planName');
-  if (el) el.value = `${lake}${ramp ? ' – ' + ramp : ''} ${session} Troll${dateShort ? ' ' + dateShort : ''}`;
+  if (el) el.value = autoPlanName();
 });
 
 // STRAIGHT TO A RENDERED PREVIEW, NOT TO THE PREVIEW SUBTAB.
@@ -2482,7 +2494,16 @@ function planSyncKey(p, id) {
 
 document.getElementById('savePlanBtn')?.addEventListener('click', async () => {
   const p = collectPlan();
-  if (!p.meta.name) { alert('Give the plan a name first.'); return; }
+  // NAME IT RATHER THAN REFUSE IT. This was `alert('Give the plan a name first.'); return;`,
+  // which is a reasonable guard next to a visible name box and a dead end without one -- and the
+  // box had been `type="hidden"` since July. The name is also the sync key, so an empty one would
+  // collide in D1; autoPlanName() gives every plan a distinct, meaningful one from the water,
+  // ramp and date, and the box above is right there to change it.
+  if (!p.meta.name) {
+    p.meta.name = autoPlanName();
+    const el = document.getElementById('planName');
+    if (el) el.value = p.meta.name;
+  }
   try {
     await dbPut('plans', p);
     alert('Plan saved.');
