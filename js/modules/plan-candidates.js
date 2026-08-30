@@ -607,6 +607,92 @@ const DOCK_GAP_M = 120;
 const DOCK_LINE_M = 250;
 const DOCK_LINE_MIN = 4;
 
+/**
+ * docks.geojson -> dock lines, pockets and singles, WITHOUT a lane.
+ *
+ * Ryan, 2026-08-30: "docks need to be there... they would be a primary target for casting for
+ * largemouth". They were not there at all: groupDocks() below chains docks by `s`, their distance
+ * along a trolling lane, so a dock only became anything if a run went past it -- and Pick Water
+ * never even fetched the file. Wateree ships 2,796 docks and offered none of them.
+ *
+ * Same numbers as groupDocks and for the same reasons, because they are shoreline geometry and
+ * not tuning knobs: residential docks sit 30-60 m apart, a gap over DOCK_GAP_M is a break between
+ * groups, and past DOCK_LINE_M a row of docks stops being a spot and becomes a stretch you run a
+ * bait down. What changes is the chaining -- along the shore instead of along somebody's route --
+ * so the groups are single-link clusters at DOCK_GAP_M, found through a grid so 2,796 docks do
+ * not cost 7.8 million distance checks.
+ *
+ * Three shapes, kept from groupDocks: a line is placed at one end because that is where you start
+ * running it; a pocket and a lone dock are placed at their middle because that is what you stop on.
+ */
+export function dockSpotFeatures(docksFc) {
+  const pts = [];
+  for (const f of ((docksFc && docksFc.features) || [])) {
+    const g = f && f.geometry;
+    if (!g) continue;
+    // A dock is drawn as a point in some packs and a little line in others. Either way what is
+    // wanted is where it is, so a line collapses to its first vertex.
+    const c = g.type === 'Point' ? g.coordinates
+      : (Array.isArray(g.coordinates) && Array.isArray(g.coordinates[0]) ? g.coordinates[0] : null);
+    if (Array.isArray(c) && c.length >= 2 && Number.isFinite(c[0]) && Number.isFinite(c[1])) {
+      pts.push([c[0], c[1]]);
+    }
+  }
+  if (!pts.length) return [];
+
+  // ~DOCK_GAP_M cells, so every neighbour within the gap is in this cell or one touching it.
+  const lat0 = pts[0][1];
+  const dLat = DOCK_GAP_M / 111320;
+  const dLon = DOCK_GAP_M / (111320 * Math.max(0.2, Math.cos(lat0 * Math.PI / 180)));
+  const cell = new Map();
+  pts.forEach(([x, y], i) => {
+    const k = `${Math.floor(x / dLon)},${Math.floor(y / dLat)}`;
+    if (!cell.has(k)) cell.set(k, []);
+    cell.get(k).push(i);
+  });
+  const near = (i) => {
+    const [x, y] = pts[i];
+    const cx = Math.floor(x / dLon), cy = Math.floor(y / dLat);
+    const out = [];
+    for (let a = -1; a <= 1; a++) {
+      for (let b = -1; b <= 1; b++) {
+        for (const j of (cell.get(`${cx + a},${cy + b}`) || [])) {
+          if (j !== i && metresBetween(pts[i], pts[j]) <= DOCK_GAP_M) out.push(j);
+        }
+      }
+    }
+    return out;
+  };
+
+  const seen = new Array(pts.length).fill(false);
+  const out = [];
+  for (let i = 0; i < pts.length; i++) {
+    if (seen[i]) continue;
+    const group = [i];
+    seen[i] = true;
+    for (let h = 0; h < group.length; h++) {
+      for (const j of near(group[h])) {
+        if (!seen[j]) { seen[j] = true; group.push(j); }
+      }
+    }
+    // The span is the group's longest reach, which is what decides line against pocket.
+    let span = 0, ai = group[0], bi = group[0];
+    for (const a of group) {
+      for (const b of group) {
+        const d = metresBetween(pts[a], pts[b]);
+        if (d > span) { span = d; ai = a; bi = b; }
+      }
+    }
+    const kind = span >= DOCK_LINE_M && group.length >= DOCK_LINE_MIN ? 'dock_line'
+      : group.length > 1 ? 'dock_cluster' : 'dock';
+    const at = kind === 'dock_line' ? pts[ai]
+      : [(pts[ai][0] + pts[bi][0]) / 2, (pts[ai][1] + pts[bi][1]) / 2];
+    out.push({ type: 'Feature', geometry: { type: 'Point', coordinates: at },
+               properties: { kind, n: group.length, spanM: Math.round(span) } });
+  }
+  return out;
+}
+
 export function groupDocks(hits) {
   if (!hits.length) return [];
   const sorted = [...hits].sort((a, b) => a.s - b.s);

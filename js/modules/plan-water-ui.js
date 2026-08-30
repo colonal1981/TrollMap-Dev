@@ -41,7 +41,7 @@ import { depthSampler, shorelineIndex } from './plan-water-index.js';
 import { offerWater, dayCost, priceSpots, searchOrder, optionality, TROLL_MPH, SPOT_KINDS } from './plan-water.js';
 import { planFromWater } from './plan-from-water.js';
 import { buildSmartPlanV2, modelAsker, waterRouter } from './smart-plan-v2.js';
-import { poiSpotFeatures, attractorSpotFeatures } from './plan-candidates.js';
+import { poiSpotFeatures, attractorSpotFeatures, dockSpotFeatures } from './plan-candidates.js';
 import { planToTimeline, installTimeline } from './plan-to-timeline.js';
 import { renderSmartPlanUI, syncSpread } from './smart-plan-ui.js';
 import { materialisePlan } from './plan-tracks.js';
@@ -66,6 +66,9 @@ const T = { pieces: [], picked: new Set(), ramp: null, rampName: '', usableAh: 0
             // WHICH KINDS OF SPOT HE WANTS TO SEE. Empty means all of them, which is what it
             // did before there was a filter. See paintSpots().
             spotKinds: new Set(),
+            // How many spot rows to draw. 573 ledges behind a fixed 30 is the same trapdoor the
+            // kind filter just opened; "show more" steps it.
+            spotLimit: 30,
             // The water-depth filter. null means no bound — see inDepthBand().
             depthMin: null, depthMax: null };
 
@@ -319,15 +322,18 @@ function paintSpots() {
   const shown = T.spotKinds.size ? priced.filter((x) => T.spotKinds.has(x.type)) : priced;
   // Free ones first, then nearest. A spot that costs a mile of paddling is still offered -- § 9,
   // "feasibility is feedback, not a gate" -- it just does not lead.
-  const show = shown.slice(0, 30);
+  const show = shown.slice(0, T.spotLimit);
   const free = priced.filter((x) => x.free).length;
   const filtered = T.spotKinds.size
     ? ` · ${shown.length} of the kind${T.spotKinds.size > 1 ? 's' : ''} you picked` : '';
+  const more = shown.length - show.length;
   el.innerHTML = chips
     + `<div class="wg-count">${priced.length} cast spots · ${free} on water you have `
-    + `picked${filtered}${shown.length > show.length ? ` · showing ${show.length}` : ''}</div>`
+    + `picked${filtered}${more > 0 ? ` · showing ${show.length}` : ''}</div>`
     + (show.length ? show.map(spotRow).join('')
-                   : `<div class="wg-dim">Nothing of that kind on this water.</div>`);
+                   : `<div class="wg-dim">Nothing of that kind on this water.</div>`)
+    + (more > 0 ? `<button type="button" class="wg-more" data-more="1">`
+                + `show ${Math.min(more, 60)} more of ${more}</button>` : '');
   return priced;
 }
 
@@ -598,7 +604,7 @@ export async function findWater() {
   // I offered twice before checking the bucket. 385 packs carry a shoreline against 543 carrying
   // runs, so the shoreline is genuinely absent a lot and its absence must stay silent rather than
   // become a claim of open water.
-  const [fc, daFc, slFc, wfFc, stFc, poFc] = await Promise.all([
+  const [fc, daFc, slFc, wfFc, stFc, poFc, dkFc] = await Promise.all([
     get(`/${r2Key}/trolling_runs.geojson`),
     get(`/${r2Key}/depth_areas.geojson`).catch(() => null),
     get(`/${r2Key}/garmin_shoreline.geojson`).catch(() => null),
@@ -608,6 +614,10 @@ export async function findWater() {
     // and attractors exist only in near[] and have no such file, so they keep the estimate".
     // They have a file. It is this one, and neither planner was fetching it.
     get(`/${r2Key}/pois.geojson`).catch(() => null),
+    // DOCKS. 2,796 of them on Wateree and not one was reachable: groupDocks() chains them by
+    // distance along a trolling lane, and this file was never fetched here at all. Ryan: "docks
+    // need to be there... they would be a primary target for casting for largemouth".
+    get(`/${r2Key}/docks.geojson`).catch(() => null),
   ]);
   const lanes = (fc && fc.features) || [];
   if (!lanes.length) return say(`${inp.lakeName} has no trolling runs in its chartpack`, true);
@@ -670,7 +680,7 @@ export async function findWater() {
       // The real points, coves, creek mouths, humps and ledges, so a cast spot snaps to the thing
       // itself rather than to a guess at where along a lane it sat. See castSpots().
       spotFeatures: [...((wfFc && wfFc.features) || []), ...((stFc && stFc.features) || []),
-                     ...poiSpotFeatures(poFc)],
+                     ...poiSpotFeatures(poFc), ...dockSpotFeatures(dkFc)],
       // The state's brushpiles, deduped against the buoys Garmin already charted. Listed whether
       // or not a trolling lane happens to pass one -- see the note in castSpots().
       extraSpots: dnrSpots,
@@ -958,8 +968,12 @@ export function initWaterTab() {
   // The chips repaint the list, so they are a click and not a change. Repainting loses nothing:
   // T.pickedSpots is the source of truth for a tick and spotRow() reads it back.
   $('wgSpots')?.addEventListener('click', (e) => {
+    if (e.target?.closest?.('[data-more]')) { T.spotLimit += 60; paintSpots(); return; }
     const btn = e.target?.closest?.('[data-kind]');
     if (!btn) return;
+    // Changing the kind starts the window over -- 300 rows of ledge then 30 of cove would be
+    // the old trapdoor wearing the filter's clothes.
+    T.spotLimit = 30;
     const k = btn.dataset.kind;
     if (!k) T.spotKinds.clear();
     else if (T.spotKinds.has(k)) T.spotKinds.delete(k);

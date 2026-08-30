@@ -1025,6 +1025,10 @@ export const SPOT_KINDS = {
   dnr_attractor: 'DNR brushpile',
   dock_line:   'line of docks',
   dock_cluster:'pocket of docks',
+  // groupDocks() has always had three shapes and said why: "a single dock that grouped with
+  // nothing is not a cluster -- calling it 'a cluster of 1 dock' is how a plan starts sounding
+  // like it is padding". It needs a name here or it is silently dropped as an unknown kind.
+  dock:        'single dock',
 };
 
 /**
@@ -1054,6 +1058,47 @@ export function castSpots(lanes, { features = null, mergeM = 60, extraSpots = nu
     if (!e || !Array.isArray(e.at) || !SPOT_KINDS[e.type]) continue;
     raw.push({ type: e.type, what: e.what || SPOT_KINDS[e.type], at: e.at, offM: e.offM ?? 0 });
   }
+
+  // A CAST SPOT HAS NOTHING TO DO WITH A TROLLING LANE.
+  //
+  // Ryan, 2026-08-30: "I should be able to make a plan that is all cast stops... cast stops
+  // should have nothing to do with the trolling lanes at all... now if i am picking lanes i will
+  // probably pick cast spots that are close by... but i should be able to choose that...
+  // pickwater is supposed to be fisherman decides".
+  //
+  // Everything below this was discovered by walking each lane's `near[]`, and the comment on the
+  // extraSpots loop above already admitted what that does -- it "quietly makes 'worth stopping
+  // on' mean 'worth stopping on while trolling past'". The DNR feed was let in above precisely
+  // because it "must not need a lane's permission to be listed", and then every other source was
+  // left needing exactly that. What it cost, measured on Lake Wateree:
+  //
+  //     on the lake     offered as a cast spot
+  //     ledge   573                          0     -- `ledge` is not a near[] code at all
+  //     hump     52                        412     -- 4,060 lane sightings, distance-merged
+  //     point   339                        369
+  //     cove    279                        209     -- 70 coves no lane passes
+  //     creek     11                          2     -- 9 of the 11 unreachable
+  //
+  // The pack carries every one of them with exact coordinates. So they are listed from the FILE,
+  // lane or no lane, and `near[]` below becomes what it should always have been: extra sightings
+  // that dedupe onto a thing already known, never the reason it is known.
+  //
+  // Proximity did not stop mattering -- it stopped being a GATE. priceSpots() marks a spot free
+  // when it sits on water he has ticked and prices the detour in metres when it does not, which
+  // is the same information offered as a choice instead of enforced as a filter.
+  //
+  // offM 0 is right for these: the comparison below keeps the best-positioned sighting of a
+  // thing seen several times, and the pack's own coordinate IS the best-positioned sighting.
+  for (const f of (features || [])) {
+    const g = f && f.geometry;
+    const kind = (f.properties || {}).kind;
+    // Only kinds the form can express. pois.geojson also yields hazards, shallows and bridges;
+    // those are things to know about, not things to cast at.
+    if (!g || g.type !== 'Point' || !SPOT_KINDS[kind]) continue;
+    if (!Array.isArray(g.coordinates) || g.coordinates.length < 2) continue;
+    raw.push({ type: kind, what: SPOT_KINDS[kind], at: g.coordinates, offM: 0 });
+  }
+
   for (const f of (lanes || [])) {
     const p = (f && f.properties) || {};
     const coords = (f.geometry && f.geometry.coordinates) || [];
