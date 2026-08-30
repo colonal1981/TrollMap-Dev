@@ -2986,7 +2986,7 @@ def _reach_head(text):
     river -- which is the same contract GA's Ocmulgee rule has had since 2026-08-28.
     """
     t = re.split(r'\b(?:down\s?stream of|up\s?stream of|seaward of|below|above|from)\b',
-                 text or '', 1, flags=re.I)[0]
+                 text or '', maxsplit=1, flags=re.I)[0]
     return t.strip(' .,;')
 
 

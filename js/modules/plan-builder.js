@@ -1901,22 +1901,16 @@ export function renderPlanStats(){
   if(el) el.innerHTML=Object.keys(groups).sort().map(k=>`<span class="pill">${esc(k)}: ${groups[k]}</span>`).join(' ') || '<span class="muted">No groups</span>';
 }
 
-/* Plan UI wiring */
-document.querySelectorAll('#panel-plan .subtabs button').forEach(btn=>{
-  btn.addEventListener('click', ()=>{
-    document.querySelectorAll('#panel-plan .subtabs button').forEach(b=>b.classList.remove('active'));
-    btn.classList.add('active');
-    const tab = btn.dataset.plansub;
-    document.getElementById('plan-builder')?.classList.toggle('hidden', tab!=='builder');
-    document.getElementById('plan-preview')?.classList.toggle('hidden', tab!=='preview');
-    document.getElementById('plan-library')?.classList.toggle('hidden', tab!=='library');
-    if(tab==='library') refreshPlanLibrary?.();
-  });
-});
-
-document.getElementById('backToBuilderBtn')?.addEventListener('click', ()=>{
-  document.querySelector('#panel-plan .subtabs button[data-plansub="builder"]').click();
-});
+/* Plan UI wiring lives in plan-tab-wiring.js, which says so in its own header: "Replaces the
+   old 3-tab (Builder / Preview / Library) wiring in plan-builder.js". The replacement landed
+   and the original did not leave, so BOTH bound the same buttons. The old one toggled
+   #plan-builder hidden unless the tab was called `builder`, and the first tab is called
+   `plan` -- so every click on Smart Plan hid the Smart Plan panel, and the only reason the
+   tab worked is that plan-tab-wiring.js is imported second and un-hid it on the same click.
+   The old backToBuilderBtn handler queried `[data-plansub="builder"]`, which has matched
+   nothing since the rebuild, and called .click() on it with no `?.` -- a TypeError on every
+   press of a button that appeared to work, because a throw in one listener does not stop the
+   others. Deleted 2026-08-30. One owner. */
 
 
 /* ---------- Plan tab lake/ramp dropdowns (lakes + rivers merged) ---------- */
@@ -2457,10 +2451,6 @@ document.getElementById('printPlanBtn')?.addEventListener('click', async () => {
   setTimeout(() => window.print(), 400);
 });
 
-;
-
-;
-
 document.getElementById('importPlanFile')?.addEventListener('change', (e) => {
   const f = e.target.files[0];
   if (!f) return;
@@ -2502,7 +2492,7 @@ document.getElementById('savePlanBtn')?.addEventListener('click', async () => {
   } catch (e) { alert('Save failed: ' + e); }
 });
 
-async function refreshPlanLibrary() {
+export async function refreshPlanLibrary() {
   const host = document.getElementById('planLibraryList');
   if (!host) return;
   let plans = [];
@@ -2534,7 +2524,10 @@ window.loadPlanById = async function (id) {
   const p = await dbGet('plans', id);
   if (p) {
     loadPlanIntoForm(p);
-    document.querySelector('#panel-plan .subtabs button[data-plansub="builder"]')?.click();
+    // The tab is called `plan`, not `builder`; `builder` is the id of the DIV. This selector
+    // had the two confused and quietly matched nothing, so loading a plan left you looking at
+    // the library it came from.
+    document.querySelector('#planSubtabs button[data-plansub="plan"]')?.click();
     alert('Plan loaded.');
   }
 };

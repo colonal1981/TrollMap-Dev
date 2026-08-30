@@ -18,12 +18,17 @@
 // nothing and the default tab comes up blank. A new tab is now a button and a div, and nothing
 // here changes.
 document.querySelectorAll('#planSubtabs button').forEach(btn => {
-  btn.addEventListener('click', () => {
+  btn.addEventListener('click', async () => {
     const tab = btn.dataset.plansub;
     document.querySelectorAll('#planSubtabs button').forEach(b => b.classList.toggle('active', b === btn));
     document.querySelectorAll('#panel-plan .plan-sub').forEach(panel => {
       panel.classList.toggle('hidden', panel.dataset.plansub !== tab);
     });
+    // The library reads IndexedDB, so it is filled when it is opened rather than on load.
+    if (tab === 'library') {
+      const m = await import('./plan-builder.js');
+      m.refreshPlanLibrary?.();
+    }
   });
 });
 

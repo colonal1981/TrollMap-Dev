@@ -986,6 +986,7 @@
           <button data-plansub="plan" class="active">🎣 Smart Plan</button>
           <button data-plansub="water">🌊 Pick Water</button>
           <button data-plansub="preview">📄 Preview / Print</button>
+          <button data-plansub="library">📚 Saved Plans</button>
         </div>
 
         <!-- ── PLAN TAB ──────────────────────────────────────────────────── -->
@@ -1123,12 +1124,47 @@
             <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px">
               <span id="smartPlanStatus" style="font-size:12px;color:var(--muted)"></span>
               <div style="display:flex;gap:6px">
+                <button id="savePlanBtn" class="small primary" style="font-size:11px"
+                        title="Save this plan to this device and push it to the cloud">💾 Save</button>
                 <button id="exportPlanJsonBtn" class="small ghost" style="font-size:11px">⬇ JSON</button>
                 <button id="exportPlanHtmlBtn" class="small ghost" style="font-size:11px">⬇ HTML</button>
                 <button id="buildPreviewBtn" class="small" style="font-size:11px">📄 Preview</button>
               </div>
             </div>
 
+
+          <!-- ── BATTERY ────────────────────────────────────────────────────
+               ble-motor.js has been imported and running on every page load since
+               2026-07-09, and its first act is to ask for `btnEmbedPairBle`. That id went
+               out with the plan-panel re-upload and never came back, so the module hit
+               `if(!btnPair) return;` and stopped -- silently, for seven weeks. Ryan found it
+               the only way it could be found: "i see no way to control the bluetooth for my
+               battery in the app anymore???"
+
+               The readout box starts hidden because ble-motor.js toggles its display on
+               connect and on `gattserverdisconnected`. -->
+          <div class="card" id="batteryCard">
+            <div class="row" style="justify-content:space-between;align-items:center">
+              <b style="font-size:13px">🔋 Battery</b>
+              <button id="btnEmbedPairBle" class="small"
+                      style="background:var(--accent2);color:#000;font-weight:700">⚡ Live Web Bluetooth Pair</button>
+            </div>
+            <p class="muted" style="font-size:11px;margin:6px 0 0">
+              Pairs an XZNY / JBD / Xiaoxiang-style BMS over Web Bluetooth and reads voltage,
+              current, state of charge and remaining amp-hours. Needs HTTPS; Safari on iOS does
+              not allow Web Bluetooth.
+            </p>
+            <div id="embedBleAssessmentBox" style="display:none;margin-top:10px;border-top:1px solid var(--line);padding-top:10px">
+              <div id="ebName" class="muted" style="font-size:11px"></div>
+              <div class="row" style="gap:14px;margin-top:6px;align-items:baseline">
+                <span id="ebSoc" class="big" style="font-size:22px"></span>
+                <span id="ebVolts" class="big" style="font-size:18px"></span>
+                <span id="ebAmps" style="font-size:12px"></span>
+              </div>
+              <div id="ebRemAh" class="muted" style="font-size:11.5px;margin-top:4px"></div>
+              <div id="ebSprintTime" style="font-size:12px;margin-top:6px"></div>
+            </div>
+          </div>
 
           <!-- ROUTE CARDS — populated by smart-plan-ui.js after Generate -->
           <div id="smartPlanUIContainer"></div>
@@ -1255,6 +1291,33 @@
             <div id="planPreviewHtml" class="plan-preview">
               <p class="muted">Generate a Smart Plan first, then click Preview.</p>
             </div>
+          </div>
+        </div>
+
+        <!-- ── SAVED PLANS ──────────────────────────────────────────────────
+             Every handler behind this panel has been sitting in plan-builder.js since
+             2026-06-23, bound with `?.` to elements that stopped existing on 2026-07-09:
+             savePlanBtn writes to IndexedDB and pushes to D1, refreshPlanLibrary renders
+             into planLibraryList, loadPlanById and deletePlanById are complete and were
+             only ever called from the markup refreshPlanLibrary emits, and importPlanFile
+             is the reader for the JSON the ⬇ JSON button has been writing all along.
+             Ryan: "there is no actual way to save a plan anymore that i can find... i can
+             export a json... but i dont think anything reads it". Nothing needed writing.
+             It needed a page to attach to. -->
+        <div id="plan-library" class="plan-sub hidden" data-plansub="library">
+          <div class="card">
+            <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:8px">
+              <b style="font-size:13px">📚 Saved Plans</b>
+              <label class="small ghost" style="font-size:11px;cursor:pointer;padding:4px 10px;border:1px solid var(--line);border-radius:6px">
+                ⬆ Import JSON
+                <input type="file" id="importPlanFile" accept=".json,application/json" style="display:none">
+              </label>
+            </div>
+            <p class="muted" style="font-size:11px;margin:0 0 10px">
+              Saved on this device and pushed to the cloud, so a plan built on the laptop
+              opens on the phone. Load puts it back in the builder.
+            </p>
+            <div id="planLibraryList"><p class="muted">No saved plans yet.</p></div>
           </div>
         </div>
 
