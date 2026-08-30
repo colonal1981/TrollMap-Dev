@@ -129,6 +129,36 @@ def depth_bands(pack, slug):
     return out or None
 
 
+def dock_polygons(pack, slug):
+    """Every charted dock as a shapely polygon, or [] where the pack has none.
+
+    Ryan, on a transit routed straight through one: "i would prefer to not be routed through this
+    persons dock... i am sure they prefer that too."
+
+    docks.geojson ships in every pack and nothing has ever read it for routing. Wateree has 2,796.
+    Absent is [] and never an error -- a pack without the layer simply has no docks to avoid, and
+    that must not be the difference between a graph and no graph.
+    """
+    fp = os.path.join(pack, slug, 'docks.geojson')
+    if not os.path.exists(fp):
+        return []
+    out = []
+    try:
+        gj = json.load(open(fp, encoding='utf-8'))
+    except Exception:
+        return []
+    for f in (gj.get('features') or []):
+        for r in _rings(f.get('geometry') or {}):
+            if len(r) >= 4:
+                try:
+                    p = Polygon(r)
+                    if p.is_valid and not p.is_empty:
+                        out.append(p)
+                except Exception:
+                    continue
+    return out
+
+
 def rasterise_depths(bands, mask, mark_rings=False):
     """Scanline-fill every depth polygon into the mask's own grid. Shallowest band wins.
 
@@ -207,6 +237,8 @@ def build_lake(registry, pack, slug, cell=None, quiet=False):
         rep['skipped'] = 'no depth_areas.geojson'
         return rep, None
     rep['depth_polygons'] = len(bands)
+    docks = dock_polygons(pack, slug)
+    rep['docks'] = len(docks)
 
     # The mask is the SAME rasteriser build_chartpack uses -- one grid definition in this repo,
     # not two. buffer 0 because a routing node outside the waterline is a node on the bank.
@@ -282,6 +314,37 @@ def build_lake(registry, pack, slug, cell=None, quiet=False):
         edges = cand
     rep['edges'] = len(edges)
     rep['vetoed_by_land_test'] = vetoed
+
+    # ── THE DOCK TEST ───────────────────────────────────────────────────────────────────
+    #
+    # Ryan, looking at a transit drawn straight through a charted dock: "i would prefer to not be
+    # routed through this persons dock... i am sure they prefer that too."
+    #
+    # The land test above asks whether a segment leaves the WATER. A dock is over water and it is
+    # still not somewhere to drive: it is somebody's property, it is a fixed obstruction, and a
+    # kayak towing two rods through a boat lift is a bad afternoon for everyone.
+    #
+    # docks.geojson ships in every pack and nothing has ever read it for routing -- Wateree has
+    # 2,796 of them. Same mechanism as the land test and the same prefilter: an STRtree over the
+    # dock polygons, and an edge whose bounding box misses every one of them is never tested.
+    #
+    # `intersects`, not `covers`. A segment that merely clips the corner of a dock still goes
+    # through it, and unlike the waterline there is no reason to be generous about touching --
+    # nothing legitimate ends ON a dock.
+    docked = 0
+    if docks:
+        dtree = STRtree(docks)
+        kept = []
+        for a, b in edges:
+            ln = LineString((nodes[a], nodes[b]))
+            near = dtree.query(ln)
+            if len(near) and any(docks[k].intersects(ln) for k in near):
+                docked += 1
+            else:
+                kept.append((a, b))
+        edges = kept
+    rep['vetoed_by_dock_test'] = docked
+    rep['edges'] = len(edges)
 
     # ── components ──────────────────────────────────────────────────────────────────────
     adj = [[] for _ in nodes]

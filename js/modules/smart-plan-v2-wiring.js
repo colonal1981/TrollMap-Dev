@@ -19,6 +19,7 @@ import { depthBandFor, usableAhFrom, researchIntel, researchHazards, structureWe
          describeDepthBand } from './plan-inputs.js';
 import { DEFAULT_WEIGHTS, DEFAULT_RELIEF_WEIGHTS } from './plan-candidates.js';
 import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
+import { TRANSIT_MIN_DEPTH_FT } from './plan-water.js';
 import { solunarFor } from '../utils/solunar.js';
 import { checkPlanLegality, ensureRegulations, fetchForecast, fetchWaterState } from './plan-preflight.js';
 import { buildSmartPlanV2, packFetcher, modelAsker, waterRouter } from './smart-plan-v2.js';
@@ -241,7 +242,8 @@ export async function runSmartPlanV2() {
       // in the browser had ever called it, so every transit in every plan Ryan has seen was a
       // straight line between two leg ends. When the endpoint cannot answer, the leg says
       // `unrouted: true`, the plan warns, and validatePlan() lists it -- it is never faked.
-      routeWater: waterRouter(CF_WORKER_URL, r2Key),
+      // The same floor Pick Water sends. A transit is a transit whichever tab planned it.
+      routeWater: waterRouter(CF_WORKER_URL, r2Key, { minDepthFt: TRANSIT_MIN_DEPTH_FT }),
       askModel: async (req) => { say('Asking the model…'); return modelAsker(CF_WORKER_URL)(req); },
     });
   } catch (e) {

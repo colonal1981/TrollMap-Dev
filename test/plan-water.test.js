@@ -166,8 +166,30 @@ describe('reasons — arguments, never a verdict', () => {
     // "nice to see to confirm that the program/llm gets it right" — a constraint the app applies
     // silently and never displays cannot be confirmed by anyone.
     const r = reasons(piece, { minM: 600, partners: [] });
-    expect(r.for.some((s) => new RegExp(`nothing may run deeper than ${piece.holdsFt} ft`).test(s)))
-      .toBe(true);
+    expect(r.for.some((s) => /nothing may run deeper than \d+ ft/.test(s))).toBe(true);
+  });
+
+  it('states the ceiling the PLAN enforces — the line, not the bank beside it', () => {
+    // It used to quote `holdsFt`, off `envelope_ft`, which is the shallowest water within a
+    // wander -- the bank you steer AWAY from. plan-from-water.js stopped sizing baits that way on
+    // 2026-08-30, and this tab did not, so the two showed different ceilings for the same water:
+    // wateree_lake#526 read "nothing may run deeper than 6 ft" while the model was correctly
+    // handed maxRunDepthFt: 19. Ryan: "as long as the model gets that 13ft limit... that is the
+    // point."
+    const p = { ...piece, holdsFt: 6,
+                water: { line: { minFt: 19, medianFt: 25, maxFt: 32 },
+                         side: { minFt: 7, medianFt: 20, maxFt: 32 } } };
+    const line = reasons(p, { minM: 600, partners: [] }).for.find((s) => /may run deeper/.test(s));
+    expect(/nothing may run deeper than 19 ft/.test(line)).toBe(true);
+    expect(/6 ft/.test(line)).toBe(false);
+    // and the wander number survives as the warning it is, not as the ceiling
+    expect(/comes up to 7 ft/.test(line)).toBe(true);
+    expect(/depth cue calls before you reach it/.test(line)).toBe(true);
+  });
+
+  it('falls back to holdsFt only on a pack with no envelope profile', () => {
+    const line = reasons(piece, { minM: 600, partners: [] }).for.find((s) => /may run deeper/.test(s));
+    expect(/nothing may run deeper than 18 ft/.test(line)).toBe(true);
   });
 });
 

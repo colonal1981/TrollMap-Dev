@@ -39,7 +39,7 @@ import { depthBandFor, usableAhFrom, researchIntel, researchHazards, describeDep
 import { packFetcher } from './smart-plan-v2.js';
 import { fetchForecast, fetchWaterState } from './plan-preflight.js';
 import { depthSampler, shorelineIndex } from './plan-water-index.js';
-import { offerWater, dayCost, priceSpots, searchOrder, optionality, reasons, TROLL_MPH, SPOT_KINDS } from './plan-water.js';
+import { offerWater, dayCost, priceSpots, searchOrder, optionality, reasons, TROLL_MPH, TRANSIT_MIN_DEPTH_FT, SPOT_KINDS } from './plan-water.js';
 import { joinedPiece } from './plan-pieces.js';
 import { planFromWater } from './plan-from-water.js';
 import { buildSmartPlanV2, modelAsker, waterRouter } from './smart-plan-v2.js';
@@ -917,7 +917,8 @@ export async function buildFromPicked() {
       // by leg; `routeWater` is the async fetcher planFromWater() prefetches every pair with.
       // Handing the fetcher over as `transit` is half of what broke the build on 2026-08-11 —
       // see the note in plan-from-water.js.
-      routeWater: waterRouter(CF_WORKER_URL, T.r2Key),
+      // HIS FLOOR, ASKED FOR DIRECTLY. See waterRouter() for why nobody had ever sent one.
+      routeWater: waterRouter(CF_WORKER_URL, T.r2Key, { minDepthFt: TRANSIT_MIN_DEPTH_FT }),
     });
   } catch (e) { return say(`Failed: ${e.message}`, true); }
 

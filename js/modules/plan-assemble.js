@@ -368,6 +368,22 @@ export function assemblePlan(o) {
         warnings.push(`${tleg.id} is a straight line, not a water-routed path — it can cross `
                     + 'land and it understates the amp-hours');
       }
+      // A FLOOR THAT WAS ASKED FOR AND NOT HELD IS A THING HE HAS TO KNOW BEFORE HE GETS THERE.
+      // The Worker relaxes `min_depth_ft` rather than refusing to route, which is right -- but a
+      // relaxation nobody is told about is the same as never asking. See waterRouter().
+      if (p.minDepthHeld === false) {
+        tleg.minDepthHeld = false;
+        tleg.shallowM = p.shallowM;
+        // THE METRES, NOT THE VERDICT. The router spends the least shallow water it can rather
+        // than abandoning the floor, so "40 m of it" is usually the boat leaving the bank and
+        // "600 m of it" is a leg worth looking at. Saying only "the floor was dropped" made
+        // those two read the same. See pathPreferringDepth() in Worker/water.js.
+        warnings.push(`${tleg.id} crosses ${p.shallowM ?? '?'} m of water shallower than the `
+                    + `${p.askedDepthFt ?? '?'} ft you asked for`
+                    + (Number.isFinite(p.shallowestFt) ? `, down to ${p.shallowestFt} ft` : '')
+                    + ' — it is the least shallow water there is between those two points, so '
+                    + 'look at it before you run it.');
+      }
       legs.push(tleg);
       runM += len; transitM += len; ah += a; clock += mins;
     }
@@ -579,6 +595,14 @@ export function assemblePlan(o) {
         estDurationMin: Math.round(mins), estStartTime: formatClock(clock),
         coordinates: p.coordinates,
       };
+      if (p.minDepthHeld === false) {
+        homeLeg.minDepthHeld = false;
+        homeLeg.shallowM = p.shallowM;
+        warnings.push(`THE ROUTE HOME crosses ${p.shallowM ?? '?'} m of water shallower than the `
+                    + `${p.askedDepthFt ?? '?'} ft you asked for`
+                    + (Number.isFinite(p.shallowestFt) ? `, down to ${p.shallowestFt} ft` : '')
+                    + ' — look at it before you run it.');
+      }
       if (p.unrouted) {
         homeLeg.unrouted = true;
         warnings.push(`THE ROUTE HOME IS NOT WATER-ROUTED — ${homeLeg.id} is a straight line from `

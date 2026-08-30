@@ -297,15 +297,37 @@ export async function prefetchTransits(candidates, launch, routeWater) {
  */
 export function waterRouter(workerUrl, slug, opts = {}) {
   const timeoutMs = opts.timeoutMs ?? 12000;
+  // HOW SHALLOW HE WILL CROSS, AND NOBODY HAS EVER ASKED.
+  //
+  // Ryan, on a transit drawn through a 2-3 ft neck beside an island: "your water graphs are
+  // letting the boat go too shallow... i am not portaging the kayak over an island."
+  //
+  // The Worker has taken `min_depth_ft` since it was written and not one caller has ever sent
+  // one, so `minDepth` defaulted to 0 and every route was optimised for distance across anything
+  // the graph called water. That was DELIBERATE on the Garmin mesh -- 45% of its nodes are tagged
+  // 0 ft, so asking for 3 ft discarded half the lake and the boat could not leave the ramp. The
+  // bathymetric graph is 5.2% at 0 ft, so the floor is affordable for the first time.
+  //
+  // Six feet is his answer, asked directly, and it is the figure the graph was measured against:
+  // every transit on the 2026-08-30 Wateree plan came out 1.09-1.13x the straight line with it
+  // enforced. It is an option rather than a constant because it is a fact about his boat and his
+  // day, not about this module.
+  const minDepthFt = opts.minDepthFt ?? 0;
   return async (from, to) => {
     const r = await fetch(`${workerUrl}/water/${encodeURIComponent(slug)}/route`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ from, to }),
+      body: JSON.stringify(minDepthFt > 0 ? { from, to, min_depth_ft: minDepthFt } : { from, to }),
       signal: AbortSignal.timeout?.(timeoutMs),
     });
     if (!r.ok) return null;
     const d = await r.json();
     if (!Array.isArray(d.coordinates) || d.coordinates.length < 2) return null;
-    return { distanceM: Number(d.distance_m) || 0, coordinates: d.coordinates };
+    // `min_depth_held` IS THE HALF THAT WAS BEING THROWN AWAY. The Worker relaxes the floor
+    // rather than failing -- "a plan that quietly ignores the request is as bad as one that
+    // fails" -- and says so on the response. This read `distance_m` and `coordinates` and
+    // dropped the rest, so the relaxation was silent all the way to the water.
+    return { distanceM: Number(d.distance_m) || 0, coordinates: d.coordinates,
+             minDepthHeld: d.min_depth_held, askedDepthFt: minDepthFt || undefined,
+             shallowM: d.shallow_m, shallowestFt: d.shallowest_ft };
   };
 }

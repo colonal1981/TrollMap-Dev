@@ -62,6 +62,18 @@ const AXIS_IS_WATER_DEPTH = 0;
 export const TROLL_MPH = 2.0;
 export const TRANSIT_MPH = 3.5;
 
+// HOW SHALLOW HE WILL CROSS ON A TRANSIT. Not fishing -- just getting from one run to the next.
+//
+// Asked directly on 2026-08-30, after a plan routed him through a 2-3 ft neck beside an island:
+// "your water graphs are letting the boat go too shallow... i am not portaging the kayak over an
+// island." His answer was six feet, and it is the figure the bathymetric graph was measured
+// against -- every transit on that day's plan came out 1.09-1.13x the straight line with it
+// enforced, so it costs almost nothing.
+//
+// It belongs here with TROLL_MPH and TRANSIT_MPH because it is the same kind of number: a fact
+// about his boat and his day that the modules below have no business inventing.
+export const TRANSIT_MIN_DEPTH_FT = 6;
+
 /**
  * THE DEPTH LADDER THE OFFER CURVE IS MEASURED ON.
  *
@@ -276,15 +288,37 @@ export function reasons(piece, o) {
   // piece where the clearance alone was 3 ft, which is most of them. The question it is trying to
   // ask is whether the shallowest station is unlike the rest of the stretch, and that is the
   // shallowest against the median of the same profile.
-  if (Number.isFinite(piece.holdsFt)) {
-    const side = piece.water && piece.water.side;
-    const tight = side && side.medianFt - side.minFt >= 3;
-    forIt.push(`nothing may run deeper than ${piece.holdsFt} ft here`
-             + (side ? ` — the shallowest water within a wander anywhere on the `
-                     + `${fmtMi(piece.lengthM)} is ${side.minFt} ft`
-                     : ` — that is the shallowest water within a wander anywhere on the `
-                     + `${fmtMi(piece.lengthM)}`)
-             + (tight ? `, and it is one spot, not the whole stretch` : ''));
+  // THE CEILING THE PLAN ACTUALLY ENFORCES, WHICH IS THE LINE AND NOT THE BANK BESIDE IT.
+  //
+  // This quoted `holdsFt`, which is measured off `envelope_ft` -- the shallowest water within a
+  // wander, which is the bank you are steering AWAY from. plan-from-water.js stopped sizing baits
+  // that way on 2026-08-30, because a channel edge always has shallower water beside it and that
+  // is what makes it worth fishing: across Wateree's 305 lanes the shallow side reads 4+ ft
+  // shallower than the line on 237 of them. The plan learned it and this tab did not, so the two
+  // showed different ceilings for the same water -- wateree_lake#526 read "nothing may run deeper
+  // than 6 ft" here while the model was correctly handed `maxRunDepthFt: 19`.
+  //
+  // Ryan, 2026-08-30: "as long as the model gets that 13ft limit... that is the point." Same
+  // number in both places now.
+  //
+  // THE WANDER NUMBER STAYS, AS A WARNING RATHER THAN A CEILING. It is real -- the bottom does
+  // come up to 7 ft within 25 m of that line -- and it is what depthCues() calls out before he
+  // reaches it. It is simply not the number that sizes the bait.
+  const line = piece.water && piece.water.line;
+  const side = piece.water && piece.water.side;
+  if (line) {
+    const oneSpot = line.medianFt - line.minFt >= 3;
+    forIt.push(`nothing may run deeper than ${line.minFt} ft here — that is the shallowest the `
+             + `line itself gets on the ${fmtMi(piece.lengthM)}`
+             + (oneSpot ? `, and it is one spot rather than the whole stretch` : '')
+             + (side && side.minFt < line.minFt
+                 ? `. Within a wander of it the bottom comes up to ${side.minFt} ft, which the `
+                 + `depth cue calls before you reach it`
+                 : ''));
+  } else if (Number.isFinite(piece.holdsFt)) {
+    // A pack with no envelope profile. Say the only number there is, and say what it is.
+    forIt.push(`nothing may run deeper than ${piece.holdsFt} ft here — the shallowest water `
+             + `within a wander anywhere on the ${fmtMi(piece.lengthM)}`);
   }
 
   // THE LAPS ARE THE PARTNERS, not the offer curve — see ladderPartners(). A piece with three

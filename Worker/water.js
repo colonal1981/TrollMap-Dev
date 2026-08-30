@@ -374,6 +374,10 @@ function nearestNode(g, lon, lat) {
 }
 
 /** Shortest path over navigable water. Returns {distance_m, coordinates} or null if unreachable. */
+// Longer than any route on any water this app carries, so a single shallow metre outranks every
+// possible saving in distance. Wateree end to end is about 60 km; this is a thousand times that.
+const PENALTY = 1e6;
+
 function shortestPath(g, ai, bi, minDepth) {
   const dist = new Float64Array(g.nn).fill(Infinity);
   const prev = new Int32Array(g.nn).fill(-1);
@@ -411,16 +415,45 @@ function shortestPath(g, ai, bi, minDepth) {
     if (u === bi) break;
     for (let e = g.head[u]; e < g.head[u + 1]; e++) {
       const v = g.adj[e];
-      if (minDepth && g.depth[v] < minDepth) continue;
       const w = metres(g.lon[u], g.lat[u], g.lon[v], g.lat[v]);
-      if (d + w < dist[v]) { dist[v] = d + w; prev[v] = u; push(d + w, v); }
+      // THE FLOOR IS A COST, NOT A GATE, AND THAT IS WHAT MAKES IT USABLE AT A RAMP.
+      //
+      // `continue` here made the depth all-or-nothing: either every node on the path cleared the
+      // floor or the whole request fell back to no floor at all. A launch ramp is in shallow
+      // water by definition -- the node nearest Clearwater Cove is tagged 3 ft -- so every leg
+      // touching the ramp dropped the constraint entirely and crossed whatever it liked for its
+      // whole length, to get off a bank it had to cross either way.
+      //
+      // Shallow metres are priced instead. PENALTY is not a tuning knob: it is longer than any
+      // path on any lake this app carries, so the search is LEXICOGRAPHIC -- fewest shallow
+      // metres first, shortest distance among those. A route that can hold the floor holds it
+      // exactly; one that cannot uses the least shallow water it possibly can, which at a ramp
+      // is the few metres off the bank and nothing else.
+      const shallow = minDepth && g.depth[v] < minDepth;
+      const cost = shallow ? w * PENALTY : w;
+      if (d + cost < dist[v]) { dist[v] = d + cost; prev[v] = u; push(d + cost, v); }
     }
   }
   if (!Number.isFinite(dist[bi])) return null;
+  // WALK IT BACK AND MEASURE WHAT IT ACTUALLY COST, because `dist` is a penalised number and
+  // nobody wants that reported as a distance. The real length and the shallow metres both come
+  // out of the path itself.
   const path = [];
-  for (let u = bi; u !== -1; u = prev[u]) path.push([Number(g.lon[u].toFixed(6)), Number(g.lat[u].toFixed(6))]);
+  let realM = 0, shallowM = 0, shallowest = Infinity;
+  for (let u = bi; u !== -1; u = prev[u]) {
+    path.push([Number(g.lon[u].toFixed(6)), Number(g.lat[u].toFixed(6))]);
+    if (g.depth[u] < shallowest) shallowest = g.depth[u];
+    const p = prev[u];
+    if (p !== -1) {
+      const w = metres(g.lon[p], g.lat[p], g.lon[u], g.lat[u]);
+      realM += w;
+      if (minDepth && g.depth[u] < minDepth) shallowM += w;
+    }
+  }
   path.reverse();
-  return { distance_m: Math.round(dist[bi]), coordinates: path };
+  return { distance_m: Math.round(realM), coordinates: path,
+           shallow_m: Math.round(shallowM),
+           shallowest_ft: Number.isFinite(shallowest) ? shallowest : null };
 }
 
 // THE HINT USED TO NAME A SCRIPT THAT NO LONGER EXISTS AND SHOULD NOT BE RUN.
@@ -438,27 +471,34 @@ const UNREACHABLE = {
 };
 
 /**
- * Shortest path, relaxing `minDepth` rather than failing when it makes the water impassable.
+ * Shortest path, PRICING shallow water rather than forbidding it.
  *
- * `depth` on a graph node is the deepest MAR layer that contains the cell, quantised to
- * 0/3/6/9/12/15/18/24/30 ft. On Wateree 3,979 of 8,896 nodes are tagged 0, so asking for
- * `min_depth_ft: 3` discards 45% of the graph — and a launch ramp is in shallow water by
- * definition, so the boat cannot even leave the bank. Treated as a hard constraint it turns a
- * perfectly ordinary request into "no route", with an error blaming a severed graph.
+ * `depth` on a graph node is the deepest layer that contains the cell. On the Garmin mesh 45% of
+ * Wateree's nodes are tagged 0 ft, so a hard `min_depth_ft: 3` discarded half the lake; the
+ * bathymetric graph is 5.2% at 0 ft, and at a 6 ft floor 80.4% of its nodes remain with 99.8% of
+ * those in one connected piece. The floor became affordable, and this function became the thing
+ * standing in its way.
  *
- * So the depth is a preference: try to honour it, and if that leaves no path at all, route
- * anyway and SAY the constraint was dropped. A plan that quietly ignores the request is as bad
- * as one that fails; a plan that says "I could not keep you in 3 ft, here is the route" is
- * what a person actually wants.
+ * IT USED TO BE ALL OR NOTHING: try the whole path with the floor, and if that failed anywhere,
+ * throw the floor away for the WHOLE path. A launch ramp is in shallow water by definition -- the
+ * node nearest Clearwater Cove is tagged 3 ft -- so every leg touching the ramp fell back to no
+ * constraint at all and was then free to cross a 2 ft neck a mile away, to solve a problem that
+ * only existed in the first twenty metres off the bank.
+ *
+ * shortestPath() prices shallow metres instead, lexicographically: fewest shallow metres first,
+ * shortest distance among those. So a route that can hold the floor holds it exactly, and one
+ * that cannot spends the least shallow water it possibly can. There is one call and it always
+ * answers.
+ *
+ * `min_depth_held` stays for callers that only want the yes/no, and `shallow_m` is the number
+ * worth reading: "40 m of it is shallower than you asked for, leaving the ramp" is a fact he can
+ * act on, where "the constraint was dropped" is not.
  */
 function pathPreferringDepth(g, ai, bi, minDepth) {
-  if (minDepth > 0) {
-    const p = shortestPath(g, ai, bi, minDepth);
-    if (p) return { ...p, min_depth_held: true };
-  }
-  const p = shortestPath(g, ai, bi, 0);
+  const p = shortestPath(g, ai, bi, minDepth);
   if (!p) return null;
-  return { ...p, min_depth_held: minDepth > 0 ? false : undefined };
+  if (!(minDepth > 0)) return p;
+  return { ...p, min_depth_held: p.shallow_m === 0 };
 }
 
 // ── shoreline clearance ─────────────────────────────────────────────────────────────────────
@@ -626,6 +666,12 @@ async function handleRoute(env, slug, request) {
     // the relaxation invisible, which is the same failure as not relaxing at all: the caller
     // asked to stay in 3 ft, did not, and was never told.
     min_depth_held: p.min_depth_held,
+    // HOW MUCH OF IT IS SHALLOWER THAN HE ASKED FOR, which is the number a person can act on.
+    // The router spends the least shallow water it can rather than abandoning the floor, so
+    // "40 m" is the boat leaving the bank and "600 m" is a leg worth looking at. `min_depth_held`
+    // alone made those two read the same.
+    shallow_m: p.shallow_m,
+    shallowest_ft: p.shallowest_ft,
     distance_m: p.distance_m,
     straight_line_m: Math.round(straight),
     detour_ratio: straight > 0 ? Number((p.distance_m / straight).toFixed(2)) : null,
