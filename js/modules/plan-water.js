@@ -1428,6 +1428,8 @@ export function offerWater(lanes, o) {
       // a runId would have to be resolved back to exactly this pair anyway.
       .map(({ j, n, other }) => ({ ...j, idx: n,
                                   otherKey: keyed[other].key, otherRunId: keyed[other].runId,
+                                  // So the tab can name it by length when it is off screen.
+                                  otherLengthM: keyed[other].lengthM,
                                   costFt: Math.max(0, (p.holdsFt ?? 0) - j.baitFt),
                                   gainM: j.lengthM - p.lengthM }))
       .sort((x, y) => (y.baitFt - x.baitFt) || (y.lengthM - x.lengthM)),

@@ -272,8 +272,20 @@ function joinsHtml(p) {
   if (!js.length) return '';
   return `<div class="wg-joins">${js.map((j) => {
     const cost = j.costFt > 0 ? ` · costs ${j.costFt} ft of bait depth` : ' · no cost in bait depth';
+    // BY ITS ROW NUMBER, and by its length when it is not on screen. A piece can be filtered out
+    // by the depth slider or fall past the row limit and still be perfectly joinable, so the
+    // button has to be readable either way rather than naming something he cannot look up.
+    // ROW NUMBER FIRST, THE LANE'S ID SECOND, because the two are read in different places. The
+    // row number is how he finds it in this list; the id is what the map tooltip says when he
+    // hovers the line -- which is how he found it at all: "oh they do if i hover over the map".
+    // A piece can also be filtered out by the depth slider or fall past the row limit and still
+    // be perfectly joinable, so the button stays readable when there is no row to point at.
+    const n = T.rowOf && T.rowOf.get(j.otherKey);
+    const id = String(j.otherRunId || '').split('#').pop();
+    const who = n ? `row ${n} (${id})`
+                  : `${id}, a ${fmtMi(j.otherLengthM || 0)} piece not in this list`;
     return `<button type="button" class="wg-join" data-join="${esc(String(j.idx))}">`
-         + `carry on into ${esc(String(j.otherRunId).split('#').pop())} — ${fmtMi(j.lengthM)} `
+         + `carry on into ${esc(who)} — ${fmtMi(j.lengthM)} `
          + `on one ${j.baitFt} ft bait${cost}`
          + `<span class="wg-join-meta">${j.gapM} m of water between them, ${j.turnDeg}° turn`
          + `${j.floorFt ? `, floor ${j.floorFt.minFt}\u2013${j.floorFt.maxFt} ft` : ''}</span>`
@@ -580,6 +592,12 @@ function paint() {
       : `${T.depthMin ?? $('wgDepthLo')?.min}–${T.depthMax ?? $('wgDepthHi')?.max} ft`;
   }
   const list = shown();
+  // WHICH ROW IS WHICH, so a join can name the piece the way the tab does. Ryan: "your buttons
+  // say to carry into x but the numbers dont exist anywhere in the pickwater" -- and they did
+  // not: the button was quoting the lane's id out of the chartpack, which appears in no row, no
+  // header and no tooltip. Rows are numbered by their position in this list, so the number he
+  // reads is the number that has to come back at him.
+  T.rowOf = new Map(list.map((p, i) => [p.key, i + 1]));
   const el = $('wgList');
   if (el) el.innerHTML = list.map(row).join('');
   // THE MAP DRAWS WHAT THE LIST DRAWS. Drawing all 211 pieces while listing 12 of them put the
