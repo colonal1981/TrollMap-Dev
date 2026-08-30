@@ -34,6 +34,7 @@ import { checkCoastalRegulations } from '../data/coastal-regulations.js';
 import { COASTAL_ZONES, isCoastalKey } from '../data/coastal-zones.js';
 import { resolveR2Key } from '../data/lake-keys.js';
 import { lakeDbEntryFor, lakeRecordFor } from '../data/lake-registry.js';
+import { primeRegulations, regulationsPrimed } from '../data/regulations-live.js';
 import { fetchWaterConditions } from '../utils/water-conditions.js';
 import { getTideStateForZone } from './tide-engine.js';
 import { assessZoneIntrusion } from './usgs-gauges.js';
@@ -46,7 +47,58 @@ export function detectCoastalZone(lakeName) {
 }
 
 /**
+ * The state this water's regulations live under, coastal zone first.
+ *
+ * One derivation, because checkPlanLegality() and ensureRegulations() must agree about it or the
+ * cache is warmed under one key and read under another.
+ */
+export function regulationStateFor(lakeName) {
+  const zoneKey = detectCoastalZone(lakeName);
+  const st = zoneKey ? (COASTAL_ZONES[zoneKey] || {}).state : null;
+  return st || (lakeDbEntryFor(lakeName) || {}).state || null;
+}
+
+/**
+ * Warm the regulation digest for this water, and say whether it is warm.
+ *
+ * THE CHECK WAS READING A CACHE NOTHING ON ITS PATH HAD FILLED.
+ *
+ * `checkRegulations()` is synchronous by design -- it is called from deep inside the plan build,
+ * where nothing can await -- so it answers out of `regulations-live.js`'s cache and treats a cold
+ * cache as "unknown", which warns. That is the correct shape. What was missing is anybody filling
+ * it: `primeRegulations()` had exactly ONE caller in the app, a fire-and-forget line in
+ * conditions-strip.js that runs when the conditions strip refreshes, on a different trigger
+ * entirely. And smart-plan-v2-wiring.js calls checkPlanLegality() at line 117 while its only
+ * async water work happens at line 150 -- thirty-three lines LATER.
+ *
+ * So on the plan path the cache was reliably cold, `livePolicyFor()` was never consulted, and
+ * every inland lake reported "No regulation data for <lake> — verify with the state before you
+ * keep one" no matter how much of the book had been parsed. Ryan saw it on Lake Wateree twice.
+ *
+ * `regulationsPrimed()` already existed for exactly this and had NO CALLERS. It does now.
+ *
+ * @returns {Promise<boolean>} true when the digest is in hand
+ */
+export async function ensureRegulations(lakeName, opts = {}) {
+  const st = regulationStateFor(lakeName);
+  if (!st) return false;
+  if (regulationsPrimed(st, lakeName)) return true;
+  try {
+    await primeRegulations(st, lakeName, { worker: opts.worker });
+  } catch (e) {
+    // A FAILED PRIME IS NOT A PASS. It leaves the cache cold, the check falls to "unknown", and
+    // that warns. Nothing here can turn a network problem into permission.
+    console.warn('[preflight] could not prime regulations for', lakeName, e && e.message);
+  }
+  return regulationsPrimed(st, lakeName);
+}
+
+/**
  * May this species be fished on this water on this date?
+ *
+ * CALL `await ensureRegulations(lakeName, { worker })` FIRST. This function cannot await, so a
+ * cold cache reads as "we know nothing about this water" -- which is honest, and useless when the
+ * book is sitting one fetch away.
  *
  * @returns {{legal: boolean, reason: string, warnings: string[], coastal: boolean}}
  */
@@ -56,7 +108,7 @@ export function checkPlanLegality(lakeName, species, date) {
   // THE STATE IS WHAT UNLOCKS THE DIGEST. Inland it comes off the registry row, which this file
   // already reads for other reasons; on the coast the zone carries it. Without a state,
   // checkRegulations falls to its unknown branch — which now warns instead of saying nothing.
-  const inlandState = st || (lakeDbEntryFor(lakeName) || {}).state || null;
+  const inlandState = st || regulationStateFor(lakeName);
   let r;
   try {
     r = st ? checkCoastalRegulations(st, species, date)

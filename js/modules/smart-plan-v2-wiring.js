@@ -19,7 +19,7 @@ import { depthBandFor, usableAhFrom, researchIntel, structureWeights } from './p
 import { DEFAULT_WEIGHTS, DEFAULT_RELIEF_WEIGHTS } from './plan-candidates.js';
 import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
 import { solunarFor } from '../utils/solunar.js';
-import { checkPlanLegality, fetchForecast, fetchWaterState } from './plan-preflight.js';
+import { checkPlanLegality, ensureRegulations, fetchForecast, fetchWaterState } from './plan-preflight.js';
 import { buildSmartPlanV2, packFetcher, modelAsker, waterRouter } from './smart-plan-v2.js';
 import { planToTimeline, installTimeline } from './plan-to-timeline.js';
 import { renderSmartPlanUI, syncSpread } from './smart-plan-ui.js';
@@ -114,6 +114,13 @@ export async function runSmartPlanV2() {
   // THE LAW FIRST, BEFORE A MODEL CALL IS SPENT ON IT. Ryan: "reg check is needed so we don't
   // plan on closed waters." A block returns here — there is no point costing a Gemini call, a
   // battery budget and a morning on a species that cannot be kept today.
+  //
+  // AND THE BOOK HAS TO BE IN HAND BEFORE IT CAN BE CONSULTED. checkPlanLegality() is
+  // synchronous and answers out of a cache; the only thing that filled that cache was a
+  // fire-and-forget line in conditions-strip.js on a different trigger, and this call sat
+  // thirty-three lines ahead of the only async water work on the path. So it ran cold every
+  // time and every inland lake came back "No regulation data". One await, before the read.
+  await ensureRegulations(inp.lakeName, { worker: CF_WORKER_URL });
   const legality = checkPlanLegality(inp.lakeName, species, date);
   if (!legality.legal) {
     say(`${species} not legal here today`, true);
