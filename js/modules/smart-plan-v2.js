@@ -131,6 +131,9 @@ export async function buildSmartPlanV2(o) {
     launchTime: o.launchTime, returnTime: o.returnTime,
     species: o.species ? [].concat(o.species) : [],
     conditions: o.conditions, tackle: o.tackle, snapEligible, trollable,
+    // So the prompt can say HOW each bait reaches a depth rather than leaving the model to read
+    // one off the lure's name -- see depthNote() in plan-prompt.js.
+    lureByName: o.lureByName,
     usableAh: o.usableAh, intel: o.intel,
     // THE CHART FIRST, THE RESEARCH SECOND. The charted ones come out of the pack this function
     // already fetched; the wiring adds the profile's prose. Each line says which it is, so when

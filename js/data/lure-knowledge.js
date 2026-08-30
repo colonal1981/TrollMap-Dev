@@ -881,16 +881,37 @@ export function leadForDepth(lure, targetDepthFt, speedMph) {
  */
 export function depthWindow(lure, { speedMph, leadFt } = {}) {
   const k = LURE_KNOWLEDGE[lure?.type];
-  if (!k) return { min: null, max: null, mode: 'unknown', controlledBy: 'unknown' };
+  if (!k) return { min: null, max: null, mode: 'unknown', claimed: false, controlledBy: 'unknown' };
   // A bait that planes has no running depth to report, at any lead. Saying null is the answer;
   // the callers already treat a non-finite max as "cannot place this" -- see capBaitDepth().
   if (k.depthMode === 'none') {
-    return { min: null, max: null, mode: 'none',
+    return { min: null, max: null, mode: 'none', claimed: false,
              controlledBy: 'nothing — this bait is not trolled and planes at trolling speed' };
   }
   if (k.depthMode !== 'lead') {
     const d = k.ratedDepth || { min: 0, max: 1 };
-    return { ...d, mode: k.depthMode,
+    // A RATED DEPTH CAME OFF A BOX. NOTHING HERE MEASURED IT.
+    //
+    // Ryan, 2026-08-30: "the only lure i have that has an actual max depth is the crankbaits...
+    // it doesn't matter how much line you let out or how fast you go they aren't going to go
+    // much deeper than their spec... and my experience is that most of them run more shallow
+    // than they say they do."
+    //
+    // The max is respected already -- leadForDepth() clamps to it and capBaitDepth() refuses to
+    // lift a rated bait by shortening the lead. What was missing is that the pair is an
+    // UNCERTAINTY, and which end of it to read depends on the question:
+    //
+    //   will it drag the bottom?      assume it makes `max`. Pessimistic, and it saves the lure.
+    //   is it down with the fish?     count on `min`. A DD3 gets credit for 20 ft, not 25.
+    //
+    // No shrink factor is invented for "runs shallower than they say", and none can be: he has
+    // no way to measure it either -- "my sonar isn't going to show where my bait is... i do not
+    // have live sonar". The rated pair already spans it, so reading the shallow end when placing
+    // a bait among fish uses his own numbers rather than one of mine.
+    //
+    // `claimed` is how a reader tells the two apart. A lead-controlled bait's window is computed
+    // from lead, speed and weight and is marked false; this one is a manufacturer's word.
+    return { ...d, mode: k.depthMode, claimed: true,
              controlledBy: k.depthMode === 'surface' ? 'surface' : 'the lure itself' };
   }
   if (leadFt == null) {
@@ -904,7 +925,7 @@ export function depthWindow(lure, { speedMph, leadFt } = {}) {
     if (guess(mid) < leadFt) lo = mid; else hi = mid;
   }
   const d = Math.round(lo);
-  return { min: Math.max(0, d - 2), max: d + 2, mode: 'lead',
+  return { min: Math.max(0, d - 2), max: d + 2, mode: 'lead', claimed: false,
            controlledBy: 'lead length + speed + weight', speedFactor: sf };
 }
 

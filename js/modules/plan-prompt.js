@@ -54,6 +54,9 @@
  * ---------------------------------------------------------------------------------------------
  */
 
+// ONE PLACE KNOWS HOW DEEP A BAIT RUNS, and until now the prompt was not one of its readers.
+import { depthWindow } from '../data/lure-knowledge.js';
+
 // Six rods. This never changes; it is the boat, not a setting.
 export const ROD_IDS = ['R1', 'R2', 'R3', 'R4', 'R5', 'R6'];
 
@@ -327,6 +330,8 @@ export function riverPromptBlock(ws) {
  *                                    `tackle` and not in here is cast-only and the prompt says
  *                                    so. Omitted means "assume all of them", which is the old
  *                                    behaviour and the bug.
+ * @param {function} [o.lureByName] name -> inventory lure. Used to tell the model HOW each bait
+ *                                  reaches a depth instead of letting it read one off the name.
  * @param {number}   [o.usableAh]
  * @param {string[]} [o.hazards]     what is in the way, as sentences that name their own source.
  *                                   chartedHazards() reads the pack's POI layer in two tiers,
@@ -359,6 +364,39 @@ export function buildPlanRequest(o) {
   // it to build the union that produced this list.
   const trollSet = new Set(o.trollable || o.tackle || []);
   const castOnly = (o.tackle || []).filter((n) => !trollSet.has(n));
+
+  // HOW EACH BAIT GETS TO A DEPTH, SAID OUT LOUD INSTEAD OF READ OFF A NAME.
+  //
+  // Until now the model was handed a flat list of names and nothing else, so the only depth
+  // information reaching it was whatever was printed in the name: "DD3 Crankbait (20-25ft)". It
+  // read 25 off the label and the card printed 25. Ryan, 2026-08-30:
+  //
+  //   > the only way to change the depth of a lure is lead or speed... or changing the lure...
+  //   > for a weighted lure (non lipped) either letting out more line or slowing down will drop
+  //   > the bait down deeper... the only lure i have that has an actual max depth is the
+  //   > crankbaits... and my experience is that most of them run more shallow than they say
+  //
+  // All of that is already in LURE_KNOWLEDGE and none of it was ever sent. Two facts per bait:
+  // what controls its depth, and -- for a bait whose bill controls it -- that the printed range
+  // is the maker's word rather than anything measured, so the shallow end is the one to place
+  // fish against. `depthWindow().claimed` is that distinction.
+  const depthNote = (name) => {
+    const lure = o.lureByName ? o.lureByName(name) : null;
+    if (!lure) return null;
+    const w = depthWindow(lure, { speedMph: 2.0, leadFt: null });
+    if (w.mode === 'none') return null;                       // the CAST ONLY block says it better
+    if (w.mode === 'lead') {
+      return `${name} — depth set by LEAD and SPEED. More line out or slower is deeper; `
+           + `shorter or faster is shallower. No ceiling: it will go as deep as you feed it.`;
+    }
+    if (w.mode === 'surface') return `${name} — stays on the surface. No running depth.`;
+    return `${name} — depth set by its BILL. It runs about ${w.min}-${w.max} ft and NO amount of `
+         + `lead or speed takes it deeper; that is the maker's rating, not a measurement, and `
+         + `his own experience is these run SHALLOWER than rated. When you need this bait to be `
+         + `among the fish, count on ${w.min} ft. When you are checking it against the shallowest `
+         + `water on a leg, assume it reaches ${w.max} ft.`;
+  };
+  const depthNotes = [...trollSet].map(depthNote).filter(Boolean);
 
   const system = 'You are TrollMap Smart Plan, an expert fishing guide planning one day on the '
     + 'water for a kayak angler. Return one valid JSON object and nothing else — no markdown, no '
@@ -410,6 +448,11 @@ seconds, where a leader rod is a knot with wet hands.
 
 Colour is a free string; assume any colour combination is aboard. Use ONLY these exact lure names:
 ${(o.tackle || []).join(', ') || '(inventory unavailable)'}
+${depthNotes.length ? `
+HOW EACH OF THESE GETS TO A DEPTH. There are only three ways to move a bait: the lead, the speed,
+or a different bait. Do not read a depth off a lure's NAME — the name is what the box says.
+${depthNotes.map((d) => `- ${d}`).join('\n')}
+` : ''}
 ${castOnly.length ? `
 CAST ONLY — NEVER BEHIND THE BOAT. These may go on a casting rod at a stop and NOWHERE else:
 ${castOnly.join(', ')}

@@ -227,6 +227,14 @@ export async function runSmartPlanV2() {
       hazards: researchHazards(researched),
       tackle: castableOrTrollable.map((l) => l.name),
       inventory: castableOrTrollable,
+      // A NAME IS NOT A DEPTH. Pick Water has passed this since capBaitDepth() needed it; Smart
+      // Plan never did, so the only depth information reaching the model on this path was
+      // whatever was printed in a lure's name -- "DD3 Crankbait (20-25ft)". See depthNote() in
+      // plan-prompt.js for what it says now, and why the shallow end is the one to trust.
+      lureByName: (name) => {
+        const n = String(name || '').trim().toLowerCase();
+        return n ? TACKLE_INVENTORY.find((l) => String(l.name).toLowerCase() === n) || null : null;
+      },
       fetchJson: packFetcher(CF_WORKER_URL),
       // Transits go over the water graph instead of straight through whatever is in the way.
       // Worker/water.js has answered POST /water/<slug>/route since it was written and nothing

@@ -259,6 +259,9 @@ export async function planFromWater(o) {
 
   const req = buildPlanRequest({
     ...o.planArgs,
+    // So the prompt can say HOW each bait reaches a depth rather than leaving the model to read
+    // one off the lure's name. Same resolver the assembler already gets, one line further up.
+    lureByName: o.lureByName,
     candidates: legs.map((l) => ({
       runId: l.runId,
       depthFt: l.depthFt,
