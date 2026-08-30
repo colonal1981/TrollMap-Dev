@@ -24,7 +24,7 @@
 // when it sits on water he has ticked, which is the same information offered as a choice.
 import { describe, it, expect } from './expect-shim.mjs';
 import { castSpots, SPOT_KINDS } from '../js/modules/plan-water.js';
-import { dockSpotFeatures } from '../js/modules/plan-candidates.js';
+import { dockSpotFeatures, chartedGrid, attractorSpotFeatures } from '../js/modules/plan-candidates.js';
 
 const pt = (kind, lon, lat, extra = {}) => ({
   type: 'Feature', geometry: { type: 'Point', coordinates: [lon, lat] },
@@ -154,5 +154,57 @@ describe('dockSpotFeatures groups docks along the shore, not along a route', () 
   it('survives an empty or absent file', () => {
     expect(dockSpotFeatures(null)).toEqual([]);
     expect(dockSpotFeatures({ features: [] })).toEqual([]);
+  });
+});
+
+
+// WHY I WOULD NOT FISH FISHING CREEK FROM A KAYAK ON WATEREE.
+//
+// Ryan, 2026-08-30: "why would i fish the fish attractor at fishing creek, lancaster reservoir or
+// lake monticello when i am lake wateree? i dont think my kayak will make it there and i am damn
+// sure i can't cast that far".
+//
+// There was no spatial filter on the state feed at all. The Worker returns every attractor it
+// holds -- 5,263 rows across SC, NC, GA and TN -- and every one became a cast spot on whatever
+// lake was open: `[pick-water] 5258 state attractors listed`. Smart Plan scored days against the
+// same set, so a brushpile on Lake Monticello was weighting a leg on Wateree.
+//
+// The test cannot be a name and should not be a bounding box: Wateree runs north-west to
+// south-east and a box around it contains a good deal of Fishing Creek Reservoir. The pack IS the
+// lake, so the question is whether a point sits near something this pack charted.
+describe('attractors are filtered to the water being planned', () => {
+  const line = (pts) => ({ type: 'Feature', properties: {},
+                           geometry: { type: 'LineString', coordinates: pts } });
+  // A stand-in "pack": a run through the middle of Lake Wateree.
+  const pack = [line([[-80.7300, 34.3700], [-80.7260, 34.3730], [-80.7220, 34.3760]])];
+  const grid = chartedGrid([pack]);
+  const rows = [
+    { name: 'Wateree AT-1',  lat: 34.3712, lon: -80.7260 },
+    { name: 'Fishing Creek', lat: 34.6339, lon: -80.8664 },
+    { name: 'Lancaster Res', lat: 34.6800, lon: -80.7500 },
+    { name: 'Monticello',    lat: 34.3050, lon: -81.3200 },
+  ];
+
+  it('keeps the one on this water and drops the other three lakes', () => {
+    const out = attractorSpotFeatures(rows, [], { onWater: grid, where: 'test' });
+    expect(out.map((f) => f.properties.name)).toEqual(['Wateree AT-1']);
+  });
+
+  it('a pack with nothing charted cannot judge, so it does not', () => {
+    // Better to list everything than to silently empty a lake because its pack came back empty.
+    expect(chartedGrid([[]])).toBe(null);
+    expect(attractorSpotFeatures(rows, [], { onWater: null }).length).toBe(4);
+  });
+
+  it('still dedupes against the buoys Garmin already charted', () => {
+    const charted = [{ type: 'Feature', properties: { kind: 'attractor' },
+                       geometry: { type: 'Point', coordinates: [-80.7260, 34.3712] } }];
+    const out = attractorSpotFeatures(rows, charted, { onWater: grid, where: 'test' });
+    expect(out.length).toBe(0);
+  });
+
+  it('the old numeric third argument still means dedupeM', () => {
+    // smart-plan-v2 and any test calling attractorSpotFeatures(rows, spots, 30) must not break.
+    expect(attractorSpotFeatures(rows, [], 30).length).toBe(4);
   });
 });

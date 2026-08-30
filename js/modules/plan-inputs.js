@@ -503,6 +503,50 @@ export function researchIntel(profile, species, season, now = Date.now()) {
 }
 
 /**
+ * WHAT THE RESEARCH SAYS WILL HURT YOU HERE.
+ *
+ * `buildPlanRequest` has read `o.hazards` for the SAFETY section since it was written and NO
+ * CALLER HAS EVER FILLED IT -- not Smart Plan, not Pick Water. The sentence it guards ("there
+ * are N marked hazard zones on this water") describes charted geometry, and no chartpack carries
+ * a hazards layer: wateree_lake holds contours, depth_areas, docks, shoreline, hydrography,
+ * pois, structure, trolling_runs, water_features, water_graph and waterbody. There is nothing
+ * for it to count, which is why it never fired.
+ *
+ * The hazards this app actually holds are PROSE, in the research profile's navigation section,
+ * put there by the agent whose targetFields are `navigation.ramps`, `navigation.hazards`,
+ * `navigation.notes`. On Lake Wateree, SC they are a bridge replacement on S-20-101 and storm
+ * activity near the dam. Both planners already load that profile.
+ *
+ * lake-intel.js reads `nav.navigationHazards` for the same briefing, and NOTHING IS FILED UNDER
+ * THAT NAME -- the agent writes `navigation.hazards`, so the Lake Intelligence Briefing has been
+ * printing no hazards for every lake that has some. Same bug as `preferredStructure` above, same
+ * fix: the real field first, the guesses kept as alternates for older profiles.
+ *
+ * `drawdownNotes` comes along because lake-intel.js already counts it as a navigation hazard,
+ * and one definition of the phrase beats three.
+ */
+export function researchHazards(profile) {
+  const nav = (profile && profile.navigation) || {};
+  const out = [];
+  const push = (v) => {
+    if (v === null || v === undefined) return;
+    // An entry is a sentence or an object; lake-research-ui.js renders the same two shapes and
+    // reads description/name/type off the object form, so those names come from a real profile
+    // rather than from me.
+    const t = String(typeof v === 'string' ? v
+      : (v.description || v.name || v.text || v.hazard || v.type || '')).trim();
+    if (!t) return;
+    const loc = typeof v === 'object' && v && v.location ? ` (${String(v.location).trim()})` : '';
+    const line = `${t}${loc}`;
+    if (!out.includes(line)) out.push(line);
+  };
+  const raw = nav.hazards ?? nav.navigationHazards ?? (profile && profile.hazards);
+  if (Array.isArray(raw)) raw.forEach(push); else push(raw);
+  push(nav.drawdownNotes);
+  return out;
+}
+
+/**
  * HOW OLD THE RESEARCH IS, in the one place that hands it to a model.
  *
  * `metadata.lastUpdated` has been written on every profile since storage.js was built, and THREE

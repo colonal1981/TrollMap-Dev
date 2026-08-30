@@ -7,6 +7,7 @@
 import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
 import { coerceList, coerceLabels } from '../utils/coerce.js';
+import { researchHazards } from './plan-inputs.js';
 
 /* Lake Intel: species, forage, habitat, hazards, seasonal patterns */
 export async function syncLakeIntelData() {
@@ -156,17 +157,20 @@ export async function syncLakeIntelData() {
       if(p.bottom) lines.push(`Bottom composition: ${p.bottom}`);
     }
 
-    // Navigation hazards
-    if(rp?.navigation) {
-      const nav = rp.navigation;
-      const hazards = [];
-      const navHazards = coerceList(nav.navigationHazards);
-      if(navHazards.length) hazards.push(navHazards.join('; '));
-      if(nav.drawdownNotes) hazards.push(nav.drawdownNotes);
-      if(hazards.length) lines.push(`Navigation hazards: ${hazards.join(' \u00B7 ')}`);
-    } else {
-      if(p.hazards) lines.push(`Navigation hazards: ${p.hazards}`);
-    }
+    // Navigation hazards.
+    //
+    // THIS READ `nav.navigationHazards` AND NOTHING IS FILED UNDER THAT NAME. The research
+    // agent's own targetFields are `navigation.ramps`, `navigation.hazards`, `navigation.notes`
+    // -- so every lake that HAS hazards has been showing none in this briefing. Lake Wateree, SC
+    // carries two: storm activity near the dam and the S-20-101 bridge replacement.
+    //
+    // researchHazards() is now the one place that answers "what are this water's navigation
+    // hazards", for this briefing and for the plan prompt's safety section, so the two cannot
+    // drift again. It keeps `navigationHazards` as an alternate for older profiles and still
+    // folds in drawdownNotes, which is what this block already did.
+    const hazards = researchHazards(rp);
+    if(hazards.length) lines.push(`Navigation hazards: ${hazards.join(' \u00B7 ')}`);
+    else if(!rp?.navigation && p.hazards) lines.push(`Navigation hazards: ${p.hazards}`);
 
     // Seasonal pattern / trolling intel
     if(rp?.trollingIntelligence) {

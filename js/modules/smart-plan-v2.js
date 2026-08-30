@@ -17,10 +17,11 @@
  * the seams between six modules stay honest.
  */
 
-import { selectCandidates, structureIndex, forModel, orientLegs, poiSpotFeatures, attractorSpotFeatures } from './plan-candidates.js';
+import { selectCandidates, structureIndex, forModel, orientLegs, poiSpotFeatures,
+         attractorSpotFeatures, chartedGrid } from './plan-candidates.js';
 import { buildPlanRequest, parsePlanResponse, planArgsFrom } from './plan-prompt.js';
 import { assemblePlan, validatePlan } from './plan-assemble.js';
-import { connectionFor } from '../data/lure-knowledge.js';
+import { connectionFor, snapEligibleFrom } from '../data/lure-knowledge.js';
 
 // How many candidates the model is shown. Enough to make the ordering a real choice, few enough
 // that the prompt does not turn into a phone book. NOT a cap on what it may fish — it may use all
@@ -80,7 +81,13 @@ export async function buildSmartPlanV2(o) {
   // The state's own attractors, minus the ones Garmin already charted. Injected as rows rather
   // than fetched, like everything else this module reads, so the whole path still runs in a test
   // with no network.
-  const attractors = structureIndex(attractorSpotFeatures(o.dnrAttractors, poiSpots));
+  // SAME FILTER, SAME REASON. Smart Plan was scoring days against every attractor in four
+  // states; a brushpile on Lake Monticello has no business weighting a leg on Wateree.
+  const onWater = chartedGrid([runs, (structFc && structFc.features) || [],
+                               (waterFc && waterFc.features) || [],
+                               (docksFc && docksFc.features) || []]);
+  const attractors = structureIndex(attractorSpotFeatures(o.dnrAttractors, poiSpots,
+                                    { onWater, where: `smart-plan ${o.r2Key}` }));
 
   const candidates = selectCandidates(runs, {
     ramp: o.ramp, slug: o.r2Key, fishDepthFt: o.fishDepthFt, holding: o.holding,
@@ -112,8 +119,9 @@ export async function buildSmartPlanV2(o) {
   // module never has to know how the inventory is shaped.
   const typeOf = new Map((o.inventory || []).map((l) => [l.name, l.type]));
   const connectionOf = (name) => (typeOf.has(name) ? connectionFor(typeOf.get(name)) : null);
-  const snapEligible = (o.inventory || [])
-    .filter((l) => connectionFor(l.type) !== 'tie').map((l) => l.name);
+  // Was `connectionFor(l.type) !== 'tie'` written out here, which is canTakeSnap() with the
+  // table's own name filed off -- and Pick Water, reading the same bag, had no copy at all.
+  const snapEligible = snapEligibleFrom(o.inventory);
 
   const req = buildPlanRequest({
     candidates: candidates.map((c) => forModel(c)),

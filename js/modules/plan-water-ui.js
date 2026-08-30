@@ -34,21 +34,22 @@
 import { state, CF_WORKER_URL } from '../core/state.js';
 import { resolveR2Key } from '../data/lake-keys.js';
 import { getSeason } from '../data/species-intel.js';
-import { depthBandFor, usableAhFrom } from './plan-inputs.js';
+import { depthBandFor, usableAhFrom, researchIntel, researchHazards } from './plan-inputs.js';
 import { packFetcher } from './smart-plan-v2.js';
 import { fetchForecast, fetchWaterState } from './plan-preflight.js';
 import { depthSampler, shorelineIndex } from './plan-water-index.js';
 import { offerWater, dayCost, priceSpots, searchOrder, optionality, TROLL_MPH, SPOT_KINDS } from './plan-water.js';
 import { planFromWater } from './plan-from-water.js';
 import { buildSmartPlanV2, modelAsker, waterRouter } from './smart-plan-v2.js';
-import { poiSpotFeatures, attractorSpotFeatures, dockSpotFeatures } from './plan-candidates.js';
+import { poiSpotFeatures, attractorSpotFeatures, dockSpotFeatures, chartedGrid }
+  from './plan-candidates.js';
 import { planToTimeline, installTimeline } from './plan-to-timeline.js';
 import { renderSmartPlanUI, syncSpread } from './smart-plan-ui.js';
 import { materialisePlan } from './plan-tracks.js';
 import { loadSessionFromPlan, isEnabled, launchFrom } from './notifications.js';
 import { renderAll } from '../core/map-init.js';
 import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
-import { connectionFor } from '../data/lure-knowledge.js';
+import { connectionFor, snapEligibleFrom } from '../data/lure-knowledge.js';
 import { readInputs, rampCoords, loadResearchedProfile } from './smart-plan-v2-wiring.js';
 
 const $ = (id) => document.getElementById(id);
@@ -62,6 +63,11 @@ const fmtHm = (min) => `${Math.floor(min / 60)}h ${String(Math.round(min % 60)).
 const T = { pieces: [], picked: new Set(), ramp: null, rampName: '', usableAh: 0,
             windowMin: null, band: null, holding: null, sortBy: 'ramp', lake: '', limit: 25,
             spots: [], species: '', r2Key: '', dateStr: '', launchTime: '', returnTime: '',
+            // WHAT THE RESEARCH SAID, carried across the two halves of this tab. findWater()
+            // loads the profile; buildFromPicked() is the one that writes the prompt, and they
+            // are different functions -- so the profile has to survive the gap or the prompt is
+            // written without it. That gap is exactly what shipped.
+            intel: null, hazards: [],
             windByHour: null, weatherByHour: null, pickedSpots: new Set(),
             // WHICH KINDS OF SPOT HE WANTS TO SEE. Empty means all of them, which is what it
             // did before there was a filter. See paintSpots().
@@ -662,7 +668,12 @@ export async function findWater() {
   // were toggled first must not decide what a plan can see. Failure is [] and a log.
   const dnrRows = await (window.getFishAttractors?.() ?? Promise.resolve([]))
     .catch((e) => { console.warn('[pick-water] DNR attractor feed unavailable:', e?.message); return []; });
-  const dnrSpots = attractorSpotFeatures(dnrRows, poiSpotFeatures(poFc))
+  // Everywhere this pack has charted anything -- the runs, the depth areas, the shoreline, the
+  // features, the structure. An attractor outside all of it is on another lake.
+  const onWater = chartedGrid([lanes, (daFc && daFc.features) || [], (slFc && slFc.features) || [],
+                               (wfFc && wfFc.features) || [], (stFc && stFc.features) || []]);
+  const dnrSpots = attractorSpotFeatures(dnrRows, poiSpotFeatures(poFc),
+                                         { onWater, where: `pick-water ${r2Key}` })
     .map((f) => ({ type: 'dnr_attractor', at: f.geometry.coordinates,
                    what: f.properties.name || 'DNR brushpile' }));
   if (dnrSpots.length) console.log(`[pick-water] ${dnrSpots.length} state attractors listed`);
@@ -702,6 +713,10 @@ export async function findWater() {
     launchTime: inp.launchTime, returnTime: inp.returnTime,
     usableAh: usableAhFrom(inp.motor), band: depth ? depth.band : null,
     holding: depth ? depth.holding : null, lake: inp.lakeName,
+    // DERIVED HERE because this is where the profile, the species and the date all exist. The
+    // profile was being loaded twelve lines above, spent on depthBandFor() alone, and dropped.
+    intel: researchIntel(researched, species, getSeason(date)),
+    hazards: researchHazards(researched),
     windowMin: (() => {
       const p = (s) => { const m = /^(\d{1,2}):(\d{2})/.exec(String(s || '')); return m ? +m[1] * 60 + +m[2] : null; };
       const a = p(inp.launchTime), b = p(inp.returnTime);
@@ -810,6 +825,22 @@ export async function buildFromPicked() {
         launchTime: T.launchTime, returnTime: T.returnTime,
         species: [T.species], usableAh: T.usableAh,
         tackle: castable.map((l) => l.name),
+        // THE THREE FIELDS buildPlanRequest READS THAT THIS PATH NEVER SENT.
+        //
+        // Ryan, 2026-08-30, on a Pick Water plan for Lake Wateree: "so that note shows up but the
+        // plan actually shows the research profile". Both halves are true and that is the bug.
+        // The plan card's briefing is assembled by lake-intel from the profile; the PROMPT got
+        // `intel: undefined`, fell to "NOTHING. No researched profile exists for this water", and
+        // the model dutifully wrote it into the rationale: "Since no profile exists for this
+        // water, rely on sonar". Wateree's profile is v140.0 at 96% confidence, 66 ft max depth,
+        // a 27 ft summer thermocline, and Pick Water was loading it -- for `depthBandFor` only,
+        // three lines up -- and then throwing it away.
+        //
+        // Smart Plan has sent `intel` since 2026-08-07. Two planners, one prompt, one of them
+        // filling it.
+        intel: T.intel,
+        hazards: T.hazards,
+        snapEligible: snapEligibleFrom(castable),
         conditions: { depthBand: { ft: T.band, holding: T.holding || 'unknown',
                                    meaning: 'where the fish are, not the depth of the water' } },
         waterState,

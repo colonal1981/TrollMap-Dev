@@ -15,7 +15,8 @@ import { state, CF_WORKER_URL } from '../core/state.js';
 import { resolveR2Key } from '../data/lake-keys.js';
 import { getLoadedAccessIndex } from '../data/access-index.js';
 import { getSeason } from '../data/species-intel.js';
-import { depthBandFor, usableAhFrom, researchIntel, structureWeights } from './plan-inputs.js';
+import { depthBandFor, usableAhFrom, researchIntel, researchHazards, structureWeights }
+  from './plan-inputs.js';
 import { DEFAULT_WEIGHTS, DEFAULT_RELIEF_WEIGHTS } from './plan-candidates.js';
 import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
 import { solunarFor } from '../utils/solunar.js';
@@ -246,6 +247,9 @@ export async function runSmartPlanV2() {
       // What the research pipeline actually found about this water — thermocline, oxygen,
       // forage, habitat, the lot. v2 was sending none of it.
       intel: researchIntel(researched, species, season),
+      // THE SAFETY SECTION'S HAZARD SENTENCE, which has never once had anything to say because
+      // nothing filled this. Same profile, already loaded, one field further down.
+      hazards: researchHazards(researched),
       tackle: castableOrTrollable.map((l) => l.name),
       inventory: castableOrTrollable,
       fetchJson: packFetcher(CF_WORKER_URL),
@@ -400,8 +404,24 @@ export async function loadResearchedProfile(lakeName) {
     if (cached) return cached;
   } catch (e) { console.warn('[plan-v2] researched cache threw', e.message); }
   try {
-    const r = await fetch(`${CF_WORKER_URL}/research/get?lake=${encodeURIComponent(lakeName)}`);
-    if (r.status === 404) return null;
+    const url = `${CF_WORKER_URL}/research/get?lake=${encodeURIComponent(lakeName)}`;
+    const r = await fetch(url);
+    if (r.status === 404) {
+      // A 404 IS NOT PROOF THAT NOBODY RESEARCHED THIS LAKE. It is proof that nothing answered to
+      // THIS NAME, and the two are not the same claim: the store holds 62 profiles under three
+      // different spellings of the same lakes, which is why handleResearchGet resolves a
+      // candidate list instead of one key. A silent return therefore makes a miss unfalsifiable
+      // -- the plan says "no researched profile exists for this water" and nobody can tell
+      // whether that means absent or unmatched.
+      //
+      // NOT the cause of Ryan's 2026-08-30 report. Measured against the live Worker that day,
+      // `/research/get?lake=Lake Wateree, SC` answers ok with the v140.0 profile; Pick Water
+      // simply never handed it to the prompt. This line stands anyway, because it is the check
+      // that would have ruled the misfiling story out in one run instead of an afternoon.
+      console.warn(`[plan-v2] no research profile answered to "${lakeName}" — if this lake HAS `
+        + `been researched, it is filed under a name this lookup did not try.`);
+      return null;
+    }
     if (!r.ok) { console.warn(`[plan-v2] /research/get returned ${r.status} for ${lakeName}`); return null; }
     const d = await r.json();
     return d?.profile || d?.data || d || null;

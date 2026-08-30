@@ -324,7 +324,9 @@ export function riverPromptBlock(ws) {
  * @param {string[]} o.tackle        exact lure names the model may use
  * @param {string[]} [o.snapEligible] the subset of those that may hang off a swivel snap
  * @param {number}   [o.usableAh]
- * @param {object[]} [o.hazards]     for the safety note; stops are refused by id regardless
+ * @param {string[]} [o.hazards]     navigation hazards from the research profile, as sentences.
+ *                                   researchHazards() builds them; they are advisories, not
+ *                                   charted geometry, and the safety note says so.
  * @param {string}   [o.intel]       species / research / catch-history prose the app already has
  * @param {object}   [o.waterState]  fetchWaterState() output — {featureType, river, tidal}.
  *                                   NOT absent on a reservoir: an impoundment with an inflow
@@ -501,7 +503,12 @@ RULES THAT ARE NOT NEGOTIABLE
 SAFETY — judge it honestly for a 12.5 ft kayak
 Sustained wind over 15 mph, or gusts over 20, is a no-go. Judge ${o.ramp || 'the ramp'} against the
 wind direction: is it a dangerous windward launch?${o.hazards && o.hazards.length
-  ? `\nThere are ${o.hazards.length} marked hazard zones on this water; keep clear of them.` : ''}
+  ? `\nThe research on this water lists ${o.hazards.length} navigation hazard`
+    + `${o.hazards.length === 1 ? '' : 's'}:\n`
+    + o.hazards.map((h) => `- ${h}`).join('\n')
+    + `\nThese are written advisories, NOT charted zones with positions — say the ones that bear `
+    + `on today out loud and do not imply they are marked on the map.`
+  : ''}
 ${coastalPromptBlock(o.waterState)}${riverPromptBlock(o.waterState)}
 WHAT IS ALREADY KNOWN
 ${o.intel || 'NOTHING. No researched profile exists for this water, so everything else here rests '

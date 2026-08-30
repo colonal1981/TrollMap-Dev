@@ -1070,6 +1070,21 @@ export function canTakeSnap(lureType) {
 }
 
 /**
+ * THE NAMES the prompt may put on a snap rod, out of a bag.
+ *
+ * `canTakeSnap` was written, tested and never called: smart-plan-v2.js hand-rolled
+ * `connectionFor(l.type) !== 'tie'` in its own file, and plan-water-ui.js -- the other planner,
+ * reading the same inventory -- did not roll it at all. So Pick Water sent buildPlanRequest no
+ * `snapEligible`, the prompt's snap list printed "(unknown -- treat everything as tie-only)",
+ * and a bag of eleven snap-friendly lures arrived at the model as eleven tie-only ones.
+ *
+ * One expression, in the module that owns the terminal-connection table, called by both.
+ */
+export function snapEligibleFrom(inventory) {
+  return (inventory || []).filter((l) => l && canTakeSnap(l.type)).map((l) => l.name);
+}
+
+/**
  * The lure types nobody has ruled on yet, so the gap is visible instead of hiding inside the
  * 'tie' default. Pass the inventory; get back the types it holds that are not in the table.
  */
