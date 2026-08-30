@@ -55,8 +55,15 @@ describe('spotKindCounts', () => {
     expect(order).toEqual(['hump', 'point', 'pile', 'cove']);
   });
 
-  it('carries the readable label, not the code', () => {
+  it('carries the KIND label, not one spot\'s own name', () => {
+    // A DNR brushpile carries its published name -- "Fish Attractor #4 Lake Wateree" -- which is
+    // right on a row and absurd on a chip. The first render of this filter offered a button
+    // labelled with one attractor's name and a count of 3,898. SPOT_KINDS is the vocabulary.
     expect(ui.spotKindCounts(priced)[0].what).toBe('offshore hump');
+    const named = [{ type: 'dnr_attractor', what: 'Fish Attractor #4 Lake Wateree', free: false },
+                   { type: 'dnr_attractor', what: 'Fish Attractor #9 Lake Wateree', free: false }];
+    expect(ui.spotKindCounts(named)[0].what).toBe('DNR brushpile');
+    expect(ui.spotKindCounts(named)[0].n).toBe(2);
   });
 
   it('survives an empty or malformed list rather than throwing under a repaint', () => {

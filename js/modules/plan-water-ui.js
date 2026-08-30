@@ -38,7 +38,7 @@ import { depthBandFor, usableAhFrom } from './plan-inputs.js';
 import { packFetcher } from './smart-plan-v2.js';
 import { fetchForecast, fetchWaterState } from './plan-preflight.js';
 import { depthSampler, shorelineIndex } from './plan-water-index.js';
-import { offerWater, dayCost, priceSpots, searchOrder, optionality, TROLL_MPH } from './plan-water.js';
+import { offerWater, dayCost, priceSpots, searchOrder, optionality, TROLL_MPH, SPOT_KINDS } from './plan-water.js';
 import { planFromWater } from './plan-from-water.js';
 import { buildSmartPlanV2, modelAsker, waterRouter } from './smart-plan-v2.js';
 import { poiSpotFeatures, attractorSpotFeatures } from './plan-candidates.js';
@@ -279,7 +279,12 @@ export function spotKindCounts(priced) {
   const by = new Map();
   for (const s of (priced || [])) {
     if (!s || !s.type) continue;
-    const e = by.get(s.type) || { type: s.type, what: s.what || s.type, n: 0, free: 0 };
+    // THE KIND'S LABEL, NOT THE SPOT'S OWN NAME. A DNR brushpile carries its published name --
+    // "Fish Attractor #4 Lake Wateree" -- which is right on a row and absurd on a chip: the
+    // filter came up offering a button labelled with one attractor's name and a count of 3,898.
+    // SPOT_KINDS is the vocabulary; a spot's `what` is only a fallback for a kind not in it.
+    const label = SPOT_KINDS[s.type] || s.what || s.type;
+    const e = by.get(s.type) || { type: s.type, what: label, n: 0, free: 0 };
     e.n += 1;
     if (s.free) e.free += 1;
     by.set(s.type, e);

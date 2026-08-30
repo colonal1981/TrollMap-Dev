@@ -1005,7 +1005,7 @@ export function dayCost(picked, o) {
 const CORRIDOR_M = 50;
 
 /** What the packs can name as something worth stopping on, and what to call it. */
-const SPOT_KINDS = {
+export const SPOT_KINDS = {
   timber:      'flooded timber',
   // NOT 'DNR brushpile'. A `near[]` attractor mark comes from Garmin's own Fish Attractor Buoy
   // symbol -- build_trolling_runs.py:461 -- and the state feed is a different source that was
