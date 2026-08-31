@@ -854,6 +854,24 @@ export function seatRods(rods, connOf) {
  * @param {object[]} candidates  the FULL candidate objects from selectCandidates(), unordered
  * @param {object}   [ctx]       { tackle: string[], connectionOf: fn }
  */
+/**
+ * THE FIELDS THE MODEL SETS ON A LEG, IN ONE PLACE, BECAUSE TWO PATHS READ THEM.
+ *
+ * planArgsFrom() returns `candidates` — the app's candidates with the model's per-leg answers
+ * merged on, IN THE MODEL'S ORDER. Smart Plan takes the whole thing, order included. Pick Water
+ * cannot: the order there is Ryan's, off a map, and is not the model's to change. So it took
+ * `deploy` (a runId-keyed map, order-blind) and discarded `candidates` entirely.
+ *
+ * That discarded the answers along with the ordering. Measured off his plan of 2026-08-31: the
+ * model asked for a second pass on three of ten legs and got none, and wrote a sentence of `why`
+ * for every leg and every card came out blank. Both had been computed, validated and thrown away
+ * one line apart.
+ *
+ * Writing the three names out again in plan-from-water.js would fix today and lose the next field
+ * the same way. One list, two readers, no drift.
+ */
+export const MODEL_LEG_FIELDS = ['why', 'speedMph', 'trollPasses'];
+
 export function planArgsFrom(res, candidates, ctx = {}) {
   const problems = [];
   // Whatever parsePlanResponse() had to repair to make the answer parse at all. Reported here so
@@ -950,10 +968,12 @@ export function planArgsFrom(res, candidates, ctx = {}) {
       else problems.push(`${c.runId} asked for ${JSON.stringify(leg.trollPasses)} trolling `
                        + 'passes — that is not a whole number of passes, so it is fished once');
     }
-    // `why`, `speedMph` and `trollPasses` are the model's, and ride on the candidate into the
-    // assembler.
-    ordered.push({ ...c, why: str(leg.why), speedMph: num(leg.speedMph) ?? undefined,
-                   trollPasses });
+    // WHAT THE MODEL SAID ABOUT THIS PARTICULAR LEG, riding on the candidate into the assembler.
+    // Built through MODEL_LEG_FIELDS rather than written out here, because there is a second
+    // reader -- see plan-from-water.js, which wants these and not the ordering they come in.
+    const answer = { why: str(leg.why), speedMph: num(leg.speedMph) ?? undefined, trollPasses };
+    for (const k of MODEL_LEG_FIELDS) if (!(k in answer)) answer[k] = undefined;
+    ordered.push({ ...c, ...answer });
 
     const d = leg.deploy || {};
     const port = reseat(str(d.port)), starboard = reseat(str(d.starboard));

@@ -36,7 +36,8 @@
 
 import { ampHours, minutesFor, metresBetween, cumulative } from './plan-candidates.js';
 import { assemblePlan } from './plan-assemble.js';
-import { buildPlanRequest, parsePlanResponse, planArgsFrom } from './plan-prompt.js';
+import { buildPlanRequest, parsePlanResponse, planArgsFrom, MODEL_LEG_FIELDS }
+  from './plan-prompt.js';
 import { prefetchTransits } from './smart-plan-v2.js';
 import { searchOrder, dayCost, priceSpots, TROLL_MPH, TRANSIT_MPH } from './plan-water.js';
 
@@ -246,7 +247,6 @@ export async function planFromWater(o) {
   //
   // A router that answers for nothing returns null, and assemblePlan falls back to straight lines
   // that mark themselves `unrouted`. That is a worse plan, not a broken one, and it says so.
-  const transit = o.transit || await prefetchTransits(legs, o.ramp, o.routeWater);
 
   // Spots priced against the water he actually picked -- a spot in a picked corridor is a free
   // stop, one outside every corridor is a trip. § 6.
@@ -351,10 +351,43 @@ export async function planFromWater(o) {
       + 'the plan with nothing in the water. It was asked to rig every one.');
   }
 
+  // HIS ORDER, THE MODEL'S ANSWERS. Both, which is the thing this path was not doing.
+  //
+  // planArgsFrom() returns `candidates` with the model's per-leg answers merged on, in the
+  // MODEL'S order -- and the order here is Ryan's, off a map, and is not the model's to change.
+  // So this path took `deploy`, which is keyed by runId and therefore order-blind, and threw the
+  // rest away. It threw the answers away with the ordering.
+  //
+  // Measured off his plan of 2026-08-31: the model asked for a second pass on `#1762`, `#1480`
+  // and `#1422` and the day fished every leg once, and it wrote a sentence of `why` for all ten
+  // legs and every card came out blank. Both had been computed, validated, and discarded one line
+  // apart from the `deploy` map that was kept.
+  //
+  // Keyed by runId for the same reason `deploy` is: a runId is what a leg IS, and the order it
+  // sits in is a separate fact. MODEL_LEG_FIELDS is the list, and it lives where the fields are
+  // set so the next one added cannot be lost here the way these were.
+  const said = new Map((args.candidates || []).map((c) => [c.runId, c]));
+  const candidates = legs.map((l) => {
+    const c = said.get(l.runId);
+    if (!c) return l;
+    const out = { ...l };
+    for (const k of MODEL_LEG_FIELDS) if (c[k] !== undefined) out[k] = c[k];
+    return out;
+  });
+
+  // THE ROUTER IS ASKED AFTER THE MODEL HAS ANSWERED, NOT BEFORE.
+  //
+  // This was prefetched off `legs` before `askModel`, which was fine while a leg was a leg. A leg
+  // fished an even number of times ends where it STARTED, so the transit out of it leaves from
+  // the other end -- and a pair prefetched from the wrong end simply misses, dropping that
+  // transit to an unrouted straight line. prefetchTransits() reads the pass counts through
+  // orientLegs(), so it has to see them.
+  const transit = o.transit || await prefetchTransits(candidates, o.ramp, o.routeWater);
+
   const plan = assemblePlan({
     // IN THE ORDER ALREADY DECIDED. assemblePlan documents `candidates` as "IN THE ORDER THE MODEL
     // CHOSE"; on this path the model chose nothing and the array is already the day.
-    candidates: legs,
+    candidates,
     launch: o.ramp,
     loadout: args.loadout,
     deploy: args.deploy,

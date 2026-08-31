@@ -149,6 +149,75 @@ describe('a leg built from picked water carries both of its ends', () => {
     expect(r.plan.legs.filter((l) => l.type === 'troll').length).toBe(3);
   });
 
+  // ---------------------------------------------------------------------------------------------
+  // HIS ORDER, THE MODEL'S ANSWERS
+  //
+  // Ryan's plan of 2026-08-31: the model asked for a second pass on three of ten legs and the day
+  // fished every leg once, and it wrote a sentence of `why` for all ten and every card came out
+  // blank. planArgsFrom() returns the model's per-leg answers merged onto the candidates IN THE
+  // MODEL'S ORDER; the order here is his, so this path took `deploy` -- runId-keyed, order-blind
+  // -- and discarded the rest. It discarded the answers with the ordering.
+  // ---------------------------------------------------------------------------------------------
+  const answered = (extra) => build({
+    askModel: async () => JSON.stringify({
+      loadout: { rods: [{ id: 'R1', lure: LURES[0], role: 'troll', leadFt: 80 },
+                        { id: 'R5', lure: LURES[0], role: 'troll', leadFt: 80 }] },
+      legs: PICKED.map((p, i) => ({
+        runId: p.runId, speedMph: i === 0 ? 1.7 : 2.2,
+        trollPasses: i === 0 ? 2 : 1,
+        why: `because of piece ${p.key}`,
+        deploy: { port: 'R1', starboard: 'R5' },
+      })),
+      stops: [], changes: [],
+    }),
+    ...extra,
+  });
+
+  it('fishes back the leg the model asked to fish back', async () => {
+    const r = await answered();
+    const troll = r.plan.legs.filter((l) => l.type === 'troll');
+    const mine = troll.filter((l) => l.runId === PICKED[0].runId);
+    expect(mine.length).toBe(2);
+    expect(mine.map((l) => l.pass)).toEqual([1, 2]);
+    // The other two are fished once, and the two passes are back to back — the boat turns at the
+    // end of the leg rather than coming back to it later in the day. (The ORDER of the pieces is
+    // the app's here, not the model's: planFromWater picks the cheapest ordering of what he
+    // ticked, which is a separate decision and untouched by this.)
+    expect(troll.filter((l) => l.runId === PICKED[1].runId).length).toBe(1);
+    expect(troll.filter((l) => l.runId === PICKED[2].runId).length).toBe(1);
+    expect(troll.length).toBe(4);
+    const at = troll.map((l) => l.runId).indexOf(PICKED[0].runId);
+    expect(troll[at + 1].runId).toBe(PICKED[0].runId);
+  });
+
+  it('keeps the reason the model gave for each leg', async () => {
+    const r = await answered();
+    for (const p of PICKED) {
+      const leg = r.plan.legs.find((l) => l.runId === p.runId);
+      expect(leg.why).toBe(`because of piece ${p.key}`);
+    }
+  });
+
+  it('trolls each leg at the speed the model set for it', async () => {
+    const r = await answered();
+    expect(r.plan.legs.find((l) => l.runId === PICKED[0].runId).speedMph).toBe(1.7);
+    expect(r.plan.legs.find((l) => l.runId === PICKED[1].runId).speedMph).toBe(2.2);
+  });
+
+  it('asks the router for the pair out of a doubled leg, not the pair out of its first pass', async () => {
+    const asked = [];
+    await answered({
+      routeWater: async (a, b) => { asked.push([a, b]); return null; },
+    });
+    // The leg is fished twice, so the boat leaves from the end it came in by. A prefetch built
+    // before the model answered could not know that and would have asked for the other end.
+    const first = PICKED[0];
+    const head = first.coords[0], tail = first.coords[first.coords.length - 1];
+    const near = (p, q) => Math.abs(p[0] - q[0]) < 1e-9 && Math.abs(p[1] - q[1]) < 1e-9;
+    const leaves = asked.filter(([a]) => near(a, head) || near(a, tail));
+    expect(leaves.length).toBeGreaterThan(0);
+  });
+
   it('says nothing when the model rigged every piece', async () => {
     const r = await build();
     expect(r.problems.some((x) => /never mentioned/.test(x))).toBe(false);
