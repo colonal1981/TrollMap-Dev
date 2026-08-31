@@ -14,7 +14,7 @@
 import { state, CF_WORKER_URL } from '../core/state.js';
 import { resolveR2Key } from '../data/lake-keys.js';
 import { getLoadedAccessIndex } from '../data/access-index.js';
-import { getSeason } from '../data/species-intel.js';
+import { getSeason, seasonNote } from '../data/species-intel.js';
 import { depthBandFor, usableAhFrom, researchIntel, researchHazards, structureWeights,
          describeDepthBand } from './plan-inputs.js';
 import { DEFAULT_WEIGHTS, DEFAULT_RELIEF_WEIGHTS } from './plan-candidates.js';
@@ -109,7 +109,10 @@ export async function runSmartPlanV2() {
   if (!ramp) return say('Could not place that ramp', true), null;
 
   const date = new Date(`${inp.dateStr}T12:00:00`);
-  const season = getSeason(date);
+  // THE WATER GETS A SAY. `season` decides the depth band, the structure weights and which
+  // research entry is read, and it was decided by the month alone -- so a plan dated September 1st
+  // read the fall profile with 85 degree water in the lake. See getSeason().
+  const season = getSeason(date, inp.waterTempF);
 
   const species = inp.species[0];
 
@@ -342,6 +345,13 @@ export async function runSmartPlanV2() {
       'no hourly wind for this water — the safety call was made on a daily maximum, '
       + 'which cannot tell a calm dawn from a blown-out noon'];
   }
+
+  // AN OVERRIDE THAT HAPPENS SILENTLY IS THE SAME AS NO OVERRIDE. The season decides the depth
+  // band, the structure weights and which research entry is read; when the water overrules the
+  // calendar it changes all three, and the whole reason getSeason() takes a temperature is that
+  // a band changed under him once without anything saying so.
+  const sn = seasonNote(date, inp.waterTempF);
+  if (sn) r.problems = [...(r.problems || []), sn];
 
   // The warnings go in ABOVE the timeline, after the renderer has written the container --
   // renderSmartPlanUI sets innerHTML, so anything put there first is wiped.

@@ -33,7 +33,7 @@
 
 import { state, CF_WORKER_URL } from '../core/state.js';
 import { resolveR2Key } from '../data/lake-keys.js';
-import { getSeason } from '../data/species-intel.js';
+import { getSeason, seasonNote } from '../data/species-intel.js';
 import { depthBandFor, usableAhFrom, researchIntel, researchHazards, describeDepthBand }
   from './plan-inputs.js';
 import { packFetcher } from './smart-plan-v2.js';
@@ -64,7 +64,8 @@ const fmtHm = (min) => `${Math.floor(min / 60)}h ${String(Math.round(min % 60)).
 /** Everything the tab is currently looking at. Not on `window`; the module owns it. */
 const T = { pieces: [], picked: new Set(), ramp: null, rampName: '', usableAh: 0,
             windowMin: null, band: null, holding: null, sortBy: 'ramp', lake: '', limit: 25,
-            spots: [], species: '', r2Key: '', dateStr: '', launchTime: '', returnTime: '',
+            spots: [], species: '', r2Key: '', dateStr: '', waterTempF: null,
+            launchTime: '', returnTime: '',
             // WHAT THE RESEARCH SAID, carried across the two halves of this tab. findWater()
             // loads the profile; buildFromPicked() is the one that writes the prompt, and they
             // are different functions -- so the profile has to survive the gap or the prompt is
@@ -763,7 +764,7 @@ export async function findWater() {
   // researched answer here as well as there.
   say('Reading the research…');
   const researched = await loadResearchedProfile(inp.lakeName);
-  const depth = depthBandFor(species, inp.lakeName, getSeason(date), inp.waterTempF, researched);
+  const depth = depthBandFor(species, inp.lakeName, getSeason(date, inp.waterTempF), inp.waterTempF, researched);
 
   say('Reading the pack…');
   const get = packFetcher(CF_WORKER_URL);
@@ -885,13 +886,18 @@ export async function findWater() {
     joins: out.joins || [], joinsTaken: 0, minM: out.minM,
     ramp, rampName: inp.rampName || 'launch',
     species, r2Key, dateStr: inp.dateStr, windByHour: forecast ? forecast.windByHour : null,
+    // CARRIED FOR THE SEASON, which now asks the water rather than the calendar. findWater()
+    // reads the inputs; buildFromPicked() writes the prompt, and without this the second half
+    // would fall back to the month on its own -- the two halves of one tab disagreeing about
+    // which season it is, which is exactly the class of bug `dateStr` is carried for.
+    waterTempF: inp.waterTempF,
     weatherByHour: forecast ? forecast.weatherByHour : null,
     launchTime: inp.launchTime, returnTime: inp.returnTime,
     usableAh: usableAhFrom(inp.motor), band: depth ? depth.band : null,
     holding: depth ? depth.holding : null, lake: inp.lakeName,
     // DERIVED HERE because this is where the profile, the species and the date all exist. The
     // profile was being loaded twelve lines above, spent on depthBandFor() alone, and dropped.
-    intel: researchIntel(researched, species, getSeason(date)),
+    intel: researchIntel(researched, species, getSeason(date, inp.waterTempF)),
     // THE CHART FIRST, THE RESEARCH SECOND -- same order and same reason as Smart Plan. `poFc` is
     // the pois.geojson this function already fetched for the cast spots.
     hazards: [...chartedHazards(poFc), ...researchHazards(researched)],
@@ -1034,7 +1040,8 @@ export async function buildFromPicked() {
         // `T.dateStr` is what findWater() stored for exactly this, and line 618 builds the same
         // Date from it the same way.
         conditions: { depthBand: describeDepthBand(T.depth, T.species,
-                                                   getSeason(new Date(`${T.dateStr}T12:00:00`))) },
+                                                   getSeason(new Date(`${T.dateStr}T12:00:00`),
+                                                             T.waterTempF)) },
         waterState,
       },
       askModel: modelAsker(CF_WORKER_URL),
@@ -1068,6 +1075,12 @@ export async function buildFromPicked() {
   // WHAT THE MODEL GOT WRONG, ON SCREEN. Every one of these was being computed and discarded:
   // a rod the boat does not carry, a lure the bag does not hold, a leg with no rods deployed, a
   // bait shortened to clear a shoal. The Smart Plan tab has always shown them.
+  // AN OVERRIDE THAT HAPPENS SILENTLY IS THE SAME AS NO OVERRIDE. Same note, same reason, as the
+  // Smart Plan path: when the water overrules the calendar it changes the depth band, the
+  // structure weights and which research entry was read, and he has to be able to see it.
+  const sn = seasonNote(new Date(`${T.dateStr}T12:00:00`), T.waterTempF);
+  if (sn) r.problems = [...(r.problems || []), sn];
+
   if (r.problems && r.problems.length) {
     console.warn('[pick-water] the plan came back with %d problem(s):', r.problems.length);
     for (const p of r.problems) console.warn('  •', p);

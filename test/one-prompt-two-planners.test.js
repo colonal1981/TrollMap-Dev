@@ -278,7 +278,10 @@ describe('Pick Water carries the research it already loaded', () => {
   const ui = live(src('js/modules/plan-water-ui.js'));
 
   it('derives the intel where the profile, the species and the date all exist', () => {
-    expect(ui).toMatch(/intel:\s*researchIntel\(researched,\s*species,\s*getSeason\(date\)\)/);
+    // `getSeason(date, inp.waterTempF)` since 2026-08-31: the season decides which research
+    // entry is read, and it was decided by the month alone -- so a plan dated September 1st
+    // read the fall profile with 85 degree water in the lake.
+    expect(ui).toMatch(/intel:\s*researchIntel\(researched,\s*species,\s*getSeason\(date, inp\.waterTempF\)\)/);
     expect(ui).toMatch(/hazards:\s*\[\.\.\.chartedHazards\(poFc\), \.\.\.researchHazards\(researched\)\]/);
   });
 

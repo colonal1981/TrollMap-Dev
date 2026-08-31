@@ -766,15 +766,11 @@ export function getSpeedRange(lureType) {
 }
 
 // ── Season helper ─────────────────────────────────────────────────────────────
-
-export function getSeason(date) {
-  const d = date ? new Date(date) : new Date();
-  const m = d.getMonth() + 1;
-  if (m >= 3 && m <= 5)  return 'spring';
-  if (m >= 6 && m <= 8)  return 'summer';
-  if (m >= 9 && m <= 11) return 'fall';
-  return 'winter';
-}
+//
+// DELETED 2026-08-31. A second getSeason() lived here, on month boundaries, and nothing imported
+// it -- every caller in the app reads species-intel.js's. Two implementations of one rule is two
+// answers waiting to differ, and this one would not have been fixed when the other was. The live
+// one is `getSeason(date, waterTempF)` in js/data/species-intel.js.
 
 
 // ── Depth: one source, three modes ────────────────────────────────────────────

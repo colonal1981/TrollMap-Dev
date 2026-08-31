@@ -53,12 +53,76 @@ import { livePolicyFor, closuresFor } from './regulations-live.js';
 // a limit in the digest, and what swims in a lake in the species merge, which does not gate.
 
 // ── Helpers ───────────────────────────────────────────────────────────────
-export function getSeason(date) {
-  const month = (date instanceof Date ? date : new Date(date)).getMonth() + 1; // 1-12
-  if (month >= 6 && month <= 8) return 'summer';
-  if (month >= 9 && month <= 11) return 'fall';
-  if (month === 12 || month <= 2) return 'winter';
-  return 'spring';
+/**
+ * THE WATER TEMPERATURE ABOVE WHICH IT IS STILL SUMMER, WHATEVER THE CALENDAR SAYS.
+ *
+ * Ryan, 2026-08-31: "i would say temp should have a say... anything over 75 is probably still
+ * pretty much summer to me" — and, unprompted, in the next breath: "its a guess".
+ *
+ * So it is recorded as his guess and not as a fact, the same way TRANSIT_SHARE_WARN and the lead
+ * ratios are. It is ONE named number in ONE place so that changing his mind costs one edit. If a
+ * day that is plainly summer starts reading as fall, or the reverse, this is the number and not
+ * the plan.
+ *
+ * There is no matching lower bound, because he did not give one and neither of us has measured
+ * where a Carolina lake stops being summer at the cold end. Below this the calendar stands.
+ */
+export const SUMMER_WATER_F = 75;
+
+/**
+ * Which season this day fishes as.
+ *
+ * TWO THINGS WERE WRONG, AND THE PLAN OF 2026-09-01 HAD BOTH.
+ *
+ * It was keyed on the month alone: 6-8 summer, 9-11 fall. So a plan dated September 1st read the
+ * FALL profile, and Ryan's striped bass band moved from `15-40 ft suspended` to `19-25 ft` between
+ * one day and the next with nothing in the water having changed. He caught it: "why are we looking
+ * at fall... fall doesn't start until sep 22... so sep 1 is wrong no matter what".
+ *
+ * He is right on the calendar, so the boundaries are the astronomical ones now — Mar 20, Jun 21,
+ * Sep 22, Dec 21 — rather than whole months. September 1st is summer.
+ *
+ * And the water gets a say, which is the half that actually matters on his lake: "surface water
+ * temp today was 85 degrees... does that sound like fall to you?" It does not. Above
+ * SUMMER_WATER_F the water is the answer and the calendar is overruled.
+ *
+ * THE APP ALREADY HAD THE TEMPERATURE AND NEVER ASKED IT. depthBandFor() takes `waterTempF` in
+ * its signature and returns the researched band before reading it — so the better a lake's data,
+ * the more certainly its season came off a calendar. Passing it here is what closes that.
+ *
+ * `waterTempF` is typed in by hand and is usually blank; absent, the calendar stands alone.
+ */
+export function getSeason(date, waterTempF) {
+  const d = date instanceof Date ? date : new Date(date);
+  const t = Number(waterTempF);
+  if (Number.isFinite(t) && t > SUMMER_WATER_F) return 'summer';
+  return calendarSeason(d);
+}
+
+/** The season by the calendar alone, on the astronomical boundaries. */
+export function calendarSeason(date) {
+  const d = date instanceof Date ? date : new Date(date);
+  const md = (d.getMonth() + 1) * 100 + d.getDate();     // Sep 1 -> 901
+  if (md >= 320 && md <= 620) return 'spring';
+  if (md >= 621 && md <= 921) return 'summer';
+  if (md >= 922 && md <= 1220) return 'fall';
+  return 'winter';
+}
+
+/**
+ * The sentence to say out loud when the water overruled the calendar, else ''.
+ *
+ * An override that happens silently is the same as no override: the whole reason this exists is
+ * that a band changed under him without anything saying so.
+ */
+export function seasonNote(date, waterTempF) {
+  const t = Number(waterTempF);
+  if (!Number.isFinite(t) || t <= SUMMER_WATER_F) return '';
+  const cal = calendarSeason(date);
+  if (cal === 'summer') return '';
+  return `the calendar says ${cal}, but the water is ${t}°F — planned as summer, because above `
+       + `${SUMMER_WATER_F}°F it still fishes like summer. That figure is Ryan's working number, `
+       + 'not a measurement.';
 }
 
 export const TOD = { DAWN: 'dawn', DAY: 'day', DUSK: 'dusk', NIGHT: 'night' };
