@@ -139,6 +139,9 @@ NOTE = "Personal use only, not for distribution or resale; not for navigation."
 # island or the tip of a point, which is shoreline structure and already has its own layer.
 MIN_OFFSHORE_DEG = 0.0012
 HUMP_MIN_ACRES, HUMP_MAX_ACRES = 0.4, 500.0
+# Half of fit_trolling_runs.py's --structure-min-leg-m (600 m, Ryan's own shortest pass), so
+# a crown and its company fit inside one pass. See the company rule in find_nests().
+COMPANY_M = 300.0
 
 # Slope is sampled, not computed at every vertex: a lake has millions and adjacent vertices on
 # the same line give the same answer. Every 4th vertex on Wateree is 60,000 samples and the
@@ -275,7 +278,52 @@ class Grid:
                     yield it
 
 
-def find_nests(contours, ring, islands=()):
+def charted_water(pack):
+    """Point-in-water off the chart itself, from `depth_areas.geojson`.
+
+    THE BOUNDARY AND THE CHART DISAGREE ABOUT WHERE THE LAND IS, and only one of them was
+    consulted. `island_rings()` reads the lake polygon's holes -- drawn from a survey at some
+    water level nobody recorded -- and a crown inside one was thrown out as an island.
+
+    Ryan, on the biggest thing in Clearwater Cove: "that thing is such a big hump it ends up
+    being an island when the lake is a bit lower than it is now lol". It is at 34.37874,
+    -80.74273, it sits inside a 0.27-acre island hole, and the chart puts 3.0 ft over its crown
+    with 29.9 ft of water 150 m away -- TWENTY-SEVEN FEET OF RELIEF, more than hump_1's 17.1,
+    which is the best-scoring hump on the lake. It was deleted for being dry on a day the
+    boundary was drawn.
+
+    So the island filter still runs and still removes the 54 real islands, but a hole only
+    disqualifies a crown when the CHART agrees there is no water on it. depth_areas is the
+    pipeline's own answer to "is this water" everywhere else; it is the answer here too.
+    """
+    da = read_json(os.path.join(pack, 'depth_areas.geojson'))
+    polys = []
+    for f in (da.get('features') or []) if da else []:
+        g = f.get('geometry') or {}
+        if g.get('type') != 'Polygon':
+            continue
+        rings = g.get('coordinates') or []
+        r = rings[0] if rings else None
+        if not r or len(r) < 4:
+            continue
+        xs = [q[0] for q in r]; ys = [q[1] for q in r]
+        # HOLES COUNT. A depth area drawn around an island has the island as a hole, and testing
+        # the outer ring alone would call the island water -- which would let the real 54 stop
+        # being shoreline, the exact thing the island filter exists to prevent.
+        polys.append((min(xs), min(ys), max(xs), max(ys), r, rings[1:]))
+    if not polys:
+        return None                       # no chart to ask; the old behaviour stands
+    def wet(lon, lat):
+        for x0, y0, x1, y1, r, holes in polys:
+            if x0 <= lon <= x1 and y0 <= lat <= y1 and point_in_ring(lon, lat, r):
+                if any(point_in_ring(lon, lat, h) for h in holes):
+                    continue
+                return True
+        return False
+    return wet
+
+
+def find_nests(contours, ring, islands=(), wet=None):
     # Returns (humps, holes) -- see the nest walk below; one machine, two signs.
     """Closed contour loops offshore. Score by size and by how many levels stack inside.
 
@@ -313,10 +361,59 @@ def find_nests(contours, ring, islands=()):
             if ring and not point_in_ring(lon, lat, ring): continue
             # ON AN ISLAND IS NOT OFFSHORE. Inside the outer ring and inside a hole are both
             # "inside the lake" to a point-in-polygon test that only ever saw the outer ring.
-            if any(point_in_ring(lon, lat, h) for h in islands): continue
+            # ON AN ISLAND IS NOT OFFSHORE -- unless the chart says there is water on it. See
+            # charted_water(). Without `wet` this is exactly the old test.
+            if any(point_in_ring(lon, lat, h) for h in islands) and not (wet and wet(lon, lat)):
+                continue
             rec = {'lon': lon, 'lat': lat, 'acres': a, 'depth': float(d), 'ring': c}
             crowns.append(rec)
             if a >= HUMP_MIN_ACRES: loops.append(rec)
+
+    # A SMALL RISE ALONE IS NOISE. THE SAME RISE IN COMPANY IS BROKEN GROUND.
+    #
+    # `HUMP_MIN_ACRES` is 0.4 and it exists for a good reason -- Ryan: "i know why that rule
+    # exists so that we dont have 1000 humps on a small lake". It is also why three crowns he
+    # marked by eye in Clearwater Cove were binned at 0.02, 0.11 and 0.23 acres.
+    #
+    # His argument, and it is the right one: "surface area of the individual humps has nothing to
+    # do with it... that whole area would push bait between that island and there and hump #1...
+    # its a combination of everything going on in that area that makes those 3 additional
+    # targets."
+    #
+    # Measured on the 661 m between that island-hump and hump_1: 75 closed rings, 22 distinct
+    # high spots once the levels of one rise stop being counted separately, crowns from 2 ft to
+    # 15 ft, 92 acres of ring. That is not a lake of a thousand humps, it is one stretch of
+    # broken bottom -- and every crown in it under 0.4 acres was invisible.
+    #
+    # So the floor stays and gains a second way through: a crown under it survives when it is NOT
+    # ALONE. `COMPANY_M` is half of `--structure-min-leg-m` (600 m, Ryan's own shortest pass), so
+    # "in company" means what one pass can cover -- a derived distance rather than a tuned one.
+    # A lone 0.2-acre bump in open water still goes in the bin, which is what the floor is for.
+    # BUCKETED, NOT PAIRWISE. The comment above `crowns` records what a pair walk over every ring
+    # costs: Kentucky Lake went 14,218 rings -> 59,145 and the card-wide run stalled on it. One
+    # dict of COMPANY_M cells and a nine-cell look is the same answer without the square.
+    cell = COMPANY_M / 111320.0
+    buck = {}
+    for c in crowns:
+        buck.setdefault((int(c['lon'] / cell), int(c['lat'] / cell)), []).append(c)
+    for c1 in crowns:
+        if c1['acres'] >= HUMP_MIN_ACRES:
+            continue
+        gx, gy = int(c1['lon'] / cell), int(c1['lat'] / cell)
+        found = False
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for c2 in buck.get((gx + dx, gy + dy), ()):
+                    if c2 is c1:
+                        continue
+                    if metres((c1['lon'], c1['lat']), (c2['lon'], c2['lat'])) <= COMPANY_M:
+                        found = True
+                        break
+                if found: break
+            if found: break
+        if found:
+            c1['kept_by_company'] = True
+            loops.append(c1)
     # nesting: a loop whose centroid falls inside another, deeper loop
     loops.sort(key=lambda h: -h['acres'])
     for h in loops:
@@ -440,7 +537,22 @@ def find_nests(contours, ring, islands=()):
         rg = Grid(MIN_OFFSHORE_DEG * 2)
         for p in ring: rg.add(p[0], p[1], None)
         # An island's shore is shore. A loop hugging one is the tip of a point by another name.
+        #
+        # UNLESS THE CHART SAYS IT IS UNDER WATER. This is the second gate the boundary's island
+        # holes were killing, and it is where Clearwater Cove's biggest structure actually died:
+        # the mark moves to the shallowest crown -- see "WHERE THE TOP IS" above -- which for
+        # that stack is the 3 ft ring sitting INSIDE a 0.27-acre island hole. So the hump was
+        # metres from an "island shore" and thrown out as the tip of a point.
+        #
+        # Ryan: "that thing is such a big hump it ends up being an island when the lake is a bit
+        # lower than it is now lol"... "it has a depth zone 2-3 area on it". A boundary drawn at
+        # an unrecorded level does not outrank the chart. An island the chart floods is not a
+        # shore, and the 54 real ones -- dry on the chart too -- still are.
         for h in islands:
+            if wet and h:
+                cx = sum(q[0] for q in h) / len(h); cy = sum(q[1] for q in h) / len(h)
+                if wet(cx, cy):
+                    continue
             for p in h: rg.add(p[0], p[1], None)
         lim = MIN_OFFSHORE_DEG * 111320.0
         for h in loops:
@@ -840,7 +952,7 @@ def main():
     # and a ledge stopped meaning any slope at all. Stamped on the contours alone, every pack
     # would have reported itself up to date and kept the old file. Bump this when the geometry
     # rules change and every lake rebuilds without anybody remembering --force.
-    RULES_VERSION = '2026-08-30-crown'
+    RULES_VERSION = '2026-08-31-company-island'
     ST_PARAMS = (a.min_score, RULES_VERSION)
     for n, slug in enumerate(slugs, 1):
         pack = os.path.join(a.packs, slug)
@@ -860,7 +972,8 @@ def main():
         bnd = read_json(os.path.join(a.registry, 'boundaries', slug + '.geojson'))
         ring = outer_ring(bnd)
         islands = island_rings(bnd)
-        humps, holes = find_nests(contours, ring, islands)
+        wet = charted_water(os.path.join(a.packs, slug))
+        humps, holes = find_nests(contours, ring, islands, wet)
         ledges = find_ledges(contours, ring, islands)
         score_nests(humps); score_nests(holes); score_ledges(ledges)
         feats = []
