@@ -863,6 +863,111 @@ def _merge_prior_report(path, lakes, partial):
     return lakes
 
 
+# ── ONE PACK, SO IT CAN BE HANDED TO A POOL ─────────────────────────────────────────────────
+#
+# Ryan, 2026-08-31: "why are these scripts so slow..." Measured on his own card: 12 packs in
+# 35.6 s, about 3 s each, single file at a time on a ten-core machine. 343 packs is 17 minutes of
+# one core working and nine idle.
+#
+# There was no reason for it. Every pack reads its own contours and its own boundary and writes
+# its own structure.geojson; nothing is shared and nothing is ordered. build_trolling_runs.py and
+# fit_trolling_runs.py have taken --jobs for weeks and this one never did, so the two halves of
+# the same pipeline ran at very different speeds for no stated reason.
+#
+# Lifted out of the loop verbatim rather than rewritten -- the arithmetic is the arithmetic, and
+# a parallel rewrite that also changes answers is unreviewable. Verified by rebuilding the same
+# twelve packs with --jobs 8 --force and diffing every byte against the serial output.
+def _build_one(args):
+    slug, a, ST_PARAMS = args
+    pack = os.path.join(a.packs, slug)
+    st_inputs = ('contours.geojson',
+                 os.path.join(a.registry, 'boundaries', slug + '.geojson'))
+    if not a.force and _stamp_is_current(pack, 'structure.geojson', st_inputs, ST_PARAMS):
+        return slug, {'current': True}
+    cpath = os.path.join(a.packs, slug, 'contours.geojson')
+    contours = read_json(cpath)
+    if not contours or not (contours.get('features') or []):
+        return slug, {'skipped': 'no contours'}
+    bnd = read_json(os.path.join(a.registry, 'boundaries', slug + '.geojson'))
+    ring = outer_ring(bnd)
+    islands = island_rings(bnd)
+    wet = charted_water(os.path.join(a.packs, slug))
+    humps, holes = find_nests(contours, ring, islands, wet)
+    ledges = find_ledges(contours, ring, islands)
+    score_nests(humps); score_nests(holes); score_ledges(ledges)
+    feats = []
+    for i, h in enumerate(sorted(humps, key=lambda x: -x['score'])):
+        if h['score'] < a.min_score: continue
+        feats.append({'type': 'Feature',
+                      # `depth_ft` IS THE CROWN, which is what both readers already call it:
+                      # plan-candidates.js prints `crown ${depth_ft} ft` and
+                      # supplemental-layers.js prints `crown @${depth}ft`. The pipeline was
+                      # writing the BASE into it, so hump_1 read "crown @23ft" with its top
+                      # at 8.9 ft. The point is the summit now, and the depth at that point
+                      # is the depth of the summit. `base_ft` is what it stands on.
+                      'properties': {'kind': 'hump', 'id': 'hump_%d' % (i + 1),
+                                     'score': h['score'],
+                                     'depth_ft': round(h['inner_depth'], 1),
+                                     'base_ft': round(h['rim_depth'], 1),
+                                     'area_acres': round(h['acres'], 2),
+                                     'relief_ft': round(h['relief'], 1),
+                                     'levels': h['levels']},
+                      'geometry': {'type': 'Point',
+                                   'coordinates': [round(h['lon'], 6), round(h['lat'], 6)]}})
+    # HOLES. Same shape as a hump, read the other way: `depth_ft` is the deepest point --
+    # where the pin is -- and `rim_ft` is the lip it drops from.
+    for i, h in enumerate(sorted(holes, key=lambda x: -x['score'])):
+        if h['score'] < a.min_score: continue
+        feats.append({'type': 'Feature',
+                      'properties': {'kind': 'hole', 'id': 'hole_%d' % (i + 1),
+                                     'score': h['score'],
+                                     'depth_ft': round(h['inner_depth'], 1),
+                                     'rim_ft': round(h['rim_depth'], 1),
+                                     'area_acres': round(h['acres'], 2),
+                                     'relief_ft': round(h['relief'], 1),
+                                     'levels': h['levels']},
+                      'geometry': {'type': 'Point',
+                                   'coordinates': [round(h['lon'], 6), round(h['lat'], 6)]}})
+    for i, l in enumerate(sorted(ledges, key=lambda x: -x['score'])):
+        if l['score'] < a.min_score: continue
+        feats.append({'type': 'Feature',
+                      'properties': {'kind': 'ledge', 'id': 'ledge_%d' % (i + 1),
+                                     'score': l['score'],
+                                     # AT THE PIN -- the top of the drop. `deep_ft` is what
+                                     # it falls to; `drop_ft` is the difference.
+                                     'depth_ft': round(l['depth'], 1),
+                                     'deep_ft': round(l['deep'], 1),
+                                     # WHERE THE WALL ACTUALLY BOTTOMS OUT. `drop_ft` is
+                                     # the first step; this is the whole fall, and it is
+                                     # what separates a wall from a taper.
+                                     'fall_to_ft': round(l['fall_to'], 1),
+                                     'fall_ft': l['fall'],
+                                     'slope_ft_per_100ft': round(l['slope'], 1),
+                                     # HOW FAR THIS BREAK STANDS ABOVE THE BOTTOM AROUND
+                                     # IT, which is what makes it a break and what leads
+                                     # the score. A steep bank in a steep basin has a low
+                                     # one; a wall on a flat has a high one.
+                                     'steeper_than_around_by': l.get('prominence', 0.0),
+                                     'drop_ft': round(l['drop'], 1),
+                                     'run_ft': round(l['run_ft'], 0)},
+                      'geometry': {'type': 'Point',
+                                   'coordinates': [round(l['lon'], 6), round(l['lat'], 6)]}})
+    doc = {'type': 'FeatureCollection',
+           'properties': {'layer': 'structure', 'key': slug,
+                          'generator': 'build_structure.py', 'note': NOTE},
+           'features': feats}
+    json.dump(doc, open(os.path.join(a.packs, slug, 'structure.geojson'), 'w',
+                        encoding='utf-8'), ensure_ascii=False)
+    _stamp_record(pack, 'structure.geojson', st_inputs, ST_PARAMS)
+    # HOLES ARE SHIPPED AND WERE NOT COUNTED. find_nests() returns humps AND holes and both
+    # are written into the pack, but this line named only two of the three kinds -- so the
+    # card-wide summary read "4742 humps, 46998 ledges" over a run that also shipped 16,743
+    # holes, and the only trace of them was `features` not adding up. A kind the pipeline
+    # ships and does not name is a kind nobody goes looking for.
+    return slug, {'humps': len(humps), 'holes': len(holes), 'ledges': len(ledges),
+                  'features': len(feats)}
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -885,6 +990,10 @@ def main():
     ap.add_argument('--index',
                     help='registry/lake_index.json -- ONLY these slugs are built. Defaults '
                          'beside --registry.')
+    ap.add_argument('--jobs', type=int, default=1,
+                    help='packs in parallel. Every pack is independent -- own contours in, '
+                         'own structure.geojson out -- so this only costs cores. Ryan runs 8 '
+                         'of his 10.')
     ap.add_argument('--min-score', type=float, default=0.0,
                     help='drop candidates below this. Default 0 -- ship everything ranked and '
                          'let the client choose, because a cap in the data is a decision made '
@@ -954,103 +1063,31 @@ def main():
     # rules change and every lake rebuilds without anybody remembering --force.
     RULES_VERSION = '2026-08-31-company-island'
     ST_PARAMS = (a.min_score, RULES_VERSION)
-    for n, slug in enumerate(slugs, 1):
-        pack = os.path.join(a.packs, slug)
-        st_inputs = ('contours.geojson',
-                     os.path.join(a.registry, 'boundaries', slug + '.geojson'))
-        if not a.force and _stamp_is_current(pack, 'structure.geojson', st_inputs, ST_PARAMS):
+    def _absorb(res):
+        nonlocal made, current, skipped
+        slug, row = res
+        if row.get('current'):
             current += 1
-            if n % 25 == 0 or n == len(slugs):
-                print('  %d/%d  %d written, %d up to date, %d skipped, %.1f min'
-                      % (n, len(slugs), made, current, skipped, (time.time() - t0) / 60),
-                      flush=True)
-            continue
-        cpath = os.path.join(a.packs, slug, 'contours.geojson')
-        contours = read_json(cpath)
-        if not contours or not (contours.get('features') or []):
-            report[slug] = {'skipped': 'no contours'}; skipped += 1; continue
-        bnd = read_json(os.path.join(a.registry, 'boundaries', slug + '.geojson'))
-        ring = outer_ring(bnd)
-        islands = island_rings(bnd)
-        wet = charted_water(os.path.join(a.packs, slug))
-        humps, holes = find_nests(contours, ring, islands, wet)
-        ledges = find_ledges(contours, ring, islands)
-        score_nests(humps); score_nests(holes); score_ledges(ledges)
-        feats = []
-        for i, h in enumerate(sorted(humps, key=lambda x: -x['score'])):
-            if h['score'] < a.min_score: continue
-            feats.append({'type': 'Feature',
-                          # `depth_ft` IS THE CROWN, which is what both readers already call it:
-                          # plan-candidates.js prints `crown ${depth_ft} ft` and
-                          # supplemental-layers.js prints `crown @${depth}ft`. The pipeline was
-                          # writing the BASE into it, so hump_1 read "crown @23ft" with its top
-                          # at 8.9 ft. The point is the summit now, and the depth at that point
-                          # is the depth of the summit. `base_ft` is what it stands on.
-                          'properties': {'kind': 'hump', 'id': 'hump_%d' % (i + 1),
-                                         'score': h['score'],
-                                         'depth_ft': round(h['inner_depth'], 1),
-                                         'base_ft': round(h['rim_depth'], 1),
-                                         'area_acres': round(h['acres'], 2),
-                                         'relief_ft': round(h['relief'], 1),
-                                         'levels': h['levels']},
-                          'geometry': {'type': 'Point',
-                                       'coordinates': [round(h['lon'], 6), round(h['lat'], 6)]}})
-        # HOLES. Same shape as a hump, read the other way: `depth_ft` is the deepest point --
-        # where the pin is -- and `rim_ft` is the lip it drops from.
-        for i, h in enumerate(sorted(holes, key=lambda x: -x['score'])):
-            if h['score'] < a.min_score: continue
-            feats.append({'type': 'Feature',
-                          'properties': {'kind': 'hole', 'id': 'hole_%d' % (i + 1),
-                                         'score': h['score'],
-                                         'depth_ft': round(h['inner_depth'], 1),
-                                         'rim_ft': round(h['rim_depth'], 1),
-                                         'area_acres': round(h['acres'], 2),
-                                         'relief_ft': round(h['relief'], 1),
-                                         'levels': h['levels']},
-                          'geometry': {'type': 'Point',
-                                       'coordinates': [round(h['lon'], 6), round(h['lat'], 6)]}})
-        for i, l in enumerate(sorted(ledges, key=lambda x: -x['score'])):
-            if l['score'] < a.min_score: continue
-            feats.append({'type': 'Feature',
-                          'properties': {'kind': 'ledge', 'id': 'ledge_%d' % (i + 1),
-                                         'score': l['score'],
-                                         # AT THE PIN -- the top of the drop. `deep_ft` is what
-                                         # it falls to; `drop_ft` is the difference.
-                                         'depth_ft': round(l['depth'], 1),
-                                         'deep_ft': round(l['deep'], 1),
-                                         # WHERE THE WALL ACTUALLY BOTTOMS OUT. `drop_ft` is
-                                         # the first step; this is the whole fall, and it is
-                                         # what separates a wall from a taper.
-                                         'fall_to_ft': round(l['fall_to'], 1),
-                                         'fall_ft': l['fall'],
-                                         'slope_ft_per_100ft': round(l['slope'], 1),
-                                         # HOW FAR THIS BREAK STANDS ABOVE THE BOTTOM AROUND
-                                         # IT, which is what makes it a break and what leads
-                                         # the score. A steep bank in a steep basin has a low
-                                         # one; a wall on a flat has a high one.
-                                         'steeper_than_around_by': l.get('prominence', 0.0),
-                                         'drop_ft': round(l['drop'], 1),
-                                         'run_ft': round(l['run_ft'], 0)},
-                          'geometry': {'type': 'Point',
-                                       'coordinates': [round(l['lon'], 6), round(l['lat'], 6)]}})
-        doc = {'type': 'FeatureCollection',
-               'properties': {'layer': 'structure', 'key': slug,
-                              'generator': 'build_structure.py', 'note': NOTE},
-               'features': feats}
-        json.dump(doc, open(os.path.join(a.packs, slug, 'structure.geojson'), 'w',
-                            encoding='utf-8'), ensure_ascii=False)
-        _stamp_record(pack, 'structure.geojson', st_inputs, ST_PARAMS)
-        # HOLES ARE SHIPPED AND WERE NOT COUNTED. find_nests() returns humps AND holes and both
-        # are written into the pack, but this line named only two of the three kinds -- so the
-        # card-wide summary read "4742 humps, 46998 ledges" over a run that also shipped 16,743
-        # holes, and the only trace of them was `features` not adding up. A kind the pipeline
-        # ships and does not name is a kind nobody goes looking for.
-        report[slug] = {'humps': len(humps), 'holes': len(holes), 'ledges': len(ledges),
-                        'features': len(feats)}
-        made += 1
+        elif row.get('skipped'):
+            skipped += 1
+            report[slug] = row
+        else:
+            made += 1
+            report[slug] = row
+        n = made + current + skipped
         if n % 25 == 0 or n == len(slugs):
             print('  %d/%d  %d written, %d up to date, %d skipped, %.1f min'
                   % (n, len(slugs), made, current, skipped, (time.time() - t0) / 60), flush=True)
+
+    work = [(s, a, ST_PARAMS) for s in slugs]
+    if a.jobs > 1 and len(slugs) > 1:
+        from multiprocessing import Pool
+        with Pool(a.jobs) as pool:
+            for res in pool.imap_unordered(_build_one, work, chunksize=1):
+                _absorb(res)
+    else:
+        for item in work:
+            _absorb(_build_one(item))
 
     print('\n%d written, %d already current, %d skipped, %.1f min'
           % (made, current, skipped, (time.time() - t0) / 60))
