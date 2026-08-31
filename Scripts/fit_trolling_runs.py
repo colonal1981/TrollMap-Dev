@@ -879,6 +879,167 @@ def annotate(props, coords, grid, cell, annotate_m, depth, lat0):
 
 # ── one pack ────────────────────────────────────────────────────────────────────────────────
 
+# ── STRUCTURE SEEDS ─────────────────────────────────────────────────────────────────────────
+#
+# THE SEED LIST WAS CONTOURS AND NOTHING ELSE, AND THAT IS THE WHOLE GAP.
+#
+# Ryan, 2026-08-30, on a cove he caught eleven fish in: "not one of them cross the area i would
+# want them to... not a single trolling lane comes near it". Then, having clicked every dropped
+# lane on the chart: "the no pass survived are all along the shoreline, the closed ring just goes
+# around humps in a circle, and the 2 short to try were all in coves next to shore".
+#
+# He is right, and the reason is not geometry. A contour is a line of ONE depth -- all 7,490 of
+# Wateree's carry a single integer -- and the water he fishes is a flat with humps standing out of
+# it, so the only contours in it are the edge of the flat, the rings around the humps, and stubs.
+# There is nothing there to trace.
+#
+# What was NOT true, and what I told him before he made me check it: that a fitted lane follows a
+# contour. It does not. Of Wateree's 305 fitted lanes, ZERO stay inside a 2 ft band; the median
+# runs over 16 ft of depth change end to end, and lane #14 is seeded on the 39 ft contour and runs
+# over water from 5 ft to 48 ft. `split_to_band` is doing exactly what its name says. The fitter
+# has always held a depth RANGE, and a contour was only ever where it started.
+#
+# So this hands it somewhere else to start. Ryan: "if the research says that ledges or points or
+# creekmouths or whatever is where the fish are... the app should know how to troll near/over or
+# whatever is needed for that type of area... this is a fishing app not a geometry one."
+#
+# WHAT IS NOT DECIDED HERE. Which structure is worth fishing. That is `trollingIntelligence`'s
+# job at plan time -- `plan-inputs.js` maps its named structures onto these kinds and gives them
+# RESEARCH_LEAD over everything it did not name. This script runs once, months before anyone knows
+# what will be planned on it, and the comment above `envelope_ft` already says why it must not try:
+# "WHICH water to troll is a fishing decision... it cannot make that call and must not try."
+# So EVERY structure is seeded, no score threshold, and the structure's own numbers ride along on
+# the lane so the app can rank with measurements instead of a cut this script invented.
+#
+# ONE GEOMETRIC CONSTRAINT SURVIVES, and it is a fishing one. Ryan: "i need the lines to be
+# somewhat straight so as not to tangle up my lures but that is a fishing constraint not a
+# geometry one." That is `--max-turn-deg` and `split_at_hard_corners`, already enforced on every
+# pass this script cuts, seeded from a contour or from a hump alike.
+
+# How you troll each kind, in the app's own vocabulary. `lure-knowledge.js` already distinguishes
+# `hump_top` from `hump_edge` -- an MR crankbait is mapped to the top, a DD3 to the edge -- so the
+# two are emitted as separate passes and the plan picks between them from the depth the fish are
+# actually at. The pipeline does not choose; it offers both.
+#
+#   (tag, which depth on the feature is the target, how far off the feature to sit)
+SEED_SHAPES = {
+    'hump': [('hump_top',  'depth_ft', 0.0),     # over the crown
+             ('hump_edge', 'base_ft',  1.4)],    # past the flank, in the water it rises out of
+    'hole': [('hole_over', 'depth_ft', 0.0),     # "troll right over that deep hole if i so desire"
+             ('hole_rim',  'rim_ft',   1.4)],    # the lip, which is a ledge by another name
+    'ledge': [('ledge', 'depth_ft', 0.0)],       # along the top of the drop -- "following a
+}                                                # contour line with a drop off near it is great"
+
+
+def structure_seeds(pack, depth, lat0, a):
+    """Run-shaped seeds cut from `structure.geojson`, for the same fitter the contours go through.
+
+    Returns features that look exactly like the contour runs already in `trolling_runs.geojson`
+    -- `depth_dm` and a LineString -- because the whole point is that nothing downstream learns a
+    new kind of thing. A structure-seeded pass gets the same smoothing, the same band, the same
+    envelope, the same corner limit and the same id scheme as any other.
+    """
+    p = os.path.join(pack, 'structure.geojson')
+    if not os.path.isfile(p):
+        return []
+    try:
+        with open(p, 'r', encoding='utf-8') as fh:
+            feats = json.load(fh).get('features') or []
+    except Exception:
+        return []
+
+    k = m_per_deg_lon(lat0)
+    half = float(a.structure_seed_m)
+    out = []
+    for f in feats:
+        pr = f.get('properties') or {}
+        g = f.get('geometry') or {}
+        shapes = SEED_SHAPES.get(pr.get('kind'))
+        if not shapes or g.get('type') != 'Point':
+            continue
+        c = g.get('coordinates') or []
+        if len(c) < 2:
+            continue
+        P = np.array([[float(c[0]) * k, float(c[1]) * M_PER_DEG_LAT]], float)
+
+        # WHICH WAY THE PASS RUNS IS NOT A CHOICE, IT IS THE SHAPE OF THE BOTTOM. The fall line
+        # is where the water gets deeper; the structure runs across it. Ryan: "i dont care whether
+        # lines go north to south or east to west or some combination there of".
+        #
+        # A hump top is a local maximum, where the gradient is near zero and its direction is
+        # noise, so the ring is read when the point itself has nothing to say. On a symmetric hump
+        # any chord crosses it, so an arbitrary bearing there is harmless rather than wrong.
+        acres = pr.get('area_acres')
+        try:
+            rad = math.sqrt(float(acres) * 4046.86 / math.pi) if acres else 0.0
+        except (TypeError, ValueError):
+            rad = 0.0
+        rad = max(rad, 40.0)
+        d = depth.deeper_dir(P)[0]
+        if math.hypot(float(d[0]), float(d[1])) < 1e-9:
+            ring = np.array([[P[0, 0] + rad * 1.5 * math.cos(t), P[0, 1] + rad * 1.5 * math.sin(t)]
+                             for t in (0.0, math.pi / 2, math.pi, 3 * math.pi / 2)], float)
+            d = depth.deeper_dir(ring).mean(axis=0)
+        n = math.hypot(float(d[0]), float(d[1]))
+        down = np.array([float(d[0]) / n, float(d[1]) / n]) if n > 1e-9 else np.array([0.0, 1.0])
+        along = np.array([-down[1], down[0]])
+
+        for tag, depth_key, off_r in shapes:
+            ft = pr.get(depth_key)
+            if not isinstance(ft, (int, float)) or ft <= 0:
+                continue
+            # Long enough that `min_fit_m` lets it through and the structure sits well inside the
+            # line rather than at its end. What comes out is whatever `split_to_band` leaves --
+            # the water decides the length, the same as it does for a contour.
+            L = max(half, 3.0 * rad)
+            mid = P[0] + down * (off_r * rad)
+            npts = max(4, int(round(2 * L / 25.0)) + 1)
+            ts = np.linspace(-L, L, npts)
+            xy = np.array([mid + along * t for t in ts], float)
+
+            # TRIMMED TO THE RASTER, NOT PADDED AROUND. Outside the grid `_ij` clips to the edge
+            # cell and every sample past the boundary reads back whatever that last cell holds --
+            # so a chord leaving the box would report the edge's depth for hundreds of metres of
+            # water nobody sounded. Widening the box instead was the first attempt and it moved
+            # every contour lane in the pack. The longest run of points that IS inside survives.
+            inset = 2.0 * depth.step
+            ok = ((xy[:, 0] >= depth.x0 + inset) & (xy[:, 0] <= depth.x0 + depth.nx * depth.step - inset)
+                  & (xy[:, 1] >= depth.y0 + inset) & (xy[:, 1] <= depth.y0 + depth.ny * depth.step - inset))
+            if not ok.any():
+                continue
+            best_a = best_b = i0 = None
+            for i, v in enumerate(list(ok) + [False]):
+                if v and i0 is None:
+                    i0 = i
+                elif not v and i0 is not None:
+                    if best_a is None or (i - i0) > (best_b - best_a):
+                        best_a, best_b = i0, i
+                    i0 = None
+            xy = xy[best_a:best_b]
+            if len(xy) < 4 or float(_seglens(xy).sum()) < a.min_fit_m:
+                continue
+            props = {
+                'depth_ft': round(float(ft), 1),
+                'depth_m': round(float(ft) * 0.3048, 2),
+                'depth_dm': int(round(float(ft) * 3.048)),
+                'closed': False,
+                'length_m': round(float(_seglens(xy).sum()), 1),
+                # The seed's own provenance, kept on the lane. `seed` is why this pass exists at
+                # all; the rest is the structure's own measurement, carried so the app can rank on
+                # numbers rather than on a threshold this script invented.
+                'seed': tag,
+                'seed_kind': pr.get('kind'),
+                'seed_id': pr.get('id'),
+                'seed_score': pr.get('score'),
+                'seed_relief_ft': pr.get('relief_ft'),
+                'seed_area_acres': pr.get('area_acres'),
+                'seed_lonlat': [round(float(c[0]), 6), round(float(c[1]), 6)],
+            }
+            out.append({'type': 'Feature', 'properties': props,
+                        'geometry': {'type': 'LineString', 'coordinates': _ll(xy, lat0)}})
+    return out
+
+
 def fit_pack(pack, a):
     t_pack = time.time()
     slug = os.path.basename(pack.rstrip('/\\'))
@@ -917,6 +1078,10 @@ def fit_pack(pack, a):
         for c in f['geometry']['coordinates']:
             xs.append(c[0]); ys.append(c[1])
     lat0 = (min(ys) + max(ys)) / 2.0
+    # DO NOT PAD THIS FOR THE STRUCTURE SEEDS. The first cut did, and the wider box moved the
+    # grid origin, which moved every cell, which changed 318 of Wateree's 1,750 CONTOUR lanes
+    # -- output that had nothing to do with the change. A seed that runs past the edge is
+    # trimmed to the raster in structure_seeds() instead, which leaves this untouched.
     pad_deg = 400.0 / M_PER_DEG_LAT
     bbox = (min(xs) - pad_deg, min(ys) - pad_deg, max(xs) + pad_deg, max(ys) + pad_deg)
 
@@ -925,6 +1090,12 @@ def fit_pack(pack, a):
         da = (json.load(fh).get('features') or [])
     depth = DepthRaster(da, bbox, a.grid_m, lat0, a.safety_cells, a.max_cells)
     t_raster = time.time() - t0
+
+    # THE SECOND SEED SOURCE. Appended to `runs` rather than fitted separately, because a
+    # structure-seeded pass is not a new kind of thing -- it is a pass, and it earns the same
+    # smoothing, band, envelope, corner limit and id as one cut from a contour.
+    st_seeds = [] if a.no_structure_seeds else structure_seeds(pack, depth, lat0, a)
+    runs = runs + st_seeds
 
     pts = load_annotation_points(pack)
     cell = max(a.annotate_m, 50.0) / 111320.0 * 1.5
@@ -945,13 +1116,30 @@ def fit_pack(pack, a):
     out = []
     st = {'in': len(runs), 'fitted': 0, 'split': 0, 'kept_closed': 0, 'kept_short': 0,
           'kept_thin': 0, 'm_in': 0.0, 'm_out': 0.0,
-          'corners_before': 0, 'corners_after': 0, 'passes': 0}
+          'corners_before': 0, 'corners_after': 0, 'passes': 0,
+          # `in` counts both seed sources because they go through one loop. These say how much of
+          # it was structure, so a run that produced nothing new says so instead of looking normal.
+          'seeds_in': len(st_seeds), 'seed_passes': 0, 'seed_kinds': {}}
 
     for f in runs:
         pr = dict(f['properties'])
         coords = f['geometry']['coordinates']
         pr.pop('id', None)
         parent_len = pr.get('length_m') or length_m(coords)
+
+        # HOW LONG A PASS HAS TO BE IS NOT THE SAME QUESTION FOR THE TWO SEEDS.
+        #
+        # `--min-leg-m` is 1500 because that is what a contour pass down a main-lake ledge should
+        # be worth. It is also, exactly, why Clearwater Cove is empty: every contour in it carries
+        # the note "no fitted pass of 1500 m survived". A pass over a three-acre hump is not a
+        # failed 1500 m pass, it is a different thing, and 1500 m of it does not exist anywhere.
+        #
+        # `--structure-min-leg-m` defaults to 600 because that is RYAN'S OWN number, not one from
+        # here: `buildPieces()` in plan-pieces.js takes `minM` 600 as the default and Pick Water
+        # passes it, so 600 m is the shortest thing the app has ever called a pass.
+        st_seed = pr.get('seed')
+        min_leg = a.structure_min_leg_m if st_seed else a.min_leg_m
+        min_stretch = min(a.min_stretch_m, min_leg) if st_seed else a.min_stretch_m
 
         if pr.get('closed') or parent_len < a.min_fit_m or len(coords) < 4:
             # A closed ring at depth is a hump, and you circle it -- smoothing a closed curve
@@ -978,7 +1166,7 @@ def fit_pack(pack, a):
         # had already passed. after_bay_reservoir fitted nothing at all for this reason while
         # carrying 13 runs with in-band water in them. The stretch gate is now only "long enough
         # to be worth smoothing"; whether it is a trolling pass is decided on the finished line.
-        for stretch in split_to_band(seeded, depth, floor, ceil, a.min_stretch_m,
+        for stretch in split_to_band(seeded, depth, floor, ceil, min_stretch,
                                      bridge_m=a.bridge_m, bridge_dm=a.bridge_dm,
                                      deep_bridge_m=a.deep_bridge_m,
                                      deep_bridge_dm=a.deep_bridge_dm):
@@ -1013,7 +1201,7 @@ def fit_pack(pack, a):
             sm = smooth(even, depth, floor, ceil, float(pr['depth_dm']), a.iters, a.deep_bias_m)
             ch = chord_pass(sm, depth, floor, ceil, float(pr['depth_dm']), a.max_turn_deg,
                             bridge_dm=a.bridge_dm)
-            for piece in split_at_hard_corners(ch, a.max_turn_deg, a.min_leg_m):
+            for piece in split_at_hard_corners(ch, a.max_turn_deg, min_leg):
                 # ASSERT THE INVARIANT ON THE OUTPUT, not only along the way.
                 #
                 # Every stage enforces the depth rule against the line it was handed, and every
@@ -1024,15 +1212,15 @@ def fit_pack(pack, a):
                 # So the finished pass is re-tested against the chart from scratch, and any part
                 # of it that is not in band is cut off. Cheap, and it makes the guarantee a
                 # property of the OUTPUT rather than a claim about the process.
-                pieces.extend(split_to_band(piece, depth, floor, ceil, a.min_leg_m,
+                pieces.extend(split_to_band(piece, depth, floor, ceil, min_leg,
                                             bridge_m=a.bridge_m, bridge_dm=a.bridge_dm,
                                             deep_bridge_m=a.deep_bridge_m,
                                             deep_bridge_dm=a.deep_bridge_dm))
         if not pieces:
             st['kept_thin'] += 1
-            pr['fit_note'] = ('no fitted pass of %.0f m survived: this contour is not %.1f ft '
+            pr['fit_note'] = ('no fitted pass of %.0f m survived: this %s is not %.1f ft '
                               'deep for that far at a time'
-                              % (a.min_leg_m, floor / 3.048))
+                              % (min_leg, st_seed or 'contour', floor / 3.048))
             # Every piece came out under min_leg_m: the water here does not hold a pass. Keep the
             # contour rather than inventing one, and say so in the properties.
             pr['fitted'] = False
@@ -1042,6 +1230,9 @@ def fit_pack(pack, a):
             continue
 
         st['fitted'] += 1
+        if st_seed:
+            st['seed_passes'] += len(pieces)
+            st['seed_kinds'][st_seed] = st['seed_kinds'].get(st_seed, 0) + len(pieces)
         if len(pieces) > 1:
             st['split'] += 1
         st['passes'] += len(pieces)
@@ -1279,7 +1470,11 @@ def _absorb(r, rows, a, total):
         print('  [%d/%d] %-40s %4d -> %4d runs   fitted %4d  split %3d  thin %3d%s   %s '
               '(raster %.1fs)%s'
               % (n, total, r['slug'], r['in'], r['out'], r['fitted'], r['split'], r['kept_thin'],
-                 tail, _hms(r['pack_s']), r['raster_s'],
+                 (tail + ('   structure %d seeds -> %d passes (%s)'
+                          % (r['seeds_in'], r['seed_passes'],
+                             ', '.join('%s %d' % kv for kv in sorted(r['seed_kinds'].items())) or 'none'))
+                  if r.get('seeds_in') else tail),
+                 _hms(r['pack_s']), r['raster_s'],
                  '  [grid %.0f m]' % r['grid_m'] if r['coarsened'] > 1.01 else ''), flush=True)
     # THE REPORT SURVIVES A KILL. Rewritten after every pack rather than once at the end: this
     # run is hours long, and a machine that reboots at hour six used to leave nothing behind.
@@ -1378,6 +1573,19 @@ def main():
     # HOW FAR HE ACTUALLY WANDERS, and how often to ask. 25 m either side is his own revision
     # of 50: "i dont think i sway 150 ft to a side... that is probably over stating it by a lot".
     # 40 m along is one sample per ~20 seconds of trolling, which is finer than he can steer.
+    # ── structure seeds ────────────────────────────────────────────────────────────────────
+    ap.add_argument('--structure-seed-m', type=float, default=600.0,
+                    help='half-length of the chord laid across a structure, metres. The seed only '
+                         'has to be long enough for split_to_band to have something to cut; what '
+                         'survives is decided by the water, exactly as it is for a contour.')
+    ap.add_argument('--structure-min-leg-m', type=float, default=600.0,
+                    help="the shortest structure-seeded pass to keep. NOT --min-leg-m, which is "
+                         "1500 and is the reason every contour in Clearwater Cove carries the note "
+                         "'no fitted pass of 1500 m survived'. 600 is Ryan's own number -- "
+                         "buildPieces() in plan-pieces.js defaults minM to 600 and Pick Water "
+                         "passes it, so it is the shortest thing the app has ever called a pass.")
+    ap.add_argument('--no-structure-seeds', action='store_true',
+                    help='contours only, the way it worked before 2026-08-31.')
     ap.add_argument('--envelope-m', type=float, default=25.0,
                     help='half-width of the wander envelope the shallowest depth is read across')
     ap.add_argument('--envelope-step-m', type=float, default=40.0,
