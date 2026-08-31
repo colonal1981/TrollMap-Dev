@@ -74,6 +74,11 @@ const CACHE_TTL = 24 * 60 * 60 * 1000;
 // ledges report the lip instead of the deep side and carry the whole fall, and `hole` is a kind
 // that did not exist. A browser holding yesterday's layer would draw all three wrong.
 //
+// 5 -> 6 on 2026-08-31, for the rules change that made `hump_8` exist. build_structure.py's
+// RULES_VERSION moved to 2026-08-31-company-island: an island the chart floods stops being a
+// shore, and a sub-floor crown in company stops being noise. Wateree went 52 humps -> 69. Every
+// browser holding a v5 layer is holding the 52.
+//
 // 4 -> 5 on 2026-08-31, AND THE REASON IS NOT A SCHEMA CHANGE. The 4 landed while the crown
 // rules were written; the packs were rebuilt and re-uploaded AFTER it. So a browser that loaded
 // a lake in between cached a `v4` entry holding the OLD structure -- and Ryan's did: his console
@@ -84,7 +89,7 @@ const CACHE_TTL = 24 * 60 * 60 * 1000;
 // one place in the app that can still show yesterday's chart: the Worker settled on max-age=300
 // for exactly this reason -- "packs are rebuilt daily right now, and a stale contour set after a
 // build is worse than a re-fetch" -- and CACHE_TTL below is still a day.
-const CACHE_SCHEMA = 5;
+const CACHE_SCHEMA = 6;
 
 // AND WHICH BUILD THAT NUMBER WAS BUMPED FOR, so the next person cannot forget the way I did.
 //
@@ -96,7 +101,7 @@ const CACHE_SCHEMA = 5;
 // test/structure-cache-schema.test.js reads RULES_VERSION out of the Python and fails if it has
 // moved past this string. A rules change now cannot ship without someone deciding, out loud,
 // whether the browser has to forget what it is holding.
-export const STRUCTURE_RULES_AT_BUMP = '2026-08-30-crown';
+export const STRUCTURE_RULES_AT_BUMP = '2026-08-31-company-island';
 
 async function fetchSupplemental(lakeKey, layer) {
   const url = `${CF_WORKER_URL}/chartpacks/${lakeKey}/${layer}.geojson?v=${Date.now()}`;
