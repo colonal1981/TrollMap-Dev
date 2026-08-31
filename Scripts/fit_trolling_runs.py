@@ -1128,6 +1128,24 @@ def fit_pack(pack, a):
     if not a.refit and _already_fitted(rpath):
         return {'slug': slug, 'skipped': 'already fitted -- pass --refit to do it again, but '
                                          'restore the original first or it fits its own output'}
+    # AND THE --refit GUARD HAS TO BE PER LAKE, WHICH IT WAS NOT.
+    #
+    # main() refuses --refit when the backup DIRECTORY is empty. That is a card-wide test on a
+    # per-lake fact: measured 2026-08-31 on the shipping card, 585 packs are fitted and only 360
+    # of them have an original saved. With those 360 present the directory is not empty, the
+    # guard passes, and the other 225 get exactly the double fit the guard exists to prevent --
+    # silently, and reported as a normal run, which is the failure mode its own comment predicts
+    # ("the trap the first time anyone refits after tonight").
+    #
+    # So it is checked here, where the slug is known. A lake with no original is skipped and
+    # NAMED, rather than smoothed twice. The recovery for those is the one main() already
+    # prints: build_trolling_runs.py, then fit -- not refit.
+    if a.refit and _already_fitted(rpath) and not os.path.isfile(
+            os.path.join(a.backup_dir, slug, 'trolling_runs.geojson')):
+        return {'slug': slug,
+                'skipped': 'refit refused -- no original saved for this lake, and a refit of a '
+                           'fitted file smooths already-smoothed runs. Rebuild it with '
+                           'build_trolling_runs.py, then fit.'}
     if not os.path.isfile(dpath):
         return {'slug': slug, 'skipped': 'no depth_areas.geojson'}
 
@@ -1571,17 +1589,27 @@ def _already_fitted(path, probe=200_000):
 
 
 def ship_only_slugs(registry):
-    p = os.path.join(registry, 'charted.json')
-    with open(p, 'r', encoding='utf-8') as fh:
-        d = json.load(fh)
-    rows = d.get('lakes') or d.get('records') or d
-    if isinstance(rows, dict):
-        rows = list(rows.values())
-    keep = set()
-    for r in rows:
-        if isinstance(r, dict) and not r.get('skipped') and r.get('slug'):
-            keep.add(r['slug'])
-    return keep
+    """The lakes that actually get uploaded. ONE implementation, next door.
+
+    THIS FUNCTION MATCHED NOTHING AND SAID NOTHING. `charted.json` is a map of slug -> record and
+    the records carry no `slug` field, so `r.get('slug')` was None on every one of the 1833 of
+    them, `keep` came back empty, and `--ship-only` silently fitted ZERO packs. It printed
+    "0 pack(s)" and exited clean.
+
+    The irony is on the line above the call site: "EXIT rather than fall back to the whole card.
+    A flag that silently means its opposite is worse than a flag that fails." It did the other
+    silent thing instead -- the whole card became nothing -- one function away.
+
+    It was the FOURTH copy of one rule. build_structure.py, build_trolling_runs.py and
+    build_water_features.py each carry the same test, all three read the map correctly, and all
+    three would have caught this. build_structure.py's own docstring says why: "a second
+    implementation of the ship test is how the two copies drift apart." So this one is deleted
+    rather than repaired, and the canonical one is imported -- the same way `classify` is
+    imported from build_water_features above.
+    """
+    from build_structure import ship_only_slugs as canonical    # noqa: E402
+    ship, _total = canonical(registry)
+    return ship
 
 
 def main():
