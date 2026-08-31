@@ -92,9 +92,16 @@ export function metresBetween(a, b) {
  * which walks them. Two callers, one answer, no network in between: if the router were consulted
  * here the two could disagree and every flipped leg would fall back to an unrouted straight line.
  *
- * @param {{start:number[], end:number[]}[]} candidates  IN THE ORDER THE MODEL CHOSE
+ * FISHED BACK. A leg carrying `trollPasses: n` is trolled n times, turning at each end, so it
+ * ends where it started when n is even. The chain is solved over that: the hop into the next leg
+ * is priced from `finish`, not from the end of the first pass. A leg without the field is fished
+ * once and behaves exactly as it always has.
+ *
+ * @param {{start:number[], end:number[], trollPasses?:number}[]} candidates  IN THE MODEL'S ORDER
  * @param {number[]} launch                              [lon, lat] of the ramp
- * @returns {{flipped:boolean, start:number[], end:number[]}[]}  one per candidate, in order
+ * @returns {{flipped:boolean, start:number[], end:number[], passes:number, finish:number[]}[]}
+ *          one per candidate, in order. `start`/`end` are the FIRST pass's ends; `finish` is where
+ *          the boat stands when every pass is done.
  */
 export function orientLegs(candidates, launch) {
   const legs = Array.isArray(candidates) ? candidates : [];
@@ -103,9 +110,30 @@ export function orientLegs(candidates, launch) {
   // A candidate with an end missing cannot be costed and must not throw. Treating the hop as free
   // leaves it where it was drawn, which is exactly the old behaviour for exactly that leg.
   const hop = (a, b) => (Array.isArray(a) && Array.isArray(b) ? metresBetween(a, b) : 0);
+  // HOW MANY TIMES THIS PASS IS FISHED, which decides which end the boat leaves from.
+  //
+  // Ryan, 2026-08-31, looking at a Colonel Creek plan with seven legs and eight transits between
+  // them: "its because they have no concept of running back the other direction... there should
+  // be almost no deadheading there". Measured off that plan's own GPX: L1 finished at the head of
+  // the cove, the plan then paid 499 m of deadhead to reach L2's far end, and L2 ran back to
+  // finish 77 m from where L1 had ended. The boat crossed the same water three times and fished
+  // it once.
+  //
+  // A pass fished an EVEN number of times ends where it started; an odd number ends at the far
+  // end. That parity is the whole of it, and it is what this function has to know: the hop to the
+  // next leg is measured from where the boat actually stands, not from the end of one pass. Absent
+  // or malformed means one pass, which is what every caller did before this existed.
+  // WHOLE PASSES ONLY, and never by truncation. `Math.trunc(1.5)` is a finite 1, which would have
+  // turned "fish it one and a half times" into a silent single pass -- the model asking for
+  // something impossible and the app quietly agreeing. There is no half pass; anything that is not
+  // a whole number of them is not a pass count, and one is what this leg has always been.
+  const laps = (i) => {
+    const n = Number(legs[i] && legs[i].trollPasses);
+    return Number.isInteger(n) && n >= 1 ? n : 1;
+  };
   // [ where it starts if forward, where it ends if forward ]. Reversed swaps the two.
   const enter = (i, o) => (o ? legs[i].end : legs[i].start);
-  const leave = (i, o) => (o ? legs[i].start : legs[i].end);
+  const leave = (i, o) => (laps(i) % 2 ? (o ? legs[i].start : legs[i].end) : enter(i, o));
 
   const cost = [], from = [];
   for (let i = 0; i < n; i++) { cost.push([Infinity, Infinity]); from.push([0, 0]); }
@@ -129,7 +157,14 @@ export function orientLegs(candidates, launch) {
   for (let i = n - 1; i >= 0; i--) { chosen[i] = best; best = from[i][best]; }
   return legs.map((c, i) => {
     const flipped = chosen[i] === 1;
-    return { flipped, start: flipped ? c.end : c.start, end: flipped ? c.start : c.end };
+    const start = flipped ? c.end : c.start;
+    const end = flipped ? c.start : c.end;
+    // `start` and `end` are the FIRST pass's two ends and have never meant anything else, so the
+    // assembler's leg geometry and prefetchTransits' first pair are untouched by pass counts.
+    // `finish` is where the boat stands when the leg is done — the only new thing — and it equals
+    // `end` on every leg fished once, which is every leg that existed before `trollPasses` did.
+    const passes = laps(i);
+    return { flipped, start, end, passes, finish: passes % 2 ? end : start };
   });
 }
 
@@ -1408,14 +1443,26 @@ export function selectCandidates(runs, o) {
   // Only over `kept`, so the keys are exactly the candidates the model is shown and it can never
   // be handed a distance to a leg it may not choose. n <= o.limit (12 in the app), so this is at
   // most ~144 solves of a four-comparison problem.
+  //
+  // AND WHAT IT COSTS AFTER FISHING IT BACK. A leg fished twice ends where it started, so the hop
+  // to the next leg is measured from the OTHER end and `transitToM` no longer describes the boat.
+  // Ryan's Colonel Creek plan is the case: L1 → L2 was quoted and paid at 499 m, while L2's far
+  // end sat 77 m from where L1 finished. Both numbers are real; which one the day pays is decided
+  // by how many times L1 gets fished, and that is the model's call — so it is shown both prices
+  // rather than one of them. Same solver, same two-leg day, `trollPasses: 2` on the first leg.
   for (const a of kept) {
     const to = {};
+    const back = {};
+    const twice = { ...a, trollPasses: 2 };
     for (const b of kept) {
       if (b.runId === a.runId) continue;
       const [fa, fb] = orientLegs([a, b], o.ramp);
       to[b.runId] = Math.round(transitM(fa.end, fb.start));
+      const [ga, gb] = orientLegs([twice, b], o.ramp);
+      back[b.runId] = Math.round(transitM(ga.finish, gb.start));
     }
     a.transitToM = to;
+    a.transitToMIfFishedBack = back;
   }
 
   // WHY NOTHING CAME BACK, WHEN NOTHING COMES BACK. Attached to the returned array rather than
@@ -1669,6 +1716,10 @@ export function forModel(c, cap = MODEL_STRUCTURE_CAP) {
     // runId, in which order"), so the model is the thing that has to see these -- and see
     // selectCandidates() for what happened when it did not.
     transitToM: c.transitToM || undefined,
+    // THE SAME HOPS, PRICED FOR A LEG FISHED AN EVEN NUMBER OF TIMES. See selectCandidates(). It
+    // is a second price on the same decision, not a second decision: `trollPasses` is what picks
+    // between them, and this is here so that choice can be made with both numbers in view.
+    transitToMIfFishedBack: c.transitToMIfFishedBack || undefined,
     // `transitToRampM` is metres from the end of this leg back to the launch, which the day pays
     // once. LEFT AS DRAWN ON PURPOSE, even though the app may troll the pass the other way. On a
     // single leg the direction cannot save a metre: the boat leaves the ramp and returns to it, so

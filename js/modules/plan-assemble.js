@@ -414,7 +414,8 @@ export function assemblePlan(o) {
       });
     }
 
-    const { flipped, start: legStart, end: legEnd } = facing[ci];
+    const { flipped, start: legStart, end: legEnd,
+            passes: legPasses = 1, finish: legFinish = legEnd } = facing[ci];
 
     // Transit to the head of the leg.
     const p = joinEnds(transit(cursor, legStart) || straight(cursor, legStart), cursor, legStart);
@@ -620,8 +621,68 @@ export function assemblePlan(o) {
             note: 'positions are post-fight photo locations, accurate to a few hundred metres' }
         : undefined,
     });
+    const first = legs[legs.length - 1];
     runM += legLen; fishingM += legLen; ah += a; clock += mins + stopMin;
-    cursor = legEnd;
+
+    // ── FISHING IT BACK ────────────────────────────────────────────────────────────────────────
+    //
+    // Ryan, 2026-08-31, on a Colonel Creek plan of seven legs and eight transits: "its because
+    // they have no concept of running back the other direction... there should be almost no
+    // deadheading there". He was right and it was structural, not a tuning problem: a runId could
+    // appear once, so a pass could be fished once, and every return over water that had just
+    // produced had to be spent as a transit to somewhere else. Measured off that plan's GPX, the
+    // in-field deadhead was 2093 m against 4272 m fished; letting a leg be fished back takes it to
+    // 1638 m against 5455 m. Clearwater went from 31% to 16% the same way.
+    //
+    // A pass is a piece of water, not an errand. `trollPasses` is the model's call -- the fishing
+    // judgement about whether this stretch deserves a second look -- and everything below is the
+    // arithmetic that call implies, which is the app's. Same split as orientLegs.
+    //
+    // EACH PASS IS A REAL LEG. It gets its own id, its own minutes, its own amp-hours and its own
+    // geometry, because the boat really does run it and the budget really does pay for it. The
+    // alternative -- one leg carrying a multiplier -- would have every reader of `lengthM`,
+    // `coordinates` and `estDurationMin` quietly understating the day, and the GPX would draw one
+    // track for two runs.
+    //
+    // STOPS AND LURE CHANGES BELONG TO THE FIRST PASS ONLY. A stop is a place he stops and casts;
+    // repeating it because the trolling pass repeated would invent time he never agreed to spend.
+    if (legPasses > 1) { first.pass = 1; first.ofPasses = legPasses; }
+    for (let np = 2; np <= legPasses; np++) {
+      // NO INVENTED CEILING ON THE PASS COUNT. What bounds the day is the time he has to be off
+      // the water, which is already known here and already what the budget is judged against. So
+      // the passes stop at the first one that would end after it, and say which one.
+      if (returnMin != null && clock + mins > returnMin) {
+        warnings.push(`${c.runId} asked for ${legPasses} passes — stopped after ${np - 1}, `
+                    + `pass ${np} would end after ${formatClock(returnMin)}`);
+        break;
+      }
+      const prev = legs[legs.length - 1];
+      legs.push({
+        ...first,
+        id: `L${++li}`,
+        startM: runM,
+        // No `stopMin`: the stops are on the first pass and are not repeated.
+        estDurationMin: Math.round(mins), estStartTime: formatClock(clock),
+        // Drawn the way it will be RUN, which is the way the pass before it was not.
+        coordinates: (prev.coordinates || []).slice().reverse(),
+        trolledReversed: prev.trolledReversed ? undefined : true,
+        envelope: prev.envelope ? prev.envelope.slice().reverse() : undefined,
+        // Mirrored off the pass before, for the same reason that one was mirrored off the line as
+        // drawn: `atM` is distance along THIS pass, and this pass runs the other way.
+        marks: (prev.marks || []).map((m) => ({
+          ...m, atM: Math.max(0, Math.round(legLen - m.atM)),
+        })),
+        stops: [],
+        pass: np, ofPasses: legPasses,
+      });
+      runM += legLen; fishingM += legLen; ah += a; clock += mins;
+    }
+
+    // WHERE THE BOAT STANDS WHEN THE LEG IS DONE. Fished an even number of times it is back at
+    // the end it came in by, and the transit to the next leg is measured from there -- which is
+    // the whole saving, and reading `legEnd` here would throw it away and route the next transit
+    // from a place the boat is not.
+    cursor = legFinish;
   }
 
   // ── THE ROUTE HOME ───────────────────────────────────────────────────────────────────────────

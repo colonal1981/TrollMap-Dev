@@ -239,6 +239,7 @@ export function collectPlan(){
             starboardLeadFt: e.starboardLeadFt,
             why: e.why,
             phaseName: e.phaseName,
+            pass: e.pass, ofPasses: e.ofPasses,
             stats: e.stats,
             // rods hold full spread info for this pass
             rods: (e.rods||[]).map(r=>({
@@ -502,6 +503,10 @@ export function collectPlan(){
         depthFt: l.depthFt ?? null, speedMph: l.speedMph,
         batteryAh: l.batteryAh, estDurationMin: l.estDurationMin, estStartTime: l.estStartTime ?? null,
         unrouted: l.unrouted === true ? true : undefined,
+        // WHICH TIME OVER THIS WATER THIS IS. Without it the saved plan shows the same runId on
+        // two legs and nothing on the file says why — which is exactly the shape of a bug, and
+        // this is the file Ryan exports and reads back.
+        pass: l.pass ?? undefined, ofPasses: l.ofPasses ?? undefined,
         stopIds: (l.stops || []).map((x) => x.id),
       })),
       changes: (v2.changes || []).slice(),

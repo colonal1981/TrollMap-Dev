@@ -526,6 +526,12 @@ of that leg to the START of every other leg — \`transitFromRampM\` from the ra
 \`transitToRampM\` from its end back to the ramp. Those are the only numbers that change when you
 reorder the day, and they are yours to spend: the app computes the legs, you choose the sequence.
 
+AND WHAT TURNING AROUND COSTS. \`transitToMIfFishedBack\` is the same table for a leg you troll an
+EVEN number of times: turn at each end and you finish where you started, so the hop to the next
+leg is measured from the other end of the pass. Where that number is much smaller than
+\`transitToM\`, fishing the leg back is cheaper in deadhead AND longer in the water — the two
+things almost never point the same way and here they do.
+
 ${JSON.stringify(candidates)}
 ${o.waterIsChosen ? `
 THE FISHERMAN ALREADY CHOSE THIS WATER AND THIS ORDER.
@@ -581,6 +587,16 @@ RULES THAT ARE NOT NEGOTIABLE
    you ordered it that way. Prefer a slightly weaker leg next door to a slightly better one across
    the lake, and if the good water genuinely is far apart, fish fewer legs rather than commuting
    between them.
+   AND FISH THE GOOD ONES BACK. A pass is a piece of water, not an errand to be run once and
+   crossed off. When a stretch earns it — it holds the structure the day is built on, the history
+   says fish have come off it, it is the best water you have at that hour — set \`trollPasses\` to
+   2 and troll it down and back before you move. That is water fished twice for zero deadhead,
+   and it often costs less deadhead than moving on, because you end at the end you came in by:
+   compare \`transitToMIfFishedBack\` against \`transitToM\` for the leg that follows it. A day of
+   six stretches each fished once, with a transit between every pair, is the shape this is here to
+   break. Do not set it on every leg to run the clock up — set it where the water deserves a
+   second look, and say why in \`why\`. The app stops adding passes at the first one that would end
+   after he is due back.
 4. A stop is a pause ON a leg, not instead of one. Stop where the structure is better cast at
    than trolled over — a hump crown, a dock line, a creek mouth, a laydown — and only ever on a
    structure carrying \`worthFishing: true\`. Judge every leg's structures on their own merits: a
@@ -654,9 +670,11 @@ RETURN EXACTLY THIS SHAPE
     ]
   },
   "legs": [
-    { "runId": "copied exactly", "speedMph": 2.0,
+    { "runId": "copied exactly", "speedMph": 2.0, "trollPasses": 1,
       "deploy": { "port": "R1", "starboard": "R5" },
       "why": "one sentence on why this water, now" }
+    // \`trollPasses\` is how many times you troll this stretch before moving on — down, back,
+    // down again. Omit it or say 1 for a single pass. See rule 3.
   ],
   "stops": [
     { "runId": "copied exactly", "id": "that structure's \`id\`, copied exactly",
@@ -834,8 +852,36 @@ export function planArgsFrom(res, candidates, ctx = {}) {
     if (!c) { problems.push(`no such run: ${JSON.stringify(leg && leg.runId)}`); continue; }
     if (seen.has(c.runId)) { problems.push(`${c.runId} listed twice — kept the first`); continue; }
     seen.add(c.runId);
-    // `why` and `speedMph` are the model's, and ride on the candidate into the assembler.
-    ordered.push({ ...c, why: str(leg.why), speedMph: num(leg.speedMph) ?? undefined });
+    // HOW MANY TIMES THIS PASS GETS FISHED.
+    //
+    // Ryan, 2026-08-31: "its because they have no concept of running back the other direction...
+    // there should be almost no deadheading there". Until this field existed the refusal above was
+    // the end of the road -- a runId could appear once, so a pass could be fished once, and the
+    // only way back over water that had just produced was a transit to somewhere else. It is a
+    // count on the leg rather than the same runId listed twice on purpose: `deploy`, `stops` and
+    // `changes` are all keyed by runId downstream, and a duplicate key would have silently taken
+    // the rods, the stops and the lure changes off the second pass.
+    //
+    // NOT NAMED `passes`. The candidate this spreads over already has a `passes` field -- the
+    // structures the run goes by, which the model reads -- and clobbering it would strip every
+    // leg of its structure list on the way to the assembler.
+    //
+    // No ceiling is invented here. What bounds a day is the return time and the battery, both of
+    // which are real, both already measured, and assemblePlan() stops adding passes at the first
+    // one that would end after he is due back.
+    let trollPasses;
+    if (leg.trollPasses != null) {
+      // NOT TRUNCATED. `Math.trunc(1.5)` is a finite 1, so rounding here would accept a request
+      // for one and a half passes and fish it once without ever saying it had refused anything.
+      const n = Number(leg.trollPasses);
+      if (Number.isInteger(n) && n >= 1) trollPasses = n;
+      else problems.push(`${c.runId} asked for ${JSON.stringify(leg.trollPasses)} trolling `
+                       + 'passes — that is not a whole number of passes, so it is fished once');
+    }
+    // `why`, `speedMph` and `trollPasses` are the model's, and ride on the candidate into the
+    // assembler.
+    ordered.push({ ...c, why: str(leg.why), speedMph: num(leg.speedMph) ?? undefined,
+                   trollPasses });
 
     const d = leg.deploy || {};
     const port = reseat(str(d.port)), starboard = reseat(str(d.starboard));

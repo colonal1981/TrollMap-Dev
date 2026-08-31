@@ -83,9 +83,15 @@ export function trackName(leg) {
   // foot values mostly do not exist... near twelve feet the charted lines are 11.2 ft (34 dm) and
   // 12.1 ft (37 dm) and there is nothing between them." A tenth of a foot was never a real
   // distinction; it was a decimal point standing between him and the right number.
+  // SAY WHEN IT IS THE SAME WATER AGAIN. A leg fished back is a separate leg with its own id and
+  // its own track, so two rows on the unit would otherwise read `L1 21 FT` / `L2 21 FT` and look
+  // like a coincidence of depth rather than a turn at the end of the pass. Even passes run the
+  // opposite direction to the first, so "back" is literally what they are; odd ones are the
+  // original direction again. Both stay inside the 24 characters the 93sv shows.
+  const again = leg.pass > 1 ? (leg.pass % 2 === 0 ? ' back' : ' again') : '';
   return leg.depthFt != null
-    ? `${leg.id} · ${Math.round(Number(leg.depthFt))} ft`
-    : `${leg.id} · troll`;
+    ? `${leg.id} · ${Math.round(Number(leg.depthFt))} ft${again}`
+    : `${leg.id} · troll${again}`;
 }
 
 /** `S1.1 · hump 14ft`. The id first, because that is what the timeline calls it. */

@@ -265,7 +265,12 @@ export async function prefetchTransits(candidates, launch, routeWater) {
   for (const [i, c] of candidates.entries()) {
     const f = facing[i] || { start: c.start, end: c.end };
     if (Array.isArray(cursor) && Array.isArray(f.start)) pairs.push([cursor, f.start]);
-    cursor = f.end;
+    // WHERE THE BOAT STANDS WHEN THE LEG IS DONE, which is not the end of its first pass once a
+    // leg can be fished back. `finish` equals `end` on every leg fished once, so this is the same
+    // cursor it always was until the model asks for a second pass — and on the leg that does ask,
+    // reading `end` here would prefetch a pair the assembler never walks and drop that transit to
+    // an unrouted straight line. Same failure the orientation fix above was written for.
+    cursor = f.finish || f.end;
   }
   // AND THE PAIR HOME. assemblePlan() asks for the last leg's tail back to the ramp now that the
   // route home is a real leg, and a pair nobody prefetched comes back null -- which would leave

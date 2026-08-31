@@ -277,14 +277,27 @@ export function planToTimeline(plan, o = {}) {
           ? `${leg.depthMinFt} ft under the boat`
           : `${leg.depthMinFt}–${leg.depthMaxFt} ft under the boat · median ${leg.depthFt}`)
       : (leg.depthFt != null ? `${leg.depthFt} ft under the boat` : '');
+    // SAY WHEN IT IS THE SAME WATER AGAIN. A leg fished back is its own leg — its own id, its own
+    // track, its own minutes — so on a timeline it would otherwise read as a second stretch that
+    // happens to be the same length and depth as the one above it. Even passes run the opposite
+    // direction to the first, so "fished back" is literally what they are.
+    const again = leg.pass > 1
+      ? (leg.pass % 2 === 0 ? ' · fished back' : ` · pass ${leg.pass}`)
+      : '';
+    const samePhrase = leg.pass > 1 ? `same water as Leg ${trollN - 1}, the other way · ` : '';
     const card = {
       ...common,
-      label: `Leg ${trollN} — ${mi.toFixed(1)} mi`, shortLabel: `Leg ${trollN}`,
+      label: `Leg ${trollN} — ${mi.toFixed(1)} mi${again}`,
+      shortLabel: leg.pass > 1 ? `Leg ${trollN}${leg.pass % 2 === 0 ? ' back' : ` p${leg.pass}`}`
+                               : `Leg ${trollN}`,
       icon: '🎣', color: LEG_COLORS[(trollN - 1) % LEG_COLORS.length],
-      desc: (waterPhrase ? `${waterPhrase} · ` : '')
+      desc: samePhrase + (waterPhrase ? `${waterPhrase} · ` : '')
           + `from ${mark} in · ${leg.speedMph} mph · ${leg.batteryAh} Ah`,
       longDesc: clean(leg.why),
       speedMph: leg.speedMph,
+      // Carried so every reader downstream can tell a second pass from a second stretch without
+      // re-deriving it from a repeated runId.
+      pass: leg.pass, ofPasses: leg.ofPasses,
     };
     cards.push(card);
     routeRods[key] = rods;
@@ -318,6 +331,7 @@ export function planToTimeline(plan, o = {}) {
       holding,
       // The warnings that name THIS leg, by the runId they were written with.
       warnings: leg.runId ? legWarnings.filter((w) => String(w).includes(leg.runId)) : [],
+      pass: leg.pass, ofPasses: leg.ofPasses,
       port: rods[0] ? rods[0].lure : '', starboard: rods[1] ? rods[1].lure : '',
       portColor: rods[0] ? rods[0].color : '', starboardColor: rods[1] ? rods[1].color : '',
       portLeadFt: rods[0] ? rods[0].lead : '', starboardLeadFt: rods[1] ? rods[1].lead : '',
