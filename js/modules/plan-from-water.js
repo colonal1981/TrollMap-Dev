@@ -325,6 +325,32 @@ export async function planFromWater(o) {
   // does not carry, or a lure that is not in the bag, said so all along and nobody was listening.
   const args = planArgsFrom(res, legs, { tackle: o.tackle, connectionOf: o.connectionOf });
 
+  // A LEG THE MODEL NEVER MENTIONED IS A LEG TROLLED EMPTY, AND NOTHING SAID WHY.
+  //
+  // Ryan, 2026-08-31, on a nine-piece Pick Water day: five legs came back with no rods in the
+  // water, `wateree_lake#46` among them at 2.0 miles -- the longest piece he picked. The app's
+  // problem list said nothing about any of them, because planArgsFrom() can only complain about
+  // legs the model DID list: a leg named with a broken `deploy` is refused out loud, and a leg
+  // the model simply skipped is invisible to it.
+  //
+  // On the Smart Plan path that cannot happen -- the day IS the model's leg list, so a leg it
+  // omits is water it declined and nothing is missing. HERE the day is Ryan's list and the
+  // model's answer is only the rigging for it, so an omission is a hole in the middle of a day he
+  // chose. Same silence, opposite meaning, and only this path can tell them apart.
+  //
+  // It reports and stops there. Carrying the previous leg's rods forward would paper over a wrong
+  // plan and make it look complete, which is the one thing worse than an empty leg -- the same
+  // call assemblePlan() made in 2026-08-11 and for the same reason.
+  const answered = new Set((Array.isArray(res.legs) ? res.legs : [])
+    .map((l) => l && l.runId).filter(Boolean));
+  const skipped = legs.filter((l) => !answered.has(l.runId));
+  if (skipped.length) {
+    args.problems.push(`the model rigged ${legs.length - skipped.length} of the ${legs.length} `
+      + `pieces you picked and never mentioned ${skipped.map((l) => l.runId).join(', ')} — `
+      + `${(skipped.reduce((t, l) => t + l.lengthM, 0) / 1609.34).toFixed(1)} mi of the day is in `
+      + 'the plan with nothing in the water. It was asked to rig every one.');
+  }
+
   const plan = assemblePlan({
     // IN THE ORDER ALREADY DECIDED. assemblePlan documents `candidates` as "IN THE ORDER THE MODEL
     // CHOSE"; on this path the model chose nothing and the array is already the day.
@@ -347,6 +373,15 @@ export async function planFromWater(o) {
 
   return {
     plan,
+    // THE EXCHANGE, so the saved plan can show what was sent and what came back.
+    //
+    // collectPlan() reads `request`/`response` off `window._planV2Result`, which plan-water-ui.js
+    // sets from this object -- and this path built both and returned neither, so a Pick Water day
+    // saved a `model` block with two nulls in it and the one question it was added to answer went
+    // unanswered. smart-plan-v2.js has returned them since it was written; this is the same two
+    // fields on the other path.
+    request: req,
+    response: res,
     // WHAT THE MODEL GOT WRONG, SAID OUT LOUD. This was a hardcoded empty array, so a rod that is
     // not on the boat, a lure that is not in the bag and a leg with no rods deployed all arrived
     // silently. smart-plan-v2.js has always returned these.

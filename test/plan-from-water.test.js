@@ -119,6 +119,50 @@ describe('a leg built from picked water carries both of its ends', () => {
     expect(r.problems.some((p) => /needs one port rod and one starboard rod/.test(p))).toBe(true);
   });
 
+  // ---------------------------------------------------------------------------------------------
+  // A LEG THE MODEL NEVER MENTIONED
+  //
+  // Ryan, 2026-08-31, on a nine-piece day: five legs came back with no rods in the water, the
+  // longest picked piece among them at 2.0 miles, and the problem list said nothing about any of
+  // them. planArgsFrom() can only complain about legs the model DID list -- a leg named with a
+  // broken `deploy` is refused out loud, a leg simply skipped is invisible to it. On the Smart
+  // Plan path that is correct: the day IS the model's leg list, so an omission is water it
+  // declined. Here the day is Ryan's and the answer is only the rigging for it, so an omission is
+  // a hole in the middle of a day he chose.
+  // ---------------------------------------------------------------------------------------------
+  it('says which picked pieces the model never answered for', async () => {
+    const r = await build({
+      askModel: async () => JSON.stringify({
+        loadout: { rods: [{ id: 'R1', lure: LURES[0], role: 'troll', leadFt: 80 },
+                          { id: 'R5', lure: LURES[0], role: 'troll', leadFt: 80 }] },
+        // Only the first of the three pieces he picked.
+        legs: [{ runId: PICKED[0].runId, speedMph: 2.0, deploy: { port: 'R1', starboard: 'R5' } }],
+        stops: [], changes: [],
+      }),
+    });
+    const said = r.problems.find((x) => /rigged 1 of the 3 pieces you picked/.test(x));
+    expect(said).toBeTruthy();
+    expect(said).toContain(PICKED[1].runId);
+    expect(said).toContain(PICKED[2].runId);
+    expect(said).toMatch(/mi of the day is in the plan with nothing in the water/);
+    // The day still has all three, because they are his. Reported, never filled in.
+    expect(r.plan.legs.filter((l) => l.type === 'troll').length).toBe(3);
+  });
+
+  it('says nothing when the model rigged every piece', async () => {
+    const r = await build();
+    expect(r.problems.some((x) => /never mentioned/.test(x))).toBe(false);
+  });
+
+  // The whole point of the `model` block in a saved plan: this path built both and returned
+  // neither, so a Pick Water day saved two nulls where the exchange should be.
+  it('hands back the prompt it sent and the answer it got', async () => {
+    const r = await build();
+    expect(r.request && typeof r.request.user).toBe('string');
+    expect(r.request.user).toContain(PICKED[0].runId);
+    expect(r.response && Array.isArray(r.response.legs)).toBe(true);
+  });
+
   it('orientLegs can orient every leg, which it cannot without start and end', async () => {
     const r = await build();
     const troll = r.plan.legs.filter((l) => l.type !== 'transit');
