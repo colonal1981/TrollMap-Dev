@@ -42,6 +42,9 @@ class Args:
     structure_seed_m = 600.0
     min_fit_m = 800.0
     no_structure_seeds = False
+    # The band the bearing search scores against — the same one the fitter cuts to.
+    tol_dm = 3.0
+    ceiling_dm = 24.0
 
 
 class FlatRaster:
@@ -49,12 +52,19 @@ class FlatRaster:
     and anything standing on the bottom runs north-south across it."""
     step = 12.0
 
-    def __init__(self, w_m=6000.0, h_m=6000.0):
+    def __init__(self, w_m=6000.0, h_m=6000.0, flat_dm=70.0):
         self.x0, self.y0 = 0.0, 0.0
         self.nx, self.ny = int(w_m / self.step), int(h_m / self.step)
+        self.flat_dm = flat_dm
 
     def deeper_dir(self, xy):
         return np.tile(np.array([[1.0, 0.0]]), (len(xy), 1))
+
+    def at_raw(self, xy):
+        # Decimetres. Neutral by default: the seed's own target everywhere, so the bearing search
+        # has nothing to prefer and the shape assertions are about shape. The bearing itself is
+        # tested against Slope below, where the water does have something to say.
+        return np.full(len(xy), float(self.flat_dm), dtype=np.float32)
 
 
 def pack_with(tmp, feats):
@@ -161,6 +171,33 @@ def main(tmp):
                 'every vertex of a trimmed seed is inside the raster'
         assert f['properties']['length_m'] >= Args.min_fit_m, \
             'length_m describes what survived the trim, not the chord we asked for'
+
+    # ── the bearing is measured, not derived ────────────────────────────────────────────────
+    #
+    # The first version took `deeper_dir` at the feature and ran the chord across it. A hump is a
+    # local maximum, where that gradient is noise -- and on Wateree's best hump, `hump_1` with
+    # 17.1 ft of relief and the top score on the lake, the chord came out running DOWN the slope:
+    # water from 2.0 to 43.0 ft under it, 8 of 49 samples in band, no pass. hump_4, scoring 57,
+    # produced two. So twelve bearings are laid and the one the water supports longest wins.
+    class Slope(FlatRaster):
+        """Depth falls to the east and to nothing else, so the 25 ft band runs dead north-south.
+        A chord on that bearing holds it; anything else walks out of it."""
+        def at_raw(self, xy):
+            f = np.clip(xy[:, 0] / (self.nx * self.step), 0.0, 1.0)
+            return (30.0 + f * 240.0).astype(np.float32)     # 10 ft west wall to 88 ft east
+
+    slope = Slope()
+    lat_mid = 0.5 * 6000.0 / ftr.M_PER_DEG_LAT
+    kk = ftr.m_per_deg_lon(lat_mid)
+    # 25 ft is 76 dm, which on this ramp sits at x/6000 = (76-30)/240 -> 1150 m
+    s = ftr.structure_seeds(pack_with(tmp, [feat('ledge', 1150.0 / kk, lat_mid, depth_ft=25.0)]),
+                            slope, lat_mid, Args())
+    eq(len(s), 1, 'the ledge is offered')
+    c = s[0]['geometry']['coordinates']
+    dx = abs(c[-1][0] - c[0][0]) * kk
+    dy = abs(c[-1][1] - c[0][1]) * ftr.M_PER_DEG_LAT
+    assert dy > dx * 6, ('the chord must run along the band, not down the slope: '
+                         f'dx={dx:.0f} m dy={dy:.0f} m')
 
     # ── seed_relief: a seeded pass measures what a contour pass inherits ────────────────────
     #

@@ -1007,28 +1007,28 @@ def structure_seeds(pack, depth, lat0, a):
             continue
         P = np.array([[float(c[0]) * k, float(c[1]) * M_PER_DEG_LAT]], float)
 
-        # WHICH WAY THE PASS RUNS IS NOT A CHOICE, IT IS THE SHAPE OF THE BOTTOM. The fall line
-        # is where the water gets deeper; the structure runs across it. Ryan: "i dont care whether
-        # lines go north to south or east to west or some combination there of".
+        # WHICH WAY THE PASS RUNS IS NOT A CHOICE AND IT IS NOT THE GRADIENT EITHER. Ryan: "i
+        # dont care whether lines go north to south or east to west or some combination there of."
         #
-        # A hump top is a local maximum, where the gradient is near zero and its direction is
-        # noise, so the ring is read when the point itself has nothing to say. On a symmetric hump
-        # any chord crosses it, so an arbitrary bearing there is harmless rather than wrong.
+        # The first version read `deeper_dir` at the feature and ran the chord across it. That is
+        # right for a ledge and WRONG FOR A HUMP, because a hump is a local maximum: the gradient
+        # at its summit is near zero and its direction is noise, and a guard at 1e-9 essentially
+        # never fires. Measured on Wateree's best hump -- hump_1, 17.1 ft of relief, the highest
+        # score on the lake -- the chord came out running DOWN the slope instead of along it, over
+        # water from 2.0 ft to 43.0 ft, with 8 of 49 sample points inside the band and nothing
+        # 500 m long left to smooth. The best structure on the lake produced no pass at all while
+        # hump_4, scoring 57, produced two.
+        #
+        # So the bearing is MEASURED rather than derived: lay the chord on twelve bearings and
+        # keep the one the water actually supports for longest. That is not a guess between them,
+        # it is the same question `split_to_band` is about to ask, asked before the smoothing is
+        # paid for. It costs twelve raster reads per seed and the raster is already in memory.
         acres = pr.get('area_acres')
         try:
             rad = math.sqrt(float(acres) * 4046.86 / math.pi) if acres else 0.0
         except (TypeError, ValueError):
             rad = 0.0
         rad = max(rad, 40.0)
-        d = depth.deeper_dir(P)[0]
-        if math.hypot(float(d[0]), float(d[1])) < 1e-9:
-            ring = np.array([[P[0, 0] + rad * 1.5 * math.cos(t), P[0, 1] + rad * 1.5 * math.sin(t)]
-                             for t in (0.0, math.pi / 2, math.pi, 3 * math.pi / 2)], float)
-            d = depth.deeper_dir(ring).mean(axis=0)
-        n = math.hypot(float(d[0]), float(d[1]))
-        down = np.array([float(d[0]) / n, float(d[1]) / n]) if n > 1e-9 else np.array([0.0, 1.0])
-        along = np.array([-down[1], down[0]])
-
         for tag, depth_key, off_r in shapes:
             ft = pr.get(depth_key)
             if not isinstance(ft, (int, float)) or ft <= 0:
@@ -1037,10 +1037,28 @@ def structure_seeds(pack, depth, lat0, a):
             # line rather than at its end. What comes out is whatever `split_to_band` leaves --
             # the water decides the length, the same as it does for a contour.
             L = max(half, 3.0 * rad)
-            mid = P[0] + down * (off_r * rad)
             npts = max(4, int(round(2 * L / 25.0)) + 1)
             ts = np.linspace(-L, L, npts)
-            xy = np.array([mid + along * t for t in ts], float)
+            # The band the fitter is about to cut this seed to, so the bearing is chosen against
+            # the same test rather than against a proxy for it.
+            floor = float(ft) * 3.048 - a.tol_dm
+            ceil = float(ft) * 3.048 + a.ceiling_dm
+            xy, best_in = None, -1
+            for b in range(12):                       # 15 deg apart; a chord is symmetric, so 180
+                th = b * math.pi / 12.0
+                along = np.array([math.sin(th), math.cos(th)])
+                down = np.array([along[1], -along[0]])
+                cand = np.array([P[0] + down * (off_r * rad) + along * t for t in ts], float)
+                d = depth.at_raw(cand)
+                inb = int(np.sum(np.isfinite(d) & (d >= floor) & (d <= ceil)))
+                if inb > best_in:
+                    best_in, xy = inb, cand
+            # NO THRESHOLD HERE. An in-band count is a cheap proxy and `split_to_band` is the
+            # real test a few lines on; adding a floor of my own would be a second rule to keep in
+            # step with the first. The bearing search picks the best chord there is and the fitter
+            # decides whether it is a pass.
+            if xy is None:
+                continue
 
             # TRIMMED TO THE RASTER, NOT PADDED AROUND. Outside the grid `_ij` clips to the edge
             # cell and every sample past the boundary reads back whatever that last cell holds --
