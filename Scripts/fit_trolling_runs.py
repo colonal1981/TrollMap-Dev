@@ -106,6 +106,10 @@ from matplotlib.path import Path as MplPath
 # implementations of "how far is that" would drift the first time one of them was tuned.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from build_trolling_runs import metres, length_m, NodeIndex, read_graph, main_component  # noqa: E402
+# Same reason. `relief` is a four-line rule about how much deeper the water gets beside a
+# line, and the thresholds are fishing numbers -- 15 ft to a channel edge, 4 ft to a flat.
+# Restating them here is how they drift apart the first time one is tuned.
+from build_water_features import classify as classify_relief  # noqa: E402
 
 M_PER_DEG_LAT = 110540.0
 
@@ -931,6 +935,47 @@ SEED_SHAPES = {
 }                                                # contour line with a drop off near it is great"
 
 
+def seed_relief(xy, depth, own_ft, relief_m):
+    """WHAT THE BOTTOM DOES BESIDE A STRUCTURE-SEEDED PASS.
+
+    `build_water_features.py` asks this of every contour run -- how much deeper the water gets
+    within `--relief-m` -- and tags it `channel_edge`, `break`, `steep_bank` or `flat`. A fitted
+    contour pass inherits the answer from its parent, and `plan-candidates.js` scores it: a
+    channel edge is worth 12 and a flat 8.
+
+    A structure-seeded pass has no parent, and the ordering is why it can never get one:
+    `build_water_features.py` runs BEFORE this script and must -- it annotates `near` in place and
+    knows nothing about depth stamps, so running it afterwards strips them. So the seeds are cut
+    after the only stage that could have tagged them, and they came out of the first version of
+    this change scoring ZERO on relief. Not because the water is poor: because the field was empty.
+    269 new passes on Wateree, every one of them ranked under a main-lake contour that got 12 for
+    free.
+
+    So it is measured here instead, off the raster this script already holds, by the same rule --
+    imported, not restated. Contour passes are untouched and go on inheriting, which is what keeps
+    their output byte-identical.
+    """
+    if not (own_ft and own_ft > 0) or len(xy) < 2:
+        return None, None, None
+    r = max(1, int(round(relief_m / depth.step)))
+    at = np.linspace(0, len(xy) - 1, max(2, min(14, len(xy)))).astype(int)
+    cls, deep = {}, 0.0
+    for t in at:
+        i, j = depth._ij(xy[t:t + 1])
+        i, j = int(i[0]), int(j[0])
+        box = depth.dm_raw[max(0, i - r):i + r + 1, max(0, j - r):j + r + 1]
+        if box.size == 0 or not np.isfinite(box).any():
+            continue
+        d = float(np.nanmax(box)) / 3.048
+        sh = float(np.nanmin(box)) / 3.048
+        deep = max(deep, d)
+        k = classify_relief(own_ft, d, sh)
+        cls[k] = cls.get(k, 0) + 1
+    if not cls:
+        return None, None, None
+    return max(cls.items(), key=lambda kv: kv[1])[0], cls, int(round(deep))
+
+
 def structure_seeds(pack, depth, lat0, a):
     """Run-shaped seeds cut from `structure.geojson`, for the same fitter the contours go through.
 
@@ -1384,6 +1429,14 @@ def fit_pack(pack, a):
                     p2.pop('reach_m', None)
                     p2['routable'] = False
 
+            # A seeded pass has no parent to inherit `relief` from -- see seed_relief().
+            if st_seed:
+                rel, mix, deep = seed_relief(piece, depth, p2.get('depth_ft'), a.relief_m)
+                if rel:
+                    p2['relief'] = rel
+                    p2['relief_mix'] = mix
+                    p2['deepest_within_m'] = deep
+
             annotate(p2, ll, grid, cell, a.annotate_m, depth, lat0)
             out.append({'type': 'Feature', 'properties': p2,
                         'geometry': {'type': 'LineString', 'coordinates': ll}})
@@ -1584,6 +1637,10 @@ def main():
                          "'no fitted pass of 1500 m survived'. 600 is Ryan's own number -- "
                          "buildPieces() in plan-pieces.js defaults minM to 600 and Pick Water "
                          "passes it, so it is the shortest thing the app has ever called a pass.")
+    ap.add_argument('--relief-m', type=float, default=250.0,
+                    help='radius the relief probe reads, for STRUCTURE-SEEDED passes only. Must '
+                         'match build_water_features.py --relief-m (250) or the two halves of the '
+                         'pack answer the same question differently.')
     ap.add_argument('--no-structure-seeds', action='store_true',
                     help='contours only, the way it worked before 2026-08-31.')
     ap.add_argument('--envelope-m', type=float, default=25.0,

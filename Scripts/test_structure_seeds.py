@@ -162,6 +162,48 @@ def main(tmp):
         assert f['properties']['length_m'] >= Args.min_fit_m, \
             'length_m describes what survived the trim, not the chord we asked for'
 
+    # ── seed_relief: a seeded pass measures what a contour pass inherits ────────────────────
+    #
+    # `build_water_features.py` runs BEFORE the fitter and must, so a seed cut inside the fitter
+    # can never have a parent to inherit `relief` from. The first version of this change left the
+    # field empty and every one of Wateree's 269 new passes scored zero against a main-lake
+    # contour that got 12 for free. The rule is imported from build_water_features, not restated.
+    class Slab:
+        """dm_raw in decimetres, 12 m cells. Depth is a function of i alone: the east half of the
+        box falls away to 65 ft while the line sits in 20 ft."""
+        step = 12.0
+
+        def __init__(self, drop_dm=None):
+            self.nx = self.ny = 200
+            self.dm_raw = np.full((self.nx, self.ny), 61.0, dtype=np.float32)   # 20 ft
+            if drop_dm is not None:
+                self.dm_raw[self.nx // 2:, :] = drop_dm
+            self.x0 = self.y0 = 0.0
+
+        def _ij(self, xy):
+            i = np.clip((xy[:, 0] / self.step + 0.5).astype(int), 0, self.nx - 1)
+            j = np.clip((xy[:, 1] / self.step + 0.5).astype(int), 0, self.ny - 1)
+            return i, j
+
+    line = np.array([[1200.0, y] for y in np.linspace(400.0, 1600.0, 40)], float)
+
+    rel, mix, deep = ftr.seed_relief(line, Slab(198.0), 20.0, 250.0)   # 65 ft beside a 20 ft line
+    eq(rel, 'channel_edge', 'a 45 ft drop within 250 m is a channel edge')
+    assert deep >= 60, f'deepest_within_m carries the drop, got {deep}'
+    assert sum(mix.values()) > 1, 'relief_mix counts every station, not just the winner'
+
+    rel, _, _ = ftr.seed_relief(line, Slab(None), 20.0, 250.0)
+    eq(rel, 'flat', 'water that does not change beside the line is a flat')
+
+    rel, _, _ = ftr.seed_relief(line, Slab(90.0), 20.0, 250.0)          # 29.5 ft beside 20 ft
+    eq(rel, 'break', 'between four and fifteen feet of drop is a break')
+
+    eq(ftr.seed_relief(line, Slab(198.0), None, 250.0), (None, None, None),
+       'no depth to compare against means no claim, not a guess')
+    blank = Slab(None); blank.dm_raw[:] = np.nan
+    eq(ftr.seed_relief(line, blank, 20.0, 250.0), (None, None, None),
+       'unsounded water is not flat water -- it is no answer')
+
     # ── no structure file, no seeds, no exception ───────────────────────────────────────────
     import tempfile
     eq(ftr.structure_seeds(tempfile.mkdtemp(), FlatRaster(), lat0, Args()), [],
