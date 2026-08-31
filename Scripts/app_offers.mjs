@@ -1,31 +1,44 @@
 /**
- * app_offers.mjs -- write the list of waters the PLANNER PICKER actually offers.
+ * app_offers.mjs -- write the slug list the pipeline scripts should be scoped to.
  *
  *     node Scripts/app_offers.mjs F:\TrollMapPipeline\registry
  *
- * Writes `<registry>/_app_offers.txt`, one slug per line, for `--only-lakes @...`.
+ * Writes `<registry>/_app_registry.txt`, one slug per line, for `--only-lakes @...`.
  *
- * WHY THIS IS JAVASCRIPT IN A PYTHON PIPELINE
+ * WHAT THIS DELIBERATELY DOES NOT DO
  *
- * Ryan, 2026-08-31: "we only need to do the lakes the app offers... nothing more, nothing less."
+ * The first cut of this script imported `PRESETS.planner` from js/data/water-filter.js and wrote
+ * a narrower list called `_app_offers.txt`, claiming to be "the waters the picker lists". It was
+ * wrong, and wrong in a way that reads as authoritative.
  *
- * Which waters those are is decided by ONE rule, `PRESETS.planner` in js/data/water-filter.js:
- * bathymetry is not 'no' AND there is somewhere to launch, minus the coastal zones, minus the six
- * rivers that have their own entries. Writing that rule again in Python would be a second
- * implementation of it, and this codebase has already paid for that twice this week -- four
- * copies of the ship test, one of them broken and matching nothing; two copies of getSeason(),
- * one of them a month behind.
+ * `PRESETS.planner` tests `hasRamp`, and hasRamp is a UNION of two sources:
  *
- * So it imports the app's own predicate and asks it. If the picker changes, this changes with it.
+ *     hasRamp: liveLaunches(name) > 0 || has(rec.ramps) || has(rec.ramp_sources) || ...
  *
- * The six PLAN_RIVERS slugs are appended because the picker lists them in their own optgroup --
- * they are water he can plan a day on and they need fitting like anything else.
+ * `liveLaunches` reads a source registered at runtime by setLiveAccessSource() -- the Worker's
+ * live access index -- which exists precisely because the baked registry field goes stale. It
+ * changes 67 rows, and the whole point of it is that the feed can only ADD water to a picker.
+ *
+ * A node script has no Worker, so liveAccessSource is null, liveLaunches() returns 0 for every
+ * water, and the predicate silently degrades to the file alone. It then reported 108 waters as
+ * "dropped for having no ramp" -- including Randleman Lake, which has two. Ryan: "Randleman lake
+ * has 2 boat ramps... i swear to god i hate having these same conversations."
+ *
+ * He is right that we had already fixed it: setLiveAccessSource landed 2026-08-14 for this exact
+ * class of mistake. Running the predicate blind put it straight back.
+ *
+ * So this script does not run the predicate at all. What the picker offers is a runtime question
+ * and it is answered at runtime, in the browser, with the live feed attached. What this file
+ * needs to know is much smaller and fully answerable offline: which slugs are in the registry the
+ * app ships, so a pipeline pass is scoped to them and not to 1,709 pack directories.
+ *
+ * Coastal zones are excluded -- they have their own picker and no trolling runs -- and the six
+ * PLAN_RIVERS slugs are added, because the planner lists them in their own optgroup.
  *
  * Personal use only, not for distribution or resale. NOT FOR NAVIGATION.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { makePredicate } from '../js/data/water-filter.js';
 
 const registry = process.argv[2];
 if (!registry) {
@@ -37,43 +50,17 @@ const idxPath = join(registry, 'lake_index.json');
 const raw = JSON.parse(readFileSync(idxPath, 'utf8'));
 const rows = Array.isArray(raw) ? raw : (raw.lakes || raw.records || Object.values(raw));
 
-// The same three exclusions populatePlanLakeDropdown() applies before the predicate.
 const RIVER_SLUGS = ['wateree_river', 'congaree_river', 'saluda_river_lower_saluda',
                      'broad_river_2', 'santee_river', 'tail_race_canal'];
 const isCoastal = (r) => r.feature_type === 'coastal' || String(r.slug || '').startsWith('coast_');
 
-const keep = makePredicate('planner', rows);
-const offered = new Set(RIVER_SLUGS);
-let dropped = 0;
-for (const r of rows) {
-  if (!r || !r.slug) continue;
-  if (isCoastal(r)) continue;
-  if (keep(r, r.display_name || r.name || '')) offered.add(r.slug);
-  else dropped += 1;
-}
+const inland = rows.filter((r) => r && r.slug && !isCoastal(r)).map((r) => r.slug);
+const out = [...new Set([...inland, ...RIVER_SLUGS])].sort();
 
-const out = [...offered].sort();
-const dest = join(registry, '_app_offers.txt');
+const dest = join(registry, '_app_registry.txt');
 writeFileSync(dest, out.join('\n') + '\n');
-console.log(`${out.length} water(s) the planner offers (${dropped} registry rows filtered out, `
-          + `${RIVER_SLUGS.length} rivers added)`);
-console.log(`wrote ${dest}`);
-
-// AND THE WIDER LIST, BECAUSE THE NARROW ONE IS ABOUT TO GET WIDER.
-//
-// Ryan, 2026-08-31: "why is a ramp a show stopper for a kayak fisherman?" It is not. All 108 of
-// the waters PRESETS.planner drops are dropped for having no ramp on record -- Randleman at 2,919
-// acres among them, charted and shipped -- and a kayak launches where you can park. What the
-// filter is standing in for is real (the planner needs a launch COORDINATE, and `ramps` is the
-// only registry field that carries one) but the day that is solved, those 108 become plannable
-// and their packs need to have been fitted.
-//
-// Fitting costs about a second a lake. Rebuilding a pack costs minutes. So the wide list is
-// written too and the fit runs against it, and nothing has to be re-run later -- which is Ryan's
-// own standing rule about not making him run the same thing twice.
-const wide = rows.filter((r) => r && r.slug && !isCoastal(r)).map((r) => r.slug);
-const all = [...new Set([...wide, ...RIVER_SLUGS])].sort();
-const destAll = join(registry, '_app_registry.txt');
-writeFileSync(destAll, all.join('\n') + '\n');
-console.log(`${all.length} water(s) in the registry, coastal excluded`);
-console.log(`wrote ${destAll}`);
+console.log(`${rows.length} registry rows, ${rows.length - inland.length} coastal excluded, `
+          + `${RIVER_SLUGS.length} rivers added`);
+console.log(`${out.length} slug(s) -> ${dest}`);
+console.log('NOTE: this is the registry, not the picker. What the picker lists depends on the '
+          + 'live access feed and is only answerable in the browser.');
