@@ -256,6 +256,9 @@ export function collectPlan(){
             why: e.why,
             phaseName: e.phaseName,
             pass: e.pass, ofPasses: e.ofPasses,
+            // Whether tap-and-reel-up is the right move on this leg. See bottomNote() in
+            // plan-to-timeline.js — it is the thing his own technique cannot tell him.
+            bottomNote: e.bottomNote,
             stats: e.stats,
             // rods hold full spread info for this pass
             rods: (e.rods||[]).map(r=>({
@@ -269,6 +272,9 @@ export function collectPlan(){
               trailerSize: r.trailerSize,
               arigWeight: r.arigWeight,
               jigWeight: r.jigWeight,
+              // How this bait sits against the bottom he will feel. Carried rather than
+              // recomputed: the report and the on-screen card must not be able to disagree.
+              clearance: r.clearance,
               notes: r.notes,
             })),
           };
@@ -698,8 +704,18 @@ export async function buildPlanPreviewHtml(p){
         // the weight is what decides the depth that 63 ft of lead buys, and this row printed the
         // lead alone while the plan had carried the weight all along. See leadWithHead() in
         // smart-plan-ui.js, same fix, the other surface.
-        const rods = (e.rods||[]).map(r=> `${esc(r.side||'')}: ${esc(r.lure||'')} ${esc(r.lead||'')?`@ ${esc(r.lead)}ft`:''}${r.jigWeight?` · ${esc(r.jigWeight)} head`:''}`).join('<br>');
-        return `<tr style="background:#eef7ff"><td><b>${icon} TROLL — ${esc(label)}</b><br><span class="rp-small">${esc(e.desc||e.phaseName||'')}</span></td><td>${esc(speed)}<br>${esc(depth)}</td><td class="rp-small">${rods || `${esc(e.port||'')} / ${esc(e.starboard||'')}`}</td><td class="rp-small">${esc(e.why||'')}</td></tr>`;
+        // WHERE IT RUNS AND HOW THAT SITS AGAINST THE BOTTOM, not feet of line.
+        //
+        // Ryan cannot set a lead -- "i don't have a ruler... there is literally no way for me to
+        // answer these questions" -- and finds depth by feel instead: "let out a bunch of line if
+        // the rod tips starts bouncing it is tapping bottom... reel up". So the row says the two
+        // things he can act on, and the feet stay inside the app where capBaitDepth() uses them.
+        const rods = (e.rods||[]).map(r=> {
+          const gap = r.clearance ? (r.clearance.taps ? ' · taps bottom' : ` · ${r.clearance.gap} ft up`) : '';
+          return `${esc(r.side||'')}: ${esc(r.lure||'')}${r.jigWeight?` ${esc(r.jigWeight)}`:''}`
+               + `${r.depth?` — runs ${esc(String(r.depth))} ft`:''}${esc(gap)}`;
+        }).join('<br>');
+        return `<tr style="background:#eef7ff"><td><b>${icon} TROLL — ${esc(label)}</b><br><span class="rp-small">${esc(e.desc||e.phaseName||'')}</span></td><td>${esc(speed)}<br>${esc(depth)}</td><td class="rp-small">${rods || `${esc(e.port||'')} / ${esc(e.starboard||'')}`}${e.bottomNote?`<br><i>${esc(e.bottomNote)}</i>`:''}</td><td class="rp-small">${esc(e.why||'')}</td></tr>`;
       } else if (e.type === 'change') {
         return `<tr style="background:#fffde7"><td><b>🔁 SWAP — ${esc(String(e.rodId||''))}</b><br><span class="rp-small">${esc(e.mark||'')} in</span></td><td colspan="2">${esc(e.from||'—')} → <b>${esc(e.to||'')}</b><br><span class="rp-small">${esc(e.costLabel||e.cost||'')}</span></td><td class="rp-small">${esc(e.why||'')}</td></tr>`;
       } else {

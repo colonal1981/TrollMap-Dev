@@ -195,7 +195,10 @@ describe('a transit is rendered as a transit', () => {
     // 'Target Depth' was renamed 2026-08-30: the tile shows the WATER the leg follows, and
     // calling it the target is what let a card read "Target Depth 6ft" above a bait running
     // 20-25 ft. The tile is the same tile; only the label it carries is honest now.
-    for (const spreadMarkup of ['>Water on this leg</div>', '>Spread / Leads</div>',
+    // 'Spread / Leads' became 'Where the baits run' on 2026-08-31: the box stopped printing
+    // feet of line, which he cannot set, and started printing where each bait runs against
+    // the bottom he can feel. Same box, same position, honest label.
+    for (const spreadMarkup of ['>Water on this leg</div>', '>Where the baits run</div>',
                                 'rodSlotHtml(rods[0]']) {
       expect(UI.indexOf(spreadMarkup), `${spreadMarkup} is drawn before the transit branch`)
         .toBeGreaterThan(branch);

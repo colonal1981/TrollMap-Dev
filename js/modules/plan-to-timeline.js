@@ -120,7 +120,61 @@ export function markMi(atM) {
  * port slot and rods[1] starboard, regardless of what `side` says. So the ORDER here matters more
  * than the label does.
  */
-function rodView(rod, side, over) {
+/**
+ * The one sentence per leg that his technique cannot supply.
+ *
+ * "let out a bunch of line if the rod tips starts bouncing it is tapping bottom... reel up" finds
+ * the bottom, and on a leg where the baits are meant to be well above it that is the wrong place
+ * to end up. This says which leg is which, out of the numbers already on the rods -- it states the
+ * bottom and where the baits run and lets those speak, rather than inventing a "well above" line
+ * to be over or under.
+ */
+function bottomNote(rods, leg) {
+  const withGap = (rods || []).filter((r) => r && r.clearance);
+  if (!withGap.length) return '';
+  const floorFt = withGap[0].clearance.floorFt;
+  const taps = withGap.filter((r) => r.clearance.taps);
+  const runs = withGap.map((r) => r.depth).filter(Boolean).join(' and ');
+  if (taps.length) {
+    return `Bottom is ${floorFt} ft here and the ${taps.length > 1 ? 'baits' : taps[0].lure} `
+         + `${taps.length > 1 ? 'find' : 'finds'} it — let it tap and come up, that rise is the spot.`;
+  }
+  return `Bottom is ${floorFt} ft here and the baits run ${runs} ft — this is not a leg to fish `
+       + 'down. Tapping bottom means you are under them.';
+}
+
+/**
+ * WHERE THIS BAIT SITS AGAINST THE BOTTOM HE IS GOING TO FEEL.
+ *
+ * Ryan, 2026-08-31, asked how much line he lets out for each crankbait: "i don't have a ruler...
+ * there is literally no way for me to answer these questions". And then how he actually does it:
+ * "cast it out let out a bunch of line if the rod tips starts bouncing it is tapping bottom...
+ * reel up... that works for just about every bait i own".
+ *
+ * So the lead was never the instruction. It is an intermediate the app reasons with -- it is how
+ * capBaitDepth() knows a DD3 will drag a 19 ft leg -- and it was printing on the card as though
+ * it were a setting to dial in. His own plan of that morning quoted one swimbait at 85, 76, 74,
+ * 67, 63 and 99 ft across a single day, four feet apart in places, none of it settable.
+ *
+ * What his technique CANNOT tell him is the one thing the app knows: whether bottom is where he
+ * wants to be. Let it tap and reel up on a 36 ft leg with the fish suspended and he is fifteen
+ * feet under them, and nothing in the rod tip says so.
+ *
+ * The test is the app's own and adds no new number: capBaitDepth() already treats the shallowest
+ * water on the leg as the ceiling, and a bait whose run depth clears it clears it. Above the
+ * ceiling it taps; below it, the gap is how far up it is riding.
+ */
+function bottomClearance(runs, leg) {
+  const floorFt = Number(leg && (leg.depthMinFt ?? leg.depthFt));
+  const deep = Array.isArray(runs) ? Number(runs[1]) : NaN;
+  if (!Number.isFinite(floorFt) || !Number.isFinite(deep)) return null;
+  const gap = Math.round(floorFt - deep);
+  if (gap < 0) return { gap, floorFt, taps: true, note: `digs into the ${floorFt} ft rise` };
+  if (gap === 0) return { gap, floorFt, taps: true, note: `rides right on the ${floorFt} ft rise` };
+  return { gap, floorFt, taps: false, note: `${gap} ft up off the bottom` };
+}
+
+function rodView(rod, side, over, leg) {
   if (!rod) return null;
   // `over` is leg.rodPlan[id] -- what capBaitDepth had to change FOR THIS LEG. It used to write
   // straight into the rod, and the rod is one object shared by every leg through `rodsById`
@@ -140,10 +194,15 @@ function rodView(rod, side, over) {
     lure: clean(rod.lure),
     color: clean(rod.color),
     lead: leadFt ?? '',
-    depth: Array.isArray(runs) ? runs.join('–') : '',
+    // `18–18` is one depth written twice. A rated bait pinned to a single foot -- which is most
+    // of the crankbaits -- was printing its band as a range against itself.
+    depth: Array.isArray(runs) ? (runs[0] === runs[1] ? String(runs[0]) : runs.join('–')) : '',
     reel: '',
     trailerSize: '', arigWeight: '', jigWeight: head,
     notes: clean(rod.why),
+    // Where it sits against the bottom, which is the part he can act on. Null when the leg has no
+    // depth profile or the bait has no running depth — absent, never guessed at.
+    clearance: bottomClearance(runs, leg),
   };
 }
 
@@ -257,8 +316,8 @@ export function planToTimeline(plan, o = {}) {
     const port = rodsById.get(leg.deploy && leg.deploy.port);
     const stbd = rodsById.get(leg.deploy && leg.deploy.starboard);
     const rp = leg.rodPlan || {};
-    const rods = [rodView(port, 'Port', rp[leg.deploy && leg.deploy.port]),
-                  rodView(stbd, 'Stbd', rp[leg.deploy && leg.deploy.starboard])].filter(Boolean);
+    const rods = [rodView(port, 'Port', rp[leg.deploy && leg.deploy.port], leg),
+                  rodView(stbd, 'Stbd', rp[leg.deploy && leg.deploy.starboard], leg)].filter(Boolean);
 
     // WHAT IS UNDER THE BOAT, NOT WHAT THE CONTOUR IS CALLED.
     //
@@ -332,6 +391,10 @@ export function planToTimeline(plan, o = {}) {
       // The warnings that name THIS leg, by the runId they were written with.
       warnings: leg.runId ? legWarnings.filter((w) => String(w).includes(leg.runId)) : [],
       pass: leg.pass, ofPasses: leg.ofPasses,
+      // WHETHER TAP-AND-REEL-UP IS THE RIGHT MOVE ON THIS LEG. His technique finds bottom by
+      // feel; this says whether bottom is where the plan wants him. No threshold is invented --
+      // it reads the clearances already computed above, which use capBaitDepth()'s own ceiling.
+      bottomNote: bottomNote(rods, leg),
       port: rods[0] ? rods[0].lure : '', starboard: rods[1] ? rods[1].lure : '',
       portColor: rods[0] ? rods[0].color : '', starboardColor: rods[1] ? rods[1].color : '',
       portLeadFt: rods[0] ? rods[0].lead : '', starboardLeadFt: rods[1] ? rods[1].lead : '',

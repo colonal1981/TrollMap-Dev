@@ -242,14 +242,87 @@ test('every head in the box has a label a person would write on a packet', () =>
 // by the head weight was the only rig that never printed it. A lead figure with
 // no weight beside it is half an instruction.
 // ---------------------------------------------------------------------------
-const { leadWithHead } = await import('../js/modules/smart-plan-ui.js');
+const { rodDepthCell } = await import('../js/modules/smart-plan-ui.js');
 
-test('a lead is quoted with the head that produced it', () => {
-  assert.equal(leadWithHead('Stbd', 63, { jigWeight: '3/4oz' }), 'Stbd 63ft · 3/4oz head');
+// The lead came off this cell entirely on 2026-08-31 -- Ryan cannot set one: "i don't have a
+// ruler... there is literally no way for me to answer these questions". The head stays, because
+// the head is what he ties on, and it is what he asked for in the first place.
+test('the head rides with where the bait runs', () => {
+  assert.equal(rodDepthCell('Stbd', { depth: '15–19', jigWeight: '3/4oz',
+                                      clearance: { gap: 0, taps: true, floorFt: 19 } }),
+               'Stbd 15–19 ft · taps bottom · 3/4oz head');
 });
 
-test('a bait whose depth is its bill is quoted exactly as it always was', () => {
-  assert.equal(leadWithHead('Port', 80, { lure: 'DD1 Crankbait (14-18ft)', jigWeight: '' }),
-               'Port 80ft');
-  assert.equal(leadWithHead('Port', null, null), 'Port —ft');
+test('a bait with no head quotes no head', () => {
+  assert.equal(rodDepthCell('Port', { depth: '18', lure: 'DD1 Crankbait (14-18ft)', jigWeight: '',
+                                      clearance: { gap: 7, taps: false, floorFt: 25 } }),
+               'Port 18 ft · 7 ft up');
+});
+
+test('a leg with no depth profile says nothing rather than a dash', () => {
+  assert.equal(rodDepthCell('Port', { depth: '18', clearance: null }), 'Port 18 ft');
+  assert.equal(rodDepthCell('Port', null), 'Port —');
+});
+
+// ---------------------------------------------------------------------------
+// WHERE IT RUNS AGAINST THE BOTTOM HE CAN FEEL
+//
+// Ryan, 2026-08-31, on how he actually sets depth: "cast it out let out a bunch
+// of line if the rod tips starts bouncing it is tapping bottom... reel up... that
+// works for just about every bait i own lol" -- after establishing that he cannot
+// measure a lead at all: "i don't have a ruler... there is literally no way for
+// me to answer these questions".
+//
+// So the lead stopped being printed as an instruction. What his technique cannot
+// tell him is whether bottom is where the plan wants him, and that is what these
+// pin -- on the two legs of his own Sep 1 plan that the change was designed on.
+// ---------------------------------------------------------------------------
+const { planToTimeline: toTimeline } = await import('../js/modules/plan-to-timeline.js');
+
+function legPlan(depthMinFt, depthMaxFt, portRuns, stbdRuns, portLure) {
+  const leg = {
+    id: 'L1', type: 'troll', runId: 'w#1', startM: 0, lengthM: 4500,
+    depthFt: Math.round((depthMinFt + depthMaxFt) / 2), depthMinFt, depthMaxFt,
+    speedMph: 2, batteryAh: 7, estDurationMin: 80, estStartTime: '09:00',
+    deploy: { port: 'R1', starboard: 'R5' },
+    rodPlan: { R1: { runsDepthFt: portRuns }, R5: { runsDepthFt: stbdRuns, jigheadOz: 0.5 } },
+    coordinates: [[-80.70, 34.35], [-80.68, 34.36]], stops: [], marks: [],
+  };
+  return {
+    planVersion: 2, meta: {}, conditions: {}, warnings: [], changes: [], legs: [leg],
+    budget: { totalM: 4500, fishingM: 4500, transitM: 0 },
+    loadout: { rods: [{ id: 'R1', lure: portLure, color: 'Sexy Shad', leadFt: 60 },
+                      { id: 'R5', lure: 'Swimbait 4.6" – Jighead', color: 'Herring', leadFt: 111 }] },
+  };
+}
+const card = (p) => toTimeline(p, {}).timeline.find((e) => e.type === 'troll');
+
+test('his Leg 2: 36 ft of water, both baits well up, do not fish it down', () => {
+  const e = card(legPlan(36, 47, [18, 18], [20, 22], 'DD1 Crankbait (14-18ft)'));
+  assert.equal(e.rods[0].clearance.gap, 18);
+  assert.equal(e.rods[0].clearance.taps, false);
+  assert.equal(e.rods[1].clearance.gap, 14);
+  assert.match(e.bottomNote, /Bottom is 36 ft here/);
+  assert.match(e.bottomNote, /not a leg to fish down/);
+});
+
+test('his Leg 4: the swimbait finds the 19 ft rise, and that rise is the spot', () => {
+  const e = card(legPlan(19, 29, [12, 12], [15, 19], 'MR Crankbait (6-12ft)'));
+  assert.equal(e.rods[0].clearance.gap, 7);
+  assert.equal(e.rods[1].clearance.taps, true);
+  assert.match(e.bottomNote, /let it tap and come up, that rise is the spot/);
+});
+
+test('one depth is written once, not as a range against itself', () => {
+  const e = card(legPlan(36, 47, [18, 18], [20, 22], 'DD1 Crankbait (14-18ft)'));
+  assert.equal(e.rods[0].depth, '18');
+  assert.equal(e.rods[1].depth, '20–22');
+});
+
+test('a leg with no depth profile carries no clearance and no note', () => {
+  const p = legPlan(36, 47, [18, 18], [20, 22], 'DD1 Crankbait (14-18ft)');
+  delete p.legs[0].depthMinFt; delete p.legs[0].depthFt;
+  const e = card(p);
+  assert.equal(e.rods[0].clearance, null);
+  assert.equal(e.bottomNote, '');
 });

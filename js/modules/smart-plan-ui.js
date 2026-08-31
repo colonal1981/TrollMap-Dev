@@ -87,20 +87,36 @@ function buildCards(fallbackSpeedMph, routeSpeeds = {}, cardDefs = null) {
 
 // ── Rod slot HTML (used inside trolling timeline cards) ──────────────────────
 /**
- * `Stbd 63ft` — or `Stbd 63ft · 3/4oz head`, when the head is what sets the depth.
+ * `7 ft up` / `taps` / `` — how this bait sits against the bottom he is going to feel.
  *
- * A LEAD WITHOUT THE WEIGHT THAT PRODUCED IT IS HALF AN INSTRUCTION. Ryan, 2026-08-31: "it says
- * to use 63ft of lead... but with what weight... weight is going to change the depth that 63ft of
- * lead gives me." The leg card's Spread / Leads box printed the lead alone, so the one number on
- * it that cannot be acted on by itself was the only number on it.
- *
- * Only weighted rigs carry `jigWeight`, so a crankbait — whose depth is the bill and not the
- * lead — prints exactly what it printed before.
+ * See bottomClearance() in plan-to-timeline.js for why this replaced the lead. Empty when the leg
+ * has no depth profile, because an absent number is the honest answer and a dash is not one.
  */
-export function leadWithHead(side, lead, rod) {
-  const ft = lead || '—';
-  const head = rod && rod.jigWeight ? rod.jigWeight : '';
-  return `${side} ${esc(String(ft))}ft${head ? ` · ${esc(head)} head` : ''}`;
+export function clearanceLabel(rod) {
+  const c = rod && rod.clearance;
+  if (!c) return '';
+  return c.taps ? 'taps bottom' : `${c.gap} ft up`;
+}
+
+/**
+ * `Stbd 15–19 ft · taps` — where the bait runs and how that sits against the bottom.
+ *
+ * THE LEAD WAS NEVER THE INSTRUCTION. Ryan, 2026-08-31: "i don't have a ruler... there is
+ * literally no way for me to answer these questions", and then how he actually does it: "let out
+ * a bunch of line if the rod tips starts bouncing it is tapping bottom... reel up". His own plan
+ * that morning quoted one swimbait at 85, 76, 74, 67, 63 and 99 ft in a single day — six settings
+ * for one bait, four feet apart in places, none of them settable.
+ *
+ * So this box stopped printing feet of line at him. The feet still exist inside the app, where
+ * capBaitDepth() uses them to know a DD3 will drag a 19 ft leg; they are just no longer presented
+ * as a dial. The head stays, because the head IS what he ties on.
+ */
+export function rodDepthCell(side, rod) {
+  if (!rod) return `${side} —`;
+  const runs = rod.depth ? `${esc(String(rod.depth))} ft` : '—';
+  const gap = clearanceLabel(rod);
+  const head = rod.jigWeight ? ` · ${esc(rod.jigWeight)} head` : '';
+  return `${side} ${runs}${gap ? ` · ${esc(gap)}` : ''}${head}`;
 }
 
 function rodSlotHtml(rod, cardIdx, slotIdx) {
@@ -145,8 +161,8 @@ function rodSlotHtml(rod, cardIdx, slotIdx) {
       <div style="margin-top:3px">${reelBadge}</div>
     </div>
     <div style="text-align:right;font-size:11px;white-space:nowrap">
-      <div style="color:var(--accent);font-weight:700">${esc(String(rod.lead || '—'))}<span style="color:var(--muted);font-weight:400">ft</span></div>
-      <div style="color:var(--muted)">${esc(String(rod.depth || '—'))}ft</div>
+      <div style="color:var(--accent);font-weight:700">${esc(String(rod.depth || '—'))}<span style="color:var(--muted);font-weight:400">ft</span></div>
+      <div style="color:${rod.clearance && rod.clearance.taps ? 'var(--warn)' : 'var(--muted)'}">${esc(clearanceLabel(rod))}</div>
       <button onclick="window._spEditRod(${cardIdx},${slotIdx})"
         style="margin-top:4px;font-size:10px;padding:2px 7px;border:1px solid var(--line);background:var(--panel);color:var(--muted);border-radius:4px;cursor:pointer">
         ✏️
@@ -664,10 +680,11 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeed
               ${bandLabel ? `<div style="color:var(--accent);font-size:10px;margin-top:2px">${esc(bandLabel)}</div>` : ''}
             </div>
             <div style="font-size:11px;background:rgba(255,255,255,0.03);border:1px solid var(--line);border-radius:6px;padding:6px 8px">
-              <div style="color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.05em">Spread / Leads</div>
+              <div style="color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.05em">Where the baits run</div>
               <div style="font-weight:600;color:var(--muted);font-size:11px">
-                ${leadWithHead('Port', entry.portLeadFt || rods[0]?.lead, rods[0])} · ${leadWithHead('Stbd', entry.starboardLeadFt || rods[1]?.lead, rods[1])}
+                ${rodDepthCell('Port', rods[0])}<br>${rodDepthCell('Stbd', rods[1])}
               </div>
+              ${entry.bottomNote ? `<div style="color:var(--accent);font-size:10px;margin-top:3px">${esc(entry.bottomNote)}</div>` : ''}
             </div>
           </div>
           <!-- Rods -->
