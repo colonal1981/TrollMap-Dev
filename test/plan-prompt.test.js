@@ -209,6 +209,44 @@ describe('plan-prompt — reading the answer', () => {
     try { parsePlanResponse('no object here'); } catch { threw = true; }
     expect(threw).toBe(true);
   });
+
+  // -------------------------------------------------------------------------------------------
+  // A TRAILING COMMA IS A TYPO IN THE PUNCTUATION, NOT A WRONG ANSWER
+  //
+  // Ryan, 2026-08-31, building a Pick Water striper day: "The model did not answer usably:
+  // Unexpected token ']', ..." }, ], "chan"... is not valid JSON". One character that carries no
+  // meaning in JSON, and the whole day went with it -- the candidates, the ordering, the rigging,
+  // every number the app had already computed.
+  // -------------------------------------------------------------------------------------------
+  it('repairs a trailing comma rather than losing the day over one character', () => {
+    const out = parsePlanResponse('{ "legs": [ { "runId": "w#1" }, ], "changes": [], }');
+    expect(out.legs.length).toBe(1);
+    expect(out.legs[0].runId).toBe('w#1');
+    expect(out._appRepairs.length).toBe(1);
+    expect(out._appRepairs[0]).toMatch(/2 trailing commas/);
+  });
+
+  it('never touches a comma inside the model\'s own prose', () => {
+    // `why` and `presentation` are free text. A blind regex cannot tell a comma in the syntax
+    // from a comma in a sentence, and would edit what the model wrote.
+    const out = parsePlanResponse('{ "legs": [{ "why": "work it slow, ]" }], "changes": [] }');
+    expect(out.legs[0].why).toBe('work it slow, ]');
+    expect(out._appRepairs).toBe(undefined);
+  });
+
+  it('still fails loudly on an answer that is broken some other way', () => {
+    let msg = '';
+    try { parsePlanResponse('{ "legs": [ {"a": } ] }'); } catch (e) { msg = e.message; }
+    expect(msg.length > 0).toBe(true);
+    expect(/valid JSON/.test(msg)).toBe(true);
+  });
+
+  it('says out loud that it repaired something, on the plan\'s own problems list', () => {
+    const res = parsePlanResponse('{ "safety": {"isGo": true}, "loadout": {"rods": []}, '
+      + '"legs": [], "stops": [], "changes": [], }');
+    const a = planArgsFrom(res, CANDS, { tackle: TACKLE, connectionOf });
+    expect(a.problems.some((p) => /not valid JSON/.test(p))).toBe(true);
+  });
 });
 
 describe('plan-prompt — turning the answer into assembler arguments', () => {

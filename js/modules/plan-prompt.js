@@ -706,11 +706,79 @@ RETURN EXACTLY THIS SHAPE
  * Kept in the spirit of the extraction smart-plan.js already used against /groq-query, because
  * that path has survived several providers and their various ideas about code fences.
  */
+/**
+ * Drop commas that sit immediately before a `]` or a `}`, and count them.
+ *
+ * STRING-AWARE, because a blind regex is wrong here. `why` and `presentation` are free text the
+ * model writes, and a sentence ending "...work it slow, ]" would be silently edited by a pattern
+ * that cannot tell a comma in the syntax from a comma in a sentence. This walks the text tracking
+ * whether it is inside a string literal and only ever removes a comma that JSON itself forbids.
+ *
+ * It fixes exactly one class of breakage. Anything else still fails loudly, with the fragment.
+ */
+function stripTrailingCommas(src) {
+  let out = '', inStr = false, esc = false, fixes = 0;
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (inStr) {
+      out += ch;
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') { inStr = true; out += ch; continue; }
+    if (ch === ',') {
+      let j = i + 1;
+      while (j < src.length && /\s/.test(src[j])) j++;
+      if (src[j] === ']' || src[j] === '}') { fixes++; continue; }
+    }
+    out += ch;
+  }
+  return { text: out, fixes };
+}
+
+/** The 120 characters either side of where JSON.parse gave up, when it says where. */
+function around(src, err) {
+  const at = /at position (\d+)/.exec(String(err && err.message) || '');
+  if (!at) return '';
+  const i = Number(at[1]);
+  return `\n…${src.slice(Math.max(0, i - 120), i)}<<HERE>>${src.slice(i, i + 120)}…`;
+}
+
 export function parsePlanResponse(text) {
   const raw = String(text || '').replace(/```json|```/g, '').trim();
   const a = raw.indexOf('{'), b = raw.lastIndexOf('}');
   if (a === -1 || b === -1 || b <= a) throw new Error(`no JSON object in response: ${raw.slice(0, 200)}`);
-  return JSON.parse(raw.slice(a, b + 1));
+  const body = raw.slice(a, b + 1);
+  try { return JSON.parse(body); } catch (first) {
+    // A TRAILING COMMA IS NOT A WRONG ANSWER, IT IS A TYPO IN THE PUNCTUATION.
+    //
+    // Ryan, 2026-08-31, building a Pick Water striper day: "The model did not answer usably:
+    // Unexpected token ']', ..." }, ], "chan"... is not valid JSON". A comma before a `]`, and
+    // the whole day -- the candidates, the ordering, the rigging, every number the app had
+    // already computed -- was thrown away over one character that carries no meaning in JSON.
+    //
+    // Repairing it is not guessing at what the model meant: JSON forbids the comma outright, so
+    // there is exactly one reading of the text with it removed. That is the difference between
+    // this and papering over a wrong plan -- nothing here decides anything about fishing.
+    //
+    // It is said out loud rather than fixed in silence. `_appRepairs` rides on the parsed object,
+    // reaches `problems` through planArgsFrom() and lands in the saved plan's `model.response`,
+    // so an answer that keeps arriving malformed is visible rather than absorbed.
+    const { text: fixed, fixes } = stripTrailingCommas(body);
+    if (fixes) {
+      try {
+        const out = JSON.parse(fixed);
+        if (out && typeof out === 'object') {
+          out._appRepairs = [`the model's answer was not valid JSON — ${fixes} trailing `
+            + `comma${fixes === 1 ? '' : 's'} before a ] or }, removed by the app`];
+        }
+        return out;
+      } catch { /* not the only thing wrong with it; report the original failure */ }
+    }
+    throw new Error(`${first.message}${around(body, first)}`);
+  }
 }
 
 /**
@@ -788,6 +856,10 @@ export function seatRods(rods, connOf) {
  */
 export function planArgsFrom(res, candidates, ctx = {}) {
   const problems = [];
+  // Whatever parsePlanResponse() had to repair to make the answer parse at all. Reported here so
+  // it reaches the screen and the saved plan by the same route as every other thing the app
+  // refused or fixed, rather than living on an object nobody reads.
+  for (const r of (Array.isArray(res && res._appRepairs) ? res._appRepairs : [])) problems.push(r);
   const byRun = new Map((candidates || []).map((c) => [c.runId, c]));
   const tackleNames = ctx.tackle && ctx.tackle.length ? ctx.tackle : null;
 
