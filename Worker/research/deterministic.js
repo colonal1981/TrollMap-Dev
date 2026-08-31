@@ -2,7 +2,9 @@
 import { JSON_HEADERS, r2Text } from '../worker-core.js';
 import { researchStorageId, resolveResearchStorageId } from './keys.js';
 import { buildEvidence, buildFactualSummary, getAttractorFacts, getRampSpeciesFacts, uniqueResearchSpecies, splitSpeciesText } from './facts-util.js';
-import { lakeIndex, ncSpeciesByLake, resolveRegistryRow } from '../registry.js';
+import { lakeIndex, ncSpeciesByLake, resolveRegistryRow, identityBaseline } from '../registry.js';
+import { dukeRowForNames, fetchDukeAccessAlerts, fetchDukeOperatingRange } from '../worker-data.js';
+import { parseAccessAlerts, dukeLocationIdFor, dukePoolManagement } from '../conditions.js';
 
 async function handleResearchDeterministicFacts(request, env) {
   let body;
@@ -30,6 +32,61 @@ async function handleResearchDeterministicFacts(request, env) {
     if (!profile.evidence[section]) profile.evidence[section] = {};
     profile.evidence[section][field] = (profile.evidence[section][field] || []).concat(entries);
   };
+
+  // ── IDENTITY, FROM THE REGISTRY, BEFORE ANYONE ASKS A MODEL ────────────────────────────────
+  //
+  // identityGrounding() has assembled this the whole time -- the registry row, plus a full pool
+  // and a drawdown schedule from the operator's own feeds -- and agents.js handed the result to
+  // the identity agent AS CONTEXT. The model then restated it, and the restatement was what got
+  // stored. That is the shape this refactor exists to remove: the pipeline computes the fact and
+  // an LLM is paid to say it back.
+  //
+  // So it is written here instead. `surfaceAreaAcres`, `maxDepthFt` and `averageDepthFt` are
+  // already geometry-derived in the browser (lake-research-engine.js:1057 and 2400-2403, flagged
+  // `_geometryDerived`), and mergeMissing only fills what is absent, so nothing here overwrites a
+  // measurement taken off the chartpack. What this adds is the registry's own: county, acres when
+  // geometry did not answer, feature type, GNIS, centroid, and the pool numbers.
+  //
+  // WHAT IS STILL THE AGENT'S: `archetype`, `damName`, `reservoirOwner`, `riverSystem` and
+  // `yearImpounded`. dam_table.json and water_chain.json can answer the middle three -- the
+  // binding already exists in conditions.js -- and that is the next cut, not this one.
+  try {
+    const base = await identityGrounding(lakeName, env);
+    if (base) {
+      const id = profile.identity;
+      const put = (k, v) => { if (v !== null && v !== undefined && v !== '') id[k] = v; };
+      put('county', base.county);
+      put('surfaceAreaAcres', base.surfaceAreaAcres);
+      put('bodyType', base.featureType);
+      put('gnis', base.gnis);
+      put('gpsCenter', base.centroid);
+      put('normalPoolFt', base.normalPoolFt);
+      if (base.poolManagement) put('poolManagement', base.poolManagement);
+      if (base.drawdownType) put('drawdownType', base.drawdownType);
+      if (base.county) id.counties = [base.county];
+      // Evidence, so the card can say where it came from and the contradiction resolver has
+      // something to weigh a model's answer against.
+      for (const [field, why] of [['county', base.source], ['surfaceAreaAcres', base.source],
+                                  ['bodyType', base.source], ['gnis', base.source]]) {
+        if (id[field] != null) {
+          mergeEvidence('identity', field, buildEvidence([{
+            fact: String(id[field]), source: base.source || 'TrollMap registry',
+            trust: 'OFFICIAL', sourceType: 'internal_structured',
+          }]));
+        }
+      }
+      if (id.normalPoolFt != null && base.normalPoolSource) {
+        mergeEvidence('identity', 'normalPoolFt', buildEvidence([{
+          fact: String(id.normalPoolFt), source: base.normalPoolSource,
+          trust: 'OFFICIAL', sourceType: 'official_structured',
+        }]));
+      }
+    }
+  } catch (e) {
+    // A registry miss is not a failed run. The identity agent still covers it, and an unresolved
+    // name is a real and common state -- resolveRegistryRow refuses an ambiguous one on purpose.
+    profile.identity.registryNote = `registry identity unavailable: ${e && e.message}`;
+  }
 
   // Document facts are extracted through the normal evidence pipeline. Keeping
   // lake-specific regex corrections here made deterministic facts depend on
@@ -291,3 +348,48 @@ async function handleResearchGetNormalized(env, lakeName) {
 }
 
 export { handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized };
+
+/**
+ * Registry identity for any of the 454, plus a pool elevation only if a live feed published one.
+ *
+ * THE POOL NUMBER IS THE PART THAT HAD TO CHANGE. `LAKES.normalPool` carried nine Duke lakes whose
+ * values are byte-identical to what `normalizeDukeRow()` already parses out of Duke's own
+ * `Elevation` string — checked against the live feed on 2026-08-17: Wateree 225.5, Wylie 569.4,
+ * Norman 760, Keowee 800, Jocassee 1110, Hickory 935, James 1200, Rhodhiss 995.1, Mountain Island
+ * 647.5. The feed carries 35 lakes; the table carried nine of them. A hand-typed copy of a live
+ * field is a copy that can go stale without anything reporting it.
+ *
+ * `dukeRowForNames` is used rather than `getDukeLake`, because getDukeLake matches on a bare
+ * substring — the family of bug that put Mountain Island Lake's row on Mountain Lake. The names
+ * offered are the registry's own, and the matcher runs with sourceMayBeBroader:false.
+ *
+ * Murray, Marion and Moultrie lose a hand-typed pool constant here and gain county, acres, GNIS
+ * and centroid, which the table never had. Dominion and Santee Cooper publish a current elevation
+ * and no full pond, so there is no live number to offer for those three and none is invented.
+ */
+export async function identityGrounding(lakeName, env) {
+  const index = await lakeIndex(env);
+  const row = resolveRegistryRow(index, lakeName);
+  if (!row) return null;
+  const names = [row.display_name, row.name, row.legacy_display_name,
+                 ...(Array.isArray(row.legacy_display_names) ? row.legacy_display_names : [])]
+    .filter(Boolean);
+  const duke = await dukeRowForNames(names).catch(() => null);
+  const pool = duke && Number.isFinite(duke.fullPool)
+    ? { ft: duke.fullPool,
+        source: `Duke Energy live lake-levels feed (${duke.duke_feed_name || 'matched row'})` }
+    : null;
+
+  // THE DRAWDOWN SCHEDULE OUT OF THE API RATHER THAN OUT OF A PDF. Ryan, 2026-08-17: "for draw
+  // down schedule research should point at that api instead of scraping the webpages that it has
+  // been doing for duke". The location id is published in the alert feed, so nothing is typed.
+  let poolMgmt = null;
+  if (duke) {
+    const alerts = parseAccessAlerts(await fetchDukeAccessAlerts().catch(() => null));
+    const locId = dukeLocationIdFor(alerts, row.display_name || row.name, names);
+    if (locId != null) {
+      poolMgmt = dukePoolManagement(await fetchDukeOperatingRange(locId).catch(() => null));
+    }
+  }
+  return identityBaseline(row, pool, poolMgmt);
+}

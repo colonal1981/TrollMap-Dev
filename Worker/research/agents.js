@@ -1,8 +1,13 @@
 // research/agents.js — split from worker-research.js (behavior-preserving) 
 import { JSON_HEADERS, callLLM, extractLLMText } from '../worker-core.js';
-import { dukeRowForNames, fetchDukeAccessAlerts, fetchDukeOperatingRange } from '../worker-data.js';
-import { parseAccessAlerts, dukeLocationIdFor, dukePoolManagement } from '../conditions.js';
-import { lakeIndex, resolveRegistryRow, identityBaseline } from '../registry.js';
+import { fetchDukeOperatingRange } from '../worker-data.js';
+import { dukePoolManagement } from '../conditions.js';
+import { lakeIndex, resolveRegistryRow } from '../registry.js';
+// MOVED 2026-08-31. identityGrounding() assembles the registry identity and the live pool
+// numbers, and this file handed the result to an LLM as context. That is backwards: it is a
+// deterministic fact, so it now lives in deterministic.js, is written straight into the
+// profile there, and is imported here only for as long as the identity agent still runs.
+import { identityGrounding } from './deterministic.js';
 import { fetchStateRegulations, getLakeRegulations,
          fetchSaltwaterRegulations, fetchLiveRegsAmendments } from './clients.js';
 import { extractJsonPossibly } from './keys.js';
@@ -911,51 +916,6 @@ function gateOverallConfidence(rawOverall, profile, fieldStatus = {}) {
   if (!hasTrollingIntel && !exempt('fisheries.trollingIntelligence')) conf = Math.min(conf, 58);
 
   return { percent: Math.max(30, Math.min(99, conf)), penalties };
-}
-
-/**
- * Registry identity for any of the 454, plus a pool elevation only if a live feed published one.
- *
- * THE POOL NUMBER IS THE PART THAT HAD TO CHANGE. `LAKES.normalPool` carried nine Duke lakes whose
- * values are byte-identical to what `normalizeDukeRow()` already parses out of Duke's own
- * `Elevation` string — checked against the live feed on 2026-08-17: Wateree 225.5, Wylie 569.4,
- * Norman 760, Keowee 800, Jocassee 1110, Hickory 935, James 1200, Rhodhiss 995.1, Mountain Island
- * 647.5. The feed carries 35 lakes; the table carried nine of them. A hand-typed copy of a live
- * field is a copy that can go stale without anything reporting it.
- *
- * `dukeRowForNames` is used rather than `getDukeLake`, because getDukeLake matches on a bare
- * substring — the family of bug that put Mountain Island Lake's row on Mountain Lake. The names
- * offered are the registry's own, and the matcher runs with sourceMayBeBroader:false.
- *
- * Murray, Marion and Moultrie lose a hand-typed pool constant here and gain county, acres, GNIS
- * and centroid, which the table never had. Dominion and Santee Cooper publish a current elevation
- * and no full pond, so there is no live number to offer for those three and none is invented.
- */
-async function identityGrounding(lakeName, env) {
-  const index = await lakeIndex(env);
-  const row = resolveRegistryRow(index, lakeName);
-  if (!row) return null;
-  const names = [row.display_name, row.name, row.legacy_display_name,
-                 ...(Array.isArray(row.legacy_display_names) ? row.legacy_display_names : [])]
-    .filter(Boolean);
-  const duke = await dukeRowForNames(names).catch(() => null);
-  const pool = duke && Number.isFinite(duke.fullPool)
-    ? { ft: duke.fullPool,
-        source: `Duke Energy live lake-levels feed (${duke.duke_feed_name || 'matched row'})` }
-    : null;
-
-  // THE DRAWDOWN SCHEDULE OUT OF THE API RATHER THAN OUT OF A PDF. Ryan, 2026-08-17: "for draw
-  // down schedule research should point at that api instead of scraping the webpages that it has
-  // been doing for duke". The location id is published in the alert feed, so nothing is typed.
-  let poolMgmt = null;
-  if (duke) {
-    const alerts = parseAccessAlerts(await fetchDukeAccessAlerts().catch(() => null));
-    const locId = dukeLocationIdFor(alerts, row.display_name || row.name, names);
-    if (locId != null) {
-      poolMgmt = dukePoolManagement(await fetchDukeOperatingRange(locId).catch(() => null));
-    }
-  }
-  return identityBaseline(row, pool, poolMgmt);
 }
 
 async function handleResearchAgent(request, env) {
