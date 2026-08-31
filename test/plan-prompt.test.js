@@ -219,6 +219,16 @@ describe('plan-prompt — the request', () => {
     expect(/RETURN ONE ENTRY IN/.test(chosen.user)).toBe(false);
   });
 
+  it('tells the model that a bill cuts both ways, which is what set the lead to zero', () => {
+    // Ryan, 2026-08-31, on `DD2 Crankbait (16-20ft) @ 0ft`: "Lead does impact how shallow it
+    // runs... but more lead isnt going to make it go past its max depth... am i saying that
+    // right?" He was. The rule said only the first half — no length of lead lifts a lipped bait —
+    // and the model drew the reasonable wrong conclusion that lead therefore did not matter.
+    expect(req.user).toMatch(/THAT CUTS BOTH WAYS/);
+    expect(req.user).toMatch(/too little line will not get it down to the bill/);
+    expect(req.user).toMatch(/A lead of 0/);
+  });
+
   it('carries the day and the candidates as data, not prose', () => {
     expect(req.user.includes('"waterTempF": 84')).toBe(true);
     expect(req.user.includes('w#1:p0')).toBe(true);

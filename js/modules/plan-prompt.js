@@ -629,7 +629,11 @@ RULES THAT ARE NOT NEGOTIABLE
    bait against the range, not the name.
    \`cannotUse\` ON A LEG IS THE LIST OF BAITS THAT WILL NOT CLEAR IT. Their depth is set by a
    bill, so no length of lead lifts them: on that leg they drag, and a dragged bait is a lost
-   bait. Do not deploy one of them there. It is not a judgement about the bait -- the same lure
+   bait. THAT CUTS BOTH WAYS AND THE SECOND HALF MATTERS. More line will not take a lipped bait
+   past its bill — and too little line will not get it down to the bill either. It still has to be
+   let back a normal working distance behind the boat like anything else. A lead of 0, or a token
+   few feet, is not "the bill decides the depth", it is a bait hanging off the rod tip in the
+   wake. Do not deploy one of them there. It is not a judgement about the bait -- the same lure
    may be the right answer on the next leg, and the list is worked out per leg for that reason.
    Nothing appears on it that has any way of working, because a weighted bait is simply given a
    shorter lead instead.
