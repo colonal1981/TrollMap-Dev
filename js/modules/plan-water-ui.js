@@ -175,39 +175,148 @@ function strip(p, band, w = 560, h = 96) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
-// THE MAP — every piece at once, so a choice is a place and not a row number.
+// THE MAP — THE ACTUAL CHART, NOT A BOX WITH LINES IN IT.
+//
+// Ryan, 2026-08-30: "the whole pickwater concept is broken... i should be able to see the map...
+// know what it looks like as i am picking it... not a representation of what is under me the
+// actual contours and colors but i dont know how that would work for real." And when it was
+// still a black rectangle a day later: "this is useless".
+//
+// It works, and the reason it works is the annoying part: THIS TAB ALREADY DOWNLOADS THE CHART.
+// `depth_areas.geojson` is fetched a few hundred lines below to sample depths with, and the
+// picture was thrown away every time -- 6,697 depth-banded polygons for Wateree, which is what a
+// Garmin unit draws. The shoreline is already here too. No new fetch, no pipeline change.
+//
+// CANVAS, NOT SVG. The old map was an SVG of the lane polylines over a filled rect, which was
+// fine for 109 paths. The chart is 6,697 filled polygons plus the shoreline plus the lanes, and
+// as SVG that is a DOM node per polygon and a repaint per pick.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
-function mapSvg(pieces, picked, ramp, w = 560, h = 420) {
+
+// Shallow to deep, the way a chart reads: pale sand through to a navy channel. Not a rainbow --
+// the point is to see the shape of the bottom at a glance, and a hue ramp hides it.
+const DEPTH_STOPS = [[0, '#f4ebd9'], [2, '#e7e2c9'], [5, '#cfe0c8'], [8, '#a9d6ce'],
+                     [12, '#7fc6d2'], [18, '#54aecb'], [25, '#3690bc'], [32, '#2472a6'],
+                     [42, '#1b578c'], [55, '#143f6e'], [70, '#0e2b52']];
+function depthColour(ft) {
+  if (!(ft >= 0)) return '#8fb6c4';
+  for (let i = DEPTH_STOPS.length - 1; i >= 0; i--) if (ft >= DEPTH_STOPS[i][0]) return DEPTH_STOPS[i][1];
+  return DEPTH_STOPS[0][1];
+}
+
+/** Fit the listed pieces, then draw the whole chart under them. */
+function mapCanvas(w = 560, h = 420) {
+  return `<canvas id="wgMap" width="${w}" height="${h}" `
+       + `style="width:100%;display:block;border-radius:8px;cursor:pointer"></canvas>`;
+}
+
+function paintMap(pieces, picked, ramp) {
+  const cv = $('wgMap');
+  if (!cv || !cv.getContext) return;
   const all = pieces.flatMap((p) => p.coords || []);
-  if (all.length < 2) return '';
+  if (all.length < 2) return;
+
+  const box = cv.parentElement.getBoundingClientRect();
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = Math.max(320, Math.round(box.width)) || 560;
+  const h = Math.round(w * 0.75);
+  cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+  cv.style.height = h + 'px';
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
   const lons = all.map((c) => c[0]), lats = all.map((c) => c[1]);
-  const lo0 = Math.min(...lons), lo1 = Math.max(...lons);
-  const la0 = Math.min(...lats), la1 = Math.max(...lats);
-  // Metres, not degrees. Projecting raw degrees squashes a lake at 34 N by about 17% and it looks
-  // like a bug in the fitter rather than a bug in the drawing.
+  let lo0 = Math.min(...lons), lo1 = Math.max(...lons);
+  let la0 = Math.min(...lats), la1 = Math.max(...lats);
+  // A LITTLE AIR ROUND THE PICK. Fitting the listed pieces exactly puts them against the edge
+  // with none of the water that makes them mean anything -- the cove a lane sits in is the point.
+  const padLo = Math.max((lo1 - lo0) * 0.18, 0.004), padLa = Math.max((la1 - la0) * 0.18, 0.003);
+  lo0 -= padLo; lo1 += padLo; la0 -= padLa; la1 += padLa;
+
   const kx = 111320 * Math.cos(((la0 + la1) / 2) * Math.PI / 180), ky = 110540;
   const wM = (lo1 - lo0) * kx, hM = (la1 - la0) * ky;
-  const s = Math.min((w - 16) / Math.max(1, wM), (h - 16) / Math.max(1, hM));
+  const s = Math.min((w - 8) / Math.max(1, wM), (h - 8) / Math.max(1, hM));
   const ox = (w - wM * s) / 2, oy = (h - hM * s) / 2;
   const X = (c) => ox + (c[0] - lo0) * kx * s;
   const Y = (c) => h - oy - (c[1] - la0) * ky * s;
-  const path = (co) => `M ${co.map((c) => `${X(c).toFixed(1)} ${Y(c).toFixed(1)}`).join(' L ')}`;
+  T.mapHit = { X, Y, w, h };
 
-  const lines = pieces.map((p) => {
+  ctx.fillStyle = '#0b1622';
+  ctx.fillRect(0, 0, w, h);
+
+  // Cull by bounding box. At cove zoom that is most of the lake skipped, and it is the only
+  // reason drawing every depth band on every pick is affordable.
+  const inView = (bb) => !(bb[2] < lo0 || bb[0] > lo1 || bb[3] < la0 || bb[1] > la1);
+  const ringBox = (r) => {
+    let a = 180, b = 90, c = -180, d = -90;
+    for (const p of r) { if (p[0] < a) a = p[0]; if (p[1] < b) b = p[1];
+                         if (p[0] > c) c = p[0]; if (p[1] > d) d = p[1]; }
+    return [a, b, c, d];
+  };
+  const tracePoly = (rings) => {
+    ctx.beginPath();
+    for (const r of rings) {
+      for (let i = 0; i < r.length; i++) {
+        const x = X(r[i]), y = Y(r[i]);
+        i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+      }
+      ctx.closePath();
+    }
+  };
+
+  for (const f of (T.daFeatures || [])) {
+    const g = f.geometry;
+    if (!g || g.type !== 'Polygon') continue;
+    if (!f._bb) f._bb = ringBox(g.coordinates[0]);
+    if (!inView(f._bb)) continue;
+    ctx.fillStyle = depthColour(Number((f.properties || {}).depth_max_ft));
+    tracePoly(g.coordinates);
+    ctx.fill('evenodd');
+  }
+
+  ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(232,239,244,.45)';
+  for (const f of (T.shoreFeatures || [])) {
+    const g = f.geometry; if (!g) continue;
+    const parts = g.type === 'LineString' ? [g.coordinates]
+                : g.type === 'MultiLineString' ? g.coordinates : null;
+    if (!parts) continue;
+    for (const c of parts) {
+      if (c.length < 2) continue;
+      if (!inView(ringBox(c))) continue;
+      ctx.beginPath();
+      for (let i = 0; i < c.length; i++) { const x = X(c[i]), y = Y(c[i]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+      ctx.stroke();
+    }
+  }
+
+  // The lanes last, so a pick is never buried under a depth band.
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  for (const p of pieces) {
     const on = picked.has(p.key);
-    return `<path d="${path(p.coords)}" fill="none" stroke="${on ? '#76ff03' : '#3d6b93'}" `
-         + `stroke-width="${on ? 3 : 1.4}" stroke-linecap="round" opacity="${on ? 1 : 0.7}" `
-         + `data-key="${esc(p.key)}" class="wg-line"><title>${esc(p.runId || p.key)} — `
-         + `${fmtMi(p.lengthM)} at ${p.holdsFt} ft</title></path>`;
-  }).join('');
+    ctx.lineWidth = on ? 4.5 : 2.4;
+    ctx.strokeStyle = on ? '#76ff03' : '#ff9d2e';
+    ctx.beginPath();
+    const co = p.coords || [];
+    for (let i = 0; i < co.length; i++) { const x = X(co[i]), y = Y(co[i]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+    ctx.stroke();
+    // The row number, so the list and the chart are the same object seen twice.
+    const mid = co[Math.floor(co.length / 2)];
+    const n = T.rowOf && T.rowOf.get(p.key);
+    if (mid && n) {
+      const x = X(mid), y = Y(mid);
+      ctx.fillStyle = on ? '#76ff03' : 'rgba(11,22,34,.82)';
+      ctx.beginPath(); ctx.arc(x, y, 8, 0, 7); ctx.fill();
+      ctx.fillStyle = on ? '#0b1622' : '#ff9d2e';
+      ctx.font = '600 10px ui-monospace, monospace';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(String(n), x, y);
+    }
+  }
 
-  const rampDot = ramp
-    ? `<circle cx="${X(ramp).toFixed(1)}" cy="${Y(ramp).toFixed(1)}" r="5" fill="#ffd54f" `
-      + `stroke="#0d1a2a" stroke-width="1.5"><title>launch</title></circle>`
-    : '';
-
-  return `<svg id="wgMap" viewBox="0 0 ${w} ${h}" role="img" aria-label="water on this lake">`
-       + `<rect x="0" y="0" width="${w}" height="${h}" fill="#0b1622" />${lines}${rampDot}</svg>`;
+  if (ramp) {
+    ctx.beginPath(); ctx.arc(X(ramp), Y(ramp), 5.5, 0, 7);
+    ctx.fillStyle = '#ffd54f'; ctx.fill();
+    ctx.lineWidth = 1.5; ctx.strokeStyle = '#0d1a2a'; ctx.stroke();
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -604,7 +713,7 @@ function paint() {
   // whole lake on screen with the twelve invisible inside it -- the map has to answer "where is
   // row 4", and it cannot do that at lake scale.
   const map = $('wgMap')?.parentElement;
-  if (map) map.innerHTML = mapSvg(list, T.picked, T.ramp);
+  if (map) { map.innerHTML = mapCanvas(); paintMap(list, T.picked, T.ramp); }
   paintSpots();
   const n = $('wgCount');
   if (n) {
@@ -766,6 +875,10 @@ export async function findWater() {
 
   Object.assign(T, {
     pieces: out.pieces, spots: out.spots || [], picked: new Set(),
+    // THE CHART, KEPT RATHER THAN THROWN AWAY. Both were fetched above to measure with and were
+    // dropped the moment the numbers came out of them -- which is why the map was a black box.
+    daFeatures: (daFc && daFc.features) || [],
+    shoreFeatures: (slFc && slFc.features) || [],
     // WHERE TWO OF THESE ARE ONE RUN -- see joinsFor() in plan-pieces.js. Held whole because
     // joinedPiece() indexes into the piece array these were measured against, so the pair and
     // the array have to stay together.
@@ -1106,8 +1219,8 @@ export function initWaterTab() {
     if (e.target.checked) T.picked.add(k); else T.picked.delete(k);
     // Repaint the map and the total, NOT the list — rebuilding the list under a click loses the
     // scroll position, and on 200 rows that is the difference between usable and infuriating.
-    const map = $('wgMap')?.parentElement;
-    if (map) map.innerHTML = mapSvg(shown(), T.picked, T.ramp);
+    // Repaint only -- the canvas does not have to be rebuilt to change one lane's colour.
+    paintMap(shown(), T.picked, T.ramp);
     e.target.closest('.wg-row')?.classList.toggle('picked', e.target.checked);
     // Spots are priced against the ticked water, so ticking water reprices every one of them.
     paintSpots();
@@ -1141,11 +1254,27 @@ export function initWaterTab() {
     paint();
   });
 
-  // Clicking the water is the same act as ticking the row.
+  // CLICKING THE WATER IS THE SAME ACT AS TICKING THE ROW, and on a canvas that means finding
+  // the lane yourself. The SVG version read `data-key` off the path under the cursor; there are
+  // no paths now, so the click is projected back through the same X/Y the paint used and the
+  // nearest lane inside a finger's width wins. Anything further away is a click on the chart,
+  // which is not a pick -- it should not silently tick the lane on the other side of the cove.
   document.addEventListener('click', (e) => {
-    const k = e.target?.closest?.('.wg-line')?.dataset?.key;
-    if (!k) return;
-    const box = document.querySelector(`input[data-pick="${CSS.escape(k)}"]`);
+    const cv = e.target;
+    if (!cv || cv.id !== 'wgMap' || !T.mapHit) return;
+    const r = cv.getBoundingClientRect();
+    const sx = T.mapHit.w / r.width;                       // CSS pixels -> the paint's own space
+    const px = (e.clientX - r.left) * sx, py = (e.clientY - r.top) * sx;
+    const { X, Y } = T.mapHit;
+    let best = null, bd = 14 * sx;
+    for (const q of shown()) {
+      for (const c of (q.coords || [])) {
+        const d = Math.hypot(X(c) - px, Y(c) - py);
+        if (d < bd) { bd = d; best = q.key; }
+      }
+    }
+    if (!best) return;
+    const box = document.querySelector(`input[data-pick="${CSS.escape(best)}"]`);
     if (box) { box.checked = !box.checked; box.dispatchEvent(new Event('change', { bubbles: true })); }
   });
   console.log('[plan-water-ui] ready');

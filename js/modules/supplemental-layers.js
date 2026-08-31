@@ -73,7 +73,18 @@ const CACHE_TTL = 24 * 60 * 60 * 1000;
 // move to their summit (up to 353 m on Wateree) and report the crown depth instead of the base,
 // ledges report the lip instead of the deep side and carry the whole fall, and `hole` is a kind
 // that did not exist. A browser holding yesterday's layer would draw all three wrong.
-const CACHE_SCHEMA = 4;
+//
+// 4 -> 5 on 2026-08-31, AND THE REASON IS NOT A SCHEMA CHANGE. The 4 landed while the crown
+// rules were written; the packs were rebuilt and re-uploaded AFTER it. So a browser that loaded
+// a lake in between cached a `v4` entry holding the OLD structure -- and Ryan's did: his console
+// read "52 humps, 573 ledges, 0 holes" against a pack carrying 106 holes, for 24 hours, with
+// nothing to say the number was stale.
+//
+// The bump has to follow the UPLOAD, not the code change. Worth knowing that this cache is the
+// one place in the app that can still show yesterday's chart: the Worker settled on max-age=300
+// for exactly this reason -- "packs are rebuilt daily right now, and a stale contour set after a
+// build is worse than a re-fetch" -- and CACHE_TTL below is still a day.
+const CACHE_SCHEMA = 5;
 
 // AND WHICH BUILD THAT NUMBER WAS BUMPED FOR, so the next person cannot forget the way I did.
 //
