@@ -140,7 +140,38 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
     // fish a whole day at a weight nobody picked.
     const fit = fitJighead(lureAsBought, rod, speedMph, ceilingFt, id, runId, warnings);
     const lure = fit ? { ...lureAsBought, weightOz: fit.weightOz } : lureAsBought;
-    const leadFt = fit ? fit.leadFt : rod.leadFt;
+    let leadFt = fit ? fit.leadFt : rod.leadFt;
+
+    // A LEAD OF ZERO IS NOT A LEAD.
+    //
+    // Ryan's plan of 2026-08-31 quoted `DD2 Crankbait (16-20ft) @ 0ft` on every leg it was on.
+    // The model had answered `leadFt: 0` for all three of its lipped baits, and it is easy to see
+    // why: rule 7 tells it a bill sets how deep a crankbait runs and no length of lead lifts it,
+    // which is true about DEPTH and says nothing about DISTANCE. At 0 ft the bait is at the rod
+    // tip, in the boat's wake, which is not a thing to go and do.
+    //
+    // Nothing caught it. `0` is finite, so the guard below let it through; `depthWindow()` on a
+    // rated bait reports the printed band whatever the lead, so the leg read 16-20 ft and every
+    // check after it passed. The zero rode all the way to the card.
+    //
+    // The replacement is not a number anyone made up -- it is `leadForDepth()`, the same function
+    // this file already uses to shorten a lead, asked for the depth the bait is built to run. A
+    // lead-controlled bait with no lead still cannot be answered here (its window IS the lead, so
+    // there is nothing to invert) and falls through to the skip below, as it always did.
+    if (!fit && !(Number.isFinite(leadFt) && leadFt > 0)) {
+      const rated = depthWindow(lure, { speedMph, leadFt: null });
+      const want = rated.claimed && Number.isFinite(rated.max)
+        ? leadForDepth(lure, rated.max, speedMph) : null;
+      if (Number.isFinite(want) && want > 0) {
+        warnings.push(`${id} on ${runId}: the plan put a ${rod.lure} on `
+                    + `${Number.isFinite(leadFt) ? `${leadFt} ft of lead` : 'no lead at all'}. The `
+                    + 'bill sets how DEEP it runs, not how far BEHIND the boat it is — at the rod '
+                    + `tip it is in the wake. Let out ${want} ft, which is what it takes to work `
+                    + `a bait rated to ${rated.max} ft.`);
+        leadFt = want;
+        forThisLeg[id] = { ...(forThisLeg[id] || {}), leadFt };
+      }
+    }
     if (!Number.isFinite(leadFt)) continue;
     // A fitted head is reported whether or not anything else about this leg had to move. It is
     // the number Ryan asked for and could not find: `jigWeight` was an empty string on every row

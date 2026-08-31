@@ -540,6 +540,14 @@ they are in \`whyThisWater\` on each one, computed from the chart, not written b
 re-rank them, do not suggest better water, and do not reorder the day. The list above IS the day,
 first to last.
 
+RETURN ONE ENTRY IN \`legs\` FOR EVERY ONE OF THE ${(o.candidates || []).length} \`runId\`s ABOVE
+— all ${(o.candidates || []).length} of them, every one carrying its own \`deploy\`. A runId you
+leave out does NOT drop that stretch from the day: he picked it, so he is going to run it, and it
+goes in the plan with nothing behind the boat. On 2026-08-31 five of ten came back unmentioned and
+he pedalled five miles of chosen water with bare rods. If a stretch is genuinely not worth fishing,
+say so in its \`why\` and rig it anyway — that is a leg he can skip on the day, which is his call
+to make and not one you can make for him by omission.
+
 The order is a SEARCH order: the most diagnostic water first, so that a leg which produces nothing
 still tells him something. That is why it is not the shortest route between them.
 

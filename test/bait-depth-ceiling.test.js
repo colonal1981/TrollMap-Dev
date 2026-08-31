@@ -1,7 +1,7 @@
 import { describe, it, expect } from './expect-shim.mjs';
 import { assemblePlan } from '../js/modules/plan-assemble.js';
 import { TACKLE_INVENTORY } from '../js/data/tackle-inventory.js';
-import { depthWindow } from '../js/data/lure-knowledge.js';
+import { depthWindow, leadForDepth } from '../js/data/lure-knowledge.js';
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // THE SHALLOWEST WATER ON THE LEG IS A CEILING ON THE BAIT
@@ -201,5 +201,59 @@ describe('a cast-only bait has no trolling depth', () => {
     expect(said.length).toBe(1);
     expect(said[0].includes('fishing nothing')).toBe(true);
     expect(plan.warnings.some((w) => /shortened the lead/.test(w))).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// A LEAD OF ZERO IS NOT A LEAD
+//
+// Ryan's plan of 2026-08-31 quoted `DD2 Crankbait (16-20ft) @ 0ft` on every leg it was on. The
+// model had answered `leadFt: 0` for all three of its lipped baits, and it is easy to see why:
+// rule 7 tells it a bill sets how deep a crankbait runs and no length of lead lifts it, which is
+// true about DEPTH and says nothing about DISTANCE. At 0 ft the bait is at the rod tip.
+//
+// Nothing caught it. `0` is finite, so the guard let it through; depthWindow() on a rated bait
+// reports the printed band whatever the lead, so the leg read 16–20 ft and every check after it
+// passed. The zero rode all the way to the card.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+describe('a rated bait is given the lead it takes to work it', () => {
+  const DD2 = TACKLE_INVENTORY.find((l) => /DD2/.test(l.name));
+
+  it('replaces a lead of zero with what the app itself would let out', () => {
+    const rod = { id: 'R1', lure: DD2.name, rig: 'snap', role: 'troll', leadFt: 0,
+                  runsDepthFt: [16, 20] };
+    const plan = build(LEG(28), rod);
+    const got = planned(plan, 0, 'R1');
+    expect(got.leadFt > 0).toBe(true);
+    // Not a number written here: leadForDepth() asked for the depth the bait is built to run.
+    expect(got.leadFt).toBe(leadForDepth(DD2, depthWindow(DD2, { leadFt: null }).max, 2.0));
+    // And it is said out loud, naming the distinction the model got wrong.
+    expect(plan.warnings.some((w) => /0 ft of lead/.test(w) && /how far BEHIND the boat/.test(w)))
+      .toBe(true);
+    // The bag is untouched, the same as every other cap on this leg.
+    expect(rod.leadFt).toBe(0);
+  });
+
+  it('answers a rated bait the model gave no lead at all', () => {
+    const rod = { id: 'R1', lure: DD2.name, rig: 'snap', role: 'troll', runsDepthFt: [16, 20] };
+    const plan = build(LEG(28), rod);
+    expect(planned(plan, 0, 'R1').leadFt > 0).toBe(true);
+    expect(plan.warnings.some((w) => /no lead at all/.test(w))).toBe(true);
+  });
+
+  it('leaves a real lead alone and says nothing', () => {
+    const rod = { id: 'R1', lure: DD2.name, rig: 'snap', role: 'troll', leadFt: 76,
+                  runsDepthFt: [16, 20] };
+    const plan = build(LEG(28), rod);
+    expect(plan.warnings.some((w) => /how far BEHIND the boat/.test(w))).toBe(false);
+  });
+
+  it('still says nothing it cannot answer: a lead-controlled bait with no lead', () => {
+    // Its window IS the lead, so there is nothing to invert and nothing to hand back. It skips,
+    // exactly as it did before, rather than inventing a distance.
+    const rod = { id: 'R1', lure: LIPLESS.name, rig: 'snap', role: 'troll' };
+    const plan = build(LEG(28), rod);
+    expect((planned(plan, 0, 'R1')).leadFt).toBe(undefined);
+    expect(plan.warnings.some((w) => /how far BEHIND the boat/.test(w))).toBe(false);
   });
 });

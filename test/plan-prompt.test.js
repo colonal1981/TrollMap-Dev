@@ -194,6 +194,31 @@ describe('plan-prompt — the request', () => {
     expect(withHops.user).toMatch(/close\s+to the ramp can still be six miles from EACH OTHER/);
   });
 
+  // -------------------------------------------------------------------------------------------
+  // THE COUNT, BECAUSE THE MODEL KEPT ANSWERING FOR SOME OF THEM
+  //
+  // Ryan, 2026-08-31: "now its back to not picking lures". The model returned five legs for a
+  // ten-piece Pick Water day — five miles of water he had ticked himself, in the plan, with bare
+  // rods. Nothing in the prompt had ever said how many entries `legs` must have; the picked-water
+  // block said "the list above IS the day" and left the arithmetic to inference.
+  // -------------------------------------------------------------------------------------------
+  it('tells the model how many legs it must answer for, by number', () => {
+    const three = [{ runId: 'w#1', lengthM: 2500, depthFt: 24, structures: [] },
+                   { runId: 'w#2', lengthM: 2200, depthFt: 26, structures: [] },
+                   { runId: 'w#3', lengthM: 900, depthFt: 19, structures: [] }];
+    const picked = buildPlanRequest({ waterIsChosen: true, candidates: three,
+                                      water: 'Lake Wateree, SC', tackle: TACKLE });
+    expect(picked.user).toMatch(/RETURN ONE ENTRY IN `legs` FOR EVERY ONE OF THE 3 `runId`s/);
+    expect(picked.user).toMatch(/all 3 of them/);
+    // And the consequence of leaving one out, which is the part that is not obvious: the stretch
+    // does not drop from the day, it just goes out unrigged.
+    expect(picked.user).toMatch(/goes in the plan with nothing behind the boat/);
+
+    // Smart Plan chooses its own water, so the count is not its instruction and must not appear.
+    const chosen = buildPlanRequest({ candidates: three, water: 'Lake Wateree, SC', tackle: TACKLE });
+    expect(/RETURN ONE ENTRY IN/.test(chosen.user)).toBe(false);
+  });
+
   it('carries the day and the candidates as data, not prose', () => {
     expect(req.user.includes('"waterTempF": 84')).toBe(true);
     expect(req.user.includes('w#1:p0')).toBe(true);
