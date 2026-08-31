@@ -58,3 +58,22 @@ writeFileSync(dest, out.join('\n') + '\n');
 console.log(`${out.length} water(s) the planner offers (${dropped} registry rows filtered out, `
           + `${RIVER_SLUGS.length} rivers added)`);
 console.log(`wrote ${dest}`);
+
+// AND THE WIDER LIST, BECAUSE THE NARROW ONE IS ABOUT TO GET WIDER.
+//
+// Ryan, 2026-08-31: "why is a ramp a show stopper for a kayak fisherman?" It is not. All 108 of
+// the waters PRESETS.planner drops are dropped for having no ramp on record -- Randleman at 2,919
+// acres among them, charted and shipped -- and a kayak launches where you can park. What the
+// filter is standing in for is real (the planner needs a launch COORDINATE, and `ramps` is the
+// only registry field that carries one) but the day that is solved, those 108 become plannable
+// and their packs need to have been fitted.
+//
+// Fitting costs about a second a lake. Rebuilding a pack costs minutes. So the wide list is
+// written too and the fit runs against it, and nothing has to be re-run later -- which is Ryan's
+// own standing rule about not making him run the same thing twice.
+const wide = rows.filter((r) => r && r.slug && !isCoastal(r)).map((r) => r.slug);
+const all = [...new Set([...wide, ...RIVER_SLUGS])].sort();
+const destAll = join(registry, '_app_registry.txt');
+writeFileSync(destAll, all.join('\n') + '\n');
+console.log(`${all.length} water(s) in the registry, coastal excluded`);
+console.log(`wrote ${destAll}`);
