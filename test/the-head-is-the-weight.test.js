@@ -303,7 +303,8 @@ test('his Leg 2: 36 ft of water, both baits well up, do not fish it down', () =>
   assert.equal(e.rods[0].clearance.taps, false);
   assert.equal(e.rods[1].clearance.gap, 14);
   assert.match(e.bottomNote, /Bottom is 36 ft here/);
-  assert.match(e.bottomNote, /not a leg to fish down/);
+  assert.match(e.bottomNote, /the deepest bait rides 14 ft off it/);
+  assert.match(e.bottomNote, /14 ft under your own spread/);
 });
 
 test('his Leg 4: the swimbait finds the 19 ft rise, and that rise is the spot', () => {

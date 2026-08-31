@@ -139,8 +139,21 @@ function bottomNote(rods, leg) {
     return `Bottom is ${floorFt} ft here and the ${taps.length > 1 ? 'baits' : taps[0].lure} `
          + `${taps.length > 1 ? 'find' : 'finds'} it — let it tap and come up, that rise is the spot.`;
   }
-  return `Bottom is ${floorFt} ft here and the baits run ${runs} ft — this is not a leg to fish `
-       + 'down. Tapping bottom means you are under them.';
+  // NOT "this is not a leg to fish down", WHICH IS A JUDGEMENT WITH A THRESHOLD BEHIND IT.
+  //
+  // Measured off Ryan's Sep 1 plan, Leg 4: 28 ft of water with a bucktail riding 3 ft off the
+  // bottom, and the sentence said "this is not a leg to fish down" — while the bait was already
+  // as good as down. Telling the two apart needs a line between "well up" and "near enough", and
+  // there is no such line in anything measured; drawing one would be an invented number in the
+  // one sentence that exists to be trusted.
+  //
+  // So it says what tapping would COST, in feet, and lets that carry the weight. Eleven feet under
+  // the spread reads as a mistake and three feet reads as nothing, without either being ruled on
+  // here.
+  const nearest = withGap.reduce((a, b) => (a.clearance.gap <= b.clearance.gap ? a : b));
+  const g = nearest.clearance.gap;
+  return `Bottom is ${floorFt} ft here and the deepest bait rides ${g} ft off it — let it tap and `
+       + `you are ${g} ft under your own spread.`;
 }
 
 /**
