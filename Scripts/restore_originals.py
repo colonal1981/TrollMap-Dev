@@ -60,6 +60,18 @@ def main() -> int:
                     help='default <packs>/../_to_delete/pre_fit_runs')
     ap.add_argument('--write', action='store_true', help='actually restore; otherwise dry run')
     ap.add_argument('--only', default=None, help='one slug')
+    # THE SAME FLAG THE OTHER FOUR SCRIPTS TAKE, AND THE ONLY ONE THAT MATTERS HERE.
+    #
+    # `--only` restores ONE lake and the default restores EVERY lake with a backup. Neither is
+    # the job: the app offers 234 waters and the card holds 585 fitted packs, so a card-wide
+    # restore un-fits 350-odd lakes nobody is about to re-fit and leaves them shipping raw
+    # contour geometry. Doing it a slug at a time is 233 invocations.
+    #
+    # `@file` and a comma list, spelled exactly as build_structure.py, build_trolling_runs.py,
+    # build_water_features.py and fit_trolling_runs.py already spell it -- a fifth syntax for
+    # one idea is how a scoped run quietly means something else.
+    ap.add_argument('--only-lakes', default=None,
+                    help='comma list of slugs, or @file with one per line. Restores only these.')
     a = ap.parse_args()
 
     bak = a.backup_dir or os.path.join(os.path.dirname(os.path.abspath(a.packs)),
@@ -102,6 +114,23 @@ def main() -> int:
     slugs = sorted(os.listdir(bak))
     if a.only:
         slugs = [s for s in slugs if s == a.only]
+    if a.only_lakes:
+        src = a.only_lakes
+        if src.startswith('@'):
+            src = open(src[1:], encoding='utf-8').read()
+        elif os.path.exists(src):
+            src = open(src, encoding='utf-8').read()
+        want = {x.strip() for x in src.replace('\n', ',').split(',') if x.strip()}
+        # SAY WHAT WAS ASKED FOR AND NOT FOUND. A slug with no backup is not restorable here and
+        # the run must not read as though it were: it is the build_trolling_runs.py path instead.
+        missing = sorted(want - set(slugs))
+        slugs = [s for s in slugs if s in want]
+        print('--only-lakes: %d of %d requested slug(s) have an original saved'
+              % (len(slugs), len(want)))
+        if missing:
+            print('  no original for %d: %s%s'
+                  % (len(missing), ', '.join(missing[:8]),
+                     ' ...' if len(missing) > 8 else ''))
 
     restore, skip_fitted, skip_missing, already = [], [], [], []
     for slug in slugs:
