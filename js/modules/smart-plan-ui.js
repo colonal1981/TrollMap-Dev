@@ -86,6 +86,23 @@ function buildCards(fallbackSpeedMph, routeSpeeds = {}, cardDefs = null) {
 }
 
 // ── Rod slot HTML (used inside trolling timeline cards) ──────────────────────
+/**
+ * `Stbd 63ft` — or `Stbd 63ft · 3/4oz head`, when the head is what sets the depth.
+ *
+ * A LEAD WITHOUT THE WEIGHT THAT PRODUCED IT IS HALF AN INSTRUCTION. Ryan, 2026-08-31: "it says
+ * to use 63ft of lead... but with what weight... weight is going to change the depth that 63ft of
+ * lead gives me." The leg card's Spread / Leads box printed the lead alone, so the one number on
+ * it that cannot be acted on by itself was the only number on it.
+ *
+ * Only weighted rigs carry `jigWeight`, so a crankbait — whose depth is the bill and not the
+ * lead — prints exactly what it printed before.
+ */
+export function leadWithHead(side, lead, rod) {
+  const ft = lead || '—';
+  const head = rod && rod.jigWeight ? rod.jigWeight : '';
+  return `${side} ${esc(String(ft))}ft${head ? ` · ${esc(head)} head` : ''}`;
+}
+
 function rodSlotHtml(rod, cardIdx, slotIdx) {
   const label = slotIdx === 0 ? '🔵 Port' : '🔴 Stbd';
   if (!rod) {
@@ -97,15 +114,26 @@ function rodSlotHtml(rod, cardIdx, slotIdx) {
     ? `<span style="color:#ffb300;font-size:10px">⚡ Direct braid → swivel snap</span>`
     : `<span style="color:#76ff03;font-size:10px">🔗 Braid + fluoro leader</span>`;
 
-  let arigLine = '';
-  if (rod.lure?.toLowerCase().includes('a-rig') || rod.lure?.toLowerCase().includes('umbrella')) {
-    const parts = [
-      rod.arigWeight  ? `Frame: ${rod.arigWeight}`    : '',
-      rod.jigWeight   ? `Heads: ${rod.jigWeight}`     : '',
-      rod.trailerSize ? `Trailer: ${rod.trailerSize}` : '',
-    ].filter(Boolean).join(' · ');
-    if (parts) arigLine = `<div style="font-size:10px;color:var(--muted);margin-top:2px">${esc(parts)}</div>`;
-  }
+  // WHAT IS ON THE END OF IT, WHATEVER IT IS.
+  //
+  // Ryan, 2026-08-31: "if it is going to assign a swimbait... i need to know what size jighead the
+  // app is using for the lead and depth calculations... it says to use 63ft of lead... but with
+  // what weight... weight is going to change the depth that 63ft of lead gives me."
+  //
+  // He was right and the number was already there. capBaitDepth() fits the head, plan-to-timeline
+  // puts it on the rod as `jigWeight`, and the saved plan carried "3/4oz" on every swimbait row --
+  // and this block rendered it ONLY when the lure name contained "a-rig" or "umbrella". A plain
+  // jighead swimbait fell through the test, so the one rig whose depth is SET by the head weight
+  // was the one rig that never showed it. The gate is gone: if a rod has a frame, a head or a
+  // trailer, it says so. An A-rig with all three reads exactly as it always did.
+  const rigParts = [
+    rod.arigWeight  ? `Frame: ${rod.arigWeight}`    : '',
+    rod.jigWeight   ? `Head: ${rod.jigWeight}`      : '',
+    rod.trailerSize ? `Trailer: ${rod.trailerSize}` : '',
+  ].filter(Boolean).join(' · ');
+  const arigLine = rigParts
+    ? `<div style="font-size:10px;color:var(--muted);margin-top:2px">${esc(rigParts)}</div>`
+    : '';
 
   return `
   <div style="border:1px solid var(--line);border-radius:7px;padding:8px 10px;display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:start">
@@ -638,7 +666,7 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeed
             <div style="font-size:11px;background:rgba(255,255,255,0.03);border:1px solid var(--line);border-radius:6px;padding:6px 8px">
               <div style="color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.05em">Spread / Leads</div>
               <div style="font-weight:600;color:var(--muted);font-size:11px">
-                Port ${entry.portLeadFt || rods[0]?.lead || '—'}ft · Stbd ${entry.starboardLeadFt || rods[1]?.lead || '—'}ft
+                ${leadWithHead('Port', entry.portLeadFt || rods[0]?.lead, rods[0])} · ${leadWithHead('Stbd', entry.starboardLeadFt || rods[1]?.lead, rods[1])}
               </div>
             </div>
           </div>

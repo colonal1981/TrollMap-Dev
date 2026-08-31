@@ -122,6 +122,22 @@ function planV2() {
   try { return (typeof window !== 'undefined' && window._planV2) || null; } catch { return null; }
 }
 
+/**
+ * THE WHOLE RESULT, not just the plan: the prompt that was sent, the answer that came back, and
+ * every problem the app raised reading it.
+ *
+ * Ryan, 2026-08-31, on a plan with four legs trolled empty and no idea why: "the plan doesn't
+ * show what the models get sent to them????" It did not, and every part of it was already in
+ * memory. buildSmartPlanV2() returns `{plan, candidates, request, response, problems}` and the
+ * wiring parks the lot on `window._planV2Result` -- and then collectPlan() read `window._planV2`
+ * and saved the plan alone. So a saved plan carried the assembler's warnings and nothing about
+ * the exchange that produced them: whether the model left `deploy` off a leg, or named a rod the
+ * app then refused, read identically in the file. Both are one line in `problems`.
+ */
+function planV2Result() {
+  try { return (typeof window !== 'undefined' && window._planV2Result) || null; } catch { return null; }
+}
+
 /** "22.4" for one contour, "22.4–31" for several. Never a band the species is using. */
 function contourRange(plan) {
   const ft = (plan.legs || []).filter((l) => l.type === 'troll' && l.depthFt != null)
@@ -527,8 +543,43 @@ export function collectPlan(){
         structureType: w.structureType || null,
         tacticalNote: w.tacticalNote || null,
       })),
-      trackList: state.DATA.tracks.map(t=>({name:t.name, points:t.pts.length}))
+      // THE LINE THE BOAT RUNS, IN THE FILE THAT DESCRIBES THE DAY.
+      //
+      // `points` was a count and nothing else, so a saved plan could say L5 was 1080 m long and
+      // had 52 vertices without saying where any of them were -- nothing about an ordering, an
+      // orientation or a deadhead could be measured out of the one file the app hands him.
+      //
+      // NOT a copy on the legs, which is what it looks like it wants to be. The comment on
+      // `plan.legs` above is right and stands: two copies of one geometry in one file is two
+      // things to drift. This is not a second copy -- `state.DATA.tracks` is the single source
+      // the GPX itself is written from, and `trackList` is already its projection. It was
+      // projecting the length of each track and throwing away the track.
+      //
+      // `pts` is [lat, lon], the way GPX writes it and the way `state.DATA.tracks` holds it --
+      // NOT the [lon, lat] the plan uses everywhere else. It is in the `gpx` block, beside the
+      // count it belongs to, for exactly that reason.
+      trackList: state.DATA.tracks.map(t=>({name:t.name, points:t.pts.length, pts:t.pts}))
     },
+    // ── WHAT THE MODEL WAS SENT AND WHAT IT SENT BACK ──────────────────────────────────────────
+    //
+    // Guarded on identity, not on existence: `_planV2Result` is a global like `_planV2`, and a
+    // stale one would attach yesterday's prompt to today's plan -- the same failure the block
+    // above rejects a whole plan over. `=== v2raw` is exact and free.
+    //
+    // `problems` is the union the screen shows -- what the app refused reading the answer, plus
+    // the assembler's warnings, plus validatePlan(). `plan.warnings` above is only the middle
+    // third, which is why a leg with no rods in the water was in the file and the reason for it
+    // was not. Nothing here is a credential or a key: the request is candidate geometry and the
+    // day's rules, the response is the model's own JSON.
+    model: (() => {
+      const r = planV2Result();
+      if (!r || !v2 || r.plan !== v2raw) return null;
+      return {
+        request: r.request || null,
+        response: r.response || null,
+        problems: Array.isArray(r.problems) ? r.problems.slice() : [],
+      };
+    })(),
     savedAt: new Date().toISOString()
   };
 }
@@ -643,7 +694,11 @@ export async function buildPlanPreviewHtml(p){
                + `<td class="rp-small">Nothing in the water</td>`
                + `<td class="rp-small">${est}${e.why ? `<br>${esc(e.why)}` : ''}</td></tr>`;
         }
-        const rods = (e.rods||[]).map(r=> `${esc(r.side||'')}: ${esc(r.lure||'')} ${esc(r.lead||'')?`@ ${esc(r.lead)}ft`:''}`).join('<br>');
+        // THE HEAD RIDES WITH THE LEAD. `@ 63ft` on a jighead swimbait is half an instruction --
+        // the weight is what decides the depth that 63 ft of lead buys, and this row printed the
+        // lead alone while the plan had carried the weight all along. See leadWithHead() in
+        // smart-plan-ui.js, same fix, the other surface.
+        const rods = (e.rods||[]).map(r=> `${esc(r.side||'')}: ${esc(r.lure||'')} ${esc(r.lead||'')?`@ ${esc(r.lead)}ft`:''}${r.jigWeight?` · ${esc(r.jigWeight)} head`:''}`).join('<br>');
         return `<tr style="background:#eef7ff"><td><b>${icon} TROLL — ${esc(label)}</b><br><span class="rp-small">${esc(e.desc||e.phaseName||'')}</span></td><td>${esc(speed)}<br>${esc(depth)}</td><td class="rp-small">${rods || `${esc(e.port||'')} / ${esc(e.starboard||'')}`}</td><td class="rp-small">${esc(e.why||'')}</td></tr>`;
       } else if (e.type === 'change') {
         return `<tr style="background:#fffde7"><td><b>🔁 SWAP — ${esc(String(e.rodId||''))}</b><br><span class="rp-small">${esc(e.mark||'')} in</span></td><td colspan="2">${esc(e.from||'—')} → <b>${esc(e.to||'')}</b><br><span class="rp-small">${esc(e.costLabel||e.cost||'')}</span></td><td class="rp-small">${esc(e.why||'')}</td></tr>`;

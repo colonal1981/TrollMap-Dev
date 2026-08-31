@@ -226,3 +226,30 @@ test('every head in the box has a label a person would write on a packet', () =>
   assert.deepEqual([...seen.values()],
     ['1/4oz', '3/8oz', '1/2oz', '3/4oz', '1oz', '1-1/4oz', '1-1/2oz']);
 });
+
+// ---------------------------------------------------------------------------
+// AND IT HAS TO BE ON THE SCREEN, NOT JUST IN THE OBJECT.
+//
+// Ryan, 2026-08-31, a day after the head was fitted and filed: "if it is going
+// to assign a swimbait... i need to know what size jighead the app is using for
+// the lead and depth calculations... it says to use 63ft of lead... but with
+// what weight... weight is going to change the depth that 63ft of lead gives
+// me."
+//
+// The number was right and invisible. `jigWeight: "3/4oz"` was on every swimbait
+// row of the saved plan, and rodSlotHtml() rendered the rig line only when the
+// lure name contained "a-rig" or "umbrella" -- so the one rig whose depth is SET
+// by the head weight was the only rig that never printed it. A lead figure with
+// no weight beside it is half an instruction.
+// ---------------------------------------------------------------------------
+const { leadWithHead } = await import('../js/modules/smart-plan-ui.js');
+
+test('a lead is quoted with the head that produced it', () => {
+  assert.equal(leadWithHead('Stbd', 63, { jigWeight: '3/4oz' }), 'Stbd 63ft · 3/4oz head');
+});
+
+test('a bait whose depth is its bill is quoted exactly as it always was', () => {
+  assert.equal(leadWithHead('Port', 80, { lure: 'DD1 Crankbait (14-18ft)', jigWeight: '' }),
+               'Port 80ft');
+  assert.equal(leadWithHead('Port', null, null), 'Port —ft');
+});
