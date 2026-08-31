@@ -33,58 +33,44 @@ async function handleResearchDeterministicFacts(request, env) {
     profile.evidence[section][field] = (profile.evidence[section][field] || []).concat(entries);
   };
 
-  // ── IDENTITY, FROM THE REGISTRY, BEFORE ANYONE ASKS A MODEL ────────────────────────────────
+  // ── IDENTITY IS ONE FIELD ──────────────────────────────────────────────────────────────────
   //
-  // identityGrounding() has assembled this the whole time -- the registry row, plus a full pool
-  // and a drawdown schedule from the operator's own feeds -- and agents.js handed the result to
-  // the identity agent AS CONTEXT. The model then restated it, and the restatement was what got
-  // stored. That is the shape this refactor exists to remove: the pipeline computes the fact and
-  // an LLM is paid to say it back.
+  // Ryan, 2026-08-31, on a first cut of this that wrote nine of them: "wait... is that information
+  // used anywhere... does anyone ask for that?" Almost none of it. Counted by reading the lines,
+  // not by matching names:
   //
-  // So it is written here instead. `surfaceAreaAcres`, `maxDepthFt` and `averageDepthFt` are
-  // already geometry-derived in the browser (lake-research-engine.js:1057 and 2400-2403, flagged
-  // `_geometryDerived`), and mergeMissing only fills what is absent, so nothing here overwrites a
-  // measurement taken off the chartpack. What this adds is the registry's own: county, acres when
-  // geometry did not answer, feature type, GNIS, centroid, and the pool numbers.
+  //   plan-inputs.js is the ONLY consumer of identity, and it reads three fields --
+  //     put('Lake type',     id.archetype || id.bodyType);
+  //     put('Max depth',     id.maxDepthFt, ' ft');
+  //     put('Average depth', id.averageDepthFt, ' ft');
   //
-  // WHAT IS STILL THE AGENT'S: `archetype`, `damName`, `reservoirOwner`, `riverSystem` and
-  // `yearImpounded`. dam_table.json and water_chain.json can answer the middle three -- the
-  // binding already exists in conditions.js -- and that is the next cut, not this one.
+  //   maxDepthFt and averageDepthFt are ALREADY geometry-derived off the chartpack
+  //   (lake-research-engine.js:1057, 2400-2403). So one field is left.
+  //
+  //   county, gnis, gpsCenter, normalPoolFt, surfaceAreaAcres, reservoirOwner, riverSystem,
+  //   yearImpounded and damName have NO reader outside the research pipeline. Every `damName`
+  //   match is `ev.damName` on a dam-release event out of the conditions feed, a different
+  //   object entirely; `reservoirOwner` does not appear in js/ or Worker/ at all.
+  //
+  // The first cut wrote all of them "with evidence", which would have made nine dead paths look
+  // sourced and defensible -- the precise thing this refactor removes. So it writes ONE, and the
+  // registry's `feature_type` is what the "Lake type" line asks for.
+  //
+  // The pool numbers identityGrounding() fetches are not lost by this: Worker/conditions.js
+  // serves full pool and the drawdown schedule live, which is where a number that changes daily
+  // belongs. Storing a copy in a research profile is what step 2 already deleted.
   try {
     const base = await identityGrounding(lakeName, env);
-    if (base) {
-      const id = profile.identity;
-      const put = (k, v) => { if (v !== null && v !== undefined && v !== '') id[k] = v; };
-      put('county', base.county);
-      put('surfaceAreaAcres', base.surfaceAreaAcres);
-      put('bodyType', base.featureType);
-      put('gnis', base.gnis);
-      put('gpsCenter', base.centroid);
-      put('normalPoolFt', base.normalPoolFt);
-      if (base.poolManagement) put('poolManagement', base.poolManagement);
-      if (base.drawdownType) put('drawdownType', base.drawdownType);
-      if (base.county) id.counties = [base.county];
-      // Evidence, so the card can say where it came from and the contradiction resolver has
-      // something to weigh a model's answer against.
-      for (const [field, why] of [['county', base.source], ['surfaceAreaAcres', base.source],
-                                  ['bodyType', base.source], ['gnis', base.source]]) {
-        if (id[field] != null) {
-          mergeEvidence('identity', field, buildEvidence([{
-            fact: String(id[field]), source: base.source || 'TrollMap registry',
-            trust: 'OFFICIAL', sourceType: 'internal_structured',
-          }]));
-        }
-      }
-      if (id.normalPoolFt != null && base.normalPoolSource) {
-        mergeEvidence('identity', 'normalPoolFt', buildEvidence([{
-          fact: String(id.normalPoolFt), source: base.normalPoolSource,
-          trust: 'OFFICIAL', sourceType: 'official_structured',
-        }]));
-      }
+    if (base && base.featureType) {
+      profile.identity.bodyType = base.featureType;
+      mergeEvidence('identity', 'bodyType', buildEvidence([{
+        fact: String(base.featureType), source: base.source || 'TrollMap registry',
+        trust: 'OFFICIAL', sourceType: 'internal_structured',
+      }]));
     }
   } catch (e) {
-    // A registry miss is not a failed run. The identity agent still covers it, and an unresolved
-    // name is a real and common state -- resolveRegistryRow refuses an ambiguous one on purpose.
+    // A registry miss is not a failed run. resolveRegistryRow refuses an ambiguous name on
+    // purpose and an unresolved water is a real, common state.
     profile.identity.registryNote = `registry identity unavailable: ${e && e.message}`;
   }
 

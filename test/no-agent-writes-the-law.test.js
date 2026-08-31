@@ -45,9 +45,16 @@ describe('the two agents that used to write the regulations', () => {
     const keys = agentKeys();
     expect(keys.includes('regulations')).toBe(false);
     expect(keys.includes('saltwater_regulations')).toBe(false);
-    // and the nine that remain are still there
-    for (const k of ['identity', 'limnology', 'biology', 'habitat', 'navigation', 'fisheries',
-                     'summary', 'estuary', 'tidal']) {
+    // `identity` joined them on 2026-08-31 -- deterministic.js writes the one field of its nine
+    // that had a reader (`bodyType`, from the registry's feature_type), and the chartpack was
+    // already writing maxDepthFt and averageDepthFt.
+    // `identity`, `estuary` and `tidal` joined them on 2026-08-31. identity: nine target fields
+    // and plan-inputs.js read three, two of which the chartpack already derives and the third of
+    // which the registry's feature_type answers. estuary and tidal: fifteen fields between them
+    // and not one reader outside this pipeline -- the live tide and gauge path answers the cards.
+    for (const k of ['identity', 'estuary', 'tidal']) expect(keys.includes(k)).toBe(false);
+    // and the six that remain are still there
+    for (const k of ['limnology', 'biology', 'habitat', 'navigation', 'fisheries', 'summary']) {
       expect(keys.includes(k)).toBe(true);
     }
   });

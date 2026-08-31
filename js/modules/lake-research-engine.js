@@ -45,8 +45,12 @@ window.TROLLMAP_RESEARCHED_CACHE = window.TROLLMAP_RESEARCHED_CACHE || {};
 // deterministic.js and the live digest fill regulations.*, and checkRegulations() has read the
 // digest's closures since the hand table was deleted on 2026-08-27, so an LLM writing that
 // section is a third source of a fact we already parse out of the book.
-const FRESHWATER_RESEARCH_ORDER = ['identity', 'limnology', 'biology', 'habitat', 'navigation', 'fisheries', 'summary'];
-const COASTAL_RESEARCH_ORDER = ['estuary', 'tidal', 'biology', 'habitat', 'navigation', 'fisheries', 'summary'];
+// `identity` RETIRED 2026-08-31 -- see deterministic.js. Nine target fields, and
+// plan-inputs.js read three of them: archetype/bodyType, maxDepthFt, averageDepthFt. The
+// last two are geometry-derived off the chartpack; the first is the registry's
+// `feature_type`. The other six have no reader anywhere outside this pipeline.
+const FRESHWATER_RESEARCH_ORDER = ['limnology', 'biology', 'habitat', 'navigation', 'fisheries', 'summary'];
+const COASTAL_RESEARCH_ORDER = ['biology', 'habitat', 'navigation', 'fisheries', 'summary'];
 
 // WHAT THE RESEARCH CARD DRAWS. A superset of the agent list, and it stays a superset: a section
 // with no agent is filled by the deterministic pass or the live digest, and Ryan still has to be
@@ -58,7 +62,6 @@ const COASTAL_PROFILE_SECTIONS = ['estuary', 'tidal', 'biology', 'habitat', 'nav
 const RESEARCH_ORDER = FRESHWATER_RESEARCH_ORDER;
 
 const RESEARCH_LABELS = {
-  identity: '🆔 Identity',
   limnology: '🌊 Limnology',
   biology: '🐟 Fisheries',
   habitat: '🌿 Habitat',
@@ -66,17 +69,11 @@ const RESEARCH_LABELS = {
   regulations: '📜 Regulations',
   fisheries: '🧠 Species Intelligence',
   summary: '📝 AI Summary',
-  estuary: '🏖️ Estuary Identity',
-  tidal: '🌊 Tidal Dynamics',
   saltwater_regulations: '📜 Saltwater Regs',
 };
 
 // Agent definitions with target fields for validation
 const AGENT_DEFINITIONS = {
-  identity: {
-    label: '🆔 Identity',
-    targetFields: ['identity.surfaceAreaAcres', 'identity.maxDepthFt', 'identity.averageDepthFt', 'identity.reservoirOwner', 'identity.riverSystem', 'identity.damName', 'identity.yearImpounded', 'identity.county', 'identity.archetype'],
-  },
   limnology: {
     label: '🌊 Limnology',
     targetFields: ['limnology.waterClarity.typical', 'limnology.waterClarity.color', 'limnology.waterClarity.secchiFt', 'limnology.thermocline.summerDepthFt', 'limnology.thermocline.strength', 'limnology.oxygen.depletionDepthFt', 'limnology.oxygen.anoxicBelowFt', 'limnology.trophicStatus', 'limnology.flowCharacteristics', 'limnology.seasonalDrawdownFt'],
@@ -101,17 +98,17 @@ const AGENT_DEFINITIONS = {
     label: '📝 AI Summary',
     targetFields: ['summary'],
   },
-  // ── Coastal agents (saltwater estuary counterparts) ─────────────────────
-  estuary: {
-    label: '🏖️ Estuary Identity',
-    coastal: true,
-    targetFields: ['estuary.waterBodyType', 'estuary.meanTidalRangeFt', 'estuary.primaryInlets', 'estuary.tributaryRivers', 'estuary.marshAcreage', 'estuary.oysterPresence', 'identity.surfaceAreaAcres', 'identity.maxDepthFt'],
-  },
-  tidal: {
-    label: '🌊 Tidal Dynamics',
-    coastal: true,
-    targetFields: ['tidal.datum', 'tidal.stratificationType', 'tidal.salinityPpt', 'tidal.tidalCurrentKts', 'tidal.flushingTimeDays', 'tidal.waterTempF', 'tidal.turbidity'],
-  },
+  // ── COASTAL AGENTS RETIRED 2026-08-31 ─────────────────────────────────────
+  //
+  // `estuary` and `tidal` wrote fifteen fields between them and NOT ONE has a reader outside this
+  // pipeline. Checked by reading the lines rather than matching names, which is what made the
+  // earlier verdicts wrong: `conditions.js` reads `b.pool.datum` and not `tidal.datum`;
+  // `tide-engine.js` classifies a tide stage and never touches `tidal.tidalCurrentKts`;
+  // `conditions-strip.js` prints a live USGS 00480 salinity, not `tidal.salinityPpt`. The live
+  // tide and gauge path answers everything the coastal cards show.
+  //
+  // They also carried `identity.surfaceAreaAcres` and `identity.maxDepthFt` among their targets,
+  // which the chartpack has been deriving all along.
 };
 
 // ── Coastal detection helpers (frontend) ──────────────────────────────────
@@ -1657,24 +1654,10 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
       previousResults = { ...previousResults, ..._contextResults };
     }
 
-    // When identity runs without a full pipeline (e.g. resume mode), load the
-    // saved profile's identity so the LLM sees the geometry-derived bathymetry
-    // values and doesn't replace them with training-data depths.
-    if (agentKey === 'identity' && !previousResults.identity?._geometryDerived) {
-      try {
-        const savedIdRes = await fetch(`${CF_WORKER_URL}/research/get?lake=${encodeURIComponent(lakeName)}`);
-        if (savedIdRes.ok) {
-          const savedIdData = await savedIdRes.json();
-          const savedId = savedIdData.profile?.identity || null;
-          if (savedId?._geometryDerived) {
-            previousResults = { ...previousResults, identity: savedId };
-            log(`  [identity] Loaded geometry-derived bathymetry from saved profile (max ${savedId.maxDepthFt} ft, avg ${savedId.averageDepthFt} ft, area ${savedId.surfaceAreaAcres != null ? savedId.surfaceAreaAcres + " ac" : "N/A"})`);
-          }
-        }
-      } catch (_) {
-        console.warn(`[research] saved profile id fetch failed:`, _ && _.message);
-      }
-    }
+    // The identity agent's resume-mode reload lived here: it fetched the saved profile so the LLM
+    // would see the geometry-derived depths and not replace them with training-data ones. With the
+    // agent retired there is no LLM to protect them from -- deterministic.js writes the one field
+    // that has a reader and the chartpack writes the depths.
 
     // When fisheries runs without biology in the same batch (e.g. resume on
     // fisheries only), load the saved profile's species list so the LLM has
@@ -2458,8 +2441,8 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
   //   Wave2: biology, fisheries (shared, with coastal hints)
   // `regulations` and `saltwater_regulations` were the fifth member of each wave and are retired;
   // the digest is parsed live and its closures are what checkRegulations() reads.
-  const FRESH_WAVE1 = ['identity', 'limnology', 'habitat', 'navigation'];
-  const COASTAL_WAVE1 = ['estuary', 'tidal', 'habitat', 'navigation'];
+  const FRESH_WAVE1 = ['limnology', 'habitat', 'navigation'];
+  const COASTAL_WAVE1 = ['habitat', 'navigation'];
   const WAVE1_AGENTS = coastalForRun ? COASTAL_WAVE1 : FRESH_WAVE1;
   const WAVE2_AGENTS = ['biology', 'fisheries'];
   const wave1 = parallelAgents.filter(k => WAVE1_AGENTS.includes(k));

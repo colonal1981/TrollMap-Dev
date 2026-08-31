@@ -69,13 +69,10 @@ function agentTargetFields() {
 
 // A field is excused only with a reason. "Not used" is a decision that has to be written down,
 // which is the entire point -- an unexplained absence is how the whole pipeline went unwired.
+// The six `identity.*` excuses that headed this list are gone with the identity agent, and the
+// coastal ones with `estuary` and `tidal` (all 2026-08-31). An excuse is for a field an agent
+// still hunts and the planner declines to read; a field nothing hunts needs no excuse.
 const NOT_FOR_THE_PLANNER = {
-  'identity.county': 'administrative; regulations already handle jurisdiction',
-  'identity.damName': 'administrative; the dam is not a fishing decision',
-  'identity.reservoirOwner': 'administrative; who owns it changes nothing on the water',
-  'identity.riverSystem': 'administrative; the water graph already knows the shape',
-  'identity.yearImpounded': 'history, not today',
-  'identity.surfaceAreaAcres': 'the pack geometry is authoritative for size',
   'biology.invasiveSpecies': 'regulatory and ecological, does not change where to troll',
   'biology.speciesAbundance': 'prose about the fishery; the catch journal is the local truth',
   'biology.predatorSpecies': 'the species being targeted is chosen in the form',
@@ -96,19 +93,6 @@ const NOT_FOR_THE_PLANNER = {
   // exact thing the last test in this file is for, and it is what caught them.
   // Coastal / tidal. v2 has only been run on reservoirs; when it plans a coastal day these
   // become real and this list should shrink.
-  'estuary.marshAcreage': 'coastal — v2 is reservoir-only so far',
-  'estuary.meanTidalRangeFt': 'coastal; the live tide engine owns this, not the profile',
-  'estuary.oysterPresence': 'coastal — v2 is reservoir-only so far',
-  'estuary.primaryInlets': 'coastal — v2 is reservoir-only so far',
-  'estuary.tributaryRivers': 'coastal — v2 is reservoir-only so far',
-  'estuary.waterBodyType': 'coastal — v2 is reservoir-only so far',
-  'tidal.datum': 'coastal; the live tide engine owns this, not the profile',
-  'tidal.flushingTimeDays': 'coastal — v2 is reservoir-only so far',
-  'tidal.salinityPpt': 'coastal — v2 is reservoir-only so far',
-  'tidal.stratificationType': 'coastal — v2 is reservoir-only so far',
-  'tidal.tidalCurrentKts': 'coastal; the live tide engine owns this, not the profile',
-  'tidal.turbidity': 'coastal — clarity comes off the form',
-  'tidal.waterTempF': 'coastal — water temperature comes off the form',
   
   
   'limnology.waterClarity.color': 'typical + secchi already carry clarity',
