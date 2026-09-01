@@ -473,12 +473,35 @@ export function researchIntel(profile, species, season, now = Date.now()) {
   put('Spawn timing', bio.spawnTiming);
   put('Stockings', bio.knownStockings);
 
-  put('Standing timber', hab.standingTimber || hab.timberFields);
+  // THE CHART KNEW ALL OF THIS AND THE PROMPT WAS BEING TOLD THE MODEL'S VERSION.
+  //
+  // deriveGeospatialStructureFacts() fetches the pack's water_features.geojson and pois.geojson
+  // on every research run and writes habitat.structuralElements: named creek mouths, charted
+  // points and coves, and a count of every structure POI type Garmin surveyed -- Flooded Timber,
+  // Shallow Area, Hazard, Attractor, Pile, Bridge. lake-intel.js renders it. THIS FUNCTION NEVER
+  // READ IT, and instead printed `Standing timber` and `Named creek mouths` off the habitat
+  // agent, which was answering from documents and recollection.
+  //
+  // Counted 2026-09-01 across the 343 packs the app offers: 1,352 creek mouths, every single one
+  // of them carrying a name, and 1,469 Flooded Timber POIs in the first 150 packs alone. On
+  // Wateree that is 11 named creek mouths -- Dutchmans, Cedar, White Oak, Fox, Stillhouse Branch
+  // -- against an agent sentence.
+  //
+  // Points, coves and creek mouths are also the structure the PLAN cannot otherwise see:
+  // trolling runs are fitted to structure.geojson, which holds ledges, holes and humps only.
+  const struct = hab.structuralElements || {};
+  put('Named creek mouths', struct.creekMouths);
+  put('Charted points', struct.points);
+  put('Charted coves', struct.coves);
+  put('Charted structure POIs', struct.chartedStructurePois);
   put('Fish attractors', hab.artificialHabitatDetails?.attractorCount);
   put('Attractor types', hab.artificialHabitatDetails?.attractorTypes);
+  // The two habitat fields with no charted source. Garmin ships no substrate or vegetation
+  // layer: across all 343 packs there are 39 distinct poi_type values, none of them vegetation,
+  // and fifteen `rock` POIs in total. These are still the agent's words. See the note on the
+  // habitat agent in lake-research-engine.js.
   put('Bottom', hab.bottomComposition);
   put('Vegetation', hab.vegetation);
-  put('Named creek mouths', hab.namedCreekMouths);
 
   // The fisheries agent's own words for this species and season, beyond the depth band.
   const band = researchedBand(profile, species, s);

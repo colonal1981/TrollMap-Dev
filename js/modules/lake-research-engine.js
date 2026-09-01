@@ -103,7 +103,24 @@ const AGENT_DEFINITIONS = {
   },
   habitat: {
     label: '🌿 Habitat',
-    targetFields: ['habitat.bottomComposition', 'habitat.cover', 'habitat.vegetation', 'habitat.standingTimber', 'habitat.dockDensity', 'habitat.riprapLocations', 'habitat.namedCreekMouths', 'habitat.timberFields', 'habitat.shallowFlatAreas', 'habitat.artificialHabitat', 'habitat.artificialHabitatDetails.attractorCount', 'habitat.artificialHabitatDetails.attractorTypes'],
+    // FIVE OF THE ORIGINAL TWELVE CAME OFF THIS LIST 2026-09-01, BECAUSE THE CHART ANSWERS THEM.
+    //
+    //   namedCreekMouths, standingTimber, timberFields
+    //       water_features.geojson and pois.geojson, read by deriveGeospatialStructureFacts()
+    //       into habitat.structuralElements on every run. 1,352 creek mouths across the 343
+    //       packs the app offers and every one of them named; 1,469 Flooded Timber POIs in the
+    //       first 150 packs. plan-inputs.js reads the pack's answer now -- it had been printing
+    //       the agent's.
+    //   artificialHabitatDetails.attractorCount, .attractorTypes
+    //       Deterministic since the attractor feeds were wired; the prompt skeleton has told the
+    //       agent not to return them for some time, so listing them here as targets it hunts was
+    //       already untrue.
+    //
+    // What is left is seven fields, five of which have no planner reader and carry a written
+    // excuse in research-reaches-the-plan.test.js, and two -- bottomComposition and vegetation --
+    // which the planner DOES read and which have no charted source: across all 343 packs there
+    // are 39 distinct poi_type values, none of them vegetation, and fifteen `rock` POIs in total.
+    targetFields: ['habitat.bottomComposition', 'habitat.vegetation', 'habitat.cover', 'habitat.dockDensity', 'habitat.riprapLocations', 'habitat.shallowFlatAreas', 'habitat.artificialHabitat'],
   },
   // ── `navigation` RETIRED 2026-09-01 ───────────────────────────────────────
   //
@@ -453,10 +470,16 @@ function buildEvidenceEntry(sourceType, sourceLabel, sourceUrl, quote, method, e
   return { sourceType, sourceLabel, sourceUrl, quote: quote || null, method, ...extra };
 }
 
-// Layer the deterministic pass's limnology over a saved section, one real leaf at a time. Only
-// values that exist are copied, so a null in the deterministic skeleton means "this pass has no
-// answer", never "erase what is there".
-function mergeDeterministicLimnology(saved, det) {
+// Layer the deterministic pass's section over a saved one, one real leaf at a time. Only values
+// that exist are copied, so a null in the deterministic skeleton means "this pass has no answer",
+// never "erase what is there".
+//
+// This exists because `existingSavedProfile.<section> || det.<section>` short-circuits on the
+// OBJECT, which every saved profile has, so the deterministic pass is never consulted on a
+// re-run. The ramps comment in assembleAndSaveProfile documents the first time that bit; it has
+// now bitten limnology (the operator's drawdown) and habitat (the pack's structuralElements).
+// One helper, used by both, rather than a third hand-rolled special case.
+function mergeDeterministicSection(saved, det) {
   const out = cloneJson(saved) || {};
   for (const [k, v] of Object.entries(cloneJson(det) || {})) {
     if (v && typeof v === 'object' && !Array.isArray(v)) {
@@ -2747,7 +2770,15 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
   const agentSections = {
     identity:             cloneJson(existingSavedProfile.identity     || det.identity     || {}),
     biology:              cloneJson(existingSavedProfile.biology       || det.biology      || {}),
-    habitat:              cloneJson(existingSavedProfile.habitat      || det.habitat      || {}),
+    // THE PACK'S STRUCTURE MUST REACH THE PROFILE ON EVERY RUN, NOT JUST THE FIRST.
+    //
+    // deriveGeospatialStructureFacts() reads the chartpack and writes habitat.structuralElements
+    // -- named creek mouths, charted points and coves, the Flooded Timber and Shallow Area
+    // counts -- into det.habitat. `existingSavedProfile.habitat || det.habitat` then threw it
+    // away on every re-run, because a saved habitat object is truthy whatever it holds. A
+    // profile written before a pack gained its water_features layer would have vetoed that layer
+    // permanently, and plan-inputs.js now prints those fields to the model.
+    habitat:              mergeDeterministicSection(existingSavedProfile.habitat, det.habitat),
     // RAMPS ARE DETERMINISTIC AND THE SAVED PROFILE MUST NOT VETO THEM.
     //
     // `existingSavedProfile.navigation || det.navigation` short-circuits on the OBJECT
@@ -2778,7 +2809,7 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
     // spread cannot do that job: det.limnology is a fully-shaped skeleton whose sub-objects are
     // present and whose leaves are null, so `{...saved, ...det}` would replace a saved
     // waterClarity holding real values with a waterClarity holding four nulls.
-    limnology:            applyWqpToLimnology(mergeDeterministicLimnology(existingSavedProfile.limnology, det.limnology), wqp),
+    limnology:            applyWqpToLimnology(mergeDeterministicSection(existingSavedProfile.limnology, det.limnology), wqp),
     summary:              cloneJson(existingSavedProfile.summary      || det.summary      || {}),
     trollingIntelligence: existingSavedProfile.trollingIntelligence   || null,
     estuary:              cloneJson(existingSavedProfile.estuary       || {}),

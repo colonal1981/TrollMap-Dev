@@ -372,13 +372,10 @@ Return ONLY:
     "cover": [],
     "vegetation": {},
     "artificialHabitat": [],
-    "//": "artificialHabitatDetails and structuralElements are DERIVED FROM THE CHARTPACK and are already stored. Do not return them.",
+    "//": "artificialHabitatDetails, structuralElements, namedCreekMouths, standingTimber and timberFields are DERIVED FROM THE CHARTPACK and are already stored. Do not return them. The pack carries 1,352 named creek mouths and thousands of Flooded Timber POIs, each one surveyed and positioned.",
     "dockDensity": null,
     "riprapLocations": [],
-    "namedCreekMouths": [],
-    "timberFields": null,
     "shallowFlatAreas": null,
-    "standingTimber": null,
     "notes": ${JSON.stringify(existingHabitat.notes || null)}
   },
   "sources": []

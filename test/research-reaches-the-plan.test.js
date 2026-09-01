@@ -177,6 +177,21 @@ describe('the research pipeline reaches the planner', () => {
     expect(stale).toEqual([]);
   });
 
+  it('the chartpack answers habitat, and the planner reads the chartpack', () => {
+    // deriveGeospatialStructureFacts() has always written habitat.structuralElements from
+    // water_features.geojson and pois.geojson -- named creek mouths, charted points and coves,
+    // and the Flooded Timber / Shallow Area / Hazard counts. lake-intel.js rendered it and THIS
+    // PLANNER NEVER READ IT, printing the habitat agent's `namedCreekMouths` and `standingTimber`
+    // instead. Counted 2026-09-01 over the 343 packs the app offers: 1,352 creek mouths, all of
+    // them named.
+    expect(/structuralElements/.test(PLANNER_CODE)).toBe(true);
+    for (const leaf of ['creekMouths', 'chartedStructurePois']) {
+      expect(new RegExp(`\\b${leaf}\\b`).test(PLANNER_CODE)).toBe(true);
+    }
+    // And the agent's versions must not come back: a survey with a position beats a sentence.
+    expect(/namedCreekMouths|standingTimber|timberFields/.test(PLANNER_CODE)).toBe(false);
+  });
+
   it('the two fields that decide where fish can physically be are consumed', () => {
     // Thermocline and anoxic depth are not colour on a stratified reservoir in August. If these
     // ever fall out of the planner, a plan can put the angler on water nothing can live in.
