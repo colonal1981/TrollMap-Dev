@@ -57,7 +57,7 @@ const { registryRecordFor } = await import('../js/data/access-index.js');
 const { isCoastalKey } = await import('../js/data/coastal-zones.js');
 const { resolveR2Key } = await import('../js/data/lake-keys.js');
 const { makePredicate } = await import('../js/data/water-filter.js');
-const { researchedNames } = await import('../js/data/research-ids.js');
+const { researchedNames, researchStorageIdCandidates } = await import('../js/data/research-ids.js');
 
 let all = [];
 try {
@@ -93,6 +93,32 @@ try {
 }
 const done = researchedNames(worth, list.lakes || []);
 const todo = worth.filter((n) => !done.has(n));
+
+// ── PROFILES NOTHING CAN REACH ──────────────────────────────────────────────────────────────
+//
+// A profile is filed under an id derived from whatever the lake was CALLED when it was written.
+// Rename the water and the old object is still there and no longer answers to anything. That is
+// how J. Strom Thurmond got researched twice on 2026-08-16, and it is a silent failure: the
+// picker simply offers the lake again.
+//
+// The consolidator's own safety check when curated_lakes.json was retired as a name source on
+// 2026-08-24 compared INDEX NAMES before and after and reported one loss. It could not have
+// caught this, because a name can leave the index without anything noticing until a stored
+// profile stops resolving. This is that check, against the bucket, on every run.
+//
+// Measured against ALL offered names rather than the research subset, because the bucket also
+// holds coastal zones and waters under 1,000 acres.
+const reach = new Set();
+for (const n of all) for (const c of researchStorageIdCandidates(n)) reach.add(c);
+const orphans = (list.lakes || [])
+  .map((x) => (typeof x === 'string' ? x : x && x.id)).filter(Boolean)
+  .filter((id) => !reach.has(id));
+if (orphans.length) {
+  console.error(`!! ${orphans.length} profile(s) in R2 that no name the app offers can reach:`);
+  for (const id of orphans) console.error(`     ${id}`);
+  console.error('   Each is a lake that was renamed after its profile was written. Researching it'
+              + ' again writes a second profile beside the first.');
+}
 // ───────────────────────────────────────────────────────────────────────────────────────────
 
 console.error(`${all.length} names offered, ${worth.length} worth researching, `
@@ -121,6 +147,6 @@ if (unstated.length) console.error(`!! no state for: ${unstated.join(', ')}`);
 
 const { writeFileSync } = await import('node:fs');
 const out = JSON.stringify({ generated: new Date().toISOString(),
-  worth: worth.length, researched: [...done].sort(), todo: rows }, null, 2);
+  worth: worth.length, researched: [...done].sort(), orphans, todo: rows }, null, 2);
 if (jsonAt) { writeFileSync(jsonAt, out); console.error(`-> ${jsonAt}`); }
 else process.stdout.write(out);
