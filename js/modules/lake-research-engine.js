@@ -1368,33 +1368,29 @@ function scoreDocuments(normalizedDocuments, baseName, lakeName) {
   }).sort((a, b) => (b.scoring.composite||0) - (a.scoring.composite||0));
 }
 
+// THESE LISTS DID NOT DELETE THEMSELVES, WHICH IS WHAT WAS PREDICTED.
+//
+// RESEARCH_REFACTOR_WHERE_IT_STANDS said the three validation lists "all go to ZERO entries when
+// the eight agents retire. They delete themselves." They did not: they are hand-maintained, and
+// after nine retirements this one still named identity, habitat and navigation paths -- 24 of its
+// 33 entries pointing at agents that no longer exist. Nothing broke, because the validation pass
+// only asks about sections whose agent ran, which is exactly why it would have sat here for
+// months. Trimmed by hand, and the honest lesson is that a list is not self-maintaining just
+// because its consumers are guarded.
+//
+// This list exists to hand a model the fields an agent left null. Only biology has an agent.
 const VALIDATION_FIELD_PATHS = [
-  'identity.surfaceAreaAcres', 'identity.maxDepthFt', 'identity.averageDepthFt',
-  'identity.reservoirOwner', 'identity.riverSystem',
-  'identity.damName', 'identity.yearImpounded', 'identity.county', 'identity.archetype',
-  // Limnology paths removed with the agent: every one is measured or derived from a measurement,
-  // and this list exists to hand null fields to a model to fill.
   'biology.primaryForage', 'biology.secondaryForage', 'biology.predatorSpecies',
   'biology.speciesAbundance', 'biology.knownStockings', 'biology.baitfishMovement',
-  'biology.invasiveSpecies', 'biology.spawnTiming', 'biology.forageSpatial',
-  'habitat.bottomComposition', 'habitat.cover', 'habitat.vegetation',
-  'habitat.standingTimber', 'habitat.dockDensity', 'habitat.riprapLocations',
-  'habitat.namedCreekMouths', 'habitat.timberFields', 'habitat.shallowFlatAreas',
-  'habitat.artificialHabitat', 'habitat.artificialHabitatDetails.attractorCount',
-  'habitat.artificialHabitatDetails.attractorTypes',
-  'navigation.ramps', 'navigation.hazards', 'navigation.notes'
+  'biology.invasiveSpecies', 'biology.spawnTiming', 'biology.forageSpatial'
 ];
 
+// The coastal list keeps its own identity for one reason: it omits `knownStockings` and
+// `invasiveSpecies`, which are reservoir-management questions and not estuary ones. That is the
+// whole remaining difference between the two, so they are two lists rather than one.
 const COASTAL_VALIDATION_FIELD_PATHS = [
-  'estuary.waterBodyType', 'estuary.meanTidalRangeFt', 'estuary.primaryInlets',
-  'estuary.tributaryRivers', 'estuary.marshAcreage', 'estuary.oysterPresence',
-  'tidal.datum', 'tidal.stratificationType', 'tidal.salinityPpt', 'tidal.tidalCurrentKts',
-  'tidal.flushingTimeDays', 'tidal.waterTempF', 'tidal.turbidity',
   'biology.primaryForage', 'biology.secondaryForage', 'biology.predatorSpecies',
   'biology.speciesAbundance', 'biology.baitfishMovement', 'biology.spawnTiming', 'biology.forageSpatial',
-  'habitat.bottomComposition', 'habitat.cover', 'habitat.vegetation',
-  'habitat.riprapLocations', 'habitat.namedCreekMouths', 'habitat.shallowFlatAreas',
-  'navigation.ramps', 'navigation.hazards', 'navigation.notes',
   // `saltwaterRegulations`, `saltwater_regulations` and `regulations` were here, which meant the
   // validation pass asked an LLM to fill the regulations section even with no agent targeting it.
   // The freshwater list never had them. The coastal digest and fetchLiveRegsAmendments() answer
@@ -1520,15 +1516,13 @@ async function validateExistingFacts(lakeName, callbacks = {}) {
   }
 }
 
+// Limnology is not recoverable by a model -- a null there means WQP has no depth profile for this
+// water, and the honest recovery is another sampling program, not a paragraph. Habitat is not
+// recoverable either: the chartpack and the attractor feeds are the source, and if they are silent
+// the water has no charted answer.
 const SMART_PLAN_RECOVERY_FIELDS = [
-  // Limnology is not recoverable by a model -- a null here means WQP has no depth profile for
-  // this water, and the honest recovery is another sampling program, not a paragraph.
   'biology.primaryForage', 'biology.secondaryForage', 'biology.baitfishMovement',
-  'biology.spawnTiming', 'biology.forageSpatial',
-  'habitat.cover', 'habitat.standingTimber', 'habitat.dockDensity',
-  'habitat.riprapLocations', 'habitat.namedCreekMouths', 'habitat.timberFields',
-  'habitat.shallowFlatAreas', 'habitat.artificialHabitat',
-  'habitat.artificialHabitatDetails.attractorCount', 'habitat.artificialHabitatDetails.attractorTypes'
+  'biology.spawnTiming', 'biology.forageSpatial'
 ];
 
 function normalizeMasterForRecovery(profile) {
@@ -3314,14 +3308,11 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
   }
 
   // Validation pass — only runs when we have facts, only checks fields for agents that ran
+  // Filtered by `agentsRan.has(section)` below, so the five retired sections that were still
+  // listed here could never fire -- which is why they survived nine retirements unnoticed.
   const ALL_VALIDATION_FIELDS = {
-    identity:   ['identity.surfaceAreaAcres','identity.maxDepthFt','identity.averageDepthFt','identity.reservoirOwner','identity.riverSystem','identity.damName','identity.yearImpounded','identity.county','identity.archetype'],
     biology:    ['biology.primaryForage','biology.secondaryForage','biology.predatorSpecies','biology.speciesAbundance','biology.knownStockings','biology.baitfishMovement','biology.invasiveSpecies','biology.spawnTiming','biology.forageSpatial'],
-    habitat:    ['habitat.bottomComposition','habitat.cover','habitat.vegetation','habitat.standingTimber','habitat.dockDensity','habitat.riprapLocations','habitat.namedCreekMouths','habitat.timberFields','habitat.shallowFlatAreas','habitat.artificialHabitat','habitat.artificialHabitatDetails.attractorCount','habitat.artificialHabitatDetails.attractorTypes'],
-    navigation: ['navigation.ramps','navigation.hazards','navigation.notes'],
     fisheries:  ['trollingIntelligence'],
-    estuary:    ['estuary.waterBodyType','estuary.meanTidalRangeFt','estuary.primaryInlets','estuary.tributaryRivers','estuary.marshAcreage','estuary.oysterPresence','identity.bodyType','identity.zoneType','identity.tideStation'],
-    tidal:      ['tidal.datum','tidal.stratificationType','tidal.salinityPpt','tidal.tidalCurrentKts','tidal.flushingTimeDays','tidal.waterTempF','tidal.turbidity','limnology.salinity','limnology.tidalRange'],
   };
   // Map agent keys to their section paths for validation — fisheries writes to trollingIntelligence
   const agentSectionPath = (section) => section === 'fisheries' ? 'trollingIntelligence' : section;
