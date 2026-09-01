@@ -1910,12 +1910,15 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
     // Thurmond" where the registry says "J. Strom Thurmond Reservoir", TWRA says "Ft. Loudoun
     // Reservoir" where it says "Fort Loudoun Lake".
     const recForNames = lakeRecordFor(lakeName);
+    // ONE LIST, USED TWICE. Discovery searches under every name the water has, and the off-lake
+    // gate below judges what discovery found under the same ones. They were built separately for
+    // discovery only, and the gate's single display name cost Lanier six of nine documents.
+    const everyName = (recForNames
+      ? [recForNames.name, recForNames.displayName, ...(recForNames.legacyDisplayNames || [])]
+      : []).filter(Boolean).filter((v, i, a) => a.indexOf(v) === i);
     const discoverPayload = {
       lakeName, state: stateName, agent: agentKey,
-      names: recForNames
-        ? [recForNames.name, recForNames.displayName, ...(recForNames.legacyDisplayNames || [])]
-            .filter(Boolean).filter((v, i, a) => a.indexOf(v) === i)
-        : [lakeName],
+      names: everyName.length ? everyName : [lakeName],
       county: recForNames ? (recForNames.county || null) : null,
       reservoirOwner: previousResults.reservoirOwner || null,
       predatorSpecies: previousResults.predatorSpecies || [],
@@ -2271,7 +2274,11 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
         // raisable -- and parsing this payload to filter it does not fit. The browser has the
         // documents and no CPU ceiling; the Worker has the R2 credential and should only
         // write bytes. It streams the body straight into the bucket without reading it.
-        const prepared = prepareNormalizedDocuments(merged, lakeName, []);
+        // `recForNames` is the same registry row the discover payload above was built from, and
+        // the same alias list. Discovery is told every name the water has; until 2026-09-01 the
+        // gate that judged what discovery found was told one, and dropped six of Lanier's nine
+        // documents for not saying "Sidney Lanier".
+        const prepared = prepareNormalizedDocuments(merged, lakeName, [], null, everyName);
         if (prepared.rejected) {
           log(`  [${agentKey}] ${prepared.rejected} off-lake doc(s) of ${prepared.total} dropped before upload`);
         }

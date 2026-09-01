@@ -189,6 +189,24 @@ let _geminiRoundRobinIdx = 0;
 async function callLLM(env, payload, preferredProvider = null) {
   // If no preferred provider specified and we have multiple gemini-free keys,
   // auto-rotate across them to spread RPM load
+  // THE ROTATION PICKS WHERE THE CHAIN STARTS, NOT WHERE IT ENDS.
+  //
+  // It was written to spread RPM across several free Gemini keys, and it did -- but it set
+  // `preferredProvider`, and the line below reads that as "this provider and no other". So from
+  // the moment a second free key existed, EVERY general LLM call in this Worker became
+  // single-provider: one key, its model list, then throw. The whole fallback chain -- the other
+  // free keys, groq, openrouter, cerebras -- was unreachable on any call that did not name a
+  // provider outright, which is all of them.
+  //
+  // Measured 2026-09-01, two consecutive runs of the fisheries batch. Both lost a whole species
+  // group to the same sentence: "gemini/gemini-3.1-flash-lite: This model is currently
+  // experiencing high demand." First run took the crappie group off Lake Sidney Lanier
+  // (Hall Co, GA); second run took the bass group, three species of five. A transient spike on
+  // one key is not a reason to fail a call when other keys and other providers are configured,
+  // and across 64 lakes it would have left dozens of waters quietly short.
+  //
+  // An EXPLICIT preferredProvider still pins -- a caller that names a provider means it.
+  let rotated = false;
   if (!preferredProvider) {
     const freeKeys = ['gemini-free', 'gemini-free2', 'gemini-free3', 'gemini-free4', 'gemini-free5'];
     const available = freeKeys.filter(name => {
@@ -198,11 +216,17 @@ async function callLLM(env, payload, preferredProvider = null) {
     if (available.length > 1) {
       preferredProvider = available[_geminiRoundRobinIdx % available.length];
       _geminiRoundRobinIdx++;
+      rotated = true;
     }
   }
-  const providers = preferredProvider
-    ? LLM_PROVIDERS.filter(p => p.name === preferredProvider)
-    : LLM_PROVIDERS.filter(p => env[p.keyEnv] && !p.excludeFromGeneral);
+  const generalChain = LLM_PROVIDERS.filter(p => env[p.keyEnv] && !p.excludeFromGeneral);
+  const providers = !preferredProvider
+    ? generalChain
+    : rotated
+      // The rotated key first, then everything else the chain would have offered.
+      ? [...LLM_PROVIDERS.filter(p => p.name === preferredProvider),
+         ...generalChain.filter(p => p.name !== preferredProvider)]
+      : LLM_PROVIDERS.filter(p => p.name === preferredProvider);
 
   if (!providers.length) {
     throw new Error("No LLM provider configured. Set GROQ_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY, or CEREBRAS_API_KEY");

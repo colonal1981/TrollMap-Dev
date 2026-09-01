@@ -165,7 +165,7 @@ def pdf_text(data):
         return ""
 
 
-def gate_documents(repo, documents, lake):
+def gate_documents(repo, documents, lake, alt_names=None):
     """
     The off-lake gate, RUN RATHER THAN REIMPLEMENTED.
 
@@ -184,10 +184,11 @@ def gate_documents(repo, documents, lake):
         f"const m = await import({json.dumps('file://' + src.replace(os.sep, '/'))});"
         "const inp = JSON.parse(readFileSync(0,'utf8'));"
         "process.stdout.write(JSON.stringify("
-        "m.prepareNormalizedDocuments(inp.documents, inp.lakeName, [])));"
+        "m.prepareNormalizedDocuments(inp.documents, inp.lakeName, [], null, inp.altNames)));"
     )
     proc = subprocess.run(["node", "--input-type=module", "-e", script],
-                          input=json.dumps({"documents": documents, "lakeName": lake}),
+                          input=json.dumps({"documents": documents, "lakeName": lake,
+                                            "altNames": alt_names or []}),
                           capture_output=True, text=True, encoding="utf-8")
     if proc.returncode != 0:
         raise SystemExit(f"!! the off-lake gate failed to run under node: "
@@ -283,12 +284,13 @@ def fetch_sources(lake, sources, existing, verbose=False):
     return docs, stats
 
 
-def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev"):
+def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev", alt_names=None):
     """One lake, start to saved profile. Returns a result dict; never raises."""
     t0 = time.perf_counter()
     out = {"lake": lake, "state": state, "ok": False, "species": 0, "saved": False, "error": None,
            "confirmed": [], "returned": [], "missing": [], "documents": 0, "facts": 0,
-           "sources": 0, "fetch": {}, "rejected_offlake": 0, "warnings": []}
+           "sources": 0, "fetch": {}, "rejected_offlake": 0, "rejected_docs": [],
+           "warnings": []}
 
     code, det, err = _req("/research/deterministic-facts", {"lakeName": lake, "state": state})
     if code != 200 or not det or not det.get("profile"):
@@ -328,9 +330,16 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev")
     if fetched:
         touched = {norm_url(d.get("url")) for d in fetched}
         merged = [d for d in existing if norm_url(d.get("url")) not in touched] + fetched
-        prepared = gate_documents(repo, merged, lake)
+        prepared = gate_documents(repo, merged, lake, alt_names)
         out["rejected_offlake"] = prepared.get("rejected", 0)
         keep = prepared.get("documents") or []
+        # NAME WHAT THE GATE DROPPED. A count says six documents did not survive; it does not say
+        # whether the gate was right. On 2026-09-01 Lanier fetched nine and kept three, twice, and
+        # there was no way to tell a correctly-rejected off-lake page from a Lake Lanier report
+        # thrown out for not spelling itself "Sidney Lanier". The titles decide that in one read.
+        kept_urls = {norm_url(d.get("url")) for d in keep}
+        out["rejected_docs"] = [{"title": d.get("title"), "url": d.get("url")}
+                                for d in merged if norm_url(d.get("url")) not in kept_urls]
         code, _, err = _req(f"/research/save-normalized?lake={urllib.parse.quote(lake)}"
                             f"&n={len(keep)}&rejected={out['rejected_offlake']}", keep)
         if code != 200:
@@ -424,6 +433,19 @@ def load_lakes(args, registry):
     with open(idx_path, encoding="utf-8") as f:
         idx = json.load(f)
 
+    # EVERY NAME THE WATER HAS, off the registry, for the off-lake gate. lake-research-engine.js
+    # builds the same list for /research/discover -- `[name, displayName, ...legacyDisplayNames]`
+    # -- and the gate needs it for the same reason: Lanier's documents say "Lake Lanier" and its
+    # registry name is "Lake Sidney Lanier". Six of nine were dropped for that on 2026-09-01.
+    alt_names = {}
+    for slug, row in idx.items():
+        name = row.get("display_name") or row.get("name") or slug
+        legacy = row.get("legacy_display_names")
+        if legacy is None:
+            legacy = [row["legacy_display_name"]] if row.get("legacy_display_name") else []
+        names = [row.get("name"), row.get("display_name"), *legacy]
+        alt_names[name.strip().lower()] = [n for n in dict.fromkeys(names) if n]
+
     if args.lake:
         # THE STATE COMES OFF THE REGISTRY, NOT OFF A DEFAULT. A one-lake run is how the cold-run
         # cost gets measured, and the cold lakes are in GA, NC and TN -- Lanier, Townsend, Watauga.
@@ -440,7 +462,7 @@ def load_lakes(args, registry):
             if not args.state and n.strip().lower() not in by_name:
                 print(f"!! {n} is not in lake_index.json -- falling back to state=SC. "
                       f"Pass --state if that is wrong.")
-            out.append((n, st))
+            out.append((n, st, alt_names.get(n.strip().lower(), [])))
         return out
 
     out = []
@@ -454,7 +476,7 @@ def load_lakes(args, registry):
         if slug.startswith("coast_"):
             continue
         name = row.get("display_name") or row.get("name") or slug
-        out.append((name, row.get("state") or "SC"))
+        out.append((name, row.get("state") or "SC", alt_names.get(name.strip().lower(), [])))
     out.sort(key=lambda p: p[0])
     return out
 
@@ -509,8 +531,8 @@ def main():
     results = []
 
     def work(pair):
-        name, st = pair
-        r = research_one(name, st, a.dry_run, a.verbose, a.repo)
+        name, st, alts = pair
+        r = research_one(name, st, a.dry_run, a.verbose, a.repo, alts)
         done[0] += 1
         mark = "ok " if r["ok"] else "FAIL"
         secs = f'{r.get("seconds", 0):5.1f}s'
@@ -558,6 +580,16 @@ def main():
             print(f"  {r['lake']}: {r.get('sources', 0)} sources discovered, "
                   f"{f.get('failed', 0)} failed to download, "
                   f"{r.get('rejected_offlake', 0)} dropped as off-lake")
+
+    gated = [r for r in ok if r.get("rejected_docs")]
+    if gated:
+        print(f"\nthe off-lake gate dropped documents on {len(gated)} water(s) "
+              f"-- check these are actually off-lake:")
+        for r in gated:
+            print(f"  {r['lake']}: {len(r['rejected_docs'])} of "
+                  f"{len(r['rejected_docs']) + r['documents']}")
+            for d in r["rejected_docs"][:6]:
+                print(f"      {str(d.get('title'))[:70]}  {str(d.get('url'))[:70]}")
 
     os.makedirs(os.path.dirname(a.report) or ".", exist_ok=True)
     with open(a.report, "w", encoding="utf-8") as f:

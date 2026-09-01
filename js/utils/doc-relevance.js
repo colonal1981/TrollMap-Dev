@@ -41,7 +41,7 @@ export function lakeTerms(lakeName) {
  * Official sources bypass it: an SCDNR or EPA document is about the water it is about, and
  * dropping one for failing a substring test costs more than the occasional off-lake page.
  */
-export function isOnLakeDoc(doc, lakeName) {
+export function isOnLakeDoc(doc, lakeName, altNames = []) {
   const { baseName, state } = lakeTerms(lakeName);
   const url = String(doc?.url || '').toLowerCase();
   if (OFFICIAL_SOURCE.test(url)) return true;
@@ -49,8 +49,35 @@ export function isOnLakeDoc(doc, lakeName) {
   const combined = `${String(doc?.title || '').toLowerCase()} ${url} `
     + `${String(doc?.fullText || doc?.text || '').slice(0, 3000).toLowerCase()}`;
 
-  const hasLakeName = [String(lakeName || '').toLowerCase(), baseName.toLowerCase()]
-    .filter(Boolean).some((t) => combined.includes(t));
+  // EVERY NAME THE WATER HAS, because discovery was already told all of them and this was not.
+  //
+  // lake-research-engine.js builds `names` for /research/discover out of the registry row --
+  // `[name, displayName, ...legacyDisplayNames]` -- under a comment naming the exact problem:
+  // "SCDNR says 'Lake Thurmond' where the registry says 'J. Strom Thurmond Reservoir', TWRA says
+  // 'Ft. Loudoun Reservoir' where it says 'Fort Loudoun Lake'." Discovery then found documents
+  // under those names and handed them here, where the gate knew only the display name and threw
+  // them away.
+  //
+  // Measured 2026-09-01 on two runs of the batch: Lake Sidney Lanier (Hall Co, GA) fetched nine
+  // documents and this gate rejected SIX of them, both times. Its base name is "Sidney Lanier"
+  // and every document in the world writes "Lake Lanier" -- which the registry has known all
+  // along, in legacy_display_names. Counted across the 64 research waters: 40 carry a legacy
+  // name whose base differs from the one this looks for, and the clean misses are the ones
+  // nobody spells the registry's way -- Clarks Hill for Thurmond, Jordan Lake for B. Everett
+  // Jordan Lake, Moss Lake for John H. Moss Lake, and every Lake-versus-Reservoir pair in
+  // Tennessee, where "Norris Reservoir" does not contain "Norris Lake".
+  //
+  // Still both halves: a name AND a state. Widening the names does not widen the state test,
+  // which is what keeps "Marion Lake, MN" out.
+  const names = [String(lakeName || ''), baseName];
+  for (const alt of Array.isArray(altNames) ? altNames : []) {
+    if (!alt) continue;
+    names.push(String(alt), lakeTerms(alt).baseName);
+  }
+  const hasLakeName = names
+    .map((t) => String(t || '').toLowerCase().trim())
+    .filter((t) => t.length >= 4)
+    .some((t) => combined.includes(t));
   if (!hasLakeName) return false;
   if (!state) return true;
 
@@ -60,7 +87,7 @@ export function isOnLakeDoc(doc, lakeName) {
 }
 
 /** The finished array the Worker will store verbatim. */
-export function prepareNormalizedDocuments(documents, lakeName, agentTags = [], nowIso = null) {
+export function prepareNormalizedDocuments(documents, lakeName, agentTags = [], nowIso = null, altNames = []) {
   const all = Array.isArray(documents) ? documents : [];
   const stamp = nowIso || new Date().toISOString();
   // AGENT TAGS ARE POSITIONAL AGAINST THE ORIGINAL LIST, so the original index has to be
@@ -71,7 +98,7 @@ export function prepareNormalizedDocuments(documents, lakeName, agentTags = [], 
   // moving it out of an HTTP handler.
   const kept = all
     .map((doc, i) => ({ doc, i }))
-    .filter(({ doc }) => isOnLakeDoc(doc, lakeName));
+    .filter(({ doc }) => isOnLakeDoc(doc, lakeName, altNames));
   return {
     documents: kept.map(({ doc, i }) => ({
       ...doc,
