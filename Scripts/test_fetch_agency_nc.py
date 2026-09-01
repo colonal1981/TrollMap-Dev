@@ -17,6 +17,7 @@ Personal use only, not for distribution or resale; not for navigation.
 import os, sys
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
+import urllib.parse
 import fetch_agency_lake_pages as F
 
 FAILED = []
@@ -118,6 +119,44 @@ check('the pagination link is not mistaken for a species',
       any('?page=' in u for u, _ in d), False)
 check('a document link is not mistaken for a species page',
       any('/media/' in u for u, _ in d), False)
+
+# ── The /fishing subtree, which is where the black bass reports actually live ─────────────────
+# /species/largemouth-bass exists and carries ZERO document links; every largemouth report hangs
+# off /fishing/black-bass-north-carolina/largemouth-bass. Real hrefs off the /fishing page.
+FISHING = '''
+<a href="/fishing/regulations">Regulations</a>
+<a href="/fishing/where-fish">Where to Fish</a>
+<a href="/fishing/black-bass-north-carolina">Black Bass in North Carolina</a>
+<a href="/fishing/striped-bass-fishing-information">Striped Bass Fishing Information</a>
+<a href="/fishing/trout-fishing-north-carolina">Trout Fishing in North Carolina</a>
+<a href="/fishing/fishing-research-reports">Fishing Research Reports</a>
+<a href="/species/bluegill">Bluegill</a>
+<a href="https://www.ncwildlife.gov/media/3595/open">a document</a>
+<a href="https://www.eregulations.com/northcarolina/fishing">off site</a>
+'''
+f = F.links_on(FISHING, 'https://www.ncwildlife.gov/fishing', spec, spec['seed_link'])
+paths = [urllib.parse.urlparse(u).path for u, _ in f]
+check('the /fishing walk finds the species hubs',
+      set(['/fishing/black-bass-north-carolina', '/fishing/striped-bass-fishing-information',
+           '/fishing/trout-fishing-north-carolina', '/fishing/fishing-research-reports'])
+      <= set(paths), True)
+check('it stays inside /fishing', [p for p in paths if not p.startswith('/fishing/')], [])
+check('an offsite link is not followed', any('eregulations' in u for u, _ in f), False)
+
+# Hop two: the hub names its own species pages, which is where the documents are.
+HUB = '''
+<a href="/fishing/black-bass-north-carolina/largemouth-bass">Largemouth Bass</a>
+<a href="/fishing/black-bass-north-carolina/alabama-bass">Alabama Bass</a>
+<a href="/fishing">back to Fishing</a>
+'''
+h = F.links_on(HUB, 'https://www.ncwildlife.gov/fishing/black-bass-north-carolina', spec,
+               spec['seed_link'])
+check('hop two reaches the page the largemouth reports are on',
+      'https://www.ncwildlife.gov/fishing/black-bass-north-carolina/largemouth-bass'
+      in [u for u, _ in h], True)
+check('three segments deep is not followed',
+      F.links_on('<a href="/fishing/a/b/c">too deep</a>', 'https://www.ncwildlife.gov/fishing',
+                 spec, spec['seed_link']), [])
 
 print('\n%s' % ('%d FAILED' % len(FAILED) if FAILED else 'all checks passed'))
 sys.exit(1 if FAILED else 0)

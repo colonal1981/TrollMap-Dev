@@ -119,16 +119,28 @@ STATES = {
         'directory': ('https://www.ncwildlife.gov/wildlife-habitat/species'
                       '?field_catalog_categories_target_id_6%5B1547%5D=1547&page={page}'),
         'directory_pages': 4,
-        # The black bass and striped bass pages live outside /species/ and carry reports of their
-        # own, so they are seeded alongside whatever the directory turns up.
-        'seed': [
-            'https://www.ncwildlife.gov/fishing/black-bass-north-carolina/largemouth-bass',
-            'https://www.ncwildlife.gov/fishing/black-bass-north-carolina/smallmouth-bass',
-            'https://www.ncwildlife.gov/fishing/black-bass-north-carolina/spotted-bass',
-            'https://www.ncwildlife.gov/fishing/black-bass-north-carolina/alabama-bass',
-            'https://www.ncwildlife.gov/fishing/black-bass-north-carolina/bartrams-bass',
-            'https://www.ncwildlife.gov/fishing/striped-bass-fishing-information',
-        ],
+        # ── THE SPECIES DIRECTORY IS NOT ENOUGH, AND /species/largemouth-bass PROVES IT ───────
+        #
+        # That page exists, and it carries ZERO document links. Every largemouth report -- the
+        # longest list NC WRC publishes, Hyco and Lookout Shoals and High Rock and Moss and
+        # W. Kerr Scott among them -- hangs off /fishing/black-bass-north-carolina/largemouth-bass
+        # instead. Other families put theirs on the species page: black crappie carries fourteen,
+        # flathead catfish ten. Both shapes are real and neither covers the other.
+        #
+        # So the second frontier is the /fishing subtree, and it is WALKED rather than typed. The
+        # first cut of this named five black bass pages and the striped bass page, and that list
+        # was already short by two: /fishing/trout-fishing-north-carolina is a third species hub
+        # and /fishing/fishing-research-reports is the recent-years index, thirteen documents that
+        # are on no species page at all. A typed list is a list that is wrong the day after it is
+        # typed.
+        #
+        # Two hops and no further: /fishing names its hubs, a hub names its species pages, and a
+        # species page is where the documents are. The pattern is anchored to the /fishing subtree
+        # on one host, so nothing outside it is followed.
+        'seed_index': 'https://www.ncwildlife.gov/fishing',
+        'seed_link': re.compile(r'^(?:https?://(?:www\.)?ncwildlife\.gov)?'
+                                r'/fishing/[a-z0-9-]+(?:/[a-z0-9-]+)?/?$', re.I),
+        'seed_hops': 2,
         'folder': 'NC_Lakes',
         # LEVEL 1: a species page. `/index.php/species/<slug>` appears on the directory beside the
         # clean form and is the same page, so both spellings are taken and de-duplicated by url.
@@ -404,10 +416,26 @@ def main():
                 level1 += [(u, None) for u in fresh]
                 print('   %d species page(s), %d new' % (len(hits), len(fresh)))
                 time.sleep(a.delay)
-            for u in spec.get('seed', []):
-                if u not in seen1:
-                    seen1.add(u)
-                    level1.append((u, 'seed'))
+            # The /fishing subtree, walked to `seed_hops` and unioned into the same frontier.
+            frontier, hops = [spec['seed_index']], 0
+            while frontier and hops < spec.get('seed_hops', 0):
+                nxt = []
+                for u in frontier:
+                    try:
+                        body, _ = fetch(u)
+                    except (urllib.error.URLError, urllib.error.HTTPError, OSError) as e:
+                        print('   !! %s: %s' % (u, e))
+                        continue
+                    for hu, _t in links_on(body.decode('utf-8', 'replace'), u, spec,
+                                           spec['seed_link']):
+                        if hu in seen1:
+                            continue
+                        seen1.add(hu)
+                        nxt.append(hu)
+                        level1.append((hu, 'fishing'))
+                    time.sleep(a.delay)
+                print('   /fishing hop %d: %d new page(s)' % (hops + 1, len(nxt)))
+                frontier, hops = nxt, hops + 1
             print('\n   %d species page(s) to read' % len(level1))
             if not level1:
                 print('!! the directory parsed and linked nothing -- the page shape changed. '
