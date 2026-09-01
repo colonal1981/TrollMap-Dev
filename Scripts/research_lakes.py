@@ -368,7 +368,8 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
                  tpm=DEFAULT_TPM):
     """One lake, start to saved profile. Returns a result dict; never raises."""
     t0 = time.perf_counter()
-    out = {"lake": lake, "state": state, "ok": False, "species": 0, "saved": False, "error": None,
+    out = {"lake": lake, "state": state, "aliases": list(alt_names or []),
+           "ok": False, "species": 0, "saved": False, "error": None,
            "confirmed": [], "returned": [], "missing": [], "documents": 0, "facts": 0,
            "sources": 0, "fetch": {}, "rejected_offlake": 0, "rejected_docs": [],
            "chars_sent": 0, "retries": 0, "group_attempts": {}, "saved_key": None,
@@ -595,6 +596,18 @@ def load_lakes(args, registry):
         names = [row.get("name"), row.get("display_name"), *legacy]
         alt_names[name.strip().lower()] = [n for n in dict.fromkeys(names) if n]
 
+    if getattr(args, "from_report", None):
+        # THE NAMES A PRIOR RUN USED, WHICH ARE THE APP'S NAMES. --todo only offers waters with no
+        # profile, so it cannot repeat a batch: the moment the first run saves, they all disappear
+        # from it. Reading them back out of the report keeps the same spellings -- the ones that
+        # resolve onto the stored profile on both the read and the write -- without anybody
+        # retyping a list.
+        with open(args.from_report, encoding="utf-8") as f:
+            prior = json.load(f)
+        args.lake = [r["lake"] for r in (prior.get("results") or []) if r.get("lake")]
+        print(f"repeating {len(args.lake)} water(s) from "
+              f"{os.path.basename(args.from_report)}")
+
     if getattr(args, "todo", False):
         # The app's name, its state and its alias set, all decided by the same registryRecordFor()
         # that produced the name. Nothing here is looked up again in lake_index.json: these names
@@ -615,13 +628,23 @@ def load_lakes(args, registry):
         for slug, row in idx.items():
             name = row.get("display_name") or row.get("name") or slug
             by_name[name.strip().lower()] = row.get("state")
+        # A report carries the state and the aliases the run used; a registry lookup on an app
+        # name does not find them. Same lesson as the first --todo run, which sent Georgia and
+        # Tennessee lakes to the Worker as South Carolina.
+        prior_state, prior_alias = {}, {}
+        if getattr(args, "from_report", None):
+            with open(args.from_report, encoding="utf-8") as f:
+                for r in (json.load(f).get("results") or []):
+                    if r.get("lake"):
+                        prior_state[r["lake"]] = r.get("state")
+                        prior_alias[r["lake"]] = r.get("aliases") or []
         out = []
         for n in args.lake:
-            st = args.state or by_name.get(n.strip().lower()) or "SC"
-            if not args.state and n.strip().lower() not in by_name:
+            st = args.state or prior_state.get(n) or by_name.get(n.strip().lower()) or "SC"
+            if not args.state and not prior_state.get(n) and n.strip().lower() not in by_name:
                 print(f"!! {n} is not in lake_index.json -- falling back to state=SC. "
                       f"Pass --state if that is wrong.")
-            out.append((n, st, alt_names.get(n.strip().lower(), [])))
+            out.append((n, st, prior_alias.get(n) or alt_names.get(n.strip().lower(), []) or [n]))
         return out
 
     out = []
@@ -649,6 +672,9 @@ def main():
                          "than reimplementing them: the off-lake gate, the storage-id resolver, "
                          "and the research tab's own not-researched-yet list.")
     ap.add_argument("--lake", action="append", help="one water by display name (repeatable)")
+    ap.add_argument("--from-report", metavar="PATH",
+                    help="re-run exactly the waters a previous report covered, with the names it "
+                         "used. For repeating a batch after a fix rather than retyping it.")
     ap.add_argument("--todo", action="store_true",
                     help="research exactly what the app's Research tab lists as not researched "
                          "yet, via Scripts/research_todo.mjs. This is the one to use.")
