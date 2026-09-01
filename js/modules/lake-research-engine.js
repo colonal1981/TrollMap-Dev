@@ -2981,6 +2981,40 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
       if (sectionKeys.length === 0) {
         log(`  ⚠️ [fisheries] LLM returned empty section — trollingIntelligence not updated`);
       }
+      // THE SPECIES LIST FISHERIES ESTABLISHED FOR ITSELF, WHEN NOTHING ELSE COULD.
+      //
+      // The agent runs in DISCOVER mode only when every deterministic source came back empty --
+      // no ramp record, no agency lake page, no lake-specific regulation. Measured 2026-09-01
+      // over the 64 inland lakes above 1,000 acres the research tab offers, that is four waters:
+      // Robinson, William C Bowen, Bay Tree and White Lake. It answers from OFFICIAL agency
+      // documents only and carries the sentence that establishes each fish.
+      //
+      // Written into biology.predatorSpecies so the roster has one home and one shape whatever
+      // found it, and so `_speciesDiscoveredBy` marks the four waters whose list came from a
+      // model reading a document rather than from a structured feed. That mark is the point: a
+      // reader can tell the difference, which it could not if this were merged silently.
+      const found = Array.isArray(data.data?.speciesFound) ? data.data.speciesFound : [];
+      if (found.length) {
+        const named = found
+          .map((f) => String((f && (f.species || f.name)) || '').trim())
+          .filter(Boolean);
+        const bio = agentSections.biology = agentSections.biology || {};
+        const before = new Set((bio.predatorSpecies || []).map((s) => String(s).toLowerCase()));
+        const added = coerceSpeciesArray(named).filter((s) => !before.has(String(s).toLowerCase()));
+        if (added.length) {
+          bio.predatorSpecies = [...(bio.predatorSpecies || []), ...added];
+          bio._speciesDiscoveredBy = 'fisheries agent, from agency documents (no deterministic source for this water)';
+          evidence.biology = evidence.biology || {};
+          evidence.biology.predatorSpecies = [
+            ...(evidence.biology.predatorSpecies || []),
+            ...found.filter((f) => f && (f.species || f.name)).map((f) => buildEvidenceEntry(
+              'agency_document', String(f.source || 'agency document'), null,
+              f.quote ? String(f.quote).slice(0, 400) : null, 'fisheries_agent_species_discovery',
+              { species: String(f.species || f.name) })),
+          ];
+          log(`  [fisheries] established ${added.length} species from documents: ${added.join(', ')}`);
+        }
+      }
       agentSections.trollingIntelligence = merged;
     } else {
       agentSections[agentKey] = merged;

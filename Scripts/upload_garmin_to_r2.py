@@ -675,7 +675,7 @@ def main():
         print("!! NO REGISTRY DIR -- looked beside --root and in ./registry.")
         print("!! NONE of the _registry/ objects will be published -- lakes.json, "
               "lake_index.json, water_bindings.json, water_chain.json, dam_table.json, "
-              "nc_species_by_lake.json, full_pool.json.")
+              "nc_species_by_lake.json, agency_lake_facts.json, full_pool.json.")
         print("!! The app reads all three: lake-registry.js loads the index, and "
               "Worker/conditions.js")
         print("!! answers every level, flow and tide request off the bindings.")

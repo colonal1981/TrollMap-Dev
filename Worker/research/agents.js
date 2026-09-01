@@ -474,7 +474,20 @@ JSON only. Never output a string or array for creelLimits or sizeLimits.`;
     userTemplate: (lakeName, state, prev) => {
       const bio = prev?.biology || {};
       const confirmedSpecies = Array.isArray(bio.predatorSpecies) ? bio.predatorSpecies : [];
-      const speciesList = confirmedSpecies.length > 0 ? confirmedSpecies : ['(none confirmed — biology section empty)'];
+      // TWO MODES, AND THE SECOND ONE EXISTS BECAUSE THE FIRST USED TO PRODUCE GARBAGE.
+      //
+      // This read `(none confirmed — biology section empty)` into the species list when the
+      // deterministic sources had nothing, and then told the model to write intelligence for
+      // ONLY that "species". Ryan, 2026-09-01: "we just need the fisheries intel agent to ask
+      // that question before it gets the intel on those species... for lakes that do not have
+      // that info from a deterministic source it can be searched for using research."
+      //
+      // Measured the same day over the 64 inland lakes above 1,000 acres the research tab
+      // actually offers: 60 arrive with a species list from a deterministic source and 4 do not
+      // -- Robinson, William C Bowen, Bay Tree and White Lake. So DISCOVER mode is the rare path
+      // and CLOSED mode stays exactly as it was, byte for byte, when a list exists.
+      const discover = confirmedSpecies.length === 0;
+      const speciesList = discover ? [] : confirmedSpecies;
       const speciesArrayStr = speciesList.map(s => `"${s}"`).join(', ');
       const exampleSpecies = speciesList[0] || 'SpeciesName';
       const primaryForage = Array.isArray(bio.primaryForage) ? bio.primaryForage : (typeof bio.primaryForage === 'string' ? [bio.primaryForage] : []);
@@ -491,8 +504,30 @@ Lake profile (use for confirmed species, forage, limnology context):
 ${JSON.stringify(cleanProfile(prev), null, 2).slice(0, 12000)}
 ${docSection}${prev?._behaviourBlock || ''}
 
-CONFIRMED SPECIES (ONLY these — do not add others):
-${speciesList.join(', ')}
+${discover ? `NO SPECIES LIST EXISTS FOR THIS WATER. ESTABLISH ONE FIRST, THEN WRITE THE INTELLIGENCE.
+
+No deterministic source -- no state ramp record, no agency lake page, no lake-specific regulation
+-- names a single fish in this water. That is why you are being asked, and it is the ONLY reason
+you may name a species at all.
+
+Rules for establishing the list, and they are the same rules the retired biology agent carried
+because the failure they prevent is the same one:
+
+  A. A species counts as present ONLY if an OFFICIAL AGENCY source in the documents above says so
+     -- SCDNR, NCWRC, GADNR, TWRA, TVA, USACE, USGS, EPA, a state regulations digest, or a dated
+     agency survey. A fishing guide, a report site, a forum post or a social media page is NOT
+     evidence of presence, however confident it sounds. Those sources are for behaviour, not for
+     what lives here.
+  B. NEVER name: sturgeon, paddlefish, gar, eel, lamprey, shad, herring, carp, drum, buffalo,
+     sucker, or any protected, endangered or baitfish species. Those are forage or rough fish and
+     do not belong in a predator list.
+  C. If the documents do not support a species, LEAVE IT OUT. A short honest list is correct. An
+     empty list is also correct and is far better than a plausible one -- return
+     "speciesFound": [] and "trollingIntelligence": {} and say why in the note.
+
+Return what you established in "speciesFound", each entry carrying the sentence that establishes
+it, and then write trollingIntelligence for exactly those species and no others.` : `CONFIRMED SPECIES (ONLY these — do not add others):
+${speciesList.join(', ')}`}
 
 SPECIES NAME RESOLUTION — CRITICAL:
 Source documents (especially state agency pages like TWRA, SCDNR, NCWRC, DNR) frequently use GROUP TERMS as section headings. These are NOT valid species keys — you MUST split them into individual species from the confirmed list above.
@@ -582,7 +617,12 @@ If a season is completely unknown, use null for that season entry.
 
 Return ONLY:
 {
-  "trollingIntelligence": {
+${discover ? `  "speciesFound": [
+    {"species": "Largemouth Bass",
+     "source": "SCDNR lake page / TWRA survey / state regulations digest — name the agency",
+     "quote": "the verbatim sentence from the documents that establishes this fish is in this water"}
+  ],
+` : ''}  "trollingIntelligence": {
     "${exampleSpecies}": {
       "summer": {
         "preferredDepth": [12,18],
@@ -602,7 +642,7 @@ Return ONLY:
   "sources": [{"label":"Derived from lake profile and source documents","trust":"DERIVED"}]
 }
 
-Species list MUST be ONLY: [${speciesArrayStr}] — do NOT add species not in this list.
+${discover ? 'The species keys in trollingIntelligence MUST be exactly the names you returned in speciesFound.' : `Species list MUST be ONLY: [${speciesArrayStr}] — do NOT add species not in this list.`}
 preferredDepth MUST be a 2-element number array [minDepthFt, maxDepthFt] or null — NEVER a bare array at the season level.
 JSON only.`;
     },
