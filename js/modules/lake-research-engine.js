@@ -88,7 +88,25 @@ const AGENT_DEFINITIONS = {
   },
   navigation: {
     label: '🧭 Navigation',
-    targetFields: ['navigation.ramps', 'navigation.hazards', 'navigation.notes'],
+    // `ramps` and `notes` dropped 2026-08-31. deterministic.js has filled `navigation.ramps` from
+    // the registry's geometry-bound feeds since it was written -- 9 on Wateree -- and the agent
+    // was being asked for a list the pipeline already had. `navigation.notes` has NO reader: the
+    // only two matches in js/ or Worker/ are comments naming these very targetFields, and what it
+    // holds on Wateree is "Public access is available at Lake Wateree State Recreational Area",
+    // which is the ramps list again in prose.
+    //
+    // `hazards` stays, and it is the only one of the three with a live consumer: researchHazards()
+    // in plan-inputs.js feeds both the Lake Intelligence Briefing and the plan prompt's safety
+    // section, alongside chartedHazards() off the pack's POI layer.
+    //
+    // WHETHER IT EARNS ITS PLACE IS A JUDGEMENT AND IT IS RYAN'S. Counted over the 63 profiles:
+    // 42 carry hazards, 88 sentences in all, and reading them -- 9 are generic TVA boilerplate
+    // ("fluctuating water levels common in TVA reservoirs"), 9 name a marina or a neighbouring
+    // lake rather than a hazard, several are regulations filed in the wrong section, and a
+    // minority are real and local. Wateree's two are one of each: an S-20-101 bridge replacement
+    // with a project id, and "severe thunderstorms historical activity", which the live wind and
+    // weather path already answers better.
+    targetFields: ['navigation.hazards'],
   },
   fisheries: {
     label: '🧠 Species Intelligence',

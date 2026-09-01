@@ -152,11 +152,32 @@ describe('staleness signalling (verifyBy is the review date, whatever it current
     expect(r.warnings.join(' ')).toMatch(/CoastalGaDNR\.org/i);
   });
 
+  // THIS TEST GOING RED IS A NOTIFICATION, NOT A BUG.
+  //
+  // It fired for the first time at midnight on 2026-09-01, when NC's `verifyBy` came due. That is
+  // the whole point of it: the numbers in this table are law, they are copied out of a book, and
+  // NC amends by proclamation with little notice. A quiet expiry is the failure -- the app would
+  // keep printing a slot limit that a proclamation had already replaced.
+  //
+  // `expected 1788220800000 to be > 1788221786879` is a true statement and a useless one, so the
+  // failure now says which state, by how long, and what closes it. DO NOT fix this by moving the
+  // date. It is closed by reading the agency's current rules and updating the entries, or by
+  // deleting the state's block if it is not being maintained.
   it('every state review date is still ahead of us', () => {
+    const now = Date.now();
+    const due = [];
     for (const st of ['SC', 'GA', 'NC']) {
-      const vb = new Date(COASTAL_REGULATIONS[st]._meta.verifyBy);
-      expect(vb.getTime()).toBeGreaterThan(Date.now());
+      const meta = COASTAL_REGULATIONS[st]._meta;
+      const vb = new Date(meta.verifyBy);
+      if (vb.getTime() <= now) {
+        const days = Math.floor((now - vb.getTime()) / 86400000);
+        due.push(`${st} (${meta.agency}) expired ${meta.verifyBy}, ${days} day(s) ago — `
+               + `re-verify at ${meta.url}`);
+      }
     }
+    expect(due.join(' | '), 'a coastal regulation table is past its review date. This is a '
+         + 'notification: re-verify against the agency and update the entries. Do NOT move '
+         + 'verifyBy to make this pass.').toEqual('');
   });
 
   it('every state declares an agency, url and review date', () => {
