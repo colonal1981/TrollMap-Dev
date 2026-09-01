@@ -42,6 +42,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -588,6 +589,25 @@ def main():
     done = [0]
     results = []
 
+    # THE REPORT IS WRITTEN AFTER EVERY LAKE, NOT AT THE END.
+    #
+    # It used to be dumped once, when the whole run finished. On two lakes that is a couple of
+    # minutes of nothing on disk; on the sixty-four-lake quarterly run it is an hour and a half
+    # during which the only way to know anything is to watch the terminal -- which is the exact
+    # problem the report was added to solve. Ryan drives this box over Chrome Remote Desktop.
+    # A partial report is also what survives a run that dies in the middle.
+    report_lock = threading.Lock()
+
+    def flush_report(wall, partial):
+        os.makedirs(os.path.dirname(a.report) or ".", exist_ok=True)
+        tmp = a.report + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"worker": WORKER, "dry_run": a.dry_run, "wall_seconds": round(wall, 1),
+                       "generated": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                       "in_progress": partial, "done": len(results), "of": len(lakes),
+                       "results": results}, f, indent=2)
+        os.replace(tmp, a.report)          # never leave a half-written report to be read
+
     def work(pair):
         name, st, alts = pair
         r = research_one(name, st, a.dry_run, a.verbose, a.repo, alts, a.tpm)
@@ -607,13 +627,17 @@ def main():
             detail += "  LOST: " + ", ".join(r["missing"])
         print(f"  [{done[0]:3d}/{len(lakes)}] {mark} {secs}  {name[:42]:44s}{detail}"
               + (f"  -- {r['error']}" if r["error"] else ""))
+        with report_lock:
+            results.append(r)
+            flush_report(time.perf_counter() - t0, True)
         return r
 
     if a.jobs > 1:
         with ThreadPoolExecutor(max_workers=a.jobs) as ex:
-            results = list(ex.map(work, lakes))
+            list(ex.map(work, lakes))
     else:
-        results = [work(p) for p in lakes]
+        for p in lakes:
+            work(p)
 
     wall = time.perf_counter() - t0
     ok = [r for r in results if r["ok"]]
@@ -661,11 +685,7 @@ def main():
             for d in r["rejected_docs"][:6]:
                 print(f"      {str(d.get('title'))[:70]}  {str(d.get('url'))[:70]}")
 
-    os.makedirs(os.path.dirname(a.report) or ".", exist_ok=True)
-    with open(a.report, "w", encoding="utf-8") as f:
-        json.dump({"worker": WORKER, "dry_run": a.dry_run, "wall_seconds": round(wall, 1),
-                   "generated": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                   "results": results}, f, indent=2)
+    flush_report(wall, False)
     print(f"\nreport -> {a.report}")
     return 1 if bad else 0
 
