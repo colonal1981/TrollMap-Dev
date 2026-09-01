@@ -229,57 +229,24 @@ JSON only.`;
     },
     expectedKey: "identity"
   },
-  limnology: {
-    label: "Limnology",
-    order: 2,
-    system: "You are a limnologist data assembly agent. Map extracted facts and depth profile data to the limnology JSON. depletionDepthFt = shallowest depth where DO drops below 2 mg/L. anoxicBelowFt = depth where DO approaches 0. thermocline summerDepthFt = single number (midpoint of thermocline range, in feet). Convert meters to feet (×3.281). All numeric fields must be numbers or null — NEVER strings. Return ONLY valid JSON.",
-    userTemplate: (lakeName, state, prev) => {
-      const facts = prev?._extractedFacts || [];
-      const limFacts = facts.filter(f =>
-        /limnology|thermocline|oxygen|clarity|secchi|trophic|depth.?profile|water.?clarity|hydraulic|retention|do_depth|temp_depth/i.test(f.category + ' ' + f.fact)
-      );
-      const factsBlock = limFacts.map(f =>
-        `• [${f.category}] ${f.fact} (source: ${f.source}, confidence ${f.confidence}%)\n  Quote: "${f.quote}"`
-      ).join('\n\n');
-
-      const docSection = prev?._documentContext
-        ? `\n\nRAW DOCUMENT TEXT (look for depth profile tables with DO and temperature readings at multiple depths):\n${prev._documentContext.slice(0, 40000)}`
-        : '';
-
-      return `Extract limnology data for ${lakeName} from facts and documents.
-
-EXTRACTED FACTS:
-${factsBlock || 'No limnology facts extracted — derive from document depth profiles.'}
-
-INSTRUCTIONS:
-1. secchiFt: The EPA NES table has a row labeled "SECCHI (METERS)" — that is the only row for Secchi. Convert meters × 3.281. NEVER use alkalinity (10-35 mg/L), conductivity, pH, or any other row as Secchi. Most SE piedmont reservoirs have secchi < 5ft, but oligotrophic mountain lakes (Nantahala, Santeetlah, Jocassee, etc.) can have legitimate secchi of 10-20ft. Only reject values above 25ft as implausible.
-2. thermocline.summerDepthFt: find where temperature drops sharply with depth in summer profiles. Report as a SINGLE NUMBER (the midpoint in feet, e.g. 19 for a 16-22ft range). NEVER a string, NEVER a range string like "16-22".
-3. oxygen.depletionDepthFt: depth where DO first drops below 2 mg/L in summer. Must be a number or null — never the string "null".
-4. oxygen.anoxicBelowFt: depth where DO approaches 0. Must be a number or null — never the string "null".
-5. trophicStatus: derive from phosphorus, Secchi, chlorophyll data if present.
-6. hydraulicRetentionDays: look for "retention time" or "residence time" in days. Number or null.
-7. All depth values in feet — convert meters × 3.281.
-8. CRITICAL: Every numeric field must be a JSON number or JSON null. Never use the string "null", never use a range string. If data is unavailable, use JSON null.
-${docSection}
-
-Return ONLY:
-{
-  "limnology": {
-    "waterClarity": {"typical": null, "color": null, "secchiFt": null, "note": null},
-    "thermocline": {"summerDepthFt": null, "strength": null, "winterMix": null, "confidence": null, "note": null},
-    "oxygen": {"depletionDepthFt": null, "anoxicBelowFt": null, "note": null},
-    "trophicStatus": null,
-    "hydraulicRetentionDays": null,
-    "flowCharacteristics": null,
-    "seasonalDrawdownFt": null,
-    "phTypical": null
-  },
-  "sources": []
-}
-JSON only.`;
-    },
-    expectedKey: "limnology"
-  },
+  // ── `limnology` RETIRED 2026-09-01 ────────────────────────────────────────────────────────
+  //
+  // All ten of its target fields are now measured, derived from a measurement, or gone.
+  //
+  //   secchiFt, thermocline.summerDepthFt, oxygen.anoxicBelowFt   WQP depth-profile samples
+  //   oxygen.depletionDepthFt                                     same DO bins, 5 mg/L standard
+  //   trophicStatus, waterClarity.typical                         Carlson TSI off that secchi
+  //   seasonalDrawdownFt                                          Duke operating-range API
+  //   waterClarity.color, thermocline.strength, flowCharacteristics   cut, no reader worth one
+  //
+  // The system prompt this replaces defined "depletionDepthFt = shallowest depth where DO drops
+  // below 2 mg/L" and "anoxicBelowFt = depth where DO approaches 0" -- one threshold asked for
+  // twice, which is why the two numbers were never usefully different. They are 5 mg/L and
+  // 2 mg/L now, both published standards, both read off the same binned profile.
+  //
+  // What made this agent worth retiring rather than improving: every number it wrote landed on
+  // top of a WQP-derived one, and the evidence row underneath still said the value came from
+  // state monitoring data.
   biology: {
     label: "Fisheries Biology",
     order: 3,
@@ -1006,26 +973,21 @@ async function handleResearchAgent(request, env) {
   }
 
   // Inject document text for agents that benefit from reading source material directly
-  // limnology gets the EPA/water quality docs; biology gets the fisheries docs
+  // biology gets the fisheries docs
   // fisheries gets fishing guide/report docs — seasonal behavior lives in these, not the profile
   // summary gets concise excerpts from cached docs so it is grounded in the same evidence corpus.
-  // identity uses _extractedFacts only — raw docs make prompt too large for Cerebras TPM
-  const docInjectionAgents = new Set(['limnology', 'biology', 'habitat', 'fisheries', 'summary']);
+  const docInjectionAgents = new Set(['biology', 'habitat', 'fisheries', 'summary']);
   if (docInjectionAgents.has(agentKey) && previousResults._normalizedDocuments?.length) {
     const docFilter = {
-      limnology: /epa|nscep|water.?qual|characteriz|nutrient|limnol/i,
-      identity:  /epa|nscep|water.?qual|characteriz|sc.?lake|dnr/i,
       biology:   /striped.?bass|fisheries|biology|annual|species|stocking|fish|bass|crappie|catfish|pattern|forage|shad|herring|omnia|conventional|sportsman|tactic|guide/i,
       habitat:   /habitat|attractor|structure|dnr|sc.?lake/i,
       fisheries: /fish|bass|crappie|striper|catfish|pattern|season|depth|behavior|report|tactic|guide|omnia|conventional|sportsman/i,
       summary:   /lake|reservoir|water.?quality|fisher|biology|habitat|navigation|regulation|report|plan|assessment|dnr|duke|owner|dam/i,
     };
     const filter = docFilter[agentKey];
-    // Gemini free-tier requests must stay comfortably below token-per-minute
-    // limits. Limnology already receives extracted facts, so two focused source
-    // excerpts are enough for table/profile confirmation; summary gets short
-    // excerpts from several documents because it also receives the saved profile.
-    const maxDocs = agentKey === 'limnology' ? 2 : agentKey === 'fisheries' ? 8 : agentKey === 'summary' ? 8 : 8;
+    // Gemini free-tier requests must stay comfortably below token-per-minute limits. Summary gets
+    // short excerpts from several documents because it also receives the saved profile.
+    const maxDocs = 8;
     // 150,000 CHARACTERS PER DOCUMENT WAS NOT A BUDGET, IT WAS THE ABSENCE OF ONE.
     //
     // Eight documents at that cap is 1.2 million characters -- roughly 300,000 tokens of raw
@@ -1039,7 +1001,7 @@ async function handleResearchAgent(request, env) {
     // A fishing report says everything useful about where fish sit in its first few thousand
     // characters. The agency survey PDFs that were eating the budget are the right source for
     // population and stocking and say nothing about holding depth at all.
-    const charsPerDoc = agentKey === 'limnology' ? 15000 : agentKey === 'fisheries' ? 20000 : agentKey === 'summary' ? 8000 : 40000;
+    const charsPerDoc = agentKey === 'fisheries' ? 20000 : agentKey === 'summary' ? 8000 : 40000;
     const matched = previousResults._normalizedDocuments
       .filter(d => !filter || filter.test(d.title + ' ' + d.url));
 
@@ -1437,22 +1399,9 @@ holding: coerceHolding(entry.holding, holdingRejects),
   let sectionData = (parsed[dataKey] && Object.keys(parsed[dataKey]).length > 0) ? parsed[dataKey] : (parsed[agentKey] && Object.keys(parsed[agentKey] || {}).length > 0) ? parsed[agentKey] : parsed;
   const sources = parsed.sources || sectionData?.sources || [];
 
-  // Sanitize limnology output — coerce string "null" and range strings to proper types
-  if (agentKey === 'limnology' && sectionData) {
-    const lim = sectionData;
-    if (lim.thermocline) {
-      lim.thermocline.summerDepthFt = coerceNum(lim.thermocline.summerDepthFt);
-    }
-    if (lim.oxygen) {
-      lim.oxygen.depletionDepthFt = coerceNum(lim.oxygen.depletionDepthFt);
-      lim.oxygen.anoxicBelowFt = coerceNum(lim.oxygen.anoxicBelowFt);
-    }
-    if (lim.waterClarity) {
-      lim.waterClarity.secchiFt = coerceNum(lim.waterClarity.secchiFt);
-    }
-    lim.hydraulicRetentionDays = coerceNum(lim.hydraulicRetentionDays) ?? lim.hydraulicRetentionDays;
-    lim.seasonalDrawdownFt = coerceNum(lim.seasonalDrawdownFt) ?? lim.seasonalDrawdownFt;
-  }
+  // The limnology coercion block that stood here existed to repair a model returning the string
+  // "null" and range strings where numbers belonged. Every one of those numbers is now read off a
+  // depth profile or an operator's table as a JSON number, so there is nothing left to repair.
 
   // Sanitize regulations output — fix malformed creelLimits/sizeLimits
   // Agent sometimes returns these as strings or arrays instead of {species: limit} objects

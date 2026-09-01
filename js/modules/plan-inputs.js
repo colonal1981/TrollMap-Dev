@@ -441,9 +441,14 @@ export function researchIntel(profile, species, season, now = Date.now()) {
   put('Average depth', id.averageDepthFt, ' ft');
 
   // The two that decide where the fish can physically be.
+  //
+  // `thermocline.strength` used to be appended here in parentheses. It was a qualitative word
+  // from the limnology agent, and the only branch that could ever have derived it honestly is
+  // the temperature-gradient fallback -- the higher-confidence DO-profile branch computes no
+  // gradient at all. One adjective, available only on the weaker of two paths, is not worth a
+  // derivation, so it is gone rather than guessed.
   if (lim.thermocline?.summerDepthFt) {
-    out.push(`Thermocline in summer: ${lim.thermocline.summerDepthFt} ft`
-      + (lim.thermocline.strength ? ` (${lim.thermocline.strength})` : ''));
+    out.push(`Thermocline in summer: ${lim.thermocline.summerDepthFt} ft`);
   }
   put('Anoxic below', lim.oxygen?.anoxicBelowFt, ' ft — nothing holds under this in late summer');
   put('Oxygen depletion begins', lim.oxygen?.depletionDepthFt, ' ft');
@@ -451,7 +456,11 @@ export function researchIntel(profile, species, season, now = Date.now()) {
   put('Typical clarity', lim.waterClarity?.typical);
   put('Secchi', lim.waterClarity?.secchiFt, ' ft');
   put('Seasonal drawdown', lim.seasonalDrawdownFt, ' ft');
-  put('Flow', lim.flowCharacteristics);
+  // `Flow: <prose>` STOOD HERE AND IS GONE. It was a stored sentence about how the water
+  // generally moves, printed a few lines above a live gauge section that already carries today's
+  // discharge, how it compares to normal, the median for the date, the gauge name, and a
+  // paragraph telling the model whether this is a river or an impoundment reading. A remembered
+  // generality standing next to a measured number can only agree with it or contradict it.
 
   // Ryan's call, 2026-08-07: these belong in the plan. What else is in the lake and how
   // abundant the target actually is are both arguments about lure and presentation.

@@ -646,11 +646,10 @@ Map this information to this exact JSON schema. Every null means no information 
     "aliases": []
   },
   "limnology": {
-    "waterClarity": {"typical": null, "color": null, "secchiFt": null, "note": null},
-    "thermocline": {"summerDepthFt": null, "strength": null, "winterMix": null, "note": null},
+    "waterClarity": {"typical": null, "secchiFt": null, "note": null},
+    "thermocline": {"summerDepthFt": null, "winterMix": null, "note": null},
     "oxygen": {"depletionDepthFt": null, "anoxicBelowFt": null, "note": null},
     "trophicStatus": null,
-    "flowCharacteristics": null,
     "seasonalDrawdownFt": null
   },
   "biology": {

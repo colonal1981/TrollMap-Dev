@@ -52,9 +52,13 @@ describe('the two agents that used to write the regulations', () => {
     // and plan-inputs.js read three, two of which the chartpack already derives and the third of
     // which the registry's feature_type answers. estuary and tidal: fifteen fields between them
     // and not one reader outside this pipeline -- the live tide and gauge path answers the cards.
-    for (const k of ['identity', 'estuary', 'tidal', 'navigation']) expect(keys.includes(k)).toBe(false);
-    // and the five that remain are still there
-    for (const k of ['limnology', 'biology', 'habitat', 'fisheries', 'summary']) {
+    // `limnology` joined them on 2026-09-01. Ten target fields: six are read off WQP/SCDES depth
+    // profiles or derived from that same secchi, one is the operator's published drawdown table,
+    // and three had no reader worth a derivation. Its answers had been landing on top of the
+    // measured ones under an evidence row citing the monitoring data they displaced.
+    for (const k of ['identity', 'estuary', 'tidal', 'navigation', 'limnology']) expect(keys.includes(k)).toBe(false);
+    // and the four that remain are still there
+    for (const k of ['biology', 'habitat', 'fisheries', 'summary']) {
       expect(keys.includes(k)).toBe(true);
     }
   });

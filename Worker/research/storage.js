@@ -470,7 +470,7 @@ REQUESTED FIELDS:\n${nullFields.join('\n')}
 EXTRACTED, SOURCE-BACKED FACTS:\n${facts.slice(0, 30000)}
 
 Return only a JSON object whose keys are requested dot paths and whose values are explicitly supported by the facts. Omit unsupported fields. Do not infer.
-Rules: depth values must be specific and convert meters × 3.281; normalPoolFt must be an actual pool elevation, not a fluctuation; trophicStatus must be eutrophic, mesotrophic, oligotrophic, or oligotrophic/mesotrophic. thermocline.strength is qualitative only (for example weak, moderate, strong, distinct); never put a depth, a depth range, feet, or meters in that field.`;
+Rules: depth values must be specific and convert meters × 3.281; normalPoolFt must be an actual pool elevation, not a fluctuation.`;
   const payload = {
     messages: [
       { role: 'system', content: 'You are a JSON-only evidence extraction agent. Never guess.' },
@@ -492,14 +492,11 @@ Rules: depth values must be specific and convert meters × 3.281; normalPoolFt m
     // name rather than the prompt literally.
     const candidate = parsed.filled && typeof parsed.filled === 'object' && !Array.isArray(parsed.filled)
       ? parsed.filled : parsed;
-    const validFieldValue = (path, value) => {
-      if (path === 'limnology.thermocline.strength') {
-        const text = String(value || '').toLowerCase();
-        // A measurement belongs in summerDepthFt, not the qualitative strength field.
-        if (/\b(m|meters?|feet|ft)\b|^\s*\d/.test(text)) return /\b(weak|moderate|strong|distinct)\b/.test(text) && !/\d/.test(text);
-      }
-      return true;
-    };
+    // `limnology.thermocline.strength` was the one field this guard existed for -- a qualitative
+    // word the model kept answering with a depth. The field is gone, and every limnology number
+    // now comes off a depth profile, so there is no path left for this to catch. The trophicStatus
+    // wording rule went with it: that bucket is read off Carlson's secchi boundaries, not written.
+    const validFieldValue = () => true;
     const filled = Object.fromEntries(Object.entries(candidate).filter(([path, value]) =>
       allowed.has(path) && value !== null && value !== '' && !(Array.isArray(value) && !value.length) && validFieldValue(path, value)
     ));

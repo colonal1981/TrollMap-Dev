@@ -49,7 +49,7 @@ window.TROLLMAP_RESEARCHED_CACHE = window.TROLLMAP_RESEARCHED_CACHE || {};
 // plan-inputs.js read three of them: archetype/bodyType, maxDepthFt, averageDepthFt. The
 // last two are geometry-derived off the chartpack; the first is the registry's
 // `feature_type`. The other six have no reader anywhere outside this pipeline.
-const FRESHWATER_RESEARCH_ORDER = ['limnology', 'biology', 'habitat', 'fisheries', 'summary'];
+const FRESHWATER_RESEARCH_ORDER = ['biology', 'habitat', 'fisheries', 'summary'];
 const COASTAL_RESEARCH_ORDER = ['biology', 'habitat', 'fisheries', 'summary'];
 
 // WHAT THE RESEARCH CARD DRAWS. A superset of the agent list, and it stays a superset: a section
@@ -62,7 +62,6 @@ const COASTAL_PROFILE_SECTIONS = ['estuary', 'tidal', 'biology', 'habitat', 'nav
 const RESEARCH_ORDER = FRESHWATER_RESEARCH_ORDER;
 
 const RESEARCH_LABELS = {
-  limnology: '🌊 Limnology',
   biology: '🐟 Fisheries',
   habitat: '🌿 Habitat',
   regulations: '📜 Regulations',
@@ -73,10 +72,32 @@ const RESEARCH_LABELS = {
 
 // Agent definitions with target fields for validation
 const AGENT_DEFINITIONS = {
-  limnology: {
-    label: '🌊 Limnology',
-    targetFields: ['limnology.waterClarity.typical', 'limnology.waterClarity.color', 'limnology.waterClarity.secchiFt', 'limnology.thermocline.summerDepthFt', 'limnology.thermocline.strength', 'limnology.oxygen.depletionDepthFt', 'limnology.oxygen.anoxicBelowFt', 'limnology.trophicStatus', 'limnology.flowCharacteristics', 'limnology.seasonalDrawdownFt'],
-  },
+  // ── `limnology` RETIRED 2026-09-01 ────────────────────────────────────────
+  //
+  // Ten target fields, and a measured answer already existed for most of them.
+  //
+  //   secchiFt · thermocline.summerDepthFt · oxygen.anoxicBelowFt
+  //       WQP/SCDES depth-profile samples, binned by depth, already fetched every run.
+  //   oxygen.depletionDepthFt
+  //       The same bins walked to the 5 mg/L aquatic-life standard. The agent's own prompt
+  //       defined this as "DO below 2 mg/L" -- the anoxic threshold -- so the two numbers it
+  //       was asked for were one number asked for twice.
+  //   trophicStatus · waterClarity.typical
+  //       Carlson's secchi boundaries, which this file already used for the trophic bucket and
+  //       now reads a second label off. One scale, no new numbers.
+  //   seasonalDrawdownFt
+  //       Duke's /lakes/operating-range table. identityGrounding() has been computing the swing
+  //       between the highest and lowest monthly target on every run and discarding it.
+  //   waterClarity.color · thermocline.strength · flowCharacteristics
+  //       Cut. `color` had no reader outside the research page, where the measured turbidity
+  //       already sits. `strength` was one parenthetical adjective in the prompt, derivable only
+  //       on the weaker of the two thermocline branches. `flowCharacteristics` was stored prose
+  //       standing beside a live gauge discharge the prompt already carries in full.
+  //
+  // The reason it had to go rather than improve: applyWqpToLimnology() wrote four of these ONLY
+  // into a hole, and the agent merge then copied every non-null agent value over the top -- while
+  // buildWqpEvidence() stamped the row "Water Quality Portal / SCDES monitoring" regardless. A
+  // recalled number was being stored under a citation to the state monitoring data it displaced.
   biology: {
     label: '🐟 Fisheries Biology',
     targetFields: ['biology.primaryForage', 'biology.secondaryForage', 'biology.predatorSpecies', 'biology.speciesAbundance', 'biology.knownStockings', 'biology.baitfishMovement', 'biology.invasiveSpecies', 'biology.spawnTiming', 'biology.forageSpatial'],
@@ -419,6 +440,44 @@ function buildEvidenceEntry(sourceType, sourceLabel, sourceUrl, quote, method, e
   return { sourceType, sourceLabel, sourceUrl, quote: quote || null, method, ...extra };
 }
 
+// Layer the deterministic pass's limnology over a saved section, one real leaf at a time. Only
+// values that exist are copied, so a null in the deterministic skeleton means "this pass has no
+// answer", never "erase what is there".
+function mergeDeterministicLimnology(saved, det) {
+  const out = cloneJson(saved) || {};
+  for (const [k, v] of Object.entries(cloneJson(det) || {})) {
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      const sub = { ...(out[k] && typeof out[k] === 'object' && !Array.isArray(out[k]) ? out[k] : {}) };
+      for (const [sk, sv] of Object.entries(v)) if (hasResearchValue(sv)) sub[sk] = sv;
+      if (Object.keys(sub).length) out[k] = sub;
+    } else if (hasResearchValue(v)) {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+// THE MEASUREMENT OUTRANKS THE MODEL, WHICH IS NOT HOW THIS READ.
+//
+// Every one of these five numbers is derived from state depth-profile samples, and four of them
+// were written ONLY INTO A HOLE -- `!hasResearchValue(...)` -- so the limnology agent's answer
+// won whenever it had one. Then the merge loop further down (`agentKey === 'limnology'`) copied
+// every non-null agent sub-field over the top, with exactly one carve-out for secchi.
+//
+// The consequence was not just a worse number. buildWqpEvidence() runs unconditionally on
+// `wqp.thermocline?.depthFt != null` and stamps `limnology.thermocline` with "Water Quality
+// Portal / SCDES monitoring" and the derivation method. So a model's recalled depth was stored
+// under a citation to state monitoring data that did not produce it. A wrong number is a wrong
+// number; a wrong number wearing an official source is how it never gets caught.
+//
+// So WQP now simply wins where WQP has an answer, the agent is retired below, and the evidence
+// row describes the value actually stored.
+//
+// `waterClarity.typical` joins them because it is the same measurement in words. It reuses the
+// Carlson boundaries already sitting in this function rather than inventing a second set of
+// secchi cut-offs -- one scale, two labels. Lakes with turbidity and no secchi keep a null
+// `typical` and carry the measured NTU in `note`; there is no published NTU-to-adjective scale
+// to bucket those against, and guessing one is the thing this refactor is removing.
 function applyWqpToLimnology(base = {}, wqp = null) {
   const out = cloneJson(base) || {};
   if (!wqp?.ok) return out;
@@ -430,40 +489,55 @@ function applyWqpToLimnology(base = {}, wqp = null) {
   if (wqp.surfaceWater?.recentTurbidityNTU != null && !out.waterClarity.note) {
     out.waterClarity.note = `Recent WQP/SCDES surface turbidity around ${wqp.surfaceWater.recentTurbidityNTU} NTU.`;
   }
-  // WQP secchi always wins when it has 5+ samples — higher confidence than any single doc extraction
-  if (wqp.secchi?.avgSecchiDepthFt != null && (wqp.secchi.sampleCount >= 5 || !hasResearchValue(out.waterClarity.secchiFt))) {
-    out.waterClarity.secchiFt = wqp.secchi.avgSecchiDepthFt;
+  const secchiFt = wqp.secchi?.avgSecchiDepthFt;
+  if (secchiFt != null) {
+    out.waterClarity.secchiFt = secchiFt;
+    // Carlson TSI(SD) boundaries, in feet. One set of thresholds, read twice.
+    if (wqp.secchi.sampleCount >= 5) {
+      if (secchiFt < 1.6)       { out.trophicStatus = 'hypereutrophic'; out.waterClarity.typical = 'muddy'; }
+      else if (secchiFt < 6.6)  { out.trophicStatus = 'eutrophic';      out.waterClarity.typical = 'stained'; }
+      else if (secchiFt < 13.0) { out.trophicStatus = 'mesotrophic';    out.waterClarity.typical = 'clear'; }
+      else                      { out.trophicStatus = 'oligotrophic';   out.waterClarity.typical = 'very clear'; }
+    }
   }
-  if (wqp.thermocline?.depthFt != null && !hasResearchValue(out.thermocline?.summerDepthFt)) {
+  if (wqp.thermocline?.depthFt != null) {
     out.thermocline = out.thermocline || {};
     out.thermocline.summerDepthFt = wqp.thermocline.depthFt;
     out.thermocline.method = wqp.thermocline.method || null;
     out.thermocline.note = wqp.note || out.thermocline.note || null;
   }
-  if (wqp.oxygen?.anoxicBelowFt != null && !hasResearchValue(out.oxygen?.anoxicBelowFt)) {
+  if (wqp.oxygen) {
     out.oxygen = out.oxygen || {};
-    out.oxygen.anoxicBelowFt = wqp.oxygen.anoxicBelowFt;
+    if (wqp.oxygen.anoxicBelowFt != null) out.oxygen.anoxicBelowFt = wqp.oxygen.anoxicBelowFt;
+    if (wqp.oxygen.depletionDepthFt != null) out.oxygen.depletionDepthFt = wqp.oxygen.depletionDepthFt;
     out.oxygen.note = wqp.oxygen.note || out.oxygen.note || null;
-  }
-  // Derive trophic status from WQP secchi depth (Carlson TSI thresholds) when not already set
-  if (!hasResearchValue(out.trophicStatus) && wqp.secchi?.avgSecchiDepthFt != null && wqp.secchi.sampleCount >= 5) {
-    const s = wqp.secchi.avgSecchiDepthFt;
-    if (s < 1.6)       out.trophicStatus = 'hypereutrophic';
-    else if (s < 6.6)  out.trophicStatus = 'eutrophic';
-    else if (s < 13.0) out.trophicStatus = 'mesotrophic';
-    else               out.trophicStatus = 'oligotrophic';
   }
   return out;
 }
 
+// An evidence row is a claim about where a stored value came from, so it is written for the
+// fields this pass actually stores and no others. Previously `waterClarity` and `trophicStatus`
+// were derived here and cited nowhere, while `thermocline` was cited whether or not the derived
+// depth survived the agent merge.
 function buildWqpEvidence(wqp) {
   if (!wqp?.ok) return {};
   const sourceUrl = 'worker:/research/limnology-data';
-  const entry = buildEvidenceEntry('official_structured', 'Water Quality Portal / SCDES monitoring', sourceUrl, null, 'structured_surface_monitoring', { lastObserved: wqp.lastObserved, recordCount: wqp.recordCount });
+  const LABEL = 'Water Quality Portal / SCDES monitoring';
+  const entry = buildEvidenceEntry('official_structured', LABEL, sourceUrl, null, 'structured_surface_monitoring', { lastObserved: wqp.lastObserved, recordCount: wqp.recordCount });
   const evidence = { limnology: {} };
   if (wqp.surfaceWater) evidence.limnology.surfaceWater = [entry];
-  if (wqp.thermocline?.depthFt != null) evidence.limnology.thermocline = [buildEvidenceEntry('official_structured', 'Water Quality Portal / SCDES monitoring', sourceUrl, null, wqp.thermocline.method || 'depth_profile_derivation', { lastObserved: wqp.lastObserved, evidenceCount: wqp.thermocline.evidenceCount })];
-  if (wqp.oxygen?.anoxicBelowFt != null) evidence.limnology.oxygen = [entry];
+  if (wqp.thermocline?.depthFt != null) {
+    evidence.limnology.thermocline = [buildEvidenceEntry('official_structured', LABEL, sourceUrl, null, wqp.thermocline.method || 'depth_profile_derivation', { lastObserved: wqp.lastObserved, evidenceCount: wqp.thermocline.evidenceCount })];
+  }
+  if (wqp.oxygen && (wqp.oxygen.anoxicBelowFt != null || wqp.oxygen.depletionDepthFt != null)) {
+    evidence.limnology.oxygen = [buildEvidenceEntry('official_structured', LABEL, sourceUrl, null, 'do_depth_profile_thresholds', { lastObserved: wqp.lastObserved, evidenceCount: wqp.oxygen.evidenceCount })];
+  }
+  if (wqp.secchi?.avgSecchiDepthFt != null) {
+    const clarity = buildEvidenceEntry('official_structured', LABEL, sourceUrl, null, wqp.secchi.basis === 'turbidity' ? 'turbidity_samples' : 'secchi_samples', { lastObserved: wqp.secchi.lastObserved || wqp.lastObserved, evidenceCount: wqp.secchi.sampleCount });
+    evidence.limnology.waterClarity = [clarity];
+    // The trophic bucket IS the secchi reading, read against Carlson's boundaries.
+    if (wqp.secchi.sampleCount >= 5) evidence.limnology.trophicStatus = [buildEvidenceEntry('official_structured', LABEL, sourceUrl, null, 'carlson_tsi_from_secchi', { lastObserved: wqp.secchi.lastObserved || wqp.lastObserved, evidenceCount: wqp.secchi.sampleCount })];
+  }
   return evidence;
 }
 
@@ -1197,11 +1271,8 @@ const VALIDATION_FIELD_PATHS = [
   'identity.surfaceAreaAcres', 'identity.maxDepthFt', 'identity.averageDepthFt',
   'identity.reservoirOwner', 'identity.riverSystem',
   'identity.damName', 'identity.yearImpounded', 'identity.county', 'identity.archetype',
-  'limnology.waterClarity.typical', 'limnology.waterClarity.color',
-  'limnology.waterClarity.secchiFt', 'limnology.thermocline.summerDepthFt',
-  'limnology.thermocline.strength', 'limnology.thermocline.winterMix',
-  'limnology.oxygen.depletionDepthFt', 'limnology.oxygen.anoxicBelowFt',
-  'limnology.trophicStatus', 'limnology.flowCharacteristics', 'limnology.seasonalDrawdownFt',
+  // Limnology paths removed with the agent: every one is measured or derived from a measurement,
+  // and this list exists to hand null fields to a model to fill.
   'biology.primaryForage', 'biology.secondaryForage', 'biology.predatorSpecies',
   'biology.speciesAbundance', 'biology.knownStockings', 'biology.baitfishMovement',
   'biology.invasiveSpecies', 'biology.spawnTiming', 'biology.forageSpatial',
@@ -1349,10 +1420,8 @@ async function validateExistingFacts(lakeName, callbacks = {}) {
 }
 
 const SMART_PLAN_RECOVERY_FIELDS = [
-  'limnology.waterClarity.typical', 'limnology.waterClarity.color', 'limnology.waterClarity.secchiFt',
-  'limnology.thermocline.summerDepthFt', 'limnology.thermocline.strength',
-  'limnology.oxygen.depletionDepthFt', 'limnology.oxygen.anoxicBelowFt',
-  'limnology.flowCharacteristics', 'limnology.seasonalDrawdownFt',
+  // Limnology is not recoverable by a model -- a null here means WQP has no depth profile for
+  // this water, and the honest recovery is another sampling program, not a paragraph.
   'biology.primaryForage', 'biology.secondaryForage', 'biology.baitfishMovement',
   'biology.spawnTiming', 'biology.forageSpatial',
   'habitat.cover', 'habitat.standingTimber', 'habitat.dockDensity',
@@ -1413,11 +1482,17 @@ function applyShallowLakeApplicability(profile, fields) {
     || (Number.isFinite(max) && max <= 15 && Number.isFinite(avg) && avg <= 8);
   if (!noPersistentThermocline) return fields;
   const exempt = new Set([
-    'limnology.thermocline.summerDepthFt', 'limnology.thermocline.strength',
+    'limnology.thermocline.summerDepthFt',
     'limnology.oxygen.depletionDepthFt', 'limnology.oxygen.anoxicBelowFt'
   ]);
-  for (const path of fields) {
-    if (!exempt.has(path)) continue;
+  // THE STAMP IS ABOUT THE WATER, NOT ABOUT WHAT THIS RUN HAPPENS TO BE ASKING FOR.
+  //
+  // This iterated `fields` and stamped only the exempt paths it found there. That was equivalent
+  // while the recovery list contained all three; it stopped being equivalent the moment limnology
+  // came out of that list with the agent. The stamp would then never be written, and
+  // gateOverallConfidence would go back to docking a farm pond for having no thermocline -- a
+  // penalty this function exists to prevent, silently undone by an edit somewhere else.
+  for (const path of exempt) {
     profile.fieldStatus[path] = {
       status: 'not_applicable',
       reason: `Maximum depth ${max} ft${Number.isFinite(avg) ? ` and average depth ${avg} ft` : ''} indicate no persistent, Smart Plan-relevant summer thermocline or deep oxygen floor.`
@@ -1430,7 +1505,6 @@ function scoreRecoveryDocument(doc, fields) {
   const id = `${doc.title || ''} ${doc.url || ''}`.toLowerCase();
   const text = String(doc.fullText || doc.text || '').slice(0, 120000).toLowerCase();
   let score = /usgs|epa|water.?quality|limnolog|spartanburgwater|operator|reservoir/i.test(id) ? 20 : 0;
-  if (fields.some(f => f.startsWith('limnology.')) && /thermocline|dissolved oxygen|secchi|water quality|stratif|limnolog|profile/.test(text)) score += 30;
   if (fields.some(f => f.startsWith('biology.')) && /forage|herring|shad|spawn|stocking|fisheries|species/.test(text)) score += 20;
   if (fields.some(f => f.startsWith('habitat.')) && /timber|riprap|creek|dock|attractor|vegetation|brush|flat|structure/.test(text)) score += 20;
   if (/facebook|lake biwa|researchgate|bowfishing/i.test(id)) score -= 30;
@@ -1775,9 +1849,7 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
     // Discovered sources sorted by prefetchScore descending, then capped.
     // Sources without prefetchScore get a default of 3 so they're not unfairly cut.
     const AGENT_SOURCE_CAPS = {
-      identity: 8, limnology: 12, biology: 12, habitat: 8,
-      navigation: 8, fisheries: 10, summary: 0,
-      estuary: 8, tidal: 12,
+      biology: 12, habitat: 8, fisheries: 10, summary: 0,
     };
     const cap = AGENT_SOURCE_CAPS[agentKey] ?? 10;
     const guaranteed = sources.filter(s => s.priority === 1);
@@ -2415,9 +2487,16 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
     } catch (e) { log(`⚠️ Geospatial structure failed: ${e.message}`); }
   }
 
-  // WQP limnology — runs on both full and resume when limnology is selected.
-  // runFullPipeline also runs this in Step 1d; runAgents handles the resume case.
-  if (mode === 'resume' && agentKeys.includes('limnology')) {
+  // WQP IS NO LONGER GATED ON AN AGENT, BECAUSE THE AGENT IS GONE AND THE DATA IS NOT OPTIONAL.
+  //
+  // This read `agentKeys.includes('limnology')`, which was correct while the limnology agent was
+  // the thing that consumed the WQP answer. It is now the ONLY source of the thermocline, the two
+  // oxygen depths, secchi, the clarity word and the trophic bucket -- so resuming any other agent
+  // with this gate in place would have quietly assembled a profile with all six missing and saved
+  // it over one that had them.
+  //
+  // runFullPipeline runs this in Step 1d; runAgents handles the resume case.
+  if (mode === 'resume') {
     setProgress('WQP limnology data...', 5);
     await fetchWqpLimnology(lakeName);
   }
@@ -2451,7 +2530,7 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
   //   Wave2: biology, fisheries (shared, with coastal hints)
   // `regulations` and `saltwater_regulations` were the fifth member of each wave and are retired;
   // the digest is parsed live and its closures are what checkRegulations() reads.
-  const FRESH_WAVE1 = ['limnology', 'habitat'];
+  const FRESH_WAVE1 = ['habitat'];
   const COASTAL_WAVE1 = ['habitat'];
   const WAVE1_AGENTS = coastalForRun ? COASTAL_WAVE1 : FRESH_WAVE1;
   const WAVE2_AGENTS = ['biology', 'fisheries'];
@@ -2654,11 +2733,10 @@ async function runFullPipeline(lakeName, selectedAgents, callbacks = {}) {
       }
     } catch (e) { log(`⚠️ Geospatial adapter failed: ${e.message}`); }
 
-    // STEP 1d: WQP limnology (only when limnology agent is in the run)
-    if (!selectedAgents || selectedAgents.includes('limnology')) {
-      setProgress('Step 1d: WQP limnology data...', 20);
-      await fetchWqpLimnology(lakeName);
-    }
+    // STEP 1d: WQP limnology. Unconditional — see the note in runAgents. This is the only source
+    // the limnology section has now.
+    setProgress('Step 1d: WQP limnology data...', 20);
+    await fetchWqpLimnology(lakeName);
 
     // Delegate to runAgents — each agent does per-agent discover→cache-check→fetch→extract→LLM
     // assembleAndSaveProfile runs after all agents finish inside runAgents
@@ -2745,7 +2823,19 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
       return nav;
     })(),
     regulations:          cloneJson(existingSavedProfile.regulations  || det.regulations  || {}),
-    limnology:            applyWqpToLimnology(existingSavedProfile.limnology || det.limnology || {}, wqp),
+    // SAME SHORT-CIRCUIT THE RAMPS COMMENT ABOVE DOCUMENTS, SAME CONSEQUENCE.
+    //
+    // `existingSavedProfile.limnology || det.limnology` picks the saved OBJECT, which every
+    // profile has, so the deterministic pass was never consulted for this section. That did not
+    // matter while the deterministic pass wrote nothing into limnology. It writes the operator's
+    // published drawdown now, and a saved profile carrying the retired agent's guess would have
+    // vetoed it forever.
+    //
+    // Deterministic facts go on top of the saved section, and WQP on top of both. A plain
+    // spread cannot do that job: det.limnology is a fully-shaped skeleton whose sub-objects are
+    // present and whose leaves are null, so `{...saved, ...det}` would replace a saved
+    // waterClarity holding real values with a waterClarity holding four nulls.
+    limnology:            applyWqpToLimnology(mergeDeterministicLimnology(existingSavedProfile.limnology, det.limnology), wqp),
     summary:              cloneJson(existingSavedProfile.summary      || det.summary      || {}),
     trollingIntelligence: existingSavedProfile.trollingIntelligence   || null,
     estuary:              cloneJson(existingSavedProfile.estuary       || {}),
@@ -2805,10 +2895,10 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
     if (id.yearImpounded == null)    id.yearImpounded    = factNumber(['yearImpounded'], IDENTITY_MEASURES.yearImpounded);
     if (!id.reservoirOwner)          id.reservoirOwner   = getFactVal(['reservoirOwner']);
     if (!id.riverSystem)             id.riverSystem      = getFactVal(['riverSystem']);
-    const lim = agentSections.limnology;
-    if (!lim.thermocline) lim.thermocline = {};
-    if (lim.thermocline.summerDepthFt == null) { const tv = getFactVal(['thermocline']); if (tv) lim.thermocline.note = (lim.thermocline.note ? lim.thermocline.note + ' ' : '') + tv; }
-    if (!lim.trophicStatus) lim.trophicStatus = getFactVal(['trophicStatus']);
+    // Limnology took two values from extracted document text here -- a thermocline sentence
+    // appended to `note`, and a trophicStatus string. Both are now read off state depth-profile
+    // samples in applyWqpToLimnology(). A sentence scraped out of a PDF of unknown vintage is not
+    // a second opinion on a measurement; it is a way for one to be overwritten.
   }
 
   // Merge new agent section results on top
@@ -2821,31 +2911,8 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
       if (Array.isArray(v) && v.length === 0 && Array.isArray(existing[k]) && existing[k].length > 0) continue;
       merged[k] = v;
     }
-    // Limnology: deep-merge nested objects — never let agent null sub-fields
-    // overwrite existing non-null values (e.g. WQP-derived thermocline/oxygen)
-    if (agentKey === 'limnology') {
-      for (const subKey of ['thermocline', 'oxygen', 'waterClarity', 'surfaceWater']) {
-        if (merged[subKey] && existing[subKey]) {
-          const mergedSub = { ...existing[subKey] };
-          for (const [sk, sv] of Object.entries(merged[subKey])) {
-            if (sv != null) {
-              // WQP secchi (many samples) always beats a single doc extraction
-              if (subKey === 'waterClarity' && sk === 'secchiFt' && wqp?.secchi?.sampleCount >= 5 && existing[subKey]?.secchiFt != null) continue;
-              mergedSub[sk] = sv;
-            }
-          }
-          merged[subKey] = mergedSub;
-        }
-      }
-      // Coerce string types left over from prior runs or LLM output -- see utils/coerce.js
-      if (merged.thermocline) merged.thermocline.summerDepthFt = coerceNum(merged.thermocline.summerDepthFt);
-      if (merged.oxygen) {
-        merged.oxygen.depletionDepthFt = coerceNum(merged.oxygen.depletionDepthFt);
-        merged.oxygen.anoxicBelowFt = coerceNum(merged.oxygen.anoxicBelowFt);
-      }
-      if (merged.waterClarity) merged.waterClarity.secchiFt = coerceNum(merged.waterClarity.secchiFt);
-      if (merged.seasonalDrawdownFt != null) merged.seasonalDrawdownFt = coerceNum(merged.seasonalDrawdownFt) ?? merged.seasonalDrawdownFt;
-    }
+    // The limnology branch that stood here deep-merged an agent's sub-objects over the
+    // WQP-derived ones and coerced its string numbers. No agent writes limnology any more.
     // Biology: species list is always additive — never let agent shrink the list.
     // Normalize to Title Case before deduplication so 'largemouth bass' and
     // 'Largemouth Bass' don't both appear. Filter blanks and baitfish/non-predators.
@@ -3207,7 +3274,6 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
   // Validation pass — only runs when we have facts, only checks fields for agents that ran
   const ALL_VALIDATION_FIELDS = {
     identity:   ['identity.surfaceAreaAcres','identity.maxDepthFt','identity.averageDepthFt','identity.reservoirOwner','identity.riverSystem','identity.damName','identity.yearImpounded','identity.county','identity.archetype'],
-    limnology:  ['limnology.waterClarity.typical','limnology.waterClarity.color','limnology.waterClarity.secchiFt','limnology.thermocline.summerDepthFt','limnology.thermocline.strength','limnology.thermocline.winterMix','limnology.oxygen.depletionDepthFt','limnology.oxygen.anoxicBelowFt','limnology.trophicStatus','limnology.flowCharacteristics','limnology.seasonalDrawdownFt'],
     biology:    ['biology.primaryForage','biology.secondaryForage','biology.predatorSpecies','biology.speciesAbundance','biology.knownStockings','biology.baitfishMovement','biology.invasiveSpecies','biology.spawnTiming','biology.forageSpatial'],
     habitat:    ['habitat.bottomComposition','habitat.cover','habitat.vegetation','habitat.standingTimber','habitat.dockDensity','habitat.riprapLocations','habitat.namedCreekMouths','habitat.timberFields','habitat.shallowFlatAreas','habitat.artificialHabitat','habitat.artificialHabitatDetails.attractorCount','habitat.artificialHabitatDetails.attractorTypes'],
     navigation: ['navigation.ramps','navigation.hazards','navigation.notes'],

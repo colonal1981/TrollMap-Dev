@@ -18,7 +18,7 @@ async function handleResearchDeterministicFacts(request, env) {
     state,
     identity: { aliases: [], counties: [] },
     biology: { primaryForage: [], secondaryForage: [], predatorSpecies: [], speciesAbundance: {}, knownStockings: [], baitfishMovement: null, forageCalendar: {}, notes: [] },
-    limnology: { waterClarity: { typical: null, color: null, secchiFt: null, note: null }, surfaceWater: {}, thermocline: { summerDepthFt: null, method: null, note: null }, oxygen: { depletionDepthFt: null, anoxicBelowFt: null, note: null }, trophicStatus: null, flowCharacteristics: null, seasonalDrawdownFt: null },
+    limnology: { waterClarity: { typical: null, secchiFt: null, note: null }, surfaceWater: {}, thermocline: { summerDepthFt: null, method: null, note: null }, oxygen: { depletionDepthFt: null, anoxicBelowFt: null, note: null }, trophicStatus: null, seasonalDrawdownFt: null },
     habitat: { structuralElements: {}, cover: [], vegetation: [], standingTimber: null, dockDensity: null, riprapLocations: [], namedCreekMouths: [], timberFields: null, shallowFlatAreas: null, artificialHabitat: [], artificialHabitatDetails: { attractorCount: null, attractorTypes: [] }, notes: null },
     navigation: { ramps: [], hazards: [], notes: null },
     regulations: { state, generalStateRegulations: { lengthLimits: {}, creelLimits: {} }, lakeSpecificRegulations: { hasExceptions: null, creelLimits: {}, sizeLimits: {}, specialRules: [], closedSeasons: [] }, notes: null },
@@ -66,6 +66,26 @@ async function handleResearchDeterministicFacts(request, env) {
       mergeEvidence('identity', 'bodyType', buildEvidence([{
         fact: String(base.featureType), source: base.source || 'TrollMap registry',
         trust: 'OFFICIAL', sourceType: 'internal_structured',
+      }]));
+    }
+    // THE DRAWDOWN IS ALREADY IN HAND AND WAS BEING DROPPED ON THE FLOOR.
+    //
+    // identityGrounding() reads Duke's /lakes/operating-range and identityBaseline() turns the
+    // month-by-month guide curve into one number: the swing between the highest and lowest
+    // target index, in feet, because a Duke index unit IS a foot. That has been computed on
+    // every deterministic run and then discarded, while `limnology.seasonalDrawdownFt` -- which
+    // plan-inputs.js prints as "Seasonal drawdown: N ft" -- was left to the limnology agent.
+    //
+    // The operator publishes the schedule it intends to run. Nothing a model recalls about a
+    // winter drawdown can beat that, and for a water whose operator publishes no such table the
+    // honest value is null rather than a remembered one.
+    if (base && Number.isFinite(base.seasonalDrawdownFt)) {
+      profile.limnology.seasonalDrawdownFt = base.seasonalDrawdownFt;
+      mergeEvidence('limnology', 'seasonalDrawdownFt', buildEvidence([{
+        fact: `${base.seasonalDrawdownFt} ft between the highest and lowest monthly target`
+            + `${base.drawdownType ? ` (${base.drawdownType})` : ''}`,
+        source: base.normalPoolSource || 'Duke Energy operating-range API',
+        trust: 'OFFICIAL', sourceType: 'official_structured',
       }]));
     }
   } catch (e) {

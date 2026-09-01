@@ -267,6 +267,24 @@ async function handleResearchLimnologyData(request, env, opts = {}) {
     }
   }
 
+  // TWO DEPTHS OUT OF ONE WALK DOWN THE SAME PROFILE.
+  //
+  // This binned every DO reading by depth, walked down until the median fell under 2 mg/L, and
+  // returned that one number. `limnology.oxygen.depletionDepthFt` -- which plan-inputs.js prints
+  // to the model as "Oxygen depletion begins: N ft" -- was left for the limnology agent to
+  // answer from prose, standing beside a measured anoxic floor derived from these very samples.
+  //
+  // The second depth is the same walk with a different threshold, so it costs one comparison.
+  //
+  // 5.0 mg/L IS NOT A NUMBER PICKED HERE. It is the freshwater dissolved-oxygen standard for
+  // aquatic life in both states this card mostly covers -- SC R.61-68 and NC 15A NCAC 02B .0211
+  // both set a 5.0 mg/L daily average. Below it the state's own rule says the water has stopped
+  // supporting the fishery, which is exactly what "depletion begins" is asking. 2 mg/L for the
+  // anoxic floor was already here, and the DO-profile thermocline above uses 4 mg/L for the
+  // metalimnion. Three thresholds, all published, none of them ours.
+  //
+  // Ordering is enforced rather than assumed: a coarse 2 ft bin can put both crossings in the
+  // same bin, and "depletion begins at 30 ft, nothing lives below 30 ft" is not two facts.
   let oxygen = null;
   if (allDO.length >= 3) {
     const bins = {};
@@ -276,13 +294,26 @@ async function handleResearchLimnologyData(request, env, opts = {}) {
       bins[bin].push(r.value);
     }
     const sortedBins = Object.keys(bins).map(Number).sort((a, b) => a - b);
-    let anoxicBelowFt = null;
-    for (const bin of sortedBins) {
+    const medianAt = (bin) => {
       const vals = bins[bin].slice().sort((a, b) => a - b);
-      const median = vals[Math.floor(vals.length / 2)];
-      if (median < 2) { anoxicBelowFt = bin; break; }
-    }
-    oxygen = { anoxicBelowFt, note: anoxicBelowFt != null ? `Median dissolved oxygen drops below 2 mg/L near ${anoxicBelowFt} ft in available depth-profile samples.` : null };
+      return vals[Math.floor(vals.length / 2)];
+    };
+    const firstBinUnder = (mgL) => {
+      for (const bin of sortedBins) if (medianAt(bin) < mgL) return bin;
+      return null;
+    };
+    const anoxicBelowFt = firstBinUnder(2);
+    let depletionDepthFt = firstBinUnder(5);
+    if (depletionDepthFt != null && anoxicBelowFt != null && depletionDepthFt >= anoxicBelowFt) depletionDepthFt = null;
+    const noteBits = [];
+    if (depletionDepthFt != null) noteBits.push(`Median dissolved oxygen falls below the 5 mg/L aquatic-life standard near ${depletionDepthFt} ft`);
+    if (anoxicBelowFt != null) noteBits.push(`${noteBits.length ? 'and below' : 'Median dissolved oxygen drops below'} 2 mg/L near ${anoxicBelowFt} ft`);
+    oxygen = {
+      anoxicBelowFt,
+      depletionDepthFt,
+      evidenceCount: allDO.length,
+      note: noteBits.length ? `${noteBits.join(' ')} in available depth-profile samples.` : null,
+    };
   }
 
   const latestDateByType = {};

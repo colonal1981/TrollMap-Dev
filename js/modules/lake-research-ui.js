@@ -463,9 +463,9 @@ function formatHumanReadableSection(key, data) {
     const ox = d.oxygen || {};
     return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;font-size:12px;">
       <div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px">
-        <b>🌊 Clarity & Color</b><br>
+        <b>🌊 Clarity</b><br>
         Typical: <b>${esc(cl.typical || '—')}</b> ${cl.secchiFt ? `(${cl.secchiFt} ft Secchi)` : ''}<br>
-        Color/Turbidity: ${esc(cl.color || d.waterColor || '—')}<br>
+        Trophic: ${esc(d.trophicStatus || '—')}<br>
         ${cl.note ? `<span class="muted" style="font-size:11px">${esc(cl.note)}</span>` : ''}
       </div>
       <div style="background:rgba(255,255,255,.03);padding:6px;border-radius:6px">

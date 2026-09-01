@@ -43,7 +43,10 @@ assert.ok(end > start, 'it must be a top-level function');
 const applyShallowLakeApplicability = new Function(
   `${SRC.slice(start, end + 2)}\nreturn applyShallowLakeApplicability;`)();
 
-const FIELDS = ['limnology.thermocline.summerDepthFt', 'limnology.thermocline.strength',
+// `limnology.thermocline.strength` was a fourth entry here until 2026-09-01. It is gone with the
+// limnology agent: one parenthetical adjective in the prompt, derivable only on the weaker of the
+// two thermocline branches.
+const FIELDS = ['limnology.thermocline.summerDepthFt',
                 'limnology.oxygen.depletionDepthFt', 'limnology.oxygen.anoxicBelowFt'];
 const withDepth = (maxDepthFt, averageDepthFt) => ({ identity: { maxDepthFt, averageDepthFt }, fieldStatus: {} });
 
@@ -74,6 +77,22 @@ test('a genuinely shallow lake is still exempted, which is the point of the func
   assert.deepEqual(applyShallowLakeApplicability(profile, [...FIELDS]), []);
   assert.equal(profile.fieldStatus['limnology.thermocline.summerDepthFt'].status, 'not_applicable');
   assert.match(profile.fieldStatus['limnology.oxygen.anoxicBelowFt'].reason, /Maximum depth 8 ft/);
+});
+
+// THE STAMP IS WHAT gateOverallConfidence READS, AND IT MUST NOT DEPEND ON THE CALLER'S LIST.
+//
+// This function used to iterate `fields` and stamp only the exempt paths it found there. That
+// was indistinguishable from stamping the exempt set itself, right up until the limnology agent
+// retired on 2026-09-01 and took its paths out of the recovery list this is called with. The
+// stamp would then never be written, and a farm pond would go back to being docked for having no
+// thermocline -- the exact penalty this function exists to prevent, undone by an edit in another
+// file with no test between them.
+test('a shallow lake is stamped even when the caller asks about nothing', () => {
+  const profile = withDepth(8, 4);
+  assert.deepEqual(applyShallowLakeApplicability(profile, []), []);
+  for (const path of FIELDS) {
+    assert.equal(profile.fieldStatus[path].status, 'not_applicable', `${path} must be stamped`);
+  }
 });
 
 test('the shallow-and-flat second clause still fires when both depths are real', () => {

@@ -91,10 +91,11 @@ const NOT_FOR_THE_PLANNER = {
   // exact thing the last test in this file is for, and it is what caught them.
   // Coastal / tidal. v2 has only been run on reservoirs; when it plans a coastal day these
   // become real and this list should shrink.
-  
-  
-  'limnology.waterClarity.color': 'typical + secchi already carry clarity',
-  
+  //
+  // `limnology.waterClarity.color` was excused here as "typical + secchi already carry clarity".
+  // That was an argument for deleting the field, not for keeping it unread, and on 2026-09-01 it
+  // was deleted along with the agent that wrote it. No targetFields names it, so the excuse would
+  // now be stale -- which the last test in this file checks for.
 };
 
 describe('the research pipeline reaches the planner', () => {
