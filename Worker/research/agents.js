@@ -55,6 +55,59 @@ export function fitPromptToBudget(systemPrompt, buildUser, grounded, budget = 80
  *
  * The summary agent already deleted these by hand before its own dump. This is that, shared.
  */
+/**
+ * THE ONE GROUP-TERM MAP AND THE ONE REDISTRIBUTOR, because there were two of each and they
+ * disagreed. The fisheries agent has two routes into a trollingIntelligence section -- the
+ * per-group fan-out and the single-shot fallback -- and each carried its own copy of this table
+ * and its own copy of the loop below. The copies had already drifted: the group map listed
+ * `catfish`, the fallback map did not.
+ *
+ * `crappie` and `catfish` are keys here AND real canonical names in RESEARCH_SPECIES_CANON. They
+ * are what the deterministic pass writes into predatorSpecies -- NC WRC's "Crappie (Unspecified)"
+ * canonicalises to "Crappie" on 52 waters, and the GA DNR lake pages name "Crappie" outright. So
+ * a model handed predatorSpecies:['Crappie'] answers with the key "Crappie", which is correct,
+ * and the old loop read the correct answer as a group label, redistributed it into itself and
+ * then deleted it. Measured 2026-09-01 on the first cold run: Lake Sidney Lanier (Hall Co, GA)
+ * returned 4 species out of a confirmed 5 and the one it lost was Crappie.
+ *
+ * Hence `confirmed.has(keyLower)` guards the whole branch: a key that is itself a confirmed
+ * species is an answer, not a label. A real group term -- "Black Bass" is confirmed on no lake --
+ * still splits the way it always did.
+ */
+const GROUP_TERM_MAP = {
+  'black bass': ['Largemouth Bass', 'Smallmouth Bass', 'Spotted Bass'],
+  'catfish (all species)': ['Blue Catfish', 'Channel Catfish', 'Flathead Catfish'],
+  'catfish': ['Blue Catfish', 'Channel Catfish', 'Flathead Catfish'],
+  'crappie (all species)': ['Crappie', 'Black Crappie', 'White Crappie'],
+  'crappie': ['Crappie', 'Black Crappie', 'White Crappie'],
+  'bream/sunfish': ['Bluegill', 'Redear Sunfish (Shellcracker)', 'Warmouth'],
+  'bluegill/warmouth': ['Bluegill', 'Warmouth'],
+  'striped bass or hybrid striped bass': ['Striped Bass', 'Hybrid Striped Bass'],
+};
+
+/** Mutates `section` in place: splits group-term keys onto the confirmed species they cover. */
+function redistributeGroupTerms(section, confirmed) {
+  for (const [key, seasons] of Object.entries(section)) {
+    const keyLower = key.toLowerCase();
+    if (!GROUP_TERM_MAP[keyLower] || confirmed.has(keyLower)) continue;
+    const targets = GROUP_TERM_MAP[keyLower].filter((t) => confirmed.has(t.toLowerCase()));
+    if (!targets.length) continue;
+    console.log(`[fisheries-redist] redistributing "${key}" -> ${targets.join(', ')}`);
+    for (const target of targets) {
+      if (!section[target]) {
+        section[target] = JSON.parse(JSON.stringify(seasons));
+        continue;
+      }
+      for (const season of ['spring', 'summer', 'fall', 'winter']) {
+        if (!section[target][season] && seasons[season]) {
+          section[target][season] = JSON.parse(JSON.stringify(seasons[season]));
+        }
+      }
+    }
+    delete section[key];
+  }
+}
+
 function cleanProfile(prev) {
   const out = { ...(prev || {}) };
   delete out._documentContext;
@@ -1127,44 +1180,9 @@ async function handleResearchAgent(request, env) {
       }
     }
 
-    // ── Post-merge: redistribute group-term keys to individual species ──
-    // Defense-in-depth: if LLM still outputs "Black Bass" instead of splitting
-    // to Largemouth/Smallmouth/Spotted Bass, redistribute the data here.
-    const GROUP_TERM_MAP = {
-      'black bass': ['Largemouth Bass', 'Smallmouth Bass', 'Spotted Bass'],
-      'catfish (all species)': ['Blue Catfish', 'Channel Catfish', 'Flathead Catfish'],
-      'catfish': ['Blue Catfish', 'Channel Catfish', 'Flathead Catfish'],
-      'crappie (all species)': ['Crappie', 'Black Crappie', 'White Crappie'],
-      'crappie': ['Crappie', 'Black Crappie', 'White Crappie'],
-      'bream/sunfish': ['Bluegill', 'Redear Sunfish (Shellcracker)', 'Warmouth'],
-      'bluegill/warmouth': ['Bluegill', 'Warmouth'],
-      'striped bass or hybrid striped bass': ['Striped Bass', 'Hybrid Striped Bass'],
-    };
-    const confirmedSet = new Set(allSpecies.map(s => s.toLowerCase()));
-    for (const [key, seasons] of Object.entries(mergedIntelligence)) {
-      const keyLower = key.toLowerCase();
-      if (GROUP_TERM_MAP[keyLower]) {
-        // This is a group term — redistribute to individual confirmed species
-        const targets = GROUP_TERM_MAP[keyLower].filter(t => confirmedSet.has(t.toLowerCase()));
-        if (targets.length > 0) {
-          console.log(`[fisheries-redist] redistributing "${key}" → ${targets.join(', ')}`);
-          for (const target of targets) {
-            // Only fill in seasons that the target species doesn't already have data for
-            if (!mergedIntelligence[target]) {
-              mergedIntelligence[target] = JSON.parse(JSON.stringify(seasons));
-            } else {
-              // Merge: fill null seasons from group data
-              for (const season of ['spring', 'summer', 'fall', 'winter']) {
-                if ((!mergedIntelligence[target][season] || mergedIntelligence[target][season] === null) && seasons[season]) {
-                  mergedIntelligence[target][season] = JSON.parse(JSON.stringify(seasons[season]));
-                }
-              }
-            }
-          }
-          delete mergedIntelligence[key];
-        }
-      }
-    }
+    // Post-merge: group-term keys go back onto the species they cover. One map, one loop,
+    // both shared with the single-shot path below -- see redistributeGroupTerms().
+    redistributeGroupTerms(mergedIntelligence, new Set(allSpecies.map((s2) => s2.toLowerCase())));
 
     // Run normalization pass (same as post-processing below)
     const SEASONS = ['spring', 'summer', 'fall', 'winter'];
@@ -1367,41 +1385,12 @@ holding: coerceHolding(entry.holding, holdingRejects),
     console.log(`[fisheries-debug] sectionData keys: ${Object.keys(sectionData).join(', ')}`);
     console.log(`[fisheries-debug] first entry sample: ${JSON.stringify(Object.entries(sectionData)[0])?.slice(0, 200)}`);
 
-    // ── Redistribute group-term keys to individual species (defense-in-depth) ──
-    // If LLM outputs "Black Bass" instead of splitting to Largemouth/Smallmouth/Spotted,
-    // redistribute here so the data lands on the correct individual species keys.
-    const GROUP_TERM_MAP_FALLBACK = {
-      'black bass': ['Largemouth Bass', 'Smallmouth Bass', 'Spotted Bass'],
-      'catfish (all species)': ['Blue Catfish', 'Channel Catfish', 'Flathead Catfish'],
-      'crappie (all species)': ['Crappie', 'Black Crappie', 'White Crappie'],
-      'crappie': ['Crappie', 'Black Crappie', 'White Crappie'],
-      'bream/sunfish': ['Bluegill', 'Redear Sunfish (Shellcracker)', 'Warmouth'],
-      'bluegill/warmouth': ['Bluegill', 'Warmouth'],
-      'striped bass or hybrid striped bass': ['Striped Bass', 'Hybrid Striped Bass'],
-    };
+    // Same redistribution the group path runs, and now literally the same function. The two
+    // copies had already drifted -- this one never listed `catfish` -- which is the argument.
     const bioForRedist = groundedPrev?.biology || {};
-    const confirmedForRedist = new Set((Array.isArray(bioForRedist.predatorSpecies) ? bioForRedist.predatorSpecies : []).map(s => s.toLowerCase()));
-    for (const [key, seasons] of Object.entries(sectionData)) {
-      const keyLower = key.toLowerCase();
-      if (GROUP_TERM_MAP_FALLBACK[keyLower]) {
-        const targets = GROUP_TERM_MAP_FALLBACK[keyLower].filter(t => confirmedForRedist.has(t.toLowerCase()));
-        if (targets.length > 0) {
-          console.log(`[fisheries-redist] redistributing "${key}" → ${targets.join(', ')}`);
-          for (const target of targets) {
-            if (!sectionData[target]) {
-              sectionData[target] = JSON.parse(JSON.stringify(seasons));
-            } else {
-              for (const season of ['spring', 'summer', 'fall', 'winter']) {
-                if ((!sectionData[target][season] || sectionData[target][season] === null) && seasons[season]) {
-                  sectionData[target][season] = JSON.parse(JSON.stringify(seasons[season]));
-                }
-              }
-            }
-          }
-          delete sectionData[key];
-        }
-      }
-    }
+    redistributeGroupTerms(sectionData, new Set(
+      (Array.isArray(bioForRedist.predatorSpecies) ? bioForRedist.predatorSpecies : [])
+        .map((s2) => s2.toLowerCase())));
 
     const SEASONS = ['spring', 'summer', 'fall', 'winter'];
     // Its own sink -- a separate scope from the group path, and a shared name declared in only

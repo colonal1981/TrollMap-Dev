@@ -95,7 +95,9 @@ def _req(path, payload=None, timeout=300):
 def research_one(lake, state, dry_run=False, verbose=False):
     """One lake, start to saved profile. Returns a result dict; never raises."""
     t0 = time.perf_counter()
-    out = {"lake": lake, "ok": False, "species": 0, "saved": False, "error": None}
+    out = {"lake": lake, "state": state, "ok": False, "species": 0, "saved": False, "error": None,
+           "confirmed": [], "returned": [], "missing": [], "documents": 0, "facts": 0,
+           "warnings": []}
 
     code, det, err = _req("/research/deterministic-facts", {"lakeName": lake, "state": state})
     if code != 200 or not det or not det.get("profile"):
@@ -103,6 +105,7 @@ def research_one(lake, state, dry_run=False, verbose=False):
         return out
     profile = det["profile"]
     species = ((profile.get("biology") or {}).get("predatorSpecies")) or []
+    out["confirmed"] = list(species)
 
     code, disc, err = _req("/research/discover",
                            {"lakeName": lake, "state": state, "agent": "fisheries",
@@ -113,6 +116,7 @@ def research_one(lake, state, dry_run=False, verbose=False):
     code, norm, err = _req(f"/research/get-normalized?lake={urllib.parse.quote(lake)}")
     docs = ((norm or {}).get("documents") or (norm or {}).get("docs") or []) if code == 200 else []
     usable = [d for d in docs if len(str(d.get("fullText") or d.get("text") or "")) >= 200]
+    out["documents"] = len(usable)
 
     # EXTRACTION IS NOT OPTIONAL, whatever an earlier reading of the template suggested. The Worker
     # turns these facts into the PARSED OBSERVATION block via parseBehaviour(), and the fisheries
@@ -131,6 +135,7 @@ def research_one(lake, state, dry_run=False, verbose=False):
         if i + 1 < min(len(usable), LLM_DOC_LIMIT):
             time.sleep(EXTRACT_PAUSE_S)
 
+    out["facts"] = len(facts)
     prev = dict(profile)
     prev["_extractedFacts"] = facts
     prev["_normalizedDocuments"] = [
@@ -146,8 +151,20 @@ def research_one(lake, state, dry_run=False, verbose=False):
         return out
     section = res.get("section") or {}
     out["species"] = len(section)
-    for w in (res.get("warnings") or []):
+    out["returned"] = [k for k in section.keys() if k != "sources"]
+    out["warnings"] = list(res.get("warnings") or [])
+    for w in out["warnings"]:
         print(f"      warn [{lake}]: {w}")
+
+    # WHAT WENT IN AND DID NOT COME BACK. The Worker already computes this and warns; this
+    # records it per lake so a 64-lake run ends with the list rather than sixty-four scrollback
+    # lines nobody reads. Ryan, 2026-08-10, on the run that lost a quarter of a lake's species
+    # while every line said success -- and again on 2026-09-01, when Lanier came back 4 of 5.
+    #
+    # IT DOES NOT ABORT THE SAVE. Four species of five is worth keeping, and one flaky group
+    # must not cost the other sixty-three lakes their run. It is counted, printed and reported.
+    got = {k.lower() for k in out["returned"]}
+    out["missing"] = [s2 for s2 in out["confirmed"] if s2.lower() not in got]
 
     # AN EMPTY SECTION IS A FAILED RUN, NOT A QUIET ONE. Ryan found this the hard way on
     # 2026-08-10: a group came back empty, a quarter of the lake's species vanished, and every
@@ -232,9 +249,16 @@ def main():
     ap.add_argument("--limit", type=int, default=0, help="stop after N lakes (0 = all)")
     ap.add_argument("--dry-run", action="store_true",
                     help="run everything except /research/save")
-    ap.add_argument("--report", default=None, help="write a JSON summary here")
+    # A REPORT IS WRITTEN EVERY RUN, NOT ONLY WHEN ASKED. Ryan drives this box over Chrome
+    # Remote Desktop, where copying a PowerShell scrollback back into a conversation is a chore
+    # -- so the run leaves a file that can be read directly instead. Pass --report to move it.
+    ap.add_argument("--report", default=None,
+                    help="where the JSON summary goes (default: _reports/research_lakes_<stamp>.json)")
     ap.add_argument("--verbose", action="store_true")
     a = ap.parse_args()
+    if not a.report:
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        a.report = os.path.join("_reports", f"research_lakes_{stamp}.json")
 
     if not SYNC_TOKEN:
         print("!! TROLLMAP_SYNC_TOKEN is not set in this shell. Every research call the app makes")
@@ -263,8 +287,14 @@ def main():
         done[0] += 1
         mark = "ok " if r["ok"] else "FAIL"
         secs = f'{r.get("seconds", 0):5.1f}s'
-        print(f"  [{done[0]:3d}/{len(lakes)}] {mark} {secs}  {name[:42]:44s}"
-              f"{r['species']} species" + (f"  -- {r['error']}" if r["error"] else ""))
+        # docs and facts are on the line because a cold run that quietly found no documents
+        # looks exactly like a fast one, and the difference is the whole point of the batch.
+        detail = (f"{len(r['returned'])}/{len(r['confirmed'])} species  "
+                  f"{r['documents']} docs  {r['facts']} facts")
+        if r["missing"]:
+            detail += "  LOST: " + ", ".join(r["missing"])
+        print(f"  [{done[0]:3d}/{len(lakes)}] {mark} {secs}  {name[:42]:44s}{detail}"
+              + (f"  -- {r['error']}" if r["error"] else ""))
         return r
 
     if a.jobs > 1:
@@ -282,11 +312,26 @@ def main():
         print(f"per lake: median {per[len(per) // 2]:.0f}s  min {per[0]:.0f}s  max {per[-1]:.0f}s")
     for r in bad:
         print(f"  FAILED {r['lake']}: {r['error']}")
-    if a.report:
-        with open(a.report, "w", encoding="utf-8") as f:
-            json.dump({"worker": WORKER, "dry_run": a.dry_run, "wall_seconds": round(wall, 1),
-                       "results": results}, f, indent=2)
-        print(f"\nreport -> {a.report}")
+
+    lost = [r for r in ok if r["missing"]]
+    if lost:
+        print(f"\n{len(lost)} water(s) came back short of their confirmed species:")
+        for r in lost:
+            print(f"  {r['lake']}: {len(r['returned'])} of {len(r['confirmed'])} "
+                  f"-- no block for {', '.join(r['missing'])}")
+    dry = [r for r in ok if r["documents"] == 0]
+    if dry:
+        print(f"\n{len(dry)} water(s) ran on no documents at all -- the model had only the "
+              f"deterministic profile:")
+        for r in dry:
+            print(f"  {r['lake']}")
+
+    os.makedirs(os.path.dirname(a.report) or ".", exist_ok=True)
+    with open(a.report, "w", encoding="utf-8") as f:
+        json.dump({"worker": WORKER, "dry_run": a.dry_run, "wall_seconds": round(wall, 1),
+                   "generated": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                   "results": results}, f, indent=2)
+    print(f"\nreport -> {a.report}")
     return 1 if bad else 0
 
 
