@@ -61,9 +61,27 @@ const COASTAL_PROFILE_SECTIONS = ['estuary', 'tidal', 'biology', 'habitat', 'nav
 // Default export kept for backwards compatibility — callers should use getResearchOrderForLake()
 const RESEARCH_ORDER = FRESHWATER_RESEARCH_ORDER;
 
+// THIS MAP NAMES PROFILE SECTIONS, NOT JUST AGENTS, and the nine retirements nearly broke that.
+//
+// renderSections() in lake-research-ui.js walks PROFILE_SECTIONS -- eight of them, and only one
+// still has an agent -- and titles each one `RESEARCH_LABELS[key] || key`. Deleting a label with
+// its agent left the research card heading its sections "limnology", "biology", "habitat" in raw
+// lowercase. The sections did not go anywhere; only their names did.
+//
+// A retired agent still has a section Ryan looks at, so every section keeps its label. The
+// agent-picker modal is driven by the RESEARCH ORDER above, not by this map, so a label here has
+// never meant a runnable agent and no longer implies one.
 const RESEARCH_LABELS = {
+  identity: '🆔 Identity',
+  limnology: '🌊 Limnology',
+  biology: '🐟 Fisheries Biology',
+  habitat: '🌿 Habitat',
+  navigation: '🧭 Navigation',
   regulations: '📜 Regulations',
   fisheries: '🧠 Species Intelligence',
+  summary: '📝 Summary',
+  estuary: '🌾 Estuary',
+  tidal: '🌊 Tidal',
   saltwater_regulations: '📜 Saltwater Regs',
 };
 
