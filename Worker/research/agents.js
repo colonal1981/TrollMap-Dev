@@ -1152,25 +1152,51 @@ async function handleResearchAgent(request, env) {
         max_tokens: 5000,
         response_format: { type: "json_object" }
       };
-      try {
-        const llmResult = await callLLM(env, payload, null);
-        const rawText = extractLLMText(llmResult.data);
-        const parsed = extractJsonPossibly(rawText);
-        if (!parsed) {
-          console.warn(`fisheries group ${groupName}: non-JSON response`);
-          groupOutcomes.push({ group: groupName, species: groupSpecies, ok: false, reason: 'non-JSON response' });
-          return {};
+      // WHEN THE PROVIDER SAYS "TRY AGAIN LATER", TRY AGAIN LATER.
+      //
+      // "This model is currently experiencing high demand. Spikes in demand are usually
+      // temporary. Please try again later." -- that sentence has now cost four species groups
+      // across three runs of the batch, and it is an instruction. A group is one call and the
+      // whole lake's answer for those species; giving up on the first refusal throws away work
+      // the run has already paid for in downloads and extraction.
+      //
+      // Serialising the groups and pacing the extraction (see GROUP_CONCURRENCY above) cut the
+      // load a long way -- Lake Sidney Lanier (Hall Co, GA) went from two species of five to
+      // five of five, and its facts from one to twenty-two -- but Lake Townsend (Guilford Co,
+      // NC) still lost its catfish group on the third call of the lake. The remaining pressure
+      // is that every group re-sends the whole document set: eight documents at 20,000
+      // characters is roughly 40,000 input tokens PER GROUP, so three groups spend 120,000
+      // tokens on the same eight documents.
+      //
+      // Backoff, not immediacy. Waiting is the entire point of the retry -- a spike measured in
+      // seconds is answered by seconds. Two extra attempts at 8 s and 20 s, and the wall time is
+      // spent only on a lake that would otherwise have come back short.
+      const RETRY_WAITS_MS = [8000, 20000];
+      let lastReason = null;
+      for (let attempt = 0; attempt <= RETRY_WAITS_MS.length; attempt++) {
+        if (attempt > 0) {
+          console.warn(`fisheries group ${groupName}: retry ${attempt} after ${RETRY_WAITS_MS[attempt - 1]}ms (${lastReason})`);
+          await new Promise((r) => setTimeout(r, RETRY_WAITS_MS[attempt - 1]));
         }
-        const section = parsed.trollingIntelligence || parsed[agentKey] || parsed || {};
-        const got = Object.keys(section).filter((k) => k !== 'sources');
-        groupOutcomes.push({ group: groupName, species: groupSpecies, ok: got.length > 0,
-                             returned: got, reason: got.length ? null : 'empty section' });
-        return section;
-      } catch (e) {
-        console.warn(`fisheries group ${groupName} failed: ${e.message}`);
-        groupOutcomes.push({ group: groupName, species: groupSpecies, ok: false, reason: e.message });
-        return {};
+        try {
+          const llmResult = await callLLM(env, payload, null);
+          const rawText = extractLLMText(llmResult.data);
+          const parsed = extractJsonPossibly(rawText);
+          if (!parsed) { lastReason = 'non-JSON response'; continue; }
+          const section = parsed.trollingIntelligence || parsed[agentKey] || parsed || {};
+          const got = Object.keys(section).filter((k) => k !== 'sources');
+          if (!got.length) { lastReason = 'empty section'; continue; }
+          groupOutcomes.push({ group: groupName, species: groupSpecies, ok: true,
+                               returned: got, reason: null, attempts: attempt + 1 });
+          return section;
+        } catch (e) {
+          lastReason = e.message;
+        }
       }
+      console.warn(`fisheries group ${groupName} failed after ${RETRY_WAITS_MS.length + 1} attempts: ${lastReason}`);
+      groupOutcomes.push({ group: groupName, species: groupSpecies, ok: false,
+                           reason: lastReason, attempts: RETRY_WAITS_MS.length + 1 });
+      return {};
     };
 
     // A simple sliding window: GROUP_CONCURRENCY workers pull from one shared cursor, so the

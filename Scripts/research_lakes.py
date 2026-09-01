@@ -330,7 +330,7 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
     out = {"lake": lake, "state": state, "ok": False, "species": 0, "saved": False, "error": None,
            "confirmed": [], "returned": [], "missing": [], "documents": 0, "facts": 0,
            "sources": 0, "fetch": {}, "rejected_offlake": 0, "rejected_docs": [],
-           "chars_sent": 0, "warnings": []}
+           "chars_sent": 0, "retries": 0, "group_attempts": {}, "warnings": []}
 
     code, det, err = _req("/research/deterministic-facts", {"lakeName": lake, "state": state})
     if code != 200 or not det or not det.get("profile"):
@@ -434,6 +434,12 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
     out["species"] = len(section)
     out["returned"] = [k for k in section.keys() if k != "sources"]
     out["warnings"] = list(res.get("warnings") or [])
+    # How hard the provider made us work for it. A group that needed a second or third attempt
+    # succeeded, so nothing warns -- but a run where every group is retrying is a run whose load
+    # is still too high, and that is only visible if the number is carried out.
+    groups = ((res.get("meta") or {}).get("groups")) or []
+    out["group_attempts"] = {g.get("group"): g.get("attempts", 1) for g in groups if g.get("group")}
+    out["retries"] = sum(max(0, (g.get("attempts") or 1) - 1) for g in groups)
     for w in out["warnings"]:
         print(f"      warn [{lake}]: {w}")
 
@@ -595,7 +601,8 @@ def main():
         ktok = r.get("chars_sent", 0) / CHARS_PER_TOKEN / 1000
         detail = (f"{len(r['returned'])}/{len(r['confirmed'])} species  "
                   f"{r['documents']} docs ({got} new, {f.get('reused', 0)} cached, "
-                  f"{f.get('failed', 0)} failed)  {r['facts']} facts  ~{ktok:.0f}k tok")
+                  f"{f.get('failed', 0)} failed)  {r['facts']} facts  ~{ktok:.0f}k tok"
+                  + (f"  {r['retries']} retries" if r.get("retries") else ""))
         if r["missing"]:
             detail += "  LOST: " + ", ".join(r["missing"])
         print(f"  [{done[0]:3d}/{len(lakes)}] {mark} {secs}  {name[:42]:44s}{detail}"
@@ -633,6 +640,16 @@ def main():
             print(f"  {r['lake']}: {r.get('sources', 0)} sources discovered, "
                   f"{f.get('failed', 0)} failed to download, "
                   f"{r.get('rejected_offlake', 0)} dropped as off-lake")
+
+    retried = [r for r in ok if r.get("retries")]
+    if retried:
+        total = sum(r["retries"] for r in retried)
+        print(f"\n{total} group retr{'y' if total == 1 else 'ies'} across {len(retried)} water(s) "
+              f"-- the provider pushed back and the backoff caught it. Rising numbers here mean "
+              f"the per-lake load is still too high:")
+        for r in retried:
+            hard = {g: n for g, n in (r.get("group_attempts") or {}).items() if n > 1}
+            print(f"  {r['lake']}: " + ", ".join(f"{g} x{n}" for g, n in hard.items()))
 
     gated = [r for r in ok if r.get("rejected_docs")]
     if gated:
