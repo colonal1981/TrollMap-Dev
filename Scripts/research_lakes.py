@@ -218,6 +218,23 @@ def gate_documents(repo, documents, lake, alt_names=None):
     return json.loads(proc.stdout)
 
 
+def candidate_ids(repo, display_names):
+    """Every storage id these names could be filed under, via the app's own rule."""
+    src = os.path.abspath(os.path.join(repo, "js", "data", "research-ids.js"))
+    script = (
+        "import {readFileSync} from 'node:fs';"
+        f"const m = await import({json.dumps('file://' + src.replace(os.sep, '/'))});"
+        "const names = JSON.parse(readFileSync(0,'utf8'));"
+        "process.stdout.write(JSON.stringify(names.flatMap(n => m.researchStorageIdCandidates(n))));"
+    )
+    proc = subprocess.run(["node", "--input-type=module", "-e", script],
+                          input=json.dumps(display_names), capture_output=True, text=True,
+                          encoding="utf-8")
+    if proc.returncode != 0:
+        raise SystemExit(f"!! researchStorageIdCandidates failed: {(proc.stderr or '').strip()[:300]}")
+    return json.loads(proc.stdout)
+
+
 def researched_names(repo, display_names):
     """
     Which of these waters already have a profile in R2 -- ANSWERED BY THE CODEBASE'S OWN RULE.
@@ -367,7 +384,8 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
     out = {"lake": lake, "state": state, "ok": False, "species": 0, "saved": False, "error": None,
            "confirmed": [], "returned": [], "missing": [], "documents": 0, "facts": 0,
            "sources": 0, "fetch": {}, "rejected_offlake": 0, "rejected_docs": [],
-           "chars_sent": 0, "retries": 0, "group_attempts": {}, "warnings": []}
+           "chars_sent": 0, "retries": 0, "group_attempts": {}, "saved_key": None,
+           "saved_version": None, "warnings": []}
 
     code, det, err = _req("/research/deterministic-facts", {"lakeName": lake, "state": state})
     if code != 200 or not det or not det.get("profile"):
@@ -506,12 +524,19 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
         out["seconds"] = time.perf_counter() - t0
         return out
 
-    code, _, err = _req("/research/save",
-                        {"lakeName": lake, "profile": profile,
-                         "status": meta["status"], "requestedBy": "research_lakes.py batch"})
+    code, saved, err = _req("/research/save",
+                            {"lakeName": lake, "profile": profile,
+                             "status": meta["status"], "requestedBy": "research_lakes.py batch"})
     if code != 200:
         out["error"] = f"save {code}: {err}"
         return out
+    # WHICH KEY IT LANDED ON AND WHAT VERSION IT BECAME. handleResearchSave resolves the id
+    # before writing, so a lake that already had a profile is versioned rather than forked --
+    # and version 1 means this water genuinely had nothing. That is the difference between a
+    # batch that filled a gap and a batch that redid work, and it is one field.
+    out["saved_key"] = (saved or {}).get("key") or (saved or {}).get("id")
+    out["saved_version"] = ((saved or {}).get("version")
+                            or ((saved or {}).get("metadata") or {}).get("version"))
     out["ok"] = out["saved"] = True
     out["seconds"] = time.perf_counter() - t0
     return out
@@ -586,6 +611,10 @@ def main():
                     help="parallel lakes. 1 by default: 64 lakes is under an hour serial and "
                          "serial cannot trip the LLM rate limit")
     ap.add_argument("--limit", type=int, default=0, help="stop after N lakes (0 = all)")
+    ap.add_argument("--list-profiles", metavar="PATH", nargs="?", const="_reports/research_profiles.json",
+                    help="write what /research/list holds, and how each of the waters this script "
+                         "would offer resolves against it, then stop. Answers 'does R2 already "
+                         "have this lake' without anyone reading ids off a screen.")
     ap.add_argument("--only-missing", action="store_true",
                     help="skip waters that already have a profile in R2, asked live via "
                          "/research/list and resolved with the app's own id rule")
@@ -614,6 +643,32 @@ def main():
         return 2
 
     lakes = load_lakes(a, a.registry)
+
+    if a.list_profiles:
+        code, data, err = _req("/research/list")
+        if code != 200 or not data:
+            print(f"!! /research/list {code}: {err}")
+            return 1
+        names = [n for n, _, _ in lakes]
+        done, _ = researched_names(a.repo, names)
+        ids = [x.get("id") if isinstance(x, dict) else x for x in (data.get("lakes") or [])]
+        matched = set()
+        for n in names:
+            if n in done:
+                matched.update(candidate_ids(a.repo, [n]))
+        os.makedirs(os.path.dirname(a.list_profiles) or ".", exist_ok=True)
+        with open(a.list_profiles, "w", encoding="utf-8") as f:
+            json.dump({"count": data.get("count"), "ids": sorted(i for i in ids if i),
+                       "offered": names,
+                       "resolved": sorted(done),
+                       "unresolved": [n for n in names if n not in done],
+                       "candidates": {n: candidate_ids(a.repo, [n]) for n in names}},
+                      f, indent=2)
+        print(f"{data.get('count')} profiles in R2. Of the {len(names)} waters this script offers, "
+              f"{len(done)} resolve onto one and {len(names) - len(done)} do not.")
+        print(f"-> {a.list_profiles}")
+        return 0
+
     if a.only_missing:
         done, stored = researched_names(a.repo, [n for n, _, _ in lakes])
         before = len(lakes)
