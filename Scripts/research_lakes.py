@@ -13,6 +13,13 @@ this work were wrong -- "5 minutes" for a rebuild that took 26, "7 minutes a lak
 an eleven-agent pipeline, and a benchmark that printed a number from four failed calls -- so this
 one came off a stopwatch.
 
+THAT 48 s IS A REFRESH, NOT A COLD RUN. Wateree already carries a profile, so /research/get-
+normalized returned a cached corpus and nothing was downloaded. Seventeen of the sixty-four have
+no profile at all -- see SEVENTEEN_HAVE_NO_PROFILE_FOUR_HAVE_NO_SPECIES_2026-09-01.md -- and each
+of those adds discovery and document downloads on top. The per-lake line this script prints at the
+end is the number to trust for the next quarter; the estimate it prints at the start is a refresh
+figure and will run short on the first pass.
+
 Ryan, on why it is a batch and not a tab: "I also don't like the idea of individual reruns for
 trolling intel... it is 1 agent x the number of lakes above 1000 acres... I already plan to pull
 new chart cards quarterly... maybe all of this can become a pipeline run?"
@@ -171,11 +178,29 @@ def research_one(lake, state, dry_run=False, verbose=False):
 
 def load_lakes(args, registry):
     """--lake wins; otherwise the app registry, filtered the way the research tab filters."""
-    if args.lake:
-        return [(n, args.state) for n in args.lake]
     idx_path = os.path.join(registry, "lake_index.json")
     with open(idx_path, encoding="utf-8") as f:
         idx = json.load(f)
+
+    if args.lake:
+        # THE STATE COMES OFF THE REGISTRY, NOT OFF A DEFAULT. A one-lake run is how the cold-run
+        # cost gets measured, and the cold lakes are in GA, NC and TN -- Lanier, Townsend, Watauga.
+        # Sending state=SC with a Georgia lake binds the wrong regulations into
+        # /research/deterministic-facts, and the run has to be done twice. An explicit --state
+        # still wins; it is the escape hatch for a name the index does not carry.
+        by_name = {}
+        for slug, row in idx.items():
+            name = row.get("display_name") or row.get("name") or slug
+            by_name[name.strip().lower()] = row.get("state")
+        out = []
+        for n in args.lake:
+            st = args.state or by_name.get(n.strip().lower()) or "SC"
+            if not args.state and n.strip().lower() not in by_name:
+                print(f"!! {n} is not in lake_index.json -- falling back to state=SC. "
+                      f"Pass --state if that is wrong.")
+            out.append((n, st))
+        return out
+
     out = []
     for slug, row in idx.items():
         # PRESETS.research in js/data/water-filter.js: minAcres 1000, includeRivers false.
@@ -197,7 +222,8 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--registry", default="registry", help="folder holding lake_index.json")
     ap.add_argument("--lake", action="append", help="one water by display name (repeatable)")
-    ap.add_argument("--state", default="SC", help="state for --lake runs")
+    ap.add_argument("--state", default=None,
+                    help="override the state for --lake runs; the registry supplies it otherwise")
     ap.add_argument("--min-acres", type=int, default=1000,
                     help="matches PRESETS.research (default 1000)")
     ap.add_argument("--jobs", type=int, default=1,
