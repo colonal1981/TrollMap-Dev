@@ -453,6 +453,11 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
             # mention it -- so getting it right is the difference between "Sidney Lanier" and a
             # name no document on earth contains.
             "lakeName": lake, "baseName": base_name(lake), "state": state,
+            # EVERY NAME THE WATER HAS, into the extractor. Its prompt says to take only facts
+            # that mention the base name, and a base name is one string: "John H. Moss" for a
+            # water the world calls Moss Lake or Kings Mountain Reservoir. Two documents, zero
+            # facts, on 2026-09-01. The registry has carried both other names all along.
+            "aliases": alt_names or [],
             "docIndex": i, "targetFields": ["trollingIntelligence"],
             "documents": [{"title": d.get("title"), "url": d.get("url"), "text": text}]})
         if code == 200:

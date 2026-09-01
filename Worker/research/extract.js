@@ -304,7 +304,33 @@ PRIORITY FIELDS — extract any of the following present in this document:
       'lake hartwell': ['Lake Hartwell', 'Hartwell Lake', 'Hartwell Reservoir'],
     };
     const _aliasKey = _baseNameStripped.toLowerCase().replace(/,\s*(sc|nc|ga|tn)(\/[a-z]{2})?\s*$/i, '').trim();
-    const _docAliases = DOCUMENT_ALIASES[_aliasKey] || [];
+    // THE CALLER'S ALIASES, UNIONED WITH THE TABLE. DOCUMENT_ALIASES is twelve waters somebody
+    // typed; the registry knows the rest and the caller is already holding them.
+    //
+    // Ryan, 2026-09-01, quoting the encyclopedia entry for the lake that came back with two
+    // documents and ZERO facts: "Kings Mountain Reservoir, also known as Moss Lake or John H.
+    // Moss Reservoir, is a 1,280 to 1,600-acre impoundment of Buffalo Creek in Cleveland County,
+    // North Carolina." The registry display name is "John H. Moss Lake", whose base name is
+    // "John H. Moss" -- a string no document about that water contains -- and the prompt below
+    // says to extract only facts that mention it. Its legacy_display_names have carried "Kings
+    // Mountain Reservoir" the whole time.
+    //
+    // Counted across the 64 research waters: the trailing "Lake"/"Reservoir" strip changes the
+    // name on 41 of them. Most are harmless because the base still sits inside the spoken name --
+    // "Hyco" inside "Hyco Lake", 24 facts. Two shapes are not: a personal name that never appears
+    // alone, and a word that appears everywhere ("White Lake" -> "White", which matches white
+    // bass and white perch).
+    //
+    // County stamps are dropped on the way in for the same reason baseName drops them: they are
+    // consolidate_lake_index.py's handwriting and no document carries one.
+    const _fromCaller = (Array.isArray(body.aliases) ? body.aliases : [])
+      .map((a) => String(a || '').replace(/\s*\([^)]*\bCo\b[^)]*\)\s*/i, ' ')
+                                 .replace(/\s+/g, ' ').trim())
+      .filter((a) => a.length >= 4);
+    const _docAliases = [...(DOCUMENT_ALIASES[_aliasKey] || []), ..._fromCaller]
+      .filter((a) => a.toLowerCase() !== _baseNameStripped.toLowerCase())
+      .filter((v, i, arr) => arr.findIndex((x) => x.toLowerCase() === v.toLowerCase()) === i)
+      .slice(0, 12);
     const _aliasClause = _docAliases.length
       ? ` OR any of these known aliases: ${_docAliases.map(a => `"${a}"`).join(', ')}`
       : '';
