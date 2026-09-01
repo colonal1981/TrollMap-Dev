@@ -664,7 +664,28 @@ def load_lakes(args, registry):
         # value. setdefault() would have let it: the key exists, the value is None, and the
         # report's NC/GA/TN never lands. Every Georgia and Tennessee lake goes back to SC, which
         # is the same failure as the first --todo run, one layer along.
-        resolved = getattr(args, "_resolved", None) or {}
+        # ASK THE APP WHO THIS WATER IS, WHETHER THE NAMES CAME FROM A REPORT OR FROM --lake.
+        #
+        # Only the --from-report branch above resolved, so a bare `--lake "Lake Richard Russell,
+        # GA"` skipped it and took the two fallbacks on the next lines: state off `by_name`, which
+        # is keyed by lake_index.json display names and does not contain the app's name, so SC;
+        # and aliases `[n]`, one name, its own.
+        #
+        # Measured 2026-09-01 on exactly that command. The run reported state=SC for a GA/SC water
+        # and aliases ["Lake Richard Russell, GA"], and the off-lake gate then dropped five of
+        # eight documents -- among them "Lake Russell Fishing Report", "Richard B. Russell Lake
+        # fishing reports" and "Richard B Russell Lake Fishing", which are the three best pages
+        # about the lake. Correctly, on what it was given: the base name of the app's name is
+        # "Richard Russell", and not one of those titles contains that string. The registry knows
+        # the water as "Richard B Russell Lake" and its documents say "Lake Russell"; both were one
+        # resolve away and the branch did not make it.
+        #
+        # Same lesson as the first --todo run, two branches along, and the comment below already
+        # says a registry lookup on an app name does not find these. It does not, so stop doing
+        # one: registryRecordFor() produced the name and is the only thing that can answer for it.
+        resolved = getattr(args, "_resolved", None)
+        if resolved is None:
+            resolved = resolve_names(args.repo, args.lake)
         prior_state = {k: v["state"] for k, v in resolved.items() if v.get("state")}
         prior_alias = {k: v["aliases"] for k, v in resolved.items() if v.get("aliases")}
         if getattr(args, "from_report", None):
@@ -683,7 +704,17 @@ def load_lakes(args, registry):
             if not args.state and not prior_state.get(n) and n.strip().lower() not in by_name:
                 print(f"!! {n} is not in lake_index.json -- falling back to state=SC. "
                       f"Pass --state if that is wrong.")
-            out.append((n, st, prior_alias.get(n) or alt_names.get(n.strip().lower(), []) or [n]))
+            names = prior_alias.get(n) or alt_names.get(n.strip().lower(), []) or [n]
+            # A WATER RUNNING UNDER ITS OWN NAME ALONE IS THE OFF-LAKE GATE ABOUT TO THROW AWAY
+            # ITS BEST DOCUMENTS, AND IT SAID NOTHING. Russell ran with ["Lake Richard Russell,
+            # GA"] and the gate dropped the three fishing reports that name the lake in their own
+            # titles -- correctly, on one name whose base is a string none of them contain. The
+            # run reported "ok 9/9 species" and looked fine.
+            if len(names) < 2:
+                print(f"!! {n}: the app returned no other name for this water, so the off-lake "
+                      f"gate has only \"{n}\" to judge documents by. Expect it to drop pages that "
+                      f"name the lake some other way.")
+            out.append((n, st, names))
         return out
 
     out = []
