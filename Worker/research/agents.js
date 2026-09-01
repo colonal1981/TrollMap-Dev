@@ -1061,7 +1061,20 @@ async function handleResearchAgent(request, env) {
     const groupOutcomes = [];
 
     // Run all groups concurrently
-    const groupPromises = groupEntries.map(async ([groupName, groupSpecies]) => {
+    // ONE LAKE WAS AN UNBOUNDED BURST OF LLM CALLS.
+    //
+    // `groupEntries.map(async …)` starts every group at once, so a lake with six species groups
+    // fired six concurrent calls. That was survivable from a browser, one lake at a time. It is
+    // not survivable from a batch: the quarterly run walks 64 lakes with `--jobs`, so four
+    // parallel lakes at six groups each is twenty-four simultaneous requests, and the provider
+    // chain answers that with 429s rather than intelligence.
+    //
+    // Bounded to GROUP_CONCURRENCY at a time. The batch's own `--jobs` then multiplies a number
+    // somebody chose instead of one nobody counted. Ryan set the constraint and not the value:
+    // "keep it under the cpu limit on the worker and under the rpm for the LLM... beyond that i
+    // dont care."
+    const GROUP_CONCURRENCY = 2;
+    const runGroup = async ([groupName, groupSpecies]) => {
       const userPrompt = buildGroupPrompt(groupSpecies);
       const payload = {
         messages: [
@@ -1091,9 +1104,19 @@ async function handleResearchAgent(request, env) {
         groupOutcomes.push({ group: groupName, species: groupSpecies, ok: false, reason: e.message });
         return {};
       }
-    });
+    };
 
-    const groupResults = await Promise.all(groupPromises);
+    // A simple sliding window: GROUP_CONCURRENCY workers pull from one shared cursor, so the
+    // next group starts the moment a slot frees rather than waiting for a whole batch to finish.
+    const groupResults = new Array(groupEntries.length);
+    let groupCursor = 0;
+    await Promise.all(Array.from({ length: Math.min(GROUP_CONCURRENCY, groupEntries.length) }, async () => {
+      for (;;) {
+        const i = groupCursor++;
+        if (i >= groupEntries.length) return;
+        groupResults[i] = await runGroup(groupEntries[i]);
+      }
+    }));
 
     // Merge all group results into single trollingIntelligence object
     const mergedIntelligence = {};

@@ -2403,8 +2403,25 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
 
     // ── STEP 6: LLM enrichment (one Worker call, fast) ───────────────────────
     log(`  [${agentKey}] Running LLM enrichment...`);
-    const llmDocLimit = agentKey === 'fisheries' ? 25 : 12;
-    const llmDocChars = agentKey === 'fisheries' ? 150000 : 40000;
+    // SEND WHAT THE WORKER USES, PLUS ENOUGH TO CHOOSE FROM.
+    //
+    // This shipped 25 documents at 150,000 characters -- up to 3.75 MB of JSON per lake, per run
+    // -- to a Worker that injects `maxDocs = 8` at `charsPerDoc = 20000`, about 160 KB. Roughly
+    // 96% of what crossed the wire was parsed and then discarded, and that JSON.parse is real CPU
+    // inside a handler with a hard CPU ceiling. On one lake from a browser it was invisible. On a
+    // 64-lake batch it is the difference between finishing and being killed mid-run.
+    //
+    // The headroom is deliberate and is the whole reason this is not simply 8: the Worker filters
+    // the documents by relevance to the agent BEFORE taking its eight, so sending exactly eight
+    // would hand it a choice already made -- by document order, which is nobody's judgement.
+    // Twelve at the Worker's own per-document cap leaves the filter something to select from and
+    // still cuts the payload by about 94%.
+    //
+    // Ryan set the constraint rather than the numbers: "keep it under the cpu limit on the worker
+    // and under the rpm for the LLM... beyond that i dont care." These are the smallest values
+    // that keep the Worker's own selection meaningful.
+    const llmDocLimit = agentKey === 'fisheries' ? 12 : 10;
+    const llmDocChars = 20000;
     const agentRes = await fetch(`${CF_WORKER_URL}/research/agent-llm`, {
       method: 'POST',
       headers: workerHeaders(),
