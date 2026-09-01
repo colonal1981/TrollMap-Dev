@@ -39,6 +39,13 @@ window.TROLLMAP_WORKER_URL = process.env.TROLLMAP_WORKER_URL
 const args = process.argv.slice(2);
 const withRivers = args.includes('--rivers');
 const jsonAt = args.includes('--json') ? args[args.indexOf('--json') + 1] : null;
+// --resolve <file>: names in, {name, state, aliases} out, for a caller that already knows WHICH
+// waters it wants and needs what the app knows about them. A re-run cannot use the todo list --
+// the moment the first run saves, every lake leaves it -- and a registry lookup on an app name
+// finds nothing, because "HYCO LAKE, NC" and "Lake Richard Russell, GA" are not keys in
+// lake_index.json. registryRecordFor() is the binding that produced those names, so it is the
+// only thing that can answer for them.
+const resolveAt = args.includes('--resolve') ? args[args.indexOf('--resolve') + 1] : null;
 
 // STDOUT IS NOT A CHANNEL THIS SCRIPT OWNS. access-index.js reports what it did with
 // console.info -- five lines about folded feed names, contributed registry lakes, dropped access
@@ -59,6 +66,20 @@ const { resolveR2Key } = await import('../js/data/lake-keys.js');
 const { makePredicate } = await import('../js/data/water-filter.js');
 const { researchedNames, researchStorageIdCandidates } = await import('../js/data/research-ids.js');
 
+/** What the app knows about one water: its state, and every name it answers to. */
+const describe = (name) => {
+  const rec = registryRecordFor(name);
+  const suffix = /,\s*([A-Z]{2})(?:\/[A-Z]{2})*\s*$/.exec(name);
+  return {
+    name,
+    state: (rec && rec.state) || (suffix && suffix[1]) || null,
+    aliases: rec
+      ? [rec.name, rec.displayName, ...(rec.legacyDisplayNames || [])].filter(Boolean)
+        .filter((v, i, a) => a.indexOf(v) === i)
+      : [name],
+  };
+};
+
 let all = [];
 try {
   all = await window.getUniversalLakeNamesAsync();
@@ -66,6 +87,16 @@ try {
   console.error(`!! the access index failed to load: ${e.message}`);
 }
 
+
+if (resolveAt) {
+  const { readFileSync, writeFileSync } = await import('node:fs');
+  const out = JSON.parse(readFileSync(resolveAt, 'utf8')).map(describe);
+  const missing = out.filter((r) => !r.state).map((r) => r.name);
+  if (missing.length) console.error(`!! no state for: ${missing.join(', ')}`);
+  writeFileSync(jsonAt || resolveAt, JSON.stringify(out, null, 2));
+  console.error(`resolved ${out.length} name(s) -> ${jsonAt || resolveAt}`);
+  process.exit(0);
+}
 
 // ── populateResearchLakeDropdown(), lake-research-ui.js, minus the DOM ──────────────────────
 const inland = all.filter((name) => !isCoastalKey(resolveR2Key(name)));
@@ -130,18 +161,7 @@ console.error(`${all.length} names offered, ${worth.length} worth researching, `
 // to state=SC. Georgia and Tennessee waters were about to be researched under South Carolina
 // regulations. registryRecordFor() is the binding that produced the name in the first place and
 // it is sitting right here, so it answers both questions at the source.
-const rows = todo.map((name) => {
-  const rec = registryRecordFor(name);
-  const suffix = /,\s*([A-Z]{2})(?:\/[A-Z]{2})*\s*$/.exec(name);
-  return {
-    name,
-    state: (rec && rec.state) || (suffix && suffix[1]) || null,
-    aliases: rec
-      ? [rec.name, rec.displayName, ...(rec.legacyDisplayNames || [])].filter(Boolean)
-        .filter((v, i, a) => a.indexOf(v) === i)
-      : [name],
-  };
-});
+const rows = todo.map(describe);
 const unstated = rows.filter((r) => !r.state).map((r) => r.name);
 if (unstated.length) console.error(`!! no state for: ${unstated.join(', ')}`);
 

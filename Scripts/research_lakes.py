@@ -219,6 +219,29 @@ def gate_documents(repo, documents, lake, alt_names=None):
     return json.loads(proc.stdout)
 
 
+def resolve_names(repo, names):
+    """{name: {state, aliases}} for names the app already chose -- its own binding, not a lookup."""
+    src = os.path.join(repo, "Scripts", "research_todo.mjs")
+    if not os.path.exists(src):
+        raise SystemExit(f"!! cannot find {src} -- pass --repo pointing at the TrollMap-Dev tree")
+    with tempfile.TemporaryDirectory() as tmp:
+        inp = os.path.join(tmp, "names.json")
+        outp = os.path.join(tmp, "resolved.json")
+        with open(inp, "w", encoding="utf-8") as f:
+            json.dump(names, f)
+        proc = subprocess.run(["node", os.path.abspath(src), "--resolve", inp, "--json", outp],
+                              capture_output=True, text=True, encoding="utf-8",
+                              cwd=os.path.abspath(repo),
+                              env=dict(os.environ, TROLLMAP_WORKER_URL=WORKER))
+        for line in (proc.stderr or "").splitlines():
+            print(f"   {line}")
+        if proc.returncode != 0 or not os.path.exists(outp):
+            print("!! could not resolve names against the app -- falling back to the registry")
+            return {}
+        with open(outp, encoding="utf-8") as f:
+            return {r["name"]: r for r in json.load(f)}
+
+
 def app_todo_names(repo):
     """
     The waters the Research tab shows under "Not researched yet" -- ASKED OF THE APP'S OWN CODE.
@@ -607,6 +630,12 @@ def load_lakes(args, registry):
         args.lake = [r["lake"] for r in (prior.get("results") or []) if r.get("lake")]
         print(f"repeating {len(args.lake)} water(s) from "
               f"{os.path.basename(args.from_report)}")
+        # THE STATE AND THE ALIASES COME FROM THE APP, NOT FROM THE OLD REPORT. A report written
+        # before aliases were recorded has none, and a registry lookup on an app name finds none
+        # either -- "Lake Richard Russell, GA" is not a key in lake_index.json, and its documents
+        # all say "Lake Russell". So the same registryRecordFor() that produced the name answers
+        # for it, through research_todo.mjs --resolve.
+        args._resolved = resolve_names(args.repo, args.lake)
 
     if getattr(args, "todo", False):
         # The app's name, its state and its alias set, all decided by the same registryRecordFor()
@@ -631,13 +660,23 @@ def load_lakes(args, registry):
         # A report carries the state and the aliases the run used; a registry lookup on an app
         # name does not find them. Same lesson as the first --todo run, which sent Georgia and
         # Tennessee lakes to the Worker as South Carolina.
-        prior_state, prior_alias = {}, {}
+        # A resolve that answered `null` is not an answer, so it must not shadow the report's
+        # value. setdefault() would have let it: the key exists, the value is None, and the
+        # report's NC/GA/TN never lands. Every Georgia and Tennessee lake goes back to SC, which
+        # is the same failure as the first --todo run, one layer along.
+        resolved = getattr(args, "_resolved", None) or {}
+        prior_state = {k: v["state"] for k, v in resolved.items() if v.get("state")}
+        prior_alias = {k: v["aliases"] for k, v in resolved.items() if v.get("aliases")}
         if getattr(args, "from_report", None):
             with open(args.from_report, encoding="utf-8") as f:
                 for r in (json.load(f).get("results") or []):
-                    if r.get("lake"):
-                        prior_state[r["lake"]] = r.get("state")
-                        prior_alias[r["lake"]] = r.get("aliases") or []
+                    n = r.get("lake")
+                    if not n:
+                        continue
+                    if r.get("state") and not prior_state.get(n):
+                        prior_state[n] = r["state"]
+                    if r.get("aliases") and not prior_alias.get(n):
+                        prior_alias[n] = r["aliases"]
         out = []
         for n in args.lake:
             st = args.state or prior_state.get(n) or by_name.get(n.strip().lower()) or "SC"
