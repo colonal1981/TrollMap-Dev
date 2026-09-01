@@ -58,10 +58,90 @@ export function lakeTerms(lakeName) {
  * Official sources bypass it: an SCDNR or EPA document is about the water it is about, and
  * dropping one for failing a substring test costs more than the occasional off-lake page.
  */
+/** Waterbody nouns, so a one-word name has to name a WATER and not an adjective. */
+const WATER_NOUN = ['lake', 'reservoir', 'pond', 'dam', 'impoundment'];
+
+const flat = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+/**
+ * Does the title or the URL name this water?
+ *
+ * A PAGE TITLED FOR A LAKE IS ABOUT THAT LAKE, and the state test below cannot know it. That test
+ * exists to keep "Marion Lake, MN" out of Lake Marion, SC, and it works by demanding a state
+ * signal in the same blob as the name -- title, url and the first 3,000 characters run together.
+ * A fishing report about Hyco Lake often never writes "NC" or "North Carolina" anywhere in it.
+ *
+ * Measured 2026-09-01 across the seventeen-lake cold batch: the gate dropped 48 documents and 22
+ * of them named the lake in their own title or URL. "Hyco Lake Fishing Reports". "Mountain Island
+ * Lake Fishing". All three Rhodhiss pages. "Stripers backed up at Tuckertown dam". Every W. Kerr
+ * Scott page. That is the prose the fisheries doc ranking calls the best source there is, refused
+ * for not repeating the state. Hyco kept four documents and lost its two best.
+ *
+ * TWO RULES, AND THE SECOND IS WHY THIS IS NOT A SUBSTRING TEST. A multi-word base name is
+ * distinctive by itself -- "mountain island", "w kerr scott", "lookout shoals". A ONE-WORD base is
+ * not: White Lake bases to "white", which matches "white bass" and "white perch" in any title. So
+ * a single word must arrive beside a waterbody noun -- "hyco lake", "lake rhodhiss", "randleman
+ * reservoir", "tuckertown dam". That is how a water's name is written and not how a fish's colour
+ * is.
+ *
+ * Aliases go through the same two rules, which is what reaches "Lake Russell fishing report" for
+ * Richard B Russell Lake and "Moss Lake fishing reports" for John H. Moss Lake.
+ *
+ * What still fails, correctly, on the same 48: Cleveland Metroparks in Ohio, a Maryland report,
+ * Smith Mountain Lake in Virginia, Jackson Hole, Texas Parks and Wildlife, Oregon DFW, the
+ * Cambridge Dictionary's definition of "lake", and the county recreation pages that mention no
+ * water at all.
+ */
+const OUR_STATES = ['sc', 'nc', 'ga', 'tn'];
+
+/**
+ * The states this app does not cover, spelled out. Two-letter codes are deliberately NOT here:
+ * `in`, `or`, `me`, `de`, `ok`, `hi`, `la`, `pa` and `co` are all ordinary words and would refuse
+ * half the good pages. A `state.xx.us` domain is the one abbreviation that cannot be a word.
+ */
+const OTHER_STATE = new RegExp('\\b(' + [
+  'alabama', 'alaska', 'arizona', 'arkansas', 'california', 'colorado', 'connecticut', 'delaware',
+  'florida', 'hawaii', 'idaho', 'illinois', 'indiana', 'iowa', 'kansas', 'kentucky', 'louisiana',
+  'maine', 'maryland', 'massachusetts', 'michigan', 'minnesota', 'mississippi', 'missouri',
+  'montana', 'nebraska', 'nevada', 'new hampshire', 'new jersey', 'new mexico', 'new york',
+  'north dakota', 'ohio', 'oklahoma', 'oregon', 'pennsylvania', 'rhode island', 'south dakota',
+  'texas', 'utah', 'vermont', 'virginia', 'washington', 'west virginia', 'wisconsin', 'wyoming',
+].join('|') + ')\\b');
+
+/** A page that names another state in its own title or URL is not this lake's page. */
+function claimedByAnotherState(hay, state) {
+  if (OTHER_STATE.test(hay)) return true;
+  const m = /\bstate ([a-z]{2}) us\b/.exec(hay);
+  return !!m && m[1] !== String(state || '').toLowerCase() && !OUR_STATES.includes(m[1]);
+}
+
+function namedInTitle(doc, names, state) {
+  const hay = flat(`${doc?.title || ''} ${doc?.url || ''}`);
+  if (!hay) return false;
+  // THE ONE CASE THE TITLE RULE CANNOT HAVE. `test/doc-relevance.test.js` has asserted since it
+  // was written that "Marion Lake fisheries survey" on dnr.state.mn.us must not pass for Lake
+  // Marion, SC -- and it names the lake in its title, so the rule above would have taken it. The
+  // test caught it on the first run, which is the whole reason that test exists.
+  if (claimedByAnotherState(hay, state)) return false;
+  for (const raw of names) {
+    const full = flat(lakeTerms(raw).baseName || raw);
+    const base = full.replace(/^lake /, '').replace(/ (lake|reservoir)$/, '').trim();
+    if (base.length < 4) continue;
+    if (base.includes(' ') && hay.includes(base)) return true;
+    for (const w of WATER_NOUN) {
+      if (hay.includes(`${base} ${w}`) || hay.includes(`${w} ${base}`)) return true;
+    }
+  }
+  return false;
+}
+
 export function isOnLakeDoc(doc, lakeName, altNames = []) {
   const { baseName, state } = lakeTerms(lakeName);
   const url = String(doc?.url || '').toLowerCase();
   if (OFFICIAL_SOURCE.test(url)) return true;
+
+  const every = [lakeName, ...(Array.isArray(altNames) ? altNames : [])].filter(Boolean);
+  if (namedInTitle(doc, every, state)) return true;
 
   const combined = `${String(doc?.title || '').toLowerCase()} ${url} `
     + `${String(doc?.fullText || doc?.text || '').slice(0, 3000).toLowerCase()}`;
