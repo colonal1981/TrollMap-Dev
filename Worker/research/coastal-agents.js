@@ -250,7 +250,6 @@ function isCoastalZone(zoneKeyOrName) {
 function coastalAgentPlan() {
   return [
     'biology',              // shared, coastal hint
-    'habitat',              // shared, coastal hint
     'fisheries',            // shared, coastal hint
   ];
 }
@@ -265,6 +264,7 @@ const COASTAL_SKIPPED_AGENTS = {
   tidal: 'RETIRED 2026-08-31, with `estuary`, for the same reason.',
   navigation: 'RETIRED 2026-09-01. chartedHazards() reads the pack POI layer and the weather block carries wind and current.',
   summary: 'RETIRED 2026-09-01. buildDeterministicSummary() writes the section from the measured fields already in the profile.',
+  habitat: 'RETIRED 2026-09-01. The chartpack answers creek mouths, timber and bottom composition; the attractor feeds answer attractors; five fields had no planner reader; vegetation is parked empty by decision.',
 };
 
 export {

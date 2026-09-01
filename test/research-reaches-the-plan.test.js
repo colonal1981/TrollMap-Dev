@@ -76,11 +76,11 @@ const NOT_FOR_THE_PLANNER = {
   'biology.invasiveSpecies': 'regulatory and ecological, does not change where to troll',
   'biology.speciesAbundance': 'prose about the fishery; the catch journal is the local truth',
   'biology.predatorSpecies': 'the species being targeted is chosen in the form',
-  'habitat.cover': 'superseded by the pack: docks, timber and attractors arrive as geometry',
-  'habitat.dockDensity': 'docks.geojson carries every dock individually',
-  'habitat.riprapLocations': 'no riprap layer in the pack yet — see DELETION_TAB custom-vectors',
-  'habitat.shallowFlatAreas': 'depth_areas.geojson is finer than a prose description',
-  'habitat.artificialHabitat': 'the Details.attractorCount/Types fields carry the usable form',
+  // The five habitat excuses that stood here went with the habitat agent on 2026-09-01. They said
+  // the pack supersedes cover, that docks.geojson carries every dock, that depth_areas is finer
+  // than a prose flat, and that artificialHabitatDetails carries the usable form of the
+  // attractors -- all true, and all now arguments for the field not existing rather than for it
+  // going unread. A field nothing hunts needs no excuse.
   // `navigation.hazards` WAS EXCUSED HERE with "handed to the prompt from the pack, not the
   // profile" -- half true and the half that was false hid a gap. The pack's charted hazards were
   // reaching nothing, and neither was the profile's prose. Both do now, chart first, so this is a

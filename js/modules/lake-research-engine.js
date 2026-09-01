@@ -49,8 +49,8 @@ window.TROLLMAP_RESEARCHED_CACHE = window.TROLLMAP_RESEARCHED_CACHE || {};
 // plan-inputs.js read three of them: archetype/bodyType, maxDepthFt, averageDepthFt. The
 // last two are geometry-derived off the chartpack; the first is the registry's
 // `feature_type`. The other six have no reader anywhere outside this pipeline.
-const FRESHWATER_RESEARCH_ORDER = ['biology', 'habitat', 'fisheries'];
-const COASTAL_RESEARCH_ORDER = ['biology', 'habitat', 'fisheries'];
+const FRESHWATER_RESEARCH_ORDER = ['biology', 'fisheries'];
+const COASTAL_RESEARCH_ORDER = ['biology', 'fisheries'];
 
 // WHAT THE RESEARCH CARD DRAWS. A superset of the agent list, and it stays a superset: a section
 // with no agent is filled by the deterministic pass or the live digest, and Ryan still has to be
@@ -63,7 +63,6 @@ const RESEARCH_ORDER = FRESHWATER_RESEARCH_ORDER;
 
 const RESEARCH_LABELS = {
   biology: '🐟 Fisheries',
-  habitat: '🌿 Habitat',
   regulations: '📜 Regulations',
   fisheries: '🧠 Species Intelligence',
   saltwater_regulations: '📜 Saltwater Regs',
@@ -101,27 +100,22 @@ const AGENT_DEFINITIONS = {
     label: '🐟 Fisheries Biology',
     targetFields: ['biology.primaryForage', 'biology.secondaryForage', 'biology.predatorSpecies', 'biology.speciesAbundance', 'biology.knownStockings', 'biology.baitfishMovement', 'biology.invasiveSpecies', 'biology.spawnTiming', 'biology.forageSpatial'],
   },
-  habitat: {
-    label: '🌿 Habitat',
-    // FIVE OF THE ORIGINAL TWELVE CAME OFF THIS LIST 2026-09-01, BECAUSE THE CHART ANSWERS THEM.
-    //
-    //   namedCreekMouths, standingTimber, timberFields
-    //       water_features.geojson and pois.geojson, read by deriveGeospatialStructureFacts()
-    //       into habitat.structuralElements on every run. 1,352 creek mouths across the 343
-    //       packs the app offers and every one of them named; 1,469 Flooded Timber POIs in the
-    //       first 150 packs. plan-inputs.js reads the pack's answer now -- it had been printing
-    //       the agent's.
-    //   artificialHabitatDetails.attractorCount, .attractorTypes
-    //       Deterministic since the attractor feeds were wired; the prompt skeleton has told the
-    //       agent not to return them for some time, so listing them here as targets it hunts was
-    //       already untrue.
-    //
-    // What is left is seven fields, five of which have no planner reader and carry a written
-    // excuse in research-reaches-the-plan.test.js, and two -- bottomComposition and vegetation --
-    // which the planner DOES read and which have no charted source: across all 343 packs there
-    // are 39 distinct poi_type values, none of them vegetation, and fifteen `rock` POIs in total.
-    targetFields: ['habitat.bottomComposition', 'habitat.vegetation', 'habitat.cover', 'habitat.dockDensity', 'habitat.riprapLocations', 'habitat.shallowFlatAreas', 'habitat.artificialHabitat'],
-  },
+  // ── `habitat` RETIRED 2026-09-01 ──────────────────────────────────────────
+  //
+  // Twelve target fields and not one left for a model to answer.
+  //
+  //   namedCreekMouths, standingTimber, timberFields   the pack's water_features and POI layers
+  //   artificialHabitatDetails.attractorCount/Types    the state attractor feeds
+  //   bottomComposition                                garmin_6_0, Garmin's own seabed labels
+  //   cover, dockDensity, riprapLocations,             no planner reader; each carries a written
+  //     shallowFlatAreas, artificialHabitat            excuse in research-reaches-the-plan.test.js
+  //   vegetation                                       PARKED EMPTY, by Ryan's call
+  //
+  // On vegetation, after the counting: "for the lakes and rivers just park those empty... i don't
+  // think a web fetch is going to get accurate data... that is one of those things i will just
+  // have to learn on the water." The whole pack set holds 60 `Wd` marks. Aerial and satellite
+  // vegetation mapping sees topped-out growth, which is the half he can already see; the
+  // submerged edge only comes off sonar, over water somebody has already run.
   // ── `navigation` RETIRED 2026-09-01 ───────────────────────────────────────
   //
   // `ramps` was deterministic already, `notes` had no reader, and now `hazards` goes too.
@@ -1011,6 +1005,69 @@ function depthStats_needsContours(depthGeo) {
   return !(depthGeo?.features?.length > 0);
 }
 
+// GARMIN SOUNDED THE BOTTOM AND WROTE IT DOWN, AND AN LLM WAS BEING ASKED THE SAME QUESTION.
+//
+// `garmin_6_0` is Garmin's nature-of-the-seabed class -- identified 2026-08-27, with the firmware's
+// own section header "Bottom Conditions" sitting immediately ahead of the feature block at
+// 0x6e966f8. The labels are standard chart abbreviations (NOAA Chart No. 1, section J): a material
+// code, optionally preceded by a lowercase qualifier, space-separated when the bottom is mixed.
+//
+// Counted across every pack on disk, 2026-09-01: 4,074 records on 46 waters, 1,759 of them named,
+// in 40 distinct label combinations. IT IS A MARINE ATTRIBUTE -- 98% sit on the 24 coastal zone
+// packs, and inland it is 97 records on 11 waters, most of those tidal coastal-plain rivers.
+// Wateree has none and Murray has one. So this fills bottomComposition where Garmin surveyed it
+// and leaves it empty everywhere else, which is the honest answer and is what the field was
+// getting a model's paragraph for.
+//
+// `Wd` is weed -- 60 records. That is the only charted vegetation anywhere in the pack set, and it
+// is far too sparse to describe a lake's grass. It is reported as its own count rather than being
+// folded into the bottom, so nobody later mistakes it for a vegetation survey.
+const SEABED_MATERIAL = {
+  S: 'sand', M: 'mud', Cy: 'clay', Si: 'silt', St: 'stones', G: 'gravel',
+  P: 'pebbles', Sh: 'shells', Rk: 'rock', Co: 'coral', Wd: 'weed',
+};
+const SEABED_QUALIFIER = {
+  f: 'fine', m: 'medium', c: 'coarse', so: 'soft', sy: 'sticky',
+  h: 'hard', bk: 'broken', sf: 'stiff',
+};
+
+function bottomCompositionFromPois(poiGeo) {
+  const feats = poiGeo?.features;
+  if (!feats?.length) return null;
+  const material = {};
+  const qualifier = {};
+  let labelled = 0;
+  for (const f of feats) {
+    const p = f.properties || {};
+    if (p.poi_type !== 'garmin_6_0') continue;
+    const label = String(p.name || '').trim();
+    if (!label) continue;               // 57% of them carry no label at all
+    labelled += 1;
+    for (const token of label.split(/\s+/)) {
+      // A token is an optional lowercase qualifier followed by a capitalised material code:
+      // `soM` soft mud, `bkSh` broken shells, `fS` fine sand, `Cy` clay. A bare qualifier
+      // (`so`, `sy`) is what the chart drew when it named a consistency and no material.
+      const m = /^([a-z]*)([A-Z][a-z]?)?$/.exec(token);
+      if (!m) continue;
+      const [, q, mat] = m;
+      if (q && SEABED_QUALIFIER[q]) qualifier[SEABED_QUALIFIER[q]] = (qualifier[SEABED_QUALIFIER[q]] || 0) + 1;
+      if (mat && SEABED_MATERIAL[mat]) material[SEABED_MATERIAL[mat]] = (material[SEABED_MATERIAL[mat]] || 0) + 1;
+    }
+  }
+  if (!labelled) return null;
+  const weed = material.weed || 0;
+  delete material.weed;
+  const out = { ...material, ...qualifier };
+  // A WEED MARK IS NOT A BOTTOM COMPOSITION. Lake Murray carries exactly one `garmin_6_0` label
+  // and it reads `Wd`, which produced a bottom-composition object holding nothing but a note --
+  // an empty finding dressed as a finding, on a 50,000-acre water. The rule is the material, not
+  // a count: no decoded material or consistency means Garmin recorded no bottom here.
+  if (!Object.keys(out).length) return weed ? { bottomComposition: null, chartedWeedMarks: weed } : null;
+  out.note = `From ${labelled} charted Garmin bottom-conditions labels on this water`
+    + (weed ? `; ${weed} of them read Wd (weed), which is a sounding note and not a vegetation survey.` : '.');
+  return { bottomComposition: out, chartedWeedMarks: weed || null };
+}
+
 function derivePoiStructures(poiGeo) {
   // THIS USED TO KEEP ONLY BRIDGE NAMES. Fourteen lines whose entire output was one string:
   // it mapped every POI to its name, filtered for /bridge/i, and discarded the rest. Murrells
@@ -1157,17 +1214,25 @@ async function deriveGeospatialStructureFacts(lakeName) {
     )];
   }
 
+  const bottom = bottomCompositionFromPois(poiGeo);
   const hasStructure = Object.keys(structuralElements).length > 0;
   const hasIdentity = Object.keys(identityFacts).length > 0;
-  if (!hasStructure && !hasIdentity) return null;
+  if (!hasStructure && !hasIdentity && !bottom) return null;
 
   const evidence = { habitat: {}, identity: identityEvidence };
   for (const field of Object.keys(structuralElements)) {
     evidence.habitat[`structuralElements.${field}`] = [buildEvidenceEntry('internal_geospatial_layer', 'TrollMap structure / water_features / POI / boundary layers', 'internal:structure+water_features+pois+boundaries', null, 'pipeline_derived_structure_layers', { lakeName })];
   }
 
-  const habitatSection = hasStructure ? {
-    structuralElements,
+  if (bottom?.bottomComposition) {
+    evidence.habitat.bottomComposition = [buildEvidenceEntry(
+      'internal_geospatial_layer', 'Garmin charted bottom-conditions labels (chartpack pois.geojson)',
+      'internal:pois#garmin_6_0', null, 'charted_seabed_abbreviations', { labelled: bottom.bottomComposition.note })];
+  }
+  const habitatSection = (hasStructure || bottom) ? {
+    ...(hasStructure ? { structuralElements } : {}),
+    ...(bottom?.bottomComposition ? { bottomComposition: bottom.bottomComposition } : {}),
+    ...(bottom?.chartedWeedMarks ? { chartedWeedMarks: bottom.chartedWeedMarks } : {}),
     notes: 'Structural elements summarized from TrollMap contour, depth-area, POI, and boundary layers.'
   } : (undefined);
 
@@ -1854,7 +1919,7 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
     // Discovered sources sorted by prefetchScore descending, then capped.
     // Sources without prefetchScore get a default of 3 so they're not unfairly cut.
     const AGENT_SOURCE_CAPS = {
-      biology: 12, habitat: 8, fisheries: 10,
+      biology: 12, fisheries: 10,
     };
     const cap = AGENT_SOURCE_CAPS[agentKey] ?? 10;
     const guaranteed = sources.filter(s => s.priority === 1);
@@ -2518,8 +2583,11 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
   //   Wave2: biology, fisheries (shared, with coastal hints)
   // `regulations` and `saltwater_regulations` were the fifth member of each wave and are retired;
   // the digest is parsed live and its closures are what checkRegulations() reads.
-  const FRESH_WAVE1 = ['habitat'];
-  const COASTAL_WAVE1 = ['habitat'];
+  // Wave 1 was the agents that produced context the later ones read. `habitat` was the last of
+  // them and it is retired; biology and fisheries both read the deterministic profile, not each
+  // other, so there is nothing left to sequence.
+  const FRESH_WAVE1 = [];
+  const COASTAL_WAVE1 = [];
   const WAVE1_AGENTS = coastalForRun ? COASTAL_WAVE1 : FRESH_WAVE1;
   const WAVE2_AGENTS = ['biology', 'fisheries'];
   const wave1 = parallelAgents.filter(k => WAVE1_AGENTS.includes(k));

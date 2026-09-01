@@ -422,9 +422,25 @@ export function researchIntel(profile, species, season, now = Date.now()) {
   if (!profile) return null;
   const out = [];
   const s = String(season || '').toLowerCase();
+  // `Bottom: [object Object]` WAS REACHING THE MODEL.
+  //
+  // `bottomComposition` and `vegetation` are objects in the research schema -- `{sand: 'high'}` --
+  // and this interpolated them straight into the line. An EMPTY object passed the guard too, so a
+  // profile whose habitat agent found nothing still printed `Bottom: [object Object]`. Objects are
+  // rendered as `key (value)` pairs now and an empty one is treated as no answer.
   const put = (label, v, unit = '') => {
     if (v === null || v === undefined || v === '' || (Array.isArray(v) && !v.length)) return;
-    out.push(`${label}: ${Array.isArray(v) ? v.join('; ') : v}${unit}`);
+    let text;
+    if (Array.isArray(v)) text = v.join('; ');
+    else if (typeof v === 'object') {
+      const parts = Object.entries(v)
+        .filter(([k, val]) => k !== 'note' && val !== null && val !== undefined && val !== '')
+        .map(([k, val]) => (val === true ? k : `${k} (${val})`));
+      const note = typeof v.note === 'string' ? v.note : '';
+      if (!parts.length && !note) return;
+      text = parts.join(', ') + (note ? `${parts.length ? ' — ' : ''}${note}` : '');
+    } else text = v;
+    out.push(`${label}: ${text}${unit}`);
   };
 
   const id = profile.identity || {};
@@ -496,12 +512,19 @@ export function researchIntel(profile, species, season, now = Date.now()) {
   put('Charted structure POIs', struct.chartedStructurePois);
   put('Fish attractors', hab.artificialHabitatDetails?.attractorCount);
   put('Attractor types', hab.artificialHabitatDetails?.attractorTypes);
-  // The two habitat fields with no charted source. Garmin ships no substrate or vegetation
-  // layer: across all 343 packs there are 39 distinct poi_type values, none of them vegetation,
-  // and fifteen `rock` POIs in total. These are still the agent's words. See the note on the
-  // habitat agent in lake-research-engine.js.
+  // BOTTOM IS CHARTED WHERE IT IS CHARTED, AND BLANK WHERE IT IS NOT.
+  //
+  // `garmin_6_0` is Garmin's nature-of-the-seabed class and bottomCompositionFromPois() decodes
+  // it. It is a marine attribute: 98% of the 4,074 records on disk sit on coastal zone packs, and
+  // inland it is 97 records on 11 waters, mostly tidal rivers. So this line appears on the coast
+  // and on the Cooper, and does not appear on Wateree.
+  //
+  // Vegetation has no line at all. Ryan, 2026-09-01, after the counting came back: "for the lakes
+  // and rivers just park those empty... i don't think a web fetch is going to get accurate data...
+  // that is one of those things i will just have to learn on the water." The 60 `Wd` marks in the
+  // whole pack set are sounding notes, not a grass map, and the only thing that maps a submerged
+  // grass edge is sonar over water somebody has already run.
   put('Bottom', hab.bottomComposition);
-  put('Vegetation', hab.vegetation);
 
   // The fisheries agent's own words for this species and season, beyond the depth band.
   const band = researchedBand(profile, species, s);

@@ -325,65 +325,16 @@ depthRange is [minFt, maxFt] array or null. Only populate seasons with document 
     },
     expectedKey: "biology"
   },
-  habitat: {
-    label: "Habitat",
-    order: 4,
-    system: "You are an aquatic habitat data assembly agent. Map facts and geospatial data to the habitat JSON. No fishing advice. Return ONLY valid JSON.",
-    userTemplate: (lakeName, state, prev) => {
-      const facts = prev?._extractedFacts || [];
-      const habFacts = facts.filter(f =>
-        /habitat|cover|attractor|bottom|timber|dock|vegetation|structure|point|creek|ledge|flat|ramp|bridge|riprap|cove|arm|shallow|marina|pier/i.test(f.category + ' ' + f.fact)
-      );
-      const existingHabitat = prev?.habitat || {};
-      const factsBlock = habFacts.map(f =>
-        `• [${f.category}] ${f.fact} (source: ${f.source}, confidence ${f.confidence}%)`
-      ).join('\n');
-
-      return `Map habitat facts for ${lakeName}.
-
-EXTRACTED FACTS:
-${factsBlock || 'No habitat facts extracted.'}
-
-EXISTING GEOSPATIAL DATA (from TrollMap contour/supplemental layers — preserve these exactly):
-${JSON.stringify(existingHabitat, null, 2).slice(0, 3000)}
-
-DERIVED FIELDS ARE ALREADY STORED AND MUST NOT BE RETURNED: artificialHabitatDetails and
-structuralElements come from the chartpack's own geometry. Echoing them back is what produced
-a 402,757-character reply on 2026-08-16 -- structuralElements carried 3,531 hump coordinates at
-the time. Omit both keys; the merge preserves what you do not return.
-
-RULES:
-CASTING EXTRACTION REQUIREMENTS — these fields power the casting stop builder. Search the full document, including captions, tables, map labels, and prose. Preserve named locations verbatim and do not replace a specific location with a generic category.
-1. dockDensity: if documents describe dock concentration (e.g. "heavily docked residential shoreline", "sparse docks", "marina on north end"), capture as a descriptive string. null if not mentioned.
-2. riprapLocations: list specific riprap areas if mentioned (e.g. dam face, causeways, bridge approaches, rip-rapped banks). Array of strings.
-3. namedCreekMouths: extract named creek mouths or arms if mentioned in documents (e.g. "Bear Creek arm", "Dutchman Creek mouth"). Array of strings. These are high-value casting targets.
-4. timberFields: if documents describe flooded timber areas or submerged wood concentrations, capture as descriptive string with location if available.
-5. shallowFlatAreas: if documents describe specific named shallow flat areas or coves good for casting/spawning, capture as descriptive string.
-6. Include evidence-backed location details even when no numeric value is present; an empty array/null is correct only when the document contains no support.
-7. Do not infer casting locations from generic lake geography or fishing knowledge.
-8. standingTimber: boolean or description if submerged timber is present lake-wide.
-9. cover: array of cover types present (docks, brush, timber, riprap, etc.).
-10. Preserve all existing geospatial structuralElements and artificialHabitatDetails exactly.
-
-Return ONLY:
-{
-  "habitat": {
-    "bottomComposition": {},
-    "cover": [],
-    "vegetation": {},
-    "artificialHabitat": [],
-    "//": "artificialHabitatDetails, structuralElements, namedCreekMouths, standingTimber and timberFields are DERIVED FROM THE CHARTPACK and are already stored. Do not return them. The pack carries 1,352 named creek mouths and thousands of Flooded Timber POIs, each one surveyed and positioned.",
-    "dockDensity": null,
-    "riprapLocations": [],
-    "shallowFlatAreas": null,
-    "notes": ${JSON.stringify(existingHabitat.notes || null)}
-  },
-  "sources": []
-}
-JSON only.`;
-    },
-    expectedKey: "habitat"
-  },
+  // ── `habitat` RETIRED 2026-09-01 ──────────────────────────────────────────────────────────
+  //
+  // Twelve target fields, none of them left for a model. The pack's water_features and POI layers
+  // answer the creek mouths and the timber, the state attractor feeds answer the attractors,
+  // `garmin_6_0` -- Garmin's own nature-of-the-seabed labels -- answers bottomComposition where it
+  // was surveyed, and five fields had no planner reader at all.
+  //
+  // Vegetation is parked empty on purpose. Ryan: "for the lakes and rivers just park those
+  // empty... i don't think a web fetch is going to get accurate data... that is one of those
+  // things i will just have to learn on the water."
   navigation: {
     label: "Navigation",
     order: 5,
@@ -940,11 +891,10 @@ async function handleResearchAgent(request, env) {
   // Inject document text for agents that benefit from reading source material directly
   // biology gets the fisheries docs
   // fisheries gets fishing guide/report docs — seasonal behavior lives in these, not the profile
-  const docInjectionAgents = new Set(['biology', 'habitat', 'fisheries']);
+  const docInjectionAgents = new Set(['biology', 'fisheries']);
   if (docInjectionAgents.has(agentKey) && previousResults._normalizedDocuments?.length) {
     const docFilter = {
       biology:   /striped.?bass|fisheries|biology|annual|species|stocking|fish|bass|crappie|catfish|pattern|forage|shad|herring|omnia|conventional|sportsman|tactic|guide/i,
-      habitat:   /habitat|attractor|structure|dnr|sc.?lake/i,
       fisheries: /fish|bass|crappie|striper|catfish|pattern|season|depth|behavior|report|tactic|guide|omnia|conventional|sportsman/i,
     };
     const filter = docFilter[agentKey];
@@ -1402,20 +1352,9 @@ holding: coerceHolding(entry.holding, holdingRejects),
     };
   }
 
-  // Normalize habitat output — fix string fields that should be arrays
-  // The habitat agent sometimes writes cover/riprapLocations/namedCreekMouths as comma-separated strings
-  if (agentKey === 'habitat' && sectionData && typeof sectionData === 'object') {
-    const ARRAY_FIELDS = ['cover', 'riprapLocations', 'namedCreekMouths', 'artificialHabitat'];
-    for (const field of ARRAY_FIELDS) {
-      const val = sectionData[field];
-      if (typeof val === 'string' && val.trim()) {
-        // Convert comma-separated string to array
-        sectionData[field] = val.split(',').map(s => s.trim()).filter(Boolean);
-      } else if (val == null) {
-        sectionData[field] = [];
-      }
-    }
-  }
+  // The habitat repair block that stood here split comma-separated strings back into arrays for
+  // cover, riprapLocations, namedCreekMouths and artificialHabitat. No agent writes habitat any
+  // more: the chartpack and the attractor feeds do, as typed values.
 
   // Normalize trollingIntelligence — fix bare array season entries like [5, 15]
   // Agent sometimes shortcuts secondary species to just a depth array instead of full season object

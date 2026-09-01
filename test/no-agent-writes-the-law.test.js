@@ -60,11 +60,15 @@ describe('the two agents that used to write the regulations', () => {
     // from the profile's own measured fields on every assembly; the agent then ran alone
     // afterwards, read the saved profile back, and wrote it again with its section replaced by
     // prose restating the labelled lines that sit above it in the plan prompt.
-    for (const k of ['identity', 'estuary', 'tidal', 'navigation', 'limnology', 'summary']) {
+    // `habitat` joined them the same day, the last of the nine. Its twelve fields went to the
+    // pack's water_features and POI layers (creek mouths, timber), the state attractor feeds,
+    // `garmin_6_0` (Garmin's own seabed labels, for bottomComposition), and five that no planner
+    // ever read. Vegetation is parked empty by Ryan's call rather than guessed.
+    for (const k of ['identity', 'estuary', 'tidal', 'navigation', 'limnology', 'summary', 'habitat']) {
       expect(keys.includes(k)).toBe(false);
     }
-    // and the three that remain are still there
-    for (const k of ['biology', 'habitat', 'fisheries']) {
+    // and the two that remain are still there
+    for (const k of ['biology', 'fisheries']) {
       expect(keys.includes(k)).toBe(true);
     }
   });
