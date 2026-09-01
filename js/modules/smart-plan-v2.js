@@ -138,7 +138,10 @@ export async function buildSmartPlanV2(o) {
     // THE CHART FIRST, THE RESEARCH SECOND. The charted ones come out of the pack this function
     // already fetched; the wiring adds the profile's prose. Each line says which it is, so when
     // navigation.hazards retires this half simply goes empty and the sentence still stands.
-    hazards: [...chartedHazards(poisFc), ...(o.hazards || [])],
+    // The charted POI layer, and nothing else. `o.hazards` was the research agent's prose and the
+    // wiring stopped filling it on 2026-09-01 when the navigation agent retired -- a spread over a
+    // value nobody sets is a dead object, so it is gone rather than left looking optional.
+    hazards: chartedHazards(poisFc),
     // WHAT THE WATER IS DOING TODAY -- tide on the coast, flow and generation on a river.
     // Absent on a reservoir, and absent is the prompt this file has always built.
     waterState: o.waterState,

@@ -7,7 +7,6 @@
 import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
 import { coerceList, coerceLabels } from '../utils/coerce.js';
-import { researchHazards } from './plan-inputs.js';
 
 /* Lake Intel: species, forage, habitat, hazards, seasonal patterns */
 export async function syncLakeIntelData() {
@@ -157,20 +156,17 @@ export async function syncLakeIntelData() {
       if(p.bottom) lines.push(`Bottom composition: ${p.bottom}`);
     }
 
-    // Navigation hazards.
+    // NAVIGATION HAZARDS WERE HERE AND ARE GONE -- 2026-09-01.
     //
-    // THIS READ `nav.navigationHazards` AND NOTHING IS FILED UNDER THAT NAME. The research
-    // agent's own targetFields are `navigation.ramps`, `navigation.hazards`, `navigation.notes`
-    // -- so every lake that HAS hazards has been showing none in this briefing. Lake Wateree, SC
-    // carries two: storm activity near the dam and the S-20-101 bridge replacement.
+    // The block read researchHazards(rp), which read the navigation agent's prose. That agent is
+    // retired: of 88 hazard sentences across 42 profiles, nine were TVA boilerplate, nine named a
+    // marina rather than a hazard, and Wateree's own two were a weather-history line the live wind
+    // path answers better and a bridge replacement stored with no date on it.
     //
-    // researchHazards() is now the one place that answers "what are this water's navigation
-    // hazards", for this briefing and for the plan prompt's safety section, so the two cannot
-    // drift again. It keeps `navigationHazards` as an alternate for older profiles and still
-    // folds in drawdownNotes, which is what this block already did.
-    const hazards = researchHazards(rp);
-    if(hazards.length) lines.push(`Navigation hazards: ${hazards.join(' \u00B7 ')}`);
-    else if(!rp?.navigation && p.hazards) lines.push(`Navigation hazards: ${p.hazards}`);
+    // The charted hazards -- 33 Hazard, 34 No Wake, 13 No Boats on Wateree, typed and positioned
+    // off Garmin's survey -- reach the PLAN through chartedHazards(), which needs the pack's POI
+    // layer. This briefing does not load one, so it says nothing rather than saying prose. If it
+    // should carry them, it needs the pack, not a research field.
 
     // Seasonal pattern / trolling intel
     if(rp?.trollingIntelligence) {

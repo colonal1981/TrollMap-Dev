@@ -52,9 +52,9 @@ describe('the two agents that used to write the regulations', () => {
     // and plan-inputs.js read three, two of which the chartpack already derives and the third of
     // which the registry's feature_type answers. estuary and tidal: fifteen fields between them
     // and not one reader outside this pipeline -- the live tide and gauge path answers the cards.
-    for (const k of ['identity', 'estuary', 'tidal']) expect(keys.includes(k)).toBe(false);
-    // and the six that remain are still there
-    for (const k of ['limnology', 'biology', 'habitat', 'navigation', 'fisheries', 'summary']) {
+    for (const k of ['identity', 'estuary', 'tidal', 'navigation']) expect(keys.includes(k)).toBe(false);
+    // and the five that remain are still there
+    for (const k of ['limnology', 'biology', 'habitat', 'fisheries', 'summary']) {
       expect(keys.includes(k)).toBe(true);
     }
   });

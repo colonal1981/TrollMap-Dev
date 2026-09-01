@@ -15,7 +15,7 @@ import { state, CF_WORKER_URL } from '../core/state.js';
 import { resolveR2Key } from '../data/lake-keys.js';
 import { getLoadedAccessIndex } from '../data/access-index.js';
 import { getSeason, seasonNote } from '../data/species-intel.js';
-import { depthBandFor, usableAhFrom, researchIntel, researchHazards, structureWeights,
+import { depthBandFor, usableAhFrom, researchIntel, structureWeights,
          describeDepthBand } from './plan-inputs.js';
 import { DEFAULT_WEIGHTS, DEFAULT_RELIEF_WEIGHTS } from './plan-candidates.js';
 import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
@@ -228,7 +228,6 @@ export async function runSmartPlanV2() {
       intel: researchIntel(researched, species, season),
       // THE SAFETY SECTION'S HAZARD SENTENCE, which has never once had anything to say because
       // nothing filled this. Same profile, already loaded, one field further down.
-      hazards: researchHazards(researched),
       tackle: castableOrTrollable.map((l) => l.name),
       inventory: castableOrTrollable,
       // A NAME IS NOT A DEPTH. Pick Water has passed this since capBaitDepth() needed it; Smart

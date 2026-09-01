@@ -69,8 +69,8 @@ function agentTargetFields() {
 
 // A field is excused only with a reason. "Not used" is a decision that has to be written down,
 // which is the entire point -- an unexplained absence is how the whole pipeline went unwired.
-// The six `identity.*` excuses that headed this list are gone with the identity agent, and the
-// coastal ones with `estuary` and `tidal` (all 2026-08-31). An excuse is for a field an agent
+// The `identity.*` excuses went with the identity agent, the coastal ones with `estuary` and
+// `tidal` (2026-08-31), and the `navigation.*` ones with the navigation agent (2026-09-01). An excuse is for a field an agent
 // still hunts and the planner declines to read; a field nothing hunts needs no excuse.
 const NOT_FOR_THE_PLANNER = {
   'biology.invasiveSpecies': 'regulatory and ecological, does not change where to troll',
@@ -81,8 +81,6 @@ const NOT_FOR_THE_PLANNER = {
   'habitat.riprapLocations': 'no riprap layer in the pack yet — see DELETION_TAB custom-vectors',
   'habitat.shallowFlatAreas': 'depth_areas.geojson is finer than a prose description',
   'habitat.artificialHabitat': 'the Details.attractorCount/Types fields carry the usable form',
-  'navigation.ramps': 'the access index is authoritative and the ramp is chosen in the form',
-  'navigation.notes': 'free prose, no reliable structure',
   // `navigation.hazards` WAS EXCUSED HERE with "handed to the prompt from the pack, not the
   // profile" -- half true and the half that was false hid a gap. The pack's charted hazards were
   // reaching nothing, and neither was the profile's prose. Both do now, chart first, so this is a

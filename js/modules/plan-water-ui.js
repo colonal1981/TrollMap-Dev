@@ -34,7 +34,7 @@
 import { state, CF_WORKER_URL } from '../core/state.js';
 import { resolveR2Key } from '../data/lake-keys.js';
 import { getSeason, seasonNote } from '../data/species-intel.js';
-import { depthBandFor, usableAhFrom, researchIntel, researchHazards, describeDepthBand }
+import { depthBandFor, usableAhFrom, researchIntel, describeDepthBand }
   from './plan-inputs.js';
 import { packFetcher } from './smart-plan-v2.js';
 import { fetchForecast, fetchWaterState } from './plan-preflight.js';
@@ -900,7 +900,8 @@ export async function findWater() {
     intel: researchIntel(researched, species, getSeason(date, inp.waterTempF)),
     // THE CHART FIRST, THE RESEARCH SECOND -- same order and same reason as Smart Plan. `poFc` is
     // the pois.geojson this function already fetched for the cast spots.
-    hazards: [...chartedHazards(poFc), ...researchHazards(researched)],
+    // The charted POI layer only -- researchHazards() is gone with the navigation agent.
+    hazards: chartedHazards(poFc),
     windowMin: (() => {
       const p = (s) => { const m = /^(\d{1,2}):(\d{2})/.exec(String(s || '')); return m ? +m[1] * 60 + +m[2] : null; };
       const a = p(inp.launchTime), b = p(inp.returnTime);

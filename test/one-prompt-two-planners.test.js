@@ -25,7 +25,6 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { describe, it, expect } from './expect-shim.mjs';
-import { researchHazards } from '../js/modules/plan-inputs.js';
 import { snapEligibleFrom, TERMINAL_CONNECTION } from '../js/data/lure-knowledge.js';
 import { chartedHazards, NO_GO_POI_TYPES, AVOID_POI_TYPES } from '../js/modules/plan-candidates.js';
 import { buildPlanRequest } from '../js/modules/plan-prompt.js';
@@ -96,33 +95,19 @@ describe('what the research says will hurt you', () => {
     },
   };
 
-  it('reads navigation.hazards, which is where the research agent writes them', () => {
-    expect(researchHazards(WATEREE).length).toBe(2);
-    expect(researchHazards(WATEREE)[0]).toMatch(/Severe thunderstorms/);
-  });
-
-  it('takes the object form too, and keeps the location it carries', () => {
-    const p = { navigation: { hazards: [{ description: 'Submerged pilings', location: 'old US-21 crossing' }] } };
-    expect(researchHazards(p)).toEqual(['Submerged pilings (old US-21 crossing)']);
-  });
-
-  it('counts drawdown notes as a navigation hazard, the way lake-intel already did', () => {
-    const p = { navigation: { hazards: ['a'], drawdownNotes: 'winter drawdown to 220 ft' } };
-    expect(researchHazards(p)).toEqual(['a', 'winter drawdown to 220 ft']);
-  });
-
-  it('is empty, never null, when a lake has no profile at all', () => {
-    expect(researchHazards(null)).toEqual([]);
-    expect(researchHazards({})).toEqual([]);
-  });
-
-  it('does not repeat itself', () => {
-    expect(researchHazards({ navigation: { hazards: ['a', 'a', ''] } })).toEqual(['a']);
-  });
+  // researchHazards() WAS TESTED HERE AND IS GONE -- 2026-09-01, with the navigation agent that
+  // wrote the field it read. Ryan: "cut hazards from the agent... weather handles weather... and
+  // some random bridge closure i am sure i will find on my own another way."
+  //
+  // What these six tests pinned was a reader for prose that no longer exists. The SAFETY SECTION
+  // itself still matters and is still tested below -- buildPlanRequest() takes `hazards` from
+  // whoever calls it, and both planners now fill that from chartedHazards() off the pack's POI
+  // layer: typed, positioned, and off Garmin's survey rather than out of a model.
 
   it('reaches the safety section, and is kept apart from the charted kind', () => {
     const req = buildPlanRequest({ water: 'Lake Wateree, SC', species: ['Striped Bass'],
-                                   tackle: [], candidates: [], hazards: researchHazards(WATEREE) });
+                                   tackle: [], candidates: [],
+                                   hazards: WATEREE.navigation.hazards });
     const txt = JSON.stringify(req);
     expect(txt.includes('S-20-101')).toBe(true);
     expect(txt.includes('WHAT IS IN THE WAY')).toBe(true);
@@ -226,7 +211,10 @@ describe('what the chart says you may not enter, and what it says to avoid', () 
   it('is read from the pack both planners already hold, not a new request', () => {
     for (const f of ['js/modules/smart-plan-v2.js', 'js/modules/plan-water-ui.js']) {
       const t = live(src(f));
-      expect(t).toMatch(/hazards:\s*\[\s*\.\.\.chartedHazards\(/);
+      // Was `[...chartedHazards(`, a spread over a second source that no longer exists: the
+      // research agent's prose went with the navigation agent on 2026-09-01. What this test is
+      // for is that hazards come off the pack both planners already fetched, not a new request.
+      expect(t).toMatch(/hazards:\s*chartedHazards\(/);
       // one pois.geojson fetch per planner, the one that was already there
       expect((t.match(/pois\.geojson/g) || []).length).toBe(1);
     }
@@ -282,7 +270,8 @@ describe('Pick Water carries the research it already loaded', () => {
     // entry is read, and it was decided by the month alone -- so a plan dated September 1st
     // read the fall profile with 85 degree water in the lake.
     expect(ui).toMatch(/intel:\s*researchIntel\(researched,\s*species,\s*getSeason\(date, inp\.waterTempF\)\)/);
-    expect(ui).toMatch(/hazards:\s*\[\.\.\.chartedHazards\(poFc\), \.\.\.researchHazards\(researched\)\]/);
+    // The charted half only, since 2026-09-01.
+    expect(ui).toMatch(/hazards:\s*chartedHazards\(poFc\)/);
   });
 
   it('and hands them to the prompt from the tab state, across the two functions', () => {

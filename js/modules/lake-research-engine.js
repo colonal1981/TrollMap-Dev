@@ -49,8 +49,8 @@ window.TROLLMAP_RESEARCHED_CACHE = window.TROLLMAP_RESEARCHED_CACHE || {};
 // plan-inputs.js read three of them: archetype/bodyType, maxDepthFt, averageDepthFt. The
 // last two are geometry-derived off the chartpack; the first is the registry's
 // `feature_type`. The other six have no reader anywhere outside this pipeline.
-const FRESHWATER_RESEARCH_ORDER = ['limnology', 'biology', 'habitat', 'navigation', 'fisheries', 'summary'];
-const COASTAL_RESEARCH_ORDER = ['biology', 'habitat', 'navigation', 'fisheries', 'summary'];
+const FRESHWATER_RESEARCH_ORDER = ['limnology', 'biology', 'habitat', 'fisheries', 'summary'];
+const COASTAL_RESEARCH_ORDER = ['biology', 'habitat', 'fisheries', 'summary'];
 
 // WHAT THE RESEARCH CARD DRAWS. A superset of the agent list, and it stays a superset: a section
 // with no agent is filled by the deterministic pass or the live digest, and Ryan still has to be
@@ -65,7 +65,6 @@ const RESEARCH_LABELS = {
   limnology: '🌊 Limnology',
   biology: '🐟 Fisheries',
   habitat: '🌿 Habitat',
-  navigation: '🧭 Navigation',
   regulations: '📜 Regulations',
   fisheries: '🧠 Species Intelligence',
   summary: '📝 AI Summary',
@@ -86,28 +85,21 @@ const AGENT_DEFINITIONS = {
     label: '🌿 Habitat',
     targetFields: ['habitat.bottomComposition', 'habitat.cover', 'habitat.vegetation', 'habitat.standingTimber', 'habitat.dockDensity', 'habitat.riprapLocations', 'habitat.namedCreekMouths', 'habitat.timberFields', 'habitat.shallowFlatAreas', 'habitat.artificialHabitat', 'habitat.artificialHabitatDetails.attractorCount', 'habitat.artificialHabitatDetails.attractorTypes'],
   },
-  navigation: {
-    label: '🧭 Navigation',
-    // `ramps` and `notes` dropped 2026-08-31. deterministic.js has filled `navigation.ramps` from
-    // the registry's geometry-bound feeds since it was written -- 9 on Wateree -- and the agent
-    // was being asked for a list the pipeline already had. `navigation.notes` has NO reader: the
-    // only two matches in js/ or Worker/ are comments naming these very targetFields, and what it
-    // holds on Wateree is "Public access is available at Lake Wateree State Recreational Area",
-    // which is the ramps list again in prose.
-    //
-    // `hazards` stays, and it is the only one of the three with a live consumer: researchHazards()
-    // in plan-inputs.js feeds both the Lake Intelligence Briefing and the plan prompt's safety
-    // section, alongside chartedHazards() off the pack's POI layer.
-    //
-    // WHETHER IT EARNS ITS PLACE IS A JUDGEMENT AND IT IS RYAN'S. Counted over the 63 profiles:
-    // 42 carry hazards, 88 sentences in all, and reading them -- 9 are generic TVA boilerplate
-    // ("fluctuating water levels common in TVA reservoirs"), 9 name a marina or a neighbouring
-    // lake rather than a hazard, several are regulations filed in the wrong section, and a
-    // minority are real and local. Wateree's two are one of each: an S-20-101 bridge replacement
-    // with a project id, and "severe thunderstorms historical activity", which the live wind and
-    // weather path already answers better.
-    targetFields: ['navigation.hazards'],
-  },
+  // ── `navigation` RETIRED 2026-09-01 ───────────────────────────────────────
+  //
+  // `ramps` was deterministic already, `notes` had no reader, and now `hazards` goes too.
+  // Ryan: "cut hazards from the agent... weather handles weather... and some random bridge
+  // closure i am sure i will find on my own another way."
+  //
+  // Which is what the counting said: of 88 hazard sentences across 42 profiles, nine were TVA
+  // boilerplate, nine named a marina or a neighbouring lake, several were regulations filed in
+  // the wrong section. Wateree's two were "severe thunderstorms historical activity" -- the live
+  // wind and weather path answers that better -- and an S-20-101 bridge replacement, which is
+  // news with a shelf life, stored undated.
+  //
+  // chartedHazards() answers this now, off the pack's POI layer: on Wateree 33 Hazard, 34 No
+  // Wake, 13 No Boats, 5 Spar/Spindle Buoy and a Water Intake Keep Clear, each typed and
+  // positioned off Garmin's survey, and wired into both planners already.
   fisheries: {
     label: '🧠 Species Intelligence',
     targetFields: ['trollingIntelligence'],
@@ -2459,8 +2451,8 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
   //   Wave2: biology, fisheries (shared, with coastal hints)
   // `regulations` and `saltwater_regulations` were the fifth member of each wave and are retired;
   // the digest is parsed live and its closures are what checkRegulations() reads.
-  const FRESH_WAVE1 = ['limnology', 'habitat', 'navigation'];
-  const COASTAL_WAVE1 = ['habitat', 'navigation'];
+  const FRESH_WAVE1 = ['limnology', 'habitat'];
+  const COASTAL_WAVE1 = ['habitat'];
   const WAVE1_AGENTS = coastalForRun ? COASTAL_WAVE1 : FRESH_WAVE1;
   const WAVE2_AGENTS = ['biology', 'fisheries'];
   const wave1 = parallelAgents.filter(k => WAVE1_AGENTS.includes(k));
