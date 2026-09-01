@@ -49,8 +49,8 @@ window.TROLLMAP_RESEARCHED_CACHE = window.TROLLMAP_RESEARCHED_CACHE || {};
 // plan-inputs.js read three of them: archetype/bodyType, maxDepthFt, averageDepthFt. The
 // last two are geometry-derived off the chartpack; the first is the registry's
 // `feature_type`. The other six have no reader anywhere outside this pipeline.
-const FRESHWATER_RESEARCH_ORDER = ['biology', 'fisheries'];
-const COASTAL_RESEARCH_ORDER = ['biology', 'fisheries'];
+const FRESHWATER_RESEARCH_ORDER = ['fisheries'];
+const COASTAL_RESEARCH_ORDER = ['fisheries'];
 
 // WHAT THE RESEARCH CARD DRAWS. A superset of the agent list, and it stays a superset: a section
 // with no agent is filled by the deterministic pass or the live digest, and Ryan still has to be
@@ -62,7 +62,6 @@ const COASTAL_PROFILE_SECTIONS = ['estuary', 'tidal', 'biology', 'habitat', 'nav
 const RESEARCH_ORDER = FRESHWATER_RESEARCH_ORDER;
 
 const RESEARCH_LABELS = {
-  biology: '🐟 Fisheries',
   regulations: '📜 Regulations',
   fisheries: '🧠 Species Intelligence',
   saltwater_regulations: '📜 Saltwater Regs',
@@ -96,10 +95,35 @@ const AGENT_DEFINITIONS = {
   // into a hole, and the agent merge then copied every non-null agent value over the top -- while
   // buildWqpEvidence() stamped the row "Water Quality Portal / SCDES monitoring" regardless. A
   // recalled number was being stored under a citation to the state monitoring data it displaced.
-  biology: {
-    label: '🐟 Fisheries Biology',
-    targetFields: ['biology.primaryForage', 'biology.secondaryForage', 'biology.predatorSpecies', 'biology.speciesAbundance', 'biology.knownStockings', 'biology.baitfishMovement', 'biology.invasiveSpecies', 'biology.spawnTiming', 'biology.forageSpatial'],
-  },
+  // ── `biology` RETIRED 2026-09-01, THE LAST OF THE TEN ─────────────────────
+  //
+  // Nine target fields. Where each went:
+  //
+  //   predatorSpecies    ramp records, NC WRC, agency lake pages, and the regulations floor --
+  //                      60 of the 64 lakes the research tab offers. On the other four the
+  //                      fisheries agent establishes the list itself, from agency documents,
+  //                      with the sentence that establishes each fish.
+  //   primaryForage      the one field fisheries genuinely CONSUMED -- it is what stops the
+  //   secondaryForage    model feeding blueback herring to bluegill. Folded INTO fisheries
+  //                      rather than cut: it reads the same documents, so it establishes the
+  //                      forage base first and then assigns from it. One pass, no ordering
+  //                      between two agents to get wrong.
+  //   knownStockings     deterministic where it exists -- NC WRC publishes `stocked` as its own
+  //                      flag, and deterministic.js already writes it.
+  //   spawnTiming        Cut. Lake-wide prose, and trollingIntelligence already carries the
+  //   baitfishMovement   per-species, per-season version of the same question, which is the one
+  //   forageSpatial      a plan can act on: `forage here, this season` beside a depth band beats
+  //                      a paragraph about the lake in general.
+  //   speciesAbundance   Cut. Ryan, 2026-08-07, put it in the prompt; the catch journal is the
+  //                      local truth and this was always agency prose about the fishery.
+  //   invasiveSpecies    Cut. Never had a planner reader.
+  //
+  // Ryan, on what settles it: "if the agent is just searching a document for a quote on what that
+  // species does in that lake during that time of year is it really needed... it all depends on
+  // what is fed to smartplan." What is fed to Smart Plan is trollingIntelligence, per species and
+  // per season, and it comes from the same documents in the same pass.
+  //
+  // Agents: eleven when this refactor started, one now.
   // ── `habitat` RETIRED 2026-09-01 ──────────────────────────────────────────
   //
   // Twelve target fields and not one left for a model to answer.
@@ -1913,7 +1937,7 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
     // Discovered sources sorted by prefetchScore descending, then capped.
     // Sources without prefetchScore get a default of 3 so they're not unfairly cut.
     const AGENT_SOURCE_CAPS = {
-      biology: 12, fisheries: 10,
+      fisheries: 10,
     };
     const cap = AGENT_SOURCE_CAPS[agentKey] ?? 10;
     const guaranteed = sources.filter(s => s.priority === 1);
@@ -2343,8 +2367,10 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
 
     // Species trace: keep the evidence handoff visible in the in-app research
     // log. This is intentionally done here rather than relying on DevTools
-    // Network inspection, which can pause the pipeline in some browsers.
-    if (agentKey === 'biology') {
+    // Network inspection, which can pause the pipeline in some browsers. `fisheries` is the
+    // agent that reads species facts now, and on the four waters with no deterministic roster
+    // it is the one establishing the list, so the handoff is worth seeing there.
+    if (agentKey === 'fisheries') {
       const speciesFacts = uniqueFacts.filter(f =>
         /predatorSpecies|speciesAbundance|stocking/i.test(String(f.category || '')) ||
         /\b(muskellunge|muskie|walleye|pickerel|perch|catfish|crappie|bass|bluegill|bowfin)\b/i.test(String(f.fact || ''))
@@ -2411,12 +2437,18 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
     const agentData = await agentRes.json();
     if (!agentData.success) throw new Error(agentData.error || 'Agent LLM failed');
 
-    if (agentKey === 'biology') {
-      const returnedSpecies = agentData.section?.predatorSpecies || [];
-      const inputSpecies = previousResults.biology?.predatorSpecies || [];
-      const addedSpecies = returnedSpecies.filter(s => !inputSpecies.some(i => String(i).toLowerCase() === String(s).toLowerCase()));
-      log(`  [biology] LLM returned predator species (${returnedSpecies.length}): ${returnedSpecies.join(', ') || 'NONE'}`);
-      log(`  [biology] LLM-added species beyond deterministic input: ${addedSpecies.join(', ') || 'NONE'}`);
+    // DISCOVER MODE IS THE ONE PATH THAT CAN ADD A SPECIES, so say so in the log when it does.
+    // The biology equivalent of this block reported what that agent added beyond the
+    // deterministic input; the same question now belongs to fisheries and only fires on a water
+    // where nothing deterministic answered.
+    if (agentKey === 'fisheries') {
+      const found = agentData.data?.speciesFound || [];
+      if (found.length) {
+        log(`  [fisheries] no deterministic roster for this water — established ${found.length} species from documents:`);
+        for (const f of found) {
+          log(`    • ${String(f.species || f.name || '?')} — ${String(f.source || 'unnamed source').slice(0, 80)}`);
+        }
+      }
     }
 
     // AN AGENT'S OWN WARNINGS REACH THE LOG BEFORE ITS TICK DOES.
@@ -2583,7 +2615,7 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
   const FRESH_WAVE1 = [];
   const COASTAL_WAVE1 = [];
   const WAVE1_AGENTS = coastalForRun ? COASTAL_WAVE1 : FRESH_WAVE1;
-  const WAVE2_AGENTS = ['biology', 'fisheries'];
+  const WAVE2_AGENTS = ['fisheries'];
   const wave1 = parallelAgents.filter(k => WAVE1_AGENTS.includes(k));
   const wave2 = parallelAgents.filter(k => WAVE2_AGENTS.includes(k));
   // Any unknown agents run in wave 1
@@ -2620,9 +2652,12 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
     if (wave2.length > 0) {
       log(`[runAgents] Wave 2 serial: [${wave2.join(', ')}]`);
       for (const agentKey of wave2) {
-        const biologyResult = results.find(r => r.agent === 'biology')?.data;
-        const dependencyContext = biologyResult?.section ? { biology: biologyResult.section } : {};
-        const result = await runAgentSafe(agentKey, dependencyContext);
+        // `fisheries` used to wait on `biology` for its species list and take it through this
+        // dependencyContext. Ryan on that coupling, 2026-08-27: "i can't just run fisheries... it
+        // needs biology for the list of predator species... see it is stuff like that... that
+        // makes me not like this research." The list is deterministic now, or fisheries
+        // establishes it itself, so there is no agent left to wait for.
+        const result = await runAgentSafe(agentKey);
         if (result.status === 'fulfilled') results.push({ agent: result.agent, data: result.value });
       }
     }
@@ -2831,7 +2866,14 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
   // For coastal zones we also preserve estuary/tidal/saltwaterRegulations sections
   const agentSections = {
     identity:             cloneJson(existingSavedProfile.identity     || det.identity     || {}),
-    biology:              cloneJson(existingSavedProfile.biology       || det.biology      || {}),
+    // FOURTH INSTANCE OF THE SHORT-CIRCUIT THE RAMPS COMMENT DOCUMENTS, AND THE COSTLIEST.
+    //
+    // `existingSavedProfile.biology || det.biology` picks the saved OBJECT, which every profile
+    // has. The deterministic pass now writes predatorSpecies from three sources it did not have
+    // before -- the agency lake pages, the regulations floor, and the NC WRC list -- and a saved
+    // profile would have vetoed every one of them on re-run. Every water already carrying a
+    // biology section, which is all of them, would have kept the roster it was researched with.
+    biology:              mergeDeterministicSection(existingSavedProfile.biology, det.biology),
     // THE PACK'S STRUCTURE MUST REACH THE PROFILE ON EVERY RUN, NOT JUST THE FIRST.
     //
     // deriveGeospatialStructureFacts() reads the chartpack and writes habitat.structuralElements
@@ -2952,28 +2994,12 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
     // Biology: species list is always additive — never let agent shrink the list.
     // Normalize to Title Case before deduplication so 'largemouth bass' and
     // 'Largemouth Bass' don't both appear. Filter blanks and baitfish/non-predators.
-    if (agentKey === 'biology') {
-      const INVALID_PREDATORS = /^(shad|herring|menhaden|carp|drum|buffalo|sucker|eel|lamprey|mussels?|clam|crawfish|crayfish|insect|zooplankton|algae|diatom|cryptophyte|cyanobacteria|dinoflagellate|phytoplankton|unknown|other)\b/i;
-      const normalizeSpecies = (list) => (list || [])
-        .map(s => String(s || '').trim())
-        .filter(s => s.length > 2 && !INVALID_PREDATORS.test(s))
-        .map(s => s.replace(/\b\w/g, c => c.toUpperCase())); // Title Case
-      const detSpecies      = normalizeSpecies(det.biology?.predatorSpecies);
-      const existingSpecies = normalizeSpecies(existing.predatorSpecies);
-      const agentSpecies    = normalizeSpecies(merged.predatorSpecies);
-      // Deduplicate case-insensitively — keep first occurrence (deterministic wins)
-      const seen = new Map();
-      for (const s of [...detSpecies, ...existingSpecies, ...agentSpecies]) {
-        const key = s.toLowerCase();
-        if (!seen.has(key)) seen.set(key, s);
-      }
-      merged.predatorSpecies = [...seen.values()];
-      merged.knownStockings  = merged.knownStockings?.length ? merged.knownStockings : (existing.knownStockings?.length ? existing.knownStockings : (det.biology?.knownStockings || []));
-      // Coerce in case the LLM returned a non-array (string/object) — prevents
-      // downstream ".map is not a function" crashes and repairs saved data.
-      merged.knownStockings = coerceStockingsArray(merged.knownStockings);
-      merged.predatorSpecies = coerceSpeciesArray(merged.predatorSpecies);
-    }
+    // The biology branch that stood here made the species list additive across the deterministic
+    // pass, the saved profile and the agent, so an agent answer could never shrink it. No agent
+    // writes biology any more. What it protected is preserved rather than lost: the roster is
+    // built additively in deterministic.js from the ramp records, the NC WRC list, the agency
+    // lake pages and the regulations floor, each one unioning into what came before, and the
+    // fisheries discover path unions on top of that with an evidence row per fish.
     // Fisheries agent returns trollingIntelligence
     if (agentKey === 'fisheries') {
       const sectionKeys = Object.keys(data.section || {});
@@ -3014,6 +3040,29 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
           ];
           log(`  [fisheries] established ${added.length} species from documents: ${added.join(', ')}`);
         }
+      }
+      // THE FORAGE LIST, FROM THE PASS THAT WAS ALREADY READING THE DOCUMENTS.
+      //
+      // `primaryForage` is the one biology field the fisheries prompt genuinely CONSUMED: it is
+      // what stops the model assigning the whole lake's bait to every species, and without it a
+      // bluegill entry comes back eating blueback herring. That made biology look load-bearing
+      // when the rest of it was not.
+      //
+      // Folding it in removes the dependency instead of the field. Fisheries reads the same
+      // documents, establishes the forage base first, and then assigns from it -- one agent, one
+      // pass, no ordering between two agents to get wrong. It only asks when the deterministic
+      // pass and the saved profile both have nothing.
+      const lakeForage = data.data?.lakeForage;
+      if (lakeForage && (lakeForage.primary?.length || lakeForage.secondary?.length)) {
+        const bio2 = agentSections.biology = agentSections.biology || {};
+        if (!bio2.primaryForage?.length && Array.isArray(lakeForage.primary)) {
+          bio2.primaryForage = coerceSpeciesArray(lakeForage.primary);
+        }
+        if (!bio2.secondaryForage?.length && Array.isArray(lakeForage.secondary)) {
+          bio2.secondaryForage = coerceSpeciesArray(lakeForage.secondary);
+        }
+        bio2._forageEstablishedBy = 'fisheries agent, from the same source documents';
+        log(`  [fisheries] established lake forage: ${[...(bio2.primaryForage || [])].join(', ') || 'none'}`);
       }
       agentSections.trollingIntelligence = merged;
     } else {

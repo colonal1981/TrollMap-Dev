@@ -90,7 +90,13 @@ const NOT_FOR_THE_PLANNER = {
   // has no planner reader today. USGS NAS is a real key-free source for it and covers plants as
   // well as fish, but its filters are state / county / HUC with no bounding box, so any join lands
   // at drainage scale rather than at a lake. Not decided.
-  'biology.invasiveSpecies': 'no planner reader today; USGS NAS could source it but only joins at HUC/drainage scale — revisit',
+  // EMPTY, AND THAT IS THE END STATE THIS FILE WAS ARGUING FOR.
+  //
+  // `biology.invasiveSpecies` was the last entry and it went with the biology agent on
+  // 2026-09-01. Nothing is hunted-but-unread any more: one agent remains, it targets
+  // `trollingIntelligence`, and the planner reads it. USGS NAS stays the option if invasive
+  // plants ever earn a place -- key-free, covers plants as well as fish, but its filters are
+  // state / county / HUC with no bounding box, so any join lands at drainage scale.
   // The five habitat excuses that stood here went with the habitat agent on 2026-09-01. They said
   // the pack supersedes cover, that docks.geojson carries every dock, that depth_areas is finer
   // than a prose flat, and that artificialHabitatDetails carries the usable form of the

@@ -64,11 +64,17 @@ describe('the two agents that used to write the regulations', () => {
     // pack's water_features and POI layers (creek mouths, timber), the state attractor feeds,
     // `garmin_6_0` (Garmin's own seabed labels, for bottomComposition), and five that no planner
     // ever read. Vegetation is parked empty by Ryan's call rather than guessed.
-    for (const k of ['identity', 'estuary', 'tidal', 'navigation', 'limnology', 'summary', 'habitat']) {
+    // `biology` was the last of the ten, the same day. predatorSpecies is deterministic on 60 of
+    // the 64 lakes the research tab offers and `fisheries` establishes it on the other four;
+    // primaryForage -- the only field fisheries actually consumed -- is folded into that same
+    // pass; knownStockings stays deterministic; and spawnTiming, baitfishMovement, forageSpatial
+    // and speciesAbundance are answered per species and per season by trollingIntelligence.
+    for (const k of ['identity', 'estuary', 'tidal', 'navigation', 'limnology', 'summary',
+                     'habitat', 'biology']) {
       expect(keys.includes(k)).toBe(false);
     }
-    // and the two that remain are still there
-    for (const k of ['biology', 'fisheries']) {
+    // and the one that remains is still there
+    for (const k of ['fisheries']) {
       expect(keys.includes(k)).toBe(true);
     }
   });

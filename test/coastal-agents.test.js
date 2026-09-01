@@ -146,14 +146,14 @@ describe('agent plan and skips', () => {
   // `saltwater_regulations`, `navigation` and `summary`. All five were retired across 2026-08-31
   // and 2026-09-01, and the test kept passing because coastalAgentPlan() has no live caller --
   // it agreed with the list, and the list agreed with nothing that runs.
-  it('runs the two surviving agents for a coastal zone', () => {
-    expect(coastalAgentPlan()).toEqual(['biology', 'fisheries']);
+  it('runs the one surviving agent for a coastal zone', () => {
+    expect(coastalAgentPlan()).toEqual(['fisheries']);
   });
 
   it('names no retired agent in the plan', () => {
     const plan = coastalAgentPlan();
     for (const a of ['identity', 'limnology', 'regulations', 'saltwater_regulations',
-                     'estuary', 'tidal', 'navigation', 'summary', 'habitat']) {
+                     'estuary', 'tidal', 'navigation', 'summary', 'habitat', 'biology']) {
       expect(plan).not.toContain(a);
     }
   });

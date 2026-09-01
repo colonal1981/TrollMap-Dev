@@ -478,16 +478,28 @@ export function researchIntel(profile, species, season, now = Date.now()) {
   // paragraph telling the model whether this is a river or an impoundment reading. A remembered
   // generality standing next to a measured number can only agree with it or contradict it.
 
-  // Ryan's call, 2026-08-07: these belong in the plan. What else is in the lake and how
-  // abundant the target actually is are both arguments about lure and presentation.
+  // Ryan's call, 2026-08-07: what else is in the lake is an argument about lure and
+  // presentation, so the species list and the forage base stay.
   put('Other predators here', bio.predatorSpecies);
-  put('How abundant the target is', bio.speciesAbundance);
   put('Primary forage', bio.primaryForage);
   put('Secondary forage', bio.secondaryForage);
-  put('Baitfish movement', bio.baitfishMovement);
-  put('Forage location', bio.forageSpatial);
-  put('Spawn timing', bio.spawnTiming);
   put('Stockings', bio.knownStockings);
+  // FOUR LINES STOOD HERE AND WENT WITH THE BIOLOGY AGENT, 2026-09-01.
+  //
+  //   How abundant the target is   speciesAbundance
+  //   Baitfish movement            baitfishMovement
+  //   Forage location              forageSpatial
+  //   Spawn timing                 spawnTiming
+  //
+  // All four were lake-wide prose an agent read out of a document, and all four are answered
+  // better a few lines below by trollingIntelligence, which says it per species and per season:
+  // `forage here, this season` beside a researched depth band is a thing a plan can act on, and
+  // "baitfish move into the creeks in fall" is not. Ryan: "if the agent is just searching a
+  // document for a quote on what that species does in that lake during that time of year is it
+  // really needed... it all depends on what is fed to smartplan."
+  //
+  // `knownStockings` survives them because it is deterministic where it exists -- NC WRC
+  // publishes `stocked` as its own flag and deterministic.js reads it.
 
   // THE CHART KNEW ALL OF THIS AND THE PROMPT WAS BEING TOLD THE MODEL'S VERSION.
   //

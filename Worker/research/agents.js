@@ -247,84 +247,15 @@ JSON only.`;
   // What made this agent worth retiring rather than improving: every number it wrote landed on
   // top of a WQP-derived one, and the evidence row underneath still said the value came from
   // state monitoring data.
-  biology: {
-    label: "Fisheries Biology",
-    order: 3,
-    system: "You are a fisheries data assembly agent. Map extracted facts to the biology JSON. CRITICAL: predatorSpecies MUST include ALL species from the deterministic list — never shrink it. Only add species confirmed in facts/documents. Return ONLY valid JSON.",
-    userTemplate: (lakeName, state, prev) => {
-      const facts = prev?._extractedFacts || [];
-      const bioFacts = facts.filter(f =>
-        /biology|forage|species|predator|stocking|standing.?stock|shad|bass|crappie|catfish|biomass|rotenone|abundance|invasive|herring|spawn|bream|bluegill|crawfish|crayfish|perch/i.test(f.category + ' ' + f.fact)
-      );
-
-      // Split facts: official agency sources vs web/guide sources
-      // Only official sources can confirm new species presence
-      const OFFICIAL_SRC = /scdnr|ncwrc|ncwildlife|gadnr|georgiawildlife|twra|tn\.gov|tva\.gov|eregulations|dnr\.sc\.gov|dnr\.nc\.gov|ncwildlife\.gov|epd\.georgia|wildlife\.ga\.gov|georgiawildlife\.com|epa\.gov|usgs\.gov|usace|corps\.army\.mil|santee.?cooper|duke.?energy|ferc|statewide.?fisheries|annual.?report|management.?plan|survey.*\d{4}|\d{4}.*survey/i;
-      const officialFacts = bioFacts.filter(f => OFFICIAL_SRC.test(f.source || ''));
-      const webFacts = bioFacts.filter(f => !OFFICIAL_SRC.test(f.source || ''));
-
-      const deterministicSpecies = prev?.biology?.predatorSpecies || [];
-
-      const officialFactsBlock = officialFacts.map(f =>
-        `• [${f.category}] ${f.fact} (source: ${f.source}, confidence ${f.confidence}%)\n  Quote: "${f.quote}"`
-      ).join('\n\n');
-
-      const webFactsBlock = webFacts.map(f =>
-        `• [${f.category}] ${f.fact} (source: ${f.source}, confidence ${f.confidence}%)\n  Quote: "${f.quote}"`
-      ).join('\n\n');
-
-      const docSection = prev?._documentContext
-        ? `\n\nDOCUMENT TEXT (look for species lists, stocking records, cove rotenone data, biomass tables, spawn timing, forage location notes):\n${prev._documentContext.slice(0, 80000)}`
-        : '';
-
-      return `Map fisheries biology facts for ${lakeName}.
-
-DETERMINISTIC SPECIES LIST (MUST be preserved — only add, never remove):
-${JSON.stringify(deterministicSpecies)}
-
-OFFICIAL AGENCY FACTS (SCDNR, NCWRC, EPA, USGS, eRegulations, DNR, Santee Cooper — authoritative for species presence):
-${officialFactsBlock || 'None.'}
-
-WEB / GUIDE FACTS (fishing guides, social media, commercial sites — use for forage/behavior/stocking only, NOT species presence):
-${webFactsBlock || 'None.'}
-${docSection}
-
-RULES:
-1. predatorSpecies: start with deterministic list above. ONLY add a species if it appears in the OFFICIAL AGENCY FACTS section or in official agency document text. NEVER add a species based solely on web/guide sources like Omnia Fishing, fishing reports, or social media — these are unreliable for confirming species presence. Never remove. NEVER add: sturgeon, paddlefish, gar, eel, lamprey, shad, herring, carp, drum, buffalo, sucker, or any protected/endangered/baitfish species — these are NOT predator species.
-2. primaryForage: extract from facts AND document text. If shad (threadfin shad, gizzard shad, blueback herring) are mentioned as forage or baitfish in any document, include them. Do not leave primaryForage empty if forage species appear in the source material.
-3. knownStockings: extract actual stocking events with species, quantities, years if mentioned.
-4. standingStockKgHa: extract biomass figures from rotenone or electrofishing data if present.
-5. speciesAbundance: use actual percentage data from documents if available.
-6. spawnTiming: extract spawn timing per species if mentioned (e.g. "largemouth bass spawn late March to early May when water reaches 62-68°F"). Use format {"species": "timing description"}.
-7. forageSpatial: if documents mention WHERE forage concentrates (e.g. "bream in shallow rocky coves", "shad school in open mid-lake water near dam", "crappie at creek mouths"), extract that as a single descriptive string.
-8. baitfishMovement: if documents describe seasonal or behavioral movement of bait species, extract as a seasonal object {"spring": "...", "summer": "...", "fall": "...", "winter": "..."}. Include spatial context (e.g. "suspend over humps near thermocline", "push into creek backs"). Omit seasons with no document support.
-9. Keep spawnTiming keyed by the exact species name and preserve temperature/date triggers when stated.
-10. forageSpatial must name the area or habitat where forage is reported; do not turn a generic forage species statement into a location.
-11. speciesBehavior: CRITICAL — for each predator species, extract lake-specific depth ranges, structure associations, and behavioral notes per season from documents. This replaces generic species intel in Smart Plan. If a document says "largemouth bass holding in 5-8 feet around woody cover" — that goes in speciesBehavior.Largemouth Bass.summer. If no species-specific depth/structure data exists in documents, omit that species from speciesBehavior.
-
-Return ONLY:
-{
-  "biology": {
-    "primaryForage": [],
-    "secondaryForage": [],
-    "predatorSpecies": ${JSON.stringify(deterministicSpecies.length ? deterministicSpecies : [])},
-    "speciesAbundance": {},
-    "standingStockKgHa": null,
-    "baitfishMovement": { "spring": null, "summer": null, "fall": null, "winter": null },
-    "knownStockings": [],
-    "invasiveSpecies": [],
-    "forageCalendar": {},
-    "spawnTiming": {},
-    "forageSpatial": null,
-    "speciesBehavior": {}
-  },
-  "sources": []
-}
-speciesBehavior schema per species: { "spring": {"depthRange": [minFt, maxFt], "structure": [], "notes": null}, "summer": {...}, "fall": {...}, "winter": {...}, "spawnTiming": {"waterTempF": null, "typicalMonths": []}, "spawnHabitat": null, "lakeSpecificNotes": null }
-depthRange is [minFt, maxFt] array or null. Only populate seasons with document evidence. JSON only.`;
-    },
-    expectedKey: "biology"
-  },
+  // ── `biology` RETIRED 2026-09-01 ──────────────────────────────────────────────────────────
+  //
+  // The last of the ten. predatorSpecies is deterministic on 60 of the 64 lakes the research tab
+  // offers, and on the other four `fisheries` establishes it from agency documents in its own
+  // pass. primaryForage and secondaryForage -- the only fields this agent produced that fisheries
+  // actually consumed -- are folded into that same pass, so the forage base is read and used by
+  // one agent instead of handed between two. knownStockings stays deterministic. spawnTiming,
+  // baitfishMovement, forageSpatial and speciesAbundance are cut: trollingIntelligence already
+  // answers the same question per species and per season, which is the form a plan can use.
   // ── `habitat` RETIRED 2026-09-01 ──────────────────────────────────────────────────────────
   //
   // Twelve target fields, none of them left for a model. The pack's water_features and POI layers
@@ -550,7 +481,18 @@ If generic group-level data has NO species-specific breakdown (just a paragraph 
 
 NEVER output "Black Bass", "Catfish (all species)", "Bream/Sunfish", or any other group term as a key in trollingIntelligence. Only use exact species names from the confirmed list above.
 
-CONFIRMED LAKE FORAGE: ${forageStr}
+${allForage.length ? `CONFIRMED LAKE FORAGE: ${forageStr}` : `THIS LAKE'S FORAGE IS NOT RECORDED. ESTABLISH IT FROM THE DOCUMENTS FIRST.
+
+The biology agent used to answer this and it is retired, so read the forage out of the same
+documents you are reading everything else from, and return it in "lakeForage" -- primary is what
+the sources describe as the main prey base, secondary is everything else named. Threadfin shad,
+gizzard shad, blueback herring, alewife, bluegill and crawfish are the usual answers in these
+waters; a stocked or introduced forage species is worth naming when a source says so.
+
+Establish that list BEFORE you assign per-species forage below, and then assign from it. If the
+documents name no forage at all, return "lakeForage": {"primary": [], "secondary": []} and use
+species-appropriate forage from general knowledge for the per-species entries -- do not invent a
+lake-specific forage base you did not read.`}
 Use forage intelligently — match what each predator species actually eats, not the full lake forage list:
 - Striped Bass / Largemouth Bass / Spotted Bass: primary forage is shad (threadfin, gizzard, blueback herring)
 - Crappie: small shad, minnows
@@ -617,7 +559,8 @@ If a season is completely unknown, use null for that season entry.
 
 Return ONLY:
 {
-${discover ? `  "speciesFound": [
+${allForage.length ? '' : `  "lakeForage": {"primary": ["Threadfin Shad"], "secondary": ["Bluegill", "Crawfish"]},
+`}${discover ? `  "speciesFound": [
     {"species": "Largemouth Bass",
      "source": "SCDNR lake page / TWRA survey / state regulations digest — name the agency",
      "quote": "the verbatim sentence from the documents that establishes this fish is in this water"}
@@ -931,10 +874,9 @@ async function handleResearchAgent(request, env) {
   // Inject document text for agents that benefit from reading source material directly
   // biology gets the fisheries docs
   // fisheries gets fishing guide/report docs — seasonal behavior lives in these, not the profile
-  const docInjectionAgents = new Set(['biology', 'fisheries']);
+  const docInjectionAgents = new Set(['fisheries']);
   if (docInjectionAgents.has(agentKey) && previousResults._normalizedDocuments?.length) {
     const docFilter = {
-      biology:   /striped.?bass|fisheries|biology|annual|species|stocking|fish|bass|crappie|catfish|pattern|forage|shad|herring|omnia|conventional|sportsman|tactic|guide/i,
       fisheries: /fish|bass|crappie|striper|catfish|pattern|season|depth|behavior|report|tactic|guide|omnia|conventional|sportsman/i,
     };
     const filter = docFilter[agentKey];
