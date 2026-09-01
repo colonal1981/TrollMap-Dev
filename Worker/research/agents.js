@@ -660,47 +660,15 @@ JSON only.`;
     },
     expectedKey: "trollingIntelligence"
   },
-  summary: {
-    label: "AI Summary",
-    order: 8,
-    system: "You summarize a lake profile into a readable human description, max 500 words. Use only supplied profile JSON and cached source-document excerpts. Never invent facts. Return JSON with text field.",
-    userTemplate: (lakeName, state, prev) => {
-      const profileForSummary = { ...(prev || {}) };
-      delete profileForSummary._normalizedDocuments;
-      delete profileForSummary._documentContext;
-      delete profileForSummary._documentContextNote;
-      if (Array.isArray(profileForSummary._extractedFacts)) {
-        profileForSummary._extractedFacts = profileForSummary._extractedFacts.slice(0, 80);
-      }
-      const sourceTitles = Array.isArray(prev?._normalizedDocuments)
-        ? prev._normalizedDocuments.slice(0, 12).map(d => `• ${d.title || 'Untitled'} — ${d.url || 'no url'}`).join('\n')
-        : '';
-      const docSection = prev?._documentContext
-        ? `\n\nCACHED SOURCE DOCUMENT EXCERPTS (ground the summary with these; do not add facts that conflict with the profile):\n${prev._documentContext.slice(0, 24000)}`
-        : '';
-      return `Summarize this lake profile for a kayak angler. Max 500 words. Use only the supplied profile JSON and cached source-document excerpts. Never invent facts.
-
-Profile JSON:
-${JSON.stringify(profileForSummary, null, 2).slice(0, 18000)}
-
-Cached source documents used for grounding:
-${sourceTitles || 'No cached source documents were provided.'}
-${docSection}
-
-Return ONLY:
-{
-  "summary": {
-    "text": "Lake Wateree is a lowland river-run reservoir... Primary trolling opportunities are ... Always check lake specific fishing regulations for season closures and creel limits before launching.",
-    "keywords": ["river-run","striped bass","channel ledges","Threadfin Shad","regulations"]
-  },
-  "sources": [{"label":"Derived from saved lake profile and cached source documents","trust":"DERIVED"}]
-}
-
-Plain text summary in text field, no markdown headers, no bullet list - 2-3 paragraphs max.
-JSON only.`;
-    },
-    expectedKey: "summary"
-  }
+  // ── `summary` RETIRED 2026-09-01 ──────────────────────────────────────────────────────────
+  //
+  // "You summarize a lake profile into a readable human description" -- of a profile the client
+  // had already assembled, already summarized deterministically from its own measured fields,
+  // and already saved. This agent then read that profile back and wrote the whole thing again
+  // with its section replaced.
+  //
+  // buildDeterministicSummary() in lake-research-engine.js keeps the job. It says the same things
+  // off the same numbers, and it cannot say anything the profile does not contain.
 };
 
 function calculateSectionConfidence(sources, hasData, sectionType) {
@@ -975,18 +943,15 @@ async function handleResearchAgent(request, env) {
   // Inject document text for agents that benefit from reading source material directly
   // biology gets the fisheries docs
   // fisheries gets fishing guide/report docs — seasonal behavior lives in these, not the profile
-  // summary gets concise excerpts from cached docs so it is grounded in the same evidence corpus.
-  const docInjectionAgents = new Set(['biology', 'habitat', 'fisheries', 'summary']);
+  const docInjectionAgents = new Set(['biology', 'habitat', 'fisheries']);
   if (docInjectionAgents.has(agentKey) && previousResults._normalizedDocuments?.length) {
     const docFilter = {
       biology:   /striped.?bass|fisheries|biology|annual|species|stocking|fish|bass|crappie|catfish|pattern|forage|shad|herring|omnia|conventional|sportsman|tactic|guide/i,
       habitat:   /habitat|attractor|structure|dnr|sc.?lake/i,
       fisheries: /fish|bass|crappie|striper|catfish|pattern|season|depth|behavior|report|tactic|guide|omnia|conventional|sportsman/i,
-      summary:   /lake|reservoir|water.?quality|fisher|biology|habitat|navigation|regulation|report|plan|assessment|dnr|duke|owner|dam/i,
     };
     const filter = docFilter[agentKey];
-    // Gemini free-tier requests must stay comfortably below token-per-minute limits. Summary gets
-    // short excerpts from several documents because it also receives the saved profile.
+    // Gemini free-tier requests must stay comfortably below token-per-minute limits.
     const maxDocs = 8;
     // 150,000 CHARACTERS PER DOCUMENT WAS NOT A BUDGET, IT WAS THE ABSENCE OF ONE.
     //
@@ -1001,7 +966,7 @@ async function handleResearchAgent(request, env) {
     // A fishing report says everything useful about where fish sit in its first few thousand
     // characters. The agency survey PDFs that were eating the budget are the right source for
     // population and stocking and say nothing about holding depth at all.
-    const charsPerDoc = agentKey === 'fisheries' ? 20000 : agentKey === 'summary' ? 8000 : 40000;
+    const charsPerDoc = agentKey === 'fisheries' ? 20000 : 40000;
     const matched = previousResults._normalizedDocuments
       .filter(d => !filter || filter.test(d.title + ' ' + d.url));
 
@@ -1045,9 +1010,7 @@ async function handleResearchAgent(request, env) {
       groundedPrev = {
         ...groundedPrev,
         _documentContext: docContext,
-        _documentContextNote: agentKey === 'summary'
-          ? `Cached source excerpts from ${relevantDocs.length} document(s) — use to ground wording and cite no facts beyond the saved profile/evidence.${droppedNote}`
-          : `Raw document text from ${relevantDocs.length} source(s) — use this for specific measurements, tables, and depth profiles. Prioritize this over training knowledge.${droppedNote}`
+        _documentContextNote: `Raw document text from ${relevantDocs.length} source(s) — use this for specific measurements, tables, and depth profiles. Prioritize this over training knowledge.${droppedNote}`
       };
     }
   }
@@ -1374,7 +1337,7 @@ holding: coerceHolding(entry.holding, holdingRejects),
       { role: "user", content: userPrompt }
     ],
     temperature: 0.1,
-    max_tokens: agentKey === 'summary' ? 800 : agentKey === 'fisheries' ? 8000 : 3000,
+    max_tokens: agentKey === 'fisheries' ? 8000 : 3000,
     response_format: { type: "json_object" }
   };
 

@@ -49,8 +49,8 @@ window.TROLLMAP_RESEARCHED_CACHE = window.TROLLMAP_RESEARCHED_CACHE || {};
 // plan-inputs.js read three of them: archetype/bodyType, maxDepthFt, averageDepthFt. The
 // last two are geometry-derived off the chartpack; the first is the registry's
 // `feature_type`. The other six have no reader anywhere outside this pipeline.
-const FRESHWATER_RESEARCH_ORDER = ['biology', 'habitat', 'fisheries', 'summary'];
-const COASTAL_RESEARCH_ORDER = ['biology', 'habitat', 'fisheries', 'summary'];
+const FRESHWATER_RESEARCH_ORDER = ['biology', 'habitat', 'fisheries'];
+const COASTAL_RESEARCH_ORDER = ['biology', 'habitat', 'fisheries'];
 
 // WHAT THE RESEARCH CARD DRAWS. A superset of the agent list, and it stays a superset: a section
 // with no agent is filled by the deterministic pass or the live digest, and Ryan still has to be
@@ -66,7 +66,6 @@ const RESEARCH_LABELS = {
   habitat: '🌿 Habitat',
   regulations: '📜 Regulations',
   fisheries: '🧠 Species Intelligence',
-  summary: '📝 AI Summary',
   saltwater_regulations: '📜 Saltwater Regs',
 };
 
@@ -125,10 +124,24 @@ const AGENT_DEFINITIONS = {
     label: '🧠 Species Intelligence',
     targetFields: ['trollingIntelligence'],
   },
-  summary: {
-    label: '📝 AI Summary',
-    targetFields: ['summary'],
-  },
+  // ── `summary` RETIRED 2026-09-01 ──────────────────────────────────────────
+  //
+  // buildDeterministicSummary() runs on every assembly and writes the same section from the
+  // profile's own measured fields: archetype and acreage and max depth, the confirmed species
+  // list and its stocking notes, secchi and the dated surface grab samples and the thermocline,
+  // the mapped attractor count and the cover. Then this agent ran LAST, on its own, after the
+  // profile had already been saved -- a discovery pass, ten cached documents at 12,000 characters
+  // each, 250 extracted facts, one LLM call, then a full profile read and a SECOND full profile
+  // write whose only purpose was to replace that section with prose.
+  //
+  // What the prose was competing with is not a rival measurement, it is the same measurements a
+  // few lines up: plan-inputs.js prints Lake type, Max depth, Thermocline, Anoxic below, Trophic
+  // status, Secchi and the species list as their own labelled lines, and THEN appends
+  // `Summary: ...` restating them to the same model in the same prompt.
+  //
+  // The deterministic version keeps the few things those lines do not carry -- surface acreage,
+  // the stocking notes, the dated surface temperature and DO -- which is why the section stays
+  // and only the agent goes.
   // ── COASTAL AGENTS RETIRED 2026-08-31 ─────────────────────────────────────
   //
   // `estuary` and `tidal` wrote fifteen fields between them and NOT ONE has a reader outside this
@@ -1764,37 +1777,6 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
       }
     }
 
-    // Summary runs after the profile has already been assembled and saved. It
-    // should synthesize that saved profile plus the cached normalized documents
-    // created by the other agents — not bail out just because there are no new
-    // summary-specific search results.
-    if (agentKey === 'summary') {
-      try {
-        const savedRes = await fetch(`${CF_WORKER_URL}/research/get?lake=${encodeURIComponent(lakeName)}`);
-        if (savedRes.ok) {
-          const savedData = await savedRes.json();
-          const savedProfile = savedData.profile || null;
-          if (savedProfile) {
-            previousResults = {
-              ...previousResults,
-              ...savedProfile,
-              identity: savedProfile.identity || previousResults.identity || {},
-              biology: savedProfile.biology || previousResults.biology || {},
-              limnology: savedProfile.limnology || previousResults.limnology || {},
-              habitat: savedProfile.habitat || previousResults.habitat || {},
-              navigation: savedProfile.navigation || previousResults.navigation || {},
-              regulations: savedProfile.regulations || previousResults.regulations || {},
-              trollingIntelligence: savedProfile.trollingIntelligence || previousResults.trollingIntelligence || null,
-              _extractedFacts: savedProfile._extractedFacts || previousResults._extractedFacts || [],
-            };
-            log(`  [summary] Loaded saved profile context (facts=${previousResults._extractedFacts?.length || 0}, sources=${savedProfile.sources?.length || 0})`);
-          }
-        }
-      } catch (e) {
-        log(`  ⚠️ [summary] Could not load saved profile context: ${e.message}`);
-      }
-    }
-
     // ── STEP 1: Discover sources for this agent ──────────────────────────────
     log(`  [${agentKey}] Discovering sources...`);
     let discoverRes;
@@ -1849,7 +1831,7 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
     // Discovered sources sorted by prefetchScore descending, then capped.
     // Sources without prefetchScore get a default of 3 so they're not unfairly cut.
     const AGENT_SOURCE_CAPS = {
-      biology: 12, habitat: 8, fisheries: 10, summary: 0,
+      biology: 12, habitat: 8, fisheries: 10,
     };
     const cap = AGENT_SOURCE_CAPS[agentKey] ?? 10;
     const guaranteed = sources.filter(s => s.priority === 1);
@@ -1857,18 +1839,11 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
       .sort((a, b) => (b.prefetchScore ?? b.score ?? 3) - (a.prefetchScore ?? a.score ?? 3));
     const discoveryCap = Math.max(0, cap - guaranteed.length);
     const cappedSources = [...guaranteed, ...discovered.slice(0, discoveryCap)];
-    if (agentKey === 'summary') {
-      log(`  [summary] Found ${sources.length} new sources (${guaranteed.length} seeds + ${discovered.length} discovered); cached profile/docs are the primary summary corpus`);
-    } else {
-      log(`  [${agentKey}] Found ${sources.length} sources (${guaranteed.length} seeds + ${discovered.length} discovered) → capped to ${cappedSources.length}`);
-    }
+    log(`  [${agentKey}] Found ${sources.length} sources (${guaranteed.length} seeds + ${discovered.length} discovered) → capped to ${cappedSources.length}`);
 
-    if (!cappedSources.length && agentKey !== 'summary') {
+    if (!cappedSources.length) {
       log(`  [${agentKey}] No sources — skipping`);
       return { success: true, agent: agentKey, section: {}, factsCount: 0, docsUsed: 0, queryLog };
-    }
-    if (!cappedSources.length && agentKey === 'summary') {
-      log(`  [summary] No new summary-specific sources — using saved profile and cached normalized documents`);
     }
 
     // ── STEP 2: Load existing normalized docs from R2 (cache check) ──────────
@@ -1913,14 +1888,7 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
     const normalizedDocuments = [];
     const now = Date.now();
 
-    // Summary is a synthesis pass. Reuse the normalized documents already
-    // fetched by identity/limnology/biology/habitat/navigation/fisheries so the
-    // summary has actual lake evidence even when it performs no new discovery.
-    if (agentKey === 'summary' && mode !== 'resume') {
-      const summaryDocs = existingDocs.filter(d => String(d.fullText || d.text || '').length >= 200);
-      normalizedDocuments.push(...summaryDocs);
-      log(`  [summary] Loaded ${summaryDocs.length} cached normalized docs for summary context`);
-    } else if (mode === 'resume') {
+    if (mode === 'resume') {
       // Start with whatever is in the normalized cache
       // Filter to agent-tagged docs first, fall back to full cache if none
       const agentTagged = existingDocs.filter(d => d.agentTags?.includes(agentKey));
@@ -2200,10 +2168,7 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
 
     // ── STEP 4: Extract facts (one Worker call, fast) ─────────────────────────
     let uniqueFacts = [];
-    if (agentKey === 'summary') {
-      uniqueFacts = Array.isArray(previousResults._extractedFacts) ? previousResults._extractedFacts.slice(0, 250) : [];
-      log(`  [summary] Using ${normalizedDocuments.length} cached docs and ${uniqueFacts.length} existing extracted facts for LLM context (no re-extraction)`);
-    } else if (normalizedDocuments.length > 0) {
+    if (normalizedDocuments.length > 0) {
       log(`  [${agentKey}] Extracting facts from ${normalizedDocuments.length} docs...`);
       try {
         // ── ONE REQUEST PER PAIR OF DOCUMENTS, NOT TWELVE IN ONE ────────────────
@@ -2312,8 +2277,8 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
 
     // ── STEP 6: LLM enrichment (one Worker call, fast) ───────────────────────
     log(`  [${agentKey}] Running LLM enrichment...`);
-    const llmDocLimit = agentKey === 'fisheries' ? 25 : agentKey === 'summary' ? 10 : 12;
-    const llmDocChars = agentKey === 'fisheries' ? 150000 : agentKey === 'summary' ? 12000 : 40000;
+    const llmDocLimit = agentKey === 'fisheries' ? 25 : 12;
+    const llmDocChars = agentKey === 'fisheries' ? 150000 : 40000;
     const agentRes = await fetch(`${CF_WORKER_URL}/research/agent-llm`, {
       method: 'POST',
       headers: workerHeaders(),
@@ -2508,9 +2473,9 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
     log(`🌊 Coastal zone ${getCoastalR2Key(lakeName)} detected — using marine agent set [${effectiveOrder.join(', ')}]`);
   }
 
-  // Summary always runs last — separate it from the parallel batch
-  const hasSummary = agentKeys.includes('summary');
-  let parallelAgents = agentKeys.filter(k => k !== 'summary');
+  // Every agent now runs in the wave batches. `summary` was the one that had to be held back and
+  // run alone at the end, because it read the saved profile it was about to overwrite.
+  let parallelAgents = agentKeys.slice();
   // Always sort agents by canonical order (freshwater or coastal) so dependencies are respected
   parallelAgents = parallelAgents.sort((a, b) => {
     const ai = effectiveOrder.indexOf(a);
@@ -2589,38 +2554,16 @@ async function runAgents(lakeName, agentKeys, mode, callbacks = {}) {
         log(`⚠️ Profile assembly failed: ${e.message}`);
       }
     } else {
-      log('⚠️ No non-summary agents succeeded — skipping profile assembly/save');
+      log('⚠️ No agents succeeded — skipping profile assembly/save');
     }
 
-    // Summary agent runs last with the fully assembled profile as context
-    if (hasSummary) {
-      setProgress('Running summary agent...', 92);
-      try {
-        const summaryResult = await runAgent(lakeName, 'summary', mode, {}, true);
-        completed++;
-        results.push({ agent: 'summary', data: summaryResult });
-        // Merge summary into the already-saved profile. Do not let an empty
-        // summary response wipe the deterministic/profile summary that was just
-        // saved during assembly.
-        if (summaryResult?.section && hasResearchValue(summaryResult.section)) {
-          const existingRes = await fetch(`${CF_WORKER_URL}/research/get?lake=${encodeURIComponent(lakeName)}`);
-          if (existingRes.ok) {
-            const existingData = await existingRes.json();
-            if (existingData.profile) {
-              const patched = { ...existingData.profile, summary: summaryResult.section };
-              await fetch(`${CF_WORKER_URL}/research/save`, {
-                method: 'POST', headers: workerHeaders(),
-                body: JSON.stringify({ lakeName, profile: patched, status: patched.metadata?.status || 'draft', requestedBy: 'Summary agent patch' })
-              });
-              log('✔ Summary section merged into saved profile');
-            }
-          }
-        } else {
-          log('⚠️ Summary agent returned no usable section — keeping existing saved summary');
-        }
-      } catch (e) { log(`⚠️ Summary agent failed: ${e.message}`); }
-    }
-
+    // THE SECOND SAVE IS GONE WITH THE AGENT.
+    //
+    // What stood here: after assembleAndSaveProfile had already written the profile -- including
+    // a deterministic summary built from its own measured fields -- the summary agent ran alone,
+    // read that profile back over the network, and wrote the whole thing again with its section
+    // replaced by model prose. Two reads and two full writes of the profile per run, for a
+    // paragraph restating the lines above it in the plan prompt.
     log(`✔ All agents complete: ${results.filter(r => r.data).length}/${total} succeeded`);
     const finalLog = [...(_state.researchLog || [])];
     if (callbacks.onComplete) await callbacks.onComplete(lakeName);

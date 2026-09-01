@@ -925,26 +925,13 @@
           </div>
         </div>
 
-        <!-- Refresh picker -->
-        <div id="refreshPicker" class="card" style="display:none">
-          <h3>🔄 Refresh — Pick Sections to Re-Research</h3>
-          <p class="muted">Select which sections to re-run. Physical facts (identity, limnology) rarely change. Regulations and trolling intelligence benefit most from refresh.</p>
-          <div style="display:flex;flex-wrap:wrap;gap:10px;margin:10px 0">
-            <label style="display:flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" value="identity" checked> 🆔 Identity</label>
-            <label style="display:flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" value="limnology"> 🌊 Limnology</label>
-            <label style="display:flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" value="biology"> 🐟 Biology</label>
-            <label style="display:flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" value="habitat"> 🌿 Habitat</label>
-            <label style="display:flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" value="navigation"> 🧭 Navigation</label>
-            <label style="display:flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" value="regulations" checked> 📜 Regulations</label>
-            <label style="display:flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" value="trolling" checked> 🎣 Trolling</label>
-            <label style="display:flex;align-items:center;gap:4px;font-size:12px"><input type="checkbox" value="summary" checked> 📝 Summary</label>
-          </div>
-          <div class="row">
-            <button id="btnDoRefresh" class="primary small">▶ Run Selected</button>
-            <button id="btnCancelRefresh" class="small">Cancel</button>
-          </div>
-        </div>
-
+        <!-- THE REFRESH PICKER WAS DELETED 2026-09-01, AND ITS HANDLER NEVER EXISTED.
+             A `display:none` card with eight agent checkboxes and two buttons -- btnDoRefresh
+             and btnCancelRefresh -- neither of which any module ever bound a listener to, and
+             an id (`refreshPicker`) that appeared exactly once in the codebase: here. Six of its
+             eight checkboxes named agents that have since been retired, three of them `checked`.
+             The picker that actually runs is built in lake-research-ui.js from the research
+             order and RESEARCH_LABELS, which is why retiring six agents never broke it. -->
         <!-- Research Sections -->
         <div class="card">
           <h3>📋 Research Sections</h3>

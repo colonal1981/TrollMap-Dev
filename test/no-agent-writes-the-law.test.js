@@ -56,9 +56,15 @@ describe('the two agents that used to write the regulations', () => {
     // profiles or derived from that same secchi, one is the operator's published drawdown table,
     // and three had no reader worth a derivation. Its answers had been landing on top of the
     // measured ones under an evidence row citing the monitoring data they displaced.
-    for (const k of ['identity', 'estuary', 'tidal', 'navigation', 'limnology']) expect(keys.includes(k)).toBe(false);
-    // and the four that remain are still there
-    for (const k of ['biology', 'habitat', 'fisheries', 'summary']) {
+    // `summary` joined them the same day. buildDeterministicSummary() already wrote that section
+    // from the profile's own measured fields on every assembly; the agent then ran alone
+    // afterwards, read the saved profile back, and wrote it again with its section replaced by
+    // prose restating the labelled lines that sit above it in the plan prompt.
+    for (const k of ['identity', 'estuary', 'tidal', 'navigation', 'limnology', 'summary']) {
+      expect(keys.includes(k)).toBe(false);
+    }
+    // and the three that remain are still there
+    for (const k of ['biology', 'habitat', 'fisheries']) {
       expect(keys.includes(k)).toBe(true);
     }
   });

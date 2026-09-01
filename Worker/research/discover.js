@@ -508,7 +508,6 @@ const AGENT_TO_TAGS = {
   navigation: ['navigation'],
   regulations: ['regulations'],
   fisheries: ['fisheries'],
-  summary: ['summary'],
   estuary: ['estuary', 'identity'],
   tidal: ['tidal', 'limnology'],
   saltwater_regulations: ['saltwater_regulations', 'regulations']

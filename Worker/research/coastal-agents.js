@@ -233,25 +233,38 @@ function isCoastalZone(zoneKeyOrName) {
   return typeof zoneKeyOrName === 'string' && zoneKeyOrName.startsWith('coast_');
 }
 
-/** Agents that apply to a coastal zone, in run order. */
+/**
+ * Agents that apply to a coastal zone, in run order.
+ *
+ * THIS LISTED EIGHT AND FIVE OF THEM NO LONGER EXIST. `estuary`, `tidal`,
+ * `saltwater_regulations`, `navigation` and `summary` were all retired across 2026-08-31 and
+ * 2026-09-01, and this function went on describing them because nothing calls it -- it is
+ * imported, re-exported and asserted on by a test, and never consulted by the running pipeline,
+ * which reads COASTAL_RESEARCH_ORDER in lake-research-engine.js instead.
+ *
+ * A list that only a test reads will agree with the test forever and with the app never. It says
+ * what actually runs now, and the fact that it is identical to the freshwater order is the real
+ * state of the coastal path: the three surviving agents take a coastal hint (COASTAL_AGENT_HINTS)
+ * rather than being replaced by marine counterparts.
+ */
 function coastalAgentPlan() {
   return [
-    'estuary',              // replaces identity
-    'tidal',                // replaces limnology
     'biology',              // shared, coastal hint
     'habitat',              // shared, coastal hint
-    'navigation',           // shared as-is
-    'saltwater_regulations',// replaces regulations
-    'fisheries',            // shared as-is
-    'summary',              // shared as-is
+    'fisheries',            // shared, coastal hint
   ];
 }
 
-/** Agents deliberately skipped for coastal zones, with the reason. */
+/** Agents that do not run on a coastal zone, with the reason. */
 const COASTAL_SKIPPED_AGENTS = {
-  identity: 'reservoir identity (pool elevation, dam owner, impoundment year) is meaningless for a tidal estuary — use `estuary`',
-  limnology: 'thermal stratification and anoxia do not apply to a well-flushed estuary — use `tidal`',
-  regulations: 'freshwater digest sections do not cover saltwater species — use `saltwater_regulations`',
+  identity: 'RETIRED 2026-08-31. Reservoir identity was meaningless for a tidal estuary and mostly unread everywhere else; the registry feature_type answers the one field with a reader.',
+  limnology: 'RETIRED 2026-09-01. Thermal stratification and anoxia do not apply to a well-flushed estuary, and on freshwater the numbers come off WQP depth profiles rather than an agent.',
+  regulations: 'RETIRED 2026-08-31. The parsed digests are read straight from R2; no agent writes the law.',
+  saltwater_regulations: 'RETIRED 2026-08-31, with `regulations`, for the same reason.',
+  estuary: 'RETIRED 2026-08-31. Its fields had no reader outside the research pipeline; the live tide and gauge path answers the coastal cards.',
+  tidal: 'RETIRED 2026-08-31, with `estuary`, for the same reason.',
+  navigation: 'RETIRED 2026-09-01. chartedHazards() reads the pack POI layer and the weather block carries wind and current.',
+  summary: 'RETIRED 2026-09-01. buildDeterministicSummary() writes the section from the measured fields already in the profile.',
 };
 
 export {

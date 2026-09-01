@@ -142,26 +142,33 @@ describe('shared agents get coastal framing rather than duplicates', () => {
 });
 
 describe('agent plan and skips', () => {
-  it('runs 8 agents for a coastal zone', () => {
-    expect(coastalAgentPlan()).toHaveLength(8);
+  // This asserted an eight-agent coastal plan naming `estuary`, `tidal`,
+  // `saltwater_regulations`, `navigation` and `summary`. All five were retired across 2026-08-31
+  // and 2026-09-01, and the test kept passing because coastalAgentPlan() has no live caller --
+  // it agreed with the list, and the list agreed with nothing that runs.
+  it('runs the three surviving agents for a coastal zone', () => {
+    expect(coastalAgentPlan()).toEqual(['biology', 'habitat', 'fisheries']);
   });
 
-  it('includes the three new agents and the five shared ones', () => {
+  it('names no retired agent in the plan', () => {
     const plan = coastalAgentPlan();
-    for (const a of ['estuary', 'tidal', 'saltwater_regulations']) expect(plan).toContain(a);
-    for (const a of ['biology', 'habitat', 'navigation', 'fisheries', 'summary']) expect(plan).toContain(a);
+    for (const a of ['identity', 'limnology', 'regulations', 'saltwater_regulations',
+                     'estuary', 'tidal', 'navigation', 'summary']) {
+      expect(plan).not.toContain(a);
+    }
   });
 
-  it('never runs the three freshwater-only agents', () => {
+  it('documents why every agent it does not run is missing', () => {
     const plan = coastalAgentPlan();
-    for (const a of ['identity', 'limnology', 'regulations']) expect(plan).not.toContain(a);
-  });
-
-  it('documents why each freshwater agent is skipped', () => {
-    expect(Object.keys(COASTAL_SKIPPED_AGENTS).sort())
-      .toEqual(['identity', 'limnology', 'regulations']);
-    for (const reason of Object.values(COASTAL_SKIPPED_AGENTS)) {
+    // Every skipped agent carries a reason, and no agent is both run and skipped.
+    for (const [agent, reason] of Object.entries(COASTAL_SKIPPED_AGENTS)) {
+      expect(plan).not.toContain(agent);
       expect(reason.length).toBeGreaterThan(20);
+    }
+    // And the three coastal-specific agents that were built and then retired are all accounted
+    // for here rather than quietly forgotten.
+    for (const a of ['estuary', 'tidal', 'saltwater_regulations']) {
+      expect(Object.keys(COASTAL_SKIPPED_AGENTS)).toContain(a);
     }
   });
 
