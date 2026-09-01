@@ -378,10 +378,28 @@ async function handleResearchDelete(request, env) {
   // candidate list, so the panel can be displaying `lake_robinson_sc` while this deleted
   // `lake_robinson_chesterfield_co_sc` -- a key that does not exist -- and reported a clean run.
   // Nothing was removed and the UI said "Deleted research for ...".
-  const foundKey = await resolveResearchStorageId(lakeName,
+  //
+  // AN EXPLICIT `id` SKIPS THE RESOLUTION ENTIRELY, and collapsing a duplicate is why it exists.
+  // Four waters carry two profiles -- lake_lanier_ga beside lake_sidney_lanier_hall_co_ga, and
+  // three more -- and removing the wrong one is unrecoverable. Resolving by name is fine for the
+  // button, which deletes whatever the panel is showing, but it is NOT safe for that cleanup: run
+  // by name once and it takes the thin duplicate, run it a second time and the same command takes
+  // the good profile that was left. An id is the same object every time it is asked for.
+  const explicitId = String(body.id || '').trim();
+  if (explicitId && !/^[a-z0-9_]{1,80}$/.test(explicitId)) {
+    return new Response(JSON.stringify({ ok:false, error:`not a storage id: ${explicitId}` }),
+      { status:400, headers:JSON_HEADERS });
+  }
+  const foundKey = explicitId ? null : await resolveResearchStorageId(lakeName,
     (id) => env.R2_TROLLMAP_CHARTPACKS.get(`lakes/${id}.json`).catch(() => null),
     await registryIdentityNames(env, lakeName));
-  const safe = foundKey ? foundKey.id : researchStorageId(lakeName);
+  const safe = explicitId || (foundKey ? foundKey.id : researchStorageId(lakeName));
+  if (explicitId && !(await env.R2_TROLLMAP_CHARTPACKS.head(`lakes/${safe}.json`).catch(() => null))) {
+    // Saying "deleted 0" for an id that was never there reads as success. It is the difference
+    // between "already done" and "you typed it wrong", and only one of those is safe to ignore.
+    return new Response(JSON.stringify({ ok:false, error:`no profile stored at lakes/${safe}.json`,
+      lakeName, id: safe }), { status:404, headers:JSON_HEADERS });
+  }
   const keys = [`lakes/${safe}.json`];
   try {
     const pkg = await env.R2_TROLLMAP_CHARTPACKS.list({ prefix: `lake_packages/${safe}/` });
