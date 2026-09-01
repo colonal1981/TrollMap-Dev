@@ -2,7 +2,7 @@
 import { JSON_HEADERS, callLLM, extractLLMText } from '../worker-core.js';
 import { fetchDukeOperatingRange } from '../worker-data.js';
 import { dukePoolManagement } from '../conditions.js';
-import { lakeIndex, resolveRegistryRow } from '../registry.js';
+import { lakeIndex, resolveRegistryRow, agencyLakeFacts } from '../registry.js';
 // MOVED 2026-08-31. identityGrounding() assembles the registry identity and the live pool
 // numbers, and this file handed the result to an LLM as context. That is backwards: it is a
 // deterministic fact, so it now lives in deterministic.js, is written straight into the
@@ -12,6 +12,7 @@ import { fetchStateRegulations, getLakeRegulations,
          fetchSaltwaterRegulations, fetchLiveRegsAmendments } from './clients.js';
 import { extractJsonPossibly } from './keys.js';
 import { parseBehaviour, behaviourBlock } from './behaviour.js';
+import { canonicalizeResearchSpecies } from './facts-util.js';
 import {
   COASTAL_AGENTS, COASTAL_AGENT_HINTS, COASTAL_SKIPPED_AGENTS,
   isCoastalZone, coastalAgentPlan,
@@ -486,7 +487,7 @@ JSON only. Never output a string or array for creelLimits or sizeLimits.`;
 Lake: ${lakeName}
 Lake profile (use for confirmed species, forage, limnology context):
 ${JSON.stringify(cleanProfile(prev), null, 2).slice(0, 12000)}
-${docSection}${prev?._behaviourBlock || ''}
+${docSection}${prev?._agencyBlock || ''}${prev?._behaviourBlock || ''}
 
 ${discover ? `NO SPECIES LIST EXISTS FOR THIS WATER. ESTABLISH ONE FIRST, THEN WRITE THE INTELLIGENCE.
 
@@ -837,6 +838,97 @@ function gateOverallConfidence(rawOverall, profile, fieldStatus = {}) {
   return { percent: Math.max(30, Math.min(99, conf)), penalties };
 }
 
+/**
+ * THE STATE BIOLOGIST ALREADY ANSWERED, AND THE APP TOOK THE FISH NAMES OFF THE PAGE.
+ *
+ * `registry/agency_lake_facts.json` holds 48 waters and 122 species sections read off the TWRA
+ * reservoir pages, the SCDNR lake pages and the GA DNR fishing forecasts. Counted 2026-09-01, the
+ * whole file was read in ONE place -- deterministic.js taking `page.species[].name` -- and every
+ * other field was parsed, published to R2 and read by nothing:
+ *
+ *   target 76 · prospect 78 · technique 74 · tips 39 · notes 45
+ *
+ * Georgia writes each species as three labelled paragraphs and the labels are the schema:
+ * `Prospect` is this year's abundance and size structure off spring sampling, `Technique` is what
+ * to throw by season, `Target` is WHERE THE FISH ARE by season and depth. Tennessee's shape is an
+ * overview then prose per species with `Fishing Tips:`. THE_AGENCY_PAGES_ARE_A_SMART_PLAN_SOURCE
+ * called it on 2026-08-27 -- "Target is the closest thing to trollingIntelligence that anybody
+ * publishes" -- the reader was built, the file was published, and the consumer took the names.
+ *
+ * Russell's own page names the water: "anglers can still find reliable concentrations in Beaverdam
+ * Creek, Coldwater Creek and Pickens Creek", and for technique "around standing timber, main-lake
+ * points, river channel markers, offshore humps, riprap and rocky areas and around lay-down
+ * trees." Ryan, of what the plan gives him instead: "15-40ft is almost the entire depth profile...
+ * this doesn't say upper or lower lake... coves or open lake... the rest of that is just noise."
+ *
+ * So it goes in beside the parsed observations, and for the same reason: a named creek written by
+ * the biologist who sampled the lake is not something a model should be inventing an alternative
+ * to. It is prose, not a value, so the instruction is different -- the parsed block says copy the
+ * number across, this one says these places and seasons are the answer where they conflict with
+ * inference.
+ */
+async function agencyGuidanceEntries(env, lakeName) {
+  let pages = null;
+  try {
+    const row = resolveRegistryRow(await lakeIndex(env), lakeName);
+    const slug = row && row.slug;
+    pages = slug ? (await agencyLakeFacts(env))[slug] : null;
+  } catch (err) {
+    // Most waters have no agency page and agencyLakeFacts throws when the object is not in the
+    // bucket. Neither is a reason to fail an agent run.
+    console.warn(`[research:fisheries] agency page lookup failed for ${lakeName}:`, err && err.message);
+    return [];
+  }
+  if (!Array.isArray(pages) || !pages.length) return [];
+
+  const clean = (v) => (Array.isArray(v) ? v : [v]).map((x) => String(x || '').replace(/\s+/g, ' ').trim())
+    .filter((x) => x.length > 20);
+  const entries = [];
+  for (const page of pages) {
+    const label = `${page.agency || 'state agency'} — ${page.page_name || lakeName}`;
+    const url = (page.source && page.source.url) || 'registry:agency_lake_facts.json';
+    const dated = (page.source && (page.source.published || page.source.saved_at)) || null;
+    for (const sp of (page.species || [])) {
+      const name = String((sp && sp.name) || '').trim();
+      if (!name) continue;
+      const parts = [];
+      for (const key of ['target', 'technique', 'prospect', 'tips', 'notes']) {
+        for (const line of clean(sp[key])) parts.push(`      ${key.toUpperCase()}: ${line}`);
+      }
+      if (parts.length) {
+        entries.push({ species: name, text: `  ${name} — ${label}${dated ? ` (${dated})` : ''}\n${parts.join('\n')}` });
+      }
+    }
+  }
+  return entries;
+}
+
+/**
+ * The block for ONE group's species, because the fisheries agent runs a call per species group and
+ * a call about catfish has no use for the crappie section. Uncapped, Lanier's page is 21,373
+ * characters and every group would have carried all of it; split by species each call carries its
+ * own share. No cap and no budget number: the filter is the species already in the request.
+ */
+function agencyGuidanceBlock(entries, species) {
+  const all = Array.isArray(entries) ? entries : [];
+  if (!all.length) return '';
+  // "Black Crappie" on the page is "Crappie" in the plan's vocabulary. canonicalizeResearchSpecies
+  // is the codebase's own rule for that and is what the roster upstream was folded with.
+  const canon = (n) => String(canonicalizeResearchSpecies(n) || n || '').toLowerCase().trim();
+  const want = new Set((Array.isArray(species) ? species : []).map(canon).filter(Boolean));
+  const shown = want.size ? all.filter((e) => want.has(canon(e.species))) : all;
+  if (!shown.length) return '';
+  return `\n\nTHE STATE AGENCY'S OWN LAKE PAGE FOR THIS WATER — this is the strongest source you have.\n`
+    + `Each block below was read off the published page for THIS lake by a deterministic parser and\n`
+    + `is quoted as the agency wrote it. It is the biologist who sampled the water saying where the\n`
+    + `fish are, what they are eating and what to throw.\n`
+    + `USE THE NAMED PLACES. A creek arm, a point, a tailrace or a depth written here goes into\n`
+    + `structures and preferredDepth as written. Do NOT replace a named creek with "main lake\n`
+    + `points", and do NOT widen a stated depth band into the lake's whole profile.\n`
+    + `Where this disagrees with anything you would otherwise infer, this wins.\n`
+    + shown.map((e) => e.text).join('\n');
+}
+
 async function handleResearchAgent(request, env) {
   let body;
   try { body = await request.json(); } catch { return new Response(JSON.stringify({success:false, error:"invalid JSON body"}), {status:400, headers:JSON_HEADERS}); }
@@ -1037,6 +1129,21 @@ async function handleResearchAgent(request, env) {
     }
   }
 
+  // The agency page goes in whether or not any document was fetched: it is the one source that is
+  // already on disk for this water and needs no discovery, no download and no extraction.
+  if (agentKey === 'fisheries') {
+    const agencyEntries = await agencyGuidanceEntries(env, lakeName);
+    if (agencyEntries.length) {
+      groundedPrev = {
+        ...groundedPrev,
+        _agencyEntries: agencyEntries,
+        _agencyBlock: agencyGuidanceBlock(agencyEntries, null),
+      };
+      console.log(`[research:fisheries] agency lake page in play for ${lakeName}: `
+                + `${agencyEntries.map((e) => e.species).join(', ')}`);
+    }
+  }
+
   // ── Fisheries agent: run one LLM call per species group for focused extraction ──
   // Running all 17 species in one call causes token budget compression — striper spring
   // and other minority-season data gets dropped. Split into groups, merge results.
@@ -1116,7 +1223,12 @@ async function handleResearchAgent(request, env) {
 
     // Build a per-group prompt using the same userTemplate but with a filtered species list
     const buildGroupPrompt = (groupSpecies) => {
-      const groupPrev = { ...groundedPrev, biology: { ...bio, predatorSpecies: groupSpecies } };
+      const groupPrev = {
+        ...groundedPrev,
+        biology: { ...bio, predatorSpecies: groupSpecies },
+        // Only this group's species sections. See agencyGuidanceBlock().
+        _agencyBlock: agencyGuidanceBlock(groundedPrev._agencyEntries, groupSpecies),
+      };
       return agent.userTemplate(lakeName, state, groupPrev);
     };
 

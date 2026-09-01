@@ -55,24 +55,20 @@ test('116 ramps no longer blow up the navigation prompt', () => {
   assert.ok(big.length - none.length < 400, `prompt grew ${big.length - none.length} chars for 116 ramps`);
 });
 
-test('habitat does not ask for chartpack-derived structure back', () => {
-  const p = RESEARCH_AGENTS.habitat.userTemplate('J. Strom Thurmond Reservoir', 'GA',
-    { habitat: { structuralElements: { humpCoordinates: humps(3531), humpCount: 3531 } }, _extractedFacts: [] });
-  const sk = skeletonOf(p);
-  assert.ok(!/"structuralElements"/.test(sk), 'the skeleton must not ask for structuralElements');
-  assert.ok(!/"artificialHabitatDetails"/.test(sk), 'nor for artificialHabitatDetails');
-});
-
-test('3,531 humps no longer produce a 400,000 character habitat prompt', () => {
-  const p = RESEARCH_AGENTS.habitat.userTemplate('X', 'GA',
-    { habitat: { structuralElements: { humpCoordinates: humps(3531), humpCount: 3531 } }, _extractedFacts: [] });
-  assert.ok(p.length < 12000, `habitat prompt was ${p.length} chars`);
-});
+// THE TWO HABITAT TESTS ARE GONE, AND THE AGENT IS WHY. 4c167c5 -- "Retire the habitat agent;
+// Garmin sounded the bottom and we were asking a model" -- removed `habitat` from RESEARCH_AGENTS
+// and left this file calling `RESEARCH_AGENTS.habitat.userTemplate`, so three of its six tests
+// have been throwing "Cannot read properties of undefined" ever since. A red file is where the
+// next real break hides.
+//
+// The lesson they carried is not lost: the 402,757-character prompt came from
+// `"structuralElements": ${JSON.stringify(...)}` inside the JSON skeleton the model was told to
+// return, and 3,531 hump coordinates went into it twice. That is a rule about ANY agent echoing
+// deterministic data back, and the navigation tests above still enforce it on the agent that
+// still exists. There is no habitat prompt left to grow.
 
 test('an agent with no deterministic input still produces a usable prompt', () => {
   const nav = RESEARCH_AGENTS.navigation.userTemplate('Some Lake', 'SC', {});
   assert.match(nav, /Return ONLY/);
   assert.match(nav, /hazards/);
-  const hab = RESEARCH_AGENTS.habitat.userTemplate('Some Lake', 'SC', {});
-  assert.match(hab, /Return ONLY/);
 });
