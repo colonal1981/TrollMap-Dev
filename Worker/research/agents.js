@@ -1278,8 +1278,20 @@ holding: coerceHolding(entry.holding, holdingRejects),
     // Which confirmed species did not survive the round trip, whatever the reason -- a failed
     // call, an empty section, or a name the model quietly renamed. Compared against what was
     // asked for rather than against the exceptions caught, because the bass group did not throw.
-    const returnedSet = new Set(Object.keys(normalizedMerged).map((k) => k.toLowerCase()));
-    const missingSpecies = deduped.filter((s2) => !returnedSet.has(s2.toLowerCase()));
+    //
+    // BOTH SIDES GO THROUGH SPECIES_MERGE, or the warning cries wolf. `deduped` is the merged
+    // list -- Black Crappie and White Crappie both become Crappie above -- and the returned keys
+    // were not merged, so a model that answered with "Black Crappie" produced
+    // "Crappie missing from the result" while Black Crappie sat right there in the section.
+    //
+    // Measured 2026-09-01 on LAKE WACCAMAW, NC: NC WRC lists Black Crappie, the agent asked about
+    // Crappie, the model answered "Black Crappie", and the batch printed a missing-species warning
+    // for a lake that came back 5 of 5. This warning is the only reason two real defects were
+    // visible today -- the group-term deletion and the rate-limited groups -- and a warning that
+    // fires when nothing is wrong is how it stops being read.
+    const mergeKey = (k) => String(SPECIES_MERGE[k] || k).toLowerCase();
+    const returnedSet = new Set(Object.keys(normalizedMerged).map(mergeKey));
+    const missingSpecies = deduped.filter((s2) => !returnedSet.has(mergeKey(s2)));
     const failedGroups = groupOutcomes.filter((g) => !g.ok);
     if (missingSpecies.length) {
       console.warn(`[research:fisheries] ${missingSpecies.length} confirmed species missing from `
