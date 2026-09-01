@@ -61,7 +61,29 @@ const RESEARCH_SPECIES_CANON = {
   'north american freshwater catfishes': 'Catfish',
   'sunfish': 'Sunfish',
   'bodie bass striped bass hybrid': 'White Bass / Hybrid',
-  'bullhead sp': 'Bullhead'
+  'bullhead sp': 'Bullhead',
+  // THE PLAN FORM'S OWN VOCABULARY, which reaches predatorSpecies through the regulations
+  // species floor. `registry/species_map.json` maps a book phrase onto the fifteen checkboxes in
+  // FRESHWATER_GROUPS, and its note says those strings "are the target vocabulary and must not be
+  // paraphrased" -- so `plan_species` is plan words, and deterministic.js unions them into a
+  // RESEARCH list. Five of the fifteen were not in this table and fell through to title-casing.
+  //
+  // `Hybrid` is the expensive one: it means striped bass hybrid, it is on 68 by_water rules --
+  // tied with Striped Bass for the most common species in the whole regulations table, because
+  // NC, SC, GA and TN all write striper-and-hybrid combination limits -- and it arrived as a fish
+  // named "Hybrid" sitting beside the "White Bass / Hybrid" the same lake already had from NC WRC.
+  // Measured 2026-09-01 on Lake Townsend (Guilford Co, NC): six confirmed species where the water
+  // has four, and the model was asked to write trolling intelligence for both halves of the
+  // duplicate. `hybrid bass` already pointed at White Bass / Hybrid; the bare word did not.
+  //
+  // The other four are real fish that title-cased correctly by luck. They are named anyway,
+  // because `isKnownResearchSpecies()` gates whole agency rosters on this table and a fish it
+  // does not know cannot vouch for the page it came from.
+  'hybrid': 'White Bass / Hybrid',
+  'redear sunfish shellcracker': 'Redear Sunfish (Shellcracker)',
+  'warmouth': 'Warmouth',
+  'green sunfish': 'Green Sunfish',
+  'pumpkinseed': 'Pumpkinseed'
 };
 
 function canonicalizeResearchSpecies(raw) {

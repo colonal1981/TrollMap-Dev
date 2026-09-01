@@ -36,8 +36,11 @@ Personal use only, not for distribution or resale; not for navigation.
 """
 
 import argparse
+import io
 import json
 import os
+import re
+import subprocess
 import sys
 import time
 import urllib.error
@@ -92,12 +95,200 @@ def _req(path, payload=None, timeout=300):
         return 0, None, str(e)
 
 
-def research_one(lake, state, dry_run=False, verbose=False):
+def _raw(path, timeout=300):
+    """GET returning (status, bytes, content-type, error). /research/proxy-download hands back
+    PDF bytes, not JSON -- the browser runs pdf.js on them and this runs pypdf."""
+    req = urllib.request.Request(f"{WORKER}{path}", headers=_headers(body=False), method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status, r.read(), r.headers.get("Content-Type", ""), None
+    except urllib.error.HTTPError as e:
+        body = e.read()[:300].decode("utf-8", "replace").replace("\n", " ").strip()
+        return e.code, None, None, body or "empty body"
+    except Exception as e:                                    # noqa: BLE001
+        return 0, None, None, str(e)
+
+
+# ── THE DOWNLOAD STAGE, which this script did not have and needed ───────────────────────────
+#
+# The browser's pipeline is discover -> proxy-download -> save-normalized -> analyze-facts
+# (lake-research-engine.js, the comment above runAgent). The first version of this script went
+# discover -> get-normalized and skipped the two in the middle, so it read a corpus it never
+# filled. On a lake that already had one -- Wateree -- that looked like a 48-second run. On a lake
+# that never had one it looked like a FASTER run: Lanier and Townsend came back in 21 s and 15 s
+# with `documents: 0`, the model answering from the deterministic profile alone. A batch built
+# that way would have written sixty-four profiles with no document behind any of them, which is
+# the one thing trollingIntelligence exists to avoid.
+
+SOURCE_CAP = 10          # AGENT_SOURCE_CAPS.fisheries in lake-research-engine.js
+BATCH_SIZE = 10          # what /research/proxy-download-batch takes per call
+DAY_MS = 24 * 60 * 60 * 1000
+TTL_MS = {"academic": 365 * DAY_MS, "official": 90 * DAY_MS,
+          "news": 30 * DAY_MS, "anecdotal": 14 * DAY_MS}
+
+
+def doc_ttl_ms(url):
+    """getDocTtl() in lake-research-engine.js -- how long a source of this kind stays fresh."""
+    u = str(url or "").lower()
+    if re.search(r"seafwa|usgs|nepis|epa\.gov|asmfc|apms|\.edu", u):
+        return TTL_MS["academic"]
+    if re.search(r"dnr\.sc\.gov|ncwildlife|georgiawildlife|tn\.gov|eregulations|ferc|"
+                 r"santeecooper|usace", u):
+        return TTL_MS["official"]
+    if re.search(r"news|report|stocking|annual|trends|freshwater\.html", u):
+        return TTL_MS["news"]
+    return TTL_MS["anecdotal"]
+
+
+def norm_url(u):
+    return str(u or "").split("?")[0].lower()
+
+
+def is_pdf_url(url, type_):
+    return str(type_ or "").upper() == "PDF" or re.search(r"\.pdf($|[?#])", str(url or ""), re.I)
+
+
+def is_special_url(url):
+    return bool(re.search(r"nepis\.epa\.gov|ZyNET\.exe|wateratlas\.usf\.edu", str(url or ""), re.I))
+
+
+def pdf_text(data):
+    """Text out of PDF bytes. The browser uses pdf.js; this box already has pypdf."""
+    try:
+        from pypdf import PdfReader
+    except ImportError:
+        return ""
+    try:
+        reader = PdfReader(io.BytesIO(data))
+        return "\n".join((page.extract_text() or "") for page in reader.pages)
+    except Exception:                                          # noqa: BLE001
+        return ""
+
+
+def gate_documents(repo, documents, lake):
+    """
+    The off-lake gate, RUN RATHER THAN REIMPLEMENTED.
+
+    js/utils/doc-relevance.js already holds prepareNormalizedDocuments(), already carries the
+    positional-agentTags bug fix, and is already covered by a test. Porting 85 lines of it into
+    Python would make a second copy of a rule this project has watched drift before -- the
+    fisheries group-term table was two copies and they disagreed, and it cost a species on
+    2026-09-01. Node is on this machine and the module is plain ESM with no browser globals, so
+    the real function runs on the real documents and Python never learns the rule.
+    """
+    src = os.path.abspath(os.path.join(repo, "js", "utils", "doc-relevance.js"))
+    if not os.path.exists(src):
+        raise SystemExit(f"!! cannot find {src} -- pass --repo pointing at the TrollMap-Dev tree")
+    script = (
+        "import {readFileSync} from 'node:fs';"
+        f"const m = await import({json.dumps('file://' + src.replace(os.sep, '/'))});"
+        "const inp = JSON.parse(readFileSync(0,'utf8'));"
+        "process.stdout.write(JSON.stringify("
+        "m.prepareNormalizedDocuments(inp.documents, inp.lakeName, [])));"
+    )
+    proc = subprocess.run(["node", "--input-type=module", "-e", script],
+                          input=json.dumps({"documents": documents, "lakeName": lake}),
+                          capture_output=True, text=True, encoding="utf-8")
+    if proc.returncode != 0:
+        raise SystemExit(f"!! the off-lake gate failed to run under node: "
+                         f"{(proc.stderr or '').strip()[:300]}")
+    return json.loads(proc.stdout)
+
+
+def fetch_sources(lake, sources, existing, verbose=False):
+    """
+    Sources -> normalized documents, the way runAgent does it: batch the HTML through
+    /research/proxy-download-batch, take PDFs and the blocked domains one at a time.
+    Returns (documents, stats).
+    """
+    by_url = {norm_url(d.get("url")): d for d in existing}
+    now_ms = time.time() * 1000
+    to_fetch, reused = [], []
+    for src in sources:
+        cached = by_url.get(norm_url(src.get("url")))
+        if cached:
+            fetched = cached.get("fetchedAt")
+            age = None
+            if fetched:
+                try:
+                    age = now_ms - time.mktime(time.strptime(
+                        str(fetched)[:19], "%Y-%m-%dT%H:%M:%S")) * 1000
+                except ValueError:
+                    age = None
+            if age is not None and age < doc_ttl_ms(src.get("url")):
+                reused.append(cached)
+                continue
+        to_fetch.append(src)
+
+    docs = list(reused)
+    stats = {"reused": len(reused), "html_ok": 0, "pdf_ok": 0, "failed": 0, "pdf_no_text": 0}
+
+    batch = [s for s in to_fetch if not is_pdf_url(s.get("url"), s.get("type"))
+             and not is_special_url(s.get("url"))]
+    individual = [s for s in to_fetch if s not in batch]
+
+    for i in range(0, len(batch), BATCH_SIZE):
+        chunk = batch[i:i + BATCH_SIZE]
+        payload = {"urls": [{"url": s.get("url"), "canonicalUrl": s.get("canonicalUrl") or s.get("url"),
+                             "title": s.get("title"), "type": s.get("type") or "HTML"} for s in chunk]}
+        code, data, err = _req("/research/proxy-download-batch", payload)
+        if code != 200 or not data:
+            if verbose:
+                print(f"      proxy-download-batch {code}: {err}")
+            stats["failed"] += len(chunk)
+            continue
+        results = data.get("results") or []
+        for j, s2 in enumerate(chunk):
+            r = results[j] if j < len(results) else None
+            text = (r or {}).get("text") or ""
+            if (r or {}).get("ok") and len(text) > 200:
+                docs.append({"title": s2.get("title"), "url": s2.get("url"), "fullText": text,
+                             "agentTags": s2.get("agentTags") or ["fisheries"],
+                             "discoveredBy": "fisheries",
+                             "fetchedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
+                stats["html_ok"] += 1
+            elif (r or {}).get("reason") == "unhandled":
+                individual.append(s2)          # the batch classified it special -- take it alone
+            else:
+                stats["failed"] += 1
+                if verbose:
+                    print(f"      batch miss: {str(s2.get('title'))[:60]} "
+                          f"({(r or {}).get('error') or 'no content'})")
+
+    for s3 in individual:
+        url = f"/research/proxy-download?url={urllib.parse.quote(str(s3.get('url') or ''), safe='')}" \
+              f"&type={s3.get('type') or 'HTML'}"
+        code, raw, ctype, err = _raw(url)
+        if code != 200 or not raw:
+            stats["failed"] += 1
+            if verbose:
+                print(f"      proxy-download {code} for {str(s3.get('title'))[:60]}: {err}")
+            continue
+        if "application/pdf" in (ctype or "").lower() or is_pdf_url(s3.get("url"), s3.get("type")):
+            text = pdf_text(raw)
+            if len(text) <= 200:
+                stats["pdf_no_text"] += 1
+                continue
+            stats["pdf_ok"] += 1
+        else:
+            text = raw.decode("utf-8", "replace")
+            if len(text) <= 200:
+                stats["failed"] += 1
+                continue
+            stats["html_ok"] += 1
+        docs.append({"title": s3.get("title"), "url": s3.get("url"), "fullText": text,
+                     "agentTags": s3.get("agentTags") or ["fisheries"],
+                     "discoveredBy": "fisheries",
+                     "fetchedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
+    return docs, stats
+
+
+def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev"):
     """One lake, start to saved profile. Returns a result dict; never raises."""
     t0 = time.perf_counter()
     out = {"lake": lake, "state": state, "ok": False, "species": 0, "saved": False, "error": None,
            "confirmed": [], "returned": [], "missing": [], "documents": 0, "facts": 0,
-           "warnings": []}
+           "sources": 0, "fetch": {}, "rejected_offlake": 0, "warnings": []}
 
     code, det, err = _req("/research/deterministic-facts", {"lakeName": lake, "state": state})
     if code != 200 or not det or not det.get("profile"):
@@ -110,11 +301,45 @@ def research_one(lake, state, dry_run=False, verbose=False):
     code, disc, err = _req("/research/discover",
                            {"lakeName": lake, "state": state, "agent": "fisheries",
                             "names": [lake], "predatorSpecies": species})
-    if code != 200 and verbose:
-        print(f"      discover {code}: {err}")
+    if code != 200 or not disc or not disc.get("success"):
+        out["error"] = f"discover {code}: {err or (disc or {}).get('error') or 'no sources'}"
+        return out
+    found = [s2 for s2 in (disc.get("sources") or [])
+             if not s2.get("agentTags") or "fisheries" in s2["agentTags"]]
+
+    # THE CAP THE BROWSER APPLIES, mirrored: seeds (priority 1) always pass, the rest sort by
+    # prefetchScore and fill what is left of ten. A source with no score defaults to 3 so it is
+    # not cut for a field discovery did not set.
+    seeds = [s2 for s2 in found if s2.get("priority") == 1]
+    rest = sorted((s2 for s2 in found if s2.get("priority") != 1),
+                  key=lambda s2: s2.get("prefetchScore", s2.get("score", 3)), reverse=True)
+    sources = seeds + rest[:max(0, SOURCE_CAP - len(seeds))]
+    out["sources"] = len(sources)
+    if verbose:
+        print(f"      discover: {len(found)} sources ({len(seeds)} seeds) -> {len(sources)}")
 
     code, norm, err = _req(f"/research/get-normalized?lake={urllib.parse.quote(lake)}")
-    docs = ((norm or {}).get("documents") or (norm or {}).get("docs") or []) if code == 200 else []
+    existing = ((norm or {}).get("documents") or (norm or {}).get("docs") or []) if code == 200 else []
+
+    fetched, out["fetch"] = fetch_sources(lake, sources, existing, verbose)
+
+    # The off-lake gate, then back to R2 so the next quarter's run reuses the corpus instead of
+    # paying for it again. Untouched cached docs are merged back in, the way runAgent does.
+    if fetched:
+        touched = {norm_url(d.get("url")) for d in fetched}
+        merged = [d for d in existing if norm_url(d.get("url")) not in touched] + fetched
+        prepared = gate_documents(repo, merged, lake)
+        out["rejected_offlake"] = prepared.get("rejected", 0)
+        keep = prepared.get("documents") or []
+        code, _, err = _req(f"/research/save-normalized?lake={urllib.parse.quote(lake)}"
+                            f"&n={len(keep)}&rejected={out['rejected_offlake']}", keep)
+        if code != 200:
+            print(f"      warn [{lake}]: save-normalized {code}: {err} "
+                  f"-- the corpus was used but not stored")
+        docs = keep
+    else:
+        docs = existing
+
     usable = [d for d in docs if len(str(d.get("fullText") or d.get("text") or "")) >= 200]
     out["documents"] = len(usable)
 
@@ -238,6 +463,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--registry", default="registry", help="folder holding lake_index.json")
+    ap.add_argument("--repo", default="TrollMap-Dev",
+                    help="the TrollMap-Dev tree, for js/utils/doc-relevance.js (the off-lake gate)")
     ap.add_argument("--lake", action="append", help="one water by display name (repeatable)")
     ap.add_argument("--state", default=None,
                     help="override the state for --lake runs; the registry supplies it otherwise")
@@ -283,14 +510,17 @@ def main():
 
     def work(pair):
         name, st = pair
-        r = research_one(name, st, a.dry_run, a.verbose)
+        r = research_one(name, st, a.dry_run, a.verbose, a.repo)
         done[0] += 1
         mark = "ok " if r["ok"] else "FAIL"
         secs = f'{r.get("seconds", 0):5.1f}s'
         # docs and facts are on the line because a cold run that quietly found no documents
         # looks exactly like a fast one, and the difference is the whole point of the batch.
+        f = r.get("fetch") or {}
+        got = f.get("html_ok", 0) + f.get("pdf_ok", 0)
         detail = (f"{len(r['returned'])}/{len(r['confirmed'])} species  "
-                  f"{r['documents']} docs  {r['facts']} facts")
+                  f"{r['documents']} docs ({got} new, {f.get('reused', 0)} cached, "
+                  f"{f.get('failed', 0)} failed)  {r['facts']} facts")
         if r["missing"]:
             detail += "  LOST: " + ", ".join(r["missing"])
         print(f"  [{done[0]:3d}/{len(lakes)}] {mark} {secs}  {name[:42]:44s}{detail}"
@@ -324,7 +554,10 @@ def main():
         print(f"\n{len(dry)} water(s) ran on no documents at all -- the model had only the "
               f"deterministic profile:")
         for r in dry:
-            print(f"  {r['lake']}")
+            f = r.get("fetch") or {}
+            print(f"  {r['lake']}: {r.get('sources', 0)} sources discovered, "
+                  f"{f.get('failed', 0)} failed to download, "
+                  f"{r.get('rejected_offlake', 0)} dropped as off-lake")
 
     os.makedirs(os.path.dirname(a.report) or ".", exist_ok=True)
     with open(a.report, "w", encoding="utf-8") as f:
