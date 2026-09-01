@@ -1,8 +1,8 @@
 // research/deterministic.js — split from worker-research.js (behavior-preserving)
 import { JSON_HEADERS, r2Text } from '../worker-core.js';
 import { researchStorageId, resolveResearchStorageId } from './keys.js';
-import { buildEvidence, buildFactualSummary, getAttractorFacts, getRampSpeciesFacts, uniqueResearchSpecies, splitSpeciesText } from './facts-util.js';
-import { lakeIndex, ncSpeciesByLake, resolveRegistryRow, identityBaseline } from '../registry.js';
+import { buildEvidence, buildFactualSummary, getAttractorFacts, getRampSpeciesFacts, uniqueResearchSpecies, splitSpeciesText, isKnownResearchSpecies } from './facts-util.js';
+import { lakeIndex, ncSpeciesByLake, resolveRegistryRow, identityBaseline, regulationsTable, agencyLakeFacts } from '../registry.js';
 import { dukeRowForNames, fetchDukeAccessAlerts, fetchDukeOperatingRange } from '../worker-data.js';
 import { parseAccessAlerts, dukeLocationIdFor, dukePoolManagement } from '../conditions.js';
 
@@ -187,6 +187,126 @@ async function handleResearchDeterministicFacts(request, env) {
     } catch (e) {
       console.warn(`deterministic NC species lookup failed for ${lakeName}: ${e.message}`);
     }
+  }
+
+  // ── THE AGENCY ALREADY PUBLISHED THE ROSTER, IN EVERY STATE BUT NORTH CAROLINA ─────────────
+  //
+  // TWRA reservoir pages, SCDNR lake pages and GA DNR lake pages each print the species the state
+  // says are in that water. build_agency_lake_facts.py has been parsing them into
+  // registry/agency_lake_facts.json since 2026-08-28 and nothing read the file, so the research
+  // pipeline was sending a model to investigate lakes the state had already answered -- Burton,
+  // Lanier, Hartwell, Richard B. Russell and Clarks Hill among them.
+  //
+  // This is a ROSTER, unlike the regulations floor below it: the page lists what is in the lake,
+  // not merely what carries a rule. It is additive against the NC list above for the same reason
+  // that one is additive -- two agencies naming different fish in one water is two facts, not a
+  // contradiction.
+  //
+  // The page's own section headings are NOT species. A GA DNR page yields `Largemouth Bass,
+  // Spotted Bass, Brown Trout` on the lake template; the PFA template returns `Gallery`,
+  // `Fees & Passes` and `Stay connected` from the same reader, which is why the PFA pages must
+  // stay out of Georgia_Lakes/ until ga_page() learns that template. uniqueResearchSpecies()
+  // filters non-fish, and this refuses any name the species vocabulary does not recognise rather
+  // than trusting the reader.
+  try {
+    const row = resolveRegistryRow(await lakeIndex(env), lakeName);
+    const slug = row && row.slug;
+    const pages = slug ? (await agencyLakeFacts(env))[slug] : null;
+    if (Array.isArray(pages) && pages.length) {
+      const named = [];
+      for (const page of pages) {
+        for (const sp of (page.species || [])) {
+          const nm = String((sp && sp.name) || '').trim();
+          if (nm) named.push(nm);
+        }
+      }
+      // A FISHING AGENCY'S SPECIES LIST THAT NAMES NO FISH IS NOT A SPECIES LIST.
+      //
+      // ga_page() reads the GA DNR LAKE template. On the PFA template the same reader returns the
+      // page's section headings -- measured on the Hugh M. Gillis page, 2026-09-01: `Adrian`,
+      // `Creel Limits`, `Gallery`, `Fees & Passes`, `Address`, `featured`, `Stay connected`. Every
+      // one of those survives uniqueResearchSpecies(), because that filter removes non-game fish
+      // and cannot tell a fish from a nav link.
+      //
+      // The page name still resolves, so a build with a PFA page in Georgia_Lakes/ would have
+      // written "Gallery" into a roster and handed it to the plan. Those pages belong out of that
+      // folder until the reader learns the template -- and this refuses the list anyway, on a test
+      // the junk cannot pass: a real roster names at least one fish this codebase already knows.
+      // Burton scores three of three, Thurmond six of seven, the PFA page zero of seven.
+      const roster = uniqueResearchSpecies(named);
+      if (roster.length && !roster.some(isKnownResearchSpecies)) {
+        console.warn(`agency species list for ${lakeName} names no known fish -- ignoring `
+                   + `[${roster.slice(0, 6).join(', ')}]; the page is probably not the lake template`);
+      } else if (roster.length) {
+        profile.biology.predatorSpecies = uniqueResearchSpecies(
+          [...(profile.biology.predatorSpecies || []), ...roster]);
+        const agency = pages[0].agency || 'state agency';
+        const url = (pages[0].source && pages[0].source.url) || 'registry:agency_lake_facts.json';
+        mergeEvidence('biology', 'predatorSpecies', buildEvidence([{
+          fact: roster.join(', '), source: `${agency} lake page`, url,
+          trust: 'OFFICIAL', sourceType: 'official_structured',
+        }]));
+        profile.sources.push({ label: `${agency} lake page`, url, trust: 'OFFICIAL', sourceType: 'official_structured' });
+      }
+    }
+  } catch (e) {
+    // Most waters have no agency page, and agencyLakeFacts throws when the object is not in the
+    // bucket yet. Neither is a failed profile.
+    console.warn(`deterministic agency species lookup failed for ${lakeName}: ${e && e.message}`);
+  }
+
+  // ── THE BOOK NAMES THE FISH IT WRITES A RULE FOR, AND THAT IS A FLOOR ──────────────────────
+  //
+  // A lake-specific creel or size rule proves the species is in that water. "Striped Bass: five
+  // per day" on Hartwell is the state saying stripers are there. It is NOT a roster -- it says
+  // nothing about what else lives there -- so this UNIONS IN UNDERNEATH the rosters above and can
+  // never remove or replace one.
+  //
+  // `plan_species` is used rather than the raw rule label on purpose. The book writes
+  // "Striped or Hybrid Bass or a combination", "Bass (largemouth, spotted, redeye, smallmouth or
+  // combination)" and "Aggregate of all game fish (does not include catfish)*" -- those are rule
+  // headings, not fish. build_regulations_table.py already maps them to the plan's own species
+  // vocabulary through registry/species_map.json, explicitly rather than by fuzzy containment,
+  // and that mapped list is what a consumer can act on.
+  //
+  // Measured 2026-09-01 over the 64 inland lakes above 1,000 acres that the research filter
+  // actually offers (PRESETS.research: minAcres 1000, includeRivers false): 26 carry a
+  // lake-specific rule naming a species. Six distinct species across them -- Largemouth Bass 20,
+  // Striped Bass 10, Hybrid 10, Crappie 5, White Bass 3, Catfish 2.
+  try {
+    const row = resolveRegistryRow(await lakeIndex(env), lakeName);
+    const slug = row && row.slug;
+    const rec = slug ? (await regulationsTable(env)).by_water[slug] : null;
+    if (rec) {
+      const named = new Set();
+      const walk = (o) => {
+        if (Array.isArray(o)) { o.forEach(walk); return; }
+        if (!o || typeof o !== 'object') return;
+        for (const [k, v] of Object.entries(o)) {
+          if (k === 'plan_species' && Array.isArray(v)) {
+            for (const sp of v) if (typeof sp === 'string' && sp.trim()) named.add(sp.trim());
+          } else walk(v);
+        }
+      };
+      walk(rec);
+      const floor = uniqueResearchSpecies([...named]);
+      if (floor.length) {
+        const before = new Set((profile.biology.predatorSpecies || []).map((s) => String(s).toLowerCase()));
+        profile.biology.predatorSpecies = uniqueResearchSpecies(
+          [...(profile.biology.predatorSpecies || []), ...floor]);
+        const added = floor.filter((s) => !before.has(s.toLowerCase()));
+        const label = `${rec.state || state} fishing regulations digest (lake-specific rules)`;
+        mergeEvidence('biology', 'predatorSpecies', buildEvidence([{
+          fact: `Named in this water's own rules: ${floor.join(', ')}`
+              + (added.length ? `; ${added.length} not otherwise recorded here` : '; all already recorded'),
+          source: label, trust: 'OFFICIAL', sourceType: 'official_structured',
+        }]));
+      }
+    }
+  } catch (e) {
+    // A water with no lake-specific rule is the normal case, and regulationsTable throws when the
+    // object is missing from the bucket. Neither is a failed profile.
+    console.warn(`deterministic regs species floor failed for ${lakeName}: ${e && e.message}`);
   }
 
   // Structured attractors

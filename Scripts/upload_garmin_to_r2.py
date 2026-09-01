@@ -812,6 +812,29 @@ def main():
             print(f"!! {ns.name} not found -- every NC water researches with an empty species "
                   f"list; build it with build_nc_species_by_lake.py --go")
 
+        # AGENCY LAKE FACTS -- what the states already published, for every state but NC.
+        #
+        # TWRA reservoir pages, SCDNR lake pages and GA DNR lake pages each print the species the
+        # state says are in that water. build_agency_lake_facts.py has parsed them since
+        # 2026-08-28 and the file was never uploaded and never read, so the research pipeline kept
+        # sending a model to investigate lakes the state had already answered -- Burton, Lanier,
+        # Hartwell, Richard B. Russell and Clarks Hill among them. Sixth file to learn the same
+        # lesson: parsed correctly, addressed to nobody.
+        af = regdir / "agency_lake_facts.json"
+        if af.exists():
+            _af = json.load(open(af, encoding="utf-8"))
+            reg_jobs.append((str(af), f"{args.prefix}_registry/agency_lake_facts.json",
+                             "_registry", "agency_facts"))
+            _rows = _af.get("rows") or {}
+            _with = sum(1 for v in _rows.values() if any((p_ or {}).get("species") for p_ in (v or [])))
+            print(f"agency:   {len(_rows):,} waters from {_af.get('pages_read', 0):,} agency pages, "
+                  f"{_with:,} carrying a species roster -> "
+                  f"{args.prefix}_registry/agency_lake_facts.json "
+                  f"({af.stat().st_size/1024:.0f} KB before gzip)")
+        else:
+            print(f"!! {af.name} not found -- SC/GA/TN waters research without the roster their "
+                  f"own agency publishes; build it with build_agency_lake_facts.py")
+
 
         # FULL POOL -- the elevation each Garmin chart is sounded to.
         #

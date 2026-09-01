@@ -29,6 +29,7 @@ export const LAKE_INDEX_KEY = '_registry/lake_index.json';
 export const WATER_CHAIN_KEY = '_registry/water_chain.json';
 export const DAM_TABLE_KEY = '_registry/dam_table.json';
 export const NC_SPECIES_KEY = '_registry/nc_species_by_lake.json';
+export const AGENCY_FACTS_KEY = '_registry/agency_lake_facts.json';
 export const REGULATIONS_KEY = '_registry/regulations.json';
 export const FULL_POOL_KEY = '_registry/full_pool.json';
 export const INDEX_TTL_S = 3600;
@@ -41,6 +42,8 @@ let _dams = null;
 let _damsAt = 0;
 let _ncSpecies = null;
 let _ncSpeciesAt = 0;
+let _agencyFacts = null;
+let _agencyFactsAt = 0;
 
 /** Exposed for tests. Nothing in the Worker should need to call this. */
 export function _resetIndexCache() {
@@ -48,6 +51,7 @@ export function _resetIndexCache() {
   _pool = null; _poolAt = 0;
   _index = null; _indexAt = 0; _chain = null; _chainAt = 0; _dams = null; _damsAt = 0;
   _ncSpecies = null; _ncSpeciesAt = 0;
+  _agencyFacts = null; _agencyFactsAt = 0;
 }
 
 /**
@@ -195,6 +199,44 @@ export async function ncSpeciesByLake(env, opts = {}) {
   }
   _ncSpecies = rows;
   _ncSpeciesAt = now;
+  return rows;
+}
+
+/**
+ * What the state agencies already publish about our waters, keyed by registry slug.
+ *
+ * `build_agency_lake_facts.py` reads the saved TWRA reservoir pages, SCDNR lake pages and GA DNR
+ * lake pages and parses each one's species list, overview and measures. It has been writing
+ * `registry/agency_lake_facts.json` since 2026-08-28 and NOTHING READ IT: the only files that
+ * mentioned the name were the script that builds it and the script that fetches its pages.
+ *
+ * It carries full rosters for waters the research pipeline was sending an LLM to investigate --
+ * Lake Burton, Lanier, Hartwell, Richard B. Russell and Clarks Hill among them. Cross-checked
+ * 2026-09-01 against gastateparks.org's own fishing page: the two agree on all five Georgia
+ * lakes, differing only in vocabulary (spotted bass for the Alabama Bass complex, redear for
+ * bream).
+ *
+ * Same cadence and same failure mode as the loaders above: the object changes when the PIPELINE
+ * uploads, not when the Worker deploys, and a missing object is an error naming the script that
+ * writes it. The caller catches, because a water with no agency page must still produce a profile.
+ */
+export async function agencyLakeFacts(env, opts = {}) {
+  const now = Number.isFinite(opts.now) ? opts.now : Date.now();
+  if (!opts.fresh && _agencyFacts && now - _agencyFactsAt < INDEX_TTL_S * 1000) return _agencyFacts;
+  const bucket = (env && env.R2_TROLLMAP_CHARTPACKS) || opts.bucket;
+  if (!bucket) throw new Error('R2_TROLLMAP_CHARTPACKS is not bound to this Worker');
+  const obj = await bucket.get(AGENCY_FACTS_KEY);
+  if (!obj) {
+    throw new Error(`${AGENCY_FACTS_KEY} is not in the bucket -- run build_agency_lake_facts.py, `
+                  + 'then upload_garmin_to_r2.py');
+  }
+  const parsed = JSON.parse(await r2Text(obj));
+  const rows = parsed && parsed.rows;
+  if (!rows || typeof rows !== 'object' || Array.isArray(rows)) {
+    throw new Error(`${AGENCY_FACTS_KEY} has no "rows" object keyed by registry slug`);
+  }
+  _agencyFacts = rows;
+  _agencyFactsAt = now;
   return rows;
 }
 

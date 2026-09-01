@@ -84,7 +84,17 @@ const NON_GAME_SPECIES = new Set([
   'gar', 'longnose gar', 'spotted gar', 'alligator gar',
   'drum', 'freshwater drum', 'buffalo', 'bigmouth buffalo', 'smallmouth buffalo',
   'sucker', 'white sucker', 'redhorse',
+  // NOT A FISH, BUT THE AGENCIES WRITE IT IN THE FISH LIST. GA DNR closes several of its lake
+  // pages with a bucket row -- Thurmond and Lanier both end "Other Species" -- and it read
+  // straight through this filter into predatorSpecies, where the plan would have offered it as
+  // a target. It is the page saying "and some others", which is the absence of a name.
+  'other species', 'other', 'various', 'various species', 'game fish', 'gamefish',
 ]);
+
+/** Exposed so a caller can ask whether a parsed list names any fish this codebase knows. */
+function isKnownResearchSpecies(raw) {
+  return Object.prototype.hasOwnProperty.call(RESEARCH_SPECIES_CANON, normalizeResearchName(raw));
+}
 
 function uniqueResearchSpecies(items) {
   const out = [];
@@ -750,4 +760,4 @@ function buildFactualSummary(profile) {
   return parts.join(' ').trim() || null;
 }
 
-export { sampleDated, normalizeResearchName, hasResearchValue, buildEvidence, titleCaseWords, RESEARCH_SPECIES_CANON, canonicalizeResearchSpecies, NON_GAME_SPECIES, uniqueResearchSpecies, splitSpeciesText, parseSCDNRDescriptionFacts, RESEARCH_RAMP_SOURCES, RESEARCH_ATTRACTOR_SOURCES, fetchArcGISGrouped, waterbodyMatchesLake, stripHtmlPreserveTables, extractHtmlTableRows, extractMarkdownTableRows, slicePdfPageRange, parseSCRegulationsFromHtml, getRampSpeciesFacts, getAttractorFacts, buildFactualSummary };
+export { sampleDated, normalizeResearchName, hasResearchValue, buildEvidence, titleCaseWords, RESEARCH_SPECIES_CANON, canonicalizeResearchSpecies, isKnownResearchSpecies, NON_GAME_SPECIES, uniqueResearchSpecies, splitSpeciesText, parseSCDNRDescriptionFacts, RESEARCH_RAMP_SOURCES, RESEARCH_ATTRACTOR_SOURCES, fetchArcGISGrouped, waterbodyMatchesLake, stripHtmlPreserveTables, extractHtmlTableRows, extractMarkdownTableRows, slicePdfPageRange, parseSCRegulationsFromHtml, getRampSpeciesFacts, getAttractorFacts, buildFactualSummary };
