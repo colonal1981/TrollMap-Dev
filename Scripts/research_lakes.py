@@ -580,9 +580,15 @@ def main():
     print(f"worker: {WORKER}")
     print(f"{len(lakes)} water(s), --jobs {a.jobs}"
           f"{'  [DRY RUN -- nothing is saved]' if a.dry_run else ''}")
-    # 80 s is the first real COLD measurement -- Lanier 100 s, Townsend 51 s, both with documents
-    # actually downloaded. The 48 s that preceded it was a refresh on a cached corpus.
-    print(f"estimate at 80 s/lake: {len(lakes) * 80 / max(a.jobs, 1) / 60:.0f} min"
+    # 220 s/lake, from the first two runs that finished with nothing missing: Lake Sidney Lanier
+    # (Hall Co, GA) 121 s and Lake Townsend (Guilford Co, NC) 313 s, both 5 of 5 species with
+    # documents downloaded, extraction paced and groups serialised. The numbers that preceded it
+    # were all measuring something else -- 48 s was a refresh on a cached corpus, 80 s was a cold
+    # run whose groups were failing and therefore finishing early.
+    #
+    # --jobs multiplies the token rate, which is what the pacing exists to hold down. Serial is
+    # the default for that reason and not out of caution.
+    print(f"estimate at 220 s/lake: {len(lakes) * 220 / max(a.jobs, 1) / 60:.0f} min"
           f"   (extraction paced to {a.tpm:,} input tokens/min)\n")
 
     t0 = time.perf_counter()

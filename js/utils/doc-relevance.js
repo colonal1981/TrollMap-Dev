@@ -19,7 +19,24 @@
  * it could never be exercised where it was, because it lived behind an HTTP handler.
  */
 
-const OFFICIAL_SOURCE = /eregulations\.com|dnr\.sc\.gov|dnr\.nc\.gov|epd\.georgia|epa\.gov|waterqualitydata|grokipedia|santeecooper|ncwildlife|tw\.gov/i;
+/**
+ * Sources whose documents are about the water they are about, name test or no name test.
+ *
+ * THIS LIST WAS HAND-WRITTEN AND NEVER CHECKED AGAINST THE DOMAINS THE PIPELINE ACTUALLY READS.
+ * Counted 2026-09-01 across Worker/ and js/: `tn.gov` appears 13 times, `georgiawildlife` 14,
+ * `usace.army.mil` 7, `deq.nc.gov` 6, `gadnr` 34 -- and none of them were here. Meanwhile
+ * `tw.gov` was, which is Taiwan; it is a typo for Tennessee that has been matching nothing.
+ * `dnr.nc.gov` is here and appears nowhere else in the codebase -- North Carolina's agencies are
+ * ncwildlife.org and deq.nc.gov -- so it was a guess. It stays, because it costs nothing.
+ *
+ * What it cost: the run of 2026-09-01 rejected
+ * "Fishing - US Army Corps of Engineers - Mobile District" at
+ * sam.usace.army.mil/.../Lake-Sidney-Lanier/Fishing -- the federal agency that OPERATES the
+ * reservoir, refused for a document about the lake it runs. Georgia is the sharper case: every
+ * agency lake page behind registry/agency_lake_facts.json is on georgiawildlife.com, and the
+ * gate did not know the domain.
+ */
+const OFFICIAL_SOURCE = /eregulations\.com|dnr\.sc\.gov|dnr\.nc\.gov|deq\.nc\.gov|epd\.georgia|epa\.gov|waterqualitydata|grokipedia|santeecooper|ncwildlife|georgiawildlife|gadnr|scdnr|tn\.gov|tva\.gov|usace\.army\.mil/i;
 
 /** "Lake Marion, SC" -> {baseName: "Marion", state: "SC"} */
 export function lakeTerms(lakeName) {
