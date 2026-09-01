@@ -1040,16 +1040,37 @@ async function handleResearchAgent(request, env) {
   // ── Fisheries agent: run one LLM call per species group for focused extraction ──
   // Running all 17 species in one call causes token budget compression — striper spring
   // and other minority-season data gets dropped. Split into groups, merge results.
-  if (agentKey === 'fisheries') {
-    // The client normally supplies the completed biology section. Keep a
-    // compatibility fallback for older callers/resume payloads that only sent
-    // predatorSpecies at the top level; otherwise fisheries silently receives
-    // an empty list and creates zero groups.
-    const bio = groundedPrev?.biology || {};
-    const allSpecies = Array.isArray(bio.predatorSpecies)
-      ? bio.predatorSpecies
-      : (Array.isArray(groundedPrev?.predatorSpecies) ? groundedPrev.predatorSpecies : []);
-    if (!Array.isArray(bio.predatorSpecies) && allSpecies.length) {
+  // The client normally supplies the completed biology section. Keep a compatibility fallback for
+  // older callers/resume payloads that only sent predatorSpecies at the top level; otherwise
+  // fisheries silently receives an empty list and creates zero groups.
+  const _fishBio = agentKey === 'fisheries' ? (groundedPrev?.biology || {}) : {};
+  const _fishSpecies = agentKey !== 'fisheries' ? []
+    : (Array.isArray(_fishBio.predatorSpecies) ? _fishBio.predatorSpecies
+       : (Array.isArray(groundedPrev?.predatorSpecies) ? groundedPrev.predatorSpecies : []));
+
+  // NOTHING TO GROUP MEANS NOTHING TO SPLIT, AND THE GROUPED PATH SWALLOWED DISCOVER MODE.
+  //
+  // The four waters with no deterministic species roster -- Lake Robinson (Chesterfield Co, SC),
+  // Lake William C Bowen (Spartanburg Co, SC), Bay Tree Lake and White Lake, both Bladen Co, NC --
+  // are the whole reason this agent has a DISCOVER mode: `const discover = confirmedSpecies.length
+  // === 0` up in the prompt, with its own instruction to ESTABLISH A SPECIES LIST FIRST and its
+  // own `speciesFound` output field.
+  //
+  // That prompt lives in the single-shot path below. The grouped path was added later and took the
+  // whole `agentKey === 'fisheries'` branch, so with an empty roster it grouped zero species into
+  // zero groups, awaited an empty array of calls, and returned an empty section. Discover mode has
+  // been unreachable ever since, and the failure looks like the agent declining to answer.
+  //
+  // Measured 2026-09-01 on White Lake (Bladen Co, NC), lake 12 of the cold batch: five documents
+  // fetched, fifteen facts extracted, 0/0 species, "agent-llm returned an empty
+  // trollingIntelligence section". Everything the run needed was in hand.
+  //
+  // Splitting a known list into groups is what this block does. With no list, it has no work, and
+  // the single-shot call below is the one that was written for exactly this case.
+  if (agentKey === 'fisheries' && _fishSpecies.length) {
+    const bio = _fishBio;
+    const allSpecies = _fishSpecies;
+    if (!Array.isArray(bio.predatorSpecies)) {
       bio.predatorSpecies = allSpecies;
     }
     console.log(`fisheries agent: received ${allSpecies.length} species from biology context`);

@@ -372,7 +372,7 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
            "confirmed": [], "returned": [], "missing": [], "documents": 0, "facts": 0,
            "sources": 0, "fetch": {}, "rejected_offlake": 0, "rejected_docs": [],
            "chars_sent": 0, "retries": 0, "group_attempts": {}, "saved_key": None,
-           "saved_version": None, "warnings": []}
+           "saved_version": None, "discovered_species": [], "warnings": []}
 
     code, det, err = _req("/research/deterministic-facts", {"lakeName": lake, "state": state})
     if code != 200 or not det or not det.get("profile"):
@@ -512,7 +512,44 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
         out["error"] = "agent-llm returned an empty trollingIntelligence section"
         return out
 
+
     profile["trollingIntelligence"] = section
+
+    # WHAT DISCOVER MODE ESTABLISHED, WRITTEN WHERE THE ROSTER LIVES.
+    #
+    # Four waters have no deterministic species list -- Lake Robinson (Chesterfield Co, SC), Lake
+    # William C Bowen (Spartanburg Co, SC), Bay Tree Lake and White Lake, both Bladen Co, NC --
+    # and for those the agent establishes one from the documents and returns it as `speciesFound`
+    # beside the section. lake-research-engine.js has folded that into biology.predatorSpecies
+    # since the discover path was written; this script was not, so White Lake would have saved
+    # trolling intelligence for species its own biology section did not list.
+    #
+    # `_speciesDiscoveredBy` is the mark the client sets and the reason it sets it: a reader can
+    # tell a roster a model read out of a document from one a structured feed supplied.
+    data = res.get("data") or {}
+    found = [str((f or {}).get("species") or (f or {}).get("name") or "").strip()
+             for f in (data.get("speciesFound") or [])]
+    found = [f for f in found if f]
+    if found:
+        bio = profile.setdefault("biology", {})
+        have = {str(x).lower() for x in (bio.get("predatorSpecies") or [])}
+        added = [f for f in dict.fromkeys(found) if f.lower() not in have]
+        if added:
+            bio["predatorSpecies"] = list(bio.get("predatorSpecies") or []) + added
+            bio["_speciesDiscoveredBy"] = ("fisheries agent, from agency documents "
+                                           "(no deterministic source for this water)")
+            out["discovered_species"] = added
+            print(f"      [{lake}] established {len(added)} species from documents: "
+                  f"{', '.join(added)}")
+    forage = data.get("lakeForage") or {}
+    if forage.get("primary") or forage.get("secondary"):
+        bio = profile.setdefault("biology", {})
+        if not bio.get("primaryForage") and forage.get("primary"):
+            bio["primaryForage"] = forage["primary"]
+        if not bio.get("secondaryForage") and forage.get("secondary"):
+            bio["secondaryForage"] = forage["secondary"]
+        bio["_forageEstablishedBy"] = "fisheries agent, from the documents it was already reading"
+
     meta = profile.setdefault("metadata", {})
     meta["status"] = meta.get("status") or "draft"
 
