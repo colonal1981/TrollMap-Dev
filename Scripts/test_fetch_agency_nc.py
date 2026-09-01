@@ -82,5 +82,42 @@ check('SC names are unchanged',
       [F.name_for(u, sc['index'], t, sc) for u, t in sc_hits],
       ['wateree.html', 'state_ashwood.html'])
 
+# ── The two document shapes, and the species directory ────────────────────────────────────────
+# Real rows off the black crappie page. /open is a species profile, /download?attachment is a
+# per-lake survey report, and an earlier cut of the pattern matched only the second -- which made
+# every species profile in the state invisible.
+CRAPPIE_PAGE = '''
+<a href="https://www.ncwildlife.gov/media/2878/open">Black Crappie Species Profile</a>
+<a href="https://www.ncwildlife.gov/media/2884/download?attachment">High Rock Lake Black Crappie Population Assessment - 2019</a>
+<a href="https://www.ncwildlife.gov/media/2890/download?attachment">Assessment of the Crappie Population in Lake Rhodhiss</a>
+<a href="https://www.ncwildlife.gov/media/2883/download?attachment">Angler Use Patterns on Randleman Lake</a>
+'''
+c = F.links_on(CRAPPIE_PAGE, 'https://www.ncwildlife.gov/species/black-crappie', spec)
+check('both /open and /download are taken', len(c), 4)
+check('a species profile is named off its own title',
+      F.name_for(c[0][0], '', c[0][1], spec), '2878_black-crappie-species-profile.pdf')
+check('a per-lake report beside it keeps its own id',
+      F.name_for(c[1][0], '', c[1][1], spec),
+      '2884_high-rock-lake-black-crappie-population-assessment-2019.pdf')
+
+# The species directory, filtered to fish. Both link spellings appear on it and are the same page.
+DIRECTORY = '''
+<a href="https://www.ncwildlife.gov/species/black-crappie">Black Crappie</a>
+<a href="https://www.ncwildlife.gov/species/bodie-bass-hybrid-striped-bass">Bodie Bass (Hybrid Striped Bass)</a>
+<a href="https://www.ncwildlife.gov/index%2ephp/species/carolina-redhorse">Carolina Redhorse</a>
+<a href="https://www.ncwildlife.gov/wildlife-habitat/species?page=1">next</a>
+<a href="https://www.ncwildlife.gov/fishing/where-fish">Where to Fish</a>
+<a href="https://www.ncwildlife.gov/media/3595/open">a document, not a species page</a>
+'''
+d = F.links_on(DIRECTORY, spec['directory'].format(page=0), spec, spec['index_link'])
+check('the directory yields species pages only', [u for u, _ in d],
+      ['https://www.ncwildlife.gov/species/black-crappie',
+       'https://www.ncwildlife.gov/species/bodie-bass-hybrid-striped-bass',
+       'https://www.ncwildlife.gov/index%2ephp/species/carolina-redhorse'])
+check('the pagination link is not mistaken for a species',
+      any('?page=' in u for u, _ in d), False)
+check('a document link is not mistaken for a species page',
+      any('/media/' in u for u, _ in d), False)
+
 print('\n%s' % ('%d FAILED' % len(FAILED) if FAILED else 'all checks passed'))
 sys.exit(1 if FAILED else 0)

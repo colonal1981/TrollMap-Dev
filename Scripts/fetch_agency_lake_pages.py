@@ -78,24 +78,50 @@ STATES = {
     # carried an NC row and why every NC water in the research set goes to the web agents with
     # nothing from its own state behind it.
     #
-    # What NC publishes instead is PER-LAKE SURVEY REPORTS, as PDFs, linked from six species
-    # pages. Counted against the registry 2026-09-01: 32 reports land on 20 waters in the
-    # research set, seven of them lakes from the cold batch -- Hyco, Lookout Shoals, Rhodhiss,
-    # Mountain Island, Randleman, Moss and W. Kerr Scott.
+    # What NC publishes instead hangs off its SPECIES pages, and there are two kinds of document
+    # on them, told apart by the last segment of the url:
     #
-    # Three differences from South Carolina, and each is a field here rather than a branch below:
-    #   * SIX indexes, not one. `index` takes a list.
-    #   * The links are ABSOLUTE and on the same host, which links_on() refused by design --
-    #     `href.startswith('http')` was the rule that kept the SC crawl on one page.
-    #   * The pages are PDFs. A PDF cannot carry the browser's `saved from url=` comment, so its
-    #     address lives only in _fetched.json, and the shrink guard has to measure bytes rather
-    #     than parsed HTML blocks.
+    #   /media/<id>/download?attachment   a PER-LAKE SURVEY REPORT. "Hyco Lake Largemouth Bass
+    #                                     Survey" -- CPUE 129/hr, PSD 72, mean Wr 82. The Prospect
+    #                                     half of a GA DNR page. 32 of these land on 20 research
+    #                                     waters off the black bass pages alone, and the crappie
+    #                                     page adds High Rock, Randleman, Cane Creek, Jordan,
+    #                                     Tillery, James and Rhodhiss on top.
+    #   /media/<id>/open                  a SPECIES PROFILE. Statewide, not per-water, and it
+    #                                     carries what the profile has nowhere else: the bluegill
+    #                                     one gives "Nests are usually located in 1 to 6 ft. of
+    #                                     water" and "peak spawn occurring between May and June
+    #                                     when water temperatures reach about 70 degrees F".
+    #                                     `biology.spawnTiming` is {} on every water we hold.
     #
-    # The species pages are saved too, not just crawled. They are the index AND a source: the
-    # Alabama Bass page carries a dated distribution list of about thirty NC waters, and
-    # nc_species_by_lake.json names that fish on none of its 77.
+    # THE SPECIES LIST IS DISCOVERED, NOT TYPED. An earlier cut of this named six black bass and
+    # striped bass pages, which is a hand-written list of the kind this pipeline keeps deleting --
+    # and it was already wrong twice over: it matched only `/download`, so every species profile
+    # was invisible, and NC WRC publishes a page for close to every fish in the state. The
+    # directory at /wildlife-habitat/species is server-rendered, paginated `?page=N` from zero,
+    # and carries NC WRC's own Fish filter -- 47 species over 4 pages. Walk it and the list
+    # maintains itself: a species page added next year is picked up, and one that disappears is
+    # simply not offered.
+    #
+    # SO THIS IS THE ONE SOURCE THAT GOES TWO LEVELS DEEP, and the docstring above now says so.
+    # The rule it relaxes was "one index page, one level deep, on one host"; what is kept is one
+    # host and two explicit patterns, so nothing is followed that was not named. A species page
+    # with no media link on it costs one request and contributes nothing, which is the price of
+    # not typing the list.
     'NC': {
-        'index': [
+        # FILTERED TO FISH, which is 47 species over 4 pages rather than 339 over 23. The
+        # category id is NC WRC's own -- `field_catalog_categories_target_id_6[1547]=1547` is what
+        # the Fish checkbox submits -- so the crawl reads their filter rather than fetching every
+        # bird and salamander page to find out it holds no fisheries report.
+        # `{page}` AND NOT `%d`: the url carries `%5B` and `%5D` for the filter's square
+        # brackets, and percent-formatting a string that already holds percent escapes raises
+        # ValueError on the first call. Caught by test_fetch_agency_nc.py before it ever ran.
+        'directory': ('https://www.ncwildlife.gov/wildlife-habitat/species'
+                      '?field_catalog_categories_target_id_6%5B1547%5D=1547&page={page}'),
+        'directory_pages': 4,
+        # The black bass and striped bass pages live outside /species/ and carry reports of their
+        # own, so they are seeded alongside whatever the directory turns up.
+        'seed': [
             'https://www.ncwildlife.gov/fishing/black-bass-north-carolina/largemouth-bass',
             'https://www.ncwildlife.gov/fishing/black-bass-north-carolina/smallmouth-bass',
             'https://www.ncwildlife.gov/fishing/black-bass-north-carolina/spotted-bass',
@@ -104,9 +130,12 @@ STATES = {
             'https://www.ncwildlife.gov/fishing/striped-bass-fishing-information',
         ],
         'folder': 'NC_Lakes',
-        'link': re.compile(r'^https?://(?:www\.)?ncwildlife\.gov/media/(\d+)/download', re.I),
-        # An external journal link is not a report on the drive. seafwa.org, wiley, tandfonline
-        # and semanticscholar are all linked from the same lists and none of them is NC WRC's.
+        # LEVEL 1: a species page. `/index.php/species/<slug>` appears on the directory beside the
+        # clean form and is the same page, so both spellings are taken and de-duplicated by url.
+        'index_link': re.compile(r'^(?:https?://(?:www\.)?ncwildlife\.gov)?'
+                                 r'(?:/index(?:%2E|\.)php)?/species/[a-z0-9-]+/?$', re.I),
+        # LEVEL 2: the documents. Both suffixes, because they are two different documents.
+        'link': re.compile(r'^https?://(?:www\.)?ncwildlife\.gov/media/(\d+)/(download|open)', re.I),
         'skip': re.compile(r'^$'),
         'kind': 'pdf',
         'save_index': True,
@@ -197,7 +226,7 @@ def name_for(url, index_url, text='', spec=None):
     return ('_'.join(parts) or 'index') + '.html'
 
 
-def links_on(html_text, index_url, spec):
+def links_on(html_text, index_url, spec, pattern=None):
     """Every lake page linked from the index, absolute and de-duplicated in page order.
 
     Returns (url, anchor text) pairs. The text is what NC's filenames are built from -- a
@@ -209,7 +238,8 @@ def links_on(html_text, index_url, spec):
     on the page -- seafwa.org, wiley, tandfonline, bassmaster -- fails that pattern and is
     dropped here exactly as before.
     """
-    absolute_ok = spec['link'].pattern.startswith(('^http', 'https?://', '^https?'))
+    rx = pattern or spec['link']
+    absolute_ok = rx.pattern.startswith(('^http', 'https?://', '^https?', '^(?:https?'))
     out, seen = [], set()
     for m in re.finditer(r'<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', html_text, re.I | re.S):
         href = m.group(1).strip()
@@ -219,7 +249,7 @@ def links_on(html_text, index_url, spec):
             continue
         if href.startswith('http') and not absolute_ok:
             continue
-        if spec['skip'].match(href) or not spec['link'].match(href):
+        if spec['skip'].match(href) or not rx.match(href):
             continue
         url = urllib.parse.urljoin(index_url, href)
         if url not in seen:
@@ -281,17 +311,24 @@ def readable_blocks(body):
 def run(jobs, folder, go, delay, manifest, allow_shrink=False):
     """One place does the fetching, whichever mode found the work."""
     ok = fail = refused = 0
-    for i, (fname, url) in enumerate(jobs):
+    for i, job in enumerate(jobs):
+        # A JOB MAY ARRIVE WITH ITS BODY ALREADY IN HAND. The NC walk reads every species page to
+        # find the documents hanging off it, and those same pages are saved -- fetching them a
+        # second time here would be 47 requests to re-read what discovery already held.
+        fname, url, have = (job + (None,))[:3] if len(job) < 3 else job
         if not go:
-            print('   would save %-26s <- %s' % (fname, url))
+            print('   would save %-30s <- %s' % (fname, url))
             continue
         took = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-        try:
-            body, status = fetch(url)
-        except (urllib.error.URLError, urllib.error.HTTPError, OSError) as e:
-            print('   !! %-26s %s' % (fname, e))
-            fail += 1
-            continue
+        if have is not None:
+            body = have
+        else:
+            try:
+                body, status = fetch(url)
+            except (urllib.error.URLError, urllib.error.HTTPError, OSError) as e:
+                print('   !! %-26s %s' % (fname, e))
+                fail += 1
+                continue
         dest = os.path.join(folder, fname)
         if os.path.exists(dest) and not allow_shrink:
             prev = open(dest, 'rb').read()
@@ -312,8 +349,8 @@ def run(jobs, folder, go, delay, manifest, allow_shrink=False):
                 continue
         write_page(folder, fname, url, body, took, manifest)
         ok += 1
-        print('   saved %-26s %7d bytes  %s' % (fname, len(body), url))
-        if i + 1 < len(jobs):
+        print('   saved %-30s %7d bytes  %s' % (fname, len(body), url))
+        if have is None and i + 1 < len(jobs):
             time.sleep(delay)
     if refused:
         print('\n   %d page(s) kept as they were. A JavaScript-rendered page has to be saved '
@@ -343,49 +380,99 @@ def main():
     if a.state:
         spec = STATES[a.state]
         folder = os.path.join(root, spec['folder'])
-        # ONE INDEX OR SIX, read the same way. South Carolina has a single search page; North
-        # Carolina lists its reports across six species pages and a report can appear on more
-        # than one of them, so the de-duplication is across the whole set rather than per index.
-        indexes = spec['index'] if isinstance(spec['index'], (list, tuple)) else [spec['index']]
-        found, seen, index_jobs = [], set(), []
-        for idx in indexes:
-            print('%s: reading the index at %s' % (a.state, idx), flush=True)
-            try:
-                body, _ = fetch(idx)
-            except (urllib.error.URLError, urllib.error.HTTPError, OSError) as e:
-                print('   !! could not read it: %s' % e)
-                continue
-            hits = links_on(body.decode('utf-8', 'replace'), idx, spec)
-            print('   %d report(s) linked from it' % len(hits))
-            for url, text in hits:
-                if url in seen:
-                    continue
-                seen.add(url)
-                found.append((url, text, idx))
-            # THE INDEX IS ALSO A SOURCE, not just a list of links. The Alabama Bass page carries
-            # a dated distribution list of about thirty NC waters and nc_species_by_lake.json
-            # names that fish on none of its 77, so the page itself is worth having on the drive.
-            if spec.get('save_index'):
-                index_jobs.append(('_index_%s.html' % slug(urllib.parse.urlparse(idx).path), idx))
-            if idx != indexes[-1]:
-                time.sleep(a.delay)
-        print('\n   %d distinct report(s) across %d index page(s)' % (len(found), len(indexes)))
-        if not found:
-            print('!! the index parsed and linked nothing -- the page shape changed. Not writing.')
-            return 2
         manifest = load_manifest(folder)
         jobs, already = [], []
-        for fn, u in index_jobs:
+
+        if spec.get('directory'):
+            # ── TWO LEVELS, AND ONLY THIS SOURCE HAS THEM ────────────────────────────────────
+            # Level 1 is the state's own species directory, read through its own Fish filter.
+            # Level 2 is each species page, which is both saved and scraped for the documents
+            # hanging off it. Nothing is followed that is not named by one of the two patterns.
+            level1, seen1 = [], set()
+            for n in range(spec['directory_pages']):
+                url = spec['directory'].format(page=n)
+                print('%s: species directory page %d' % (a.state, n), flush=True)
+                try:
+                    body, _ = fetch(url)
+                except (urllib.error.URLError, urllib.error.HTTPError, OSError) as e:
+                    print('   !! could not read it: %s' % e)
+                    continue
+                hits = [u for u, _t in links_on(body.decode('utf-8', 'replace'), url, spec,
+                                                spec['index_link'])]
+                fresh = [u for u in hits if u not in seen1]
+                seen1.update(fresh)
+                level1 += [(u, None) for u in fresh]
+                print('   %d species page(s), %d new' % (len(hits), len(fresh)))
+                time.sleep(a.delay)
+            for u in spec.get('seed', []):
+                if u not in seen1:
+                    seen1.add(u)
+                    level1.append((u, 'seed'))
+            print('\n   %d species page(s) to read' % len(level1))
+            if not level1:
+                print('!! the directory parsed and linked nothing -- the page shape changed. '
+                      'Not writing.')
+                return 2
+
+            found, seen2 = [], set()
+            for i, (u, why) in enumerate(level1):
+                try:
+                    body, _ = fetch(u)
+                except (urllib.error.URLError, urllib.error.HTTPError, OSError) as e:
+                    print('   !! %s: %s' % (u, e))
+                    continue
+                text = body.decode('utf-8', 'replace')
+                docs = links_on(text, u, spec)
+                new_docs = [(du, dt, u) for du, dt in docs if du not in seen2]
+                seen2.update(du for du, _dt, _s in new_docs)
+                if docs:
+                    print('   %-58s %2d doc(s), %2d new'
+                          % (u.rsplit('/', 1)[-1][:58], len(docs), len(new_docs)))
+                found += new_docs
+                # The species page itself is a source, not just a list of links: it carries the
+                # "Tips; Places to Fish" prose, and the Alabama Bass page carries a dated
+                # distribution list of about thirty NC waters that nc_species_by_lake.json names
+                # that fish on none of.
+                if spec.get('save_index'):
+                    fn = '_species_%s.html' % slug(urllib.parse.urlparse(u).path.rsplit('/', 1)[-1])
+                    if os.path.exists(os.path.join(folder, fn)) and not a.force:
+                        already.append(fn)
+                    else:
+                        jobs.append((fn, u, body))
+                if i + 1 < len(level1):
+                    time.sleep(a.delay)
+            indexes_for_naming = None
+        else:
+            # ONE INDEX OR SIX, read the same way. South Carolina has a single search page.
+            indexes = spec['index'] if isinstance(spec['index'], (list, tuple)) else [spec['index']]
+            found, seen2 = [], set()
+            for idx in indexes:
+                print('%s: reading the index at %s' % (a.state, idx), flush=True)
+                try:
+                    body, _ = fetch(idx)
+                except (urllib.error.URLError, urllib.error.HTTPError, OSError) as e:
+                    print('   !! could not read it: %s' % e)
+                    continue
+                hits = links_on(body.decode('utf-8', 'replace'), idx, spec)
+                print('   %d page(s) linked from it' % len(hits))
+                for url, text in hits:
+                    if url in seen2:
+                        continue
+                    seen2.add(url)
+                    found.append((url, text, idx))
+                if idx != indexes[-1]:
+                    time.sleep(a.delay)
+
+        print('\n   %d distinct document(s) found' % len(found))
+        if not found:
+            print('!! nothing linked -- the page shape changed. Not writing.')
+            return 2
+        for u, text, src in found:
+            fn = name_for(u, src, text, spec)
             if os.path.exists(os.path.join(folder, fn)) and not a.force:
                 already.append(fn)
             else:
-                jobs.append((fn, u))
-        for u, text, idx in found:
-            fn = name_for(u, idx, text, spec)
-            if os.path.exists(os.path.join(folder, fn)) and not a.force:
-                already.append(fn)
-            else:
-                jobs.append((fn, u))
+                jobs.append((fn, u, None))
         if already:
             print('   %d already saved (--force to re-fetch): %s'
                   % (len(already), ', '.join(already[:6]) + (' ...' if len(already) > 6 else '')))
@@ -408,7 +495,7 @@ def main():
             if not url:
                 url = (saved.get(fn) or {}).get('url')
             if url:
-                jobs.append((fn, url))
+                jobs.append((fn, url, None))
             else:
                 homeless.append(fn)
         print('refresh %s: %d page(s) carry their own address, %d do not'
