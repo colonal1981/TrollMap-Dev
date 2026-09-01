@@ -18,6 +18,25 @@ var SYNC_TOKEN = "";
 // - Cerebras: valid models are llama-3.3-70b, llama-3.1-8b, qwen-3-32b, gpt-oss-120b etc — NOT llama3.1-70b [3](https://tokenmix.ai/blog/cerebras-api-key-access-speed-tests-2026)
 // - OpenRouter free: use 3.3 variant
 // We now try multiple model candidates per provider in order, and fall back across providers.
+/**
+ * THE FREE-TIER MODEL LADDER, IN ONE PLACE FOR ALL FIVE KEYS.
+ *
+ * Ryan, 2026-09-01: "google has added 3.5 flash lite to the free tier... i am guessing 3.1 will
+ * be shutdown at some point. same rates as 3.1 flash lite" -- 15 RPM, 250,000 TPM, 500 RPD per
+ * key, which is the budget the batch is paced against.
+ *
+ * 3.5 first and 3.1 behind it, so the newer model is used while the older one is still there to
+ * catch a bad day, and the day Google retires 3.1 nothing needs editing: callLLM already walks a
+ * provider's model list and moves on when one fails.
+ *
+ * Five copies of this array were five chances to update four of them. It was one line per key
+ * when there was one model; it is a ladder now, and a ladder wants a single definition.
+ */
+const GEMINI_FREE_MODELS = [
+  "gemini-3.5-flash-lite",
+  "gemini-3.1-flash-lite",
+];
+
 var LLM_PROVIDERS = [
   {
     // Pay-tier Gemini — limnology agent only
@@ -48,10 +67,8 @@ models: [
     name: "gemini-free",
     baseUrl: null,
     keyEnv: "GEMINI_FREE_API_KEY",
-    defaultModel: "gemini-3.1-flash-lite",
-    models: [
-      "gemini-3.1-flash-lite",
-    ],
+    defaultModel: "gemini-3.5-flash-lite",
+    models: GEMINI_FREE_MODELS,
     headers: (key) => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
     isGemini: true,
     transformPayload: (p) => ({
@@ -69,8 +86,8 @@ models: [
     name: "gemini-free2",
     baseUrl: null,
     keyEnv: "GEMINI_FREE2_API_KEY",
-    defaultModel: "gemini-3.1-flash-lite",
-    models: [ "gemini-3.1-flash-lite" ],
+    defaultModel: "gemini-3.5-flash-lite",
+    models: GEMINI_FREE_MODELS,
     headers: (key) => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
     isGemini: true,
     transformPayload: (p) => ({
@@ -83,8 +100,8 @@ models: [
     name: "gemini-free3",
     baseUrl: null,
     keyEnv: "GEMINI_FREE3_API_KEY",
-    defaultModel: "gemini-3.1-flash-lite",
-    models: [ "gemini-3.1-flash-lite" ],
+    defaultModel: "gemini-3.5-flash-lite",
+    models: GEMINI_FREE_MODELS,
     headers: (key) => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
     isGemini: true,
     transformPayload: (p) => ({
@@ -97,8 +114,8 @@ models: [
     name: "gemini-free4",
     baseUrl: null,
     keyEnv: "GEMINI_FREE4_API_KEY",
-    defaultModel: "gemini-3.1-flash-lite",
-    models: [ "gemini-3.1-flash-lite" ],
+    defaultModel: "gemini-3.5-flash-lite",
+    models: GEMINI_FREE_MODELS,
     headers: (key) => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
     isGemini: true,
     transformPayload: (p) => ({
@@ -111,8 +128,8 @@ models: [
     name: "gemini-free5",
     baseUrl: null,
     keyEnv: "GEMINI_FREE5_API_KEY",
-    defaultModel: "gemini-3.1-flash-lite",
-    models: [ "gemini-3.1-flash-lite" ],
+    defaultModel: "gemini-3.5-flash-lite",
+    models: GEMINI_FREE_MODELS,
     headers: (key) => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
     isGemini: true,
     transformPayload: (p) => ({

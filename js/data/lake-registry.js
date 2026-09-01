@@ -536,3 +536,120 @@ export function lakeDbEntryFor(query) {
 export function lakeNamesForPicker(opts) {
   return filterLakes(opts).map((r) => r.displayName);
 }
+
+/**
+ * THE NAMES A DOCUMENT USES, WHICH ARE NOT THE NAMES THE RESOLVER USES.
+ *
+ * `legacy_display_names` feeds two consumers with opposite needs. The resolver wants ONE water
+ * per name and breaks when two share one -- `WARE_SHOALS_IS_105_KM_FROM_SALUDA_SHOALS` is the
+ * write-up of that failure, and on 2026-09-01 adding "Lake Russell" to the registry took Richard
+ * B Russell Lake from 9 species to 0 because an 88-acre Habersham County pond already owned it.
+ * The document matchers want the opposite: EVERY name a document might use, and the useful ones
+ * are exactly the ambiguous ones.
+ *
+ * So the document names are derived here instead, and nothing below is written into the index:
+ *
+ *   1. The registry's own names, county stamp removed. `(Hall Co, GA)` is
+ *      consolidate_lake_index.py's handwriting; no document carries one.
+ *   2. Reach labels dropped. 54 of the 358 rows carry NHD reach names like "Big Branch - Clarks
+ *      Hill Lake" and "Chattahoochee River - Lake Lanier". They are arms of the water, not names
+ *      for it, and J. Strom Thurmond alone has 38 of them -- enough to fill the extractor's
+ *      twelve-alias budget with creek names and leave no room for "Clarks Hill Lake".
+ *   3. "Name, ST" dropped when the bare "Name" is already present.
+ *   4. Lake/Reservoir generated both ways, because that swap is a rule and not a fact:
+ *      "Mountain Island Lake" -> "Mountain Island Reservoir", "Lake Jocassee" -> "Jocassee
+ *      Reservoir". A generated name is DISCARDED if any other registry row answers to it under
+ *      the registry's own normName -- which is what keeps "Lake Cherokee" (51 ac, Cherokee Co SC)
+ *      and "Cherokee Lake" (30,053 ac, TN) apart, along with Bear Creek, Cypress, Glenville,
+ *      Brooks, Beaver and Hunt. Eighteen such pairs exist; the guard drops all eighteen.
+ *
+ * Counted 2026-09-01 across all 358 rows with the guard on: zero generated name is another
+ * water's name, and no water's list exceeds the twelve the extractor will send.
+ */
+
+/**
+ * The names no rule can derive and no index can hold, because another water already answers to
+ * them. Each line is a decision about which water the FISHING LITERATURE means, and both of these
+ * are the same shape: a reservoir everyone writes about, and a pond nobody does.
+ *
+ *   "Lake Lanier"  -- Lake Sidney Lanier, 38,293 ac, Hall Co GA, vs an 85-acre Greenville Co SC pond
+ *   "Lake Russell" -- Richard B Russell Lake, 24,608 ac, vs an 88-acre Habersham Co GA pond
+ *
+ * Both ponds are under the 1,000-acre research floor, so neither is ever researched and neither
+ * has documents of its own to lose. If a pond is ever added to the research set, its entry here
+ * has to come out first.
+ */
+const DOC_ONLY_NAMES = {
+  lake_sidney_lanier: ['Lake Lanier'],
+  richard_b_russell_lake: ['Lake Russell', 'Russell Lake'],
+};
+
+let _nameOwners = null;
+/** normName key -> the slugs that answer to it. More than one means nobody may generate it. */
+function nameOwners() {
+  if (_nameOwners && _nameOwners.size) return _nameOwners;
+  _nameOwners = new Map();
+  for (const r of registry.list) {
+    for (const n of [r.name, r.displayName, r.legacyDisplayName, ...r.legacyDisplayNames]) {
+      const k = normName(n);
+      if (!k) continue;
+      if (!_nameOwners.has(k)) _nameOwners.set(k, new Set());
+      _nameOwners.get(k).add(r.slug);
+    }
+  }
+  return _nameOwners;
+}
+
+const stripCountyStamp = (s) => String(s || '')
+  .replace(/\s*\([^)]*\bCo\b[^)]*\)\s*/i, ' ').replace(/\s+/g, ' ').trim();
+const stripStateSuffix = (s) => String(s || '')
+  .replace(/,\s*[A-Za-z]{2}(?:\/[A-Za-z]{2})*$/, '').trim();
+
+/** "Mountain Island Lake" -> "Mountain Island Reservoir"; "Lake Jocassee" -> "Jocassee Lake/Reservoir". */
+function nounVariants(name) {
+  const lead = /^Lake\s+(.+)$/i.exec(name);
+  if (lead) return [`${lead[1]} Lake`, `${lead[1]} Reservoir`];
+  const trail = /^(.+?)\s+(Lake|Reservoir)$/i.exec(name);
+  if (trail) return [`${trail[1]} ${/lake/i.test(trail[2]) ? 'Reservoir' : 'Lake'}`];
+  return [];
+}
+
+/** Every name a document about this water might use. Registry names first, generated ones last. */
+export function documentNamesFromRecord(rec) {
+  if (!rec) return [];
+  const raw = [rec.name, rec.displayName, rec.legacyDisplayName, ...(rec.legacyDisplayNames || []),
+    ...(DOC_ONLY_NAMES[rec.slug] || [])].filter(Boolean);
+  const kept = raw.map(stripCountyStamp).filter((n) => n && !/ - /.test(n));
+  // "Lake Wateree, SC" is dropped only when plain "Lake Wateree" is ALSO on the list. Testing the
+  // stripped form against itself instead drops every name of the fifteen coastal zones, whose
+  // names ARE state-suffixed -- "Charleston Harbor, SC" has no bare form to fall back to, and all
+  // fifteen came back with no document names at all.
+  const bareForms = new Set(kept
+    .filter((n) => stripStateSuffix(n).toLowerCase() === n.toLowerCase())
+    .map((n) => n.toLowerCase()));
+  const real = [];
+  for (const n of kept) {
+    const b = stripStateSuffix(n).toLowerCase();
+    if (b !== n.toLowerCase() && bareForms.has(b)) continue;
+    if (!real.some((x) => x.toLowerCase() === n.toLowerCase())) real.push(n);
+  }
+  const owners = nameOwners();
+  const generated = [];
+  for (const n of real) {
+    for (const v of nounVariants(n)) {
+      const held = owners.get(normName(v));
+      if (held && !(held.size === 1 && held.has(rec.slug))) continue;
+      const k = v.toLowerCase();
+      if (real.some((x) => x.toLowerCase() === k) || generated.some((x) => x.toLowerCase() === k)) continue;
+      generated.push(v);
+    }
+  }
+  return [...real, ...generated];
+}
+
+/** Same, for callers holding a name rather than a record. Falls back to the name itself. */
+export function documentNamesFor(query) {
+  const rec = lakeRecordFor(query);
+  const names = documentNamesFromRecord(rec);
+  return names.length ? names : [String(query || '')].filter(Boolean);
+}

@@ -288,46 +288,30 @@ PRIORITY FIELDS — extract any of the following present in this document:
     const _baseNameStripped = baseName.replace(/,\s*(SC|NC|GA|TN)(\/[A-Z]{2})?\s*$/i, '').trim();
     const _lakeNameStripped = 'Lake ' + _baseNameStripped;
 
-    // ── Document aliases: real-world names used in documents for lakes with
-    // non-standard display names (slash names, dual names, renamed lakes, etc.)
-    const DOCUMENT_ALIASES = {
-      'clarks hill / thurmond': ['Clarks Hill Lake', 'J. Strom Thurmond Lake', 'Lake Thurmond', 'Thurmond Lake', 'Clarks Hill Reservoir', 'Strom Thurmond Lake'],
-      'lake russell': ['Richard B. Russell Lake', 'Lake Russell', 'Russell Lake', 'R.B. Russell Lake'],
-      'lake wylie': ['Lake Wylie', 'Wylie Lake', 'Lake Wylie Reservoir'],
-      'lake monticello': ['Lake Monticello', 'Monticello Reservoir', 'Broad River Reservoir'],
-      'fishing creek reservoir': ['Fishing Creek Reservoir', 'Fishing Creek Lake', 'Nitrolee Dam'],
-      'lake greenwood': ['Lake Greenwood', 'Buzzard Roost Reservoir'],
-      'lake jocassee': ['Lake Jocassee', 'Jocassee Reservoir'],
-      'mountain island lake': ['Mountain Island Lake', 'Mountain Island Reservoir'],
-      'high rock lake': ['High Rock Lake', 'High Rock Reservoir'],
-      'blewett falls lake': ['Blewett Falls Lake', 'Blewett Falls Reservoir', 'Lake Tillery'],
-      'lake hartwell': ['Lake Hartwell', 'Hartwell Lake', 'Hartwell Reservoir'],
-    };
-    const _aliasKey = _baseNameStripped.toLowerCase().replace(/,\s*(sc|nc|ga|tn)(\/[a-z]{2})?\s*$/i, '').trim();
-    // THE CALLER'S ALIASES, UNIONED WITH THE TABLE. DOCUMENT_ALIASES is twelve waters somebody
-    // typed; the registry knows the rest and the caller is already holding them.
+    // ── The names a document about this water might use.
     //
-    // Ryan, 2026-09-01, quoting the encyclopedia entry for the lake that came back with two
-    // documents and ZERO facts: "Kings Mountain Reservoir, also known as Moss Lake or John H.
-    // Moss Reservoir, is a 1,280 to 1,600-acre impoundment of Buffalo Creek in Cleveland County,
-    // North Carolina." The registry display name is "John H. Moss Lake", whose base name is
-    // "John H. Moss" -- a string no document about that water contains -- and the prompt below
-    // says to extract only facts that mention it. Its legacy_display_names have carried "Kings
-    // Mountain Reservoir" the whole time.
+    // ELEVEN HAND-WRITTEN ALIAS KEYS, NONE OF WHICH COULD EVER MATCH. This block held a table
+    // keyed by base name -- 'lake hartwell', 'mountain island lake', 'clarks hill / thurmond',
+    // eight more -- and `baseName` arrives here with "Lake ", " Lake" and " Reservoir" already
+    // stripped by cleanLakeBaseName(). So the key was never producible: computed across all 358
+    // registry rows on 2026-09-01, the 350 distinct keys the code can generate contain not one
+    // of the eleven. The table had never fired for any water, ever, which is why Lanier, Russell
+    // and Thurmond kept losing facts to documents that call them by the names it listed.
     //
-    // Counted across the 64 research waters: the trailing "Lake"/"Reservoir" strip changes the
-    // name on 41 of them. Most are harmless because the base still sits inside the spoken name --
-    // "Hyco" inside "Hyco Lake", 24 facts. Two shapes are not: a personal name that never appears
-    // alone, and a word that appears everywhere ("White Lake" -> "White", which matches white
-    // bass and white perch).
+    // It also carried 'Lake Tillery' as an alias of Blewett Falls Lake. They are separate rows
+    // 30 km apart on the Pee Dee -- Tillery 4,847 acres, Blewett Falls 2,439 -- so had the key
+    // ever matched, every depth attributed to Tillery would have been filed under Blewett Falls.
     //
-    // County stamps are dropped on the way in for the same reason baseName drops them: they are
-    // consolidate_lake_index.py's handwriting and no document carries one.
+    // What replaces it is the caller's list, which is derived rather than typed: see
+    // documentNamesFromRecord() in js/data/lake-registry.js. It covers every name the table had
+    // that is true, generates the Lake/Reservoir spellings the table listed one water at a time,
+    // and reaches all 358 rows instead of eleven. County stamps are dropped on the way in for the
+    // same reason baseName drops them: they are consolidate_lake_index.py's handwriting.
     const _fromCaller = (Array.isArray(body.aliases) ? body.aliases : [])
       .map((a) => String(a || '').replace(/\s*\([^)]*\bCo\b[^)]*\)\s*/i, ' ')
                                  .replace(/\s+/g, ' ').trim())
       .filter((a) => a.length >= 4);
-    const _docAliases = [...(DOCUMENT_ALIASES[_aliasKey] || []), ..._fromCaller]
+    const _docAliases = [..._fromCaller]
       .filter((a) => a.toLowerCase() !== _baseNameStripped.toLowerCase())
       .filter((v, i, arr) => arr.findIndex((x) => x.toLowerCase() === v.toLowerCase()) === i)
       .slice(0, 12);

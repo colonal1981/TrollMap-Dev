@@ -29,7 +29,7 @@ import { isCoastalKey, COASTAL_ZONES } from '../data/coastal-zones.js';
 import { workerHeaders } from '../utils/worker-auth.js';
 
 import { boundsOf, paddedBox } from '../utils/geojson-coords.js';
-import { lakeRecordFor } from '../data/lake-registry.js';
+import { lakeRecordFor, documentNamesFor } from '../data/lake-registry.js';
 import { prepareNormalizedDocuments } from '../utils/doc-relevance.js';
 
 // Setup global caches and references
@@ -1925,12 +1925,13 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
     // Thurmond" where the registry says "J. Strom Thurmond Reservoir", TWRA says "Ft. Loudoun
     // Reservoir" where it says "Fort Loudoun Lake".
     const recForNames = lakeRecordFor(lakeName);
-    // ONE LIST, USED TWICE. Discovery searches under every name the water has, and the off-lake
-    // gate below judges what discovery found under the same ones. They were built separately for
-    // discovery only, and the gate's single display name cost Lanier six of nine documents.
-    const everyName = (recForNames
-      ? [recForNames.name, recForNames.displayName, ...(recForNames.legacyDisplayNames || [])]
-      : []).filter(Boolean).filter((v, i, a) => a.indexOf(v) === i);
+    // ONE LIST, USED THREE TIMES: discovery searches under it, the off-lake gate judges what
+    // discovery found under it, and the extractor is told to accept facts attributed to it.
+    // Built by documentNamesFor() rather than here, because the raw registry names are the wrong
+    // list -- they carry the county stamp no document uses, they carry 38 NHD creek-arm labels
+    // for J. Strom Thurmond alone, and they lack the Lake/Reservoir spelling half the agencies
+    // use. See the note above documentNamesFromRecord in js/data/lake-registry.js.
+    const everyName = documentNamesFor(lakeName);
     const discoverPayload = {
       lakeName, state: stateName, agent: agentKey,
       names: everyName.length ? everyName : [lakeName],
@@ -2349,6 +2350,14 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
             headers: workerHeaders(),
             body: JSON.stringify({
               lakeName, baseName, state: stateName,
+              // THE EXTRACTOR ASKED FOR THESE AND NOBODY SENT THEM. research/extract.js has read
+              // `body.aliases` since 2026-09-01 and no call site set the field, so the union it
+              // builds was always the hand-written table alone -- whose eleven keys are all
+              // unreachable (see the note there). Every name in `everyName` is a name a document
+              // about this water actually uses, and the prompt refuses facts attributed to
+              // anything it was not given: Lanier's documents say "Lake Lanier" and it was being
+              // told to look for "Sidney Lanier".
+              aliases: everyName,
               zoneKey: coastalKeyForAgent || undefined,
               docIndex: bi * ANALYZE_BATCH,
               documents: batch,

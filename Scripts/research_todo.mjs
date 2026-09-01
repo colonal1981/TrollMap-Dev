@@ -61,6 +61,7 @@ for (const k of ['log', 'info', 'debug']) {
 }
 
 const { registryRecordFor } = await import('../js/data/access-index.js');
+const { documentNamesFromRecord } = await import('../js/data/lake-registry.js');
 const { isCoastalKey } = await import('../js/data/coastal-zones.js');
 const { resolveR2Key } = await import('../js/data/lake-keys.js');
 const { makePredicate } = await import('../js/data/water-filter.js');
@@ -69,14 +70,14 @@ const { researchedNames, researchStorageIdCandidates } = await import('../js/dat
 /** What the app knows about one water: its state, and every name it answers to. */
 const describe = (name) => {
   const rec = registryRecordFor(name);
+  const docNames = rec ? documentNamesFromRecord(rec) : [];
   const suffix = /,\s*([A-Z]{2})(?:\/[A-Z]{2})*\s*$/.exec(name);
   return {
     name,
     state: (rec && rec.state) || (suffix && suffix[1]) || null,
-    aliases: rec
-      ? [rec.name, rec.displayName, ...(rec.legacyDisplayNames || [])].filter(Boolean)
-        .filter((v, i, a) => a.indexOf(v) === i)
-      : [name],
+    // The same list the Research tab builds, from the same function -- raw registry names are the
+    // wrong answer here for the reasons written above documentNamesFromRecord().
+    aliases: docNames.length ? docNames : [name],
   };
 };
 

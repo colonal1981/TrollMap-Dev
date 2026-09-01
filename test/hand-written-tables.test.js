@@ -137,8 +137,21 @@ const DECLARED = [
    'THE SAME TABLE, second copy. Pinned identical below.'],
   ['Worker/research/deterministic.js', 'LEGACY_PROFILE_KEYS', 7, 'alias',
    'profile keys written before the storage-id rules settled. Read-only compatibility.'],
-  ['Worker/research/extract.js', 'DOCUMENT_ALIASES', 11, 'alias',
-   'names as they appear inside fetched documents, which is not how the registry spells them.'],
+  // DOCUMENT_ALIASES was here until 2026-09-01, eleven waters, and NOT ONE OF ITS KEYS COULD
+  // MATCH. It was keyed by base name and `baseName` reaches extract.js with "Lake ", " Lake" and
+  // " Reservoir" already stripped by cleanLakeBaseName(); every key still carried one of those
+  // words. Computed across all 358 registry rows: of the 350 distinct keys the code can produce,
+  // zero are in the table. It had never fired for any water, which is why Lanier, Russell and
+  // Thurmond kept losing facts to documents calling them exactly what it listed. It also mapped
+  // 'Lake Tillery' onto Blewett Falls Lake -- separate rows 30 km apart on the Pee Dee.
+  // Replaced by documentNamesFromRecord(), which derives the same names from the registry for all
+  // 358 rows instead of eleven, and by DOC_ONLY_NAMES below for the two it cannot derive.
+  ['js/data/lake-registry.js', 'DOC_ONLY_NAMES', 2, 'alias',
+   'the two names no rule can derive and the index cannot hold, because a pond already answers '
+   + 'to each: "Lake Lanier" for Lake Sidney Lanier and "Lake Russell" for Richard B Russell '
+   + 'Lake. Everything else is generated. This grows only when a reservoir is found sharing a '
+   + 'name with a water nobody writes about -- and if that water ever enters the research set, '
+   + 'its line comes out first.'],
   // ONE HUNDRED AND TWENTY-ONE, NOT SIXTY-SEVEN. The old scanner stopped early on a brace inside
   // a nested string and undercounted this by fifty-four. It is the second-largest hand-written
   // table in the app and every audit that quoted 67 was quoting a parser bug.
