@@ -107,15 +107,21 @@ const DECLARED = [
   // 24 since 2026-08-19, down six. The map is slug -> label and the six out-of-region zones
   // no longer have slugs: cutting them from coastal_catalog.py without cutting them here would
   // leave six labels for water the picker cannot offer.
-  ['js/modules/contour-data.js', 'CHAIN_DESCRIPTIONS', 24, 'data',
-   'prose for 24 named reservoir chains and coastal zones.'],
+  // 21, 13, 98 and 130 since 2026-09-01. a4bfd02 cut the three NC coastal zones --
+  // coast_brunswick_nc, coast_cape_fear_nc, coast_topsail_new_river_nc -- along with the
+  // hand-typed NCDMF regulation table behind them, and left these four counts declaring
+  // the zones that went. Every one of the four is a row ABOUT those zones: a chain
+  // description each, a zone entry each, an R2 key each, and the alias rows pointing at
+  // them. The ratchet caught all four the next time it ran, which is what it is for.
+  ['js/modules/contour-data.js', 'CHAIN_DESCRIPTIONS', 21, 'data',
+   'prose for 21 named reservoir chains and coastal zones.'],
   ['js/modules/fishing-index.js', 'FISHING_SYSTEMS', 5, 'data',
    'five named systems that group ramps across waters.'],
   // 16 since 2026-08-19. This row used to read "22 declared, 16 shipped" -- it had been
   // recording the discrepancy rather than closing it. The six extras are gone from
   // Scripts/coastal_catalog.py, so declared and shipped are now the same number.
-  ['js/data/coastal-zones.js', 'COASTAL_ZONES', 16, 'data',
-   '16 declared, 16 shipped. Every zone in the table is a zone the picker offers.'],
+  ['js/data/coastal-zones.js', 'COASTAL_ZONES', 13, 'data',
+   '13 declared, 13 shipped. Every zone in the table is a zone the picker offers.'],
 
   // ── discovery seeds: superseded by the live agency indexes ────────────────────────────────
   // NOT DEAD, and this note said it was. Corrected 2026-08-23 while auditing the ledger for
@@ -158,7 +164,7 @@ const DECLARED = [
   // 115 since 2026-08-19, down six: the display names of the six cut coastal zones. A name
   // here that resolves to a slug the picker will not offer is a lake that appears in the list
   // and then fails to load, which is the exact failure LAKE_NAMES_WITHOUT_PACK exists to prevent.
-  ['js/data/lake-keys.js', 'LAKE_NAME_TO_R2_KEY', 101, 'alias',
+  ['js/data/lake-keys.js', 'LAKE_NAME_TO_R2_KEY', 98, 'alias',
    'display name to R2 key. Superseded in most paths by the registry, still the fallback.'],
   // 141 since 2026-08-18, down one from 142. gen_water_aliases_js.py drops a name the registry
   // now answers directly, and "Cooper River" graduated the night the Cooper got its own 4,658-acre
@@ -171,8 +177,8 @@ const DECLARED = [
   // WINS, so the alias could not have answered for water lake_index.json offers. Checked
   // before regenerating rather than assumed, because a stale alias that CAN answer is a
   // lake loading the wrong water and this file has that failure recorded twice already.
-  ['js/data/water-aliases.js', 'WATER_TO_R2_KEY', 138, 'alias',
-   'the biggest of them and the least worrying: 141 water names mapped to R2 keys, which '
+  ['js/data/water-aliases.js', 'WATER_TO_R2_KEY', 130, 'alias',
+   'the biggest of them and the least worrying: 130 water names mapped to R2 keys, which '
    + 'is exactly the job an alias table should have. GENERATED -- do not hand-edit; run '
    + 'Scripts/gen_water_aliases_js.py and update the count here.'],
 
