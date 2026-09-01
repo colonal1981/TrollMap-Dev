@@ -218,6 +218,34 @@ def gate_documents(repo, documents, lake, alt_names=None):
     return json.loads(proc.stdout)
 
 
+def app_todo_names(repo):
+    """
+    The waters the Research tab shows under "Not researched yet" -- ASKED OF THE APP'S OWN CODE.
+
+    Scripts/research_todo.mjs is populateResearchLakeDropdown() with the DOM taken out. It builds
+    the access index from the live worker feeds, filters with PRESETS.research, reads
+    /research/list and resolves with researchedNames -- the same modules in the same order.
+
+    Nothing here is a reimplementation, because every attempt at one was wrong. This script used
+    to derive the list from lake_index.json's county-stamped display_name and 22 of 64 waters came
+    back missing while the app was showing their profile. Ryan: "but all of those are able to be
+    seen in the app..." The name the profile is filed under comes from findExistingLakeKey() in
+    access-index.js -- a feed waterbody within 15 km that also matches by name, else the registry
+    display name -- and that join is not reproducible from a JSON file on disk.
+    """
+    src = os.path.join(repo, "Scripts", "research_todo.mjs")
+    if not os.path.exists(src):
+        raise SystemExit(f"!! cannot find {src} -- pass --repo pointing at the TrollMap-Dev tree")
+    env = dict(os.environ, TROLLMAP_WORKER_URL=WORKER)
+    proc = subprocess.run(["node", os.path.abspath(src)], capture_output=True, text=True,
+                          encoding="utf-8", cwd=os.path.abspath(repo), env=env)
+    for line in (proc.stderr or "").splitlines():
+        print(f"   {line}")
+    if proc.returncode != 0:
+        raise SystemExit("!! could not get the list from the app's own code -- see above")
+    return [ln.strip() for ln in (proc.stdout or "").splitlines() if ln.strip()]
+
+
 def candidate_ids(repo, display_names):
     """Every storage id these names could be filed under, via the app's own rule."""
     src = os.path.abspath(os.path.join(repo, "js", "data", "research-ids.js"))
@@ -543,7 +571,7 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
 
 
 def load_lakes(args, registry):
-    """--lake wins; otherwise the app registry, filtered the way the research tab filters."""
+    """--todo and --lake win; otherwise the registry, filtered the way the research tab filters."""
     idx_path = os.path.join(registry, "lake_index.json")
     with open(idx_path, encoding="utf-8") as f:
         idx = json.load(f)
@@ -561,6 +589,10 @@ def load_lakes(args, registry):
         names = [row.get("name"), row.get("display_name"), *legacy]
         alt_names[name.strip().lower()] = [n for n in dict.fromkeys(names) if n]
 
+    if getattr(args, "todo", False):
+        args.lake = app_todo_names(args.repo)
+        if not args.lake:
+            print("nothing to research -- every water the tab offers already has a profile")
     if getattr(args, "lakes_file", None):
         with open(args.lakes_file, encoding="utf-8-sig") as f:
             args.lake = [ln.strip() for ln in f if ln.strip() and not ln.startswith("#")]
@@ -608,9 +640,10 @@ def main():
                     help="the TrollMap-Dev tree, for js/utils/doc-relevance.js (the off-lake gate)")
     ap.add_argument("--lake", action="append", help="one water by display name (repeatable)")
     ap.add_argument("--lakes-file", metavar="PATH",
-                    help="one water per line, AS THE APP SPELLS IT. The research dropdown's "
-                         "names are the app's names, and those are the only ones that resolve "
-                         "onto a stored profile -- see --only-missing's warning.")
+                    help="one water per line, as the app spells it")
+    ap.add_argument("--todo", action="store_true",
+                    help="research exactly what the app's Research tab lists as not researched "
+                         "yet, via Scripts/research_todo.mjs. This is the one to use.")
     ap.add_argument("--state", default=None,
                     help="override the state for --lake runs; the registry supplies it otherwise")
     ap.add_argument("--min-acres", type=int, default=1000,
