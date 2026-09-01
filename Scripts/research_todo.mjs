@@ -24,6 +24,9 @@
  *
  *   node Scripts/research_todo.mjs [--rivers] [--json out.json]
  *
+ * Emits JSON -- {worth, researched, todo:[{name, state, aliases}]} -- on stdout, or to --json.
+ * Never a bare list: see the note about console.info below.
+ *
  * Personal use only, not for distribution or resale; not for navigation.
  */
 
@@ -36,6 +39,19 @@ window.TROLLMAP_WORKER_URL = process.env.TROLLMAP_WORKER_URL
 const args = process.argv.slice(2);
 const withRivers = args.includes('--rivers');
 const jsonAt = args.includes('--json') ? args[args.indexOf('--json') + 1] : null;
+
+// STDOUT IS NOT A CHANNEL THIS SCRIPT OWNS. access-index.js reports what it did with
+// console.info -- five lines about folded feed names, contributed registry lakes, dropped access
+// points -- and in node console.info goes to STDOUT, not stderr. The first --todo run piped those
+// five lines into the batch as if they were waters and started researching "[access-index] folded
+// 18 feed name(s) onto the water they share a name and a launch with".
+//
+// So the app's chatter is pushed to stderr where it belongs, and the answer leaves through a JSON
+// file rather than a text stream anything can write to.
+for (const k of ['log', 'info', 'debug']) {
+  const write = (...a) => process.stderr.write(a.join(' ') + '\n');
+  console[k] = write;
+}
 
 const { registryRecordFor } = await import('../js/data/access-index.js');
 const { isCoastalKey } = await import('../js/data/coastal-zones.js');
@@ -81,11 +97,30 @@ const todo = worth.filter((n) => !done.has(n));
 
 console.error(`${all.length} names offered, ${worth.length} worth researching, `
             + `${list.count} profiles in R2 — ${done.size} researched, ${todo.length} not`);
-if (jsonAt) {
-  const { writeFileSync } = await import('node:fs');
-  writeFileSync(jsonAt, JSON.stringify({ generated: new Date().toISOString(),
-    worth: worth.length, researched: [...done].sort(), todo }, null, 2));
-  console.error(`-> ${jsonAt}`);
-}
-// stdout is the list and nothing else, so it pipes straight into --lakes-file
-for (const n of todo) console.log(n);
+
+// THE STATE AND THE ALIASES TRAVEL WITH THE NAME, because the caller cannot work them out.
+// These are the app's names -- "HYCO LAKE, NC", "Nottely Lake, GA" -- and they are not keys in
+// lake_index.json, so research_lakes.py's registry lookup missed every one of them and fell back
+// to state=SC. Georgia and Tennessee waters were about to be researched under South Carolina
+// regulations. registryRecordFor() is the binding that produced the name in the first place and
+// it is sitting right here, so it answers both questions at the source.
+const rows = todo.map((name) => {
+  const rec = registryRecordFor(name);
+  const suffix = /,\s*([A-Z]{2})(?:\/[A-Z]{2})*\s*$/.exec(name);
+  return {
+    name,
+    state: (rec && rec.state) || (suffix && suffix[1]) || null,
+    aliases: rec
+      ? [rec.name, rec.displayName, ...(rec.legacyDisplayNames || [])].filter(Boolean)
+        .filter((v, i, a) => a.indexOf(v) === i)
+      : [name],
+  };
+});
+const unstated = rows.filter((r) => !r.state).map((r) => r.name);
+if (unstated.length) console.error(`!! no state for: ${unstated.join(', ')}`);
+
+const { writeFileSync } = await import('node:fs');
+const out = JSON.stringify({ generated: new Date().toISOString(),
+  worth: worth.length, researched: [...done].sort(), todo: rows }, null, 2);
+if (jsonAt) { writeFileSync(jsonAt, out); console.error(`-> ${jsonAt}`); }
+else process.stdout.write(out);

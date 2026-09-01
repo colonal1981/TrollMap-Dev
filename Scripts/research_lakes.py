@@ -42,6 +42,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
@@ -237,13 +238,24 @@ def app_todo_names(repo):
     if not os.path.exists(src):
         raise SystemExit(f"!! cannot find {src} -- pass --repo pointing at the TrollMap-Dev tree")
     env = dict(os.environ, TROLLMAP_WORKER_URL=WORKER)
-    proc = subprocess.run(["node", os.path.abspath(src)], capture_output=True, text=True,
-                          encoding="utf-8", cwd=os.path.abspath(repo), env=env)
-    for line in (proc.stderr or "").splitlines():
-        print(f"   {line}")
-    if proc.returncode != 0:
-        raise SystemExit("!! could not get the list from the app's own code -- see above")
-    return [ln.strip() for ln in (proc.stdout or "").splitlines() if ln.strip()]
+    # A FILE, NOT A PIPE. The first --todo run read the list off stdout and got five of
+    # access-index.js's own console.info lines mixed in with the seventeen waters -- node sends
+    # console.info to STDOUT -- and set about researching "[access-index] folded 18 feed name(s)
+    # onto the water they share a name and a launch with". research_todo.mjs now pushes the app's
+    # chatter to stderr, and this asks for a file as well, so no amount of noise on a stream can
+    # be mistaken for an answer again.
+    with tempfile.TemporaryDirectory() as tmp:
+        out_path = os.path.join(tmp, "todo.json")
+        proc = subprocess.run(["node", os.path.abspath(src), "--json", out_path],
+                              capture_output=True, text=True, encoding="utf-8",
+                              cwd=os.path.abspath(repo), env=env)
+        for line in (proc.stderr or "").splitlines():
+            print(f"   {line}")
+        if proc.returncode != 0 or not os.path.exists(out_path):
+            raise SystemExit("!! could not get the list from the app's own code -- see above")
+        with open(out_path, encoding="utf-8") as f:
+            data = json.load(f)
+    return data.get("todo") or []
 
 
 def fetch_sources(lake, sources, existing, verbose=False):
@@ -410,11 +422,16 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
         kept_urls = {norm_url(d.get("url")) for d in keep}
         out["rejected_docs"] = [{"title": d.get("title"), "url": d.get("url")}
                                 for d in merged if norm_url(d.get("url")) not in kept_urls]
-        code, _, err = _req(f"/research/save-normalized?lake={urllib.parse.quote(lake)}"
-                            f"&n={len(keep)}&rejected={out['rejected_offlake']}", keep)
-        if code != 200:
-            print(f"      warn [{lake}]: save-normalized {code}: {err} "
-                  f"-- the corpus was used but not stored")
+        # AN EMPTY CORPUS IS NOT WORTH A KEY IN R2. On 2026-09-01 three console.info lines were
+        # researched as if they were lakes; the off-lake gate correctly threw out every document
+        # they found, and this then wrote an empty document array to the bucket under each of
+        # their names. Nothing to store means nothing to store.
+        if keep:
+            code, _, err = _req(f"/research/save-normalized?lake={urllib.parse.quote(lake)}"
+                                f"&n={len(keep)}&rejected={out['rejected_offlake']}", keep)
+            if code != 200:
+                print(f"      warn [{lake}]: save-normalized {code}: {err} "
+                      f"-- the corpus was used but not stored")
         docs = keep
     else:
         docs = existing
@@ -537,9 +554,15 @@ def load_lakes(args, registry):
         alt_names[name.strip().lower()] = [n for n in dict.fromkeys(names) if n]
 
     if getattr(args, "todo", False):
-        args.lake = app_todo_names(args.repo)
-        if not args.lake:
+        # The app's name, its state and its alias set, all decided by the same registryRecordFor()
+        # that produced the name. Nothing here is looked up again in lake_index.json: these names
+        # -- "HYCO LAKE, NC", "Nottely Lake, GA" -- are not keys in it, and the first --todo run
+        # fell back to state=SC for every Georgia, Tennessee and North Carolina water in the list.
+        rows = app_todo_names(args.repo)
+        if not rows:
             print("nothing to research -- every water the tab offers already has a profile")
+        return [(r["name"], args.state or r.get("state") or "SC", r.get("aliases") or [r["name"]])
+                for r in rows]
     if args.lake:
         # THE STATE COMES OFF THE REGISTRY, NOT OFF A DEFAULT. A one-lake run is how the cold-run
         # cost gets measured, and the cold lakes are in GA, NC and TN -- Lanier, Townsend, Watauga.
