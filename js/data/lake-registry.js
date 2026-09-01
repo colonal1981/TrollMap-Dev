@@ -653,3 +653,116 @@ export function documentNamesFor(query) {
   const names = documentNamesFromRecord(rec);
   return names.length ? names : [String(query || '')].filter(Boolean);
 }
+
+/**
+ * THE NAMES A PROFILE COULD BE FILED UNDER, WHICH IS A STRICTER LIST THAN THE DOCUMENT ONE.
+ *
+ * A profile is stored at `lakes/<sanitized name>.json`, and the name that was sanitized is
+ * whatever the water was CALLED the day it was written. Rename the water and the object stays
+ * where it is, answering to nothing. Measured 2026-09-01 across all 80 profiles in the bucket
+ * and all 358 registry rows: FOUR waters have two profiles each, and all four are waters this
+ * batch reported as "not researched" and researched again.
+ *
+ *   Richard B Russell Lake   lake_russell_sc                 + lake_richard_russell_ga
+ *   Lake Sidney Lanier       lake_lanier_ga                  + lake_sidney_lanier_hall_co_ga
+ *   Nottely Lake             lake_nottely_ga                 + nottely_lake_ga
+ *   Watauga Lake             watauga_tn                      + watauga_lake_tn
+ *
+ * The July profiles are the good ones -- Lanier's carries a 22.5 ft thermocline, anoxia below
+ * 30 ft and an 8.6 ft Secchi where the new one has null in all three -- and they went dark when
+ * the display names changed, not when the batch ran. The registry has never stopped knowing the
+ * old names: `legacy_display_names` still holds "Watauga, TN" and "Lake Nottely, GA", and
+ * RESEARCH_CANONICAL_IDS already maps `lake_russell_ga`. Nothing needed typing; the id lookup
+ * simply never asked with those names.
+ *
+ * WHY THIS IS NOT documentNamesFromRecord(). That list is allowed to be generous, because the
+ * cost of a wrong name there is one off-topic document. Here the cost is two waters sharing one
+ * profile, which is unrecoverable, so a name ANY other registry row answers to is dropped --
+ * "Lake Robinson, SC" belongs to both Chesterfield and Greer, and neither may reach the other's
+ * profile through it. Cedar Creek Reservoir and Cypress Lake are the same shape.
+ *
+ * The exception is DOC_ONLY_NAMES, which is a decision already made and written down: a
+ * 38,293-acre reservoir and an 85-acre pond both answer to "Lake Lanier", and the fishing
+ * literature -- and the profile written in July -- mean the reservoir.
+ *
+ * Each name is offered bare and with every state the row carries, because a profile id is built
+ * from a spoken name and the app has spelled these both ways: `lake_lanier` and `lake_lanier_ga`.
+ */
+export function identityNamesFor(query) {
+  const rec = lakeRecordFor(query);
+  return identityNamesForRecord(rec);
+}
+
+/**
+ * Same, from a record. Mirrored by `identityNamesForRow()` in Worker/registry.js and pinned
+ * identical by test/identity-names.test.js, because the client decides which waters to research
+ * and the Worker decides where their profile lives -- and those two answering differently is a
+ * lake researched again beside a profile it already had.
+ *
+ * THE GUARD IS EXACT-NAME, NOT normName. documentNamesFromRecord() can afford `normName`, which
+ * folds token order and the water-type word; a Worker that has no `normName` cannot mirror it
+ * without a second copy of that rule. An exact match on the folded name catches every collision
+ * that exists in the index: "Lake Robinson, SC" is carried verbatim by BOTH Robinsons, and so are
+ * "Cedar Creek Reservoir" and "Cypress Lake" by their pairs. Measured over all 358 rows against
+ * all 80 profiles in the bucket: no profile is claimed by two waters.
+ */
+const COUNTY_PAREN_G = /\s*\([^)]*\bCo\b[^)]*\)\s*/ig;
+const HAS_STATE = /(?:,\s*|\(\s*)(?:SC|NC|GA|TN)(?:\s*\/\s*(?:SC|NC|GA|TN))*\s*\)?\s*$/i;
+
+export function identityNamesForRecord(rec) {
+  if (!rec) return [];
+  const owners = rawNameOwners();
+  const fold = (n) => String(n || '').toLowerCase()
+    .replace(/\s*\([^)]*\)\s*/g, ' ').replace(/\s+/g, ' ').trim();
+  const docOnly = new Set((DOC_ONLY_NAMES[rec.slug] || []).map(fold));
+  const raw = [rec.displayName, rec.name, rec.legacyDisplayName, ...(rec.legacyDisplayNames || []),
+    ...(DOC_ONLY_NAMES[rec.slug] || [])].filter(Boolean);
+  const states = String(rec.state || '').toUpperCase().split(/[^A-Z]+/).filter(Boolean);
+  const out = [];
+  const add = (n) => { if (n && !out.some((x) => x.toLowerCase() === n.toLowerCase())) out.push(n); };
+  for (const n of raw) {
+    // A reach label is an arm of the water, not a name anything was ever filed under.
+    if (/ - /.test(n)) continue;
+    const f = fold(n);
+    const held = owners.get(f);
+    if (held && held.size > 1 && !docOnly.has(f)) continue;
+    add(n);
+    // The stamped name and the stripped one are both real ids in the bucket:
+    // `john_h_moss_lake_cleveland_co_nc` alongside `lake_lanier_ga`.
+    //
+    // ONLY THE COUNTY PARENTHETICAL COMES OFF -- the same `\bCo\b` regex legacyStorageName() uses,
+    // and for the same reason. `(2)`, `(3)`, `(4)` are what consolidate_lake_index.py writes when
+    // two rows collide, and they are the ONLY thing telling four Saluda Rivers apart. Stripping
+    // every parenthetical made "Nolichucky River (Unicoi Co, TN)" and "Nolichucky River (2)
+    // (Greene Co, TN)" claim one id, and the same for two Chattahoochees.
+    const stripped = String(n).replace(COUNTY_PAREN_G, ' ').replace(/\s+/g, ' ').trim();
+    add(stripped);
+    // A name that already carries a state does not get a second one: appending to "Nolichucky
+    // River, TN" produced `nolichucky_river_tn_tn`, an id nothing has ever been filed under.
+    if (!HAS_STATE.test(stripped)) {
+      for (const st of states) {
+        add(`${stripped}, ${st}`);
+        add(`${stripped} (${st})`);
+      }
+    }
+  }
+  return out;
+}
+
+let _rawOwners = null;
+/** folded name -> the slugs that carry it verbatim. Two means nobody may claim it. */
+function rawNameOwners() {
+  if (_rawOwners && _rawOwners.size) return _rawOwners;
+  _rawOwners = new Map();
+  const fold = (n) => String(n || '').toLowerCase()
+    .replace(/\s*\([^)]*\)\s*/g, ' ').replace(/\s+/g, ' ').trim();
+  for (const r of registry.list) {
+    for (const n of [r.displayName, r.name, r.legacyDisplayName, ...(r.legacyDisplayNames || [])]) {
+      const f = fold(n);
+      if (!f) continue;
+      if (!_rawOwners.has(f)) _rawOwners.set(f, new Set());
+      _rawOwners.get(f).add(r.slug);
+    }
+  }
+  return _rawOwners;
+}

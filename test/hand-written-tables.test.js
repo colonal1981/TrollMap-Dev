@@ -158,6 +158,12 @@ const DECLARED = [
    + 'Lake. Everything else is generated. This grows only when a reservoir is found sharing a '
    + 'name with a water nobody writes about -- and if that water ever enters the research set, '
    + 'its line comes out first.'],
+  ['Worker/registry.js', 'IDENTITY_DOC_ONLY_NAMES', 2, 'alias',
+   'THE SAME TWO NAMES, second copy. The client decides which waters still need researching and '
+   + 'the Worker decides where a profile is read from and written to; they must agree about what '
+   + 'a water is called or a lake is researched again beside the profile it already had. '
+   + 'test/identity-names.test.js pins the whole rule, not just this table, by running both '
+   + 'copies over all 358 rows.'],
   // ONE HUNDRED AND TWENTY-ONE, NOT SIXTY-SEVEN. The old scanner stopped early on a brace inside
   // a nested string and undercounted this by fifty-four. It is the second-largest hand-written
   // table in the app and every audit that quoted 67 was quoting a parser bug.

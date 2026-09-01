@@ -458,3 +458,91 @@ export function identityBaseline(row, pool = null, poolManagement = null) {
   }
   return out;
 }
+
+/**
+ * THE NAMES THIS WATER'S PROFILE COULD BE FILED UNDER.
+ *
+ * MIRROR OF `identityNamesForRecord()` in js/data/lake-registry.js, pinned identical by
+ * test/identity-names.test.js. Two copies is a cost, and it is paid for the same reason
+ * RESEARCH_CANONICAL_IDS is duplicated: the client decides which waters still need researching
+ * and the Worker decides where a profile is read from and written to. Those two answering
+ * differently is a lake researched a second time beside the profile it already had, which is
+ * exactly what happened to four waters on 2026-09-01.
+ *
+ * A profile is stored at `lakes/<sanitized name>.json`, and the name that got sanitized is
+ * whatever the water was CALLED that day. Rename it and the object stays put, answering to
+ * nothing. The registry never forgets the old names -- `legacy_display_names` still carries
+ * "Watauga, TN" and "Lake Nottely, GA" -- so the answer was always in the index; nothing asked.
+ *
+ * THE GUARD REFUSES A SHARED NAME. Both Lake Robinsons carry "Lake Robinson, SC" verbatim, and
+ * neither may reach the other's profile through it; Cedar Creek Reservoir and Cypress Lake are
+ * the same shape. DOC_ONLY_NAMES is the written-down exception -- a 38,293-acre reservoir and an
+ * 85-acre pond both answer to "Lake Lanier", and the profile written in July means the reservoir.
+ * Measured over all 358 rows against all 80 objects in the bucket: no profile is claimed by two
+ * waters, and the only pair that shares one is Russell with its pond, which
+ * RESEARCH_CANONICAL_IDS already bound before any of this.
+ */
+const IDENTITY_DOC_ONLY_NAMES = {
+  lake_sidney_lanier: ['Lake Lanier'],
+  richard_b_russell_lake: ['Lake Russell', 'Russell Lake'],
+};
+
+let _identityOwners = null;
+let _identityOwnersFor = null;
+function identityNameOwners(index) {
+  if (_identityOwners && _identityOwnersFor === index) return _identityOwners;
+  const owners = new Map();
+  for (const [slug, row] of Object.entries(index || {})) {
+    if (!row || typeof row !== 'object') continue;
+    for (const n of [row.display_name, row.name, row.legacy_display_name,
+      ...(Array.isArray(row.legacy_display_names) ? row.legacy_display_names : [])]) {
+      const f = bare(n);
+      if (!f) continue;
+      if (!owners.has(f)) owners.set(f, new Set());
+      owners.get(f).add(slug);
+    }
+  }
+  _identityOwners = owners;
+  _identityOwnersFor = index;
+  return owners;
+}
+
+const IDENTITY_COUNTY_PAREN = /\s*\([^)]*\bCo\b[^)]*\)\s*/ig;
+const IDENTITY_HAS_STATE = /(?:,\s*|\(\s*)(?:SC|NC|GA|TN)(?:\s*\/\s*(?:SC|NC|GA|TN))*\s*\)?\s*$/i;
+
+export function identityNamesForRow(index, row, slug) {
+  if (!row || typeof row !== 'object') return [];
+  const key = slug || row.slug;
+  const owners = identityNameOwners(index);
+  const docOnly = new Set((IDENTITY_DOC_ONLY_NAMES[key] || []).map(bare));
+  const display = row.display_name || `${row.name}, ${row.state}`;
+  const raw = [display, row.name, row.legacy_display_name,
+    ...(Array.isArray(row.legacy_display_names) ? row.legacy_display_names : []),
+    ...(IDENTITY_DOC_ONLY_NAMES[key] || [])].filter(Boolean);
+  const states = String(row.state || '').toUpperCase().split(/[^A-Z]+/).filter(Boolean);
+  const out = [];
+  const add = (n) => { if (n && !out.some((x) => lower(x) === lower(n))) out.push(n); };
+  for (const n of raw) {
+    if (/ - /.test(n)) continue;
+    const f = bare(n);
+    const held = owners.get(f);
+    if (held && held.size > 1 && !docOnly.has(f)) continue;
+    add(n);
+    // Only the COUNTY parenthetical, never the registry's disambiguating ordinal. See the note on
+    // the client copy: stripping every parenthetical gave two Nolichucky Rivers one id.
+    const stripped = String(n).replace(IDENTITY_COUNTY_PAREN, ' ').replace(/\s+/g, ' ').trim();
+    add(stripped);
+    if (!IDENTITY_HAS_STATE.test(stripped)) {
+      for (const st of states) { add(`${stripped}, ${st}`); add(`${stripped} (${st})`); }
+    }
+  }
+  return out;
+}
+
+/** The identity names for a lake the caller knows only by name. Empty when it does not resolve. */
+export function identityNamesForLake(index, lakeName) {
+  const row = resolveRegistryRow(index, lakeName);
+  if (!row) return [];
+  const slug = row.slug || Object.keys(index).find((k) => index[k] === row);
+  return identityNamesForRow(index, row, slug);
+}

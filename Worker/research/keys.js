@@ -138,11 +138,34 @@ function researchStorageIdCandidates(lakeName) {
  * when something is stored under it -- so the caller decides what "exists" means (a master
  * profile, a package file) and this stays one rule rather than four copies of it.
  */
-async function resolveResearchStorageId(lakeName, probe) {
-  for (const id of researchStorageIdCandidates(lakeName)) {
-    // eslint-disable-next-line no-await-in-loop
-    const hit = await probe(id);
-    if (hit) return { id, hit };
+/**
+ * The id this lake's profile is actually filed under, or null.
+ *
+ * `altNames` is every OTHER name the registry says this water answers to, supplied by the caller
+ * because this module is pure and has no index. It is tried after the caller's own name, so a
+ * water whose profile sits under its current spelling is unaffected.
+ *
+ * WHY IT TAKES THEM AT ALL. A profile is stored under whatever the water was CALLED the day it
+ * was written; rename the water and the object answers to nothing. Measured 2026-09-01 across all
+ * 80 profiles in the bucket: four waters had two profiles each, and in every case the older and
+ * better one was filed under a name the registry still carries.
+ *
+ *   Richard B Russell Lake   lake_russell_sc     + lake_richard_russell_ga
+ *   Lake Sidney Lanier       lake_lanier_ga      + lake_sidney_lanier_hall_co_ga
+ *   Nottely Lake             lake_nottely_ga     + nottely_lake_ga
+ *   Watauga Lake             watauga_tn          + watauga_lake_tn
+ */
+async function resolveResearchStorageId(lakeName, probe, altNames = []) {
+  const seen = new Set();
+  const tries = [lakeName, ...(Array.isArray(altNames) ? altNames : [])];
+  for (const name of tries) {
+    for (const id of researchStorageIdCandidates(name)) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      // eslint-disable-next-line no-await-in-loop
+      const hit = await probe(id);
+      if (hit) return { id, hit };
+    }
   }
   return null;
 }

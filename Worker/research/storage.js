@@ -3,6 +3,7 @@ import { CORS, JSON_HEADERS, callLLM, extractLLMText, r2Text, r2Body } from '../
 import { getLakeIntel, lakeKeyFromName } from '../worker-data.js';
 import { searchWeb } from './clients.js';
 import { extractJsonPossibly, researchStorageId, resolveResearchStorageId } from './keys.js';
+import { lakeIndex, identityNamesForLake } from '../registry.js';
 import { calculateSectionConfidence, gateOverallConfidence } from './agents.js';
 import { buildFactualSummary } from './facts-util.js';
 
@@ -26,12 +27,40 @@ async function handleResearchList(env) {
   return new Response(JSON.stringify({ok:true, count: masters.length, lakes: masters, versionFiles: versions.length, timestamp: new Date().toISOString()}), {headers: JSON_HEADERS});
 }
 
+/**
+ * Every OTHER name the registry says this water answers to, for the id resolution below.
+ *
+ * A profile is filed under whatever the water was CALLED the day it was written, and the resolver
+ * underneath only ever tried the one name it was handed. Measured 2026-09-01 across all 80
+ * profiles in the bucket: four waters had two profiles each, and every older -- and better --
+ * one was filed under a name `legacy_display_names` still carries.
+ *
+ *   Richard B Russell Lake   lake_russell_sc   + lake_richard_russell_ga
+ *   Lake Sidney Lanier       lake_lanier_ga    + lake_sidney_lanier_hall_co_ga
+ *   Nottely Lake             lake_nottely_ga   + nottely_lake_ga
+ *   Watauga Lake             watauga_tn        + watauga_lake_tn
+ *
+ * NEVER THROWS. lakeIndex() reads R2 and can fail, and a failure here must degrade to exactly the
+ * behaviour this had yesterday -- the caller's own name and nothing else. A read that 404s because
+ * the index was briefly unavailable would send a researched lake back through the whole pipeline,
+ * which is the failure this function exists to stop.
+ */
+async function registryIdentityNames(env, lakeName) {
+  try {
+    return identityNamesForLake(await lakeIndex(env), lakeName) || [];
+  } catch (err) {
+    console.warn('[storage] identity names unavailable for', lakeName, err && err.message);
+    return [];
+  }
+}
+
 async function handleResearchGet(env, lakeId) {
   // Every key this lake could be filed under, not just the one its current display name
   // sanitizes to. A 404 here is what sent J. Strom Thurmond back through the whole pipeline
   // on 2026-08-16 while its verified profile sat in the bucket under the pre-county name.
   const found = await resolveResearchStorageId(lakeId,
-    (id) => env.R2_TROLLMAP_CHARTPACKS.get(`lakes/${id}.json`).catch(() => null));
+    (id) => env.R2_TROLLMAP_CHARTPACKS.get(`lakes/${id}.json`).catch(() => null),
+    await registryIdentityNames(env, lakeId));
   const safe = found ? found.id : researchStorageId(lakeId);
   const masterKey = `lakes/${safe}.json`;
   const obj = found ? found.hit : null;
@@ -85,7 +114,8 @@ async function handleResearchSave(request, env) {
   //
   // A NEW lake still gets researchStorageId(), so nothing changes for a first save.
   const foundKey = await resolveResearchStorageId(lakeName,
-    (id) => env.R2_TROLLMAP_CHARTPACKS.get(`lakes/${id}.json`).catch(() => null));
+    (id) => env.R2_TROLLMAP_CHARTPACKS.get(`lakes/${id}.json`).catch(() => null),
+    await registryIdentityNames(env, lakeName));
   const safe = foundKey ? foundKey.id : researchStorageId(lakeName);
   const incomingProfile = body.profile || body;
   const packageParts = body.packageParts || body.parts || {};
@@ -349,7 +379,8 @@ async function handleResearchDelete(request, env) {
   // `lake_robinson_chesterfield_co_sc` -- a key that does not exist -- and reported a clean run.
   // Nothing was removed and the UI said "Deleted research for ...".
   const foundKey = await resolveResearchStorageId(lakeName,
-    (id) => env.R2_TROLLMAP_CHARTPACKS.get(`lakes/${id}.json`).catch(() => null));
+    (id) => env.R2_TROLLMAP_CHARTPACKS.get(`lakes/${id}.json`).catch(() => null),
+    await registryIdentityNames(env, lakeName));
   const safe = foundKey ? foundKey.id : researchStorageId(lakeName);
   const keys = [`lakes/${safe}.json`];
   try {
@@ -387,7 +418,7 @@ async function handleResearchPackage(env, lakeId) {
   const found = await resolveResearchStorageId(lakeId, async (id) => {
     const l = await env.R2_TROLLMAP_CHARTPACKS.list({ prefix: `lake_packages/${id}/` }).catch(() => null);
     return l && l.objects.length ? l : null;
-  });
+  }, await registryIdentityNames(env, lakeId));
   const safe = found ? found.id : researchStorageId(lakeId);
   const listed = found ? found.hit : { objects: [] };
   if (!listed.objects.length) return new Response(JSON.stringify({ok:false, error:`no package for ${lakeId}`}), {status:404, headers:JSON_HEADERS});
@@ -401,7 +432,8 @@ async function handleResearchPackage(env, lakeId) {
 
 async function handleResearchPackageFile(env, lakeId, filename) {
   const found = await resolveResearchStorageId(lakeId,
-    (id) => env.R2_TROLLMAP_CHARTPACKS.get(`lake_packages/${id}/${filename}`).catch(() => null));
+    (id) => env.R2_TROLLMAP_CHARTPACKS.get(`lake_packages/${id}/${filename}`).catch(() => null),
+    await registryIdentityNames(env, lakeId));
   const safe = found ? found.id : researchStorageId(lakeId);
   const key = `lake_packages/${safe}/${filename}`;
   const obj = found ? found.hit : null;

@@ -19,6 +19,10 @@
  * Personal use only, not for distribution or resale. NOT FOR NAVIGATION.
  */
 
+// The registry is NOT part of the mirror below -- keys.js is pure and stays pure. This import
+// is used only by researchedNames(), which is client-only and has no counterpart in the Worker.
+import { identityNamesFor } from './lake-registry.js';
+
 /** Mirror of `sanitizeLakeId` in worker/research/keys.js. */
 export function sanitizeLakeId(name) {
   return String(name || '').toLowerCase()
@@ -114,7 +118,29 @@ export function researchedNames(displayNames, ids) {
   const have = new Set((ids || []).map((x) => (typeof x === 'string' ? x : x && x.id)).filter(Boolean));
   const out = new Set();
   for (const name of displayNames || []) {
-    if (researchStorageIdCandidates(name).some((id) => have.has(id))) out.add(name);
+    // ONE NAME IS NOT ENOUGH, AND FOUR WATERS PROVED IT ON 2026-09-01.
+    //
+    // A profile is filed under whatever the water was CALLED the day it was written. Rename it and
+    // the object stays where it is, answering to nothing -- so this reported four waters as
+    // unresearched, the batch researched them again, and each ended the night with two profiles:
+    //
+    //   Richard B Russell Lake   lake_russell_sc     + lake_richard_russell_ga
+    //   Lake Sidney Lanier       lake_lanier_ga      + lake_sidney_lanier_hall_co_ga
+    //   Nottely Lake             lake_nottely_ga     + nottely_lake_ga
+    //   Watauga Lake             watauga_tn          + watauga_lake_tn
+    //
+    // The July profiles are the better ones -- Lanier's has a 22.5 ft thermocline, anoxia below
+    // 30 ft and an 8.6 ft Secchi where the new one is null in all three -- and the registry never
+    // stopped knowing the names they are filed under: `legacy_display_names` still carries
+    // "Watauga, TN" and "Lake Nottely, GA", and RESEARCH_CANONICAL_IDS already maps
+    // `lake_russell_ga`. Nothing needed typing. The question was asked with one spelling.
+    //
+    // identityNamesFor() is the registry's answer to "what else is this water called", with a
+    // guard that refuses any name a second row also carries -- both Lake Robinsons answer to
+    // "Lake Robinson, SC" and neither may reach the other's profile through it. Measured over all
+    // 358 rows against all 80 objects in the bucket: no profile is claimed by two waters.
+    const names = [name, ...identityNamesFor(name)];
+    if (names.some((n) => researchStorageIdCandidates(n).some((id) => have.has(id)))) out.add(name);
   }
   return out;
 }
