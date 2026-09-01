@@ -27,6 +27,11 @@ const FEB = new Date('2026-02-15T12:00:00');
 const AUG = new Date('2026-08-20T12:00:00');
 
 describe('the gap this closes', () => {
+  // NC's coastal block was removed 2026-09-01 -- a hand-typed copy of NCDMF's rules against a
+  // parser that now reads the book, and Ryan is cutting NC coastal water anyway. The tests that
+  // exercised its seatrout and flounder entries went with it. What remains here tests the
+  // MECHANISM -- closed windows, gig-only warnings, year-wrapping -- against SC and GA, which is
+  // what those tests were always really for.
   it('freshwater checkRegulations() cannot protect coastal zones', () => {
     // The REGULATIONS map is keyed by lake and has no entry that any coastal
     // zone display name resolves to, so it waves everything through. This is
@@ -36,31 +41,11 @@ describe('the gap this closes', () => {
     expect(r.regInfo).toBeNull();
   });
 
-  it('the saltwater check blocks that same trip', () => {
-    const r = checkCoastalRegulations('NC', 'Speckled Trout (Spotted Seatrout)', FEB);
-    expect(r.legal).toBe(false);
-    expect(r.reason).toMatch(/Closed season/);
-  });
 });
 
 describe('closed seasons block, gear closures only warn', () => {
-  it('blocks NC seatrout during the cold-stun proclamation window', () => {
-    const r = checkCoastalRegulations('NC', 'Speckled Trout (Spotted Seatrout)', FEB);
-    expect(r.legal).toBe(false);
-    expect(r.reason).toMatch(/FF-12-2026/);
-  });
 
-  it('allows NC seatrout once the window has passed', () => {
-    expect(checkCoastalRegulations('NC', 'Speckled Trout (Spotted Seatrout)', AUG).legal).toBe(true);
-  });
 
-  it('blocks NC southern flounder year-round (no recreational season)', () => {
-    for (const d of [FEB, AUG]) {
-      const r = checkCoastalRegulations('NC', 'Southern Flounder', d);
-      expect(r.legal).toBe(false);
-      expect(r.reason).toMatch(/Harvest closed/);
-    }
-  });
 
   it('does NOT block SC trout for a gig-only closure', () => {
     // Dec-Feb gigging is closed, but rod and reel is fine — blocking the plan
@@ -73,7 +58,6 @@ describe('closed seasons block, gear closures only warn', () => {
   it('allows open species', () => {
     expect(checkCoastalRegulations('SC', 'Red Drum (Redfish)', AUG).legal).toBe(true);
     expect(checkCoastalRegulations('GA', 'Southern Flounder', AUG).legal).toBe(true);
-    expect(checkCoastalRegulations('NC', 'Red Drum (Redfish)', AUG).legal).toBe(true);
   });
 
   it('handles a closed window that wraps the new year', () => {
@@ -97,7 +81,7 @@ describe('current limits match the agencies', () => {
 
   it('every slot-managed species carries both bounds', () => {
     // Collapsing a slot to a minimum would authorise keeping an oversize fish.
-    for (const st of ['SC', 'GA', 'NC']) {
+    for (const st of ['SC', 'GA']) {
       const rd = COASTAL_REGULATIONS[st]['Red Drum (Redfish)'];
       expect(rd.sizeLimit.min, `${st} red drum min`).toBeGreaterThan(0);
       expect(rd.sizeLimit.max, `${st} red drum max`).toBeGreaterThan(rd.sizeLimit.min);
@@ -109,7 +93,7 @@ describe('current limits match the agencies', () => {
   });
 
   it('every state covers the three primary target species', () => {
-    for (const st of ['SC', 'GA', 'NC']) {
+    for (const st of ['SC', 'GA']) {
       for (const sp of ['Red Drum (Redfish)', 'Speckled Trout (Spotted Seatrout)', 'Southern Flounder']) {
         expect(COASTAL_REGULATIONS[st][sp], `${st} / ${sp}`).toBeTruthy();
       }
@@ -166,7 +150,7 @@ describe('staleness signalling (verifyBy is the review date, whatever it current
   it('every state review date is still ahead of us', () => {
     const now = Date.now();
     const due = [];
-    for (const st of ['SC', 'GA', 'NC']) {
+    for (const st of ['SC', 'GA']) {
       const meta = COASTAL_REGULATIONS[st]._meta;
       const vb = new Date(meta.verifyBy);
       if (vb.getTime() <= now) {
@@ -181,7 +165,7 @@ describe('staleness signalling (verifyBy is the review date, whatever it current
   });
 
   it('every state declares an agency, url and review date', () => {
-    for (const st of ['SC', 'GA', 'NC']) {
+    for (const st of ['SC', 'GA']) {
       const meta = COASTAL_REGULATIONS[st]._meta;
       expect(meta.agency).toBeTruthy();
       expect(meta.url).toMatch(/^https?:\/\//);
@@ -223,7 +207,10 @@ describe('formatCoastalLimit', () => {
   });
 
   it('says so when there is no open season', () => {
-    expect(formatCoastalLimit(COASTAL_REGULATIONS.NC['Southern Flounder']))
+    // Was `COASTAL_REGULATIONS.NC['Southern Flounder']`, which is gone with NC. The branch it
+    // exercises is the FORMATTER's, so it is tested against a literal now -- reaching into a
+    // state table to find an example of a shape is what tied this to data that could be deleted.
+    expect(formatCoastalLimit({ harvestClosed: true, sizeLimit: { min: 15 }, creelLimit: 4 }))
       .toBe('No open harvest season');
   });
 });

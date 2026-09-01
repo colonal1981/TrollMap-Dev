@@ -192,9 +192,6 @@ export const LAKE_NAME_TO_R2_KEY = {
   'Brunswick / St. Simons Sound, GA':         'coast_brunswick_st_simons_ga',
 
   // ── NC Coastal ──────────────────────────────────────────────────────────────
-  'Brunswick County / Shallotte Inlet, NC':   'coast_brunswick_nc',
-  'Cape Fear River / Wilmington, NC':         'coast_cape_fear_nc',
-  'Topsail Island / New River Inlet, NC':     'coast_topsail_new_river_nc',
 };
 
 // Build lowercase lookup once at module load for case-insensitive exact matching.

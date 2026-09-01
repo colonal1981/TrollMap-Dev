@@ -42,9 +42,6 @@ const CHAIN_DESCRIPTIONS = {
   'coast_ossabaw_st_catherines_ga': 'Ossabaw / St. Catherines Sound',
   'coast_sapelo_altamaha_ga':       'Sapelo Sound / Altamaha River',
   'coast_brunswick_st_simons_ga':   'Brunswick / St. Simons Sound',
-  'coast_brunswick_nc':             'Brunswick County / Shallotte Inlet',
-  'coast_cape_fear_nc':             'Cape Fear River / Wilmington',
-  'coast_topsail_new_river_nc':     'Topsail Island / New River Inlet',
 };
 
 // ── IndexedDB cache ───────────────────────────────────────────────────────────

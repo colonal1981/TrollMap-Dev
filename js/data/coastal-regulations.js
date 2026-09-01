@@ -157,43 +157,20 @@ export const COASTAL_REGULATIONS = {
     'Sheepshead': { sizeLimit: { min: 10 }, creelLimit: 15, measurement: 'FL', note: '10" FL min, 15/day.' },
   },
 
-  NC: {
-    _meta: {
-      agency: 'NC Division of Marine Fisheries (NCDMF)',
-      digest: 'proclamation-driven',
-      // NC changes by proclamation with little notice — verify often.
-      verifyBy: '2026-09-01',
-      url: 'https://deq.nc.gov/about/divisions/marine-fisheries',
-    },
-    'Red Drum (Redfish)': {
-      sizeLimit: { min: 18, max: 27 },
-      creelLimit: 1,
-      measurement: 'TL',
-      note: 'NC slot 18–27" TL, 1/person/day. Harvest must be reported to NCDMF.',
-    },
-    'Speckled Trout (Spotted Seatrout)': {
-      // Proclamation FF-12-2026 closed all coastal and joint waters on
-      // 2026-02-06 after widespread cold-stun events; scheduled to reopen by
-      // proclamation on 2026-07-01. Encoded as a dated window so the block
-      // lifts automatically, but verifyBy still forces confirmation.
-      closedSeason: [2, 6, 6, 30],
-      sizeLimit: { min: 14, max: 20 },
-      creelLimit: 3,
-      measurement: 'TL',
-      note: 'Closed 6 Feb – 30 Jun 2026 by NCDMF proclamation FF-12-2026 (cold stun). Reopens by proclamation — confirm before harvesting. Slot 14–20", 1 fish over 26" allowed, 3/day.',
-      proclamation: 'FF-12-2026',
-    },
-    'Southern Flounder': {
-      // The Marine Fisheries Commission declined to set a recreational season
-      // in coastal waters; southern flounder remain overfished. A narrow gulf
-      // flounder opening exists but is a different species and area.
-      harvestClosed: true,
-      measurement: 'TL',
-      note: 'No recreational southern flounder season in NC coastal waters — stock is overfished and overfishing is occurring. A limited gulf-flounder season may open by proclamation in specific areas only. Catch-and-release only unless NCDMF says otherwise.',
-    },
-    'Black Drum': { sizeLimit: { min: 14 }, creelLimit: 10, measurement: 'TL', note: '14" TL min, 10/day.' },
-    'Sheepshead': { sizeLimit: { min: 14 }, creelLimit: 5, measurement: 'TL', note: '14" TL min, 5/day.' },
-  },
+  // ── NC REMOVED 2026-09-01 ─────────────────────────────────────────────────
+  //
+  // Ryan: "the new regs are out... they have been parsed... i plan to cut all coastal areas from
+  // NC anyways."
+  //
+  // This block was a hand-typed copy of NCDMF's rules with a `verifyBy` of 2026-09-01, and that
+  // date came due during the session that removed it. The expiry was not the problem; the copy
+  // was. It is the same shape as the REGULATIONS table deleted from species-intel.js on
+  // 2026-08-27 -- thirteen hand-typed rows against a parser that reads the book itself -- and it
+  // failed the same way: a slot limit typed once, going stale silently while a proclamation
+  // replaced it.
+  //
+  // SC and GA stay for now because nothing has replaced them yet. When the parser covers them,
+  // this whole table goes the way this block did.
 };
 
 /** Inclusive month/day window test that tolerates wrapping the new year. */

@@ -1,5 +1,15 @@
 /**
- * coastal-zones.js — SC / GA / NC coastal + tidal zone catalog.
+ * coastal-zones.js — SC / GA coastal + tidal zone catalog.
+ *
+ * NC REMOVED 2026-09-01. Ryan: "i plan to cut all coastal areas from NC anyways." Three zones
+ * went — Brunswick County / Shallotte Inlet, Cape Fear River / Wilmington, and Topsail Island /
+ * New River Inlet — together with NC's block in coastal-regulations.js, which was a hand-typed
+ * copy of NCDMF's rules against a parser that now reads the book.
+ *
+ * THE TWO HAD TO GO TOGETHER. coastal-regulations.test.js asserts that every coastal zone maps to
+ * a state with a regulation table, and removing the table first broke it — correctly. A zone the
+ * app offers with no rules behind it is a plan on closed water reported legal, which is the
+ * failure that whole file exists to prevent.
  *
  * GENERATED FILE — DO NOT EDIT BY HAND.
  * Source of truth: Scripts/coastal_catalog.py
@@ -236,58 +246,6 @@ export const COASTAL_ZONES = {
     "usgsGauges": [],
     "usgsRivers": [],
   },
-  "coast_brunswick_nc": {
-    "slug": "coast_brunswick_nc",
-    "name": "Brunswick County / Shallotte Inlet, NC",
-    "state": "NC",
-    "coastal": true,
-    "tideStation": "8658120",
-    "center": [33.95, -78.5],
-    "bbox": [[33.85, -78.7], [34.05, -78.3]],
-    "priority": 8,
-    "ramps": {
-      "Holden Beach Ramp": [33.913, -78.33],
-      "Shallotte Inlet Access": [33.892, -78.385],
-      "Sunset Beach Ramp": [33.878, -78.512],
-    },
-    "usgsGauges": ["02105769"],
-    "usgsRivers": ["Cape Fear River"],
-  },
-  "coast_cape_fear_nc": {
-    "slug": "coast_cape_fear_nc",
-    "name": "Cape Fear River / Wilmington, NC",
-    "state": "NC",
-    "coastal": true,
-    "tideStation": "8658120",
-    "center": [34.18, -77.95],
-    "bbox": [[34.05, -78.1], [34.3, -77.75]],
-    "priority": 8,
-    "ramps": {
-      "Wilmington Riverfront Ramp": [34.235, -77.948],
-      "Carolina Beach State Park": [34.052, -77.893],
-      "Masonboro Inlet Access": [34.171, -77.842],
-      "Wrightsville Beach Ramp": [34.208, -77.797],
-    },
-    "usgsGauges": ["02105769"],
-    "usgsRivers": ["Cape Fear River"],
-  },
-  "coast_topsail_new_river_nc": {
-    "slug": "coast_topsail_new_river_nc",
-    "name": "Topsail Island / New River Inlet, NC",
-    "state": "NC",
-    "coastal": true,
-    "tideStation": "8658163",
-    "center": [34.45, -77.52],
-    "bbox": [[34.3, -77.75], [34.6, -77.3]],
-    "priority": 8,
-    "ramps": {
-      "Sneads Ferry Ramp": [34.557, -77.398],
-      "Topsail Beach Access": [34.388, -77.647],
-      "New River Inlet Ramp": [34.527, -77.338],
-    },
-    "usgsGauges": [],
-    "usgsRivers": [],
-  },
 };
 
 /** All coastal slugs. */
@@ -317,7 +275,7 @@ export function coastalZonesByState(stateCode) {
 
 /** Display names grouped for the lake selector: { SC: [...], GA: [...], NC: [...] } */
 export function coastalNamesByState() {
-  const out = { SC: [], GA: [], NC: [] };
+  const out = { SC: [], GA: [] };
   for (const slug of COASTAL_SLUGS) {
     const zone = COASTAL_ZONES[slug];
     if (out[zone.state]) out[zone.state].push(zone.name);
