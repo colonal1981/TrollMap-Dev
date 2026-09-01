@@ -246,59 +246,6 @@ def app_todo_names(repo):
     return [ln.strip() for ln in (proc.stdout or "").splitlines() if ln.strip()]
 
 
-def candidate_ids(repo, display_names):
-    """Every storage id these names could be filed under, via the app's own rule."""
-    src = os.path.abspath(os.path.join(repo, "js", "data", "research-ids.js"))
-    script = (
-        "import {readFileSync} from 'node:fs';"
-        f"const m = await import({json.dumps('file://' + src.replace(os.sep, '/'))});"
-        "const names = JSON.parse(readFileSync(0,'utf8'));"
-        "process.stdout.write(JSON.stringify(names.flatMap(n => m.researchStorageIdCandidates(n))));"
-    )
-    proc = subprocess.run(["node", "--input-type=module", "-e", script],
-                          input=json.dumps(display_names), capture_output=True, text=True,
-                          encoding="utf-8")
-    if proc.returncode != 0:
-        raise SystemExit(f"!! researchStorageIdCandidates failed: {(proc.stderr or '').strip()[:300]}")
-    return json.loads(proc.stdout)
-
-
-def researched_names(repo, display_names):
-    """
-    Which of these waters already have a profile in R2 -- ANSWERED BY THE CODEBASE'S OWN RULE.
-
-    /research/list returns storage ids, not display names, and turning one into the other is
-    `researchStorageIdCandidates()`: the bare name, the pre-county "Name, ST" name and the literal
-    name, through a canonical-alias map so border waters are not researched twice. That rule
-    already exists twice on purpose -- Worker/research/keys.js writes with it and
-    js/data/research-ids.js reads with it, locked together by test/research-ids.test.js, whose own
-    comment says what a third copy would cost: "a researched lake reported as unresearched, and a
-    pipeline re-run nobody needed."
-
-    So this runs the real one under node, the same way the off-lake gate does. Python never learns
-    the rule and there is nothing to drift.
-    """
-    code, data, err = _req("/research/list")
-    if code != 200 or not data or not data.get("ok"):
-        raise SystemExit(f"!! /research/list {code}: {err or 'no list'} -- cannot tell which "
-                         f"waters already have a profile")
-    src = os.path.abspath(os.path.join(repo, "js", "data", "research-ids.js"))
-    if not os.path.exists(src):
-        raise SystemExit(f"!! cannot find {src} -- pass --repo pointing at the TrollMap-Dev tree")
-    script = (
-        "import {readFileSync} from 'node:fs';"
-        f"const m = await import({json.dumps('file://' + src.replace(os.sep, '/'))});"
-        "const inp = JSON.parse(readFileSync(0,'utf8'));"
-        "process.stdout.write(JSON.stringify([...m.researchedNames(inp.names, inp.ids)]));"
-    )
-    proc = subprocess.run(["node", "--input-type=module", "-e", script],
-                          input=json.dumps({"names": display_names, "ids": data.get("lakes") or []}),
-                          capture_output=True, text=True, encoding="utf-8")
-    if proc.returncode != 0:
-        raise SystemExit(f"!! researchedNames failed under node: {(proc.stderr or '').strip()[:300]}")
-    return set(json.loads(proc.stdout)), data.get("count", 0)
-
-
 def fetch_sources(lake, sources, existing, verbose=False):
     """
     Sources -> normalized documents, the way runAgent does it: batch the HTML through
@@ -593,10 +540,6 @@ def load_lakes(args, registry):
         args.lake = app_todo_names(args.repo)
         if not args.lake:
             print("nothing to research -- every water the tab offers already has a profile")
-    if getattr(args, "lakes_file", None):
-        with open(args.lakes_file, encoding="utf-8-sig") as f:
-            args.lake = [ln.strip() for ln in f if ln.strip() and not ln.startswith("#")]
-
     if args.lake:
         # THE STATE COMES OFF THE REGISTRY, NOT OFF A DEFAULT. A one-lake run is how the cold-run
         # cost gets measured, and the cold lakes are in GA, NC and TN -- Lanier, Townsend, Watauga.
@@ -637,10 +580,10 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--registry", default="registry", help="folder holding lake_index.json")
     ap.add_argument("--repo", default="TrollMap-Dev",
-                    help="the TrollMap-Dev tree, for js/utils/doc-relevance.js (the off-lake gate)")
+                    help="the TrollMap-Dev tree. This script runs three pieces of the app rather "
+                         "than reimplementing them: the off-lake gate, the storage-id resolver, "
+                         "and the research tab's own not-researched-yet list.")
     ap.add_argument("--lake", action="append", help="one water by display name (repeatable)")
-    ap.add_argument("--lakes-file", metavar="PATH",
-                    help="one water per line, as the app spells it")
     ap.add_argument("--todo", action="store_true",
                     help="research exactly what the app's Research tab lists as not researched "
                          "yet, via Scripts/research_todo.mjs. This is the one to use.")
@@ -649,16 +592,10 @@ def main():
     ap.add_argument("--min-acres", type=int, default=1000,
                     help="matches PRESETS.research (default 1000)")
     ap.add_argument("--jobs", type=int, default=1,
-                    help="parallel lakes. 1 by default: 64 lakes is under an hour serial and "
-                         "serial cannot trip the LLM rate limit")
+                    help="parallel lakes. 1 by default, and that is the measured right answer: "
+                         "--jobs multiplies the token rate the pacing exists to hold down, and "
+                         "a group that gets rate limited costs a species")
     ap.add_argument("--limit", type=int, default=0, help="stop after N lakes (0 = all)")
-    ap.add_argument("--list-profiles", metavar="PATH", nargs="?", const="_reports/research_profiles.json",
-                    help="write what /research/list holds, and how each of the waters this script "
-                         "would offer resolves against it, then stop. Answers 'does R2 already "
-                         "have this lake' without anyone reading ids off a screen.")
-    ap.add_argument("--only-missing", action="store_true",
-                    help="UNSAFE, see the note in the source -- it asks with registry names and "
-                         "the store is keyed by the app's names. Use --lakes-file instead.")
     ap.add_argument("--tpm", type=int, default=DEFAULT_TPM,
                     help="input tokens per minute this script will pace extraction to "
                          f"(default {DEFAULT_TPM}; 0 disables pacing)")
@@ -685,64 +622,6 @@ def main():
 
     lakes = load_lakes(a, a.registry)
 
-    if a.list_profiles:
-        code, data, err = _req("/research/list")
-        if code != 200 or not data:
-            print(f"!! /research/list {code}: {err}")
-            return 1
-        names = [n for n, _, _ in lakes]
-        done, _ = researched_names(a.repo, names)
-        ids = [x.get("id") if isinstance(x, dict) else x for x in (data.get("lakes") or [])]
-        matched = set()
-        for n in names:
-            if n in done:
-                matched.update(candidate_ids(a.repo, [n]))
-        os.makedirs(os.path.dirname(a.list_profiles) or ".", exist_ok=True)
-        with open(a.list_profiles, "w", encoding="utf-8") as f:
-            json.dump({"count": data.get("count"), "ids": sorted(i for i in ids if i),
-                       "offered": names,
-                       "resolved": sorted(done),
-                       "unresolved": [n for n in names if n not in done],
-                       "candidates": {n: candidate_ids(a.repo, [n]) for n in names}},
-                      f, indent=2)
-        print(f"{data.get('count')} profiles in R2. Of the {len(names)} waters this script offers, "
-              f"{len(done)} resolve onto one and {len(names) - len(done)} do not.")
-        print(f"-> {a.list_profiles}")
-        return 0
-
-    if a.only_missing:
-        # THIS FLAG ASKS THE WRONG QUESTION AND IT TOOK A MEASUREMENT TO SEE IT.
-        #
-        # It matches /research/list against ids derived from lake_index.json's display_name --
-        # the county-stamped form, "Wateree Lake (Kershaw Co, SC)". Nothing is stored under that.
-        # The app asks with the access index's names, "Lake Wateree, SC", which is what the
-        # profile is filed as. Measured against the live bucket on 2026-09-01: of 64 research
-        # waters, only 29 resolved, and 22 of the 35 that did not have a perfectly good profile
-        # the app displays. Ryan, looking at the app: "but all of those are able to be seen in
-        # the app..." -- which is the whole correction in one sentence.
-        #
-        # Running the batch on this list would have re-researched 22 researched waters and left
-        # a second profile beside each, because /research/save writes under the current name when
-        # it cannot find the old one. One of those forks already exists:
-        # b_everett_jordan_lake_chatham_co_nc, written beside lake_jordan_nc by the one-lake test.
-        #
-        # Three offline joins were tried to bridge registry names to stored ids -- bare name,
-        # curated_lakes.json by name, curated_lakes.json by geometry -- and every one was wrong
-        # somewhere. The geometric one bound Tuckertown Reservoir to High Rock Lake, whose bounds
-        # box contains it. A join that is wrong is worse than no join, so there is no join here.
-        #
-        # THE APP'S DROPDOWN IS THE ANSWER, and --lakes-file takes it.
-        print("!! --only-missing resolves against registry names; the store is keyed by the "
-              "app's names.")
-        print("   Measured 2026-09-01: 22 of 64 waters read as missing while the app shows "
-              "their profile.")
-        print("   Use --lakes-file with the research dropdown's own 'Not researched yet' list.")
-        return 2
-        done, stored = researched_names(a.repo, [n for n, _, _ in lakes])
-        before = len(lakes)
-        lakes = [t for t in lakes if t[0] not in done]
-        print(f"{stored} profiles in R2; {before - len(lakes)} of the {before} waters offered "
-              f"already have one, {len(lakes)} do not")
     if a.limit:
         lakes = lakes[:a.limit]
     if not lakes:
