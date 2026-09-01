@@ -61,7 +61,7 @@ for (const k of ['log', 'info', 'debug']) {
 }
 
 const { registryRecordFor } = await import('../js/data/access-index.js');
-const { documentNamesFromRecord } = await import('../js/data/lake-registry.js');
+const { documentNamesFromRecord, lakeRecordFor } = await import('../js/data/lake-registry.js');
 const { isCoastalKey } = await import('../js/data/coastal-zones.js');
 const { resolveR2Key } = await import('../js/data/lake-keys.js');
 const { makePredicate } = await import('../js/data/water-filter.js');
@@ -69,7 +69,22 @@ const { researchedNames, researchStorageIdCandidates } = await import('../js/dat
 
 /** What the app knows about one water: its state, and every name it answers to. */
 const describe = (name) => {
-  const rec = registryRecordFor(name);
+  // TWO RESOLVERS, THE APP'S BINDING FIRST AND THE REGISTRY'S SECOND.
+  //
+  // registryRecordFor() is the join that PRODUCED these names -- a DNR feed waterbody within
+  // 15 km that also matches by name -- so it answers first and its answer is the profile's
+  // identity. It also returns null rather than guess, and on 2026-09-01 it returned null for
+  // "Lake Richard Russell, GA" and "Lake Sidney Lanier (Hall Co, GA)". Both came back carrying
+  // one alias, their own name, and the off-lake gate then threw away five of Russell's eight
+  // documents -- including the three fishing reports that name the lake in their own titles.
+  //
+  // lakeRecordFor() is the registry's own resolver, state-keyed then state-blind, and it is
+  // already what lake-research-engine.js asks. Checked against every app name the reports have
+  // recorded: 18 of 18 waters resolve, Russell and Lanier among them. It runs only when the
+  // first returned nothing, so it can fill a null and cannot overwrite an answer.
+  //
+  // The NAME is never taken from here. It is the app's, and it is what the profile is filed as.
+  const rec = registryRecordFor(name) || lakeRecordFor(name);
   const docNames = rec ? documentNamesFromRecord(rec) : [];
   const suffix = /,\s*([A-Z]{2})(?:\/[A-Z]{2})*\s*$/.exec(name);
   return {
