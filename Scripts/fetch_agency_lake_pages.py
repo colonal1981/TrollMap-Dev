@@ -119,20 +119,25 @@ STATES = {
         'directory': ('https://www.ncwildlife.gov/wildlife-habitat/species'
                       '?field_catalog_categories_target_id_6%5B1547%5D=1547&page={page}'),
         'directory_pages': 4,
-        # ── THE SPECIES DIRECTORY IS NOT ENOUGH, AND /species/largemouth-bass PROVES IT ───────
+        # ── TWO FRONTIERS, BECAUSE THE TWO LISTS ARE NOT THE SAME LIST ───────────────────────
         #
-        # That page exists, and it carries ZERO document links. Every largemouth report -- the
-        # longest list NC WRC publishes, Hyco and Lookout Shoals and High Rock and Moss and
-        # W. Kerr Scott among them -- hangs off /fishing/black-bass-north-carolina/largemouth-bass
-        # instead. Other families put theirs on the species page: black crappie carries fourteen,
-        # flathead catfish ten. Both shapes are real and neither covers the other.
+        # THERE ARE TWO LARGEMOUTH BASS PAGES AND ONLY ONE OF THEM IS LINKED. Fetch
+        # /species/largemouth-bass and it carries zero documents; the directory links
+        # /species/largemouth-bass-0, which carries 39. A conclusion drawn from the unlinked one
+        # -- "the species directory misses the largemouth reports" -- was wrong, and is recorded
+        # here because the fix that followed it is right for a different reason.
         #
-        # So the second frontier is the /fishing subtree, and it is WALKED rather than typed. The
-        # first cut of this named five black bass pages and the striped bass page, and that list
-        # was already short by two: /fishing/trout-fishing-north-carolina is a third species hub
-        # and /fishing/fishing-research-reports is the recent-years index, thirteen documents that
-        # are on no species page at all. A typed list is a list that is wrong the day after it is
-        # typed.
+        # The real reason is that the hub list is LONGER. /species/largemouth-bass-0 carries 39
+        # documents; /fishing/black-bass-north-carolina/largemouth-bass carries about 74, because
+        # it adds the Summaries and the Hurricane Response sections that the species page does not
+        # list. Two other pages hang off /fishing and appear on no species page at all:
+        # /fishing/trout-fishing-north-carolina, and /fishing/fishing-research-reports with the
+        # thirteen most recent. So both frontiers are read and the documents are de-duplicated by
+        # url across them.
+        #
+        # AND THE /fishing LIST IS WALKED, NOT TYPED. The first cut named five black bass pages
+        # and the striped bass page and was already short by those two. A typed list is a list
+        # that is wrong the day after it is typed.
         #
         # Two hops and no further: /fishing names its hubs, a hub names its species pages, and a
         # species page is where the documents are. The pattern is anchored to the /fishing subtree

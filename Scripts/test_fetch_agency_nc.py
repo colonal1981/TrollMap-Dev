@@ -158,5 +158,21 @@ check('three segments deep is not followed',
       F.links_on('<a href="/fishing/a/b/c">too deep</a>', 'https://www.ncwildlife.gov/fishing',
                  spec, spec['seed_link']), [])
 
+# ── The slugs the directory actually uses ─────────────────────────────────────────────────────
+# Every href below is verbatim off the fish-filtered directory. Two of them are the reason this
+# check exists: the linked largemouth page is `largemouth-bass-0`, not `largemouth-bass`, and the
+# `/index%2Ephp/` prefix appears in BOTH cases on the same listing.
+REAL_SLUGS = '''
+<a href="/species/largemouth-bass-0">Largemouth Bass</a>
+<a href="/index%2ephp/species/common-carp">Common Carp</a>
+<a href="/index%2Ephp/species/green-sunfish">Green Sunfish</a>
+<a href="/species/flathead-catfish">Flathead Catfish</a>
+<a href="/species/muskellunge">Muskellunge</a>
+'''
+r = F.links_on(REAL_SLUGS, spec['directory'].format(page=1), spec, spec['index_link'])
+check('a slug ending in a digit is taken -- the linked largemouth page is largemouth-bass-0',
+      any(u.endswith('/species/largemouth-bass-0') for u, _ in r), True)
+check('both spellings of the index.php prefix are taken', len(r), 5)
+
 print('\n%s' % ('%d FAILED' % len(FAILED) if FAILED else 'all checks passed'))
 sys.exit(1 if FAILED else 0)
