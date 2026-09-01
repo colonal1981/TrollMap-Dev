@@ -73,9 +73,24 @@ function agentTargetFields() {
 // `tidal` (2026-08-31), and the `navigation.*` ones with the navigation agent (2026-09-01). An excuse is for a field an agent
 // still hunts and the planner declines to read; a field nothing hunts needs no excuse.
 const NOT_FOR_THE_PLANNER = {
-  'biology.invasiveSpecies': 'regulatory and ecological, does not change where to troll',
-  'biology.speciesAbundance': 'prose about the fishery; the catch journal is the local truth',
-  'biology.predatorSpecies': 'the species being targeted is chosen in the form',
+  // TWO EXCUSES HERE WERE FLATLY WRONG, and the test below could not see it.
+  //
+  // `biology.predatorSpecies` was excused as "the species being targeted is chosen in the form"
+  // and `biology.speciesAbundance` as "prose about the fishery; the catch journal is the local
+  // truth". plan-inputs.js reads both -- `Other predators here` and `How abundant the target is`,
+  // lines 483 and 484. What is in the lake besides the target, and how many of the target there
+  // are, are both arguments about lure and presentation, which is the reason Ryan asked for them
+  // in the prompt on 2026-08-07 in the first place.
+  //
+  // They survived because the usage test `continue`s on an excused field BEFORE checking whether
+  // the planner reads it, so an excuse is only ever tested in one direction. The new test at the
+  // bottom of this file closes that.
+  //
+  // `invasiveSpecies` keeps its excuse but the wording is now honest about being provisional: it
+  // has no planner reader today. USGS NAS is a real key-free source for it and covers plants as
+  // well as fish, but its filters are state / county / HUC with no bounding box, so any join lands
+  // at drainage scale rather than at a lake. Not decided.
+  'biology.invasiveSpecies': 'no planner reader today; USGS NAS could source it but only joins at HUC/drainage scale — revisit',
   // The five habitat excuses that stood here went with the habitat agent on 2026-09-01. They said
   // the pack supersedes cover, that docks.geojson carries every dock, that depth_areas is finer
   // than a prose flat, and that artificialHabitatDetails carries the usable form of the
@@ -168,6 +183,16 @@ describe('the research pipeline reaches the planner', () => {
       expect(typeof why === 'string' && why.length > 12).toBe(true);
       if (!why) throw new Error(`${field} is excused with no reason`);
     }
+  });
+
+  it('nothing is excused that the planner actually reads', () => {
+    // The mirror of the stale-excuse test, and the one that was missing. The usage test above
+    // skips excused fields before it checks anything, so an excuse claiming a field is unread
+    // stays true-by-assumption forever. `biology.predatorSpecies` and `biology.speciesAbundance`
+    // sat here for weeks while plan-inputs.js printed both of them to the model.
+    const contradicted = Object.keys(NOT_FOR_THE_PLANNER)
+      .filter((f) => new RegExp(`\\b${f.split('.').pop()}\\b`).test(PLANNER_CODE));
+    expect(contradicted).toEqual([]);
   });
 
   it('the excuse list does not outlive the fields it excuses', () => {
