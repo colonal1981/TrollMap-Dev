@@ -218,6 +218,42 @@ def gate_documents(repo, documents, lake, alt_names=None):
     return json.loads(proc.stdout)
 
 
+def researched_names(repo, display_names):
+    """
+    Which of these waters already have a profile in R2 -- ANSWERED BY THE CODEBASE'S OWN RULE.
+
+    /research/list returns storage ids, not display names, and turning one into the other is
+    `researchStorageIdCandidates()`: the bare name, the pre-county "Name, ST" name and the literal
+    name, through a canonical-alias map so border waters are not researched twice. That rule
+    already exists twice on purpose -- Worker/research/keys.js writes with it and
+    js/data/research-ids.js reads with it, locked together by test/research-ids.test.js, whose own
+    comment says what a third copy would cost: "a researched lake reported as unresearched, and a
+    pipeline re-run nobody needed."
+
+    So this runs the real one under node, the same way the off-lake gate does. Python never learns
+    the rule and there is nothing to drift.
+    """
+    code, data, err = _req("/research/list")
+    if code != 200 or not data or not data.get("ok"):
+        raise SystemExit(f"!! /research/list {code}: {err or 'no list'} -- cannot tell which "
+                         f"waters already have a profile")
+    src = os.path.abspath(os.path.join(repo, "js", "data", "research-ids.js"))
+    if not os.path.exists(src):
+        raise SystemExit(f"!! cannot find {src} -- pass --repo pointing at the TrollMap-Dev tree")
+    script = (
+        "import {readFileSync} from 'node:fs';"
+        f"const m = await import({json.dumps('file://' + src.replace(os.sep, '/'))});"
+        "const inp = JSON.parse(readFileSync(0,'utf8'));"
+        "process.stdout.write(JSON.stringify([...m.researchedNames(inp.names, inp.ids)]));"
+    )
+    proc = subprocess.run(["node", "--input-type=module", "-e", script],
+                          input=json.dumps({"names": display_names, "ids": data.get("lakes") or []}),
+                          capture_output=True, text=True, encoding="utf-8")
+    if proc.returncode != 0:
+        raise SystemExit(f"!! researchedNames failed under node: {(proc.stderr or '').strip()[:300]}")
+    return set(json.loads(proc.stdout)), data.get("count", 0)
+
+
 def fetch_sources(lake, sources, existing, verbose=False):
     """
     Sources -> normalized documents, the way runAgent does it: batch the HTML through
@@ -550,6 +586,9 @@ def main():
                     help="parallel lakes. 1 by default: 64 lakes is under an hour serial and "
                          "serial cannot trip the LLM rate limit")
     ap.add_argument("--limit", type=int, default=0, help="stop after N lakes (0 = all)")
+    ap.add_argument("--only-missing", action="store_true",
+                    help="skip waters that already have a profile in R2, asked live via "
+                         "/research/list and resolved with the app's own id rule")
     ap.add_argument("--tpm", type=int, default=DEFAULT_TPM,
                     help="input tokens per minute this script will pace extraction to "
                          f"(default {DEFAULT_TPM}; 0 disables pacing)")
@@ -575,8 +614,17 @@ def main():
         return 2
 
     lakes = load_lakes(a, a.registry)
+    if a.only_missing:
+        done, stored = researched_names(a.repo, [n for n, _, _ in lakes])
+        before = len(lakes)
+        lakes = [t for t in lakes if t[0] not in done]
+        print(f"{stored} profiles in R2; {before - len(lakes)} of the {before} waters offered "
+              f"already have one, {len(lakes)} do not")
     if a.limit:
         lakes = lakes[:a.limit]
+    if not lakes:
+        print("nothing to do")
+        return 0
     print(f"worker: {WORKER}")
     print(f"{len(lakes)} water(s), --jobs {a.jobs}"
           f"{'  [DRY RUN -- nothing is saved]' if a.dry_run else ''}")
