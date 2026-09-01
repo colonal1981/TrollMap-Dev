@@ -1043,6 +1043,31 @@ PFA_NOTE = re.compile(r'^Note\s*:\s*(?P<note>.+)$')
 PFA_WATER = re.compile(r'^Water\s*:\s*(?P<water>.+)$')
 
 
+# Georgia writes a PFA roster as a comma list closed by a full stop, then keeps writing:
+#
+#   Fish Species: Largemouth bass, Bluegill, Red- ear sunfish, Channel catfish, Black crappie.
+#   Live fish (minnows) are allowed for bait.
+#
+# So the roster is everything up to the first full stop, and "Live fish (minnows) are allowed for
+# bait" is a bait rule that must not become a species. The hyphen in `Red- ear` is the PDF's line
+# wrap, not the fish's name -- pdfplumber hands back the break as written.
+FISH_WRAP = re.compile(r'(?<=[a-z])-\s+(?=[a-z])')
+
+def split_fish_species(text):
+    """The roster as a list, or [] when the line names no fish."""
+    t = FISH_WRAP.sub('', str(text or '').strip())
+    t = t.split('.')[0]                      # the sentence, not the bait rule after it
+    out = []
+    for part in t.split(','):
+        name = ' '.join(part.split()).strip(' .;')
+        # `and` joins the last two on some areas -- "Bluegill and Red ear sunfish".
+        for piece in re.split(r'\s+and\s+', name):
+            piece = piece.strip(' .;')
+            if len(piece) > 2:
+                out.append(piece[0].upper() + piece[1:])
+    return out
+
+
 def read_ga_pfa(pdf, pages):
     """Georgia's Public Fishing Areas -- its answer to SC's state lakes table.
 
@@ -3557,6 +3582,22 @@ def project_by_water(doc, idx, all_specs=None, smap=None, ramps=None, not_fish=(
                     rec = {'source': '%s %s' % (st, blk.get('source_file')),
                            'table': key, 'label': tb.get('label'), 'page': tb.get('page'),
                            'address': r.get('text'), 'cells': row['cells']}
+                    # THE PFA ROSTER WAS PARSED AND THEN DROPPED ON THE FLOOR.
+                    #
+                    # read_ga_pfa() reads Georgia's `Fish Species:` line -- the actual roster for
+                    # each Public Fishing Area, eleven of them -- into `fish_species` on the row.
+                    # That key was WRITTEN at two lines and READ at zero: it never reached this
+                    # record, so the table carried only the one species named in the size-limit
+                    # sentence. Dodge County shipped as `LARGEMOUTH BASS` when the book says
+                    # "Largemouth bass, Bluegill, Redear sunfish, Channel catfish, Black crappie".
+                    #
+                    # Split here rather than downstream, because the book's own punctuation is
+                    # the delimiter and it is only reliable in this one place: the roster is a
+                    # comma list ended by a full stop, and the sentences that follow it are bait
+                    # and facility rules, not fish.
+                    if row.get('fish_species'):
+                        rec['fish_species'] = row['fish_species']
+                        rec['fish_species_list'] = split_fish_species(row['fish_species'])
                     # THE TWO NUMBERS A PERSON ACTUALLY ASKS FOR, pulled out at build time so
                     # no consumer has to work out which cell is which. The browser's callers
                     # read sizeLimit and creelLimit and nothing else; a record that carries
