@@ -27,6 +27,7 @@ Personal use only, not for distribution or resale; not for navigation.
 
 import argparse
 import json
+import os
 import statistics
 import sys
 import time
@@ -34,7 +35,46 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-WORKER = "https://trollmap-worker.colonal1981.workers.dev"
+WORKER = os.environ.get("TROLLMAP_WORKER_URL",
+                        "https://trollmap-worker.colonal1981.workers.dev")
+
+# THE APP SENDS A TOKEN AND THE FIRST VERSION OF THIS SCRIPT DID NOT.
+#
+# Every research call in lake-research-engine.js goes through workerHeaders(), which sets
+# `X-Sync-Token`. This script sent Content-Type and nothing else, so it was never making the same
+# request the browser makes. That is why it was rejected, and I should have read workerHeaders()
+# before writing a single line of this rather than after Ryan hit it.
+#
+# THE VALUE IS NOT IN THIS FILE AND MUST NEVER BE. It is read from the environment at runtime, so
+# the token stays on the machine that owns it -- out of the repo, out of the transcript, and out
+# of my hands. Set it in the shell before running:
+#
+#   PowerShell   $env:TROLLMAP_SYNC_TOKEN = "<the value from Worker/wrangler.toml>"
+#   bash         export TROLLMAP_SYNC_TOKEN='<the value>'
+SYNC_TOKEN = os.environ.get("TROLLMAP_SYNC_TOKEN", "")
+
+# Cloudflare is markedly less friendly to `Python-urllib/3.x` than to something that looks like a
+# browser, and a bot challenge answers 403 with an HTML body -- which is exactly what a benchmark
+# reports as "the Worker is broken" if it never prints what came back.
+UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+      "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
+
+
+def _headers(with_content_type=True):
+    h = {"User-Agent": UA, "Accept": "application/json"}
+    if with_content_type:
+        h["Content-Type"] = "application/json"
+    if SYNC_TOKEN:
+        h["X-Sync-Token"] = SYNC_TOKEN
+    return h
+
+
+def _explain(status, raw):
+    """Say what came back, because '403' on its own has cost two rounds of guessing already."""
+    body = (raw or b"")[:400].decode("utf-8", "replace").replace("\n", " ").strip()
+    if not body:
+        return f"HTTP {status}, empty body"
+    return f"HTTP {status}: {body}"
 
 # Mirrors lake-research-engine.js. The Worker injects maxDocs=8 at charsPerDoc=20000; the client
 # sends a little more so the Worker's relevance filter still has something to choose from.
@@ -46,8 +86,7 @@ def post(path, payload, timeout=300):
     """One POST. Returns (seconds, status, parsed-or-None, bytes_sent, bytes_recv)."""
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
-        f"{WORKER}{path}", data=body,
-        headers={"Content-Type": "application/json"}, method="POST")
+        f"{WORKER}{path}", data=body, headers=_headers(), method="POST")
     t0 = time.perf_counter()
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -59,6 +98,7 @@ def post(path, payload, timeout=300):
                 return dt, r.status, None, len(body), len(raw)
     except urllib.error.HTTPError as e:
         raw = e.read()
+        print(f"    !! POST {path} -> {_explain(e.code, raw)}")
         return time.perf_counter() - t0, e.code, None, len(body), len(raw)
     except Exception as e:                                    # noqa: BLE001
         print(f"    !! {path} failed: {e}")
@@ -68,7 +108,8 @@ def post(path, payload, timeout=300):
 def get(path, timeout=300):
     t0 = time.perf_counter()
     try:
-        with urllib.request.urlopen(f"{WORKER}{path}", timeout=timeout) as r:
+        req = urllib.request.Request(f"{WORKER}{path}", headers=_headers(False))
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             raw = r.read()
             dt = time.perf_counter() - t0
             try:
@@ -76,7 +117,9 @@ def get(path, timeout=300):
             except json.JSONDecodeError:
                 return dt, r.status, None, len(raw)
     except urllib.error.HTTPError as e:
-        return time.perf_counter() - t0, e.code, None, len(e.read())
+        raw = e.read()
+        print(f"    !! GET {path} -> {_explain(e.code, raw)}")
+        return time.perf_counter() - t0, e.code, None, len(raw)
     except Exception as e:                                    # noqa: BLE001
         print(f"    !! {path} failed: {e}")
         return time.perf_counter() - t0, 0, None, 0
@@ -209,6 +252,17 @@ def main():
     a = ap.parse_args()
 
     print("Timing a fisheries-only research run. No /research/save -- nothing is written.")
+    print(f"worker: {WORKER}")
+    if not SYNC_TOKEN:
+        print("\n!! TROLLMAP_SYNC_TOKEN is not set in this shell.")
+        print("   Every research call the app makes sends an X-Sync-Token header; without it the")
+        print("   Worker will refuse this one. The value lives in Worker/wrangler.toml -- set it")
+        print("   in your shell, not in this file:")
+        print("\n     $env:TROLLMAP_SYNC_TOKEN = \"<value>\"      # PowerShell")
+        print("     export TROLLMAP_SYNC_TOKEN='<value>'        # bash")
+        print("\n   Refusing to run rather than reporting a timing for a run that was rejected.")
+        return 2
+    print("token: set (value never read, logged or stored by this script)")
     runs = []
     for lake in a.lake:
         for _ in range(a.repeat):
@@ -220,9 +274,10 @@ def main():
         print("MEASUREMENT FAILED -- no timing is reported, because the numbers would be fiction.")
         for f in sorted(set(bad)):
             print(f"  {f}")
-        print("\nIf every call returned 403, this machine cannot reach the Worker. That is an")
-        print("egress restriction, not a bug in the run -- try it from a shell with plain")
-        print("internet access. Any other code is a real failure worth reading.")
+        print("\nThe body of each failure is printed above -- read it before concluding anything.")
+        print("  401 / \"unauthorized\"  the token is wrong or the Worker wants a different one")
+        print("  403 with an HTML body  a Cloudflare challenge, not the Worker at all")
+        print("  \"Tunnel connection failed\"  this shell has no route out; try another machine")
         return 1
     per = [r["total"] for r in runs]
     med = statistics.median(per)
