@@ -6,7 +6,16 @@ async function handleResearchAnalyzeFacts(request, env) {
   let body;
   try { body = await request.json(); } catch { body = {}; }
   const lakeName = String(body.lakeName || "").trim();
-  const baseName = String(body.baseName || body.lakeName || "").replace(/^Lake\s+/i,'').replace(/,\s*(SC|NC|GA|TN)(\/(?:SC|NC|GA|TN))*\s*$/i,'').trim() || lakeName;
+  // The county stamp goes first, and it has to go here too: this is the fallback for a caller
+  // that sends no baseName, and the prompt below tells the model to extract only facts that
+  // mention this string. "(Hall Co, GA)" is consolidate_lake_index.py's handwriting, not a name
+  // any document uses. Same regex as cleanLakeBaseName() in lake-research-engine.js,
+  // legacyStorageName() in research/keys.js and lakeTerms() in js/utils/doc-relevance.js -- `Co`
+  // as a word, so "Saluda River (2)" keeps the ordinal that is the only thing telling four
+  // Saluda Rivers apart.
+  const baseName = String(body.baseName || body.lakeName || "")
+    .replace(/\s*\([^)]*\bCo\b[^)]*\)\s*/i, ' ').replace(/\s+/g, ' ')
+    .replace(/^Lake\s+/i,'').replace(/,\s*(SC|NC|GA|TN)(\/(?:SC|NC|GA|TN))*\s*$/i,'').trim() || lakeName;
   const state = String(body.state||'SC').trim();
   const documents = body.documents || [];
   // Optional low-cost Smart Plan recovery mode. Documents still come from the

@@ -63,7 +63,28 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 # little more so the Worker's relevance filter still has something to choose from.
 LLM_DOC_LIMIT = 12
 LLM_DOC_CHARS = 20000
-EXTRACT_PAUSE_S = 1.0
+
+# research/extract.js slices every document to 150,000 characters before it builds the prompt,
+# and lake-research-engine.js sends exactly that. This script was sending 200,000 -- 50,000
+# characters uploaded on every extraction call for the Worker to throw away.
+EXTRACT_DOC_CHARS = 150000
+
+# PACE BY TOKENS, NOT BY A FIXED SLEEP.
+#
+# Ryan, 2026-09-01, on two runs that each lost a species group to "This model is currently
+# experiencing high demand": "i don't think that error is correct i think you are rate limitting
+# because you are hitting all of the species at once."
+#
+# Counted from the code: one lake with eight documents sends eight extraction calls at up to
+# 150,000 characters each, then one call per species group carrying up to eight documents at
+# 20,000 characters. About 420,000 input tokens inside a minute, on a free tier that meters
+# tokens per minute. A one-second sleep between calls does not describe that load at all -- it
+# is the same pause whether the document is 2,000 characters or 150,000.
+#
+# So the pause is computed from what was actually just sent. --tpm sets the ceiling; the default
+# leaves most of a 250,000 TPM allowance for the group calls that follow the extraction burst.
+DEFAULT_TPM = 120000
+CHARS_PER_TOKEN = 4
 
 
 def _headers(body=True):
@@ -284,13 +305,32 @@ def fetch_sources(lake, sources, existing, verbose=False):
     return docs, stats
 
 
-def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev", alt_names=None):
+def base_name(lake_name):
+    """cleanLakeBaseName() in lake-research-engine.js. The county stamp is ours, not the water's."""
+    b = re.sub(r"\s*\([^)]*\bCo\b[^)]*\)\s*", " ", str(lake_name or ""), flags=re.I)
+    b = re.sub(r"\s+", " ", b).strip()
+    b = re.sub(r"^Lake\s+", "", b, flags=re.I)
+    b = re.sub(r",\s*(SC|NC|GA|TN)(/(?:SC|NC|GA|TN))*\s*$", "", b, flags=re.I).strip()
+    b = re.sub(r"\s+Reservoir$", "", b, flags=re.I).strip()
+    b = re.sub(r"\s+Lake$", "", b, flags=re.I).strip()
+    return b or str(lake_name or "")
+
+
+def pace_seconds(chars, tpm):
+    """How long to wait after sending `chars` so the minute's token budget is not blown."""
+    if tpm <= 0:
+        return 0.0
+    return min(30.0, (chars / CHARS_PER_TOKEN) / tpm * 60.0)
+
+
+def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev", alt_names=None,
+                 tpm=DEFAULT_TPM):
     """One lake, start to saved profile. Returns a result dict; never raises."""
     t0 = time.perf_counter()
     out = {"lake": lake, "state": state, "ok": False, "species": 0, "saved": False, "error": None,
            "confirmed": [], "returned": [], "missing": [], "documents": 0, "facts": 0,
            "sources": 0, "fetch": {}, "rejected_offlake": 0, "rejected_docs": [],
-           "warnings": []}
+           "chars_sent": 0, "warnings": []}
 
     code, det, err = _req("/research/deterministic-facts", {"lakeName": lake, "state": state})
     if code != 200 or not det or not det.get("profile"):
@@ -357,17 +397,24 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
     # prompt ranks that ABOVE the documents: "If a PARSED OBSERVATION covers this species and
     # season, its value is the answer -- copy it, do not adjust it."
     facts = []
-    for i, d in enumerate(usable[:LLM_DOC_LIMIT]):
+    chosen = usable[:LLM_DOC_LIMIT]
+    for i, d in enumerate(chosen):
+        text = str(d.get("fullText") or d.get("text") or "")[:EXTRACT_DOC_CHARS]
         code, ex, err = _req("/research/analyze-facts", {
-            "lakeName": lake, "state": state, "targetFields": ["trollingIntelligence"],
-            "documents": [{"title": d.get("title"), "url": d.get("url"),
-                           "text": str(d.get("fullText") or d.get("text") or "")[:200000]}]})
+            # baseName and docIndex are what lake-research-engine.js sends. Without baseName the
+            # Worker derives one, and the prompt then tells the model to extract only facts that
+            # mention it -- so getting it right is the difference between "Sidney Lanier" and a
+            # name no document on earth contains.
+            "lakeName": lake, "baseName": base_name(lake), "state": state,
+            "docIndex": i, "targetFields": ["trollingIntelligence"],
+            "documents": [{"title": d.get("title"), "url": d.get("url"), "text": text}]})
         if code == 200:
             facts.extend((ex or {}).get("extracted_facts") or [])
         elif verbose:
             print(f"      analyze-facts {code}: {err}")
-        if i + 1 < min(len(usable), LLM_DOC_LIMIT):
-            time.sleep(EXTRACT_PAUSE_S)
+        out["chars_sent"] += len(text)
+        if i + 1 < len(chosen):
+            time.sleep(pace_seconds(len(text), tpm))
 
     out["facts"] = len(facts)
     prev = dict(profile)
@@ -496,6 +543,9 @@ def main():
                     help="parallel lakes. 1 by default: 64 lakes is under an hour serial and "
                          "serial cannot trip the LLM rate limit")
     ap.add_argument("--limit", type=int, default=0, help="stop after N lakes (0 = all)")
+    ap.add_argument("--tpm", type=int, default=DEFAULT_TPM,
+                    help="input tokens per minute this script will pace extraction to "
+                         f"(default {DEFAULT_TPM}; 0 disables pacing)")
     ap.add_argument("--dry-run", action="store_true",
                     help="run everything except /research/save")
     # A REPORT IS WRITTEN EVERY RUN, NOT ONLY WHEN ASKED. Ryan drives this box over Chrome
@@ -523,8 +573,10 @@ def main():
     print(f"worker: {WORKER}")
     print(f"{len(lakes)} water(s), --jobs {a.jobs}"
           f"{'  [DRY RUN -- nothing is saved]' if a.dry_run else ''}")
-    print("estimate at the measured 48 s/lake: "
-          f"{len(lakes) * 48 / max(a.jobs, 1) / 60:.0f} min\n")
+    # 80 s is the first real COLD measurement -- Lanier 100 s, Townsend 51 s, both with documents
+    # actually downloaded. The 48 s that preceded it was a refresh on a cached corpus.
+    print(f"estimate at 80 s/lake: {len(lakes) * 80 / max(a.jobs, 1) / 60:.0f} min"
+          f"   (extraction paced to {a.tpm:,} input tokens/min)\n")
 
     t0 = time.perf_counter()
     done = [0]
@@ -532,7 +584,7 @@ def main():
 
     def work(pair):
         name, st, alts = pair
-        r = research_one(name, st, a.dry_run, a.verbose, a.repo, alts)
+        r = research_one(name, st, a.dry_run, a.verbose, a.repo, alts, a.tpm)
         done[0] += 1
         mark = "ok " if r["ok"] else "FAIL"
         secs = f'{r.get("seconds", 0):5.1f}s'
@@ -540,9 +592,10 @@ def main():
         # looks exactly like a fast one, and the difference is the whole point of the batch.
         f = r.get("fetch") or {}
         got = f.get("html_ok", 0) + f.get("pdf_ok", 0)
+        ktok = r.get("chars_sent", 0) / CHARS_PER_TOKEN / 1000
         detail = (f"{len(r['returned'])}/{len(r['confirmed'])} species  "
                   f"{r['documents']} docs ({got} new, {f.get('reused', 0)} cached, "
-                  f"{f.get('failed', 0)} failed)  {r['facts']} facts")
+                  f"{f.get('failed', 0)} failed)  {r['facts']} facts  ~{ktok:.0f}k tok")
         if r["missing"]:
             detail += "  LOST: " + ", ".join(r["missing"])
         print(f"  [{done[0]:3d}/{len(lakes)}] {mark} {secs}  {name[:42]:44s}{detail}"

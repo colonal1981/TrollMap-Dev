@@ -308,6 +308,21 @@ function sanitize(str) {
 
 function cleanLakeBaseName(lakeName) {
   let base = String(lakeName || '').trim();
+  // THE COUNTY STAMP IS OURS, NOT THE WATER'S, AND IT WAS BEING SENT TO THE EXTRACTOR AS THE
+  // NAME TO LOOK FOR. consolidate_lake_index.py appends "(Hall Co, GA)" so two lakes with one
+  // name can be told apart in a dropdown; no document ever written about the water contains it.
+  // This function feeds `baseName` into /research/analyze-facts, whose prompt says: "Only
+  // extract facts that explicitly mention <baseName> or <lakeName>..." -- so for Lake Sidney
+  // Lanier (Hall Co, GA) the extractor was told to look for "Sidney Lanier (Hall Co, GA)".
+  //
+  // Measured 2026-09-01: Lanier returned ONE fact from three documents; Lake Townsend
+  // (Guilford Co, NC), whose base name survives as plain "Townsend", returned eight from six.
+  //
+  // Third place the county stamp has done this. `legacyStorageName()` in Worker/research/keys.js
+  // strips it for storage ids and `lakeTerms()` in js/utils/doc-relevance.js strips it for the
+  // off-lake gate; both use this same regex, which wants `Co` as a word so that "Saluda River
+  // (2)" keeps its ordinal.
+  base = base.replace(/\s*\([^)]*\bCo\b[^)]*\)\s*/i, ' ').replace(/\s+/g, ' ').trim();
   base = base.replace(/^Lake\s+/i, '');
   base = base.replace(/,\s*(SC|NC|GA|TN)(?:\/(?:SC|NC|GA|TN))*\s*$/i, '').trim();
   base = base.replace(/\s+Reservoir$/i, '').trim();

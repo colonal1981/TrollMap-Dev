@@ -1126,7 +1126,21 @@ async function handleResearchAgent(request, env) {
     // somebody chose instead of one nobody counted. Ryan set the constraint and not the value:
     // "keep it under the cpu limit on the worker and under the rpm for the LLM... beyond that i
     // dont care."
-    const GROUP_CONCURRENCY = 2;
+    //
+    // ONE AT A TIME, NOT TWO. Ryan, 2026-09-01, on two runs that each lost a group to
+    // "This model is currently experiencing high demand": "i don't think that error is correct
+    // i think you are rate limitting because you are hitting all of the species at once."
+    //
+    // Counted from the code rather than argued: one lake with eight documents sends eight
+    // extraction calls at up to 150,000 characters each (research/extract.js), then one group
+    // call per species group carrying up to eight documents at 20,000 characters. That is about
+    // 420,000 input tokens inside a minute, and the free Gemini tier meters tokens per minute.
+    // Two groups in flight put the two largest prompts of the run on the wire together.
+    //
+    // Serial groups cost wall time and nothing else -- a group is one call and the lake is not
+    // waiting on anything. Measured cost of the change: roughly 10-20 s on a lake that already
+    // takes 50-100 s.
+    const GROUP_CONCURRENCY = 1;
     const runGroup = async ([groupName, groupSpecies]) => {
       const userPrompt = buildGroupPrompt(groupSpecies);
       const payload = {

@@ -189,7 +189,8 @@ let _geminiRoundRobinIdx = 0;
 async function callLLM(env, payload, preferredProvider = null) {
   // If no preferred provider specified and we have multiple gemini-free keys,
   // auto-rotate across them to spread RPM load
-  // THE ROTATION PICKS WHERE THE CHAIN STARTS, NOT WHERE IT ENDS.
+  // THE ROTATION PICKS WHERE THE ROTATION STARTS, NOT WHERE IT ENDS -- AND IT NEVER LEAVES THE
+  // FREE GEMINI KEYS.
   //
   // It was written to spread RPM across several free Gemini keys, and it did -- but it set
   // `preferredProvider`, and the line below reads that as "this provider and no other". So from
@@ -201,9 +202,15 @@ async function callLLM(env, payload, preferredProvider = null) {
   // Measured 2026-09-01, two consecutive runs of the fisheries batch. Both lost a whole species
   // group to the same sentence: "gemini/gemini-3.1-flash-lite: This model is currently
   // experiencing high demand." First run took the crappie group off Lake Sidney Lanier
-  // (Hall Co, GA); second run took the bass group, three species of five. A transient spike on
-  // one key is not a reason to fail a call when other keys and other providers are configured,
-  // and across 64 lakes it would have left dozens of waters quietly short.
+  // (Hall Co, GA); second run took the bass group, three species of five.
+  //
+  // GROQ, OPENROUTER AND CEREBRAS ARE NOT THE ANSWER AND MUST NOT BE IN THIS CHAIN. Ryan,
+  // 2026-09-01: "you can't use groq and cerebras... the rpm for them is completely different so
+  // is the token size limits... that is why they were removed." They are still in LLM_PROVIDERS
+  // for callers that name them outright, and a first attempt at this fix let the rotated chain
+  // fall through to them -- which would have sent a 160,000-character fisheries prompt at a
+  // provider whose limits were never sized for it. The fallback stays inside the free Gemini
+  // keys, which share one shape of request.
   //
   // An EXPLICIT preferredProvider still pins -- a caller that names a provider means it.
   let rotated = false;
@@ -219,13 +226,15 @@ async function callLLM(env, payload, preferredProvider = null) {
       rotated = true;
     }
   }
-  const generalChain = LLM_PROVIDERS.filter(p => env[p.keyEnv] && !p.excludeFromGeneral);
   const providers = !preferredProvider
-    ? generalChain
+    ? LLM_PROVIDERS.filter(p => env[p.keyEnv] && !p.excludeFromGeneral)
     : rotated
-      // The rotated key first, then everything else the chain would have offered.
+      // The rotated key first, then the OTHER FREE GEMINI KEYS and nothing else. Same model
+      // family, same request shape, same limits -- a spike on one key is answered by another
+      // key rather than by a provider sized differently.
       ? [...LLM_PROVIDERS.filter(p => p.name === preferredProvider),
-         ...generalChain.filter(p => p.name !== preferredProvider)]
+         ...LLM_PROVIDERS.filter(p => p.name !== preferredProvider
+                                   && /^gemini-free/.test(p.name) && env[p.keyEnv])]
       : LLM_PROVIDERS.filter(p => p.name === preferredProvider);
 
   if (!providers.length) {
