@@ -122,6 +122,46 @@ for n, c in kept:
     if n != c:
         print('        %-28s -> %s' % (n, c))
 
+# ── THE PADDLE LAUNCHES, WHICH ARE THE ACCESS A KAYAK ACTUALLY USES ────────────────────────
+#
+# The species counter added to the ramps build found this the first time it ran:
+#
+#     ramps  GA   659 pts, 218 waterbodies      659 of 659 points name a fish
+#     paddle GA   722 pts, 288 waterbodies        0 of 722 points name a fish
+#
+# Same layer, same 895 features, different source table -- fetch_dnr_paddle.py filters on
+# CanoeAcc where the ramp build filters on Ramp, and its meta dropped the species. South
+# Carolina had the same hole for the same reason: its paddle launches come off the identical
+# layer as its ramps, filtered to a different WaterAccessType, so a paddle launch arrived with
+# no fish while the boat ramp two hundred yards away arrived with ten.
+print('\nthe paddle sources carry species too')
+_p = importlib.util.spec_from_file_location('fdp', os.path.join(_HERE, 'fetch_dnr_paddle.py'))
+P = importlib.util.module_from_spec(_p); _p.loader.exec_module(P)
+
+ga_paddle = [f['properties'] for f in FEATURES if P.SOURCES['ga']['filter'](f['properties'])]
+named = [p for p in ga_paddle if P.SOURCES['ga']['meta'](p).get('species')]
+check('GA paddle launches naming a fish', len(ga_paddle) - len(named), 3)
+print('   .... %d of %d GA canoe-access points name a fish' % (len(named), len(ga_paddle)))
+
+# SC's paddle meta must ASK for the field its layer publishes. Asserted on a synthetic feature
+# because the SC layer is not on the drive as a geojson -- what is being tested is the reader,
+# not the data.
+check('SC paddle meta carries SpeciesList',
+      P.SOURCES['sc']['meta']({'SpeciesList': 'Bluegill, Redbreast Sunfish'}).get('species'),
+      'Bluegill, Redbreast Sunfish')
+
+# ONE DEFINITION ON THE PYTHON SIDE TOO. build_dnr_ramps_by_lake.py imports ga_species from
+# fetch_dnr_paddle.py rather than keeping its own; a second copy is how the table drifts.
+#
+# Asserted on the SOURCE, not on object identity: this test loads fetch_dnr_paddle.py a second
+# time under its own module name, so `B.ga_species is P.ga_species` is False for a reason that
+# has nothing to do with the code -- a check that fails for the wrong reason is worse than none.
+_bsrc = open(os.path.join(_HERE, 'build_dnr_ramps_by_lake.py'), encoding='utf-8').read()
+check('the build script imports the shared reader',
+      'ga_species' in _bsrc.split('SOURCES = {')[0] and '\ndef ga_species(' not in _bsrc, True)
+check('and both reach the same 48 columns',
+      P._ga_species_columns() == B._ga_species_columns(), True)
+
 print('\n%s' % ('%d check(s) FAILED: %s' % (len(FAILED), ', '.join(FAILED)) if FAILED
                 else 'all checks passed'))
 sys.exit(1 if FAILED else 0)

@@ -59,6 +59,57 @@ def flag_yes(v):
 # Mirrors PADDLE_SOURCES in Worker/trollmap-worker.js.  Keep the predicates in
 # lockstep with that file -- if they drift, the --compare check below fails,
 # which is the point.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+# ── Georgia's species columns, READ FROM THE ONE DEFINITION ─────────────────────────────────
+#
+# This module and build_dnr_ramps_by_lake.py keep INDEPENDENT source predicates on purpose --
+# a second implementation is what catches a filter that silently rejects every row, which is
+# what this file's own header says it exists for. That argument does not reach a table of
+# forty-eight abbreviations: a wrong predicate shows up as a count of zero and gets caught,
+# while `HybStrpBas` mapped to the wrong fish is a wrong fish that looks like a right one.
+#
+# So the table lives once, in js/data/ga-access-species.js, which the Worker imports directly.
+# Node once at import, not per feature. It lives HERE rather than in the build script because
+# both need it and this is the module the build script already imports from.
+def _ga_species_columns():
+    import subprocess
+    tries = [os.path.abspath(os.path.join(_HERE, '..', 'js', 'data', 'ga-access-species.js')),
+             os.path.abspath(os.path.join(_HERE, '..', 'TrollMap-Dev', 'js', 'data',
+                                          'ga-access-species.js'))]
+    src = next((t for t in tries if os.path.exists(t)), None)
+    if not src:
+        raise SystemExit('!! cannot find ga-access-species.js -- it is the one definition of '
+                         "Georgia's species columns and this script will not guess at it. "
+                         'Looked in:\n    %s' % '\n    '.join(tries))
+    script = ("const m = await import(%s);"
+              "process.stdout.write(JSON.stringify(m.GA_ACCESS_SPECIES_COLUMNS));"
+              % json.dumps('file://' + src.replace(os.sep, '/')))
+    proc = subprocess.run(['node', '--input-type=module', '-e', script],
+                          capture_output=True, text=True, encoding='utf-8')
+    if proc.returncode != 0:
+        raise SystemExit('!! could not read the Georgia species columns under node: %s'
+                         % (proc.stderr or '').strip()[:300])
+    return json.loads(proc.stdout)
+
+
+_GA_COLUMNS = None
+
+
+def ga_species(props):
+    """One GA access point -> its fish, comma-joined the way SCDNR's SpeciesList arrives.
+
+    `Y` IS THE ONLY YES. The layer's values are Y, N, U, None and blank -- counted across all
+    895 points on 2026-09-02 -- and `U` is unknown, which is not a fish.
+    """
+    global _GA_COLUMNS
+    if _GA_COLUMNS is None:
+        _GA_COLUMNS = _ga_species_columns()
+    return ', '.join(name for col, name in _GA_COLUMNS.items()
+                     if str(props.get(col) or '').strip().upper() == 'Y')
+
+
 SOURCES = {
     'sc': {
         'url': 'https://services.arcgis.com/acgZYxoN5Oj8pDLa/arcgis/rest/services/'
@@ -68,9 +119,14 @@ SOURCES = {
                              and _s(p.get('PublicAccess')).lower() != 'closed'),
         'name': lambda p: p.get('WaterAccessName'),
         'wb': lambda p: p.get('Waterbody'),
+        # THE SAME LAYER AS THE RAMPS, FILTERED TO A DIFFERENT ACCESS TYPE -- so it carries
+        # the same `SpeciesList`, and dropping it here meant every SC paddle launch arrived
+        # with no fish while the ramp two hundred yards away arrived with ten. For a kayak the
+        # paddle launch is the more relevant of the two.
         'meta': lambda p: {'subtype': p.get('WaterAccessSubType'),
                            'county': p.get('County'),
-                           'owner': p.get('Owner')},
+                           'owner': p.get('Owner'),
+                           'species': p.get('SpeciesList')},
     },
     'nc': {
         'url': 'https://services1.arcgis.com/YfqBAUM5nWR3yhGP/arcgis/rest/services/'
@@ -96,7 +152,10 @@ SOURCES = {
                              and _s(p.get('Status')).lower() not in ('closed', 'inactive')),
         'name': lambda p: p.get('Name'),
         'wb': lambda p: p.get('Waterbody'),
-        'meta': lambda p: {'county': p.get('County'), 'owner': p.get('Owner')},
+        # Same WRD layer as the ramps, filtered on CanoeAcc instead of Ramp, so the same
+        # forty-eight species columns are on every feature. See ga_species() above.
+        'meta': lambda p: {'county': p.get('County'), 'owner': p.get('Owner'),
+                           'species': ga_species(p)},
     },
     'tn': {
         'url': 'https://services3.arcgis.com/PWXNAH2YKmZY7lBq/arcgis/rest/services/'
