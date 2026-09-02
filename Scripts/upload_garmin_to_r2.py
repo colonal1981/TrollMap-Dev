@@ -675,7 +675,8 @@ def main():
         print("!! NO REGISTRY DIR -- looked beside --root and in ./registry.")
         print("!! NONE of the _registry/ objects will be published -- lakes.json, "
               "lake_index.json, water_bindings.json, water_chain.json, dam_table.json, "
-              "nc_species_by_lake.json, agency_lake_facts.json, full_pool.json.")
+              "nc_species_by_lake.json, agency_lake_facts.json, species_traits.json, "
+              "full_pool.json.")
         print("!! The app reads all three: lake-registry.js loads the index, and "
               "Worker/conditions.js")
         print("!! answers every level, flow and tide request off the bindings.")
@@ -834,6 +835,32 @@ def main():
         else:
             print(f"!! {af.name} not found -- SC/GA/TN waters research without the roster their "
                   f"own agency publishes; build it with build_agency_lake_facts.py")
+
+
+        # SPECIES TRAITS -- what the states publish about the FISH, as opposed to the water.
+        #
+        # The other axis of agency_lake_facts.json above. That one is per water; this is per
+        # species and statewide, out of SCDNR's Guide to Freshwater Fishes of South Carolina and
+        # NC WRC's Wildlife Profiles. It is the answer to `biology.spawnTiming`, which was cut on
+        # 2026-09-01 because a lake's documents do not say when a fish spawns -- these documents
+        # do, and both were already on the drive.
+        #
+        # Seventh file in this block, and the first one added by somebody who read the note above
+        # rather than by somebody finding out the hard way. Three lists, not one:
+        # here, verify_registry_r2.py's EXPECT, and Worker/registry.js:speciesTraits().
+        st = regdir / "species_traits.json"
+        if st.exists():
+            _st = json.load(open(st, encoding="utf-8"))
+            reg_jobs.append((str(st), f"{args.prefix}_registry/species_traits.json",
+                             "_registry", "species_traits"))
+            _rows = sum(len(v or []) for v in (_st.get("species") or {}).values())
+            print(f"traits:   {_st.get('species_count', 0):,} species, {_rows:,} agency rows -> "
+                  f"{args.prefix}_registry/species_traits.json "
+                  f"({st.stat().st_size/1024:.0f} KB before gzip)")
+        else:
+            print(f"!! {st.name} not found -- the fisheries agent writes spawning timing from "
+                  f"recollection instead of the state's own number; build it with "
+                  f"build_species_traits.py --go")
 
 
         # FULL POOL -- the elevation each Garmin chart is sounded to.

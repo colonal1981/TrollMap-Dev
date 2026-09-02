@@ -129,6 +129,10 @@ FILES = [
      "Worker/research/deterministic.js and the fisheries agent read the state's own lake pages "
      "off this -- 83 waters, 205 species sections. Without it every NC, TN, GA and SC water "
      "loses the roster and the prose its own agency published"),
+    ("species_traits.json", "species_traits.json", "verbatim",
+     "Worker/research/agents.js:speciesTraitsEntries() gives the fisheries agent the state's own "
+     "spawning temperature and habitat paragraph for each fish -- 27 species, 32 rows. Without it "
+     "the agent writes spawn timing from recollection, which is the reason the field was cut"),
 ]
 
 

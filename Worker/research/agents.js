@@ -2,7 +2,7 @@
 import { JSON_HEADERS, callLLM, extractLLMText } from '../worker-core.js';
 import { fetchDukeOperatingRange } from '../worker-data.js';
 import { dukePoolManagement } from '../conditions.js';
-import { lakeIndex, resolveRegistryRow, agencyLakeFacts } from '../registry.js';
+import { lakeIndex, resolveRegistryRow, agencyLakeFacts, speciesTraits } from '../registry.js';
 // MOVED 2026-08-31. identityGrounding() assembles the registry identity and the live pool
 // numbers, and this file handed the result to an LLM as context. That is backwards: it is a
 // deterministic fact, so it now lives in deterministic.js, is written straight into the
@@ -487,7 +487,7 @@ JSON only. Never output a string or array for creelLimits or sizeLimits.`;
 Lake: ${lakeName}
 Lake profile (use for confirmed species, forage, limnology context):
 ${JSON.stringify(cleanProfile(prev), null, 2).slice(0, 12000)}
-${docSection}${prev?._agencyBlock || ''}${prev?._behaviourBlock || ''}
+${docSection}${prev?._agencyBlock || ''}${prev?._traitsBlock || ''}${prev?._behaviourBlock || ''}
 
 ${discover ? `NO SPECIES LIST EXISTS FOR THIS WATER. ESTABLISH ONE FIRST, THEN WRITE THE INTELLIGENCE.
 
@@ -929,6 +929,74 @@ function agencyGuidanceBlock(entries, species) {
     + shown.map((e) => e.text).join('\n');
 }
 
+/**
+ * The state's own paragraph about the FISH, for the fish this call is about.
+ *
+ * agencyGuidanceEntries() above answers "what does the state say about this lake". This answers
+ * "what does the state say about this species", which is the question `biology.spawnTiming`,
+ * `baitfishMovement` and `forageSpatial` were asking a lake's documents and never getting an
+ * answer to -- a population assessment does not say when crappie spawn. SCDNR and NC WRC both
+ * publish it, per species and statewide, and both documents were already on the drive.
+ *
+ * "As water temperatures approach 60 degrees Fahrenheit in late February to early May, male black
+ * crappie build their nests on top of sand, gravel or mud" -- SCDNR, black crappie. The app
+ * already knows today's water temperature, so that sentence beside a live 58 is a plan input in
+ * a way that "spawn timing: spring" never was.
+ *
+ * PREFER THE WATER'S OWN STATE. Both states describe the same fish and neither is wrong, but a
+ * Carolina angler's water is in one of them, and NCWRC writes about NC reservoirs by name. The
+ * other state's row is used only where the water's own agency does not cover the species -- the
+ * guide's 27 species against NCWRC's 4.
+ */
+async function speciesTraitsEntries(env, state) {
+  let table = null;
+  try {
+    table = await speciesTraits(env);
+  } catch (err) {
+    // The object is published by the pipeline, not the Worker. Its absence thins one block.
+    console.warn('[research:fisheries] species traits lookup failed:', err && err.message);
+    return [];
+  }
+  const home = String(state || '').trim().toUpperCase();
+  const entries = [];
+  for (const [name, rows] of Object.entries(table || {})) {
+    const list = Array.isArray(rows) ? rows : [];
+    const mine = list.filter((r) => String(r && r.state || '').toUpperCase() === home);
+    for (const r of (mine.length ? mine : list)) {
+      const parts = Object.entries(r.sections || {})
+        .map(([k, v]) => `      ${k.toUpperCase()}: ${String(v || '').replace(/\s+/g, ' ').trim()}`)
+        .filter((line) => line.length > 30);
+      if (!parts.length) continue;
+      const where = r.state === home ? `${r.agency}, ${r.state}` : `${r.agency}, ${r.state} — the neighbouring state`;
+      entries.push({ species: name, text: `  ${name} — ${where}\n${parts.join('\n')}` });
+    }
+  }
+  return entries;
+}
+
+/**
+ * The block for ONE group's species, for the same reason agencyGuidanceBlock() is: the fisheries
+ * agent runs a call per species group and a call about catfish has no use for the crappie
+ * paragraph. Unfiltered this is 30 KB and every group would have carried all of it.
+ */
+function speciesTraitsBlock(entries, species) {
+  const all = Array.isArray(entries) ? entries : [];
+  if (!all.length) return '';
+  const canon = (n) => String(canonicalizeResearchSpecies(n) || n || '').toLowerCase().trim();
+  const want = new Set((Array.isArray(species) ? species : []).map(canon).filter(Boolean));
+  const shown = want.size ? all.filter((e) => want.has(canon(e.species))) : all;
+  if (!shown.length) return '';
+  return `\n\nTHE STATE'S OWN SPECIES ACCOUNT — statewide, not about this lake.\n`
+    + `Read off SCDNR's Guide to Freshwater Fishes of South Carolina and NC WRC's Wildlife\n`
+    + `Profiles by a deterministic parser and quoted as the agency wrote it. It is the state\n`
+    + `saying when this fish spawns, at what water temperature, at what depth, and on what.\n`
+    + `USE THE NUMBERS. A spawning temperature, a month range or a nesting depth written here is\n`
+    + `the state's, and goes into seasonal timing as written rather than a recollected one.\n`
+    + `IT IS NOT ABOUT THIS WATER. Where it disagrees with the lake page above, or with a\n`
+    + `document about this lake, THOSE win -- this is the general case, they are the specific one.\n`
+    + shown.map((e) => e.text).join('\n');
+}
+
 async function handleResearchAgent(request, env) {
   let body;
   try { body = await request.json(); } catch { return new Response(JSON.stringify({success:false, error:"invalid JSON body"}), {status:400, headers:JSON_HEADERS}); }
@@ -1142,6 +1210,15 @@ async function handleResearchAgent(request, env) {
       console.log(`[research:fisheries] agency lake page in play for ${lakeName}: `
                 + `${agencyEntries.map((e) => e.species).join(', ')}`);
     }
+    const traitEntries = await speciesTraitsEntries(env, state);
+    if (traitEntries.length) {
+      groundedPrev = {
+        ...groundedPrev,
+        _traitsEntries: traitEntries,
+        _traitsBlock: speciesTraitsBlock(traitEntries, null),
+      };
+      console.log(`[research:fisheries] species accounts in play: ${traitEntries.length} row(s)`);
+    }
   }
 
   // ── Fisheries agent: run one LLM call per species group for focused extraction ──
@@ -1228,6 +1305,7 @@ async function handleResearchAgent(request, env) {
         biology: { ...bio, predatorSpecies: groupSpecies },
         // Only this group's species sections. See agencyGuidanceBlock().
         _agencyBlock: agencyGuidanceBlock(groundedPrev._agencyEntries, groupSpecies),
+        _traitsBlock: speciesTraitsBlock(groundedPrev._traitsEntries, groupSpecies),
       };
       return agent.userTemplate(lakeName, state, groupPrev);
     };

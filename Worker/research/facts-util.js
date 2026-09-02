@@ -35,6 +35,13 @@ const RESEARCH_SPECIES_CANON = {
   'redear sunfish': 'Redear Sunfish (Shellcracker)',
   'shellcracker': 'Redear Sunfish (Shellcracker)',
   'redbreast sunfish': 'Redbreast Sunfish',
+  // SCDNR PRINTS THE SHORT NAME. The Guide to Freshwater Fishes of South Carolina heads these two
+  // spreads "REDEAR" and "REDBREAST" with no "sunfish" after either, so without these rows the
+  // state's own spawning and habitat paragraphs for two fish the app already names bind to
+  // nothing. Found 2026-09-02 by build_species_traits.py, which reports every name it read that
+  // this table has no word for.
+  'redear': 'Redear Sunfish (Shellcracker)',
+  'redbreast': 'Redbreast Sunfish',
   'chain pickerel': 'Chain Pickerel',
   'bowfin': 'Bowfin',
   'yellow perch': 'Yellow Perch',

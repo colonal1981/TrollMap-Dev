@@ -30,6 +30,7 @@ export const WATER_CHAIN_KEY = '_registry/water_chain.json';
 export const DAM_TABLE_KEY = '_registry/dam_table.json';
 export const NC_SPECIES_KEY = '_registry/nc_species_by_lake.json';
 export const AGENCY_FACTS_KEY = '_registry/agency_lake_facts.json';
+export const SPECIES_TRAITS_KEY = '_registry/species_traits.json';
 export const REGULATIONS_KEY = '_registry/regulations.json';
 export const FULL_POOL_KEY = '_registry/full_pool.json';
 export const INDEX_TTL_S = 3600;
@@ -44,6 +45,8 @@ let _ncSpecies = null;
 let _ncSpeciesAt = 0;
 let _agencyFacts = null;
 let _agencyFactsAt = 0;
+let _speciesTraits = null;
+let _speciesTraitsAt = 0;
 
 /** Exposed for tests. Nothing in the Worker should need to call this. */
 export function _resetIndexCache() {
@@ -52,6 +55,7 @@ export function _resetIndexCache() {
   _index = null; _indexAt = 0; _chain = null; _chainAt = 0; _dams = null; _damsAt = 0;
   _ncSpecies = null; _ncSpeciesAt = 0;
   _agencyFacts = null; _agencyFactsAt = 0;
+  _speciesTraits = null; _speciesTraitsAt = 0;
 }
 
 /**
@@ -238,6 +242,45 @@ export async function agencyLakeFacts(env, opts = {}) {
   _agencyFacts = rows;
   _agencyFactsAt = now;
   return rows;
+}
+
+/**
+ * What each state publishes about a FISH, keyed by the app's own canonical species name.
+ *
+ * `build_species_traits.py` reads SCDNR's Guide to Freshwater Fishes of South Carolina and NC
+ * WRC's Wildlife Profiles and keeps four labelled sections per species -- Spawning, Preferred
+ * Habitat, Food Habits and Range for SC, Habitat and Habits for NC -- quoted as the agency wrote
+ * them. 27 species, 32 rows, 30 KB.
+ *
+ * THIS IS THE SIBLING OF agencyLakeFacts() AND THE OPPOSITE AXIS. That one is per WATER and
+ * answers "what does the state say about this lake". This one is per SPECIES and statewide, and
+ * answers "when does this fish spawn, and at what temperature" -- which is what
+ * `biology.spawnTiming` was asking sixty-four lakes' documents and never getting, because a lake
+ * report does not say it and the species guide does. Keyed by species precisely so it is NOT
+ * copied onto every water.
+ *
+ * Same cadence and same failure mode as the loaders above: the object changes when the PIPELINE
+ * uploads, not when the Worker deploys, and a missing object is an error naming the script that
+ * writes it. The caller catches -- a species the guide does not cover must still produce a plan.
+ */
+export async function speciesTraits(env, opts = {}) {
+  const now = Number.isFinite(opts.now) ? opts.now : Date.now();
+  if (!opts.fresh && _speciesTraits && now - _speciesTraitsAt < INDEX_TTL_S * 1000) return _speciesTraits;
+  const bucket = (env && env.R2_TROLLMAP_CHARTPACKS) || opts.bucket;
+  if (!bucket) throw new Error('R2_TROLLMAP_CHARTPACKS is not bound to this Worker');
+  const obj = await bucket.get(SPECIES_TRAITS_KEY);
+  if (!obj) {
+    throw new Error(`${SPECIES_TRAITS_KEY} is not in the bucket -- run build_species_traits.py --go, `
+                  + 'then upload_garmin_to_r2.py');
+  }
+  const parsed = JSON.parse(await r2Text(obj));
+  const species = parsed && parsed.species;
+  if (!species || typeof species !== 'object' || Array.isArray(species)) {
+    throw new Error(`${SPECIES_TRAITS_KEY} has no "species" object keyed by canonical species name`);
+  }
+  _speciesTraits = species;
+  _speciesTraitsAt = now;
+  return species;
 }
 
 let _regs = null;
