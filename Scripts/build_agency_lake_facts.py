@@ -523,6 +523,29 @@ def nc_species_vocab(root):
                   key=len, reverse=True)
 
 
+def group_term_vocab(root):
+    """GROUP_TERM_MAP's keys, READ OUT OF Worker/research/agents.js.
+
+    Sibling of nc_species_vocab() and here for the same reason: "bream", "black bass", "catfish",
+    "crappie", "trout" and "pickerel" are what SCDNR actually writes, and none of them is a key in
+    RESEARCH_SPECIES_CANON -- the Worker resolves them through this map instead. Filtering SC
+    prose against the canon alone would throw away the exact words the agency used. Returns []
+    when the repo is not beside the pipeline, and the caller then emits unfiltered.
+    """
+    src = os.path.join(root, 'TrollMap-Dev', 'Worker', 'research', 'agents.js')
+    if not os.path.exists(src):
+        return []
+    try:
+        txt = open(src, encoding='utf-8').read()
+    except OSError:
+        return []
+    i = txt.find('const GROUP_TERM_MAP')
+    if i < 0:
+        return []
+    seg = txt[i:txt.find('\n};', i)]
+    return sorted({m.group(1).lower() for m in re.finditer(r"^\s*'([^']+)'\s*:", seg, re.M)})
+
+
 def nc_water_in_title(title, name_keys):
     """The longest registry name the title contains, or None.
 
@@ -1022,7 +1045,7 @@ def read_one(path, spec, idx, multimap):
         return read_one_nc(path, spec, idx, multimap)
     blocks, raw = blocks_of(path)
     page = (tn_page(blocks) if reader == 'tn'
-            else sc_page(blocks, raw) if reader == 'sc'
+            else sc_page(blocks, raw, spec.get('_species') or ()) if reader == 'sc'
             else ga_page(blocks))
     if page is None:
         return None, 'not an %s page -- no reader for this template' % spec['agency'], None, raw
@@ -1090,6 +1113,11 @@ def main():
     for spec in SOURCES:
         if wanted and spec['state'] not in wanted:
             continue
+        if spec['reader'] == 'sc':
+            spec['_species'] = set(nc_species_vocab(root)) | set(group_term_vocab(root))
+            if not spec['_species']:
+                print('!! could not read RESEARCH_SPECIES_CANON / GROUP_TERM_MAP out of the repo '
+                      '-- SC roster names will be emitted unfiltered for the Worker to judge')
         if spec['reader'] == 'nc':
             # THE KEYS ARE SLUGIFIED. build_name_multimap keys on REG.slugify output --
             # `hyco_lake`, not `Hyco Lake` -- so a title match has to be made against the spaced
@@ -1350,7 +1378,153 @@ SC_TEMPLATE = re.compile(r'<h2[^>]*>\s*General Information\s*</h2>', re.I)
 SC_BANNER = re.compile(r'South Carolina Lakes and Waterways', re.I)
 
 
-def sc_page(blocks, raw):
+# ── THE SCDNR ROSTER SENTENCE ───────────────────────────────────────────────────────────────
+#
+# sc_page() returned `'species': []` as a LITERAL from the day it was written, on all 26 SCDNR
+# rows, while the pages it had already parsed named the fish in prose. Ryan, 2026-09-02, on being
+# told Lake Secession had nothing: *"there is 0 chance greenwood and secession are missing from
+# both the SC ramps feed species list or the SC lakes pages."* He was right about Secession --
+# its saved page has said this since 2026-08-27:
+#
+#     "Secession maintains an excellent fishery for black crappie and largemouth bass."
+#     "The lake also supports good fishing for catfish and bream (redear and bluegill)."
+#     "Secession maintains the rare opportunity for a seasonal (spring) fishery for white bass."
+#
+# THE PATTERNS ARE READ OFF THE REAL PAGES, NOT INVENTED. Every regex below was written against
+# the 47 fish-naming sentences in the saved folder and each one is quoted where it is used. This
+# matters because the last regex written against a sentence I typed rather than fetched -- the
+# Randleman title rule -- passed its test and missed the live document.
+#
+# AND A BARE FISH-WORD SCAN WOULD BE WRONG, which the same folder proves: Lake Thicketty's
+# directions say "Take an immediate left onto Trout View Road." So a species is only taken from a
+# ROSTER PHRASE -- a lead-in that says these fish are in this water -- and never from a word
+# sitting anywhere in the prose. Directions and Hours sections are not read at all.
+#
+# THE NAMES ARE NOT FILTERED HERE, for the reason already written above NC_ROSTER: emit the
+# phrase as SCDNR writes it and let uniqueResearchSpecies()/isKnownResearchSpecies() in the
+# Worker decide what is a fish. A second species vocabulary in Python is a second copy to drift.
+SC_ROSTER = (
+    # "providing largemouth bass, bluegill, shell-cracker, and catfish fishing" -- the state
+    # lakes boilerplate, 11 pages. "Both are fertilized and offer largemouth bass, bluegill,
+    # shellcracker, and channel catfish fishing." -- Mountain Lakes.
+    re.compile(r'\b(?:providing|provides|offers?|offering)\s+(.{5,200}?)\s+fishing\b', re.I),
+    # "Popular sport fish on Lake Wateree include black crappie, striped bass, largemouth bass
+    # and catfish." -- Wateree, Wylie, Fishing Creek. "Other popular game fish include ..." --
+    # Monticello. "...species targeted and caught by anglers on Lake Russell include warm-water
+    # species - black bass (spotted and largemouth), crappie, and catfish." -- Russell.
+    re.compile(r'\b(?:sport\s*fish|game\s*fish|gamefish|fish\s+species|fishing\s+opportunities)'
+               r'[^.]{0,80}?\binclud\w*\s+(.{5,240}?)\.', re.I),
+    # "serves host to a number of other popular gamefish including bluegill, redear sunfish,
+    # crappie and catfish." -- Murray. Kept separate: the lead-in noun is behind the verb here.
+    re.compile(r'\bhost\s+to[^.]{0,80}?\binclud\w*\s+(.{5,240}?)\.', re.I),
+    # "maintains an excellent fishery for black crappie and largemouth bass." / "also supports
+    # good fishing for catfish and bream (redear and bluegill)." -- Secession.
+    re.compile(r'\bfish(?:ery|ing)\s+for\s+(.{5,160}?)\s*(?:\.|,\s+but\b|\s+in\s+the\b)', re.I),
+    # "outstanding opportunities to catch three species of black bass, striped and hybrid bass,
+    # black crappie, and bream." -- Hartwell.
+    re.compile(r'\bopportunit\w+\s+to\s+catch\s+(.{5,200}?)\.', re.I),
+    # "excellent fish habitat for nearly all fish species that inhabit the lake (especially
+    # crappie, bream, and catfish)" and "providing habitat for largemouth bass, pickerel, bream,
+    # and many other species" -- Lake Marion. Habitat for a fish is SCDNR saying it is there.
+    re.compile(r'\bhabitat\s+for\s+(.{5,200}?)\.', re.I),
+    # "The state record spotted bass, redeye bass, smallmouth bass, brown trout, and rainbow
+    # trout were caught from Lake Jocassee." -- the strongest roster sentence on that page and
+    # the only one, since Jocassee's prose otherwise says only "ranging from trout to black bass".
+    re.compile(r'\bstate\s+record\s+(.{5,200}?)\s+(?:was|were)\s+caught', re.I),
+)
+# "three species of black bass" -- a count in front of the fish; "warm-water species -" in front
+# of Russell's list; "especially crappie, bream, and catfish" inside Lake Marion's parenthetical.
+# Every one of these is quoted off a saved page, not imagined.
+SC_LEADIN = re.compile(r'^(?:\w+\s+species\s+of\s+|[\w-]+\s+species\s*[-–]\s*|especially\s+|'
+                       r'an?\s+|the\s+)', re.I)
+SC_SPLIT = re.compile(r'\s*(?:,|&|;|\band\b|\bor\b)\s*', re.I)
+SC_PAREN = re.compile(r'\(([^)]*)\)')
+SC_NOT_A_FISH = re.compile(r'\b(?:road|river|lake|creek|county|area|habitat|opportunit|water|'
+                           r'population|season|angler|dam|park|acre)\b', re.I)
+
+
+def sc_complete(parts, vocab=()):
+    """Give a bare conjunct its head noun back, and ONLY when it needs one.
+
+    MIRRORS splitConjunctiveName() IN agents.js, which exists for TWRA's "Walleye and Sauger".
+    SCDNR elides the same way: "striped and hybrid bass" on Hartwell, "black bass (spotted and
+    largemouth)" on Russell. Splitting leaves "striped" and "spotted", which are not fish.
+
+    TWO RULES THE FIRST VERSION GOT WRONG, both caught by running it over the saved folder:
+
+    THE HEAD COMES FROM THE NEXT PART THAT HAS ONE, not from the last part of the list. English
+    elides forward -- "striped and hybrid bass" borrows from the word right after it. Hartwell's
+    full list is "black bass, striped and hybrid bass, black crappie, and bream", whose LAST part
+    is "bream" with no head at all, so the last-part rule left "striped" broken.
+
+    AND A PART THAT IS ALREADY A FISH IS LEFT ALONE. "largemouth bass, bluegill, shellcracker,
+    and channel catfish" ends in a two-word name, so lending its head turned bluegill into
+    "bluegill catfish" and shellcracker into "shellcracker catfish" -- three waters lost two
+    species each to a completion that fired where nothing was missing.
+    """
+    out = []
+    for i, p in enumerate(parts):
+        if ' ' in p or (vocab and p.lower() in vocab):
+            out.append(p)
+            continue
+        head = None
+        for q in parts[i + 1:]:
+            w = q.split()
+            if len(w) > 1:
+                head = w[-1]
+                break
+        out.append('%s %s' % (p, head) if head else p)
+    return out
+
+
+def sc_species(paras, vocab=()):
+    """[{name, notes}] out of SCDNR's roster sentences. `paras` is prose, never Directions.
+
+    A parenthetical is KEPT, not dropped: "bream (redear and bluegill)" is SCDNR naming three
+    fish, and "black bass (spotted and largemouth)" on Russell is the only place that page says
+    which black bass. Stripping brackets here would throw away the more specific half.
+    """
+    found, notes = [], {}
+    for p in paras:
+        for sent in re.split(r'(?<=[.!?])\s+', p):
+            for rx in SC_ROSTER:
+                m = rx.search(sent)
+                if not m:
+                    continue
+                phrase = re.sub(r'\s+', ' ', m.group(1)).strip()
+                parts = []
+                for inner in SC_PAREN.findall(phrase):
+                    parts += sc_complete([x for x in SC_SPLIT.split(inner) if x], vocab)
+                parts += sc_complete([x for x in SC_SPLIT.split(SC_PAREN.sub(' ', phrase)) if x], vocab)
+                for raw in parts:
+                    nm = SC_LEADIN.sub('', re.sub(r'\s+', ' ', raw).strip(' .,-')).strip()
+                    # "shell-cracker" and "shellcracker" are one fish spelled two ways on two
+                    # pages of the same folder; the Worker's alias table already folds it, and it
+                    # only gets there if the hyphen does not make it a different string.
+                    nm = re.sub(r'(?<=[a-z])-(?=[a-z])', '', nm)
+                    if len(nm) < 4 or len(nm) > 46 or SC_NOT_A_FISH.search(nm):
+                        continue
+                    # THE VOCABULARY IS THE WORKER'S, NOT A NEW ONE. `vocab` is
+                    # RESEARCH_SPECIES_CANON plus GROUP_TERM_MAP's keys, both read out of the
+                    # repo -- the same single source that already decides what is a fish
+                    # everywhere else. Without it "providing a boat ramp, picnic area and
+                    # fishing" contributes "boat ramp", and Lake Wateree contributes "boating"
+                    # and "bank". Measured before it was added: 106 names extracted, 25 of them
+                    # not fish. Empty vocab means the repo is not beside the pipeline, and then
+                    # everything is emitted for the Worker to judge, as the NC reader does.
+                    if vocab:
+                        probe = re.sub(r'(?<=[a-z])s$', '', nm.lower())
+                        if nm.lower() not in vocab and probe not in vocab:
+                            continue
+                    key = nm.lower()
+                    if key not in notes:
+                        notes[key] = {'name': nm, 'notes': []}
+                        found.append(notes[key])
+                    if sent.strip() not in notes[key]['notes']:
+                        notes[key]['notes'].append(sent.strip())
+    return found
+
+def sc_page(blocks, raw, vocab=()):
     """The SCDNR page, by its own labels.
 
     THE SECOND <h1> IS THE LAKE. The first is the site banner, 'South Carolina Lakes and
@@ -1425,8 +1599,14 @@ def sc_page(blocks, raw):
         measures.setdefault(key, {
             'value': int(v) if v == int(v) and units == 'count' else v,
             'units': units, 'text': '%s: %s' % (label, value)})
+    # DIRECTIONS AND HOURS ARE NOT PROSE ABOUT THE FISHERY. Lake Thicketty's directions say
+    # "Take an immediate left onto Trout View Road", which is how a species reader invents a
+    # trout stream out of a street name.
+    body_prose = list(overview) + [t for h, ps in sections.items()
+                                   if not re.match(r'directions|hours', h or '', re.I)
+                                   for t in ps]
     return {'name': name, 'overview': overview, 'general': general,
-            'sections': sections, 'measures': measures, 'species': []}
+            'sections': sections, 'measures': measures, 'species': sc_species(body_prose, vocab)}
 
 if __name__ == '__main__':
     sys.exit(main())
