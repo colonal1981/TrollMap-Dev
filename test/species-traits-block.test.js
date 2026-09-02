@@ -77,19 +77,22 @@ test('the water gets its own state, and the neighbour only where its own state i
   assert.ok(!scBluegill[0].text.includes('neighbouring'), 'an SC water gets SCDNR plainly');
 });
 
-test('a species none of the three guides covers gets no block, and nothing throws', async () => {
+test('a species none of the four guides covers gets no block, and nothing throws', async () => {
   const entries = await mod.speciesTraitsEntries({}, 'SC');
-  // On the form, in the books, and in none of the three species guides. Muskellunge WAS this
-  // test's example and stopped being one the day TWRA's guide was read -- which is the whole
-  // point of the file, so the example moves rather than the assertion softening.
-  for (const absent of ['Roanoke Bass', 'Shadow Bass', 'Kokanee Salmon', 'Northern Pike']) {
+  // On the form, in the books, and in none of the four species guides. This list keeps shrinking
+  // and that is the point of the file: MUSKELLUNGE stopped being an example the day TWRA's guide
+  // was read, SHADOW BASS the day GA DNR's page was. The example moves; the assertion does not
+  // soften. When it empties, every fish the books regulate has an account from some state.
+  for (const absent of ['Roanoke Bass', 'Kokanee Salmon', 'Northern Pike', 'Trout']) {
     assert.equal(mod.speciesTraitsBlock(entries, [absent]), '', `${absent} has no account`);
   }
   assert.equal(mod.speciesTraitsBlock([], null), '');
 });
 
 test('every species in the file produces a block in every state', async () => {
-  for (const state of ['SC', 'NC', 'TN']) {
+  // GA DNR joined the file on 2026-09-02 and was the last of the four -- until then every Georgia
+  // water was handed SCDNR's account of its fish, labelled as the neighbouring state's.
+  for (const state of ['SC', 'NC', 'TN', 'GA']) {
     const entries = await mod.speciesTraitsEntries({}, state);
     const named = new Set(entries.map((e) => e.species));
     assert.equal(named.size, TRAITS.species_count,

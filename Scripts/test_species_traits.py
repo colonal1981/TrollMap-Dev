@@ -92,6 +92,55 @@ else:
         contains('the state\'s spawning temperature is quotable', lmb['Spawning'],
                  'water temperatures range between 65-75')
 
+# ------------------------------------------------------------ GA DNR's identification page
+GA = os.path.join(ROOT, B.GA_DIR, B.GA_PAGE)
+if not os.path.exists(GA):
+    print('\nSKIP GA DNR -- %s is not on the drive. Run fetch_agency_lake_pages.py --state GA --go'
+          % os.path.join(B.GA_DIR, B.GA_PAGE))
+else:
+    print('\n%s' % os.path.join(B.GA_DIR, B.GA_PAGE))
+    ga = {g['name']: g for g in B.read_ga_page(GA, canon)}
+    check('the page carries about fifty fish', 40 < len(ga) < 60, True)
+
+    # 19. THE PAGE FILES ITS FISH LIKE AN INDEX -- "Bass, Largemouth", "Trout, Brook". Swapping on
+    #     the comma reads most of them and gets two wrong in a way no rule fixes: "Sunfish, Rock
+    #     Bass" is a rock bass, not a "Rock Bass Sunfish". The forms are offered and the app's own
+    #     vocabulary picks, which is a measurement rather than a guess about English.
+    for want in ('Largemouth Bass', 'Smallmouth Bass', 'Spotted Bass', 'Redeye Bass', 'Shoal Bass',
+                 'Black Crappie', 'Channel Catfish', 'Brook Trout', 'Chain Pickerel'):
+        check('%s is read off the inverted heading' % want, want in ga, True)
+    check('a fish whose tail IS the whole name is not inverted', 'Rock Bass' in ga, True)
+    check('nor the shadow bass', 'Shadow Bass' in ga, True)
+    check('and a name in the parentheses is offered too',
+          canon.get(B.norm_species(next(n for n in ga if 'Hybrid' in n))), 'White Bass / Hybrid')
+    check('a name with no comma is left alone', 'Walleye' in ga and 'Bowfin' in ga, True)
+
+    # 20. THE FIELD THIS WHOLE REFACTOR WENT LOOKING FOR.
+    contains("GA DNR's spawning temperature is in Habitat",
+             ga['Largemouth Bass']['sections'].get('Habitat', ''),
+             'Spawning activity begins when water reaches 63-68 degrees')
+    check('and the binomial comes off the same block',
+          ga['Largemouth Bass']['scientific'], 'Micropterus salmoides')
+
+    # 21. NOT A FISH. The page's furniture carries <h2> too -- "Search :", "About Us",
+    #     "Quick links", "Stay connected" -- and none of it has a labelled field.
+    for junk in ('Search', 'About Us', 'Quick links', 'Stay connected', 'featured'):
+        check('%s is not a species' % junk, junk in ga, False)
+
+    # 22. A STUB IS A VALUE WITH NOTHING IN IT, NOT A SHORT ONE. Georgia's whole Range field for
+    #     the largemouth is "Common throughout Georgia." -- 26 characters, a complete sentence,
+    #     and the answer to whether the fish is in the state at all. A `len > 30` floor dropped it.
+    check('a short complete sentence is kept',
+          ga['Largemouth Bass']['sections'].get('Range'), 'Common throughout Georgia.')
+
+    # 23. THE COLON IS ON BOTH SIDES OF THE </em>, depending on who typed the entry. Most read
+    #     `<em>Habitat</em>: ...`, seven read `<em>Habitat: </em>...`. Demanding the first
+    #     spelling dropped seven fish -- WALLEYE among them, which is the species this file was
+    #     extended for. Georgia's is the only walleye spawning temperature we hold.
+    check('the walleye survives the other spelling of the label', 'Walleye' in ga, True)
+    contains('with the number it was fetched for', ga['Walleye']['sections'].get('Habitat', ''),
+             'Spawns in spring when water reaches 45-50 degrees')
+
 # ------------------------------------------------------ TWRA's Angler's Guide to Tennessee Fish
 TN = os.path.join(ROOT, B.TN_GUIDE)
 if not os.path.exists(TN):

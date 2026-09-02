@@ -37,11 +37,13 @@ out of that text is attached to the wrong sentence. bands() below finds the real
 
 Personal use only, not for distribution or resale; not for navigation.
 """
-import argparse, collections, glob, json, os, re, sys
+import argparse, collections, glob, html, json, os, re, sys
 from datetime import datetime, timezone
 
 SC_GUIDE = 'FreshwaterFishPocketGuide.pdf'
 TN_GUIDE = 'anglersguide.pdf'
+GA_DIR = 'Georgia_Species'
+GA_PAGE = '_page_fishing-identification.html'
 NC_DIR = 'NC_Lakes'
 NC_PROFILE = '*species-profile*.pdf'
 MARK = '\x01'                                  # wraps a heading inside the assembled page text
@@ -68,6 +70,10 @@ NC_USEFUL = ['Habitat and Habits']
 # choose between -- and it is where the spawning temperature lives: "Spawning activity begins when
 # water temperatures approach 62-65 F."
 TN_USEFUL = ['Account']
+# GA DNR labels four of its six, and `Habitat` is where the spawning temperature lives:
+# "Spawning activity begins when water reaches 63-68 degrees." Description is physical
+# identification -- the jawbone and the dorsal notch -- and is kept in the file, not carried.
+GA_USEFUL = ['Habitat', 'Food Habits', 'Tips', 'Range']
 
 
 # ---------------------------------------------------------------- reading a page as a human does
@@ -423,6 +429,87 @@ def read_tn_guide(path):
     return out
 
 
+# GEORGIA PUBLISHES FIFTY SPECIES ON ONE PAGE, AND NAMES THEM BACKWARDS.
+#
+# georgiawildlife.com/fishing/identification, saved by fetch_agency_lake_pages.py --state GA. The
+# markup is regular to the point of being pleasant: an <h2> per fish, then one <p> per labelled
+# field with the label in <em>.
+#
+#     <h2>Bass, Largemouth</h2>
+#     <p><em>Scientific Name</em>: <em>Micropterus salmoides</em></p>
+#     <p><em>Habitat</em>: ... Spawning activity begins when water reaches 63-68 degrees.</p>
+#
+# Georgia was the last of the four states with no species account of its own, so every GA water --
+# Hartwell, Lanier, Russell, Thurmond, Burton -- was handed SCDNR's and told it was the neighbour's.
+GA_H2 = re.compile(r'<h2[^>]*>(.*?)</h2>(.*?)(?=<h2[^>]*>|\Z)', re.S | re.I)
+# THE COLON IS ON BOTH SIDES OF THE </em>, DEPENDING ON WHO TYPED THE ENTRY. Most read
+# `<em>Habitat</em>: ...` and some read `<em>Habitat: </em>...` -- the walleye, and six others.
+# Demanding the first spelling silently dropped seven fish, walleye among them, and walleye is the
+# species this file was extended for in the first place: "Spawns in spring when water reaches
+# 45-50 degrees over rocky bottoms in rivers."
+GA_FIELD = re.compile(r'<em>\s*([A-Za-z][A-Za-z /]{2,24}?)\s*:?\s*</em>\s*:?\s*(.*?)</p>',
+                      re.S | re.I)
+GA_TAGS = re.compile(r'<[^>]+>')
+
+
+def ga_text(fragment):
+    return re.sub(r'\s+', ' ', html.unescape(GA_TAGS.sub(' ', fragment or ''))).strip()
+
+
+def ga_name_candidates(h2):
+    """Every form of the name this page might mean, best first.
+
+    THE PAGE FILES ITS FISH LIKE AN INDEX: "Bass, Largemouth", "Catfish, Channel", "Trout, Brook".
+    Swapping on the comma reads most of them -- and gets two wrong in a way no rule fixes, because
+    "Sunfish, Rock Bass" is a rock bass and "Sunfish, Shadow Bass" is a shadow bass, not a
+    "Rock Bass Sunfish". So the forms are OFFERED and the app's own vocabulary decides which one
+    it recognises; that is a measurement rather than a guess about English.
+    """
+    raw = re.sub(r'\s+', ' ', str(h2 or '')).strip()
+    paren = re.findall(r'\(([^)]+)\)', raw)
+    bare = re.sub(r'\s*\([^)]*\)', '', raw).strip()
+    out = [bare]
+    if ',' in bare:
+        head, tail = [x.strip() for x in bare.split(',', 1)]
+        out += ['%s %s' % (tail, head), tail]
+    out += paren
+    seen, uniq = set(), []
+    for c in out:
+        if c and c.lower() not in seen:
+            seen.add(c.lower())
+            uniq.append(c)
+    return uniq
+
+
+def read_ga_page(path, canon):
+    """One entry per <h2> that carries labelled fields.
+
+    `canon` is passed in because the NAME cannot be settled without it -- see
+    ga_name_candidates(). Every other reader here names the fish and lets main() look it up.
+    """
+    src = open(path, encoding='utf-8', errors='replace').read()
+    i = src.find('field--name-body')
+    body = src[i:] if i >= 0 else src
+    out = []
+    for m in GA_H2.finditer(body):
+        block = m.group(2)
+        fields = {}
+        for f in GA_FIELD.finditer(block):
+            label = ga_text(f.group(1)).strip(' :')
+            value = ga_text(f.group(2))
+            if label and value:
+                fields.setdefault(label, value)
+        if 'Habitat' not in fields and 'Description' not in fields:
+            continue                      # "Search :", "About Us", "Stay connected"
+        cands = ga_name_candidates(ga_text(m.group(1)))
+        name = next((c for c in cands if canon.get(norm_species(c))), cands[0] if cands else None)
+        if not name:
+            continue
+        out.append({'name': name, 'scientific': fields.pop('Scientific Name', None),
+                    'sections': fields, 'page': None})
+    return out
+
+
 def sc_sections(text):
     parts = SC_RX.split(dehyphen(re.sub(r'\s+', ' ', text)))
     out = collections.OrderedDict()
@@ -561,6 +648,16 @@ def main():
     else:
         print('!! %s is not beside the root -- no SC species traits' % SC_GUIDE)
 
+    ga = os.path.join(root, GA_DIR, GA_PAGE)
+    if os.path.exists(ga):
+        got = read_ga_page(ga, canon)
+        print('GA DNR %-42s %d species entr(ies)' % (os.path.join(GA_DIR, GA_PAGE), len(got)))
+        for g in got:
+            entries.append(('GA', 'GA DNR', GA_PAGE, GA_USEFUL, g))
+    else:
+        print('!! %s is not on the drive -- no GA species accounts. Run '
+              'fetch_agency_lake_pages.py --state GA --go' % os.path.join(GA_DIR, GA_PAGE))
+
     tn = os.path.join(root, TN_GUIDE)
     if os.path.exists(tn):
         got = read_tn_guide(tn)
@@ -585,7 +682,13 @@ def main():
         if not key:
             unknown.append('%-34s %s  no name in the app\'s vocabulary' % (g['name'], state))
             continue
-        keep = {k: v for k, v in g['sections'].items() if k in useful and len(v) > 30}
+        # A STUB IS A VALUE WITH NOTHING IN IT, NOT A SHORT ONE. This was `len(v) > 30`, which is
+        # fine for SCDNR's paragraphs and wrong for GA DNR's, where the whole Range field is
+        # "Common throughout Georgia." -- 26 characters, a complete sentence, and the answer to
+        # whether the fish is even in the state. Three words is the floor now, which still drops
+        # SCDNR's "Statewide." and the empty ones.
+        keep = {k: v for k, v in g['sections'].items()
+                if k in useful and len(v.split()) >= 3}
         if not keep:
             unknown.append('%-34s %s  %s' % (g['name'], state,
                                              g.get('why') or 'none of %s carried text' % useful))
