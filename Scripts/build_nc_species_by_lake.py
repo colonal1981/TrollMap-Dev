@@ -370,6 +370,31 @@ def load_areas(a):
     return get_json(AREAS_URL)
 
 
+# A RAMP IS ON THE BANK, AND THE BOX IS DRAWN AROUND THE WATER.
+#
+# `bounds_wsen` comes from the 3DHP water polygon, so a boat ramp, its parking lot and the
+# fishing pier beside it are OUTSIDE it by construction -- not by a little, but by exactly the
+# width of the thing that lets you launch. Requiring the point to fall inside the unpadded box
+# therefore refused locations whose waterbodyName is an exact match for the water they sit on:
+# RANKIN LAKE PARK on Rankin Lake, CANE CREEK PARK on Cane Creek Lake, LAKE JUNALUSKA ASSEMBLY
+# OFFICE on Lake Junaluska.
+#
+# THE NUMBER IS NOT A KNOB, BECAUSE WIDENING IT CANNOT BUY ANYTHING. Re-binding all 891
+# locations at 0.005, 0.01, 0.02, 0.05 and 0.1 degrees never reaches a water 0.002 did not --
+# and at 0.05 the count FALLS, because a location then lands inside two padded boxes whose names
+# it both answers to and the name rule refuses it. So this is a fixed offset (the width of a
+# ramp) and not a threshold somebody can loosen for more results: loosening it costs results.
+# test_ncpaws_access.py asserts exactly that, since the claim is the whole justification.
+#
+# Measured 2026-09-02: 886 of 891 bindings identical, 5 changed, every one of them REFUSED -> a
+# water whose name the location already stated, and no location moved between waters. 77 -> 81.
+#
+# THE NAME REQUIREMENT BELOW IS UNCHANGED. Padding widens the candidate set; it does not weaken
+# the second signal. A location that lands in two padded boxes and matches neither name is still
+# refused, which is why the flat curve is a safe curve.
+BANK_PAD_DEG = 0.002
+
+
 def bind(loc, idx, by_name, by_bare):
     """(slug, how) for one location, or (None, why).
 
@@ -378,7 +403,7 @@ def bind(loc, idx, by_name, by_bare):
     lat, lon = loc.get('latitude'), loc.get('longitude')
     if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
         return None, 'no coordinate'
-    boxes = [s for s in idx if in_box(idx[s], lat, lon)]
+    boxes = [s for s in idx if in_box(idx[s], lat, lon, BANK_PAD_DEG)]
     if not boxes:
         return None, 'outside every registry water'
 
@@ -417,6 +442,75 @@ def bind(loc, idx, by_name, by_bare):
     # whose water we cannot name is refused and written to _nc_species_unmatched.json where it
     # can be read.
     return None, ('inside %d box(es), name agrees with none' % len(boxes))
+
+
+# ── THE OTHER TWENTY-THREE FIELDS ON THE SAME RESPONSE ─────────────────────────────────────
+#
+# GetFishingAreaInfo answers twenty-four fields per location and this script read exactly one of
+# them -- `speciesInfo` -- for every run before 2026-09-02. Counted across the 345 cached
+# responses, the ones it threw away include:
+#
+#     canoeAccess        233 true      boatRamp             176 true
+#     wheelchairAccess   178 true      shorelineAccess      161 true
+#     fishingPierAccess   71 true      waterbodyInfo.acres   48 populated
+#
+# `canoeAccess` is the one that matters here, because this is a kayak app and because NC is the
+# state where paddle access is thinnest: `dnr_paddle_by_lake.json` carries 38 NC waters, built
+# from NCWRC_Boating_Access_Areas_view's Non_Motorized_Access flag -- a DIFFERENT NCWRC layer,
+# 137 points. Measured 2026-09-02 against that file: 162 canoeAccess points on waters we ship
+# have no paddle site of ours within ~200 m, across 57 waters; 69 boatRamp points likewise have
+# no ramp of ours. French Broad River alone is missing 18, the Yadkin 13, Jordan 10.
+#
+# This is the same fact, from the same agency, about the same launch, already fetched and already
+# bound to a slug by the geometry above. Georgia's paddle filter is literally `CanoeAcc` on the
+# WRD access points; North Carolina publishes `canoeAccess` and we were dropping it on the floor.
+#
+# WHY ITS OWN FILE AND NOT dnr_paddle_by_lake.json. Two writers on one file is how a narrowed run
+# deletes what it did not read -- it has already cost this project registry/agency_lake_facts.json
+# (83 waters -> 16) and nearly cost dnr_ramps_by_lake.json the same week. consolidate_lake_index.py
+# already merges FIVE per-source buckets by filename, so a sixth is the established shape and a
+# one-row change there, not a new concept.
+#
+# ONLY LAUNCHES GO IN. `ramp_sources` in the index counts non-empty buckets, so a bucket holding
+# bank-and-pier-only sites would make a water with nowhere to put a kayak in read as having one
+# more place to launch. A location earns a row here only if canoeAccess or boatRamp is true; the
+# shore, pier and wheelchair flags ride along in `meta` on the rows that qualify.
+ACCESS_OUT = 'ncpaws_access_by_lake.json'
+
+
+def access_rows(hits, cache):
+    """{slug: [ramp-bucket record]} for every bound location NC WRC says you can launch at."""
+    out = {}
+    for slug, locs in sorted(hits.items()):
+        rows = []
+        for l in sorted(locs, key=lambda x: str(x.get('locationName') or '')):
+            info = cache.get(str(l['locationID'])) or {}
+            canoe, ramp = bool(info.get('canoeAccess')), bool(info.get('boatRamp'))
+            if not (canoe or ramp):
+                continue
+            lat, lon = info.get('latitude'), info.get('longitude')
+            if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
+                continue
+            rows.append({
+                'name': l.get('locationName'),
+                'wb': l.get('waterbodyName'),
+                # Both, when it is both -- a ramp you can also slide a kayak off is not two sites.
+                'type': 'Boat Ramp / Paddle Launch' if (canoe and ramp)
+                        else ('Boat Ramp' if ramp else 'Paddle Launch'),
+                'src': 'NC WRC public fishing areas (ncpaws.org/NCWRCMaps/FishingAreas)',
+                'lat': lat, 'lon': lon,
+                'meta': {'canoe': canoe, 'ramp': ramp,
+                         'shore': bool(info.get('shorelineAccess')),
+                         'pier': bool(info.get('fishingPierAccess')),
+                         'wheelchair': bool(info.get('wheelchairAccessible')),
+                         'county': info.get('county'),
+                         'owner': info.get('ownerName') or info.get('management'),
+                         'locationID': l.get('locationID'),
+                         'matchedBy': l.get('_how')},
+            })
+        if rows:
+            out[slug] = rows
+    return out
 
 
 def main():
@@ -594,6 +688,13 @@ def main():
             'lakes': lakes}
     json.dump(body, io.open(out_fp, 'w', encoding='utf-8'), indent=1, ensure_ascii=False)
     json.dump(refused, io.open(os.path.join(R, '_nc_species_unmatched.json'), 'w', encoding='utf-8'), indent=1)
+    access = access_rows(hits, cache)
+    access_fp = os.path.join(R, ACCESS_OUT)
+    json.dump(access, io.open(access_fp, 'w', encoding='utf-8'), indent=1, ensure_ascii=False)
+    _n_canoe = sum(1 for v in access.values() for r in v if r['meta']['canoe'])
+    _n_ramp = sum(1 for v in access.values() for r in v if r['meta']['ramp'])
+    print('-> %s   (%d launch(es) on %d water(s): %d canoe, %d ramp)'
+          % (access_fp, sum(len(v) for v in access.values()), len(access), _n_canoe, _n_ramp))
     print('-> %s   (%d waters carry species, %d carry a stocking plan)'
           % (out_fp, sum(1 for v in lakes.values() if v['predatorSpecies']), len(by_slug)))
     if plan_missed:

@@ -709,7 +709,15 @@ def main():
                                        ('osm_ramps_by_lake.json', 'osm'),
                                        ('garmin_ramps_by_lake.json', 'garmin'),
                                        ('dnr_ramps_by_lake.json', 'dnr'),
-                                       ('dnr_paddle_by_lake.json', 'dnr_paddle'))}
+                                       ('dnr_paddle_by_lake.json', 'dnr_paddle'),
+                                       # NC WRC's fishing-areas app, whose canoeAccess/boatRamp
+                                       # flags sit on a LARGER point set than the Boating Access
+                                       # Areas layer the dnr buckets read: 162 canoe launches and
+                                       # 69 ramps on waters we ship had no site of ours within
+                                       # ~200 m, counted 2026-09-02. Written by
+                                       # build_nc_species_by_lake.py, which already binds those
+                                       # locations by name AND geometry to answer for species.
+                                       ('ncpaws_access_by_lake.json', 'ncpaws'))}
 
     idx, by_norm = {}, defaultdict(list)
     county_hits = county_miss = 0
