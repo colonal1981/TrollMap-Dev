@@ -71,6 +71,26 @@ STATES = {
         # 'state/index.html' is the map of the state lakes, not a lake
         'skip': re.compile(r'^(?:state|)/?index\.html$', re.I),
     },
+    # ── GEORGIA'S SPECIES PAGE IS ONE PAGE AND IT IS THE DOCUMENT ─────────────────────────────
+    #
+    # GA DNR's per-LAKE pages are ArcGIS StoryMaps with no crawlable index, which is why there is
+    # no GA lake discovery here. Its per-SPECIES content is the opposite shape: everything on one
+    # URL, about thirty-nine fish, each with Description, Habitat, Tips and Range -- and the
+    # habitat line carries the spawning temperature, which is the field this whole refactor went
+    # looking for. "Spawning activity begins when water reaches 63-68 degrees." -- largemouth bass.
+    #
+    # Georgia was the last of the four states with no species account of its own, so every GA
+    # water was being handed SCDNR's and told in the prompt that it was the neighbouring state's.
+    #
+    # `link` matches nothing on purpose: there is nothing to crawl. `save_index` is what makes the
+    # page itself the output.
+    'GA': {
+        'index': 'https://georgiawildlife.com/fishing/identification',
+        'folder': 'Georgia_Species',
+        'link': re.compile(r'^$'),
+        'skip': re.compile(r'^$'),
+        'save_index': True,
+    },
     # ── NORTH CAROLINA IS A DIFFERENT SHAPE, AND THAT IS THE WHOLE POINT ──────────────────────
     #
     # NC WRC publishes no per-lake page. Georgia has 31 fishing forecasts and Tennessee 11 TWRA
@@ -423,7 +443,7 @@ def main():
         spec = STATES[a.state]
         folder = os.path.join(root, spec['folder'])
         manifest = load_manifest(folder)
-        jobs, already = [], []
+        jobs, already, index_jobs = [], [], []
 
         if spec.get('directory'):
             # ── TWO LEVELS, AND ONLY THIS SOURCE HAS THEM ────────────────────────────────────
@@ -550,11 +570,27 @@ def main():
                         continue
                     seen2.add(url)
                     found.append((url, text, idx))
+                # AN INDEX CAN BE THE DOCUMENT. The two-level NC branch has honoured `save_index`
+                # since it was written -- a species page is both a list of reports and the prose
+                # about the fish -- and this branch could not, so a source whose whole content is
+                # ONE page had nowhere to go. GA DNR's identification page is that shape: about
+                # thirty-nine species with Description, Habitat, Tips and Range, and not a lake
+                # link on it. Without this the run reads the page, finds nothing linked, and
+                # prints "the page shape changed. Not writing."
+                if spec.get('save_index'):
+                    fn = '_page_%s.html' % slug(urllib.parse.urlparse(idx).path.strip('/'), cap=90)
+                    if os.path.exists(os.path.join(folder, fn)) and not a.force:
+                        already.append(fn)
+                    else:
+                        index_jobs.append((fn, idx, body))
                 if idx != indexes[-1]:
                     time.sleep(a.delay)
 
-        print('\n   %d distinct document(s) found' % len(found))
-        if not found:
+        jobs += index_jobs
+        print('\n   %d distinct document(s) found%s'
+              % (len(found), (', %d index page(s) saved as documents' % len(index_jobs))
+                 if index_jobs else ''))
+        if not found and not index_jobs:
             print('!! nothing linked -- the page shape changed. Not writing.')
             return 2
         for u, text, src in found:
