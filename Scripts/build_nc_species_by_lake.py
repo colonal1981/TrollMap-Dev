@@ -55,7 +55,7 @@ Everything refused is written to `_nc_species_unmatched.json` rather than droppe
 location that binds to nothing is either a water we do not ship or a name we do not know, and the
 second kind is worth reading.
 """
-import argparse, io, json, math, os, re, sys, time
+import argparse, glob, io, json, math, os, re, sys, time
 import urllib.request
 
 AREAS_URL = 'https://www.ncpaws.org/NCWRCMaps/FishingAreas/Home/GetFilteredFishingAreas'
@@ -65,6 +65,106 @@ UA = 'TrollMap/1.0 (personal use; contact via github.com/colonal1981)'
 GENERIC = re.compile(r'\b(lake|reservoir|pond|impoundment|res)\b', re.I)
 COUNTY_PAREN = re.compile(r'\s*\([^)]*\bCo\b[^)]*\)\s*', re.I)
 STATE_SUFFIX = re.compile(r',\s*(SC|NC|GA|TN)(/(?:SC|NC|GA|TN))*\s*$', re.I)
+
+
+# NC WRC'S WARMWATER STOCKING PLAN -- the numbers, which the fishing-areas API does not carry.
+#
+# ncpaws.org answers `stocked: true|false` per species per location. That is a BOOLEAN, and it is
+# already read below. The agency also publishes the plan itself as two spreadsheets, and those
+# carry what the boolean cannot: 37,500 bodie bass into Hyco Lake at 1-2 inches; 120,000 into
+# Jordan; 64,000 striped bass into Badin.
+#
+#   WarmwaterStocking*.csv   per water: District, County, Lake or Stream, SP, Size, Number
+#   WarmwaterSummary*.csv    per species and size: the district totals
+#
+# THE SPECIES CODES ARE DERIVED, NOT TYPED. The detail file writes `BB`, `WY`, `MK` and prints no
+# legend. Summing the detail by (code, size) and matching each total against the summary's
+# (species, size) resolves all twelve buckets to exactly one species each, with nothing left over
+# on either side -- which also proves the extraction, because every per-water number adds up to
+# the agency's own district totals. A bucket that does not match one species is REPORTED and its
+# rows are dropped; a hand-typed legend would have silently mislabelled the year they add a fish.
+STOCKING_GLOB = 'WarmwaterStocking*.csv'
+SUMMARY_GLOB = 'WarmwaterSummary*.csv'
+STOCK_YEAR = re.compile(r'(20\d\d)')
+
+
+def _count(v):
+    """`"37,500"` -> 37500. The files quote their thousands separators."""
+    d = re.sub(r'[^\d]', '', str(v or ''))
+    return int(d) if d else 0
+
+
+def _csv_rows(path):
+    """cp1252, because the detail file carries a Windows right single quote in a directions cell."""
+    import csv
+    with io.open(path, encoding='cp1252', newline='') as f:
+        return [r for r in csv.DictReader(f)]
+
+
+def stocking_legend(detail, summary):
+    """{code: species}, and the codes it could not settle."""
+    per_code = {}
+    for r in detail:
+        k = ((r.get('SP') or '').strip(), (r.get('SIZE') or '').strip())
+        per_code[k] = per_code.get(k, 0) + _count(r.get('NUMBER'))
+    per_species = {}
+    for r in summary:
+        sp = (r.get('Species') or '').strip()
+        if not sp or 'TOTAL' in sp.upper():
+            continue
+        per_species[(sp, (r.get('Size') or '').strip())] = _count(r.get('Total Number'))
+    legend, unsettled = {}, []
+    for (code, size), total in sorted(per_code.items()):
+        hits = sorted({sp for (sp, sz), t in per_species.items() if sz == size and t == total})
+        if len(hits) == 1 and code not in legend:
+            legend[code] = hits[0]
+        elif len(hits) != 1:
+            unsettled.append('%s at %s totals %d -- %d species in the summary match that'
+                             % (code or '(blank)', size or '(no size)', total, len(hits)))
+    return legend, unsettled
+
+
+def read_stocking_plan(root):
+    """[{name, county, species, size, number, year}], the legend, and what it could not settle."""
+    det = sorted(glob.glob(os.path.join(root, STOCKING_GLOB)))
+    summ = sorted(glob.glob(os.path.join(root, SUMMARY_GLOB)))
+    if not det or not summ:
+        return [], {}, ['no %s / %s beside %s' % (STOCKING_GLOB, SUMMARY_GLOB, root)], None
+    detail = [r for r in _csv_rows(det[-1])
+              if (r.get('LAKE OR STREAM') or '').strip() not in ('', '(none)')]
+    legend, unsettled = stocking_legend(detail, _csv_rows(summ[-1]))
+    year = (STOCK_YEAR.search(os.path.basename(det[-1])) or [None, None])[1]
+    out = []
+    for r in detail:
+        code = (r.get('SP') or '').strip()
+        if code not in legend:
+            continue
+        n = _count(r.get('NUMBER'))
+        if not n:
+            continue
+        name = re.sub(r'\s*\([^)]*\)', '',
+                      re.sub(r'\s+', ' ', (r.get('LAKE OR STREAM') or '').strip()).title()).strip()
+        out.append({'name': name, 'county': (r.get('COUNTY') or '').strip(),
+                    'species': legend[code], 'size': (r.get('SIZE') or '').strip(),
+                    'number': n, 'year': year})
+    return out, legend, unsettled, os.path.basename(det[-1])
+
+
+def bind_stocking(name, by_name, by_bare):
+    """The slug, only when exactly one NC water answers to the name.
+
+    `by_name` and `by_bare` are built from the NC rows ONLY, and that is doing real work here:
+    the registry files `Lake Louise` as a name Hartwell Lake answers to, and the CSV's Lake Louise
+    is in Buncombe County. A resolver that reaches every state accepts it "across the state line"
+    and writes an NC stocking onto a South Carolina reservoir. NCWRC cannot stock a water North
+    Carolina does not hold, so the NC-only map is the correct map to ask.
+    """
+    for m, key in ((by_name, norm), (by_bare, norm_bare)):
+        for cand in (name, 'Lake %s' % name, '%s Lake' % name):
+            got = m.get(key(cand)) or set()
+            if len(got) == 1:
+                return sorted(got)[0]
+    return None
 
 
 def norm(s):
@@ -185,6 +285,9 @@ def main():
     ap.add_argument('--sleep', type=float, default=0.4, help='seconds between location requests')
     ap.add_argument('--refresh', action='store_true', help='ignore the cache and refetch every location')
     ap.add_argument('--date', default=None, help='stamp written into the output; default today')
+    ap.add_argument('--stocking-root', default=None,
+                    help='where the WarmwaterStocking / WarmwaterSummary CSVs live; '
+                         'default the parent of --registry')
     ap.add_argument('--go', action='store_true', help='write. Without it nothing is touched.')
     a = ap.parse_args()
 
@@ -262,6 +365,25 @@ def main():
         time.sleep(a.sleep)
     json.dump(cache, io.open(cache_fp, 'w', encoding='utf-8'), indent=1)
 
+    # THE STOCKING PLAN, bound to the same NC-only name maps the locations were bound with.
+    plan, legend, unsettled, plan_file = read_stocking_plan(
+        a.stocking_root or os.path.dirname(os.path.abspath(R)) or '.')
+    by_slug, plan_missed = {}, []
+    for row in plan:
+        slug = bind_stocking(row['name'], by_name, by_bare)
+        if slug:
+            by_slug.setdefault(slug, []).append(row)
+        else:
+            plan_missed.append(row)
+    if plan_file:
+        print('stocking: %s -- %d row(s), %d code(s) derived (%s)'
+              % (plan_file, len(plan), len(legend),
+                 ', '.join('%s=%s' % kv for kv in sorted(legend.items()))))
+        print('          %d row(s) onto %d water(s); %d name(s) are not waters we ship'
+              % (sum(len(v) for v in by_slug.values()), len(by_slug), len(plan_missed)))
+    for u in unsettled:
+        print('       !! %s' % u)
+
     stamp = a.date or time.strftime('%Y-%m-%d')
     lakes = {}
     for slug, locs in sorted(hits.items()):
@@ -279,17 +401,39 @@ def main():
             if info.get('speciesInfo'):
                 used.append({'locationID': l['locationID'], 'locationName': l.get('locationName'),
                              'waterbodyName': l.get('waterbodyName'), 'matchedBy': l.get('_how')})
-        if wild:
+        if wild or by_slug.get(slug):
             lakes[slug] = {'predatorSpecies': sorted(wild), 'knownStockings': sorted(stocked),
                            'locations': used}
+    # STOCKING PLAN IS ITS OWN FIELD, NOT KNOWNSTOCKINGS.
+    #
+    # `knownStockings` here is NC WRC's own `stocked` boolean, per species, and
+    # Worker/research/deterministic.js hands the whole list to uniqueResearchSpecies(), which
+    # takes STRINGS. Writing `{species, number}` objects into it would reach
+    # canonicalizeResearchSpecies() as an object and canonicalise to "Object Object". They are
+    # also two different facts from two different documents: one says this water is stocked with
+    # channel catfish, the other says 4,500 of them at 8-12 inches in 2026.
+    for slug, rows_ in by_slug.items():
+        lakes.setdefault(slug, {'predatorSpecies': [], 'knownStockings': [], 'locations': []})
+        lakes[slug]['stockingPlan'] = [
+            {'species': r['species'], 'size': r['size'], 'number': r['number'],
+             'year': r['year'], 'agency': 'NCWRC'}
+            for r in sorted(rows_, key=lambda x: (-x['number'], x['species']))]
     body = {'generated': stamp,
             'source': 'NC WRC public fishing areas (ncpaws.org/NCWRCMaps/FishingAreas)',
-            'note': 'commonName per location; `stocked` is NC WRC\'s own flag. Built by '
-                    'build_nc_species_by_lake.py -- do not hand-edit.',
+            'note': 'commonName per location; `stocked` is NC WRC\'s own flag. `stockingPlan` is '
+                    'the agency\'s published warmwater stocking spreadsheet -- species, size and '
+                    'COUNT -- and its species codes are derived by joining the per-water file to '
+                    'the district summary, not typed. Built by build_nc_species_by_lake.py -- do '
+                    'not hand-edit.',
             'lakes': lakes}
     json.dump(body, io.open(out_fp, 'w', encoding='utf-8'), indent=1, ensure_ascii=False)
     json.dump(refused, io.open(os.path.join(R, '_nc_species_unmatched.json'), 'w', encoding='utf-8'), indent=1)
-    print('-> %s   (%d waters carry species)' % (out_fp, len(lakes)))
+    print('-> %s   (%d waters carry species, %d carry a stocking plan)'
+          % (out_fp, sum(1 for v in lakes.values() if v['predatorSpecies']), len(by_slug)))
+    if plan_missed:
+        seen_ = sorted({r['name'] for r in plan_missed})
+        print('   stocked by NC WRC, not a water we ship: %s%s'
+              % (', '.join(seen_[:8]), ' ...' if len(seen_) > 8 else ''))
     print('-> %s   (%d locations bound to nothing)' % (os.path.join(R, '_nc_species_unmatched.json'), len(refused)))
     _report(hits, cache, idx)
     return 0

@@ -184,6 +184,48 @@ async function handleResearchDeterministicFacts(request, env) {
           { speciesCount: entry.predatorSpecies.length, locations: (entry.locations || []).length })]);
         profile.sources.push({ label, url, trust: 'OFFICIAL_GIS', sourceType: 'official_structured' });
       }
+
+      // THE STOCKING PLAN CARRIES THE NUMBER, AND IT IS A DIFFERENT FACT FROM THE FLAG.
+      //
+      // ncpaws answers `stocked: true|false` per species, and that is what `knownStockings`
+      // above holds. NC WRC also publishes the plan itself -- 325,000 bodie bass into Lake
+      // Norman, 180,000 walleye into Lake James, 100,000 into Fontana -- and a count is an
+      // argument about how many of that fish are actually out there in a way a boolean is not.
+      //
+      // READ SEPARATELY, and not gated on the roster: a water can appear in the stocking
+      // spreadsheet and have no ncpaws location at all, and the number is worth having anyway.
+      // It also cannot be folded into `entry.knownStockings`, which uniqueResearchSpecies()
+      // takes as STRINGS -- an object reaching canonicalizeResearchSpecies() canonicalises to
+      // "Object Object".
+      if (entry && Array.isArray(entry.stockingPlan) && entry.stockingPlan.length) {
+        const already = new Set((profile.biology.knownStockings || [])
+          .map((x) => String((x && x.species) || x || '').toLowerCase()));
+        const add = [];
+        for (const r of entry.stockingPlan) {
+          const sp = canonicalizeResearchSpecies(r && r.species);
+          if (!sp) continue;
+          const n = Number(r.number);
+          const bits = [Number.isFinite(n) ? n.toLocaleString('en-US') : null,
+                        r.size ? `at ${r.size}` : null].filter(Boolean).join(' ');
+          const note = `${r.agency || 'NCWRC'}${r.year ? ` ${r.year}` : ''} stocking plan`
+                     + (bits ? `: ${bits}` : '');
+          const key = sp.toLowerCase();
+          if (already.has(key)) {
+            const hit = (profile.biology.knownStockings || [])
+              .find((x) => String((x && x.species) || x || '').toLowerCase() === key);
+            if (hit && typeof hit === 'object' && !hit.note) hit.note = note;
+            continue;
+          }
+          already.add(key);
+          add.push({ species: sp, note, source: 'NC WRC warmwater stocking plan' });
+        }
+        if (add.length) {
+          profile.biology.knownStockings = [...(profile.biology.knownStockings || []), ...add];
+          mergeEvidence('biology', 'knownStockings', [buildEvidence('official_structured',
+            'NC WRC warmwater stocking plan', 'registry:nc_species_by_lake.json', null,
+            'deterministic')]);
+        }
+      }
     } catch (e) {
       console.warn(`deterministic NC species lookup failed for ${lakeName}: ${e.message}`);
     }

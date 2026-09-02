@@ -117,6 +117,9 @@ const RESEARCH_SPECIES_CANON = {
   'north american freshwater catfishes': 'Catfish',
   'sunfish': 'Sunfish',
   'bodie bass striped bass hybrid': 'White Bass / Hybrid',
+  // NC WRC's warmwater stocking spreadsheet writes the bare name -- 325,000 `BB` into Lake
+  // Norman -- where the regulations digest writes "BODIE BASS (STRIPED BASS HYBRID)". Same fish.
+  'bodie bass': 'White Bass / Hybrid',
   'bullhead sp': 'Bullhead',
   // THE PLAN FORM'S OWN VOCABULARY, which reaches predatorSpecies through the regulations
   // species floor. `registry/species_map.json` maps a book phrase onto the fifteen checkboxes in
