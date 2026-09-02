@@ -62,10 +62,14 @@ test('the water gets its own state, and the neighbour only where its own state i
   assert.equal(bluegill.length, 1, 'NCWRC covers bluegill, so SCDNR is not also sent');
   assert.ok(/NCWRC, NC$/m.test(bluegill[0].text), 'and it is the NC row');
 
+  // NCWRC publishes no largemouth profile, so the other states answer -- and every row that does
+  // says which state it is. TWRA joined the file on 2026-09-02, so this is now more than one row:
+  // the rule is not "exactly one", it is "none of them is passed off as this water's own state".
   const lmb = nc.filter((e) => e.species === 'Largemouth Bass');
-  assert.equal(lmb.length, 1);
-  assert.ok(lmb[0].text.includes('neighbouring state'),
-    'NCWRC publishes no largemouth profile, so SCDNR is used and SAID to be another state');
+  assert.ok(lmb.length >= 1);
+  assert.ok(lmb.every((e) => e.text.includes('neighbouring state')),
+    'a state that is not this water\'s must SAY so, every time');
+  assert.ok(!lmb.some((e) => /NCWRC/.test(e.text)), 'and none of them may claim to be NCWRC');
 
   const sc = await mod.speciesTraitsEntries({}, 'SC');
   const scBluegill = sc.filter((e) => e.species === 'Bluegill');
@@ -73,14 +77,19 @@ test('the water gets its own state, and the neighbour only where its own state i
   assert.ok(!scBluegill[0].text.includes('neighbouring'), 'an SC water gets SCDNR plainly');
 });
 
-test('a species the guide does not cover gets no block, and nothing throws', async () => {
+test('a species none of the three guides covers gets no block, and nothing throws', async () => {
   const entries = await mod.speciesTraitsEntries({}, 'SC');
-  assert.equal(mod.speciesTraitsBlock(entries, ['Muskellunge']), '');
+  // On the form, in the books, and in none of the three species guides. Muskellunge WAS this
+  // test's example and stopped being one the day TWRA's guide was read -- which is the whole
+  // point of the file, so the example moves rather than the assertion softening.
+  for (const absent of ['Roanoke Bass', 'Shadow Bass', 'Kokanee Salmon', 'Northern Pike']) {
+    assert.equal(mod.speciesTraitsBlock(entries, [absent]), '', `${absent} has no account`);
+  }
   assert.equal(mod.speciesTraitsBlock([], null), '');
 });
 
-test('every species in the file produces a block in both states', async () => {
-  for (const state of ['SC', 'NC']) {
+test('every species in the file produces a block in every state', async () => {
+  for (const state of ['SC', 'NC', 'TN']) {
     const entries = await mod.speciesTraitsEntries({}, state);
     const named = new Set(entries.map((e) => e.species));
     assert.equal(named.size, TRAITS.species_count,
