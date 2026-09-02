@@ -81,3 +81,17 @@ test('an empty payload is not an error, it is an empty payload', () => {
   assert.deepEqual(out, { documents: [], rejected: 0, total: 0 });
   assert.equal(prepareNormalizedDocuments(null, 'x').total, 0);
 });
+
+test("NC WRC's own stocking system is an official source", () => {
+  // Dropped from NANTAHALA LAKE (Macon Co, NC) on the 64-water run of 2026-09-02 -- the only one
+  // of 77 distinct refusals that was about the water it was refused for. The county PDF names no
+  // lake in its title and no state anywhere, so both halves of the name/state test fail it, which
+  // is exactly what OFFICIAL_SOURCE is for: this pipeline reads ncpaws.org in four other places
+  // and every NC profile's stocking plan is built from it.
+  const doc = {
+    title: 'Macon County - 2026 MASTER TROUT STOCKING LIST',
+    url: 'https://www.ncpaws.org/RSReports/FishStock/TroutCountyPDF.aspx?countyID=56',
+    text: 'Hatchery Supported Trout Waters',
+  };
+  assert.equal(isOnLakeDoc(doc, 'Nantahala Lake (Macon Co, NC)'), true);
+});

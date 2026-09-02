@@ -100,6 +100,83 @@ const GROUP_TERM_MAP = {
   'striped bass or hybrid striped bass': ['Striped Bass', 'Hybrid Striped Bass'],
 };
 
+/**
+ * Names that are the SAME FISH for trolling-intelligence purposes, so one call answers for all of
+ * them. Hoisted to module scope from inside handleResearchAgent, where it was defined twice over
+ * -- once to dedupe the roster before grouping and once to compare the answer against it -- and a
+ * third caller now needs it. One table, one meaning.
+ */
+const SPECIES_MERGE = {
+  'Black Crappie': 'Crappie',
+  'White Crappie': 'Crappie',
+  'Redear Sunfish Shellcracker': 'Redear Sunfish (Shellcracker)',
+  'Redear Sunfish': 'Redear Sunfish (Shellcracker)',
+};
+
+/**
+ * An agency heading that NAMES ITS OWN MEMBERS, split into them.
+ *
+ *   "Striped and Cherokee Bass"      -> ["Striped Bass", "Cherokee Bass"]
+ *   "Walleye, Sauger, and Saugeye"   -> ["Walleye", "Sauger", "Saugeye"]
+ *   "Rock Bass or Redeye and Shadow Bass" -> ["Rock Bass", "Redeye Bass", "Shadow Bass"]
+ *   "Black Bass"                     -> []   one name, not a list; GROUP_TERM_MAP owns it
+ *
+ * WHY THIS IS DERIVED AND NOT ANOTHER TABLE ROW. Counted 2026-09-02 across
+ * registry/agency_lake_facts.json: TWRA writes one group four ways on its own lake pages --
+ * "Walleye", "Walleye and Sauger", "Walleye, Sauger, and Saugeye"; "Striped Bass",
+ * "Striped and Cherokee Bass", "Striped and Hybrid Striped Bass". GROUP_TERM_MAP already carried
+ * "walleye/sauger" AND "walleye & sauger" as separate keys, which is the same spelling problem
+ * being solved one row at a time. A heading that lists its members does not need a lookup: the
+ * members are written in it, sharing the head noun at the end.
+ *
+ * The trailing head noun is distributed onto the bare parts only -- "Striped" takes "Bass" from
+ * "Cherokee Bass", while "Walleye, Sauger, and Saugeye" ends in a single word and so takes
+ * nothing. Nothing here decides whether a fish exists; the caller only ever asks whether a name
+ * it already has came back.
+ */
+function splitConjunctiveName(label) {
+  const s = String(label || '').trim();
+  const parts = s.split(/\s*(?:,|&|\/|\band\b|\bor\b)\s*/i).map((x) => x.trim()).filter(Boolean);
+  if (parts.length < 2) return [];
+  const tail = parts[parts.length - 1].split(/\s+/);
+  const head = tail.length > 1 ? tail[tail.length - 1] : null;
+  return parts.map((part) => (head && !part.includes(' ') ? `${part} ${head}` : part));
+}
+
+/**
+ * The confirmed species this run did not answer for. THE ONLY COPY OF THIS RULE.
+ *
+ * Two names for one fish is the whole difficulty, and it arrives from both directions:
+ *
+ *   the roster is finer than the answer -- NC WRC lists Black Crappie AND Crappie, the agent
+ *   asks about Crappie once, and the model answers "Crappie". SPECIES_MERGE folds both sides.
+ *   Measured 2026-09-01 on LAKE WACCAMAW, NC, which came back 5 of 5 and was reported short; and
+ *   again 2026-09-02, on eight waters, by the batch's own second copy of this rule.
+ *
+ *   the roster is COARSER than the answer -- TWRA regulates "Black Bass" and the prompt tells the
+ *   model, in capitals, never to answer with a group term. It obeys, and returns Largemouth,
+ *   Smallmouth and Spotted Bass. Measured on the 64-water run of 2026-09-02: six Tennessee waters
+ *   were reported short of a species that was sitting in the section under its real name, and the
+ *   count printed beside them read "6 of 4" and "8 of 4" -- more species returned than confirmed,
+ *   which is what a shortfall report should never be able to say.
+ *
+ * A group heading is ANSWERED when any of its members came back. That is not a lowered bar: a
+ * regulation heading does not say which of its members the water holds, so the species the
+ * documents name are strictly better information than the heading was.
+ */
+function missingConfirmedSpecies(confirmed, returnedKeys) {
+  const mergeKey = (k) => String(SPECIES_MERGE[k] || k).toLowerCase();
+  const returned = new Set((returnedKeys || []).map(mergeKey));
+  const answered = (label) => {
+    const members = [
+      ...(GROUP_TERM_MAP[String(label || '').toLowerCase()] || []),
+      ...splitConjunctiveName(label),
+    ];
+    return members.some((m) => returned.has(mergeKey(m)));
+  };
+  return (confirmed || []).filter((s2) => !returned.has(mergeKey(s2)) && !answered(s2));
+}
+
 /** Mutates `section` in place: splits group-term keys onto the confirmed species they cover. */
 function redistributeGroupTerms(section, confirmed) {
   for (const [key, seasons] of Object.entries(section)) {
@@ -1276,12 +1353,6 @@ async function handleResearchAgent(request, env) {
     // Dedup species before grouping:
     // Black Crappie / White Crappie are redundant with Crappie for trolling intel purposes
     // Merge them all into a single 'Crappie' representative to avoid 3 near-identical calls
-    const SPECIES_MERGE = {
-      'Black Crappie': 'Crappie',
-      'White Crappie': 'Crappie',
-      'Redear Sunfish Shellcracker': 'Redear Sunfish (Shellcracker)',
-      'Redear Sunfish': 'Redear Sunfish (Shellcracker)',
-    };
     const deduped = [];
     const dedupSeen = new Set();
     for (const s of allSpecies) {
@@ -1504,19 +1575,10 @@ holding: coerceHolding(entry.holding, holdingRejects),
     // call, an empty section, or a name the model quietly renamed. Compared against what was
     // asked for rather than against the exceptions caught, because the bass group did not throw.
     //
-    // BOTH SIDES GO THROUGH SPECIES_MERGE, or the warning cries wolf. `deduped` is the merged
-    // list -- Black Crappie and White Crappie both become Crappie above -- and the returned keys
-    // were not merged, so a model that answered with "Black Crappie" produced
-    // "Crappie missing from the result" while Black Crappie sat right there in the section.
-    //
-    // Measured 2026-09-01 on LAKE WACCAMAW, NC: NC WRC lists Black Crappie, the agent asked about
-    // Crappie, the model answered "Black Crappie", and the batch printed a missing-species warning
-    // for a lake that came back 5 of 5. This warning is the only reason two real defects were
-    // visible today -- the group-term deletion and the rate-limited groups -- and a warning that
-    // fires when nothing is wrong is how it stops being read.
-    const mergeKey = (k) => String(SPECIES_MERGE[k] || k).toLowerCase();
-    const returnedSet = new Set(Object.keys(normalizedMerged).map(mergeKey));
-    const missingSpecies = deduped.filter((s2) => !returnedSet.has(mergeKey(s2)));
+    // THE RULE IS missingConfirmedSpecies() AND IT LIVES AT MODULE SCOPE, with the two cases it
+    // has to survive written above it. A warning that fires when nothing is wrong is how it stops
+    // being read, and this one is the only reason three real defects have been caught this week.
+    const missingSpecies = missingConfirmedSpecies(deduped, Object.keys(normalizedMerged));
     const failedGroups = groupOutcomes.filter((g) => !g.ok);
     if (missingSpecies.length) {
       console.warn(`[research:fisheries] ${missingSpecies.length} confirmed species missing from `
@@ -1780,4 +1842,5 @@ export {
   hasStructuredTrollingIntel, handleResearchAgent,
   COASTAL_AGENTS, COASTAL_AGENT_HINTS, COASTAL_SKIPPED_AGENTS,
   isCoastalZone, coastalAgentPlan,
+  splitConjunctiveName, missingConfirmedSpecies,
 };

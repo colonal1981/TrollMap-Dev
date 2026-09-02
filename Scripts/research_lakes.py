@@ -393,7 +393,8 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
     t0 = time.perf_counter()
     out = {"lake": lake, "state": state, "aliases": list(alt_names or []),
            "ok": False, "species": 0, "saved": False, "error": None,
-           "confirmed": [], "returned": [], "missing": [], "documents": 0, "facts": 0,
+           "confirmed": [], "asked": [], "returned": [], "missing": [], "documents": 0,
+           "facts": 0,
            "sources": 0, "fetch": {}, "rejected_offlake": 0, "rejected_docs": [],
            "chars_sent": 0, "retries": 0, "group_attempts": {}, "saved_key": None,
            "saved_version": None, "discovered_species": [], "warnings": []}
@@ -531,15 +532,28 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
     for w in out["warnings"]:
         print(f"      warn [{lake}]: {w}")
 
-    # WHAT WENT IN AND DID NOT COME BACK. The Worker already computes this and warns; this
-    # records it per lake so a 64-lake run ends with the list rather than sixty-four scrollback
-    # lines nobody reads. Ryan, 2026-08-10, on the run that lost a quarter of a lake's species
-    # while every line said success -- and again on 2026-09-01, when Lanier came back 4 of 5.
+    # WHAT WENT IN AND DID NOT COME BACK -- TAKEN FROM THE WORKER, NOT RECOMPUTED HERE.
+    #
+    # This script used to work it out itself: every confirmed name with no exactly-matching key in
+    # the section. That is a second copy of a rule the Worker already owns, and on 2026-09-02 the
+    # two copies disagreed on thirteen of sixty-four waters. Both directions of the same problem:
+    # the Worker folds Black Crappie and White Crappie onto the one Crappie it asked about, and it
+    # reads a member species as an answer to the group heading the regulations name -- Largemouth,
+    # Smallmouth and Spotted Bass ARE the answer to Tennessee's "Black Bass". The naive check knew
+    # neither, so it printed a loss for eight NC and SC waters that lost nothing and six TN waters
+    # that came back with MORE fish than the roster had names for. The tell was in its own
+    # arithmetic: "Cherokee Lake: 6 of 4".
+    #
+    # See missingConfirmedSpecies() in Worker/research/agents.js, which is now the only copy, and
+    # test/the-shortfall-report-said-six-of-four.test.js, which is these waters.
     #
     # IT DOES NOT ABORT THE SAVE. Four species of five is worth keeping, and one flaky group
     # must not cost the other sixty-three lakes their run. It is counted, printed and reported.
-    got = {k.lower() for k in out["returned"]}
-    out["missing"] = [s2 for s2 in out["confirmed"] if s2.lower() not in got]
+    out["missing"] = list(meta.get("missingSpecies") or [])
+    # WHAT WAS ACTUALLY ASKED, which is not the roster: the Worker merges names for one fish
+    # before it builds the groups, so the roster is the wrong denominator and printing it is how
+    # "6 of 4" got onto the screen.
+    out["asked"] = sorted({s2 for g in groups for s2 in (g.get("species") or [])})
 
     # AN EMPTY SECTION IS A FAILED RUN, NOT A QUIET ONE. Ryan found this the hard way on
     # 2026-08-10: a group came back empty, a quarter of the lake's species vanished, and every
@@ -848,7 +862,7 @@ def main():
         f = r.get("fetch") or {}
         got = f.get("html_ok", 0) + f.get("pdf_ok", 0)
         ktok = r.get("chars_sent", 0) / CHARS_PER_TOKEN / 1000
-        detail = (f"{len(r['returned'])}/{len(r['confirmed'])} species  "
+        detail = (f"{len(r['returned'])}/{len(r['asked']) or len(r['confirmed'])} species  "
                   f"{r['documents']} docs ({got} new, {f.get('reused', 0)} cached, "
                   f"{f.get('failed', 0)} failed)  {r['facts']} facts  ~{ktok:.0f}k tok"
                   + (f"  {r['retries']} retries" if r.get("retries") else ""))
@@ -882,7 +896,8 @@ def main():
     if lost:
         print(f"\n{len(lost)} water(s) came back short of their confirmed species:")
         for r in lost:
-            print(f"  {r['lake']}: {len(r['returned'])} of {len(r['confirmed'])} "
+            print(f"  {r['lake']}: {len(r['returned'])} of "
+                  f"{len(r['asked']) or len(r['confirmed'])} "
                   f"-- no block for {', '.join(r['missing'])}")
     dry = [r for r in ok if r["documents"] == 0]
     if dry:

@@ -29,6 +29,22 @@
  * `dnr.nc.gov` is here and appears nowhere else in the codebase -- North Carolina's agencies are
  * ncwildlife.org and deq.nc.gov -- so it was a guess. It stays, because it costs nothing.
  *
+ * Counted again 2026-09-02 against the 64-water run: the gate dropped 124 documents and 77 of
+ * them were distinct. Eleven sat on a .gov, .edu or authority domain, and of those exactly one
+ * was about the water it was refused for -- "Macon County - 2026 MASTER TROUT STOCKING LIST" at
+ * ncpaws.org, dropped from NANTAHALA LAKE, which is a stocked trout water in Macon County.
+ * `ncpaws.org` is NC WRC's own reporting system and this pipeline already reads it in four places
+ * (build_nc_species_by_lake.py, Worker/registry.js and two tests); it is the source the NC
+ * stocking plan on every NC profile is built from. It was the only domain missing, so it is the
+ * only one added -- triadncwater.gov and congareeriverkeeper.org are read nowhere, and adding a
+ * domain this pipeline has never fetched would be the guess this comment exists to complain about.
+ *
+ * The other 75 were refused correctly, and the list is worth reading once: a Princeton
+ * autocomplete word list, an MIT word list, a New York power-line filing, a Texas coastal-zone
+ * program, a plant-ecology paper, an archives finding aid, and forty-odd fishing reports that
+ * name a DIFFERENT lake in their own title -- Hickory dropped from twelve other waters, Lake Fork
+ * in Texas from fourteen.
+ *
  * What it cost: the run of 2026-09-01 rejected
  * "Fishing - US Army Corps of Engineers - Mobile District" at
  * sam.usace.army.mil/.../Lake-Sidney-Lanier/Fishing -- the federal agency that OPERATES the
@@ -36,7 +52,7 @@
  * agency lake page behind registry/agency_lake_facts.json is on georgiawildlife.com, and the
  * gate did not know the domain.
  */
-const OFFICIAL_SOURCE = /eregulations\.com|dnr\.sc\.gov|dnr\.nc\.gov|deq\.nc\.gov|epd\.georgia|epa\.gov|waterqualitydata|grokipedia|santeecooper|ncwildlife|georgiawildlife|gadnr|scdnr|tn\.gov|tva\.gov|usace\.army\.mil/i;
+const OFFICIAL_SOURCE = /eregulations\.com|dnr\.sc\.gov|dnr\.nc\.gov|deq\.nc\.gov|epd\.georgia|epa\.gov|waterqualitydata|grokipedia|santeecooper|ncwildlife|ncpaws|georgiawildlife|gadnr|scdnr|tn\.gov|tva\.gov|usace\.army\.mil/i;
 
 /** "Lake Marion, SC" -> {baseName: "Marion", state: "SC"} */
 export function lakeTerms(lakeName) {
