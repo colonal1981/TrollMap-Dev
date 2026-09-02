@@ -1529,8 +1529,19 @@ holding: coerceHolding(entry.holding, holdingRejects),
       agent: agentKey,
       section: normalizedMerged,
       confidence: { percent: 35 },
+      // WHAT THE DETERMINISTIC BLOCKS ACTUALLY CONTRIBUTED, carried out so a caller can tell a
+      // run that HAD them from a run that did not.
+      //
+      // Both blocks are read out of R2 and both callers swallow the failure on purpose, because
+      // a water with no agency page and a species the guides do not cover must still produce a
+      // profile. That is right, and it means an object MISSING FROM THE BUCKET produces exactly
+      // the same run as an object that is present and simply had nothing to say. The batch is 64
+      // waters and nobody reads 64 scrollback lines; this is the number that makes the difference
+      // falsifiable in the report. Same reason `groups` and `missingSpecies` are here.
       meta: { model: 'multi-group', provider: 'gemini-free',
-              groups: groupOutcomes, failedGroups, missingSpecies },
+              groups: groupOutcomes, failedGroups, missingSpecies,
+              agencyEntries: (groundedPrev._agencyEntries || []).length,
+              speciesTraitRows: (groundedPrev._traitsEntries || []).length },
       // Surfaced where the client's log will show it. A run that lost a quarter of the lake's
       // species must not print a tick and nothing else.
       warnings: [

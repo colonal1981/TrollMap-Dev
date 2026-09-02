@@ -513,9 +513,21 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
     # How hard the provider made us work for it. A group that needed a second or third attempt
     # succeeded, so nothing warns -- but a run where every group is retrying is a run whose load
     # is still too high, and that is only visible if the number is carried out.
-    groups = ((res.get("meta") or {}).get("groups")) or []
+    meta = res.get("meta") or {}
+    groups = meta.get("groups") or []
     out["group_attempts"] = {g.get("group"): g.get("attempts", 1) for g in groups if g.get("group")}
     out["retries"] = sum(max(0, (g.get("attempts") or 1) - 1) for g in groups)
+    # WHICH DETERMINISTIC BLOCKS WERE IN PLAY. This script never names agency_lake_facts.json or
+    # species_traits.json and should not -- it is a driver, and the Worker does the reading inside
+    # /research/agent-llm. But both of those reads are against R2, and both callers swallow a
+    # missing object on purpose, so an object THAT WAS NEVER UPLOADED produces a run identical to
+    # one where it was present and had nothing to say. Recording the counts is what makes the
+    # difference visible without opening the profile.
+    out["agency_entries"] = meta.get("agencyEntries")
+    out["species_trait_rows"] = meta.get("speciesTraitRows")
+    if not meta.get("speciesTraitRows"):
+        print(f"      note [{lake}]: no species traits in the prompt -- is "
+              f"_registry/species_traits.json in the bucket?")
     for w in out["warnings"]:
         print(f"      warn [{lake}]: {w}")
 
