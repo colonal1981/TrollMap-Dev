@@ -152,7 +152,16 @@ STATES = {
         'index_link': re.compile(r'^(?:https?://(?:www\.)?ncwildlife\.gov)?'
                                  r'(?:/index(?:%2E|\.)php)?/species/[a-z0-9-]+/?$', re.I),
         # LEVEL 2: the documents. Both suffixes, because they are two different documents.
-        'link': re.compile(r'^https?://(?:www\.)?ncwildlife\.gov/media/(\d+)/(download|open)', re.I),
+        #
+        # THE HOST IS OPTIONAL AND THAT IS THE WHOLE FIX. The first live run read all 76 pages
+        # without an error and found ZERO documents, because this pattern demanded
+        # `https://www.ncwildlife.gov/media/...` and the site writes `href="/media/2878/open"`.
+        # The two patterns that DID work on that same run -- index_link and seed_link, 47 species
+        # pages and 29 /fishing pages -- are the two that already made the host optional. A page
+        # that links its own documents relatively is the normal case; requiring the host was the
+        # bug, and requiring the PATH is what still keeps a journal link out.
+        'link': re.compile(r'^(?:https?://(?:www\.)?ncwildlife\.gov)?'
+                           r'/media/(\d+)/(download|open)', re.I),
         'skip': re.compile(r'^$'),
         'kind': 'pdf',
         'save_index': True,

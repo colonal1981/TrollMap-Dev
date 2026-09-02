@@ -174,5 +174,28 @@ check('a slug ending in a digit is taken -- the linked largemouth page is largem
       any(u.endswith('/species/largemouth-bass-0') for u, _ in r), True)
 check('both spellings of the index.php prefix are taken', len(r), 5)
 
+# ── THE SHAPE THE SITE ACTUALLY WRITES ────────────────────────────────────────────────────────
+# The first live run read 76 pages without one error and found zero documents. Every fixture
+# above used absolute hrefs, because that is how WebFetch reports a link after resolving it --
+# ncwildlife.gov writes them RELATIVE. That is the case this file did not have and the run did.
+RELATIVE = '''
+<a href="/media/2878/open">Black Crappie Species Profile</a>
+<a href="/media/2884/download?attachment">High Rock Lake Black Crappie Population Assessment - 2019</a>
+<a href="/media/3130/download?attachment">Hyco Lake Largemouth Bass Survey</a>
+<a href="/fishing/regulations">Regulations</a>
+<a href="http://www.ncpaws.org/ncwrcmaps/fishingareas">Where to Fish</a>
+<a href="https://seafwa.org/journal/2016/changes-black-bass">a journal article</a>
+'''
+rel = F.links_on(RELATIVE, 'https://www.ncwildlife.gov/species/black-crappie', spec)
+check('a relative /media href is taken -- the bug the first live run found', len(rel), 3)
+check('it is resolved against the page it was found on',
+      rel[0][0], 'https://www.ncwildlife.gov/media/2878/open')
+check('the id still comes off a resolved absolute url',
+      F.name_for(rel[2][0], '', rel[2][1], spec), '3130_hyco-lake-largemouth-bass-survey.pdf')
+check('a relative non-media link is still refused',
+      any('/fishing/' in u for u, _ in rel), False)
+check('an offsite document link is still refused',
+      any('seafwa' in u or 'ncpaws' in u for u, _ in rel), False)
+
 print('\n%s' % ('%d FAILED' % len(FAILED) if FAILED else 'all checks passed'))
 sys.exit(1 if FAILED else 0)
