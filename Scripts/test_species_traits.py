@@ -92,6 +92,60 @@ else:
         contains('the state\'s spawning temperature is quotable', lmb['Spawning'],
                  'water temperatures range between 65-75')
 
+# ------------------------------------------------------ TWRA's Angler's Guide to Tennessee Fish
+TN = os.path.join(ROOT, B.TN_GUIDE)
+if not os.path.exists(TN):
+    print('\nSKIP TWRA -- %s is not beside the root' % B.TN_GUIDE)
+else:
+    print('\n%s' % B.TN_GUIDE)
+    tn = {g['name']: g for g in B.read_tn_guide(TN)}
+    check('every species in the book gets an account', len(tn) > 80, True)
+
+    # 14. THE NAME AND ITS BINOMIAL SHARE A BASELINE AND NOT A LINE BUCKET. The italic sits 0.6pt
+    #     higher, so they arrive as two rows in the order (binomial, name) -- and a name that
+    #     wraps leaves its LAST word on the binomial's row. Looking for "Name (Binomial)" on one
+    #     line found 47 of 87 and missed largemouth, spotted, redeye and black crappie.
+    for want in ('Largemouth Bass', 'Spotted Bass', 'Redeye Bass', 'Black Crappie', 'Walleye'):
+        check('%s is read off a split heading' % want, want in tn, True)
+    check('and a name that wraps is put back together', 'Yellow Bass' in tn, True)
+
+    # 15. THE FURNITURE IS SEPARATED BY FONT, not by length or position. The photo credit is the
+    #     body face italic at 6pt and the anatomy caption is bold italic at 8pt sitting at x=249
+    #     IN THE MIDDLE OF A SENTENCE -- read by line, "jaw extends behind eye" lands between
+    #     "prefer calm, warmer waters in" and "rivers, lakes, reservoirs".
+    lmb = tn['Largemouth Bass']['sections'].get('Account', '')
+    contains('the caption is not spliced into the prose', lmb, 'jaw extends behind eye', False)
+    contains('nor the photo credit', lmb, 'Brian James', False)
+    contains('and the sentence it interrupted is whole', lmb,
+             'prefer calm, warmer waters in rivers, lakes, reservoirs')
+    contains("TWRA's spawning temperature survives", lmb,
+             'water temperatures approach 62-65')
+
+    # 16. THE "OTHER NAMES" LIST WRAPS, and every line but the last ends in a comma. Consuming
+    #     only the first line put "striped jack, stripe, yellow belly, barfish" at the head of the
+    #     yellow bass account, where a reader takes it for a sentence.
+    yb = tn['Yellow Bass']['sections'].get('Account', '')
+    check('the account starts with the account', yb.startswith('Yellow bass are found in quiet'), True)
+
+    # 16b. A CAPTION ON THE SAME BASELINE AS A SENTENCE MUST NOT COST THE SENTENCE. Rejecting the
+    #      whole row because it is not uniformly the body face started black crappie at
+    #      "sociated with aquatic vegetation" -- the words are filtered, not the row.
+    contains('a line sharing its baseline with a caption keeps its words',
+             tn['Black Crappie']['sections'].get('Account', ''),
+             'Black crappie are found in quiet, warm waters')
+
+    # 17. A HEADING WITH NO BINOMIAL STILL ENDS AN ACCOUNT. The Cherokee bass is a hybrid and has
+    #     no species name of its own; "Temperate Bass Comparison Chart" is not a fish at all.
+    #     Without them Yellow Bass ran on into the Cherokee bass and Redeye Bass into the crappie.
+    contains('yellow bass stops before the cherokee bass', yb, 'cross between the female striped', False)
+    contains('redeye bass stops before the crappie', tn['Redeye Bass']['sections'].get('Account',''),
+             'white and black crappie', False)
+    check('and a comparison chart is not a species', 'Temperate Bass Comparison Chart' in tn, False)
+    # 18. THE HYBRID HAS A CROSS WHERE A BINOMIAL GOES: `(Morone saxatilis x M. chrysops)`.
+    check('the Cherokee bass is read off its cross', 'Cherokee Bass' in tn, True)
+    check('and the app knows it is the striped x white hybrid',
+          canon.get(B.norm_species('Cherokee Bass')), 'White Bass / Hybrid')
+
 # ------------------------------------------------------------------ NC WRC's Wildlife Profiles
 NC = os.path.join(ROOT, B.NC_DIR)
 if not os.path.isdir(NC) or not os.listdir(NC):

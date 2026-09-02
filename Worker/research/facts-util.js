@@ -120,6 +120,11 @@ const RESEARCH_SPECIES_CANON = {
   // NC WRC's warmwater stocking spreadsheet writes the bare name -- 325,000 `BB` into Lake
   // Norman -- where the regulations digest writes "BODIE BASS (STRIPED BASS HYBRID)". Same fish.
   'bodie bass': 'White Bass / Hybrid',
+  // TENNESSEE'S NAME FOR THE SAME FISH. TWRA: "This species is a cross between the female striped
+  // bass and the male white bass. Initially known as the 'hybrid,' it was renamed the Cherokee
+  // bass because of the first successful Tennessee introduction into Cherokee Reservoir in 1965."
+  // It is on a TWRA reservoir page in agency_lake_facts.json as "Striped and Cherokee Bass".
+  'cherokee bass': 'White Bass / Hybrid',
   'bullhead sp': 'Bullhead',
   // THE PLAN FORM'S OWN VOCABULARY, which reaches predatorSpecies through the regulations
   // species floor. `registry/species_map.json` maps a book phrase onto the fifteen checkboxes in

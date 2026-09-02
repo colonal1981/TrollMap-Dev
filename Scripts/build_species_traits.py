@@ -41,6 +41,7 @@ import argparse, collections, glob, json, os, re, sys
 from datetime import datetime, timezone
 
 SC_GUIDE = 'FreshwaterFishPocketGuide.pdf'
+TN_GUIDE = 'anglersguide.pdf'
 NC_DIR = 'NC_Lakes'
 NC_PROFILE = '*species-profile*.pdf'
 MARK = '\x01'                                  # wraps a heading inside the assembled page text
@@ -63,6 +64,10 @@ NC_FALLBACK = 'History and Status'
 # What a plan can act on. The rest is read, reported and simply not carried into the file.
 SC_USEFUL = ['Spawning', 'Preferred Habitat', 'Food Habits', 'Range']
 NC_USEFUL = ['Habitat and Habits']
+# TWRA prints no labelled sections at all. The account IS the section, so there is nothing to
+# choose between -- and it is where the spawning temperature lives: "Spawning activity begins when
+# water temperatures approach 62-65 F."
+TN_USEFUL = ['Account']
 
 
 # ---------------------------------------------------------------- reading a page as a human does
@@ -264,6 +269,160 @@ def dehyphen(t):
     return re.sub(r'(\w)- (\w)', r'\1\2', t)
 
 
+# TENNESSEE'S GUIDE IS PROSE UNDER A NAME, WITH NO LABELS ANYWHERE.
+#
+# `anglersguide.pdf` -- TWRA's Angler's Guide to Tennessee Fish, 80 pages -- gives each species a
+# bold name, an italic binomial, an "Other names:" line and then two or three paragraphs. It is the
+# THIRD state, and until now a Tennessee water was handed South Carolina's account of its fish and
+# told in the prompt that it was the neighbouring state's.
+#
+# It is also the document that settled the black bass question, in the regulation's own words:
+# "The term, black bass, refers to several species of bass in Tennessee including smallmouth,
+# largemouth, spotted, redeye (Coosa) and the recently recognized Alabama bass."
+#
+# THE FONT SEPARATES THE PROSE FROM THE FURNITURE, so nothing has to be guessed by length or
+# position: the body is WarnockPro-Regular at 10pt, the photo credit is the same face italic at
+# 6pt ("Brian James"), and the anatomy caption is bold italic at 8pt ("jaw extends behind eye")
+# sitting at x=249 in the middle of a sentence about vegetation. Read by line, that caption lands
+# between "prefer calm, warmer waters in" and "rivers, lakes, reservoirs".
+# `(Morone saxatilis x M. chrysops)` is the Cherokee bass, and a genus-species-only pattern does
+# not match it -- so its heading was neither a binomial nor, being half bold and half italic, a
+# single-face heading row. It closed nothing, and its whole account ran on into the yellow bass.
+TN_BINOMIAL = re.compile(r'\(([A-Z][a-z]+\.? [a-z]+[^)]*)\)')
+TN_OTHER = re.compile(r'^Other names?:\s*', re.I)
+
+
+def body_face(pdf):
+    """The (fontname, size) most of the document's words are set in."""
+    c = collections.Counter()
+    for pg in pdf.pages:
+        for w in pg.extract_words(extra_attrs=['size', 'fontname']):
+            c[(str(w['fontname']).split('+')[-1], round(w['size'], 1))] += 1
+    return c.most_common(1)[0][0] if c else (None, None)
+
+
+def tn_rows(pg, face):
+    """[(text, prose, {fontnames}, largest size)] for one page, in reading order.
+
+    `prose` is the row's BODY WORDS ONLY, which is not the same as "the row is body". TWRA sets an
+    anatomy caption at x=249 on the same baseline as a sentence, so the row reads
+    "Black crappie are found in quiet, warm waters, and are often as- crappie" -- rejecting the
+    whole row because it is not uniformly body loses the sentence and the account starts at
+    "sociated with aquatic vegetation". Filtering the words keeps the sentence and drops the
+    caption. A row with no body words at all is a heading or furniture, and the caller tells those
+    apart by size.
+    """
+    out = []
+    for ln in page_lines_faced(pg):
+        t = join_words(ln).strip()
+        if not t or re.fullmatch(r'\d{1,3}', t):
+            continue
+        body = [w for w in ln
+                if str(w['fontname']).split('+')[-1] == face[0] and round(w['size'], 1) == face[1]]
+        prose = join_words(body).strip() if body else ''
+        out.append((t, prose, {str(w['fontname']).split('+')[-1] for w in ln},
+                    max(round(w['size'], 1) for w in ln)))
+    return out
+
+
+def page_lines_faced(pg):
+    d = collections.defaultdict(list)
+    for w in pg.dedupe_chars().extract_words(extra_attrs=['size', 'fontname']):
+        d[round(w['top'] / 2.5)].append(w)
+    return [sorted(v, key=lambda w: w['x0']) for _, v in sorted(d.items())]
+
+
+def read_tn_guide(path):
+    """One entry per species account.
+
+    The name and its binomial share a baseline but not a line bucket -- the italic sits 0.6pt
+    higher -- so they arrive as two rows in the order (binomial, name), and a name that wraps
+    leaves its LAST word on the binomial's row: "Bass(Morone mississippiensis)" then "Yellow".
+    Both halves are put back rather than one of them being dropped, which is why Yellow Bass,
+    Largemouth, Spotted and Redeye are here at all.
+    """
+    import pdfplumber
+    out = []
+    with pdfplumber.open(path) as pdf:
+        face = body_face(pdf)
+        if not face[0]:
+            return []
+        rows = []
+        for pg in pdf.pages:
+            rows.extend(tn_rows(pg, face))
+    # THE HEADING FACE IS LEARNED, NOT NAMED. Every species name is set in one face and the body
+    # in another; taking the face of the rows that sit beside a binomial says which is which
+    # without this file knowing that TWRA's designer picked Warnock Pro.
+    #
+    # It matters because a heading with NO binomial still ends an account, and there are several:
+    # "Temperate Bass Comparison Chart", the Cherokee bass (a hybrid, so no species name of its
+    # own), the "Crappie" and "Sunfishes" group headings. Without them Yellow Bass ran on into the
+    # Cherokee bass account and Redeye Bass into the crappie.
+    heads = collections.Counter()
+    for i, (t, prose, fname, _sz) in enumerate(rows):
+        # ONLY the row that supplies the NAME. Counting the binomial's own row too elects the
+        # italic face, and then every species account reads as a heading and the file empties.
+        if (TN_BINOMIAL.search(t) and not prose and not TN_BINOMIAL.sub('', t).strip()
+                and i + 1 < len(rows) and not rows[i + 1][1]):
+            for f in rows[i + 1][2]:
+                heads[f] += 1
+    head_face = heads.most_common(1)[0][0] if heads else None
+
+    cur, other, used = None, False, -1
+    for i, (t, prose, fname, size) in enumerate(rows):
+        # The row the heading borrowed its name from is part of the heading, not a boundary after
+        # it. Without this the binomial row opens the account and the name row closes it again.
+        if i == used:
+            continue
+        m = TN_BINOMIAL.search(t)
+        if m and not prose:
+            tail = TN_BINOMIAL.sub('', t).strip()
+            head, borrowed = '', -1
+            if i + 1 < len(rows) and not rows[i + 1][1]:
+                head, borrowed = rows[i + 1][0].strip(), i + 1
+            name = ' '.join(x for x in (head, tail) if x).strip(' -')
+            if name and len(name) < 40:
+                used = borrowed
+                cur = {'name': name.title(), 'scientific': m.group(1),
+                       'sections': {}, 'page': None, '_lines': []}
+                out.append(cur)
+                other = False
+                continue
+        if not prose and (head_face in (fname or set()) or size > face[1]):
+            # A HEADING OF ANY KIND CLOSES THE ACCOUNT, and TWRA writes two kinds. A species name
+            # is the body face turned BOLD at the same size; a section heading -- "Crappie",
+            # "Sunfishes", "Temperate (True) Bass" -- is the body face at 24pt. Testing only the
+            # bold face let the group headings through, and redeye bass ran on into the crappie.
+            #
+            # The photo credit (6pt italic) and the anatomy caption (8pt bold italic) are also
+            # rows with no body words, and they sit INSIDE an account -- "TWRA Staff" lands
+            # between the second and third paragraphs of the largemouth bass. Both are SMALLER
+            # than the body, which is what separates furniture from a heading.
+            #
+            # It does not OPEN an account unless a binomial came with it, which is what keeps the
+            # comparison charts out of the file.
+            cur, other = None, False
+            continue
+        if not cur or not prose:
+            continue
+        if TN_OTHER.match(prose):
+            # "Other names: brassy bass," / "striped jack, stripe," / "yellow belly," / "barfish"
+            # -- the list wraps, and every line but the last ends in a comma. Consuming only the
+            # first line put "striped jack, stripe, yellow belly, barfish" at the head of the
+            # yellow bass account, where a reader would take it for a sentence.
+            other = prose.rstrip().endswith(',')
+            continue
+        if other:
+            other = prose.rstrip().endswith(',')
+            continue
+        cur['_lines'].append(prose)
+    for e in out:
+        text = dehyphen(re.sub(r'\s+', ' ', ' '.join(e.pop('_lines'))).strip())
+        if len(text) > 60:
+            e['sections']['Account'] = text
+    return out
+
+
 def sc_sections(text):
     parts = SC_RX.split(dehyphen(re.sub(r'\s+', ' ', text)))
     out = collections.OrderedDict()
@@ -401,6 +560,15 @@ def main():
             entries.append(('SC', 'SCDNR', SC_GUIDE, SC_USEFUL, g))
     else:
         print('!! %s is not beside the root -- no SC species traits' % SC_GUIDE)
+
+    tn = os.path.join(root, TN_GUIDE)
+    if os.path.exists(tn):
+        got = read_tn_guide(tn)
+        print('TWRA   %-42s %d species account(s)' % (TN_GUIDE, len(got)))
+        for g in got:
+            entries.append(('TN', 'TWRA', TN_GUIDE, TN_USEFUL, g))
+    else:
+        print('!! %s is not beside the root -- no TN species accounts' % TN_GUIDE)
 
     ncs = sorted(glob.glob(os.path.join(root, NC_DIR, NC_PROFILE)))
     print('NCWRC  %-42s %d profile(s)' % (os.path.join(NC_DIR, NC_PROFILE), len(ncs)))
