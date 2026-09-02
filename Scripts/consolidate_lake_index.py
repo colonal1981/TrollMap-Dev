@@ -346,6 +346,80 @@ def load_nhd_ftypes(regdir):
     return out, note
 
 
+def name_key(s):
+    """norm(), with any parenthetical dropped first.
+
+    THE TWO NORMALISERS DISAGREED AND THAT WAS THE HOLE. `norm()` here keeps the county token,
+    so "Lake Lucas (Randolph Co, NC)" reads as `lucas randolph` and does not collide with
+    "Lake Lucas". `norm()` in build_nc_species_by_lake.py strips the parenthetical first --
+    COUNTY_PAREN -- so over there the two strings are the SAME name and the collision is real.
+    A check written against the laxer of two normalisers passes while the matcher it is meant
+    to protect still breaks; caught 2026-09-02 by test_name_collisions.py, which asserted the
+    county form was gone and found it sitting on the row.
+    """
+    return norm(re.sub(r'\s*\([^)]*\)\s*', ' ', str(s or '')))
+
+
+def claimed_names(idx):
+    """{name key: {slug, ...}} over every name any row answers to.
+
+    The same four doors row_names() opens in build_nc_species_by_lake.py, because a name that
+    resolves to two waters is only a problem where something tries to spend it.
+    """
+    m = defaultdict(set)
+    for slug, rec in idx.items():
+        for n in ([rec.get('name'), rec.get('display_name'), rec.get('legacy_display_name')]
+                  + list(rec.get('legacy_display_names') or [])):
+            if n:
+                m[name_key(n)].add(slug)
+    return m
+
+
+def drop_stolen_legacy_names(idx, renamed_old):
+    """A renamed water keeps its replaced name ONLY while no other water answers to it.
+
+    load_name_overrides keeps the replaced 3DHP name as a legacy name so "anything already
+    holding the old string -- a saved plan, an R2 key, a bookmark -- still resolves". That is
+    right when the wrong name belonged to nobody: GNIS called 36,000 acres of Chickamauga
+    "Dallas Lake" after Dallas Bay, and no other water is called Dallas Lake.
+
+    IT IS EXACTLY WRONG WHEN THE NAME IS ANOTHER WATER'S REAL NAME. Found 2026-09-02: 3DHP hung
+    "Lake Lucas" on a NAMELESS 500-acre impoundment on the Uwharrie River -- its NHD record
+    carries nhd_gnis_id null and nhd_gnis_name null -- while the actual Lake Lucas, five miles
+    east on Back Creek, is filed under its GNIS name "Back Creek Lake". Three sources put one
+    ramp on the second water: NC WRC's fishing-areas point, the OSM slipway already in this
+    index, and Ryan's own pin, all within 84 m. Renaming the Uwharrie water to Lake Reese while
+    it KEPT "Lake Lucas" would leave two rows answering to it, and every matcher that needs a
+    name to resolve to exactly one water -- bind() below, bind() in
+    build_nc_species_by_lake.py, registryRecordFor in access-index.js -- refuses an ambiguous
+    name. Both waters would bind to nothing, which is worse than the wrong label we started
+    with.
+
+    SO IT IS DERIVED, NOT FLAGGED. Nobody has to remember to write "this one was really wrong"
+    in the override file: a replaced name survives only while no other row claims it, which is
+    a fact about the finished index and is recomputed every run.
+
+    Mutates `idx`. -> [(slug, dropped name, [slugs that already answer to it])]
+    """
+    claims, stolen = claimed_names(idx), []
+    for slug, olds in sorted(renamed_old.items()):
+        rec = idx[slug]
+        bad = {o for o in olds if claims.get(name_key(o), set()) - {slug}}
+        if not bad:
+            continue
+        gone = {name_key(o) for o in bad}
+        rec['legacy_display_names'] = [n for n in (rec.get('legacy_display_names') or [])
+                                       if name_key(n) not in gone]
+        if rec.get('legacy_display_name') and name_key(rec['legacy_display_name']) in gone:
+            # The scalar is read directly by row_names(), so clearing the list alone would
+            # leave the ambiguity in place through that door.
+            rec['legacy_display_name'] = (rec['legacy_display_names'][0]
+                                          if rec['legacy_display_names'] else None)
+        for o in sorted(bad):
+            stolen.append((slug, o, sorted(claims[name_key(o)] - {slug})))
+    return stolen
+
+
 def load_name_overrides(path):
     """slug -> the name this water is actually called.
 
@@ -720,6 +794,7 @@ def main():
                                        ('ncpaws_access_by_lake.json', 'ncpaws'))}
 
     idx, by_norm = {}, defaultdict(list)
+    renamed_old = {}
     county_hits = county_miss = 0
     for x in lakes:
         s = x['slug']
@@ -789,11 +864,48 @@ def main():
             'pack_mb': C.get('mb'),
         }
         by_norm[norm(x['name'])].append(s)
+        if _ov.get('name'):
+            # The exact strings the rename replaced, kept so the pass below can tell a name
+            # this water lost from a name it never had. Reconstructing them afterwards from
+            # positions in legacy_display_names would break the first time the list order
+            # changes.
+            renamed_old[s] = [old_display, display_with_county(x['name'], cty, state_suffix(x)),
+                              x['name']]
 
-    # THE ALIAS FILE DEFAULTS, AND SAYS WHAT IT DID. See the 2026-08-12 note in the module
-    # docstring: this used to be the one optional input of the three that loaded silently, so
-    # a run that forgot the flag was indistinguishable from a run with no naming disagreements
-    # to fix. `--counties` and `--names` above already work this way; this is only catching up.
+    stolen = drop_stolen_legacy_names(idx, renamed_old)
+    if stolen:
+        print('renames: %d replaced name(s) NOT kept as legacy -- another water answers to them'
+              % len(stolen))
+        for _s, _o, _owners in stolen:
+            print('   %-26s dropped %-30s -> %s' % (_s, '"%s"' % _o, ', '.join(_owners)))
+
+    # AND WHATEVER IS STILL AMBIGUOUS GETS SAID OUT LOUD, WITH THE STATE, BECAUSE THE STATE IS
+    # WHAT DECIDES WHETHER IT HURTS. Two waters answering to one name across a state line cost
+    # nothing: every binder that spends a name unqualified is already state-scoped --
+    # bind_stocking() in build_nc_species_by_lake.py builds its map from the NC rows ONLY,
+    # precisely so an NC stocking cannot land on a South Carolina reservoir. WITHIN one state
+    # there is no second signal left, and the name binds to nothing at all.
+    #
+    # Measured on the shipped index 2026-09-02: 15 collisions, 8 of them same-state. The one
+    # that costs us is `glenville` -- Glenville Lake (Cumberland Co, NC) at 26 acres and Lake
+    # Glenville (Jackson Co, NC) at 1,390, the water whose empty roster is the whole reason
+    # build_nc_species_by_lake.py was written. Five more are one river carried as several rows
+    # (saluda, nolichucky, chattahoochee, catawba, broad) and `robinson` is two real Lake
+    # Robinsons in South Carolina -- the two-Goose-Creeks case, which needs a county in the
+    # name rather than a fix. NONE of them break a binder that also has geometry, which is why
+    # this prints rather than refuses: it says which names cannot be spent on their own.
+    dupes = {n: sorted(v) for n, v in claimed_names(idx).items() if n and len(v) > 1}
+    def _st(s_):
+        return str((idx.get(s_) or {}).get('state') or '?').upper()
+    same = {n: v for n, v in dupes.items() if len({_st(x) for x in v}) < len(v)}
+    if dupes:
+        print('name collisions: %d name(s) answer to more than one water, %d of them WITHIN one '
+              'state (those are the ones a state-scoped binder cannot spend):'
+              % (len(dupes), len(same)))
+        for _n, _v in sorted(dupes.items()):
+            print('   %-3s %-26s %s' % ('!!' if _n in same else '', _n,
+                                        ', '.join('%s [%s]' % (x, _st(x)) for x in _v)))
+
     apath = a.aliases or os.path.join(R, 'lake_aliases.json')
     aliases = {}
     if os.path.exists(apath):
