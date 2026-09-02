@@ -12,7 +12,7 @@
 // and already holds the documents — and that the rule is now something a test can run.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { lakeTerms, isOnLakeDoc, prepareNormalizedDocuments } from '../js/utils/doc-relevance.js';
+import { lakeTerms, isOnLakeDoc, prepareNormalizedDocuments, offLakeReason } from '../js/utils/doc-relevance.js';
 
 const doc = (o) => ({ title: '', url: '', fullText: '', ...o });
 
@@ -78,7 +78,7 @@ test('the prepared array is exactly what the Worker will store, counts included'
 
 test('an empty payload is not an error, it is an empty payload', () => {
   const out = prepareNormalizedDocuments([], 'Lake Marion, SC');
-  assert.deepEqual(out, { documents: [], rejected: 0, total: 0 });
+  assert.deepEqual(out, { documents: [], refused: [], rejected: 0, total: 0 });
   assert.equal(prepareNormalizedDocuments(null, 'x').total, 0);
 });
 
@@ -94,4 +94,49 @@ test("NC WRC's own stocking system is an official source", () => {
     text: 'Hatchery Supported Trout Waters',
   };
   assert.equal(isOnLakeDoc(doc, 'Nantahala Lake (Macon Co, NC)'), true);
+});
+
+test('the operator that built the lake writes about it without saying which state it is in', () => {
+  // RANDLEMAN LAKE (Randolph Co, NC). Piedmont Triad Regional Water Authority built and runs this
+  // reservoir; the page prices the fishing pier and says which launches take gasoline, electric
+  // only and paddle. Refused on the 2026-09-02 run for never writing "North Carolina" -- which a
+  // local authority writing for local people does not.
+  const doc = {
+    title: 'Reservoir Recreation – Piedmont Triad Regional Water Authority',
+    url: 'https://triadncwater.gov/reservoir-recreation',
+    fullText: 'Randleman Regional Reservoir Operating Hours for 2026. Click to view current '
+            + 'conditions at Randleman Lake. Pier Fishing $3 per person. Gasoline boats, '
+            + 'electric motors, kayaks and canoes.',
+  };
+  assert.equal(offLakeReason(doc, 'Randleman Lake (Randolph Co, NC)'), null);
+});
+
+test('a riverkeeper naming the reservoir at the top of its own reach is about that reservoir', () => {
+  // PARR SHOALS RESERVOIR (Fairfield Co, SC). The page names the species in the water, gives the
+  // mean flow, and names the one public landing below the dam.
+  const doc = {
+    title: 'Congaree Riverkeeper | Broad River',
+    url: 'https://www.congareeriverkeeper.org/lower-broad-river',
+    fullText: "The Congaree Riverkeeper's geographical scope includes a 22-mile stretch of the "
+            + 'Broad River, from the Parr Shoals Reservoir located in Newberry County down to its '
+            + 'confluence with the Lower Saluda River. Largemouth and smallmouth bass, bluegill, '
+            + 'catfish and shad. Average flow 5,316 cubic feet per second.',
+  };
+  assert.equal(offLakeReason(doc, 'Parr Shoals Reservoir (Fairfield Co, SC)'), null);
+});
+
+test('the reason says which half refused it', () => {
+  const noName = { title: 'Lake Fork Crappie Fishing Report | Seasonal Patterns',
+                   url: 'https://lakeforktrophybass.com/seasonal-patterns', fullText: 'crappie' };
+  assert.equal(offLakeReason(noName, 'Lake Wateree, SC'), 'no_name');
+
+  // Named in the title, and the title says Texas.
+  const elsewhere = { title: 'Crappie and White Bass on Cedar Creek Lake Texas',
+                      url: 'https://www.bigcrappie.com/how-to-guides/cedar-creek',
+                      fullText: 'Cedar Creek Lake' };
+  assert.equal(offLakeReason(elsewhere, 'Cedar Creek Reservoir (Lancaster Co, SC)'), 'other_state');
+
+  // An agency domain never needs either half.
+  assert.equal(offLakeReason({ url: 'https://www.ncpaws.org/RSReports/FishStock/x.aspx' },
+                             'Nantahala Lake (Macon Co, NC)'), null);
 });

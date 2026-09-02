@@ -48,6 +48,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 
 WORKER = os.environ.get("TROLLMAP_WORKER_URL",
@@ -444,9 +445,13 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
         # whether the gate was right. On 2026-09-01 Lanier fetched nine and kept three, twice, and
         # there was no way to tell a correctly-rejected off-lake page from a Lake Lanier report
         # thrown out for not spelling itself "Sidney Lanier". The titles decide that in one read.
-        kept_urls = {norm_url(d.get("url")) for d in keep}
-        out["rejected_docs"] = [{"title": d.get("title"), "url": d.get("url")}
-                                for d in merged if norm_url(d.get("url")) not in kept_urls]
+        # AND WHY, FROM THE GATE ITSELF. This used to difference the URL sets, which is a second
+        # copy of a question prepareNormalizedDocuments() has already answered and could only ever
+        # produce a title -- so "is the gate right" had to be settled by opening the pages by hand,
+        # which on 2026-09-02 is exactly what it took for Randleman Lake and Parr Shoals Reservoir.
+        # `why` is one of no_name, named_no_state or other_state, and named_no_state is the only
+        # one worth arguing with.
+        out["rejected_docs"] = prepared.get("refused") or []
         # AN EMPTY CORPUS IS NOT WORTH A KEY IN R2. On 2026-09-01 three console.info lines were
         # researched as if they were lakes; the off-lake gate correctly threw out every document
         # they found, and this then wrote an empty document array to the bucket under each of
@@ -921,13 +926,17 @@ def main():
 
     gated = [r for r in ok if r.get("rejected_docs")]
     if gated:
-        print(f"\nthe off-lake gate dropped documents on {len(gated)} water(s) "
-              f"-- check these are actually off-lake:")
+        why_all = Counter(d.get("why") or "?" for r in gated for d in r["rejected_docs"])
+        print(f"\nthe off-lake gate dropped documents on {len(gated)} water(s) -- "
+              + ", ".join(f"{n} {w}" for w, n in why_all.most_common())
+              + ".\nno_name is almost never worth arguing with; named_no_state is the one that "
+                "is, because a local page about a water often never repeats its state:")
         for r in gated:
             print(f"  {r['lake']}: {len(r['rejected_docs'])} of "
                   f"{len(r['rejected_docs']) + r['documents']}")
-            for d in r["rejected_docs"][:6]:
-                print(f"      {str(d.get('title'))[:70]}  {str(d.get('url'))[:70]}")
+            for d in sorted(r["rejected_docs"], key=lambda x: x.get("why") != "named_no_state")[:6]:
+                print(f"      [{str(d.get('why'))[:14]:14s}] {str(d.get('title'))[:56]}  "
+                      f"{str(d.get('url'))[:64]}")
 
     flush_report(wall, False)
     print(f"\nreport -> {a.report}")
