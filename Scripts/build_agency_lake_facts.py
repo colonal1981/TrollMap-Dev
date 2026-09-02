@@ -735,6 +735,112 @@ SOURCES = [
 ]
 
 
+# GEORGIA PUBLISHES ONE DOCUMENT THAT IS ALL LAKE AND NO SPECIES PAGE.
+#
+# `walleyeGuide_scrollable.pdf` -- GA DNR's Angler's Guide to Walleye Fishing in Georgia -- is not
+# a lake page and not a species account. It is a THREE-SEASON TABLE OF NAMED PLACES: eleven
+# reservoirs down the side, February-April / May-September / October-January across, and a tip in
+# every cell that names a creek, a ramp, a dam or a depth.
+#
+#   "Target standing timber in 30-feet of water on main lake points in the Eastanollee Creek area."
+#                                                                            Hartwell, Oct-Jan
+#   "Target brush piles in 30-50 feet of water on the lower half of the lake."   Lanier, May-Sept
+#
+# That is the shape of this file, not of species_traits.json: per water, per season, and specific
+# to the place. It is also exactly what Ryan said the plan was missing -- "15-40ft is almost the
+# entire depth profile... this doesn't say upper or lower lake... coves or open lake".
+#
+# ONE FILE, MANY WATERS, so it cannot go through read_one() like the per-lake pages. It is its own
+# pass in main().
+GA_WALLEYE = 'walleyeGuide_scrollable.pdf'
+GA_WALLEYE_SEASON = re.compile(r'^(FEBRUARY - APRIL|MAY - SEPTEMBER|OCTOBER - JANUARY)$')
+
+
+def ga_walleye_table(path):
+    """{reservoir: {season: tip}}, read off the RULES THE DOCUMENT DRAWS.
+
+    The page is one 1080x7280 sheet and the reservoir name is set vertically CENTRED against a
+    tip that runs to four lines, so a name sits above some of its own text and below the rest.
+    Reading by proximity gets Rabun's first line onto Seed by 0.8 of a point. The table is ruled
+    -- horizontal rules at every row boundary, verticals at x=150/330/494/930 -- so pdfplumber's
+    `lines` strategy reads the rows the designer actually drew and none of that arises.
+    """
+    import pdfplumber
+    out, season = {}, None
+    with pdfplumber.open(path) as pdf:
+        pg = pdf.pages[0].dedupe_chars()
+        tables = pg.crop((0, 0, pg.width, pg.height - 1)).extract_tables(
+            {'vertical_strategy': 'lines', 'horizontal_strategy': 'lines'})
+    for t in tables:
+        for row in t:
+            c = [str(x or '').replace('\n', ' ').strip() for x in row]
+            if not c or not c[0]:
+                continue
+            if GA_WALLEYE_SEASON.match(c[0]):
+                season = c[0]
+                continue
+            if c[0].upper() == 'RESERVOIR' or not season or len(c) < 3 or not c[2]:
+                continue
+            tip = re.sub(r'(\w)- (\w)', r'\1\2', re.sub(r'\s+', ' ', c[2])).strip()
+            if len(tip) > 20:
+                out.setdefault(c[0], {})[season] = tip
+    return out
+
+
+def ga_walleye_water(name, idx, multimap):
+    """The guide writes bare reservoir names -- `Seed`, `Rabun`, `Lanier`.
+
+    Exact first, through the same resolver every other page uses. `Lanier` is the one that needs
+    more: Georgia's is `lake_sidney_lanier` and the bare name belongs to an 88.5-acre SC lake in
+    Greenville County, so the state filter is doing real work here. The fallback accepts a
+    substring ONLY when exactly one water in the state answers to it, which is a measurement
+    rather than a guess -- and it is why Blue Ridge, Carters and the three Rocky Mountain PFA
+    ponds come back empty: Georgia stocks walleye in them and we do not ship a chart for them.
+    """
+    for cand in (name, 'Lake %s' % name, '%s Lake' % name):
+        slug, why = resolve_with_county(cand, '', 'GA', idx, multimap)
+        if slug:
+            return slug, why
+    n = re.sub(r'[^a-z0-9]+', ' ', name.lower()).strip()
+    hits = {s for s, r in idx.items()
+            if str(r.get('state') or '').upper() == 'GA'
+            and n in re.sub(r'[^a-z0-9]+', ' ',
+                            str(r.get('display_name') or r.get('name') or '').lower())}
+    if len(hits) == 1:
+        return sorted(hits)[0], 'the only GA water whose name contains "%s"' % name
+    return None, ('%d GA waters contain "%s"' % (len(hits), name)) if hits else 'no GA water by that name'
+
+
+def read_ga_walleye(root, idx, multimap):
+    """-> ({slug: rec}, [unmatched]). One rec per reservoir, in this file's own shape."""
+    path = os.path.join(root, GA_WALLEYE)
+    if not os.path.exists(path):
+        return {}, []
+    table = ga_walleye_table(path)
+    got, missed = {}, []
+    for name, seasons in sorted(table.items()):
+        slug, why = ga_walleye_water(name, idx, multimap)
+        tips = ['%s — %s' % (season, seasons[season])
+                for season in ('FEBRUARY - APRIL', 'MAY - SEPTEMBER', 'OCTOBER - JANUARY')
+                if seasons.get(season)]
+        if not slug:
+            missed.append({'page_name': name, 'file': GA_WALLEYE, 'state': 'GA',
+                           'why': why, 'measures': {}})
+            continue
+        got[slug] = {
+            'state': 'GA', 'agency': 'GA DNR',
+            'page_name': "Angler's Guide to Walleye Fishing in Georgia — %s" % name,
+            'display_name': (idx.get(slug) or {}).get('display_name'),
+            'match_note': why,
+            'source': {'file': GA_WALLEYE, 'url': None, 'saved_at': saved_at(path),
+                       'published': None},
+            'measures': {}, 'overview': [],
+            'species': [{'name': 'Walleye', 'tips': tips}],
+            'mentioned_but_not_parsed': [],
+        }
+    return got, missed
+
+
 def build_name_multimap(idx):
     """Every name a water answers to -> EVERY slug that answers to it.
 
@@ -1044,6 +1150,19 @@ def main():
             else:
                 unmatched.append({'page_name': page['name'], 'file': os.path.basename(p),
                                   'state': spec['state'], 'why': why, 'measures': measures})
+
+    # GA DNR'S WALLEYE GUIDE. One document, many waters, so it is its own pass rather than a
+    # SOURCES entry -- read_one() is one file to one lake by construction.
+    if not wanted or 'GA' in wanted:
+        wal, wal_missed = read_ga_walleye(root, idx, multimap)
+        if wal or wal_missed:
+            pages += 1
+            for slug, rec in wal.items():
+                rows.setdefault(slug, []).append(rec)
+            unmatched.extend(wal_missed)
+            print('GA DNR: walleye guide -> %d water(s), %d named but not ours (%s)'
+                  % (len(wal), len(wal_missed),
+                     ', '.join(m['page_name'] for m in wal_missed) or '-'))
 
     # THE SURFACE-ACRES DISAGREEMENT IS SYSTEMATIC, AND THAT IS THE FINDING.
     #
