@@ -431,7 +431,39 @@ export function researchIntel(profile, species, season, now = Date.now()) {
   const put = (label, v, unit = '') => {
     if (v === null || v === undefined || v === '' || (Array.isArray(v) && !v.length)) return;
     let text;
-    if (Array.isArray(v)) text = v.join('; ');
+    // AN ARRAY OF OBJECTS JOINED IS "[object Object]; [object Object]", AND THAT IS WHAT THE
+    // PROMPT WAS BEING SENT.
+    //
+    // `put('Stockings', bio.knownStockings)` twelve lines below. Every saved profile stores that
+    // field as objects -- coerceStockingsArray() at lake-research-engine.js:3526 turns the bare
+    // strings into `{species}` on the way in, and the LLM schema in facts-util.js emits
+    // `{species, agency, note}` directly. Array.join() then stringified each one. Measured
+    // 2026-09-02: `Stockings: [object Object]; [object Object]`.
+    //
+    // It read correctly ONLY on the NC deterministic path, where uniqueResearchSpecies() returns
+    // plain strings -- which is why it survived: the one water anybody checked was an NC water.
+    //
+    // Fixed for the CLASS, not the field. Any array element that is an object goes through the
+    // same renderer a lone object already gets, and one that carries a `species` leads with the
+    // fish rather than with the word "species".
+    const one = (x) => {
+      if (x === null || x === undefined) return '';
+      if (typeof x !== 'object') return String(x);
+      if (typeof x.species === 'string' && x.species.trim()) {
+        const rest = Object.entries(x)
+          .filter(([k, val]) => k !== 'species' && k !== 'note' && val !== null
+                             && val !== undefined && val !== '' && val !== false)
+          .map(([k, val]) => (val === true ? k : `${k} ${val}`));
+        const n = typeof x.note === 'string' ? x.note : '';
+        return x.species.trim()
+             + (rest.length ? ` (${rest.join(', ')})` : '')
+             + (n ? ` — ${n}` : '');
+      }
+      return Object.entries(x)
+        .filter(([k, val]) => k !== 'note' && val !== null && val !== undefined && val !== '')
+        .map(([k, val]) => (val === true ? k : `${k} (${val})`)).join(', ');
+    };
+    if (Array.isArray(v)) text = v.map(one).filter(Boolean).join('; ');
     else if (typeof v === 'object') {
       const parts = Object.entries(v)
         .filter(([k, val]) => k !== 'note' && val !== null && val !== undefined && val !== '')
