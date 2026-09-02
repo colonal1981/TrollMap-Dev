@@ -265,9 +265,34 @@ function uniqueResearchSpecies(items) {
   return out;
 }
 
+/**
+ * A FOOTNOTE MARKER IS NOT PART OF THE FISH'S NAME, AND GEORGIA IS THE ONLY BOOK THAT USES ONE.
+ *
+ * Counted 2026-09-02 across every statewide row in registry/regulations_table.json: GA marks 13
+ * species and SC, NC and TN mark none -- `*` on nine (Amberjack*, King mackerel*, Red snapper*),
+ * a bare capital on three (`Sharks (other than Hammerheads, SSC and Prohibited Sharks)A`), and
+ * `**B` on exactly one, which is the one that matters:
+ *
+ *     'Red drum (Channel bass, Spottail bass, Redfish)**B'  ->  'Red Drum B'
+ *
+ * The parenthetical strip below already handles the alias list -- North Carolina's
+ * 'RED DRUM (CHANNEL BASS, RED FISH, OR PUPPY DRUM)' comes out as Red Drum (Redfish) correctly --
+ * but GA's marker sits OUTSIDE the closing bracket and survives it. So Georgia's red drum, the
+ * most targeted inshore fish on that coast, canonicalised to a species that does not exist.
+ *
+ * The bare capital is required to be attached -- `(?<=[a-z)])` -- so it only fires on `Sharks)A`
+ * and never on a real name with a space before a capitalised word. Markers come off BEFORE the
+ * parentheses, or `(SSC)A` leaves an orphaned ` A` behind.
+ */
+const stripFootnoteMarker = (s) => String(s || '')
+  .replace(/[*\u2020\u2021]+[A-Z]?\s*$/, '')
+  .replace(/(?<=[a-z)])[A-Z]\s*$/, '')
+  .trim();
+
 function splitSpeciesText(text) {
-  const cleaned = String(text || '').replace(/\([^)]*\)/g, ' ').replace(/\band\b/gi, ',').replace(/;/g, ',');
-  return cleaned.split(',').map(s => s.trim()).filter(Boolean);
+  const cleaned = stripFootnoteMarker(text)
+    .replace(/\([^)]*\)/g, ' ').replace(/\band\b/gi, ',').replace(/;/g, ',');
+  return cleaned.split(',').map(s => stripFootnoteMarker(s.trim())).filter(Boolean);
 }
 
 async function parseSCDNRDescriptionFacts(lakeName, url, html, env) {

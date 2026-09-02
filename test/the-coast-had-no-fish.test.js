@@ -22,8 +22,8 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canonicalizeResearchSpecies, uniqueResearchSpecies, isKnownResearchSpecies }
-  from '../Worker/research/facts-util.js';
+import { canonicalizeResearchSpecies, uniqueResearchSpecies, isKnownResearchSpecies,
+         splitSpeciesText } from '../Worker/research/facts-util.js';
 import { SC_INSHORE_ROSTER, SC_INSHORE_BASIS } from '../Worker/research/coastal-agents.js';
 import { speciesGroupsFor } from '../js/modules/species-selector.js';
 
@@ -92,4 +92,26 @@ test('the freshwater roster still works and the coast did not leak into it', () 
   assert.ok(shown.includes('Largemouth Bass'));
   assert.ok(!shown.includes('Red Drum (Redfish)'), 'no saltwater box on a reservoir');
   assert.ok(isKnownResearchSpecies('Largemouth Bass'));
+});
+
+test('a Georgia footnote marker is not part of the fish', () => {
+  // Counted across every statewide row in regulations_table.json: GA marks 13 species and
+  // SC, NC and TN mark none. This is the one that mattered -- the marker sits OUTSIDE the
+  // closing bracket, so the parenthetical strip that fixes North Carolina's row walked past it
+  // and Georgia's most targeted inshore fish canonicalised to "Red Drum B".
+  const one = (s) => uniqueResearchSpecies(splitSpeciesText(s));
+  assert.deepEqual(one('Red drum (Channel bass, Spottail bass, Redfish)**B'), ['Red Drum (Redfish)']);
+  assert.deepEqual(one('RED DRUM (CHANNEL BASS, RED FISH, OR PUPPY DRUM)'), ['Red Drum (Redfish)']);
+  assert.deepEqual(one('Amberjack*'), ['Amberjack']);
+  assert.deepEqual(one('Sharks (other than Hammerheads, SSC and Prohibited Sharks)A'), ['Sharks']);
+  // Three fish on one row of the SC book, and all three have a checkbox.
+  assert.deepEqual(one('Atlantic Croaker, Spot, Whiting'),
+                   ['Atlantic Croaker', 'Spot', 'Whiting (Southern Kingfish)']);
+});
+
+test('a real name with brackets in it is not damaged by the marker strip', () => {
+  const one = (s) => uniqueResearchSpecies(splitSpeciesText(s));
+  assert.deepEqual(one('Redear Sunfish (Shellcracker)'), ['Redear Sunfish (Shellcracker)']);
+  assert.deepEqual(one('White Bass / Hybrid'), ['White Bass / Hybrid']);
+  assert.deepEqual(one('Largemouth Bass'), ['Largemouth Bass']);
 });
