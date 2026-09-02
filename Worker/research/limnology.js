@@ -9,7 +9,8 @@ import { handleResearchThermoclineSearch } from './storage.js';
 import { LAKE_NAME_TO_R2_KEY as SUPPLEMENTAL_KEY_MAP, resolveR2Key } from '../../js/data/lake-keys.js';
 
 import { boundsOf } from '../../js/utils/geojson-coords.js';
-import { lakeIndex, resolveRegistryRow } from '../registry.js';
+import { lakeIndex, resolveRegistryRow, identityNamesForLake } from '../registry.js';
+import { researchStorageId, resolveResearchStorageId } from './keys.js';
 import { applyWqpToLimnology, buildWqpEvidence, limnologyGaps } from '../../js/utils/wqp-limnology.js';
 
 function resolveSupplementalKeyWorker(lakeName) {
@@ -74,8 +75,43 @@ async function handleResearchLimnologyData(request, env, opts = {}) {
 
 const WQP_TTL_MS = 30 * 24 * 60 * 60 * 1000;   // monthly sampling underneath; see above
 
+/**
+ * The id the PROFILE is stored under, which is the only id the thirty-day sweep can pair against.
+ *
+ * researchStorageId() is not that id. It sanitises whatever name it is handed, and the two sides
+ * hand it different names: the batch passes the registry display name "Wateree Lake (Kershaw Co,
+ * SC)" -> `wateree_lake_kershaw_co_sc`, while the profile has been filed under `lake_wateree_sc`
+ * since before August. researchStorageIdCandidates() exists precisely because of that spread --
+ * "Every profile written before August is under the second spelling" -- and resolving against the
+ * bucket is what /research/get and /research/save already do.
+ *
+ * Get this wrong and nothing errors: the batch writes its cache under one id, the sweep looks for
+ * it under another, and every water on the card reads as never-pulled forever. HEAD, not GET, so
+ * resolving costs no bodies.
+ */
+async function limnologyCacheId(env, lakeName) {
+  try {
+    const bucket = env?.R2_TROLLMAP_CHARTPACKS;
+    if (bucket?.head) {
+      // EVERY NAME THE WATER IS FILED UNDER, the way handleResearchGet does it. The registry
+      // display name alone is not enough and the candidate list proves it: "Wateree Lake (Kershaw
+      // Co, SC)" generates wateree_lake, wateree_lake_sc and wateree_lake_kershaw_co_sc, and the
+      // profile is `lake_wateree_sc` -- reachable only through the legacy name the registry
+      // carries. That is the same 404 that sent J. Strom Thurmond back through the whole pipeline
+      // on 2026-08-16.
+      const alts = identityNamesForLake(await lakeIndex(env), lakeName) || [];
+      const found = await resolveResearchStorageId(lakeName,
+        (id) => bucket.head(`lakes/${id}.json`), alts);
+      if (found) return found.id;
+    }
+  } catch (e) {
+    console.warn(`[limnology-data] storage id resolve failed for ${lakeName}: ${e.message}`);
+  }
+  return researchStorageId(lakeName);
+}
+
 /** The pull, or the newest one inside the TTL. Never throws: a bad fetch serves the stale copy. */
-async function wqpCached(env, lakeName, body, opts) {
+async function wqpCached(env, lakeName, body, opts, knownId = null) {
   // A SECCHI-ONLY PULL IS NOT A WQP PULL AND MUST NEVER BE STORED AS ONE. `opts.secchiOnly`
   // returns early with `{ok, recordCount, secchi, recentTurbidityNTU, lastObserved}` and NO
   // thermocline, oxygen or surfaceWater. Caching that under the shared key would serve a payload
@@ -83,7 +119,7 @@ async function wqpCached(env, lakeName, body, opts) {
   // change exists to repair, reintroduced by its own cache. getSecchiSummary() calls wqpPull()
   // directly and keeps its own clarity-cache, so nothing is lost by refusing here.
   if (opts && opts.secchiOnly) return (await wqpPull(env, { ...body, lakeName }, opts)).json();
-  const key = `limnology-cache/${resolveSupplementalKeyWorker(lakeName)}.json`;
+  const key = `limnology-cache/${knownId || await limnologyCacheId(env, lakeName)}.json`;
   let stale = null;
   try {
     const hit = env?.R2_TROLLMAP_CHARTPACKS ? await env.R2_TROLLMAP_CHARTPACKS.get(key) : null;
@@ -652,4 +688,99 @@ async function getSecchiSummary(env, lakeName) {
   }
 }
 
-export { SUPPLEMENTAL_KEY_MAP, resolveSupplementalKeyWorker, handleResearchLimnologyData, getSecchiSummary };
+/**
+ * THE THIRTY-DAY REFRESH, ON THE CLOCK THAT ALREADY EXISTS.
+ *
+ * Ryan, 2026-09-02: *"pulled in the pipeline and then reran every 30 days automatically and then
+ * merged back in ... that is what i want to happen."* Step 4 of his 2026-09-01 plan says the same
+ * thing and names this cron: *"WQP refresh belongs here, gated to the N oldest waters per firing
+ * so the whole card rolls over inside a month -- matching the monthly sampling underneath."*
+ *
+ * TWO LISTINGS AND NO BODIES. R2's list gives `uploaded` per object, so a profile is paired with
+ * its cache and judged stale without reading either -- which is why the cache is keyed by
+ * researchStorageId above. Only the waters that are actually past the TTL cost anything, so on a
+ * normal firing this does nothing at all.
+ *
+ * TWO PER FIRING. The five-minute cron fires 288 times a day, so two is enough to work through
+ * every water on the card in well under a day whenever a batch of them ages out together, while
+ * never putting more than two WQP requests on the wire at once. It is not a throughput target; it
+ * is the smallest number that cannot fall behind a monthly TTL.
+ *
+ * IT DOES NOT BUMP THE PROFILE VERSION. A version marks a research run -- a judgement somebody
+ * made and can roll back to. This is a measurement being re-read from the same source under the
+ * same method, so it writes `metadata.limnologyRefreshedAt` and leaves the version alone. Bumping
+ * it would file 64 new versions a month that no human authored and bury the ones that mean
+ * something. The numbers stay re-derivable from the cache either way.
+ *
+ * NOTHING HERE MAY TAKE THE ALERT SWEEP DOWN. scheduled() is the only path that reaches Ryan with
+ * the app closed, and a throw inside it is silent -- Cloudflare does not retry. So every failure
+ * is caught per water and reported in the return value, which is what the cron logs.
+ */
+const SWEEP_PER_FIRING = 2;
+
+async function refreshStaleLimnology(env, opts = {}) {
+  const limit = opts.limit || SWEEP_PER_FIRING;
+  const out = { checked: 0, stale: 0, refreshed: 0, merged: 0, failed: [] };
+  if (!env?.R2_TROLLMAP_CHARTPACKS) return out;
+
+  const [profiles, caches] = await Promise.all([
+    env.R2_TROLLMAP_CHARTPACKS.list({ prefix: 'lakes/' }),
+    env.R2_TROLLMAP_CHARTPACKS.list({ prefix: 'limnology-cache/' }),
+  ]);
+  const cachedAt = new Map();
+  for (const o of caches.objects || []) {
+    const id = o.key.replace(/^limnology-cache\//, '').replace(/\.json$/, '');
+    cachedAt.set(id, o.uploaded ? Date.parse(o.uploaded) : 0);
+  }
+
+  const due = [];
+  for (const o of profiles.objects || []) {
+    // `lakes/versions/<id>/vN.json` is history, not a profile.
+    const m = /^lakes\/([^/]+)\.json$/.exec(o.key);
+    if (!m) continue;
+    out.checked += 1;
+    const at = cachedAt.get(m[1]);
+    if (at == null || Date.now() - at >= WQP_TTL_MS) due.push({ id: m[1], key: o.key, at: at || 0 });
+  }
+  out.stale = due.length;
+  due.sort((a, b) => a.at - b.at);            // the oldest first, missing before merely old
+
+  for (const water of due.slice(0, limit)) {
+    try {
+      const obj = await env.R2_TROLLMAP_CHARTPACKS.get(water.key);
+      if (!obj) continue;
+      const profile = JSON.parse(await r2Text(obj));
+      const lakeName = profile.lakeName || profile.identity?.lakeName;
+      if (!lakeName) { out.failed.push(`${water.id}: profile carries no lakeName`); continue; }
+
+      // The id is the listing key it came from, so nothing has to resolve it again.
+      const pull = await wqpCached(env, lakeName, {}, {}, water.id);
+      out.refreshed += 1;
+      if (!pull?.ok || !(pull.recordCount > 0)) continue;
+
+      const merged = applyWqpToLimnology(profile.limnology || {}, pull);
+      if (JSON.stringify(merged) === JSON.stringify(profile.limnology || {})) continue;
+      profile.limnology = merged;
+      profile._wqpLimnology = pull;
+      const ev = buildWqpEvidence(pull);
+      for (const [section, fields] of Object.entries(ev)) {
+        profile.evidence = profile.evidence || {};
+        profile.evidence[section] = profile.evidence[section] || {};
+        // REPLACED, NOT APPENDED. This row says where the value now stored came from, and there
+        // is one such value; appending would leave last month's citation beside this month's
+        // number claiming to explain it.
+        for (const [field, rows] of Object.entries(fields || {})) profile.evidence[section][field] = rows;
+      }
+      profile.metadata = profile.metadata || {};
+      profile.metadata.limnologyRefreshedAt = new Date().toISOString();
+      await env.R2_TROLLMAP_CHARTPACKS.put(water.key, JSON.stringify(profile),
+        { httpMetadata: { contentType: 'application/json' } });
+      out.merged += 1;
+    } catch (e) {
+      out.failed.push(`${water.id}: ${e && e.message}`);
+    }
+  }
+  return out;
+}
+
+export { SUPPLEMENTAL_KEY_MAP, resolveSupplementalKeyWorker, handleResearchLimnologyData, getSecchiSummary, refreshStaleLimnology };

@@ -16,7 +16,7 @@ import { handleAlerts, runAlertSweep } from './alerts.js';
 import { handleReports } from './reports.js';
 import { fetchStateRegulations, getLakeRegulations } from './research/clients.js';
 import { regulationsTable, lakeIndex, resolveRegistryRow } from './registry.js';
-import { handleResearchThermoclineSearch, handleResearchLimnologyData, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchRegsDebug, handleResearchApprove, handleResearchDelete, handleResearchDeleteNormalizedDoc, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleResearchValidationPass, handleSharedCheck, handleSharedStore, handleSharedQuery, handleSharedPublish, handleSharedStatus, handleSharedQuarantine } from './worker-research.js';
+import { handleResearchThermoclineSearch, handleResearchLimnologyData, refreshStaleLimnology, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchRegsDebug, handleResearchApprove, handleResearchDelete, handleResearchDeleteNormalizedDoc, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleResearchValidationPass, handleSharedCheck, handleSharedStore, handleSharedQuery, handleSharedPublish, handleSharedStatus, handleSharedQuarantine } from './worker-research.js';
 
 
 /**
@@ -987,6 +987,22 @@ var trollmap_worker_default = {
   async scheduled(event, env, ctx) {
     const summary = await runAlertSweep(env).catch((e) => ({ error: e && e.message }));
     console.log('[alerts] sweep', JSON.stringify(summary));
+
+    // THE SECOND THING THE CLOCK IS FOR, AND IT RUNS AFTER THE ALERTS AND CANNOT DISTURB THEM.
+    //
+    // Ryan's 2026-09-01 plan, step 4: "give WQP a TTL and put its refresh on the existing cron",
+    // gated to the oldest waters per firing so the card rolls over inside a month. The thermocline
+    // and the anoxic boundary are climatological -- derived once from a depth-profile pull, not
+    // read off an instrument today -- so they belong on a slow clock and not in a plan's critical
+    // path. Every firing where nothing is past its thirty days costs two R2 listings and stops.
+    //
+    // SEPARATELY AWAITED AND SEPARATELY CAUGHT. runAlertSweep is the only path that reaches Ryan
+    // with the app closed and the phone asleep; a throw here is silent and Cloudflare does not
+    // retry, so a bad WQP day must not be able to take the alerts with it.
+    const limn = await refreshStaleLimnology(env).catch((e) => ({ error: e && e.message }));
+    if (limn && (limn.refreshed || limn.failed?.length || limn.error)) {
+      console.log('[limnology] sweep', JSON.stringify(limn));
+    }
   },
 
   async fetch(request, env, ctx) {
