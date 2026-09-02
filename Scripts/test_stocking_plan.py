@@ -85,6 +85,72 @@ check('Lake Louise, Buncombe Co does not become Hartwell',
 check('and no bound water is outside North Carolina',
       [s for s in bound if 'NC' not in str((idx.get(s) or {}).get('state') or '').upper()], [])
 
+# 7. THE API SAYS "SPOTTED BASS" AND NC WRC SAYS THAT IS THE WRONG FISH.
+#
+#    The fishing-areas API answers `commonName` per location and never once says Alabama Bass --
+#    52 locations say Spotted Bass. NC WRC's own page says why, and the sentence IS the rule:
+#    "True Spotted Bass are native to the mountain drainages of southwestern North Carolina and
+#    have been introduced into the Cape Fear River basin, W. Kerr Scott Reservoir, and the Yadkin
+#    River above High Rock Lake. Everyplace else in the state, any fish anglers have been catching
+#    that looks like a Spotted Bass is actually an Alabama Bass."
+NCD = os.path.join(ROOT, 'NC_Lakes')
+rule = B.alabama_rule(NCD)
+if not rule:
+    print('\nSKIP Alabama Bass -- the rule page is not saved under NC_Lakes')
+else:
+    print('\nNC WRC Alabama Bass rule')
+    check('the rule is READ off the page, not retyped here', bool(rule[0]), True)
+    check('and its three introduced exceptions are parsed out of the sentence', rule[1],
+          ['Cape Fear River basin', 'W. Kerr Scott Reservoir',
+           'Yadkin River above High Rock Lake'])
+
+    waters = B.alabama_waters(NCD)
+    check('the impacts document names its waters by basin', len(waters) >= 18, True)
+    check('and files the southwest under its own basin headings',
+          sorted({b for _n, (b, _s) in waters.items()
+                  if b in B.ALB_SW_BASINS}), ['Hiwassee', 'Little Tennessee'])
+
+    # AN INITIAL IS NOT A SENTENCE END. Trimming the heading at any ". " turned
+    # "W. Kerr Scott Reservoir" into " Kerr Scott Reservoir", which matches no registry name --
+    # and that water is the one document entry that is ALSO one of the three exceptions.
+    check('the reservoir with an initial in its name survives the heading trim',
+          'W. Kerr Scott Reservoir' in waters, True)
+    check('and a heading that starts mid-sentence is trimmed', 'Dan River' in waters, True)
+
+    lakes2 = json.loads(json.dumps(
+        json.load(io.open(os.path.join(ROOT, 'registry', 'nc_species_by_lake.json'),
+                          encoding='utf-8'))['lakes']))
+    rep = B.apply_alabama(lakes2, by_name, by_bare, NCD, idx)
+
+    # CORRECTED: outside true-Spotted-Bass country AND independently named by the impacts
+    # document. Two documents, or nothing is changed.
+    check('Lake Norman\'s Spotted Bass becomes Alabama Bass',
+          ('Alabama Bass' in lakes2['lake_norman']['predatorSpecies']
+           and 'Spotted Bass' not in lakes2['lake_norman']['predatorSpecies']), True)
+    check('and Moss Lake\'s does too',
+          ('Alabama Bass' in lakes2['john_h_moss_lake']['predatorSpecies']
+           and 'Spotted Bass' not in lakes2['john_h_moss_lake']['predatorSpecies']), True)
+
+    # KEPT: W. Kerr Scott is named in the rule as true Spotted Bass country AND in the impacts
+    # document as having Alabama Bass introduced. Both fish, which is what NC WRC describes.
+    ks = lakes2['w_kerr_scott_reservoir']['predatorSpecies']
+    check('Kerr Scott keeps its Spotted Bass', 'Spotted Bass' in ks, True)
+    check('and gains Alabama Bass beside it', 'Alabama Bass' in ks, True)
+
+    # KEPT: a southwestern mountain drainage, by the document's own basin heading.
+    check('Hiwassee keeps its Spotted Bass',
+          'Spotted Bass' in lakes2['hiwassee_lake']['predatorSpecies'], True)
+    # KEPT: the Cape Fear basin, named in the rule.
+    check('the Cape Fear keeps its Spotted Bass',
+          'Spotted Bass' in lakes2['cape_fear_river']['predatorSpecies'], True)
+    check('and gains no Alabama Bass, being named by neither document',
+          'Alabama Bass' in lakes2['cape_fear_river']['predatorSpecies'], False)
+
+    check('nothing is corrected without both documents agreeing', len(rep['corrected']), 2)
+    check('the waters named but not shipped are reported, not forced',
+          sorted(rep['unbound']),
+          ['Apalachia Reservoir', 'Chatuge Reservoir', 'Kerr Reservoir', 'Lake Gaston'])
+
 # 6. THE COMMUNITY PONDS ARE NOT FORCED. Most of the file is city park ponds.
 check('the ponds we do not ship are left alone', len(bound) < len({r['name'] for r in plan}), True)
 print('\n%d row(s) from %s -> %d water(s)' % (len(plan), fname, len(bound)))

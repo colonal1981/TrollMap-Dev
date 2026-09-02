@@ -167,6 +167,149 @@ def bind_stocking(name, by_name, by_bare):
     return None
 
 
+# THE FISHING-AREAS API SAYS "SPOTTED BASS" AND NC WRC SAYS THAT IS THE WRONG FISH.
+#
+# The API answers `commonName` per location and never once says Alabama Bass -- 52 locations say
+# Spotted Bass. NC WRC's own Alabama Bass page says why, and the sentence is the rule:
+#
+#   "Alabama Bass are referred to by most anglers as Spotted Bass... True Spotted Bass are native
+#    to the mountain drainages of southwestern North Carolina and have been introduced into the
+#    Cape Fear River basin, W. Kerr Scott Reservoir, and the Yadkin River above High Rock Lake.
+#    EVERYPLACE ELSE IN THE STATE, ANY FISH ANGLERS HAVE BEEN CATCHING THAT LOOKS LIKE A SPOTTED
+#    BASS IS ACTUALLY AN ALABAMA BASS."
+#
+# So this is not a gap in the roster, it is a WRONG NAME in it -- and it started to matter on
+# 2026-09-02, when the plan form began filtering to the roster: Lake Norman offers a Spotted box,
+# no Alabama box, and the fisheries prompt gets the wrong fish's account. They are not the same
+# fish. TWRA: the Alabama bass "has a growth advantage over our native spotted bass and commonly
+# obtains weights over 4.5 pounds."
+#
+# THE RULE IS READ, NOT RETYPED. alabama_rule() lifts the sentence off the saved page and parses
+# the three introduced exceptions out of it; if the page stops saying it, nothing is corrected and
+# the run says so. The southwestern mountain drainages are the impacts document's OWN basin
+# sections -- it files its waters under "Little Tennessee River basin" and "Hiwassee River basin",
+# the two Tennessee drainages in the far southwest, and under Catawba, Yadkin, Broad and Roanoke
+# for everywhere else.
+#
+# A CORRECTION NEEDS BOTH DOCUMENTS. The page says a water is not true-spotted country; the
+# impacts document has to independently name the water as holding Alabama Bass. Anything with only
+# one of the two keeps what the API said and is printed.
+ALB_PAGE = '_page_fishing-black-bass-north-carolina-alabama-bass.html'
+ALB_DOC = '2974_alabama-bass-impacts-*.pdf'
+ALB_SW_BASINS = ('Little Tennessee', 'Hiwassee')
+ALB_RULE = re.compile(r'True Spotted Bass are native to (.{10,120}?) and have been introduced into '
+                      r'(.{10,200}?)\.\s*Everyplace else in the state', re.I | re.S)
+ALB_BASIN = re.compile(r'([A-Z][A-Za-z]+(?: [A-Z][a-z]+)?) River basin')
+ALB_WATER = re.compile(r'((?:Lakes?|Reservoirs?)?\s*[A-Z][A-Za-z.]+(?:[ ]+(?:and[ ]+)?[A-Z][A-Za-z.]+){0,3}'
+                       r'(?:[ ]+lakes)?)\s+[–—-]\s')
+ALB_TAGS = re.compile(r'<[^>]+>')
+
+
+def alabama_rule(nc_dir):
+    """NC WRC's sentence off the saved page. -> (native_clause, [introduced phrases]) or None."""
+    fp = os.path.join(nc_dir, ALB_PAGE)
+    if not os.path.exists(fp):
+        return None
+    import html as _h
+    t = re.sub(r'\s+', ' ', _h.unescape(ALB_TAGS.sub(' ', io.open(fp, encoding='utf-8',
+                                                                  errors='replace').read())))
+    m = ALB_RULE.search(t)
+    if not m:
+        return None
+    parts = [x.strip(' .') for x in re.split(r',\s*and\s+|,\s*|\s+and\s+', m.group(2)) if x.strip()]
+    return m.group(1).strip(), [re.sub(r'^the\s+', '', x, flags=re.I) for x in parts]
+
+
+def alabama_waters(nc_dir):
+    """{water phrase: (basin, sentence)} out of the impacts document's own basin sections."""
+    import glob as _g
+    hits = sorted(_g.glob(os.path.join(nc_dir, ALB_DOC)))
+    if not hits:
+        return {}
+    try:
+        import pdfplumber
+    except ImportError:
+        return {}
+    with pdfplumber.open(hits[0]) as pdf:
+        t = ' '.join((pg.extract_text() or '') for pg in pdf.pages)
+    t = re.sub(r'\s+', ' ', t).replace('- ', '')
+    marks = [(m.start(), m.group(1)) for m in ALB_BASIN.finditer(t)]
+    out = {}
+    for m in ALB_WATER.finditer(t):
+        # The pattern can start mid-sentence -- "...Alabama Bass. Dan River -" -- so anything up
+        # to the last full stop belongs to the sentence before, not to the water's name.
+        head = re.sub(r'\s+', ' ', m.group(1)).strip()
+        # A LOWERCASE LETTER BEFORE THE STOP, or the split eats an initial: "W. Kerr Scott
+        # Reservoir" became " Kerr Scott Reservoir" and stopped matching the registry's
+        # "W Kerr Scott Reservoir" -- the one water in the document that is also one of the three
+        # true-Spotted-Bass exceptions, so losing it lost the most interesting row in the file.
+        head = re.split(r'(?<=[a-z])\.\s+', head)[-1].strip()
+        basin = ([b for pos, b in marks if pos < m.start()] or ['?'])[-1]
+        say = t[m.end():m.end() + 900]
+        if 'Alabama Bass' not in say and 'ALB' not in say:
+            continue
+        plural = head.lower().endswith(' lakes')
+        head = re.sub(r'\s+lakes$', '', head, flags=re.I)
+        lead = 'Lake ' if head.lower().startswith('lakes ') else ''
+        head = re.sub(r'^lakes\s+', '', head, flags=re.I)
+        for part in [x.strip() for x in head.split(' and ') if x.strip()]:
+            name = (lead + part) if lead else part
+            if plural and not re.search(r'lake|reservoir|river', name, re.I):
+                name += ' Lake'
+            out.setdefault(name, (basin, say.strip()))
+    return out
+
+
+def alabama_exception(display, introduced):
+    """Is this water one NC WRC names as holding TRUE Spotted Bass?"""
+    d = norm(display)
+    for phrase in introduced:
+        core = re.split(r'\s+above\s+', phrase, flags=re.I)[0]
+        core = norm(re.sub(r'\s+basin$', '', core, flags=re.I))
+        if core and (core in d or d in core):
+            return phrase
+    return None
+
+
+def apply_alabama(lakes, by_name, by_bare, nc_dir, idx):
+    """Correct the roster against NC WRC's own two documents. -> a printable report."""
+    rule = alabama_rule(nc_dir)
+    waters = alabama_waters(nc_dir)
+    rep = {'rule': bool(rule), 'named': len(waters), 'added': [], 'corrected': [],
+           'kept': [], 'unbound': []}
+    if not rule or not waters:
+        return rep
+    _native, introduced = rule
+    for name, (basin, say) in sorted(waters.items()):
+        slug = bind_stocking(name, by_name, by_bare)
+        if not slug:
+            rep['unbound'].append(name)
+            continue
+        row = lakes.setdefault(slug, {'predatorSpecies': [], 'knownStockings': [], 'locations': []})
+        sp = row['predatorSpecies']
+        display = str((idx.get(slug) or {}).get('display_name') or name)
+        why = alabama_exception(display, introduced) or (
+            'the %s River basin, a southwestern mountain drainage' % basin
+            if basin in ALB_SW_BASINS else None)
+        if 'Alabama Bass' not in sp:
+            sp.append('Alabama Bass')
+            rep['added'].append((slug, name, basin))
+        if 'Spotted Bass' in sp:
+            if why:
+                rep['kept'].append((slug, why))
+            else:
+                sp.remove('Spotted Bass')
+                rep['corrected'].append((slug, basin, say[:150]))
+        row['predatorSpecies'] = sorted(set(sp))
+    # A water the API called Spotted Bass that the impacts document does NOT name keeps it, and is
+    # printed: one document is not two, and this is the list to read next time the page updates.
+    named = {bind_stocking(n, by_name, by_bare) for n in waters}
+    for slug, row in lakes.items():
+        if 'Spotted Bass' in (row.get('predatorSpecies') or []) and slug not in named:
+            rep['kept'].append((slug, 'not named in the impacts document'))
+    return rep
+
+
 def norm(s):
     """Lowercase alphanumerics, county parenthetical and state suffix removed."""
     s = COUNTY_PAREN.sub(' ', str(s or ''))
@@ -285,6 +428,8 @@ def main():
     ap.add_argument('--sleep', type=float, default=0.4, help='seconds between location requests')
     ap.add_argument('--refresh', action='store_true', help='ignore the cache and refetch every location')
     ap.add_argument('--date', default=None, help='stamp written into the output; default today')
+    ap.add_argument('--nc-pages', default=None,
+                    help='the saved NC WRC pages and reports; default <stocking root>/NC_Lakes')
     ap.add_argument('--stocking-root', default=None,
                     help='where the WarmwaterStocking / WarmwaterSummary CSVs live; '
                          'default the parent of --registry')
@@ -418,13 +563,34 @@ def main():
             {'species': r['species'], 'size': r['size'], 'number': r['number'],
              'year': r['year'], 'agency': 'NCWRC'}
             for r in sorted(rows_, key=lambda x: (-x['number'], x['species']))]
+    # THE API CALLS IT SPOTTED BASS AND NC WRC SAYS THAT IS THE WRONG FISH. See alabama_rule().
+    nc_pages = a.nc_pages or os.path.join(
+        a.stocking_root or os.path.dirname(os.path.abspath(R)) or '.', 'NC_Lakes')
+    alb = apply_alabama(lakes, by_name, by_bare, nc_pages, idx)
+    if not alb['rule']:
+        print('alabama:  !! NC WRC\'s rule sentence is not on the saved page under %s -- nothing '
+              'corrected. Run fetch_agency_lake_pages.py --state NC --go' % nc_pages)
+    else:
+        print('alabama:  %d water(s) named by the impacts document; %d gained Alabama Bass, '
+              '%d had Spotted Bass corrected to it' % (alb['named'], len(alb['added']),
+                                                       len(alb['corrected'])))
+        for slug, basin, say in alb['corrected']:
+            print('          %-24s [%s basin] %s' % (slug, basin, say[:96]))
+        for slug, why in alb['kept']:
+            print('          kept Spotted Bass on %-22s %s' % (slug, why))
+        if alb['unbound']:
+            print('          named but not a water we ship: %s' % ', '.join(alb['unbound']))
+
     body = {'generated': stamp,
             'source': 'NC WRC public fishing areas (ncpaws.org/NCWRCMaps/FishingAreas)',
             'note': 'commonName per location; `stocked` is NC WRC\'s own flag. `stockingPlan` is '
                     'the agency\'s published warmwater stocking spreadsheet -- species, size and '
                     'COUNT -- and its species codes are derived by joining the per-water file to '
-                    'the district summary, not typed. Built by build_nc_species_by_lake.py -- do '
-                    'not hand-edit.',
+                    'the district summary, not typed. Alabama Bass is added, and a Spotted Bass '
+                    'record corrected to it, per NC WRC\'s own rule: "Everyplace else in the '
+                    'state, any fish anglers have been catching that looks like a Spotted Bass is '
+                    'actually an Alabama Bass." Built by build_nc_species_by_lake.py -- do not '
+                    'hand-edit.',
             'lakes': lakes}
     json.dump(body, io.open(out_fp, 'w', encoding='utf-8'), indent=1, ensure_ascii=False)
     json.dump(refused, io.open(os.path.join(R, '_nc_species_unmatched.json'), 'w', encoding='utf-8'), indent=1)
