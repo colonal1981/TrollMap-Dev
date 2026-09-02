@@ -118,6 +118,17 @@ FILES = [
     ("nc_species_by_lake.json", "nc_species_by_lake.json", "verbatim",
      "Worker/registry.js:ncSpeciesByLake() seeds biology.predatorSpecies for 77 NC waters -- "
      "without it every NC lake's species list falls to the web agents"),
+    # PUBLISHED SINCE 2026-08-28, READ BY THE WORKER, AND VERIFIED BY NOTHING UNTIL NOW.
+    # upload_garmin_to_r2.py has been pushing it and Worker/registry.js:agencyLakeFacts() has
+    # been reading it, and this list -- the one that answers "did the registry publish?" -- did
+    # not name it. So a run could drop it and still print that every registry object matches.
+    # That is the shape the uploader's own note warns about: "a stale count in this comment is
+    # what made a reader believe on 2026-08-27 that R2 carried three registry objects when it
+    # carried six." Found 2026-09-02 while checking where a new species file would have to go.
+    ("agency_lake_facts.json", "agency_lake_facts.json", "verbatim",
+     "Worker/research/deterministic.js and the fisheries agent read the state's own lake pages "
+     "off this -- 83 waters, 205 species sections. Without it every NC, TN, GA and SC water "
+     "loses the roster and the prose its own agency published"),
 ]
 
 
