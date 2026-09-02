@@ -214,6 +214,15 @@ def stamp(url, body):
     return body if SAVED_FROM.search(body[:2000].decode('utf-8', 'replace')) else head + body
 
 
+def doc_key(url, spec):
+    """What makes two links the same document. For NC that is the media id, not the url."""
+    if spec.get('kind') == 'pdf':
+        m = spec['link'].match(url)
+        if m and m.groups():
+            return 'media:%s' % m.group(1)
+    return url
+
+
 def slug(text, cap=60):
     """`Hyco Lake Largemouth Bass Survey (2022)` -> `hyco-lake-largemouth-bass-survey-2022`.
 
@@ -456,7 +465,7 @@ def main():
                       'Not writing.')
                 return 2
 
-            found, seen2 = [], set()
+            found, seen2 = [], {}
             for i, (u, why) in enumerate(level1):
                 try:
                     body, _ = fetch(u)
@@ -465,8 +474,34 @@ def main():
                     continue
                 text = body.decode('utf-8', 'replace')
                 docs = links_on(text, u, spec)
-                new_docs = [(du, dt, u) for du, dt in docs if du not in seen2]
-                seen2.update(du for du, _dt, _s in new_docs)
+                # ONE DOCUMENT, TWO ADDRESSES. `/media/3590/open` and
+                # `/media/3590/download?attachment` are the same object served two ways -- one
+                # renders inline, one saves. De-duplicating by url took both: the first live run
+                # would have fetched ten documents twice, and for eight of them the two names
+                # collided exactly, so the second silently overwrote the first. The id is what
+                # identifies the document, so the id is what is de-duplicated.
+                #
+                # WHEN TWO LINKS SHARE AN ID, THE SHORTER TEXT WINS. One is the document's name
+                # and the other is the sentence that links to it: "American Shad Species Profile"
+                # against "Learn more by reading the American Shad Species Profile".
+                new_docs = []
+                for du, dt in docs:
+                    key = doc_key(du, spec)
+                    if key in seen2:
+                        prev = seen2[key]
+                        if len(dt) < len(prev[1]):
+                            seen2[key] = (du, dt, u)
+                            for j, (pu, pt, ps) in enumerate(found):
+                                if doc_key(pu, spec) == key:
+                                    found[j] = (du, dt, u)
+                                    break
+                            for j, (pu, pt, ps) in enumerate(new_docs):
+                                if doc_key(pu, spec) == key:
+                                    new_docs[j] = (du, dt, u)
+                                    break
+                        continue
+                    seen2[key] = (du, dt, u)
+                    new_docs.append((du, dt, u))
                 if docs:
                     print('   %-58s %2d doc(s), %2d new'
                           % (u.rsplit('/', 1)[-1][:58], len(docs), len(new_docs)))
@@ -476,7 +511,13 @@ def main():
                 # distribution list of about thirty NC waters that nc_species_by_lake.json names
                 # that fish on none of.
                 if spec.get('save_index'):
-                    fn = '_species_%s.html' % slug(urllib.parse.urlparse(u).path.rsplit('/', 1)[-1])
+                    # THE WHOLE PATH, NOT THE LAST SEGMENT. /species/smallmouth-bass and
+                    # /fishing/black-bass-north-carolina/smallmouth-bass are two different pages
+                    # with two different document lists, and naming both `_species_smallmouth-
+                    # bass.html` meant the second overwrote the first. Same for spotted bass, and
+                    # `/fishing/collection-sensitive-waters-2019-species-removed/open` was about
+                    # to be saved as `_species_open.html`.
+                    fn = '_page_%s.html' % slug(urllib.parse.urlparse(u).path.strip('/'), cap=90)
                     if os.path.exists(os.path.join(folder, fn)) and not a.force:
                         already.append(fn)
                     else:

@@ -197,5 +197,24 @@ check('a relative non-media link is still refused',
 check('an offsite document link is still refused',
       any('seafwa' in u or 'ncpaws' in u for u, _ in rel), False)
 
+# ── One document, two addresses ───────────────────────────────────────────────────────────────
+# Real pairs off the first live run. /open and /download?attachment serve the same object, and
+# de-duplicating by url took both -- ten documents fetched twice, eight of them writing the same
+# filename so the second overwrote the first.
+check('the media id is what identifies a document',
+      F.doc_key('https://www.ncwildlife.gov/media/3590/open', spec),
+      F.doc_key('https://www.ncwildlife.gov/media/3590/download?attachment', spec))
+check('two different documents are still two',
+      F.doc_key('https://www.ncwildlife.gov/media/3590/open', spec)
+      != F.doc_key('https://www.ncwildlife.gov/media/3595/open', spec), True)
+
+# The page-name collision: two real pages, two document lists, one filename.
+check('a species page and a fishing hub page do not collide',
+      F.slug('species/smallmouth-bass'.strip('/'), cap=90)
+      != F.slug('fishing/black-bass-north-carolina/smallmouth-bass'.strip('/'), cap=90), True)
+check('a page is named by its whole path',
+      '_page_%s.html' % F.slug('fishing/black-bass-north-carolina/smallmouth-bass', cap=90),
+      '_page_fishing-black-bass-north-carolina-smallmouth-bass.html')
+
 print('\n%s' % ('%d FAILED' % len(FAILED) if FAILED else 'all checks passed'))
 sys.exit(1 if FAILED else 0)
