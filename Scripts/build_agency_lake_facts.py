@@ -350,6 +350,250 @@ def ga_page(blocks):
 # CROSS-CHECK -- record, never resolve
 # ─────────────────────────────────────────────────────────────────────────────────────────────
 
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+# NORTH CAROLINA -- NCWRC per-lake survey reports, as PDFs
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+#
+# THE PAGE IS NOT ONE COLUMN AND EXTRACTING IT AS ONE PRODUCES SENTENCES THAT WERE NEVER WRITTEN.
+# pdfplumber's own extract_text() on the High Rock fact sheet gives:
+#
+#     ...large numbers of smaller, slower growing (stunt-
+#     Davidson counties in the Piedmont region
+#
+# "stunt-" ends a line in the body at x=30 and "Davidson counties" is a margin caption at x=418.
+# De-hyphenate that and you get `stuntDavidson`; leave it and every sentence in the document is
+# interleaved with whatever sits beside it. A reader built on that output would produce confident,
+# sourced, wrong facts, which is worse than no reader.
+#
+# So the words are grouped into lines, each line is split wherever a horizontal gap is wider than
+# a word space, and the runs are read body-first. The margin is kept separately rather than
+# discarded -- Hyco's carries `PSD-P = 14`, which is a figure annotation and a real statistic.
+#
+# WHAT THESE DOCUMENTS RELIABLY CARRY, counted over the 115 short ones rather than assumed from
+# the two that were read first:
+#
+#   a roster sentence          16 of 115. "several species of interest including Largemouth Bass,
+#                              Striped Bass, White Bass, Black Crappie, White Crappie, Flathead
+#                              Catfish, and Blue Catfish" -- High Rock. Worth taking, not worth
+#                              building the reader around.
+#   a species in the TITLE     46 of the 71 that bind to a research water, and this is the one
+#                              that needs no prose parsing at all. "Hyco Lake Largemouth Bass
+#                              Survey" is NC WRC saying largemouth bass are in Hyco Lake, on the
+#                              same logic deterministic.js already applies to a lake-specific
+#                              creel rule: the state writing a rule for a species in a water is
+#                              the state saying it is there. A survey is the stronger version.
+#   acreage, river, counties   the opening sentence of a fact sheet: "The 15,180-acre impoundment
+#                              of the Yadkin River is located in Rowan and Davidson counties".
+#                              That feeds resolve_with_county() and the acreage cross-check
+#                              unchanged -- no NC-specific resolution rule is added.
+#
+# THE SPECIES NAME IS NOT FILTERED HERE. It is emitted as the title writes it and
+# uniqueResearchSpecies()/isKnownResearchSpecies() in the Worker decide what is a fish, which is
+# what already guards the GA and TN rosters. A second species vocabulary in Python is a second
+# copy to drift.
+
+NC_GAP = 28.0          # a horizontal gap wider than this is a column break, not a word space
+NC_MARGIN_X = 400.0    # a run starting right of this and narrower than NC_MARGIN_W is a caption
+NC_MARGIN_W = 260.0
+NC_MAX_PAGES = 3       # a fact sheet is 1-2 pages; an F-108 report puts its abstract on page 1
+
+NC_COUNTIES = re.compile(r'\b(?:located|situated)\s+in\s+((?:[A-Z][a-z]+(?:[,\s]+(?:and\s+)?)?){1,4})'
+                         r'\s+count(?:y|ies)', re.I)
+NC_ROSTER = re.compile(r'species of interest(?:\s+\w+){0,3}?\s+includ\w*\s+(.{10,300}?)\.', re.I)
+NC_ROSTER2 = re.compile(r'(?:sport|game)\s*fish(?:es)?[^.]{0,60}?[;:]\s*(.{10,240}?)\s+are\s+the\s+most'
+                        r'\s+sought[- ]after', re.I)
+NC_TITLE_TAIL = re.compile(r'\s+(?:Survey|Surveys|Report|Assessment|Population|Fishery|Investigation|'
+                           r'Evaluation|Overview|Monitoring|Summary|Update)\b.*$', re.I)
+
+
+def nc_runs(pg):
+    """One page's words as body runs and margin runs, in reading order."""
+    lines = {}
+    for w in pg.extract_words():
+        lines.setdefault(round(w['top'] / 3), []).append(w)
+    body, side, seen = [], [], set()
+    for k in sorted(lines):
+        ws = sorted(lines[k], key=lambda w: w['x0'])
+        runs, run = [], [ws[0]]
+        for a, b in zip(ws, ws[1:]):
+            if b['x0'] - a['x1'] > NC_GAP:
+                runs.append(run)
+                run = []
+            run.append(b)
+        runs.append(run)
+        for r in runs:
+            if not r:
+                continue
+            txt = ' '.join(w['text'] for w in r)
+            if r[0]['x0'] >= NC_MARGIN_X and (r[-1]['x1'] - r[0]['x0']) < NC_MARGIN_W:
+                # A caption repeats across the y buckets it spans; keep it once.
+                if txt not in seen:
+                    seen.add(txt)
+                    side.append(txt)
+            else:
+                body.append(txt)
+    return body, side
+
+
+def nc_text(path):
+    import pdfplumber
+    body, side = [], []
+    with pdfplumber.open(path) as pdf:
+        for i in range(min(len(pdf.pages), NC_MAX_PAGES)):
+            b, s = nc_runs(pdf.pages[i])
+            body += b
+            side += s
+    t = re.sub(r'(\w)-\n(\w)', r'\1\2', '\n'.join(body))
+    return re.sub(r'[ \t]+', ' ', t).strip(), ' '.join(side)
+
+
+def nc_title(path):
+    """`3130_hyco-lake-largemouth-bass-survey.pdf` -> `Hyco Lake Largemouth Bass Survey`.
+
+    THE FILENAME, NOT THE FIRST LINE OF THE PDF. fetch_agency_lake_pages.py builds it from NC
+    WRC's own link text, and the document's own first line is the template's banner as often as
+    it is the title -- "Fisheries Research Fact Sheet" on 40 of them.
+    """
+    base = os.path.basename(path)
+    base = re.sub(r'^\d+_', '', base)
+    base = re.sub(r'\.pdf$', '', base, flags=re.I)
+    return base.replace('-', ' ').strip()
+
+
+def nc_page(path):
+    body, margin = nc_text(path)
+    title = nc_title(path)
+    paras = [p.strip() for p in body.split('\n') if len(p.strip()) > 40]
+    joined = ' '.join(paras)
+
+    species = []
+    for rx in (NC_ROSTER, NC_ROSTER2):
+        m = rx.search(joined)
+        if m:
+            for part in re.split(r',|\band\b', m.group(1)):
+                nm = part.strip(' .;:').strip()
+                if 3 < len(nm) < 40:
+                    species.append({'name': nm, 'from': 'roster sentence'})
+            break
+    if not species:
+        # The title names the subject species. What it is gets decided in read_one_nc, against
+        # the app's own vocabulary, because only there is the water known and removable.
+        species.append({'name': title, 'from': 'document title', 'title_form': True})
+
+    counties = ''
+    m = NC_COUNTIES.search(joined)
+    if m:
+        counties = re.sub(r'\s+and\s+', ', ', m.group(1)).strip(' ,')
+
+    # The measures ride on the page like every other reader's, so the page is self-describing and
+    # read_one_nc's own acreage fallback reads the same numbers main() will.
+    return {'name': title, 'overview': paras, 'species': species,
+            'measures': measures_in(paras),
+            'general': ({'County': counties} if counties else {}),
+            'margin': margin, 'kind': 'pdf'}
+
+
+def titleCase(s):
+    """`largemouth bass` -> `Largemouth Bass`, leaving an already-cased name alone."""
+    return ' '.join(w if w[:1].isupper() else w.capitalize() for w in str(s).split())
+
+
+def nc_species_vocab(root):
+    """The species names the app already knows, READ OUT OF ITS OWN SOURCE rather than copied.
+
+    `RESEARCH_SPECIES_CANON` in Worker/research/facts-util.js is the vocabulary that decides what
+    is a fish everywhere else in this pipeline. Retyping its 43 keys here would be a second copy
+    to drift, which is the thing test/hand-written-tables.test.js exists to catch; reading the
+    file is what that test does too. Returns [] when the repo is not beside the pipeline, and the
+    caller then keeps the title residue unfiltered for the Worker to judge.
+    """
+    src = os.path.join(root, 'TrollMap-Dev', 'Worker', 'research', 'facts-util.js')
+    if not os.path.exists(src):
+        return []
+    try:
+        txt = open(src, encoding='utf-8').read()
+    except OSError:
+        return []
+    i = txt.find('RESEARCH_SPECIES_CANON')
+    if i < 0:
+        return []
+    seg = txt[i:txt.find('};', i)]
+    return sorted({m.group(1).lower() for m in re.finditer(r"^\s*'([^']+)'\s*:", seg, re.M)},
+                  key=len, reverse=True)
+
+
+def nc_water_in_title(title, name_keys):
+    """The longest registry name the title contains, or None.
+
+    A DOCUMENT TITLE IS PROSE, NOT A NAME. "Angler Use Patterns on Randleman Lake" is not a name
+    resolve_with_county() can match and it should not be asked to -- the strict resolver stays
+    strict. What happens here is extraction: find the water the sentence names, then hand THAT to
+    the resolver, which still matches exactly and still checks the county.
+
+    Longest first, so "Lake James" cannot claim a title that says "Lake James Walleye" ahead of a
+    longer name, and so a two-word water beats its own one-word substring.
+    """
+    t = ' %s ' % re.sub(r'[^a-z0-9]+', ' ', title.lower()).strip()
+    for k in name_keys:
+        if len(k) >= 5 and (' %s ' % k) in t:
+            return k
+    return None
+
+
+def read_one_nc(path, spec, idx, multimap):
+    try:
+        page = nc_page(path)
+    except Exception as e:                                    # a scan with no text layer
+        return None, 'could not read the pdf: %s' % str(e)[:80], None, ''
+    if not page['overview']:
+        return None, 'no text layer -- would need OCR', None, ''
+    counties = (page.get('general') or {}).get('County') or ''
+    named = nc_water_in_title(page['name'], spec.get('_name_keys') or [])
+    slug, why = (None, None)
+    for cand in (named, page['name']):
+        if not cand:
+            continue
+        slug, why = resolve_with_county(cand, counties, spec['state'], idx, multimap)
+        if slug:
+            break
+    if not slug:
+        found = measures_in(page['overview'])
+        acres = (found.get('surface_acres') or {}).get('value')
+        slug, why = resolve_by_stated_fact(named or page['name'], spec['state'], counties, acres, idx)
+    # THE TITLE'S SPECIES IS WHAT IS LEFT AFTER THE WATER AND THE REPORT WORD COME OUT.
+    # "Hyco Lake Largemouth Bass Survey" minus "hyco lake" minus "Survey" is "Largemouth Bass".
+    # Without removing the water, every title became its own species name -- "angler use patterns
+    # on randleman lake" was being emitted as a fish.
+    # THE TITLE'S SPECIES IS A VOCABULARY LOOKUP, NOT A SUBSTRING OF WHAT IS LEFT OVER.
+    #
+    # An earlier cut stripped the title at its first report word and kept the remainder. "An
+    # Overview of the Falls Lake Largemouth Bass Fishery" strips at *Overview* and leaves "an",
+    # which was then emitted as a fish. So did "long term", "evaluation of the black bass" and
+    # "angler use patterns on".
+    #
+    # The water comes out first -- it can contain a fish, and Bass Lake would otherwise name one
+    # -- and then the longest vocabulary term inside what remains is the answer. A title naming no
+    # known fish yields NO species rather than a bad one, which is the same refusal
+    # deterministic.js already makes of an agency roster that names nothing it recognises.
+    vocab = spec.get('_species') or []
+    kept = []
+    for sp in page['species']:
+        if not sp.get('title_form'):
+            kept.append(sp)
+            continue
+        residue = sp['name']
+        if named:
+            residue = re.sub(re.escape(named).replace(r'\ ', r'[^a-z0-9]+'), ' ', residue, flags=re.I)
+        residue = ' %s ' % re.sub(r'[^a-z0-9]+', ' ', residue.lower()).strip()
+        pick = next((v for v in vocab if (' %s ' % v) in residue), None)
+        if pick:
+            sp['name'] = titleCase(pick)
+            sp.pop('title_form', None)
+            kept.append(sp)
+    page['species'] = kept
+    return slug, why, page, ''
+
 def held_values(registry, slug, idx):
     """What we already hold for this water, from the two registries that carry these numbers."""
     out = {}
@@ -480,6 +724,14 @@ SOURCES = [
     {'state': 'TN', 'agency': 'TWRA', 'dir': 'Tennessee_Lakes', 'reader': 'tn'},
     {'state': 'GA', 'agency': 'GA DNR', 'dir': 'Georgia_Lakes', 'reader': 'ga'},
     {'state': 'SC', 'agency': 'SCDNR', 'dir': 'SC_Lakes', 'reader': 'sc'},
+    # NORTH CAROLINA PUBLISHES NO PER-LAKE PAGE. Georgia has 31 fishing forecasts, Tennessee 11
+    # TWRA reservoir pages, South Carolina 32 lake descriptions -- and NC WRC has none, which is
+    # why this file has never carried an NC row and why 30 of the 31 NC waters in the research
+    # set reached the agents with nothing from their own state behind them.
+    #
+    # What it publishes instead is per-lake SURVEY REPORTS, as PDFs, saved by
+    # fetch_agency_lake_pages.py --state NC. 282 of them, of which 71 bind to a research water.
+    {'state': 'NC', 'agency': 'NCWRC', 'dir': 'NC_Lakes', 'reader': 'nc', 'glob': '*.pdf'},
 ]
 
 
@@ -659,8 +911,10 @@ def resolve_with_county(name, counties, state, idx, multimap):
 
 
 def read_one(path, spec, idx, multimap):
-    blocks, raw = blocks_of(path)
     reader = spec['reader']
+    if reader == 'nc':
+        return read_one_nc(path, spec, idx, multimap)
+    blocks, raw = blocks_of(path)
     page = (tn_page(blocks) if reader == 'tn'
             else sc_page(blocks, raw) if reader == 'sc'
             else ga_page(blocks))
@@ -699,6 +953,12 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--root', default='.', help='the pipeline root holding the page folders')
+    # A READER IS ITERATED ON, and reading 282 NC pdfs to see whether one regex landed is a
+    # five-minute round trip. Both of these narrow the run; neither changes what it reads.
+    ap.add_argument('--state', action='append',
+                    help='only these states (repeatable), e.g. --state NC')
+    ap.add_argument('--limit', type=int, default=0,
+                    help='stop after N pages per source (0 = all). For iterating on a reader.')
     ap.add_argument('--registry', default=None, help='default <root>/registry')
     ap.add_argument('--out', default=None, help='default <registry>/agency_lake_facts.json')
     ap.add_argument('--chartpack', default=None,
@@ -719,9 +979,25 @@ def main():
     multimap = build_name_multimap(idx)
 
     rows, unmatched, unread, pages = {}, [], [], 0
+    wanted = {x.upper() for x in (a.state or [])}
     for spec in SOURCES:
+        if wanted and spec['state'] not in wanted:
+            continue
+        if spec['reader'] == 'nc':
+            # THE KEYS ARE SLUGIFIED. build_name_multimap keys on REG.slugify output --
+            # `hyco_lake`, not `Hyco Lake` -- so a title match has to be made against the spaced
+            # form. Underscores back to spaces, longest first. The resolver still receives a name
+            # and still matches it exactly; only the extraction from prose happens here.
+            spec['_name_keys'] = sorted({k.replace('_', ' ') for k in multimap},
+                                        key=len, reverse=True)
+            spec['_species'] = nc_species_vocab(root)
+            if not spec['_species']:
+                print('!! could not read RESEARCH_SPECIES_CANON out of the repo -- NC title '
+                      'species will be emitted unfiltered for the Worker to judge')
         d = os.path.join(root, spec['dir'])
-        files = sorted(glob.glob(os.path.join(d, '*.html')))
+        files = sorted(glob.glob(os.path.join(d, spec.get('glob', '*.html'))))
+        if a.limit:
+            files = files[:a.limit]
         print('%s: %d page(s) under %s' % (spec['agency'], len(files), spec['dir']), flush=True)
         for p in files:
             pages += 1
