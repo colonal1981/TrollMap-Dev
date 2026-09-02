@@ -46,6 +46,7 @@ GA_DIR = 'Georgia_Species'
 GA_PAGE = '_page_fishing-identification.html'
 NC_DIR = 'NC_Lakes'
 NC_PROFILE = '*species-profile*.pdf'
+NC_PAGES = ('_page_species-*.html', '_page_index-2ephp-species-*.html')
 MARK = '\x01'                                  # wraps a heading inside the assembled page text
 
 # SCDNR's own ten labels. Every species spread prints all ten, so ">= 6 of these" identifies a
@@ -66,6 +67,11 @@ NC_FALLBACK = 'History and Status'
 # What a plan can act on. The rest is read, reported and simply not carried into the file.
 SC_USEFUL = ['Spawning', 'Preferred Habitat', 'Food Habits', 'Range']
 NC_USEFUL = ['Habitat and Habits']
+# The species PAGE is a different document from the species PDF and says different things. The
+# profile gives Habitat and Habits; the page gives an Overview and, on 23 of them, NC WRC's own
+# answer to WHERE: "In the Coastal Plain, the best fishing places to catch largemouth bass are the
+# numerous blackwater rivers found throughout the region."
+NC_PAGE_USEFUL = ['Abundance', 'Overview', 'Tips / Places to Fish']
 # TWRA prints no labelled sections at all. The account IS the section, so there is nothing to
 # choose between -- and it is where the spawning temperature lives: "Spawning activity begins when
 # water temperatures approach 62-65 F."
@@ -510,6 +516,69 @@ def read_ga_page(path, canon):
     return out
 
 
+# NORTH CAROLINA HAS FULL SPECIES PAGES AND THIS FILE READ FIVE PDFs.
+#
+# Ryan, 2026-09-02: "ummm that's not right about nc... they have full species pages." He is right,
+# and they were already on the drive: fetch_agency_lake_pages.py --state NC saved 47 of them on
+# 2026-09-01 with `save_index`, precisely because "the species page itself is a source, not just a
+# list of links". Then this reader globbed `*species-profile*.pdf`, found ten, and NC went into
+# species_traits.json with FIVE species while forty-seven pages sat in the same folder.
+#
+# Same failure as agency_lake_facts.json before it: parsed, saved, addressed to nobody.
+#
+#     <strong>Abundance:</strong> Common throughout NC.
+#     <h2>Overview</h2>          <p>...prefer locations with lots of structure, such as submerged
+#                                 vegetation, brush piles, stumps, boat docks and standing
+#                                 timber. Underwater points, humps, drop-offs, bridge pilings and
+#                                 old road beds are also favored haunts...</p>
+#     <h2>Tips; Places to Fish</h2>
+#
+# THE HEADING IS SPELLED TWO WAYS -- "Tips / Places to Fish" on thirteen pages and
+# "Tips; Places to Fish" on ten. Same fix as GA DNR's wandering colon: fold them, do not pick one.
+NC_H2 = re.compile(r'<h2[^>]*>(.*?)</h2>(.*?)(?=<h2[^>]*>|\Z)', re.S | re.I)
+NC_H1 = re.compile(r'<h1[^>]*>(.*?)</h1>', re.S | re.I)
+NC_STRONG = re.compile(r'<strong>\s*([A-Za-z][A-Za-z ]{2,20}?)\s*:?\s*</strong>\s*:?\s*(.*?)(?:<br|</p>)',
+                       re.S | re.I)
+NC_BUTTON = re.compile(r'<a\b[^>]*class="[^"]*button[^"]*"[^>]*>.*?</a>', re.S | re.I)
+
+
+def nc_page_head(t):
+    """`Tips; Places to Fish` and `Tips / Places to Fish` are one heading."""
+    t = re.sub(r'\s+', ' ', str(t or '')).strip(' :')
+    return re.sub(r'\s*[;/]\s*', ' / ', t)
+
+
+def read_nc_page(path):
+    """One entry per NC WRC species page."""
+    src = open(path, encoding='utf-8', errors='replace').read()
+    m = NC_H1.search(src)
+    name = ga_text(m.group(1)) if m else None
+    if not name or len(name) > 44:
+        return None
+    i = src.find('field--name-body')
+    body = NC_BUTTON.sub(' ', src[i:] if i >= 0 else src)
+    out = {}
+    # THE HEADER BLOCK ONLY -- everything before the first <h2>. Scanning further takes the
+    # SUB-labels inside a section as though they were sections of their own: `<strong>Fishing
+    # Tips</strong>:` and `<strong>Places to Fish</strong>:` both live inside "Tips / Places to
+    # Fish" and are two halves of it, not two more of it.
+    head = body[:(lambda m: m.start() if m else 4000)(re.search(r'<h2[^>]*>', body, re.I))]
+    for f in NC_STRONG.finditer(head):
+        label, value = ga_text(f.group(1)).strip(' :'), ga_text(f.group(2))
+        if label and value:
+            out.setdefault(label, value)
+    sci = out.pop('Scientific Name', None)
+    for h in NC_H2.finditer(body):
+        label = nc_page_head(ga_text(h.group(1)))
+        if label not in NC_PAGE_USEFUL:
+            continue                       # Regulations and Management are link lists; the rest
+            # -- Related Topics, Work With Us, Podcast, Network Menu -- is the site around the page
+        value = ga_text(h.group(2))
+        if value:
+            out.setdefault(label, value)
+    return {'name': name, 'scientific': sci, 'sections': out, 'page': None}
+
+
 def sc_sections(text):
     parts = SC_RX.split(dehyphen(re.sub(r'\s+', ' ', text)))
     out = collections.OrderedDict()
@@ -666,6 +735,19 @@ def main():
             entries.append(('TN', 'TWRA', TN_GUIDE, TN_USEFUL, g))
     else:
         print('!! %s is not beside the root -- no TN species accounts' % TN_GUIDE)
+
+    seen_pages = set()
+    npg = [p for g in NC_PAGES for p in sorted(glob.glob(os.path.join(root, NC_DIR, g)))]
+    got = []
+    for p in npg:
+        e = read_nc_page(p)
+        # `/species/x` and `/index.php/species/x` are the same page saved under two names.
+        if e and e['sections'] and e['name'].lower() not in seen_pages:
+            seen_pages.add(e['name'].lower())
+            got.append(e)
+    print('NCWRC %-43s %d species page(s)' % (os.path.join(NC_DIR, '_page_species-*.html'), len(got)))
+    for g in got:
+        entries.append(('NC', 'NCWRC', 'ncwildlife.gov/species', NC_PAGE_USEFUL, g))
 
     ncs = sorted(glob.glob(os.path.join(root, NC_DIR, NC_PROFILE)))
     print('NCWRC  %-42s %d profile(s)' % (os.path.join(NC_DIR, NC_PROFILE), len(ncs)))

@@ -58,18 +58,27 @@ test('a species group is sent only its own species accounts', async () => {
 
 test('the water gets its own state, and the neighbour only where its own state is silent', async () => {
   const nc = await mod.speciesTraitsEntries({}, 'NC');
+  // NCWRC covers bluegill twice -- the species PAGE and the species-profile PDF are two
+  // documents saying different things -- so the rule is not "exactly one row". It is that when a
+  // state answers for a fish, no other state's row is sent for it.
   const bluegill = nc.filter((e) => e.species === 'Bluegill');
-  assert.equal(bluegill.length, 1, 'NCWRC covers bluegill, so SCDNR is not also sent');
-  assert.ok(/NCWRC, NC$/m.test(bluegill[0].text), 'and it is the NC row');
+  assert.ok(bluegill.length >= 1, 'NCWRC covers bluegill');
+  assert.ok(bluegill.every((e) => /NCWRC, NC$/m.test(e.text)),
+    'so every row sent is the NC one, and SCDNR is not also sent');
 
-  // NCWRC publishes no largemouth profile, so the other states answer -- and every row that does
-  // says which state it is. TWRA joined the file on 2026-09-02, so this is now more than one row:
-  // the rule is not "exactly one", it is "none of them is passed off as this water's own state".
-  const lmb = nc.filter((e) => e.species === 'Largemouth Bass');
-  assert.ok(lmb.length >= 1);
-  assert.ok(lmb.every((e) => e.text.includes('neighbouring state')),
+  // NC WRC publishes no REDEYE BASS page -- it is a Coosa and Savannah drainage fish -- so the
+  // other states answer, and every row that does says which state it is. This was Largemouth Bass
+  // until 2026-09-02, when NC WRC's 47 species pages were read and it stopped being an example.
+  const redeye = nc.filter((e) => e.species === 'Redeye Bass');
+  assert.ok(redeye.length >= 1);
+  assert.ok(redeye.every((e) => e.text.includes('neighbouring state')),
     'a state that is not this water\'s must SAY so, every time');
-  assert.ok(!lmb.some((e) => /NCWRC/.test(e.text)), 'and none of them may claim to be NCWRC');
+  assert.ok(!redeye.some((e) => /NCWRC/.test(e.text)), 'and none of them may claim to be NCWRC');
+
+  // And the fish NC DOES publish is answered by NC alone.
+  const lmb = nc.filter((e) => e.species === 'Largemouth Bass');
+  assert.ok(lmb.length >= 1 && lmb.every((e) => /NCWRC, NC$/m.test(e.text)),
+    'NC WRC has a largemouth page, so no other state is sent for it');
 
   const sc = await mod.speciesTraitsEntries({}, 'SC');
   const scBluegill = sc.filter((e) => e.species === 'Bluegill');
@@ -81,9 +90,10 @@ test('a species none of the four guides covers gets no block, and nothing throws
   const entries = await mod.speciesTraitsEntries({}, 'SC');
   // On the form, in the books, and in none of the four species guides. This list keeps shrinking
   // and that is the point of the file: MUSKELLUNGE stopped being an example the day TWRA's guide
-  // was read, SHADOW BASS the day GA DNR's page was. The example moves; the assertion does not
-  // soften. When it empties, every fish the books regulate has an account from some state.
-  for (const absent of ['Roanoke Bass', 'Kokanee Salmon', 'Northern Pike', 'Trout']) {
+  // was read, SHADOW BASS the day GA DNR's page was, and ROANOKE BASS the day NC WRC's 47 species
+  // pages were. The example moves; the assertion does not soften. When it empties, every fish the
+  // books regulate has an account from some state.
+  for (const absent of ['Kokanee Salmon', 'Northern Pike', 'Trout']) {
     assert.equal(mod.speciesTraitsBlock(entries, [absent]), '', `${absent} has no account`);
   }
   assert.equal(mod.speciesTraitsBlock([], null), '');

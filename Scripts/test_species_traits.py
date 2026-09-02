@@ -13,6 +13,7 @@ them was found by reading the extracted text, not by reading the code.
 Personal use only, not for distribution or resale; not for navigation.
 """
 import os, re, sys
+import glob as _g
 _HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(_HERE)
 sys.path.insert(0, _HERE)
@@ -220,6 +221,42 @@ else:
                  'tend to form nesting colonies')
         check('and NCWRC\'s two spellings are one section', 'Habitats & Habits' in g['sections'],
               False)
+
+    # 10b. NORTH CAROLINA HAS FULL SPECIES PAGES AND THIS READER GLOBBED FIVE PDFs.
+    #      Ryan, 2026-09-02: "ummm that's not right about nc... they have full species pages."
+    #      47 of them, saved by the crawl on 2026-09-01 with `save_index` precisely because "the
+    #      species page itself is a source", and then read by nothing. NC went into the file with
+    #      FIVE species while forty-seven pages sat in the same folder.
+    pages = [B.read_nc_page(p_) for p_ in sorted(_g.glob(os.path.join(NC, '_page_species-*.html')))]
+    pages = {p_['name']: p_ for p_ in pages if p_}
+    check('every saved species page is read', len(pages) > 40, True)
+    for want in ('Largemouth Bass', 'Smallmouth Bass', 'Spotted Bass', 'Rock Bass',
+                 'Roanoke Bass', 'Walleye', 'Muskellunge', 'White Perch'):
+        check('%s has an NC WRC page' % want, want in pages, True)
+
+    lmb_pg = pages['Largemouth Bass']
+    check('the name comes off the h1, not the filename', lmb_pg['name'], 'Largemouth Bass')
+    check('and the binomial off the strong tag', lmb_pg['scientific'], 'Micropterus salmoides')
+    contains('the overview carries the structure sentence', lmb_pg['sections'].get('Overview', ''),
+             'brush piles, stumps, boat docks and standing timber')
+    contains('and NC WRC answers WHERE', lmb_pg['sections'].get('Tips / Places to Fish', ''),
+             'Use a wide variety of fishing methods')
+
+    # 10c. THE HEADING IS SPELLED TWO WAYS -- "Tips / Places to Fish" on thirteen pages and
+    #      "Tips; Places to Fish" on ten. Same shape as GA DNR's wandering colon: fold them.
+    both = [n for n, e in pages.items() if 'Tips / Places to Fish' in e['sections']]
+    check('both spellings of the tips heading fold into one', len(both) > 18, True)
+    check('and neither spelling survives beside it',
+          any('Tips; Places to Fish' in e['sections'] for e in pages.values()), False)
+
+    # 10d. THE SITE IS NOT THE PAGE. Every one of the 47 carries Work With Us, Report Wildlife
+    #      Violations, Follow Us, Podcast and Network Menu as <h2>, and Regulations and Management
+    #      are link lists.
+    #      `Classification` and `Status` are header-block labels beside Abundance -- read, not
+    #      carried. Anything else appearing here would be the site leaking in.
+    junk = ({k for e in pages.values() for k in e['sections']}
+            - set(B.NC_PAGE_USEFUL) - {'Classification', 'Status'})
+    check('no site furniture reaches the sections', sorted(junk), [])
 
     # 11. THE SHEET WITH NO HABITAT HEADING. NCWRC printed the walleye's habitat and spawning
     #     prose under "History and Status" and gave it no habitat heading at all.
