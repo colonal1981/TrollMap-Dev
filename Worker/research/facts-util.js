@@ -147,7 +147,75 @@ const RESEARCH_SPECIES_CANON = {
   'redear sunfish shellcracker': 'Redear Sunfish (Shellcracker)',
   'warmouth': 'Warmouth',
   'green sunfish': 'Green Sunfish',
-  'pumpkinseed': 'Pumpkinseed'
+  'pumpkinseed': 'Pumpkinseed',
+
+  // ── THE INSHORE SPECIES, WHICH THIS TABLE HAD NONE OF ─────────────────────────────────────
+  //
+  // Fifty canonical names and every one of them freshwater, while the plan form has carried a
+  // nineteen-box saltwater catalogue since 2026-09-02. That is not a decision anybody made: the
+  // batch's water list filters `feature_type != 'lake'`, so no coastal zone has ever been through
+  // the deterministic pass, and nothing ever forced this table to learn an inshore name.
+  //
+  // What it costs is not a dropped fish -- uniqueResearchSpecies() passes an unknown name through
+  // untouched -- it is a fish under a name the FORM cannot match. speciesGroupsFor() compares
+  // normalised strings, so a roster reading "Spotted Seatrout" never lights up the box valued
+  // "Speckled Trout (Spotted Seatrout)": `spotted seatrout` against `speckled trout spotted
+  // seatrout`. Same shape as the Black Crappie / Crappie miscount of this morning.
+  //
+  // THE VALUES ARE THE FORM'S, EXACTLY. Worker/research/clients.js already warns about this pair
+  // in the saltwater prompt -- "'Spotted Seatrout (Speckled Trout)' and 'Speckled Trout (Spotted
+  // Seatrout)' are the same fish and neither string contains the other" -- and the SCDNR profile
+  // for Murrells Inlet carries the first spelling while the checkbox carries the second. Both
+  // fold here, along with the bare forms every fishing report actually writes.
+  'red drum': 'Red Drum (Redfish)',
+  'redfish': 'Red Drum (Redfish)',
+  'red drum redfish': 'Red Drum (Redfish)',
+  'redfish red drum': 'Red Drum (Redfish)',
+  // SCDNR's own species snapshot opens with it: red drum are "often referred to as 'spottail
+  // bass' or 'redfish'". A local name in the agency's first sentence is not an edge case.
+  'spottail bass': 'Red Drum (Redfish)',
+  'spottail': 'Red Drum (Redfish)',
+  'spotted seatrout': 'Speckled Trout (Spotted Seatrout)',
+  'spotted sea trout': 'Speckled Trout (Spotted Seatrout)',
+  'speckled trout': 'Speckled Trout (Spotted Seatrout)',
+  'speckled sea trout': 'Speckled Trout (Spotted Seatrout)',
+  'seatrout': 'Speckled Trout (Spotted Seatrout)',
+  'sea trout': 'Speckled Trout (Spotted Seatrout)',
+  'spotted seatrout speckled trout': 'Speckled Trout (Spotted Seatrout)',
+  'speckled trout spotted seatrout': 'Speckled Trout (Spotted Seatrout)',
+  // The SC book files three flounders under one heading and the form has one box. Summer and
+  // Gulf flounder are separate species; SCDNR's own snapshot says southern flounder "are the
+  // most common flounder in South Carolina estuaries", so the heading resolves to that box
+  // rather than inventing two the angler cannot tick.
+  'southern flounder': 'Southern Flounder',
+  'flounder': 'Southern Flounder',
+  'flounders': 'Southern Flounder',
+  'summer flounder': 'Southern Flounder',
+  'gulf flounder': 'Southern Flounder',
+  'flounders southern summer gulf': 'Southern Flounder',
+  'black drum': 'Black Drum',
+  'sheepshead': 'Sheepshead',
+  'bluefish': 'Bluefish',
+  'ladyfish': 'Ladyfish',
+  'weakfish': 'Weakfish (Gray Trout)',
+  'gray trout': 'Weakfish (Gray Trout)',
+  'grey trout': 'Weakfish (Gray Trout)',
+  'weakfish gray trout': 'Weakfish (Gray Trout)',
+  'tripletail': 'Tripletail',
+  'atlantic croaker': 'Atlantic Croaker',
+  'croaker': 'Atlantic Croaker',
+  // SAFE BECAUSE THE LOOKUP IS AN EXACT KEY, NOT A SUBSTRING. canonicalizeResearchSpecies()
+  // normalises the whole name and indexes this object with it, so `spot` answers for "Spot" and
+  // never for "spotted seatrout" or "spotted bass".
+  'spot': 'Spot',
+  'whiting': 'Whiting (Southern Kingfish)',
+  'southern kingfish': 'Whiting (Southern Kingfish)',
+  'whiting southern kingfish': 'Whiting (Southern Kingfish)',
+  'florida pompano': 'Florida Pompano',
+  'pompano': 'Florida Pompano',
+  'tarpon': 'Tarpon',
+  'cobia': 'Cobia',
+  'spanish mackerel': 'Spanish Mackerel'
 };
 
 function canonicalizeResearchSpecies(raw) {

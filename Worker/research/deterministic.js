@@ -3,6 +3,7 @@ import { JSON_HEADERS, r2Text } from '../worker-core.js';
 import { researchStorageId, resolveResearchStorageId } from './keys.js';
 import { buildEvidence, buildFactualSummary, getAttractorFacts, getRampSpeciesFacts, uniqueResearchSpecies, splitSpeciesText, isKnownResearchSpecies } from './facts-util.js';
 import { lakeIndex, ncSpeciesByLake, resolveRegistryRow, identityBaseline, regulationsTable, agencyLakeFacts } from '../registry.js';
+import { SC_INSHORE_ROSTER, SC_INSHORE_BASIS } from './coastal-agents.js';
 import { dukeRowForNames, fetchDukeAccessAlerts, fetchDukeOperatingRange } from '../worker-data.js';
 import { parseAccessAlerts, dukeLocationIdFor, dukePoolManagement } from '../conditions.js';
 
@@ -144,6 +145,41 @@ async function handleResearchDeterministicFacts(request, env) {
     }
   } catch (e) {
     console.warn(`deterministic ramps fetch failed for ${lakeName}: ${e.message}`);
+  }
+
+  // SOUTH CAROLINA INSHORE GETS A FLOOR, AND THE EVIDENCE ROW SAYS THAT IS WHAT IT IS.
+  //
+  // The block above reads species off the state ramp feed. SCDNR's feed carries `SpeciesList` --
+  // it is the only one of the four that does -- but the landings inside an estuary are river
+  // landings, and their lists are FRESHWATER. Bound by zone bbox on 2026-09-02, not one of the
+  // nine SC coastal zones came back with a single inshore species; Winyah Bay reads largemouth
+  // and bream. So the coast reached the plan form with a roster of freshwater fish or nothing.
+  //
+  // See SC_INSHORE_ROSTER in coastal-agents.js for the five, who chose them and what stands
+  // behind them. What matters here is that it is written as a FLOOR: `sourceLabel` says so and
+  // `method` is `state_inshore_floor`, so a reader can tell this from the NC block above, which
+  // is a per-water structured source, without opening either file.
+  //
+  // ADDITIVE, LIKE EVERY OTHER SPECIES BLOCK. A zone that later gains a real per-water source --
+  // Georgia's access layer marks 48 species per point and binds by the zone's own bbox -- adds
+  // to this rather than fighting it, and uniqueResearchSpecies() folds the names.
+  // THE REGISTRY ROW DECIDES WHETHER THIS IS COASTAL, NOT isCoastalZone(). That helper matches
+  // a `coast_*` SLUG, and every caller into this handler passes a DISPLAY NAME -- measured
+  // 2026-09-02: isCoastalZone('Murrells Inlet / Pawleys Island, SC') is false and
+  // isCoastalZone('coast_murrells_inlet_sc') is true. Guarding on it would have compiled, run,
+  // matched nothing and reported nothing. `feature_type` is what put the sixteen coastal rows in
+  // lake_index.json, and resolveRegistryRow is the resolver that refuses an ambiguous name
+  // rather than guessing -- the same one the North Carolina block below uses.
+  const scRow = state === 'SC' ? resolveRegistryRow(await lakeIndex(env), lakeName) : null;
+  if (scRow && String(scRow.feature_type || '').toLowerCase() === 'coastal') {
+    profile.biology.predatorSpecies = uniqueResearchSpecies(
+      [...(profile.biology.predatorSpecies || []), ...SC_INSHORE_ROSTER]);
+    const label = SC_INSHORE_BASIS;
+    const url = 'registry:regulations_table.json + SCDNR 2025 Species Snapshots';
+    mergeEvidence('biology', 'predatorSpecies', [buildEvidence('official_structured', label, url, null,
+      'state_inshore_floor', { speciesCount: SC_INSHORE_ROSTER.length, zone: scRow.slug || lakeName })]);
+    profile.sources.push({ label: 'SCDNR saltwater species snapshots and SC saltwater limits',
+                           url, trust: 'OFFICIAL', sourceType: 'official_structured' });
   }
 
   // NORTH CAROLINA'S SPECIES COME FROM A FILE, BECAUSE NC PUBLISHES THEM NOWHERE ELSE.
