@@ -880,6 +880,27 @@ def main():
                     print('        vs dump: %s (dump %d pts, live %d pts)'
                           % ('MATCH' if same else 'DIFFER', dstats['kept'], stats['kept']))
             feeds[kind][st] = (wbs, stats, label)
+            # HOW MANY OF THOSE POINTS NAME A FISH, said out loud on every run.
+            #
+            # A count of points does not say whether the species came through, and for four
+            # years Georgia's did not: both readers asked its layer for `SpeciesList`, which is
+            # South Carolina's field name, got undefined and recorded nothing -- on a layer where
+            # 892 of 895 points carry species. The dry run printed "659 pts, 218 waterbodies" and
+            # looked perfectly healthy the whole time.
+            #
+            # NC is expected to be zero and says so rather than reading as a fault: that layer
+            # publishes 42 fields and none of them is a species. A zero anywhere else is the
+            # regression this line exists to make visible before anyone writes.
+            # TWO SHAPES, BECAUSE THE TWO PATHS BUILD DIFFERENT ROWS. A live fetch nests the
+            # extras under `meta`; registry/_dnr_<kind>_<st>.json writes them flat, and reading
+            # only one of them reported a confident zero for South Carolina, which does carry
+            # species -- the same class of wrong answer this line was added to catch.
+            def _species_of(r):
+                return str(r.get('species') or (r.get('meta') or {}).get('species') or '').strip()
+            with_sp = sum(1 for pts in wbs.values() for r in pts if _species_of(r))
+            total = sum(len(pts) for pts in wbs.values())
+            note = '' if st.upper() != 'NC' else '   (NC publishes no species field -- expected)'
+            print('          %d of %d points name a fish%s' % (with_sp, total, note))
 
     out, rep = bind(R, idx, feeds, a.tol_m, geometry=geometry)
     dst = {'ramps': os.path.join(R, 'dnr_ramps_by_lake.json'),
