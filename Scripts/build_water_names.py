@@ -60,8 +60,16 @@ from __future__ import annotations
 import argparse, json, os, re, sys
 from collections import defaultdict
 
+# A FIFTH FEED, 2026-09-02. `ncpaws_access_by_lake.json` is written by
+# build_nc_species_by_lake.py from NC WRC's fishing-areas app, and its records carry `wb` --
+# the agency's own name for the water -- exactly like the other four. It is the feed that knows
+# North Carolina calls back_creek_lake "LAKE LUCAS", which is the name on the ramp sign, on the
+# Asheboro Parks & Recreation page and in every fishing report. Leaving it out would have made
+# this list the one place a new source has to be remembered, which is what the file's own
+# docstring says it exists to stop.
 FEEDS = ('dnr_ramps_by_lake.json', 'natl_ramps_by_lake.json',
-         'osm_ramps_by_lake.json', 'dnr_paddle_by_lake.json')
+         'osm_ramps_by_lake.json', 'dnr_paddle_by_lake.json',
+         'ncpaws_access_by_lake.json')
 MIN_LEN = 4
 # Whole trailing word, never a substring -- "Creekside Lake" is a lake.
 STREAMISH = re.compile(r'\b(creek|branch|river|run|fork|brook|slough|canal|ditch|prong|swamp)$',
