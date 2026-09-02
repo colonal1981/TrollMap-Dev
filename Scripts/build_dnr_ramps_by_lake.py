@@ -140,6 +140,61 @@ except ImportError as e:                                    # pragma: no cover
     raise SystemExit('build_dnr_ramps_by_lake.py must sit beside fetch_dnr_paddle.py (%s)' % e)
 
 
+# ── Georgia's species columns, READ FROM THE ONE DEFINITION ─────────────────────────────────
+#
+# The file's own note below accepts three copies of the SOURCE PREDICATES on purpose, because a
+# second independent implementation is what catches a filter that silently rejects every row.
+# That argument does not extend to a table of forty-eight abbreviations: a wrong predicate shows
+# up as a count of zero and gets caught, while `HybStrpBas` mapped to the wrong fish is a wrong
+# fish that looks exactly like a right one. So the predicate below stays independent and the
+# TABLE is read from js/data/ga-access-species.js, which the Worker imports directly.
+#
+# Node once, at import, not per feature. Scripts/research_lakes.py runs the off-lake gate the
+# same way and for the same reason.
+def _ga_species_columns():
+    import subprocess
+    # THIS SCRIPT IS DELIVERED TO TWO DIRECTORIES and only one of them sits inside the repo:
+    # TrollMap-Dev/Scripts/ has js/ one level up, TrollMapPipeline/scripts/ has it two levels
+    # down a different branch. Both are tried and the error names both, because a path that
+    # works from one copy and not the other is how the pipeline copy quietly stops fetching
+    # Georgia's species.
+    tries = [os.path.abspath(os.path.join(HERE, '..', 'js', 'data', 'ga-access-species.js')),
+             os.path.abspath(os.path.join(HERE, '..', 'TrollMap-Dev', 'js', 'data',
+                                          'ga-access-species.js'))]
+    src = next((t for t in tries if os.path.exists(t)), None)
+    if not src:
+        raise SystemExit('!! cannot find ga-access-species.js -- it is the one definition of '
+                         "Georgia's species columns and this script will not guess at it. "
+                         'Looked in:\n    %s' % '\n    '.join(tries))
+    script = ("const m = await import(%s);"
+              "process.stdout.write(JSON.stringify(m.GA_ACCESS_SPECIES_COLUMNS));"
+              % json.dumps('file://' + src.replace(os.sep, '/')))
+    proc = subprocess.run(['node', '--input-type=module', '-e', script],
+                          capture_output=True, text=True, encoding='utf-8')
+    if proc.returncode != 0:
+        raise SystemExit('!! could not read the Georgia species columns under node: %s'
+                         % (proc.stderr or '').strip()[:300])
+    return json.loads(proc.stdout)
+
+
+_GA_COLUMNS = None
+
+
+def ga_species(props):
+    """One GA access point -> its fish, comma-joined the way SCDNR's SpeciesList arrives.
+
+    `Y` IS THE ONLY YES. The layer's values are Y, N, U, None and blank -- counted across all
+    895 points on 2026-09-02 -- and `U` is unknown, which is not a fish. Same rule as
+    gaAccessSpecies() in the JS; the table it reads is the same table.
+    """
+    global _GA_COLUMNS
+    if _GA_COLUMNS is None:
+        _GA_COLUMNS = _ga_species_columns()
+    out = [name for col, name in _GA_COLUMNS.items()
+           if str(props.get(col) or '').strip().upper() == 'Y']
+    return ', '.join(out)
+
+
 # ── The ramp feeds ───────────────────────────────────────────────────────────────────────────
 #
 # Mirrors RAMP_SOURCES in Worker/trollmap-worker.js and RESEARCH_RAMP_SOURCES in
@@ -178,12 +233,16 @@ RAMP_SOURCES = {
                              and _s(p.get('Status')).lower() not in ('closed', 'inactive')),
         'name': lambda p: p.get('Name'),
         'wb': lambda p: p.get('Waterbody'),
-        # Same layer the Worker reads, same SpeciesList. Georgia's saved dump has no species
-        # column at all -- it was written before this field was noticed -- so GA needs a live
-        # re-fetch to fill, where SC can come --from-dump.
+        # GEORGIA HAS NO `SpeciesList` AND NEVER HAS. The note that used to sit here said the
+        # saved dump "was written before this field was noticed" -- it is not the dump. That is
+        # South Carolina's field name, this asked Georgia's layer for it, got None, and recorded
+        # nothing. Counted on a fresh download of the same service, 2026-09-02: 892 of 895 access
+        # points carry species, across 373 waterbodies -- 306 Major Reservoir, 235 Small
+        # Impoundment, 231 River, 73 Coastal, 47 Trout Stream -- as forty-eight Y/N columns.
+        # See ga_species() above and js/data/ga-access-species.js, the one definition.
         'meta': lambda p: {'lanes': p.get('NumLanes'), 'dock': p.get('Dock'),
                            'county': p.get('County'), 'owner': p.get('Owner'),
-                           'species': p.get('SpeciesList')},
+                           'species': ga_species(p)},
         'src': 'Georgia DNR WRD Water Access Points',
     },
     'nc': {

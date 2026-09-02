@@ -1,6 +1,7 @@
 // research/facts-util.js — split from worker-research.js (behavior-preserving)
 import { callLLM, extractLLMText, r2Text } from '../worker-core.js';
 import { hasResearchValue } from '../../js/utils/coerce.js';
+import { gaAccessSpecies } from '../../js/data/ga-access-species.js';
 
 function normalizeResearchName(s) {
   return String(s || '').toLowerCase().replace(/&amp;/g, '&').replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ');
@@ -215,7 +216,21 @@ const RESEARCH_SPECIES_CANON = {
   'pompano': 'Florida Pompano',
   'tarpon': 'Tarpon',
   'cobia': 'Cobia',
-  'spanish mackerel': 'Spanish Mackerel'
+  'spanish mackerel': 'Spanish Mackerel',
+
+  // ── THREE NAMES GEORGIA'S ACCESS LAYER USES AND THIS TABLE DID NOT ────────────────────────
+  //
+  // The WRD layer publishes 48 yes/no species columns (js/data/ga-access-species.js). Forty-one
+  // distinct fish survive the canon and the non-game filter; these three were arriving under a
+  // name the plan form cannot match.
+  //
+  // `HybStrpBas` is the same fish as `hybrid bass`, which has pointed at White Bass / Hybrid
+  // since it was added -- and the form's `Hybrid` checkbox covers exactly that value.
+  'hybrid striped bass': 'White Bass / Hybrid',
+  // The form has no bullhead box and one canonical `Bullhead`; two spellings folding to it beats
+  // two strings that match nothing. GA marks yellow on 73 access points and brown on 90.
+  'yellow bullhead': 'Bullhead',
+  'brown bullhead': 'Bullhead'
 };
 
 function canonicalizeResearchSpecies(raw) {
@@ -480,7 +495,18 @@ const RESEARCH_RAMP_SOURCES = {
     wb: (p) => p.Waterbody,
     lat: (p) => p.Latitude,
     lon: (p) => p.Longitude,
-    meta: (p) => ({ lanes: p.NumLanes, dock: p.Dock, fee: String(p.Fee || '').toUpperCase() === 'Y', species: p.SpeciesList || '', county: p.County, owner: p.Owner, motorRestrictions: p.MotorRest })
+    // GEORGIA HAS NO `SpeciesList`. IT HAS FORTY-EIGHT YES/NO COLUMNS.
+    //
+    // `p.SpeciesList` is South Carolina's field name and this asked Georgia's layer for it, got
+    // undefined, and recorded nothing -- on a layer where 892 of 895 access points carry species
+    // across 373 waterbodies, 231 of them river access and 73 coastal. See
+    // js/data/ga-access-species.js, which is the one definition of that mapping and is read by
+    // Scripts/build_dnr_ramps_by_lake.py as well, so the two cannot drift.
+    //
+    // Joined into a comma string on purpose: that is the shape SCDNR's SpeciesList arrives in,
+    // and splitSpeciesText() is what reads both, so nothing downstream has to know which state
+    // it is looking at.
+    meta: (p) => ({ lanes: p.NumLanes, dock: p.Dock, fee: String(p.Fee || '').toUpperCase() === 'Y', species: gaAccessSpecies(p), county: p.County, owner: p.Owner, motorRestrictions: p.MotorRest })
   },
   NC: {
     url: "https://services1.arcgis.com/YfqBAUM5nWR3yhGP/arcgis/rest/services/NCWRC_Boating_Access_Areas_view/FeatureServer/0/query",
