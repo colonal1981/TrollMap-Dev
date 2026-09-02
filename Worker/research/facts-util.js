@@ -42,6 +42,55 @@ const RESEARCH_SPECIES_CANON = {
   // this table has no word for.
   'redear': 'Redear Sunfish (Shellcracker)',
   'redbreast': 'Redbreast Sunfish',
+  // EVERY SPECIES THE FOUR REGULATION BOOKS NAME AS A ROW OF ITS OWN, added 2026-09-02 with the
+  // plan form's catalogue. Ryan: "if it is a species in the regs that is fishable from a kayak then
+  // go ahead and add it." Until now 148 rules across the four digests named a fish nothing in this
+  // codebase knew -- and isKnownResearchSpecies() gates whole agency rosters on this table, so a
+  // fish it does not know cannot vouch for the page it came from.
+  //
+  // THE BLACK BASS COMPLEX. TWRA prints the definition inside the regulation itself: "Black Bass
+  // (includes Largemouth, Smallmouth, Spotted, Alabama, Coosa and all hybrids)" -- TN p17. SC p31
+  // heads its row "Redeye (Bartrams) Bass" and NC p31 "ALABAMA BASS AND SPOTTED BASS"; TWRA's own
+  // guide says the Alabama bass "was called the 'Alabama spotted bass'" before AFS split it in
+  // 2011, so that spelling is this fish and not the spotted bass beside it.
+  //
+  // A BARE `redeye` IS DELIBERATELY ABSENT. TWRA, p12: the redeye bass "is quite different from the
+  // rock bass which many people also call a 'redeye.'" Two fish, one nickname, and both are on the
+  // form -- so the nickname resolves to neither.
+  'alabama bass': 'Alabama Bass',
+  'alabama spotted bass': 'Alabama Bass',
+  'redeye bass': 'Redeye Bass',
+  'coosa bass': 'Redeye Bass',
+  'bartrams bass': 'Redeye Bass',
+  'redeye bartrams bass': 'Redeye Bass',
+  'shoal bass': 'Shoal Bass',
+  // ROCK BASS AND ROANOKE BASS -- NC p33 regulates them as one row, TN p17 as "Rock Bass or Redeye
+  // and Shadow Bass". Nine of TWRA's ten reservoirs carry a rock bass rule; it was the single
+  // largest hole in the vocabulary.
+  'rock bass': 'Rock Bass',
+  'roanoke bass': 'Roanoke Bass',
+  'shadow bass': 'Shadow Bass',
+  // WALLEYE, SAUGER AND THE PIKES. SC p30 writes "Walleye & Sauger", NC p33 and GA p65 give each a
+  // row, TN p17 adds "Sauger or Sauger/Walleye hybrids", Muskellunge and Northern Pike.
+  'sauger': 'Sauger',
+  'muskellunge': 'Muskellunge',
+  'muskie': 'Muskellunge',
+  'musky': 'Muskellunge',
+  'northern pike': 'Northern Pike',
+  'redfin pickerel': 'Redfin Pickerel',
+  'yellow bass': 'Yellow Bass',
+  // TROUT. TN p17 "Trout (all trout species combined)" and "Lake Trout"; NC p33 "KOKANEE SALMON".
+  'lake trout': 'Lake Trout',
+  'brook trout': 'Brook Trout',
+  'kokanee salmon': 'Kokanee Salmon',
+  'kokanee': 'Kokanee Salmon',
+  // THE TWO SUNFISH SC AND NC NAME INSIDE THE BREAM BAND, which is the only reason that band was
+  // PARTLY mapped rather than mapped: SC p30 "Bream (includes bluegill, flier, warmouth,
+  // pumpkinseed, green sunfish, redear (shellcracker) and spotted sunfish)".
+  'flier': 'Flier',
+  'spotted sunfish': 'Spotted Sunfish',
+  // NC p33 bands white catfish in with the bullheads; the TWRA stocking file names it on its own.
+  'white catfish': 'Catfish',
   'chain pickerel': 'Chain Pickerel',
   'bowfin': 'Bowfin',
   'yellow perch': 'Yellow Perch',

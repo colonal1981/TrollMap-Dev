@@ -76,12 +76,26 @@ export function fitPromptToBudget(systemPrompt, buildUser, grounded, budget = 80
  * still splits the way it always did.
  */
 const GROUP_TERM_MAP = {
-  'black bass': ['Largemouth Bass', 'Smallmouth Bass', 'Spotted Bass'],
+  // TWRA writes the membership into the regulation: "Black Bass (includes Largemouth, Smallmouth,
+  // Spotted, Alabama, Coosa and all hybrids)" -- TN p17. Alabama and Redeye were missing because
+  // the plan form had no box for either; it has now, so the group term reaches all five.
+  // redistributeGroupTerms() only ever splits onto species the water is CONFIRMED to hold, so a
+  // longer list never invents a fish.
+  'black bass': ['Largemouth Bass', 'Smallmouth Bass', 'Spotted Bass', 'Alabama Bass',
+                 'Redeye Bass', 'Shoal Bass'],
+  'rock bass or redeye and shadow bass': ['Rock Bass', 'Redeye Bass', 'Shadow Bass'],
+  'walleye/sauger': ['Walleye', 'Sauger'],
+  'walleye & sauger': ['Walleye', 'Sauger'],
+  'pickerel': ['Chain Pickerel', 'Redfin Pickerel'],
+  'trout': ['Trout', 'Rainbow Trout', 'Brown Trout', 'Brook Trout', 'Lake Trout'],
   'catfish (all species)': ['Blue Catfish', 'Channel Catfish', 'Flathead Catfish'],
   'catfish': ['Blue Catfish', 'Channel Catfish', 'Flathead Catfish'],
   'crappie (all species)': ['Crappie', 'Black Crappie', 'White Crappie'],
   'crappie': ['Crappie', 'Black Crappie', 'White Crappie'],
-  'bream/sunfish': ['Bluegill', 'Redear Sunfish (Shellcracker)', 'Warmouth'],
+  'bream/sunfish': ['Bluegill', 'Redear Sunfish (Shellcracker)', 'Redbreast Sunfish', 'Warmouth',
+                    'Green Sunfish', 'Pumpkinseed', 'Flier', 'Spotted Sunfish'],
+  'bream': ['Bluegill', 'Redear Sunfish (Shellcracker)', 'Redbreast Sunfish', 'Warmouth',
+            'Green Sunfish', 'Pumpkinseed', 'Flier', 'Spotted Sunfish'],
   'bluegill/warmouth': ['Bluegill', 'Warmouth'],
   'striped bass or hybrid striped bass': ['Striped Bass', 'Hybrid Striped Bass'],
 };
