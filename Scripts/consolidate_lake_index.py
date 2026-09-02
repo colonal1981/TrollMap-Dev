@@ -404,7 +404,25 @@ def drop_stolen_legacy_names(idx, renamed_old):
     claims, stolen = claimed_names(idx), []
     for slug, olds in sorted(renamed_old.items()):
         rec = idx[slug]
-        bad = {o for o in olds if claims.get(name_key(o), set()) - {slug}}
+        # A DISAMBIGUATING RENAME IS NOT A CORRECTION, AND ONLY A CORRECTION MAY TAKE A NAME.
+        #
+        # Caught on the first live run, 2026-09-02: this fired on `lake_robinson_greer` as well
+        # as lake_lucas and stripped "Lake Robinson" off it. That water IS called Lake Robinson
+        # -- South Carolina has two, in Chesterfield and Greenville counties, and the override
+        # renamed this one to "Lake Robinson (Greer)" to tell them apart. Dropping the plain
+        # name there does not remove an ambiguity, it makes a saved plan reading "Lake Robinson,
+        # SC" resolve SILENTLY AND ALWAYS to the other lake, which is worse than resolving to
+        # neither.
+        #
+        # The two cases separate on their own without a flag: a rename that DISAMBIGUATES keeps
+        # the old name inside the new one -- "Lake Robinson" is a substring of "Lake Robinson
+        # (Greer)" -- while a rename that CORRECTS replaces it outright, and "Lake Reese" holds
+        # no part of "Lake Lucas". Only the second kind was ever entitled to give a name away.
+        new_key = name_key(rec.get('name'))
+        bad = {o for o in olds
+               if (claims.get(name_key(o), set()) - {slug})
+               and name_key(o) != new_key
+               and not set(name_key(o).split()) <= set(new_key.split())}
         if not bad:
             continue
         gone = {name_key(o) for o in bad}
@@ -878,33 +896,6 @@ def main():
               % len(stolen))
         for _s, _o, _owners in stolen:
             print('   %-26s dropped %-30s -> %s' % (_s, '"%s"' % _o, ', '.join(_owners)))
-
-    # AND WHATEVER IS STILL AMBIGUOUS GETS SAID OUT LOUD, WITH THE STATE, BECAUSE THE STATE IS
-    # WHAT DECIDES WHETHER IT HURTS. Two waters answering to one name across a state line cost
-    # nothing: every binder that spends a name unqualified is already state-scoped --
-    # bind_stocking() in build_nc_species_by_lake.py builds its map from the NC rows ONLY,
-    # precisely so an NC stocking cannot land on a South Carolina reservoir. WITHIN one state
-    # there is no second signal left, and the name binds to nothing at all.
-    #
-    # Measured on the shipped index 2026-09-02: 15 collisions, 8 of them same-state. The one
-    # that costs us is `glenville` -- Glenville Lake (Cumberland Co, NC) at 26 acres and Lake
-    # Glenville (Jackson Co, NC) at 1,390, the water whose empty roster is the whole reason
-    # build_nc_species_by_lake.py was written. Five more are one river carried as several rows
-    # (saluda, nolichucky, chattahoochee, catawba, broad) and `robinson` is two real Lake
-    # Robinsons in South Carolina -- the two-Goose-Creeks case, which needs a county in the
-    # name rather than a fix. NONE of them break a binder that also has geometry, which is why
-    # this prints rather than refuses: it says which names cannot be spent on their own.
-    dupes = {n: sorted(v) for n, v in claimed_names(idx).items() if n and len(v) > 1}
-    def _st(s_):
-        return str((idx.get(s_) or {}).get('state') or '?').upper()
-    same = {n: v for n, v in dupes.items() if len({_st(x) for x in v}) < len(v)}
-    if dupes:
-        print('name collisions: %d name(s) answer to more than one water, %d of them WITHIN one '
-              'state (those are the ones a state-scoped binder cannot spend):'
-              % (len(dupes), len(same)))
-        for _n, _v in sorted(dupes.items()):
-            print('   %-3s %-26s %s' % ('!!' if _n in same else '', _n,
-                                        ', '.join('%s [%s]' % (x, _st(x)) for x in _v)))
 
     apath = a.aliases or os.path.join(R, 'lake_aliases.json')
     aliases = {}
@@ -1645,6 +1636,33 @@ def main():
               'does not offer:')
         for d, ss in sorted(clash.items())[:10]:
             print('     %-44s %s' % (d, ', '.join(ss)))
+    # ── NAMES TWO WATERS ANSWER TO, OVER WHAT ACTUALLY SHIPS ────────────────────────────────
+    #
+    # HERE, NOT UP BESIDE THE RENAME, and that placement is the whole point. Run against every
+    # registry row this printed 168 collisions on 2026-09-02, 102 of them same-state, and
+    # almost all were farm ponds that never reach the app -- eight Smith Lakes, nine Jones
+    # Lakes. A report nobody can read is a report nobody reads. Over the 358 rows that ship it
+    # is short enough to act on.
+    #
+    # THE STATE IS WHAT DECIDES WHETHER IT HURTS. Two waters answering to one name across a
+    # state line cost nothing: every binder that spends a name unqualified is already
+    # state-scoped -- bind_stocking() in build_nc_species_by_lake.py builds its map from the NC
+    # rows ONLY, precisely so an NC stocking cannot land on a South Carolina reservoir. Within
+    # one state there is no second signal left and the name binds to nothing at all.
+    #
+    # This is the check that would have caught the Lake Lucas collision the day 3DHP created
+    # it. The line above it -- "N names shared, N shared by two or more SHIPPED lakes" -- has
+    # been printing since August and reads DISPLAY names only, so a water whose real name is
+    # only ever a legacy or an `also` entry was invisible to it.
+    _dupes = {n: sorted(v) for n, v in claimed_names(idx).items() if n and len(v) > 1}
+    _st = lambda s_: str((idx.get(s_) or {}).get('state') or '?').upper()
+    _same = {n: v for n, v in _dupes.items() if len({_st(x) for x in v}) < len(v)}
+    print('name collisions: %d name(s) answer to more than one SHIPPED water, %d of them WITHIN '
+          'one state (those are the ones a state-scoped binder cannot spend):'
+          % (len(_dupes), len(_same)))
+    for _n, _v in sorted(_dupes.items()):
+        print('   %-3s %-26s %s' % ('!!' if _n in _same else '', _n,
+                                    ', '.join('%s [%s]' % (x, _st(x)) for x in _v)))
     print()
     # Labelled by its FILE, not by the dead JS symbol. `LAKE_DB` here sent a reader looking
     # for js/data/lakes.js, which has not existed since 2026-08-04.

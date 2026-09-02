@@ -73,6 +73,20 @@ check('and the scalar is cleared too',
       'lucas' in str(idx['a']['legacy_display_name'] or '').lower(), False)
 check('the row that really is called that keeps it', idx['b']['name'], 'Lake Lucas')
 
+# A disambiguating rename must NOT give its old name away.
+idx = {'lake_robinson_greer': row('lake_robinson_greer', 'Lake Robinson (Greer)',
+                                  ['Lake Robinson, SC', 'Lake Robinson (Greenville Co, SC)',
+                                   'Lake Robinson']),
+       'lake_robinson': row('lake_robinson', 'Lake Robinson')}
+stolen = C.drop_stolen_legacy_names(idx, {'lake_robinson_greer': [
+    'Lake Robinson, SC', 'Lake Robinson (Greenville Co, SC)', 'Lake Robinson']})
+check('"Lake Robinson" -> "Lake Robinson (Greer)" keeps the old name', stolen, [])
+check('all three spellings survive', len(idx['lake_robinson_greer']['legacy_display_names']), 3)
+# ...but a correction still takes it, even when the two names share a word.
+idx = {'a': row('a', 'Lake Reese', ['Lake Lucas']), 'b': row('b', 'Lake Lucas')}
+stolen = C.drop_stolen_legacy_names(idx, {'a': ['Lake Lucas']})
+check('"Lake Lucas" -> "Lake Reese" still gives it up', [x[0] for x in stolen], ['a'])
+
 # A rename must never strip a name from a row it did not rename.
 idx = {'a': row('a', 'Lake Reese', ['Lake Lucas']), 'b': row('b', 'Lake Lucas', ['Lake Lucas'])}
 before = copy.deepcopy(idx['b'])
