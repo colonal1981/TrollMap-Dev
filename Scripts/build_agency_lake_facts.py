@@ -1072,7 +1072,8 @@ def main():
     a = ap.parse_args()
     root = os.path.abspath(a.root)
     registry = a.registry or os.path.join(root, 'registry')
-    out = a.out or os.path.join(registry, 'agency_lake_facts.json')
+    default_out = os.path.join(registry, 'agency_lake_facts.json')
+    out = a.out or default_out
     chartpack = a.chartpack or os.path.join(root, 'chartpack')
     if not os.path.isdir(chartpack):
         chartpack = None
@@ -1231,6 +1232,37 @@ def main():
                               'build_regulations_table.py from the same pages.',
         },
     }
+    # ── A NARROWED RUN MAY NOT WRITE THE WHOLE FILE ────────────────────────────────────────
+    #
+    # This object is rebuilt from scratch on every run and the write replaces it, so a run that
+    # read only some of the sources produces a file holding only those. It is not a hypothetical:
+    # on 2026-09-02 `--state GA` was run to iterate on a reader and took
+    # registry/agency_lake_facts.json from 83 waters to 16. Ryan rebuilt it by hand.
+    #
+    # BOTH FLAGS DO IT, and `--limit` is the more dangerous of the two because its own help text
+    # invites it -- "stop after N pages per source (0 = all). For iterating on a reader." That is
+    # exactly when you least want the real file replaced, and there is no --go on this script to
+    # catch it: the write happens on every run.
+    #
+    # Refusing rather than merging, the same call build_dnr_ramps_by_lake.py makes: a file whose
+    # rows came from different runs, with nothing on it saying which, is worse than one that made
+    # you re-run. `--out` is the way to keep a narrowed run's output, and it says so.
+    narrowed = []
+    if wanted:
+        narrowed.append('--state %s (skipped %s)'
+                        % ('+'.join(sorted(wanted)),
+                           ', '.join(sorted({sp['state'] for sp in SOURCES} - wanted)) or 'nothing'))
+    if a.limit:
+        narrowed.append('--limit %d (each source truncated)' % a.limit)
+    if narrowed and os.path.abspath(out) == os.path.abspath(default_out):
+        print('\nREFUSING TO WRITE A PARTIAL FILE. This run was narrowed by %s, and the write '
+              'replaces\n%s entirely -- so it would DELETE every water this run did not read.'
+              % (' and '.join(narrowed), out))
+        print('   This is what took agency_lake_facts.json from 83 waters to 16 on 2026-09-02.')
+        print('\nDrop the flags to write the real file, or send this run somewhere else:')
+        print('   --out %s' % os.path.join(os.path.dirname(out) or '.', '_agency_lake_facts_partial.json'))
+        return 2
+
     os.makedirs(os.path.dirname(out) or '.', exist_ok=True)
     with open(out, 'w', encoding='utf-8') as f:
         json.dump(doc, f, indent=1, ensure_ascii=False)

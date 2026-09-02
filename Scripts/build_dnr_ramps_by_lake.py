@@ -372,6 +372,17 @@ def load_water(registry, slug, bounds, want_geometry=True):
 
 # ── Feed loading ─────────────────────────────────────────────────────────────────────────────
 
+def states_missing(states):
+    """The feeds this run did NOT fetch, upper-cased. Empty means a whole-file write is safe.
+
+    Lifted out of main() so the guard can be tested without a live fetch -- the failure it
+    prevents is invisible to a dry run, so a test that needs the network to prove it is a test
+    that never runs.
+    """
+    have = {str(s or '').lower() for s in (states or [])}
+    return [s.upper() for s in RAMP_SOURCES if s not in have]
+
+
 def feed_live(kind, st):
     src = (RAMP_SOURCES if kind == 'ramps' else PADDLE_SOURCES)[st]
     feats = fetch_all(src['url'], src.get('id_field', 'OBJECTID'))
@@ -863,6 +874,34 @@ def main():
             print('\nREFUSING TO WRITE FROM A DUMP. The dumps are stale by days and their '
                   'mtimes lie about it.\nDrop --from-dump to fetch, or delete this guard if '
                   'you really mean to freeze old data.')
+            return 2
+        # ── AND REFUSING TO WRITE A WHOLE FILE FROM A SUBSET OF THE STATES ──────────────────
+        #
+        # `out` is built from `feeds`, which holds only the states this run fetched, and the
+        # write below replaces the file. So `--state ga --state sc --go` does not update
+        # Georgia and South Carolina -- it DELETES North Carolina and Tennessee, 245 ramp
+        # points across 358 registry rows, silently, and the run prints a cheerful
+        # "-> registry/dnr_ramps_by_lake.json (124 lakes, 837 points)" on the way out.
+        #
+        # Measured 2026-09-02 on the file as it stands: ramps GA 307, SC 299, NC 120, TN 125.
+        #
+        # This is not hypothetical and it is not new. The same shape cost
+        # registry/agency_lake_facts.json its contents earlier the same day -- 83 waters down to
+        # 16 -- because `build_agency_lake_facts.py --state GA` rebuilt the whole object from
+        # one state. Ryan rebuilt it by hand. A dry run cannot show this: nothing is written, so
+        # nothing looks wrong.
+        #
+        # Refusing rather than merging, for the reason the dump guard above gives: a file whose
+        # rows were fetched on different days, with nothing on it saying which, is worse than a
+        # file that made you re-run. Fetching all four is one command and about a minute.
+        missing = states_missing(states)
+        if missing:
+            print('\nREFUSING TO WRITE A PARTIAL FILE. This run fetched %s, and the write '
+                  'replaces\nthe whole of dnr_ramps_by_lake.json and dnr_paddle_by_lake.json '
+                  '-- so it would DELETE\n%s rather than leave them alone.'
+                  % (', '.join(s2.upper() for s2 in states), ', '.join(missing)))
+            print('\nDrop --state to fetch all four, or add the missing ones:')
+            print('   py .\\scripts\\build_dnr_ramps_by_lake.py --registry %s --go' % a.registry)
             return 2
         print()
         for kind, path in dst.items():
