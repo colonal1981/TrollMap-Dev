@@ -216,5 +216,16 @@ check('a page is named by its whole path',
       '_page_%s.html' % F.slug('fishing/black-bass-north-carolina/smallmouth-bass', cap=90),
       '_page_fishing-black-bass-north-carolina-smallmouth-bass.html')
 
+# ── HTML entities in the link text ────────────────────────────────────────────────────────────
+# Nine files off the first live run carried `&nbsp;` through as the word "nbsp", which breaks the
+# only job the filename has: naming the water so it can be read back out.
+check('a non-breaking space does not become the word nbsp',
+      F.slug('Hyco Lake&nbsp;Largemouth Bass Assessment'),
+      'hyco-lake-largemouth-bass-assessment')
+check('and the water survives in the name',
+      'hyco lake' in F.slug('Hyco Lake&nbsp;Largemouth Bass Assessment').replace('-', ' '), True)
+check('an ampersand entity does not become the word amp',
+      F.slug('Economic Impacts &amp; Contributions'), 'economic-impacts-contributions')
+
 print('\n%s' % ('%d FAILED' % len(FAILED) if FAILED else 'all checks passed'))
 sys.exit(1 if FAILED else 0)

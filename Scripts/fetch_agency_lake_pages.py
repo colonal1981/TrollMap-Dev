@@ -38,7 +38,7 @@ follows links from ONE index page, one level deep, on one host.
 
 Personal use only, not for distribution or resale; not for navigation.
 """
-import argparse, glob, json, os, re, sys, time
+import argparse, glob, html, json, os, re, sys, time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -226,10 +226,17 @@ def doc_key(url, spec):
 def slug(text, cap=60):
     """`Hyco Lake Largemouth Bass Survey (2022)` -> `hyco-lake-largemouth-bass-survey-2022`.
 
+    ENTITIES ARE DECODED FIRST. NC WRC writes `&nbsp;` inside its link text and nine files came
+    off the first run carrying it as a word: `2927_hyco-lake-nbsp-largemouth-bass-assessment.pdf`,
+    `2888_an-overview-of-the-shearon-nbsp-harris-reservoir-habitat.pdf`. That is not only ugly --
+    it breaks the thing the filename exists for, because "shearon nbsp harris reservoir" does not
+    contain "shearon harris reservoir" and the water cannot be read back out of the name.
+    `&amp;` did the same to one more.
+
     A LONG TITLE IS CUT AT A WORD, NOT MID-WORD. "...habitat-enhancem" is a filename that reads
     like a truncated download rather than a report, and these sit in a folder a human opens.
     """
-    s = re.sub(r'[^a-z0-9]+', '-', str(text or '').lower()).strip('-')
+    s = re.sub(r'[^a-z0-9]+', '-', html.unescape(str(text or '')).lower()).strip('-')
     if len(s) <= cap:
         return s
     cut = s[:cap]
