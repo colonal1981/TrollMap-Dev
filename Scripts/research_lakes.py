@@ -397,6 +397,7 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
            "confirmed": [], "asked": [], "returned": [], "missing": [], "documents": 0,
            "facts": 0,
            "sources": 0, "fetch": {}, "rejected_offlake": 0, "rejected_docs": [],
+           "wqp_records": 0, "limnology_gaps": [],
            "chars_sent": 0, "retries": 0, "group_attempts": {}, "saved_key": None,
            "saved_version": None, "discovered_species": [], "warnings": []}
 
@@ -407,6 +408,47 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
     profile = det["profile"]
     species = ((profile.get("biology") or {}).get("predatorSpecies")) or []
     out["confirmed"] = list(species)
+
+    # ── THE MEASURED LIMNOLOGY, WHICH THIS SCRIPT WAS SAVING OVER THE TOP OF ────────────────
+    #
+    # The deterministic pass writes exactly one limnology field, `seasonalDrawdownFt`. Every
+    # other one -- thermocline, the anoxic boundary, Secchi, trophic status -- comes from the
+    # Water Quality Portal pull, and that pull lived only in the browser module this batch
+    # replaced. `/research/save` builds its document from what it is sent, so running this
+    # script deleted those numbers from all 64 waters. Measured on Wateree, 2026-09-02:
+    # thermocline.summerDepthFt null, oxygen.anoxicBelowFt null, waterClarity.secchiFt null,
+    # trophicStatus null, seasonalDrawdownFt 2.5.
+    #
+    # researchIntel() prints the first four into the plan prompt and clampToOxygen() squeezes the
+    # depth band against the anoxic boundary, so the plan lost the two lines the code calls "the
+    # two that decide where the fish can physically be" and the clamp stopped clamping.
+    #
+    # The endpoint owns the rule -- pull, 30-day cache, merge, and the list of fields the pull
+    # could NOT answer. Nothing about limnology is decided here; this hands over the block and
+    # stores what comes back. Ryan, 2026-09-02: "we need the wqp to be there so as to know
+    # whether limnology information is needed to be pulled from the facts."
+    code, wqp, err = _req("/research/limnology-data",
+                          {"lakeName": lake, "base": profile.get("limnology") or {}})
+    if code == 200 and wqp and wqp.get("merged"):
+        profile["limnology"] = wqp["merged"]
+        # Step 5 of the 2026-09-01 plan: the profile keeps the WQP block WITH ITS DATES. A
+        # number whose sample date is 2017 and a number measured last week are different claims.
+        profile["_wqpLimnology"] = {k: v for k, v in wqp.items()
+                                    if k not in ("merged", "evidence", "gaps")}
+        for section, fields in (wqp.get("evidence") or {}).items():
+            ev = profile.setdefault("evidence", {}).setdefault(section, {})
+            for field, rows in (fields or {}).items():
+                ev[field] = list(ev.get(field) or []) + list(rows or [])
+        out["wqp_records"] = wqp.get("recordCount") or 0
+        out["limnology_gaps"] = list(wqp.get("gaps") or [])
+    else:
+        # NOT FATAL, AND NOT SILENT. A water WQP has never sampled must still produce a profile;
+        # a water that has one and did not get it is a different thing and only the count says
+        # which. Same argument as the species-traits note below.
+        out["limnology_gaps"] = ["limnology.ALL"]
+        print(f"      note [{lake}]: no WQP limnology "
+              f"({(wqp or {}).get('error') or err or 'no merged block'}) "
+              f"-- thermocline, anoxic depth, Secchi and trophic status will be blank in the plan")
 
     code, disc, err = _req("/research/discover",
                            {"lakeName": lake, "state": state, "agent": "fisheries",
@@ -913,6 +955,25 @@ def main():
             print(f"  {r['lake']}: {r.get('sources', 0)} sources discovered, "
                   f"{f.get('failed', 0)} failed to download, "
                   f"{r.get('rejected_offlake', 0)} dropped as off-lake")
+
+    # WHICH WATERS HAVE NO MEASURED LIMNOLOGY, AND WHAT THE DOCUMENTS WOULD HAVE TO ANSWER.
+    #
+    # This is the line that would have caught the 2026-09-01 regression on the day it happened:
+    # 64 waters saved with a null thermocline and nothing on screen saying so. A gap here is not
+    # a failure -- WQP genuinely has not sampled some of these -- it is the list of fields the
+    # extraction pass is the only remaining source for.
+    dryw = [r for r in ok if not r.get("wqp_records")]
+    if dryw:
+        print(f"\n{len(dryw)} water(s) came back with no WQP limnology -- thermocline, anoxic "
+              f"depth, Secchi and trophic status are blank in their plans:")
+        for r in dryw:
+            print(f"  {r['lake']}")
+    gapped = [r for r in ok if r.get("wqp_records") and r.get("limnology_gaps")]
+    if gapped:
+        every = Counter(g for r in gapped for g in r["limnology_gaps"])
+        print(f"\n{len(gapped)} water(s) have WQP data with gaps in it -- "
+              + ", ".join(f"{n} missing {g.split('.')[-1]}" for g, n in every.most_common())
+              + ".\nThese are the limnology fields a document is the only source for.")
 
     retried = [r for r in ok if r.get("retries")]
     if retried:

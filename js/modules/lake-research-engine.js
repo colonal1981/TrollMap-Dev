@@ -31,6 +31,13 @@ import { workerHeaders } from '../utils/worker-auth.js';
 import { boundsOf, paddedBox } from '../utils/geojson-coords.js';
 import { lakeRecordFor, documentNamesFor } from '../data/lake-registry.js';
 import { prepareNormalizedDocuments } from '../utils/doc-relevance.js';
+// THE WQP RULE MOVED OUT OF THIS FILE AND NOTHING ELSE CHANGED. Only the browser loads this
+// module, so when research_lakes.py replaced the tab as the way research is RUN, these three
+// went out of reach and 64 profiles were saved with a null thermocline, anoxic depth, Secchi
+// and trophic status. They now live in js/utils/, which Worker/research/limnology.js can import
+// -- it already imports js/data/lake-keys.js and js/utils/geojson-coords.js -- so the batch and
+// this tab apply the same rule instead of one of them applying none.
+import { buildEvidenceEntry, applyWqpToLimnology, buildWqpEvidence } from '../utils/wqp-limnology.js';
 
 // Setup global caches and references
 window.TROLLMAP_RESEARCHED_CACHE = window.TROLLMAP_RESEARCHED_CACHE || {};
@@ -517,9 +524,6 @@ function buildDeterministicSummary(profile) {
   return sentences.join(' ').trim() || null;
 }
 
-function buildEvidenceEntry(sourceType, sourceLabel, sourceUrl, quote, method, extra = {}) {
-  return { sourceType, sourceLabel, sourceUrl, quote: quote || null, method, ...extra };
-}
 
 // Layer the deterministic pass's section over a saved one, one real leaf at a time. Only values
 // that exist are copied, so a null in the deterministic skeleton means "this pass has no answer",
@@ -565,68 +569,11 @@ function mergeDeterministicSection(saved, det) {
 // secchi cut-offs -- one scale, two labels. Lakes with turbidity and no secchi keep a null
 // `typical` and carry the measured NTU in `note`; there is no published NTU-to-adjective scale
 // to bucket those against, and guessing one is the thing this refactor is removing.
-function applyWqpToLimnology(base = {}, wqp = null) {
-  const out = cloneJson(base) || {};
-  if (!wqp?.ok) return out;
-  out.surfaceWater = out.surfaceWater || {};
-  if (wqp.surfaceWater) {
-    Object.assign(out.surfaceWater, wqp.surfaceWater);
-  }
-  out.waterClarity = out.waterClarity || {};
-  if (wqp.surfaceWater?.recentTurbidityNTU != null && !out.waterClarity.note) {
-    out.waterClarity.note = `Recent WQP/SCDES surface turbidity around ${wqp.surfaceWater.recentTurbidityNTU} NTU.`;
-  }
-  const secchiFt = wqp.secchi?.avgSecchiDepthFt;
-  if (secchiFt != null) {
-    out.waterClarity.secchiFt = secchiFt;
-    // Carlson TSI(SD) boundaries, in feet. One set of thresholds, read twice.
-    if (wqp.secchi.sampleCount >= 5) {
-      if (secchiFt < 1.6)       { out.trophicStatus = 'hypereutrophic'; out.waterClarity.typical = 'muddy'; }
-      else if (secchiFt < 6.6)  { out.trophicStatus = 'eutrophic';      out.waterClarity.typical = 'stained'; }
-      else if (secchiFt < 13.0) { out.trophicStatus = 'mesotrophic';    out.waterClarity.typical = 'clear'; }
-      else                      { out.trophicStatus = 'oligotrophic';   out.waterClarity.typical = 'very clear'; }
-    }
-  }
-  if (wqp.thermocline?.depthFt != null) {
-    out.thermocline = out.thermocline || {};
-    out.thermocline.summerDepthFt = wqp.thermocline.depthFt;
-    out.thermocline.method = wqp.thermocline.method || null;
-    out.thermocline.note = wqp.note || out.thermocline.note || null;
-  }
-  if (wqp.oxygen) {
-    out.oxygen = out.oxygen || {};
-    if (wqp.oxygen.anoxicBelowFt != null) out.oxygen.anoxicBelowFt = wqp.oxygen.anoxicBelowFt;
-    if (wqp.oxygen.depletionDepthFt != null) out.oxygen.depletionDepthFt = wqp.oxygen.depletionDepthFt;
-    out.oxygen.note = wqp.oxygen.note || out.oxygen.note || null;
-  }
-  return out;
-}
 
 // An evidence row is a claim about where a stored value came from, so it is written for the
 // fields this pass actually stores and no others. Previously `waterClarity` and `trophicStatus`
 // were derived here and cited nowhere, while `thermocline` was cited whether or not the derived
 // depth survived the agent merge.
-function buildWqpEvidence(wqp) {
-  if (!wqp?.ok) return {};
-  const sourceUrl = 'worker:/research/limnology-data';
-  const LABEL = 'Water Quality Portal / SCDES monitoring';
-  const entry = buildEvidenceEntry('official_structured', LABEL, sourceUrl, null, 'structured_surface_monitoring', { lastObserved: wqp.lastObserved, recordCount: wqp.recordCount });
-  const evidence = { limnology: {} };
-  if (wqp.surfaceWater) evidence.limnology.surfaceWater = [entry];
-  if (wqp.thermocline?.depthFt != null) {
-    evidence.limnology.thermocline = [buildEvidenceEntry('official_structured', LABEL, sourceUrl, null, wqp.thermocline.method || 'depth_profile_derivation', { lastObserved: wqp.lastObserved, evidenceCount: wqp.thermocline.evidenceCount })];
-  }
-  if (wqp.oxygen && (wqp.oxygen.anoxicBelowFt != null || wqp.oxygen.depletionDepthFt != null)) {
-    evidence.limnology.oxygen = [buildEvidenceEntry('official_structured', LABEL, sourceUrl, null, 'do_depth_profile_thresholds', { lastObserved: wqp.lastObserved, evidenceCount: wqp.oxygen.evidenceCount })];
-  }
-  if (wqp.secchi?.avgSecchiDepthFt != null) {
-    const clarity = buildEvidenceEntry('official_structured', LABEL, sourceUrl, null, wqp.secchi.basis === 'turbidity' ? 'turbidity_samples' : 'secchi_samples', { lastObserved: wqp.secchi.lastObserved || wqp.lastObserved, evidenceCount: wqp.secchi.sampleCount });
-    evidence.limnology.waterClarity = [clarity];
-    // The trophic bucket IS the secchi reading, read against Carlson's boundaries.
-    if (wqp.secchi.sampleCount >= 5) evidence.limnology.trophicStatus = [buildEvidenceEntry('official_structured', LABEL, sourceUrl, null, 'carlson_tsi_from_secchi', { lastObserved: wqp.secchi.lastObserved || wqp.lastObserved, evidenceCount: wqp.secchi.sampleCount })];
-  }
-  return evidence;
-}
 
 async function fetchGeoJsonMaybe(url) {
   try {

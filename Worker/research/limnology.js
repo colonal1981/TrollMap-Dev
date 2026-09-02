@@ -9,6 +9,8 @@ import { handleResearchThermoclineSearch } from './storage.js';
 import { LAKE_NAME_TO_R2_KEY as SUPPLEMENTAL_KEY_MAP, resolveR2Key } from '../../js/data/lake-keys.js';
 
 import { boundsOf } from '../../js/utils/geojson-coords.js';
+import { lakeIndex, resolveRegistryRow } from '../registry.js';
+import { applyWqpToLimnology, buildWqpEvidence, limnologyGaps } from '../../js/utils/wqp-limnology.js';
 
 function resolveSupplementalKeyWorker(lakeName) {
   return resolveR2Key(lakeName);
@@ -31,10 +33,123 @@ function resolveSupplementalKeyWorker(lakeName) {
  * Firecrawl guide-article search for the thermocline, which the code below deliberately gates
  * to avoid burning credits on small lakes. Clarity would trigger that on every cache miss.
  */
+/**
+ * THE WQP PULL, CACHED FOR THIRTY DAYS, MERGED, AND ASKED WHAT IT COULD NOT ANSWER.
+ *
+ * Ryan, 2026-09-02: *"is there any reason why that can't be initially pulled in the pipeline and
+ * then reran every 30 days automatically and then merged back in? that is what i want to happen
+ * ... we need the wqp to be there so as to know whether limnology information is needed to be
+ * pulled from the facts."*
+ *
+ * No reason, and it was already step 4 of his own 2026-09-01 plan -- "give WQP a TTL and put its
+ * refresh on the existing cron" -- written beside step 3, the sequencer, which shipped that day
+ * without it. `/research/save` replaces rather than merges, so step 3 alone deleted what step 5
+ * said to keep. Measured on Wateree the next morning: thermocline, anoxic depth, Secchi and
+ * trophic status all null, on 64 waters.
+ *
+ * THIRTY DAYS IS THE SAMPLING RATE, NOT A GUESS. WQP's underlying monitoring is monthly and
+ * publishes months-to-years-old samples; getSecchiSummary() below already uses the same TTL for
+ * the same reason, and the 08-24 plan wrote it down: "A 30-day TTL refetches three times per new
+ * sample." The cache carries `fetchedAt` so it goes stale loudly, and a fetch that fails serves
+ * the stale copy rather than a null -- an old thermocline is worth incomparably more than none.
+ *
+ * `base` is optional. Send the profile's current limnology block and the response carries
+ * `merged` (WQP applied over it), `evidence` (the citation rows for what WQP actually supplied)
+ * and `gaps` (the fields WQP could NOT answer). The caller stores the first two and passes the
+ * third to extraction, so a document is asked only for the limnology the measurement missed.
+ */
 async function handleResearchLimnologyData(request, env, opts = {}) {
   const body = await request.json().catch(() => ({}));
-  let { lakeName, bboxNorth, bboxSouth, bboxEast, bboxWest } = body;
+  const lakeName = String(body.lakeName || body.lake || '').trim();
   if (!lakeName) return new Response(JSON.stringify({ ok: false, error: 'missing lakeName' }), { status: 400, headers: JSON_HEADERS });
+
+  const pull = await wqpCached(env, lakeName, body, opts);
+  const base = body.base && typeof body.base === 'object' ? body.base : null;
+  const merged = base ? applyWqpToLimnology(base, pull) : null;
+  return new Response(JSON.stringify({
+    ...pull,
+    ...(merged ? { merged, evidence: buildWqpEvidence(pull), gaps: limnologyGaps(merged) } : {}),
+  }), { headers: JSON_HEADERS });
+}
+
+const WQP_TTL_MS = 30 * 24 * 60 * 60 * 1000;   // monthly sampling underneath; see above
+
+/** The pull, or the newest one inside the TTL. Never throws: a bad fetch serves the stale copy. */
+async function wqpCached(env, lakeName, body, opts) {
+  // A SECCHI-ONLY PULL IS NOT A WQP PULL AND MUST NEVER BE STORED AS ONE. `opts.secchiOnly`
+  // returns early with `{ok, recordCount, secchi, recentTurbidityNTU, lastObserved}` and NO
+  // thermocline, oxygen or surfaceWater. Caching that under the shared key would serve a payload
+  // with a null thermocline to every later caller for thirty days -- the exact defect this whole
+  // change exists to repair, reintroduced by its own cache. getSecchiSummary() calls wqpPull()
+  // directly and keeps its own clarity-cache, so nothing is lost by refusing here.
+  if (opts && opts.secchiOnly) return (await wqpPull(env, { ...body, lakeName }, opts)).json();
+  const key = `limnology-cache/${resolveSupplementalKeyWorker(lakeName)}.json`;
+  let stale = null;
+  try {
+    const hit = env?.R2_TROLLMAP_CHARTPACKS ? await env.R2_TROLLMAP_CHARTPACKS.get(key) : null;
+    if (hit) {
+      const cached = JSON.parse(await r2Text(hit));
+      if (cached.fetchedAt && Date.now() - Date.parse(cached.fetchedAt) < WQP_TTL_MS) return cached;
+      stale = cached;
+    }
+  } catch (e) {
+    console.warn(`[limnology-data] cache read failed for ${lakeName}: ${e.message}`);
+  }
+
+  let fresh = null;
+  try {
+    const res = await wqpPull(env, { ...body, lakeName }, opts);
+    fresh = await res.json();
+  } catch (e) {
+    console.warn(`[limnology-data] pull failed for ${lakeName}: ${e.message}`);
+  }
+  // A PULL THAT CAME BACK EMPTY MUST NOT EVICT A GOOD ONE. WQP answers `ok` with zero records
+  // when its own service is having a bad day as readily as when a lake is genuinely unmonitored,
+  // and the difference is invisible from here.
+  if (!fresh || !fresh.ok || !(fresh.recordCount > 0)) {
+    if (stale) {
+      console.warn(`[limnology-data] serving stale WQP for ${lakeName} (fetched ${stale.fetchedAt})`);
+      return stale;
+    }
+    return fresh || { ok: false, error: 'WQP pull failed and no cached copy exists', thermocline: null };
+  }
+
+  fresh.fetchedAt = new Date().toISOString();
+  try {
+    if (env?.R2_TROLLMAP_CHARTPACKS) {
+      await env.R2_TROLLMAP_CHARTPACKS.put(key, JSON.stringify(fresh),
+        { httpMetadata: { contentType: 'application/json' } });
+    }
+  } catch (e) {
+    console.warn(`[limnology-data] cache write failed for ${lakeName}: ${e.message}`);
+  }
+  return fresh;
+}
+
+async function wqpPull(env, body, opts = {}) {
+
+  let { lakeName, bboxNorth, bboxSouth, bboxEast, bboxWest } = body;
+
+  // THE REGISTRY CARRIES A BOX FOR EVERY WATER AND THIS ASKED R2 FOR A FILE INSTEAD.
+  //
+  // The self-derive below reads `<key>/shoreline.geojson` or `<key>/garmin_shoreline.geojson`,
+  // and 157 of the shipped packs have neither -- that is
+  // THE_SAME_TRAPDOOR_OPENED_UNDER_157_LAKES_2026-08-23, where North Saluda logged "WQP: could
+  // not derive bbox — skipping" and WQP was silently missing 42% of the card. The browser was
+  // fixed that day by reading `bounds_wsen` off lake_index.json; this endpoint never was, and it
+  // is the one the batch calls. Counted 2026-09-02: 358 of 358 registry rows carry bounds_wsen.
+  if (bboxNorth == null || bboxSouth == null || bboxEast == null || bboxWest == null) {
+    try {
+      const row = resolveRegistryRow(await lakeIndex(env), lakeName);
+      const b = row && (row.bounds_wsen || row.boundsWSEN);
+      if (Array.isArray(b) && b.length === 4 && b.every((n) => Number.isFinite(Number(n)))) {
+        [bboxWest, bboxSouth, bboxEast, bboxNorth] = b.map(Number);
+        console.log(`[limnology-data] bbox from registry bounds_wsen for ${lakeName}`);
+      }
+    } catch (e) {
+      console.warn(`[limnology-data] registry bbox lookup failed for ${lakeName}: ${e.message}`);
+    }
+  }
 
   // If no bbox provided, self-derive from supplemental shoreline GeoJSON (available for all lakes)
   if (bboxNorth == null || bboxSouth == null || bboxEast == null || bboxWest == null) {
@@ -506,12 +621,9 @@ async function getSecchiSummary(env, lakeName) {
   }
 
   try {
-    const req = new Request('internal', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ lakeName }),
-    });
-    const res = await handleResearchLimnologyData(req, env, { secchiOnly: true });
+    // The pull, not the cached-and-merged wrapper: this path wants the early secchi-only return
+    // and keeps its own clarity-cache below. See the guard in wqpCached().
+    const res = await wqpPull(env, { lakeName }, { secchiOnly: true });
     const data = await res.json();
     // Secchi OR turbidity. Measured 2026-08-06 across 512 inland lakes: 170 have secchi, 288
     // have turbidity, and 122 have turbidity and no secchi -- including Lake Norman and every
