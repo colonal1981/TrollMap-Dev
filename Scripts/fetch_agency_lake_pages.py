@@ -128,6 +128,33 @@ STATES = {
     # host and two explicit patterns, so nothing is followed that was not named. A species page
     # with no media link on it costs one request and contributes nothing, which is the price of
     # not typing the list.
+    # ── SOUTH CAROLINA'S MARINE SPECIES, WHICH ARE A DIFFERENT PUBLICATION FROM ITS LAKES ────
+    #
+    # The 'SC' spec above reads SCDNR's freshwater lake descriptions. This reads its saltwater
+    # SPECIES accounts, and they are the only per-species saltwater source any of the four states
+    # publishes: Georgia's CRD has a limits page, a records page and a survey programme page and
+    # no species profiles; NC coastal is cut. Twenty species, one page each, checked 2026-09-02.
+    #
+    # WHY IT IS WORTH THE CRAWL. Every page carries the same headings -- General Description,
+    # Average Size, Habitat, Reproductive Cycle, Foraging Habits, Availability/Vulnerability to
+    # Harvest -- and the content is seasonal and structural rather than descriptive. Red drum:
+    # adults on "tidal creeks, oyster reefs, and beaches", juveniles "reside in deeper river
+    # channels during winter", "larger adults overwinter offshore and return to nearshore waters
+    # during spring", "spawning aggregations occur near estuary inlets and passes along barrier
+    # island beaches". That is the same shape as the four freshwater guides in
+    # build_species_traits.py, for the fish RESEARCH_SPECIES_CANON only learned this evening.
+    #
+    # THE LINKS ARE FULL ABSOLUTE URLS on dnr.sc.gov -- reddrum.html, spottedseatrout.html,
+    # southernflounder.html -- so the pattern is absolute, which is what tells links_on() that
+    # absolute hrefs are allowed here. `skip` keeps the index out of its own crawl.
+    'SC_MARINE': {
+        'index': 'https://www.dnr.sc.gov/marine/species/index.html',
+        'folder': 'SC_Marine_Species',
+        'link': re.compile(r'^https?://(?:www\.)?dnr\.sc\.gov/marine/species/'
+                           r'(?!index\.html)[a-z0-9_-]+\.html$', re.I),
+        'skip': re.compile(r'.*index\.html$', re.I),
+        'save_index': True,
+    },
     'NC': {
         # FILTERED TO FISH, which is 47 species over 4 pages rather than 339 over 23. The
         # category id is NC WRC's own -- `field_catalog_categories_target_id_6[1547]=1547` is what
