@@ -3453,6 +3453,38 @@ def expand_species(phrase, smap):
                     return {'plan_species': list(v.get('plan') or []),
                             'also_covers': list(v.get('also_covers') or []), 'basis': basis}
                 return {'plan_species': [], 'basis': basis, 'note': v}
+    # AND WITHOUT THE ALIAS LIST THE BOOK PUTS IN BRACKETS.
+    #
+    # Three books name the same fish and two of them print its local names beside it:
+    #
+    #     NC   RED DRUM (CHANNEL BASS, RED FISH, OR PUPPY DRUM)
+    #     GA   Red drum (Channel bass, Spottail bass, Redfish)**B
+    #     SC   Red Drum
+    #
+    # The first is declared in book_phrases and the second is not, so Georgia's red drum -- the
+    # most targeted inshore fish on that coast -- came back UNMAPPED while the identical fish
+    # resolved for the other two states. Declaring the third spelling would fix Georgia and
+    # nothing else; a book that adds a fourth local name next year would break again.
+    #
+    # A bracketed list after a species name is that species, said twice. Stripped only here,
+    # after the exact, the case-blind and the footnote tests have all failed, so a declared
+    # phrase that genuinely needs its brackets -- `Aggregate of all game fish (does not include
+    # catfish)` is the one that does, and it is declared -- always wins first.
+    head = re.sub(r'\([^)]*\)', ' ', phrase)
+    head = norm(head).strip().lower()
+    if head and head not in (want, bare):
+        for table, basis in ((bp, 'exact, the bracketed names are the same fish'),
+                             (pm, 'partial -- the book is wider than the form'),
+                             (nh, 'no checkbox for this fish')):
+            for k, v in table.items():
+                if k.startswith('_') or norm(k).strip().lower() != head:
+                    continue
+                if table is bp:
+                    return {'plan_species': list(v), 'basis': basis}
+                if table is pm and isinstance(v, dict):
+                    return {'plan_species': list(v.get('plan') or []),
+                            'also_covers': list(v.get('also_covers') or []), 'basis': basis}
+                return {'plan_species': [], 'basis': basis, 'note': v}
     return {'plan_species': [], 'basis': 'UNMAPPED'}
 
 
@@ -3760,16 +3792,23 @@ def project_by_water(doc, idx, all_specs=None, smap=None, ramps=None, not_fish=(
                                 c['plan_species'] = list((smap or {}).get('plan_species', {})
                                                          .get('values') or [])
                                 c['species_basis'] = 'every species -- the water is shut'
-                            elif o2.get('implicitly') == 'statewide coastal':
-                                # NOT AN UNMAPPED PHRASE, AND NOT A SILENT ZERO. Cobia and
-                                # Atlantic sturgeon are not missing from species_map.json --
-                                # that map is the FRESHWATER plan form's fifteen checkboxes and
-                                # a saltwater fish has no business in it. So these gate nothing
-                                # by construction and say why, rather than arriving as UNMAPPED
-                                # and reading like a lookup that failed.
-                                c['plan_species'] = []
-                                c['species_basis'] = ('coastal species -- the freshwater plan '
-                                                      'form has no checkbox for it')
+                            # COASTAL ROWS GO THROUGH THE MAP LIKE EVERY OTHER ROW.
+                            #
+                            # This used to return `plan_species: []` on the reasoning that
+                            # "species_map.json is the FRESHWATER plan form's fifteen checkboxes
+                            # and a saltwater fish has no business in it". That was true when it
+                            # was written and stopped being true on 2026-09-02, when the form's
+                            # nineteen-box saltwater catalogue went into plan_species.values --
+                            # 51 values now, and species_map_check reports 206 book phrases with
+                            # NONE unmapped. Every coastal phrase in these books is declared:
+                            # `Spotted Seatrout` -> Speckled Trout (Spotted Seatrout),
+                            # `Flounders (Southern, Summer & Gulf)` -> Southern Flounder,
+                            # `Atlantic Croaker, Spot, Whiting` -> three separate checkboxes.
+                            #
+                            # Keeping the branch cost the coast its regulations: an SC or GA
+                            # coastal water reached checkPlanLegality() with no species on any
+                            # rule, so a closed season or a slot limit governed no checkbox and
+                            # the planner was told the book says nothing.
                             else:
                                 ex = expand_species(sp, smap or {})
                                 c['plan_species'] = ex['plan_species']
@@ -3786,19 +3825,13 @@ def project_by_water(doc, idx, all_specs=None, smap=None, ramps=None, not_fish=(
                     # build time precisely so neither the Worker nor the browser makes it.
                     if sp and not all_species:
                         rec['species'] = sp
-                        if o2.get('implicitly') == 'statewide coastal':
-                            # Same reasoning as the closure branch: species_map.json is the
-                            # FRESHWATER plan form's fifteen checkboxes and a saltwater fish
-                            # has no business in it. Says so rather than reading as UNMAPPED.
-                            rec['plan_species'] = []
-                            rec['species_basis'] = ('coastal species -- the freshwater plan '
-                                                    'form has no checkbox for it')
-                        else:
-                            ex = expand_species(sp, smap or {})
-                            rec['plan_species'] = ex['plan_species']
-                            rec['species_basis'] = ex['basis']
-                            if ex.get('also_covers'):
-                                rec['also_covers'] = ex['also_covers']
+                        # Same as the closure branch above: the plan form is no longer
+                        # freshwater only, so a coastal row is mapped rather than excused.
+                        ex = expand_species(sp, smap or {})
+                        rec['plan_species'] = ex['plan_species']
+                        rec['species_basis'] = ex['basis']
+                        if ex.get('also_covers'):
+                            rec['also_covers'] = ex['also_covers']
                     if sp and not row.get('continuation'):
                         last_species = sp
                     if band:
