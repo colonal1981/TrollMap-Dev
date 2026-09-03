@@ -29,7 +29,8 @@ using them interchangeably would be the bug this file exists to avoid.
 
 Personal use only, not for distribution or resale; not for navigation.
 """
-import argparse, glob, json, os, re, sys, unicodedata
+import argparse
+import html, glob, json, os, re, sys, unicodedata
 from datetime import date, datetime
 from html.parser import HTMLParser
 
@@ -448,6 +449,40 @@ def nc_text(path):
     return re.sub(r'[ \t]+', ' ', t).strip(), ' '.join(side)
 
 
+# HTML ENTITY NAMES ARE NOT WORDS IN A LAKE'S NAME.
+#
+# fetch_agency_lake_pages.py builds these filenames from NC WRC's link text, and some of that
+# text is DOUBLE-escaped: `shearon&amp;nbsp;harris` survives one unescape as
+# `shearon&nbsp;harris`, whose punctuation then falls away and whose `nbsp` becomes a word. The
+# file on disk is `2888_an-overview-of-the-shearon-nbsp-harris-reservoir-habitat.pdf`, and
+# nc_water_in_title() looks for the longest registry name the title CONTAINS -- so "shearon
+# harris reservoir" is not in it and the page bound to nothing.
+#
+# The fetcher unescapes to a fixed point now, but 282 PDFs already carry the residue in their
+# names and renaming them would break every manifest entry pointing at them. So the reader drops
+# it -- and drops ONLY the entities that expand to whitespace.
+#
+# THE FIRST VERSION OF THIS DROPPED ANY NAMED ENTITY AND THAT WAS MUCH WORSE THAN THE BUG.
+# `&and;` is a real HTML5 entity for the logical AND, and so are `not`, `or`, `int`, `part`,
+# `sum`, `real`, `copy`, `deg`, `sec` and hundreds more ordinary English words. Measured before
+# it shipped: 49 of the 282 titles changed, and almost every one had lost a real word --
+# "largemouth bass and sunfish in lake phelps" became "largemouth bass sunfish in lake phelps",
+# "surveys 2010 and 2017" became "surveys 2010 2017".
+#
+# A whitespace entity is the only kind that can appear INSIDE a water's name, because it is what
+# replaced the space: `shearon&amp;nbsp;harris`. Everything else -- `&amp;`, `&quot;` -- expanded
+# to punctuation the slug already dropped, so its residue sits between words rather than in one.
+# No water is named after a space, so this cannot delete anything real.
+_ENTITY_WORDS = frozenset(
+    k.strip('&;').lower() for k, v in html.entities.html5.items()
+    if k.strip('&;').isalpha() and (not v.strip() or not v.isprintable()))
+
+
+def strip_entity_words(title):
+    kept = [w for w in str(title or '').split() if w.lower() not in _ENTITY_WORDS]
+    return ' '.join(kept)
+
+
 def nc_title(path):
     """`3130_hyco-lake-largemouth-bass-survey.pdf` -> `Hyco Lake Largemouth Bass Survey`.
 
@@ -458,7 +493,7 @@ def nc_title(path):
     base = os.path.basename(path)
     base = re.sub(r'^\d+_', '', base)
     base = re.sub(r'\.pdf$', '', base, flags=re.I)
-    return base.replace('-', ' ').strip()
+    return strip_entity_words(base.replace('-', ' ').strip())
 
 
 def nc_page(path):

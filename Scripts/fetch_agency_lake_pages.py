@@ -292,7 +292,20 @@ def slug(text, cap=60):
     A LONG TITLE IS CUT AT A WORD, NOT MID-WORD. "...habitat-enhancem" is a filename that reads
     like a truncated download rather than a report, and these sit in a folder a human opens.
     """
-    s = re.sub(r'[^a-z0-9]+', '-', html.unescape(str(text or '')).lower()).strip('-')
+    # UNESCAPED TO A FIXED POINT, because NC WRC's link text is DOUBLE-escaped in places:
+    # `shearon&amp;nbsp;harris` unescapes once to `shearon&nbsp;harris`, whose `&` and `;` are
+    # then punctuation and whose `nbsp` is a word. That is how
+    # `2888_an-overview-of-the-shearon-nbsp-harris-reservoir-habitat.pdf` got its name, and the
+    # water in that title stopped being findable. Twice reaches the non-breaking space, which is
+    # a separator like any other; the loop is capped because a fixed point that never arrives is
+    # a hang, not a filename.
+    raw = str(text or '')
+    for _ in range(4):
+        once = html.unescape(raw)
+        if once == raw:
+            break
+        raw = once
+    s = re.sub(r'[^a-z0-9]+', '-', raw.lower()).strip('-')
     if len(s) <= cap:
         return s
     cut = s[:cap]
