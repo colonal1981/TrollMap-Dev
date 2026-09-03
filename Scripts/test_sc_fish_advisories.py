@@ -269,5 +269,104 @@ class TheBinding(unittest.TestCase):
         self.assertIn('PRESENCE FLOOR', out['waters']['lake_robinson']['basis'])
 
 
+# The roster the qualifier rule checks against, as species_traits.json supplies it.
+ROSTER = M.load_roster(str(HERE.parent / 'registry')) or {
+    'largemouthbass', 'stripedbass', 'bowfin', 'blackcrappie', 'channelcatfish',
+    'bluecatfish', 'chainpickerel', 'warmouth', 'bluegill', 'redearsunfish',
+}
+
+
+class WhatTheFirstRunGotWrong(unittest.TestCase):
+    """Ryan, reading the first output: "ummmm some of this looks to be misleading maybe".
+
+    Every case here is a line off that run. He was right about all of them.
+    """
+
+    def test_a_bowfin_is_not_a_bass(self):
+        # Lake Wateree publishes `Bass- Bowfin`. The state filed a bowfin under the bass
+        # heading, and the inversion faithfully produced "Bowfin Bass" -- a fish that does not
+        # exist -- and put it in the output. When the inverted form is not on the roster and the
+        # qualifier alone IS, the qualifier is the fish.
+        self.assertEqual(M.uninvert('Bass- Bowfin', ROSTER), 'Bowfin')
+        self.assertEqual(M.uninvert('Bass- Largemouth', ROSTER), 'Largemouth Bass')
+        self.assertEqual(M.uninvert('Catfish- Blue', ROSTER), 'Blue Catfish')
+
+    def test_a_name_fragment_is_not_a_name(self):
+        # The roster carries 'White Bass / Hybrid'. Split on the slash it puts a bare 'Hybrid'
+        # into the known set, and `Bass- Striped/Hybrid` on Hartwell then came out as the
+        # species "Hybrid". load_roster() does not split slashes for exactly this reason.
+        self.assertNotIn('hybrid', ROSTER)
+        self.assertEqual(M.species_names('Bass- Striped/Hybrid', ROSTER),
+                         ['Striped Bass', 'Hybrid Bass'])
+
+    def test_a_slash_is_two_fish(self):
+        self.assertEqual(M.species_names('Bass- Largemouth', ROSTER), ['Largemouth Bass'])
+
+    def test_all_other_fish_is_a_scope_not_a_fish(self):
+        # Langley Pond ends with `All Other Fish`, Hartwell with `All Species of Fish`. Both
+        # reached the first run's species lists.
+        html = ('<strong>Bass- Largemouth</strong><ul><li>DO NOT EAT ANY</ul>'
+                '<strong>All Other Fish</strong><ul><li>One meal per week</ul>')
+        pairs, unparsed, notes = M.parse_restrictions(html, ROSTER)
+        self.assertEqual([p['species'] for p in pairs], ['Largemouth Bass'])
+        self.assertEqual(notes, ['All Other Fish: One meal per week'])
+        self.assertEqual(unparsed, [])
+
+    def test_a_size_qualifier_is_not_part_of_the_name(self):
+        # Hartwell-GA publishes `Bass- Largemouth less than 16 inches`. Inverted whole that is
+        # "Largemouth less than 16 inches Bass".
+        html = ('<strong>Bass- Largemouth less than 16 inches</strong>'
+                '<ul><li>One meal per week</ul>')
+        pairs, _, _ = M.parse_restrictions(html, ROSTER)
+        self.assertEqual(pairs[0]['species'], 'Largemouth Bass')
+        self.assertEqual(pairs[0]['size'], 'less than 16 inches')
+        self.assertEqual(pairs[0]['published_as'], 'Bass- Largemouth less than 16 inches')
+
+    def test_no_advisory_is_a_cleared_water_not_a_parse_failure(self):
+        # Eighteen waters carry ADVISORY 'No Advisory' and this body. The state sampled them and
+        # found nothing to warn about. The first run printed "(no species parsed)" for each,
+        # which reads as the parser breaking.
+        pairs, unparsed, notes = M.parse_restrictions('<strong>No Restrictions</strong>', ROSTER)
+        self.assertEqual(pairs, [])
+        self.assertEqual(unparsed, [])
+        self.assertEqual(notes, ['No Restrictions'])
+
+
+class TheTieBreak(unittest.TestCase):
+    """Eight advisories were dropped as ambiguous and four had an obvious right answer."""
+
+    def _hits(self, *pairs):
+        return [{'slug': s, 'tokens': list(tk), 'overlap_frac_of_ours': ov}
+                for s, tk, ov in pairs]
+
+    def test_more_shared_tokens_wins(self):
+        idx = {'black_mingo_creek': {'display_name': 'Black Mingo Creek (Georgetown Co, SC)'},
+               'black_river': {'display_name': 'Black River (Williamsburg Co, SC)'}}
+        hit, why = M.choose('Black Mingo Creek',
+                            self._hits(('black_mingo_creek', ('black', 'mingo'), 0.4),
+                                       ('black_river', ('black',), 0.9)), idx)
+        self.assertEqual(hit['slug'], 'black_mingo_creek')
+        self.assertEqual(why, 'most shared tokens')
+
+    def test_an_exact_name_breaks_a_token_tie(self):
+        idx = {'little_pee_dee_river': {'display_name': 'Little Pee Dee River (Horry Co, SC)'},
+               'great_pee_dee_river': {'display_name': 'Great Pee Dee River (Florence Co, SC)'}}
+        hit, why = M.choose('Little Pee Dee River',
+                            self._hits(('little_pee_dee_river', ('pee', 'dee'), 0.3),
+                                       ('great_pee_dee_river', ('pee', 'dee'), 0.5)), idx)
+        self.assertEqual(hit['slug'], 'little_pee_dee_river')
+        self.assertEqual(why, 'the name matches exactly')
+
+    def test_a_real_tie_is_still_dropped(self):
+        # Two Saluda reaches and neither name matches. Guessing here would be worse than silence.
+        idx = {'saluda_river_2': {'display_name': 'Saluda River (2) (Newberry Co, SC)'},
+               'saluda_river_lower_saluda': {'display_name': 'Saluda River (Lower Saluda) (SC)'}}
+        hit, why = M.choose('Saluda River',
+                            self._hits(('saluda_river_2', ('saluda',), 0.5),
+                                       ('saluda_river_lower_saluda', ('saluda',), 0.5)), idx)
+        self.assertIsNone(hit)
+        self.assertIn('tied', why)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

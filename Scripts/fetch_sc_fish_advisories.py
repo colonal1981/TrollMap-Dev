@@ -146,7 +146,66 @@ ADVICE = re.compile(
     r'\d+\s+meals?\s+per\s+\w+)\s*', re.I)
 
 
-def uninvert(name):
+NOT_A_SPECIES = re.compile(r'^\s*(all\s+|any\s+|other\b|every\b)', re.I)
+SIZE_NOTE = re.compile(
+    r'\s+((?:less\s+than|under|over|greater\s+than|above|below)\s+[\d.]+\s*(?:in|inch|inches)\b'
+    r'|[\d.]+\s*[-\u2013]\s*[\d.]+\s*(?:in|inch|inches)\b)', re.I)
+
+
+def load_roster(registry):
+    """The species names we already publish, as a normalised set. READ, NOT TYPED.
+
+    registry/species_traits.json is 56 species, is already in R2, and is already the vocabulary
+    build_species_habitat_weights.py resolves against. Using it here means the check below is
+    calibrated against the same roster as everything else rather than a fourth private list.
+    """
+    p = os.path.join(registry, 'species_traits.json')
+    if not os.path.exists(p):
+        return set()
+    d = json.load(open(p, encoding='utf-8')).get('species') or {}
+    names = list(d) if isinstance(d, dict) else [x.get('species') for x in d]
+    out = set()
+    for n in names:
+        for alt in _alternates(n):
+            k = _norm(alt)
+            if len(k) > 3:
+                out.add(k)
+    return out
+
+
+def _norm(s):
+    return re.sub(r'[^a-z]', '', str(s or '').lower())
+
+
+def _alternates(name):
+    """'Redear Sunfish (Shellcracker)' -> both halves.
+
+    THE SLASH IS DELIBERATELY NOT SPLIT HERE, unlike species_alternates() elsewhere. The roster
+    contains 'White Bass / Hybrid'; splitting it puts a bare 'Hybrid' into the known-species set,
+    and the qualifier rule below then "recognised" it -- so `Bass- Striped/Hybrid` on Hartwell
+    came out as the species "Striped Bass, Hybrid". A fragment of a name is not a name.
+    """
+    n = str(name or '')
+    out = [n] + re.findall(r'\(([^)]*)\)', n) + [re.sub(r'\s*\([^)]*\)', '', n)]
+    return [p.strip() for p in out if p.strip()]
+
+
+def species_names(published, roster=None):
+    """One published heading -> the fish it names. 'Bass- Striped/Hybrid' is TWO.
+
+    SC writes a slash where a row covers two fish that share a limit. Left joined it produced
+    "Striped/Hybrid Bass" on Hartwell -- readable to a person, and not a name anything can match.
+    """
+    s = str(published or '').strip()
+    m = re.match(r"^\s*([A-Za-z][A-Za-z' ]*?)\s*-\s*(.+?)\s*$", s)
+    if m and '/' in m.group(2):
+        group = m.group(1).strip()
+        return [uninvert('%s- %s' % (group, q.strip()), roster)
+                for q in m.group(2).split('/') if q.strip()]
+    return [uninvert(s, roster)]
+
+
+def uninvert(name, roster=None):
     """'Bass- Largemouth' -> 'Largemouth Bass'. 'Sunfish- Redear' -> 'Redear Sunfish'.
 
     The advisory writes a group first and the qualifier after a hyphen, which is how a table is
@@ -154,10 +213,18 @@ def uninvert(name):
     parenthetical like 'Bowfin (Mudfish)' is the shape species_alternates() already expands.
     """
     s = str(name or '').strip().strip(',;')
-    m = re.match(r'^\s*([A-Za-z][A-Za-z\' ]*?)\s*-\s*([A-Za-z][A-Za-z\' ]*)\s*$', s)
-    if m:
-        return '%s %s' % (m.group(2).strip(), m.group(1).strip())
-    return s
+    m = re.match(r"^\s*([A-Za-z][A-Za-z' ]*?)\s*-\s*([A-Za-z][A-Za-z'/ ]*)\s*$", s)
+    if not m:
+        return s
+    group, qualifier = m.group(1).strip(), m.group(2).strip()
+    joined = '%s %s' % (qualifier, group)
+    # A BOWFIN IS NOT A BASS, AND THE STATE FILED IT UNDER ONE. 'Lake Wateree' publishes
+    # `Bass- Bowfin`, which inverts to "Bowfin Bass" -- a fish that does not exist, and it went
+    # into the first run's output as one. When the inverted form is not on our roster and the
+    # QUALIFIER ALONE is, the qualifier is the fish and the group heading was filing.
+    if roster and _norm(joined) not in roster and _norm(qualifier) in roster:
+        return qualifier
+    return joined
 
 
 # The field is HTML. Measured, not guessed -- the raw bytes for Lake H.B. Robinson, 2026-09-03:
@@ -177,7 +244,7 @@ def strip_tags(s):
     return re.sub(r'\s+', ' ', TAG.sub(' ', str(s or ''))).strip()
 
 
-def parse_restrictions(text):
+def parse_restrictions(text, roster=None):
     """[{species, advice, published_as}], plus what could not be read, plus water-level notes.
 
     THE SHAPE WAS GUESSED ONCE AND THE GUESS WAS WRONG, WHICH IS WHY THIS READS THREE.
@@ -211,8 +278,22 @@ def parse_restrictions(text):
                 continue
             if not ad and ADVICE.fullmatch(sp):
                 notes.append(sp)          # a whole-water statement, not a fish
+            elif ad and NOT_A_SPECIES.match(sp):
+                # 'All Other Fish', 'All Species of Fish'. A scope, not a fish. The first run
+                # put both into species lists, on Hartwell and Langley Pond.
+                notes.append('%s: %s' % (sp, ad))
             elif ad:
-                pairs.append({'species': uninvert(sp), 'advice': ad, 'published_as': sp})
+                size = None
+                m2 = SIZE_NOTE.search(sp)
+                base = sp
+                if m2:
+                    size = m2.group(1).strip()
+                    base = (sp[:m2.start()] + sp[m2.end():]).strip()
+                for nm in species_names(base, roster):
+                    rec = {'species': nm, 'advice': ad, 'published_as': sp}
+                    if size:
+                        rec['size'] = size
+                    pairs.append(rec)
             else:
                 unparsed.append(sp)
             seen_end = m.end()
@@ -232,7 +313,7 @@ def parse_restrictions(text):
                 sp, ad = c.split(':', 1)
                 sp, ad = sp.strip(), ad.strip()
                 if sp and ad:
-                    pairs.append({'species': uninvert(sp), 'advice': ad, 'published_as': sp})
+                    pairs.append({'species': uninvert(sp, roster), 'advice': ad, 'published_as': sp})
                     continue
             unparsed.append(c)
         if pairs:
@@ -244,7 +325,7 @@ def parse_restrictions(text):
         sp = lines[i]
         ad = lines[i + 1] if i + 1 < len(lines) else ''
         if ad and ADVICE.search(ad) and not ADVICE.search(sp):
-            pairs.append({'species': uninvert(sp), 'advice': ad, 'published_as': sp})
+            pairs.append({'species': uninvert(sp, roster), 'advice': ad, 'published_as': sp})
             i += 2
             continue
         unparsed.append(sp)
@@ -328,10 +409,14 @@ def bind(features, index, bounds_dir, report):
     except ImportError as exc:
         raise SystemExit('geometry binding needs shapely and the pipeline helpers: %s' % exc)
 
+    # NO STATE PRE-FILTER, AND THE FIRST RUN SHOWED WHY. It read `state == 'SC'` and threw away
+    # Lake Wylie (state NC, half of it in SC) and J. Strom Thurmond (state GA, half of it in SC),
+    # both of which SC publishes an advisory for. `states` is null on those rows, so the index
+    # cannot answer "is any of this water in SC" -- but the geometry can, and does: every polygon
+    # in this service is South Carolina's, so overlapping one IS the state test. The pre-filter
+    # was a second, worse copy of a rule the geometry already enforces.
     slugs, geoms = [], []
     for slug, rec in index.items():
-        if (rec.get('state') or '').upper() != 'SC':
-            continue                      # 1. STATE-SCOPED
         p = os.path.join(bounds_dir, '%s.geojson' % slug)
         if not os.path.exists(p):
             continue
@@ -339,9 +424,9 @@ def bind(features, index, bounds_dir, report):
         if g is not None and not g.is_empty and g.area > 0:
             slugs.append(slug)
             geoms.append(g)
-    report['sc_waters_with_a_boundary'] = len(geoms)
+    report['waters_with_a_boundary'] = len(geoms)
     if not geoms:
-        raise SystemExit('no SC boundary polygons under %s -- nothing to bind to' % bounds_dir)
+        raise SystemExit('no boundary polygons under %s -- nothing to bind to' % bounds_dir)
     tree = STRtree(geoms)
 
     bound, ambiguous, unbound = {}, [], []
@@ -369,20 +454,59 @@ def bind(features, index, bounds_dir, report):
             hits.append({'slug': slug, 'tokens': sorted(agreed),
                          'overlap_frac_of_ours': (inter / g.area) if g.area else 0.0})
         if not hits:
-            unbound.append({'name': aname, 'why': 'no SC water both overlaps it and shares a '
+            unbound.append({'name': aname, 'why': 'no water both overlaps it and shares a '
                                                   'distinctive name token'})
-        elif len(hits) > 1:
-            # 4. AMBIGUITY IS DROPPED, NOT GUESSED.
-            ambiguous.append({'name': aname, 'candidates': [h['slug'] for h in hits]})
-        else:
-            bound[hits[0]['slug']] = {'match': hits[0], 'attributes': attrs}
+            continue
+        pick, why = choose(aname, hits, index)
+        if pick is None:
+            # STILL DROPPED, NOT GUESSED -- but only after the three questions below have all
+            # come back tied. The first run dropped eight, and at least four of them had an
+            # obvious right answer: "Little Pee Dee River" against `little_pee_dee_river`.
+            ambiguous.append({'name': aname, 'candidates': [h['slug'] for h in hits],
+                              'why': why})
+            continue
+        bound.setdefault(pick['slug'], []).append(
+            {'match': dict(pick, resolved_by=why), 'attributes': attrs})
     return bound, ambiguous, unbound
+
+
+def choose(advisory_name, hits, index):
+    """One of the candidates, or None. Returns (hit, how-it-was-decided).
+
+    THREE QUESTIONS, IN ORDER, AND A TIE AT THE END IS STILL A DROP.
+
+      1. Which shares the MOST distinctive tokens?   'Black Mingo Creek' shares {black, mingo}
+         with black_mingo_creek and only {black} with black_river.
+      2. Whose name IS the advisory's name?          'Little Pee Dee River' and 'Wateree River'
+         and 'Edisto River' and 'Santee River' each match one candidate exactly once the county
+         parenthetical is stripped. Four of the first run's eight drops.
+      3. Which water does the advisory cover most of? A canal's advisory covers the canal and
+         clips the river it joins.
+    """
+    best = max(len(h['tokens']) for h in hits)
+    top = [h for h in hits if len(h['tokens']) == best]
+    if len(top) == 1:
+        return top[0], 'most shared tokens'
+
+    want = _norm(re.sub(r'\s*\([^)]*\)', '', advisory_name))
+    exact = [h for h in top
+             if _norm(re.sub(r'\s*\([^)]*\)', '', index[h['slug']].get('display_name') or '')) == want]
+    if len(exact) == 1:
+        return exact[0], 'the name matches exactly'
+
+    pool = exact or top
+    pool = sorted(pool, key=lambda h: -h['overlap_frac_of_ours'])
+    if len(pool) > 1 and pool[0]['overlap_frac_of_ours'] >= 2 * max(pool[1]['overlap_frac_of_ours'], 1e-9):
+        return pool[0], 'it covers twice as much of that water as any other'
+    return None, 'tied on tokens, on name and on overlap'
 
 
 # ── main ────────────────────────────────────────────────────────────────────────────────────
 
-def build(raw, index, bounds_dir):
+def build(raw, index, bounds_dir, registry='registry'):
     report = {}
+    roster = load_roster(registry)
+    report['roster_species_known'] = len(roster)
     waters, all_ambiguous, all_unbound, all_unparsed = {}, [], [], []
     for layer_id, kind in (('2', 'freshwater'), ('3', 'estuarine')):
         feats = raw.get(layer_id) or []
@@ -390,35 +514,40 @@ def build(raw, index, bounds_dir):
         bound, ambiguous, unbound = bind(feats, index, bounds_dir, report)
         all_ambiguous += [dict(a, layer=kind) for a in ambiguous]
         all_unbound += [dict(u, layer=kind) for u in unbound]
-        for slug, hit in bound.items():
-            a = hit['attributes']
-            pairs, unparsed, notes = parse_restrictions(a.get('Waterbody_URL'))
-            if unparsed:
-                all_unparsed.append({'slug': slug, 'name': a.get('NAME'), 'text': unparsed})
-            rec = waters.setdefault(slug, {
-                'display_name': index[slug].get('display_name') or slug,
-                'state': 'SC', 'water_type': kind, 'advisories': [], 'species': [],
-                'do_not_eat': [],
-                'basis': 'PRESENCE FLOOR, not a roster. An advisory names a species because the '
-                         'state sampled it here; it says nothing about what else is present, and '
-                         'it must union in underneath a roster rather than replace one.',
-            })
-            if notes:
-                rec.setdefault('water_level_notes', [])
+        # A WATER CAN HAVE MORE THAN ONE ADVISORY AND THE FIRST RUN KEPT ONLY THE LAST.
+        # `bound[slug] = ...` overwrote, so Hartwell -- which SC publishes in five pieces, GA
+        # arm, Seneca River arm twice, 12 Mile Creek and All Remaining -- came out carrying
+        # whichever row happened to be last, and about twenty waters printed "(no species
+        # parsed)" for the same reason. They are a list now.
+        for slug, hits in bound.items():
+            for hit in hits:
+                a = hit['attributes']
+                pairs, unparsed, notes = parse_restrictions(a.get('Waterbody_URL'), roster)
+                if unparsed:
+                    all_unparsed.append({'slug': slug, 'name': a.get('NAME'), 'text': unparsed})
+                rec = waters.setdefault(slug, {
+                    'display_name': index[slug].get('display_name') or slug,
+                    'state': index[slug].get('state'), 'water_type': kind,
+                    'advisories': [], 'species': [], 'do_not_eat': [], 'water_level_notes': [],
+                    'basis': 'PRESENCE FLOOR, not a roster. An advisory names a species because '
+                             'the state sampled it here; it says nothing about what else is '
+                             'present, and it must union in underneath a roster rather than '
+                             'replace one.',
+                })
                 for n in notes:
                     if n not in rec['water_level_notes']:
                         rec['water_level_notes'].append(n)
-            rec['advisories'].append({
-                'name': a.get('NAME'), 'advisory': a.get('ADVISORY'), 'basin': a.get('Basin'),
-                'type': a.get('TYPE'), 'restrictions_text': a.get('Waterbody_URL'),
-                'matched_on': hit['match'], 'confidence': 'name+geom',
-                'source': '%s/%s' % (SERVICE, layer_id),
-            })
-            for p in pairs:
-                if p['species'] not in [s['species'] for s in rec['species']]:
-                    rec['species'].append(p)
-                if do_not_eat(p['advice']) and p['species'] not in rec['do_not_eat']:
-                    rec['do_not_eat'].append(p['species'])
+                rec['advisories'].append({
+                    'name': a.get('NAME'), 'advisory': a.get('ADVISORY'), 'basin': a.get('Basin'),
+                    'type': a.get('TYPE'), 'restrictions_text': a.get('Waterbody_URL'),
+                    'matched_on': hit['match'], 'confidence': 'name+geom',
+                    'source': '%s/%s' % (SERVICE, layer_id),
+                })
+                for sp in pairs:
+                    if sp['species'] not in [s['species'] for s in rec['species']]:
+                        rec['species'].append(sp)
+                    if do_not_eat(sp['advice']) and sp['species'] not in rec['do_not_eat']:
+                        rec['do_not_eat'].append(sp['species'])
 
     return {
         '_note': 'Personal use only, not for distribution or resale; not for navigation. '
@@ -465,14 +594,31 @@ def main():
 
     index = json.load(open(os.path.join(R, 'lake_index.json'), encoding='utf-8'))
     index = {k: v for k, v in index.items() if isinstance(v, dict)}
-    out = build(raw, index, os.path.join(R, 'boundaries'))
+    out = build(raw, index, os.path.join(R, 'boundaries'), R)
 
     w = out['waters']
-    print('\nbound to %d of our SC waters (%d SC waters have a boundary)'
-          % (len(w), out['report'].get('sc_waters_with_a_boundary', 0)))
+    print('\nbound to %d of our waters (%d have a boundary, roster knows %d species)'
+          % (len(w), out['report'].get('waters_with_a_boundary', 0),
+             out['report'].get('roster_species_known', 0)))
+    clean = 0
     for slug in sorted(w):
-        names = [s['species'] for s in w[slug]['species']]
-        print('   %-30s %-42s %s' % (slug, w[slug]['display_name'][:40], ', '.join(names) or '(no species parsed)'))
+        rec = w[slug]
+        names = [s['species'] for s in rec['species']]
+        if names:
+            said = ', '.join(names)
+        elif rec.get('water_level_notes'):
+            # NOT A FAILURE, AND THE FIRST RUN READ LIKE ONE. These waters carry
+            # `ADVISORY: No Advisory` and `<strong>No Restrictions</strong>`: the state sampled
+            # them and found nothing to warn about, so there is no species list to take. Sixteen
+            # of them printed "(no species parsed)" and Ryan read that as the parser breaking.
+            said = 'NO ADVISORY - the state names no species here (%s)' % '; '.join(
+                rec['water_level_notes'][:2])
+            clean += 1
+        else:
+            said = '(nothing parsed - LOOK AT THIS ONE)'
+        print('   %-30s %-42s %s' % (slug, rec['display_name'][:40], said))
+    print('\n   %d of the %d carry species; %d are waters the state cleared'
+          % (len(w) - clean, len(w), clean))
     if out['ambiguous']:
         print('\nDROPPED as ambiguous (%d) -- more than one of our waters fits:' % len(out['ambiguous']))
         for x in out['ambiguous']:
