@@ -78,6 +78,31 @@ check('the five in the app roster are all present',
        'spottedseatrout.html'])
 check('no duplicates, though the index links each fish twice', len(set(urls)), len(urls))
 
+print('\nname_for() -- the leaf is noise only when it is a generic page name')
+# The shapes it was written against, which must not move.
+check('a lake named by its folder',
+      F.name_for('https://www.dnr.sc.gov/lakes/wateree/description.html',
+                 'https://www.dnr.sc.gov/lakes/search.html', '', F.STATES['SC']), 'wateree.html')
+check('a state lake named by its two folders',
+      F.name_for('https://www.dnr.sc.gov/lakes/state/ashwood/index.html',
+                 'https://www.dnr.sc.gov/lakes/search.html', '', F.STATES['SC']),
+      'state_ashwood.html')
+# The shape that broke it: siblings of the index with no folder at all. All twenty collapsed
+# to 'index.html', each overwrote the last, and the shrink guard then compared one fish
+# against another and refused sixteen for "coming back thinner".
+got = [F.name_for(u, spec['index'], '', spec) for u, _t in links]
+check('every marine page gets its own name', len(set(got)), len(got))
+check('and none of them is index.html', [g for g in got if g == 'index.html'], [])
+check('red drum is named for the fish', 'reddrum.html' in got, True)
+
+print('\nload_manifest() -- symmetric with save_manifest')
+# save writes {note, pages: <given>}; load returned the whole file, so every second run
+# nested the last one inside itself. SC_Marine_Species reached depth 2 on its second fetch.
+man = F.load_manifest(folder)
+check('it unwraps to real page entries only',
+      all(isinstance(v, dict) and v.get('url') for v in man.values()), True)
+check('and carries no note or pages key', [k for k in man if k in ('note', 'pages')], [])
+
 print('\n%s' % ('%d check(s) FAILED: %s' % (len(FAILED), ', '.join(FAILED)) if FAILED
                 else 'all checks passed'))
 sys.exit(1 if FAILED else 0)

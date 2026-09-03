@@ -320,7 +320,29 @@ def name_for(url, index_url, text='', spec=None):
     base = urllib.parse.urlparse(index_url).path.rsplit('/', 1)[0] + '/'
     if rel.startswith(base):
         rel = rel[len(base):]
-    parts = [p for p in rel.split('/') if p and not p.endswith('.html')]
+    # THE LEAF IS NOISE ONLY WHEN IT IS A GENERIC PAGE NAME.
+    #
+    # This dropped EVERY `.html` segment, which is right for the shapes it was written against --
+    # `wateree/description.html` is named by its folder, `state/ashwood/index.html` by its two --
+    # and catastrophic for a flat folder. SCDNR's marine species pages are `reddrum.html`,
+    # `sheepshead.html`, `spottedseatrout.html`, all siblings of the index with no folder at all,
+    # so every one of the twenty reduced to no parts and fell through to the literal 'index'.
+    #
+    # Ryan ran it: twenty pages fetched, all written to `index.html`, each overwriting the last,
+    # and the shrink guard then compared one fish against another and refused sixteen of them for
+    # "coming back thinner". Four "saved" were four overwrites of one file. The run reported
+    # "4 saved, 0 failed".
+    #
+    # So the leaf is dropped when it carries no name and kept when it does. Every filename this
+    # function produced before is unchanged, because `description` and `index` are exactly the
+    # leaves it was already discarding.
+    GENERIC = ('index', 'description', 'default', 'home')
+    segs = [p for p in rel.split('/') if p]
+    parts = [p for p in segs[:-1] if not p.endswith('.html')]
+    if segs:
+        stem = segs[-1][:-5] if segs[-1].lower().endswith('.html') else segs[-1]
+        if stem.lower() not in GENERIC:
+            parts.append(stem)
     return ('_'.join(parts) or 'index') + '.html'
 
 
@@ -364,13 +386,28 @@ def write_page(folder, fname, url, body, took, manifest):
 
 
 def load_manifest(folder):
+    """The `pages` map, UNWRAPPED, because save_manifest wraps it again on the way out.
+
+    load returned the whole file -- `{note, pages}` -- and save writes `{note, pages: <what it
+    was given>}`, so every second run nested the previous manifest one level deeper inside
+    itself. Caught 2026-09-03 on the first folder ever fetched twice in one session:
+
+        {"note": ..., "pages": {"note": ..., "pages": {"<page>": {...}}, "index.html": {...}}}
+
+    Line 671's `manifest.get('pages') if isinstance(...) else manifest` was papering over the
+    first level of it on the read side, which is why nothing had noticed. Unwrapping HERE makes
+    load and save symmetric, and the loop below tolerates a file already nested by the old code.
+    """
     p = os.path.join(folder, '_fetched.json')
-    if os.path.exists(p):
-        try:
-            return json.load(open(p, encoding='utf-8'))
-        except ValueError:
-            pass
-    return {}
+    if not os.path.exists(p):
+        return {}
+    try:
+        d = json.load(open(p, encoding='utf-8'))
+    except ValueError:
+        return {}
+    while isinstance(d, dict) and isinstance(d.get('pages'), dict):
+        d = d['pages']
+    return {k: v for k, v in d.items() if isinstance(v, dict) and v.get('url')}
 
 
 def save_manifest(folder, manifest):
