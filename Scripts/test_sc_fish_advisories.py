@@ -332,40 +332,75 @@ class WhatTheFirstRunGotWrong(unittest.TestCase):
         self.assertEqual(notes, ['No Restrictions'])
 
 
-class TheTieBreak(unittest.TestCase):
-    """Eight advisories were dropped as ambiguous and four had an obvious right answer."""
+class WhichWatersAnAdvisoryIsAbout(unittest.TestCase):
+    """Ryan, looking at the map: "i can clearly see that the saluda river is both stretches".
 
-    def _hits(self, *pairs):
-        return [{'slug': s, 'tokens': list(tk), 'overlap_frac_of_ours': ov}
-                for s, tk, ov in pairs]
+    choose() used to return ONE water and call the rest ambiguous. An advisory reach can span
+    several of our slugs, and the polygon already says which -- that is what the map draws.
+    It also sorted on `overlap_frac_of_ours`, which is near useless: 23 of 60 clean matches sit
+    under 1% of our water because a river boundary is long and an advisory is a buffer along
+    part of it. `advisory_inside_ours` is the number that discriminates -- real matches measured
+    5.5%-96.2%, incidental ones 0.0%.
+    """
 
-    def test_more_shared_tokens_wins(self):
-        idx = {'black_mingo_creek': {'display_name': 'Black Mingo Creek (Georgetown Co, SC)'},
-               'black_river': {'display_name': 'Black River (Williamsburg Co, SC)'}}
-        hit, why = M.choose('Black Mingo Creek',
-                            self._hits(('black_mingo_creek', ('black', 'mingo'), 0.4),
-                                       ('black_river', ('black',), 0.9)), idx)
-        self.assertEqual(hit['slug'], 'black_mingo_creek')
-        self.assertEqual(why, 'most shared tokens')
+    def _h(self, slug, tokens, inside):
+        return {'slug': slug, 'tokens': list(tokens),
+                'overlap_frac_of_ours': 0.005, 'advisory_inside_ours': inside}
 
-    def test_an_exact_name_breaks_a_token_tie(self):
+    def test_a_reach_that_spans_two_of_our_slugs_binds_to_both(self):
+        idx = {'saluda_river_2': {'display_name': 'Saluda River (2) (Newberry Co, SC)'},
+               'saluda_river_lower_saluda':
+                   {'display_name': 'Saluda River (Lower Saluda) (Lexington Co, SC)'}}
+        picks, why = choose_('Saluda River',
+                             [self._h('saluda_river_2', ('saluda',), 0.604),
+                              self._h('saluda_river_lower_saluda', ('saluda',), 0.329)], idx)
+        self.assertEqual(sorted(p['slug'] for p in picks),
+                         ['saluda_river_2', 'saluda_river_lower_saluda'])
+        self.assertIn('covered', why)
+
+    def test_a_candidate_the_advisory_barely_touches_is_not_a_candidate(self):
+        # great_pee_dee_river shares `pee` and `dee` with "Little Pee Dee River" and 0.0% of
+        # the polygon. wateree_lake does the same for "Wateree River".
         idx = {'little_pee_dee_river': {'display_name': 'Little Pee Dee River (Horry Co, SC)'},
                'great_pee_dee_river': {'display_name': 'Great Pee Dee River (Florence Co, SC)'}}
-        hit, why = M.choose('Little Pee Dee River',
-                            self._hits(('little_pee_dee_river', ('pee', 'dee'), 0.3),
-                                       ('great_pee_dee_river', ('pee', 'dee'), 0.5)), idx)
-        self.assertEqual(hit['slug'], 'little_pee_dee_river')
-        self.assertEqual(why, 'the name matches exactly')
+        picks, _ = choose_('Little Pee Dee River',
+                           [self._h('little_pee_dee_river', ('pee', 'dee'), 0.467),
+                            self._h('great_pee_dee_river', ('pee', 'dee'), 0.0)], idx)
+        self.assertEqual([p['slug'] for p in picks], ['little_pee_dee_river'])
 
-    def test_a_real_tie_is_still_dropped(self):
-        # Two Saluda reaches and neither name matches. Guessing here would be worse than silence.
-        idx = {'saluda_river_2': {'display_name': 'Saluda River (2) (Newberry Co, SC)'},
-               'saluda_river_lower_saluda': {'display_name': 'Saluda River (Lower Saluda) (SC)'}}
-        hit, why = M.choose('Saluda River',
-                            self._hits(('saluda_river_2', ('saluda',), 0.5),
-                                       ('saluda_river_lower_saluda', ('saluda',), 0.5)), idx)
-        self.assertIsNone(hit)
-        self.assertIn('tied', why)
+    def test_containment_is_not_identity(self):
+        # Our Black River boundary contains 85% of the Black Mingo Creek advisory, because the
+        # creek runs into it. The creek's name is the better one and takes it alone.
+        idx = {'black_mingo_creek': {'display_name': 'Black Mingo Creek (Georgetown Co, SC)'},
+               'black_river': {'display_name': 'Black River (Williamsburg Co, SC)'}}
+        picks, why = choose_('Black Mingo Creek',
+                             [self._h('black_mingo_creek', ('black', 'mingo'), 0.585),
+                              self._h('black_river', ('black',), 0.851)], idx)
+        self.assertEqual([p['slug'] for p in picks], ['black_mingo_creek'])
+        self.assertEqual(why, 'most shared tokens')
+
+    def test_a_more_specific_name_is_a_different_water(self):
+        # "Broad River" is not the First Broad, and the county parenthetical is ours, not the
+        # water's, so it is stripped before this is asked.
+        idx = {'broad_river': {'display_name': 'Broad River (Cherokee Co, NC)'},
+               'broad_river_2': {'display_name': 'Broad River (2) (Union Co, SC)'},
+               'first_broad_river': {'display_name': 'First Broad River (Cleveland Co, NC)'}}
+        picks, why = choose_('Broad River',
+                             [self._h('broad_river', ('broad',), 0.285),
+                              self._h('broad_river_2', ('broad',), 0.329),
+                              self._h('first_broad_river', ('broad',), 0.147)], idx)
+        self.assertEqual(sorted(p['slug'] for p in picks), ['broad_river', 'broad_river_2'])
+        self.assertEqual(why, 'the others name a more specific water')
+
+    def test_nothing_covered_is_nothing_bound(self):
+        idx = {'a_lake': {'display_name': 'A Lake (X Co, SC)'}}
+        picks, why = choose_('A Lake', [self._h('a_lake', ('alake',), 0.0)], idx)
+        self.assertEqual(picks, [])
+        self.assertIn('barely touches', why)
+
+
+def choose_(name, hits, idx):
+    return M.choose(name, hits, idx)
 
 
 if __name__ == '__main__':

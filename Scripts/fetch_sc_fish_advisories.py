@@ -480,53 +480,80 @@ def bind(features, index, bounds_dir, report):
                 continue                                   # 3. A DISTINCTIVE TOKEN
             inter = g.intersection(apoly).area
             hits.append({'slug': slug, 'tokens': sorted(agreed),
-                         'overlap_frac_of_ours': (inter / g.area) if g.area else 0.0})
+                         'overlap_frac_of_ours': (inter / g.area) if g.area else 0.0,
+                         'advisory_inside_ours': (inter / apoly.area) if apoly.area else 0.0})
         if not hits:
             unbound.append({'name': aname, 'why': 'no water both overlaps it and shares a '
                                                   'distinctive name token'})
             continue
-        pick, why = choose(aname, hits, index)
-        if pick is None:
-            # STILL DROPPED, NOT GUESSED -- but only after the three questions below have all
-            # come back tied. The first run dropped eight, and at least four of them had an
-            # obvious right answer: "Little Pee Dee River" against `little_pee_dee_river`.
+        picks, why = choose(aname, hits, index)
+        if not picks:
             ambiguous.append({'name': aname, 'candidates': [h['slug'] for h in hits],
                               'why': why})
             continue
-        bound.setdefault(pick['slug'], []).append(
-            {'match': dict(pick, resolved_by=why), 'attributes': attrs})
+        for pk in picks:
+            bound.setdefault(pk['slug'], []).append(
+                {'match': dict(pk, resolved_by=why), 'attributes': attrs})
     return bound, ambiguous, unbound
 
 
 def choose(advisory_name, hits, index):
-    """One of the candidates, or None. Returns (hit, how-it-was-decided).
+    """The waters this advisory is about. A LIST -- one advisory can cover several.
 
-    THREE QUESTIONS, IN ORDER, AND A TIE AT THE END IS STILL A DROP.
+    RYAN, LOOKING AT THE MAP: "the map shows where the polygons are... i can clearly see that
+    the saluda river is both stretches... from greenwood to murray and then murray to the
+    confluence with the broad and down into lake marion as the congaree."
 
-      1. Which shares the MOST distinctive tokens?   'Black Mingo Creek' shares {black, mingo}
-         with black_mingo_creek and only {black} with black_river.
-      2. Whose name IS the advisory's name?          'Little Pee Dee River' and 'Wateree River'
-         and 'Edisto River' and 'Santee River' each match one candidate exactly once the county
-         parenthetical is stripped. Four of the first run's eight drops.
-      3. Which water does the advisory cover most of? A canal's advisory covers the canal and
-         clips the river it joins.
+    He is right and the first version was not. It picked ONE water and called everything else
+    ambiguous, so a reach that genuinely spans two of our slugs was reported as a thing nobody
+    could place. The polygon already says which waters it covers; that is what the map draws.
+
+    IT ALSO SORTED ON THE WRONG NUMBER. `overlap_frac_of_ours` is how much of OUR water the
+    advisory covers, and it is near useless here: 23 of 60 unambiguous matches sit under 1%,
+    because our river boundaries are long and an advisory polygon is a buffer along part of one.
+    What discriminates is `advisory_inside_ours` -- how much of the ADVISORY lands in our water.
+    Measured over every candidate pair: the real ones run 5.5% to 96.2% and the incidental ones
+    are 0.0%. The floor below is inside that gap rather than picked out of the air.
+
+      1. GEOMETRY GATES.   A candidate the advisory barely touches is not a candidate.
+                           great_pee_dee_river shares `pee` and `dee` with "Little Pee Dee
+                           River" and 0.0% of the polygon; wateree_lake likewise for
+                           "Wateree River".
+      2. THE BETTER NAME WINS OUTRIGHT. "Black Mingo Creek" shares two tokens with
+                           black_mingo_creek and one with black_river, whose boundary happens to
+                           contain 85% of the creek's advisory. Containment is not identity.
+      3. A MORE SPECIFIC NAME IS A DIFFERENT WATER. Tied on tokens, a water carrying a
+                           distinctive word the advisory does not say is not the water named:
+                           "Broad River" is not the First Broad. County parentheticals are
+                           stripped first -- they are our stamp, not the water's.
+      4. WHAT SURVIVES, ALL OF IT.  Three Saluda reaches, and the advisory is about all three.
     """
-    best = max(len(h['tokens']) for h in hits)
-    top = [h for h in hits if len(h['tokens']) == best]
+    FLOOR = 0.01
+    real = [h for h in hits if h['advisory_inside_ours'] >= FLOOR]
+    if not real:
+        return [], 'the advisory barely touches any of them'
+
+    best = max(len(h['tokens']) for h in real)
+    top = [h for h in real if len(h['tokens']) == best]
     if len(top) == 1:
-        return top[0], 'most shared tokens'
+        return top, 'most shared tokens'
 
-    want = _norm(re.sub(r'\s*\([^)]*\)', '', advisory_name))
+    bare = _norm(re.sub(r'\s*\([^)]*\)', '', advisory_name))
+    want = set(re.findall(r"[a-z']+", re.sub(r'\s*\([^)]*\)', '', advisory_name).lower()))
     exact = [h for h in top
-             if _norm(re.sub(r'\s*\([^)]*\)', '', index[h['slug']].get('display_name') or '')) == want]
+             if _norm(re.sub(r'\s*\([^)]*\)', '', index[h['slug']].get('display_name') or '')) == bare]
     if len(exact) == 1:
-        return exact[0], 'the name matches exactly'
+        return exact, 'the name matches exactly'
 
-    pool = exact or top
-    pool = sorted(pool, key=lambda h: -h['overlap_frac_of_ours'])
-    if len(pool) > 1 and pool[0]['overlap_frac_of_ours'] >= 2 * max(pool[1]['overlap_frac_of_ours'], 1e-9):
-        return pool[0], 'it covers twice as much of that water as any other'
-    return None, 'tied on tokens, on name and on overlap'
+    def extra(h):
+        ours = re.sub(r'\s*\([^)]*\)', '', index[h['slug']].get('display_name') or '').lower()
+        return {w for w in re.findall(r"[a-z']+", ours)
+                if len(w) > 2 and w not in GENERIC and w not in want}
+    plain = [h for h in top if not extra(h)]
+    if plain and len(plain) < len(top):
+        return plain, 'the others name a more specific water'
+    return top, ('every one of these is covered by the advisory'
+                 if len(top) > 1 else 'the only candidate the advisory covers')
 
 
 # ── main ────────────────────────────────────────────────────────────────────────────────────
