@@ -257,10 +257,44 @@ def main():
     print('   KEPT %d name(s) across %d water(s)' % (n_names, len(keep)))
 
     if not a.go:
-        for s in sorted(keep)[:12]:
-            print('      %-38s %s' % (s, keep[s]))
-        if len(keep) > 12:
-            print('      ... %d more' % (len(keep) - 12))
+        # THE DIFF, NOT THE OUTPUT. This used to list twelve of the 108 waters it keeps and say
+        # "96 more", which is 297 names to read to find the handful that moved. Ryan, looking at
+        # exactly that: "and i am supposed to look at 297 names across 108 waters... right..."
+        # A dry run exists to be read before the write, so it prints what would CHANGE.
+        before = {}
+        if os.path.exists(out_fp):
+            try:
+                before = json.load(open(out_fp, encoding='utf-8'))
+            except Exception as exc:
+                print('  !! %s unreadable (%s) -- showing everything instead of the change'
+                      % (os.path.basename(out_fp), type(exc).__name__))
+                before = None
+        if before is None or not before:
+            for s in sorted(keep)[:12]:
+                print('      %-38s %s' % (s, keep[s]))
+            if len(keep) > 12:
+                print('      ... %d more' % (len(keep) - 12))
+            print('\nDRY RUN -- nothing written. Add --go.')
+            return 0
+        after = {s: sorted(set(v)) for s, v in keep.items()}
+        gone, came = 0, 0
+        for slug in sorted(set(before) | set(after)):
+            was, now = set(before.get(slug) or []), set(after.get(slug) or [])
+            if was == now:
+                continue
+            print('   %s' % slug)
+            for nm in sorted(was - now):
+                print('       - %s' % nm)
+                gone += 1
+            for nm in sorted(now - was):
+                print('       + %s' % nm)
+                came += 1
+        if not gone and not came:
+            print('\n   no change against %s' % os.path.basename(out_fp))
+        else:
+            print('\n   %d name(s) would come off, %d would go on, across %d water(s)'
+                  % (gone, came, sum(1 for s in set(before) | set(after)
+                                     if set(before.get(s) or []) != set(after.get(s) or []))))
         print('\nDRY RUN -- nothing written. Add --go.')
         return 0
 
