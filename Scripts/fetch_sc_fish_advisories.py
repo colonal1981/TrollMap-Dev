@@ -227,6 +227,40 @@ def uninvert(name, roster=None):
     return joined
 
 
+# ── the two rows where the heading and the fish disagree, both settled ──────────────────────
+#
+# group_mismatch() finds them; this says what was found out about each. Keyed on (NAME,
+# published string) so a correction can only ever fire on the exact row it was checked against
+# -- if SC edits either, the correction stops matching and the run says so instead of quietly
+# rewriting something nobody looked at.
+PUBLISHED_CORRECTIONS = {
+    ('Lake Wateree', 'Bass- Bowfin'): {
+        'species': 'White Bass',
+        'checked': '2026-09-03',
+        'why': 'The map layer is wrong on this row and TWO other DES products agree against it. '
+               'The live per-water page (des.sc.gov .../lake-wateree-fish-consumption-advisory) '
+               'lists Black Crappie one meal per week and Blue Catfish, Channel Catfish, '
+               'Largemouth Bass, Striped Bass and WHITE BASS one meal per month -- no bowfin at '
+               'all. SC\'s 2020 statewide table says the same six. The service says '
+               '`Bass- Bowfin` where both say White Bass, and no reading of that string reaches '
+               'the right answer: the heading says Bass, the qualifier says Bowfin, the fish is '
+               'White Bass. So it is corrected here, with its evidence, rather than guessed at '
+               'in code.',
+    },
+    ('Sampit River', 'Sunfish- Pumpkinseed'): {
+        'species': 'Pumpkinseed',
+        'checked': '2026-09-03',
+        'why': 'Not an error -- a pumpkinseed IS a sunfish, so the heading and the qualifier '
+               'agree after all and the plain reading is right. Recorded so that the ONLY rows '
+               'left unexplained are new ones.',
+    },
+}
+
+
+def correction_for(water_name, published):
+    return PUBLISHED_CORRECTIONS.get((str(water_name or '').strip(), str(published or '').strip()))
+
+
 def group_mismatch(published, roster):
     """True when the qualifier is a known fish that the group heading does not describe.
 
@@ -268,7 +302,7 @@ def strip_tags(s):
     return re.sub(r'\s+', ' ', TAG.sub(' ', str(s or ''))).strip()
 
 
-def parse_restrictions(text, roster=None):
+def parse_restrictions(text, roster=None, water_name=None):
     """[{species, advice, published_as}], plus what could not be read, plus water-level notes.
 
     THE SHAPE WAS GUESSED ONCE AND THE GUESS WAS WRONG, WHICH IS WHY THIS READS THREE.
@@ -313,14 +347,20 @@ def parse_restrictions(text, roster=None):
                 if m2:
                     size = m2.group(1).strip()
                     base = (sp[:m2.start()] + sp[m2.end():]).strip()
+                fix = correction_for(water_name, base)
+                if fix:
+                    pairs.append({'species': fix['species'], 'advice': ad, 'published_as': sp,
+                                  'corrected': fix['why'], 'checked': fix['checked']})
+                    continue
                 suspect = group_mismatch(base, roster)
                 for nm in species_names(base, roster):
                     rec = {'species': nm, 'advice': ad, 'published_as': sp}
                     if size:
                         rec['size'] = size
                     if suspect:
-                        rec['suspect'] = ('the group heading and the fish disagree -- read as '
-                                          '%r, published as %r' % (nm, sp))
+                        rec['suspect'] = ('the group heading and the fish disagree and nobody '
+                                          'has checked this row -- read as %r, published as %r'
+                                          % (nm, sp))
                     pairs.append(rec)
             else:
                 unparsed.append(sp)
@@ -563,6 +603,7 @@ def build(raw, index, bounds_dir, registry='registry'):
     roster = load_roster(registry)
     report['roster_species_known'] = len(roster)
     waters, all_ambiguous, all_unbound, all_unparsed = {}, [], [], []
+    fired = set()
     for layer_id, kind in (('2', 'freshwater'), ('3', 'estuarine')):
         feats = raw.get(layer_id) or []
         report['layer_%s_features' % layer_id] = len(feats)
@@ -577,7 +618,11 @@ def build(raw, index, bounds_dir, registry='registry'):
         for slug, hits in bound.items():
             for hit in hits:
                 a = hit['attributes']
-                pairs, unparsed, notes = parse_restrictions(a.get('Waterbody_URL'), roster)
+                pairs, unparsed, notes = parse_restrictions(a.get('Waterbody_URL'), roster,
+                                                            a.get('NAME'))
+                for sp in pairs:
+                    if sp.get('corrected'):
+                        fired.add((str(a.get('NAME') or '').strip(), sp['published_as']))
                 if unparsed:
                     all_unparsed.append({'slug': slug, 'name': a.get('NAME'), 'text': unparsed})
                 rec = waters.setdefault(slug, {
@@ -615,6 +660,8 @@ def build(raw, index, bounds_dir, registry='registry'):
         'ambiguous': all_ambiguous,
         'unbound': all_unbound,
         'unparsed_restrictions': all_unparsed,
+        'corrections_unused': sorted('%s / %s' % k
+                                     for k in set(PUBLISHED_CORRECTIONS) - fired),
         'report': report,
     }
 
@@ -674,6 +721,19 @@ def main():
         print('   %-30s %-42s %s' % (slug, rec['display_name'][:40], said))
     print('\n   %d of the %d carry species; %d are waters the state cleared'
           % (len(w) - clean, len(w), clean))
+    fixed = [(s, x) for s in sorted(w) for x in w[s]['species'] if x.get('corrected')]
+    if fixed:
+        print('\n   corrections applied (see PUBLISHED_CORRECTIONS):')
+        for s, x in fixed:
+            print('      %-24s %-24r -> %r' % (s, x['published_as'], x['species']))
+    if out['corrections_unused']:
+        # A CORRECTION THAT STOPS FIRING IS THE SOURCE CHANGING UNDER IT. Better to be told
+        # than to keep a rewrite nobody has looked at since it was written.
+        print('\n!! %d correction(s) matched NOTHING this run -- re-check or remove:'
+              % len(out['corrections_unused']))
+        for k in out['corrections_unused']:
+            print('      %s' % k)
+
     sus = [(s, x) for s in sorted(w) for x in w[s]['species'] if x.get('suspect')]
     if sus:
         print('\n!! %d row(s) where the group heading and the fish disagree. Read, not '

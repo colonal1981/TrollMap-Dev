@@ -403,5 +403,59 @@ def choose_(name, hits, idx):
     return M.choose(name, hits, idx)
 
 
+class TheTwoCorrectedRows(unittest.TestCase):
+    """`Bass- Bowfin` on Lake Wateree is the map layer being wrong, and two other DES products
+    say so: the live per-water page and the 2020 statewide table both list Black Crappie, Blue
+    Catfish, Channel Catfish, Largemouth Bass, Striped Bass and WHITE BASS, with no bowfin at
+    all. No reading of the string reaches that -- the heading says Bass, the qualifier says
+    Bowfin, the fish is White Bass -- so it is a recorded correction carrying its evidence.
+    """
+
+    WATEREE = ('<strong>Bass- Largemouth</strong><ul><li>One meal per month</ul>'
+               '<strong>Bass- Striped</strong><ul><li>One meal per month</ul>'
+               '<strong>Bass- Bowfin</strong><ul><li>One meal per month</ul>'
+               '<strong>Catfish- Blue</strong><ul><li>One meal per month</ul>'
+               '<strong>Catfish- Channel</strong><ul><li>One meal per month</ul>'
+               '<strong>Crappie- Black</strong><ul><li>One meal per week</ul>')
+
+    def test_lake_wateree_reads_white_bass(self):
+        pairs, _, _ = M.parse_restrictions(self.WATEREE, ROSTER, 'Lake Wateree')
+        self.assertEqual([p['species'] for p in pairs],
+                         ['Largemouth Bass', 'Striped Bass', 'White Bass',
+                          'Blue Catfish', 'Channel Catfish', 'Black Crappie'])
+        fixed = [p for p in pairs if p.get('corrected')]
+        self.assertEqual(len(fixed), 1)
+        self.assertIn('White Bass', fixed[0]['corrected'])
+        self.assertEqual(fixed[0]['published_as'], 'Bass- Bowfin')
+
+    def test_neither_bowfin_nor_bowfin_bass_survives(self):
+        names = [p['species'] for p in M.parse_restrictions(self.WATEREE, ROSTER, 'Lake Wateree')[0]]
+        self.assertNotIn('Bowfin', names)
+        self.assertNotIn('Bowfin Bass', names)
+
+    def test_a_correction_only_fires_on_the_row_it_was_checked_against(self):
+        # Keyed on (water, published string). Another water publishing the same text has not
+        # been checked and must not be silently rewritten.
+        pairs, _, _ = M.parse_restrictions(
+            '<strong>Bass- Bowfin</strong><ul><li>One meal per month</ul>', ROSTER, 'Some Creek')
+        self.assertIsNone(pairs[0].get('corrected'))
+        self.assertTrue(pairs[0].get('suspect'), 'an unchecked mismatch must still be flagged')
+
+    def test_the_pumpkinseed_row_is_recorded_as_fine_not_as_a_fix(self):
+        # A pumpkinseed IS a sunfish. Recorded so the only rows left flagged are NEW ones.
+        pairs, _, _ = M.parse_restrictions(
+            '<strong>Sunfish- Pumpkinseed</strong><ul><li>No Restrictions</ul>',
+            ROSTER, 'Sampit River')
+        self.assertEqual(pairs[0]['species'], 'Pumpkinseed')
+        self.assertIn('IS a sunfish', pairs[0]['corrected'])
+
+    def test_every_correction_carries_its_evidence_and_a_date(self):
+        for key, fix in M.PUBLISHED_CORRECTIONS.items():
+            self.assertTrue(fix.get('species'), key)
+            self.assertTrue(fix.get('checked'), key)
+            self.assertGreater(len(fix.get('why') or ''), 80,
+                               '%s: a correction without its reasoning is a hand edit' % (key,))
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
