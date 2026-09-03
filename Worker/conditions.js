@@ -616,6 +616,39 @@ async function waterBindings(env, fresh) {
   return b;
 }
 
+/**
+ * True when the CO-OPS station catalogue binds a tide station to this water.
+ *
+ * THE QUESTION IS "DOES THE TIDE REACH IT", NOT "IS IT A COASTAL ZONE", and the two answers
+ * differ on the water Ryan fishes most. `cooper_river` is `feature_type: 'river'` and has a tide
+ * station on it — Back River Reservoir, West Branch — because Bushy Park is brackish. A
+ * `feature_type === 'coastal'` test would call the Cooper freshwater.
+ *
+ * Measured 2026-09-03 over all 207 bindings: 30 waters carry `tides`, and every one of them is
+ * genuinely salt or brackish — the 16 coastal zones, eleven lowcountry tidal rivers (Cooper,
+ * Ashley, Waccamaw, Santee, Edisto, Black, Combahee, Great Pee Dee, Sampit, Chessie Creek,
+ * Black Mingo Creek) and three waters whose NAMES say lake and whose water does not: Greenfield
+ * Lake in Wilmington, and Yauhannah and Ferry Lakes, both Pee Dee floodplain. NOT ONE RESERVOIR.
+ * No Norman, no Wateree, no Murray, no Hartwell. A rule has to reproduce a known-good answer
+ * before it is trusted, and this one does — including on the three called "Lake", which a
+ * name test would have thrown out.
+ *
+ * Absent bindings mean UNKNOWN, not fresh: this returns false and the caller drops a block
+ * rather than asserting anything about the water.
+ */
+export async function isTidalWater(env, slug) {
+  const key = String(slug || '').trim();
+  if (!key) return false;
+  try {
+    const b = await waterBindings(env, false);
+    const rec = b && b[key];
+    return !!(rec && Array.isArray(rec.tides) && rec.tides.length);
+  } catch (err) {
+    return false;
+  }
+}
+
+
 // -999 is NWPS for "no reading"; -9999 is its flood table for "no flow stage defined". Neither
 // is a number anyone should see. NaN lands here too, which is what Number(undefined) gives when
 // an optional CO-OPS field is absent.

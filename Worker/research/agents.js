@@ -1,7 +1,7 @@
 // research/agents.js — split from worker-research.js (behavior-preserving) 
 import { JSON_HEADERS, callLLM, extractLLMText } from '../worker-core.js';
 import { fetchDukeOperatingRange } from '../worker-data.js';
-import { dukePoolManagement } from '../conditions.js';
+import { dukePoolManagement, isTidalWater } from '../conditions.js';
 import { lakeIndex, resolveRegistryRow, agencyLakeFacts, speciesTraits,
          mripInshore, speciesHabitatWeights, encSeabed, coastalCurrentStations,
          ehydroSurveys } from '../registry.js';
@@ -1218,7 +1218,9 @@ function mripSeasonBlock(states, state, species) {
   }
   if (!lines.length) return '';
   return `\n\nWHAT IS ACTUALLY CAUGHT HERE, AND WHEN — NOAA MRIP intercept survey, `
-    + `${state} inland waters.\n`
+    + `${state} INSHORE waters: inside the inlets, salt and brackish. MRIP's own name for this\n`
+    + `stratum is "inland", which does NOT mean freshwater — it means shoreward of the ocean.\n`
+    + `This block only appears on water a CO-OPS tide station is bound to.\n`
     + `A federal surveyor recorded each of these off a boat. The numbers are counts of\n`
     + `intercepts per two-month wave across eleven years, so they are a SHAPE of the season,\n`
     + `not a catch rate. USE THEM FOR TIMING. Where this and a recollection disagree, this wins.\n`
@@ -1461,11 +1463,29 @@ async function handleResearchAgent(request, env) {
     }
     // The measured season and size, beside the state's prose account. Same cadence, same
     // failure mode: published by the pipeline, absent thins one block rather than failing.
+    //
+    // ONLY WHERE THE TIDE REACHES. MRIP's `INLAND` stratum is the water INSIDE the inlets --
+    // salt and brackish -- and MRIP's own word for it is the one that misleads. Every roster
+    // carries freshwater species because they are genuinely caught in the upper estuary: NC has
+    // largemouth 224, white perch 217, chain pickerel 31, bluegill 22; SC has blue catfish 59
+    // and striped bass 21. Keyed on the STATE alone, as this was until 2026-09-03, a striped
+    // bass plan on Lake Wateree drew twenty-one estuarine intercepts under the heading "WHAT IS
+    // ACTUALLY CAUGHT HERE" with "where this and a recollection disagree, this wins" beneath
+    // it. The species filter was the only thing holding it back and striped bass walks straight
+    // through it.
+    //
+    // The gate is the CO-OPS tide binding, not feature_type -- see isTidalWater(). The Cooper is
+    // a river and the tide runs up it to Bushy Park, which is the water this must not lose.
     try {
-      const mrip = await mripInshore(env);
+      const row = resolveRegistryRow(await lakeIndex(env), lakeName);
+      const tidal = await isTidalWater(env, row && row.slug);
+      const mrip = tidal ? await mripInshore(env) : null;
       if (mrip && mrip[String(state || '').trim().toUpperCase()]) {
         groundedPrev = { ...groundedPrev, _mripStates: mrip };
         console.log(`[research:fisheries] MRIP inshore season data in play for ${state}`);
+      } else if (!tidal) {
+        console.log(`[research:fisheries] MRIP inshore skipped for ${lakeName}: `
+                  + 'no tide station bound to this water');
       }
     } catch (err) {
       console.warn('[research:fisheries] MRIP inshore lookup failed:', err && err.message);
