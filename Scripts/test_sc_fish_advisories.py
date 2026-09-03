@@ -249,23 +249,26 @@ class TheBinding(unittest.TestCase):
             return M.build({'2': feats, '3': []}, index, bd)
 
     def test_it_lands_on_the_lake_the_polygon_overlaps(self):
-        out = self._run(cw(-80.19, 34.41, 0.05))
+        out, review = self._run(cw(-80.19, 34.41, 0.05))
         self.assertEqual(list(out['waters']), ['lake_robinson'])
         rec = out['waters']['lake_robinson']
         self.assertEqual([s['species'] for s in rec['species']],
                          [e[0] for e in EXPECTED])
         self.assertEqual(rec['do_not_eat'], ['Bowfin (Mudfish)'])
         self.assertEqual(rec['advisories'][0]['confidence'], 'name+geom')
-        self.assertEqual(rec['advisories'][0]['matched_on']['tokens'], ['robinson'])
+        # The match diagnostics are review material, not something the app reads.
+        self.assertEqual(review['matches'][0]['matched_on']['tokens'], ['robinson'])
+        self.assertNotIn('restrictions_text', rec['advisories'][0],
+                         'the state HTML must not travel in the published file')
 
     def test_a_polygon_over_neither_binds_to_neither(self):
         # Name alone would have matched both Robinsons. Geometry refuses.
-        out = self._run(cw(-79.0, 33.0, 0.05))
+        out, review = self._run(cw(-79.0, 33.0, 0.05))
         self.assertEqual(out['waters'], {})
-        self.assertEqual(len(out['unbound']), 1)
+        self.assertEqual(len(review['unbound']), 1)
 
     def test_the_record_says_it_is_a_floor_and_not_a_roster(self):
-        out = self._run(cw(-80.19, 34.41, 0.05))
+        out, _ = self._run(cw(-80.19, 34.41, 0.05))
         self.assertIn('PRESENCE FLOOR', out['waters']['lake_robinson']['basis'])
 
 

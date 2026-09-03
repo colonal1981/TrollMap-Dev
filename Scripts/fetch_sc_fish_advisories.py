@@ -94,6 +94,7 @@ SERVICE = ('https://gis.des.sc.gov/gisserver/rest/services/water/FishAdvisories/
 LAYERS = {2: 'freshwater', 3: 'estuarine', 0: 'tissue_station'}
 OUT_NAME = 'sc_fish_advisories.json'
 RAW_NAME = '_sc_fish_advisories_raw.json'
+REVIEW_NAME = '_sc_fish_advisories_review.json'
 PAGE = 500
 
 # Words that name no water. Same list the ATTAINS binder uses, for the same reason.
@@ -332,6 +333,10 @@ def parse_restrictions(text, roster=None, water_name=None):
         for m in HTML_PAIR.finditer(raw):
             sp = strip_tags(m.group('species'))
             ad = strip_tags(m.group('advice')) if m.group('advice') else ''
+            # SET BEFORE ANY BRANCH BELOW. It used to be set at the bottom, and the correction
+            # branch `continue`s -- so a corrected row never advanced the marker and everything
+            # after it in the string was reported as leftover the parser could not read.
+            seen_end = m.end()
             if not sp:
                 continue
             if not ad and ADVICE.fullmatch(sp):
@@ -604,6 +609,7 @@ def build(raw, index, bounds_dir, registry='registry'):
     report['roster_species_known'] = len(roster)
     waters, all_ambiguous, all_unbound, all_unparsed = {}, [], [], []
     fired = set()
+    review = {'restrictions': []}
     for layer_id, kind in (('2', 'freshwater'), ('3', 'estuarine')):
         feats = raw.get(layer_id) or []
         report['layer_%s_features' % layer_id] = len(feats)
@@ -639,31 +645,45 @@ def build(raw, index, bounds_dir, registry='registry'):
                         rec['water_level_notes'].append(n)
                 rec['advisories'].append({
                     'name': a.get('NAME'), 'advisory': a.get('ADVISORY'), 'basin': a.get('Basin'),
-                    'type': a.get('TYPE'), 'restrictions_text': a.get('Waterbody_URL'),
-                    'matched_on': hit['match'], 'confidence': 'name+geom',
+                    'type': a.get('TYPE'),
+                    'confidence': 'name+geom',
                     'source': '%s/%s' % (SERVICE, layer_id),
                 })
+                review.setdefault('matches', []).append(
+                    {'slug': slug, 'name': a.get('NAME'), 'matched_on': hit['match']})
+                # The published file is the one the APP reads, so the state's raw HTML does not
+                # travel in it -- it is 100 KB of markup the browser has no use for, and the
+                # uploader copies this file through untouched. It goes to the review file with
+                # the rest of the material a person needs and the app does not.
+                review['restrictions'].append({'slug': slug, 'name': a.get('NAME'),
+                                               'text': a.get('Waterbody_URL')})
                 for sp in pairs:
                     if sp['species'] not in [s['species'] for s in rec['species']]:
                         rec['species'].append(sp)
                     if do_not_eat(sp['advice']) and sp['species'] not in rec['do_not_eat']:
                         rec['do_not_eat'].append(sp['species'])
 
-    return {
+    published = {
         '_note': 'Personal use only, not for distribution or resale; not for navigation. '
                  'SC fish consumption advisories as a SPECIES PRESENCE FLOOR and as safety text. '
-                 'Built by fetch_sc_fish_advisories.py from the SCDHEC Watershed Atlas.',
+                 'Built by fetch_sc_fish_advisories.py from the SCDHEC Watershed Atlas. '
+                 'A species here is present because the state sampled it; the list is a FLOOR '
+                 'and says nothing about what else is in the water.',
         'source': SERVICE,
         'confidence': 'name+geom -- the advisory polygon overlaps our boundary AND shares a '
-                      'distinctive name token. Ambiguous matches are dropped, not guessed.',
+                      'distinctive name token, and an advisory covering several of our waters '
+                      'binds to all of them.',
         'waters': waters,
+        'report': report,
+    }
+    review.update({
         'ambiguous': all_ambiguous,
         'unbound': all_unbound,
         'unparsed_restrictions': all_unparsed,
         'corrections_unused': sorted('%s / %s' % k
                                      for k in set(PUBLISHED_CORRECTIONS) - fired),
-        'report': report,
-    }
+    })
+    return published, review
 
 
 def main():
@@ -696,7 +716,7 @@ def main():
 
     index = json.load(open(os.path.join(R, 'lake_index.json'), encoding='utf-8'))
     index = {k: v for k, v in index.items() if isinstance(v, dict)}
-    out = build(raw, index, os.path.join(R, 'boundaries'), R)
+    out, review = build(raw, index, os.path.join(R, 'boundaries'), R)
 
     w = out['waters']
     print('\nbound to %d of our waters (%d have a boundary, roster knows %d species)'
@@ -726,12 +746,12 @@ def main():
         print('\n   corrections applied (see PUBLISHED_CORRECTIONS):')
         for s, x in fixed:
             print('      %-24s %-24r -> %r' % (s, x['published_as'], x['species']))
-    if out['corrections_unused']:
+    if review['corrections_unused']:
         # A CORRECTION THAT STOPS FIRING IS THE SOURCE CHANGING UNDER IT. Better to be told
         # than to keep a rewrite nobody has looked at since it was written.
         print('\n!! %d correction(s) matched NOTHING this run -- re-check or remove:'
-              % len(out['corrections_unused']))
-        for k in out['corrections_unused']:
+              % len(review['corrections_unused']))
+        for k in review['corrections_unused']:
             print('      %s' % k)
 
     sus = [(s, x) for s in sorted(w) for x in w[s]['species'] if x.get('suspect')]
@@ -741,20 +761,20 @@ def main():
         for s, x in sus:
             print('   %-26s published %-24r read as %r'
                   % (s, x['published_as'], x['species']))
-    if out['ambiguous']:
-        print('\nDROPPED as ambiguous (%d) -- more than one of our waters fits:' % len(out['ambiguous']))
-        for x in out['ambiguous']:
+    if review['ambiguous']:
+        print('\nDROPPED as ambiguous (%d) -- more than one of our waters fits:' % len(review['ambiguous']))
+        for x in review['ambiguous']:
             print('   %-34s -> %s' % (x['name'], ', '.join(x['candidates'])))
-    if out['unbound']:
-        print('\nnot bound (%d):' % len(out['unbound']))
-        for x in out['unbound'][:20]:
+    if review['unbound']:
+        print('\nnot bound (%d):' % len(review['unbound']))
+        for x in review['unbound'][:20]:
             print('   %-34s %s' % (x['name'], x['why']))
-        if len(out['unbound']) > 20:
-            print('   ... and %d more' % (len(out['unbound']) - 20))
-    if out['unparsed_restrictions']:
+        if len(review['unbound']) > 20:
+            print('   ... and %d more' % (len(review['unbound']) - 20))
+    if review['unparsed_restrictions']:
         print('\n!! RESTRICTION TEXT THE PARSER COULD NOT READ (%d water(s)). This is the thing '
-              'to look at first:' % len(out['unparsed_restrictions']))
-        for x in out['unparsed_restrictions'][:10]:
+              'to look at first:' % len(review['unparsed_restrictions']))
+        for x in review['unparsed_restrictions'][:10]:
             print('   %-28s %s' % (x['slug'], ' | '.join(x['text'])[:160]))
 
     if a.dry_run:
@@ -763,7 +783,12 @@ def main():
     p = os.path.join(R, OUT_NAME)
     with open(p, 'w', encoding='utf-8') as fh:
         json.dump(out, fh, indent=1)
-    print('\n-> %s' % p)
+    rp = os.path.join(R, REVIEW_NAME)
+    with open(rp, 'w', encoding='utf-8') as fh:
+        json.dump(review, fh, indent=1)
+    print('\n-> %s   (%.0f KB, published)' % (p, os.path.getsize(p) / 1024))
+    print('-> %s   (%.0f KB, review only -- the underscore keeps it out of R2)'
+          % (rp, os.path.getsize(rp) / 1024))
     return 0
 
 

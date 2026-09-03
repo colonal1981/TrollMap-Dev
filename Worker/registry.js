@@ -711,3 +711,27 @@ export const MRIP_INSHORE_KEY = '_registry/mrip_inshore.json';
 export const mripInshore = passthroughLoader(
   MRIP_INSHORE_KEY, 'build_mrip_inshore.py',
   (p) => p && p.states, '"states" object keyed by state code');
+
+export const FISH_ADVISORIES_KEY = '_registry/sc_fish_advisories.json';
+
+/**
+ * What South Carolina says about EATING what you keep. Keyed by our slug.
+ *
+ * TWO DIFFERENT THINGS IN ONE OBJECT, and they are used in different places.
+ *
+ *   `species`   every fish the state named on this water, because an advisory is written per
+ *               species. A PRESENCE FLOOR and never a roster -- "largemouth: one meal a month"
+ *               proves largemouth are there and says nothing about what else is. It unions in
+ *               UNDERNEATH a roster exactly as the by-water regulations floor does.
+ *   `advice`    the consumption limit beside each, and `do_not_eat` for the ones the state says
+ *               not to eat at all. That half is not a plan input, it is a warning, and Ryan
+ *               placed it: "probably below the regulations entry in the smartplan output html...
+ *               hey this is what you can keep... but if you keep them know this about them."
+ *
+ * A WATER WITH NO SPECIES IS NOT A GAP. Twenty of the sixty-two carry `water_level_notes` of
+ * "No Restrictions" and an empty species list: the state sampled them and found nothing to warn
+ * about. Reading that as missing data would turn a clean bill of health into a hole.
+ */
+export const fishAdvisories = passthroughLoader(
+  FISH_ADVISORIES_KEY, 'fetch_sc_fish_advisories.py',
+  (p) => p && p.waters, '"waters" object keyed by our slug');

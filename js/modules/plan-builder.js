@@ -18,6 +18,7 @@ import { COASTAL_ZONES, isCoastalKey } from "../data/coastal-zones.js";
 import { landOnCoastalZone, focusRamp } from "../utils/viewport-cull.js";
 import { appendCoastalOptgroups } from "../utils/coastal-optgroups.js";
 import { resolveR2Key } from "../data/lake-keys.js";
+import { advisoryRows } from "../data/fish-advisories.js";
 // The band is defined once, where the cue line that carries it is built.
 import { HAND_STEER_BAND_FT } from "./plan-tracks.js";
 import { makePredicate } from "../data/water-filter.js";
@@ -978,6 +979,53 @@ export async function buildPlanPreviewHtml(p){
 
   const speciesSelected = p.meta.species || [];
   const lakeForRegs = p.meta.waterbodyLabel || p.meta.lake || '';
+
+  // ── WHAT YOU MAY KEEP, THEN WHAT TO KNOW ABOUT KEEPING IT ────────────────────────────────
+  //
+  // Ryan put it exactly there: "probably below the regulations entry in the smartplan output
+  // html... hey this is what you can keep... but if you keep them know this about them."
+  //
+  // The advisory is the state's, per species, and it is NOT a legality question -- nothing here
+  // blocks or warns a plan. It is printed and left to the person, which is the whole difference
+  // between this and the regulations table above it.
+  //
+  // A CLEARED WATER PRINTS AS ONE. Twenty of the sixty-two bound waters were sampled and had
+  // nothing to warn about; that is an answer, not an absent section.
+  const advisoryBlock = (() => {
+    const adv = advisoryRows(resolveR2Key(lakeForRegs), speciesSelected);
+    if (!adv) return '';
+    const kinds = adv.kinds.length ? ` — ${esc(adv.kinds.join(', '))}` : '';
+    const src = '<p class="rp-small">Source: SC Department of Environmental Services fish '
+      + 'consumption advisories (SCDHEC Watershed Atlas). This is a health advisory about eating '
+      + 'fish, not a size or creel limit — it does not make a fish illegal to catch or to keep. '
+      + 'Check <strong>gis.des.sc.gov/fishadvisories</strong> for the current advisory.</p>';
+    if (adv.cleared) {
+      return `<h2>🍽️ Eating What You Keep — ${esc(adv.displayName)}</h2>
+<div class="rp-callout"><b>No advisory on this water.</b> ${esc(adv.notes.join('; '))} — the state
+sampled it and published no consumption limit.</div>
+${src}`;
+    }
+    const rows = adv.rows.map((r) => `<tr${r.doNotEat ? ' style="background:#fff0f0"' : ''}>
+  <td>${esc(r.species)}${r.targeted ? ' <b>(on the plan)</b>' : ''}${r.size ? ` <span class="rp-small">${esc(r.size)}</span>` : ''}</td>
+  <td>${r.doNotEat ? `<b>${esc(r.advice)}</b>` : esc(r.advice)}</td>
+  <td class="rp-small">${esc(r.published_as || '')}${r.corrected ? ' — corrected, see registry' : ''}</td>
+</tr>`).join('');
+    const targetedDNE = adv.rows.filter((r) => r.doNotEat && r.targeted).map((r) => r.species);
+    const warn = targetedDNE.length
+      ? `<div class="rp-callout rp-warn" style="border-left-width:6px"><b>🚫 DO NOT EAT — `
+        + `${esc(targetedDNE.join(', '))}</b><br>You are planning for `
+        + `${targetedDNE.length === 1 ? 'this fish' : 'these fish'} today. Catching and releasing `
+        + `${targetedDNE.length === 1 ? 'it' : 'them'} is unaffected; the state's advice is not to `
+        + `eat ${targetedDNE.length === 1 ? 'it' : 'them'} at all.</div>`
+      : '';
+    return `<h2>🍽️ Eating What You Keep — ${esc(adv.displayName)}${kinds}</h2>
+${warn}<table>
+  <thead><tr style="background:#eef4fa"><th>Species</th><th>State advice</th><th>Published as</th></tr></thead>
+  <tbody>${rows}</tbody>
+</table>
+${src}`;
+  })();
+
   let regsRows = '';
   speciesSelected.forEach(sp=>{
     const r = getRegs(sp, lakeForRegs);
@@ -1893,6 +1941,8 @@ ${regsRows?`<h2>📋 SC Fishing Regulations — ${esc(lakeForRegs.split(',')[0]|
   <tbody>${regsRows}</tbody>
 </table>
 <p class="rp-small">Source: SCDNR / SC Code § 50-13 via <a href="https://www.eregulations.com/southcarolina/fishing/freshwater-fish-size-possession-limits" target="_blank">eRegulations – SC Freshwater Size & Possession Limits</a>. Always verify current regulations at <strong>eregulations.com/southcarolina/fishing</strong> and <strong>dnr.sc.gov</strong> before fishing. Emergency closures may apply.</p>`:''}
+
+${advisoryBlock}
 
 <h2>🎣 WHEN A FISH IS IN THE BOAT — the thirty seconds that make the next plan smarter</h2>
 <div class="rp-callout rp-warn" style="border-left-width:6px">

@@ -539,6 +539,9 @@ PASSTHROUGH_REGISTRIES = {
     "mrip_inshore.json":
         "the fisheries agent has no measured season or size for an inshore species and writes "
         "both from recollection; build it with build_mrip_inshore.py",
+    "sc_fish_advisories.json":
+        "the plan cannot say which fish the state tells you not to eat, and 62 SC waters have "
+        "an answer -- fourteen of them a DO NOT EAT; build it with fetch_sc_fish_advisories.py",
 }
 
 

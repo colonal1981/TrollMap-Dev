@@ -22,6 +22,7 @@ import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
 import { TRANSIT_MIN_DEPTH_FT } from './plan-water.js';
 import { solunarFor } from '../utils/solunar.js';
 import { checkPlanLegality, ensureRegulations, fetchForecast, fetchWaterState } from './plan-preflight.js';
+import { primeFishAdvisories } from '../data/fish-advisories.js';
 import { buildSmartPlanV2, packFetcher, modelAsker, waterRouter } from './smart-plan-v2.js';
 import { planToTimeline, installTimeline } from './plan-to-timeline.js';
 import { renderSmartPlanUI, syncSpread } from './smart-plan-ui.js';
@@ -126,6 +127,10 @@ export async function runSmartPlanV2() {
   // thirty-three lines ahead of the only async water work on the path. So it ran cold every
   // time and every inland lake came back "No regulation data". One await, before the read.
   await ensureRegulations(inp.lakeName, { worker: CF_WORKER_URL });
+  // The plan render is synchronous, so the advisory table is warmed here beside the regulations
+  // it prints under. It never throws -- a water with no advisory and no network look the same to
+  // the caller, and both mean the section does not appear.
+  await primeFishAdvisories({ worker: CF_WORKER_URL });
   const legality = checkPlanLegality(inp.lakeName, species, date);
   if (!legality.legal) {
     say(`${species} not legal here today`, true);
