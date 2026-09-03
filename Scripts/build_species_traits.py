@@ -542,6 +542,69 @@ NC_STRONG = re.compile(r'<strong>\s*([A-Za-z][A-Za-z ]{2,20}?)\s*:?\s*</strong>\
 NC_BUTTON = re.compile(r'<a\b[^>]*class="[^"]*button[^"]*"[^>]*>.*?</a>', re.S | re.I)
 
 
+# ── SCDNR'S SALTWATER SPECIES PAGES ─────────────────────────────────────────────────────────
+#
+# One page per species at dnr.sc.gov/marine/species/<fish>.html, saved by
+# fetch_agency_lake_pages.py --state SC_MARINE. Every page is the same seven blocks, each a
+# <p><strong>LABEL</strong> followed by prose, a <ul>, or both:
+#
+#     General Description · Average Size · Habitat · Reproductive Cycle · Foraging Habits
+#     Availability/Vulnerability to Harvest · Literature Cited
+#
+# WHY THIS AND NOT THE FRESHWATER GUIDE'S SHAPE. species_traits.json held 43 species and not one
+# saltwater fish, so the five in SC_INSHORE_ROSTER -- the whole inshore roster the app offers on
+# nine coastal zones -- reached a plan with a name and nothing behind it.
+#
+# WHICH SECTIONS ARE KEPT, AND WHY THOSE. `Habitat` is where the fish is ("tidal creeks, oyster
+# reefs, and beaches, typically over sandy or sandy-mud bottoms"), `Foraging Habits` is what it
+# eats ("menhaden, spot, anchovies, blue crab"), `Reproductive Cycle` is when it spawns, and
+# `Availability/Vulnerability to Harvest` is the seasonal one -- red drum "overwinter offshore
+# and return to nearshore waters during spring", sheepshead "concentrate in shallow waters during
+# late spring and late fall/early winter". `General Description` is colour and fin counts, which
+# identifies a fish already in the boat and cannot help decide where to go, and `Literature
+# Cited` is a bibliography.
+SC_MARINE_DIR = 'SC_Marine_Species'
+SC_MARINE_USEFUL = ['Habitat', 'Reproductive Cycle', 'Foraging Habits',
+                    'Availability/Vulnerability to Harvest', 'Average Size']
+# `<h2>Red Drum <span style="...">(Sciaenops ocellatus)</span></h2>` -- the binomial rides in a
+# span inside the heading, so it is taken from the heading rather than hunted for separately.
+SC_MARINE_HEADS = frozenset(SC_MARINE_USEFUL) | {'General Description', 'Literature Cited'}
+SCM_H2 = re.compile(r'<h2[^>]*>(.*?)</h2>', re.I | re.S)
+# `(Sciaenops ocellatus)` and also `(Callinectes sapidus Rathburn)` -- the blue crab page puts
+# the describing authority inside the parentheses, and a two-word pattern left the whole thing
+# sitting in the fish's NAME.
+SCM_SCI = re.compile(r'\(([A-Z][a-z]+\s+[a-z]+)(?:\s+[A-Z][a-z]+\.?)?\)')
+SCM_STRONG = re.compile(r'<strong[^>]*>(.*?)</strong>', re.I | re.S)
+
+
+def read_sc_marine_page(path):
+    """One entry per SCDNR marine species page."""
+    src = open(path, encoding='utf-8', errors='replace').read()
+    m = SCM_H2.search(src)
+    if not m:
+        return None
+    head = ga_text(m.group(1))
+    sci = (SCM_SCI.search(head) or [None, None])[1]
+    name = SCM_SCI.sub(' ', head).strip()
+    if not name or len(name) > 44:
+        return None
+
+    # THE LABELS ARE FOUND, NOT THE TEXT BETWEEN THEM SPLIT ON A PATTERN. The page's first
+    # <strong> is "SC Species Regulations for Red Drum", a link out to the limits, and it sits
+    # ABOVE the h2 on some pages and below it on others -- so the section labels are matched
+    # against the known seven rather than taken positionally, and anything else is skipped.
+    body = src[m.end():]
+    marks = [(f.start(), f.end(), ga_text(f.group(1)).strip(' :'))
+             for f in SCM_STRONG.finditer(body)]
+    known = [(s, e, lab) for s, e, lab in marks if lab in SC_MARINE_HEADS]
+    out = collections.OrderedDict()
+    for i, (_s, e, lab) in enumerate(known):
+        end = known[i + 1][0] if i + 1 < len(known) else len(body)
+        text = ga_text(body[e:end])
+        if text:
+            out.setdefault(lab, text)
+    return {'name': name, 'scientific': sci, 'sections': out, 'page': None}
+
 def nc_page_head(t):
     """`Tips; Places to Fish` and `Tips / Places to Fish` are one heading."""
     t = re.sub(r'\s+', ' ', str(t or '')).strip(' :')
@@ -749,6 +812,25 @@ def main():
     for g in got:
         entries.append(('NC', 'NCWRC', 'ncwildlife.gov/species', NC_PAGE_USEFUL, g))
 
+    scm = [p for p in sorted(glob.glob(os.path.join(root, SC_MARINE_DIR, '*.html')))
+           if not os.path.basename(p).startswith('_page_')]
+    if scm:
+        # THE FILENAME, NOT THE FOLDER, because the app's own vocabulary folds three flounders
+        # into one: `flounders southern summer gulf` is an alias of Southern Flounder, which is
+        # how SC's regulations manage them. So southernflounder.html and summerflounder.html both
+        # land on that key, and the source is the only thing that says which fish each row is
+        # actually about. A shared 'dnr.sc.gov/marine/species' made them indistinguishable.
+        got = [(os.path.basename(p), e) for p, e in ((p, read_sc_marine_page(p)) for p in scm)
+               if e and e['sections']]
+        print('SCDNR  %-42s %d saltwater species page(s)'
+              % (os.path.join(SC_MARINE_DIR, '*.html'), len(got)))
+        for fname, g in got:
+            entries.append(('SC', 'SCDNR', fname, SC_MARINE_USEFUL, g))
+    else:
+        print('!! no pages under %s -- no SALTWATER species traits, so the five in '
+              'SC_INSHORE_ROSTER reach a plan with a name and nothing behind it. Run '
+              'fetch_agency_lake_pages.py --state SC_MARINE --go' % SC_MARINE_DIR)
+
     ncs = sorted(glob.glob(os.path.join(root, NC_DIR, NC_PROFILE)))
     print('NCWRC  %-42s %d profile(s)' % (os.path.join(NC_DIR, NC_PROFILE), len(ncs)))
     for p in ncs:
@@ -799,7 +881,7 @@ def main():
 
     doc = {'generated': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
            'source': 'SCDNR Guide to Freshwater Fishes of South Carolina; '
-                     'NC WRC Wildlife Profiles',
+                     'SCDNR marine species accounts; NC WRC Wildlife Profiles',
            'note': 'Per-SPECIES and statewide, not per-water. Built by build_species_traits.py '
                    '-- do not hand-edit. Personal use only, not for distribution or resale; '
                    'not for navigation.',
