@@ -227,6 +227,30 @@ def uninvert(name, roster=None):
     return joined
 
 
+def group_mismatch(published, roster):
+    """True when the qualifier is a known fish that the group heading does not describe.
+
+    IT FIRES TWICE IN THE WHOLE DATASET, and only one of the two is an anomaly:
+
+        Lake Wateree   'Bass- Bowfin'          a bowfin is not a bass
+        Sampit River   'Sunfish- Pumpkinseed'  a pumpkinseed IS a sunfish
+
+    Which is why this MARKS the row instead of correcting it. SC's own 2020 statewide table
+    (Web_Fish_Consumption_Advisory_Table.xlsx, 2020-04-25) lists Lake Wateree as Blue Catfish,
+    Channel Catfish, Largemouth Bass, Striped Bass, WHITE Bass and Black Crappie -- White Bass
+    sits exactly where the live service says Bowfin, and five of the six agree. Either the list
+    changed in six years or somebody picked the wrong entry. Nothing here can tell which, and a
+    script that silently asserts one is the failure this whole file exists to avoid.
+    """
+    m = re.match(r"^\s*([A-Za-z][A-Za-z' ]*?)\s*-\s*([A-Za-z][A-Za-z'/ ]*)\s*$",
+                 str(published or '').strip())
+    if not m or not roster:
+        return False
+    group, qualifier = m.group(1).strip(), m.group(2).strip()
+    joined = '%s %s' % (qualifier, group)
+    return _norm(joined) not in roster and _norm(qualifier) in roster
+
+
 # The field is HTML. Measured, not guessed -- the raw bytes for Lake H.B. Robinson, 2026-09-03:
 #
 #   <strong>Bass- Largemouth</strong><ul style="list-style: none; margin: 0;">
@@ -289,10 +313,14 @@ def parse_restrictions(text, roster=None):
                 if m2:
                     size = m2.group(1).strip()
                     base = (sp[:m2.start()] + sp[m2.end():]).strip()
+                suspect = group_mismatch(base, roster)
                 for nm in species_names(base, roster):
                     rec = {'species': nm, 'advice': ad, 'published_as': sp}
                     if size:
                         rec['size'] = size
+                    if suspect:
+                        rec['suspect'] = ('the group heading and the fish disagree -- read as '
+                                          '%r, published as %r' % (nm, sp))
                     pairs.append(rec)
             else:
                 unparsed.append(sp)
@@ -619,6 +647,13 @@ def main():
         print('   %-30s %-42s %s' % (slug, rec['display_name'][:40], said))
     print('\n   %d of the %d carry species; %d are waters the state cleared'
           % (len(w) - clean, len(w), clean))
+    sus = [(s, x) for s in sorted(w) for x in w[s]['species'] if x.get('suspect')]
+    if sus:
+        print('\n!! %d row(s) where the group heading and the fish disagree. Read, not '
+              'corrected:' % len(sus))
+        for s, x in sus:
+            print('   %-26s published %-24r read as %r'
+                  % (s, x['published_as'], x['species']))
     if out['ambiguous']:
         print('\nDROPPED as ambiguous (%d) -- more than one of our waters fits:' % len(out['ambiguous']))
         for x in out['ambiguous']:
