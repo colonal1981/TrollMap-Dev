@@ -570,6 +570,93 @@ async function wqpPull(env, body, opts = {}) {
     }), { headers: JSON_HEADERS });
   }
 
+  // ── WHY THERE IS NO THERMOCLINE, IN THE PAYLOAD, INSTEAD OF ONE SENTENCE THAT FITS ANY REASON ──
+  //
+  // `note` said "Depth-profile records exist but were insufficient to derive a defensible
+  // thermocline" whenever ANY record carried a depth, and `depthProfileCount` is
+  // `records.filter(r => r.depthFt != null).length` -- which counts a surface grab logged at
+  // 0.1 m as a depth profile. So the sentence reads as a data-quality problem on a lake that may
+  // simply never have been sampled below the surface, and there was no way to tell the two apart.
+  //
+  // Badin Lake, refreshed by the cron 2026-09-02: 131 records, ALL of them carrying a depth, 105
+  // in summer, 43 of them dissolved oxygen -- and not one bin under 4 mg/L on a 5,300-acre Yadkin
+  // reservoir in July. Ryan: *"i thought a thermocline could be derived though..."* It can, and
+  // the derivation is sound; what could not be seen was that the samples never went deep enough
+  // to have one in them.
+  //
+  // So the reason is DERIVED and reported. Each branch names the number that fell short, which is
+  // the difference between "we cannot read this lake" and "nobody sampled it below eight feet".
+  const depthsOf = (rs) => rs.map((r) => r.depthFt).filter((d) => typeof d === 'number');
+  const allDepths = depthsOf(depthRecords);
+  const summerDoDepths = depthsOf(summerDO);
+  const summerTempDepths = depthsOf(summerTemp);
+  const round1 = (n) => (n == null ? null : Math.round(n * 10) / 10);
+  const depths = {
+    minFt: allDepths.length ? round1(Math.min(...allDepths)) : null,
+    maxFt: allDepths.length ? round1(Math.max(...allDepths)) : null,
+    // Distinct 2 ft bins is the number the derivation actually walks. One bin is not a profile
+    // however many records are in it.
+    distinctBins: new Set(allDepths.map((d) => Math.floor(d / 2) * 2)).size,
+    summerDoRecords: summerDO.length,
+    summerDoDeepestFt: summerDoDepths.length ? round1(Math.max(...summerDoDepths)) : null,
+    summerTempRecords: summerTemp.length,
+    summerTempDeepestFt: summerTempDepths.length ? round1(Math.max(...summerTempDepths)) : null,
+    shallowestSummerDoMgL: null,
+    largestSummerTempStepF: null,
+  };
+  // What the two branches came closest to. Recomputed rather than carried out of the loops above,
+  // because a reason that drifts from the rule it describes is worse than no reason.
+  if (summerDO.length) {
+    const bins = {};
+    for (const r of summerDO) {
+      const b = Math.floor(r.depthFt / 2) * 2;
+      (bins[b] = bins[b] || []).push(r.value);
+    }
+    const medians = Object.values(bins).map((v) => v.slice().sort((a, b) => a - b)[Math.floor(v.length / 2)]);
+    depths.shallowestSummerDoMgL = medians.length ? round1(Math.min(...medians)) : null;
+  }
+  if (summerTemp.length) {
+    const bins = {};
+    for (const r of summerTemp) {
+      const b = Math.floor(r.depthFt / 2) * 2;
+      (bins[b] = bins[b] || []).push(r.value);
+    }
+    const keys = Object.keys(bins).map(Number).sort((a, b) => a - b);
+    let step = 0;
+    for (let i = 1; i < keys.length; i++) {
+      const med = (k) => bins[k].slice().sort((a, b) => a - b)[Math.floor(bins[k].length / 2)];
+      step = Math.max(step, med(keys[i - 1]) - med(keys[i]));
+    }
+    depths.largestSummerTempStepF = keys.length > 1 ? round1(step) : null;
+  }
+
+  const whyNoThermocline = () => {
+    if (thermocline) return null;
+    if (!depthRecords.length) return surfaceOnlyNote;
+    if (depths.distinctBins <= 1) {
+      return `Every record carries a depth but they fall in one 2 ft band (${depths.minFt}-${depths.maxFt} ft). `
+           + 'These are surface grabs with a depth stamp, not a vertical profile.';
+    }
+    if (!summerDO.length && !summerTemp.length) {
+      return `${depthRecords.length} depth record(s), none of them a summer (Jun-Sep) dissolved-oxygen `
+           + 'or temperature reading, which is what the derivation walks.';
+    }
+    const bits = [];
+    if (summerDO.length) {
+      bits.push(summerDO.length < 3
+        ? `only ${summerDO.length} summer DO reading(s), and 3 is the floor`
+        : `summer DO never fell under 4 mg/L at any sampled depth (lowest binned median `
+          + `${depths.shallowestSummerDoMgL} mg/L, deepest sample ${depths.summerDoDeepestFt} ft)`);
+    }
+    if (summerTemp.length) {
+      bits.push(summerTemp.length < 3
+        ? `only ${summerTemp.length} summer temperature reading(s), and 3 is the floor`
+        : `largest temperature step between sampled depths was ${depths.largestSummerTempStepF} degF, `
+          + `under the 5 degF the gradient rule requires (deepest sample ${depths.summerTempDeepestFt} ft)`);
+    }
+    return `No thermocline: ${bits.join('; ')}.`;
+  };
+
   const surfaceOnlyNote = !thermocline && !depthRecords.length
     ? 'Monitoring data were found, but available records are surface/grab samples only — no vertical depth profiles. Thermocline cannot be derived from this source.'
     : null;
@@ -614,7 +701,8 @@ async function wqpPull(env, body, opts = {}) {
     seasonalTemp,
     secchi,
     surfaceOnlyNote,
-    note: thermocline ? null : depthRecords.length ? 'Depth-profile records exist but were insufficient to derive a defensible thermocline.' : surfaceOnlyNote,
+    depths,
+    note: whyNoThermocline(),
   };
   return new Response(JSON.stringify(out), { headers: JSON_HEADERS });
 }
