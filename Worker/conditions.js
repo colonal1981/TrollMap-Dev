@@ -2531,25 +2531,39 @@ export function alertsForWater(alerts, waterName, gaugeNames = []) {
     return n;
   };
 
-  // A POI NAME NEEDS TWO WORDS; THE ALERT'S OWN WATER NEEDS ONE.
+  // TWO WORDS ON THE WATER TOO. THE ONE-WORD VERSION SAID `island`, 2026-09-03.
   //
-  // Reading a place name against a token set over-matches on generic geography, and reading only
-  // the river half of the gauge names does not save it: with `park` gone, Mountain Island Lake
-  // picked up "Morrow Mountain State Park" -- Lake Tillery, Yadkin basin, a hundred km away -- on
-  // the single word `mountain`. The next one is `creek`, then `island`, then `point`.
+  // This block used to read "A POI NAME NEEDS TWO WORDS; THE ALERT'S OWN WATER NEEDS ONE", and
+  // named the failures it expected next: "The next one is `creek`, then `island`, then `point`."
+  // It was `island`. Murrells Inlet / Pawleys Island, SC took Duke's Mountain Island Lake alert
+  // -- Riverbend Access Area, on the Catawba, three hundred kilometres away -- on that single
+  // shared word, and dukeLocationIdFor() took Mountain Island's operating range with it. The
+  // conditions card for a saltwater inlet showed a guide curve of 96 on a scale where 100 is a
+  // full pond of 647.5 ft AMSL, which is Mountain Island's elevation.
   //
-  // `lakepondDesc` is Duke naming the water itself, so one word is evidence. A POI title is free
-  // text about a place, so it takes two -- which is the same second-signal rule the gauge binder
-  // and the picker both already use, and it is what keeps the case this function was built for:
-  // "Mountain Island Tailrace Fishing Area and Mountain Island Park" is filed under Lake WYLIE
-  // and still reaches Mountain Island Lake, because it names it twice.
+  // A FREQUENCY RULE WAS TRIED FIRST AND MEASURED BEFORE IT WAS BUILT. The idea was that a token
+  // naming many waters cannot identify one. Across the 355 index display names `island` names 2
+  // and `wateree` names 2 -- the rule does not separate them, because the corpus is our waters
+  // and not Duke's vocabulary. It was dropped rather than shipped.
+  //
+  // WHAT SEPARATES THEM IS COVERAGE. `lakepondDesc` is Duke writing the water's whole name, and a
+  // real match shares nearly all of it: "Lake Wateree" against Lake Wateree (Kershaw Co, SC)
+  // shares {lake, wateree}; "Mountain Island Lake" against its own row shares three. A false
+  // match shares exactly one. So the water takes the SAME second-signal rule the place already
+  // takes, which is the rule the gauge binder and the picker both use, and the exemption that
+  // let one word through is gone. A water Duke names in a single distinctive word still matches
+  // on that word -- one is all it has, and requiring two of one would refuse every alert about it.
+  //
+  // KEPT: "Mountain Island Tailrace Fishing Area and Mountain Island Park", filed under Lake
+  // WYLIE, still reaches Mountain Island Lake, because it names it twice in its own title.
   //
   // AN ALERT WITH NO WATER AT ALL falls back to one word on the place, because the place is then
   // the only thing it has. Three of the twenty-eight captured alerts are shaped that way.
   return (alerts || []).filter((a) => {
     if (!a || a.kind === 'RIVERBASIN') return false;
-    const named = distinctive(a.water).size > 0;
-    if (named && score(a.water) >= 1) return true;
+    const waterTokens = distinctive(a.water);
+    const named = waterTokens.size > 0;
+    if (named && score(a.water) >= Math.min(2, waterTokens.size)) return true;
     return score(a.place) >= (named ? 2 : 1);
   });
 }
@@ -2560,6 +2574,11 @@ export function alertsForWater(alerts, waterName, gaugeNames = []) {
  * `lakepondDesc` names the lake and `lakepondLocationId` is the key /lakes/operating-range wants.
  * Both are already on the wire. Matched with the same whole-token test everything else uses, and
  * an ambiguous name returns nothing rather than the first id that looked close.
+ *
+ * TWO TOKENS, for the reason written out in alertsForWater above. Breaking on the FIRST shared
+ * token is what handed Murrells Inlet the operating range of Mountain Island Lake on the word
+ * `island`, and `found.size === 1` could not save it: only one wrong id was found, so the
+ * ambiguity guard saw an unambiguous answer.
  */
 export function dukeLocationIdFor(alerts, waterName, gaugeNames = []) {
   const want = wantedTokens(waterName, gaugeNames);
@@ -2567,9 +2586,11 @@ export function dukeLocationIdFor(alerts, waterName, gaugeNames = []) {
   const found = new Set();
   for (const a of alerts || []) {
     if (!a || a.water_location_id == null || !a.water) continue;
-    for (const t of distinctive(a.water)) {
-      if (want.has(t)) { found.add(a.water_location_id); break; }
-    }
+    const tokens = distinctive(a.water);
+    if (!tokens.size) continue;
+    let hits = 0;
+    for (const t of tokens) if (want.has(t)) hits++;
+    if (hits >= Math.min(2, tokens.size)) found.add(a.water_location_id);
   }
   return found.size === 1 ? [...found][0] : null;
 }

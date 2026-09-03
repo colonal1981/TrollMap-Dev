@@ -163,3 +163,46 @@ describe('the empty cases', () => {
     expect(alertsForWater(FEED, 'The Lake')).toEqual([]);
   });
 });
+
+// ── AND THE SAME BUG AGAIN, ON THE WORD THE FILE PREDICTED ──────────────────────────────────
+//
+// Reported by Ryan 2026-09-03, from the Conditions tab of a saltwater inlet:
+//
+//     Vs Duke guide      +0.3 ft against a guide curve of 96 on a scale where 100 is
+//                        full pond (647.5 ft AMSL)
+//     Duke drought stage Stage 0 - Low Inflow Protocol
+//     Access (1)         Riverbend Access Area
+//
+// 647.5 ft AMSL is Mountain Island Lake, on the Catawba, three hundred kilometres from Murrells
+// Inlet. The shared word is `island`, and it enters the inlet's token set from its own display
+// name -- "Murrells Inlet / Pawleys Island, SC".
+//
+// alertsForWater's own comment, written 2026-08-25 for the `park` bug at the top of this file,
+// named it in advance: "The next one is `creek`, then `island`, then `point`." It was `island`,
+// and it got through because the water branch took ONE token where the place branch took two.
+// The water branch now takes two as well.
+const MURRELLS = 'Murrells Inlet / Pawleys Island, SC';
+const MURRELLS_GAUGES = [
+  'Atlantic Intracoastal Waterway at Myrtle Beach',
+  'Atlantic Coast at Myrtle Beach Springmaid Pier (IN MLLW)',
+  'Atlantic Intracoastal Waterway above Aiw At Hwy 544 At Socastee',
+];
+
+describe('a saltwater inlet is not a Duke reservoir', () => {
+  it('Murrells Inlet gets no Duke alert on the word island', () => {
+    expect(places(MURRELLS, MURRELLS_GAUGES)).toEqual([]);
+  });
+
+  it('and no Duke operating range, which is where the 647.5 ft full pond came from', () => {
+    // `found.size === 1` could not catch this: exactly one wrong id was found, so the
+    // ambiguity guard saw an unambiguous answer and returned it.
+    expect(dukeLocationIdFor(FEED, MURRELLS, MURRELLS_GAUGES)).toBe(null);
+  });
+
+  it('Mountain Island Lake still gets its own Riverbend alert and its own id', () => {
+    // The fix must not be a stopword that deletes the word for everybody.
+    const mine = places('Mountain Island Lake (Gaston Co, NC)', ['Catawba River at Mountain Island Dam']);
+    expect(mine.includes('Riverbend Access Area')).toBe(true);
+    expect(dukeLocationIdFor(FEED, 'Mountain Island Lake (Gaston Co, NC)')).toBe(12);
+  });
+});
