@@ -299,7 +299,24 @@ const SOURCE_META = {
   // the same launches and accessDedupeKey() collapses them to one dropdown row.
   dnr:        { label: 'Boat ramp (DNR)',     marker: '🛥️' },
   dnr_paddle: { label: 'Paddle launch (DNR)', marker: '🛶' },
+  // NC WRC's fishing-areas app, written by scripts/build_nc_species_by_lake.py. ONE bucket
+  // holding both kinds, because NCWRC answers canoeAccess and boatRamp as two booleans on ONE
+  // location and 110 of its 294 launches are both -- splitting them into dnr/dnr_paddle-style
+  // buckets would file the same slipway twice. So this bucket takes its label from the RECORD
+  // rather than from here: `type` is already 'Boat Ramp', 'Paddle Launch' or both, derived from
+  // those booleans when the file was written.
+  //
+  // THAT MATTERS BECAUSE ONE LABEL WOULD HAVE TO LIE. Calling all 294 'Boat ramp' tells the
+  // planner a canoe-only put-in has a ramp; calling them all 'Paddle launch' loses the 180 that
+  // are ramps, and on the fifteen waters where this bucket is the ONLY access -- Randleman among
+  // them -- that is the difference between a water you can launch a boat on and one you cannot.
+  ncpaws:     { label: 'Paddle launch (NC WRC)', marker: '🛶', typeFromItem: true,
+                source: 'NC WRC' },
 };
+
+// The same words liveAccessFor() classifies on, kept here so a per-record type that would not
+// classify falls back to the bucket label instead of silently dropping out of the launch count.
+const LAUNCH_WORD = /\b(ramp|slipway|launch|landing)\b/i;
 
 export function accessPointsFor(rec) {
   const out = [];
@@ -315,7 +332,13 @@ export function accessPointsFor(rec) {
         // you a launch exists, which is the thing that was missing.
         lat: Number.isFinite(lat) ? lat : rec.lat,
         lon: Number.isFinite(lon) ? lon : rec.lon,
-        typeLabel: meta.label,
+        // A bucket whose points are not all the same kind carries the kind on the record; see
+        // the ncpaws note in SOURCE_META. The fallback is the bucket label, so nothing else
+        // changes, and a record with an unclassifiable type keeps the bucket's wording rather
+        // than losing its launch word.
+        typeLabel: (meta.typeFromItem && LAUNCH_WORD.test(String(it.type || '')))
+          ? `${it.type} (${meta.source || 'NC WRC'})`
+          : meta.label,
         marker: meta.marker,
         sourcePath: `registry:${src}`,
         sourceState: rec.state,

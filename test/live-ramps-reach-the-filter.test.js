@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, it, expect } from './expect-shim.mjs';
 // access-index.js publishes legacy global helpers on `window` at module scope, so it needs one
 // before it can be imported under node. Same shim dnr-registry-merge.test.js uses.
@@ -313,8 +314,30 @@ describe('every registry ramp bucket reaches the filter it feeds', () => {
     })]]),
   });
 
+  // THE BUCKET LIST IS READ OUT OF THE CONSOLIDATOR, NOT TYPED HERE.
+  //
+  // It was typed here, and on 2026-09-02 a sixth bucket -- `ncpaws`, NC WRC's fishing-areas
+  // launches -- was added to consolidate_lake_index.py's merge table with no SOURCE_META entry
+  // and no line in this array. The test passed. All 294 of its points fell through to
+  // `{ label: src }`, whose wording says neither ramp nor launch, so the planner counted none of
+  // them -- on fifteen waters, including Randleman, where that bucket is the ONLY access there
+  // is. Exactly the failure the comment above SOURCE_META promises this file catches.
+  //
+  // A list somebody has to remember to extend is not a guard. So the buckets come from the file
+  // that creates them; adding one there now fails here until it has a label that classifies.
+  const consolidator = readFileSync(
+    new URL('../Scripts/consolidate_lake_index.py', import.meta.url), 'utf8');
+  const table = consolidator.slice(consolidator.indexOf('ramps = {t: load(fn)'));
+  const BUCKETS = [...table.slice(0, table.indexOf('}')).matchAll(/'([a-z_]+_by_lake\.json)',\s*'([a-z_]+)'/g)]
+    .map((m) => m[2]);
+
+  it('found the buckets the consolidator actually merges', () => {
+    expect(BUCKETS.length, BUCKETS.join(',')).toBeGreaterThanOrEqual(5);
+    expect(BUCKETS).toContain('dnr_paddle');
+  });
+
   it('counts a point from every shipped ramp bucket as a launch', () => {
-    for (const bucket of ['natl', 'osm', 'garmin', 'dnr', 'dnr_paddle']) {
+    for (const bucket of BUCKETS) {
       expect(liveAccessFor('Somewhere, SC', asIndex(bucket)).launches, bucket).toBe(1);
     }
   });
