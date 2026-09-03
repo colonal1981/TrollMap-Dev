@@ -144,15 +144,24 @@ STATES = {
     # island beaches". That is the same shape as the four freshwater guides in
     # build_species_traits.py, for the fish RESEARCH_SPECIES_CANON only learned this evening.
     #
-    # THE LINKS ARE FULL ABSOLUTE URLS on dnr.sc.gov -- reddrum.html, spottedseatrout.html,
-    # southernflounder.html -- so the pattern is absolute, which is what tells links_on() that
-    # absolute hrefs are allowed here. `skip` keeps the index out of its own crawl.
+    # THE LINKS ARE RELATIVE -- `reddrum.html`, `spottedseatrout.html` -- exactly like the
+    # freshwater SC source above, and the first version of this pattern was written absolute.
+    #
+    # HOW THAT HAPPENED, BECAUSE IT IS THE SAME MISTAKE THIS FILE KEEPS CATCHING. I fetched the
+    # index through a summarising tool and asked whether the hrefs were relative or absolute. It
+    # answered "absolute" -- correctly, about ITS OWN output, which resolves every href against
+    # the page URL before printing. That is a fact about the reader, not about the document, and
+    # writing it into a regex cost a live run: the crawl read the index, matched none of its 20
+    # species links and saved only the index itself. The saved index is what settled it, because
+    # it is the raw bytes.
+    #
+    # `links_on()` decides whether absolute hrefs are allowed by looking at whether THIS pattern
+    # starts with a scheme, so a relative pattern also keeps the crawl on one host for free.
     'SC_MARINE': {
         'index': 'https://www.dnr.sc.gov/marine/species/index.html',
         'folder': 'SC_Marine_Species',
-        'link': re.compile(r'^https?://(?:www\.)?dnr\.sc\.gov/marine/species/'
-                           r'(?!index\.html)[a-z0-9_-]+\.html$', re.I),
-        'skip': re.compile(r'.*index\.html$', re.I),
+        'link': re.compile(r'^(?!index\.html)[a-z0-9_-]+\.html$', re.I),
+        'skip': re.compile(r'^index\.html$', re.I),
         'save_index': True,
     },
     'NC': {
