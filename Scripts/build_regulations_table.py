@@ -82,17 +82,32 @@ def build_name_map(idx):
     calderwood_lake, and "Lake Russell, SC" to richard_b_russell_lake when a separate
     lake_russell exists. Anything that does not match exactly is reported, not guessed.
     """
-    m = {}
+    # A SLUG IS AN IDENTIFIER, NOT A NAME, AND THIS MAP IS FIRST-WINS. Collected separately and
+    # kept only where nothing is already CALLED that.
+    #
+    # 3DHP hung "Lake Lucas" on a nameless polygon on the Uwharrie; lake_display_names.json
+    # renamed that row to Lake Reese and gave the name back to the real Lake Lucas, filed under
+    # its GNIS name Back Creek Lake. The slug `lake_lucas` cannot follow -- it is an R2 key, a
+    # chartpack directory and whatever is in saved plans -- so it kept answering to the name, and
+    # first-wins here meant a REGULATION ADDRESSED TO LAKE LUCAS LANDED ON LAKE REESE. Measured
+    # 2026-09-03: build_name_map()['lake_lucas'] was 'lake_lucas'. Not an ambiguity somebody
+    # refuses; a confident wrong answer in the one table that decides what may be kept.
+    #
+    # Ryan, on the first pass of this fix reaching only build_agency_lake_facts: *"1 door out of
+    # 2... half..."* This is the second.
+    m, from_slug = {}, {}
     for slug, row in idx.items():
-        cands = [slug, row.get('name'), row.get('display_name'), row.get('legacy_display_name')]
+        cands = [row.get('name'), row.get('display_name'), row.get('legacy_display_name')]
         cands += list(row.get('legacy_display_names') or [])
-        for c in cands:
+        for c in [slug] + cands:
             if not c:
                 continue
             k = slugify(re.sub(r'\s*\(.*?\)\s*', ' ', str(c)))
             k = re.sub(r'_(al|ga|nc|sc|tn|va)$', '', k)
             if k:
-                m.setdefault(k, slug)
+                (from_slug if c is slug else m).setdefault(k, slug)
+    for k, slug in from_slug.items():
+        m.setdefault(k, slug)
     return m
 
 

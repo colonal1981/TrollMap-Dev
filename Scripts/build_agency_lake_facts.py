@@ -908,11 +908,24 @@ def build_name_multimap(idx):
     County, Georgia. First-wins picked the pond, and the pond's chart is 33 ft deep against the
     page's published 167.3.
     """
-    m = {}
+    # A SLUG IS AN IDENTIFIER; A NAME IS WHAT THE WATER IS CALLED. When the two disagree the name
+    # is the fact, so the slug is collected SEPARATELY and only kept where no other row answers to
+    # it by an actual name.
+    #
+    # 3DHP hung "Lake Lucas" on a nameless polygon on the Uwharrie. lake_display_names.json renamed
+    # that row to Lake Reese and gave the real Lake Lucas -- filed under its GNIS name, Back Creek
+    # Lake -- the name back, and drop_stolen_legacy_names() took the old spelling off the Reese
+    # row's display and legacy names. It could not take it off the SLUG, which is `lake_lucas`
+    # still and cannot change without moving R2 keys, saved plans and the chartpack directory.
+    #
+    # So "lake lucas" kept resolving to two slugs here and every resolver refused it as ambiguous.
+    # NC WRC's own Lake Lucas largemouth assessment bound to nothing. Ryan, 2026-09-03: *"so you
+    # half fixed the lake lucas / lake reese thing?"* -- he was right, this was the other door.
+    m, from_slug = {}, {}
     for slug, row in idx.items():
-        cands = [slug, row.get('name'), row.get('display_name'), row.get('legacy_display_name')]
+        cands = [row.get('name'), row.get('display_name'), row.get('legacy_display_name')]
         cands += list(row.get('legacy_display_names') or [])
-        for c in cands:
+        for c in [slug] + cands:
             if not c:
                 continue
             k = slugify(re.sub(r'\s*\(.*?\)\s*', ' ', str(c)))
@@ -927,7 +940,11 @@ def build_name_multimap(idx):
                     break
                 k = k2
             if k:
-                m.setdefault(k, []).append(slug)
+                (from_slug if c is slug else m).setdefault(k, []).append(slug)
+    # The slug earns its key only where nothing is already called that.
+    for k, slugs in from_slug.items():
+        if k not in m:
+            m[k] = list(slugs)
     return {k: sorted(set(v)) for k, v in m.items()}
 
 
