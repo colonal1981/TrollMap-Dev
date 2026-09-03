@@ -230,7 +230,32 @@ const RESEARCH_SPECIES_CANON = {
   // The form has no bullhead box and one canonical `Bullhead`; two spellings folding to it beats
   // two strings that match nothing. GA marks yellow on 73 access points and brown on 90.
   'yellow bullhead': 'Bullhead',
-  'brown bullhead': 'Bullhead'
+  'brown bullhead': 'Bullhead',
+  // EVERY NAME THE TWO FISH CONSUMPTION ADVISORIES PUBLISH, added 2026-09-03. Counted against
+  // both files rather than guessed at: canonicalizeResearchSpecies() falls through to
+  // titleCaseWords() for anything it does not know, so a name missing from here does not get
+  // dropped -- it goes into predatorSpecies verbatim, and the plan then offers a fish that does
+  // not exist. FOUR WERE ALREADY DOING THAT on waters we ship, from the SC file that is live:
+  // "Bowfin Mudfish", "Mullet", "Striped Mullet" and "Spotted Sucker".
+  //
+  // SC DES writes the nickname in brackets and the brackets do not survive normalisation, so
+  // `Bowfin (Mudfish)` arrives here as `bowfin mudfish`. It is on the Edisto, the Little Pee Dee,
+  // the Lumber, the Waccamaw and the Savannah, and it carries a DO NOT EAT on most of them.
+  'bowfin mudfish': 'Bowfin',
+  'mudfish': 'Bowfin',
+  // GA EPD heads 29 of its advisory rows "Bluegill Sunfish" -- the single most common species
+  // name in that book after largemouth bass, and the one the form calls Bluegill.
+  'bluegill sunfish': 'Bluegill',
+  // THE BOOK NAMES FIVE BULLHEADS AND THE FORM HAS ONE. `bullhead sp` and the yellow and brown
+  // spellings were already here; snail, flat, and the bare word were not, and Georgia writes all
+  // three. `Flat Bullhead Catfish` is the book's own longer spelling of the same fish, and
+  // `Bullhead-Catfish Spp.` on the Satilla normalises to `bullhead catfish`.
+  'bullhead': 'Bullhead',
+  'snail bullhead': 'Bullhead',
+  'flat bullhead': 'Bullhead',
+  'black bullhead': 'Bullhead',
+  'flat bullhead catfish': 'Bullhead',
+  'bullhead catfish': 'Bullhead'
 };
 
 function canonicalizeResearchSpecies(raw) {
@@ -252,12 +277,31 @@ const NON_GAME_SPECIES = new Set([
   'corbicula', 'asian clam', 'zebra mussel',
   'gar', 'longnose gar', 'spotted gar', 'alligator gar',
   'drum', 'freshwater drum', 'buffalo', 'bigmouth buffalo', 'smallmouth buffalo',
-  'sucker', 'white sucker', 'redhorse',
+  'sucker', 'white sucker', 'redhorse', 'spotted sucker',
+  // MULLET, AND NOT A FISH AT ALL. Both arrived with the fish consumption advisories, which
+  // sample what a state can test rather than what an angler targets.
+  //
+  // Ryan struck MULLET (STRIPED AND WHITE) from the plan form by hand on 2026-09-02 while the
+  // books were being closed against it -- "I am good with these not being listed" -- so a
+  // checkbox for it can never appear, and SC and GA between them name it on fourteen waters.
+  //
+  // The shellfish are species_map.json's own reason, verbatim: "Taken in pots, not on a rod."
+  // Georgia advises them on eight coastal tables and says DO NOT EAT on every one, which is
+  // worth PRINTING under the regulations and is not a fish to plan a trip around.
+  'mullet', 'striped mullet', 'white mullet',
+  'blue crab', 'crab', 'crabs', 'shrimp', 'white shrimp', 'brown shrimp',
+  'clam', 'clams', 'mussel', 'mussels', 'oyster', 'oysters',
   // NOT A FISH, BUT THE AGENCIES WRITE IT IN THE FISH LIST. GA DNR closes several of its lake
   // pages with a bucket row -- Thurmond and Lanier both end "Other Species" -- and it read
   // straight through this filter into predatorSpecies, where the plan would have offered it as
   // a target. It is the page saying "and some others", which is the absence of a name.
   'other species', 'other', 'various', 'various species', 'game fish', 'gamefish',
+  // `Black Bass Spp.` is the same shape and comes from GA EPD, which advises the Chattahoochee
+  // on it four times. It is the complex -- largemouth, smallmouth, spotted, Alabama, redeye and
+  // shoal -- not one of them, and species_map.json already records that the plan form cannot
+  // express it (`partly_mapped: Black Bass`). The book names those fish individually on the
+  // reaches where it tested them, so nothing is lost by refusing to guess which one this is.
+  'black bass',
 ]);
 
 /** Exposed so a caller can ask whether a parsed list names any fish this codebase knows. */

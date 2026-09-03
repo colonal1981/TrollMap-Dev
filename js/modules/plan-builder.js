@@ -995,10 +995,12 @@ export async function buildPlanPreviewHtml(p){
     const adv = advisoryRows(resolveR2Key(lakeForRegs), speciesSelected);
     if (!adv) return '';
     const kinds = adv.kinds.length ? ` — ${esc(adv.kinds.join(', '))}` : '';
-    const src = '<p class="rp-small">Source: SC Department of Environmental Services fish '
-      + 'consumption advisories (SCDHEC Watershed Atlas). This is a health advisory about eating '
-      + 'fish, not a size or creel limit — it does not make a fish illegal to catch or to keep. '
-      + 'Check <strong>gis.des.sc.gov/fishadvisories</strong> for the current advisory.</p>';
+    // THE SOURCE IS THE FILE'S OWN WORDS. Six waters we ship are in both states' books, and the
+    // sentence that used to sit here named South Carolina on all of them.
+    const src = `<p class="rp-small">Source: ${esc(adv.sources.join('; ')) || 'state fish '
+      + 'consumption advisories'}. This is a health advisory about eating fish, not a size or `
+      + 'creel limit — it does not make a fish illegal to catch or to keep. Check the state\'s '
+      + 'current advisory before keeping fish to eat.</p>';
     if (adv.cleared) {
       return `<h2>🍽️ Eating What You Keep — ${esc(adv.displayName)}</h2>
 <div class="rp-callout"><b>No advisory on this water.</b> ${esc(adv.notes.join('; '))} — the state
@@ -1008,7 +1010,8 @@ ${src}`;
     const rows = adv.rows.map((r) => `<tr${r.doNotEat ? ' style="background:#fff0f0"' : ''}>
   <td>${esc(r.species)}${r.targeted ? ' <b>(on the plan)</b>' : ''}${r.size ? ` <span class="rp-small">${esc(r.size)}</span>` : ''}</td>
   <td>${r.doNotEat ? `<b>${esc(r.advice)}</b>` : esc(r.advice)}</td>
-  <td class="rp-small">${esc(r.published_as || '')}${r.corrected ? ' — corrected, see registry' : ''}</td>
+  <td class="rp-small">${esc(r.published_as || '')}${r.corrected ? ' — corrected, see registry' : ''}${
+    adv.sources.length > 1 && r.source ? `<br>${esc(r.source.split(',')[0])}` : ''}</td>
 </tr>`).join('');
     const targetedDNE = adv.rows.filter((r) => r.doNotEat && r.targeted).map((r) => r.species);
     const warn = targetedDNE.length

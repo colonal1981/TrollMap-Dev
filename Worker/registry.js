@@ -712,12 +712,27 @@ export const mripInshore = passthroughLoader(
   MRIP_INSHORE_KEY, 'build_mrip_inshore.py',
   (p) => p && p.states, '"states" object keyed by state code');
 
-export const FISH_ADVISORIES_KEY = '_registry/sc_fish_advisories.json';
+// One entry per state that publishes one. Read as a table so a third state is a row here and
+// nothing else: the loader below, the client and the uploader all walk it.
+export const FISH_ADVISORY_KEYS = [
+  { key: '_registry/sc_fish_advisories.json', script: 'fetch_sc_fish_advisories.py' },
+  { key: '_registry/ga_fish_advisories.json', script: 'parse_ga_fish_advisories.py' },
+];
+export const FISH_ADVISORIES_KEY = FISH_ADVISORY_KEYS[0].key;   // kept for callers naming SC
+
+// The pick returns the source ALONGSIDE the waters. The file states where it came from once at
+// the top, and the plan prints that beside the rows -- so if this returned `p.waters` alone the
+// label would have to be typed back in somewhere, which is how a South Carolina sentence ends up
+// printed over a Georgia table.
+const _advisoryLoaders = FISH_ADVISORY_KEYS.map(({ key, script }) => passthroughLoader(
+  key, script,
+  (p) => (p && p.waters ? { waters: p.waters, source: p.source || null } : null),
+  '"waters" object keyed by our slug'));
 
 /**
- * What South Carolina says about EATING what you keep. Keyed by our slug.
+ * What a state says about EATING what you keep. Keyed by our slug, and the value is a LIST.
  *
- * TWO DIFFERENT THINGS IN ONE OBJECT, and they are used in different places.
+ * TWO DIFFERENT THINGS IN EACH RECORD, and they are used in different places.
  *
  *   `species`   every fish the state named on this water, because an advisory is written per
  *               species. A PRESENCE FLOOR and never a roster -- "largemouth: one meal a month"
@@ -728,10 +743,41 @@ export const FISH_ADVISORIES_KEY = '_registry/sc_fish_advisories.json';
  *               placed it: "probably below the regulations entry in the smartplan output html...
  *               hey this is what you can keep... but if you keep them know this about them."
  *
- * A WATER WITH NO SPECIES IS NOT A GAP. Twenty of the sixty-two carry `water_level_notes` of
- * "No Restrictions" and an empty species list: the state sampled them and found nothing to warn
- * about. Reading that as missing data would turn a clean bill of health into a hole.
+ * A LIST BECAUSE SIX WATERS ARE IN BOTH BOOKS -- Hartwell, J. Strom Thurmond, Richard B Russell,
+ * Yonah, the Savannah River and the Savannah coastal zone. Each state sampled its own side, on
+ * its own dates, for its own chemicals, and Georgia's Hartwell entry says DO NOT EAT to striped
+ * and hybrid bass where South Carolina's does not. Keying one record per slug would have let
+ * whichever file loaded second delete the other's answer on exactly the waters where two states
+ * bothered to look.
+ *
+ * ONE FILE MISSING IS NOT A FAILURE. They are built by different scripts on different days, so
+ * this throws only when NEITHER is in the bucket -- and the error then names both scripts.
+ *
+ * A WATER WITH NO SPECIES IS NOT A GAP EITHER. Twenty of South Carolina's sixty-two carry
+ * `water_level_notes` of "No Restrictions" and an empty species list: the state sampled them and
+ * found nothing to warn about. Reading that as missing data would turn a clean bill of health
+ * into a hole.
  */
-export const fishAdvisories = passthroughLoader(
-  FISH_ADVISORIES_KEY, 'fetch_sc_fish_advisories.py',
-  (p) => p && p.waters, '"waters" object keyed by our slug');
+export async function fishAdvisories(env, opts = {}) {
+  const out = {};
+  const failed = [];
+  for (const load of _advisoryLoaders) {
+    let file = null;
+    try {
+      file = await load(env, opts);
+    } catch (err) {
+      failed.push(err && err.message ? err.message : String(err));
+      continue;
+    }
+    for (const [slug, rec] of Object.entries((file && file.waters) || {})) {
+      if (!rec) continue;
+      // The record's own answer wins where it has one -- Georgia repeats its source on every
+      // water and South Carolina states it once in the file.
+      const row = { ...rec };
+      if (!row.source && file.source) row.source = file.source;
+      (out[slug] || (out[slug] = [])).push(row);
+    }
+  }
+  if (failed.length === _advisoryLoaders.length) throw new Error(failed.join(' / '));
+  return out;
+}

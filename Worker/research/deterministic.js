@@ -393,17 +393,22 @@ async function handleResearchDeterministicFacts(request, env) {
     console.warn(`deterministic regs species floor failed for ${lakeName}: ${e && e.message}`);
   }
 
-  // ── the fish consumption advisory, as a second floor ──────────────────────────────────────
+  // ── the fish consumption advisories, as a second floor ────────────────────────────────────
   //
-  // SAME RULE AS THE REGULATIONS FLOOR ABOVE: it unions in underneath a roster and never
-  // replaces one. An advisory is written PER SPECIES, so the state naming a fish here is the
-  // state saying it sampled that fish in this water -- a presence floor, and nothing about what
-  // else is present.
+  // SAME RULE AS THE REGULATIONS FLOOR ABOVE: they union in underneath a roster and never
+  // replace one. An advisory is written PER SPECIES, so a state naming a fish here is the state
+  // saying it sampled that fish in this water -- a presence floor, and nothing about what else
+  // is present.
   //
   // It is the only source for Lake Robinson (Chesterfield Co, SC), 2,099 acres and 61 km from
   // Sumter, which has an SCDNR ramp, no per-lake SCDNR page, and no rule of its own in the book.
-  // Ryan found it. Across the 62 bound waters it adds 222 species names to 38 that already had
-  // a list, and closes three that had none.
+  // Ryan found it. Across South Carolina's 62 bound waters it adds 222 species names to 38 that
+  // already had a list and closes three that had none; Georgia's booklet adds 42 more waters,
+  // the state where the app has the most waters with no species source at all.
+  //
+  // TWO STATES CAN BOTH HAVE SAMPLED THIS WATER, so the record is a LIST and every one of them
+  // is read. Taking the first would drop Georgia's Hartwell rows, which are the ones that carry
+  // the DO NOT EAT.
   //
   // THE `do_not_eat` HALF IS NOT TOUCHED HERE. It is a warning about eating a fish, not a fact
   // about whether the fish is present, and it belongs beside the regulations in the plan rather
@@ -411,27 +416,29 @@ async function handleResearchDeterministicFacts(request, env) {
   try {
     const row = resolveRegistryRow(await lakeIndex(env), lakeName);
     const slug = row && row.slug;
-    const rec = slug ? (await fishAdvisories(env))[slug] : null;
+    const recs = slug ? ((await fishAdvisories(env))[slug] || []) : [];
     const floor = uniqueResearchSpecies(
-      ((rec && rec.species) || []).map((s) => s && s.species).filter(Boolean));
+      recs.flatMap((rec) => (rec.species || []).map((s) => s && s.species)).filter(Boolean));
     if (floor.length) {
       const before = new Set((profile.biology.predatorSpecies || [])
         .map((s) => String(s).toLowerCase()));
       profile.biology.predatorSpecies = uniqueResearchSpecies(
         [...(profile.biology.predatorSpecies || []), ...floor]);
       const added = floor.filter((s) => !before.has(s.toLowerCase()));
+      // The source is the file's own words, not a sentence typed here -- this water may be in
+      // one book, the other, or both, and the evidence has to say which.
+      const sources = [...new Set(recs.map((r) => r.source).filter(Boolean))];
       mergeEvidence('biology', 'predatorSpecies', buildEvidence([{
-        fact: `Named in South Carolina's fish consumption advisory for this water: `
-            + `${floor.join(', ')}`
+        fact: `Named in the fish consumption advisory for this water: ${floor.join(', ')}`
             + (added.length ? `; ${added.length} not otherwise recorded here`
                             : '; all already recorded'),
-        source: 'SC DES fish consumption advisories (SCDHEC Watershed Atlas)',
+        source: sources.join(' + ') || 'state fish consumption advisories',
         trust: 'OFFICIAL', sourceType: 'official_structured',
       }]));
     }
   } catch (e) {
-    // A water with no advisory is the normal case -- only 62 of 355 have one -- and
-    // fishAdvisories() throws when the object is not in the bucket. Neither is a failed profile.
+    // A water with no advisory is the normal case -- only 98 of 355 have one -- and
+    // fishAdvisories() throws when NEITHER object is in the bucket. Neither is a failed profile.
     console.warn(`deterministic advisory species floor failed for ${lakeName}: ${e && e.message}`);
   }
 

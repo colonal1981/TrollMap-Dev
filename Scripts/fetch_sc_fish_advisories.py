@@ -669,7 +669,12 @@ def build(raw, index, bounds_dir, registry='registry'):
                  'Built by fetch_sc_fish_advisories.py from the SCDHEC Watershed Atlas. '
                  'A species here is present because the state sampled it; the list is a FLOOR '
                  'and says nothing about what else is in the water.',
-        'source': SERVICE,
+        # THE LABEL, NOT THE ENDPOINT. The plan prints this sentence under the advisory table
+        # and a bare service URL is not a sentence. It matters now that Georgia publishes one
+        # too: six waters we ship are in both books, so the plan names its sources from the
+        # files rather than from a line of typed text that said South Carolina on all of them.
+        'source': 'SC DES fish consumption advisories (SCDHEC Watershed Atlas)',
+        'source_service': SERVICE,
         'confidence': 'name+geom -- the advisory polygon overlaps our boundary AND shares a '
                       'distinctive name token, and an advisory covering several of our waters '
                       'binds to all of them.',
