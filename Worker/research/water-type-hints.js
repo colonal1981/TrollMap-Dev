@@ -39,10 +39,27 @@
  *             Combahee, Great Pee Dee, Sampit, Chessie Creek, Black Mingo Creek
  *      8/58   Corps eHydro survey coverage
  *
- * AND WHAT WE DO NOT HAVE, which is why the hint does not ask for it: only 4 of 58 rivers have an
- * agency lake page in agency_lake_facts.json, and none carries a species list on its index row.
- * The agency harvest is lake-shaped. Asking a river agent to reconcile against an agency page it
- * will not be given is how a prompt invents one.
+ * SPECIES, CORRECTED 2026-09-03. This block first said "only 4 of 58 rivers have an agency page
+ * and none carries a species list", and that was a single source counted as the whole picture --
+ * nc_species_by_lake.json, 15 of 58. deterministic.js unions FIVE sources at request time, and
+ * measured across all five, 50 of 58 rivers (86%) have a species list. Rivers are better covered
+ * than lakes, which sit at 155 of 284 (55%):
+ *
+ *     32/58   ramp meta.species        28/58   regulations floor
+ *     15/58   NC WRC list               3/58   an agency page
+ *
+ * The agency harvest IS lake-shaped -- 73 lakes against 3 rivers -- so the hint still does not
+ * ask a river agent to reconcile against an agency page it will not be given. That part stands.
+ *
+ * THE EIGHT WITH NOTHING ARE A FEED SHAPE, NOT A RIVER PROBLEM. Only the `dnr` and `dnr_paddle`
+ * ramp buckets carry species (554/875 and 332/412 rows); `natl`, `ncpaws` and `osm` carry none in
+ * 2,814 rows between them. SC and GA publish species on their DNR ramps, NC and TN do not -- NC is
+ * covered by the WRC list instead, and TWRA publishes reservoir pages and no river pages, so all
+ * ten covered Tennessee waters are lakes and all five uncovered ones are rivers. The eight are
+ * Clinch, Holston, Nolichucky (two reaches) and Pigeon in TN, First Broad in NC, and Saluda (2)
+ * and Bates Old River in SC. WHAT_IS_ACTUALLY_MISSING_FOR_PREDATOR_SPECIES_2026-09-01.md already
+ * recorded that no agency publishes a per-water roster for most of these; the fisheries agent is
+ * the fallback there by design, not by omission.
  */
 
 /**
