@@ -519,6 +519,26 @@ def put(local, key, gz, dry, timeout):
         return False, 0, f"{type(exc).__name__}: {exc}"
 
 
+# Registries that ship exactly as built. filename -> what is lost when it is missing.
+#
+# Every one of these is written by a script that already emits only what the app needs, so there
+# is no slim_*() for them. Keep the reason text honest: it is printed when the file is absent and
+# it is the only thing telling a future run what the silence costs.
+PASSTHROUGH_REGISTRIES = {
+    "species_habitat_weights.json":
+        "structure weights fall back to the typed table in coastal-scoring.js; "
+        "build it with build_species_habitat_weights.py",
+    "enc_seabed_by_zone.json":
+        "no bottom composition on coastal water -- the substrate half of the habitat "
+        "weights has nothing to score against; build it with extract_enc_seabed.py",
+    "coastal_current_stations.json":
+        "the plan knows the tide and not the current; build it with "
+        "fetch_noaa_current_stations.py",
+    "ehydro_surveys_by_zone.json":
+        "no channel survey index; build it with fetch_ehydro_surveys.py",
+}
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -861,6 +881,23 @@ def main():
             print(f"!! {st.name} not found -- the fisheries agent writes spawning timing from "
                   f"recollection instead of the state's own number; build it with "
                   f"build_species_traits.py --go")
+
+        # ── PASS-THROUGH REGISTRIES ─────────────────────────────────────────────────────────
+        # ONE TABLE, NOT ANOTHER SEVEN BLOCKS. The species_traits note above ends "three lists,
+        # not one: here, verify_registry_r2.py's EXPECT, and Worker/registry.js". Four more
+        # files arrived on 2026-09-03 and copying that pattern would have meant twelve edits and
+        # three places to forget. These ship byte-for-byte -- no slimming, because each was
+        # written by a build script that already emitted only what it needs -- so a table is
+        # enough, and verify_registry_r2.py imports THIS table rather than restating it.
+        for _fname, _why in PASSTHROUGH_REGISTRIES.items():
+            _p = regdir / _fname
+            if _p.exists():
+                reg_jobs.append((str(_p), f"{args.prefix}_registry/{_fname}",
+                                 "_registry", _fname[:-5]))
+                print(f"{_fname[:8]:9} -> {args.prefix}_registry/{_fname} "
+                      f"({_p.stat().st_size/1024:.0f} KB before gzip)")
+            else:
+                print(f"!! {_fname} not found -- {_why}")
 
 
         # FULL POOL -- the elevation each Garmin chart is sounded to.

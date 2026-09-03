@@ -50,6 +50,7 @@ let _speciesTraitsAt = 0;
 
 /** Exposed for tests. Nothing in the Worker should need to call this. */
 export function _resetIndexCache() {
+  for (const reset of _extraResets) reset();
   _regs = null; _regsAt = 0;
   _pool = null; _poolAt = 0;
   _index = null; _indexAt = 0; _chain = null; _chainAt = 0; _dams = null; _damsAt = 0;
@@ -589,3 +590,105 @@ export function identityNamesForLake(index, lakeName) {
   const slug = row.slug || Object.keys(index).find((k) => index[k] === row);
   return identityNamesForRow(index, row, slug);
 }
+
+
+// ── REGISTRIES THAT ARE READ, NOT RESHAPED ────────────────────────────────────────────────────
+//
+// The loaders above are hand-rolled because each one validates something different about its
+// own object. These four do not: they are read whole, cached for the same hour, and handed over.
+// Written out longhand they would be four near-identical thirty-line functions and four more
+// pairs of module-level cache variables, which is how the "three lists, not one" note further up
+// this file came to be written.
+//
+// SAME CONTRACT AS THE OTHERS. The object changes when the PIPELINE uploads, not when the Worker
+// deploys. A missing object is an ERROR NAMING THE SCRIPT THAT WRITES IT, never an empty map --
+// an empty map reaches the plan as "this water has none", which is a different and worse claim
+// than "nobody built it yet".
+
+const _extraResets = [];
+
+/**
+ * Build a loader for a registry object that ships as-is.
+ *
+ * @param {string} key      the R2 key, '_registry/<name>.json'
+ * @param {string} script   the pipeline script that writes it, named in the error
+ * @param {function} pick   payload -> the part callers want; returns null/undefined to reject
+ * @param {string} shape    what `pick` was looking for, for the error message
+ */
+function passthroughLoader(key, script, pick, shape) {
+  let cached = null;
+  let cachedAt = 0;
+  _extraResets.push(() => { cached = null; cachedAt = 0; });
+  return async function load(env, opts = {}) {
+    const now = Number.isFinite(opts.now) ? opts.now : Date.now();
+    if (!opts.fresh && cached && now - cachedAt < INDEX_TTL_S * 1000) return cached;
+    const bucket = (env && env.R2_TROLLMAP_CHARTPACKS) || opts.bucket;
+    if (!bucket) throw new Error('R2_TROLLMAP_CHARTPACKS is not bound to this Worker');
+    const obj = await bucket.get(key);
+    if (!obj) {
+      throw new Error(`${key} is not in the bucket -- run ${script}, then upload_garmin_to_r2.py`);
+    }
+    // r2Text, NOT obj.text(). A gzipped object comes back mangled from text() alone.
+    const parsed = JSON.parse(await r2Text(obj));
+    const got = pick(parsed);
+    if (!got || typeof got !== 'object' || Array.isArray(got)) {
+      throw new Error(`${key} has no ${shape}`);
+    }
+    cached = got;
+    cachedAt = now;
+    return got;
+  };
+}
+
+export const SPECIES_HABITAT_KEY = '_registry/species_habitat_weights.json';
+export const ENC_SEABED_KEY = '_registry/enc_seabed_by_zone.json';
+export const COASTAL_CURRENTS_KEY = '_registry/coastal_current_stations.json';
+export const EHYDRO_SURVEYS_KEY = '_registry/ehydro_surveys_by_zone.json';
+
+/**
+ * Species x habitat weights, from the South Atlantic habitat matrix.
+ *
+ * Keyed by OUR canonical species name; each record carries `structures` and `substrates`, each
+ * keyed by life stage -- adult, spawning, juvenile, larva. The two are separate on purpose:
+ * `structures` name classes the ranker scores today, `substrates` name bottom composition, which
+ * only became scoreable when enc_seabed_by_zone.json arrived.
+ *
+ * LIFE STAGE IS NOT DECORATION. Red drum rate marsh Very High as juveniles and Medium as adults,
+ * and spawning adults leave for the channel edge. A caller that takes the strongest number
+ * across stages makes every adult weight too strong.
+ */
+export const speciesHabitatWeights = passthroughLoader(
+  SPECIES_HABITAT_KEY, 'build_species_habitat_weights.py',
+  (p) => p && p.species, '"species" object keyed by canonical species name');
+
+/**
+ * Bottom composition and charted structure per coastal zone, out of the NOAA ENC cells.
+ *
+ * Keyed by zone slug. `bySubstrate` uses the same vocabulary as the substrate half of
+ * speciesHabitatWeights, which is what lets a species that wants soft bottom be told where soft
+ * bottom is. `blocksUs` is the restriction subset that changes a kayak's day.
+ */
+export const encSeabed = passthroughLoader(
+  ENC_SEABED_KEY, 'extract_enc_seabed.py',
+  (p) => p && p.zones, '"zones" object keyed by zone slug');
+
+/**
+ * NOAA tidal-current stations bound to coastal zones.
+ *
+ * The STATION, not its predictions -- predictions go stale the next day and are fetched live,
+ * exactly as the tide station works. Six of twenty-two zones have none, and that is reported as
+ * none rather than filled from a neighbour.
+ */
+export const coastalCurrentStations = passthroughLoader(
+  COASTAL_CURRENTS_KEY, 'fetch_noaa_current_stations.py',
+  (p) => p && p.zones, '"zones" object keyed by zone slug');
+
+/**
+ * USACE channel surveys covering each coastal zone and river, as an index.
+ *
+ * The soundings themselves are a separate download per survey; this says what exists, when it
+ * was flown, and where its data lives.
+ */
+export const ehydroSurveys = passthroughLoader(
+  EHYDRO_SURVEYS_KEY, 'fetch_ehydro_surveys.py',
+  (p) => p && p.waters, '"waters" object keyed by slug');
