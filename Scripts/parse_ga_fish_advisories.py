@@ -1003,11 +1003,15 @@ def main():
             for n, books in x['matched'].items():
                 print('        matched %-22s from %s' % (n, ', '.join(books)))
     if review['bound_on_one_word']:
-        print('\n?? %d binding(s) rest on ONE shared word and nothing else. Worth an eye:'
+        # NOT A PROBLEM LIST, and it was read as one the first time it printed because it sits
+        # under two that are. These are bound; this is the thinnest evidence the binder accepts,
+        # shown so it can be spot-checked.
+        print('\n-- %d of those bindings ARE BOUND on ONE shared word, nothing wrong with them.'
               % len(review['bound_on_one_word']))
+        print('   Listed because one word is the least this binder will accept -- spot-check:')
         for x in review['bound_on_one_word']:
-            print('   p%-3d %-40s -> %-34s on "%s"'
-                  % (x['page'], x['book_water'][:38], x['ours'][:32], x['word']))
+            print('      p%-3d %-38s -> %-34s on "%s"'
+                  % (x['page'], x['book_water'][:36], x['ours'][:32], x['word']))
     if review['spelled_differently']:
         print('\n?? %d water(s) we ship under a name ONE LETTER different. NOT BOUND -- your call:'
               % len(review['spelled_differently']))
