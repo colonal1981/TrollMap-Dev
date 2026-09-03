@@ -24,7 +24,26 @@ M = importlib.util.module_from_spec(spec)
 sys.modules['fsa'] = M
 spec.loader.exec_module(M)
 
-# Verbatim from the map popup, 2026-09-03.
+# THE REAL BYTES, pulled from the service 2026-09-03 and pasted verbatim. Ryan asked the question
+# that got them -- "why does the map view show the full species list but the api doesn't? the map
+# is pulled from the api?" -- and the answer was that the API always had all six and the reader in
+# front of me had dropped one. The field is HTML. The parser was written against a paraphrase of
+# it and would have failed on all 114 features.
+RAW_HTML = (
+    '<strong>Bass- Largemouth</strong><ul style="list-style: none; margin: 0;">'
+    '<li>One meal per month</ul>'
+    '<strong>Bluegill</strong><ul style="list-style: none; margin: 0;">'
+    '<li>One meal per week</ul>'
+    '<strong>Bowfin (Mudfish)</strong><ul style="list-style: none; margin: 0;">'
+    '<li>DO NOT EAT ANY</ul>'
+    '<strong>Chain Pickerel</strong><ul style="list-style: none; margin: 0;">'
+    '<li>One meal per week</ul>'
+    '<strong>Sunfish- Redear</strong><ul style="list-style: none; margin: 0;">'
+    '<li>No Restrictions</ul>'
+    '<strong>Warmouth</strong><ul style="list-style: none; margin: 0;">'
+    '<li>One meal per week</ul>')
+
+# The same water as the map popup laid it out. Kept as a fallback shape, not the real one.
 POPUP = """Bass- Largemouth
 One meal per month
 Bluegill
@@ -74,33 +93,48 @@ class TheNames(unittest.TestCase):
 
 
 class TheRestrictionText(unittest.TestCase):
+    def test_THE_REAL_HTML_READS_ALL_SIX(self):
+        # The calibration target. Six species, in publication order, off the actual bytes.
+        pairs, unparsed, notes = M.parse_restrictions(RAW_HTML)
+        self.assertEqual([(p['species'], p['advice']) for p in pairs], EXPECTED)
+        self.assertEqual(unparsed, [])
+        self.assertEqual(notes, [])
+
+    def test_an_advice_phrase_with_no_species_is_not_a_fish(self):
+        # 'J. Robinson Lake' publishes exactly this and nothing else. A species called
+        # "No Restrictions" would be a fish that does not exist, handed to a plan.
+        pairs, unparsed, notes = M.parse_restrictions('<strong>No Restrictions</strong>')
+        self.assertEqual(pairs, [])
+        self.assertEqual(notes, ['No Restrictions'])
+        self.assertEqual(unparsed, [])
+
     def test_the_popup_shape_reads_all_six(self):
-        pairs, unparsed = M.parse_restrictions(POPUP)
+        pairs, unparsed, _ = M.parse_restrictions(POPUP)
         self.assertEqual([(p['species'], p['advice']) for p in pairs], EXPECTED)
         self.assertEqual(unparsed, [])
 
     def test_the_inline_shape_reads_the_same_six(self):
-        pairs, unparsed = M.parse_restrictions(INLINE)
+        pairs, unparsed, _ = M.parse_restrictions(INLINE)
         self.assertEqual([(p['species'], p['advice']) for p in pairs], EXPECTED)
         self.assertEqual(unparsed, [])
 
     def test_what_was_published_is_kept_beside_what_we_call_it(self):
         # The state's own words have to survive, or nothing can be checked against the page.
-        pairs, _ = M.parse_restrictions(POPUP)
+        pairs, _, _ = M.parse_restrictions(RAW_HTML)
         by = {p['species']: p['published_as'] for p in pairs}
         self.assertEqual(by['Largemouth Bass'], 'Bass- Largemouth')
         self.assertEqual(by['Redear Sunfish'], 'Sunfish- Redear')
 
     def test_text_the_parser_cannot_read_is_returned_not_dropped(self):
         # THE WHOLE POINT. A line nobody anticipated must show up in the run, not vanish.
-        pairs, unparsed = M.parse_restrictions(
+        pairs, unparsed, _ = M.parse_restrictions(
             'Bluegill\nOne meal per week\nsome sentence the state added later')
         self.assertEqual([p['species'] for p in pairs], ['Bluegill'])
         self.assertEqual(unparsed, ['some sentence the state added later'])
 
     def test_empty_is_empty_and_never_a_throw(self):
         for v in (None, '', '   '):
-            self.assertEqual(M.parse_restrictions(v), ([], []))
+            self.assertEqual(M.parse_restrictions(v), ([], [], []))
 
     def test_do_not_eat_is_its_own_question(self):
         self.assertTrue(M.do_not_eat('DO NOT EAT ANY'))
@@ -112,7 +146,7 @@ class TheRestrictionText(unittest.TestCase):
     def test_no_restrictions_is_still_a_species_that_is_present(self):
         # A fish with no restriction is a fish the state sampled HERE. Dropping it because the
         # advice is boring would throw away the presence fact, which is the point of the source.
-        pairs, _ = M.parse_restrictions(POPUP)
+        pairs, _, _ = M.parse_restrictions(RAW_HTML)
         self.assertIn('Redear Sunfish', [p['species'] for p in pairs])
 
 
@@ -210,9 +244,7 @@ class TheBinding(unittest.TestCase):
             feats = [{'attributes': {
                 'NAME': 'Lake H.B. Robinson', 'ADVISORY': 'Mercury', 'Basin': 'PeeDee',
                 'TYPE': 'Lake/Pond',
-                'Waterbody_URL': 'Bass- Largemouth: One meal per month; '
-                                 'Bowfin (Mudfish): DO NOT EAT ANY; '
-                                 'Sunfish- Redear: No Restrictions'},
+                'Waterbody_URL': RAW_HTML},
                 'geometry': {'rings': [advisory_ring]}}]
             return M.build({'2': feats, '3': []}, index, bd)
 
@@ -221,7 +253,7 @@ class TheBinding(unittest.TestCase):
         self.assertEqual(list(out['waters']), ['lake_robinson'])
         rec = out['waters']['lake_robinson']
         self.assertEqual([s['species'] for s in rec['species']],
-                         ['Largemouth Bass', 'Bowfin (Mudfish)', 'Redear Sunfish'])
+                         [e[0] for e in EXPECTED])
         self.assertEqual(rec['do_not_eat'], ['Bowfin (Mudfish)'])
         self.assertEqual(rec['advisories'][0]['confidence'], 'name+geom')
         self.assertEqual(rec['advisories'][0]['matched_on']['tokens'], ['robinson'])

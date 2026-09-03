@@ -142,8 +142,8 @@ def fetch_layer(layer_id, want_geometry=True):
 
 # "One meal per week", "DO NOT EAT ANY", "No Restrictions", "One meal per month".
 ADVICE = re.compile(
-    r'(do\s*not\s*eat[a-z ]*|no\s+restrictions?|one\s+meal\s+per\s+\w+|'
-    r'\d+\s+meals?\s+per\s+\w+)', re.I)
+    r'\s*(?:do\s*not\s*eat[a-z ]*|no\s+restrictions?|one\s+meal\s+per\s+\w+|'
+    r'\d+\s+meals?\s+per\s+\w+)\s*', re.I)
 
 
 def uninvert(name):
@@ -160,20 +160,69 @@ def uninvert(name):
     return s
 
 
-def parse_restrictions(text):
-    """[{species, advice}], plus whatever could not be read.
+# The field is HTML. Measured, not guessed -- the raw bytes for Lake H.B. Robinson, 2026-09-03:
+#
+#   <strong>Bass- Largemouth</strong><ul style="list-style: none; margin: 0;">
+#   <li>One meal per month</ul><strong>Bluegill</strong><ul ...><li>One meal per week</ul>...
+#
+# The <li> is never closed; the </ul> ends it.
+HTML_PAIR = re.compile(
+    r'<strong[^>]*>\s*(?P<species>.*?)\s*</strong>\s*'
+    r'(?:<ul[^>]*>\s*(?:<li[^>]*>)?\s*(?P<advice>.*?)\s*</(?:li|ul)>)?',
+    re.I | re.S)
+TAG = re.compile(r'<[^>]+>')
 
-    TWO SHAPES ARE ACCEPTED because two were shown to me and I could not see the bytes:
-        'Bass- Largemouth: One meal per month; Bowfin (Mudfish): DO NOT EAT ANY'
-        'Bass- Largemouth\\nOne meal per month\\nBluegill\\nOne meal per week'
-    Anything that is neither is returned in `unparsed` rather than dropped.
+
+def strip_tags(s):
+    return re.sub(r'\s+', ' ', TAG.sub(' ', str(s or ''))).strip()
+
+
+def parse_restrictions(text):
+    """[{species, advice, published_as}], plus what could not be read, plus water-level notes.
+
+    THE SHAPE WAS GUESSED ONCE AND THE GUESS WAS WRONG, WHICH IS WHY THIS READS THREE.
+
+    Nothing in this project's sandbox has outbound network; only a summarising reader reaches
+    external hosts, and it returns its RENDERING rather than the bytes. Written from that
+    rendering, this function first accepted a colon/semicolon string and alternating plain-text
+    lines. The field is neither -- it is HTML, with no colon and no newline anywhere in it, so
+    the first version would have failed on all 114 features and Ryan would have run it for
+    nothing. Ryan asked the question that got the bytes: "the map is pulled from the api?"
+
+    HTML is the real shape and is tried first. The two plain-text shapes are kept underneath
+    because the column is 4,000 characters of free text and a state can change how it fills it;
+    they cost two regexes and they cannot fire against HTML.
+
+    AN ADVICE PHRASE WITH NO SPECIES IS NOT A SPECIES. 'J. Robinson Lake' publishes exactly
+    `<strong>No Restrictions</strong>` and nothing else. Reading that as a fish called "No
+    Restrictions" would put a species that does not exist into a plan.
     """
     raw = str(text or '').strip()
     if not raw:
-        return [], []
-    pairs, unparsed = [], []
+        return [], [], []
+    pairs, unparsed, notes = [], [], []
 
-    # Shape A: species and advice separated by a colon, records by ; | or newline.
+    if '<' in raw and '>' in raw:
+        seen_end = 0
+        for m in HTML_PAIR.finditer(raw):
+            sp = strip_tags(m.group('species'))
+            ad = strip_tags(m.group('advice')) if m.group('advice') else ''
+            if not sp:
+                continue
+            if not ad and ADVICE.fullmatch(sp):
+                notes.append(sp)          # a whole-water statement, not a fish
+            elif ad:
+                pairs.append({'species': uninvert(sp), 'advice': ad, 'published_as': sp})
+            else:
+                unparsed.append(sp)
+            seen_end = m.end()
+        leftover = strip_tags(raw[seen_end:])
+        if leftover:
+            unparsed.append(leftover)
+        if pairs or notes or unparsed:
+            return pairs, unparsed, notes
+
+    # Plain-text fallbacks. Neither can fire against the HTML above.
     if ':' in raw:
         for chunk in re.split(r'[;|\n\r]+', raw):
             c = chunk.strip()
@@ -187,9 +236,8 @@ def parse_restrictions(text):
                     continue
             unparsed.append(c)
         if pairs:
-            return pairs, unparsed
+            return pairs, unparsed, notes
 
-    # Shape B: alternating lines -- a species line, then its advice line.
     lines = [l.strip() for l in re.split(r'[\n\r]+', raw) if l.strip()]
     i = 0
     while i < len(lines):
@@ -201,7 +249,7 @@ def parse_restrictions(text):
             continue
         unparsed.append(sp)
         i += 1
-    return pairs, unparsed
+    return pairs, unparsed, notes
 
 
 def do_not_eat(advice):
@@ -344,7 +392,7 @@ def build(raw, index, bounds_dir):
         all_unbound += [dict(u, layer=kind) for u in unbound]
         for slug, hit in bound.items():
             a = hit['attributes']
-            pairs, unparsed = parse_restrictions(a.get('Waterbody_URL'))
+            pairs, unparsed, notes = parse_restrictions(a.get('Waterbody_URL'))
             if unparsed:
                 all_unparsed.append({'slug': slug, 'name': a.get('NAME'), 'text': unparsed})
             rec = waters.setdefault(slug, {
@@ -355,6 +403,11 @@ def build(raw, index, bounds_dir):
                          'state sampled it here; it says nothing about what else is present, and '
                          'it must union in underneath a roster rather than replace one.',
             })
+            if notes:
+                rec.setdefault('water_level_notes', [])
+                for n in notes:
+                    if n not in rec['water_level_notes']:
+                        rec['water_level_notes'].append(n)
             rec['advisories'].append({
                 'name': a.get('NAME'), 'advisory': a.get('ADVISORY'), 'basin': a.get('Basin'),
                 'type': a.get('TYPE'), 'restrictions_text': a.get('Waterbody_URL'),
