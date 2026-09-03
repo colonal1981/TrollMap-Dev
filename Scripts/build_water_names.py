@@ -51,6 +51,25 @@ WHAT IT REFUSES TO WRITE, and why each rule is here
     test uses 3DHP's own `feature_type` on the row, so a water that IS a river or a canal still
     accepts a river name, and no list of exceptions is needed.
   * a name shorter than four characters.
+  * A NAME CARRIED BY A RAMP THAT IS NOT ON THAT WATER. The record has always held `lat` and
+    `lon` beside the `wb` this file reads -- all 2,979 of them do -- and until 2026-09-03
+    nothing looked at them, so a ramp 475 m away donated its name exactly as readily as one on
+    the bank. That is how `murder_creek_lake` came to answer to Dairy Lake, Lake Bennett AND
+    Lake Margery: three separate ponds at the Charlie Elliott Wildlife Center whose ramps all
+    bound to one 83-acre polygon. Ryan checked the whole cluster by eye and settled it -- Murder
+    Creek Lake IS also Bennett Lake, and Lake Margery is BOYLE MURDER LAKE, the pond next door.
+
+    THE DISTANCE IS MEASURED, NOT PICKED. Across the 180 (water, name) pairs this file keeps,
+    ranked by the closest ramp that donates each name, there is an empty band: every correct
+    alias is within 108 m (Randy Poynter Lake on Black Shoals Reservoir, the furthest), and
+    every wrong one starts at 133 m (Horseshoe 3 Lake on Horseshoe Four). Ten pairs sit above
+    it and all ten are wrong -- six of them confirmed by Ryan on the map, the other four being
+    Douglas Reservoir on the Holston 19 km away, Lake Louise on Hartwell, a tailrace on Lake
+    James, and Lake Woody on Sands Pond. So the gate sits at 120 m, inside the empty band.
+
+    Distance is to the whole boundary, every part of it, NOT to the largest ring. Measuring
+    against the biggest part alone put ramps on the far arms of Thurmond 25 km from "their own"
+    lake and would have thrown away Clarks Hill Lake, which is that reservoir's real name.
 
 Output `registry/_feed_names.json` is GENERATED -- leading underscore, same as every other
 derived registry file. Do not hand-edit it. A genuine naming disagreement that no feed carries
@@ -71,6 +90,8 @@ FEEDS = ('dnr_ramps_by_lake.json', 'natl_ramps_by_lake.json',
          'osm_ramps_by_lake.json', 'dnr_paddle_by_lake.json',
          'ncpaws_access_by_lake.json')
 MIN_LEN = 4
+# Metres from the water's boundary. See the docstring: the empty band is 108 m to 133 m.
+ON_WATER_M = 120.0
 # Whole trailing word, never a substring -- "Creekside Lake" is a lake.
 STREAMISH = re.compile(r'\b(creek|branch|river|run|fork|brook|slough|canal|ditch|prong|swamp)$',
                        re.I)
@@ -83,6 +104,43 @@ def norm(s):
     s = re.sub(r'\([^)]*\)', ' ', s or '')
     s = re.sub(r',\s*[A-Za-z]{2}(\s*/\s*[A-Za-z]{2})*\s*$', ' ', s)
     return re.sub(r'[^a-z0-9]+', ' ', s.lower()).strip()
+
+
+def load_boundaries(bdir, slugs):
+    """{slug: geometry} for the slugs offered a name, with EVERY part unioned.
+
+    Returns {} and says so when shapely is missing, which turns the distance gate off rather
+    than failing the build -- the other three guards still run.
+    """
+    try:
+        from shapely.geometry import shape
+        from shapely.ops import unary_union
+    except ImportError:
+        print('  !! shapely is not installed -- the on-water gate is OFF for this run')
+        return {}
+    out = {}
+    for s in sorted(slugs):
+        p = os.path.join(bdir, '%s.geojson' % s)
+        if not os.path.exists(p):
+            continue
+        try:
+            g = json.load(open(p, encoding='utf-8'))
+            feats = g.get('features') or [g]
+            gs = [shape(f['geometry']) for f in feats if f.get('geometry')]
+            if gs:
+                out[s] = unary_union(gs)
+        except Exception as exc:
+            print('  !! %s unreadable (%s) -- not gated' % (os.path.basename(p),
+                                                            type(exc).__name__))
+    return out
+
+
+def metres_off(geom, lat, lon):
+    """Distance from a ramp to the water's boundary, or None when it cannot be measured."""
+    if geom is None or lat is None or lon is None:
+        return None
+    from shapely.geometry import Point
+    return geom.distance(Point(lon, lat)) * 111000.0
 
 
 def load_index(reg):
@@ -99,6 +157,8 @@ def main():
     ap.add_argument('--registry', required=True)
     ap.add_argument('--out', help='defaults to <registry>/_feed_names.json')
     ap.add_argument('--go', action='store_true', help='actually write. Default is a dry run.')
+    ap.add_argument('--boundaries', default=None,
+                    help='folder of <slug>.geojson; defaults to <registry>/boundaries')
     a = ap.parse_args()
     reg = a.registry
     out_fp = a.out or os.path.join(reg, '_feed_names.json')
@@ -118,7 +178,8 @@ def main():
             if n:
                 owner.setdefault(n, set()).add(s)
 
-    found = defaultdict(set)
+    # Read once to learn which slugs are offered anything, so only those boundaries load.
+    offers = []
     seen_feeds = 0
     for f in FEEDS:
         p = os.path.join(reg, f)
@@ -130,16 +191,43 @@ def main():
         for slug, recs in d.items():
             for rec in recs or []:
                 wb = (rec.get('wb') or '').strip()
-                if not wb:
-                    continue
-                parts = [x.strip() for x in re.split(r'\s+-\s+', wb)]
-                # LAST segment only. The earlier ones are the tributary the ramp is on.
-                cands = [parts[-1], wb] if len(parts) > 1 else [wb]
-                for cand in cands:
-                    if len(cand) >= MIN_LEN:
-                        found[slug].add(cand)
+                if wb:
+                    offers.append((slug, wb, rec.get('lat'), rec.get('lon')))
     if not seen_feeds:
         sys.exit('no ramp files found in %s -- run the ramp builders first' % reg)
+
+    bdir = a.boundaries or os.path.join(reg, 'boundaries')
+    geoms = load_boundaries(bdir, {s for s, _, _, _ in offers if s in idx})
+
+    found = defaultdict(set)
+    closest = {}                      # (slug, name) -> metres from the nearest ramp saying it
+    off_water = 0
+    no_shape = set()
+    for slug, wb, lat, lon in offers:
+        d = metres_off(geoms.get(slug), lat, lon)
+        if d is None:
+            if slug in idx and geoms:
+                no_shape.add(slug)
+        elif d > ON_WATER_M:
+            # The ramp that carries this name is not on this water. Its name is about the
+            # water it IS on, and that water is somebody else's row or nobody's.
+            off_water += 1
+            continue
+        parts = [x.strip() for x in re.split(r'\s+-\s+', wb)]
+        # LAST segment only. The earlier ones are the tributary the ramp is on.
+        cands = [parts[-1], wb] if len(parts) > 1 else [wb]
+        for cand in cands:
+            if len(cand) >= MIN_LEN:
+                found[slug].add(cand)
+                k = (slug, cand)
+                if d is not None and d < closest.get(k, 9e9):
+                    closest[k] = d
+    if off_water:
+        print('  gate: %d ramp record(s) named a water they are more than %.0f m from'
+              % (off_water, ON_WATER_M))
+    if no_shape:
+        print('  gate: %d shipped slug(s) have no boundary here -- NOT gated: %s'
+              % (len(no_shape), ', '.join(sorted(no_shape)[:6])))
 
     keep, why = {}, defaultdict(int)
     for slug, cands in found.items():
@@ -158,8 +246,9 @@ def main():
                 why['stream name offered to a lake'] += 1
             else:
                 keep.setdefault(slug, []).append(cand)
-                owner.setdefault(n, set()).add(slug)   # first claim wins, deterministically
+                owner.setdefault(n, set()).add(slug)
 
+    keep = {s: sorted(set(v)) for s, v in keep.items()}
     n_names = sum(len(v) for v in keep.values())
     print('%d feed file(s); %d slugs offered %d candidate name(s)'
           % (seen_feeds, len(found), sum(len(v) for v in found.values())))
