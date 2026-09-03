@@ -86,15 +86,33 @@ check('all five of SC_INSHORE_ROSTER resolve',
                                        'Southern Flounder', 'Black Drum', 'Sheepshead')),
       ['Black Drum', 'Red Drum (Redfish)', 'Sheepshead', 'Southern Flounder',
        'Speckled Trout (Spotted Seatrout)'])
-# Not a bug: RESEARCH_SPECIES_CANON folds southern, summer and gulf flounder into one key,
-# because SC's regulations manage them as one group. It IS why the source has to be the
-# filename -- otherwise two rows about two different fish are indistinguishable.
-check('the flounders fold onto one key, as the canon says',
+# RESEARCH_SPECIES_CANON folds southern, summer and gulf flounder into one key, because SC's
+# regulations manage them as one group. SCDNR publishes them separately and they are not the same
+# fish -- Paralichthys lethostigma against P. dentatus.
+check('both flounder pages resolve to the one key',
       sorted(keyed.get('Southern Flounder') or []),
       ['southernflounder.html', 'summerflounder.html'])
-check('and their binomials differ, which is what makes the source matter',
+check('and their binomials differ, so the two rows are not interchangeable',
       read['southernflounder.html']['scientific'] != read['summerflounder.html']['scientific'],
       True)
+
+print('\nsc_marine_fold() -- Ryan: "lets just go with southern"')
+pairs = sorted(read.items())
+kept, said = T.sc_marine_fold(pairs, canon)
+names = [f for f, _e in kept]
+check('summer flounder is dropped', 'summerflounder.html' in names, False)
+check('southern flounder is kept', 'southernflounder.html' in names, True)
+check('it says what it did', any('summerflounder.html' in s for s in said), True)
+check('and nothing else was folded', len(said), 1)
+check('every other page survives', len(names), len(pairs) - 1)
+# The rule is "keep the page that IS the canonical name", not a list of filenames. With no page
+# carrying the canonical spelling it must keep BOTH rather than pick one, because a rule that did
+# not actually decide anything must not be allowed to delete.
+fake = [('a.html', {'name': 'Summer flounder', 'sections': {'x': 'y'}}),
+        ('b.html', {'name': 'Gulf Flounder', 'sections': {'x': 'y'}})]
+k2, s2 = T.sc_marine_fold(fake, canon)
+check('with no page carrying the canonical name, both are kept', len(k2), 2)
+check('and the fold is reported rather than silent', bool(s2), True)
 check('shellfish carry no canonical name and are simply not written',
       [f for f in ('bluecrab.html', 'easternoyster.html', 'whiteshrimp.html')
        if canon.get(T.norm_species(read[f]['name']))], [])

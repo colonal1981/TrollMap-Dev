@@ -605,6 +605,47 @@ def read_sc_marine_page(path):
             out.setdefault(lab, text)
     return {'name': name, 'scientific': sci, 'sections': out, 'page': None}
 
+def sc_marine_fold(pages, canon):
+    """Where several pages land on one canonical name, keep the page that IS that name.
+
+    RESEARCH_SPECIES_CANON folds southern, summer and gulf flounder into `Southern Flounder`,
+    which is how South Carolina's regulations manage them. SCDNR publishes southernflounder.html
+    and summerflounder.html separately -- different fish, different binomials, Paralichthys
+    lethostigma and P. dentatus -- and both resolve to that one key, so the traits object carried
+    two rows and a plan asking about flounder could be handed either.
+
+    Ryan, 2026-09-03: *"lets just go with southern."*
+
+    THE RULE IS DERIVED, NOT A LIST. The surviving page is the one whose own name normalises to
+    the canonical name itself rather than to one of its aliases -- "Southern Flounder" is the key,
+    "Summer flounder" is an alias of it. Nothing is typed, so the day SCDNR adds a gulf flounder
+    page it folds the same way without anybody remembering this. If NO page carries the canonical
+    spelling, every one is kept and the fold is printed, because dropping on a rule that did not
+    actually decide anything is worse than a duplicate somebody can see.
+
+    -> (pages to keep, lines to print)
+    """
+    by_key = collections.OrderedDict()
+    for fname, e in pages:
+        by_key.setdefault(canon.get(norm_species(e['name'])), []).append((fname, e))
+    keep, said = [], []
+    for key, group in by_key.items():
+        if key is None or len(group) == 1:
+            keep += group
+            continue
+        exact = [(f, e) for f, e in group if norm_species(e['name']) == norm_species(key)]
+        if len(exact) == 1:
+            keep += exact
+            said.append('%s: kept %s, dropped %s -- the app folds them onto one name'
+                        % (key, exact[0][0],
+                           ', '.join(f for f, _e in group if f != exact[0][0])))
+        else:
+            keep += group
+            said.append('%s: %d pages fold onto this name and none of them IS it (%s) -- all kept'
+                        % (key, len(group), ', '.join(f for f, _e in group)))
+    return keep, said
+
+
 def nc_page_head(t):
     """`Tips; Places to Fish` and `Tips / Places to Fish` are one heading."""
     t = re.sub(r'\s+', ' ', str(t or '')).strip(' :')
@@ -824,8 +865,11 @@ def main():
                if e and e['sections']]
         print('SCDNR  %-42s %d saltwater species page(s)'
               % (os.path.join(SC_MARINE_DIR, '*.html'), len(got)))
+        got, folded = sc_marine_fold(got, canon)
         for fname, g in got:
             entries.append(('SC', 'SCDNR', fname, SC_MARINE_USEFUL, g))
+        for line in folded:
+            print('       %s' % line)
     else:
         print('!! no pages under %s -- no SALTWATER species traits, so the five in '
               'SC_INSHORE_ROSTER reach a plan with a name and nothing behind it. Run '
