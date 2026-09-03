@@ -11,6 +11,10 @@
  * app offers with no rules behind it is a plan on closed water reported legal, which is the
  * failure that whole file exists to prevent.
  *
+ * They left this file on 2026-09-01 and Scripts/coastal_catalog.py on 2026-09-03, and for those
+ * two days the source of truth said 16 while the generated file said 13. That story, and why the
+ * region mask does not overrule it, is in the catalog's own docstring.
+ *
  * GENERATED FILE — DO NOT EDIT BY HAND.
  * Source of truth: Scripts/coastal_catalog.py
  * Regenerate:      python3 Scripts/gen_coastal_zones_js.py
@@ -273,7 +277,7 @@ export function coastalZonesByState(stateCode) {
     .map((slug) => COASTAL_ZONES[slug]);
 }
 
-/** Display names grouped for the lake selector: { SC: [...], GA: [...], NC: [...] } */
+/** Display names grouped for the lake selector: { SC: [...], GA: [...] } */
 export function coastalNamesByState() {
   const out = { SC: [], GA: [] };
   for (const slug of COASTAL_SLUGS) {

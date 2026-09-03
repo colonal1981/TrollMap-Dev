@@ -44,8 +44,16 @@ describe('coastal-zones.js — generated catalog stays in sync with coastal_cata
   // they can select water i dont want them to select". Measured before cutting: no river in the
   // index has a ramp within 25 km of any of the six, so nothing depends on them for the NC/GA
   // salt test in make_river_boundaries.py.
-  it('has all 16 coastal zones', () => {
-    expect(COASTAL_SLUGS).toHaveLength(16);
+  //
+  // 13 since 2026-09-03, and THIS ASSERTION WAS THE STALE SIDE for two days. a4bfd02 cut the
+  // three remaining NC zones out of the app on 2026-09-01 and did not touch coastal_catalog.py,
+  // so the generator's source said 16, its output said 13, and the number here said 16 -- which
+  // made the failure read like the app had lost three zones rather than like the catalog had
+  // kept three. The staleness check above is the one that says which side is wrong; this line
+  // only says how many there should be, and it is worth having precisely because a regeneration
+  // that silently drops a zone leaves both files agreeing with each other and nothing else.
+  it('has all 13 coastal zones', () => {
+    expect(COASTAL_SLUGS).toHaveLength(13);
   });
 
   it('every slug is prefixed coast_ so isCoastalKey() detection is reliable', () => {
@@ -69,7 +77,9 @@ describe('coastal-zones.js — generated catalog stays in sync with coastal_cata
       const z = COASTAL_ZONES[slug];
       expect(z.slug, `${slug}.slug`).toBe(slug);
       expect(z.name, `${slug}.name`).toBeTruthy();
-      expect(['SC', 'GA', 'NC'], `${slug}.state`).toContain(z.state);
+      // NC left on 2026-09-01 and is not coming back: Ryan, 2026-09-03, "But keep NC coastal
+      // cut... i do not want it back in". An NC zone reaching this file again is a bug.
+      expect(['SC', 'GA'], `${slug}.state`).toContain(z.state);
       expect(z.coastal).toBe(true);
 
       // NOAA CO-OPS station IDs are 7 digits.
@@ -142,9 +152,15 @@ describe('coastal-zones.js — generated catalog stays in sync with coastal_cata
       const st = COASTAL_ZONES[slug].tideStation;
       (byStation[st] ||= []).push(slug);
     }
-    // Adjacent zones legitimately share a station; just assert we have a
-    // sane spread rather than every zone collapsing onto one station.
-    expect(Object.keys(byStation).length).toBeGreaterThanOrEqual(8);
+    // Adjacent zones legitimately share a station; the thing worth refusing is every zone
+    // collapsing onto one, which would mean a tide panel showing the same water everywhere.
+    // This used to read `>= 8` and started failing the moment the catalog went 16 -> 13 with
+    // six stations left -- a number that tracked the zone count rather than the property it
+    // was there to protect. Stated as the property instead: more than one station, and no
+    // single station speaking for more than half the coast.
+    expect(Object.keys(byStation).length).toBeGreaterThan(1);
+    const busiest = Math.max(...Object.values(byStation).map((z) => z.length));
+    expect(busiest <= COASTAL_SLUGS.length / 2, `one station covers ${busiest} of ${COASTAL_SLUGS.length} zones`).toBe(true);
   });
 
   it('getCoastalZone() returns zones and null for unknown slugs', () => {
@@ -154,9 +170,14 @@ describe('coastal-zones.js — generated catalog stays in sync with coastal_cata
   });
 
   it('state grouping covers every zone with no leaks', () => {
+    // Summed over whatever buckets the generator emitted, not over a typed SC/GA/NC list.
+    // The typed version threw a TypeError the day NC left, and a TypeError does not say
+    // "a state was removed" -- it says "cannot read length of undefined" in a test named for
+    // leaks. The generator derives the buckets from the catalog; so does this.
     const grouped = coastalNamesByState();
-    const total = grouped.SC.length + grouped.GA.length + grouped.NC.length;
+    const total = Object.values(grouped).reduce((n, names) => n + names.length, 0);
     expect(total).toBe(COASTAL_SLUGS.length);
+    expect(Object.keys(grouped).sort()).toEqual(['GA', 'SC']);
     expect(coastalZonesByState('SC')).toHaveLength(grouped.SC.length);
     expect(coastalZonesByState('ga')).toHaveLength(grouped.GA.length);
     expect(coastalZonesByState('XX')).toHaveLength(0);

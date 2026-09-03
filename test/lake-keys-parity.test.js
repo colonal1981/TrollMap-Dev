@@ -3,7 +3,7 @@ import { LAKE_NAME_TO_R2_KEY as frontendMap, resolveR2Key } from '../js/data/lak
 import { SUPPLEMENTAL_KEY_MAP, resolveSupplementalKeyWorker } from '../Worker/research/limnology.js';
 
 describe('lake-keys parity — frontend and worker must stay identical (P1 dedupe guard)', () => {
-  it('frontend map size == worker map size == 101', () => {
+  it('frontend map size == worker map size == 98', () => {
     // Both copies must move together — this is the guard that caught the original
     // 101 vs 74 drift.
     // 102 after the 2026-08-04 rebind to lake_index.json. Fewer names than before:
@@ -54,8 +54,12 @@ describe('lake-keys parity — frontend and worker must stay identical (P1 dedup
     // allowed to serve -- and reached it by the fallback path, which is what made it invisible.
     // 101 as of 2026-08-19: thirteen more names for nine out-of-region waters moved into
     // LAKE_NAMES_WITHOUT_PACK. The map shrinks; the refusal set grows by the same names.
-    expect(Object.keys(frontendMap).length).toBe(101);
-    expect(Object.keys(SUPPLEMENTAL_KEY_MAP).length).toBe(101);
+    // 98 as of 2026-09-01: the three NC coastal display names went with their zones in a4bfd02.
+    // Both sides moved together, which is the whole point of this file -- the frontend map and
+    // the worker's SUPPLEMENTAL_KEY_MAP each read 98, so the worker copy is still derived from
+    // the same source and not a stale duplicate of it.
+    expect(Object.keys(frontendMap).length).toBe(98);
+    expect(Object.keys(SUPPLEMENTAL_KEY_MAP).length).toBe(98);
   });
 
   it('maps are deep equal', () => {

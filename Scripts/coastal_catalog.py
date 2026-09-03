@@ -1,6 +1,26 @@
 #!/usr/bin/env python3
 """
-coastal_catalog.py — TrollMap coastal/tidal zone definitions for SC, GA, and NC.
+coastal_catalog.py — TrollMap coastal/tidal zone definitions for SC and GA.
+
+THIRTEEN ZONES, AND NORTH CAROLINA IS NOT ONE OF THEM.
+
+a4bfd02 cut the three NC coastal zones -- coast_brunswick_nc, coast_cape_fear_nc,
+coast_topsail_new_river_nc -- from the app: out of js/data/coastal-zones.js, out of
+lake-keys.js, out of CHAIN_DESCRIPTIONS, out of the hand-typed NCDMF table. It did not cut
+them from THIS file, and this file generates coastal-zones.js. So the generated file was
+hand-edited to 13 while its source stayed at 16, the staleness guard in
+test/coastal-zones-parity.test.js went red, and it stayed red because the number the test
+asserted (16) was the stale side. Finished here on 2026-09-03.
+
+The boundary does not settle this and should not be cited as if it did. Run against
+registry/region_mask.json the three NC zones come back INSIDE the polygon Ryan drew --
+coast_brunswick_nc 119/119 vertices, coast_cape_fear_nc 618/658, coast_topsail_new_river_nc
+20/150 -- so a rule that reads only the mask would put them back. Ryan's call, 2026-09-03:
+"But keep NC coastal cut... i do not want it back in". That is the reason, and it is the
+whole reason.
+
+Also gone: a second, byte-identical 'coast_savannah_ga' block that sat above the Georgia
+header. Python kept the last one, so the first had never been read by anything.
 
 Each entry contains:
   - 'name': Clean display name
@@ -141,19 +161,6 @@ COASTAL_CATALOG = {
             'Shelter Cove':       [32.209, -80.722],
         }
     },
-    'coast_savannah_ga': {
-        'name': 'Savannah River / Savannah, GA',
-        'bbox': (31.90, 32.25, -81.25, -80.90),
-        'center': (32.08, -81.09),
-        'priority': 8,
-        'coastal': True,
-        'tide_station': '8670659',
-        'state': 'GA',
-        'ramps': {
-            'Houlihan Bridge Ramp': [32.134, -81.107],
-            'Port Wentworth Ramp':  [32.155, -81.167],
-        }
-    },
     # ── Georgia Coastal Zones ─────────────────────────────────────────────────
     'coast_savannah_ga': {
         'name': 'Savannah River / Savannah, GA',
@@ -206,51 +213,6 @@ COASTAL_CATALOG = {
             'Blythe Island Regional Park': [31.148, -81.537],
             'Golden Isles Marina':         [31.152, -81.393],
             'Schnell Landing':             [31.090, -81.450],
-        }
-    },
-
-    # ── North Carolina Coastal Zones ─────────────────────────────────────────
-    'coast_brunswick_nc': {
-        'name': 'Brunswick County / Shallotte Inlet, NC',
-        'bbox': (33.85, 34.05, -78.70, -78.30),
-        'center': (33.95, -78.50),
-        'priority': 8,
-        'coastal': True,
-        'tide_station': '8658120',  # Wilmington
-        'state': 'NC',
-        'ramps': {
-            'Holden Beach Ramp':      [33.913, -78.330],
-            'Shallotte Inlet Access': [33.892, -78.385],
-            'Sunset Beach Ramp':      [33.878, -78.512],
-        }
-    },
-    'coast_cape_fear_nc': {
-        'name': 'Cape Fear River / Wilmington, NC',
-        'bbox': (34.05, 34.30, -78.10, -77.75),
-        'center': (34.18, -77.95),
-        'priority': 8,
-        'coastal': True,
-        'tide_station': '8658120',  # Wilmington
-        'state': 'NC',
-        'ramps': {
-            'Wilmington Riverfront Ramp': [34.235, -77.948],
-            'Carolina Beach State Park':  [34.052, -77.893],
-            'Masonboro Inlet Access':     [34.171, -77.842],
-            'Wrightsville Beach Ramp':    [34.208, -77.797],
-        }
-    },
-    'coast_topsail_new_river_nc': {
-        'name': 'Topsail Island / New River Inlet, NC',
-        'bbox': (34.30, 34.60, -77.75, -77.30),
-        'center': (34.45, -77.52),
-        'priority': 8,
-        'coastal': True,
-        'tide_station': '8658163',  # Wrightsville Beach
-        'state': 'NC',
-        'ramps': {
-            'Sneads Ferry Ramp':       [34.557, -77.398],
-            'Topsail Beach Access':    [34.388, -77.647],
-            'New River Inlet Ramp':    [34.527, -77.338],
         }
     },
 }

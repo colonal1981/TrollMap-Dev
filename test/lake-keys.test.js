@@ -1,8 +1,8 @@
 import { describe, it, expect } from './expect-shim.mjs';
 import { LAKE_NAME_TO_R2_KEY, LAKE_NAMES_WITHOUT_PACK, resolveR2Key } from '../js/data/lake-keys.js';
 
-describe('LAKE_NAME_TO_R2_KEY — single source of truth (101 entries)', () => {
-  it('has 101 entries (full map, not truncated worker copy)', () => {
+describe('LAKE_NAME_TO_R2_KEY — single source of truth (98 entries)', () => {
+  it('has 98 entries (full map, not truncated worker copy)', () => {
     // 97 freshwater + 21 coastal zones. Was 101 before the coastal expansion
     // split the single `sc_ga_coastal` key into 21 per-zone `coast_*` keys.
         // 102 after the 2026-08-04 rebind to lake_index.json. Fewer names than before:
@@ -55,7 +55,19 @@ describe('LAKE_NAME_TO_R2_KEY — single source of truth (101 entries)', () => {
     // mapping merely removed, 'High Falls Lake, GA' resolved to `falls_lake` -- Falls Lake in
     // NORTH CAROLINA, which ships. Deleting a mapping does not stop a name answering, it
     // re-points it, which is the failure this file already documents for Kerr.
-    expect(Object.keys(LAKE_NAME_TO_R2_KEY).length).toBe(101)  // was 121 with +Lake Robinson (Greenville Co, SC) 2026-08-14 -- two SC Lake Robinsons, 190 km apart;
+    // 98 as of 2026-09-01: the three NC coastal display names -- 'Brunswick County / Shallotte
+    // Inlet, NC', 'Cape Fear River / Wilmington, NC', 'Topsail Island / New River Inlet, NC' --
+    // left with their zones in a4bfd02. Ryan, 2026-09-03: "But keep NC coastal cut... i do not
+    // want it back in".
+    //
+    // THESE THREE DID NOT NEED LAKE_NAMES_WITHOUT_PACK, and that was measured rather than
+    // assumed, because the paragraph above says a deleted mapping re-points a name instead of
+    // silencing it. All three now return null from resolveR2Key(): each carries ", NC" and the
+    // state-disagreement refusal documented below throws out every remaining candidate, so
+    // there is no nearest freshwater lake left for them to land on. If an NC coastal zone is
+    // ever re-added to the index, check this again -- the refusal is what is doing the work,
+    // not the deletion.
+    expect(Object.keys(LAKE_NAME_TO_R2_KEY).length).toBe(98)  // was 121 with +Lake Robinson (Greenville Co, SC) 2026-08-14 -- two SC Lake Robinsons, 190 km apart;
   });
 
   it('every name in LAKE_NAMES_WITHOUT_PACK actually refuses', () => {
@@ -105,14 +117,14 @@ describe('LAKE_NAME_TO_R2_KEY — single source of truth (101 entries)', () => {
     // marsh_edges / depth_soundings under `chartpacks/{slug}/`.
     expect(LAKE_NAME_TO_R2_KEY['ACE Basin / Edisto, SC']).toBe('coast_ace_basin_sc');
     expect(LAKE_NAME_TO_R2_KEY['Charleston Harbor, SC']).toBe('coast_charleston_sc');
-    // Was 'Pamlico Sound / Neuse River, NC' until 2026-08-19. This line has to name a zone the
-    // app still offers or it stops being a sample of anything -- Cape Fear is the NC zone that
-    // ships, and one sample per state is the point of the four.
-    expect(LAKE_NAME_TO_R2_KEY['Cape Fear River / Wilmington, NC']).toBe('coast_cape_fear_nc');
     expect(LAKE_NAME_TO_R2_KEY['Savannah River / Savannah, GA']).toBe('coast_savannah_ga');
+    // There used to be a fourth sample here, one per state: 'Pamlico Sound / Neuse River, NC'
+    // until 2026-08-19, then 'Cape Fear River / Wilmington, NC' until 2026-09-01. There is no
+    // NC sample any more because there is no NC coastal zone any more, and inventing one to
+    // keep the shape of the list would be a test asserting water the app does not offer.
 
     const coastal = Object.values(LAKE_NAME_TO_R2_KEY).filter((k) => k.startsWith('coast_'));
-    expect(new Set(coastal).size).toBe(16);   // 22 until the six out-of-region zones went, 2026-08-19
+    expect(new Set(coastal).size).toBe(13);   // 22 until 2026-08-19 (six out-of-region), 16 until 2026-09-01 (the three NC zones)
   });
 
   it('contains Wateree chain and Russell chain aliases', () => {

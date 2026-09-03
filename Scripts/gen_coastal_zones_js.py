@@ -77,8 +77,6 @@ USGS_GAUGES = {
     'coast_santee_delta_sc':    ['02171700'],              # Santee
     'coast_savannah_ga':        ['02198500'],              # Savannah
     'coast_ossabaw_st_catherines_ga': ['02198500'],        # Savannah
-    'coast_cape_fear_nc':       ['02105769'],              # Cape Fear
-    'coast_brunswick_nc':       ['02105769'],              # Cape Fear
 }
 
 # Rivers named per gauge, for human-readable SmartPlan warnings.
@@ -87,7 +85,6 @@ GAUGE_NAMES = {
     '02172300': 'Ashley River',
     '02171700': 'Santee River',
     '02198500': 'Savannah River',
-    '02105769': 'Cape Fear River',
 }
 
 
@@ -101,6 +98,28 @@ def load_catalog():
                 if isinstance(target, ast.Name) and target.id == 'COASTAL_CATALOG':
                     return ast.literal_eval(node.value)
     raise SystemExit('COASTAL_CATALOG not found in coastal_catalog.py')
+
+
+def check_gauge_tables(catalog):
+    """Every gauge row must name a zone that exists, and every gauge must have a river name.
+
+    USGS_GAUGES is read with .get(slug, []), so a row for a deleted zone is never read and
+    never complained about -- which is how 'coast_cape_fear_nc' and 'coast_brunswick_nc' sat
+    here after a4bfd02 took their zones out of the app. usgsRivers is built by filtering
+    `if g in GAUGE_NAMES`, so a gauge with no name silently produces a warning with no river
+    in it. Both are checked here because both are invisible at the point of use.
+    """
+    orphans = sorted(set(USGS_GAUGES) - set(catalog))
+    if orphans:
+        raise SystemExit(
+            'USGS_GAUGES names zones that are not in coastal_catalog.py: '
+            + ', '.join(orphans))
+    nameless = sorted({g for gs in USGS_GAUGES.values() for g in gs if g not in GAUGE_NAMES})
+    if nameless:
+        raise SystemExit('GAUGE_NAMES has no river for: ' + ', '.join(nameless))
+    unused = sorted(set(GAUGE_NAMES) - {g for gs in USGS_GAUGES.values() for g in gs})
+    if unused:
+        raise SystemExit('GAUGE_NAMES carries rivers no zone asks for: ' + ', '.join(unused))
 
 
 def js_literal(value, indent):
@@ -127,6 +146,12 @@ def js_literal(value, indent):
 
 def build():
     catalog = load_catalog()
+    check_gauge_tables(catalog)
+    # The states are read out of the catalog, not typed. coastalNamesByState() used to declare
+    # { SC: [], GA: [], NC: [] } as a literal; when NC left the catalog somebody hand-edited the
+    # GENERATED file to drop the bucket, which is what put the generator and its output out of
+    # sync in the first place. Deriving it means the next state change is one edit, here.
+    states = list(dict.fromkeys(z['state'] for z in catalog.values()))
     lines = []
     for slug, zone in catalog.items():
         south, north, west, east = zone['bbox']
@@ -150,7 +175,21 @@ def build():
 
     body = ',\n'.join(lines)
     return f'''/**
- * coastal-zones.js — SC / GA / NC coastal + tidal zone catalog.
+ * coastal-zones.js — {' / '.join(states)} coastal + tidal zone catalog.
+ *
+ * NC REMOVED 2026-09-01. Ryan: "i plan to cut all coastal areas from NC anyways." Three zones
+ * went — Brunswick County / Shallotte Inlet, Cape Fear River / Wilmington, and Topsail Island /
+ * New River Inlet — together with NC's block in coastal-regulations.js, which was a hand-typed
+ * copy of NCDMF's rules against a parser that now reads the book.
+ *
+ * THE TWO HAD TO GO TOGETHER. coastal-regulations.test.js asserts that every coastal zone maps to
+ * a state with a regulation table, and removing the table first broke it — correctly. A zone the
+ * app offers with no rules behind it is a plan on closed water reported legal, which is the
+ * failure that whole file exists to prevent.
+ *
+ * They left this file on 2026-09-01 and Scripts/coastal_catalog.py on 2026-09-03, and for those
+ * two days the source of truth said 16 while the generated file said 13. That story, and why the
+ * region mask does not overrule it, is in the catalog's own docstring.
  *
  * GENERATED FILE — DO NOT EDIT BY HAND.
  * Source of truth: Scripts/coastal_catalog.py
@@ -201,9 +240,9 @@ export function coastalZonesByState(stateCode) {{
     .map((slug) => COASTAL_ZONES[slug]);
 }}
 
-/** Display names grouped for the lake selector: {{ SC: [...], GA: [...], NC: [...] }} */
+/** Display names grouped for the lake selector: {{ {', '.join(s + ': [...]' for s in states)} }} */
 export function coastalNamesByState() {{
-  const out = {{ SC: [], GA: [], NC: [] }};
+  const out = {{ {', '.join(s + ': []' for s in states)} }};
   for (const slug of COASTAL_SLUGS) {{
     const zone = COASTAL_ZONES[slug];
     if (out[zone.state]) out[zone.state].push(zone.name);

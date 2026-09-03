@@ -550,6 +550,55 @@ def _sibling_region(path):
     return mod.Region.load(path, required=False)
 
 
+def _declared_coastal_zones():
+    """The `coast_*` slugs Scripts/coastal_catalog.py declares, loaded from beside this file.
+
+    THE CATALOG IS THE ONLY PLACE A COASTAL ZONE EXISTS. It drives the R2 pipeline
+    (trollmap_pipeline_coastal.py, fetch_osm_coastal.py, extract_enc_seabed.py) and it generates
+    js/data/coastal-zones.js, which is where the app gets a zone's tide station, bbox and ramps.
+    Nothing else declares one.
+
+    Raises rather than returning an empty set. An empty set here would drop every coastal row in
+    the index, and a "silently filtered everything" failure looks exactly like a data problem.
+    """
+    import importlib.util
+    here = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.join(here, 'coastal_catalog.py')
+    if not os.path.exists(path):
+        raise SystemExit('coastal_catalog.py is not beside %s -- the coastal gate cannot run and '
+                         'the index would ship zones the app has no tide station for.' % __file__)
+    spec = importlib.util.spec_from_file_location('coastal_catalog', path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    zones = set(mod.COASTAL_CATALOG)
+    if not zones:
+        raise SystemExit('coastal_catalog.py declares no zones.')
+    return zones
+
+
+def drop_undeclared_coastal(idx, zones=None):
+    """Remove every `coast_` row the catalog no longer declares. Returns what was removed.
+
+    Mutates `idx`, like drop_retired(). `zones` is for tests; production reads the catalog.
+
+    ONLY `coast_` SLUGS. That prefix is what the coastal pipeline creates from the catalog, so
+    the set is exactly comparable. A river the classifier labelled 'coastal' is a tidal river
+    with its own 3DHP row and no zone behind it -- gating on feature_type would take those too.
+    """
+    if zones is None:
+        zones = _declared_coastal_zones()
+    removed = []
+    for slug in list(idx):
+        if not slug.startswith('coast_') or slug in zones:
+            continue
+        rec = idx[slug]
+        removed.append({'slug': slug, 'name': rec.get('name'), 'state': rec.get('state'),
+                        'area_acres': rec.get('area_acres'),
+                        'why': 'not declared in coastal_catalog.py'})
+        del idx[slug]
+    return removed
+
+
 def drop_retired(idx, registry_dir):
     """Remove every slug a merge has already retired. Returns (removed, note).
 
@@ -1130,6 +1179,29 @@ def main():
                                       'why': 'outside %s' % '+'.join(region.states)})
                 del idx[slug]
 
+    # ── the coastal catalog gate ────────────────────────────────────────────────────────────
+    #
+    # A `coast_` row must be a zone Scripts/coastal_catalog.py still declares. The scope gate
+    # above cannot do this job: it asks whether water is inside the polygon Ryan drew, and the
+    # three NC coastal zones ARE inside it -- coast_brunswick_nc 119/119 boundary vertices,
+    # coast_cape_fear_nc 618/658, coast_topsail_new_river_nc 20/150, measured 2026-09-03 against
+    # registry/region_mask.json. Geometry was never going to remove them. Ryan did:
+    # "But keep NC coastal cut... i do not want it back in".
+    #
+    # WHAT WENT WRONG WITHOUT THIS GATE. a4bfd02 cut those three zones out of the app on
+    # 2026-09-01 -- out of coastal-zones.js, out of lake-keys.js, out of coastal-regulations.js
+    # -- and lake_index.json went on carrying all sixteen `coast_` rows. lake-ramp-select.js
+    # builds its picker from the index first and only then folds in COASTAL_ZONES, so the app
+    # kept OFFERING all three under "NC -- Coast" while having no tide station, no bbox, no ramps
+    # and no regulation table for any of them. That is the exact failure
+    # coastal-regulations.test.js exists to prevent, arriving by the one path it does not walk:
+    # it iterates COASTAL_SLUGS, and these three had already left it.
+    #
+    # Derived, not typed. There is no NC rule here and no list of exiled zones -- cut a zone from
+    # the catalog and it leaves the index on the next run. Both uploaders read lake_index.json,
+    # so this gates the app and R2 together, the same reason the scope gate lives here.
+    undeclared_coastal = drop_undeclared_coastal(idx)
+
     # ── closed to fishing ───────────────────────────────────────────────────────────────────
     #
     # Ryan, 2026-08-23: *"need to get the lakes that are closed to fishing removed from the
@@ -1578,6 +1650,13 @@ def main():
         print('   -> %s   (--keep-closed to retain them)' % rpc)
         print('   the verdicts are in registry/_water_notes.json, each with how it was settled.')
         print('   lakes.json, the boundaries and the chartpack dirs are UNTOUCHED.')
+
+    if undeclared_coastal:
+        print('\ndropped %d coastal row(s) no longer declared in coastal_catalog.py:'
+              % len(undeclared_coastal))
+        for d in sorted(undeclared_coastal, key=lambda d: d['slug']):
+            print('   %-30s %s' % (d['slug'], d.get('name') or ''))
+        print('   -> re-add the zone to Scripts/coastal_catalog.py and rerun to put them back.')
 
     if out_of_region:
         rp2 = os.path.join(R, '_index_out_of_region.json')
