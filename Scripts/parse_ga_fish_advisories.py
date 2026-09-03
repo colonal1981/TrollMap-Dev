@@ -126,6 +126,37 @@ def our_name(display_name):
     return COUNTY_STAMP.sub('', str(display_name or '')).strip()
 
 
+def our_names(rec, slug=''):
+    """Every name the index holds for one of our waters, not just the one it displays.
+
+    THE INDEX ALREADY KNEW BOTH SPELLINGS. The first run reported two waters the book names one
+    letter differently -- "Lake Tugalo" against our Tugaloo Lake, "Hamburg Millpond" against our
+    Hamburgh Millpond -- and Ryan asked whether the other spelling is a real second lake. It is
+    not, and the proof was already on disk: `legacy_display_names` on Tugaloo Lake lists "Lake
+    Tugalo", "Tugalo Lake" and "Tugalo", and Hamburgh Millpond lists "Hamburg Mill Pond West".
+    One GNIS id each. The binder was reading `display_name` alone and throwing the rest away.
+
+    Measured before it was trusted: across the 99 Georgia-associated waters, NOT ONE alias string
+    names two different slugs, so widening the gate this way cannot introduce a collision.
+
+    The legacy strings carry two decorations that have to come off or they add tokens that are
+    not names: the water-chain prefix, "Little Ogeechee River - Hamburg Mill Pond West", which
+    would have made this pond a candidate for every Ogeechee River advisory; and a trailing state
+    suffix, "Tugaloo Lake, SC/GA".
+    """
+    out, seen = [], set()
+    for n in [rec.get('display_name') or slug, rec.get('name')] + (
+            rec.get('legacy_display_names') or []):
+        if not n:
+            continue
+        n = our_name(str(n).split(' - ')[-1])
+        n = re.sub(r',\s*[A-Z]{2}(?:/[A-Z]{2})?\s*$', '', n).strip()
+        if n and n.lower() not in seen:
+            seen.add(n.lower())
+            out.append(n)
+    return out
+
+
 def norm(s):
     return re.sub(r'[^a-z]', '', str(s or '').lower())
 
@@ -467,6 +498,29 @@ def binding_rejected(water, slug):
     return REJECTED_BINDINGS.get((str(water or '').strip(), str(slug or '').strip()))
 
 
+# ── and the one the gates refuse that is the same water anyway ──────────────────────────────
+#
+# Same shape, same keying, same self-report. Ryan settled the rule for these: *"search up the
+# alternate spellings... if they resolve to real lakes with those incorrect spellings then we
+# will leave them out... if those alternate lakes do not exist in georgia then we include them."*
+ACCEPTED_BINDINGS = {
+    ('Hamburg Millpond (Hamburg State Park)', 'hamburgh_millpond'): {
+        'checked': '2026-09-03',
+        'why': 'There is no second Hamburg Millpond. Our row is GNIS 336381 in WASHINGTON '
+               'County, 168 acres, and Hamburg State Park is in Washington County -- and the '
+               'index already lists "Hamburg Mill Pond West" among its own legacy names, so both '
+               'spellings were already on the same GNIS id before the book was read. It is '
+               'named here rather than matched because the alias carries a compass word the '
+               'display name does not, and the qualifier gate that keeps the North Oconee off '
+               'the Oconee cannot tell that apart from a real one.',
+    },
+}
+
+
+def binding_accepted(water, slug):
+    return ACCEPTED_BINDINGS.get((str(water or '').strip(), str(slug or '').strip()))
+
+
 def do_not_eat(advice):
     return bool(re.search(r'do\s*not\s*eat', str(advice or ''), re.I))
 
@@ -711,25 +765,43 @@ def bind(water, reach, candidates):
     bares.discard('')
     kind = primary_kind(water)
 
+    want_quals = qualifiers(name_for_tokens(water))
     hits, kinds_rejected, quals_rejected = [], 0, 0
     for slug, rec in candidates.items():
         name = rec.get('display_name') or slug
-        shared = want & tokens(our_name(name))
-        if not shared:
+        if binding_accepted(water, slug):
+            hits.append({'slug': slug, 'display_name': name, 'tokens': ['(checked by hand)'],
+                         'county_agrees': True, 'county_conflicts': False, 'exact': False,
+                         'matched_name': name})
             continue
-        theirs = water_kinds(rec, our_name(name))
+        pool = our_names(rec, slug)
+        # A name in the pool only counts if it agrees on north/south/little/upper -- those words
+        # identify nothing on their own but their presence is part of a name, and stripping them
+        # made "North Oconee River" agree with the Oconee.
+        shared = set()
+        any_token = False
+        for alias in pool:
+            hit = want & tokens(alias)
+            if not hit:
+                continue
+            any_token = True
+            if qualifiers(alias) == want_quals:
+                shared |= hit
+        if not shared:
+            if any_token:
+                quals_rejected += 1
+            continue
+        theirs = water_kinds(rec, name)
         if kind and theirs and kind not in theirs:
             kinds_rejected += 1       # a river advisory is not about a lake, however it reads
-            continue
-        if qualifiers(name_for_tokens(water)) != qualifiers(our_name(name)):
-            quals_rejected += 1       # the North Oconee is not the Oconee
             continue
         cty = our_counties(name)
         hits.append({
             'slug': slug, 'display_name': name, 'tokens': sorted(shared),
             'county_agrees': bool(book_counties and (book_counties & cty)),
             'county_conflicts': bool(book_counties and cty and not (book_counties & cty)),
-            'exact': _sorted_words(our_name(name)) in bares,
+            'exact': any(_sorted_words(a) in bares for a in pool),
+            'matched_name': next((a for a in pool if _sorted_words(a) in bares), name),
         })
     if not hits:
         if kinds_rejected or quals_rejected:
@@ -777,7 +849,7 @@ BASIS = ('PRESENCE FLOOR, not a roster. Georgia names a species here because it 
 def build(blocks, index):
     cands = ga_waters(index)
     waters, ambiguous, unbound, unread_rows, near, one_word = {}, [], [], [], [], []
-    blocks_seen = []
+    blocks_seen, by_alias = [], {}
     used_corrections = set()
 
     for b in blocks:
@@ -802,6 +874,9 @@ def build(blocks, index):
             continue
 
         for hit in hits:
+            if hit['exact']:
+                by_alias.setdefault(hit['slug'], {}).setdefault(
+                    hit['matched_name'], []).append({'book_water': water, 'page': b['page']})
             if not hit['exact'] and not hit['county_agrees'] and len(hit['tokens']) == 1:
                 # ONE WORD AND NOTHING ELSE AGREEING. Most of these are right -- every coastal
                 # sound reaches its zone this way -- but it is the thinnest binding this file
@@ -836,9 +911,25 @@ def build(blocks, index):
                 if do_not_eat(sp['advice']) and sp['species'] not in rec['do_not_eat']:
                     rec['do_not_eat'].append(sp['species'])
 
+    # ONE OF OUR ROWS WEARING TWO WATERS' NAMES. Widening the name gate to read the index's
+    # aliases is what surfaced it: `murder_creek_lake` is a 69-acre polygon in Jasper County that
+    # carries "Lake Bennett", "Lake Margery" AND "Dairy Lake" as legacy names, and those are
+    # three separate ponds in the Charlie Elliott Wildlife Center. Two different tables in the
+    # book matched two different names on the same row, which is the index conflating waters and
+    # not the book being unclear -- so the binds come out and the row is named for you.
+    conflated = []
+    for slug, names in by_alias.items():
+        if len(names) < 2:
+            continue
+        conflated.append({'slug': slug,
+                          'display_name': (index.get(slug) or {}).get('display_name') or slug,
+                          'matched': {n: [b['book_water'] for b in v] for n, v in names.items()}})
+        waters.pop(slug, None)
+
     stale = [list(k) for k in PUBLISHED_CORRECTIONS if k not in used_corrections]
-    stale += [list(k) for k in REJECTED_BINDINGS
-              if k[0] not in {b['book_water'] for b in blocks_seen}]
+    seen_waters = {b['book_water'] for b in blocks_seen}
+    stale += [list(k) for k in REJECTED_BINDINGS if k[0] not in seen_waters]
+    stale += [list(k) for k in ACCEPTED_BINDINGS if k[0] not in seen_waters]
     published = {
         '_note': 'Personal use only, not for distribution or resale; not for navigation. '
                  'Georgia fish consumption guidelines as a SPECIES PRESENCE FLOOR and as safety '
@@ -857,7 +948,8 @@ def build(blocks, index):
                    'candidates_considered': len(cands),
                    'species_records': sum(len(w['species']) for w in waters.values())},
     }
-    review = {'ambiguous': ambiguous, 'bound_on_one_word': one_word,
+    review = {'ambiguous': ambiguous, 'conflated_index_rows': conflated,
+              'bound_on_one_word': one_word,
               'spelled_differently': near, 'unbound': unbound,
               'rows_not_read': unread_rows, 'corrections_that_did_not_fire': stale}
     return published, review
@@ -903,6 +995,13 @@ def main():
         for x in review['ambiguous']:
             print('   p%-3d %-40s %s' % (x['page'], ('%s %s' % (x['book_water'], x['reach']))[:38],
                                          ', '.join(x['species'][:6])))
+    if review['conflated_index_rows']:
+        print('\n!! %d of OUR index rows carries the names of more than one water. DROPPED:'
+              % len(review['conflated_index_rows']))
+        for x in review['conflated_index_rows']:
+            print('   %-24s %s' % (x['slug'], x['display_name']))
+            for n, books in x['matched'].items():
+                print('        matched %-22s from %s' % (n, ', '.join(books)))
     if review['bound_on_one_word']:
         print('\n?? %d binding(s) rest on ONE shared word and nothing else. Worth an eye:'
               % len(review['bound_on_one_word']))

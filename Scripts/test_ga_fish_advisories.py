@@ -335,6 +335,62 @@ class TheBinder(unittest.TestCase):
         self.assertIn('coastal', why)
 
 
+class TheNamesTheIndexAlreadyKnew(unittest.TestCase):
+    """The alias list on our own rows, which the binder used to throw away.
+
+    Ryan, on the two waters the first run reported as spelled one letter differently: *"search up
+    the alternate spellings... if they resolve to real lakes with those incorrect spellings then
+    we will leave them out... if those alternate lakes do not exist in georgia then we include
+    them."* Neither does. The proof was already on disk in `legacy_display_names`, one GNIS id
+    each, and no alias string in the 99 Georgia-associated rows names two different slugs.
+    """
+
+    TUGALOO = {'display_name': 'Tugaloo Lake (Rabun Co, SC/GA)', 'name': 'Tugaloo Lake',
+               'state': 'SC', 'feature_type': 'lake',
+               'legacy_display_names': ['Tugaloo Lake, SC/GA', 'Tugalo', 'Tugalo Lake',
+                                        'Chattooga River - Lake Tugalo', 'Lake Tugalo, SC/GA']}
+    VARNER = {'display_name': 'Lower Williams Lake (Newton Co, GA)', 'state': 'GA',
+              'feature_type': 'lake',
+              'legacy_display_names': ['Cornish Creek - Lake Varner', 'Lake Varner, GA']}
+
+    def test_the_water_chain_prefix_and_the_state_suffix_come_off(self):
+        # "Little Ogeechee River - Hamburg Mill Pond West" would otherwise make that pond a
+        # candidate for every Ogeechee River advisory in the book.
+        self.assertEqual(
+            M.our_names({'display_name': 'Hamburgh Millpond (Washington Co, GA)',
+                         'legacy_display_names': ['Little Ogeechee River - Hamburg Mill Pond West',
+                                                  'Hamburgh Millpond, GA']}),
+            ['Hamburgh Millpond', 'Hamburg Mill Pond West'])
+
+    def test_lake_tugalo_is_tugaloo_lake(self):
+        hits, why = M.bind('Lake Tugalo', '', {'tugaloo_lake': self.TUGALOO})
+        self.assertEqual([h['slug'] for h in hits], ['tugaloo_lake'])
+        self.assertEqual(why, 'the name matches exactly')
+
+    def test_lake_varner_is_lower_williams_lake(self):
+        hits, _ = M.bind('Lake Varner (Cornish Creek Reservoir, Newton County)', '',
+                         {'lower_williams_lake': self.VARNER})
+        self.assertEqual([h['slug'] for h in hits], ['lower_williams_lake'])
+
+    def test_an_alias_still_has_to_agree_on_the_qualifier(self):
+        # The gate that keeps the North Oconee off the Oconee is not weakened by reading aliases.
+        hits, why = M.bind('Ocmulgee River', '', {'x': {
+            'display_name': 'Little Ocmulgee River (Wheeler Co, GA)', 'state': 'GA',
+            'feature_type': 'river',
+            'legacy_display_names': ['Little Ocmulgee Creek']}})
+        self.assertEqual(hits, [])
+        self.assertIn('north/south/little/upper', why)
+
+    def test_a_binding_checked_by_hand_and_accepted_is_taken(self):
+        hits, _ = M.bind('Hamburg Millpond (Hamburg State Park)', '', {'hamburgh_millpond': {
+            'display_name': 'Hamburgh Millpond (Washington Co, GA)', 'state': 'GA',
+            'feature_type': 'lake'}})
+        self.assertEqual([h['slug'] for h in hits], ['hamburgh_millpond'])
+        self.assertTrue(M.binding_accepted('Hamburg Millpond (Hamburg State Park)',
+                                           'hamburgh_millpond')['why'])
+        self.assertIsNone(M.binding_accepted('Hamburg Millpond (Hamburg State Park)', 'seed_lake'))
+
+
 class TheSpellingReport(unittest.TestCase):
     def test_one_letter_and_a_swapped_word_is_reported_not_bound(self):
         # The book writes "Lake Tugalo" and we ship "Tugaloo Lake". Nothing binds on this.
