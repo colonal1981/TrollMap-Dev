@@ -124,7 +124,13 @@ async function handleResearchDeterministicFacts(request, env) {
       name: r.name, lat: Math.round(r.lat * 1e6) / 1e6, lon: Math.round(r.lon * 1e6) / 1e6,
       lanes: r.lanes ?? null, county: r.county ?? null, owner: r.owner ?? null,
     }));
-    const species = uniqueResearchSpecies(clientRamps.flatMap((r) => splitSpeciesText(r.species || '')));
+    // BOTH SHAPES, BECAUSE THE REGISTRY WRITES ONE AND THIS READS THE OTHER.
+    // build_dnr_ramps_by_lake.py stores `{name, wb, lat, lon, meta: {species, county, owner}}`
+    // and this line read `r.species` off the top level, so a caller forwarding a registry record
+    // verbatim delivered its ramps and silently no fish. research_lakes.py flattens on the way
+    // out; the browser does not have to.
+    const species = uniqueResearchSpecies(clientRamps.flatMap(
+      (r) => splitSpeciesText(r.species || r.meta?.species || '')));
     if (species.length) {
       profile.biology.predatorSpecies = uniqueResearchSpecies([...(profile.biology.predatorSpecies || []), ...species]);
     }

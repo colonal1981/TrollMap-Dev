@@ -388,8 +388,52 @@ def pace_seconds(chars, tpm):
     return min(30.0, (chars / CHARS_PER_TOKEN) / tpm * 60.0)
 
 
+# ── THE REGISTRY'S OWN RAMPS, SENT WITH THE REQUEST ─────────────────────────────────────────
+#
+# `handleResearchDeterministicFacts` prefers `body.ramps` over its own lookup and says exactly
+# why: *"THE CLIENT'S LIST WINS, BECAUSE THE PIPELINE BOUND IT BY GEOMETRY... Re-deriving it here
+# by name was always the weaker method; now it is only the fallback, for a caller that cannot
+# send the registry's answer."*
+#
+# THIS SCRIPT WAS THAT CALLER, AND IT COULD SEND IT ALL ALONG. It posted `{lakeName, state}` and
+# nothing else, so `clientRamps` was empty on every water of every batch and the weaker fallback
+# is what actually ran -- 64 waters' worth. That fallback matches the raw feeds with
+# `waterbodyMatchesLake()`, a substring test on the display name, and the same comment records
+# what it costs: nineteen feed spellings for J. Strom Thurmond, none a substring of "j strom
+# thurmond reservoir lincoln co ga sc", "ramps: 0" reported for a 41,000-acre reservoir the
+# registry already had 168 ramps for.
+#
+# It costs coastal everything. A zone is named for its sound and the feeds name the creek, so no
+# coastal zone can ever match by name -- which is why Georgia's four sounds reported no inshore
+# species while GA WRD's own access points inside their boxes carry the Redfish, SeaTrout,
+# Flounder and Sheepshead columns.
+#
+# SPECIES LIVE UNDER `meta`, AND THAT IS THE SECOND HALF. build_dnr_ramps_by_lake.py writes
+# `{name, wb, type, src, lat, lon, meta: {species, county, owner, lanes}}` while the Worker reads
+# `r.species` off the top level. Flattening here rather than teaching the Worker a second shape
+# keeps one record shape on the wire; the Worker learns both anyway, because this script is not
+# the only caller.
+def registry_ramps(row):
+    """Every ramp the registry already bound to this water, flat, for `body.ramps`."""
+    out = []
+    for _src, items in ((row or {}).get("ramps") or {}).items():
+        for r in items or []:
+            try:
+                lat, lon = float(r["lat"]), float(r["lon"])
+            except (KeyError, TypeError, ValueError):
+                continue          # OSM per-lake records carry no coordinate; the Worker drops
+                                  # those anyway, and a centroid guess is not a ramp.
+            meta = r.get("meta") or {}
+            out.append({"name": r.get("name") or r.get("wb") or "Unnamed access point",
+                        "lat": lat, "lon": lon,
+                        "lanes": r.get("lanes", meta.get("lanes")),
+                        "county": r.get("county", meta.get("county")),
+                        "owner": r.get("owner", meta.get("owner")),
+                        "species": r.get("species") or meta.get("species") or ""})
+    return out
+
 def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev", alt_names=None,
-                 tpm=DEFAULT_TPM):
+                 tpm=DEFAULT_TPM, row=None):
     """One lake, start to saved profile. Returns a result dict; never raises."""
     t0 = time.perf_counter()
     out = {"lake": lake, "state": state, "aliases": list(alt_names or []),
@@ -397,11 +441,14 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
            "confirmed": [], "asked": [], "returned": [], "missing": [], "documents": 0,
            "facts": 0,
            "sources": 0, "fetch": {}, "rejected_offlake": 0, "rejected_docs": [],
-           "wqp_records": 0, "limnology_gaps": [],
+           "wqp_records": 0, "limnology_gaps": [], "ramps_sent": 0,
            "chars_sent": 0, "retries": 0, "group_attempts": {}, "saved_key": None,
            "saved_version": None, "discovered_species": [], "warnings": []}
 
-    code, det, err = _req("/research/deterministic-facts", {"lakeName": lake, "state": state})
+    ramps = registry_ramps(row)
+    out["ramps_sent"] = len(ramps)
+    code, det, err = _req("/research/deterministic-facts",
+                          {"lakeName": lake, "state": state, "ramps": ramps})
     if code != 200 or not det or not det.get("profile"):
         out["error"] = f"deterministic-facts {code}: {err or 'no profile'}"
         return out
@@ -673,6 +720,11 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
     return out
 
 
+# {lowercased display name: the registry row}, filled by load_lakes(). See
+# registry_ramps() for why the row has to reach research_one().
+ROWS_BY_NAME = {}
+
+
 def load_lakes(args, registry):
     """--todo and --lake win; otherwise the registry, filtered the way the research tab filters."""
     idx_path = os.path.join(registry, "lake_index.json")
@@ -684,6 +736,11 @@ def load_lakes(args, registry):
     # -- and the gate needs it for the same reason: Lanier's documents say "Lake Lanier" and its
     # registry name is "Lake Sidney Lanier". Six of nine were dropped for that on 2026-09-01.
     alt_names = {}
+    # Keyed exactly like alt_names, so a name that resolves to aliases resolves to its row too.
+    # A map rather than a fourth tuple element because --todo, --from-report and --lake each
+    # build that tuple in their own branch and a fourth field would have to be added to all of
+    # them and kept in step.
+    ROWS_BY_NAME.clear()
     for slug, row in idx.items():
         name = row.get("display_name") or row.get("name") or slug
         legacy = row.get("legacy_display_names")
@@ -691,6 +748,7 @@ def load_lakes(args, registry):
             legacy = [row["legacy_display_name"]] if row.get("legacy_display_name") else []
         names = [row.get("name"), row.get("display_name"), *legacy]
         alt_names[name.strip().lower()] = [n for n in dict.fromkeys(names) if n]
+        ROWS_BY_NAME[name.strip().lower()] = row
 
     if getattr(args, "from_report", None):
         # THE NAMES A PRIOR RUN USED, WHICH ARE THE APP'S NAMES. --todo only offers waters with no
@@ -900,7 +958,8 @@ def main():
 
     def work(pair):
         name, st, alts = pair
-        r = research_one(name, st, a.dry_run, a.verbose, a.repo, alts, a.tpm)
+        r = research_one(name, st, a.dry_run, a.verbose, a.repo, alts, a.tpm,
+                         ROWS_BY_NAME.get(name.strip().lower()))
         done[0] += 1
         mark = "ok " if r["ok"] else "FAIL"
         secs = f'{r.get("seconds", 0):5.1f}s'

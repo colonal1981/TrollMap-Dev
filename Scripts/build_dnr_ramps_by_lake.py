@@ -128,6 +128,7 @@ import argparse
 import json
 import math
 import os
+import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -423,6 +424,76 @@ def build_name_index(rows):
     return exact, loose
 
 
+# ── A COASTAL ZONE CANNOT BE NAMED BY THE FEED, SO IT IS BOUND BY WHERE AND WHOSE ───────────
+#
+# The name pass above is right for lakes and it is why this file exists: a park pond sitting
+# inside a reservoir's bounding box is a different water, so a name has to agree before geometry
+# is even consulted. A COASTAL ZONE IS NOT THAT SHAPE. It is a box drawn over an estuary system,
+# and the waters inside it are its own tributaries -- SCDNR files Bennetts Point under "Mosquito
+# Creek", GA WRD files Fort McAllister under "Ogeechee River", and no zone is called either. Our
+# zones are named for the sound: "ACE Basin / Edisto, SC", "Ossabaw / St. Catherines Sound, GA".
+#
+# So the name pass can never fire there, which made it a guard that removes everything and admits
+# nothing: measured 2026-09-03, ALL SIXTEEN coastal zones held zero DNR ramps and zero DNR paddle
+# launches while 246 agency access points sat inside their boxes. Georgia's four zones are the
+# sharpest case -- those points carry the Redfish, SeaTrout, Flounder and Sheepshead columns,
+# which is the entire inshore roster we had been calling missing.
+#
+# GEOMETRY ALONE IS NOT ENOUGH EITHER, and the point Ryan picked at random proved it: Bennetts
+# Point falls inside BOTH ace_basin and beaufort, and Station Creek falls inside four. Zone boxes
+# overlap by construction.
+#
+# THE SECOND SIGNAL IS THE COUNTY, AND BOTH SIDES ALREADY PUBLISH IT. Every state feed carries a
+# `county` field on the record and every zone's display_name carries one -- ACE Basin is Colleton,
+# Beaufort is Beaufort, and Bennetts Point says Colleton. That is the same two-independent-signals
+# rule as name+geometry, with the county standing in for a name that structurally cannot match,
+# and it fails closed the same way: 229 of the 246 points resolve, and the 17 that do not -- mostly
+# Intracoastal Waterway sites on a county line, plus one with the county field blank -- stay
+# refused rather than guessed at.
+#
+# THIS RUNS ONLY AFTER THE NAME PASS HAS ALREADY REFUSED THE POINT, so it can never take a point
+# away from a lake that named it, and it only ever considers rows whose feature_type is coastal.
+COASTAL_COUNTY = re.compile(r'\(([^)]*?)\s+Co(?:unty)?[,)]', re.I)
+
+
+def zone_county(rec):
+    """The county out of a zone's display_name -- "ACE Basin / Edisto, SC (Colleton Co, SC)"."""
+    m = COASTAL_COUNTY.search(str(rec.get('display_name') or ''))
+    return m.group(1).strip().lower() if m else None
+
+
+def coastal_zones(rows):
+    """{slug: (bounds, county or None)} for every coastal row with a box.
+
+    A COUNTY-LESS ZONE STILL COMPETES ON GEOMETRY. Two of the sixteen carry no county --
+    "Murrells Inlet / Pawleys Island, SC" and "St. Helena Sound, SC" -- because
+    consolidate_lake_index.py takes the county from the centroid and a sound's centroid is open
+    water, which is the same run's "5 centroids fell outside every county polygon". Requiring one
+    to enter the candidate set at all cost Murrells Inlet every point in its box, 21 of which no
+    other zone claims. The county is a TIEBREAK, so it is only needed when there is a tie.
+    """
+    out = {}
+    for slug, r in rows.items():
+        if str(r.get('feature_type') or '').lower() != 'coastal':
+            continue
+        b = r.get('bounds_wsen')
+        if b and len(b) == 4:
+            out[slug] = (b, zone_county(r))
+    return out
+
+
+def bind_coastal(zones, lat, lon, county, pad=0.002):
+    """The one zone this access point is in, or None. Box first, the feed's own county decides."""
+    inside = [s for s, (b, _c) in zones.items()
+              if (b[0] - pad) <= lon <= (b[2] + pad) and (b[1] - pad) <= lat <= (b[3] + pad)]
+    if len(inside) == 1:
+        return inside[0]
+    if not inside:
+        return None
+    c = str(county or '').strip().lower()
+    hit = [s for s in inside if c and zones[s][1] and zones[s][1] == c]
+    return hit[0] if len(hit) == 1 else None
+
 def bind(registry, rows, feeds, tol_m, geometry=True, verbose=False):
     """feeds: {kind: {state: (waterbodies, stats, src_label)}} -> {kind: {slug: [points]}}"""
     exact, loose = build_name_index(rows)
@@ -463,7 +534,9 @@ def bind(registry, rows, feeds, tol_m, geometry=True, verbose=False):
     out = {k: {} for k in feeds}
     rep = {'name_hit': 0, 'name_miss': 0, 'pts': 0, 'placed': 0,
            'dropped_geom': 0, 'no_geom_row': 0, 'by_pass': {'exact': 0, 'alias': 0, 'loose': 0},
-           'bbox_only': set(), 'exact_geom': set(), 'unmatched_names': [], '_locate': locate}
+           'bbox_only': set(), 'exact_geom': set(), 'unmatched_names': [], '_locate': locate,
+           'coastal': 0, 'coastal_zones': set()}
+    zones = coastal_zones(rows)
 
     for kind, per_state in feeds.items():
         for st, (wbs, _stats, src_label) in per_state.items():
@@ -480,8 +553,33 @@ def bind(registry, rows, feeds, tol_m, geometry=True, verbose=False):
                     cands, which = loose[lk], 'loose'
                 if not cands:
                     rep['name_miss'] += 1
-                    if len(rep['unmatched_names']) < 4000:
-                        rep['unmatched_names'].append((st.upper(), kind, wb, len(items), items))
+                    # The coastal fallback, and ONLY after the name has already failed.
+                    left = []
+                    for it in items:
+                        try:
+                            lat, lon = float(it['lat']), float(it['lon'])
+                        except (KeyError, TypeError, ValueError):
+                            left.append(it)
+                            continue
+                        meta = it.get('meta') or {}
+                        slug = bind_coastal(zones, lat, lon,
+                                            it.get('county') or meta.get('county'))
+                        if not slug:
+                            left.append(it)
+                            continue
+                        out[kind].setdefault(slug, []).append({
+                            'name': it.get('name') or 'Unnamed access point',
+                            'wb': wb,
+                            'type': 'Boat Ramp' if kind == 'ramps' else 'Paddle Launch',
+                            'src': src_label or ('%s %s' % (st.upper(), kind)),
+                            'lat': round(lat, 6), 'lon': round(lon, 6),
+                            'meta': {kk: vv for kk, vv in meta.items() if vv not in (None, '')},
+                        })
+                        rep['placed'] += 1
+                        rep['coastal'] += 1
+                        rep['coastal_zones'].add(slug)
+                    if left and len(rep['unmatched_names']) < 4000:
+                        rep['unmatched_names'].append((st.upper(), kind, wb, len(left), left))
                     continue
                 rep['name_hit'] += 1
                 rep['by_pass'][which] += 1
@@ -536,6 +634,10 @@ def report(rows, out, rep, tol_m, dst_names, geometry):
           % (rep['pts'], rep['name_hit'], rep['name_miss']))
     print('   name passes: %d exact, %d alias, %d loose'
           % (rep['by_pass']['exact'], rep['by_pass']['alias'], rep['by_pass']['loose']))
+    if rep.get('coastal'):
+        # Said out loud every run, because these are the points NO name could ever have placed.
+        print('   %d of them are coastal, bound by box + the feed\'s own county across %d zone(s)'
+              % (rep['coastal'], len(rep['coastal_zones'])))
     print('   %d points placed, %d dropped by the %s guard at %.0f m'
           % (rep['placed'], rep['dropped_geom'],
              'boundary-geometry' if geometry else 'bounding-box', tol_m))
