@@ -850,14 +850,33 @@ def load_lakes(args, registry):
 
     out = []
     for slug, row in idx.items():
-        # PRESETS.research in js/data/water-filter.js: minAcres 1000, includeRivers false.
-        # Mirrored rather than reinvented -- if that preset changes, this must follow it.
-        if row.get("feature_type") != "lake":
-            continue
-        if (row.get("area_acres") or 0) < args.min_acres:
-            continue
-        if slug.startswith("coast_"):
-            continue
+        # PRESETS.research in js/data/water-filter.js, mirrored rather than reinvented:
+        #
+        #     keep: (rec, { bath, isCoastal, isRiver, acres }, cfg) => {
+        #       if (isCoastal) return true;
+        #       if (isRiver && !cfg.includeRivers) return false;
+        #       return bath !== 'no' && acres >= (cfg.minAcres ?? 1000);
+        #     }
+        #
+        # IT SAID IT MIRRORED THAT AND IT INVERTED THE FIRST LINE. `feature_type != "lake"` plus
+        # `slug.startswith("coast_")` excluded the coastal zones the preset admits before it looks
+        # at anything else -- and the preset's own label says why it is written that way: Ryan
+        # asked for a filter "mainly for coastal and large impoundments". So the batch has never
+        # offered a coastal zone, and the sixteen have profiles only because they were researched
+        # from the browser tab one at a time.
+        #
+        # Two rules, not three: coastal passes on being coastal, a river needs the switch, and
+        # everything else is judged on acreage. `bath !== 'no'` has no mirror here -- the browser
+        # reads it off the bathymetry census and the registry row does not carry it -- so a water
+        # with no soundings can still be offered by the batch and is refused later by the run.
+        ftype = str(row.get("feature_type") or "").lower()
+        is_coastal = ftype == "coastal" or slug.startswith("coast_")
+        is_river = ftype == "river"
+        if not is_coastal:
+            if is_river and not args.include_rivers:
+                continue
+            if (row.get("area_acres") or 0) < args.min_acres:
+                continue
         name = row.get("display_name") or row.get("name") or slug
         out.append((name, row.get("state") or "SC", alt_names.get(name.strip().lower(), [])))
     out.sort(key=lambda p: p[0])
@@ -868,6 +887,11 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--registry", default="registry", help="folder holding lake_index.json")
+    ap.add_argument("--include-rivers", action="store_true",
+                    help="offer rivers too. Off by default, mirroring PRESETS.research's "
+                         "includeRivers:false -- a river's acreage measures a ribbon, and the "
+                         "research questions are lake questions. Coastal zones are NOT behind "
+                         "this switch; the preset admits them unconditionally.")
     ap.add_argument("--repo", default="TrollMap-Dev",
                     help="the TrollMap-Dev tree. This script runs three pieces of the app rather "
                          "than reimplementing them: the off-lake gate, the storage-id resolver, "
