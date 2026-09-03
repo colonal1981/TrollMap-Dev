@@ -8,7 +8,8 @@
  *
  * Per the agreed split:
  *   reused as-is        navigation, fisheries, summary
- *   coastal prompt hint habitat, biology  (see COASTAL_AGENT_HINTS)
+ *   water-type hint     fisheries  (see water-type-hints.js; the habitat/biology
+ *                       keys this used to name were retired 2026-09-01)
  *   skipped             identity
  *   new here            estuary, tidal, saltwater_regulations
  *
@@ -205,28 +206,18 @@ JSON only.`;
   },
 };
 
-/**
- * Extra prompt guidance appended to the shared agents when the target is a
- * coastal zone. Lets habitat/biology be reused instead of duplicated.
+/*
+ * COASTAL_AGENT_HINTS MOVED TO water-type-hints.js ON 2026-09-03, and was dead when it moved.
+ *
+ * It was keyed on `habitat` and `biology`. Both agents were RETIRED on 2026-09-01 -- see
+ * COASTAL_SKIPPED_AGENTS below, which records both retirements itself. agents.js looked the hint
+ * up as COASTAL_AGENT_HINTS[agentKey] against the live agents, so it could not match anything,
+ * and every coastal research pass ran the freshwater prompt.
+ *
+ * It is not in this file any more because rivers need the same treatment and a river hint does
+ * not belong in coastal-agents.js. One table, keyed water type -> agent, in
+ * Worker/research/water-type-hints.js.
  */
-const COASTAL_AGENT_HINTS = {
-  habitat:
-    "\n\nCOASTAL ZONE — this is a tidal estuary, not a reservoir. The structural " +
-    "elements that matter are: Spartina marsh edges, oyster reefs and rakes, tidal " +
-    "creek mouths and confluences, grass flat potholes, dock and pier pilings, " +
-    "inlet throats and pinch points, channel edges and drop-offs, and shell rakes. " +
-    "Do NOT report brush piles, standing timber, or man-made freshwater fish " +
-    "attractors unless a source explicitly documents them. Note which structures " +
-    "are exposed at low tide versus submerged at high tide.",
-  biology:
-    "\n\nCOASTAL ZONE — the predator species of interest are Red Drum (Redfish), " +
-    "Spotted Seatrout (Speckled Trout), Southern Flounder, Black Drum, Sheepshead " +
-    "and Tarpon. The forage base is shrimp, mud minnows (mummichog), finger mullet, " +
-    "menhaden, blue crab and juvenile spot/croaker — NOT threadfin or gizzard shad, " +
-    "blueback herring, or freshwater crayfish. Note spawning and cold-stun timing: " +
-    "seatrout are vulnerable to winter cold-stun events, and red drum move to the " +
-    "inlets and nearshore to spawn in late summer and autumn.",
-};
 
 /**
  * THE SC INSHORE ROSTER. A DECISION, WRITTEN DOWN AS ONE.
@@ -330,7 +321,6 @@ export {
   SC_INSHORE_ROSTER,
   SC_INSHORE_BASIS,
   COASTAL_AGENTS,
-  COASTAL_AGENT_HINTS,
   COASTAL_SKIPPED_AGENTS,
   isCoastalZone,
   coastalAgentPlan,

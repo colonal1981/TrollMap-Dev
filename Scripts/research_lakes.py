@@ -889,9 +889,16 @@ def main():
     ap.add_argument("--registry", default="registry", help="folder holding lake_index.json")
     ap.add_argument("--include-rivers", action="store_true",
                     help="offer rivers too. Off by default, mirroring PRESETS.research's "
-                         "includeRivers:false -- a river's acreage measures a ribbon, and the "
-                         "research questions are lake questions. Coastal zones are NOT behind "
-                         "this switch; the preset admits them unconditionally.")
+                         "includeRivers:false. THE REASON FOR THAT DEFAULT EXPIRED ON 2026-09-03: "
+                         "it was 'the research questions are lake questions', and the fisheries "
+                         "agent now takes river framing -- discharge instead of pool elevation, "
+                         "current seams and shoals instead of brush piles, a release schedule as "
+                         "the timing input -- from Worker/research/water-type-hints.js. What is "
+                         "still thin is the species baseline: 15 of 58 rivers have one, and only "
+                         "4 have an agency page. The default is unchanged because flipping it "
+                         "changes what a batch spends; the switch is the decision, not a bug. "
+                         "Coastal zones are NOT behind this switch; the preset admits them "
+                         "unconditionally.")
     ap.add_argument("--repo", default="TrollMap-Dev",
                     help="the TrollMap-Dev tree. This script runs three pieces of the app rather "
                          "than reimplementing them: the off-lake gate, the storage-id resolver, "

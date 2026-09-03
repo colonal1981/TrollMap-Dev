@@ -14,9 +14,10 @@ import { fetchStateRegulations, getLakeRegulations,
          fetchSaltwaterRegulations, fetchLiveRegsAmendments } from './clients.js';
 import { extractJsonPossibly } from './keys.js';
 import { parseBehaviour, behaviourBlock } from './behaviour.js';
+import { waterTypeHint } from './water-type-hints.js';
 import { canonicalizeResearchSpecies } from './facts-util.js';
 import {
-  COASTAL_AGENTS, COASTAL_AGENT_HINTS, COASTAL_SKIPPED_AGENTS,
+  COASTAL_AGENTS, COASTAL_SKIPPED_AGENTS,
   isCoastalZone, coastalAgentPlan,
 } from './coastal-agents.js';
 import { coerceNum } from '../../js/utils/coerce.js';
@@ -1259,6 +1260,27 @@ async function handleResearchAgent(request, env) {
   const agent = RESEARCH_AGENTS[agentKey];
   if (!agent) return new Response(JSON.stringify({success:false, error:`unknown agent ${agentKey}. Valid: ${Object.keys(RESEARCH_AGENTS).join(', ')}`}), {status:400, headers:JSON_HEADERS});
 
+  // WHAT KIND OF WATER IS THIS, RESOLVED ONCE AND FROM THE REGISTRY.
+  //
+  // Read below by the water-type prompt hint and by the MRIP inshore gate. It replaces
+  // `coastalTarget`, which asked `body.zoneKey || body.lakeKey` and then
+  // `previousResults._zoneMeta.slug` -- research_lakes.py sends no zoneKey, and `_zoneMeta` is
+  // read in two places and WRITTEN IN NONE. So the old expression was false on every run, which
+  // is the second of the three reasons the coastal hint never applied (the first being that it
+  // was keyed on two retired agents).
+  //
+  // feature_type is on every index row and is decided in ONE place, consolidate_lake_index.py.
+  // The explicit zone key stays as a fallback so a caller that DOES send one still works, but it
+  // is no longer the only thing asked.
+  let waterRow = null;
+  try {
+    waterRow = resolveRegistryRow(await lakeIndex(env), lakeName);
+  } catch (err) {
+    waterRow = null;   // no index is a reason to run unframed, not to fail the agent
+  }
+  const waterType = String(waterRow?.feature_type || '').toLowerCase()
+    || (isCoastalZone(body.zoneKey || body.lakeKey || '') ? 'coastal' : '');
+
   // GROUND THE IDENTITY AGENT FROM THE REGISTRY, NOT FROM A FIFTEEN-LAKE TABLE.
   //
   // This read `LAKES[lakeKeyFromName(lakeName)]` — fifteen waters of 454. Every other lake got a
@@ -1477,8 +1499,7 @@ async function handleResearchAgent(request, env) {
     // The gate is the CO-OPS tide binding, not feature_type -- see isTidalWater(). The Cooper is
     // a river and the tide runs up it to Bushy Park, which is the water this must not lose.
     try {
-      const row = resolveRegistryRow(await lakeIndex(env), lakeName);
-      const tidal = await isTidalWater(env, row && row.slug);
+      const tidal = await isTidalWater(env, waterRow && waterRow.slug);
       const mrip = tidal ? await mripInshore(env) : null;
       if (mrip && mrip[String(state || '').trim().toUpperCase()]) {
         groundedPrev = { ...groundedPrev, _mripStates: mrip };
@@ -1816,13 +1837,11 @@ holding: coerceHolding(entry.holding, holdingRejects),
     }), { headers: JSON_HEADERS });
   }
 
-  // Coastal zones reuse the shared habitat/biology agents but need saltwater
-  // framing, otherwise they report brush piles and shad for a salt marsh.
-  const coastalTarget = isCoastalZone(body.zoneKey || body.lakeKey || '')
-    || isCoastalZone(previousResults?._zoneMeta?.slug || '');
-  const systemPrompt = (coastalTarget && COASTAL_AGENT_HINTS[agentKey])
-    ? agent.system + COASTAL_AGENT_HINTS[agentKey]
-    : agent.system;
+  // THE WATER GETS FRAMED FOR WHAT IT IS. An estuary reported as a reservoir names brush piles
+  // and shad in a salt marsh; a river reported as one gets a thermocline and a full pool. Empty
+  // string when there is no hint for this water type and agent, so a lake runs the plain prompt.
+  const hint = waterTypeHint(waterType, agentKey);
+  const systemPrompt = hint ? agent.system + hint : agent.system;
   // THE GUARD BELOW USED TO REPORT SUCCESS AND DO NOTHING, and that is the whole of it.
   // `userPrompt` was a const built from groundedPrev, then the guard reassigned groundedPrev
   // and the payload sent the ORIGINAL string. From wrangler tail, 2026-08-16, twice with the
@@ -2036,7 +2055,7 @@ Object.assign(RESEARCH_AGENTS, COASTAL_AGENTS);
 export {
   RESEARCH_AGENTS, calculateSectionConfidence, gateOverallConfidence,
   hasStructuredTrollingIntel, handleResearchAgent,
-  COASTAL_AGENTS, COASTAL_AGENT_HINTS, COASTAL_SKIPPED_AGENTS,
+  COASTAL_AGENTS, COASTAL_SKIPPED_AGENTS,
   isCoastalZone, coastalAgentPlan,
   splitConjunctiveName, missingConfirmedSpecies,
 };
