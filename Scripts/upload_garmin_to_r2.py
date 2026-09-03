@@ -536,6 +536,9 @@ PASSTHROUGH_REGISTRIES = {
         "fetch_noaa_current_stations.py",
     "ehydro_surveys_by_zone.json":
         "no channel survey index; build it with fetch_ehydro_surveys.py",
+    "mrip_inshore.json":
+        "the fisheries agent has no measured season or size for an inshore species and writes "
+        "both from recollection; build it with build_mrip_inshore.py",
 }
 
 

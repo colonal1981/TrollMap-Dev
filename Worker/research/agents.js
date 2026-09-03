@@ -2,7 +2,9 @@
 import { JSON_HEADERS, callLLM, extractLLMText } from '../worker-core.js';
 import { fetchDukeOperatingRange } from '../worker-data.js';
 import { dukePoolManagement } from '../conditions.js';
-import { lakeIndex, resolveRegistryRow, agencyLakeFacts, speciesTraits } from '../registry.js';
+import { lakeIndex, resolveRegistryRow, agencyLakeFacts, speciesTraits,
+         mripInshore, speciesHabitatWeights, encSeabed, coastalCurrentStations,
+         ehydroSurveys } from '../registry.js';
 // MOVED 2026-08-31. identityGrounding() assembles the registry identity and the live pool
 // numbers, and this file handed the result to an LLM as context. That is backwards: it is a
 // deterministic fact, so it now lives in deterministic.js, is written straight into the
@@ -578,7 +580,7 @@ JSON only. Never output a string or array for creelLimits or sizeLimits.`;
 Lake: ${lakeName}
 Lake profile (use for confirmed species, forage, limnology context):
 ${JSON.stringify(cleanProfile(prev), null, 2).slice(0, 12000)}
-${docSection}${prev?._agencyBlock || ''}${prev?._traitsBlock || ''}${prev?._behaviourBlock || ''}
+${docSection}${prev?._agencyBlock || ''}${prev?._traitsBlock || ''}${prev?._mripBlock || ''}${prev?._coastalBlock || ''}${prev?._behaviourBlock || ''}
 
 ${discover ? `NO SPECIES LIST EXISTS FOR THIS WATER. ESTABLISH ONE FIRST, THEN WRITE THE INTELLIGENCE.
 
@@ -1070,6 +1072,162 @@ async function speciesTraitsEntries(env, state) {
  * agent runs a call per species group and a call about catfish has no use for the crappie
  * paragraph. Unfiltered this is 30 KB and every group would have carried all of it.
  */
+
+/**
+ * WHAT THE CHARTS AND THE SURVEYS KNOW ABOUT THIS ESTUARY.
+ *
+ * The one block that answers the structural questions a coastal prompt was asking and could not
+ * answer. Until 2026-09-03 the coastal path had no bottom composition, no measured current, no
+ * channel depth and no sourced species-habitat ranking, so an estuary was researched with a
+ * reservoir's vocabulary and the difference was invisible.
+ *
+ * THE ZONE IS FOUND BY REGISTRY ROW, NOT BY isCoastalZone(). That helper matches a slug prefix
+ * and the caller has a NAME -- `isCoastalZone('Murrells Inlet / Pawleys Island, SC')` is false.
+ * deterministic.js settled this on 2026-09-02 by reading `feature_type` off the resolved row,
+ * and this follows it rather than inventing a second answer. `_zoneMeta`, which two other places
+ * read, is written by nothing at all.
+ *
+ * EACH SOURCE FAILS ALONE. Four registry objects, four separate try/catches: a bucket missing
+ * the seabed must still yield the current, because a block that is all-or-nothing becomes
+ * nothing the first time one upload is skipped.
+ */
+async function coastalWaterBlock(env, lakeName, state, species) {
+  let row = null;
+  try {
+    row = resolveRegistryRow(await lakeIndex(env), lakeName);
+  } catch (err) {
+    return '';
+  }
+  if (!row || String(row.feature_type || '').toLowerCase() !== 'coastal') return '';
+  const slug = row.slug || '';
+  const lines = [];
+
+  // ── bottom, and what is built on it ────────────────────────────────────────────────────────
+  try {
+    const zone = (await encSeabed(env))[slug];
+    if (zone) {
+      const sub = Object.entries(zone.bySubstrate || {});
+      if (sub.length) {
+        lines.push(`  BOTTOM (NOAA chart seabed, ${zone.features} charted features): `
+          + sub.map(([k, n]) => `${k} ${n}`).join(', ')
+          + (Object.keys(zone.bySurface || {}).length
+             ? ` — surfaces named: ${Object.keys(zone.bySurface).slice(0, 6).join(', ')}` : ''));
+      }
+      const cat = Object.entries(zone.byCategory || {}).slice(0, 6);
+      if (cat.length) {
+        lines.push('  HARD EDGE (charted shoreline construction): '
+          + cat.map(([k, n]) => `${k.replace(/_/g, ' ')} ${n}`).join(', '));
+      }
+      const kinds = zone.byKind || {};
+      const struct = ['wreck', 'obstruction', 'piling', 'bridge', 'rock', 'turbulence']
+        .filter((k) => kinds[k]).map((k) => `${k} ${kinds[k]}`);
+      if (struct.length) lines.push(`  CHARTED STRUCTURE: ${struct.join(', ')}`);
+      const blocks = Object.entries(zone.blocksUs || {});
+      if (blocks.length) {
+        lines.push('  RESTRICTED WATER: '
+          + blocks.map(([k, n]) => `${k.replace(/_/g, ' ')} ${n}`).join(', ')
+          + '. Do not send anybody into one.');
+      }
+    }
+  } catch (err) { /* one absent object must not empty the block */ }
+
+  // ── which of those the fish in play actually want ─────────────────────────────────────────
+  try {
+    const weights = await speciesHabitatWeights(env);
+    const canon = (n) => String(canonicalizeResearchSpecies(n) || n || '').toLowerCase().trim();
+    const want = new Set((Array.isArray(species) ? species : []).map(canon).filter(Boolean));
+    for (const [name, rec] of Object.entries(weights)) {
+      if (want.size && !want.has(canon(name))) continue;
+      const adult = { ...(rec.structures?.adult || {}), ...(rec.substrates?.adult || {}) };
+      const ranked = Object.entries(adult).sort((a, b) => b[1] - a[1]).slice(0, 5);
+      if (!ranked.length) continue;
+      // ADULT ONLY, AND SAY SO. The matrix rates red drum Very High on marsh as JUVENILES and
+      // Medium as adults; spawning adults leave for the channel edge. A block that flattened
+      // the stages would send a plan to the grass for a fish that is not there.
+      lines.push(`  ${name} — ranked habitat for ADULTS (South Atlantic habitat matrix, `
+        + `4 = very high): ` + ranked.map(([k, v]) => `${k.replace(/_/g, ' ')} ${v}`).join(', '));
+    }
+  } catch (err) { /* as above */ }
+
+  // ── the water itself ──────────────────────────────────────────────────────────────────────
+  try {
+    const cur = (await coastalCurrentStations(env)).zones?.[slug]
+             || (await coastalCurrentStations(env))[slug];
+    const list = Array.isArray(cur) ? cur : (cur && cur.length ? cur : null);
+    if (list && list.length) {
+      lines.push(`  TIDAL CURRENT: ${list.length} NOAA current-prediction station(s) inside this `
+        + `zone, e.g. ${list.slice(0, 3).map((c) => c.name).filter(Boolean).join('; ')}. `
+        + 'Current is not the tide: it keeps running after high water, and the lag is what '
+        + 'positions fish at a creek mouth.');
+    }
+  } catch (err) { /* as above */ }
+
+  try {
+    const w = (await ehydroSurveys(env))[slug];
+    if (w && Array.isArray(w.newestPerChannel) && w.newestPerChannel.length) {
+      const newest = w.newestPerChannel
+        .map((r) => r.surveydateend).filter(Boolean).sort().pop();
+      lines.push(`  CHANNEL DEPTH: ${w.newestPerChannel.length} dredged reach(es) surveyed by `
+        + `USACE, most recent ${newest || 'unknown'}. Surveyed channel is the deep water in an `
+        + 'estuary and the flat beside it is not surveyed at all.');
+    }
+  } catch (err) { /* as above */ }
+
+  if (!lines.length) return '';
+  return '\n\nTHIS IS A TIDAL ESTUARY, AND HERE IS WHAT IS CHARTED AND MEASURED IN IT.\n'
+    + 'Every line below is read from a chart or a survey, not inferred. Where it disagrees with\n'
+    + 'a recollection about estuaries in general, THIS WINS -- it is about this zone.\n'
+    + lines.join('\n');
+}
+
+
+/**
+ * WHEN a fish is caught inshore in this state, and HOW BIG, from a survey rather than a memory.
+ *
+ * NOAA's Access Point Angler Intercept Survey is a federal surveyor on a dock writing down what
+ * came off the boat. Eleven years of it, filtered to the survey's OWN inland-water code, so
+ * "nothing saltwater that is not inshore" is enforced by the person who took the record.
+ *
+ * This is the one block in this file that carries a MEASURED season. Everything else about
+ * timing has come from a model's recollection or from a state's prose.
+ *
+ * AN UNSAMPLED WAVE IS NOT A ZERO, and it is written out in words here for the same reason it
+ * is stored that way: MRIP does not work January-February in SC or GA. Printed as `0` it says
+ * the seatrout are gone in February, which is the opposite of true -- that is when the big ones
+ * are caught. Printed as "not surveyed" it says what is actually known.
+ */
+function mripSeasonBlock(states, state, species) {
+  const rec = states && states[String(state || '').trim().toUpperCase()];
+  if (!rec || !rec.species) return '';
+  const canon = (n) => String(canonicalizeResearchSpecies(n) || n || '').toLowerCase().trim();
+  const want = new Set((Array.isArray(species) ? species : []).map(canon).filter(Boolean));
+  const waves = { 1: 'Jan-Feb', 2: 'Mar-Apr', 3: 'May-Jun',
+                  4: 'Jul-Aug', 5: 'Sep-Oct', 6: 'Nov-Dec' };
+  const lines = [];
+  for (const name of (rec.roster || [])) {
+    if (want.size && !want.has(canon(name))) continue;
+    const s = rec.species[name];
+    if (!s) continue;
+    const seasons = Object.entries(s.byWave || {}).map(([w, v]) => (
+      v && v.sampled ? `${waves[w]} ${v.intercepts}` : `${waves[w]} not surveyed`));
+    const size = s.lengthIn
+      ? ` — measured length ${s.lengthIn.minIn}-${s.lengthIn.maxIn} in, median `
+        + `${s.lengthIn.medianIn} in across ${s.lengthIn.n} fish`
+      : '';
+    lines.push(`  ${name} — ${s.intercepts} intercepts: ${seasons.join(', ')}${size}`);
+  }
+  if (!lines.length) return '';
+  return `\n\nWHAT IS ACTUALLY CAUGHT HERE, AND WHEN — NOAA MRIP intercept survey, `
+    + `${state} inland waters.\n`
+    + `A federal surveyor recorded each of these off a boat. The numbers are counts of\n`
+    + `intercepts per two-month wave across eleven years, so they are a SHAPE of the season,\n`
+    + `not a catch rate. USE THEM FOR TIMING. Where this and a recollection disagree, this wins.\n`
+    + `"not surveyed" means the survey did not run that wave in this state. It does NOT mean\n`
+    + `zero fish and must never be reported as a closed or dead season.\n`
+    + lines.join('\n');
+}
+
+
 function speciesTraitsBlock(entries, species) {
   const all = Array.isArray(entries) ? entries : [];
   if (!all.length) return '';
@@ -1301,6 +1459,23 @@ async function handleResearchAgent(request, env) {
       console.log(`[research:fisheries] agency lake page in play for ${lakeName}: `
                 + `${agencyEntries.map((e) => e.species).join(', ')}`);
     }
+    // The measured season and size, beside the state's prose account. Same cadence, same
+    // failure mode: published by the pipeline, absent thins one block rather than failing.
+    try {
+      const mrip = await mripInshore(env);
+      if (mrip && mrip[String(state || '').trim().toUpperCase()]) {
+        groundedPrev = { ...groundedPrev, _mripStates: mrip };
+        console.log(`[research:fisheries] MRIP inshore season data in play for ${state}`);
+      }
+    } catch (err) {
+      console.warn('[research:fisheries] MRIP inshore lookup failed:', err && err.message);
+    }
+    const coastalBlock = await coastalWaterBlock(env, lakeName, state,
+      (groundedPrev?.biology?.predatorSpecies) || []);
+    if (coastalBlock) {
+      groundedPrev = { ...groundedPrev, _coastalBlock: coastalBlock };
+      console.log(`[research:fisheries] coastal chart + survey block in play for ${lakeName}`);
+    }
     const traitEntries = await speciesTraitsEntries(env, state);
     if (traitEntries.length) {
       groundedPrev = {
@@ -1391,6 +1566,7 @@ async function handleResearchAgent(request, env) {
         // Only this group's species sections. See agencyGuidanceBlock().
         _agencyBlock: agencyGuidanceBlock(groundedPrev._agencyEntries, groupSpecies),
         _traitsBlock: speciesTraitsBlock(groundedPrev._traitsEntries, groupSpecies),
+        _mripBlock: mripSeasonBlock(groundedPrev._mripStates, state, groupSpecies),
       };
       return agent.userTemplate(lakeName, state, groupPrev);
     };

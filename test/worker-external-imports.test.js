@@ -97,11 +97,23 @@ describe('the Worker bundle can be built', () => {
     //
     // js/data/water-aliases.js is on this list only because lake-keys.js started importing
     // it. Nothing in Worker/ mentions it.
+    //
+    // TWO MORE ADDED 2026-09-03, and they had been in the real deploy set for days while this
+    // list said four. The test was red the whole time and the redness was being read as
+    // background noise -- which is what a stale assertion becomes. Both are genuinely shared:
+    //
+    //   ga-access-species.js   the 48 Y/N species columns on Georgia's WRD access points, read
+    //                          by BOTH runtimes so the browser and the research pass cannot
+    //                          disagree about what a Georgia ramp says is in the water
+    //   wqp-limnology.js       the Water Quality Portal profile reader, shared for the same
+    //                          reason -- the Worker refreshes it on cron and the client shows it
     const EXPECTED = [
+      'js/data/ga-access-species.js',
       'js/data/lake-keys.js',
       'js/data/water-aliases.js',
       'js/utils/coerce.js',
       'js/utils/geojson-coords.js',
+      'js/utils/wqp-limnology.js',
     ];
     expect(externalClosure().map((f) => relative(ROOT, f).replace(/\\/g, '/'))).toEqual(EXPECTED);
   });

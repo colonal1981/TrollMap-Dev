@@ -15,9 +15,7 @@ import { handleCameras } from './cameras.js';
 import { handleAlerts, runAlertSweep } from './alerts.js';
 import { handleReports } from './reports.js';
 import { fetchStateRegulations, getLakeRegulations } from './research/clients.js';
-import { regulationsTable, lakeIndex, resolveRegistryRow,
-         speciesHabitatWeights, encSeabed, coastalCurrentStations,
-         ehydroSurveys } from './registry.js';
+import { regulationsTable, lakeIndex, resolveRegistryRow } from './registry.js';
 import { handleResearchThermoclineSearch, handleResearchLimnologyData, refreshStaleLimnology, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchRegsDebug, handleResearchApprove, handleResearchDelete, handleResearchDeleteNormalizedDoc, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleResearchValidationPass, handleSharedCheck, handleSharedStore, handleSharedQuery, handleSharedPublish, handleSharedStatus, handleSharedQuarantine } from './worker-research.js';
 
 
@@ -1486,53 +1484,6 @@ var trollmap_worker_default = {
       // `hasExceptions` says whether the lake-specific half found anything, so a caller can tell
       // "this lake has its own rule" from "the statewide rule applies", which are different
       // sentences to put in front of somebody about to keep a fish.
-      // ── /coastal-habitat?zone=<slug> ────────────────────────────────────────────────────
-      //
-      // ONE ROUTE, NOT FOUR. Four registries arrived on 2026-09-03 -- the species x habitat
-      // weights, the ENC seabed and charted structure, the tidal-current stations and the
-      // eHydro survey index -- and every one of them is wanted at the same moment: when a zone
-      // is picked and before a plan is built. Four round-trips to answer one question is four
-      // chances to have three of them and act as though that is the whole picture.
-      //
-      // EACH PART FAILS ON ITS OWN. A registry that has not been uploaded yet must not take the
-      // other three down with it, so each is settled separately and its absence is reported by
-      // name. A caller that finds `seabed: null` knows the bottom is unknown; a caller that gets
-      // a 500 knows nothing at all and shows nothing, which reads like "there is none here".
-      if (path === "/coastal-habitat") {
-        const zone = (url.searchParams.get("zone") || "").trim();
-        const part = async (fn, pickZone) => {
-          try {
-            const all = await fn(env);
-            if (!pickZone) return { ok: true, data: all };
-            if (!zone) return { ok: false, error: "missing zone" };
-            return { ok: true, data: all[zone] ?? null };
-          } catch (e) {
-            return { ok: false, error: String((e && e.message) || e) };
-          }
-        };
-        const [weights, seabed, currents, surveys] = await Promise.all([
-          part(speciesHabitatWeights, false),
-          part(encSeabed, true),
-          part(coastalCurrentStations, true),
-          part(ehydroSurveys, true),
-        ]);
-        const missing = [
-          ["weights", weights], ["seabed", seabed],
-          ["currents", currents], ["surveys", surveys],
-        ].filter(([, r]) => !r.ok).map(([n, r]) => `${n}: ${r.error}`);
-        return new Response(JSON.stringify({
-          ok: missing.length === 0,
-          zone: zone || null,
-          weights: weights.ok ? weights.data : null,
-          seabed: seabed.ok ? seabed.data : null,
-          currents: currents.ok ? currents.data : null,
-          surveys: surveys.ok ? surveys.data : null,
-          // NAMED, NOT COUNTED. "3 of 4 available" tells a reader nothing about which fact the
-          // plan is about to be built without.
-          unavailable: missing,
-        }), { headers: JSON_HEADERS });
-      }
-
       if (path === "/regulations") {
         const st = (url.searchParams.get("state") || "").trim().toUpperCase();
         const lake = url.searchParams.get("lake") || "";

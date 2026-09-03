@@ -198,6 +198,28 @@ def list_layers(path):
     return [ds.GetLayerByIndex(i).GetName() for i in range(ds.GetLayerCount())]
 
 
+def push_layer(slug, name, text, dry_run=False):
+    """
+    One zone's layer into R2, through the road that already exists.
+
+    NOT A SIXTH UPLOADER. extract_coastal_habitat.py's own note records what happened the last
+    time somebody wrote another one: it became "the FIFTH road into trollmap-chartpacks and the
+    last one found", sat on 208 MB raw across 37 objects, and the audit could not see it because
+    `marsh_edges` and `oyster_beds` were in no uploader's layer vocabulary so no rule had an
+    opinion about them.
+
+    `seabed.geojson` is that shape exactly. So it goes up the same road, gzipped the same way,
+    into the same per-slug key layout -- and the import is lazy because that module exits at
+    import time when geopandas is missing, which must not take a --dry-run down with it.
+    """
+    try:
+        from extract_coastal_habitat import upload_to_r2       # noqa: WPS433
+    except SystemExit as e:
+        raise RuntimeError('extract_coastal_habitat.py refused to import '
+                           f'(missing geopandas or coastal_catalog.py): {e}')
+    return upload_to_r2(slug, name, text, dry_run=dry_run)
+
+
 def _root():
     d = HERE
     for _ in range(4):
@@ -410,6 +432,9 @@ def main():
     ap.add_argument('--zone', action='append', default=None)
     ap.add_argument('--min-band', type=int, default=DEFAULT_MIN_BAND,
                     help='lowest chart usage band to read (4 approach, 5 harbour)')
+    ap.add_argument('--upload', action='store_true',
+                    help='also push each zone\'s seabed.geojson to R2, through the same road '
+                         'extract_coastal_habitat.py uses for oyster_beds and marsh_edges')
     ap.add_argument('--dry-run', action='store_true')
     ap.add_argument('--list-layers', type=int, metavar='N', default=0,
                     help='open N cells per archive and report every S-57 layer in them, with '
@@ -542,6 +567,7 @@ def main():
     print(f'\nread {read} layer(s); {skipped} layer read(s) not present in a cell')
     out_root = os.path.join(root, OUT_DIR)
     summary = {}
+    pushed = []
     for slug in sorted(zones):
         feats = per_zone.get(slug, [])
         keys, names = summarise(feats)
@@ -575,8 +601,15 @@ def main():
                             or {'type': 'Point', 'coordinates': [f['lon'], f['lat']]},
                             'properties': {k: v for k, v in f.items()
                                            if k not in ('lon', 'lat', 'shape')}} for f in feats]}
+        text = json.dumps(gj, separators=(',', ':'))
         with open(os.path.join(d, 'seabed.geojson'), 'w', encoding='utf-8') as f:
-            json.dump(gj, f, separators=(',', ':'))
+            f.write(text)
+        if a.upload:
+            try:
+                pushed.append((slug, push_layer(slug, 'seabed.geojson', text)))
+            except Exception as e:                               # noqa: BLE001
+                print(f'  {"":32}  !! upload failed: {e}')
+                pushed.append((slug, False))
 
     dest = os.path.join(root, 'registry', 'enc_seabed_by_zone.json')
     with open(dest, 'w', encoding='utf-8') as f:
@@ -585,6 +618,18 @@ def main():
                    'minBand': a.min_band, 'cells': len(cells),
                    'zones': summary}, f, indent=1)
     print(f'\nwrote {dest} and per-zone seabed.geojson under {out_root}')
+    if a.upload:
+        ok = sum(1 for _, good in pushed if good)
+        print(f'uploaded {ok} of {len(pushed)} zone layer(s) to R2')
+        if ok != len(pushed):
+            # A partial upload is the one outcome that must not read as success: the packs then
+            # hold seabed for some zones and not others, and a zone with none looks surveyed.
+            print('!! not every zone landed -- re-run with --upload to finish, '
+                  'the rest are unchanged')
+            return 1
+    elif per_zone:
+        print('NOT UPLOADED. Pass --upload to push these into the packs; until then the app '
+              'cannot read them.')
     return 0
 
 

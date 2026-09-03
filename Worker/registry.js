@@ -692,3 +692,22 @@ export const coastalCurrentStations = passthroughLoader(
 export const ehydroSurveys = passthroughLoader(
   EHYDRO_SURVEYS_KEY, 'fetch_ehydro_surveys.py',
   (p) => p && p.waters, '"waters" object keyed by slug');
+
+export const MRIP_INSHORE_KEY = '_registry/mrip_inshore.json';
+
+/**
+ * What is actually caught inshore in a state, and WHEN, from eleven years of NOAA's intercept
+ * survey. Keyed by state code.
+ *
+ * NOT A ROSTER REPLACEMENT. SC_INSHORE_ROSTER is five species Ryan named and it is right;
+ * Georgia's comes off the WRD access layer's 48 species columns. Both work. What neither has is
+ * a SEASON or a SIZE, and until now the fisheries agent wrote both from recollection.
+ *
+ * Each species carries `byWave` -- six two-month waves -- and `lengthIn` from the survey's own
+ * measurements. A wave the survey did not visit is `{sampled: false}`, NEVER 0: MRIP does not
+ * work January-February in SC or GA, and a zero there is a claim that nobody caught anything.
+ * A reader that treats the two the same will tell somebody the seatrout are gone in February.
+ */
+export const mripInshore = passthroughLoader(
+  MRIP_INSHORE_KEY, 'build_mrip_inshore.py',
+  (p) => p && p.states, '"states" object keyed by state code');

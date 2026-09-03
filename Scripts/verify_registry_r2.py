@@ -135,6 +135,29 @@ FILES = [
      "the agent writes spawn timing from recollection, which is the reason the field was cut"),
 ]
 
+# ── THE TABLE THE UPLOADER PUBLISHES FROM, READ RATHER THAN RESTATED ─────────────────────────
+# 2026-09-03, and it is the third time this file has learned the same lesson. Four registry
+# objects were published that day and this checker knew none of them, so it printed
+#
+#     All 10 registry objects are published and match the local files.
+#
+# over a bucket holding fourteen. That sentence is worse than silence: it is an assurance.
+#
+# The comments above record the same failure twice before -- water_chain.json on 08-17, three
+# more on 08-27 -- and each time the fix was to add rows here by hand, which is what let it
+# happen again. So this reads the uploader's own PASSTHROUGH_REGISTRIES instead. A fifth
+# pass-through object added to the uploader is checked here the moment it exists, with no edit.
+try:
+    from upload_garmin_to_r2 import PASSTHROUGH_REGISTRIES as _PASSTHROUGH
+except ImportError:                                     # pragma: no cover
+    _PASSTHROUGH = {}
+    print('!! could not import PASSTHROUGH_REGISTRIES from upload_garmin_to_r2 -- '
+          'the pass-through registry objects will NOT be checked')
+
+for _name, _why in _PASSTHROUGH.items():
+    FILES.append((_name, _name, "raw", _why))
+
+
 
 def canon(obj) -> str:
     """sha256 of the object, not of the bytes.
