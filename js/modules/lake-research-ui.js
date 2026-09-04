@@ -8,6 +8,7 @@ import { registryRecordFor } from '../data/access-index.js';
 import { researchedNames } from '../data/research-ids.js';
 import { workerHeaders } from '../utils/worker-auth.js';
 import { researchIntel } from './plan-inputs.js';
+import { speciesGroupsFor } from './species-selector.js';
 import { getSeason } from './plan-preflight.js';
 
 
@@ -1024,6 +1025,59 @@ function formatHumanReadableSection(key, data) {
  * stored max depth here as if it were the plan's would be the photograph-of-a-chart mistake this
  * refactor keeps deleting.
  */
+/**
+ * The species row, drawn from the SAME grouping the Plan tab uses.
+ *
+ * Ryan, 2026-09-04: "i think it should be just like the plan tab... have a lake drop down and a
+ * species picker maybe." The lake dropdown is the tab's own #researchLakeSelect and already loads
+ * the profile, so a second one would be a second place to set it. The species row is new, and it
+ * calls speciesGroupsFor() -- the function behind #planSpeciesChecks -- rather than building its
+ * own list, so the two tabs cannot offer different fish for the same water.
+ *
+ * refreshSpeciesChecks() itself is NOT reused: it is hardwired to #planSpeciesChecks, reads the
+ * plan's lake control, and re-enters itself after an async roster load. Parameterising all of that
+ * to serve a second caller is a bigger change than this needs, and speciesGroupsFor() is the seam
+ * that already exists.
+ *
+ * TICKED BY DEFAULT: every species the profile has a researched band for. That is what the panel
+ * showed before there was a picker, so the first paint does not change under anyone.
+ */
+function renderPlanSpecies(profile) {
+  const box = document.getElementById('researchSpeciesChecks');
+  if (!box) return [];
+  const lakeName = _state.currentLakeName || '';
+  const key = lakeName ? resolveR2Key(lakeName) : null;
+  const ti = (profile && profile.trollingIntelligence) || {};
+  const researched = Object.keys(ti).filter((k) => ti[k] && typeof ti[k] === 'object');
+
+  const previously = [...box.querySelectorAll('input:checked')].map((i) => i.value);
+  const wantOn = new Set(previously.length ? previously : researched);
+
+  let groups = [];
+  try { groups = speciesGroupsFor(key, profile, [...wantOn]) || []; } catch (e) { groups = []; }
+  const seen = new Set();
+  let html = '';
+  for (const g of groups) {
+    for (const sp of (g.species || [])) {
+      if (!sp || seen.has(sp.value)) continue;
+      seen.add(sp.value);
+      const on = wantOn.has(sp.value);
+      const has = researched.some((k) => k.toLowerCase() === String(sp.value).toLowerCase());
+      html += `<label style="white-space:nowrap;${has ? '' : 'opacity:.65'}">`
+        + `<input type="checkbox" value="${esc(sp.value)}"${on ? ' checked' : ''} `
+        + `style="vertical-align:middle;margin-right:4px">${esc(sp.value)}`
+        + (has ? ' <span title="this profile has a researched band for it">•</span>' : '')
+        + '</label>';
+    }
+  }
+  box.innerHTML = html || '<span class="muted">No species list for this water.</span>';
+  box.querySelectorAll('input').forEach((i) => i.addEventListener('change', () => {
+    renderPlanInput(_state.mergedProfile || profile);
+  }));
+  return [...box.querySelectorAll('input:checked')].map((i) => i.value);
+}
+
+
 function renderPlanInput(profile) {
   const box = document.getElementById('researchPlanInput');
   if (!box) return;
@@ -1032,14 +1086,11 @@ function renderPlanInput(profile) {
     return;
   }
   const season = getSeason();
-  const ti = profile.trollingIntelligence || {};
-  const species = Object.keys(ti).filter((k) => ti[k] && typeof ti[k] === 'object');
-  // A profile with no per-species block still hands the plan its limnology, forage and roster, so
-  // the block is asked for once with no species rather than not asked for at all.
-  const asks = species.length ? species : [null];
-
-  const esc = (v) => String(v == null ? '' : v)
-    .replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  const picked = renderPlanSpecies(profile);
+  // A profile with no per-species block, or a row with nothing ticked, still hands the plan its
+  // limnology, forage and roster -- so the block is asked for once with no species rather than
+  // not asked for at all.
+  const asks = picked.length ? picked : [null];
 
   const blocks = [];
   for (const sp of asks) {

@@ -939,6 +939,12 @@
              Sections below that does not appear up here reaches no plan. -->
         <div class="card">
           <h3>🎯 What Smart Plan Receives</h3>
+          <!-- The species row is drawn from speciesGroupsFor() -- the SAME grouping the Plan tab's
+               #planSpeciesChecks uses -- so the two tabs cannot offer different fish for the same
+               water. The lake is the tab's own #researchLakeSelect above; a second lake control
+               would be a second place to set it. -->
+          <div id="researchSpeciesChecks"
+               style="display:flex;flex-wrap:wrap;gap:10px;padding:8px 10px;font-size:12px"></div>
           <div id="researchPlanInput">
             <div class="muted" style="padding:10px">No profile loaded.</div>
           </div>

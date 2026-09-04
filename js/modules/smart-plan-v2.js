@@ -170,6 +170,25 @@ export async function buildSmartPlanV2(o) {
     waterState: o.waterState,
   });
 
+  // ── STOP HERE AND HAND BACK THE PROMPT, WITHOUT SPENDING A CALL ───────────────────────────
+  //
+  // Ryan, 2026-09-04: "i need to see what the agent sees", and the frame that goes with it --
+  // "with the refactor we expect the research profile to be thin... so we need to show all of the
+  // other data that used to be in the profile that is now live fetched".
+  //
+  // The research profile is ONE of the 21 inputs buildPlanRequest() reads. The other twenty --
+  // conditions, water state, candidates, hazards, the bag, the cast spots -- only exist once the
+  // pack has been fetched and the envelope answered, which is everything above this line. So a
+  // viewer that lists them from a table would be describing the prompt; this returns the prompt
+  // ITSELF, built by the same code on the same inputs, and simply does not send it.
+  //
+  // `plan: null` and no `response`, because there is no answer. A caller that forgets to check
+  // `dryRun` gets a plan-shaped nothing rather than a stale plan, which is the safe way round.
+  if (o.dryRun) {
+    return { plan: null, candidates, request: req, response: null, exchange: null,
+             dryRun: true, problems: [] };
+  }
+
   // AN ASKER MAY RETURN THE TEXT, OR THE TEXT AND WHAT THE CALL COST.
   //
   // 2026-09-04, Ryan: "i want to see the full response from the LLM". modelAsker() below read the

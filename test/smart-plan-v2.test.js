@@ -539,3 +539,46 @@ describe('the asker may answer with the text, or the text and what the call cost
     expect(r.exchange).toBe(null);
   });
 });
+
+
+describe('a dry run hands back the prompt without spending a call', () => {
+  // Ryan, 2026-09-04: "i need to see what the agent sees... with the refactor we expect the
+  // research profile to be thin... so we need to show all of the other data that used to be in
+  // the profile that is now live fetched."
+  //
+  // The researched profile is ONE of the 21 inputs buildPlanRequest() reads. The other twenty
+  // only exist after the pack is fetched and the envelope has answered, so a viewer that listed
+  // them from a table would be describing the prompt. This returns the prompt itself.
+
+  it('returns the request and never calls the model', async () => {
+    let asked = 0;
+    const r = await buildSmartPlanV2({
+      ...OPTS, dryRun: true, askModel: async () => { asked++; return '{}'; },
+    });
+    expect(asked).toBe(0);
+    expect(r.dryRun).toBe(true);
+    expect(typeof r.request.system).toBe('string');
+    expect(typeof r.request.user).toBe('string');
+  });
+
+  it('and it is the SAME prompt a real run would send', async () => {
+    const dry = await buildSmartPlanV2({ ...OPTS, dryRun: true, askModel: goodModel() });
+    const wet = await buildSmartPlanV2({ ...OPTS, askModel: goodModel() });
+    expect(dry.request.system).toBe(wet.request.system);
+    expect(dry.request.user).toBe(wet.request.user);
+  });
+
+  it('hands back the candidates it built, because they are an input too', async () => {
+    const r = await buildSmartPlanV2({ ...OPTS, dryRun: true, askModel: goodModel() });
+    expect(r.candidates.length > 0).toBe(true);
+  });
+
+  it('is a plan-shaped NOTHING, not a stale plan', async () => {
+    // A caller that forgets to check `dryRun` must not be handed something it can render.
+    const r = await buildSmartPlanV2({ ...OPTS, dryRun: true, askModel: goodModel() });
+    expect(r.plan).toBe(null);
+    expect(r.response).toBe(null);
+    expect(r.exchange).toBe(null);
+    expect(r.problems.length).toBe(0);
+  });
+});
