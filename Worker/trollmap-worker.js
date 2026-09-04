@@ -17,7 +17,7 @@ import { handleAlerts, runAlertSweep } from './alerts.js';
 import { handleReports } from './reports.js';
 import { fetchStateRegulations, getLakeRegulations } from './research/clients.js';
 import { regulationsTable, lakeIndex, resolveRegistryRow } from './registry.js';
-import { handleResearchThermoclineSearch, handleResearchLimnologyData, refreshStaleLimnology, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchRegsDebug, handleResearchApprove, handleResearchDelete, handleResearchDeleteNormalizedDoc, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleResearchValidationPass, handleSharedCheck, handleSharedStore, handleSharedQuery, handleSharedPublish, handleSharedStatus, handleSharedQuarantine } from './worker-research.js';
+import { handleResearchThermoclineSearch, handleResearchLimnologyData, refreshStaleLimnology, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, registrySpeciesFor, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchRegsDebug, handleResearchApprove, handleResearchDelete, handleResearchDeleteNormalizedDoc, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleResearchValidationPass, handleSharedCheck, handleSharedStore, handleSharedQuery, handleSharedPublish, handleSharedStatus, handleSharedQuarantine } from './worker-research.js';
 
 
 /**
@@ -1754,6 +1754,39 @@ var trollmap_worker_default = {
           console.error(`[lake-intel] enhanced path failed for ${name}, serving base intel:`, err && err.message);
           const intel = await getLakeIntel(name);
           return new Response(JSON.stringify(intel, null, 2), { headers: JSON_HEADERS });
+        }
+      }
+      // THE SPECIES A WATER HAS, WITHOUT A RESEARCH PROFILE AND WITHOUT AN LLM.
+      //
+      // Ryan, 2026-09-04: "now wire up the fish species to the other states for the refactor".
+      // South Carolina and Georgia publish species on their ramp feeds and the browser already
+      // has those -- see Worker/core/ramp-sources.js. North Carolina and Tennessee publish none
+      // there; their fish are in registry/nc_species_by_lake.json and
+      // registry/agency_lake_facts.json, and until now only the research pipeline read either.
+      //
+      // Four R2 reads behind cached loaders, no ArcGIS and no model, so a plan can ask on every
+      // run. It deliberately does NOT call the deterministic-facts handler, which also fetches
+      // Duke's operating range for identityGrounding() -- a plan must not wait on Duke to learn
+      // what fish are in the lake.
+      if (path === "/species") {
+        const name = url.searchParams.get("lake") || url.searchParams.get("waterbody") || "";
+        if (!name) return new Response(JSON.stringify({ error: "missing lake" }), { headers: JSON_HEADERS, status: 400 });
+        const state = (url.searchParams.get("state") || "").toUpperCase();
+        try {
+          const reg = await registrySpeciesFor(env, name, state);
+          return new Response(JSON.stringify({
+            lake: name,
+            slug: reg.slug,
+            predatorSpecies: reg.predatorSpecies,
+            knownStockings: reg.knownStockings,
+            // Which of these say what is IN the water and which say only that a rule or an
+            // advisory names a fish. A roster and a floor are different claims and the caller
+            // has to be able to tell them apart -- see registrySpeciesFor().
+            sources: reg.sources,
+          }, null, 2), { headers: JSON_HEADERS });
+        } catch (err) {
+          console.error(`[species] failed for ${name}:`, err && err.message);
+          return new Response(JSON.stringify({ error: String(err && err.message || err) }), { headers: JSON_HEADERS, status: 500 });
         }
       }
       if (path === "/river" || url.searchParams.has("river")) {

@@ -13,10 +13,10 @@
 
 import { state, CF_WORKER_URL } from '../core/state.js';
 import { resolveR2Key } from '../data/lake-keys.js';
-import { getLoadedAccessIndex } from '../data/access-index.js';
+import { getLoadedAccessIndex, registryRecordFor } from '../data/access-index.js';
 import { getSeason, seasonNote } from '../data/species-intel.js';
 import { depthBandFor, usableAhFrom, researchIntel, structureWeights,
-         describeDepthBand, conditionsFrom } from './plan-inputs.js';
+         describeDepthBand, conditionsFrom, fetchRegistrySpecies } from './plan-inputs.js';
 import { DEFAULT_WEIGHTS, DEFAULT_RELIEF_WEIGHTS } from './plan-candidates.js';
 import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
 import { TRANSIT_MIN_DEPTH_FT } from './plan-water.js';
@@ -171,6 +171,11 @@ export async function runSmartPlanV2() {
     console.warn('[plan-v2] no structure type for:', w.unmatched.join(', '));
   }
 
+  // WHAT THE REGISTRY KNOWS SWIMS HERE, whether or not this water has ever been researched.
+  // Four files keyed by its slug; see fetchRegistrySpecies() and registrySpeciesFor(). Null on a
+  // water the registry cannot identify, which leaves the prompt exactly as it was.
+  const regSpecies = await fetchRegistrySpecies(CF_WORKER_URL, inp.lakeName,
+                                                (registryRecordFor(inp.lakeName) || {}).state || '');
   const sol = solunarFor(inp.dateStr, ramp[1], ramp[0]);
   const castableOrTrollable = TACKLE_INVENTORY.filter((l) => l.trollable || l.castable);
 
@@ -215,7 +220,11 @@ export async function runSmartPlanV2() {
       // are here; the chartpack is fetched inside buildSmartPlanV2. Passing a closure lets the
       // pack's own structure, coves, creek mouths and POIs beat the ones frozen in the profile
       // without this function downloading the pack a second time.
-      intelFor: (packFacts) => researchIntel(researched, species, season, Date.now(), packFacts),
+      // THE PACK'S FACTS AND THE REGISTRY'S, THROUGH THE ONE DOOR. `regSpecies` is awaited above
+      // rather than inside the closure, because buildSmartPlanV2 calls this synchronously while
+      // it assembles the prompt -- a promise here would reach researchIntel() as an object.
+      intelFor: (packFacts) => researchIntel(researched, species, season, Date.now(),
+        regSpecies ? { ...(packFacts || {}), biology: regSpecies } : packFacts),
       // THE SAFETY SECTION'S HAZARD SENTENCE, which has never once had anything to say because
       // nothing filled this. Same profile, already loaded, one field further down.
       tackle: castableOrTrollable.map((l) => l.name),

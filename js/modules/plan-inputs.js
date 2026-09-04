@@ -434,6 +434,47 @@ export function structureWeights(base, baseRelief, structures) {
  * it, its habitat and identity win field by field; when a caller does not, this reads the profile
  * exactly as it always has, so the two planners can be moved over one at a time.
  */
+/**
+ * THE FISH THE REGISTRY ALREADY KNOWS ABOUT THIS WATER, asked for at plan time.
+ *
+ * Ryan, 2026-09-04: "now wire up the fish species to the other states for the refactor".
+ *
+ * South Carolina and Georgia publish species on their ramp feeds and the access index carries
+ * them into the browser already -- see rampMeta() in js/data/access-index.js. North Carolina and
+ * Tennessee publish none there: NC's are in registry/nc_species_by_lake.json and TN's are on the
+ * TWRA lake pages in registry/agency_lake_facts.json, and until GET /species existed the only
+ * reader of either was the research pipeline. So a water had a roster in a plan if somebody had
+ * run research on it, and nothing if they had not.
+ *
+ * FAILURE IS SILENCE, NOT A DEAD PLAN. A water with no registry row, a Worker that cannot answer,
+ * or a network that is not there all return null, and researchIntel() then prints exactly what
+ * the stored profile has -- which is what it printed before this existed. An absent input must
+ * not become a claim.
+ *
+ * @param {string} worker    CF_WORKER_URL
+ * @param {string} lakeName  the display name, as the picker offers it
+ * @param {string} [state]
+ * @returns {Promise<?{predatorSpecies: string[], knownStockings: object[], sources: object[]}>}
+ */
+export async function fetchRegistrySpecies(worker, lakeName, state = '') {
+  if (!worker || !lakeName) return null;
+  try {
+    const u = new URL(`${String(worker).replace(/\/+$/, '')}/species`);
+    u.searchParams.set('lake', lakeName);
+    if (state) u.searchParams.set('state', state);
+    const r = await fetch(u.toString());
+    if (!r.ok) return null;
+    const d = await r.json();
+    if (!d || !Array.isArray(d.predatorSpecies) || !d.predatorSpecies.length) return null;
+    return { predatorSpecies: d.predatorSpecies,
+             knownStockings: Array.isArray(d.knownStockings) ? d.knownStockings : [],
+             sources: Array.isArray(d.sources) ? d.sources : [] };
+  } catch (e) {
+    console.warn('[plan] registry species unavailable for', lakeName, e && e.message);
+    return null;
+  }
+}
+
 export function researchIntel(profile, species, season, now = Date.now(), packFacts = null) {
   if (!profile) return null;
   const out = [];
@@ -498,7 +539,40 @@ export function researchIntel(profile, species, season, now = Date.now(), packFa
   const packId = (packFacts && packFacts.identity) || {};
   const id = { ...(profile.identity || {}), ...packId };
   const lim = profile.limnology || {};
-  const bio = profile.biology || {};
+  // THE REGISTRY'S SPECIES BEAT THE PROFILE'S, AND UNION WITH THEM.
+  //
+  // Same door and same rule as the pack facts above: a fact the app can answer at plan time is
+  // not the profile's to remember. The species roster is four registry files keyed by this
+  // water's slug -- NC's own file, the agency's lake page, the rule floor and the advisory floor
+  // -- and the browser gets them from GET /species. See registrySpeciesFor() in
+  // Worker/research/deterministic.js.
+  //
+  // UNION, NOT REPLACE, and that is the difference from `identity` and `habitat`. Those are
+  // measurements and the newer one wins outright. A species roster is a claim about presence,
+  // and two agencies naming different fish in one water is two facts -- the same rule the
+  // deterministic pass applies between its own four sources. So a profile that carries a fish
+  // the registry has not heard of keeps it.
+  //
+  // It is what lets a water with no research profile at all still tell a plan what swims in it,
+  // which is item 2 of the research refactor.
+  const packBio = (packFacts && packFacts.biology) || {};
+  const unionSpecies = (a, b) => {
+    const out = [], seen = new Set();
+    for (const x of [...(Array.isArray(a) ? a : []), ...(Array.isArray(b) ? b : [])]) {
+      const name = typeof x === 'string' ? x : (x && x.species);
+      const key = String(name || '').trim().toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push(x);
+    }
+    return out;
+  };
+  const bio = {
+    ...(profile.biology || {}),
+    ...packBio,
+    predatorSpecies: unionSpecies((profile.biology || {}).predatorSpecies, packBio.predatorSpecies),
+    knownStockings: unionSpecies((profile.biology || {}).knownStockings, packBio.knownStockings),
+  };
   const hab = {
     ...(profile.habitat || {}),
     ...packHab,

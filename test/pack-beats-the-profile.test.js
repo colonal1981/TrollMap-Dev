@@ -119,3 +119,59 @@ test('and with no closure the stored profile still answers, unchanged', () => {
   const intel = typeof o.intelFor === 'function' ? o.intelFor({}) : o.intel;
   assert.match(line(intel, 'Charted points'), /12/);
 });
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// AND THE SPECIES ROSTER ARRIVES THE SAME WAY, BUT UNIONS INSTEAD OF REPLACING
+//
+// Ryan, 2026-09-04: "now wire up the fish species to the other states for the refactor".
+//
+// Item 2. `identity` and `habitat` are MEASUREMENTS -- the chart is newer than the profile, so
+// the pack's answer wins outright. A species roster is a CLAIM ABOUT PRESENCE, and two agencies
+// naming different fish in one water is two facts, not a contradiction. That is the same rule
+// registrySpeciesFor() applies between its own four sources, applied one layer up.
+//
+// So a profile that carries a fish the registry has never heard of keeps it, and a water with no
+// profile at all still tells the plan what swims in it.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+test('the registry roster unions with the profile rather than replacing it', () => {
+  const out = researchIntel(PROFILE, SPECIES, 'summer', Date.now(),
+    { biology: { predatorSpecies: ['Striped Bass', 'Blue Catfish'] } });
+  const row = line(out, 'Other predators here');
+  // Both halves survive. Largemouth is the profile's and is the fish the plan is FOR.
+  assert.ok(row.includes('Largemouth Bass'), row);
+  assert.ok(row.includes('Striped Bass'), row);
+  assert.ok(row.includes('Blue Catfish'), row);
+});
+
+test('a fish in both is named once', () => {
+  const out = researchIntel(PROFILE, SPECIES, 'summer', Date.now(),
+    { biology: { predatorSpecies: ['largemouth bass', 'Striped Bass'] } });
+  const row = line(out, 'Other predators here');
+  assert.equal(row.toLowerCase().split('largemouth bass').length - 1, 1, row);
+});
+
+test('a water with no profile at all still gets a roster', () => {
+  // The case item 2 exists for: 242 waters under 1,000 acres are outside research scope and will
+  // never have a profile, and the registry knows their fish anyway.
+  const out = researchIntel({}, SPECIES, 'summer', Date.now(),
+    { biology: { predatorSpecies: ['Redbreast Sunfish', 'Chain Pickerel'] } });
+  assert.ok(line(out, 'Other predators here').includes('Chain Pickerel'), out);
+});
+
+test('and no registry answer leaves the profile exactly as it read before', () => {
+  const withNothing = researchIntel(PROFILE, SPECIES, 'summer', Date.now(), null);
+  const withEmpty = researchIntel(PROFILE, SPECIES, 'summer', Date.now(), { biology: {} });
+  assert.equal(line(withEmpty, 'Other predators here'), line(withNothing, 'Other predators here'));
+  assert.ok(line(withNothing, 'Other predators here').includes('Largemouth Bass'));
+});
+
+test('stockings union the same way, on the species name inside the object', () => {
+  const profile = { ...PROFILE, biology: { ...PROFILE.biology,
+    knownStockings: [{ species: 'Striped Bass', source: 'the profile' }] } };
+  const out = researchIntel(profile, SPECIES, 'summer', Date.now(),
+    { biology: { knownStockings: [{ species: 'Striped Bass', source: 'NC WRC' },
+                                  { species: 'Walleye', source: 'NC WRC' }] } });
+  const row = line(out, 'Stockings');
+  assert.ok(row.includes('Walleye'), row);
+  assert.equal(row.split('Striped Bass').length - 1, 1, row);
+});

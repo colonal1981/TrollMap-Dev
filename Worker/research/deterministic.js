@@ -1,7 +1,7 @@
 // research/deterministic.js — split from worker-research.js (behavior-preserving)
 import { JSON_HEADERS, r2Text } from '../worker-core.js';
 import { researchStorageId, resolveResearchStorageId } from './keys.js';
-import { buildEvidence, buildFactualSummary, getAttractorFacts, getRampSpeciesFacts, uniqueResearchSpecies, splitSpeciesText, isKnownResearchSpecies } from './facts-util.js';
+import { buildEvidence, buildFactualSummary, canonicalizeResearchSpecies, getAttractorFacts, getRampSpeciesFacts, uniqueResearchSpecies, splitSpeciesText, isKnownResearchSpecies } from './facts-util.js';
 import { lakeIndex, ncSpeciesByLake, resolveRegistryRow, identityBaseline, regulationsTable, agencyLakeFacts, fishAdvisories } from '../registry.js';
 import { SC_INSHORE_ROSTER, SC_INSHORE_BASIS } from './coastal-agents.js';
 import { dukeRowForNames, fetchDukeAccessAlerts, fetchDukeOperatingRange } from '../worker-data.js';
@@ -188,258 +188,49 @@ async function handleResearchDeterministicFacts(request, env) {
                            url, trust: 'OFFICIAL', sourceType: 'official_structured' });
   }
 
-  // NORTH CAROLINA'S SPECIES COME FROM A FILE, BECAUSE NC PUBLISHES THEM NOWHERE ELSE.
+  // ── EVERYTHING THE REGISTRY ALREADY KNOWS, off four files keyed by this water's slug ───────
   //
-  // The block above reads `species` off the state ramp feed and works for SC and GA, whose
-  // feeds carry `SpeciesList`. NC's feed has no such field and NC has no entry in
-  // AGENCY_INDEXES either, so before this, every North Carolina water reached the agents with
-  // an empty roster. See ncSpeciesByLake() in ../registry.js for the whole shape of that hole.
+  // These were four inline blocks here -- North Carolina's species file, the agency's own lake
+  // page, the regulations floor and the advisory floor -- and nothing outside this handler could
+  // reach any of them. So a plan got a species roster if somebody had run research on that water,
+  // and nothing if they had not, while all four files sat in R2 behind loaders that cache.
   //
-  // Keyed by registry SLUG, not by name -- `resolveRegistryRow` is the one resolver that
-  // refuses an ambiguous name rather than guessing, and two waters sharing a name is exactly
-  // the case that made it that way.
-  //
-  // `wild` and `stocked` are separate booleans at the source, so a stocked species lands in
-  // knownStockings as well as in the roster rather than being inferred from prose.
-  if (state === 'NC') {
-    try {
-      const row = resolveRegistryRow(await lakeIndex(env), lakeName);
-      const slug = row && row.slug;
-      const entry = slug ? (await ncSpeciesByLake(env))[slug] : null;
-      if (entry && entry.predatorSpecies && entry.predatorSpecies.length) {
-        profile.biology.predatorSpecies = uniqueResearchSpecies(
-          [...(profile.biology.predatorSpecies || []), ...entry.predatorSpecies]);
-        const stocked = uniqueResearchSpecies(entry.knownStockings || []);
-        if (stocked.length) {
-          const already = new Set((profile.biology.knownStockings || [])
-            .map((x) => String(x && x.species || '').toLowerCase()));
-          profile.biology.knownStockings = [
-            ...(profile.biology.knownStockings || []),
-            ...stocked.filter((sp) => !already.has(sp.toLowerCase()))
-              .map((sp) => ({ species: sp, source: 'NC WRC public fishing areas' })),
-          ];
-        }
-        const label = 'NC WRC public fishing areas';
-        const url = 'registry:nc_species_by_lake.json';
-        mergeEvidence('biology', 'predatorSpecies', [buildEvidence('official_structured', label, url, null,
-          'structured_species_aggregation',
-          { speciesCount: entry.predatorSpecies.length, locations: (entry.locations || []).length })]);
-        profile.sources.push({ label, url, trust: 'OFFICIAL_GIS', sourceType: 'official_structured' });
-      }
-
-      // THE STOCKING PLAN CARRIES THE NUMBER, AND IT IS A DIFFERENT FACT FROM THE FLAG.
-      //
-      // ncpaws answers `stocked: true|false` per species, and that is what `knownStockings`
-      // above holds. NC WRC also publishes the plan itself -- 325,000 bodie bass into Lake
-      // Norman, 180,000 walleye into Lake James, 100,000 into Fontana -- and a count is an
-      // argument about how many of that fish are actually out there in a way a boolean is not.
-      //
-      // READ SEPARATELY, and not gated on the roster: a water can appear in the stocking
-      // spreadsheet and have no ncpaws location at all, and the number is worth having anyway.
-      // It also cannot be folded into `entry.knownStockings`, which uniqueResearchSpecies()
-      // takes as STRINGS -- an object reaching canonicalizeResearchSpecies() canonicalises to
-      // "Object Object".
-      if (entry && Array.isArray(entry.stockingPlan) && entry.stockingPlan.length) {
-        const already = new Set((profile.biology.knownStockings || [])
-          .map((x) => String((x && x.species) || x || '').toLowerCase()));
-        const add = [];
-        for (const r of entry.stockingPlan) {
-          const sp = canonicalizeResearchSpecies(r && r.species);
-          if (!sp) continue;
-          const n = Number(r.number);
-          const bits = [Number.isFinite(n) ? n.toLocaleString('en-US') : null,
-                        r.size ? `at ${r.size}` : null].filter(Boolean).join(' ');
-          const note = `${r.agency || 'NCWRC'}${r.year ? ` ${r.year}` : ''} stocking plan`
-                     + (bits ? `: ${bits}` : '');
-          const key = sp.toLowerCase();
-          if (already.has(key)) {
-            const hit = (profile.biology.knownStockings || [])
-              .find((x) => String((x && x.species) || x || '').toLowerCase() === key);
-            if (hit && typeof hit === 'object' && !hit.note) hit.note = note;
-            continue;
-          }
-          already.add(key);
-          add.push({ species: sp, note, source: 'NC WRC warmwater stocking plan' });
-        }
-        if (add.length) {
-          profile.biology.knownStockings = [...(profile.biology.knownStockings || []), ...add];
-          mergeEvidence('biology', 'knownStockings', [buildEvidence('official_structured',
-            'NC WRC warmwater stocking plan', 'registry:nc_species_by_lake.json', null,
-            'deterministic')]);
-        }
-      }
-    } catch (e) {
-      console.warn(`deterministic NC species lookup failed for ${lakeName}: ${e.message}`);
-    }
-  }
-
-  // ── THE AGENCY ALREADY PUBLISHED THE ROSTER, IN EVERY STATE BUT NORTH CAROLINA ─────────────
-  //
-  // TWRA reservoir pages, SCDNR lake pages and GA DNR lake pages each print the species the state
-  // says are in that water. build_agency_lake_facts.py has been parsing them into
-  // registry/agency_lake_facts.json since 2026-08-28 and nothing read the file, so the research
-  // pipeline was sending a model to investigate lakes the state had already answered -- Burton,
-  // Lanier, Hartwell, Richard B. Russell and Clarks Hill among them.
-  //
-  // This is a ROSTER, unlike the regulations floor below it: the page lists what is in the lake,
-  // not merely what carries a rule. It is additive against the NC list above for the same reason
-  // that one is additive -- two agencies naming different fish in one water is two facts, not a
-  // contradiction.
-  //
-  // The page's own section headings are NOT species. A GA DNR page yields `Largemouth Bass,
-  // Spotted Bass, Brown Trout` on the lake template; the PFA template returns `Gallery`,
-  // `Fees & Passes` and `Stay connected` from the same reader, which is why the PFA pages must
-  // stay out of Georgia_Lakes/ until ga_page() learns that template. uniqueResearchSpecies()
-  // filters non-fish, and this refuses any name the species vocabulary does not recognise rather
-  // than trusting the reader.
+  // They are registrySpeciesFor() now, which this calls and so does GET /species. One assembly,
+  // in the order it always ran, so which spelling of a fish survives uniqueResearchSpecies() does
+  // not depend on who asked. See the function for why these four moved and the ramp feeds,
+  // the SC inshore floor and identityGrounding() did not.
   try {
-    const row = resolveRegistryRow(await lakeIndex(env), lakeName);
-    const slug = row && row.slug;
-    const pages = slug ? (await agencyLakeFacts(env))[slug] : null;
-    if (Array.isArray(pages) && pages.length) {
-      const named = [];
-      for (const page of pages) {
-        for (const sp of (page.species || [])) {
-          const nm = String((sp && sp.name) || '').trim();
-          if (nm) named.push(nm);
-        }
-      }
-      // A FISHING AGENCY'S SPECIES LIST THAT NAMES NO FISH IS NOT A SPECIES LIST.
-      //
-      // ga_page() reads the GA DNR LAKE template. On the PFA template the same reader returns the
-      // page's section headings -- measured on the Hugh M. Gillis page, 2026-09-01: `Adrian`,
-      // `Creel Limits`, `Gallery`, `Fees & Passes`, `Address`, `featured`, `Stay connected`. Every
-      // one of those survives uniqueResearchSpecies(), because that filter removes non-game fish
-      // and cannot tell a fish from a nav link.
-      //
-      // The page name still resolves, so a build with a PFA page in Georgia_Lakes/ would have
-      // written "Gallery" into a roster and handed it to the plan. Those pages belong out of that
-      // folder until the reader learns the template -- and this refuses the list anyway, on a test
-      // the junk cannot pass: a real roster names at least one fish this codebase already knows.
-      // Burton scores three of three, Thurmond six of seven, the PFA page zero of seven.
-      const roster = uniqueResearchSpecies(named);
-      if (roster.length && !roster.some(isKnownResearchSpecies)) {
-        console.warn(`agency species list for ${lakeName} names no known fish -- ignoring `
-                   + `[${roster.slice(0, 6).join(', ')}]; the page is probably not the lake template`);
-      } else if (roster.length) {
-        profile.biology.predatorSpecies = uniqueResearchSpecies(
-          [...(profile.biology.predatorSpecies || []), ...roster]);
-        const agency = pages[0].agency || 'state agency';
-        const url = (pages[0].source && pages[0].source.url) || 'registry:agency_lake_facts.json';
-        mergeEvidence('biology', 'predatorSpecies', buildEvidence([{
-          fact: roster.join(', '), source: `${agency} lake page`, url,
-          trust: 'OFFICIAL', sourceType: 'official_structured',
-        }]));
-        profile.sources.push({ label: `${agency} lake page`, url, trust: 'OFFICIAL', sourceType: 'official_structured' });
-      }
-    }
-  } catch (e) {
-    // Most waters have no agency page, and agencyLakeFacts throws when the object is not in the
-    // bucket yet. Neither is a failed profile.
-    console.warn(`deterministic agency species lookup failed for ${lakeName}: ${e && e.message}`);
-  }
-
-  // ── THE BOOK NAMES THE FISH IT WRITES A RULE FOR, AND THAT IS A FLOOR ──────────────────────
-  //
-  // A lake-specific creel or size rule proves the species is in that water. "Striped Bass: five
-  // per day" on Hartwell is the state saying stripers are there. It is NOT a roster -- it says
-  // nothing about what else lives there -- so this UNIONS IN UNDERNEATH the rosters above and can
-  // never remove or replace one.
-  //
-  // `plan_species` is used rather than the raw rule label on purpose. The book writes
-  // "Striped or Hybrid Bass or a combination", "Bass (largemouth, spotted, redeye, smallmouth or
-  // combination)" and "Aggregate of all game fish (does not include catfish)*" -- those are rule
-  // headings, not fish. build_regulations_table.py already maps them to the plan's own species
-  // vocabulary through registry/species_map.json, explicitly rather than by fuzzy containment,
-  // and that mapped list is what a consumer can act on.
-  //
-  // Measured 2026-09-01 over the 64 inland lakes above 1,000 acres that the research filter
-  // actually offers (PRESETS.research: minAcres 1000, includeRivers false): 26 carry a
-  // lake-specific rule naming a species. Six distinct species across them -- Largemouth Bass 20,
-  // Striped Bass 10, Hybrid 10, Crappie 5, White Bass 3, Catfish 2.
-  try {
-    const row = resolveRegistryRow(await lakeIndex(env), lakeName);
-    const slug = row && row.slug;
-    const rec = slug ? (await regulationsTable(env)).by_water[slug] : null;
-    if (rec) {
-      const named = new Set();
-      const walk = (o) => {
-        if (Array.isArray(o)) { o.forEach(walk); return; }
-        if (!o || typeof o !== 'object') return;
-        for (const [k, v] of Object.entries(o)) {
-          if (k === 'plan_species' && Array.isArray(v)) {
-            for (const sp of v) if (typeof sp === 'string' && sp.trim()) named.add(sp.trim());
-          } else walk(v);
-        }
-      };
-      walk(rec);
-      const floor = uniqueResearchSpecies([...named]);
-      if (floor.length) {
-        const before = new Set((profile.biology.predatorSpecies || []).map((s) => String(s).toLowerCase()));
-        profile.biology.predatorSpecies = uniqueResearchSpecies(
-          [...(profile.biology.predatorSpecies || []), ...floor]);
-        const added = floor.filter((s) => !before.has(s.toLowerCase()));
-        const label = `${rec.state || state} fishing regulations digest (lake-specific rules)`;
-        mergeEvidence('biology', 'predatorSpecies', buildEvidence([{
-          fact: `Named in this water's own rules: ${floor.join(', ')}`
-              + (added.length ? `; ${added.length} not otherwise recorded here` : '; all already recorded'),
-          source: label, trust: 'OFFICIAL', sourceType: 'official_structured',
-        }]));
-      }
-    }
-  } catch (e) {
-    // A water with no lake-specific rule is the normal case, and regulationsTable throws when the
-    // object is missing from the bucket. Neither is a failed profile.
-    console.warn(`deterministic regs species floor failed for ${lakeName}: ${e && e.message}`);
-  }
-
-  // ── the fish consumption advisories, as a second floor ────────────────────────────────────
-  //
-  // SAME RULE AS THE REGULATIONS FLOOR ABOVE: they union in underneath a roster and never
-  // replace one. An advisory is written PER SPECIES, so a state naming a fish here is the state
-  // saying it sampled that fish in this water -- a presence floor, and nothing about what else
-  // is present.
-  //
-  // It is the only source for Lake Robinson (Chesterfield Co, SC), 2,099 acres and 61 km from
-  // Sumter, which has an SCDNR ramp, no per-lake SCDNR page, and no rule of its own in the book.
-  // Ryan found it. Across South Carolina's 62 bound waters it adds 222 species names to 38 that
-  // already had a list and closes three that had none; Georgia's booklet adds 42 more waters,
-  // the state where the app has the most waters with no species source at all.
-  //
-  // TWO STATES CAN BOTH HAVE SAMPLED THIS WATER, so the record is a LIST and every one of them
-  // is read. Taking the first would drop Georgia's Hartwell rows, which are the ones that carry
-  // the DO NOT EAT.
-  //
-  // THE `do_not_eat` HALF IS NOT TOUCHED HERE. It is a warning about eating a fish, not a fact
-  // about whether the fish is present, and it belongs beside the regulations in the plan rather
-  // than in a species roster.
-  try {
-    const row = resolveRegistryRow(await lakeIndex(env), lakeName);
-    const slug = row && row.slug;
-    const recs = slug ? ((await fishAdvisories(env))[slug] || []) : [];
-    const floor = uniqueResearchSpecies(
-      recs.flatMap((rec) => (rec.species || []).map((s) => s && s.species)).filter(Boolean));
-    if (floor.length) {
-      const before = new Set((profile.biology.predatorSpecies || [])
-        .map((s) => String(s).toLowerCase()));
+    const reg = await registrySpeciesFor(env, lakeName, state);
+    if (reg.predatorSpecies.length) {
       profile.biology.predatorSpecies = uniqueResearchSpecies(
-        [...(profile.biology.predatorSpecies || []), ...floor]);
-      const added = floor.filter((s) => !before.has(s.toLowerCase()));
-      // The source is the file's own words, not a sentence typed here -- this water may be in
-      // one book, the other, or both, and the evidence has to say which.
-      const sources = [...new Set(recs.map((r) => r.source).filter(Boolean))];
-      mergeEvidence('biology', 'predatorSpecies', buildEvidence([{
-        fact: `Named in the fish consumption advisory for this water: ${floor.join(', ')}`
-            + (added.length ? `; ${added.length} not otherwise recorded here`
-                            : '; all already recorded'),
-        source: sources.join(' + ') || 'state fish consumption advisories',
-        trust: 'OFFICIAL', sourceType: 'official_structured',
-      }]));
+        [...(profile.biology.predatorSpecies || []), ...reg.predatorSpecies]);
+    }
+    if (reg.knownStockings.length) {
+      const already = new Set((profile.biology.knownStockings || [])
+        .map((x) => String((x && x.species) || x || '').toLowerCase()));
+      for (const st of reg.knownStockings) {
+        const key = String(st.species || '').toLowerCase();
+        if (!key) continue;
+        if (already.has(key)) {
+          // The roster flag landed first and carries no count; the stocking plan's note is the
+          // number, so it fills in rather than being dropped as a duplicate.
+          const hit = (profile.biology.knownStockings || [])
+            .find((x) => String((x && x.species) || x || '').toLowerCase() === key);
+          if (hit && typeof hit === 'object' && !hit.note && st.note) hit.note = st.note;
+          continue;
+        }
+        already.add(key);
+        profile.biology.knownStockings = [...(profile.biology.knownStockings || []), st];
+      }
+    }
+    for (const ev of reg.evidence) mergeEvidence('biology', ev.field, ev.entries);
+    for (const src of reg.sources) {
+      profile.sources.push({ label: src.label, url: src.url, trust: src.trust,
+                             sourceType: src.sourceType });
     }
   } catch (e) {
-    // A water with no advisory is the normal case -- only 98 of 355 have one -- and
-    // fishAdvisories() throws when NEITHER object is in the bucket. Neither is a failed profile.
-    console.warn(`deterministic advisory species floor failed for ${lakeName}: ${e && e.message}`);
+    // Every block inside already fails soft; this catch is for the registry row lookup itself.
+    console.warn(`deterministic registry species lookup failed for ${lakeName}: ${e && e.message}`);
   }
 
   // Structured attractors
@@ -604,6 +395,215 @@ async function handleResearchGetNormalized(env, lakeName) {
   let docs;
   try { docs = JSON.parse(text); } catch { return new Response(JSON.stringify({ok:false, error:"corrupt normalized documents"}), {status:500, headers:JSON_HEADERS}); }
   return new Response(JSON.stringify({ok:true, lakeName, count: docs.length, documents: docs}), {headers:JSON_HEADERS});
+}
+
+
+/**
+ * EVERY SPECIES THE REGISTRY ALREADY KNOWS ABOUT A WATER, off four files keyed by its slug.
+ *
+ * Ryan, 2026-09-04: "now wire up the fish species to the other states for the refactor".
+ *
+ * South Carolina and Georgia publish species on their ramp feeds, and since the ramp source
+ * tables were merged the browser gets those directly — see Worker/core/ramp-sources.js and
+ * rampMeta() in js/data/access-index.js. North Carolina and Tennessee publish none there. Their
+ * fish are in `registry/nc_species_by_lake.json` and `registry/agency_lake_facts.json`, both in
+ * R2 with loaders in Worker/registry.js since 2026-08-28, and until now the ONLY thing that read
+ * either was the research pipeline. So a water reached a plan with a roster if somebody had run
+ * research on it, and with nothing if they had not.
+ *
+ * This is item 2 of the research refactor — THE_PROFILE_BECAME_A_CACHE_AND_NOBODY_MOVED_THE_READS
+ * — for the species half: read at plan time, from the registry, instead of out of a stored profile.
+ *
+ * FOUR SOURCES AND NOT SIX, and the line is drawn where the cost is. These four are R2 reads
+ * behind loaders that cache for INDEX_TTL_S. The two left in the research handler are not:
+ * `getRampSpeciesFacts()` matches raw feeds and `identityGrounding()` fetches Duke, and a plan
+ * must not wait on either. The SC inshore floor stays there too — it is a coastal-only default,
+ * not a per-water fact.
+ *
+ * THE ORDER IS THE HANDLER'S ORDER, unchanged: NC roster, then the agency page roster, then the
+ * two floors. uniqueResearchSpecies() folds names as it goes, so the first spelling of a fish is
+ * the one that survives, and moving these blocks would have quietly changed which.
+ *
+ * A ROSTER AND A FLOOR ARE DIFFERENT CLAIMS. The first two say what is in the water. The last two
+ * say only that the state wrote a rule about a fish, or sampled one — presence, and nothing about
+ * what else is there. `sources[].kind` says which, so a reader can tell without opening this file.
+ *
+ * Every block fails soft and says so: most waters have no agency page and no advisory, and the
+ * loaders throw when an object is not in the bucket yet. Neither is an error.
+ *
+ * AND THREE OF THESE FOUR EVIDENCE ROWS HAD NEVER BEEN WRITTEN. The handler called
+ * `buildEvidence([{fact, source, trust, sourceType}])` for the agency page and both floors --
+ * but buildEvidence's signature is `(sourceType, sourceLabel, sourceUrl, quote, method, extra)`,
+ * so the array landed in `sourceType` and the call returned an OBJECT. mergeEvidence() opens with
+ * `if (!entries?.length) return`, and an object has no length, so every one of them was dropped
+ * on the floor. Only the NC block, which passes `[buildEvidence(...)]` correctly, ever recorded
+ * anything. That is why species sourced from an agency page or a rule show up in a stored profile
+ * with no evidence behind them -- the value was written and the provenance was not. Rebuilt on
+ * the real signature here, with the fact text carried in `extra`.
+ *
+ * @returns {{predatorSpecies: string[], knownStockings: object[], sources: object[],
+ *            evidence: {field: string, entries: object[]}[], slug: ?string}}
+ */
+export async function registrySpeciesFor(env, lakeName, state = '') {
+  const out = { predatorSpecies: [], knownStockings: [], sources: [], evidence: [], slug: null };
+  const addEvidence = (field, entries) => {
+    if (entries && entries.length) out.evidence.push({ field, entries });
+  };
+  let row = null;
+  try {
+    row = resolveRegistryRow(await lakeIndex(env), lakeName);
+  } catch (e) {
+    console.warn(`registrySpeciesFor: no registry row for ${lakeName}: ${e && e.message}`);
+    return out;
+  }
+  out.slug = (row && row.slug) || null;
+  if (!out.slug) return out;
+  const slug = out.slug;
+  const st = String(state || (row && row.state) || '').toUpperCase();
+
+  // ── North Carolina's own file, because NC publishes species nowhere else ──────────────────
+  if (st === 'NC' || !st) {
+    try {
+      const entry = (await ncSpeciesByLake(env))[slug] || null;
+      if (entry && entry.predatorSpecies && entry.predatorSpecies.length) {
+        out.predatorSpecies = uniqueResearchSpecies([...out.predatorSpecies, ...entry.predatorSpecies]);
+        const stocked = uniqueResearchSpecies(entry.knownStockings || []);
+        const already = new Set(out.knownStockings.map((x) => String((x && x.species) || '').toLowerCase()));
+        for (const sp of stocked) {
+          if (already.has(sp.toLowerCase())) continue;
+          already.add(sp.toLowerCase());
+          out.knownStockings.push({ species: sp, source: 'NC WRC public fishing areas' });
+        }
+        const label = 'NC WRC public fishing areas';
+        const url = 'registry:nc_species_by_lake.json';
+        addEvidence('predatorSpecies', [buildEvidence('official_structured', label, url, null,
+          'structured_species_aggregation',
+          { speciesCount: entry.predatorSpecies.length, locations: (entry.locations || []).length })]);
+        out.sources.push({ label, url, kind: 'roster', trust: 'OFFICIAL_GIS',
+                           sourceType: 'official_structured', species: entry.predatorSpecies.length });
+      }
+      // The stocking PLAN is a count, not a flag, and is read whether or not the roster matched:
+      // a water can be in the spreadsheet with no ncpaws location at all.
+      if (entry && Array.isArray(entry.stockingPlan) && entry.stockingPlan.length) {
+        const already = new Set(out.knownStockings.map((x) => String((x && x.species) || '').toLowerCase()));
+        const add = [];
+        for (const r of entry.stockingPlan) {
+          const sp = canonicalizeResearchSpecies(r && r.species);
+          if (!sp) continue;
+          const n = Number(r.number);
+          const bits = [Number.isFinite(n) ? n.toLocaleString('en-US') : null,
+                        r.size ? `at ${r.size}` : null].filter(Boolean).join(' ');
+          const note = `${r.agency || 'NCWRC'}${r.year ? ` ${r.year}` : ''} stocking plan`
+                     + (bits ? `: ${bits}` : '');
+          const key = sp.toLowerCase();
+          if (already.has(key)) {
+            const hit = out.knownStockings.find((x) => String((x && x.species) || '').toLowerCase() === key);
+            if (hit && !hit.note) hit.note = note;
+            continue;
+          }
+          already.add(key);
+          add.push({ species: sp, note, source: 'NC WRC warmwater stocking plan' });
+        }
+        if (add.length) {
+          out.knownStockings.push(...add);
+          addEvidence('knownStockings', [buildEvidence('official_structured',
+            'NC WRC warmwater stocking plan', 'registry:nc_species_by_lake.json', null, 'deterministic')]);
+        }
+      }
+    } catch (e) {
+      console.warn(`registrySpeciesFor NC lookup failed for ${lakeName}: ${e && e.message}`);
+    }
+  }
+
+  // ── the agency's own lake page: TWRA, SCDNR, GA DNR ───────────────────────────────────────
+  try {
+    const pages = (await agencyLakeFacts(env))[slug] || null;
+    if (Array.isArray(pages) && pages.length) {
+      const named = [];
+      for (const page of pages) {
+        for (const sp of (page.species || [])) {
+          const nm = String((sp && sp.name) || '').trim();
+          if (nm) named.push(nm);
+        }
+      }
+      const roster = uniqueResearchSpecies(named);
+      // A fishing agency's species list that names no fish is not a species list -- the GA DNR
+      // PFA template yields `Gallery`, `Fees & Passes`, `Stay connected` from the lake reader.
+      if (roster.length && !roster.some(isKnownResearchSpecies)) {
+        console.warn(`agency species list for ${lakeName} names no known fish -- ignoring `
+                   + `[${roster.slice(0, 6).join(', ')}]; the page is probably not the lake template`);
+      } else if (roster.length) {
+        out.predatorSpecies = uniqueResearchSpecies([...out.predatorSpecies, ...roster]);
+        const agency = pages[0].agency || 'state agency';
+        const url = (pages[0].source && pages[0].source.url) || 'registry:agency_lake_facts.json';
+        addEvidence('predatorSpecies', [buildEvidence('official_structured',
+          `${agency} lake page`, url, null, 'agency_page_roster',
+          { fact: roster.join(', '), speciesCount: roster.length })]);
+        out.sources.push({ label: `${agency} lake page`, url, kind: 'roster', trust: 'OFFICIAL',
+                           sourceType: 'official_structured', species: roster.length });
+      }
+    }
+  } catch (e) {
+    console.warn(`registrySpeciesFor agency lookup failed for ${lakeName}: ${e && e.message}`);
+  }
+
+  // ── the book names the fish it writes a rule for, and that is a FLOOR ─────────────────────
+  try {
+    const rec = (await regulationsTable(env)).by_water[slug] || null;
+    if (rec) {
+      const named = new Set();
+      const walk = (o) => {
+        if (Array.isArray(o)) { o.forEach(walk); return; }
+        if (!o || typeof o !== 'object') return;
+        for (const [k, v] of Object.entries(o)) {
+          if (k === 'plan_species' && Array.isArray(v)) {
+            for (const sp of v) if (typeof sp === 'string' && sp.trim()) named.add(sp.trim());
+          } else walk(v);
+        }
+      };
+      walk(rec);
+      const floor = uniqueResearchSpecies([...named]);
+      if (floor.length) {
+        const before = new Set(out.predatorSpecies.map((s) => String(s).toLowerCase()));
+        out.predatorSpecies = uniqueResearchSpecies([...out.predatorSpecies, ...floor]);
+        const added = floor.filter((s) => !before.has(s.toLowerCase()));
+        const label = `${rec.state || st} fishing regulations digest (lake-specific rules)`;
+        addEvidence('predatorSpecies', [buildEvidence('official_structured', label,
+          'registry:regulations.json', null, 'lake_rule_species_floor',
+          { fact: `Named in this water's own rules: ${floor.join(', ')}`,
+            speciesCount: floor.length, notOtherwiseRecorded: added.length })]);
+        out.sources.push({ label, url: 'registry:regulations.json', kind: 'floor',
+                           trust: 'OFFICIAL', sourceType: 'official_structured', species: floor.length });
+      }
+    }
+  } catch (e) {
+    console.warn(`registrySpeciesFor regs floor failed for ${lakeName}: ${e && e.message}`);
+  }
+
+  // ── and the consumption advisories, as a second floor ─────────────────────────────────────
+  try {
+    const recs = (await fishAdvisories(env))[slug] || [];
+    const floor = uniqueResearchSpecies(
+      recs.flatMap((rec) => (rec.species || []).map((s) => s && s.species)).filter(Boolean));
+    if (floor.length) {
+      const before = new Set(out.predatorSpecies.map((s) => String(s).toLowerCase()));
+      out.predatorSpecies = uniqueResearchSpecies([...out.predatorSpecies, ...floor]);
+      const added = floor.filter((s) => !before.has(s.toLowerCase()));
+      const labels = [...new Set(recs.map((r) => r.source).filter(Boolean))];
+      addEvidence('predatorSpecies', [buildEvidence('official_structured',
+        labels.join(' + ') || 'state fish consumption advisories',
+        'registry:fish_advisories.json', null, 'advisory_species_floor',
+        { fact: `Named in the fish consumption advisory for this water: ${floor.join(', ')}`,
+          speciesCount: floor.length, notOtherwiseRecorded: added.length })]);
+      out.sources.push({ label: labels.join(' + ') || 'state fish consumption advisories',
+                         url: 'registry:fish_advisories.json', kind: 'floor', trust: 'OFFICIAL',
+                         sourceType: 'official_structured', species: floor.length });
+    }
+  } catch (e) {
+    console.warn(`registrySpeciesFor advisory floor failed for ${lakeName}: ${e && e.message}`);
+  }
+
+  return out;
 }
 
 export { handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized };

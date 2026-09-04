@@ -4,7 +4,7 @@ export { handleResearchLimnologyData, refreshStaleLimnology } from './research/l
 export { handleResearchDiscover } from './research/discover.js';
 export { handleResearchProxyDownload, handleResearchProxyDownloadBatch } from './research/download.js';
 export { handleResearchDatasetHunt } from './research/dataset.js';
-export { handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized } from './research/deterministic.js';
+export { handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, registrySpeciesFor } from './research/deterministic.js';
 export { handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, GAP_QUERIES } from './research/extract.js';
 export { handleResearchAgent, RESEARCH_AGENTS } from './research/agents.js';
 export { sanitizeLakeId, lakeResearchMasterKey, lakePackageKey } from './research/keys.js';

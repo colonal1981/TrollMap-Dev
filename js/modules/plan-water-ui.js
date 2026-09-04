@@ -34,9 +34,10 @@
 import { state, CF_WORKER_URL } from '../core/state.js';
 import { resolveR2Key } from '../data/lake-keys.js';
 import { getSeason, seasonNote } from '../data/species-intel.js';
-import { depthBandFor, usableAhFrom, researchIntel, describeDepthBand, conditionsFrom }
-  from './plan-inputs.js';
+import { depthBandFor, usableAhFrom, researchIntel, describeDepthBand, conditionsFrom,
+         fetchRegistrySpecies } from './plan-inputs.js';
 import { solunarFor } from '../utils/solunar.js';
+import { registryRecordFor } from '../data/access-index.js';
 import { packFetcher } from './smart-plan-v2.js';
 // THE PACK'S OWN FACTS, DERIVED HERE RATHER THAN READ OUT OF A PROFILE. Pure, and it takes the
 // layers this function already fetched. See researchIntel() in plan-inputs.js and
@@ -855,6 +856,9 @@ export async function findWater() {
   // THE WIND BELONGS TO THE WATER, NOT JUST TO THE BATTERY. A crosswind on a line you steer by
   // hand is a reason against that piece, so the forecast has to be in hand BEFORE the reasons are
   // written. Failure is silence: no forecast means the wind is not mentioned, never mentioned as calm.
+  // WHAT THE REGISTRY KNOWS SWIMS HERE. Same source and same fallback as the Smart Plan tab.
+  const regSpecies = await fetchRegistrySpecies(CF_WORKER_URL, inp.lakeName,
+                                                (registryRecordFor(inp.lakeName) || {}).state || '');
   say('Checking the forecast…');
   const forecast = await fetchForecast(inp.lakeName, inp.dateStr,
     { launchTime: inp.launchTime, returnTime: inp.returnTime }).catch(() => null);
@@ -980,9 +984,16 @@ export async function findWater() {
     // boundary ring, so max and average depth still land, and contours are only consulted for
     // packs that carry no depth areas at all. What is skipped is the shoreline-complexity
     // summary, which the profile keeps supplying where it has one.
+    // THE PACK'S FACTS AND THE REGISTRY'S SPECIES, through the one door researchIntel() opens.
+    // `regSpecies` is four registry files keyed by this water's slug and is null when the
+    // registry cannot identify it -- see fetchRegistrySpecies(). Same call the Smart Plan tab
+    // makes; a species list is not a property of which tab picked the water.
     intel: researchIntel(researched, species, getSeason(date, inp.waterTempF), Date.now(),
-      packDerivedFacts({ lakeName: inp.lakeName, structGeo: stFc, featGeo: wfFc,
-                         depthGeo: daFc, poiGeo: poFc, boundaryGeo: null, contourGeo: null })),
+      {
+        ...packDerivedFacts({ lakeName: inp.lakeName, structGeo: stFc, featGeo: wfFc,
+                              depthGeo: daFc, poiGeo: poFc, boundaryGeo: null, contourGeo: null }),
+        ...(regSpecies ? { biology: regSpecies } : {}),
+      }),
     // THE CHART FIRST, THE RESEARCH SECOND -- same order and same reason as Smart Plan. `poFc` is
     // the pois.geojson this function already fetched for the cast spots.
     // The charted POI layer only -- researchHazards() is gone with the navigation agent.
