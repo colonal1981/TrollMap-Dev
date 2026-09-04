@@ -38,10 +38,14 @@ import path from 'node:path';
 import { resolveResearchStorageId } from '../Worker/research/keys.js';
 import { identityNamesForLake } from '../Worker/registry.js';
 
-// access-index.js publishes legacy helpers on `window` at module scope, so it needs one before it
-// can be imported under node -- the shim test/live-ramps-reach-the-filter.test.js uses.
+// THE APP'S OWN LIST, NOT A RECONSTRUCTION OF IT. access-index.js merges /ramps, /paddle and
+// the 3DHP registry, folds duplicate spellings onto the water they share a launch with, and drops
+// access points that sit outside the lake they were filed under. Enumerating the raw feeds skips
+// all of that and produces names the picker never shows -- "Lake Russell, SC" among them, which
+// is how this script cleared Richard B Russell twice. Ryan: "Lake Russell, SC does not show in my
+// picker at all". So `fetch` is stubbed with the saved feeds and getUniversalLakeNamesAsync() --
+// the function the research picker itself awaits -- is called.
 if (typeof globalThis.window === 'undefined') globalThis.window = globalThis;
-const { displayLakeName } = await import('../js/data/access-index.js');
 
 const argv = process.argv.slice(2);
 const arg = (name, dflt) => {
@@ -82,21 +86,26 @@ for (const id of ids) {
   };
 }
 
-const STATES = ['ga', 'nc', 'sc', 'tn'];
-const pickerNames = new Map();          // display name -> the feed spelling it came from
-for (const st of STATES) {
-  const f = path.join(REG, `_dnr_ramps_${st}.json`);
-  if (!fs.existsSync(f)) continue;
-  const feed = JSON.parse(fs.readFileSync(f, 'utf8'));
-  for (const wb of Object.keys(feed.waterbodies || {})) {
-    const shown = displayLakeName(wb, (feed.state || st).toUpperCase());
-    if (shown) pickerNames.set(shown, wb);
-  }
-}
+// The saved feeds stand in for the Worker. These four files ARE the /ramps and /paddle responses.
+globalThis.fetch = async (url) => {
+  const u = String(url);
+  const m = u.match(/\/(ramps|paddle)\?state=([A-Za-z]{2})/);
+  let f = null;
+  if (m) f = path.join(REG, `_dnr_${m[1]}_${m[2].toLowerCase()}.json`);
+  else if (u.includes('/chartpacks/_registry/lake_index.json')) f = path.join(REG, 'lake_index.json');
+  if (!f || !fs.existsSync(f)) return { ok: false, status: 404, json: async () => ({}) };
+  const body = JSON.parse(fs.readFileSync(f, 'utf8'));
+  return { ok: true, status: 200, json: async () => body };
+};
+await import('../js/data/access-index.js');
+const pickerNames = await globalThis.getUniversalLakeNamesAsync();
+
+const line = (id, mark) => `      ${mark} ${id.padEnd(34)} ${String(species[id]).padStart(2)} species  ` +
+  `${status[id].padEnd(9)} ${String(detail[id].sources).padStart(2)} sources  updated ${updated[id]}`;
 
 const reached = new Set();
 const serves = new Map();               // picker name -> stored id
-for (const name of pickerNames.keys()) {
+for (const name of pickerNames) {
   const alts = identityNamesForLake(index, name) || [];
   const probe = (id) => Promise.resolve(has.has(id) ? { id } : null);
   // eslint-disable-next-line no-await-in-loop
@@ -104,58 +113,79 @@ for (const name of pickerNames.keys()) {
   if (found) { serves.set(name, found.id); reached.add(found.id); }
 }
 
-// A COLLISION is one profile-bearing water offered twice. Two picker names that resolve to
-// different profiles AND share a registry row are the same lake wearing two states' spellings.
+// A FORK is a stored profile the picker cannot reach whose WATER it can. Measured against the
+// app's real list there are no waters offered twice -- access-index folds those -- so the shape
+// is not two entries disagreeing, it is one entry landing on the wrong half of a pair. Nottely
+// and Watauga each serve a three-source batch draft while their verified profile sits unreachable.
 const rowFor = (name) => {
   const alts = identityNamesForLake(index, name) || [];
-  return alts.length ? alts[0] : null;          // identityNamesForLake leads with display_name
+  return alts.length ? alts[0] : null;      // identityNamesForLake leads with display_name
 };
-const byRow = new Map();
+const servedByRow = new Map();
+for (const [name, id] of serves) {
+  const row = rowFor(name);
+  if (row && !servedByRow.has(row)) servedByRow.set(row, { name, id });
+}
+// TWO NAMES FOR ONE WATER THAT REACH DIFFERENT PROFILES. The universal list holds both
+// "Lake Sidney Lanier (Hall Co, GA)" and "Lake Lanier, GA"; the research picker shows only the
+// first, and it lands on the thin draft while the verified profile is reachable ONLY by a name
+// that never appears on screen. Neither profile is an orphan, so the orphan pass below cannot
+// see it -- both conditions have to be checked or a lake falls between them.
+const forksFromNames = [];
+const idsByRow = new Map();
 for (const [name, id] of serves) {
   const row = rowFor(name);
   if (!row) continue;
-  if (!byRow.has(row)) byRow.set(row, new Map());
-  byRow.get(row).set(name, id);
+  if (!idsByRow.has(row)) idsByRow.set(row, new Map());
+  idsByRow.get(row).set(id, name);
 }
-const forks = [];
-for (const [row, entries] of byRow) {
-  const idsHere = new Set(entries.values());
-  if (idsHere.size < 2) continue;
-  const ranked = [...idsHere].sort((a, b) =>
+for (const [row, byId] of idsByRow) {
+  if (byId.size < 2) continue;
+  const ranked = [...byId.keys()].sort((a, b) =>
     (status[b] === 'verified') - (status[a] === 'verified')
     || (detail[b].sources || 0) - (detail[a].sources || 0));
-  forks.push({
-    slug: row, name: row,
-    entries: [...entries].map(([n, id]) => ({ pickerName: n, id })),
-    hits: [...idsHere],
-    best: ranked[0],
-  });
-}
-
-const line = (id, mark) => `      ${mark} ${id.padEnd(34)} ${String(species[id]).padStart(2)} species  ` +
-  `${status[id].padEnd(9)} updated ${updated[id]}`;
-
-console.log(`${pickerNames.size} picker names, ${ids.length} mirrored profiles, ` +
-  `${serves.size} names reach one, ${reached.size} profiles are reachable`);
-
-console.log(`\nCOLLISIONS -- one water offered under names that reach DIFFERENT profiles (${forks.length}):`);
-if (!forks.length) console.log('   none.');
-for (const f of forks) {
-  console.log(`   ${f.name}`);
-  for (const e of f.entries) {
-    console.log(`      "${e.pickerName}"`);
-    console.log(line(e.id, e.id === f.best ? 'KEEP    ' : 'thin    '));
+  const [best, ...rest] = ranked;
+  for (const worse of rest) {
+    forksFromNames.push({
+      slug: row, name: row,
+      picker_names: [{ pickerName: byId.get(worse), id: worse }],
+      served: worse, hits: [worse, best], best,
+    });
   }
 }
 
 const orphans = ids.filter((id) => !reached.has(id)).sort();
-console.log(`\nUNREACHED -- stored profiles no picker name arrives at (${orphans.length}):`);
-if (!orphans.length) console.log('   none.');
-for (const id of orphans) console.log(line(id, '        '));
+const forks = [...forksFromNames];
+const stranded = [];
+for (const id of orphans) {
+  const prof = JSON.parse(fs.readFileSync(path.join(MIRROR, `${id}.json`), 'utf8'));
+  const row = rowFor(String(prof.lakeName || ''));
+  const live = row ? servedByRow.get(row) : null;
+  if (live && live.id !== id) {
+    forks.push({
+      slug: row, name: row, picker_names: [{ pickerName: live.name, id: live.id }],
+      served: live.id, hits: [live.id, id], best: id,
+    });
+  } else {
+    stranded.push(id);
+  }
+}
 
-// THE REPORT IS ALSO A FILE, because the thing that acts on it is a Python script and the only
-// correct answer to "which key wins" comes from running the Worker's own resolver, which is here.
-// prune_shadowed_profiles.py refuses to delete anything this file does not list as shadowed.
+console.log(`${pickerNames.length} picker names, ${ids.length} mirrored profiles, ` +
+  `${serves.size} names reach one, ${reached.size} profiles are reachable`);
+
+console.log(`\nFORKS -- the picker reaches one half of a pair (${forks.length}):`);
+if (!forks.length) console.log('   none.');
+for (const f of forks) {
+  console.log(`   ${f.name}   picker shows "${f.picker_names[0].pickerName}"`);
+  console.log(line(f.served, 'SERVED  '));
+  console.log(line(f.best, 'hidden  '));
+}
+
+console.log(`\nSTRANDED -- stored profiles no picker name reaches, and no live sibling (${stranded.length}):`);
+if (!stranded.length) console.log('   none.');
+for (const id of stranded) console.log(line(id, '        '));
+
 const out = arg('--json', '');
 if (out) {
   fs.writeFileSync(out, `${JSON.stringify({
@@ -163,14 +193,10 @@ if (out) {
     mirror: MIRROR,
     asked_with: 'displayLakeName over registry/_dnr_ramps_<st>.json -- the picker\'s own names',
     forks: forks.map((f) => ({
-      slug: f.slug,
-      name: f.name,
-      picker_names: f.entries,
-      served: f.hits.find((id) => id !== f.best) || null,
-      served_detail: detail[f.hits.find((id) => id !== f.best)] || null,
-      shadowed: [detail[f.best]],
+      slug: f.slug, name: f.name, picker_names: f.picker_names,
+      served: f.served, served_detail: detail[f.served], shadowed: [detail[f.best]],
     })),
-    orphans: orphans.map((id) => detail[id]),
+    orphans: stranded.map((id) => detail[id]),
   }, null, 1)}\n`);
   console.log(`\n-> ${out}`);
 }

@@ -130,3 +130,18 @@ test('both of the reservoir\'s picker spellings land on the same profile', async
     assert.equal(found && found.id, 'lake_russell_sc', n);
   }
 });
+
+test('every picker spelling from the 2026-09-01 fork lands on the verified profile', () => {
+  // Read off Ryan's research picker on 2026-09-04. Each of these was showing a three-source
+  // batch draft while the verified profile sat under a name the picker never offers.
+  const shown = {
+    'Lake Richard Russell, GA': 'lake_russell_sc',
+    'Lake Sidney Lanier (Hall Co, GA)': 'lake_lanier_ga',
+    'Nottely Lake, GA': 'lake_nottely_ga',
+    'Watauga Lake, TN': 'watauga_tn',
+    'Watagua, TN': 'watauga_tn',
+  };
+  for (const [pickerName, expected] of Object.entries(shown)) {
+    assert.equal(researchStorageId(pickerName), expected, pickerName);
+  }
+});

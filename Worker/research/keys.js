@@ -91,6 +91,20 @@ const RESEARCH_CANONICAL_IDS = {
   // 88-acre Habersham Co lake -- which is exactly why that key is not in this table and this
   // one is.
   'lake_richard_russell_ga': 'lake_russell_sc',
+  // The rest of the 2026-09-01 fork, from the same cause: the batch drove from the registry's
+  // county-stamped names before /research/save could map them back, so three more waters gained
+  // a second, thinner profile under the spelling the picker happens to show. Ryan's research
+  // picker, read off his screen 2026-09-04: "Lake Sidney Lanier (Hall Co, GA)", "Nottely Lake,
+  // GA", "Watauga Lake, TN" -- each landing on a three-source draft while the verified profile
+  // sat somewhere the picker never asks for.
+  //
+  // COLLISION CHECKED against the app's own 877-name list: each key below is produced by
+  // EXACTLY ONE picker name. That check is the whole difference between these rows and the
+  // lake_russell_ga row that was removed above.
+  'lake_sidney_lanier_hall_co_ga': 'lake_lanier_ga',
+  'nottely_lake_ga': 'lake_nottely_ga',
+  'watauga_lake_tn': 'watauga_tn',
+  'watagua_tn': 'watauga_tn',
 };
 
 function researchStorageId(lakeName) {
