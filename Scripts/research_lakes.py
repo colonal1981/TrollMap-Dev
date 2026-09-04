@@ -716,6 +716,7 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
     out["saved_version"] = ((saved or {}).get("version")
                             or ((saved or {}).get("metadata") or {}).get("version"))
     out["ok"] = out["saved"] = True
+    out["mirrored"] = mirror_locally(lake)
     out["seconds"] = time.perf_counter() - t0
     return out
 
@@ -723,6 +724,55 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
 # {lowercased display name: the registry row}, filled by load_lakes(). See
 # registry_ramps() for why the row has to reach research_one().
 ROWS_BY_NAME = {}
+
+# The registry folder, so a saved profile can be mirrored onto the drive. Set in main() rather
+# than threaded through research_one()'s call chain, exactly like ROWS_BY_NAME above.
+REGISTRY_DIR = ""
+
+
+def mirror_locally(lake_name):
+    """Write the profile that was just saved into registry\_research_profiles\<id>.json.
+
+    WHY THE SAVE IS NOT ENOUGH ON ITS OWN. Until 2026-09-04 a profile existed in exactly one
+    place -- R2 -- and three things followed from that: build_data_map.py had to stamp the fifth
+    kind of place `not_countable_offline`, so every species count taken on this machine counted
+    the drive and called it the app; the per-field evidence that says WHERE a species came from
+    was unreadable, so "the Parr smallmouth came in from somewhere -- where?" had no answer here;
+    and an R2 prune would have taken an hour of model time per lake with it, unrecoverably.
+
+    IT RE-READS RATHER THAN WRITING WHAT IT SENT. handleResearchSave merges evidence and stamps
+    the version, so the object in the bucket is not the object this script posted. A mirror that
+    is not the stored bytes is worse than no mirror, because it would be believed.
+
+    NEVER FAILS THE RUN. A research pass that succeeded and could not be mirrored is still a
+    research pass that succeeded; the mirror is caught up by mirror_research_profiles.py.
+    """
+    if not REGISTRY_DIR:
+        return None
+    try:
+        import mirror_research_profiles as MIRROR
+    except ImportError:
+        print("   (no local mirror: mirror_research_profiles.py is not beside this script)")
+        return None
+    try:
+        code, data, err = _req("/research/get?lake=" + urllib.parse.quote(lake_name))
+        if code != 200 or not data or not data.get("ok"):
+            print("   (no local mirror for %s: %s)" % (lake_name, err or "HTTP %s" % code))
+            return None
+        sid = MIRROR.safe_id(data.get("sanitized"))
+        profile = data.get("profile")
+        if not sid or profile is None:
+            print("   (no local mirror for %s: unusable id %r)" % (lake_name, data.get("sanitized")))
+            return None
+        out_dir = os.path.join(REGISTRY_DIR, MIRROR.OUT_DIRNAME)
+        os.makedirs(out_dir, exist_ok=True)
+        fp = os.path.join(out_dir, sid + ".json")
+        with io.open(fp, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(json.dumps(profile, indent=1, ensure_ascii=False) + "\n")
+        return fp
+    except Exception as e:                                    # noqa: BLE001
+        print("   (no local mirror for %s: %s)" % (lake_name, e))
+        return None
 
 
 def load_lakes(args, registry):
@@ -943,6 +993,8 @@ def main():
         print("     export TROLLMAP_SYNC_TOKEN='<value>'      # bash")
         return 2
 
+    global REGISTRY_DIR
+    REGISTRY_DIR = a.registry
     lakes = load_lakes(a, a.registry)
 
     if a.limit:
