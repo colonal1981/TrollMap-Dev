@@ -17,7 +17,7 @@ import { handleAlerts, runAlertSweep } from './alerts.js';
 import { handleReports } from './reports.js';
 import { fetchStateRegulations, getLakeRegulations } from './research/clients.js';
 import { regulationsTable, lakeIndex, resolveRegistryRow } from './registry.js';
-import { handleResearchThermoclineSearch, handleResearchLimnologyData, refreshStaleLimnology, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, registrySpeciesFor, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchRegsDebug, handleResearchApprove, handleResearchDelete, handleResearchDeleteNormalizedDoc, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleResearchValidationPass, handleSharedCheck, handleSharedStore, handleSharedQuery, handleSharedPublish, handleSharedStatus, handleSharedQuarantine } from './worker-research.js';
+import { handleResearchThermoclineSearch, handleResearchLimnologyData, refreshStaleLimnology, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, registrySpeciesFor, speciesFoodHabits, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchRegsDebug, handleResearchApprove, handleResearchDelete, handleResearchDeleteNormalizedDoc, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleResearchValidationPass, handleSharedCheck, handleSharedStore, handleSharedQuery, handleSharedPublish, handleSharedStatus, handleSharedQuarantine } from './worker-research.js';
 
 
 /**
@@ -1772,8 +1772,16 @@ var trollmap_worker_default = {
         const name = url.searchParams.get("lake") || url.searchParams.get("waterbody") || "";
         if (!name) return new Response(JSON.stringify({ error: "missing lake" }), { headers: JSON_HEADERS, status: 400 });
         const state = (url.searchParams.get("state") || "").toUpperCase();
+        // `?species=` is optional and answers a DIFFERENT question from the rest of this route:
+        // what that fish eats, statewide, out of the state's own guide. Asked here rather than
+        // from its own route because the plan already makes this call and the answer travels
+        // with the water's forage, which is the half it is meant to be read against.
+        const target = url.searchParams.get("species") || "";
         try {
-          const reg = await registrySpeciesFor(env, name, state);
+          const [reg, food] = await Promise.all([
+            registrySpeciesFor(env, name, state),
+            target ? speciesFoodHabits(env, target) : Promise.resolve(null),
+          ]);
           return new Response(JSON.stringify({
             lake: name,
             slug: reg.slug,
@@ -1782,6 +1790,9 @@ var trollmap_worker_default = {
             // What the agency says those fish EAT, off the same page and quoted from it.
             // See forageFromAgencyPages().
             primaryForage: reg.primaryForage,
+            // Statewide and per-species; `statewide: true` says so, because a sentence about what
+            // stripers eat in South Carolina is not a sentence about this reservoir.
+            foodHabits: food,
             // Which of these say what is IN the water and which say only that a rule or an
             // advisory names a fish. A roster and a floor are different claims and the caller
             // has to be able to tell them apart -- see registrySpeciesFor().

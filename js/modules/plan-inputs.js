@@ -490,17 +490,22 @@ export function registryIdentity(rec) {
   return Object.keys(out).length ? out : null;
 }
 
-export async function fetchRegistrySpecies(worker, lakeName, state = '') {
+export async function fetchRegistrySpecies(worker, lakeName, state = '', species = '') {
   if (!worker || !lakeName) return null;
   try {
     const u = new URL(`${String(worker).replace(/\/+$/, '')}/species`);
     u.searchParams.set('lake', lakeName);
     if (state) u.searchParams.set('state', state);
+    // The target species asks a second question of the same call: what it eats, statewide, from
+    // the state's own guide. See speciesFoodHabits().
+    if (species) u.searchParams.set('species', species);
     const r = await fetch(u.toString());
     if (!r.ok) return null;
     const d = await r.json();
     const forage = Array.isArray(d && d.primaryForage) ? d.primaryForage : [];
-    if (!d || (!Array.isArray(d.predatorSpecies) || !d.predatorSpecies.length) && !forage.length) {
+    const hasFood = !!(d && d.foodHabits && d.foodHabits.text);
+    if (!d || ((!Array.isArray(d.predatorSpecies) || !d.predatorSpecies.length)
+               && !forage.length && !hasFood)) {
       return null;
     }
     return { predatorSpecies: Array.isArray(d.predatorSpecies) ? d.predatorSpecies : [],
@@ -508,6 +513,7 @@ export async function fetchRegistrySpecies(worker, lakeName, state = '') {
              // The agency's own answer to what the predators eat -- 14 waters name it in a
              // sentence, and it was reaching nothing.
              primaryForage: forage,
+             foodHabits: (d.foodHabits && d.foodHabits.text) ? d.foodHabits : null,
              sources: Array.isArray(d.sources) ? d.sources : [] };
   } catch (e) {
     console.warn('[plan] registry species unavailable for', lakeName, e && e.message);
@@ -670,6 +676,16 @@ export function researchIntel(profile, species, season, now = Date.now(), packFa
   // presentation, so the species list and the forage base stay.
   put('Other predators here', bio.predatorSpecies);
   put('Primary forage', bio.primaryForage);
+  // WHAT THE TARGET EATS, AND IT IS NOT A FACT ABOUT THIS WATER. The label carries the state and
+  // the agency because species_traits.json's own note says "Per-SPECIES and statewide, not
+  // per-water" -- and a sentence about what stripers eat in South Carolina read as a sentence
+  // about this reservoir is exactly the confusion the evidence rows exist to prevent.
+  if (bio.foodHabits && bio.foodHabits.text) {
+    const f = bio.foodHabits;
+    const who = [f.agency, f.state].filter(Boolean).join(' ');
+    put(`What ${f.species || species || 'the target'} eat`
+        + `${who ? ` (${who}, statewide — not measured on this water)` : ''}`, f.text);
+  }
   put('Secondary forage', bio.secondaryForage);
   put('Stockings', bio.knownStockings);
   // FOUR LINES STOOD HERE AND WENT WITH THE BIOLOGY AGENT, 2026-09-01.

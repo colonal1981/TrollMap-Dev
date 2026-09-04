@@ -2,7 +2,7 @@
 import { JSON_HEADERS, r2Text } from '../worker-core.js';
 import { researchStorageId, resolveResearchStorageId } from './keys.js';
 import { buildEvidence, buildFactualSummary, canonicalizeResearchSpecies, getAttractorFacts, getRampSpeciesFacts, uniqueResearchSpecies, splitSpeciesText, isKnownResearchSpecies, RESEARCH_SPECIES_CANON } from './facts-util.js';
-import { lakeIndex, ncSpeciesByLake, resolveRegistryRow, identityBaseline, regulationsTable, agencyLakeFacts, fishAdvisories } from '../registry.js';
+import { lakeIndex, ncSpeciesByLake, resolveRegistryRow, identityBaseline, regulationsTable, agencyLakeFacts, fishAdvisories, speciesTraits } from '../registry.js';
 import { SC_INSHORE_ROSTER, SC_INSHORE_BASIS } from './coastal-agents.js';
 import { dukeRowForNames, fetchDukeAccessAlerts, fetchDukeOperatingRange } from '../worker-data.js';
 import { parseAccessAlerts, dukeLocationIdFor, dukePoolManagement } from '../conditions.js';
@@ -544,6 +544,62 @@ export function forageFromAgencyPages(pages) {
     if (forage.some((f) => l.includes(f.toLowerCase())) && quotes.length < 3) quotes.push(line.trim());
   }
   return { forage: forage.sort(), quotes };
+}
+
+/**
+ * WHAT THIS FISH EATS, from the state's own guide, and NOT a fact about any lake.
+ *
+ * registry/species_traits.json is 56 species read out of SCDNR's Guide to Freshwater Fishes of
+ * South Carolina, its marine species accounts and NC WRC's Wildlife Profiles, with a `Food Habits`
+ * section on 41 entries and `Foraging Habits` on 12. It is published to R2 --
+ * verify_registry_r2.py lists it as current -- and until now nothing in the plan path read it.
+ *
+ * Striped Bass, verbatim: *"The diet of striped bass consists mostly of fish. Preferred species in
+ * freshwater are threadfin shad, gizzard shad and blueback herring."*
+ *
+ * THE OTHER HALF OF THE FORAGE QUESTION. forageFromAgencyPages() answers what forage a WATER has;
+ * this answers what the target species EATS. The fisheries prompt needs both, and says so in its
+ * own words -- without the second it feeds blueback herring to bluegill.
+ *
+ * `statewide: true` TRAVELS WITH IT, because the file's own note says "Per-SPECIES and statewide,
+ * not per-water". A sentence about what stripers eat in South Carolina is not a sentence about
+ * this reservoir, and the difference has to reach the prompt or the model will read one as the
+ * other -- which is the whole reason `evidence` exists in this codebase.
+ *
+ * Matched through canonicalizeResearchSpecies() on both sides, so the plan form's vocabulary and
+ * the guide's find each other without a second name table.
+ */
+export async function speciesFoodHabits(env, speciesName) {
+  const want = canonicalizeResearchSpecies(speciesName);
+  if (!want) return null;
+  let table;
+  try {
+    // speciesTraits() returns the `species` OBJECT, not the file -- it unwraps and validates on
+    // the way through. Asking it for `.species` again reads undefined on every lookup.
+    table = (await speciesTraits(env)) || {};
+  } catch (e) {
+    console.warn(`speciesFoodHabits: species_traits unavailable: ${e && e.message}`);
+    return null;
+  }
+  const key = Object.keys(table).find((k) => canonicalizeResearchSpecies(k) === want);
+  if (!key) return null;
+  for (const entry of (table[key] || [])) {
+    const secs = (entry && entry.sections) || {};
+    const text = secs['Food Habits'] || secs['Foraging Habits'];
+    if (typeof text === 'string' && text.trim()) {
+      return {
+        species: key,
+        text: text.trim(),
+        statewide: true,
+        state: entry.state || null,
+        agency: entry.agency || null,
+        source: entry.source || null,
+        page: entry.page ?? null,
+        scientific: entry.scientific || null,
+      };
+    }
+  }
+  return null;
 }
 
 export async function registrySpeciesFor(env, lakeName, state = '') {

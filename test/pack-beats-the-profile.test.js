@@ -268,3 +268,16 @@ test('a profile that stores a bare string keeps it', () => {
   assert.ok(row.includes('Blueback herring'), row);
   assert.ok(row.includes('Threadfin Shad'), row);
 });
+
+test('the diet line is labelled statewide so it cannot read as a fact about this water', () => {
+  const out = researchIntel({}, SPECIES, 'summer', Date.now(), { biology: { foodHabits: {
+    species: 'Largemouth Bass', agency: 'SCDNR', state: 'SC', statewide: true,
+    text: 'Adult largemouth bass primarily consume other fish.' } } });
+  const row = line(out, 'What Largemouth Bass eat (SCDNR SC, statewide — not measured on this water)');
+  assert.ok(row.includes('primarily consume other fish'), out);
+});
+
+test('and no diet answer prints no line at all', () => {
+  const out = researchIntel({}, SPECIES, 'summer', Date.now(), { biology: { foodHabits: null } });
+  assert.ok(!/ eat/.test(out), out);
+});

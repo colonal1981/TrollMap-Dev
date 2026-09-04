@@ -250,3 +250,72 @@ describe('the agency page names the bait, in a sentence, and we read it now', ()
       notes: ['Best in the spring around bedding areas.'] }] }]).forage).toEqual([]);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// AND WHAT THE TARGET EATS, WHICH IS THE OTHER HALF AND NOT A FACT ABOUT ANY LAKE
+//
+// registry/species_traits.json is 56 species read out of SCDNR's Guide to Freshwater Fishes of
+// South Carolina, with a `Food Habits` section on 41 entries and `Foraging Habits` on 12. It is
+// published, current, and had no reader in the plan path.
+//
+// forageFromAgencyPages() says what forage a WATER has; this says what the SPECIES eats. The
+// fisheries prompt needs both — without the second it feeds blueback herring to bluegill.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+const TRAITS = { species: {
+  'Striped Bass': [
+    { state: 'SC', agency: 'SCDNR', page: 36, scientific: 'Morone saxatilis',
+      source: 'FreshwaterFishPocketGuide.pdf',
+      sections: { Range: 'Statewide.',
+        'Food Habits': 'The diet of striped bass consists mostly of fish. Preferred species in '
+                     + 'freshwater are threadfin shad, gizzard shad and blueback herring.' } },
+  ],
+  'Bluegill': [
+    { state: 'SC', agency: 'SCDNR', page: 20,
+      sections: { Range: 'Statewide.' } },                    // no diet section at all
+    { state: 'SC', agency: 'SCDNR', page: 21,
+      sections: { 'Foraging Habits': 'Feeds on insects, snails and small crustaceans.' } },
+  ],
+} };
+
+const traitsEnv = () => ({
+  R2_TROLLMAP_CHARTPACKS: {
+    get: async (key) => (key === '_registry/species_traits.json'
+      ? { text: async () => JSON.stringify(TRAITS) } : null),
+  },
+});
+
+describe('the state guide says what the target eats', () => {
+  const food = async (name) => {
+    const { speciesFoodHabits } = await import('../Worker/research/deterministic.js');
+    _resetIndexCache();
+    return speciesFoodHabits(traitsEnv(), name);
+  };
+
+  it('returns the diet with the page it came from', async () => {
+    const f = await food('Striped Bass');
+    expect(/threadfin shad, gizzard shad and blueback herring/.test(f.text)).toBe(true);
+    expect(f.agency).toBe('SCDNR');
+    expect(f.page).toBe(36);
+  });
+
+  it('says out loud that it is statewide, not this water', async () => {
+    // The file's own note: "Per-SPECIES and statewide, not per-water". A sentence about what
+    // stripers eat in South Carolina read as a sentence about this reservoir is the confusion
+    // the evidence rows exist to prevent, so the flag travels with the fact.
+    expect((await food('Striped Bass')).statewide).toBe(true);
+  });
+
+  it('falls through an entry with no diet section to one that has it', async () => {
+    expect((await food('Bluegill')).text).toBe('Feeds on insects, snails and small crustaceans.');
+  });
+
+  it('matches through the species canon, not on the exact string', async () => {
+    // The plan form and the guide do not have to spell a fish the same way.
+    expect((await food('striped bass')).species).toBe('Striped Bass');
+  });
+
+  it('answers nothing for a fish the guide does not cover', async () => {
+    expect(await food('Muskellunge')).toBe(null);
+    expect(await food('')).toBe(null);
+  });
+});
