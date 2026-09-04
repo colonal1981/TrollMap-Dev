@@ -146,25 +146,39 @@ def main(argv=None):
     if a.lake:
         ids = [x for x in ids if x == a.lake] or [a.lake]
 
-    lost_by_field, gained_by_field = {}, {}
-    compared, no_history, errors = 0, [], []
+    # EVERY LAKE COSTS AT LEAST TWO ROUND TRIPS, so the run has to say where it is. Ryan, watching
+    # the first version sit silent: "i am guessing you didn't write any sort of status lines in
+    # it?" He was right. A long read-only run with no output is indistinguishable from a hang.
+    todo = []
     for sid in ids:
         with open(os.path.join(d, sid + '.json'), encoding='utf-8') as fh:
             now = json.load(fh)
-        if updated(now) < a.before:
-            continue                                   # the batch never touched it; nothing to diff
+        # A profile the batch never touched has nothing to diff against itself.
+        if updated(now) >= a.before:
+            todo.append((sid, now))
+    print('%d of %d mirrored profile(s) were written on or after %s -- comparing each against its '
+          'newest version before that' % (len(todo), len(ids), a.before), flush=True)
+    print('   two or more requests each; this is read-only and safe to stop\n', flush=True)
+
+    lost_by_field, gained_by_field = {}, {}
+    compared, no_history, errors = 0, [], []
+    for n, (sid, now) in enumerate(todo, 1):
+        head = '[%3d/%d] %-38s' % (n, len(todo), sid[:38])
         code, data, err = _get('/research/get?lake=' + urllib.parse.quote(sid))
         if code != 200 or not data or not data.get('ok'):
             errors.append((sid, err or 'HTTP %s' % code))
+            print('%s  !! %s' % (head, err or 'HTTP %s' % code), flush=True)
             continue
         versions = [int(v['version']) for v in (data.get('versions') or [])
                     if str(v.get('version') or '').isdigit()]
         if not versions:
             no_history.append(sid)
+            print('%s  no stored versions' % head, flush=True)
             continue
         vnum, before = version_before(sid, versions, a.before)
         if vnum is None:
             no_history.append('%s (%s)' % (sid, before))
+            print('%s  %s' % (head, before), flush=True)
             continue
         compared += 1
         lost, gained = [], []
@@ -176,12 +190,13 @@ def main(argv=None):
             elif n and not b:
                 gained.append(name)
                 gained_by_field.setdefault(name, []).append(sid)
-        if lost or gained:
-            print('%-38s v%-4s -> v%-4s' % (sid, vnum, (now.get('metadata') or {}).get('versionNumber')))
-            if lost:
-                print('     LOST   %s' % ', '.join(lost))
-            if gained:
-                print('     gained %s' % ', '.join(gained))
+        vnow = (now.get('metadata') or {}).get('versionNumber')
+        verdict = 'no change to what the plan reads' if not (lost or gained) else ''
+        print('%s  v%-5s -> v%-5s %s' % (head, vnum, vnow, verdict), flush=True)
+        if lost:
+            print('          LOST   %s' % ', '.join(lost), flush=True)
+        if gained:
+            print('          gained %s' % ', '.join(gained), flush=True)
 
     print('\ncompared %d profile(s) against their last version before %s' % (compared, a.before))
     if no_history:
