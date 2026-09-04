@@ -194,3 +194,36 @@ describe('resolveR2Key — fuzzy resolver (canonical)', () => {
     expect(resolveR2Key('Lake Wateree - Kershaw County, SC')).toBe('wateree_lake');
   });
 });
+
+describe('Cheoah is a real reservoir upstream of Calderwood and the app does not carry it', () => {
+  // Ryan, 2026-09-04: "It should not be named cheoah in the app... period... that portion of
+  // water is calderwood the end". The 2026-08-23 merge kept Calderwood's geometry, which was
+  // right, and hung Cheoah's NAME on it, which put a reservoir we do not ship in the picker
+  // handing back Calderwood's chart. registry/water_chain.json had the answer the whole time:
+  // both are separate NHD features on levelpath 25000400001331, ordered by outlet_hydroseq --
+  // tellico 1336, chilhowee 1788, calderwood 2029, cheoah 2308, fontana 2795.
+
+  const SPELLINGS = ['Lake Cheoah, NC', 'Lake Cheoah, TN/NC', 'Cheoah Lake',
+                     'Cheoah Lake, TN/NC', 'CHEOAH LAKE, NC', 'Cheoah Lake (Graham Co, NC)'];
+
+  it('resolves no pack under any spelling', () => {
+    for (const name of SPELLINGS) expect(resolveR2Key(name)).toBe(null);
+  });
+
+  it('is refused BEFORE the fuzzy pass, not merely unmapped', () => {
+    // Deleting a mapping does not stop a name answering, it re-points it. hasNoPack() runs
+    // first, so the name has to be in this set or "Lake Cheoah" fuzzy-matches Calderwood again.
+    for (const name of SPELLINGS) expect(LAKE_NAMES_WITHOUT_PACK.has(name)).toBe(true);
+  });
+
+  it('and no Cheoah spelling maps to a slug at all', () => {
+    for (const [name, slug] of Object.entries(LAKE_NAME_TO_R2_KEY)) {
+      expect(/cheoah/i.test(name)).toBe(false);
+      expect(/cheoah/i.test(slug)).toBe(false);
+    }
+  });
+
+  it('while Calderwood itself still resolves', () => {
+    expect(resolveR2Key('Calderwood Lake, TN/NC')).toBe('calderwood_lake');
+  });
+});

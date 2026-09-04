@@ -136,7 +136,6 @@ export const LAKE_NAME_TO_R2_KEY = {
   'Lake Santeetlah, NC':                'santeetlah_lake',
   'Hiwassee Lake, NC':                  'hiwassee_lake',   // shipped 2026-08-04
   'Fontana Lake, NC':                   'fontana_lake',
-  'Lake Cheoah, NC':                    'cheoah_lake',   // shipped 2026-08-04
 
   // ── GA Lakes ────────────────────────────────────────────────────────────────
   'Lake Oconee, GA':                    'lake_oconee',
@@ -168,7 +167,12 @@ export const LAKE_NAME_TO_R2_KEY = {
   'Tellico Lake, TN':                   'tellico_lake',
   'Tellico Reservoir, TN':              'tellico_lake',
   'Lake Chilhowee, TN':                 'chilhowee_lake',
-  'Lake Cheoah, TN/NC':                 'cheoah_lake',   // shipped 2026-08-04
+  // ADDED 2026-09-04, and it is the reason the Cheoah cut needed a test. Calderwood had NO
+  // entry of its own: the only name that reached its pack was 'Lake Cheoah', hung on it by the
+  // 2026-08-23 merge. Cutting the wrong name made the right water unreachable, and
+  // resolveR2Key('Calderwood Lake, TN/NC') returned null until this line existed.
+  'Calderwood Lake, TN/NC':             'calderwood_lake',
+  'Calderwood Lake, TN':                'calderwood_lake',
   'Watauga Lake, TN':                   'watauga_lake',
   'Boone Lake, TN':                     'boone_lake',
   'Boone Reservoir, TN':                'boone_lake',
@@ -313,6 +317,27 @@ export const LAKE_NAMES_WITHOUT_PACK = new Set([
   // Falls (562 ac) while Juliette (~3,600 ac) is the half most people mean.
   'Lake Juliette / High Falls, GA',
   'Watauga / Boone Chain, TN/NC',
+  // ── CHEOAH IS A REAL RESERVOIR AND IT IS NOT OURS ────────────────────────────
+  // Ryan, 2026-09-04: "It should not be named cheoah in the app... period... that portion of
+  // water is calderwood the end", and "garmin carries no bathymetry for cheoah".
+  //
+  // registry/water_chain.json settles the geography without anyone reasoning about dams: all
+  // five sit on levelpath 25000400001331 and outlet_hydroseq decreases downstream --
+  // tellico ...1336, chilhowee ...1788, calderwood ...2029, cheoah ...2308, fontana ...2795.
+  // NHD names our 555.6-acre polygon "Calderwood Lake" (GNIS 982412); Cheoah is a separate
+  // 2.5981 km2 feature immediately upstream, with no GNIS and no soundings.
+  //
+  // These two names USED to map to `cheoah_lake`, a slug with no pack, and the 2026-08-23 merge
+  // also hung `Cheoah Lake` on Calderwood's row as a legacy name -- so the picker offered
+  // CHEOAH LAKE, NC and handed back Calderwood's chart. The aliases are cut in
+  // registry/lake_display_names.json; these belong HERE because deleting a mapping does not
+  // stop a name answering, it RE-POINTS it at the fuzzy pass. Listed explicitly so it cannot.
+  'Lake Cheoah, NC',
+  'Lake Cheoah, TN/NC',
+  'Cheoah Lake',
+  'Cheoah Lake, TN/NC',
+  'CHEOAH LAKE, NC',
+  'Cheoah Lake (Graham Co, NC)',
   'Auman Lake, NC',
   'Lake Mackintosh, NC',
   'Lake Michie / Little River, NC',
