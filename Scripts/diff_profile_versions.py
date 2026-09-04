@@ -119,9 +119,19 @@ def version_before(sid, versions, before):
         if code != 200 or not data or not data.get('ok'):
             return None, (err or (data or {}).get('error') or 'HTTP %s' % code)
         prof = data.get('profile') or {}
+        # DID IT ACTUALLY GIVE US THAT VERSION? A Worker without the version read deployed ignores
+        # the parameter and hands back the MASTER, whose lastUpdated is by definition newer than
+        # the cutoff -- so every walk falls off the end and the run reports "every stored version
+        # is newer", for every lake, which is indistinguishable from a real answer. Asked for and
+        # got are two different things and the response says which this is.
+        got = (prof.get('metadata') or {}).get('versionNumber')
+        if got is not None and int(got) != int(v):
+            return None, ('ASKED FOR v%s AND GOT v%s -- the Worker is ignoring ?version. '
+                          'Push the version read and re-run.' % (v, got))
         if updated(prof) < before:
             return v, prof
-    return None, 'every stored version is newer than %s' % before
+    return None, ('every stored version is newer than %s (walked v%s down to v%s)'
+                  % (before, max(versions), min(versions)))
 
 
 def main(argv=None):
@@ -177,6 +187,11 @@ def main(argv=None):
             continue
         vnum, before = version_before(sid, versions, a.before)
         if vnum is None:
+            # ONE OF THESE IS NOT LIKE THE OTHERS. A stale Worker is a fact about the deploy, not
+            # about the lake, and it must not be filed beside "this lake has no old version".
+            if 'ignoring ?version' in before:
+                print('\n!! %s\n' % before, flush=True)
+                return 2
             no_history.append('%s (%s)' % (sid, before))
             print('%s  %s' % (head, before), flush=True)
             continue
