@@ -81,6 +81,16 @@ const RESEARCH_CANONICAL_IDS = {
   // index for a second owner before adding another.
   // Lake Chatuge (GA/NC) — GA calls it Lake Chatuge, NC calls it Chatuge Lake — canonical is GA
   'chatuge_lake_nc': 'lake_chatuge_ga',
+  // Richard B Russell (SC/GA) — GA's feed calls it "Lake Richard Russell", SC's calls it
+  // "Lake Russell", so the picker offers the ONE reservoir twice and the two entries were
+  // reaching two different profiles: a 2026-09-01 batch draft at 54% against the verified one.
+  // Ryan, looking at his own app: "The app is showing me Lake Richard Russell, GA".
+  //
+  // COLLISION CHECKED, which is the rule the removed lake_russell_ga row was written without:
+  // "Lake Richard Russell" belongs to no other water in the index. "Lake Russell" does -- the
+  // 88-acre Habersham Co lake -- which is exactly why that key is not in this table and this
+  // one is.
+  'lake_richard_russell_ga': 'lake_russell_sc',
 };
 
 function researchStorageId(lakeName) {

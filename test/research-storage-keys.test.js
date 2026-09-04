@@ -120,3 +120,13 @@ test('the shared-border rows that remain each name ONE water', () => {
   assert.equal(researchStorageId('Thurmond Lake, GA'), 'clarks_hill_thurmond_sc_ga');
   assert.equal(researchStorageId('Chatuge Lake, NC'), 'lake_chatuge_ga');
 });
+
+test('both of the reservoir\'s picker spellings land on the same profile', async () => {
+  // GA's feed says "Lake Richard Russell", SC's says "Lake Russell", so the picker offers the one
+  // reservoir twice. Ryan tapped the GA entry and got a 54% draft beside a verified profile.
+  const probe = async (id) => (id === 'lake_russell_sc' ? { id } : null);
+  for (const n of ['Lake Richard Russell, GA', 'Lake Russell, SC']) {
+    const found = await resolveResearchStorageId(n, probe, []);
+    assert.equal(found && found.id, 'lake_russell_sc', n);
+  }
+});

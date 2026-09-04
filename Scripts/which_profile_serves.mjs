@@ -1,34 +1,47 @@
-// which_profile_serves.mjs -- which stored profile each water actually gets, and what is shadowed.
+// which_profile_serves.mjs -- which stored profile the PICKER's names actually reach.
 //
 // Personal use only, not for distribution or resale; not for navigation.
 //
-//     node .\Scripts\which_profile_serves.mjs --registry "F:\TrollMapPipeline\registry"
+//     node .\Scripts\which_profile_serves.mjs --registry "F:\TrollMapPipeline\registry" `
+//                                             --json "F:\TrollMapPipeline\registry\_profile_conflicts.json"
 //
-// WHY THIS IS JAVASCRIPT AND NOT ANOTHER PYTHON SCRIPT
+// IT ASKS WITH THE NAME THE CALLER PASSES, WHICH IS NOT THE REGISTRY'S.
 //
-// The question is "which key does resolveResearchStorageId land on", and the only correct answer
-// comes from running that function. This project has now guessed at that resolver twice in one
-// day and been wrong both times -- once reporting 25 unreachable profiles that were all fine, and
-// once sending 46 approvals that all 404ed. So this imports Worker/research/keys.js and
-// Worker/registry.js and runs them, with the mirror on the drive standing in for the bucket.
+// Ryan, 2026-09-04, twice: *"you are using county names when the research picker uses the name
+// from the dnr feeds"*, and then, after the first version of this script cleared Richard B
+// Russell: *"The app is showing me Lake Richard Russell, GA"* -- with the thin draft attached.
+//
+// He was right both times. The picker fills from getUniversalLakeNames, which keys every
+// waterbody in the DNR feeds through displayLakeName(rawName, stateCode) -- the feed's own
+// spelling plus ONE state. Georgia's feed calls the reservoir "Lake Richard Russell", so the
+// picker offers "Lake Richard Russell, GA", which sanitizes straight onto lake_richard_russell_ga
+// and never gets near the verified lake_russell_sc. Resolving from the registry's
+// "Richard B Russell Lake (Abbeville Co, SC/GA)" answers a question the app never asks.
+//
+// So this enumerates the PICKER's names -- displayLakeName over registry\_dnr_ramps_<st>.json,
+// the same four feeds the app fetches -- and imports displayLakeName itself rather than
+// reimplementing it. It also imports keys.js and registry.js and runs the real resolver over the
+// mirror. Nothing here restates a rule that lives in the app.
 //
 // WHAT IT FINDS
 //
-// A FORK: two or more mirrored profiles reachable from one water's names. Four exist, all created
-// 2026-09-01 by research_lakes.py driving from the registry's county-stamped display names before
-// /research/save learned to resolve through legacy_display_names. In every one the older profile
-// is the better one, and in three of the four the app serves the newer, thinner one.
+// A COLLISION: one water offered under two picker names that reach DIFFERENT profiles. Georgia
+// and South Carolina both list the same reservoir under their own spelling, so the lake appears
+// twice and the two entries can carry different research. Which one Ryan taps decides what he
+// reads.
 //
-// AN ORPHAN: a mirrored profile no water's names reach. It is storage nobody can read, and it is
-// also the state a fork's loser lands in if the resolution order ever shifts again.
+// AN UNREACHED PROFILE: stored research no picker name arrives at. It is storage nobody can read.
 //
-// IT READS THE MIRROR, NOT R2. Run mirror_research_profiles.py first. The mirror carries every
-// key /research/list returns, so the key SET is the bucket's; if the two have drifted this
-// answers for the drive, which is the honest thing a drive-side script can answer.
+// IT READS THE MIRROR, NOT R2. Run mirror_research_profiles.py first.
 import fs from 'node:fs';
 import path from 'node:path';
 import { resolveResearchStorageId } from '../Worker/research/keys.js';
 import { identityNamesForLake } from '../Worker/registry.js';
+
+// access-index.js publishes legacy helpers on `window` at module scope, so it needs one before it
+// can be imported under node -- the shim test/live-ramps-reach-the-filter.test.js uses.
+if (typeof globalThis.window === 'undefined') globalThis.window = globalThis;
+const { displayLakeName } = await import('../js/data/access-index.js');
 
 const argv = process.argv.slice(2);
 const arg = (name, dflt) => {
@@ -69,46 +82,74 @@ for (const id of ids) {
   };
 }
 
-const reached = new Set();
-const forks = [], served = new Map();
-
-for (const [slug, row] of Object.entries(index)) {
-  if (!row || typeof row !== 'object') continue;
-  const name = row.display_name || row.name || slug;
-  const alts = identityNamesForLake(index, name) || [];
-  // EVERY id this water can reach, found by removing the winner and asking again. A fork is only
-  // visible from the loser's side, and the loser is exactly what a single resolve never returns.
-  const hits = [];
-  const excluded = new Set();
-  for (;;) {
-    const probe = (id) => Promise.resolve(has.has(id) && !excluded.has(id) ? { id } : null);
-    // eslint-disable-next-line no-await-in-loop
-    const found = await resolveResearchStorageId(name, probe, alts);
-    if (!found) break;
-    hits.push(found.id);
-    excluded.add(found.id);
-    if (hits.length > 6) break;                 // a runaway is a bug, not a water with seven
+const STATES = ['ga', 'nc', 'sc', 'tn'];
+const pickerNames = new Map();          // display name -> the feed spelling it came from
+for (const st of STATES) {
+  const f = path.join(REG, `_dnr_ramps_${st}.json`);
+  if (!fs.existsSync(f)) continue;
+  const feed = JSON.parse(fs.readFileSync(f, 'utf8'));
+  for (const wb of Object.keys(feed.waterbodies || {})) {
+    const shown = displayLakeName(wb, (feed.state || st).toUpperCase());
+    if (shown) pickerNames.set(shown, wb);
   }
-  for (const id of hits) reached.add(id);
-  if (hits.length) served.set(slug, hits);
-  if (hits.length > 1) forks.push({ slug, name, hits });
+}
+
+const reached = new Set();
+const serves = new Map();               // picker name -> stored id
+for (const name of pickerNames.keys()) {
+  const alts = identityNamesForLake(index, name) || [];
+  const probe = (id) => Promise.resolve(has.has(id) ? { id } : null);
+  // eslint-disable-next-line no-await-in-loop
+  const found = await resolveResearchStorageId(name, probe, alts);
+  if (found) { serves.set(name, found.id); reached.add(found.id); }
+}
+
+// A COLLISION is one profile-bearing water offered twice. Two picker names that resolve to
+// different profiles AND share a registry row are the same lake wearing two states' spellings.
+const rowFor = (name) => {
+  const alts = identityNamesForLake(index, name) || [];
+  return alts.length ? alts[0] : null;          // identityNamesForLake leads with display_name
+};
+const byRow = new Map();
+for (const [name, id] of serves) {
+  const row = rowFor(name);
+  if (!row) continue;
+  if (!byRow.has(row)) byRow.set(row, new Map());
+  byRow.get(row).set(name, id);
+}
+const forks = [];
+for (const [row, entries] of byRow) {
+  const idsHere = new Set(entries.values());
+  if (idsHere.size < 2) continue;
+  const ranked = [...idsHere].sort((a, b) =>
+    (status[b] === 'verified') - (status[a] === 'verified')
+    || (detail[b].sources || 0) - (detail[a].sources || 0));
+  forks.push({
+    slug: row, name: row,
+    entries: [...entries].map(([n, id]) => ({ pickerName: n, id })),
+    hits: [...idsHere],
+    best: ranked[0],
+  });
 }
 
 const line = (id, mark) => `      ${mark} ${id.padEnd(34)} ${String(species[id]).padStart(2)} species  ` +
   `${status[id].padEnd(9)} updated ${updated[id]}`;
 
-console.log(`${Object.keys(index).length} waters, ${ids.length} mirrored profiles, ` +
-  `${served.size} waters reach one, ${reached.size} profiles are reachable`);
+console.log(`${pickerNames.size} picker names, ${ids.length} mirrored profiles, ` +
+  `${serves.size} names reach one, ${reached.size} profiles are reachable`);
 
-console.log(`\nFORKS -- more than one profile reachable from one water (${forks.length}):`);
+console.log(`\nCOLLISIONS -- one water offered under names that reach DIFFERENT profiles (${forks.length}):`);
 if (!forks.length) console.log('   none.');
 for (const f of forks) {
   console.log(`   ${f.name}`);
-  f.hits.forEach((id, i) => console.log(line(id, i === 0 ? 'SERVED  ' : 'shadowed')));
+  for (const e of f.entries) {
+    console.log(`      "${e.pickerName}"`);
+    console.log(line(e.id, e.id === f.best ? 'KEEP    ' : 'thin    '));
+  }
 }
 
 const orphans = ids.filter((id) => !reached.has(id)).sort();
-console.log(`\nORPHANS -- mirrored profiles no water's names reach (${orphans.length}):`);
+console.log(`\nUNREACHED -- stored profiles no picker name arrives at (${orphans.length}):`);
 if (!orphans.length) console.log('   none.');
 for (const id of orphans) console.log(line(id, '        '));
 
@@ -120,20 +161,18 @@ if (out) {
   fs.writeFileSync(out, `${JSON.stringify({
     generated: new Date().toISOString().slice(0, 10),
     mirror: MIRROR,
+    asked_with: 'displayLakeName over registry/_dnr_ramps_<st>.json -- the picker\'s own names',
     forks: forks.map((f) => ({
       slug: f.slug,
       name: f.name,
-      served: f.hits[0],
-      shadowed: f.hits.slice(1).map((id) => detail[id]),
-      served_detail: detail[f.hits[0]],
+      picker_names: f.entries,
+      served: f.hits.find((id) => id !== f.best) || null,
+      served_detail: detail[f.hits.find((id) => id !== f.best)] || null,
+      shadowed: [detail[f.best]],
     })),
     orphans: orphans.map((id) => detail[id]),
   }, null, 1)}\n`);
   console.log(`\n-> ${out}`);
 }
 
-const blank = [...served.entries()].filter(([, h]) => !species[h[0]]);
-if (blank.length) {
-  console.log(`\nSERVED A PROFILE WITH NO SPECIES (${blank.length}):`);
-  for (const [slug, h] of blank) console.log(`   ${(index[slug].display_name || slug)} -> ${h[0]}`);
-}
+
