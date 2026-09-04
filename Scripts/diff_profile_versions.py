@@ -141,6 +141,8 @@ def main(argv=None):
     ap.add_argument('--before', default='2026-09-01',
                     help='the cutoff; the newest version older than this is the "before"')
     ap.add_argument('--lake', help='one storage id, for a close look')
+    ap.add_argument('--show-versions', action='store_true',
+                    help='with --lake: list every stored version with its date and size, and stop')
     a = ap.parse_args(argv)
 
     d = os.path.join(a.registry, PROFILE_DIRNAME)
@@ -155,6 +157,37 @@ def main(argv=None):
     ids = [f[:-5] for f in sorted(os.listdir(d)) if f.endswith('.json') and not f.startswith('_')]
     if a.lake:
         ids = [x for x in ids if x == a.lake] or [a.lake]
+
+    # WHAT HISTORY ACTUALLY EXISTS, which is a different question from what the master says its
+    # version number is. Wateree's metadata says v141; that is a counter, not a promise that 141
+    # objects were kept. A lake whose stored snapshots all postdate the batch has no "before" to
+    # diff against, and this is the only way to see the difference between that and a bad read.
+    if a.show_versions:
+        if not a.lake:
+            print('--show-versions needs --lake')
+            return 2
+        sid = ids[0]
+        code, data, err = _get('/research/get?lake=' + urllib.parse.quote(sid))
+        if code != 200 or not data or not data.get('ok'):
+            print('%s: %s' % (sid, err or 'HTTP %s' % code))
+            return 1
+        vers = sorted(int(v['version']) for v in (data.get('versions') or [])
+                      if str(v.get('version') or '').isdigit())
+        print('%s -- master says v%s, %d stored version object(s): %s\n'
+              % (sid, (data.get('profile') or {}).get('metadata', {}).get('versionNumber'),
+                 len(vers), ', '.join('v%d' % v for v in vers) or '(none)'), flush=True)
+        for v in vers:
+            c, dd, e = _get('/research/get?lake=%s&version=%d' % (urllib.parse.quote(sid), v))
+            if c != 200 or not dd or not dd.get('ok'):
+                print('   v%-5s  !! %s' % (v, e or (dd or {}).get('error') or 'HTTP %s' % c), flush=True)
+                continue
+            prof = dd.get('profile') or {}
+            m = prof.get('metadata') or {}
+            print('   v%-5s  says v%-5s  updated %s  status %-9s  %d species  %d sources'
+                  % (v, m.get('versionNumber'), updated(prof), m.get('status'),
+                     len((prof.get('biology') or {}).get('predatorSpecies') or []),
+                     len(prof.get('sources') or [])), flush=True)
+        return 0
 
     # EVERY LAKE COSTS AT LEAST TWO ROUND TRIPS, so the run has to say where it is. Ryan, watching
     # the first version sit silent: "i am guessing you didn't write any sort of status lines in
