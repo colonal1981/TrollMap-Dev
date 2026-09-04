@@ -250,6 +250,12 @@ INDEX = {
                       'feature_type': 'lake'},
     'lake_wateree': {'display_name': 'Lake Wateree (Kershaw Co, SC)', 'state': 'SC',
                      'feature_type': 'lake'},
+    'horseshoe_four': {'display_name': 'Horseshoe Four (Berrien Co, GA)', 'state': 'GA',
+                       'feature_type': 'lake'},
+    'marburg_creek_reservoir': {'display_name': 'Marburg Creek Reservoir (Barrow Co, GA)',
+                                'state': 'GA', 'feature_type': 'lake'},
+    'fort_gordon_reservoir': {'display_name': 'Fort Gordon Reservoir (Richmond Co, GA)',
+                              'state': 'GA', 'feature_type': 'lake'},
     'lake_paradise_2': {'display_name': 'Lake Paradise (Berrien Co, GA)', 'state': 'GA',
                         'feature_type': 'lake'},
     'lake_bobben': {'display_name': 'Lake Bobben (Berrien Co, GA)', 'state': 'GA',
@@ -468,6 +474,52 @@ class TheRows(unittest.TestCase):
         self.assertEqual(species, [])
         self.assertEqual(notes, ['All Other Fish: No Restrictions'])
 
+
+
+class TheThreeRyanSettled(unittest.TestCase):
+    """The three rows that sat in `ambiguous` from 2026-09-03 to 2026-09-04.
+
+    Two were settled by Ryan looking at a point inside each polygon. The third the BOOK settles,
+    in a field this parser extracted and never consulted.
+    """
+
+    def setUp(self):
+        self.c = M.ga_waters(INDEX)
+
+    def test_fort_yargo_is_marburg_creek_and_not_the_army_post(self):
+        hits, why = M.bind('Fort Yargo State Park Lake (Marburg Cr. Watershed Proj.)', '', self.c)
+        self.assertEqual([h['slug'] for h in hits], ['marburg_creek_reservoir'], why)
+
+    def test_paradise_pfa_horseshoe_4_is_horseshoe_four_and_not_lake_paradise(self):
+        hits, why = M.bind('Paradise PFA (Horseshoe 4)', '', self.c)
+        self.assertEqual([h['slug'] for h in hits], ['horseshoe_four'], why)
+
+    def test_the_centralhatchee_reach_binds_to_NEITHER_of_our_two_rows(self):
+        """`(Pea Creek to West Point Lake, below Franklin)` is Heard county.
+
+        Ours are Fulton, 126 km upstream of Franklin, and White, 197 km. An advisory for a reach
+        we do not ship must bind to nothing rather than to the nearest thing sharing its name.
+        """
+        hits, why = M.bind('Chattahoochee River/Centralhatchee Creek',
+                           '(Pea Creek to West Point Lake, below Franklin)', self.c)
+        self.assertEqual(hits, [], 'bound to %s' % [h['slug'] for h in hits])
+
+    def test_and_the_reach_we_DO_ship_still_binds_to_both_segments(self):
+        """The rejection is keyed on the exact heading, so it cannot reach the other one.
+
+        `Chattahoochee River` with the Buford-to-Morgan-Falls reach is a different row and Ryan
+        settled it on the Saluda: one river in two pieces binds to both.
+        """
+        hits, why = M.bind('Chattahoochee River', '(Buford Dam to Morgan Falls Dam)', self.c)
+        self.assertEqual(sorted(h['slug'] for h in hits),
+                         ['chattahoochee_river', 'chattahoochee_river_4'])
+
+    def test_every_new_entry_carries_a_checked_date_and_a_reason(self):
+        """A binding decided by hand and not written down is one nobody can re-check."""
+        for table in (M.ACCEPTED_BINDINGS, M.REJECTED_BINDINGS):
+            for key, rec in table.items():
+                self.assertTrue(rec.get('checked'), key)
+                self.assertTrue(len(rec.get('why') or '') > 40, key)
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

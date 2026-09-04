@@ -482,6 +482,57 @@ def correction_for(water, published):
 # corrections above. A rule general enough to catch this on its own also refused Lake Sidney
 # Lanier, which the book spells "Sydney", and Lanier is one of the largest waters in the state.
 REJECTED_BINDINGS = {
+    # ── THE THREE THE BOOK COULD NOT SEPARATE, SETTLED 2026-09-04 ────────────────────────────
+    #
+    # All three sat in `ambiguous` since 2026-09-03 under "more than one of our waters fits and
+    # nothing separates them". Ryan looked at the first two on the water; the third the BOOK
+    # answers itself and this parser was not reading the field it answers in.
+    #
+    # `Fort Yargo State Park Lake (Marburg Cr. Watershed Proj.)` matched Marburg Creek Reservoir
+    # and Fort Gordon Reservoir on the word "fort". Ryan, given a point inside each polygon:
+    # *"called fort Yargo Lake in google maps"* for Marburg, and Fort Gordon *"not named on
+    # google maps but is on Fort Gordon"* -- a different water, on the Army post in Richmond
+    # County. The book agrees and always did: it files this row under the OCONEE RIVER BASIN,
+    # and Barrow County is Oconee while Richmond County is Savannah.
+    ('Fort Yargo State Park Lake (Marburg Cr. Watershed Proj.)', 'fort_gordon_reservoir'): {
+        'checked': '2026-09-04',
+        'why': 'Fort Gordon Reservoir is 98 acres on the Army post in RICHMOND county, Savannah '
+               'basin; this row is filed under the Oconee River Basin and is the 228-acre lake '
+               'in Barrow county that Google Maps labels Fort Yargo Lake. They share the word '
+               '"fort" and nothing else. Ryan looked at a point inside each on 2026-09-04.',
+    },
+
+    # `Paradise PFA (Horseshoe 4)` matched two Berrien County ponds inside the same public
+    # fishing area, 2.4 km apart, so the basin cannot separate them and only a person can.
+    # Ryan: *"horseshoe 4 confirmed... i confirmed this one yesterday same with paradise but
+    # paradise is not named in google maps"*.
+    ('Paradise PFA (Horseshoe 4)', 'lake_paradise_2'): {
+        'checked': '2026-09-04',
+        'why': 'Lake Paradise is a SEPARATE pond in the same Paradise PFA, 2.4 km from Horseshoe '
+               'Four, and the book names the numbered one. Confirmed on the water by Ryan, who '
+               'had already checked this PFA cluster the day before.',
+    },
+
+    # THE THIRD IS NOT AN AMBIGUITY AT ALL AND THE BOOK SAYS SO IN A FIELD WE ALREADY PARSE.
+    # `Chattahoochee River/Centralhatchee Creek` carries the reach
+    # `(Pea Creek to West Point Lake, below Franklin)`. Franklin is in HEARD county. Our two
+    # Chattahoochee rows are Fulton (126 km upstream of Franklin) and White (197 km). The
+    # advisory is for a reach we do not ship, and binding it to either would put a Heard County
+    # consumption warning on Atlanta's river or on the headwaters.
+    #
+    # `reach` was extracted, stored and never consulted by bind(). A book that publishes its own
+    # bounds and a binder that ignores them is the shape of every other name collision here.
+    ('Chattahoochee River/Centralhatchee Creek', 'chattahoochee_river'): {
+        'checked': '2026-09-04',
+        'why': "The book's own reach is (Pea Creek to West Point Lake, below Franklin) -- Heard "
+               'county. This row is the Fulton county reach, 126 km upstream. Centralhatchee '
+               'Creek is in no registry row at all.',
+    },
+    ('Chattahoochee River/Centralhatchee Creek', 'chattahoochee_river_4'): {
+        'checked': '2026-09-04',
+        'why': 'Same reach, and this row is the White county headwaters, 197 km above Franklin.',
+    },
+
     ('Goat Rock Lake', 'rock_eagle_lake'): {
         'checked': '2026-09-03',
         'why': 'Two different lakes 200 km apart that share the word "rock". Goat Rock Lake is a '
@@ -504,6 +555,20 @@ def binding_rejected(water, slug):
 # alternate spellings... if they resolve to real lakes with those incorrect spellings then we
 # will leave them out... if those alternate lakes do not exist in georgia then we include them."*
 ACCEPTED_BINDINGS = {
+    # The two Ryan settled on the water on 2026-09-04. Their rejected twins are in
+    # REJECTED_BINDINGS above with the reasoning; these are the halves that keep the advisory.
+    ('Fort Yargo State Park Lake (Marburg Cr. Watershed Proj.)', 'marburg_creek_reservoir'): {
+        'checked': '2026-09-04',
+        'why': 'Google Maps labels this 228-acre Barrow county reservoir "Fort Yargo Lake", and '
+               'the book files the row under the Oconee River Basin, which is Barrow. Ryan '
+               'confirmed it from a point inside the polygon. Carries Largemouth Bass.',
+    },
+    ('Paradise PFA (Horseshoe 4)', 'horseshoe_four'): {
+        'checked': '2026-09-04',
+        'why': 'Ryan: "horseshoe 4 confirmed". Berrien county, Suwannee basin, 36 acres. Carries '
+               'Channel Catfish and Largemouth Bass.',
+    },
+
     ('Hamburg Millpond (Hamburg State Park)', 'hamburgh_millpond'): {
         'checked': '2026-09-03',
         'why': 'There is no second Hamburg Millpond. Our row is GNIS 336381 in WASHINGTON '
