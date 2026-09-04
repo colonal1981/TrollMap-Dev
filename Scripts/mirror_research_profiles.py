@@ -234,6 +234,13 @@ def main(argv=None):
         if code != 200 or not data or not data.get('ok'):
             print('no profile for %s (%s)' % (a.lake, err or 'HTTP %s' % code))
             return 1
+        # WHICH KEY THAT NAME ACTUALLY SERVES, on its own line. Four waters carry two profiles
+        # each -- the 2026-09-01 fork, before /research/save learned to resolve through
+        # legacy_display_names -- and in all four the older profile is the better one. Whether
+        # the app shows the good half or the thin one depends on resolveResearchStorageId's
+        # candidate order, which cannot be worked out from the drive: only the Worker can say,
+        # and this is the call that asks it.
+        print('   %r resolves to lakes/%s.json' % (a.lake, data.get('sanitized')))
         # `uploaded` is R2's stamp and only /research/list carries it, so a single-water read
         # records None -- honest, and it costs one extra read on the next full run rather than
         # writing a stamp that might not describe what is on disk.
