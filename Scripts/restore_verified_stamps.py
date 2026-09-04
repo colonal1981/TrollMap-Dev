@@ -132,8 +132,13 @@ def main(argv=None):
         return 2
     rows = to_restore(d)
     print("%d profile(s) were verified once and no longer read verified:" % len(rows))
-    for _sid, name, ver, vat, upd in rows:
-        print("   %-44s v%-5s verified %s, overwritten %s" % (name[:44], ver, vat, upd))
+    # THE ID IS ON THE LINE because the id is what gets sent. The first run of this script sent
+    # names -- and the name a profile calls itself is not the name it is filed under: the research
+    # picker fills from the DNR feed ("Lake Wateree, SC") while the batch passes the registry's
+    # county form ("Wateree Lake (Kershaw Co, SC)"), and the key is neither of those by accident.
+    for sid, name, ver, vat, upd in rows:
+        print("   %-42s v%-5s %-38s verified %s, overwritten %s"
+              % (name[:42], ver, sid, vat, upd))
     if not rows:
         print("nothing to restore.")
         return 0
