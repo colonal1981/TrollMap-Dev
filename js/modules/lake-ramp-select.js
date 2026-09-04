@@ -91,6 +91,40 @@ export function pickerLabel(name) {
     .trim();
 }
 
+/**
+ * THE ORDER OF A GROUP IS THE ORDER OF WHAT IT SAYS, NOT THE ORDER IT WAS COLLECTED IN.
+ *
+ * Ryan, 2026-09-04, on Richard B Russell: "its at the bottom of the SC list not alphabetically
+ * where it should have been."
+ *
+ * The buckets were rendered in PUSH order and never sorted. That was invisible for every water
+ * whose name agrees with its registry about which state it is in, and it is exactly wrong for the
+ * ones that do not:
+ *
+ *   access-index.js sorts `lakeNames` with lakeStatePriority(), which reads the state off the
+ *   NAME's suffix -- so "Lake Richard Russell, GA" sits in the GA run, after every SC name.
+ *
+ *   buildLakeSelect() buckets with stateOf(name, rec), which reads the state off the REGISTRY
+ *   RECORD -- and richard_b_russell_lake is "Richard B Russell Lake (Abbeville Co, SC/GA)", so
+ *   the row lands in SC.
+ *
+ * Sorted by one notion of state, grouped by another. The row is placed in the right group and
+ * arrives after everything already in it: bottom of "SC — Lakes", under a label reading "Lake
+ * Richard Russell", which is neither where it belongs nor anywhere a person would look.
+ *
+ * Sorted on pickerLabel() and not on the raw name, because the label is the string on screen and
+ * a list whose visible order does not match its visible text is the same bug wearing a different
+ * hat. The raw name breaks ties so the order is stable when two waters read alike.
+ *
+ * Fixes the class, not the lake: any water whose registry state and name suffix disagree had this,
+ * and eleven rows in lake_index carry a two-state suffix.
+ */
+export function sortForDisplay(names) {
+  return [...(names || [])].sort((a, b) =>
+    pickerLabel(a).localeCompare(pickerLabel(b), undefined, { numeric: true, sensitivity: 'base' })
+    || String(a).localeCompare(String(b)));
+}
+
 export function stateOf(lakeName, rec) {
   if (rec?.state) return rec.state;
   // Every DNR name gets a ", SC" suffix from displayLakeName(), and coastal zone names carry
@@ -294,7 +328,7 @@ async function populateLakeSelect() {
       if (!names?.length) continue;
       const grp = document.createElement('optgroup');
       grp.label = `${stateCode} — ${typeLabel} (${names.length})`;
-      for (const name of names) {
+      for (const name of sortForDisplay(names)) {
         const opt = document.createElement('option');
         opt.value = name;
         // The group heading already says the state and the county, so both are noise on the row.
@@ -313,7 +347,7 @@ async function populateLakeSelect() {
   if (orphans.length) {
     const grp = document.createElement('optgroup');
     grp.label = `Other (${orphans.length})`;
-    for (const name of orphans) {
+    for (const name of sortForDisplay(orphans)) {
       const opt = document.createElement('option');
       opt.value = name;
       opt.textContent = name + lakeBadge(name);
