@@ -50,6 +50,7 @@ WHAT IT WRITES, and nothing else:
 Personal use only, not for distribution or resale; not for navigation.
 """
 import argparse
+import collections
 import json
 import os
 import subprocess
@@ -137,6 +138,13 @@ def main():
     ap.add_argument('--dry-run', action='store_true', help='report, write nothing')
     a = ap.parse_args()
 
+    # ABSOLUTE, BECAUSE THE NODE SUBPROCESS RUNS WITH cwd=HERE. A relative --chartpack would
+    # resolve against the scripts directory instead of the shell's, and come back "no
+    # depth_areas.geojson" on every water -- which reads exactly like a missing pack.
+    a.index = os.path.abspath(a.index)
+    a.chartpack = os.path.abspath(a.chartpack)
+    a.boundaries = os.path.abspath(a.boundaries)
+
     with open(a.index, encoding='utf-8') as fh:
         idx = json.load(fh)
 
@@ -208,6 +216,18 @@ def main():
     print(f'\n{wrote} row(s) stamped: {trusted} with a trusted average, '
           f'{maxonly} max only, {failed} failed. '
           f'{time.time() - t0:.0f} s', flush=True)
+
+    # WHEN EVERYTHING FAILS IT IS ONE CAUSE, AND THE SUMMARY HAS TO SAY IT.
+    #
+    # Ryan, 2026-09-04: "seems to have worked not at all / 0 row(s) stamped ... 355 failed". Every
+    # one was the same missing module and the summary line said only "355 failed" -- the reason
+    # was on 355 separate lines above it, which is the same as nowhere.
+    if failed:
+        why = collections.Counter(res.get('error') or 'no maxDepthFt in the result'
+                                  for _, _, res in results.values()
+                                  if res.get('error') or not res.get('maxDepthFt'))
+        for msg, n in why.most_common(3):
+            print(f'   {n:>4} failed: {msg}', flush=True)
 
     if a.dry_run:
         print('--dry-run: index NOT written', flush=True)

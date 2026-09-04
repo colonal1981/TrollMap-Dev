@@ -31,8 +31,33 @@
 // Personal use only, not for distribution or resale; not for navigation.
 import fs from 'node:fs';
 import path from 'node:path';
-import { deriveDepthStatistics, getBoundaryOuterRing, depthStats_needsContours }
-  from '../js/utils/pack-facts.js';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+// THIS FILE SHIPS TO TWO DIRECTORIES AND `../js` IS ONLY RIGHT IN ONE OF THEM.
+//
+// Every script here is delivered to BOTH F:\TrollMapPipeline\scripts and
+// F:\TrollMapPipeline\TrollMap-Dev\Scripts. A static `import '../js/utils/pack-facts.js'`
+// resolves relative to THIS FILE, so it is correct from the repo copy and points at
+// F:\TrollMapPipeline\js\utils\pack-facts.js -- which does not exist -- from the pipeline
+// copy. Ryan ran the pipeline copy and got "355 failed" in eight seconds, every one of them the
+// same missing module.
+//
+// So the module is found rather than assumed, and if it cannot be found the error names every
+// path that was tried. A batch that fails on all 355 must say why once, not 355 times.
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const CANDIDATES = [
+  path.join(HERE, '..', 'js', 'utils', 'pack-facts.js'),                  // repo copy
+  path.join(HERE, '..', 'TrollMap-Dev', 'js', 'utils', 'pack-facts.js'),  // pipeline copy
+];
+const found = CANDIDATES.find((p) => fs.existsSync(p));
+if (!found) {
+  process.stdout.write(JSON.stringify({
+    error: `cannot find js/utils/pack-facts.js -- looked in ${CANDIDATES.join(' and ')}`,
+  }));
+  process.exit(2);
+}
+const { deriveDepthStatistics, getBoundaryOuterRing, depthStats_needsContours } =
+  await import(pathToFileURL(found).href);
 
 const [, , packDir, boundaryFile] = process.argv;
 const say = (o) => { process.stdout.write(JSON.stringify(o)); process.exit(o.error ? 2 : 0); };
