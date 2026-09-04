@@ -364,6 +364,39 @@ function formatAccessLabel(item) {
   return `${prefix}${item.name}${item.typeLabel ? ` — ${item.typeLabel}` : ''}`;
 }
 
+/**
+ * THE FEED'S META IS FLAT, AND BOTH READERS ASKED FOR IT NESTED.
+ *
+ * groupFeaturesByWaterbody() in Worker/core/arcgis.js does `Object.assign(base, m)` -- every
+ * meta field lands on the ramp record itself. There is no `raw.meta`, there never has been, and
+ * this file read `raw.meta || {}` while lake-research-engine.js:1160 read `r.meta?.lanes`. Both
+ * got `{}` and `undefined`, every time, for every access point in four states.
+ *
+ * What that threw away, measured off the saved feed registry/_dnr_ramps_sc.json: a species list
+ * on all 438 South Carolina ramps across 144 waterbodies -- "Redbreast Sunfish, Warmouth,
+ * Bluegill, Redear Sunfish, Spotted Sunfish, Largemouth Bass, Flathead Catfish, Blue Catfish,
+ * White Catfish, Channel Catfish, Snail Bullhead, Striped Bass, Chain Pickerel" on one ramp
+ * alone. It arrived in the browser and was dropped one line from being usable.
+ *
+ * Ryan, 2026-09-04: "why not stop the worker from throwing away the species lists that comes in
+ * with the ramps feed". The Worker was not the only one throwing it away.
+ *
+ * Lifted rather than flattened onto the item, because `meta.lanes` and `meta.species` are the
+ * shape both readers already ask for -- so this fixes the research engine's dead read too,
+ * without touching it.
+ */
+const RAMP_META_FIELDS = ['lanes', 'dock', 'fee', 'species', 'county', 'owner', 'comments',
+                          'motorRestrictions', 'restrooms', 'handicap', 'canoeLanding',
+                          'launchable'];
+export function rampMeta(raw) {
+  // A feed that ever does start nesting still works: its own `meta` wins.
+  if (raw && raw.meta && typeof raw.meta === 'object') return raw.meta;
+  const out = {};
+  if (!raw) return out;
+  for (const k of RAMP_META_FIELDS) if (raw[k] !== undefined && raw[k] !== null) out[k] = raw[k];
+  return out;
+}
+
 function addAccessItem(index, lakeName, item) {
   if (!lakeName || !item || !Number.isFinite(item.lat) || !Number.isFinite(item.lon)) return;
 
@@ -437,7 +470,7 @@ async function buildAccessIndex() {
           sourcePath: source.path,
           sourceState: stateCode,
           marker: source.marker,
-          meta: raw.meta || {},
+          meta: rampMeta(raw),
           raw,
         });
 
@@ -455,7 +488,7 @@ async function buildAccessIndex() {
                   sourcePath: source.path,
                   sourceState: stateCode,
                   marker: '⛵',
-                  meta: raw.meta || {},
+                  meta: rampMeta(raw),
                   raw,
                 });
               }

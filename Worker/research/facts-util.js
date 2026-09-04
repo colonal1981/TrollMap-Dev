@@ -1,7 +1,7 @@
 // research/facts-util.js — split from worker-research.js (behavior-preserving)
 import { callLLM, extractLLMText, r2Text } from '../worker-core.js';
 import { hasResearchValue } from '../../js/utils/coerce.js';
-import { gaAccessSpecies } from '../../js/data/ga-access-species.js';
+import { RAMP_SOURCES } from '../core/ramp-sources.js';
 
 function normalizeResearchName(s) {
   return String(s || '').toLowerCase().replace(/&amp;/g, '&').replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ');
@@ -518,63 +518,11 @@ async function parseSCDNRDescriptionFacts(lakeName, url, html, env) {
   return { identity, biology, habitat, navigation, evidence, sources: [{ label: 'SCDNR Lake Description', url, trust: 'OFFICIAL', sourceType: 'official_document' }] };
 }
 
-const RESEARCH_RAMP_SOURCES = {
-  SC: {
-    url: "https://services.arcgis.com/acgZYxoN5Oj8pDLa/arcgis/rest/services/South_Carolina_Public_Water_Access_PUBLIC_VIEW/FeatureServer/0/query",
-    label: 'SCDNR South Carolina Public Water Access',
-    idField: 'OBJECTID',
-    filter: (p) => p.WaterAccessType === 'Boat Ramp' && String(p.Status || '').toLowerCase() === 'active' && String(p.PublicAccess || '').toLowerCase() !== 'closed',
-    name: (p) => p.WaterAccessName,
-    wb: (p) => p.Waterbody,
-    lat: (p) => p.Latitude,
-    lon: (p) => p.Longitude,
-    meta: (p) => ({ lanes: p.LaunchLanes, dock: p.CourtesyDock, fee: false, species: p.SpeciesList, county: p.County, owner: p.Owner, comments: p.Comments })
-  },
-  GA: {
-    url: "https://services6.arcgis.com/9QlSLDqa0P1cHLhu/arcgis/rest/services/WRD_Water_Access_Points/FeatureServer/0/query",
-    label: 'Georgia DNR WRD Water Access Points',
-    idField: 'FID',
-    filter: (p) => String(p.Ramp || '').toUpperCase() === 'Y' && !['closed', 'inactive'].includes(String(p.Status || '').toLowerCase()),
-    name: (p) => p.Name,
-    wb: (p) => p.Waterbody,
-    lat: (p) => p.Latitude,
-    lon: (p) => p.Longitude,
-    // GEORGIA HAS NO `SpeciesList`. IT HAS FORTY-EIGHT YES/NO COLUMNS.
-    //
-    // `p.SpeciesList` is South Carolina's field name and this asked Georgia's layer for it, got
-    // undefined, and recorded nothing -- on a layer where 892 of 895 access points carry species
-    // across 373 waterbodies, 231 of them river access and 73 coastal. See
-    // js/data/ga-access-species.js, which is the one definition of that mapping and is read by
-    // Scripts/build_dnr_ramps_by_lake.py as well, so the two cannot drift.
-    //
-    // Joined into a comma string on purpose: that is the shape SCDNR's SpeciesList arrives in,
-    // and splitSpeciesText() is what reads both, so nothing downstream has to know which state
-    // it is looking at.
-    meta: (p) => ({ lanes: p.NumLanes, dock: p.Dock, fee: String(p.Fee || '').toUpperCase() === 'Y', species: gaAccessSpecies(p), county: p.County, owner: p.Owner, motorRestrictions: p.MotorRest })
-  },
-  NC: {
-    url: "https://services1.arcgis.com/YfqBAUM5nWR3yhGP/arcgis/rest/services/NCWRC_Boating_Access_Areas_view/FeatureServer/0/query",
-    label: 'NC Wildlife Resources Commission Boating Access Areas',
-    idField: 'OBJECTID',
-    filter: (p) => !String(p.Site_Status || 'OPEN').toUpperCase().includes('CLOSED'),
-    name: (p) => p.BAA_Name,
-    wb: (p) => p.Water_Access || p.BAA_Alias,
-    lat: (p) => p.Latitude,
-    lon: (p) => p.Longitude,
-    meta: (p) => ({ lanes: p.Launch_Lane_No, dock: p.Courtesy_Dock_No || p.Fix_Dock_No, fee: false, species: '', county: p.County, owner: p.Owner, motorRestrictions: p.Motorboats_Restricted })
-  },
-  TN: {
-    url: "https://services3.arcgis.com/PWXNAH2YKmZY7lBq/arcgis/rest/services/Boat_Launch_Sites/FeatureServer/0/query",
-    label: 'Tennessee Wildlife Resources Agency Boat Launch Sites',
-    idField: 'OBJECTID',
-    filter: (p) => p.Type === 'Boat Launch' && String(p.IncludeWeb || '').toLowerCase() === 'yes' && !/^(none|0)$/i.test(String(p.Ramps || '')),
-    name: (p) => p.Name,
-    wb: (p) => p.Waterway,
-    lat: (p) => p.Latitude,
-    lon: (p) => p.Longitude,
-    meta: (p) => ({ lanes: p.Lanes, dock: String(p.CourtesyDock || '').toLowerCase() === 'yes', fee: String(p.AccessFee || '').toLowerCase() === 'yes', species: '', county: p.County, owner: p.Owner, launchable: p.Launchable })
-  }
-};
+// THE SAME TABLE THE APP'S /ramps ROUTE USES, which is the point -- these were two copies of
+// four ArcGIS layers and they had drifted, one way: this copy read a species list and the app's
+// did not. Kept under its old name because it is exported under it and read below; there is only
+// one table now. See Worker/core/ramp-sources.js.
+const RESEARCH_RAMP_SOURCES = RAMP_SOURCES;
 
 const RESEARCH_ATTRACTOR_SOURCES = {
   SC: {

@@ -9,6 +9,7 @@ const WORKER_BUILD = 'worker-2026-08-07a';
 import { fetchDukeFlowArrivals, dukeRowForNames, LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake } from './worker-data.js';
 import { SPECIES_MIDLANDS_SANTEE, SPECIES_UPSTATE, SPECIES_COASTAL_SALTWATER, SPECIES_ALL_TROLLMAP, MAX_BIOLOGICAL_LENGTH, PURE_SALTWATER, PURE_FRESHWATER, getSpeciesListForGps, checkBiologicalLength, checkEcologicalReality } from './worker-species.js';
 import { handleGisRoute, flagIsYes, hasText, ARCGIS_BUILD } from './core/arcgis.js';
+import { RAMP_SOURCES } from './core/ramp-sources.js';
 import { handleWaterRoute } from './water.js';
 import { handleConditions, handleHazards } from './conditions.js';
 import { handleCameras } from './cameras.js';
@@ -1180,53 +1181,12 @@ var trollmap_worker_default = {
 
 
       if (path === "/ramps") {
-        const RAMP_SOURCES = {
-          SC: {
-            url: "https://services.arcgis.com/acgZYxoN5Oj8pDLa/arcgis/rest/services/South_Carolina_Public_Water_Access_PUBLIC_VIEW/FeatureServer/0/query",
-            filter: (p) => p.WaterAccessType === "Boat Ramp" && p.Status?.toLowerCase() === "active" && p.PublicAccess?.toLowerCase() !== "closed",
-            name: (p) => p.WaterAccessName,
-            wb: (p) => p.Waterbody,
-            lat: (p) => p.Latitude,
-            lon: (p) => p.Longitude,
-            meta: (p) => ({ lanes: p.LaunchLanes, dock: p.CourtesyDock, fee: false, species: p.SpeciesList, county: p.County, owner: p.Owner, comments: p.Comments }),
-            label: "SCDNR South Carolina Public Water Access",
-            metaMode: "flat",
-          },
-          GA: {
-            url: "https://services6.arcgis.com/9QlSLDqa0P1cHLhu/arcgis/rest/services/WRD_Water_Access_Points/FeatureServer/0/query",
-            idField: "FID",
-            filter: (p) => flagIsYes(p.Ramp) && !["closed", "inactive"].includes(String(p.Status || "").toLowerCase()),
-            name: (p) => p.Name,
-            wb: (p) => p.Waterbody,
-            lat: (p) => p.Latitude,
-            lon: (p) => p.Longitude,
-            meta: (p) => ({ lanes: p.NumLanes, dock: p.Dock, fee: String(p.Fee || "").toUpperCase() === "Y", county: p.County, owner: p.Owner, motorRestrictions: p.MotorRest }),
-            label: "Georgia DNR WRD Water Access Points",
-            metaMode: "flat",
-          },
-          NC: {
-            url: "https://services1.arcgis.com/YfqBAUM5nWR3yhGP/arcgis/rest/services/NCWRC_Boating_Access_Areas_view/FeatureServer/0/query",
-            filter: (p) => !String(p.Site_Status || "OPEN").toUpperCase().includes("CLOSED"),
-            name: (p) => p.BAA_Name,
-            wb: (p) => p.Water_Access || p.BAA_Alias,
-            lat: (p) => p.Latitude,
-            lon: (p) => p.Longitude,
-            meta: (p) => ({ lanes: p.Launch_Lane_No, dock: p.Courtesy_Dock_No || p.Fix_Dock_No, fee: false, county: p.County, owner: p.Owner, motorRestrictions: p.Motorboats_Restricted }),
-            label: "NC Wildlife Resources Commission Boating Access Areas",
-            metaMode: "flat",
-          },
-          TN: {
-            url: "https://services3.arcgis.com/PWXNAH2YKmZY7lBq/arcgis/rest/services/Boat_Launch_Sites/FeatureServer/0/query",
-            filter: (p) => p.Type === "Boat Launch" && p.IncludeWeb === "Yes" && !["closed", "inactive"].includes(String(p.Status || "").toLowerCase()),
-            name: (p) => p.Name,
-            wb: (p) => p.Waterway,
-            lat: (p) => p.Latitude,
-            lon: (p) => p.Longitude,
-            meta: (p) => ({ lanes: p.Lanes, dock: p.CourtesyDock === "Yes" ? 1 : 0, fee: p.AccessFee === "Yes", county: p.County, owner: p.Owner, restrooms: p.Restrooms === "Yes", handicap: p.HandicapPark === "Yes", canoeLanding: p.CanoeLanding === "Yes" }),
-            label: "Tennessee Wildlife Resources Agency Boat Launch Sites",
-            metaMode: "flat",
-          }
-        };
+        // ONE TABLE, IN Worker/core/ramp-sources.js.
+        //
+        // This was a copy, and research/facts-util.js had the other one. Only that one read a
+        // species list -- so SC's arrived here and GA's forty-eight yes/no columns were never
+        // asked for at all. See the header of ramp-sources.js for what each state's copy said
+        // and which half of each disagreement survived.
         return handleGisRoute({
           env,
           url,
