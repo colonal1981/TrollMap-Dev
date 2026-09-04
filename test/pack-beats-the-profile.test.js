@@ -57,3 +57,41 @@ test('the species list still comes from the profile, which is not a pack fact', 
     { identity: { maxDepthFt: 110.9 } });
   assert.match(out, /Other predators here/);
 });
+
+// ── THE ASSUMPTION PICK WATER'S CALL RESTS ON ────────────────────────────────────────────────
+//
+// A plan run fetches depth_areas, structure, water_features and pois. It does NOT fetch the
+// boundary or the contours, and neither is worth a request: deriveDepthStatistics falls back to a
+// three-band bar when there is no boundary ring, and contours are only consulted for packs that
+// carry no depth areas at all. If that fallback did not hold, Pick Water would be passing a block
+// with no depth in it and quietly losing the field it was wired to supply.
+import { packDerivedFacts } from '../js/utils/pack-facts.js';
+
+const band = (min, max, acres) => ({
+  type: 'Feature',
+  properties: { depth_min_ft: min, depth_max_ft: max },
+  // A square whose area is not what matters here -- polygonRingsAcres measures it, and the test
+  // asserts on the depths, not the acreage.
+  geometry: { type: 'Polygon', coordinates: [[[-80.0, 34.0], [-80.0 + acres, 34.0],
+    [-80.0 + acres, 34.0 + acres], [-80.0, 34.0 + acres], [-80.0, 34.0]]] },
+});
+
+test('with no boundary and no contours, depth still comes off the depth areas', () => {
+  const out = packDerivedFacts({
+    lakeName: 'Test Lake, SC',
+    structGeo: null, featGeo: null, poiGeo: null, boundaryGeo: null, contourGeo: null,
+    depthGeo: { features: [band(0, 10, 0.01), band(10, 30, 0.008), band(30, 60, 0.004)] },
+  });
+  assert.ok(out, 'a pack with only depth areas must still produce a block');
+  assert.equal(out.identity.maxDepthFt, 60);
+  assert.ok(out.identity.averageDepthFt > 0,
+    'three bands is the no-boundary bar, so the average must land');
+});
+
+test('an empty pack produces nothing rather than a block of zeroes', () => {
+  // Zero depth is a claim. Absence is not.
+  assert.equal(packDerivedFacts({
+    lakeName: 'Test Lake, SC', structGeo: null, featGeo: null, depthGeo: null,
+    poiGeo: null, boundaryGeo: null, contourGeo: null,
+  }), null);
+});

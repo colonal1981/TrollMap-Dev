@@ -37,6 +37,10 @@ import { getSeason, seasonNote } from '../data/species-intel.js';
 import { depthBandFor, usableAhFrom, researchIntel, describeDepthBand }
   from './plan-inputs.js';
 import { packFetcher } from './smart-plan-v2.js';
+// THE PACK'S OWN FACTS, DERIVED HERE RATHER THAN READ OUT OF A PROFILE. Pure, and it takes the
+// layers this function already fetched. See researchIntel() in plan-inputs.js and
+// THE_PROFILE_BECAME_A_CACHE_AND_NOBODY_MOVED_THE_READS_2026-09-01.md.
+import { packDerivedFacts } from '../utils/pack-facts.js';
 import { fetchForecast, fetchWaterState } from './plan-preflight.js';
 import { depthSampler, shorelineIndex, waterMask } from './plan-water-index.js';
 import { offerWater, dayCost, priceSpots, searchOrder, optionality, reasons, TROLL_MPH, TRANSIT_MIN_DEPTH_FT, SPOT_KINDS } from './plan-water.js';
@@ -897,7 +901,18 @@ export async function findWater() {
     holding: depth ? depth.holding : null, lake: inp.lakeName,
     // DERIVED HERE because this is where the profile, the species and the date all exist. The
     // profile was being loaded twelve lines above, spent on depthBandFor() alone, and dropped.
-    intel: researchIntel(researched, species, getSeason(date, inp.waterTempF)),
+    // THE CHART THIS PLAN IS BEING BUILT ON, not the chart that was current the day somebody
+    // clicked research. stFc, wfFc, daFc and poFc are the layers fetched at the top of this
+    // function; the same derivation the research run makes is free here and cannot be stale.
+    //
+    // NO BOUNDARY AND NO CONTOURS ON PURPOSE. Neither is fetched on a plan run and neither is
+    // worth a request: deriveDepthStatistics falls back to a three-band bar when there is no
+    // boundary ring, so max and average depth still land, and contours are only consulted for
+    // packs that carry no depth areas at all. What is skipped is the shoreline-complexity
+    // summary, which the profile keeps supplying where it has one.
+    intel: researchIntel(researched, species, getSeason(date, inp.waterTempF), Date.now(),
+      packDerivedFacts({ lakeName: inp.lakeName, structGeo: stFc, featGeo: wfFc,
+                         depthGeo: daFc, poiGeo: poFc, boundaryGeo: null, contourGeo: null })),
     // THE CHART FIRST, THE RESEARCH SECOND -- same order and same reason as Smart Plan. `poFc` is
     // the pois.geojson this function already fetched for the cast spots.
     // The charted POI layer only -- researchHazards() is gone with the navigation agent.

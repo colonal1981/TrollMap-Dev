@@ -32,7 +32,14 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const SRC = readFileSync(path.join(ROOT, 'js/modules/lake-research-engine.js'), 'utf8');
+// THE DEPTH PIPELINE NOW SPANS TWO FILES. deriveDepthStatistics moved to js/utils/pack-facts.js
+// on 2026-09-04 so the planners can run it without importing the research engine; the shallow-lake
+// applicability rules it feeds stayed behind in the engine. Both are read, because every
+// assertion below is about the pipeline and not about which file a line sits in.
+const SRC = [
+  readFileSync(path.join(ROOT, 'js/utils/pack-facts.js'), 'utf8'),
+  readFileSync(path.join(ROOT, 'js/modules/lake-research-engine.js'), 'utf8'),
+].join('\n');
 
 // The module imports browser-only siblings, so the function under test is lifted from source.
 // A failed lift fails the test rather than silently testing nothing.

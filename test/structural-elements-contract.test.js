@@ -5,7 +5,9 @@ import path from 'node:path';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const JS_ROOT = path.join(REPO, 'js');
-const ENGINE = path.join(REPO, 'js/modules/lake-research-engine.js');
+// THE PRODUCER MOVED AGAIN, 2026-09-04: the pack derivations are in js/utils/pack-facts.js so
+// the planners can run them without importing the research engine. Same code, same keys.
+const ENGINE = path.join(REPO, 'js/utils/pack-facts.js');
 const PACK_ADAPTER = path.join(REPO, 'js/utils/structure-markers.js');
 
 // ---------------------------------------------------------------------------
@@ -129,7 +131,8 @@ describe('structuralElements: every key read is a key the engine writes', () => 
 
   for (const file of jsFiles(JS_ROOT)) {
     const rel = path.relative(REPO, file).split(path.sep).join('/');
-    if (rel.endsWith('lake-research-engine.js')) continue;
+    // The PRODUCER is not a consumer of itself. It moved to pack-facts.js on 2026-09-04.
+    if (rel.endsWith('pack-facts.js') || rel.endsWith('lake-research-engine.js')) continue;
     const source = readFileSync(file, 'utf8');
     if (!source.includes('structuralElements')) continue;
 
