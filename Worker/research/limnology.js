@@ -930,9 +930,20 @@ async function refreshStaleLimnology(env, opts = {}) {
       stateChanged = true;
       if (!pull?.ok || !(pull.recordCount > 0)) continue;
 
-      const merged = applyWqpToLimnology(profile.limnology || {}, pull);
-      if (JSON.stringify(merged) === JSON.stringify(profile.limnology || {})) continue;
-      profile.limnology = merged;
+      // A PULL THAT CHANGED NO VALUE STILL CHANGED WHAT WE KNOW.
+      //
+      // This used to read `if (merged === profile.limnology) continue;` ABOVE the two lines that
+      // attach the pull and its evidence -- so a water whose numbers happened to match already
+      // kept them with no `_wqpLimnology` block, no evidence rows and no refresh stamp. The
+      // record of HOW a number was arrived at was thrown away precisely when it agreed with what
+      // was there, which is the case where the provenance is most worth having. Lake Wateree
+      // carried a thermocline of 27 ft for months beside a note saying the depth was never
+      // provided; the only defence against that is the evidence row this branch was discarding.
+      //
+      // The guard's real job is not writing to R2 for nothing, so it now compares the WHOLE
+      // document it is about to write, not one field of it.
+      const before = JSON.stringify({ lim: profile.limnology || {}, wqp: profile._wqpLimnology || null });
+      profile.limnology = applyWqpToLimnology(profile.limnology || {}, pull);
       profile._wqpLimnology = pull;
       const ev = buildWqpEvidence(pull);
       for (const [section, fields] of Object.entries(ev)) {
@@ -943,13 +954,25 @@ async function refreshStaleLimnology(env, opts = {}) {
         // number claiming to explain it.
         for (const [field, rows] of Object.entries(fields || {})) profile.evidence[section][field] = rows;
       }
+      if (JSON.stringify({ lim: profile.limnology, wqp: profile._wqpLimnology }) === before) continue;
       profile.metadata = profile.metadata || {};
       profile.metadata.limnologyRefreshedAt = new Date().toISOString();
       await env.R2_TROLLMAP_CHARTPACKS.put(water.key, JSON.stringify(profile),
         { httpMetadata: { contentType: 'application/json' } });
       out.merged += 1;
+      state[water.id].merged = true;
     } catch (e) {
+      // A FAILURE HERE USED TO BE INVISIBLE. `out.failed` is returned to whoever called the
+      // sweep and the cron calls it with nobody listening, so a throw between the pull and the
+      // put left a state row saying "35183 records" beside a profile untouched for two months
+      // and no way to tell which. Lake Sidney Lanier, 2026-09-04: the cache object holds a
+      // thermocline of 28 ft derived from 8,823 depth records at confidence 88, and the profile
+      // it belongs to still reads 22.5 with `limnologyRefreshedAt` null.
+      //
+      // The state row is the only durable record this loop writes, so the reason goes IN IT.
       out.failed.push(`${water.id}: ${e && e.message}`);
+      if (state[water.id]) state[water.id].mergeError = String((e && e.message) || e).slice(0, 200);
+      stateChanged = true;
     }
   }
   if (stateChanged) await writeSweepState(env, state);

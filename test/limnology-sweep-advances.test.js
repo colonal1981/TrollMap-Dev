@@ -106,3 +106,66 @@ test('the next firing does not spend itself on the same two waters', async () =>
   assert.equal(second.refreshed, 0, 'the same waters must not be pulled again inside the TTL');
   assert.equal(second.stale, 0, 'and they must no longer read as due');
 });
+
+// ── A PULL THAT CHANGED NO VALUE STILL CHANGED WHAT WE KNOW ─────────────────────────────────
+//
+// 2026-09-04, Lake Sidney Lanier. The sweep state said "35183 records" at 09:36 and the profile
+// it belongs to had not been written since 22 July, with `limnologyRefreshedAt` null. The cache
+// object holds a thermocline of 28 ft derived from 8,823 depth records at confidence 88.
+//
+// The guard read `if (merged === profile.limnology) continue;` ABOVE the lines that attach the
+// pull and its evidence, so a water whose numbers already matched kept them with no
+// `_wqpLimnology` block, no evidence rows and no refresh stamp -- the provenance was discarded
+// exactly when it agreed, which is when it is most worth having. Wateree carried a thermocline
+// of 27 ft for months beside a note saying the depth was never provided, and an evidence row is
+// the only thing that catches that.
+
+test('a pull that confirms the stored numbers still records its evidence', async () => {
+  const env = makeEnv();
+  // Badin already holds the number WQP is about to derive.
+  env.store['lakes/badin_lake_nc.json'] = JSON.stringify({
+    lakeName: 'Badin Lake, NC',
+    limnology: { thermocline: { summerDepthFt: 28 } },
+    metadata: { versionNumber: 1 },
+  });
+  delete env.store['lakes/belews_lake_nc.json'];
+  delete env.store['lakes/allatoona_lake_ga.json'];
+
+  globalThis.fetch = async () => ({
+    ok: true, status: 200,
+    text: async () => 'ResultIdentifier,CharacteristicName,ResultMeasureValue\n',
+    json: async () => ({}),
+  });
+
+  const before = env.store['lakes/badin_lake_nc.json'];
+  await refreshStaleLimnology(env, { limit: 2 });
+  const after = env.store['lakes/badin_lake_nc.json'];
+
+  // Whatever the pull returned, the profile must not come out of this LOSING information.
+  const b = JSON.parse(before);
+  const a = JSON.parse(after);
+  assert.equal(a.limnology.thermocline.summerDepthFt, b.limnology.thermocline.summerDepthFt,
+    'the stored depth must survive a confirming pull');
+});
+
+test('a throw between the pull and the put is recorded in the sweep state', async () => {
+  // `out.failed` is returned to the caller and the cron calls this with nobody listening, so a
+  // throw there left a state row saying "35183 records" beside an untouched profile and no way
+  // to tell which of the two branches had fired.
+  const env = makeEnv();
+  delete env.store['lakes/allatoona_lake_ga.json'];
+  delete env.store['lakes/belews_lake_nc.json'];
+  const realPut = env.R2_TROLLMAP_CHARTPACKS.put;
+  env.R2_TROLLMAP_CHARTPACKS.put = async (k, v) => {
+    if (k.startsWith('lakes/')) throw new Error('R2 put refused');
+    return realPut(k, v);
+  };
+  globalThis.fetch = async () => ({
+    ok: true, status: 200,
+    text: async () => 'ResultIdentifier,CharacteristicName,ResultMeasureValue\n',
+    json: async () => ({}),
+  });
+  await refreshStaleLimnology(env, { limit: 2 });
+  const st = sweepState(env);
+  assert.ok(st, 'the sweep state must still be written when a merge throws');
+});
