@@ -452,7 +452,26 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
     if code != 200 or not det or not det.get("profile"):
         out["error"] = f"deterministic-facts {code}: {err or 'no profile'}"
         return out
-    profile = det["profile"]
+    # THE RUN MAY ONLY CHANGE WHAT IT COMPUTED, and /research/deterministic-facts hands back a
+    # profile built FROM SCRATCH -- deterministic.js line 21 is an empty skeleton. Saving that
+    # document replaced the stored one, so every field the deterministic pass does not compute
+    # was deleted by a run that never looked at it.
+    #
+    # MEASURED 2026-09-04 off the version history, 52 lakes with a real before-and-after:
+    #
+    #     Primary forage    43 of 52      Thermocline    34 of 52
+    #     Trophic status    42 of 52      Stockings      32 of 52
+    #     Secchi            40 of 52      Anoxic below   26 of 52
+    #
+    # Ryan: "the fact that the batch profiles are so slim scares me". It was not producing less,
+    # it was asserting a whole document while authoring part of one -- the same defect that took
+    # 46 verified stamps, one layer down.
+    prev_profile, prev_why = stored_profile(lake)
+    profile = carry_forward(prev_profile or {}, det["profile"])
+    out["carried_forward"] = sorted(carried_keys(prev_profile or {}, det["profile"]))
+    if out["carried_forward"]:
+        print(f"      [{lake}] carried forward from the stored profile: "
+              f"{', '.join(out['carried_forward'])}")
     species = ((profile.get("biology") or {}).get("predatorSpecies")) or []
     out["confirmed"] = list(species)
 
@@ -710,7 +729,7 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
     # It does not simply stay quiet, because silence on an existing profile means "verified" to
     # that rule, and a batch must never invent a verification either. So it reads what is stored
     # and echoes it, and on any uncertainty it prefers draft and says so.
-    prev, why = stored_status(lake)
+    prev, why = status_of(prev_profile, prev_why)
     meta = profile.setdefault("metadata", {})
     if prev:
         meta["status"] = prev
@@ -756,8 +775,51 @@ ROWS_BY_NAME = {}
 REGISTRY_DIR = ""
 
 
-def stored_status(lake_name):
-    """(status, why). The status R2 already holds for this water, or None with a reason.
+EMPTY = (None, "", [], {}, ())
+
+
+def carry_forward(stored, fresh):
+    """`fresh` wins wherever it has a value; `stored` survives everywhere else.
+
+    Not a blind update: a dict is merged key by key so a fresh `limnology` carrying only a
+    thermocline cannot delete the Secchi beside it. A value the run did not compute is EMPTY --
+    None, "", [] or {} -- and empty never overwrites, because "I did not look" and "there is
+    nothing there" are different claims and only one of them belongs in a stored profile.
+    """
+    if isinstance(stored, dict) and isinstance(fresh, dict):
+        out = dict(stored)
+        for k, v in fresh.items():
+            out[k] = carry_forward(stored.get(k), v) if isinstance(v, dict) else v
+            if v in EMPTY and k in stored and stored[k] not in EMPTY:
+                out[k] = stored[k]
+        return out
+    if fresh in EMPTY:
+        return stored
+    return fresh
+
+
+def carried_keys(stored, fresh, path=""):
+    """Which top-level sections kept something the fresh document did not carry. For the run line."""
+    out = set()
+    if not isinstance(stored, dict):
+        return out
+    for k, v in stored.items():
+        if v in EMPTY:
+            continue
+        f = fresh.get(k) if isinstance(fresh, dict) else None
+        if f in EMPTY:
+            out.add(path + k)
+        elif isinstance(v, dict) and isinstance(f, dict):
+            out |= carried_keys(v, f, path + k + ".")
+    return out
+
+
+def stored_profile(lake_name):
+    """(profile, why). What R2 already holds for this water, or None with a reason.
+
+    ONE READ, TWO USES. The status and the document the run must not clobber come from the same
+    object, and this used to fetch it twice -- once here for the status and once after the save
+    for the mirror.
 
     "no profile yet" is a clean 404 and means version 1. Anything else is an unknown, and the
     caller must fall back to draft rather than let silence be read as a verification.
@@ -767,7 +829,14 @@ def stored_status(lake_name):
         return None, "no profile yet"
     if code != 200 or not data or not data.get("ok"):
         return None, err or ("HTTP %s" % code)
-    st = ((data.get("profile") or {}).get("metadata") or {}).get("status")
+    return (data.get("profile") or {}), "stored"
+
+
+def status_of(profile, why):
+    """The status a stored profile names, or None with the reason there is not one."""
+    if profile is None:
+        return None, why
+    st = (profile.get("metadata") or {}).get("status")
     return (str(st) if st else None), ("stored profile names no status" if not st else "stored")
 
 
