@@ -152,7 +152,9 @@ def main(argv=None):
     print("\nrestored %d of %d" % (ok, len(rows)))
     for name, err in failed:
         print("   !! %s: %s" % (name, err))
-    print("   now re-run mirror_research_profiles.py --force so the drive agrees with the bucket.")
+    # A plain run is enough: /research/approve rewrites the object, so R2's `uploaded`
+    # stamp changes and the mirror re-reads exactly these and nothing else.
+    print("   now re-run mirror_research_profiles.py so the drive agrees with the bucket.")
     return 1 if failed else 0
 
 
