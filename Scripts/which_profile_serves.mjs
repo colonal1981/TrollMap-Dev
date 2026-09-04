@@ -118,12 +118,47 @@ if (grep) {
   // the answer to "why is this lake missing" comes out backwards.
   const { registryRecordFor } = await import('../js/data/access-index.js');
   const { makePredicate } = await import('../js/data/water-filter.js');
+  // THE MAP BAR IS A SECOND DROPDOWN WITH A SECOND GATE AND ITS OWN GROUPING, and Ryan found the
+  // difference the same day: "in the planner it is there... on the map it is not". So both are
+  // reported, plus the heading the map files it under -- a lake in the wrong state group is
+  // missing to anyone scrolling, whether or not a filter dropped it.
+  //
+  // lake-ramp-select.js reaches Leaflet transitively (contour-data.js:140 calls L.svg at module
+  // scope), so it needs an `L` before it can be imported under node -- the same shape as the
+  // `window` and `fetch` stubs above. A Proxy rather than a hand-built object: nothing here calls
+  // Leaflet, it only has to survive being touched on the way past.
+  if (typeof globalThis.L === 'undefined') {
+    const anything = new Proxy(function () {}, {
+      get: () => anything, apply: () => anything, construct: () => anything,
+    });
+    globalThis.L = anything;
+  }
+  // And a document, because the module wires its filter bar at import time. Every lookup answers
+  // "not on the page", which is the branch buildFilterBar() already takes when the bar is absent.
+  if (typeof globalThis.document === 'undefined') {
+    globalThis.document = {
+      getElementById: () => null,
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      createElement: () => ({ style: {}, dataset: {}, appendChild() {}, setAttribute() {},
+                              addEventListener() {}, classList: { add() {}, remove() {} } }),
+      addEventListener: () => {},
+      body: { appendChild() {} },
+    };
+    globalThis.window.document = globalThis.document;
+  }
+  const { stateOf, typeOf, pickerLabel } = await import('../js/modules/lake-ramp-select.js');
   const plannable = makePredicate('planner', null);
+  const mappable = makePredicate('map', null);
+  console.log(`   ${'name'.padEnd(40)} plan map  files under   ${'THE ROW HE SEES'.padEnd(32)} registry`);
   for (const n of hits.sort()) {
     const rec = registryRecordFor(n);
-    const keep = plannable(rec, n);
-    console.log(`   ${String(n).padEnd(46)} ${keep ? 'IN  ' : 'OUT '} planner   `
-      + `registry: ${rec ? (rec.display_name || rec.slug) : '(no record)'}`);
+    const group = `${stateOf(n, rec) || '??'} - ${typeOf(n, rec) || '?'}`;
+    // pickerLabel() is what the map bar actually prints, once the group heading has said the
+    // state. It is the string he scans, and it is not the name this table is keyed on.
+    console.log(`   ${String(n).padEnd(40)} ${plannable(rec, n) ? 'IN  ' : 'out '}`
+      + `${mappable(rec, n) ? 'IN  ' : 'out '} ${group.padEnd(13)} `
+      + `${String(pickerLabel(n)).padEnd(32)} ${rec ? (rec.display_name || rec.slug) : '(no record)'}`);
   }
   if (!hits.length) console.log('   -- nothing. The picker does not offer that name at all.');
   process.exit(0);
