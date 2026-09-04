@@ -694,17 +694,43 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
             bio["secondaryForage"] = forage["secondary"]
         bio["_forageEstablishedBy"] = "fisheries agent, from the documents it was already reading"
 
+    # THE STATUS THIS WATER ALREADY HAS, NEVER A FRESH "draft".
+    #
+    # Ryan, 2026-09-04: "all of these profiles used to be verified... we reran all of these and
+    # now they show draft". Measured off the mirror: 64 profiles were last written by the
+    # 2026-09-02 batch, 46 of them carry a verifiedAt proving they were verified before it, and
+    # all 46 came out draft. The 15 still verified are exactly the 15 the batch never touched.
+    #
+    # The old two lines were `meta["status"] = meta.get("status") or "draft"` on a document
+    # built fresh each run -- so the get never found anything and every save asserted "draft" on
+    # both channels. handleResearchSave's own rule is
+    # `incomingProfile.metadata?.status || body.status || (nextVersion===1?"draft":"verified")`,
+    # which means it would have KEPT the verification if the batch had simply not spoken.
+    #
+    # It does not simply stay quiet, because silence on an existing profile means "verified" to
+    # that rule, and a batch must never invent a verification either. So it reads what is stored
+    # and echoes it, and on any uncertainty it prefers draft and says so.
+    prev, why = stored_status(lake)
     meta = profile.setdefault("metadata", {})
-    meta["status"] = meta.get("status") or "draft"
+    if prev:
+        meta["status"] = prev
+    elif why == "no profile yet":
+        meta.pop("status", None)          # version 1: the Worker calls it a draft, correctly
+    else:
+        meta["status"] = "draft"
+        print(f"      [{lake}] could not read the stored status ({why}) -- saving as draft. "
+              f"If this lake was verified, restore_verified_stamps.py puts the stamp back.")
 
     if dry_run:
         out["ok"] = True
         out["seconds"] = time.perf_counter() - t0
         return out
 
-    code, saved, err = _req("/research/save",
-                            {"lakeName": lake, "profile": profile,
-                             "status": meta["status"], "requestedBy": "research_lakes.py batch"})
+    payload = {"lakeName": lake, "profile": profile,
+               "requestedBy": "research_lakes.py batch"}
+    if meta.get("status"):
+        payload["status"] = meta["status"]
+    code, saved, err = _req("/research/save", payload)
     if code != 200:
         out["error"] = f"save {code}: {err}"
         return out
@@ -728,6 +754,21 @@ ROWS_BY_NAME = {}
 # The registry folder, so a saved profile can be mirrored onto the drive. Set in main() rather
 # than threaded through research_one()'s call chain, exactly like ROWS_BY_NAME above.
 REGISTRY_DIR = ""
+
+
+def stored_status(lake_name):
+    """(status, why). The status R2 already holds for this water, or None with a reason.
+
+    "no profile yet" is a clean 404 and means version 1. Anything else is an unknown, and the
+    caller must fall back to draft rather than let silence be read as a verification.
+    """
+    code, data, err = _req("/research/get?lake=" + urllib.parse.quote(lake_name))
+    if code == 404:
+        return None, "no profile yet"
+    if code != 200 or not data or not data.get("ok"):
+        return None, err or ("HTTP %s" % code)
+    st = ((data.get("profile") or {}).get("metadata") or {}).get("status")
+    return (str(st) if st else None), ("stored profile names no status" if not st else "stored")
 
 
 def mirror_locally(lake_name):
