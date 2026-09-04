@@ -408,6 +408,36 @@ class Run(unittest.TestCase):
         self.go('--go')
         self.assertNotIn('Sciaenops-ocellatus', self.calls)
 
+    def test_an_empty_page_is_settled_not_transient(self):
+        """Esox americanus, from the real run: a page that answered and holds nothing.
+
+        The reason string is `page fetched, no trophic level and no max length`, so a PERMANENT
+        pattern anchored at position 0 never matched it and the species was re-asked forever.
+        """
+        for reason, want in (('HTTP 404', True),
+                             ('HTTP 410', True),
+                             ('page fetched, no trophic level and no max length', True),
+                             ('timed out', False),
+                             ('HTTP 503', False),
+                             ('<urlopen error [Errno -2]>', False)):
+            with self.subTest(reason):
+                self.assertEqual(FB.settled({'reason': reason}), want)
+        self.assertFalse(FB.settled(None))
+        self.assertFalse(FB.settled({}))
+
+    def test_an_empty_page_is_not_refetched_next_run(self):
+        self.go('--go')
+        self.assertIn('Moxostoma ugidatli', self.out()['species'])
+        PAGES['Moxostoma-ugidatli'] = '<html><title>Nothing here</title></html>'
+        try:
+            self.go('--go', '--refresh')
+            self.assertIn('Moxostoma ugidatli', self.out()['unresolved'])
+            self.calls = []
+            self.go('--go')
+            self.assertNotIn('Moxostoma-ugidatli', self.calls)
+        finally:
+            PAGES['Moxostoma-ugidatli'] = NO_TROPHIC
+
     def test_a_timeout_is_asked_about_again(self):
         """Nothing was learned from a timeout. A 404 is an answer; this is not."""
         real = self.fake_fetch

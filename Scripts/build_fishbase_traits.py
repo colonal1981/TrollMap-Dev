@@ -410,11 +410,24 @@ def save_out(path, species, unresolved, sources):
 # A read timeout or a 503 is the opposite: nothing was learned and the next run should try again.
 # Without this line the resume skips only the successes, so every re-run pays for every permanent
 # failure a second time -- which is exactly what the tests caught.
+# `^` BINDS TO ITS OWN BRANCH, NOT TO THE ALTERNATION, and `.match()` then anchored the whole
+# thing at position 0 -- so the second branch could never fire, because the reason it has to
+# recognise reads `page fetched, no trophic level and no max length`. Found on the real 803-page
+# run: Esox americanus came back labelled "(transient -- the next run asks again)" when it is
+# nothing of the kind. `.search()` lets branch two match anywhere while `^HTTP 4` keeps its own
+# anchor, which is what was meant.
+#
+# THE ESOX PAGE IS WHY THIS CASE EXISTS AT ALL. fishbase.se/summary/Esox-americanus.html is a
+# real page titled `Esox americanus, Redfin pickerel : gamefish, aquarium` and it carries NO
+# trophic level, NO max length and NO environment line -- the data lives on the two subspecies
+# pages, americanus and vermiculatus. The page answered; the answer is that it holds nothing.
+# That is settled, not transient, and re-asking it every run is asking a question FishBase has
+# already answered.
 PERMANENT = re.compile(r'^HTTP 4|no trophic level and no max length')
 
 
 def settled(entry):
-    return bool(PERMANENT.match((entry or {}).get('reason') or ''))
+    return bool(PERMANENT.search((entry or {}).get('reason') or ''))
 
 
 def canary_ok(rec):

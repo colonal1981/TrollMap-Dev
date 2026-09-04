@@ -180,5 +180,75 @@ class DriveAudit(unittest.TestCase):
         self.assertFalse([g for g in self.globs if g.strip('*/') == ''])
 
 
+
+class SelfReferenceIsNotAReference(unittest.TestCase):
+    """The finder must not hide the files it was written to find.
+
+    Ryan noticed from memory on 2026-09-04 that G-WRAPVectorData2021 was missing from a report
+    of unread sources. It was missing because this script's own header names it as one of the
+    three sources found by hand -- and the corpus walked this script. 592.1 MB reported as read
+    on the strength of a docstring that says nobody reads it.
+    """
+
+    def test_a_docstring_mention_is_not_a_read(self):
+        src = ('"""We should really use SCDNROyster2015Live.geojson one day."""\n'
+               'x = 1  # and ArtReef2021.csv too\n')
+        out = A.strip_py_commentary(src)
+        self.assertNotIn('SCDNROyster2015Live', out)
+        self.assertNotIn('ArtReef2021', out)
+
+    def test_an_ordinary_string_literal_survives(self):
+        """`SC_OYSTER_FILE = DATA_DIR / 'SCDNROyster2015Live.geojson'` IS a read."""
+        src = "SC_OYSTER_FILE = DATA_DIR / 'SCDNROyster2015Live.geojson'\n"
+        self.assertIn('SCDNROyster2015Live.geojson', A.strip_py_commentary(src))
+
+    def test_a_function_docstring_goes_and_its_body_stays(self):
+        src = ('def f():\n'
+               '    """Reads georgia_oyster_reef_2015.gpkg some day."""\n'
+               "    return open('DMF_ReefGuide_1.geojson')\n")
+        out = A.strip_py_commentary(src)
+        self.assertNotIn('georgia_oyster', out)
+        self.assertIn('DMF_ReefGuide_1.geojson', out)
+
+    def test_unparseable_python_is_kept_whole_rather_than_lost(self):
+        """Losing a reader is worse than keeping a comment. Broken source keeps everything."""
+        src = "def (((: 'oyster_beds.geojson'\n"
+        self.assertIn('oyster_beds.geojson', A.strip_py_commentary(src))
+
+    def _corpus_with_self_copied_in(self):
+        """A scripts/ dir holding this script, its test, and one honest reader."""
+        here = Path(A.__file__).resolve()
+        d = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, d, True)
+        root = Path(d)
+        (root / 'scripts').mkdir()
+        for name in (here.name, 'test_' + here.name):
+            src = here.parent / name
+            if src.exists():
+                shutil.copy(str(src), str(root / 'scripts' / name))
+        (root / 'scripts' / 'reader.py').write_text(
+            '"""One day we should read G-WRAPData2021.gdb and ArtReef2021.csv."""\n'
+            "SC_OYSTER_FILE = DATA_DIR / 'SCDNROyster2015Live.geojson'\n"
+            '# and georgia_oyster_reef_2015.gpkg is on the drive too\n', encoding='utf-8')
+        return A.build_corpus(root)
+
+    def test_the_three_it_was_written_to_find_come_back_unread(self):
+        """The regression. Both rules at once, and neither alone is enough.
+
+        `reader.py` names all three ONLY in a docstring and a comment (rule 1), while this
+        script's header and its test's fixtures name them as ordinary text and string
+        literals (rule 2).
+        """
+        (tokens, _globs), files = self._corpus_with_self_copied_in()
+        self.assertEqual(files, 1, 'the corpus read %d files; only reader.py counts' % files)
+        for name in ('g-wrapdata2021.gdb', 'artreef2021.csv',
+                     'georgia_oyster_reef_2015.gpkg'):
+            self.assertNotIn(name, tokens, '%s is hidden again' % name)
+
+    def test_the_honest_read_beside_them_still_counts(self):
+        """The danger of rule 1 is stripping the literal that IS the read."""
+        (tokens, _globs), _files = self._corpus_with_self_copied_in()
+        self.assertIn('scdnroyster2015live.geojson', tokens)
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

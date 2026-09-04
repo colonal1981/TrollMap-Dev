@@ -37,10 +37,12 @@ USAGE
 """
 
 import argparse
+import io
 import json
 import os
 import re
 import sys
+import tokenize
 from fnmatch import fnmatch
 from pathlib import Path
 
@@ -127,6 +129,65 @@ def human(n):
         n /= 1024.0
 
 
+# ── THIS FILE IS NOT EVIDENCE ABOUT THE DRIVE ────────────────────────────────────────────────
+#
+# Ryan, 2026-09-04: "i was under the impression that we never wired in the georgia
+# G-WRAPVectorData2021 either... i dont see that mentioned."
+#
+# He was right, and the reason is this script. The header above names G-WRAPVectorData2021 and
+# ArtReef2021.csv as the three sources found by hand that nothing was reading -- and the corpus
+# walks every .py under scripts/, INCLUDING THIS ONE, so those names appeared in our code and
+# the audit reported both as READ.
+#
+#     G-WRAPData2021.gdb            592.1 MB   referenced_by: g-wrapdata2021.gdb
+#     georgia_oyster_reef_2015.gpkg  38.5 MB   referenced_by: georgia_oyster_reef_2015.gpkg
+#     ArtReef2021.csv                          referenced_by: artreef2021.csv
+#
+# Checked 2026-09-04: the ONLY files in the whole corpus naming any of those three are this
+# script and its test. **The tool was hiding the exact files it was written to find**, and it
+# hid them by describing them. A finder that cites its own findings stops finding them.
+#
+# Two rules, because the three leaks arrive by two different doors:
+#
+#   1. A COMMENT OR A DOCSTRING IS NOT A READ. `build_species_habitat_weights.py` names
+#      usSEABED in its docstring and `seagrass` in a habitat regex and opens neither file --
+#      728 MB and 1.28 GB reported as read on the strength of prose. Python comments and
+#      docstrings come out of the corpus; ORDINARY STRING LITERALS STAY, because
+#      `SC_OYSTER_FILE = DATA_DIR / 'SCDNROyster2015Live.geojson'` is a real read and looks
+#      exactly like the thing being stripped.
+#   2. THIS SCRIPT AND ITS TEST ARE NOT PART OF THE CORPUS. The test builds fixture files named
+#      `georgia_oyster_reef_2015.gpkg` and `ArtReef2021.csv` -- string literals, not comments,
+#      so rule 1 cannot reach them.
+#
+# Neither rule is a list of names. Add a source to the header tomorrow and it stays findable.
+
+def strip_py_commentary(text):
+    """Python source minus comments and docstrings, with every other literal left alone.
+
+    A docstring is a STRING that OPENS a statement, which is exactly what tokenize's preceding
+    NEWLINE/INDENT/DEDENT/ENCODING tells us. Stripping strings generally would delete the
+    filename literals that are the whole point of the corpus.
+    """
+    try:
+        toks = list(tokenize.generate_tokens(io.StringIO(text).readline))
+    except (tokenize.TokenError, IndentationError, SyntaxError, ValueError):
+        return text                       # unparseable: keep it whole rather than lose a reader
+    out = []
+    opens_statement = True
+    for tok in toks:
+        if tok.type == tokenize.COMMENT:
+            continue
+        if tok.type == tokenize.STRING and opens_statement:
+            continue                      # a docstring
+        if tok.type in (tokenize.NEWLINE, tokenize.NL, tokenize.INDENT,
+                        tokenize.DEDENT, tokenize.ENCODING):
+            opens_statement = True
+        elif tok.type != tokenize.COMMENT:
+            opens_statement = False
+        out.append(tok.string)
+    return '\n'.join(out)
+
+
 def build_corpus(root):
     """
     Every filename-shaped token in our own code, as a set. Walked, never typed.
@@ -135,10 +196,15 @@ def build_corpus(root):
     that once per candidate turned a report into a timeout. Tokenising once is faster and also
     STRICTER: `oyster` no longer matches `oyster_beds.geojson` by accident, which is the kind of
     false hit that would have reported an unread file as read.
+
+    See the note above build_corpus for what is deliberately NOT in here and why.
     """
     parts = []
     files = 0
     seen = set()
+    # BY BASENAME, not by absolute path. A copy of this script somewhere else is still this
+    # script saying its own header out loud, and the path it sits at does not change that.
+    mine = {Path(__file__).name.lower(), ('test_' + Path(__file__).name).lower()}
     for base in CODE_DIRS:
         for start in (root / base, root / 'TrollMap-Dev' / base):
             if not start.is_dir():
@@ -148,13 +214,17 @@ def build_corpus(root):
                 for fn in filenames:
                     if Path(fn).suffix.lower() not in CODE_EXT:
                         continue
+                    if fn.lower() in mine:
+                        continue
                     p = Path(dirpath) / fn
                     rp = str(p.resolve())
                     if rp in seen:
                         continue
                     seen.add(rp)
                     try:
-                        parts.append(p.read_text(encoding='utf-8', errors='ignore'))
+                        body = p.read_text(encoding='utf-8', errors='ignore')
+                        parts.append(strip_py_commentary(body)
+                                     if p.suffix.lower() == '.py' else body)
                         files += 1
                     except OSError:
                         pass
