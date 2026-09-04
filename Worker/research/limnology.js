@@ -806,10 +806,70 @@ async function getSecchiSummary(env, lakeName) {
  */
 const SWEEP_PER_FIRING = 2;
 
+/**
+ * WHAT THE SWEEP HAS ALREADY TRIED, WHICH THE PULL CACHE CANNOT SAY.
+ *
+ * `wqpCached` writes `limnology-cache/<id>.json` ONLY when the pull came back with records --
+ * deliberately, so an empty pull cannot evict a good one. The sweep then read the ABSENCE of that
+ * object as "due", and sorted the absent ones first. So a water that could not be pulled was not
+ * merely retried: it was retried ahead of every water that had never been tried, forever.
+ *
+ * Measured 2026-09-04. The five profiles the sweep ever filled are listing keys #2 to #6 --
+ * badin, bay_tree, belews, blewett_falls, boone -- one per five-minute firing on 2026-09-02
+ * between 20:45 and 21:06. Key #1 is `allatoona_lake_ga` and it never completed once. With two
+ * slots per firing, one was spent on Allatoona every time while the other walked down the list,
+ * until it reached `cheoah_lake_nc` at 21:06 and stuck too. Both slots have been re-pulling the
+ * same two lakes every five minutes since -- about 576 futile requests a day at a federal API --
+ * and never reached key #8.
+ *
+ * So an ATTEMPT is recorded, not just a success, and it is recorded under the SAME 30-day TTL the
+ * pull cache uses. One constant, because the thing being paced is "ask WQP about this water" and
+ * the file already argues that monthly is the sampling rate underneath.
+ */
+const SWEEP_STATE_KEY = 'limnology-cache/_sweep.json';
+
+async function readSweepState(env) {
+  try {
+    const obj = await env.R2_TROLLMAP_CHARTPACKS.get(SWEEP_STATE_KEY);
+    if (!obj) return {};
+    const d = JSON.parse(await r2Text(obj));
+    return (d && typeof d.waters === 'object' && d.waters) || {};
+  } catch (e) {
+    // An unreadable state file must not stop the sweep -- it degrades to the old behaviour for
+    // one firing and is rewritten at the end of it.
+    console.warn(`[limnology] sweep state unreadable: ${e && e.message}`);
+    return {};
+  }
+}
+
+async function writeSweepState(env, waters) {
+  try {
+    await env.R2_TROLLMAP_CHARTPACKS.put(SWEEP_STATE_KEY,
+      JSON.stringify({ updated: new Date().toISOString(), waters }),
+      { httpMetadata: { contentType: 'application/json' } });
+  } catch (e) {
+    console.warn(`[limnology] sweep state write failed: ${e && e.message}`);
+  }
+}
+
 async function refreshStaleLimnology(env, opts = {}) {
   const limit = opts.limit || SWEEP_PER_FIRING;
-  const out = { checked: 0, stale: 0, refreshed: 0, merged: 0, failed: [] };
+  const out = { checked: 0, stale: 0, refreshed: 0, merged: 0, notOffered: 0, failed: [] };
   if (!env?.R2_TROLLMAP_CHARTPACKS) return out;
+
+  // THE LAKES THE APP OFFERS, AND NOTHING ELSE. Ryan, 2026-09-04: "it should only be looking at
+  // lakes in the app... nothing else". Nine stored profiles are for waters that have since left
+  // the index, and they can never work here: the bbox comes from the registry row's bounds_wsen,
+  // so a profile with no row falls through to a shoreline self-derive with no pack to read and
+  // returns ok:false every time. Those nine were the jam. A sweep that cannot read the index at
+  // all does nothing rather than guessing -- the whole point is to stop spending pulls on waters
+  // that are not in the app.
+  let index = null;
+  try {
+    index = await lakeIndex(env);
+  } catch (e) {
+    return { ...out, error: `lake index unavailable, not sweeping: ${e && e.message}` };
+  }
 
   const [profiles, caches] = await Promise.all([
     env.R2_TROLLMAP_CHARTPACKS.list({ prefix: 'lakes/' }),
@@ -818,8 +878,10 @@ async function refreshStaleLimnology(env, opts = {}) {
   const cachedAt = new Map();
   for (const o of caches.objects || []) {
     const id = o.key.replace(/^limnology-cache\//, '').replace(/\.json$/, '');
+    if (id.startsWith('_')) continue;                 // the sweep state is not a pull
     cachedAt.set(id, o.uploaded ? Date.parse(o.uploaded) : 0);
   }
+  const state = await readSweepState(env);
 
   const due = [];
   for (const o of profiles.objects || []) {
@@ -827,13 +889,21 @@ async function refreshStaleLimnology(env, opts = {}) {
     const m = /^lakes\/([^/]+)\.json$/.exec(o.key);
     if (!m) continue;
     out.checked += 1;
-    const at = cachedAt.get(m[1]);
-    if (at == null || Date.now() - at >= WQP_TTL_MS) due.push({ id: m[1], key: o.key, at: at || 0 });
+    const pulled = cachedAt.get(m[1]) || 0;
+    const tried = Date.parse(state[m[1]]?.at || '') || 0;
+    const last = Math.max(pulled, tried);
+    if (!last || Date.now() - last >= WQP_TTL_MS) due.push({ id: m[1], key: o.key, at: last });
   }
   out.stale = due.length;
   due.sort((a, b) => a.at - b.at);            // the oldest first, missing before merely old
 
-  for (const water of due.slice(0, limit)) {
+  // A WATER THAT IS NOT IN THE APP MUST NOT CONSUME A SLOT. It is marked and skipped, and the
+  // loop keeps going until `limit` waters have actually been pulled -- otherwise nine retired
+  // lakes at the head of the list would spend every firing for the next month.
+  let stateChanged = false;
+  let pulled = 0;
+  for (const water of due) {
+    if (pulled >= limit) break;
     try {
       const obj = await env.R2_TROLLMAP_CHARTPACKS.get(water.key);
       if (!obj) continue;
@@ -841,9 +911,23 @@ async function refreshStaleLimnology(env, opts = {}) {
       const lakeName = profile.lakeName || profile.identity?.lakeName;
       if (!lakeName) { out.failed.push(`${water.id}: profile carries no lakeName`); continue; }
 
+      // The SAME lookup wqpPull makes for its bbox, so this gate cannot disagree with it.
+      if (!resolveRegistryRow(index, lakeName)) {
+        state[water.id] = { at: new Date().toISOString(), outcome: 'not offered by the app' };
+        stateChanged = true;
+        out.notOffered += 1;
+        continue;
+      }
+
       // The id is the listing key it came from, so nothing has to resolve it again.
       const pull = await wqpCached(env, lakeName, {}, {}, water.id);
+      pulled += 1;
       out.refreshed += 1;
+      state[water.id] = {
+        at: new Date().toISOString(),
+        outcome: pull?.ok ? `${pull.recordCount || 0} records` : (pull?.error || 'pull failed'),
+      };
+      stateChanged = true;
       if (!pull?.ok || !(pull.recordCount > 0)) continue;
 
       const merged = applyWqpToLimnology(profile.limnology || {}, pull);
@@ -868,6 +952,7 @@ async function refreshStaleLimnology(env, opts = {}) {
       out.failed.push(`${water.id}: ${e && e.message}`);
     }
   }
+  if (stateChanged) await writeSweepState(env, state);
   return out;
 }
 
