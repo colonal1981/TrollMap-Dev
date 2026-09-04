@@ -46,7 +46,9 @@ export const CANDIDATE_LIMIT = 12;
  * @param {object[]} [o.inventory]  [{name, type}] so lure names resolve to a connection
  * @param {object[]} [o.catches]    the catch journal, for `yourHistory`
  * @param {function} o.fetchJson    (url) => Promise<object|null>
- * @param {function} o.askModel     ({system, user}) => Promise<string>  raw text
+ * @param {function} o.askModel     ({system, user}) => Promise<string|{content, meta}>
+ *                                  A bare string is still valid; modelAsker() returns the pair
+ *                                  so the plan can record what the call cost and how it ended.
  * @param {function} [o.transitM]   (a, b) => metres over water. Straight line if omitted, which
  *                                  UNDERSTATES cost on a reservoir.
  * @param {function} [o.routeWater] async (from, to) => {distanceM, coordinates} | null, backed by
@@ -168,14 +170,36 @@ export async function buildSmartPlanV2(o) {
     waterState: o.waterState,
   });
 
+  // AN ASKER MAY RETURN THE TEXT, OR THE TEXT AND WHAT THE CALL COST.
+  //
+  // 2026-09-04, Ryan: "i want to see the full response from the LLM". modelAsker() below read the
+  // HTTP body, kept `choices[0].message.content` and dropped everything else -- finish reason,
+  // usage, the body itself -- ONE LINE before it is needed. When a model is cut off mid-JSON the
+  // parse fails here, and the single field that would have said WHY had already been thrown away.
+  //
+  // Widened rather than changed: a plain string is still a valid answer, so every test asker and
+  // every other caller keeps working untouched. Only modelAsker() returns the richer shape.
+  const answered = await o.askModel(req);
+  const raw = (answered && typeof answered === 'object' && typeof answered.content === 'string')
+    ? answered
+    : { content: String(answered == null ? '' : answered), meta: null };
+
   let res;
   try {
-    res = parsePlanResponse(await o.askModel(req));
+    res = parsePlanResponse(raw.content);
   } catch (e) {
     // No fallback plan. The old path had one and it quietly produced a whole day of generic
     // advice that read exactly like a real answer. Failing visibly is better than that.
-    return { plan: null, candidates, request: req,
-             problems: [`the model's answer could not be read: ${e.message}`] };
+    //
+    // AND THE REASON RIDES WITH THE FAILURE. `finish_reason: "length"` beside an unreadable answer
+    // is the difference between "the model wrote nonsense" and "we did not give it room to
+    // finish", and those have opposite fixes.
+    const m = raw.meta || {};
+    const cut = m.finishReason && m.finishReason !== 'stop'
+      ? ` (finish_reason=${m.finishReason}${m.completionTokens ? `, ${m.completionTokens} tokens out` : ''})`
+      : '';
+    return { plan: null, candidates, request: req, exchange: raw.meta || null,
+             problems: [`the model's answer could not be read: ${e.message}${cut}`] };
   }
 
   const args = planArgsFrom(res, candidates, { tackle: o.tackle, connectionOf });
@@ -221,7 +245,7 @@ export async function buildSmartPlanV2(o) {
 
   const broken = validatePlan(plan);
   return {
-    plan, candidates, request: req, response: res,
+    plan, candidates, request: req, response: res, exchange: raw.meta || null,
     problems: [...args.problems, ...plan.warnings, ...broken],
   };
 }
@@ -271,8 +295,25 @@ export function modelAsker(workerUrl, opts = {}) {
     const content = Array.isArray(raw)
       ? raw.map((p) => (typeof p === 'string' ? p : (p?.text || p?.content || ''))).join('')
       : (raw || data.output_text || '');
-    if (!content) throw new Error(`empty content (finish_reason=${data.choices?.[0]?.finish_reason})`);
-    return content;
+    const u = data.usage || {};
+    // EVERYTHING THE BODY SAID ABOUT THE CALL, not just the half we parse. `provider` is read off
+    // the response header because the route is still spelled /groq-query and the chain resolves
+    // to Gemini -- a plan that says which model answered it is a plan that can be argued with.
+    const meta = {
+      finishReason: data.choices?.[0]?.finish_reason ?? null,
+      model: data.model || null,
+      provider: r.headers.get('X-LLM-Provider') || null,
+      promptTokens: u.prompt_tokens ?? u.promptTokenCount ?? null,
+      completionTokens: u.completion_tokens ?? u.completionTokenCount ?? null,
+      totalTokens: u.total_tokens ?? u.totalTokenCount ?? null,
+      maxTokens: opts.maxTokens ?? 8000,
+      temperature: opts.temperature ?? 0.25,
+      bodyBytes: text.length,
+      contentChars: content.length,
+      askedAt: new Date().toISOString(),
+    };
+    if (!content) throw new Error(`empty content (finish_reason=${meta.finishReason})`);
+    return { content, meta };
   };
 }
 

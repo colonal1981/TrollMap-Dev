@@ -585,6 +585,10 @@ export function collectPlan(){
       return {
         request: r.request || null,
         response: r.response || null,
+        // WHAT THE CALL COST AND HOW IT ENDED. Added 2026-09-04 -- modelAsker() used to keep
+        // `message.content` and drop finish reason and usage one line before they are needed, so
+        // an answer cut off mid-JSON was indistinguishable from an answer that was nonsense.
+        exchange: r.exchange || null,
         problems: Array.isArray(r.problems) ? r.problems.slice() : [],
       };
     })(),
@@ -1148,7 +1152,23 @@ ${src}`;
       // Capped because a plan is printed. The uncut copy is in the JSON beside the request.
       const CAP = 6000;
       const shown = answer.length > CAP ? answer.slice(0, CAP) : answer;
+      // The line that says WHICH model answered and whether it was allowed to finish. A plan you
+      // can argue with is one that names its source; `finish_reason: length` is the difference
+      // between a bad answer and an answer we cut off.
+      const x = model.exchange || {};
+      const bits = [];
+      if (x.provider || x.model) bits.push(esc([x.provider, x.model].filter(Boolean).join(' · ')));
+      if (x.finishReason) {
+        bits.push(x.finishReason === 'stop'
+          ? 'finished'
+          : `<b style="color:#b3261e">cut off — finish_reason=${esc(x.finishReason)}</b>`);
+      }
+      if (x.completionTokens) {
+        bits.push(`${x.completionTokens.toLocaleString()} of ${(x.maxTokens || 0).toLocaleString()} tokens out`);
+      }
+      if (x.temperature != null) bits.push(`temp ${x.temperature}`);
       exchangeHtml += `<div class="rp-callout rp-info"><b>🤖 What the model answered</b>`
+        + (bits.length ? `<div style="font-size:11px;color:#555;margin:4px 0 0">${bits.join(' · ')}</div>` : '')
         + `<div style="font-size:11px;color:#555;margin:4px 0 6px">`
         + `${answer.length.toLocaleString()} characters`
         + (answer.length > CAP ? `, first ${CAP.toLocaleString()} shown` : '')

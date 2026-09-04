@@ -479,3 +479,63 @@ describe('the selection report accounts for every run it was given', () => {
     expect(out.selection.accountedFor).toBe(1);
   });
 });
+
+
+describe('the asker may answer with the text, or the text and what the call cost', () => {
+  // 2026-09-04, Ryan: "i want to see the full response from the LLM". modelAsker() kept
+  // `choices[0].message.content` and dropped finish reason, usage and the body ONE LINE before
+  // they are needed -- so an answer cut off mid-JSON was indistinguishable from a bad answer,
+  // and those have opposite fixes.
+
+  it('a bare string is still a valid answer and reports no exchange', async () => {
+    const r = await buildSmartPlanV2({ ...OPTS, askModel: goodModel() });
+    expect(!!r.plan).toBe(true);
+    expect(r.exchange).toBe(null);
+  });
+
+  it('and the pair carries the metadata onto the result', async () => {
+    const inner = goodModel();
+    const meta = { finishReason: 'stop', model: 'gemini-2.5-pro', provider: 'gemini',
+                   completionTokens: 1840, maxTokens: 8000, temperature: 0.25 };
+    const r = await buildSmartPlanV2({
+      ...OPTS, askModel: async (req) => ({ content: await inner(req), meta }),
+    });
+    expect(!!r.plan).toBe(true);
+    expect(r.exchange.finishReason).toBe('stop');
+    expect(r.exchange.model).toBe('gemini-2.5-pro');
+    expect(r.exchange.completionTokens).toBe(1840);
+  });
+
+  it('AND A CUT-OFF ANSWER SAYS SO INSTEAD OF READING AS NONSENSE', async () => {
+    // The whole point. Truncated JSON fails to parse either way; only the finish reason says
+    // whether the model wrote rubbish or we refused it the room to finish.
+    const r = await buildSmartPlanV2({
+      ...OPTS,
+      askModel: async () => ({ content: '{"legs":[{"runId":"R1","spe',
+                               meta: { finishReason: 'length', completionTokens: 8000,
+                                       maxTokens: 8000 } }),
+    });
+    expect(r.plan).toBe(null);
+    const said = r.problems.join(' ');
+    expect(/could not be read/.test(said)).toBe(true);
+    expect(/finish_reason=length/.test(said)).toBe(true);
+    expect(/8000 tokens out/.test(said)).toBe(true);
+    expect(r.exchange.finishReason).toBe('length');
+  });
+
+  it('a clean stop adds no noise to a parse failure', async () => {
+    const r = await buildSmartPlanV2({
+      ...OPTS,
+      askModel: async () => ({ content: 'not json at all', meta: { finishReason: 'stop' } }),
+    });
+    expect(r.plan).toBe(null);
+    expect(/finish_reason/.test(r.problems.join(' '))).toBe(false);
+  });
+
+  it('and a bare string that will not parse still fails the old way', async () => {
+    const r = await buildSmartPlanV2({ ...OPTS, askModel: async () => 'not json at all' });
+    expect(r.plan).toBe(null);
+    expect(/could not be read/.test(r.problems.join(' '))).toBe(true);
+    expect(r.exchange).toBe(null);
+  });
+});
