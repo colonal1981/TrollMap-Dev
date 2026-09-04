@@ -54,6 +54,15 @@ class WhatItReadsOffTheMirror(unittest.TestCase):
         self.assertEqual(rows[0][1], 'Parr Shoals Reservoir (Fairfield Co, SC)')
         self.assertEqual(rows[0][3], '2026-08-21')
 
+    def test_the_storage_id_comes_off_the_filename_without_the_extension(self):
+        # The id is what gets SENT. "Parr Shoals Reservoir (Fairfield Co, SC)" sanitizes to
+        # parr_shoals_reservoir_fairfield_co_sc, which does not exist; the object is at
+        # parr_reservoir_sc, and only the filename knows that.
+        d = self._dir({'parr_reservoir_sc.json': {
+            'lakeName': 'Parr Shoals Reservoir (Fairfield Co, SC)',
+            'metadata': {'verifiedAt': '2026-08-21T00:00:00Z', 'status': 'draft'}}})
+        self.assertEqual(R.to_restore(d)[0][0], 'parr_reservoir_sc')
+
     def test_a_profile_with_no_lakeName_is_skipped_not_guessed_at(self):
         d = self._dir({'x.json': {'metadata': {'verifiedAt': '2026-08-21T00:00:00Z',
                                                'status': 'draft'}}})

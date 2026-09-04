@@ -90,7 +90,12 @@ def needs_restoring(profile):
 
 
 def to_restore(directory):
-    """[(file, lakeName, versionNumber, verifiedAt, lastUpdated)] read off the mirror."""
+    """[(storage id, lakeName, versionNumber, verifiedAt, lastUpdated)] read off the mirror.
+
+    THE ID, NOT THE NAME, is what gets sent. The mirror files are named by the key the object
+    actually lives at, and that is the one thing about a profile that cannot be wrong -- the
+    display name resolves through a candidate list, and two waters here carry two profiles each.
+    """
     out = []
     for f in sorted(os.listdir(directory)):
         if not f.endswith(".json") or f.startswith("_"):
@@ -109,7 +114,7 @@ def to_restore(directory):
             # guessing it from the filename would send the approve to whatever that resolves
             # to, which is not the same question.
             continue
-        out.append((f, name, m.get("versionNumber"), (m.get("verifiedAt") or "")[:10],
+        out.append((f[:-5], name, m.get("versionNumber"), (m.get("verifiedAt") or "")[:10],
                     (m.get("lastUpdated") or "")[:10]))
     return out
 
@@ -127,7 +132,7 @@ def main(argv=None):
         return 2
     rows = to_restore(d)
     print("%d profile(s) were verified once and no longer read verified:" % len(rows))
-    for f, name, ver, vat, upd in rows:
+    for _sid, name, ver, vat, upd in rows:
         print("   %-44s v%-5s verified %s, overwritten %s" % (name[:44], ver, vat, upd))
     if not rows:
         print("nothing to restore.")
@@ -141,8 +146,11 @@ def main(argv=None):
         return 2
 
     ok, failed = 0, []
-    for f, name, ver, vat, upd in rows:
-        code, res, err = _post("/research/approve", {"lakeName": name})
+    for sid, name, ver, vat, upd in rows:
+        # `id` is the stored key, read off the mirror filename. handleResearchApprove takes it
+        # verbatim and skips name resolution -- which is what made the first run of this script
+        # 404 on all 46, and is unsafe anyway on the two waters that carry two profiles.
+        code, res, err = _post("/research/approve", {"lakeName": name, "id": sid})
         if code == 200 and res and res.get("ok"):
             ok += 1
             print("   verified  %s" % name)

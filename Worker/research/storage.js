@@ -322,10 +322,29 @@ async function handleResearchApprove(request, env) {
   try { body = await request.json(); } catch { return new Response(JSON.stringify({ok:false, error:"invalid JSON"}), {status:400, headers:JSON_HEADERS}); }
   const lakeName = String(body.lakeName || body.lake || '').trim();
   if (!lakeName) return new Response(JSON.stringify({ok:false, error:"missing lakeName"}), {status:400, headers:JSON_HEADERS});
-  const safe = researchStorageId(lakeName);
+  // APPROVE WHAT THE READ WOULD SHOW, the same rule handleResearchDelete carries above.
+  // `researchStorageId` alone tries ONE spelling, and it is the county-stamped one the app
+  // passes: "Lake Wateree (Kershaw Co, SC)" sanitizes to lake_wateree_kershaw_co_sc while the
+  // profile has always been stored at lake_wateree_sc. On 2026-09-04 that made all 46 calls to
+  // restore the verified stamps 404 -- every single one -- on profiles the very next
+  // /research/get returns without complaint. The delete path was fixed for exactly this on
+  // 2026-08-2x and the approve path one function away was left resolving the old way.
+  //
+  // AN EXPLICIT `id` SKIPS THE RESOLUTION, for the same reason it does on delete: four waters
+  // carry two profiles, and stamping the wrong one of a pair is not something a second run
+  // fixes. A restore reads the id off the object it means and sends that.
+  const explicitId = String(body.id || '').trim();
+  if (explicitId && !/^[a-z0-9_]{1,80}$/.test(explicitId)) {
+    return new Response(JSON.stringify({ok:false, error:`not a storage id: ${explicitId}`}),
+      {status:400, headers:JSON_HEADERS});
+  }
+  const foundKey = explicitId ? null : await resolveResearchStorageId(lakeName,
+    (id) => env.R2_TROLLMAP_CHARTPACKS.get(`lakes/${id}.json`).catch(() => null),
+    await registryIdentityNames(env, lakeName));
+  const safe = explicitId || (foundKey ? foundKey.id : researchStorageId(lakeName));
   const masterKey = `lakes/${safe}.json`;
-  const obj = await env.R2_TROLLMAP_CHARTPACKS.get(masterKey);
-  if (!obj) return new Response(JSON.stringify({ok:false, error:`no profile for ${lakeName}`}), {status:404, headers:JSON_HEADERS});
+  const obj = foundKey ? foundKey.hit : await env.R2_TROLLMAP_CHARTPACKS.get(masterKey);
+  if (!obj) return new Response(JSON.stringify({ok:false, error:`no profile for ${lakeName} (${safe})`}), {status:404, headers:JSON_HEADERS});
   const txt = await r2Text(obj);
   let profile;
   try { profile = JSON.parse(txt); } catch { return new Response(JSON.stringify({ok:false, error:"corrupt JSON"}), {status:500, headers:JSON_HEADERS}); }
