@@ -770,6 +770,29 @@ async function handleResearchGapAnalysis(request, env) {
   check('biology.predatorSpecies', bio.predatorSpecies);
   check('biology.primaryForage', bio.primaryForage);
 
+  // A ROSTER OF ONE IS NOT A ROSTER, AND `check` CANNOT SEE THAT because it only asks whether
+  // the array is empty. Ryan, 2026-09-04, looking at Lake Greenwood: "i don't think there is any
+  // lake that only has 1 species of game fish."
+  //
+  // Greenwood is 10,363 acres, 97% charted, five ramps, sixteen attractors -- and its profile
+  // has carried exactly `["Largemouth Bass"]` since version 17, from two structured sources and
+  // no research at all. Because one is not zero, the field read as FILLED, so the gap query
+  // written for precisely this case never ran on the lake that most needed it:
+  //
+  //     "Greenwood" fish species gamefish bass crappie catfish striped
+  //
+  // Sampled against two neighbours to check this is an outlier and not the normal state: Parr
+  // Shoals carries ten species and Monticello twelve, both including the smallmouth that no
+  // registry file holds. So this fires rarely, and where it fires it is right.
+  //
+  // NOT A THRESHOLD. Two species would also be thin on ten thousand acres, but nobody has said
+  // so and inventing a number is how an arbitrary rule gets a comment written to justify it.
+  // The claim being encoded is the one that was made: a lake does not have one game fish.
+  if (Array.isArray(bio.predatorSpecies) && bio.predatorSpecies.length === 1
+      && !nullFields.includes('biology.predatorSpecies')) {
+    nullFields.push('biology.predatorSpecies');
+  }
+
   const reg = profile.regulations || {};
   const lakeRegs = reg.lakeSpecificRegulations || {};
   if (!lakeRegs.hasExceptions && !Object.keys(lakeRegs.creelLimits||{}).length) {
