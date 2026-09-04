@@ -87,3 +87,36 @@ test('when both exist the researched one wins over the draft the suffix created'
 test('an empty bucket resolves to null rather than a guess', async () => {
   assert.equal(await resolveResearchStorageId(THURMOND, async () => null), null);
 });
+
+// A CANONICAL ROW KEYED ON A NAME COLLIDES WHEN TWO WATERS SHARE THE NAME — 2026-09-04.
+//
+// RESEARCH_CANONICAL_IDS carried 'lake_russell_ga' -> 'lake_russell_sc', written to keep Richard
+// B Russell Lake (24,608 acres, SC/GA) from splitting into two profiles. The index also carries
+// Lake Russell (Habersham Co, GA) — 88 acres, US Forest Service, a hundred miles from the
+// Savannah — whose own legacy name "Lake Russell, GA" sanitizes to exactly that key. The small
+// lake was being served the big one's entire profile.
+test('the GA Lake Russell does not sanitize into Richard B Russell\'s profile', () => {
+  // Its own spellings, and not one of them may become the reservoir's key.
+  for (const n of ['Lake Russell (Habersham Co, GA)', 'Lake Russell, GA', 'Lake Russell (GA)']) {
+    assert.notEqual(researchStorageId(n), 'lake_russell_sc', n);
+    assert.ok(!researchStorageIdCandidates(n).includes('lake_russell_sc'),
+      `${n} must not offer lake_russell_sc as a candidate`);
+  }
+});
+
+test('Richard B Russell still reaches its profile, by a name it actually answers to', async () => {
+  // "Lake Russell, SC" is in its identity names, so the canonical row was never what carried it.
+  const found = await resolveResearchStorageId(
+    'Richard B Russell Lake (Abbeville Co, SC/GA)',
+    async (id) => (id === 'lake_russell_sc' ? { id } : null),
+    ['Lake Richard Russell, SC/GA', 'Lake Russell', 'Lake Russell, SC']);
+  assert.equal(found && found.id, 'lake_russell_sc');
+});
+
+test('the shared-border rows that remain each name ONE water', () => {
+  // Thurmond, Wylie, Hartwell and Chatuge are single waters under two state spellings. Russell
+  // was not, and that is the difference the map cannot express on its own.
+  assert.equal(researchStorageId('Lake Wylie, NC'), 'lake_wylie_sc');
+  assert.equal(researchStorageId('Thurmond Lake, GA'), 'clarks_hill_thurmond_sc_ga');
+  assert.equal(researchStorageId('Chatuge Lake, NC'), 'lake_chatuge_ga');
+});

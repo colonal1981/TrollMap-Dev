@@ -68,7 +68,17 @@ const RESEARCH_CANONICAL_IDS = {
   'lake_hartwell_sc_ga': 'lake_hartwell_sc',
   // Lake Russell (SC/GA) — SC calls it Lake Russell, GA calls it Lake Russell — canonical is SC profile
   'lake_russell_sc_ga': 'lake_russell_sc',
-  'lake_russell_ga': 'lake_russell_sc',
+  // 'lake_russell_ga' IS NOT THIS LAKE. Measured 2026-09-04: the index carries Lake Russell
+  // (Habersham Co, GA), an 88-acre Forest Service lake a hundred miles from the Savannah, whose
+  // own legacy name "Lake Russell, GA" sanitizes to exactly that key. This row handed it Richard
+  // B Russell's whole profile -- 24,608 acres, 15 species, its depth and its trolling
+  // intelligence -- on a lake Ryan could paddle across. Richard B Russell still reaches
+  // lake_russell_sc through its own identity name "Lake Russell, SC", which is a name it
+  // actually answers to; the GA lake now correctly reaches nothing, because it has nothing.
+  //
+  // A CANONICAL MAP KEYED ON A NAME COLLIDES WHEN TWO WATERS SHARE THE NAME. Every row here is
+  // hand-written, and each one is a claim that one spelling belongs to one water. Check the
+  // index for a second owner before adding another.
   // Lake Chatuge (GA/NC) — GA calls it Lake Chatuge, NC calls it Chatuge Lake — canonical is GA
   'chatuge_lake_nc': 'lake_chatuge_ga',
 };
