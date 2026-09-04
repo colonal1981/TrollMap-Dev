@@ -100,6 +100,35 @@ globalThis.fetch = async (url) => {
 await import('../js/data/access-index.js');
 const pickerNames = await globalThis.getUniversalLakeNamesAsync();
 
+// WHAT THE PICKER ACTUALLY SHOWS, for a water somebody cannot find on screen.
+//
+// Ryan, 2026-09-04: "lake Russell the large on at the SC and GA border is somehow no longer on
+// lake picker... i see 2 other Lake Russells on the picker in georgia but both are small lakes".
+// A question about the dropdown has to be answered by the dropdown -- this file already builds
+// the real list, so asking it costs one flag and stops the next answer being a guess about
+// display_name.
+const grep = arg('--names', '');
+if (grep) {
+  const needle = grep.toLowerCase();
+  const hits = pickerNames.filter((n) => String(n).toLowerCase().includes(needle));
+  console.log(`\n${hits.length} of ${pickerNames.length} picker name(s) contain ${JSON.stringify(grep)}:`);
+  // registryRecordFor() AND NOT identityNamesForLake(). The first is the app's own resolver and
+  // is what populatePlanLakeDropdown() calls before makePredicate('planner') decides; the second
+  // is the Worker's, used above for the research question. Asking the wrong one of the two is how
+  // the answer to "why is this lake missing" comes out backwards.
+  const { registryRecordFor } = await import('../js/data/access-index.js');
+  const { makePredicate } = await import('../js/data/water-filter.js');
+  const plannable = makePredicate('planner', null);
+  for (const n of hits.sort()) {
+    const rec = registryRecordFor(n);
+    const keep = plannable(rec, n);
+    console.log(`   ${String(n).padEnd(46)} ${keep ? 'IN  ' : 'OUT '} planner   `
+      + `registry: ${rec ? (rec.display_name || rec.slug) : '(no record)'}`);
+  }
+  if (!hits.length) console.log('   -- nothing. The picker does not offer that name at all.');
+  process.exit(0);
+}
+
 const line = (id, mark) => `      ${mark} ${id.padEnd(34)} ${String(species[id]).padStart(2)} species  ` +
   `${status[id].padEnd(9)} ${String(detail[id].sources).padStart(2)} sources  updated ${updated[id]}`;
 
