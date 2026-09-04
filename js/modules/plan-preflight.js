@@ -369,8 +369,21 @@ export async function fetchWaterState(lakeName, dateStr, o = {}) {
   // everything else.
   const hazards = (c && Array.isArray(c.hazards) && c.hazards.length) ? c.hazards : null;
   const allClear = c && c.hazardsAllClear === true;
-  if (!river && !tidal && !hazards) return null;
-  return { featureType, river, tidal, hazards, hazardsAllClear: allClear };
+
+  // HOW FAR THE OPERATOR MOVES THIS LAKE ACROSS A YEAR, and the same argument as the hazards
+  // above: a reservoir with no river block and no tide is most of the registry, so an early
+  // return would throw this away on exactly the waters that have one.
+  //
+  // Ryan, 2026-09-04: "why only duke". It is not Duke any more -- Worker/conditions.js reports
+  // the swing off whichever of USACE, TVA or Duke runs the water, and water-conditions.js names
+  // which in `seasonalDrawdownFrom`. A number with no operator behind it is the kind of fact
+  // this codebase keeps getting caught on, so the source travels with it.
+  const pool = (c && Number.isFinite(c.seasonalDrawdownFt))
+    ? { seasonalDrawdownFt: c.seasonalDrawdownFt, from: c.seasonalDrawdownFrom || null }
+    : null;
+
+  if (!river && !tidal && !hazards && !pool) return null;
+  return { featureType, river, tidal, hazards, hazardsAllClear: allClear, pool };
 }
 
 function round1(v) {

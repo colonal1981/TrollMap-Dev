@@ -1100,6 +1100,42 @@ const mmdd = (day) => String(day || '').slice(0, 5);   // "08/15/2026" -> "08/15
  * be tested against captured fixtures without a network -- which is the only way this file gets
  * verified at all from a sandbox that cannot reach tva.com.
  */
+/**
+ * HOW FAR A MANAGED LAKE IS MOVED ACROSS A YEAR, in feet.
+ *
+ * Ryan, 2026-09-04: "why only duke... i am still confused there".
+ *
+ * `seasonalDrawdownFt` is one of the lines researchIntel() prints, and until now the only thing
+ * that produced it was dukePoolManagement() -- the swing in Duke's monthly target index. So a
+ * Duke lake had a drawdown and Hartwell, Thurmond, Cherokee, Douglas and every other Corps or TVA
+ * water had a blank, on a field the operator publishes as plainly as Duke does.
+ *
+ * All three publish a SEASONAL CURVE and this file already parses all three:
+ *
+ *   Duke    /lakes/operating-range     monthly target index      dukePoolManagement()
+ *   TVA     guide.items[].GuideCurve   a set point per day       tvaShape()
+ *   USACE   Top of Conservation        seasonal-values[].value   usaceSeasonalValue()
+ *
+ * The drawdown is the same question of each: the distance between the highest and lowest target
+ * the operator intends across the year. A lake held flat has a swing of 0, and 0 is the honest
+ * answer rather than an omission -- Duke's version says so in its own comment and this keeps it.
+ *
+ * Pure, and it takes numbers rather than any operator's record shape, because three feeds that
+ * disagree about everything else agree that a target is a number.
+ */
+export function seasonalSwingFt(values) {
+  // `Number(null)` IS 0, AND 0 IS A FINITE ELEVATION. Fourth occurrence of that trap in this
+  // codebase and it is a standing rule: a missing set point coerced to zero becomes the lowest
+  // target of the year, and Hartwell's 4 ft drawdown reads as 660. Non-numbers are dropped
+  // BEFORE Number() gets them, not after.
+  const v = (Array.isArray(values) ? values : [])
+    .filter((x) => x !== null && x !== undefined && x !== '' && typeof x !== 'boolean')
+    .map((x) => Number(x))
+    .filter((x) => Number.isFinite(x));
+  if (v.length < 2) return null;
+  return Math.round((Math.max(...v) - Math.min(...v)) * 100) / 100;
+}
+
 export function tvaShape(observed, guide, releases, messages, todayMmDd, predicted) {
   const rows = Array.isArray(observed) ? observed : [];
   const last = rows.length ? rows[rows.length - 1] : null;
@@ -1125,6 +1161,10 @@ export function tvaShape(observed, guide, releases, messages, todayMmDd, predict
     discharge_cfs: last ? tvaNum(last.AverageHourlyDischarge) : null,
     observed_at: last ? [last.Day, last.Time].filter(Boolean).join(' ') || null : null,
     guide_curve_ft: guideCurve,
+    // THE WHOLE YEAR OF SET POINTS, NOT JUST TODAY'S. `items` is the guide curve day by day, and
+    // the swing across it is this reservoir's seasonal drawdown -- the same fact Duke publishes
+    // as a monthly target index. See seasonalSwingFt().
+    seasonal_drawdown_ft: seasonalSwingFt(items.map((x) => tvaNum(x.GuideCurve))),
     flood_guide_ft: g ? tvaNum(g.FloodGuide) : null,
     top_of_gates_ft: g ? tvaNum(g.TopOfGates) : null,
     expected_range_ft: g && tvaNum(g.LowExptdElevRange) !== null
@@ -1502,6 +1542,11 @@ export function usaceShape(levels, project, nowMs) {
     // "full pool" and publishing one would be wrong for half the year.
     conservation_pool_ft: pool ? pool.value : null,
     conservation_pool: pool,
+    // Hartwell runs 656 in winter and 660 from April to mid-October: a 4 ft seasonal drawdown,
+    // published in the level's own set points and never read. usaceSeasonalValue() evaluates
+    // this curve for one instant; this is the same curve asked what its range is.
+    seasonal_drawdown_ft: seasonalSwingFt(
+      ((by(TOP_OF_CONSERVATION) || {})['seasonal-values'] || []).map((v) => v && v.value)),
     bottom_of_conservation_ft: floor ? floor.value : null,
     drought_levels: drought,
     levels_published: mine.map((l) => l['specified-level-id']).filter(Boolean).sort(),
@@ -4138,6 +4183,10 @@ async function waterBlock(b, lat, lon, env) {
   const guide = parseOperatingRange(opRange);
   out.duke_guide = guide ? {
     ...guide,
+    // The same fact the TVA and Corps blocks now publish, off Duke's own monthly target index.
+    // dukePoolManagement() has computed this since it was written and only the research path
+    // called it, so a Duke lake's drawdown reached a stored profile and never a plan.
+    seasonal_drawdown_ft: seasonalSwingFt((guide.monthly || []).map((m) => m && m.target)),
     // The rank against the same week in every year on file. Five years of daily history is
     // enough to place a number and not enough to claim a percentile.
     vs_same_date: levelVsSameDate(opRange, guide.today && guide.today.date),

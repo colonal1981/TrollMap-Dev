@@ -572,7 +572,12 @@ export function researchIntel(profile, species, season, now = Date.now(), packFa
   const packHab = (packFacts && packFacts.habitat) || {};
   const packId = (packFacts && packFacts.identity) || {};
   const id = { ...(profile.identity || {}), ...packId };
-  const lim = profile.limnology || {};
+  // THE OPERATOR'S CURVE BEATS THE PROFILE'S COPY OF IT. Same rule as `identity`: this is a
+  // measurement of what the operator INTENDS this year, read off the live conditions call, and a
+  // profile's copy is whatever was read the day somebody ran research. `seasonalDrawdownFt` is
+  // the field that carries it -- see the `pool` block in fetchWaterState() for why it is no
+  // longer a Duke-only fact.
+  const lim = { ...(profile.limnology || {}), ...((packFacts && packFacts.limnology) || {}) };
   // THE REGISTRY'S SPECIES BEAT THE PROFILE'S, AND UNION WITH THEM.
   //
   // Same door and same rule as the pack facts above: a fact the app can answer at plan time is

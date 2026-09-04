@@ -212,3 +212,39 @@ test('registryIdentity answers nothing rather than an empty object', () => {
   assert.equal(registryIdentity({ max_depth_ft: 0 }), null);
   assert.deepEqual(registryIdentity({ feature_type: 'coastal' }), { bodyType: 'coastal' });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// SEASONAL DRAWDOWN IS NOT A DUKE FACT
+//
+// Ryan, 2026-09-04: "why only duke... i am still confused there".
+//
+// `seasonalDrawdownFt` had one producer -- dukePoolManagement(), the swing in Duke's monthly
+// target index -- so a Duke lake could have it and Hartwell, Thurmond, Cherokee and Douglas could
+// not, on a number their operators publish just as plainly. All three publish a seasonal curve
+// and Worker/conditions.js already parsed all three; each now reports the swing across its own
+// year of set points, and it reaches the plan through the same door as everything else.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+test('the operator drawdown reaches the prompt through the same door as the pack facts', () => {
+  const out = researchIntel({}, SPECIES, 'summer', Date.now(),
+    { limnology: { seasonalDrawdownFt: 4 } });
+  assert.ok(line(out, 'Seasonal drawdown').includes('4'), out);
+});
+
+test('and it beats a stale number in the profile', () => {
+  // A published operating curve is what the operator INTENDS this year. A profile's copy is
+  // whatever was read the day somebody ran research.
+  const profile = { limnology: { seasonalDrawdownFt: 12 } };
+  const out = researchIntel(profile, SPECIES, 'summer', Date.now(),
+    { limnology: { seasonalDrawdownFt: 4 } });
+  const row = line(out, 'Seasonal drawdown');
+  assert.ok(row.includes('4'), row);
+  assert.ok(!row.includes('12'), row);
+});
+
+test('a lake nobody manages says nothing rather than zero', () => {
+  // A natural lake has no operator and no curve. `null` is not `0 ft of drawdown`.
+  const profile = { limnology: { seasonalDrawdownFt: 7 } };
+  const out = researchIntel(profile, SPECIES, 'summer', Date.now(), { limnology: {} });
+  assert.ok(line(out, 'Seasonal drawdown').includes('7'), out);
+  assert.equal(line(researchIntel({}, SPECIES, 'summer', Date.now(), null), 'Seasonal drawdown'), '');
+});

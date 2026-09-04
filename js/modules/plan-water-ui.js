@@ -989,18 +989,27 @@ export async function findWater() {
     // `regSpecies` is four registry files keyed by this water's slug and is null when the
     // registry cannot identify it -- see fetchRegistrySpecies(). Same call the Smart Plan tab
     // makes; a species list is not a property of which tab picked the water.
-    intel: researchIntel(researched, species, getSeason(date, inp.waterTempF), Date.now(),
-      (() => {
+    // A CLOSURE, NOT A STRING, AND FOR THE SAME REASON THE SMART PLAN TAB USES ONE.
+    //
+    // Everything below is known HERE -- the profile, the species, the season, and the pack this
+    // function just fetched. The operator's seasonal drawdown is not: fetchWaterState() runs in
+    // buildFromPicked(), after the water has been ticked. A string built now cannot carry it, and
+    // re-fetching the conditions here to make one would be a second call for a fact the other
+    // half already has.
+    //
+    // THE PACK'S MEASUREMENT WINS OVER THE REGISTRY'S STAMP, and both beat the profile. This tab
+    // HAS the depth areas in hand, so where it measured a depth that number is newer than
+    // anything the pipeline wrote down.
+    intelFor: (extra) => researchIntel(researched, species, getSeason(date, inp.waterTempF),
+      Date.now(), (() => {
         const pf = packDerivedFacts({ lakeName: inp.lakeName, structGeo: stFc, featGeo: wfFc,
                                       depthGeo: daFc, poiGeo: poFc,
                                       boundaryGeo: null, contourGeo: null });
-        // THE PACK'S MEASUREMENT WINS OVER THE REGISTRY'S STAMP, and both beat the profile.
-        // This tab HAS the depth areas in hand, so where it measured a depth that number is
-        // newer than anything the pipeline wrote down.
         return {
           ...pf,
           ...(regId ? { identity: { ...regId, ...(pf.identity || {}) } } : {}),
           ...(regSpecies ? { biology: regSpecies } : {}),
+          ...(extra || {}),
         };
       })()),
     // THE CHART FIRST, THE RESEARCH SECOND -- same order and same reason as Smart Plan. `poFc` is
@@ -1128,7 +1137,13 @@ export async function buildFromPicked() {
         //
         // Smart Plan has sent `intel` since 2026-08-07. Two planners, one prompt, one of them
         // filling it.
-        intel: T.intel,
+        // THE OPERATOR'S SEASONAL CURVE, from whichever of USACE, TVA or Duke runs this water --
+        // see the `pool` block in fetchWaterState(). Null on a water nobody manages, which is
+        // the honest answer for a natural lake.
+        intel: T.intelFor ? T.intelFor(
+          (waterState && waterState.pool && Number.isFinite(waterState.pool.seasonalDrawdownFt))
+            ? { limnology: { seasonalDrawdownFt: waterState.pool.seasonalDrawdownFt } } : null)
+          : null,
         hazards: T.hazards,
         snapEligible: snapEligibleFrom(castable),
         // `castable` is `trollable || castable` -- the whole bag. Which half may go behind the

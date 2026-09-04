@@ -459,6 +459,23 @@ export function readConditions(j) {
   out.silent = (Array.isArray(w.silent_parameters) && w.silent_parameters.length)
     ? w.silent_parameters : null;
 
+  // HOW FAR THIS LAKE IS MOVED ACROSS A YEAR, from whichever operator runs it.
+  //
+  // Ryan, 2026-09-04: "why only duke... i am still confused there". `seasonalDrawdownFt` is a
+  // line researchIntel() prints, and the only producer was dukePoolManagement() on the research
+  // path -- so a Duke lake could have it and Hartwell, Thurmond, Cherokee and Douglas could not,
+  // on a number the Corps and TVA publish as plainly as Duke does.
+  //
+  // All three publish a seasonal curve and Worker/conditions.js already parses all three; each
+  // now reports the swing across its own year of set points. Read in the order the operator
+  // ACTUALLY runs the lake -- a water is bound to one of them, so the first that answers is the
+  // one that owns it, and `seasonalDrawdownFrom` says which rather than leaving a bare number.
+  for (const [from, v] of [['USACE', w.usace && w.usace.seasonal_drawdown_ft],
+                           ['TVA', w.tva && w.tva.seasonal_drawdown_ft],
+                           ['Duke Energy', w.duke_guide && w.duke_guide.seasonal_drawdown_ft]]) {
+    if (Number.isFinite(v)) { out.seasonalDrawdownFt = v; out.seasonalDrawdownFrom = from; break; }
+  }
+
   out.releases = w.releases || null;
   out.accessAlerts = Array.isArray(w.access_alerts) ? w.access_alerts : [];
   out.dukeGuide = w.duke_guide || null;

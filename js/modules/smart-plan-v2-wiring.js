@@ -179,6 +179,12 @@ export async function runSmartPlanV2() {
   const regSpecies = await fetchRegistrySpecies(CF_WORKER_URL, inp.lakeName, (regRow || {}).state || '');
   // `Lake type` off the row the browser already holds. No fetch -- see registryIdentity().
   const regId = registryIdentity(regRow);
+  // THE OPERATOR'S OWN SEASONAL CURVE, off the conditions call this path already makes.
+  // fetchWaterState() carries it as `pool`; see the note there for why it is not Duke-only any
+  // more. Null on a water nobody manages, which is the honest answer for a natural lake.
+  const regLim = (waterState && waterState.pool
+                  && Number.isFinite(waterState.pool.seasonalDrawdownFt))
+    ? { seasonalDrawdownFt: waterState.pool.seasonalDrawdownFt } : null;
   const sol = solunarFor(inp.dateStr, ramp[1], ramp[0]);
   const castableOrTrollable = TACKLE_INVENTORY.filter((l) => l.trollable || l.castable);
 
@@ -227,10 +233,11 @@ export async function runSmartPlanV2() {
       // rather than inside the closure, because buildSmartPlanV2 calls this synchronously while
       // it assembles the prompt -- a promise here would reach researchIntel() as an object.
       intelFor: (packFacts) => researchIntel(researched, species, season, Date.now(),
-        (regSpecies || regId)
+        (regSpecies || regId || regLim)
           ? { ...(packFacts || {}),
               ...(regId ? { identity: { ...regId, ...((packFacts || {}).identity || {}) } } : {}),
-              ...(regSpecies ? { biology: regSpecies } : {}) }
+              ...(regSpecies ? { biology: regSpecies } : {}),
+              ...(regLim ? { limnology: regLim } : {}) }
           : packFacts),
       // THE SAFETY SECTION'S HAZARD SENTENCE, which has never once had anything to say because
       // nothing filled this. Same profile, already loaded, one field further down.

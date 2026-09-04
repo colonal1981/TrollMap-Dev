@@ -367,14 +367,22 @@ describe('Pick Water carries the research it already loaded', () => {
     // pack can answer is answered from the pack that this plan is being built on -- see
     // packDerivedFacts() in js/utils/pack-facts.js. Both tabs pass one; the assertion is that
     // this one does, with the layers it already fetched.
-    expect(ui).toMatch(/intel:\s*researchIntel\(researched,\s*species,\s*getSeason\(date, inp\.waterTempF\),\s*Date\.now\(\),/);
+    //
+    // A CLOSURE SINCE 2026-09-04, and for the reason the Smart Plan tab has always had one: the
+    // operator's seasonal drawdown comes off the conditions call, which runs in buildFromPicked()
+    // after the water has been ticked. Everything else -- profile, species, season, pack -- is
+    // known in findWater(). A string built there cannot carry the drawdown, and re-fetching the
+    // conditions to make one would be a second call for a fact the other half already holds.
+    expect(ui).toMatch(/intelFor:\s*\(extra\) => researchIntel\(researched,\s*species,\s*getSeason\(date, inp\.waterTempF\),/);
     expect(ui).toMatch(/packDerivedFacts\(\{\s*lakeName: inp\.lakeName/);
+    // And the prompt calls it where the water state exists.
+    expect(ui).toMatch(/intel:\s*T\.intelFor\s*\?\s*T\.intelFor\(/);
+    expect(ui).toMatch(/seasonalDrawdownFt: waterState\.pool\.seasonalDrawdownFt/);
     // The charted half only, since 2026-09-01.
     expect(ui).toMatch(/hazards:\s*chartedHazards\(poFc\)/);
   });
 
   it('and hands them to the prompt from the tab state, across the two functions', () => {
-    expect(ui).toMatch(/intel:\s*T\.intel/);
     expect(ui).toMatch(/hazards:\s*T\.hazards/);
     expect(ui).toMatch(/snapEligible:\s*snapEligibleFrom\(castable\)/);
   });
