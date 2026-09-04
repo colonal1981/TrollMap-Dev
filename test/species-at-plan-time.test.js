@@ -174,3 +174,79 @@ describe('a water the registry cannot identify answers with nothing, not a guess
     expect(r.sources).toEqual([]);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// AND THE SAME PAGE SAYS WHAT THOSE FISH EAT
+//
+// Forage was the last thin field on the refactor: 21% of the mirrored profiles carry a primary
+// forage, and the only writer was the fisheries agent, asked to establish it "from the documents
+// you are reading everything else from" — which ARE these pages, already parsed onto the drive.
+//
+// The rule invents no vocabulary: a name RESEARCH_SPECIES_CANON recognises, which
+// uniqueResearchSpecies() then DROPS, is forage. NON_GAME_SPECIES has always known which fish are
+// not targets; nothing had ever kept the half it threw away.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+const HARTWELL = [{
+  state: 'GA', agency: 'GA DNR', page_name: 'Lake Hartwell',
+  source: { url: 'https://georgiawildlife.com/lake-hartwell' },
+  overview: ['Lake Hartwell is one of the three large reservoirs on the Savannah River.'],
+  species: [
+    { name: 'Spotted Bass',
+      technique: ['Threadfin shad and blueback herring are the preferred prey of spotted bass in '
+                + 'Lake Hartwell but they also feed on small sunfish and crayfish.'] },
+    { name: 'Hybrid & Striped Bass',
+      technique: ['Striped bass and hybrid bass feed almost exclusively on blueback herring but '
+                + 'trophy-sized stripers will take large gizzard shad at certain times of year.'] },
+  ],
+}];
+
+describe('the agency page names the bait, in a sentence, and we read it now', () => {
+  it('takes the clupeids the roster filter drops', async () => {
+    const { forageFromAgencyPages } = await import('../Worker/research/deterministic.js');
+    const { forage } = forageFromAgencyPages(HARTWELL);
+    expect(forage).toEqual(['Blueback Herring', 'Gizzard Shad', 'Threadfin Shad']);
+  });
+
+  it('keeps the agency\'s own sentence as the quote', async () => {
+    const { forageFromAgencyPages } = await import('../Worker/research/deterministic.js');
+    const { quotes } = forageFromAgencyPages(HARTWELL);
+    expect(/preferred prey of spotted bass/.test(quotes[0] || '')).toBe(true);
+  });
+
+  it('does not report "Shad" beside "Threadfin Shad"', async () => {
+    // The canon holds `shad` as well as `threadfin shad`, so one sentence yields both. A result
+    // that is a strict substring of another is the shorter reading of the same fish.
+    const { forageFromAgencyPages } = await import('../Worker/research/deterministic.js');
+    expect(forageFromAgencyPages(HARTWELL).forage.includes('Shad')).toBe(false);
+  });
+
+  it('reads only inside a predator write-up, never the page overview', async () => {
+    // Cape Fear River's rows are survey PDFs, not lake pages — `species: []`, titled "AMERICAN
+    // SHAD MONITORING IN THE CAPE FEAR RIVER-2015", with a sentence saying Longnose Gar "were
+    // the most abundant nongame fish". Reading overviews returned American Shad and Longnose Gar
+    // as this river's forage. Neither is prey; both merely failed to be targets.
+    const { forageFromAgencyPages } = await import('../Worker/research/deterministic.js');
+    const survey = [{ agency: 'NCWRC', species: [],
+      overview: ['AMERICAN SHAD MONITORING IN THE CAPE FEAR RIVER-2015',
+                 'Flathead Catfish, Channel Catfish, Blue Catfish, and Longnose Gar were the '
+               + 'most abundant nongame fish.'] }];
+    expect(forageFromAgencyPages(survey).forage).toEqual([]);
+  });
+
+  it('reads every prose field the four agencies actually write', async () => {
+    // Counted across the file: GA DNR writes prospect/technique/target/notes, TWRA notes/tips,
+    // SCDNR notes, NCWRC only `from` — a citation. The first cut omitted `tips` and lost
+    // Cherokee Lake's alewife, which sits in exactly that field.
+    const { forageFromAgencyPages } = await import('../Worker/research/deterministic.js');
+    const twra = [{ agency: 'TWRA', species: [{ name: 'Walleye',
+      tips: ['Walleye must be stocked because of the presence of alewife in the reservoir.'] }] }];
+    expect(forageFromAgencyPages(twra).forage).toEqual(['Alewife']);
+  });
+
+  it('and a page that names no forage says nothing', async () => {
+    const { forageFromAgencyPages } = await import('../Worker/research/deterministic.js');
+    expect(forageFromAgencyPages([]).forage).toEqual([]);
+    expect(forageFromAgencyPages([{ agency: 'GA DNR', species: [{ name: 'Bream',
+      notes: ['Best in the spring around bedding areas.'] }] }]).forage).toEqual([]);
+  });
+});

@@ -499,9 +499,15 @@ export async function fetchRegistrySpecies(worker, lakeName, state = '') {
     const r = await fetch(u.toString());
     if (!r.ok) return null;
     const d = await r.json();
-    if (!d || !Array.isArray(d.predatorSpecies) || !d.predatorSpecies.length) return null;
-    return { predatorSpecies: d.predatorSpecies,
+    const forage = Array.isArray(d && d.primaryForage) ? d.primaryForage : [];
+    if (!d || (!Array.isArray(d.predatorSpecies) || !d.predatorSpecies.length) && !forage.length) {
+      return null;
+    }
+    return { predatorSpecies: Array.isArray(d.predatorSpecies) ? d.predatorSpecies : [],
              knownStockings: Array.isArray(d.knownStockings) ? d.knownStockings : [],
+             // The agency's own answer to what the predators eat -- 14 waters name it in a
+             // sentence, and it was reaching nothing.
+             primaryForage: forage,
              sources: Array.isArray(d.sources) ? d.sources : [] };
   } catch (e) {
     console.warn('[plan] registry species unavailable for', lakeName, e && e.message);
@@ -595,9 +601,15 @@ export function researchIntel(profile, species, season, now = Date.now(), packFa
   // It is what lets a water with no research profile at all still tell a plan what swims in it,
   // which is item 2 of the research refactor.
   const packBio = (packFacts && packFacts.biology) || {};
+  // A BARE STRING IS A LIST OF ONE, and stored profiles hold both shapes. The first cut of this
+  // took `Array.isArray(x) ? x : []`, which silently deleted `primaryForage: 'Blueback herring'`
+  // -- a real profile shape, and the one plan-depth-band.test.js pins. Losing a field while
+  // merging it in is worse than not merging it.
+  const asList = (v) => (Array.isArray(v) ? v
+    : (v === null || v === undefined || v === '' ? [] : [v]));
   const unionSpecies = (a, b) => {
     const out = [], seen = new Set();
-    for (const x of [...(Array.isArray(a) ? a : []), ...(Array.isArray(b) ? b : [])]) {
+    for (const x of [...asList(a), ...asList(b)]) {
       const name = typeof x === 'string' ? x : (x && x.species);
       const key = String(name || '').trim().toLowerCase();
       if (!key || seen.has(key)) continue;
@@ -611,6 +623,9 @@ export function researchIntel(profile, species, season, now = Date.now(), packFa
     ...packBio,
     predatorSpecies: unionSpecies((profile.biology || {}).predatorSpecies, packBio.predatorSpecies),
     knownStockings: unionSpecies((profile.biology || {}).knownStockings, packBio.knownStockings),
+    // Same union and the same reason: two agencies naming different bait in one water is two
+    // facts. A profile that carries a forage species the agency page does not mention keeps it.
+    primaryForage: unionSpecies((profile.biology || {}).primaryForage, packBio.primaryForage),
   };
   const hab = {
     ...(profile.habitat || {}),

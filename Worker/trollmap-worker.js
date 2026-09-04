@@ -1779,6 +1779,9 @@ var trollmap_worker_default = {
             slug: reg.slug,
             predatorSpecies: reg.predatorSpecies,
             knownStockings: reg.knownStockings,
+            // What the agency says those fish EAT, off the same page and quoted from it.
+            // See forageFromAgencyPages().
+            primaryForage: reg.primaryForage,
             // Which of these say what is IN the water and which say only that a rule or an
             // advisory names a fish. A roster and a floor are different claims and the caller
             // has to be able to tell them apart -- see registrySpeciesFor().

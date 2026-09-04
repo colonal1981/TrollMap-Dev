@@ -1,7 +1,7 @@
 // research/deterministic.js — split from worker-research.js (behavior-preserving)
 import { JSON_HEADERS, r2Text } from '../worker-core.js';
 import { researchStorageId, resolveResearchStorageId } from './keys.js';
-import { buildEvidence, buildFactualSummary, canonicalizeResearchSpecies, getAttractorFacts, getRampSpeciesFacts, uniqueResearchSpecies, splitSpeciesText, isKnownResearchSpecies } from './facts-util.js';
+import { buildEvidence, buildFactualSummary, canonicalizeResearchSpecies, getAttractorFacts, getRampSpeciesFacts, uniqueResearchSpecies, splitSpeciesText, isKnownResearchSpecies, RESEARCH_SPECIES_CANON } from './facts-util.js';
 import { lakeIndex, ncSpeciesByLake, resolveRegistryRow, identityBaseline, regulationsTable, agencyLakeFacts, fishAdvisories } from '../registry.js';
 import { SC_INSHORE_ROSTER, SC_INSHORE_BASIS } from './coastal-agents.js';
 import { dukeRowForNames, fetchDukeAccessAlerts, fetchDukeOperatingRange } from '../worker-data.js';
@@ -444,8 +444,111 @@ async function handleResearchGetNormalized(env, lakeName) {
  * @returns {{predatorSpecies: string[], knownStockings: object[], sources: object[],
  *            evidence: {field: string, entries: object[]}[], slug: ?string}}
  */
+/**
+ * THE FORAGE THE AGENCY ALREADY NAMED, out of the page this file already opens.
+ *
+ * Ryan, 2026-09-04, on forage being the last thin field: *"is there anything we have on my drive
+ * or already in R2 that helps solve that for a majority of the lakes? we have a boat load of data
+ * i bet somewhere we have already found it"*. There is. Of the 87 waters in
+ * agency_lake_facts.json, 71 mention a forage word and 29 name a specific forage species, and
+ * registrySpeciesFor() was reading one field out of that file -- `page.species[].name`.
+ *
+ * It is better than a lake-level list, because the agency writes it PER PREDATOR. Lake Hartwell,
+ * GA DNR, verbatim: *"Threadfin shad and blueback herring are the preferred prey of spotted bass
+ * in Lake Hartwell"* and *"Striped bass and hybrid bass feed almost exclusively on blueback
+ * herring but trophy-sized stripers will take large gizzard shad at certain times of the year."*
+ * That is exactly what the fisheries prompt asks a model to establish from the same documents.
+ *
+ * NO NEW LIST, AND THAT IS THE WHOLE TRICK. A forage vocabulary would be the fourth hand-written
+ * species table in this codebase, and the three that exist have each been wrong. Instead the rule
+ * is written out of the two tables already here:
+ *
+ *     a name RESEARCH_SPECIES_CANON recognises, which uniqueResearchSpecies() then DROPS,
+ *     is forage
+ *
+ * Threadfin Shad, Gizzard Shad, Blueback Herring, Alewife, American Shad and Hickory Shad all
+ * canonicalise and all fall out of a predator roster through NON_GAME_SPECIES. That filter has
+ * always known which fish are not targets; nothing had ever kept the half it threw away.
+ *
+ * SUBSTRINGS ARE DROPPED. The canon holds `shad` and `herring` as well as `threadfin shad`, so a
+ * sentence naming one yields both; a result that is a strict substring of another result is the
+ * shorter reading of the same fish and goes.
+ *
+ * WHAT THIS DOES NOT CATCH, said plainly rather than guessed at. Crayfish and bluegill are real
+ * forage and the same Hartwell sentence names them -- *"they also feed on small sunfish and
+ * crayfish"* -- but both SURVIVE the roster filter, bluegill because it is genuinely a game fish
+ * too and crayfish because it is not a fish and is not in NON_GAME_SPECIES. Catching them needs
+ * either a forage list or a reading of what the sentence MEANS, and both are inventions. The
+ * clupeids are the ones that decide a striper or spotted-bass day, and they are what this returns.
+ *
+ * PRIMARY ONLY. The agency does not rank them, so neither does this: `secondaryForage` is a
+ * distinction nobody made and filling it would be the app claiming a judgement it was not given.
+ */
+export function forageFromAgencyPages(pages) {
+  // ONLY WHAT SITS INSIDE A PREDATOR'S WRITE-UP. `overview` is deliberately not read.
+  //
+  // Cape Fear River is the case that settled it. Its rows are not lake pages at all -- they are
+  // survey reports, `species: []`, titled "AMERICAN SHAD MONITORING IN THE CAPE FEAR RIVER-2015"
+  // -- and reading their prose yielded `American Shad, Longnose Gar`: the subject of the study,
+  // and a sentence saying gar "were the most abundant nongame fish". Neither is forage. Both
+  // passed the rule below, because "not a target" and "is prey" are not the same claim.
+  //
+  // A statement about what something EATS lives in that fish's own entry. Same discipline as the
+  // roster guard above, which refuses a species list that names no known fish: the page's own
+  // shape says whether it is the kind of document being read.
+  const text = [];
+  for (const page of (Array.isArray(pages) ? pages : [])) {
+    if (!page) continue;
+    for (const sp of (page.species || [])) {
+      if (!sp) continue;
+      // EVERY PROSE FIELD ANY OF THE FOUR AGENCIES WRITES, counted across the file rather than
+      // guessed: GA DNR uses prospect/technique/target/notes, TWRA uses notes/tips, SCDNR uses
+      // notes, and NCWRC writes `from` -- a citation, not prose, and it carries no forage. The
+      // first cut omitted `tips` and lost Cherokee's alewife, which sits in exactly that field.
+      for (const k of ['prospect', 'technique', 'target', 'notes', 'tips']) {
+        const v = sp[k];
+        if (typeof v === 'string') text.push(v);
+        else if (Array.isArray(v)) for (const x of v) if (typeof x === 'string') text.push(x);
+      }
+    }
+  }
+  if (!text.length) return { forage: [], quotes: [] };
+
+  const hay = text.join(' \n ').toLowerCase();
+  const found = new Set();
+  // THE CANON'S KEYS, AND NOT NON_GAME_SPECIES. Tried the union of both and measured it: that
+  // set exists to say what is not a TARGET, so it also holds `other`, `various`, `game fish`,
+  // `other species`, `shrimp` and `paddlefish`, and Lanier came back with "Blueback Herring,
+  // Carp, Gizzard Shad, Other, Threadfin Shad, Various". "Not a target" and "is prey" are
+  // different claims and this is the second time today that difference has bitten.
+  //
+  // The real gap it exposed was in the CANON: `alewife` was missing from it, which is why
+  // Cherokee's alewife was invisible. A real fish belongs in the table of real fish; it is added
+  // there rather than papered over here.
+  for (const key of Object.keys(RESEARCH_SPECIES_CANON)) {
+    // Word boundaries, or `gar` matches "Edgar" and `spot` matches "spotted".
+    const re = new RegExp(`(^|[^a-z])${key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^a-z]|$)`);
+    if (!re.test(hay)) continue;
+    const canon = canonicalizeResearchSpecies(key);
+    // The roster filter is the test: a fish it keeps is a target, a fish it drops is forage.
+    if (canon && !uniqueResearchSpecies([canon]).length) found.add(canon);
+  }
+  // `Shad` is the shorter reading of `Threadfin Shad`, not a second fish.
+  const all = [...found];
+  const forage = all.filter((a) => !all.some((b) => b !== a && b.toLowerCase().includes(a.toLowerCase())));
+
+  // The agency's own sentence, so the evidence quotes the page rather than paraphrasing it.
+  const quotes = [];
+  for (const line of text) {
+    const l = line.toLowerCase();
+    if (forage.some((f) => l.includes(f.toLowerCase())) && quotes.length < 3) quotes.push(line.trim());
+  }
+  return { forage: forage.sort(), quotes };
+}
+
 export async function registrySpeciesFor(env, lakeName, state = '') {
-  const out = { predatorSpecies: [], knownStockings: [], sources: [], evidence: [], slug: null };
+  const out = { predatorSpecies: [], knownStockings: [], primaryForage: [],
+                sources: [], evidence: [], slug: null };
   const addEvidence = (field, entries) => {
     if (entries && entries.length) out.evidence.push({ field, entries });
   };
@@ -541,6 +644,21 @@ export async function registrySpeciesFor(env, lakeName, state = '') {
           { fact: roster.join(', '), speciesCount: roster.length })]);
         out.sources.push({ label: `${agency} lake page`, url, kind: 'roster', trust: 'OFFICIAL',
                            sourceType: 'official_structured', species: roster.length });
+      }
+      // THE SAME PAGE ALSO SAYS WHAT THOSE FISH EAT. Read whether or not the roster survived --
+      // a page whose species headings did not pass the known-fish guard can still carry a
+      // forage sentence, and the two claims stand on their own.
+      const { forage, quotes } = forageFromAgencyPages(pages);
+      if (forage.length) {
+        out.primaryForage = forage;
+        const agency2 = pages[0].agency || 'state agency';
+        const url2 = (pages[0].source && pages[0].source.url) || 'registry:agency_lake_facts.json';
+        addEvidence('primaryForage', [buildEvidence('official_structured',
+          `${agency2} lake page`, url2, quotes[0] || null, 'agency_page_forage',
+          { fact: forage.join(', '), speciesCount: forage.length })]);
+        out.sources.push({ label: `${agency2} lake page`, url: url2, kind: 'forage',
+                           trust: 'OFFICIAL', sourceType: 'official_structured',
+                           species: forage.length });
       }
     }
   } catch (e) {

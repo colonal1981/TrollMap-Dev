@@ -248,3 +248,23 @@ test('a lake nobody manages says nothing rather than zero', () => {
   assert.ok(line(out, 'Seasonal drawdown').includes('7'), out);
   assert.equal(line(researchIntel({}, SPECIES, 'summer', Date.now(), null), 'Seasonal drawdown'), '');
 });
+
+test('the agency forage unions with the profile like the roster does', () => {
+  const profile = { biology: { primaryForage: ['Alewife'] } };
+  const out = researchIntel(profile, SPECIES, 'summer', Date.now(),
+    { biology: { primaryForage: ['Threadfin Shad', 'Blueback Herring'] } });
+  const row = line(out, 'Primary forage');
+  for (const f of ['Alewife', 'Threadfin Shad', 'Blueback Herring']) {
+    assert.ok(row.includes(f), row);
+  }
+});
+
+test('a profile that stores a bare string keeps it', () => {
+  // Real profiles hold both shapes. `Array.isArray(x) ? x : []` deletes the string one, which is
+  // losing a field while merging it in.
+  const out = researchIntel({ biology: { primaryForage: 'Blueback herring' } },
+    SPECIES, 'summer', Date.now(), { biology: { primaryForage: ['Threadfin Shad'] } });
+  const row = line(out, 'Primary forage');
+  assert.ok(row.includes('Blueback herring'), row);
+  assert.ok(row.includes('Threadfin Shad'), row);
+});

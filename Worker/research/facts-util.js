@@ -99,6 +99,12 @@ const RESEARCH_SPECIES_CANON = {
   'threadfin shad': 'Threadfin Shad',
   'gizzard shad': 'Gizzard Shad',
   'blueback herring': 'Blueback Herring',
+  // ALEWIFE WAS THE ONE CLUPEID THIS TABLE DID NOT SPELL. NON_GAME_SPECIES has known it
+  // since it was written -- so the roster filter dropped it correctly -- but the canon did
+  // not, and forageFromAgencyPages() reads the canon. Cherokee Lake's TWRA page says
+  // Walleye "must be stocked ... because of the presence of alewife" and the app could not
+  // see the word. Same shape as `hickory shad`, added here for the same reason.
+  'alewife': 'Alewife',
   'american shad': 'American Shad',
   'trout': 'Trout',
   'rainbow trout': 'Rainbow Trout',
