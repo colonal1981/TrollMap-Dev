@@ -41,12 +41,32 @@ const html = (v) => String(v == null ? '' : v).replace(/[&<>]/g, (c) => (
  * `problems` already contains `plan.warnings` (smart-plan-v2.js folds them in with
  * validatePlan()'s return), so the list is deduped by text rather than by source.
  */
-export function planIssuesHtml(plan, problems = []) {
+/**
+ * WHAT the plan says about itself, with no opinion about how it is drawn.
+ *
+ * 2026-09-04. Ryan's own plan for the printable report --
+ * THE_RESEARCH_TAB_BECOMES_THE_SMART_PLAN_INPUT_VIEWER_2026-09-02.md -- is "i want to know what
+ * it suggested that the app changed because of x,y,z". The 42 override points that answer that
+ * were already written, already worded as the pair, and already reaching this file. They were
+ * rendered ONLY into the tab, because planIssuesHtml() emits the tab's CSS variables and the
+ * printable report has its own classes.
+ *
+ * A SECOND COPY OF THE LIST IS A SECOND ANSWER WAITING TO DISAGREE. So the list is computed here
+ * once and the two surfaces skin it: planIssuesHtml() below is unchanged in behaviour, and
+ * plan-builder.js renders the same object with `rp-callout`.
+ */
+export function planIssues(plan, problems = []) {
   const safety = (plan && plan.safety) || {};
   const seen = new Set();
   const list = [...((plan && plan.warnings) || []), ...(problems || [])]
     .map((w) => String(w == null ? '' : w).trim())
     .filter((w) => w && !seen.has(w) && seen.add(w) !== false);
+  return { safety, list, noGo: safety.isGo === false };
+}
+
+
+export function planIssuesHtml(plan, problems = []) {
+  const { safety, list } = planIssues(plan, problems);
 
   let out = '';
   // THE MODEL CAN CALL A NO-GO AND v2 RENDERED THE DAY ANYWAY. v1 stopped for this

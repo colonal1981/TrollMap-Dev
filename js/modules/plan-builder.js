@@ -10,6 +10,7 @@
 
 import { state } from "../core/state.js";
 import { esc } from "../utils/escape.js";
+import { planIssues } from "./plan-issues.js";
 import { lakeDbEntryFor, lakeNamesForPicker, lakeRecordFor } from "../data/lake-registry.js";
 import { renderSpread } from "./spread-builder.js";
 import { newRodRow } from "../utils/rod-row.js";
@@ -1098,6 +1099,71 @@ ${src}`;
   let moonPhase = '', moonIllum = 0;
   let damHtml = '', tidesHtml = '', usgsHtml = '';
   let reportsHtml = '';
+
+  // ── WHAT WAS ASKED, WHAT CAME BACK, AND WHERE THE APP OVERRULED IT ────────────────────────
+  //
+  // Ryan, THE_RESEARCH_TAB_BECOMES_THE_SMART_PLAN_INPUT_VIEWER_2026-09-02.md: "i want to see the
+  // full response from the LLM i want to know what it suggested that the app changed because of
+  // x,y,z i want that lake intel page on the html to disappear and be replaced with actual
+  // information for the plan".
+  //
+  // THE BRIEFING WAS AN INPUT WEARING AN OUTPUT'S CLOTHES. `lake-intel.js` assembles it from the
+  // researched profile, so the printable plan -- the one document whose whole job is to say what
+  // the plan DECIDED -- was spending its best callout restating the research. That question now
+  // belongs to the research tab. This takes its slot.
+  //
+  // The 42 override points were already written and already worded as the pair, 25 in
+  // plan-assemble.js and 17 in plan-prompt.js: "asked for 12 mph -- outside", "dropped a stop on
+  // R3: no structure on that leg", "a jerkbait is a CAST-ONLY bait. It planes at". They reached
+  // plan.warnings, folded into `problems`, and rendered ONLY into the tab. plan-issues.js says
+  // why that is a defect and the sentence applies here word for word: "A refusal is not a smaller
+  // kind of error than a failure. It is the plan saying it is not the plan you asked for."
+  //
+  // THE RESPONSE IS SHOWN, THE REQUEST IS NOT. The request is candidate geometry -- tens of
+  // thousands of characters of coordinates -- and printing it helps nobody standing on a ramp.
+  // Both are already saved whole in the plan JSON, which is the half of "the plan html and json
+  // are what comes out" that is allowed to be exhaustive.
+  let exchangeHtml = '';
+  {
+    const model = (p.model || {});
+    const { list, noGo, safety } = planIssues(p.plan, model.problems || []);
+    if (noGo) {
+      exchangeHtml += `<div class="rp-callout rp-warn" style="border-left-width:6px">`
+        + `<b>🚨 NO-GO — DO NOT LAUNCH</b>`
+        + (safety.warning ? `<br>${esc(safety.warning)}` : '')
+        + `<br><span style="font-size:11px">The plan below is what the day would have been. `
+        + `It is not a recommendation to go.</span></div>`;
+    }
+    if (list.length) {
+      exchangeHtml += `<div class="rp-callout rp-warn"><b>⚠ ${list.length} thing`
+        + `${list.length === 1 ? '' : 's'} the plan wants to tell you</b>`
+        + `<ul style="margin:6px 0 0;padding-left:18px">`
+        + list.map((w) => `<li>${esc(w)}</li>`).join('')
+        + `</ul></div>`;
+    }
+    const answer = typeof model.response === 'string'
+      ? model.response
+      : (model.response ? JSON.stringify(model.response, null, 1) : '');
+    if (answer) {
+      // Capped because a plan is printed. The uncut copy is in the JSON beside the request.
+      const CAP = 6000;
+      const shown = answer.length > CAP ? answer.slice(0, CAP) : answer;
+      exchangeHtml += `<div class="rp-callout rp-info"><b>🤖 What the model answered</b>`
+        + `<div style="font-size:11px;color:#555;margin:4px 0 6px">`
+        + `${answer.length.toLocaleString()} characters`
+        + (answer.length > CAP ? `, first ${CAP.toLocaleString()} shown` : '')
+        + `. The prompt it was sent is in the saved plan JSON, with this answer in full.</div>`
+        + `<pre style="white-space:pre-wrap;word-break:break-word;font-size:10px;line-height:1.4;`
+        + `margin:0;max-height:520px;overflow:auto">${esc(shown)}</pre></div>`;
+    } else if (p.meta && p.meta.lakeIntel) {
+      // A plan saved before the exchange was recorded still has something to say. Its briefing is
+      // shown once, labelled as the older shape, rather than silently vanishing from a reprint.
+      exchangeHtml += `<div class="rp-callout rp-info"><b>🧠 Lake Intelligence Briefing</b>`
+        + `<div style="font-size:11px;color:#555;margin:4px 0 6px">Saved before this plan `
+        + `recorded the model exchange.</div>`
+        + `${esc(p.meta.lakeIntel).replace(/\n/g, '<br>')}</div>`;
+    }
+  }
   const lake = p.meta.waterbodyLabel || p.meta.lake || '';
   const cleanLake = lake.split(',')[0].trim();
   // Substring-matched against LAKE_DB's keys before this. `cleanLake.includes(k)` matches on
@@ -1671,7 +1737,7 @@ ${damHtml}
 
 ${p.meta.riverSummary ? `<div class="rp-callout rp-warn"><b>🌊 River / Dam Release Intel</b><br>${esc(p.meta.riverSummary).replace(/\n/g,'<br>')}</div>` : ''}
 
-${p.meta.lakeIntel ? `<div class="rp-callout rp-info"><b>🧠 Lake Intelligence Briefing</b><br>${esc(p.meta.lakeIntel).replace(/\n/g,'<br>')}</div>` : ''}
+${exchangeHtml}
 
 ${p.meta.clarityIntel ? `<div class="rp-callout rp-warn"><b>🌦 Clarity & Runoff Intelligence</b><br>${esc(p.meta.clarityIntel).replace(/\n/g,'<br>')}</div>` : ''}
 

@@ -1,6 +1,6 @@
 import { describe, it, expect } from './expect-shim.mjs';
 import { readFileSync } from 'node:fs';
-import { planIssuesHtml } from '../js/modules/plan-issues.js';
+import { planIssues, planIssuesHtml } from '../js/modules/plan-issues.js';
 
 const WIRING = readFileSync(new URL('../js/modules/smart-plan-v2-wiring.js', import.meta.url), 'utf8');
 
@@ -82,5 +82,47 @@ describe('smart-plan-v2-wiring — the warnings reach the screen with the plan',
   it('stops the status line claiming a plan when the model called a no-go', () => {
     expect(WIRING).toContain('safety.isGo === false');
     expect(WIRING).toContain('NO-GO');
+  });
+});
+
+
+describe('planIssues() — the data both surfaces skin', () => {
+  // 2026-09-04. The 42 override points reached the tab and never the printable report, because
+  // planIssuesHtml() emits the tab's CSS variables and the report has its own classes. The list
+  // is computed once here so a second copy cannot drift from the first.
+
+  const PLAN = {
+    safety: { isGo: false, warning: '18 mph sustained' },
+    warnings: ['R3 asked for 12 mph — outside the trolling window',
+               'dropped a stop on R3: no structure "s7" on that leg'],
+  };
+
+  it('returns the same list the tab renders, deduplicated and trimmed', () => {
+    const { list } = planIssues(PLAN, ['  dropped a stop on R3: no structure "s7" on that leg  ',
+                                       'a jerkbait is a CAST-ONLY bait']);
+    expect(list.length).toBe(3);
+    expect(list.includes('a jerkbait is a CAST-ONLY bait')).toBe(true);
+  });
+
+  it('says NO-GO only when the model actually called one', () => {
+    expect(planIssues(PLAN, []).noGo).toBe(true);
+    expect(planIssues({ safety: { isGo: true }, warnings: [] }, []).noGo).toBe(false);
+    // isGo absent is NOT a no-go -- an unanswered question is not a refusal.
+    expect(planIssues({ warnings: [] }, []).noGo).toBe(false);
+  });
+
+  it('and the tab renderer still shows every one of them', () => {
+    const html = planIssuesHtml(PLAN, ['a jerkbait is a CAST-ONLY bait']);
+    for (const w of planIssues(PLAN, ['a jerkbait is a CAST-ONLY bait']).list) {
+      expect(html.includes(w.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')))
+        .toBe(true);
+    }
+  });
+
+  it('is empty for a clean plan, so neither surface draws a box', () => {
+    const r = planIssues({ safety: { isGo: true }, warnings: [] }, []);
+    expect(r.list.length).toBe(0);
+    expect(r.noGo).toBe(false);
+    expect(planIssuesHtml({ safety: { isGo: true }, warnings: [] }, [])).toBe('');
   });
 });
