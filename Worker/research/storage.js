@@ -54,7 +54,7 @@ async function registryIdentityNames(env, lakeName) {
   }
 }
 
-async function handleResearchGet(env, lakeId) {
+async function handleResearchGet(env, lakeId, version = null) {
   // Every key this lake could be filed under, not just the one its current display name
   // sanitizes to. A 404 here is what sent J. Strom Thurmond back through the whole pipeline
   // on 2026-08-16 while its verified profile sat in the bucket under the pre-county name.
@@ -65,6 +65,42 @@ async function handleResearchGet(env, lakeId) {
   const masterKey = `lakes/${safe}.json`;
   const obj = found ? found.hit : null;
   if (!obj) return new Response(JSON.stringify({ok:false, error:`no profile for ${lakeId} (${safe})`}), {status:404, headers:JSON_HEADERS});
+
+  // AN OLDER VERSION, READ THROUGH THE SAME RESOLUTION. `lakes/versions/<id>/vN.json` has been
+  // written on every save since the beginning and nothing could ever read it back: 802 objects of
+  // history that only the writer had ever seen. Ryan, 2026-09-04, when told we would have to wait
+  // to learn what a batch run cost: "we aren't guessing at it... the old research profiles will
+  // tell you". They can only tell us if something serves them.
+  //
+  // IT HANGS OFF /research/get RATHER THAN BEING ITS OWN ROUTE because the hard part is resolving
+  // which key this water is filed under, and that is already done above. A second route would be a
+  // second copy of that resolution, and this file's history is a list of what happens when two
+  // copies of a resolution drift.
+  if (version != null) {
+    const vKey = `lakes/versions/${safe}/v${version}.json`;
+    const vObj = await env.R2_TROLLMAP_CHARTPACKS.get(vKey).catch(() => null);
+    if (!vObj) {
+      // Saying "no such version" without saying which exist makes the caller guess twice.
+      let have = [];
+      try {
+        const listed = await env.R2_TROLLMAP_CHARTPACKS.list({ prefix: `lakes/versions/${safe}/` });
+        have = listed.objects.map((o) => Number((o.key.match(/v(\d+)\.json/) || [])[1]))
+          .filter(Number.isFinite).sort((a, b) => a - b);
+      } catch (err) {
+        console.warn(`[storage] version list failed for ${safe}:`, err && err.message);
+      }
+      return new Response(JSON.stringify({ok:false, error:`no version ${version} for ${safe}`,
+        lakeId, sanitized: safe, versionsAvailable: have}), {status:404, headers:JSON_HEADERS});
+    }
+    let vData;
+    try { vData = JSON.parse(await r2Text(vObj)); } catch (err) {
+      return new Response(JSON.stringify({ok:false, error:`version ${version} for ${safe} is not valid JSON`}),
+        {status:500, headers:JSON_HEADERS});
+    }
+    return new Response(JSON.stringify({ok:true, lakeId, sanitized: safe, masterKey: vKey,
+      version: Number(version), profile: vData}), {headers: JSON_HEADERS});
+  }
+
   const text = await r2Text(obj);
   let data;
   try {

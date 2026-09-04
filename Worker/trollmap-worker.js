@@ -1112,7 +1112,15 @@ var trollmap_worker_default = {
       if (path === "/research/get" && request.method === "GET") {
         const lake = url.searchParams.get("lake") || url.searchParams.get("lakeName") || "";
         if (!lake) return new Response(JSON.stringify({ok:false, error:"missing lake param"}), {status:400, headers:JSON_HEADERS});
-        return handleResearchGet(env, lake);
+        // `?version=N` serves lakes/versions/<id>/vN.json instead of the master. Read-only, and
+        // it changes nothing about the default call.
+        const vRaw = url.searchParams.get("version");
+        const version = vRaw == null || vRaw === "" ? null : Number(vRaw);
+        if (version != null && (!Number.isInteger(version) || version < 1)) {
+          return new Response(JSON.stringify({ok:false, error:`version must be a positive integer, got ${vRaw}`}),
+            {status:400, headers:JSON_HEADERS});
+        }
+        return handleResearchGet(env, lake, version);
       }
       if (path === "/research/save" && request.method === "POST") {
         return handleResearchSave(request, env);
