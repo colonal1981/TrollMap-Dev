@@ -197,8 +197,11 @@ async function handleResearchDeterministicFacts(request, env) {
   //
   // They are registrySpeciesFor() now, which this calls and so does GET /species. One assembly,
   // in the order it always ran, so which spelling of a fish survives uniqueResearchSpecies() does
-  // not depend on who asked. See the function for why these four moved and the ramp feeds,
-  // the SC inshore floor and identityGrounding() did not.
+  // not depend on who asked. Five blocks live there now -- the NC file, the agency pages, the
+  // regulations floor, the advisory floor and THE RAMP FEEDS. The ramp block was left behind on
+  // 2026-09-04 on the grounds that getRampSpeciesFacts() is a live ArcGIS fetch; the species are
+  // also already on the registry row, so the plan path gets them for free. The SC inshore floor
+  // and identityGrounding() have not moved.
   try {
     const reg = await registrySpeciesFor(env, lakeName, state);
     if (reg.predatorSpecies.length) {
@@ -775,6 +778,58 @@ export async function registrySpeciesFor(env, lakeName, state = '') {
     }
   } catch (e) {
     console.warn(`registrySpeciesFor advisory floor failed for ${lakeName}: ${e && e.message}`);
+  }
+
+  // ── THE RAMP FEEDS, WHICH ARE THE BIGGEST SOURCE AND WERE LEFT OUT OF THIS FUNCTION ───────
+  //
+  // The comment above `handleResearchDeterministicFacts` used to say four blocks moved here and
+  // "the ramp feeds... did not". That was wrong by the time it was written, and Ryan said so:
+  //
+  //     "this is not waiting on me... the ramp feed fixes this and the fix you [did] for the
+  //      ramp feed should have actually put it into smartplans hands today"
+  //
+  // He is right twice over. `getRampSpeciesFacts()` is a LIVE ArcGIS fetch and had no business
+  // on a plan path -- that was the reason for leaving it -- but the species are ALSO already
+  // baked onto the registry row by build_dnr_ramps_by_lake.py, as `ramps.<feed>[].meta.species`.
+  // `row` is resolved at the top of this function and is in hand. **This block costs nothing:
+  // no fetch, no second object, no new load.** Measured 2026-09-04: 110 of 355 waters carry ramp
+  // species -- 104 through `dnr`, 78 through `dnr_paddle` -- which is more waters than any other
+  // floor in this function reaches.
+  //
+  // AND IT IS THE WHOLE OF GEORGIA'S SALTWATER ROSTER. All four shipped GA coastal zones were
+  // recorded as having "no roster and no source", blocked on Ryan for five species names. They
+  // were never blocked: Savannah carries Red Drum, Sheepshead, Southern Flounder and Spotted
+  // Seatrout; Ossabaw/St Catherines and Sapelo/Altamaha add Chain Pickerel; Brunswick/St Simons
+  // carries ten. Georgia publishes it in the 48 yes/no species columns of its access layer and
+  // `gaAccessSpecies()` has been decoding them since this morning.
+  //
+  // A RAMP NAMES WHAT IS CAUGHT AT THAT RAMP, so this is a presence FLOOR like the other two --
+  // it unions in underneath a roster and never replaces one.
+  try {
+    const byFeed = (row && row.ramps) || {};
+    for (const [feed, list] of Object.entries(byFeed)) {
+      const named = new Set();
+      for (const entry of (Array.isArray(list) ? list : [])) {
+        const raw = (entry && entry.meta && entry.meta.species) || (entry && entry.species) || '';
+        for (const name of splitSpeciesText(raw)) named.add(name);
+      }
+      const floor = uniqueResearchSpecies([...named]);
+      if (!floor.length) continue;
+      const before = new Set(out.predatorSpecies.map((x) => String(x).toLowerCase()));
+      out.predatorSpecies = uniqueResearchSpecies([...out.predatorSpecies, ...floor]);
+      const added = floor.filter((x) => !before.has(x.toLowerCase()));
+      const src = (Array.isArray(list) && list.find((e) => e && e.src) || {}).src || null;
+      const label = `${st || 'state'} access points (${feed}) -- species named at the ramp`;
+      addEvidence('predatorSpecies', [buildEvidence('official_structured', label,
+        src || 'registry:lake_index.json', null, 'ramp_species_floor',
+        { fact: `Named on this water's access points: ${floor.join(', ')}`,
+          speciesCount: floor.length, notOtherwiseRecorded: added.length, feed })]);
+      out.sources.push({ label, url: src || 'registry:lake_index.json', kind: 'floor',
+                         trust: 'OFFICIAL', sourceType: 'official_structured',
+                         species: floor.length });
+    }
+  } catch (e) {
+    console.warn(`registrySpeciesFor ramp floor failed for ${lakeName}: ${e && e.message}`);
   }
 
   return out;

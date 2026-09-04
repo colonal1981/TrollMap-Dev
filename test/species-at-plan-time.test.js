@@ -30,6 +30,30 @@ const INDEX = {
                 display_name: 'Boone Lake (Sullivan Co, TN)' },
   hugh_m_gillis: { slug: 'hugh_m_gillis', state: 'GA', name: 'Hugh M Gillis',
                    display_name: 'Hugh M Gillis PFA (Laurens Co, GA)' },
+
+  // THE SHAPE IS COPIED FROM registry/lake_index.json, read 2026-09-04. `ramps` is keyed by FEED
+  // and the species sit one level down under `meta`, which is the level a search for `species`
+  // misses -- the same nesting that made four of the five ramp feeds read as species-free on
+  // 2026-09-03. Savannah's four are the real values off the GA access layer.
+  coast_savannah_ga: {
+    slug: 'coast_savannah_ga', state: 'GA', name: 'Savannah', feature_type: 'coastal',
+    display_name: 'Savannah River / Wassaw Sound, GA',
+    ramps: {
+      osm: [{ name: null, tag: 'leisure=slipway', lat: 31.93, lon: -81.11 }],
+      dnr: [{ name: 'Bahia Bleu Marina', wb: 'Wilmington River', type: 'Boat Ramp',
+              src: 'Georgia DNR WRD Water Access Points',
+              meta: { lanes: 2, dock: 'Y', county: 'Chatham', owner: 'Private',
+                      species: 'Red Drum (Redfish), Spotted Seatrout, Southern Flounder, Sheepshead' } }],
+      dnr_paddle: [{ name: "Bell's Landing", meta: { county: 'Chatham' } }],
+    },
+  },
+
+  // A ramp feed naming things that are not targets, beside two that are.
+  ramp_noise_sc: {
+    slug: 'ramp_noise_sc', state: 'SC', name: 'Ramp Noise', display_name: 'Ramp Noise Lake, SC',
+    ramps: { dnr: [{ name: 'A Landing', src: 'SCDNR',
+                     meta: { species: 'Largemouth Bass, Various, Other, Shrimp, Blue Catfish' } }] },
+  },
 };
 
 const NC_SPECIES = { lakes: {
@@ -317,5 +341,80 @@ describe('the state guide says what the target eats', () => {
   it('answers nothing for a fish the guide does not cover', async () => {
     expect(await food('Muskellunge')).toBe(null);
     expect(await food('')).toBe(null);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// AND THE RAMP FEEDS, WHICH WERE LEFT OUT AND ARE THE BIGGEST SOURCE OF THE FIVE
+//
+// Ryan, 2026-09-04, on being told Georgia's four saltwater zones were blocked on him for five
+// species names: "this is not waiting on me... the ramp feed fixes this and the fix you [did]
+// for the ramp feed should have actually put it into smartplans hands today".
+//
+// He was right. The species were left out of registrySpeciesFor() because getRampSpeciesFacts()
+// is a live ArcGIS fetch -- but build_dnr_ramps_by_lake.py has also been baking them onto the
+// registry row, and this function already holds that row. Measured the same day: 110 of 355
+// waters carry ramp species, more than any other block here reaches.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+describe('the ramp feeds reach a plan, off the row this function already has', () => {
+  it("gives Georgia's saltwater zones the roster they were said to be missing", async () => {
+    const r = await fresh('Savannah River / Wassaw Sound, GA', 'GA');
+    expect(r.slug).toBe('coast_savannah_ga');
+    // THE FEED'S WORDS ARE NOT THE APP'S, and uniqueResearchSpecies() is where they meet:
+    // Georgia's layer says `Spotted Seatrout` and the app's canon is
+    // `Speckled Trout (Spotted Seatrout)`. The first version of this test asserted the feed's
+    // spelling and failed against correct code -- the same common-name-versus-canon trap the
+    // FishBase join was measured on the same day.
+    for (const sp of ['Red Drum (Redfish)', 'Speckled Trout (Spotted Seatrout)',
+                      'Southern Flounder', 'Sheepshead']) {
+      expect(r.predatorSpecies.includes(sp)).toBe(true);
+    }
+  });
+
+  it('splits the comma string and keeps a parenthesised name whole', async () => {
+    const r = await fresh('Savannah River / Wassaw Sound, GA', 'GA');
+    expect(r.predatorSpecies.includes('Red Drum (Redfish)')).toBe(true);
+    expect(r.predatorSpecies.some((s) => /^Redfish\)?$/.test(s))).toBe(false);
+  });
+
+  it('names the feed and the access layer in the evidence, as a FLOOR not a roster', async () => {
+    const r = await fresh('Savannah River / Wassaw Sound, GA', 'GA');
+    const src = r.sources.find((x) => /access points/i.test(x.label || ''));
+    expect(!!src).toBe(true);
+    expect(src.kind).toBe('floor');
+    expect(/dnr/.test(src.label)).toBe(true);
+    const ev = r.evidence.find((e) => e.field === 'predatorSpecies'
+      && (e.entries || []).some((x) => /ramp/i.test(JSON.stringify(x))));
+    expect(!!ev).toBe(true);
+  });
+
+  it('drops what is not a target and keeps what is', async () => {
+    const r = await fresh('Ramp Noise Lake, SC', 'SC');
+    expect(r.predatorSpecies.includes('Largemouth Bass')).toBe(true);
+    expect(r.predatorSpecies.includes('Blue Catfish')).toBe(true);
+    for (const junk of ['Various', 'Other', 'Shrimp']) {
+      expect(r.predatorSpecies.includes(junk)).toBe(false);
+    }
+  });
+
+  it('reads a feed with no species, and a row with no ramps, without throwing', async () => {
+    const r = await fresh('Savannah River / Wassaw Sound, GA', 'GA');
+    // osm and dnr_paddle carry no species on this row; only dnr should have produced a source.
+    expect(r.sources.filter((x) => /access points/i.test(x.label || '')).length).toBe(1);
+    const bare = await fresh('Lake Norman (Catawba Co, NC)', 'NC');
+    expect(bare.sources.some((x) => /access points/i.test(x.label || ''))).toBe(false);
+  });
+
+  it('COSTS NO FETCH -- the row is already in hand, so no extra R2 object is read', async () => {
+    _resetIndexCache();
+    const asked = [];
+    const e = env();
+    const inner = e.R2_TROLLMAP_CHARTPACKS.get;
+    e.R2_TROLLMAP_CHARTPACKS.get = async (key) => { asked.push(key); return inner(key); };
+    await registrySpeciesFor(e, 'Savannah River / Wassaw Sound, GA', 'GA');
+    // Whatever else it reads, it must not have gone looking for a ramp object.
+    expect(asked.some((k) => /ramp|access/i.test(k))).toBe(false);
+    expect(asked.includes('_registry/lake_index.json')).toBe(true);
   });
 });
