@@ -35,7 +35,7 @@ import { state, CF_WORKER_URL } from '../core/state.js';
 import { resolveR2Key } from '../data/lake-keys.js';
 import { getSeason, seasonNote } from '../data/species-intel.js';
 import { depthBandFor, usableAhFrom, researchIntel, describeDepthBand, conditionsFrom,
-         fetchRegistrySpecies } from './plan-inputs.js';
+         fetchRegistrySpecies, registryIdentity } from './plan-inputs.js';
 import { solunarFor } from '../utils/solunar.js';
 import { registryRecordFor } from '../data/access-index.js';
 import { packFetcher } from './smart-plan-v2.js';
@@ -857,8 +857,9 @@ export async function findWater() {
   // hand is a reason against that piece, so the forecast has to be in hand BEFORE the reasons are
   // written. Failure is silence: no forecast means the wind is not mentioned, never mentioned as calm.
   // WHAT THE REGISTRY KNOWS SWIMS HERE. Same source and same fallback as the Smart Plan tab.
-  const regSpecies = await fetchRegistrySpecies(CF_WORKER_URL, inp.lakeName,
-                                                (registryRecordFor(inp.lakeName) || {}).state || '');
+  const regRow = registryRecordFor(inp.lakeName);
+  const regSpecies = await fetchRegistrySpecies(CF_WORKER_URL, inp.lakeName, (regRow || {}).state || '');
+  const regId = registryIdentity(regRow);
   say('Checking the forecast…');
   const forecast = await fetchForecast(inp.lakeName, inp.dateStr,
     { launchTime: inp.launchTime, returnTime: inp.returnTime }).catch(() => null);
@@ -989,11 +990,19 @@ export async function findWater() {
     // registry cannot identify it -- see fetchRegistrySpecies(). Same call the Smart Plan tab
     // makes; a species list is not a property of which tab picked the water.
     intel: researchIntel(researched, species, getSeason(date, inp.waterTempF), Date.now(),
-      {
-        ...packDerivedFacts({ lakeName: inp.lakeName, structGeo: stFc, featGeo: wfFc,
-                              depthGeo: daFc, poiGeo: poFc, boundaryGeo: null, contourGeo: null }),
-        ...(regSpecies ? { biology: regSpecies } : {}),
-      }),
+      (() => {
+        const pf = packDerivedFacts({ lakeName: inp.lakeName, structGeo: stFc, featGeo: wfFc,
+                                      depthGeo: daFc, poiGeo: poFc,
+                                      boundaryGeo: null, contourGeo: null });
+        // THE PACK'S MEASUREMENT WINS OVER THE REGISTRY'S STAMP, and both beat the profile.
+        // This tab HAS the depth areas in hand, so where it measured a depth that number is
+        // newer than anything the pipeline wrote down.
+        return {
+          ...pf,
+          ...(regId ? { identity: { ...regId, ...(pf.identity || {}) } } : {}),
+          ...(regSpecies ? { biology: regSpecies } : {}),
+        };
+      })()),
     // THE CHART FIRST, THE RESEARCH SECOND -- same order and same reason as Smart Plan. `poFc` is
     // the pois.geojson this function already fetched for the cast spots.
     // The charted POI layer only -- researchHazards() is gone with the navigation agent.

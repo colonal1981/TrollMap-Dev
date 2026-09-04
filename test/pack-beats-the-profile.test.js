@@ -7,7 +7,7 @@
 // prefers it, field by field, and reads the profile exactly as before when no caller passes one.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { researchIntel } from '../js/modules/plan-inputs.js';
+import { researchIntel, registryIdentity } from '../js/modules/plan-inputs.js';
 
 const PROFILE = {
   identity: { maxDepthFt: 83, averageDepthFt: 19, bodyType: 'lake' },
@@ -174,4 +174,41 @@ test('stockings union the same way, on the species name inside the object', () =
   const row = line(out, 'Stockings');
   assert.ok(row.includes('Walleye'), row);
   assert.equal(row.split('Striped Bass').length - 1, 1, row);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// `Lake type` IS A PROPERTY READ, AND IT WAS COMING OUT OF A STORED PROFILE
+//
+// It is `feature_type` on the registry row -- lake, river or coastal -- which the browser has
+// held since access-index.js loaded. researchIntel() was printing it from the profile instead,
+// so 14 of the 80 mirrored profiles printed no lake type at all and the waters with no profile
+// printed none ever. The cheapest field on item 2's list.
+//
+// The precedence is the same three-way rule as every other field: the pack measured it > the
+// pipeline stamped it > the profile remembered it. Depth is in this helper for the day the
+// pipeline stamps it; until then registryIdentity() returns only the type, and absent is not a
+// claim.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+test('the registry row answers Lake type without any fetch', () => {
+  const out = researchIntel({}, SPECIES, 'summer', Date.now(),
+    { identity: registryIdentity({ feature_type: 'river' }) });
+  assert.ok(line(out, 'Lake type').includes('river'), out);
+});
+
+test('a pack measurement still beats the registry stamp', () => {
+  // Pick Water holds the depth areas, so where it measured a depth that number is newer than
+  // anything the pipeline wrote down. This is the merge order the wiring builds.
+  const reg = registryIdentity({ feature_type: 'lake', max_depth_ft: 60 });
+  const pack = { maxDepthFt: 66 };
+  const out = researchIntel({}, SPECIES, 'summer', Date.now(),
+    { identity: { ...reg, ...pack } });
+  assert.ok(line(out, 'Max depth').includes('66'), out);
+});
+
+test('registryIdentity answers nothing rather than an empty object', () => {
+  assert.equal(registryIdentity(null), null);
+  assert.equal(registryIdentity({}), null);
+  // A zero or a missing depth is not a depth.
+  assert.equal(registryIdentity({ max_depth_ft: 0 }), null);
+  assert.deepEqual(registryIdentity({ feature_type: 'coastal' }), { bodyType: 'coastal' });
 });

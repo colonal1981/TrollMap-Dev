@@ -456,6 +456,40 @@ export function structureWeights(base, baseRelief, structures) {
  * @param {string} [state]
  * @returns {Promise<?{predatorSpecies: string[], knownStockings: object[], sources: object[]}>}
  */
+/**
+ * WHAT THE REGISTRY ROW ALREADY ANSWERS ABOUT A WATER, with no fetch of any kind.
+ *
+ * `Lake type` is the one identity field researchIntel() prints, and it is `feature_type` on the
+ * registry row -- lake, river or coastal -- which the browser has held since access-index.js
+ * loaded. It was reaching the prompt out of a stored research profile instead, so 14 of the 80
+ * mirrored profiles printed no lake type at all and the 275 waters with no profile printed none
+ * ever.
+ *
+ * Item 2 of the research refactor, and the cheapest field on the list: a property read.
+ *
+ * MAX AND AVERAGE DEPTH BELONG HERE TOO AND ARE NOT HERE YET. They are computed by
+ * deriveDepthStatistics() off `depth_areas.geojson`, which Pick Water downloads for its map and
+ * Smart Plan does not download at all -- so a Smart Plan gets them only from a profile, and only
+ * 3 of 80 profiles carry them. The file is 18.6 MB on Wateree, 175 MB on Murray and 255 MB on
+ * Thurmond, so the answer is not for Smart Plan to fetch it: it is for the pipeline to stamp the
+ * two numbers onto the registry row, which is one pass costing ~6 s on the biggest pack. Until
+ * that runs, this returns what it has.
+ *
+ * @param {?object} rec  registryRecordFor(lakeName) — null is normal and answers nothing
+ */
+export function registryIdentity(rec) {
+  if (!rec || typeof rec !== 'object') return null;
+  const out = {};
+  const type = rec.feature_type || rec.featureType;
+  if (type) out.bodyType = String(type);
+  // Present as soon as the pipeline stamps them; absent until then, and absent is not a claim.
+  for (const [from, to] of [['max_depth_ft', 'maxDepthFt'], ['avg_depth_ft', 'averageDepthFt']]) {
+    const v = Number(rec[from]);
+    if (Number.isFinite(v) && v > 0) out[to] = v;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 export async function fetchRegistrySpecies(worker, lakeName, state = '') {
   if (!worker || !lakeName) return null;
   try {

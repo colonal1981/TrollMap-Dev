@@ -16,7 +16,8 @@ import { resolveR2Key } from '../data/lake-keys.js';
 import { getLoadedAccessIndex, registryRecordFor } from '../data/access-index.js';
 import { getSeason, seasonNote } from '../data/species-intel.js';
 import { depthBandFor, usableAhFrom, researchIntel, structureWeights,
-         describeDepthBand, conditionsFrom, fetchRegistrySpecies } from './plan-inputs.js';
+         describeDepthBand, conditionsFrom, fetchRegistrySpecies,
+         registryIdentity } from './plan-inputs.js';
 import { DEFAULT_WEIGHTS, DEFAULT_RELIEF_WEIGHTS } from './plan-candidates.js';
 import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
 import { TRANSIT_MIN_DEPTH_FT } from './plan-water.js';
@@ -174,8 +175,10 @@ export async function runSmartPlanV2() {
   // WHAT THE REGISTRY KNOWS SWIMS HERE, whether or not this water has ever been researched.
   // Four files keyed by its slug; see fetchRegistrySpecies() and registrySpeciesFor(). Null on a
   // water the registry cannot identify, which leaves the prompt exactly as it was.
-  const regSpecies = await fetchRegistrySpecies(CF_WORKER_URL, inp.lakeName,
-                                                (registryRecordFor(inp.lakeName) || {}).state || '');
+  const regRow = registryRecordFor(inp.lakeName);
+  const regSpecies = await fetchRegistrySpecies(CF_WORKER_URL, inp.lakeName, (regRow || {}).state || '');
+  // `Lake type` off the row the browser already holds. No fetch -- see registryIdentity().
+  const regId = registryIdentity(regRow);
   const sol = solunarFor(inp.dateStr, ramp[1], ramp[0]);
   const castableOrTrollable = TACKLE_INVENTORY.filter((l) => l.trollable || l.castable);
 
@@ -224,7 +227,11 @@ export async function runSmartPlanV2() {
       // rather than inside the closure, because buildSmartPlanV2 calls this synchronously while
       // it assembles the prompt -- a promise here would reach researchIntel() as an object.
       intelFor: (packFacts) => researchIntel(researched, species, season, Date.now(),
-        regSpecies ? { ...(packFacts || {}), biology: regSpecies } : packFacts),
+        (regSpecies || regId)
+          ? { ...(packFacts || {}),
+              ...(regId ? { identity: { ...regId, ...((packFacts || {}).identity || {}) } } : {}),
+              ...(regSpecies ? { biology: regSpecies } : {}) }
+          : packFacts),
       // THE SAFETY SECTION'S HAZARD SENTENCE, which has never once had anything to say because
       // nothing filled this. Same profile, already loaded, one field further down.
       tackle: castableOrTrollable.map((l) => l.name),
