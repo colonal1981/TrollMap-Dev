@@ -400,6 +400,26 @@ export async function planFromWater(o) {
     // So the assembler can check what the model's lead and speed actually put the bait at
     // against the shallowest water on each leg. See capBaitDepth().
     lureByName: o.lureByName,
+    // WHAT THE PLAN IS OF. assemblePlan writes `meta` from exactly these five, and this path sent
+    // none of them -- every Pick Water day came out with `meta: {water: null, slug: null,
+    // ramp: null, date: null, species: []}` and `conditions: {}`. They are all in `o.planArgs`,
+    // which this function already spreads into the PROMPT twelve lines up, so the model was told
+    // the water and the plan object was not. Same five names Smart Plan passes.
+    slug: o.slug ?? null,
+    water: (o.planArgs && o.planArgs.water) ?? null,
+    ramp: (o.planArgs && o.planArgs.ramp) ?? null,
+    date: (o.planArgs && o.planArgs.date) ?? null,
+    species: (o.planArgs && o.planArgs.species) || [],
+    conditions: (o.planArgs && o.planArgs.conditions) || {},
+    // THE MODEL MAY CALL A NO-GO ON THIS PATH TOO, AND ITS ANSWER WAS BEING THROWN AWAY.
+    //
+    // planArgsFrom() returns `safety` -- `isGo`, `warning`, `rampEvaluation` -- and Smart Plan
+    // spreads the whole of `args` into this call so it arrives. This path picks fields out of
+    // `args` one at a time (see the note above about candidates) and `safety` was not one of
+    // them, so `plan.safety` was `{}` on every Pick Water day and planIssuesHtml()'s NO-GO banner
+    // could never fire. Over 15 sustained is a no-go for a 12.5 ft kayak whichever tab picked
+    // the water.
+    safety: args.safety,
   });
 
   plan.notes = args.notes;

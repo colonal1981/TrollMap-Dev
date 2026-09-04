@@ -202,6 +202,20 @@ export async function buildSmartPlanV2(o) {
     species: o.species ? [].concat(o.species) : [],
     conditions: o.conditions, usableAh: o.usableAh,
     transit,
+    // THE SAME RESOLVER THE PROMPT GOT, HANDED TO THE CHECK ON THE ANSWER.
+    //
+    // Ryan, 2026-09-04: "so you are saying that smartplan can hand me a trolling lane and a lure
+    // and not know whether that lure will be lost trolling that lane?" It could, and it did.
+    //
+    // This line was in plan-from-water.js and not here. capBaitDepth() opens with
+    // `if (typeof lureByName !== 'function' ...) return null` -- a silent no-op -- so on this path
+    // the ceiling was computed, carried onto every candidate as `maxRunDepthFt`, and then never
+    // asked. The model was told how deep each bait runs (buildPlanRequest above gets the same
+    // resolver) and the app's own check on what came back never ran once: no lead shortened over
+    // a shoal, no jighead fitted, no cast-only rod called out. Every test in
+    // test/bait-depth-ceiling.test.js passed throughout, because every one of them called
+    // assemblePlan directly and passed the resolver itself.
+    lureByName: o.lureByName,
   });
   plan.notes = args.notes;
 

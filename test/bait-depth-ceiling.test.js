@@ -2,6 +2,7 @@ import { describe, it, expect } from './expect-shim.mjs';
 import { assemblePlan } from '../js/modules/plan-assemble.js';
 import { TACKLE_INVENTORY } from '../js/data/tackle-inventory.js';
 import { depthWindow, leadForDepth } from '../js/data/lure-knowledge.js';
+import { buildSmartPlanV2 } from '../js/modules/smart-plan-v2.js';
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // THE SHALLOWEST WATER ON THE LEG IS A CEILING ON THE BAIT
@@ -255,5 +256,98 @@ describe('a rated bait is given the lead it takes to work it', () => {
     const plan = build(LEG(28), rod);
     expect((planned(plan, 0, 'R1')).leadFt).toBe(undefined);
     expect(plan.warnings.some((w) => /how far BEHIND the boat/.test(w))).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// AND THE PLANNER HAS TO ACTUALLY HAND IT THE RESOLVER
+//
+// Ryan, 2026-09-04: "so you are saying that smartplan can hand me a trolling lane and a lure and
+// not know whether that lure will be lost trolling that lane?"
+//
+// Every test above calls assemblePlan() directly and passes `lureByName` itself, so all of them
+// pass while the thing is dead in the app. capBaitDepth()'s first line is
+//
+//     if (typeof lureByName !== 'function' || ...) return null;
+//
+// -- a silent no-op. plan-from-water.js passes the resolver twice, to buildPlanRequest AND to
+// assemblePlan. smart-plan-v2.js passed it only to buildPlanRequest, so the MODEL was told how
+// deep each bait runs and the app's own check on the answer never ran once: no lead shortened,
+// no jighead fitted, no cast-only rod called out, on any lake, on every Smart Plan ever built.
+//
+// These two run the real planner end to end. They are here rather than in smart-plan-v2.test.js
+// because what they guard is this file's subject, and this file is where someone looks.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+describe('the ceiling survives the trip through the planner, not just the assembler', () => {
+  const RAMP = [-80.7300, 34.3800];
+  // A lane 4 km long that the fitter measured: the line runs 26-30 ft except for one 8 ft rise.
+  // `envelope_ft` is the shallow side within the wander, `envelope_line_ft` the water under the
+  // centreline -- waterBand() reads both and maxRunDepthFt comes off the line.
+  const STEP = 100;
+  const N = 40;
+  const lineFt = Array.from({ length: N + 1 }, (_, k) => (k === 20 ? 8 : 28));
+  const lane = {
+    type: 'Feature',
+    geometry: { type: 'LineString',
+      coordinates: Array.from({ length: N + 1 }, (_, k) => [-80.720 + (k * STEP) / 91000, 34.380]) },
+    properties: {
+      id: 'w#1', depth_ft: 28, mean_depth_ft: 28, length_m: N * STEP, routable: true, fitted: true,
+      envelope_step_m: STEP, envelope_line_ft: lineFt, envelope_ft: lineFt,
+      near: Array.from({ length: 16 }, (_, k) => ({ s: 200 + k * 240, t: 'hump', d: 26 })),
+    },
+  };
+  const PACK = {
+    '/w/trolling_runs.geojson': { features: [lane] },
+    '/w/structure.geojson': { features: [] },
+    '/w/water_features.geojson': { features: [] },
+  };
+
+  // The model answers well: one leg, both rods out, the deep bait at the lead it asked for.
+  // 120 ft of lead puts the lipless at 25 ft, and this lane comes up to 8.
+  //
+  // R5/R1 AND NOT R1/R2, because seatRods() puts a lipless on a snap rod and a crankbait on a
+  // leader rod and RENAMES them to match. A leg deploying an id that got re-seated has no rods
+  // in the water at all, which is a different bug and would hide this one.
+  const DD2 = TACKLE_INVENTORY.find((l) => /DD2/.test(l.name));
+  const model = async ({ user }) => {
+    const runId = (user.match(/"runId":\s*"([^"]+)"/) || [])[1];
+    return JSON.stringify({
+      safety: { isGo: true, warning: '', rampEvaluation: 'sheltered' },
+      loadout: { why: 'covering the band', rods: [
+        { id: 'R1', lure: DD2.name, color: 'Shad', role: 'troll', leadFt: 60,
+          runsDepthFt: [16, 20], why: 'the mid band' },
+        { id: 'R5', lure: LIPLESS.name, color: 'Chrome', role: 'troll', leadFt: 120,
+          runsDepthFt: [21, 25], why: 'the deep half' }] },
+      legs: [{ runId, speedMph: 2.0, deploy: { port: 'R1', starboard: 'R5' }, why: 'the ledge' }],
+      stops: [], changes: [], notes: {},
+    });
+  };
+
+  const OPTS = {
+    r2Key: 'w', chartpackBase: '', ramp: RAMP, rampName: 'Clearwater Cove',
+    water: 'Lake Wateree, SC', date: '2026-08-10', launchTime: '06:00', returnTime: '15:00',
+    species: 'Striped Bass', fishDepthFt: [15, 40], holding: 'suspended',
+    usableAh: 80, windowMin: 540, conditions: {},
+    tackle: [LIPLESS.name, DD2.name], inventory: [LIPLESS, DD2], lureByName,
+    fetchJson: async (p) => PACK[p] ?? null,
+    askModel: model,
+  };
+
+  it('measures the 8 ft rise and carries it onto the leg', async () => {
+    const r = await buildSmartPlanV2(OPTS);
+    const leg = r.plan.legs.find((l) => l.type === 'troll');
+    // The lane's median is 28 and its shoal is 8. Both, on the leg, from the same envelope.
+    expect(leg.depthFt).toBe(28);
+    expect(leg.depthMinFt).toBe(8);
+  });
+
+  it('shortens the lead so the bait clears, exactly as Pick Water does', async () => {
+    const r = await buildSmartPlanV2(OPTS);
+    const leg = r.plan.legs.find((l) => l.type === 'troll');
+    const got = (leg.rodPlan || {}).R5 || {};
+    expect(got.leadFt !== undefined).toBe(true);
+    expect(got.leadFt < 120).toBe(true);
+    expect(depthWindow(LIPLESS, { speedMph: 2.0, leadFt: got.leadFt }).max <= 8).toBe(true);
+    expect(r.plan.warnings.some((w) => /shortened the lead/.test(w))).toBe(true);
   });
 });

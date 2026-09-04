@@ -12,6 +12,14 @@ import { checkPlanLegality, fetchForecast, detectCoastalZone, hourlyWind } from 
 // preflight nobody calls is worth exactly nothing.
 // ---------------------------------------------------------------------------
 const SRC = readFileSync(new URL('../js/modules/smart-plan-v2-wiring.js', import.meta.url), 'utf8');
+// THE PICK WATER WIRING TOO, since 2026-09-04 -- it fetches the same forecast, from the same
+// function, and until that day it kept the answer to itself. Ryan: "both options should have the
+// exact same information and work the exact same way with the exception that v2 the model picks
+// the routes and pickwater i pick the routes."
+const PW = readFileSync(new URL('../js/modules/plan-water-ui.js', import.meta.url), 'utf8');
+// AND conditionsFrom() LIVES HERE NOW. It was private to the Smart Plan wiring, which is exactly
+// why only that tab sent the model any weather.
+const INPUTS = readFileSync(new URL('../js/modules/plan-inputs.js', import.meta.url), 'utf8');
 
 describe('plan-preflight — regulations', () => {
   it('answers with the four fields the caller branches on', () => {
@@ -118,14 +126,19 @@ describe('plan-preflight — the forecast', () => {
 });
 
 describe('plan-preflight — the hours reach the model', () => {
-  it('the wiring passes the trip window in and windByHour out', () => {
-    expect(SRC).toContain('launchTime: inp.launchTime, returnTime: inp.returnTime');
-    expect(SRC).toContain('c.windByHour = forecast.windByHour');
-    expect(SRC).toContain('forecast.summary');
+  it('both wirings pass the trip window in and take windByHour out', () => {
+    for (const src of [SRC, PW]) {
+      expect(src).toContain('launchTime: inp.launchTime, returnTime: inp.returnTime');
+      expect(src).toContain('forecast.summary');
+      // The hours only reach the model through this one builder, so calling it is the test.
+      expect(/conditionsFrom\(inp, ramp,/.test(src)).toBe(true);
+    }
+    expect(INPUTS).toContain('c.windByHour = forecast.windByHour');
   });
 
-  it('says so when it had to fall back to a daily maximum', () => {
+  it('and both say so when they had to fall back to a daily maximum', () => {
     expect(SRC).toContain('made on a daily maximum');
+    expect(PW).toContain('made on a daily maximum');
   });
 });
 

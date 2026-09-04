@@ -644,6 +644,42 @@ export function researchIntel(profile, species, season, now = Date.now(), packFa
  *
  * So it lives here, once, and both planners call it. `depth` is depthBandFor()'s return.
  */
+/**
+ * THE DAY'S WEATHER, IN THE SHAPE THE PROMPT READS. Only what the model can use: no raw objects,
+ * no half-populated research blobs.
+ *
+ * HERE RATHER THAN IN A WIRING FILE BECAUSE BOTH TABS NEED IT AND ONLY ONE HAD IT. This was
+ * private to smart-plan-v2-wiring.js, so Pick Water sent `conditions: { depthBand }` and nothing
+ * else -- no clarity, no water temperature, no pool level, no wind by the hour, no sunrise, no
+ * solunar -- while the same function had already fetched the forecast to write the reasons on
+ * the map with. Ryan, 2026-09-04: "both options should have the exact same information and work
+ * the exact same way with the exception that v2 the model picks the routes and pickwater i pick
+ * the routes." The weather is not who picks the routes.
+ *
+ * @param {object} inp        readInputs() -- clarity, waterTempF, weather, poolLevel
+ * @param {number[]} ramp     [lon, lat]; unused today, kept so callers pass the same four
+ * @param {object} [sol]      solunarFor() output, or null
+ * @param {object} [forecast] fetchForecast() output, or null
+ */
+export function conditionsFrom(inp, ramp, sol, forecast) {
+  const c = { clarity: inp.clarity };
+  if (inp.waterTempF) c.waterTempF = inp.waterTempF;
+  if (inp.weather) c.forecast = inp.weather;
+  if (inp.poolLevel) c.poolLevel = inp.poolLevel;
+  // THE HOURS, NOT THE DAILY MAXIMUM. The prompt asks the model to rule on wind for a 12.5 ft
+  // kayak; a daily max makes a calm dawn and a blown-out noon the same number.
+  if (forecast && forecast.windByHour && forecast.windByHour.length) {
+    c.windByHour = forecast.windByHour;
+  }
+  if (forecast && forecast.sunrise) c.sunrise = forecast.sunrise;
+  if (sol) {
+    const hh = (h) => `${String(Math.floor(((h % 24) + 24) % 24)).padStart(2, '0')}:`
+                    + `${String(Math.round((h % 1) * 60)).padStart(2, '0')}`;
+    c.solunar = { majors: [hh(sol.major1), hh(sol.major2)], minors: [hh(sol.minor1), hh(sol.minor2)] };
+  }
+  return c;
+}
+
 export function describeDepthBand(depth, species, season) {
   const band = (depth && depth.band) || null;
   const holding = (depth && depth.holding) || 'unknown';

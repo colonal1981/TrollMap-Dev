@@ -27,7 +27,7 @@ import { dirname, join } from 'node:path';
 import { describe, it, expect } from './expect-shim.mjs';
 import { snapEligibleFrom, TERMINAL_CONNECTION } from '../js/data/lure-knowledge.js';
 import { chartedHazards, NO_GO_POI_TYPES, AVOID_POI_TYPES } from '../js/modules/plan-candidates.js';
-import { buildPlanRequest } from '../js/modules/plan-prompt.js';
+import { buildPlanRequest, planArgsFrom } from '../js/modules/plan-prompt.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = (f) => readFileSync(join(here, '..', f), 'utf8');
@@ -81,6 +81,98 @@ describe('the prompt contract', () => {
   it('and every one-sided field really is one of the picked-water pair', () => {
     const pw = live(src('js/modules/plan-from-water.js')) + live(src('js/modules/plan-water-ui.js'));
     for (const f of PICKED_WATER_DIALECT) expect(new RegExp(`\\b${f}\\b`).test(pw)).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// AND ONE ASSEMBLER, WITH THE SAME PROBLEM ONE LAYER DOWN
+//
+// Ryan, 2026-09-04: "so you are saying that smartplan can hand me a trolling lane and a lure and
+// not know whether that lure will be lost trolling that lane?" It could. `assemblePlan` reads
+// twenty fields off its argument and nothing held ITS two callers to a list either, so the same
+// failure happened again in the same shape and in both directions at once:
+//
+//   lureByName   Pick Water yes, Smart Plan no  -> capBaitDepth() returned null on its first
+//                                                  line, so no Smart Plan day EVER checked a
+//                                                  bait against the shoal on its own leg
+//   safety       Smart Plan yes, Pick Water no  -> the model's NO-GO was parsed and dropped
+//   water/slug/  Smart Plan yes, Pick Water no  -> every Pick Water plan carried
+//   ramp/date/                                     meta:{water:null,...} and conditions:{}
+//   species/conditions
+//
+// Same test, same reason, one layer down. `trollMph` and `transitMph` are defaults with their own
+// constants and are genuinely nobody's to send.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+describe('the assembler contract', () => {
+  const assemble = src('js/modules/plan-assemble.js');
+  const BODY = (() => {
+    const t = live(assemble);
+    return t.slice(t.indexOf('export function assemblePlan(o) {'), t.indexOf('export function planRoute'));
+  })();
+  const ASSEMBLE_CONTRACT = [...new Set(BODY.match(/\bo\.[A-Za-z_][A-Za-z0-9_]*/g) || [])]
+    .map((x) => x.slice(2)).sort();
+
+  // Defaults, not inputs: `trollMph` falls back to 2.0 and `transitMph` to 3.5 from this file's
+  // own constants, and neither planner has an opinion to send.
+  const ASSEMBLER_DEFAULTS = ['trollMph', 'transitMph'];
+
+  // WHAT A SPREAD ALREADY CARRIES. Smart Plan writes `assemblePlan({ ...args, ... })`, so
+  // `deploy`, `changes`, `stops`, `loadout`, `candidates` and `safety` arrive without their names
+  // ever appearing in that file. Asked of planArgsFrom() at run time rather than written down,
+  // because a list typed here is the next thing to go stale -- which is the whole point of this
+  // file. A planner satisfies one of these by spreading `args`; anything else it must name.
+  const SPREAD_KEYS = Object.keys(planArgsFrom({}, [], { tackle: [] }));
+  const spreads = (text) => /assemblePlan\(\{\s*(?:\/\/[^\n]*\n\s*)*\.\.\.args\b/.test(text);
+
+  it('is read off plan-assemble.js and holds the fields the bug was about', () => {
+    expect(ASSEMBLE_CONTRACT.length > 10).toBe(true);
+    for (const f of ['lureByName', 'safety', 'conditions', 'water', 'slug', 'species']) {
+      expect(ASSEMBLE_CONTRACT.includes(f)).toBe(true);
+    }
+  });
+
+  for (const [who, files] of Object.entries(CALLERS)) {
+    it(`${who} mentions every field the assembler reads`, () => {
+      const text = files.map((f) => live(src(f))).join('\n');
+      const bySpread = spreads(text) ? SPREAD_KEYS : [];
+      const missing = ASSEMBLE_CONTRACT
+        .filter((f) => !ASSEMBLER_DEFAULTS.includes(f))
+        .filter((f) => !bySpread.includes(f))
+        .filter((f) => !new RegExp(`\\b${f}\\b`).test(text));
+      expect(missing).toEqual([]);
+    });
+  }
+
+  // THE ONES THAT WERE ACTUALLY BROKEN, ASSERTED ON THE CALL AND NOT ON THE FILE.
+  //
+  // The mention test above is deliberately the weak claim -- it catches a field that is absent
+  // from a planner entirely, which is the bug that happened three times to the prompt. It cannot
+  // catch these: `lureByName` was already in smart-plan-v2.js once (for the prompt) while the
+  // assembler got none, and `safety` reads back off `r.plan.safety` in plan-water-ui.js on a path
+  // that never put one there. So these read the assemblePlan CALL itself.
+  const callIn = (f) => {
+    const t = live(src(f));
+    return t.slice(t.indexOf('assemblePlan({'));
+  };
+
+  it('both hand the assembler the lure resolver, not just the prompt', () => {
+    for (const f of ['js/modules/smart-plan-v2.js', 'js/modules/plan-from-water.js']) {
+      expect(/lureByName: o\.lureByName/.test(callIn(f))).toBe(true);
+    }
+  });
+
+  it('both hand it the model\'s safety verdict, so a NO-GO can reach the screen either way', () => {
+    expect(/safety: args\.safety/.test(callIn('js/modules/plan-from-water.js'))).toBe(true);
+    // Smart Plan supplies it through the spread; that is what SPREAD_KEYS is for.
+    expect(spreads(live(src('js/modules/smart-plan-v2.js')))).toBe(true);
+    expect(SPREAD_KEYS.includes('safety')).toBe(true);
+  });
+
+  it('both name the water the plan is of, so meta is not five nulls', () => {
+    const call = callIn('js/modules/plan-from-water.js');
+    for (const f of ['slug', 'water', 'ramp', 'date', 'species', 'conditions']) {
+      expect(new RegExp(`\\b${f}:`).test(call)).toBe(true);
+    }
   });
 });
 
@@ -269,7 +361,14 @@ describe('Pick Water carries the research it already loaded', () => {
     // `getSeason(date, inp.waterTempF)` since 2026-08-31: the season decides which research
     // entry is read, and it was decided by the month alone -- so a plan dated September 1st
     // read the fall profile with 85 degree water in the lake.
-    expect(ui).toMatch(/intel:\s*researchIntel\(researched,\s*species,\s*getSeason\(date, inp\.waterTempF\)\)/);
+    //
+    // AND THE PACK'S OWN FACTS ALONGSIDE THE PROFILE'S, since 2026-09-04. A derivation stored in
+    // a research profile is a photograph of a chart Garmin has since replaced, so anything the
+    // pack can answer is answered from the pack that this plan is being built on -- see
+    // packDerivedFacts() in js/utils/pack-facts.js. Both tabs pass one; the assertion is that
+    // this one does, with the layers it already fetched.
+    expect(ui).toMatch(/intel:\s*researchIntel\(researched,\s*species,\s*getSeason\(date, inp\.waterTempF\),\s*Date\.now\(\),/);
+    expect(ui).toMatch(/packDerivedFacts\(\{\s*lakeName: inp\.lakeName/);
     // The charted half only, since 2026-09-01.
     expect(ui).toMatch(/hazards:\s*chartedHazards\(poFc\)/);
   });

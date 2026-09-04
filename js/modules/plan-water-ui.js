@@ -34,14 +34,17 @@
 import { state, CF_WORKER_URL } from '../core/state.js';
 import { resolveR2Key } from '../data/lake-keys.js';
 import { getSeason, seasonNote } from '../data/species-intel.js';
-import { depthBandFor, usableAhFrom, researchIntel, describeDepthBand }
+import { depthBandFor, usableAhFrom, researchIntel, describeDepthBand, conditionsFrom }
   from './plan-inputs.js';
+import { solunarFor } from '../utils/solunar.js';
 import { packFetcher } from './smart-plan-v2.js';
 // THE PACK'S OWN FACTS, DERIVED HERE RATHER THAN READ OUT OF A PROFILE. Pure, and it takes the
 // layers this function already fetched. See researchIntel() in plan-inputs.js and
 // THE_PROFILE_BECAME_A_CACHE_AND_NOBODY_MOVED_THE_READS_2026-09-01.md.
 import { packDerivedFacts } from '../utils/pack-facts.js';
-import { fetchForecast, fetchWaterState } from './plan-preflight.js';
+import { checkPlanLegality, ensureRegulations, fetchForecast,
+         fetchWaterState } from './plan-preflight.js';
+import { primeFishAdvisories } from '../data/fish-advisories.js';
 import { depthSampler, shorelineIndex, waterMask } from './plan-water-index.js';
 import { offerWater, dayCost, priceSpots, searchOrder, optionality, reasons, TROLL_MPH, TRANSIT_MIN_DEPTH_FT, SPOT_KINDS } from './plan-water.js';
 import { joinedPiece } from './plan-pieces.js';
@@ -51,6 +54,7 @@ import { poiSpotFeatures, attractorSpotFeatures, dockSpotFeatures, chartedGrid, 
   from './plan-candidates.js';
 import { planToTimeline, installTimeline } from './plan-to-timeline.js';
 import { renderSmartPlanUI, syncSpread } from './smart-plan-ui.js';
+import { planIssuesHtml } from './plan-issues.js';
 import { materialisePlan } from './plan-tracks.js';
 import { loadSessionFromPlan, isEnabled, launchFrom } from './notifications.js';
 import { renderAll } from '../core/map-init.js';
@@ -754,6 +758,29 @@ export async function findWater() {
 
   const species = inp.species[0];
   const date = new Date(`${inp.dateStr}T12:00:00`);
+
+  // THE BOOK, BEFORE ANY OF THE REST OF IT. This tab never opened it.
+  //
+  // Smart Plan refuses to build a day for a species that is out of season or on water that is
+  // closed to it, and says which rule. Pick Water would happily lay out five legs for a striped
+  // bass in a closed reach -- the same lake, the same date, the same digest sitting in the same
+  // cache, and only one tab asking. Ryan, 2026-09-04: "both options should have the exact same
+  // information and work the exact same way with the exception that v2 the model picks the routes
+  // and pickwater i pick the routes." A closed season is not who picks the routes.
+  //
+  // `ensureRegulations` first because checkPlanLegality() is synchronous and answers out of a
+  // cache that nothing on this path had ever filled -- see the note on the Smart Plan call. The
+  // advisory table is warmed in the same breath for the same reason it is there: the plan render
+  // is synchronous and prints advisories under the regulations.
+  say('Checking the regulations…');
+  await ensureRegulations(inp.lakeName, { worker: CF_WORKER_URL });
+  await primeFishAdvisories({ worker: CF_WORKER_URL });
+  const legality = checkPlanLegality(inp.lakeName, species, date);
+  if (!legality.legal) {
+    return say(`${species} not legal here today — `
+             + `${legality.reason || 'closed season or closed water'}`, true);
+  }
+
   // THE RESEARCHED PROFILE FIRST — the same source the Smart Plan tab reads.
   //
   // This argument was `null`, which meant Pick Water could never reach the research pipeline and
@@ -831,6 +858,15 @@ export async function findWater() {
   say('Checking the forecast…');
   const forecast = await fetchForecast(inp.lakeName, inp.dateStr,
     { launchTime: inp.launchTime, returnTime: inp.returnTime }).catch(() => null);
+  if (forecast) {
+    // The line goes in the form field; the HOURS go to the model. Same two writes the Smart Plan
+    // path makes -- `inp.weather` is what conditionsFrom() reads for `conditions.forecast`, and
+    // this path was building the reasons off the forecast and then not telling the model there
+    // was one.
+    inp.weather = forecast.summary;
+    const wEl = $('planWeather');
+    if (wEl) wEl.value = forecast.summary;
+  }
 
   // SCDNR / NCWRC / GA DNR WRD / TWRA, live from the Worker. Awaited rather than read off
   // gis-toggles' cache: that cache only fills when the map button is clicked, and which layers
@@ -899,6 +935,40 @@ export async function findWater() {
     launchTime: inp.launchTime, returnTime: inp.returnTime,
     usableAh: usableAhFrom(inp.motor), band: depth ? depth.band : null,
     holding: depth ? depth.holding : null, lake: inp.lakeName,
+    // THE WEATHER, BUILT WHERE THE WEATHER IS. `inp`, `ramp` and `forecast` all exist here and
+    // none of them do in buildFromPicked(), which is how this path came to send the model a
+    // `conditions` object holding one field.
+    //
+    // conditionsFrom() was private to smart-plan-v2-wiring.js. It is in plan-inputs.js now and
+    // both tabs call it, so clarity, water temperature, pool level, the hour-by-hour wind, the
+    // sunrise and the solunar windows reach the prompt whichever tab picked the water. The
+    // forecast was already fetched twenty lines up -- to write the reasons on the map -- and then
+    // not passed on.
+    //
+    // Solunar was not computed on this path at all; `solunarFor` is pure arithmetic on the date
+    // and the ramp position, so it costs nothing and there is no reason one tab should have it.
+    conditions: conditionsFrom(inp, ramp, solunarFor(inp.dateStr, ramp[1], ramp[0]), forecast),
+    // The windows themselves, for notifications.js. loadSessionFromPlan() arms the major/minor
+    // alerts off this and the Pick Water call handed it `undefined` -- "This path computes no
+    // solunar, so it hands over none", which was true and did not have to be.
+    solunar: solunarFor(inp.dateStr, ramp[1], ramp[0]),
+    // THE WHOLE BAND OBJECT, NOT JUST ITS TWO EASIEST FIELDS.
+    //
+    // buildFromPicked() calls `describeDepthBand(T.depth, ...)` and NOTHING HAS EVER SET T.depth.
+    // `T.depthMin`/`T.depthMax` are the map's depth slider and are a different quantity entirely,
+    // so the name looked taken and the object was dropped here instead.
+    //
+    // describeDepthBand(undefined) does not throw. It returns `ft: null`, `basis: null`,
+    // `holding: 'unknown'` and the unknown-holding note -- "The research does not say whether
+    // Striped Bass are on the bottom or suspended here in Summer... Treat the depths as less
+    // certain than usual." Every Pick Water prompt has carried that sentence, on every lake,
+    // including the ones whose profile says `suspended` in a sourced quote -- and the water on
+    // screen was picked BY that same holding rule three hundred lines up.
+    //
+    // `band` and `holding` stay because the map, the strip and reasons() read them by those
+    // names; this is the object the prompt needs, which carries `basis`, `generic`,
+    // `waterDepthFt` and `sourceQuote` as well.
+    depth,
     // DERIVED HERE because this is where the profile, the species and the date all exist. The
     // profile was being loaded twelve lines above, spent on depthBandFor() alone, and dropped.
     // THE CHART THIS PLAN IS BEING BUILT ON, not the chart that was current the day somebody
@@ -1055,7 +1125,8 @@ export async function buildFromPicked() {
         // the model. Ryan found it the first time he pressed the button after I added the line.
         // `T.dateStr` is what findWater() stored for exactly this, and line 618 builds the same
         // Date from it the same way.
-        conditions: { depthBand: describeDepthBand(T.depth, T.species,
+        conditions: { ...(T.conditions || {}),
+                      depthBand: describeDepthBand(T.depth, T.species,
                                                    getSeason(new Date(`${T.dateStr}T12:00:00`),
                                                              T.waterTempF)) },
         waterState,
@@ -1097,6 +1168,15 @@ export async function buildFromPicked() {
   const sn = seasonNote(new Date(`${T.dateStr}T12:00:00`), T.waterTempF);
   if (sn) r.problems = [...(r.problems || []), sn];
 
+  // WHICH WIND THE SAFETY CALL WAS MADE ON. Same note, same reason, as the Smart Plan path: a
+  // daily maximum cannot tell a calm dawn from a blown-out noon, and the model was asked to rule
+  // on wind for a 12.5 ft kayak either way. Never silent about which one it had.
+  if (!(T.windByHour && T.windByHour.length)) {
+    r.problems = [...(r.problems || []),
+      'no hourly wind for this water — the safety call was made on a daily maximum, '
+      + 'which cannot tell a calm dawn from a blown-out noon'];
+  }
+
   if (r.problems && r.problems.length) {
     console.warn('[pick-water] the plan came back with %d problem(s):', r.problems.length);
     for (const p of r.problems) console.warn('  •', p);
@@ -1114,9 +1194,27 @@ export async function buildFromPicked() {
     speedMph: built.cards[0] ? built.cards[0].speedMph : TROLL_MPH,
     stopCandidates: built.stopCandidates,
     scoutReport: built.rationale,
+    // THE MAJORS, ON THE CARD. Same line the Smart Plan tab draws, from the same windows this day
+    // was built with -- see `T.solunar`.
+    solunar: T.solunar
+      ? `Majors ${(T.conditions && T.conditions.solunar
+                   ? T.conditions.solunar.majors : []).join(', ')}` : '',
     cardDefs: built.cards, unified: built.timeline,
   });
   syncSpread(built.cards, built.routeRods, built.routeSpeeds);
+
+  // THE MODEL'S NO-GO, AND EVERYTHING ELSE IT WANTED TO SAY, ON SCREEN.
+  //
+  // planIssuesHtml() had one call site and it was in smart-plan-v2-wiring.js. It draws two
+  // things: the red NO-GO panel when the model rules the day unsafe for a 12.5 ft kayak, and the
+  // "N things the plan wants to tell you" list. Neither had ever appeared on this tab. Over 15
+  // sustained or 20 gusting is a no-go whichever tab picked the water.
+  //
+  // AFTER renderSmartPlanUI, not before: that function sets innerHTML on the container, so
+  // anything inserted first is wiped. Same order as the Smart Plan path, and the same reason.
+  const issues = planIssuesHtml(r.plan, r.problems);
+  const uiOut = document.getElementById('smartPlanUIContainer');
+  if (issues && uiOut) uiOut.insertAdjacentHTML('afterbegin', issues);
 
   // THE PLAN HAS TO LEAVE THE APP OR IT IS NOT A PLAN, and this path had no way out.
   //
@@ -1160,8 +1258,11 @@ export async function buildFromPicked() {
     worker: CF_WORKER_URL,
     launch: launchFrom(T.ramp),
     date: T.dateStr || T.date || null,
-    // This path computes no solunar, so it hands over none. The return time it does know, and
-    // that is what the watch expires on.
+    // THE SAME `sol` THIS DAY WAS BUILT WITH. It used to say "this path computes no solunar, so
+    // it hands over none" -- true, and it did not have to be: solunarFor() is arithmetic on the
+    // date and the ramp position, both of which findWater() has. The major and minor windows are
+    // an alert the Echomap can act on, and one tab was arming them and the other was not.
+    solunar: T.solunar || null,
     returnTime: T.returnTime || null,
   });
 
@@ -1191,6 +1292,18 @@ export async function buildFromPicked() {
           + `are routed round the points rather than straight through them`
         : ''}. `
     : '';
+  // A NO-GO IS THE HEADLINE OR IT IS NOT A NO-GO. The banner is already above the timeline; the
+  // status line has to agree with it, or the sentence he actually reads says "Built 5 legs".
+  // Same flag and same wording as the Smart Plan path, and `_planV2NoGo` is what anything asking
+  // "did the app tell him not to launch" reads.
+  if (r.plan.safety && r.plan.safety.isGo === false) {
+    window._planV2NoGo = true;
+    say(`🚨 NO-GO — ${r.plan.safety.warning || 'unsafe conditions for a kayak'}`, true);
+    document.querySelector('#planSubtabs button[data-plansub="plan"]')?.click();
+    return r;
+  }
+  window._planV2NoGo = false;
+
   say(`Built ${picked.length} legs, fished ${seq} — most diagnostic first, so a leg that produces `
     + `nothing still tells you something. That is a search order, not the shortest route. `
     + `${clock}${r.dayCost.ah} Ah of ${T.usableAh}. ${gpx.tracks} tracks and ${gpx.waypoints} waypoints `

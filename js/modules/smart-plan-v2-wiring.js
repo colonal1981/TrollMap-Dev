@@ -16,7 +16,7 @@ import { resolveR2Key } from '../data/lake-keys.js';
 import { getLoadedAccessIndex } from '../data/access-index.js';
 import { getSeason, seasonNote } from '../data/species-intel.js';
 import { depthBandFor, usableAhFrom, researchIntel, structureWeights,
-         describeDepthBand } from './plan-inputs.js';
+         describeDepthBand, conditionsFrom } from './plan-inputs.js';
 import { DEFAULT_WEIGHTS, DEFAULT_RELIEF_WEIGHTS } from './plan-candidates.js';
 import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
 import { TRANSIT_MIN_DEPTH_FT } from './plan-water.js';
@@ -69,26 +69,6 @@ function minutesBetween(a, b) {
   const p = (s) => { const m = /^(\d{1,2}):(\d{2})/.exec(String(s || '')); return m ? +m[1] * 60 + +m[2] : null; };
   const x = p(a), y = p(b);
   return x != null && y != null && y > x ? y - x : null;
-}
-
-/** Only what the model can use: no raw objects, no half-populated research blobs. */
-function conditionsFrom(inp, ramp, sol, forecast) {
-  const c = { clarity: inp.clarity };
-  if (inp.waterTempF) c.waterTempF = inp.waterTempF;
-  if (inp.weather) c.forecast = inp.weather;
-  if (inp.poolLevel) c.poolLevel = inp.poolLevel;
-  // THE HOURS, NOT THE DAILY MAXIMUM. The prompt asks the model to rule on wind for a 12.5 ft
-  // kayak; a daily max makes a calm dawn and a blown-out noon the same number.
-  if (forecast && forecast.windByHour && forecast.windByHour.length) {
-    c.windByHour = forecast.windByHour;
-  }
-  if (forecast && forecast.sunrise) c.sunrise = forecast.sunrise;
-  if (sol) {
-    const hh = (h) => `${String(Math.floor(((h % 24) + 24) % 24)).padStart(2, '0')}:`
-                    + `${String(Math.round((h % 1) * 60)).padStart(2, '0')}`;
-    c.solunar = { majors: [hh(sol.major1), hh(sol.major2)], minors: [hh(sol.minor1), hh(sol.minor2)] };
-  }
-  return c;
 }
 
 /** Build a plan and put it on the screen. Returns the result so a test or the console can read it. */
