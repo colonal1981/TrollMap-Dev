@@ -418,7 +418,23 @@ export function structureWeights(base, baseRelief, structures) {
  * anything the pipeline marks unverified. A field the research could not establish is absent
  * rather than empty — the model must not read a blank as a zero.
  */
-export function researchIntel(profile, species, season, now = Date.now()) {
+/**
+ * THE PACK BEATS THE PROFILE, and the argument that says so is optional so nothing breaks the day
+ * it lands.
+ *
+ * Ryan, 2026-09-04: "contours can change each time Garmin updates them so anything derived from
+ * the packs should be ran when a plan is ran". THE_PROFILE_BECAME_A_CACHE_AND_NOBODY_MOVED_THE_
+ * READS_2026-09-01.md agrees and lists the fields: structuralElements, bottom composition,
+ * attractors, max and average depth, surface acres -- all of it derivable from GeoJSON both
+ * planners already fetch on every run. A number read out of a stored profile is a photograph of
+ * whatever chart was current the day somebody clicked research; the same number derived from the
+ * bytes in hand is today's chart, and it is free.
+ *
+ * `packFacts` is what packDerivedFacts() in lake-research-engine.js returns. When a caller passes
+ * it, its habitat and identity win field by field; when a caller does not, this reads the profile
+ * exactly as it always has, so the two planners can be moved over one at a time.
+ */
+export function researchIntel(profile, species, season, now = Date.now(), packFacts = null) {
   if (!profile) return null;
   const out = [];
   const s = String(season || '').toLowerCase();
@@ -475,10 +491,22 @@ export function researchIntel(profile, species, season, now = Date.now()) {
     out.push(`${label}: ${text}${unit}`);
   };
 
-  const id = profile.identity || {};
+  // Field by field, not block by block: a pack that yields a max depth but no average must not
+  // delete an average the profile still carries, and a pack with no structure layer at all must
+  // not blank a profile that has one.
+  const packHab = (packFacts && packFacts.habitat) || {};
+  const packId = (packFacts && packFacts.identity) || {};
+  const id = { ...(profile.identity || {}), ...packId };
   const lim = profile.limnology || {};
   const bio = profile.biology || {};
-  const hab = profile.habitat || {};
+  const hab = {
+    ...(profile.habitat || {}),
+    ...packHab,
+    structuralElements: {
+      ...((profile.habitat || {}).structuralElements || {}),
+      ...(packHab.structuralElements || {}),
+    },
+  };
 
   put('Lake type', id.archetype || id.bodyType);
   put('Max depth', id.maxDepthFt, ' ft');

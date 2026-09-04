@@ -45,7 +45,13 @@ function jsFiles(dir) {
 // over-approximation only ever makes this test quieter, never louder.
 function producedKeys(engineSrc) {
   const keys = new Set();
-  for (const m of engineSrc.matchAll(/\bout\.([A-Za-z_$][\w$]*)\s*=/g)) keys.add(m[1]);
+  // TWO ACCUMULATOR NAMES, NOT ONE. The helpers that build this block do not agree on what to
+  // call the object they fill: structuresFromPack and waterFeaturesFromPack use `out`,
+  // derivePoiStructures uses `result`. Reading only `out.` made this guard report
+  // `chartedStructurePois` as a key plan-inputs.js reads and the engine cannot write, which is
+  // false -- derivePoiStructures writes it on every run. A guard that cannot see a producer
+  // reports a failure that is about the guard. Found 2026-09-04; the test was red at HEAD.
+  for (const m of engineSrc.matchAll(/\b(?:out|result)\.([A-Za-z_$][\w$]*)\s*=/g)) keys.add(m[1]);
   const lit = /const structuralElements = \{([\s\S]*?)\n {2}\};/.exec(engineSrc);
   if (lit) {
     for (const m of lit[1].matchAll(/^\s*([A-Za-z_$][\w$]*)\s*:/gm)) keys.add(m[1]);

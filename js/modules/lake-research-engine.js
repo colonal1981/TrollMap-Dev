@@ -1127,29 +1127,23 @@ function derivePoiStructures(poiGeo) {
 }
 
 
-async function deriveGeospatialStructureFacts(lakeName) {
-  const contourKey = resolveR2Key(lakeName);
-  const supplementalKey = resolveSupplementalKey(lakeName);
-  const boundaryKey = resolveBoundaryKey(lakeName);
-  // structure.geojson and water_features.geojson are what build_structure.py and
-  // build_water_features.py already derived from this exact pack, offline, against the whole
-  // lake. Research used to re-derive humps and ledges from raw contours in the browser and
-  // never saw points, coves or creek mouths at all.
-  //
-  // NO CACHE-BUSTER. Every one of these carried `?v=${Date.now()}`, which defeated the Worker's
-  // ETag + max-age=300 BY CONSTRUCTION -- it could never hit cache, so a Wateree research run
-  // re-downloaded 9.7 MB of contours and 18.6 MB of depth areas every time. Packs change only
-  // when the uploader runs; five minutes of staleness is the right trade.
-  const [structGeo, featGeo, depthGeo, poiGeo, boundaryGeo] = await Promise.all([
-    contourKey ? fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/${contourKey}/structure.geojson`) : Promise.resolve(null),
-    contourKey ? fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/${contourKey}/water_features.geojson`) : Promise.resolve(null),
-    supplementalKey ? fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/${supplementalKey}/depth_areas.geojson`) : Promise.resolve(null),
-    supplementalKey ? fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/${supplementalKey}/pois.geojson`) : Promise.resolve(null),
-    // Boundary files in R2 use a _3dhp suffix (USGS 3D Hydrography Program).
-    // Try _3dhp first, fall back to bare key for older boundary files.
-    boundaryKey ? fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/${boundaryKey}/boundary.geojson`)
-      : Promise.resolve(null),
-  ]);
+/**
+ * EVERY PACK-DERIVED FACT, FROM GEOJSON THE CALLER ALREADY HOLDS. No fetches, no lake-name
+ * resolution, no R2 -- hand it the layers and it hands back the block.
+ *
+ * WHY IT IS SPLIT FROM THE FETCH. Ryan, 2026-09-04: "contours can change each time Garmin updates
+ * them so anything derived from the packs should be ran when a plan is ran... the research
+ * refactor docs should cover this". They do:
+ * THE_PROFILE_BECAME_A_CACHE_AND_NOBODY_MOVED_THE_READS_2026-09-01.md, "What moves, concretely",
+ * item 1 -- lift the pack derivations out of the research pipeline into the plan path, because
+ * both planners already hold these same objects. A derivation stored in a profile is a photograph
+ * of a chart that has since been replaced; the same derivation run on the bytes in hand cannot be
+ * stale.
+ *
+ * ONE IMPLEMENTATION, TWO CALLERS. deriveGeospatialStructureFacts() is now the fetching half and
+ * calls this, so a plan and a research run cannot disagree about what one pack says.
+ */
+function packDerivedFacts({ lakeName, structGeo, featGeo, depthGeo, poiGeo, boundaryGeo, contourGeo }) {
   const ring = getBoundaryOuterRing(boundaryGeo);
   const structuralElements = {
     ...summarizePointComplexityFromBoundary(ring),
@@ -1165,9 +1159,6 @@ async function deriveGeospatialStructureFacts(lakeName) {
   // Surface area / max depth / average depth is a DIFFERENT job from structure, and it is the
   // only thing that still wants the raw contour geometry. Fetched here rather than above so the
   // structure path no longer pays for it on packs that have structure.geojson.
-  const contourGeo = depthStats_needsContours(depthGeo)
-    ? await fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/${contourKey}/contours.geojson`)
-    : null;
   const depthStats = deriveDepthStatistics(contourGeo, depthGeo, ring);
 
   const identityFacts = {};
@@ -1249,6 +1240,37 @@ async function deriveGeospatialStructureFacts(lakeName) {
     sources: [{ label: 'TrollMap structure / water_features / POI / boundary layers', url: 'internal:contours+supplemental+boundaries', trust: 'OFFICIAL_GIS', sourceType: 'internal_geospatial_layer' }],
     depthStats,
   };
+}
+
+async function deriveGeospatialStructureFacts(lakeName) {
+  const contourKey = resolveR2Key(lakeName);
+  const supplementalKey = resolveSupplementalKey(lakeName);
+  const boundaryKey = resolveBoundaryKey(lakeName);
+  // structure.geojson and water_features.geojson are what build_structure.py and
+  // build_water_features.py already derived from this exact pack, offline, against the whole
+  // lake. Research used to re-derive humps and ledges from raw contours in the browser and
+  // never saw points, coves or creek mouths at all.
+  //
+  // NO CACHE-BUSTER. Every one of these carried `?v=${Date.now()}`, which defeated the Worker's
+  // ETag + max-age=300 BY CONSTRUCTION -- it could never hit cache, so a Wateree research run
+  // re-downloaded 9.7 MB of contours and 18.6 MB of depth areas every time. Packs change only
+  // when the uploader runs; five minutes of staleness is the right trade.
+  const [structGeo, featGeo, depthGeo, poiGeo, boundaryGeo] = await Promise.all([
+    contourKey ? fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/${contourKey}/structure.geojson`) : Promise.resolve(null),
+    contourKey ? fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/${contourKey}/water_features.geojson`) : Promise.resolve(null),
+    supplementalKey ? fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/${supplementalKey}/depth_areas.geojson`) : Promise.resolve(null),
+    supplementalKey ? fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/${supplementalKey}/pois.geojson`) : Promise.resolve(null),
+    // Boundary files in R2 use a _3dhp suffix (USGS 3D Hydrography Program).
+    // Try _3dhp first, fall back to bare key for older boundary files.
+    boundaryKey ? fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/${boundaryKey}/boundary.geojson`)
+      : Promise.resolve(null),
+  ]);
+  // The one layer the structure half does not need, so packs that carry structure.geojson no
+  // longer pay for it. The pure half takes whatever this resolves to, including null.
+  const contourGeo = depthStats_needsContours(depthGeo)
+    ? await fetchGeoJsonMaybe(`${CF_WORKER_URL}/chartpacks/${contourKey}/contours.geojson`)
+    : null;
+  return packDerivedFacts({ lakeName, structGeo, featGeo, depthGeo, poiGeo, boundaryGeo, contourGeo });
 }
 
 /**
@@ -3535,4 +3557,4 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
   return { contradictions };
 }
 
-export { runFullPipeline, runAgents, runAgent, runResume, assembleAndSaveProfile, validateExistingFacts, recoverSmartPlanFacts, deriveGeospatialStructureFacts, renderLog, _state, RESEARCH_ORDER, FRESHWATER_RESEARCH_ORDER, COASTAL_RESEARCH_ORDER, FRESHWATER_PROFILE_SECTIONS, COASTAL_PROFILE_SECTIONS, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log, getCoastalR2Key, isCoastalLake, getResearchOrderForLake, getCoastalZoneMeta };
+export { runFullPipeline, runAgents, runAgent, runResume, assembleAndSaveProfile, validateExistingFacts, recoverSmartPlanFacts, deriveGeospatialStructureFacts, packDerivedFacts, renderLog, _state, RESEARCH_ORDER, FRESHWATER_RESEARCH_ORDER, COASTAL_RESEARCH_ORDER, FRESHWATER_PROFILE_SECTIONS, COASTAL_PROFILE_SECTIONS, RESEARCH_LABELS, cloneJson, hasResearchValue, sanitize, sanitizeStateFromLakeName, log, getCoastalR2Key, isCoastalLake, getResearchOrderForLake, getCoastalZoneMeta };
