@@ -546,6 +546,10 @@ PASSTHROUGH_REGISTRIES = {
         "42 Georgia waters lose their consumption advisory, and 40 GA waters in the app have no "
         "species source at all -- the largest hole of the four states; build it with "
         "parse_ga_fish_advisories.py",
+    "fishbase_traits.json":
+        "no measured trophic level or size ceiling for any fish, so the only thing "
+        "saying what is forage and what is a target is the hand-written "
+        "NON_GAME_SPECIES set in facts-util.js; build it with build_fishbase_traits.py",
 }
 
 
