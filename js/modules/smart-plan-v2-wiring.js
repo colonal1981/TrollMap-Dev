@@ -230,7 +230,12 @@ export async function runSmartPlanV2() {
       catches: state.CATCHES || [],
       // What the research pipeline actually found about this water — thermocline, oxygen,
       // forage, habitat, the lot. v2 was sending none of it.
-      intel: researchIntel(researched, species, season),
+      //
+      // A CALLBACK, BECAUSE NEITHER SIDE HAS BOTH HALVES. The profile, the species and the season
+      // are here; the chartpack is fetched inside buildSmartPlanV2. Passing a closure lets the
+      // pack's own structure, coves, creek mouths and POIs beat the ones frozen in the profile
+      // without this function downloading the pack a second time.
+      intelFor: (packFacts) => researchIntel(researched, species, season, Date.now(), packFacts),
       // THE SAFETY SECTION'S HAZARD SENTENCE, which has never once had anything to say because
       // nothing filled this. Same profile, already loaded, one field further down.
       tackle: castableOrTrollable.map((l) => l.name),

@@ -20,6 +20,9 @@
 import { selectCandidates, structureIndex, forModel, orientLegs, poiSpotFeatures,
          attractorSpotFeatures, chartedGrid, chartedHazards } from './plan-candidates.js';
 import { buildPlanRequest, parsePlanResponse, planArgsFrom } from './plan-prompt.js';
+// THE PACK'S OWN FACTS. Pure, and it takes the layers fetched below -- see researchIntel() in
+// plan-inputs.js and THE_PROFILE_BECAME_A_CACHE_AND_NOBODY_MOVED_THE_READS_2026-09-01.md item 1.
+import { packDerivedFacts } from '../utils/pack-facts.js';
 import { assemblePlan, validatePlan } from './plan-assemble.js';
 import { connectionFor, snapEligibleFrom } from '../data/lure-knowledge.js';
 
@@ -125,6 +128,24 @@ export async function buildSmartPlanV2(o) {
   // The other half of the same idea: which of the bag may be trolled at all.
   const trollable = (o.inventory || []).filter((l) => l && l.trollable).map((l) => l.name);
 
+  // THE CHART THIS PLAN IS BEING BUILT ON, not the chart that was current the day somebody
+  // clicked research. structFc, waterFc and poisFc were fetched at the top of this function; the
+  // derivation is the same one a research run makes and is free on what is already in hand.
+  //
+  // NO DEPTH AREAS HERE, DELIBERATELY. This planner does not fetch them and they are the biggest
+  // file in the pack -- 18.6 MB on Wateree. So max and average depth still come from the profile
+  // on this path, and structure, coves, creek mouths, POIs, attractors and bottom come from the
+  // chart. Pick Water fetches depth_areas for its own reasons and gets the depths with them.
+  //
+  // `intelFor` is a callback rather than a value because the caller holds the profile, the species
+  // and the season while this function holds the pack, and neither can build the line alone. A
+  // caller that passes plain `intel` still works, which is what every test does.
+  const packFacts = packDerivedFacts({
+    lakeName: o.water || o.r2Key, structGeo: structFc, featGeo: waterFc, poiGeo: poisFc,
+    depthGeo: null, boundaryGeo: null, contourGeo: null,
+  });
+  const intel = typeof o.intelFor === 'function' ? o.intelFor(packFacts) : o.intel;
+
   const req = buildPlanRequest({
     candidates: candidates.map((c) => forModel(c)),
     water: o.water, ramp: o.rampName, date: o.date,
@@ -134,7 +155,7 @@ export async function buildSmartPlanV2(o) {
     // So the prompt can say HOW each bait reaches a depth rather than leaving the model to read
     // one off the lure's name -- see depthNote() in plan-prompt.js.
     lureByName: o.lureByName,
-    usableAh: o.usableAh, intel: o.intel,
+    usableAh: o.usableAh, intel,
     // THE CHART FIRST, THE RESEARCH SECOND. The charted ones come out of the pack this function
     // already fetched; the wiring adds the profile's prose. Each line says which it is, so when
     // navigation.hazards retires this half simply goes empty and the sentence still stands.

@@ -95,3 +95,27 @@ test('an empty pack produces nothing rather than a block of zeroes', () => {
     poiGeo: null, boundaryGeo: null, contourGeo: null,
   }), null);
 });
+
+// ── THE CALLBACK, WHICH IS THE ONLY WAY BOTH HALVES MEET ─────────────────────────────────────
+//
+// smart-plan-v2-wiring.js holds the profile, the species and the season; buildSmartPlanV2 holds
+// the pack, because it is the thing that downloads it. Neither can build the intel line alone, so
+// the wiring passes a closure and the planner calls it with what it fetched. A caller that passes
+// a plain `intel` string still works -- every existing test does exactly that, which is why the
+// old field had to keep working rather than be replaced.
+test('the intelFor closure is what carries the pack into the prompt', () => {
+  const seen = [];
+  const intelFor = (packFacts) => {
+    seen.push(packFacts);
+    return researchIntel(PROFILE, SPECIES, 'summer', Date.now(), packFacts);
+  };
+  const out = intelFor({ habitat: { structuralElements: { points: 31 } } });
+  assert.equal(seen.length, 1);
+  assert.match(line(out, 'Charted points'), /31/);
+});
+
+test('and with no closure the stored profile still answers, unchanged', () => {
+  const o = { intel: researchIntel(PROFILE, SPECIES, 'summer') };
+  const intel = typeof o.intelFor === 'function' ? o.intelFor({}) : o.intel;
+  assert.match(line(intel, 'Charted points'), /12/);
+});
