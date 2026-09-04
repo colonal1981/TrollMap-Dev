@@ -7,6 +7,8 @@ import { makePredicate } from '../data/water-filter.js';
 import { registryRecordFor } from '../data/access-index.js';
 import { researchedNames } from '../data/research-ids.js';
 import { workerHeaders } from '../utils/worker-auth.js';
+import { researchIntel } from './plan-inputs.js';
+import { getSeason } from './plan-preflight.js';
 
 
 function renderContradictionsAlert(contradictions, lakeName) {
@@ -422,6 +424,7 @@ function renderProfile(profile) {
   }
   _state.profileParts = parts;
 
+  renderPlanInput(profile);
   renderSections(profile);
   renderSources(profile);
   renderSummary(profile);
@@ -994,6 +997,84 @@ function formatHumanReadableSection(key, data) {
   }
 
   return `<pre style="font-size:11px;white-space:pre-wrap">${esc(JSON.stringify(data, null, 2))}</pre>`;
+}
+
+
+/**
+ * The block Smart Plan actually receives for this water, produced by the function the plan calls.
+ *
+ * THE_RESEARCH_TAB_BECOMES_THE_SMART_PLAN_INPUT_VIEWER_2026-09-02.md, in Ryan's words: "research
+ * is what goes into smart plan... that tab will be rebuilt to show everything that smartplan gets
+ * as an input." And the rule that goes with it: if a value reaches the plan prompt the tab shows
+ * it; if it does not reach the plan, it does not belong on the tab.
+ *
+ * RENDERED BY researchIntel(), NOT DESCRIBED. A panel that re-implements the block is a second
+ * answer waiting to disagree with the first, and the whole reason this panel exists is that
+ * nobody could see which fields were reaching a plan. `agency_lake_facts.json` was parsed on
+ * 2026-08-28 and read by nothing until 09-01 -- four days of correct work addressed to nobody,
+ * invisible because there was nowhere to look.
+ *
+ * SPECIES IS NOT PICKED HERE. The tab has no target-species control and inventing one would be a
+ * second place to set it. Instead every species the profile carries a researched band for is
+ * shown, which is what a plan for that species would get, and the count says how many.
+ *
+ * PACK FACTS ARE NOT IN THIS BLOCK AND THE PANEL SAYS SO. researchIntel() takes them as its fifth
+ * argument and prefers them field by field; they are derived at plan time from the chartpack --
+ * see js/utils/pack-facts.js -- so they exist only once a plan runs, and showing the profile's
+ * stored max depth here as if it were the plan's would be the photograph-of-a-chart mistake this
+ * refactor keeps deleting.
+ */
+function renderPlanInput(profile) {
+  const box = document.getElementById('researchPlanInput');
+  if (!box) return;
+  if (!profile) {
+    box.innerHTML = '<div class="muted" style="padding:10px">No profile loaded.</div>';
+    return;
+  }
+  const season = getSeason();
+  const ti = profile.trollingIntelligence || {};
+  const species = Object.keys(ti).filter((k) => ti[k] && typeof ti[k] === 'object');
+  // A profile with no per-species block still hands the plan its limnology, forage and roster, so
+  // the block is asked for once with no species rather than not asked for at all.
+  const asks = species.length ? species : [null];
+
+  const esc = (v) => String(v == null ? '' : v)
+    .replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+
+  const blocks = [];
+  for (const sp of asks) {
+    let text = null;
+    try { text = researchIntel(profile, sp, season, Date.now(), null); } catch (e) { text = null; }
+    if (text) blocks.push({ sp, text });
+  }
+
+  if (!blocks.length) {
+    box.innerHTML = '<div class="muted" style="padding:10px">This profile contributes NOTHING to a '
+      + 'plan. Every field it holds is either empty or read by no line of the prompt.</div>';
+    return;
+  }
+
+  const lines = new Set();
+  for (const b of blocks) for (const l of b.text.split('\n')) if (l.startsWith('- ')) lines.add(l);
+
+  let html = '<div style="padding:8px 10px;font-size:12px;color:var(--muted)">'
+    + `Season <b>${esc(season)}</b> · ${blocks.length} target`
+    + `${blocks.length === 1 ? '' : 's'} the profile has a researched band for · `
+    + `<b>${lines.size}</b> line${lines.size === 1 ? '' : 's'} reach the prompt. `
+    + 'Anything in Research Sections below that is not here reaches no plan. '
+    + 'Depth, structure and bottom come from the chartpack at plan time and are not in this block.'
+    + '</div>';
+
+  for (const b of blocks) {
+    html += '<div style="margin:6px 10px 10px">'
+      + (b.sp ? `<div style="font-size:11px;font-weight:700;text-transform:uppercase;`
+                + `letter-spacing:.06em;color:var(--muted);margin-bottom:4px">`
+                + `if you target ${esc(b.sp)}</div>` : '')
+      + `<pre style="white-space:pre-wrap;word-break:break-word;font-size:11px;line-height:1.5;`
+      + `margin:0;padding:8px 10px;border:1px solid var(--border,#333);border-radius:8px">`
+      + `${esc(b.text)}</pre></div>`;
+  }
+  box.innerHTML = html;
 }
 
 function renderSections(profile) {
