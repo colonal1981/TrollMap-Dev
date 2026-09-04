@@ -127,16 +127,115 @@ def count_waters_with(container, leaf, slugs):
     records carry `meta.species`. Reporting the file count as if it were the field count is how
     "182 of 355 have species" got published when the answer was 216.
     """
-    n = 0
+    return len(waters_with(container, leaf, slugs))
+
+
+def waters_with(container, leaf, slugs):
+    """The same question as a SET, because the union across places is the only honest total.
+
+    Counting each place separately and adding gives a number bigger than the index. Counting one
+    place gives a number smaller than the app. Only the union of the slug sets is the answer, so
+    the set is the primitive here and the count is a view of it.
+    """
+    out = set()
     for slug, rec in container.items():
         if slug not in slugs:
             continue
         try:
             if at_path(rec, leaf):
-                n += 1
+                out.add(slug)
         except Exception:
             pass
-    return n
+    return out
+
+
+PROFILE_DIRNAME = '_research_profiles'
+COUNTY_TAIL = re.compile(r'\s*\([^)]*\bCo\b[^)]*\)\s*$', re.I)
+
+
+def name_index(IDX):
+    """Every name the index knows for a water -- county-stamped and bare -> {slug}."""
+    out = {}
+    for s, r in IDX.items():
+        for n in [r.get('display_name'), r.get('name')] + list(r.get('legacy_display_names') or []):
+            if not n:
+                continue
+            for k in (str(n).strip().lower(), COUNTY_TAIL.sub('', str(n)).strip().lower()):
+                out.setdefault(k, set()).add(s)
+    return out
+
+
+def stored_profiles(reg, slugs, IDX):
+    """THE FIFTH PLACE, READ. Returns (section, {slug: [species]}).
+
+    Until mirror_research_profiles.py existed this section could only DESCRIBE R2 and stamped
+    itself `not_countable_offline`. That hole is what let "192 of 355 waters have species" be
+    published an hour after "Parr Shoals has ten species in its profile".
+
+    BOUND BY THE NAME THE PROFILE CALLS ITSELF, NOT BY ITS STORAGE ID. `lakeName` is written into
+    the document by the run that made it; the id is whatever the water was filed under the day
+    version 1 was written. Parr Shoals Reservoir's profile lives at `parr_reservoir_sc`, and
+    Lake Sidney Lanier's at `lake_lanier_ga`. A binding on the id would miss every legacy key.
+
+    WHAT IT REFUSES TO GUESS. A profile whose lakeName matches no index name is listed in
+    `unbound`, not attached to the nearest water. Two profiles binding to one slug are listed in
+    `two_profiles_one_water`, not silently merged -- which of them the app serves depends on
+    resolveResearchStorageId and cannot be answered from the drive.
+    """
+    d = os.path.join(reg, PROFILE_DIRNAME)
+    if not os.path.isdir(d):
+        return {'mirror': 'registry/%s/  -- NOT PRESENT. Run mirror_research_profiles.py.'
+                          % PROFILE_DIRNAME,
+                'not_countable_offline': True}, {}
+    byname = name_index(IDX)
+    got, unbound, unsourced, dupes = {}, [], [], {}
+    files = [f for f in sorted(os.listdir(d)) if f.endswith('.json') and not f.startswith('_')]
+    for f in files:
+        try:
+            prof = json.load(open(os.path.join(d, f), encoding='utf-8'))
+        except Exception as exc:
+            unbound.append({'file': f, 'lakeName': None, 'why': type(exc).__name__})
+            continue
+        raw = str(prof.get('lakeName') or '').strip().lower()
+        cands = byname.get(raw) or byname.get(COUNTY_TAIL.sub('', raw).strip()) or set()
+        species = [x for x in ((prof.get('biology') or {}).get('predatorSpecies') or []) if x]
+        # NO SOURCE OF ANY KIND behind the biology: no per-field evidence, no source list, no
+        # extracted facts. Three of eighty on 2026-09-04, and Parr Shoals is one of them.
+        ev = ((prof.get('evidence') or {}).get('biology') or {})
+        if species and not ev and not (prof.get('sources') or []) \
+                and not (prof.get('_extractedFactsCount') or 0):
+            unsourced.append({'file': f, 'lakeName': prof.get('lakeName'),
+                              'species': len(species),
+                              'confidence': ((prof.get('confidence') or {})
+                                             .get('biology') or {}).get('reason')})
+        if len(cands) == 1:
+            slug = next(iter(cands))
+            if slug in got:
+                dupes.setdefault(slug, []).append(f)
+            else:
+                got[slug] = species
+                dupes.setdefault(slug, []).append(f)
+        else:
+            unbound.append({'file': f, 'lakeName': prof.get('lakeName'),
+                            'why': 'ambiguous: %s' % sorted(cands) if cands
+                                   else 'no index name matches'})
+    return {
+        'where': 'R2 bucket R2_TROLLMAP_CHARTPACKS, key lakes/<researchStorageId>.json',
+        'read_via': 'GET <worker>/research/get?lake=<display name>  (or /lakes/<id>)',
+        'written_by': 'Worker/research/storage.js, from research_lakes.py runs',
+        'mirror': 'registry/%s/<researchStorageId>.json -- mirror_research_profiles.py, and '
+                  'research_lakes.py writes one on every save' % PROFILE_DIRNAME,
+        'mirrored': len(files),
+        'bound_to_a_shipped_water': len(got),
+        'carrying_predator_species': sum(1 for v in got.values() if v),
+        'unbound': unbound,
+        'two_profiles_one_water': {k: v for k, v in dupes.items() if len(v) > 1},
+        'no_source_behind_the_biology': unsourced,
+        'why_it_matters': 'This is the union the CARD shows: every floor above, plus what '
+                          'research found. A water can be blank in every registry file and '
+                          'still have species here -- and a species here can have NOTHING '
+                          'behind it, which no registry file can ever be.',
+    }, got
 
 
 def find_slug_container(o, slugs, path='', depth=0, best=None):
@@ -259,7 +358,7 @@ def main():
     slugs = set(IDX)
     print('index: %d shipped waters' % len(slugs))
 
-    files, facts, unread = {}, {}, []
+    files, facts, unread, fact_slugs = {}, {}, [], {}
     for f in sorted(os.listdir(reg)):
         if not f.endswith('.json') or f.startswith(SKIP_PREFIX):
             continue
@@ -301,15 +400,28 @@ def main():
                 for fact in FACTS:
                     if last.lower() == fact.lower():
                         prefix = '' if path == '.' else path + '.'
+                        here = waters_with(container, leaf, slugs)
+                        fact_slugs.setdefault(fact, set()).update(here)
                         facts.setdefault(fact, []).append({
                             'file': f,
                             'path': '%s<slug>.%s' % (prefix, leaf),
-                            'waters_with_a_value_here': count_waters_with(container, leaf, slugs),
+                            'waters_with_a_value_here': len(here),
                             'file_mentions_waters': entry['covers_shipped_waters'],
                         })
         else:
             entry['keyed_by'] = 'not by our slug'
         files[f] = entry
+
+    profiles, profile_species = stored_profiles(reg, slugs, IDX)
+    if profile_species:
+        carrying = {k for k, v in profile_species.items() if v}
+        facts.setdefault('species', []).append({
+            'file': '%s/<researchStorageId>.json' % PROFILE_DIRNAME,
+            'path': 'biology.predatorSpecies[]',
+            'waters_with_a_value_here': len(carrying),
+            'file_mentions_waters': len(profile_species),
+        })
+        fact_slugs.setdefault('species', set()).update(carrying)
 
     doc = {
         '_note': 'GENERATED by build_data_map.py -- do not hand-edit, do not upload. A map of '
@@ -324,7 +436,7 @@ def main():
             '2. `fact_index` -- ask it "where does species live" before writing any count.',
             '3. `runtime_writers` -- floors applied while a profile is built, held in NO file. '
             'SC_INSHORE_ROSTER is the one that got missed.',
-            '4. `stored_profiles` -- R2 lakes/<id>.json, what the CARD actually shows.',
+            '4. `stored_profiles` -- R2 lakes/<id>.json, what the CARD actually shows. MIRRORED onto the drive by mirror_research_profiles.py, so it is readable here; if `mirrored` is absent the mirror has not been run and any count is short.',
             '5. `js_data_tables` -- constants the Worker imports directly.',
             'COUNTING ANY OF THESE ALONE GIVES A WRONG ANSWER. Say which places a count covers.',
         ],
@@ -332,17 +444,16 @@ def main():
         'other_registry_files': {k: v for k, v in files.items() if v.get('keyed_by') != 'our slug'},
         'fact_index': {k: sorted(v, key=lambda x: -x['waters_with_a_value_here'])
                        for k, v in sorted(facts.items())},
-        'runtime_writers': runtime_writers(repo),
-        'stored_profiles': {
-            'where': 'R2 bucket R2_TROLLMAP_CHARTPACKS, key lakes/<researchStorageId>.json',
-            'read_via': 'GET <worker>/research/get?lake=<display name>  (or /lakes/<id>)',
-            'written_by': 'Worker/research/storage.js, from research_lakes.py runs',
-            'why_it_matters': 'This is the union the CARD shows: every floor above, plus what '
-                              'research found. A water can be blank in every registry file and '
-                              'still have species here -- Lake Greenwood had Largemouth Bass at '
-                              'version 17 while every file said nothing.',
-            'not_countable_offline': True,
+        'union_of_places': {
+            'note': 'THE ONLY HONEST TOTAL. Each place below is a subset; adding them '
+                    'double-counts and reading one alone under-counts. Covers registry files '
+                    'plus mirrored profiles -- NOT the runtime writers, which hold no file, so '
+                    'a coastal zone fed only by SC_INSHORE_ROSTER is missing from these.',
+            'shipped_waters': len(slugs),
+            'waters_with': {k: len(v) for k, v in sorted(fact_slugs.items())},
         },
+        'runtime_writers': runtime_writers(repo),
+        'stored_profiles': profiles,
         'js_data_tables': {f: {'read_by': grep(repo, f)}
                            for f in sorted(os.listdir(os.path.join(repo, 'js', 'data')))
                            if f.endswith('.js')} if os.path.isdir(os.path.join(repo, 'js', 'data')) else {},

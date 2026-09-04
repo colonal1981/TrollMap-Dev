@@ -379,6 +379,16 @@ def collect(root, repo):
             'facts_indexed': len(d.get('fact_index') or {}),
             'species_paths': len((d.get('fact_index') or {}).get('species') or []),
             'runtime_written_fields': len(d.get('runtime_writers') or {}),
+            # THE UNION, not any one place. A drop here means a source stopped binding, and it
+            # is the number every "how many waters have species" answer has to come from.
+            'profiles_mirrored': (d.get('stored_profiles') or {}).get('mirrored'),
+            'profiles_bound': (d.get('stored_profiles') or {}).get('bound_to_a_shipped_water'),
+            'waters_with_species_anywhere':
+                ((d.get('union_of_places') or {}).get('waters_with') or {}).get('species'),
+            'profiles_with_no_source_behind_the_biology':
+                len((d.get('stored_profiles') or {}).get('no_source_behind_the_biology') or []),
+            'waters_with_two_profiles':
+                len((d.get('stored_profiles') or {}).get('two_profiles_one_water') or {}),
         }
 
     safe('data_map', data_map)
