@@ -1271,14 +1271,19 @@ function renderPackage(profile, packageFiles, versions) {
       html += `<div style="font-size:11px">`;
       for (const v of versions) {
         const vfile = v.key.split('/').pop();
-        html += `<div>• <span class="pkg-ver-btn" data-file="${esc(vfile)}" data-key="${esc(v.key)}" style="cursor:pointer;color:var(--accent);text-decoration:underline dotted">${esc(v.key)}</span> ${v.size ? `— ${(v.size / 1024).toFixed(1)}KB` : ''}</div>`;
+        // THE VERSION NUMBER, not the filename. The click below asks /research/get?version=N;
+        // it used to ask /research/package?file=v140.json, which reads lake_packages/<id>/ while
+        // the list beside it comes from lakes/versions/<id>/. Two prefixes, one panel: every
+        // version in this list has 404'd since the day it was written. Ryan, 2026-09-04: "the app
+        // shows all the old versions but every one of them 404s".
+        html += `<div>• <span class="pkg-ver-btn" data-version="${esc(String(v.version ?? ''))}" data-key="${esc(v.key)}" style="cursor:pointer;color:var(--accent);text-decoration:underline dotted">${esc(v.key)}</span> ${v.size ? `— ${(v.size / 1024).toFixed(1)}KB` : ''}</div>`;
       }
       html += `</div>`;
     }
     verEl.innerHTML = html;
 
     verEl.querySelectorAll('.pkg-ver-btn').forEach(btn => {
-      btn.addEventListener('click', () => openVersionFile(lakeName, btn.dataset.file));
+      btn.addEventListener('click', () => openVersionFile(lakeName, btn.dataset.version, btn.dataset.key));
     });
   }
 }
@@ -1323,15 +1328,20 @@ async function openPackageFile(lakeName, filename) {
   }
 }
 
-async function openVersionFile(lakeName, vfile) {
+async function openVersionFile(lakeName, version, key) {
   const modal = ensureJsonModal();
-  modal.setTitle(`${vfile} — ${lakeName}`);
+  modal.setTitle(`${key || `v${version}`} — ${lakeName}`);
   modal.show('Loading…');
   try {
-    const safeKey = sanitize(lakeName);
-    const res = await fetch(`${CF_WORKER_URL}/research/package?lake=${encodeURIComponent(lakeName)}&file=${encodeURIComponent(vfile)}`);
+    if (!version) throw new Error('this row carries no version number');
+    // `sanitize(lakeName)` was computed here and never used, which is the tell that this call was
+    // written against a different route. The name is resolved Worker-side, the same way the master
+    // read resolves it, so nothing here has to guess the key.
+    const res = await fetch(`${CF_WORKER_URL}/research/get?lake=${encodeURIComponent(lakeName)}&version=${encodeURIComponent(version)}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const text = await res.text();
+    const body = await res.json();
+    if (!body.ok) throw new Error(body.error || 'version not returned');
+    const text = JSON.stringify(body.profile);
     let pretty;
     try {
       pretty = JSON.stringify(JSON.parse(text), null, 2);
