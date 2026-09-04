@@ -355,6 +355,49 @@ def collect(root, repo):
     safe('coastal', coastal)
 
     safe('test_files', lambda: sum(1 for f in os.listdir(Q('test')) if f.endswith('.test.js')))
+
+    # ── WHERE THE DATA IS, WHICH IS A FACT THAT ROTS FASTER THAN ANY NUMBER ─────────────────
+    #
+    # 2026-09-04. Asked how many waters have a species list, a session answered wrong FOUR TIMES,
+    # every time by counting one kind of place and not knowing a fifth existed: it missed the
+    # inshore floor applied in Worker code, missed `meta.species` one level down in the ramp
+    # feeds, missed the ramp feeds entirely, and missed the stored research profiles. Ryan:
+    # "holy crap you need to draw yourself a map in the form of a json."
+    #
+    # build_data_map.py writes that map, derived. These checks are here because THIS PAGE'S OWN
+    # LESSON is that a prose pointer rots and a check does not -- if the map is not built, or a
+    # source disappears from it, the run says so instead of a future session believing an
+    # unmeasured sentence. See the READ FIRST section on the data map.
+    def data_map():
+        p = R('registry', '_data_map.json')
+        if not os.path.exists(p):
+            return 'MISSING -- run build_data_map.py'
+        d = _j(p)
+        return {
+            'generated': d.get('generated'),
+            'slug_keyed_files': len(d.get('slug_keyed_files') or {}),
+            'facts_indexed': len(d.get('fact_index') or {}),
+            'species_paths': len((d.get('fact_index') or {}).get('species') or []),
+            'runtime_written_fields': len(d.get('runtime_writers') or {}),
+        }
+
+    safe('data_map', data_map)
+
+    # THE MAP MUST STILL NAME THE PLACE THAT WAS MISSED. A count of sources can stay identical
+    # while the one entry that mattered is gone, so this asserts the specific thing rather than
+    # its cardinality: the inshore floor lives in code and in no file at all.
+    def data_map_names_the_floor():
+        p = R('registry', '_data_map.json')
+        if not os.path.exists(p):
+            return 'MISSING -- run build_data_map.py'
+        blob = json.dumps(_j(p))
+        return {
+            'sc_inshore_roster': 'SC_INSHORE_ROSTER' in blob,
+            'ramp_meta_species': 'meta.species' in blob,
+            'stored_profiles': 'lakes/<researchStorageId>.json' in blob,
+        }
+
+    safe('data_map_names_the_floor', data_map_names_the_floor)
     return out
 
 
