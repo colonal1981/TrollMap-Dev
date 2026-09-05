@@ -137,10 +137,14 @@ const DECLARED = [
    'Georgia is deliberately absent from AGENCY_INDEXES, so this is still the GA seed list.'],
 
   // ── aliases: legitimate and permanent ─────────────────────────────────────────────────────
-  ['Worker/research/keys.js', 'RESEARCH_CANONICAL_IDS', 12, 'alias',
-   'storage-key aliases. Legitimate: the world disagrees about what Thurmond is called.'],
-  ['js/data/research-ids.js', 'RESEARCH_CANONICAL_IDS', 12, 'alias',
-   'THE SAME TABLE, second copy. Pinned identical below.'],
+  ['js/data/research-ids.js', 'RESEARCH_CANONICAL_IDS', 16, 'alias',
+   'storage-key aliases. Legitimate: the world disagrees about what Thurmond is called. THE '
+   + 'ONE COPY as of 2026-09-05 -- Worker/research/keys.js imports it rather than restating it, '
+   + 'the way Worker/research/limnology.js imports js/data/lake-keys.js. It was two, and they '
+   + 'drifted, and the test below caught it: the Worker lost lake_russell_ga on 2026-09-04 and '
+   + 'the client kept it, so the browser was still handing an 88-acre Habersham Co lake the '
+   + 'whole profile of Richard B Russell. 12 -> 16 is that fix plus the four picker spellings '
+   + 'added with it.'],
   ['Worker/research/deterministic.js', 'LEGACY_PROFILE_KEYS', 7, 'alias',
    'profile keys written before the storage-id rules settled. Read-only compatibility.'],
   // DOCUMENT_ALIASES was here until 2026-09-01, eleven waters, and NOT ONE OF ITS KEYS COULD
@@ -197,7 +201,7 @@ const DECLARED = [
   // growth as a bug. This one is SUPPOSED to grow: a name enters when its water leaves the app
   // and leaves when a pack is built for it. It is part of the name-resolution surface, and it
   // exists because deleting a mapping does not stop a name answering, it re-points it.
-  ['js/data/lake-keys.js', 'LAKE_NAMES_WITHOUT_PACK', 20, 'alias',
+  ['js/data/lake-keys.js', 'LAKE_NAMES_WITHOUT_PACK', 26, 'alias',
    'names refused before any matching runs. 13 of the 20 arrived 2026-08-19 with nine waters '
    + 'outside the region polygon; one more is North Fork Reservoir, which is inside it and was '
    + 'never charted by Garmin. lake-keys.test.js asserts every member resolves to null.'],
@@ -346,13 +350,27 @@ test('a NEW table keyed by water names must be declared here', () => {
     + '"gate", resolve against the registry instead of listing waters.');
 });
 
-test('the two copies of RESEARCH_CANONICAL_IDS are identical', () => {
-  // One lives in the Worker and one in the client and nothing keeps them in step. The storage
-  // key they build is what broke on 2026-08-16 when a display name gained a county suffix; two
-  // copies means that fix has to land twice.
-  const a = tablesIn('Worker/research/keys.js').get('RESEARCH_CANONICAL_IDS');
-  const b = tablesIn('js/data/research-ids.js').get('RESEARCH_CANONICAL_IDS');
-  assert.deepEqual(a, b, 'the Worker and client alias tables have drifted');
+test('there is only one RESEARCH_CANONICAL_IDS, and the Worker imports it', () => {
+  // THIS TEST USED TO ASSERT THE TWO COPIES WERE IDENTICAL, AND ON 2026-09-05 IT WAS FAILING.
+  // The Worker's copy had been corrected on 2026-09-04 -- lake_russell_ga removed, four picker
+  // spellings added -- and the client's had not, so the browser still resolved Lake Russell
+  // (Habersham Co, GA), 88 acres, to Richard B Russell's profile. Its own comment named the
+  // cure: "two copies means that fix has to land twice". So there is one, and the assertion is
+  // now that a second cannot come back.
+  assert.equal(tablesIn('Worker/research/keys.js').get('RESEARCH_CANONICAL_IDS'), undefined,
+    'the Worker restated the table instead of importing it');
+  // `tablesIn` returns each table's KEYS, which is all this assertion needs.
+  const one = tablesIn('js/data/research-ids.js').get('RESEARCH_CANONICAL_IDS');
+  assert.ok(Array.isArray(one) && one.length > 0, 'the one copy is in js/data/research-ids.js');
+  assert.match(readFileSync(path.join(ROOT, 'Worker/research/keys.js'), 'utf8'),
+    /import \{[^}]*RESEARCH_CANONICAL_IDS[^}]*\} from '\.\.\/\.\.\/js\/data\/research-ids\.js'/,
+    'the Worker imports the one copy');
+  // The row that caused it. Richard B Russell answers to "Lake Richard Russell"; the Habersham
+  // Co lake answers to "Lake Russell, GA" and must reach its own id and nothing else.
+  assert.ok(!one.includes('lake_russell_ga'),
+    'lake_russell_ga hands an 88-acre lake a 24,608-acre reservoir profile');
+  assert.ok(one.includes('lake_richard_russell_ga'),
+    'Richard B Russell reaches its profile by the name only it answers to');
 });
 
 test('the manifest itself is well formed', () => {

@@ -1,3 +1,4 @@
+import { RESEARCH_CANONICAL_IDS } from '../../js/data/research-ids.js';
 // research/keys.js — split from worker-research.js (behavior-preserving)
 
 function sanitizeLakeId(name) {
@@ -53,59 +54,6 @@ function parseLakeBaseName(displayName) {
   return expandLakeAbbrev(stripped);
 }
 
-const RESEARCH_CANONICAL_IDS = {
-  // Clarks Hill / Thurmond (SC/GA) — SC calls it Thurmond, GA calls it Clarks Hill
-  'lake_thurmond_sc': 'clarks_hill_thurmond_sc_ga',
-  'clarks_hill_lake_ga': 'clarks_hill_thurmond_sc_ga',
-  'j_strom_thurmond_lake': 'clarks_hill_thurmond_sc_ga',
-  'thurmond_lake_sc': 'clarks_hill_thurmond_sc_ga',
-  'thurmond_lake_ga': 'clarks_hill_thurmond_sc_ga',
-  'clarks_hill_thurmond_sc_ga': 'clarks_hill_thurmond_sc_ga',
-  // Lake Wylie (SC/NC) — canonical is SC profile
-  'lake_wylie_nc': 'lake_wylie_sc',
-  'lake_wylie_sc_nc': 'lake_wylie_sc',
-  // Lake Hartwell (SC/GA) — canonical is SC profile
-  'lake_hartwell_sc_ga': 'lake_hartwell_sc',
-  // Lake Russell (SC/GA) — SC calls it Lake Russell, GA calls it Lake Russell — canonical is SC profile
-  'lake_russell_sc_ga': 'lake_russell_sc',
-  // 'lake_russell_ga' IS NOT THIS LAKE. Measured 2026-09-04: the index carries Lake Russell
-  // (Habersham Co, GA), an 88-acre Forest Service lake a hundred miles from the Savannah, whose
-  // own legacy name "Lake Russell, GA" sanitizes to exactly that key. This row handed it Richard
-  // B Russell's whole profile -- 24,608 acres, 15 species, its depth and its trolling
-  // intelligence -- on a lake Ryan could paddle across. Richard B Russell still reaches
-  // lake_russell_sc through its own identity name "Lake Russell, SC", which is a name it
-  // actually answers to; the GA lake now correctly reaches nothing, because it has nothing.
-  //
-  // A CANONICAL MAP KEYED ON A NAME COLLIDES WHEN TWO WATERS SHARE THE NAME. Every row here is
-  // hand-written, and each one is a claim that one spelling belongs to one water. Check the
-  // index for a second owner before adding another.
-  // Lake Chatuge (GA/NC) — GA calls it Lake Chatuge, NC calls it Chatuge Lake — canonical is GA
-  'chatuge_lake_nc': 'lake_chatuge_ga',
-  // Richard B Russell (SC/GA) — GA's feed calls it "Lake Richard Russell", SC's calls it
-  // "Lake Russell", so the picker offers the ONE reservoir twice and the two entries were
-  // reaching two different profiles: a 2026-09-01 batch draft at 54% against the verified one.
-  // Ryan, looking at his own app: "The app is showing me Lake Richard Russell, GA".
-  //
-  // COLLISION CHECKED, which is the rule the removed lake_russell_ga row was written without:
-  // "Lake Richard Russell" belongs to no other water in the index. "Lake Russell" does -- the
-  // 88-acre Habersham Co lake -- which is exactly why that key is not in this table and this
-  // one is.
-  'lake_richard_russell_ga': 'lake_russell_sc',
-  // The rest of the 2026-09-01 fork, from the same cause: the batch drove from the registry's
-  // county-stamped names before /research/save could map them back, so three more waters gained
-  // a second, thinner profile under the spelling the picker happens to show. Ryan's research
-  // picker, read off his screen 2026-09-04: "Lake Sidney Lanier (Hall Co, GA)", "Nottely Lake,
-  // GA", "Watauga Lake, TN" -- each landing on a three-source draft while the verified profile
-  // sat somewhere the picker never asks for.
-  //
-  // COLLISION CHECKED against the app's own 877-name list: each key below is produced by
-  // EXACTLY ONE picker name. That check is the whole difference between these rows and the
-  // lake_russell_ga row that was removed above.
-  'lake_sidney_lanier_hall_co_ga': 'lake_lanier_ga',
-  'nottely_lake_ga': 'lake_nottely_ga',
-  'watauga_lake_tn': 'watauga_tn',
-  'watagua_tn': 'watauga_tn',
-};
 
 function researchStorageId(lakeName) {
   const safe = sanitizeLakeId(lakeName);

@@ -95,8 +95,20 @@ describe('the two agents that used to write the regulations', () => {
     for (const p of ['saltwaterRegulations', 'saltwater_regulations', 'regulations']) {
       expect(paths.includes(p)).toBe(false);
     }
-    // the coastal fields it exists for are untouched
-    expect(paths.includes('tidal.salinityPpt')).toBe(true);
+    // `tidal.salinityPpt` STOOD HERE AND IT WAS THE TEST THAT WAS STALE, NOT THE CODE. This was
+    // the "the coastal fields it exists for are untouched" check, written before the tidal agent
+    // retired. df490ba, 2026-09-01, trimmed all three validation lists to "what has an agent"
+    // after nine agent retirements had left them naming the dead ones -- COASTAL_VALIDATION_
+    // FIELD_PATHS went from 29 entries, 22 of them estuary/tidal/habitat/navigation, to the
+    // biology fields and trollingIntelligence. A path naming a dead agent never fires, because
+    // the validation pass filters by `agentsRan.has(section)`; asserting its presence turned
+    // dead weight into a requirement and kept this file red for four days.
+    //
+    // The assertion this was making is still worth making, against a field that still has an
+    // agent behind it: the regulations rows came out and the list was not gutted with them.
+    expect(paths.includes('biology.baitfishMovement')).toBe(true);
+    expect(paths.includes('biology.forageSpatial')).toBe(true);
+    expect(paths.includes('tidal.salinityPpt')).toBe(false);
   });
 
   it('every agent the run order names is one AGENT_DEFINITIONS declares', () => {
