@@ -279,6 +279,12 @@ export async function buildSmartPlanV2(o) {
   const broken = validatePlan(plan);
   return {
     plan, candidates, request: req, response: res, exchange: raw.meta || null,
+    // WHAT THE APP READ OUT OF THE ANSWER, BEFORE THE ASSEMBLER RAN. planArgsFrom() is the first
+    // reading -- the six rods seated on rods that can carry them, the deploys, the stops matched
+    // to real structure ids, the safety verdict -- and `plan` is the second. Ryan's question,
+    // asked twice, is about the gap between them: "what the LLM gives us and what we do with it...
+    // do we throw away good data". Answering it needs both readings, and only `plan` was returned.
+    args,
     problems: [...args.problems, ...plan.warnings, ...broken],
   };
 }

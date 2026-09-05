@@ -40,6 +40,12 @@ export function initTabs() {
         callGlobal('renderEditTables');
       }
 
+      // Bench tab — restate the Plan tab's current selection, because that is what it runs.
+      // Nothing else happens on open: the bench spends nothing until a button is pressed.
+      if (tab === 'bench') {
+        callGlobal('wirePlanBench');
+      }
+
       // Plan tab — refresh stats and auto-sync worker data blocks.
       if (tab === 'plan') {
         callGlobal('renderPlanStats');

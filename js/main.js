@@ -113,6 +113,7 @@ import { restoreCharts } from './modules/chart-mosaic.js';
 import { loadAllLayers } from './modules/chart-import.js';
 import { renderEditTables } from './modules/edit.js';
 import { renderPlanStats } from './modules/plan-builder.js';
+import { wirePlanBench } from './modules/plan-bench.js';
 
 window.populatePlanLakeDropdown = populatePlanLakeDropdown;
 window.populatePlanRampDropdown = populatePlanRampDropdown;
@@ -126,6 +127,10 @@ window.restoreCharts = restoreCharts;
 window.loadAllLayers = loadAllLayers;
 window.renderEditTables = renderEditTables;
 window.renderPlanStats = renderPlanStats;
+// Wire the bench's two buttons at startup rather than on first tab open, so the panel is live
+// the first time it is looked at. tabs.js calls it again on open to restate the Plan tab's
+// selection; both calls are idempotent -- see the dataset.wired guards.
+window.wirePlanBench = wirePlanBench;
 window.pushAllLocalToCloud = pushAllLocalToCloud;
 window.isPlanRiverValue = isPlanRiverValue;
 window.getPlanRiverDef = getPlanRiverDef;

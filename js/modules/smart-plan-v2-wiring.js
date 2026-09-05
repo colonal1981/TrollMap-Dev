@@ -73,7 +73,22 @@ function minutesBetween(a, b) {
 }
 
 /** Build a plan and put it on the screen. Returns the result so a test or the console can read it. */
-export async function runSmartPlanV2() {
+/**
+ * @param {object}  [opts]
+ * @param {boolean} [opts.dryRun]  build the prompt and stop. No model call, no cost, no plan.
+ * @param {boolean} [opts.bench]   call the model, assemble the plan, and STOP THERE -- no GPX,
+ *                                 no timeline globals, no notification session.
+ *
+ * BOTH EXIST FOR THE SAME REASON AND IT IS NOT A SECOND PLANNER. Ryan, 2026-09-06: "i want this
+ * as something to test the app before a plan is a plan... this way i am not firing alerts off on
+ * my phone for a plan that i will never fish."
+ *
+ * So the bench runs THIS function -- the same inputs, the same prompt, the same assembler -- and
+ * returns before the three things that make a plan a plan: materialisePlan() writes the GPX,
+ * loadSessionFromPlan() arms the phone, and planToTimeline() installs the globals every
+ * downstream reader uses. A parallel implementation would be testing itself.
+ */
+export async function runSmartPlanV2(opts = {}) {
   // v1's status line and v1's container. There is no second set any more.
   const status = $('smartPlanStatus');
   const out = $('smartPlanUIContainer');
@@ -264,6 +279,9 @@ export async function runSmartPlanV2() {
       // The same floor Pick Water sends. A transit is a transit whichever tab planned it.
       routeWater: waterRouter(CF_WORKER_URL, r2Key, { minDepthFt: TRANSIT_MIN_DEPTH_FT }),
       askModel: async (req) => { say('Asking the model…'); return modelAsker(CF_WORKER_URL)(req); },
+      // Straight through. buildSmartPlanV2 returns {plan:null, request, candidates} and spends
+      // nothing -- see the dryRun note there.
+      dryRun: opts.dryRun === true,
     });
   } catch (e) {
     say(`Failed: ${e.message}`, true);
@@ -271,10 +289,28 @@ export async function runSmartPlanV2() {
     return null;
   }
 
+  // THE PROMPT, AND NOTHING ELSE HAPPENS. Before the no-plan branch, because a dry run has no
+  // plan BY DESIGN and reporting that as a failure is how a working thing reads as broken.
+  if (opts.dryRun) {
+    say(`Prompt built — ${(r.request?.user || '').length.toLocaleString()} characters, `
+      + `${(r.candidates || []).length} candidates. Nothing was sent.`);
+    return r;
+  }
+
   if (!r.plan) {
     say(r.problems[0] || 'No plan', true);
     if (out) out.innerHTML = `<ul style="color:var(--warn);font-size:12px">${
       r.problems.map((p) => `<li>${String(p).replace(/[&<>]/g, '')}</li>`).join('')}</ul>`;
+    return r;
+  }
+
+  // THE ANSWER AND WHAT THE APP MADE OF IT, AND STILL NO PLAN. `r` already carries all three
+  // things the bench shows -- `request` is what the model was given, `response` what it said, and
+  // `plan` plus `problems` what assemblePlan() made of that. Returning here is what keeps the
+  // phone quiet and the GPX unwritten.
+  if (opts.bench) {
+    say(`Answered — ${(r.plan.legs || []).length} legs, ${(r.problems || []).length} warnings. `
+      + 'Nothing saved, nothing sent to the phone.');
     return r;
   }
 

@@ -156,6 +156,16 @@
   .subtabs { display:flex; gap:6px; border-bottom:1px solid var(--line); margin-bottom:10px;}
   .subtabs button { background:transparent; border:none; border-bottom:2px solid transparent; border-radius:0; padding:8px 12px; color:var(--muted);}
   .subtabs button.active { color:var(--accent); border-bottom-color:var(--accent);}
+  /* THE BENCH. Monospace because it is source material, not a card — the point is to read what
+     was actually sent, byte for byte, not a prettied summary of it. */
+  .bench-head { font-size:12px; color:var(--muted); margin:10px 0 6px; }
+  .bench-warn { color:var(--warn); }
+  .bench-sec { border:1px solid var(--line); border-radius:6px; margin:6px 0; background:var(--bg2); }
+  .bench-sec > summary { cursor:pointer; padding:7px 10px; font-size:12px; font-weight:600;
+                         letter-spacing:.02em; }
+  .bench-n { color:var(--muted); font-weight:400; }
+  .bench-pre { margin:0; padding:10px 12px; border-top:1px solid var(--line); font-size:11.5px;
+               line-height:1.45; white-space:pre-wrap; word-break:break-word; overflow-x:auto; }
   .plan-preview { background:#fff; color:#111; border-radius:10px; padding:22px; font-family: system-ui, Segoe UI, Roboto, sans-serif; }
   .plan-preview h2 { margin:0 0 4px; }
   .plan-preview table { color:#111; }
@@ -1373,6 +1383,24 @@
 
       </div>
     </section>
+    <!-- THE BENCH — test the app before a plan is a plan. Ryan, 2026-09-06: "this way i am not
+         firing alerts off on my phone for a plan that i will never fish." It runs the SAME
+         runSmartPlanV2() the Plan tab runs and returns before the GPX, the timeline globals and
+         the notification session. See js/modules/plan-bench.js. -->
+    <section class="panel" id="panel-bench">
+      <div class="card">
+        <h2>🧪 Bench</h2>
+        <p class="muted" style="margin-top:0">Runs the planner's own inputs and its own prompt
+          builder. Writes no GPX, saves no plan, sends nothing to the phone.</p>
+        <p class="muted" style="font-size:12px">Using the Plan tab's selection: <b id="benchInputs">—</b></p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0">
+          <button id="benchBuildBtn" class="primary">📥 Build the input</button>
+          <button id="benchSendBtn">📤 Build it and send it</button>
+        </div>
+        <div id="benchStatus" class="muted" style="font-size:12px;min-height:16px"></div>
+        <div id="benchOut"><p class="pv-empty">Nothing built yet.</p></div>
+      </div>
+    </section>
   </div>
 
   <nav id="bottomNav">
@@ -1381,6 +1409,7 @@
     <button data-tab="edit"><span class="ico">✏️</span>Edit</button>
     <button data-tab="catch"><span class="ico">🐟</span>Catch</button>
     <button data-tab="plan"><span class="ico">🎣</span>Plan</button>
+    <button data-tab="bench"><span class="ico">🧪</span>Bench</button>
   </nav>
 </div>
 
