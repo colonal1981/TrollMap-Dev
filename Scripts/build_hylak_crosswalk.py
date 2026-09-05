@@ -89,19 +89,39 @@ def hydrolakes(shp_path, bbox):
         raise SystemExit('pyshp is required: py -m pip install pyshp')
     from shapely.geometry import shape
 
+    # LATIN-1, BECAUSE THE NAME COLUMN IS NOT UTF-8 AND WE DO NOT NEED IT TO BE.
+    # pyshp defaults to strict UTF-8 and HydroLAKES stops it dead on the first record carrying a
+    # transliterated Cyrillic name -- `Pal\x92yeozero` -- before the reader ever reaches North
+    # America. latin-1 maps every byte and never raises. The name is CARRIED, NOT TRUSTED: the
+    # binding below is geometric, so a foreign lake's name rendering oddly costs nothing.
+    sf = shapefile.Reader(shp_path, encoding='latin-1')
+    want = ['Hylak_id', 'Lake_name', 'Lake_area']
+    have = [f[0] for f in sf.fields[1:]]
+    keep = [f for f in want if f in have]
+
+    # ASK THE READER TO DO THE FILTERING. pyshp 3 takes a bounding box and a field list, so the
+    # 1.4 million polygons outside our corner of the world are skipped without their geometry or
+    # their twenty-odd attributes ever being built. Older pyshp does not, and the loop below
+    # falls back to testing each record's own bbox -- same answer, slower.
+    try:
+        it = sf.iterShapeRecords(fields=keep, bbox=bbox)
+        prefiltered = True
+    except TypeError:
+        it = sf.iterShapeRecords()
+        keep, prefiltered = have, False
+
     w, s, e, n = bbox
-    sf = shapefile.Reader(shp_path)
-    fields = [f[0] for f in sf.fields[1:]]
-    for sr in sf.iterShapeRecords():
-        bb = getattr(sr.shape, 'bbox', None)
-        if not bb or bb[2] < w or bb[0] > e or bb[3] < s or bb[1] > n:
-            continue
+    for sr in it:
+        if not prefiltered:
+            bb = getattr(sr.shape, 'bbox', None)
+            if not bb or bb[2] < w or bb[0] > e or bb[3] < s or bb[1] > n:
+                continue
         gm = shape(sr.shape.__geo_interface__)
         if not gm.is_valid:
             gm = gm.buffer(0)
         if gm.is_empty:
             continue
-        yield dict(zip(fields, sr.record)), gm
+        yield dict(zip(keep, list(sr.record))), gm
 
 
 def main(argv=None):
