@@ -115,7 +115,12 @@ def clean(v):
 def species_list(raw):
     """"catfish and largemouth bass" -> ["catfish", "largemouth bass"]. A PRESENCE FLOOR, not a
     roster: it proves those fish are in that water and says nothing about what else is."""
-    s = clean(raw).replace(' and ', ',').replace(' & ', ',').replace(';', ',')
+    # "white bass or largemouth bass" is TWO fish. Chatuge Lake publishes it that way and the
+    # first pass stored the whole phrase as one species name, which is a fish that does not
+    # exist and would never match a roster.
+    s = clean(raw)
+    for sep in (' and ', ' & ', ' or ', ';'):
+        s = s.replace(sep, ',')
     return [x.strip() for x in s.split(',') if x.strip()]
 
 
@@ -177,8 +182,23 @@ def bind(features, index, bounds_dir, report, max_km):
         hits = [(s, d) for s, d in inside
                 if name_agrees(name, index[s].get('display_name') or s)]
         if not hits:
-            unbound.append({'name': name, 'why': 'no water both matches the point and shares a '
-                                                 'distinctive name token',
+            # TWO FAILURES WEAR ONE MESSAGE, AND ONLY ONE OF THEM IS INTERESTING.
+            #
+            # "no water both matches the point and shares a name token" was printed 62 times on
+            # the first real run and could not distinguish "this advisory is for a creek we do
+            # not carry" -- fine, nothing to do -- from "this point is sitting in one of our
+            # lakes and the names disagree", which is an advisory we are throwing away. A report
+            # that names a condition and does not act on it reads as a decision; a report that
+            # cannot tell two conditions apart is worse.
+            if not inside:
+                why = 'no water of ours within %g km of the point' % max_km
+                near_name = None
+            else:
+                s0, d0 = inside[0]
+                near_name = index[s0].get('display_name') or s0
+                why = ('nearest is %s at %.2f km, but the names share no distinctive token'
+                       % (near_name, d0))
+            unbound.append({'name': name, 'why': why, 'nearest': near_name,
                             'considered': [s for s, _ in inside]})
             continue
         if len(hits) > 1 and len({s for s, _ in hits}) > 1 and hits[0][1] == hits[1][1]:
@@ -281,10 +301,25 @@ def main(argv=None):
     for slug, w in sorted(waters.items()):
         sp = ', '.join(s['species'] for s in w['species'][:4])
         print('   %-44s %d advisory row(s)  %s' % (w['display_name'][:44], len(w['advisories']), sp))
-    for u in unbound[:20]:
-        print('   !! unbound: %-34s %s' % ((u.get('name') or '?')[:34], u.get('why')))
-    if len(unbound) > 20:
-        print('   !! ... and %d more unbound' % (len(unbound) - 20))
+    # ONE LINE PER WATER, NOT PER ROW. The layer repeats a feature per population and per map
+    # symbol, so 62 unbound rows were about 20 waters and the list read as a wall.
+    by_name = {}
+    for u in unbound:
+        k = u.get('name') or '?'
+        by_name.setdefault(k, {'n': 0, 'why': u.get('why'), 'nearest': u.get('nearest')})
+        by_name[k]['n'] += 1
+    touching = {k: v for k, v in by_name.items() if v['nearest']}
+    apart = {k: v for k, v in by_name.items() if not v['nearest']}
+    if touching:
+        print()
+        print('   THESE SIT ON A WATER WE CARRY AND THE NAMES DISAGREE -- %d, worth a look:'
+              % len(touching))
+        for k, v in sorted(touching.items()):
+            print('      %-32s x%-2d %s' % (k[:32], v['n'], v['why']))
+    if apart:
+        print('   Not near any water we carry -- %d (nothing to do):' % len(apart))
+        print('      ' + ', '.join(sorted(apart)[:24])
+              + (' ...' if len(apart) > 24 else ''))
     for am in ambiguous:
         print('   ?? ambiguous: %s -> %s' % (am['name'], am['candidates']))
 

@@ -98,7 +98,7 @@ check('and how far out it was', hr['advisories'][0]['km_from_our_boundary'] > 0,
 why = [u['why'] for u in unbound]
 check('a Web Mercator geometry is refused, not guessed',
       any('not a Carolina degree pair' in w for w in why), True)
-check('an unknown water is unbound', any('distinctive name token' in w for w in why), True)
+check('an unknown water is unbound', any('distinctive token' in w for w in why), True)
 check('nothing was silently dropped', len(unbound), 2)
 
 # THE FIELDS NAMED Lat AND Long ARE NEVER READ. Badin's would be metres; if any of them reached
@@ -115,6 +115,17 @@ check('a literal "0" survives cleaning', N.clean('0'), '0')
 check('real emptiness is still empty', N.clean('<Null>'), '')
 check('species from "a and b"', N.species_list('catfish and largemouth bass'),
       ['catfish', 'largemouth bass'])
+# Chatuge Lake publishes "white bass or largemouth bass" -- two fish, not one impossible one.
+check('species from "a or b"', N.species_list('white bass or largemouth bass'),
+      ['white bass', 'largemouth bass'])
+# THE TWO FAILURE KINDS MUST BE TOLD APART. The farm pond sits inside Badin's polygon with a
+# name that shares nothing -- that is an advisory we may be throwing away and it names the water
+# it is sitting in. The Web Mercator row is nowhere near anything and has no nearest at all.
+pond = [u for u in unbound if u['name'] == 'Some Farm Pond'][0]
+merc = [u for u in unbound if 'Carolina degree pair' in u['why']][0]
+check('a point on one of our waters names it', pond['nearest'], 'Badin Lake (Stanly Co, NC)')
+check('and says the names disagree', 'share no distinctive token' in pond['why'], True)
+check('a point nowhere near us has no nearest', merc.get('nearest'), None)
 
 shutil.rmtree(tmp, ignore_errors=True)
 if FAILS:
@@ -122,4 +133,4 @@ if FAILS:
     for f in FAILS:
         print('   ' + f)
     sys.exit(1)
-print('ok -- 20 checks')
+print('ok -- 24 checks')
