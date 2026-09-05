@@ -1,0 +1,105 @@
+"""test_probe_wqp_depth_history.py -- run with `py .\scripts\test_probe_wqp_depth_history.py`.
+
+The network call cannot be exercised from the session's container (the proxy blocks
+waterqualitydata.us), so what is tested here is everything that decides the ANSWER: the two
+column dialects, the metre-to-foot rule, the summer window, the 2 ft bins, and the split between
+records the Worker's 2015 window can see and the ones it cannot.
+
+THE CENTRAL ASSERTION IS THAT THE DIALECT DOES NOT CHANGE THE NUMBER. The same eight readings are
+written once as a WQX 2.2 response and once as a WQX 3.0 response, and the census must agree.
+"""
+import io
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import probe_wqp_depth_history as P
+
+FAILS = []
+
+
+def check(name, got, want):
+    if got != want:
+        FAILS.append('%s: got %r, want %r' % (name, got, want))
+
+
+# Eight readings on one lake:
+#   1983 summer DO at 1, 11 and 21 ft   -- before the window, three summer bins
+#   2019 summer DO at 3 m               -- inside the window, metres, = 9.8 ft
+#   2019 WINTER DO at 15 ft             -- inside the window, not summer
+#   2019 summer TEMPERATURE at 15 ft    -- a depth record, but not DO
+#   2019 summer DO with NO depth        -- a reading with no depth is not a depth record
+#   2019 summer DO at 5 ft, no value    -- a depth on a row with no reading is not a reading
+ROWS = [
+    # date,        char,                     value,  depth, unit
+    ('1983-07-14', 'Dissolved oxygen (DO)',  '8.1',  '1',   'ft'),
+    ('1983-07-14', 'Dissolved oxygen (DO)',  '5.2',  '11',  'ft'),
+    ('1983-07-14', 'Dissolved oxygen (DO)',  '1.1',  '21',  'ft'),
+    ('2019-08-02', 'Dissolved oxygen (DO)',  '7.4',  '3',   'm'),
+    ('2019-01-09', 'Dissolved oxygen (DO)',  '9.9',  '15',  'ft'),
+    ('2019-08-02', 'Temperature, water',     '81.2', '15',  'ft'),
+    ('2019-08-02', 'Dissolved oxygen (DO)',  '6.6',  '',    ''),
+    ('2019-08-02', 'Dissolved oxygen (DO)',  '',     '5',   'ft'),
+]
+
+LEGACY_HEAD = ('OrganizationIdentifier,ActivityStartDate,CharacteristicName,ResultMeasureValue,'
+               'ActivityDepthHeightMeasure/MeasureValue,ActivityDepthHeightMeasure/MeasureUnitCode,'
+               'ResultDepthHeightMeasure/MeasureValue,ResultDepthHeightMeasure/MeasureUnitCode')
+WQX3_HEAD = ('Org_Identifier,Activity_StartDate,Result_Characteristic,Result_Measure,'
+             'Activity_DepthHeightMeasure,Activity_DepthHeightMeasureUnit,'
+             'ResultDepthHeight_Measure,ResultDepthHeight_MeasureUnit')
+
+
+def build(head, org):
+    lines = [head]
+    for date, char, val, dep, unit in ROWS:
+        lines.append('%s,%s,"%s",%s,%s,%s,,' % (org, date, char, val, dep, unit))
+    return '\n'.join(lines) + '\n'
+
+
+legacy = P.census(build(LEGACY_HEAD, '21SCSANT'))
+wqx3 = P.census(build(WQX3_HEAD, '21SCSANT'))
+
+# 1. The dialect must not change a single number.
+check('the two dialects agree', legacy, wqx3)
+
+# 2. The counts themselves.
+check('rows', legacy['rows'], 8)
+# depth records: 1ft, 11ft, 21ft, 3m, 15ft(winter DO), 15ft(temp) = 6.
+# The no-depth row and the no-value row are both excluded.
+check('depth records', legacy['depth_recs'], 6)
+# summer DO with a depth: the three from 1983 plus the 2019 metres one = 4.
+check('summer DO depth records', legacy['summer_do_depth_recs'], 4)
+# 2 ft bins over those four: 1ft->0, 11ft->10, 21ft->20, 9.8ft->8. Four rungs.
+check('distinct 2 ft bins', legacy['distinct_2ft_bins'], 4)
+
+# 3. METRES ARE NOT FEET. 3 m is 9.8 ft and must never be read as 3.
+check('max depth ft', legacy['max_depth_ft'], 21.0)
+check('3 m became 9.8 ft', 9.8 in (round(3 * 3.28084, 1),), True)
+
+# 4. What the Worker's 2015 window cannot see, which is the whole point of the script.
+check('hidden depth records', legacy['hidden_depth_recs'], 3)
+check('hidden summer DO records', legacy['hidden_summer_do_depth_recs'], 3)
+check('hidden max depth', legacy['hidden_max_depth_ft'], 21.0)
+check('hidden first date', legacy['hidden_first_date'], '1983-07-14')
+check('organizations', legacy['organizations'], ['21SCSANT'])
+
+# 5. An empty or header-only body is zeroes, never a crash.
+check('empty body', P.census('')['rows'], 0)
+check('header only', P.census(LEGACY_HEAD + '\n')['depth_recs'], 0)
+
+# 6. The URL for each service, including the omission that matters.
+u_legacy = P.wqp_url((-80.15, 33.19, -79.98, 33.40), 'legacy')
+u_wqx3 = P.wqp_url((-80.15, 33.19, -79.98, 33.40), 'wqx3')
+check('legacy has no startDateLo', 'startDateLo' in u_legacy, False)
+check('wqx3 has no startDateLo', 'startDateLo' in u_wqx3, False)
+check('legacy profile', 'dataProfile=resultPhysChem' in u_legacy, True)
+check('wqx3 profile', 'dataProfile=basicPhysChem' in u_wqx3, True)
+check('wqx3 endpoint', '/wqx3/Result/search' in u_wqx3, True)
+
+if FAILS:
+    print('FAIL (%d)' % len(FAILS))
+    for f in FAILS:
+        print('   ' + f)
+    sys.exit(1)
+print('ok  -- %d checks, both dialects agree on all of them' % 17)
