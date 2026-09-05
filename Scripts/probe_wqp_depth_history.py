@@ -244,16 +244,24 @@ def load_done(fp):
     return {k: v for k, v in got.items() if 'error' not in v}
 
 
-def save(fp, waters, total, note=None):
+def save(fp, waters, total, note=None, apis=None):
     # A FAILED FETCH IS NOT PROGRESS. The first version counted every attempted water toward
     # `done` and set `complete` from that, so a run in which every single request was refused
     # wrote {"done": 1, "of": 1, "complete": true} -- which is the same lie as a partial run
     # writing a whole file, wearing a success stamp.
     ok = {k: v for k, v in waters.items() if 'error' not in v}
     bad = sorted(k for k in waters if k not in ok)
+    # WHICH SERVICES WERE ACTUALLY ASKED, WRITTEN DOWN.
+    # The 2026-09-04 census carries `by_api` with only a `legacy` key on all 64 waters, and read
+    # cold that is ambiguous in the worst way: it looks identical whether `--api legacy` was
+    # passed or `--api both` ran and the 3.0 leg vanished. It matters, because 3.0 is where USGS
+    # lives -- and USGS appears in ZERO of those 64 results while holding, for one example,
+    # thirty-four dissolved-oxygen samples on Lake Bowen and thirty-one years of top-and-bottom
+    # daily oxygen on Lake Murray. A census has to say what it asked, not only what answered.
     doc = {'generated': __import__('datetime').date.today().isoformat(),
            'window_the_worker_uses': WINDOW_START,
            'characteristics': CHARS,
+           'apis_asked': list(apis) if apis else None,
            'done': len(ok), 'failed': len(bad), 'of': total,
            'complete': len(ok) >= total,
            'note': note or (None if len(ok) >= total else
@@ -372,7 +380,7 @@ def main(argv=None):
                       % (rec.get('rows', 0), rec.get('depth_recs', 0),
                          rec.get('summer_do_depth_recs', 0), rec.get('distinct_2ft_bins', 0),
                          rec.get('max_depth_ft'), rec.get('hidden_summer_do_depth_recs', 0)))))
-            save(out_fp, waters, len(want))
+            save(out_fp, waters, len(want), apis=apis)
 
     gain = [(s, r) for s, r in waters.items() if (r.get('hidden_summer_do_depth_recs') or 0) >= 3]
     gain.sort(key=lambda t: -(t[1].get('acres') or 0))

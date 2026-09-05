@@ -141,9 +141,27 @@ finally:
 
 check('the url asks for the zip', 'zip=yes' in P.wqp_url((0, 0, 1, 1), 'legacy'), True)
 
+# A CENSUS HAS TO SAY WHAT IT ASKED, NOT ONLY WHAT ANSWERED.
+# The 2026-09-04 run carries `by_api` with a `legacy` key and nothing else on all 64 waters, and
+# that reads the same whether only the 2.2 service was asked or both were asked and 3.0 vanished.
+# 3.0 is where USGS data lives, and USGS appears in none of those 64 results.
+import json as _json                                                       # noqa: E402
+import tempfile as _tempfile                                               # noqa: E402
+_fp = os.path.join(_tempfile.mkdtemp(), 'probe.json')
+P.save(_fp, {'a_lake': {'rows': 1}}, 1, apis=('legacy', 'wqx3'))
+_doc = _json.load(open(_fp, encoding='utf-8'))
+check('the file names the services it asked', _doc.get('apis_asked'), ['legacy', 'wqx3'])
+P.save(_fp, {'a_lake': {'rows': 1}}, 1, apis=('legacy',))
+check('and says so when only one was asked',
+      _json.load(open(_fp, encoding='utf-8')).get('apis_asked'), ['legacy'])
+P.save(_fp, {'a_lake': {'rows': 1}}, 1)
+check('an unstated ask is null, never a guess',
+      _json.load(open(_fp, encoding='utf-8')).get('apis_asked'), None)
+
 if FAILS:
     print('FAIL (%d)' % len(FAILS))
     for f in FAILS:
         print('   ' + f)
     sys.exit(1)
-print('ok  -- %d checks: both dialects agree, and the zip path changes nothing' % 25)
+print('ok  -- %d checks: both dialects agree, the zip path changes nothing, and the\n'
+      '      census records which services it asked' % 28)
