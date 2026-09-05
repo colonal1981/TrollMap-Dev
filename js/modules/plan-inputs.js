@@ -938,15 +938,46 @@ export function describeDepthBand(depth, species, season) {
       + `Water was picked by matching its depth to the band, which is only right if they are on `
       + `the bottom. Treat the depths as less certain than usual.`;
 
+  // ── ONE NUMBER CANNOT BE TWO QUANTITIES ────────────────────────────────────────────────────
+  //
+  // Ryan, 2026-09-05, on the Wateree plan that came out of exactly this: "even the guide post i
+  // mentioned could give you 3-15 feet... in the morning topwater (3ft) perch at 15ft on humps".
+  // He is right that the NUMBERS can be real. What is not real is calling them a fish depth.
+  //
+  // The Sep 5 run shipped `ft: [3,15]` and `waterDepthFt: [3,15]` in the same object, under
+  // `meaning: 'where the fish are, not the depth of the water'` -- an object asserting the two
+  // are different while carrying one number twice, and then writing a note explaining the
+  // distinction it had just failed to make. The quote says it outright: "3-15 feet OF WATER".
+  //
+  // When both pairs are identical the source stated ONE depth and nothing here knows which
+  // quantity it was. That is a fact about the record, not a threshold -- a pure equality test,
+  // no number invented, and it repairs every profile already stored without a re-run. Measured
+  // across the 77 stored profiles: 199 of the 365 entries that state both state them equal.
+  //
+  // It does not drop the band. A band is still the best thing available; it is just not allowed
+  // to claim it is where the fish are when nobody said so.
+  const collapsed = Array.isArray(band) && Array.isArray(depth && depth.waterDepthFt)
+    && band.length === 2 && depth.waterDepthFt.length === 2
+    && band[0] === depth.waterDepthFt[0] && band[1] === depth.waterDepthFt[1];
+
   return {
     ft: band,
     basis: (depth && depth.basis) || null,
     lakeSpecific: depth ? !depth.generic : false,
-    meaning: 'where the fish are, not the depth of the water',
+    meaning: collapsed
+      ? 'ONE depth, and the source did not say whether it is the fish or the bottom'
+      : 'where the fish are, not the depth of the water',
+    // A value, not prose, because the prompt is not the only reader and prose cannot be tested.
+    fishDepthStated: !collapsed,
     holding,
     waterDepthFt: (depth && depth.waterDepthFt) || null,
     sourceQuote: (depth && depth.sourceQuote) || null,
-    note,
+    note: collapsed
+      ? `The research gives ${lo}\u2013${hi} ft for ${sp} in ${se} as BOTH the fish depth and the `
+        + `water depth, which means the source stated one number and did not say which it was. `
+        + `Treat it as the depth of WATER to look in, not as a depth to run a bait at, and say in `
+        + `the plan that the holding depth is unknown. Do not pick a lure by this number alone.`
+      : note,
   };
 }
 
