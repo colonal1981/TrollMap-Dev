@@ -55,6 +55,7 @@ import datetime
 import json
 import os
 import re
+import shutil
 import sys
 import urllib.error
 import urllib.parse
@@ -270,34 +271,81 @@ def main(argv=None):
         if len(p['fetch']) > 40:
             print('      ... and %d more' % (len(p['fetch']) - 40))
         return 0
-    if not p['fetch']:
+    # THE STALE ROWS ARE EXAMINED BEFORE THE EARLY RETURN.
+    #
+    # `fetch` carries only what CHANGED, and a file named for one profile while holding another is
+    # wrong on every quiet run. Written the first time BELOW the "nothing to do" return, which
+    # made it unreachable on exactly the run that needed it: 2026-09-05, the first real run after
+    # the check existed printed "nothing to do" and left all three wrong files in place. The test
+    # had two profiles to read and never entered the quiet path -- a control the rule does not
+    # fire on is not a control.
+    os.makedirs(out_dir, exist_ok=True)
+    written = dict((manifest or {}).get('lakes') or {})
+    mismatched = []
+    for sid, row in sorted(list(written.items())):
+        r = row.get('resolved_to')
+        if r and r != sid:
+            mismatched.append((sid, r))
+            written.pop(sid, None)
+
+    got, failed = {}, []
+    if p['fetch']:
+        with ThreadPoolExecutor(max_workers=max(1, a.jobs)) as ex:
+            for sid, profile, sanitized, err in ex.map(fetch_one, p['fetch']):
+                if err or profile is None:
+                    failed.append((sid, err or 'empty profile'))
+                    continue
+                got[sid] = (profile, sanitized)
+
+        lakes_by_id = {safe_id(r.get('id')): r for r in p['fetch']}
+
+        # A FILE NAMED FOR ONE PROFILE MUST NOT HOLD ANOTHER.
+        #
+        # `/research/get?lake=<id>` runs the app's name resolution, which folds a shadowed id onto
+        # the profile that is actually SERVED for that water. So asking for `nottely_lake_ga`
+        # returns `lake_nottely_ga`, and this loop wrote the served profile into
+        # `nottely_lake_ga.json`.
+        #
+        # It already knew. `resolved_to` was recorded in the manifest on every one of those rows
+        # and nothing acted on it -- a report that names a condition and does not act on it reads
+        # as a decision. Measured 2026-09-05: three of the eighty mirrored files held someone
+        # else's profile, byte for byte.
+        #
+        #   asked lake_sidney_lanier_hall_co_ga  got lake_lanier_ga   draft/3 sources -> verified/9
+        #   asked nottely_lake_ga                got lake_nottely_ga  5 species -> 8
+        #   asked watauga_lake_tn                got watauga_tn
+        #
+        # THE COST IS NOT A WRONG FILE, IT IS A WRONG DELETION. This mirror is the local copy the
+        # R2 prune rule's middle row depends on -- "no longer offered AND recoverable, may go". A
+        # shadowed profile is not recoverable from a file holding a different profile, so pruning
+        # it would destroy the only copy while every check said there was a backup.
+        #
+        # The read cannot ask for an exact key -- handleResearchGet resolves before it fetches,
+        # and a second route would be a second copy of that resolution. So the honest thing is to
+        # refuse the write and say which ids have no local copy.
+        for sid, (profile, sanitized) in sorted(got.items()):
+            if sanitized and sanitized != sid:
+                mismatched.append((sid, sanitized))
+                written.pop(sid, None)
+                continue
+            fp = os.path.join(out_dir, sid + '.json')
+            blob = json.dumps(profile, indent=1, ensure_ascii=False) + '\n'
+            with open(fp, 'w', encoding='utf-8', newline='\n') as fh:
+                fh.write(blob)
+            row = lakes_by_id.get(sid) or {}
+            written[sid] = {'key': row.get('key') or ('lakes/%s.json' % sid),
+                            'uploaded': row.get('uploaded'),
+                            'r2_size': row.get('size'),
+                            'bytes': len(blob.encode('utf-8')),
+                            'resolved_to': sanitized,
+                            'species': len(profile_species(profile)),
+                            'status': profile_status(profile)}
+    elif not mismatched:
         print('nothing to do.')
         return 0
 
-    os.makedirs(out_dir, exist_ok=True)
-    got, failed = {}, []
-    with ThreadPoolExecutor(max_workers=max(1, a.jobs)) as ex:
-        for sid, profile, sanitized, err in ex.map(fetch_one, p['fetch']):
-            if err or profile is None:
-                failed.append((sid, err or 'empty profile'))
-                continue
-            got[sid] = (profile, sanitized)
-
-    lakes_by_id = {safe_id(r.get('id')): r for r in p['fetch']}
-    written = dict((manifest or {}).get('lakes') or {})
-    for sid, (profile, sanitized) in sorted(got.items()):
-        fp = os.path.join(out_dir, sid + '.json')
-        blob = json.dumps(profile, indent=1, ensure_ascii=False) + '\n'
-        with open(fp, 'w', encoding='utf-8', newline='\n') as fh:
-            fh.write(blob)
-        row = lakes_by_id.get(sid) or {}
-        written[sid] = {'key': row.get('key') or ('lakes/%s.json' % sid),
-                        'uploaded': row.get('uploaded'),
-                        'r2_size': row.get('size'),
-                        'bytes': len(blob.encode('utf-8')),
-                        'resolved_to': sanitized,
-                        'species': len(profile_species(profile)),
-                        'status': profile_status(profile)}
+    seen = set()
+    mismatched = [m for m in mismatched if not (m[0] in seen or seen.add(m[0]))]
 
     summary = summarise({k: v[0] for k, v in got.items()})
     doc = {'generated': datetime.date.today().isoformat(),
@@ -310,12 +358,57 @@ def main(argv=None):
         json.dump(doc, fh, indent=1, ensure_ascii=False)
         fh.write('\n')
 
-    print('read %d profile(s): %d carry predatorSpecies, %d distinct species, %s'
-          % (summary['profiles'], summary['carrying_predator_species'],
-             summary['distinct_species'],
-             ', '.join('%s %d' % kv for kv in summary['by_status'].items())))
+    # Only when something was actually read. A quiet run that exists to report a stale row should
+    # not also print "read 0 profile(s): 0 carry predatorSpecies, 0 distinct species," -- a report
+    # shows the CHANGE, not the output.
+    if got:
+        print('read %d profile(s): %d carry predatorSpecies, %d distinct species, %s'
+              % (summary['profiles'], summary['carrying_predator_species'],
+                 summary['distinct_species'],
+                 ', '.join('%s %d' % kv for kv in summary['by_status'].items())))
     for sid, err in failed:
         print('   !! %s: %s' % (sid, err))
+    if mismatched:
+        print()
+        print('   %d id(s) HAVE NO LOCAL COPY -- /research/get resolved each to another profile:'
+              % len(mismatched))
+        for sid, r in mismatched:
+            print('      %-42s is served by %s' % (sid, r))
+        # MOVED, NOT LISTED, AND NOT DELETED. Ryan, 2026-09-05: *"move them to _to_delete like you
+        # do everything else... then they are harmless"*. A wrong file left in place is a backup
+        # that is not one, and telling a person to go delete three files is a step that gets
+        # skipped. Out of the mirror directory is what makes it harmless; the bytes are a
+        # duplicate of the file that stays, so nothing is lost either way.
+        #
+        # `registry/_to_delete/` is the sibling convention already on the drive -- chartpack and
+        # TrollMap-Dev each keep their own. This script owns --registry, so it needs no path
+        # guessing to find it.
+        parked = os.path.join(a.registry, '_to_delete',
+                              'mirror_wrong_name_' + datetime.date.today().isoformat())
+        moved, unmoved = [], []
+        for sid, _r in mismatched:
+            fp = os.path.join(out_dir, sid + '.json')
+            if not os.path.exists(fp):
+                continue
+            os.makedirs(parked, exist_ok=True)
+            dest = os.path.join(parked, sid + '.json')
+            n = 1
+            while os.path.exists(dest):          # never overwrite an earlier parked copy
+                dest = os.path.join(parked, '%s.%d.json' % (sid, n))
+                n += 1
+            try:
+                shutil.move(fp, dest)
+                moved.append(dest)
+            except OSError as exc:
+                unmoved.append((fp, exc))
+        if moved:
+            print('   %d file(s) named for one profile held another. Moved out of the mirror:'
+                  % len(moved))
+            for d in moved:
+                print('      -> %s' % d)
+        for fp, exc in unmoved:
+            print('   !! could not move %s: %s' % (fp, exc))
+        print('   These profiles are NOT recoverable from this mirror. Do not prune them from R2.')
     print('-> %s   (%d file(s) on disk)' % (out_dir, len(written)))
     print('   now re-run build_data_map.py -- the fifth place is readable.')
     return 1 if failed else 0
