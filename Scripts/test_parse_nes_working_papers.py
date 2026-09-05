@@ -310,9 +310,62 @@ ok('September survives as a profile', P.keep_cast(casts['1973-09-22'])[0], True)
 d = tempfile.mkdtemp()
 open(os.path.join(d, '9100D9LY.300.041.txt'), 'w').write(WORDS41)
 open(os.path.join(d, '9100D9LY.500.041.tsv'), 'w').write(tsv(PAGE41))
+open(os.path.join(d, '9100D9LY.300.041.tsv'), 'w').write(tsv(PAGE41))
 got = P.load(d)
 ok('load pairs the words page and the digits page', sorted(got['9100D9LY']['words']), [41])
-ok('and finds the tsv', sorted(got['9100D9LY']['tsv']), [41])
+ok('and finds both digits passes, filed under their dpi',
+   sorted(got['9100D9LY']['tsv']), [300, 500])
+ok('and the page under each', sorted(got['9100D9LY']['tsv'][500]), [41])
+
+# --- 9b. TWO SCANS OF THE SAME PAGE, RECONCILED ------------------------------------------------
+# Lake Robinson is why this exists. 450801 6 July 1973 prints `0031  27.2  1.0`; 500 dpi read the
+# depth `00312` and 300 dpi read `0032`, so the passes disagree about WHICH ROW IT IS and neither
+# is right. 450802 prints `0006  32.6  5.6`; both passes agree it is the 6 ft row and only 300 dpi
+# rendered the oxygen -- 500 dpi gave `526`, the whitelist eating the decimal it was added to save.
+
+
+def pass_with(rows, sid='450801', date='1973-07-06'):
+    return {sid: {'station': sid, 'casts': {date: {
+        'date': date, 'dropped': 0,
+        'readings': [dict({'depthFt': d}, **v) for d, v in rows]}}}}
+
+
+def tal():
+    return {k: 0 for k in ('agreed', 'one_pass_only', 'conflict_dropped', 'row_in_one_pass',
+                           'cast_in_one_pass', 'station_in_one_pass')}
+
+# the 450802 case: same row, one pass rendered the cell
+t = tal()
+m = P.merge_passes([pass_with([(6, {'tempC': 29.7}), (15, {'tempC': 29.7, 'doMgL': 4.7})]),
+                    pass_with([(6, {'tempC': 32.6, 'doMgL': 5.6}),
+                               (15, {'tempC': 29.7, 'doMgL': 4.7})])], t)
+got6 = [r for r in m['450801']['casts']['1973-07-06']['readings'] if r['depthFt'] == 6][0]
+ok('a cell only one pass could read is taken', got6.get('doMgL'), 5.6)
+ok('and counted as such', t['one_pass_only'] >= 1, True)
+ok('a cell both passes read the same way is taken', 
+   [r for r in m['450801']['casts']['1973-07-06']['readings']
+    if r['depthFt'] == 15][0].get('doMgL'), 4.7)
+
+# the 450801 case: the passes disagree about which row it is
+t2 = tal()
+m2 = P.merge_passes([pass_with([(15, {'doMgL': 6.6})]),
+                     pass_with([(15, {'doMgL': 6.6}), (32, {'tempC': 27.2, 'doMgL': 1.0})])], t2)
+ok('a row only one pass found is dropped, however clean it looks',
+   [r['depthFt'] for r in m2['450801']['casts']['1973-07-06']['readings']], [15])
+ok('and counted, because that is a lost reading and not a clean file',
+   t2['row_in_one_pass'], 1)
+
+# two readable values that differ is damage in one of them and we cannot say which
+t3 = tal()
+m3 = P.merge_passes([pass_with([(15, {'doMgL': 6.6})]), pass_with([(15, {'doMgL': 8.6})])], t3)
+ok('two different acceptable values means the field goes, and with it the only row',
+   m3['450801']['casts'], {})
+ok('and it is counted', t3['conflict_dropped'], 1)
+
+t4 = tal()
+m4 = P.merge_passes([pass_with([(15, {'doMgL': 6.6})]), {}], t4)
+ok('a station only one pass saw is dropped', m4, {})
+ok('and counted', t4['station_in_one_pass'], 1)
 ok('the loud call runs', P.main(['--pages', d]), 0)
 
 quiet = tempfile.mkdtemp()

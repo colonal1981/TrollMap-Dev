@@ -283,13 +283,24 @@ def read_rows(pages, appendix_d, meta, source):
         lines = tsv_lines(text)
         for li, line in enumerate(lines):
             toks = [t for _c, t in line]
+            r = column_ruler(line)
+            if r:
+                # A RULER IS RECOGNISED BY ITS OWN TEST, NOT BY A GATE IN FRONT OF IT.
+                # The first version asked is_header() first, and is_header() requires EVERY token
+                # to be a five- or six-digit code. Lake Bowen's header at 300 dpi ends `0067`
+                # instead of `00671` -- one digit lost -- so the line was not a header, the ruler
+                # was never built, and the page produced nothing at all. column_ruler() already
+                # demands six codes including temperature and oxygen; that is the strict test.
+                ruler = r
+                continue
             if is_header(line):
                 # THE SAME PAGE PRINTS A SECOND TABLE IN THE SAME COLUMNS.
                 # Under `00665 32217` come total phosphorus and chlorophyll-a, at the same
                 # x-positions as water temperature and dissolved oxygen. Robinson's September
                 # chlorophyll of 9.4 ug/L was being stored as 9.4 mg/L of oxygen. A header line
                 # either replaces the ruler or removes it -- it never leaves the old one standing.
-                ruler = column_ruler(line)
+                # Reaching here means column_ruler() refused it, so it removes.
+                ruler = None
                 continue
             if len(toks) == 1 and STATION_TOK.match(toks[0]):
                 nxt = ' '.join(t for ln in lines[li + 1:li + 3] for _c, t in ln)
@@ -357,14 +368,90 @@ def keep_cast(cast):
     return True, None
 
 
-def parse_paper(word_pages, tsv_pages, source):
+def merge_passes(passes, tally):
+    """TWO SCANS OF THE SAME PAGE, RECONCILED CELL BY CELL.
+
+    Ryan, 2026-09-05, holding the printed page against our file: *"are you sure your reader got
+    robinson correct?"* It had not. Lake Robinson station 450801, 6 July 1973, prints
+    `0031  27.2  1.0` -- one milligram of oxygen at the bottom of a 31 ft lake, the most important
+    reading on the page -- and our file did not have it. Station 450802 prints `0006  32.6  5.6`
+    and our file did not have that either. Two different failures wearing the same clothes:
+
+        450801  0031    500 dpi read `00312`, 300 dpi read `0032`, the page says `0031`.
+                        The passes disagree on WHICH ROW IT IS. Neither is right, and taking
+                        either stores a depth deeper than the station is charted.
+        450802  5.6     500 dpi read `526`, 300 dpi read `5.6`. The passes AGREE the row is at
+                        6 ft and only one of them rendered the cell. That is the same printed
+                        cell read twice with one read succeeding -- not a choice between two
+                        candidate values.
+
+    The numeric whitelist was added to protect the decimal point and on that row it is what
+    destroyed it. So the digits pass is not strictly better than a second digits pass at another
+    resolution, and neither is authoritative alone.
+
+    THE DEPTH IS THE ROW'S IDENTITY, SO IT MUST AGREE. A row only one pass produced is dropped,
+    however clean it looks -- that is what refuses `0032`. Within a row that both passes found:
+    both render the same value, take it; only one renders an acceptable value, take it and count
+    it; both render acceptable values that DIFFER, that is damage in one of them and we cannot
+    say which, so the field goes.
+    """
+    keep, first = {}, passes[0]
+    for sid, st in first.items():
+        others = [p.get(sid) for p in passes[1:]]
+        if any(o is None for o in others):
+            tally['station_in_one_pass'] += 1
+            continue
+        out = dict(st, casts={})
+        for date, cast in st['casts'].items():
+            twins = [o['casts'].get(date) for o in others]
+            if any(t is None for t in twins):
+                tally['cast_in_one_pass'] += 1
+                continue
+            rows = {}
+            for c in [cast] + twins:
+                for r in c['readings']:
+                    rows.setdefault(r['depthFt'], []).append(r)
+            merged, dropped = [], cast.get('dropped', 0)
+            for depth in sorted(rows):
+                seen = rows[depth]
+                if len(seen) < len(passes):
+                    tally['row_in_one_pass'] += 1        # <- the 0031 / 0032 case
+                    continue
+                row = {'depthFt': depth}
+                for field in ('tempC', 'doMgL'):
+                    vals = {r[field] for r in seen if field in r}
+                    if len(vals) == 1:
+                        row[field] = next(iter(vals))
+                        tally['agreed' if len(seen) == len([r for r in seen if field in r])
+                              else 'one_pass_only'] += 1
+                    elif len(vals) > 1:
+                        tally['conflict_dropped'] += 1   # two readable values, both suspect
+                if 'doMgL' not in row:
+                    dropped += 1
+                if len(row) > 1:
+                    merged.append(row)
+            if merged:
+                out['casts'][date] = {'date': date, 'readings': merged, 'dropped': dropped}
+        keep[sid] = out
+    return keep
+
+
+def parse_paper(word_pages, tsv_by_dpi, source):
     lake_name, lake_code, appendix_d, meta = read_structure(word_pages)
-    stations = read_rows(tsv_pages, appendix_d, meta, source)
-    return lake_name, lake_code, [stations[k] for k in sorted(stations)]
+    tally = {k: 0 for k in ('agreed', 'one_pass_only', 'conflict_dropped', 'row_in_one_pass',
+                            'cast_in_one_pass', 'station_in_one_pass')}
+    reads = [read_rows([(n, read(fps[n])) for n in sorted(fps)], appendix_d, meta, source)
+             for _dpi, fps in sorted(tsv_by_dpi.items())]
+    stations = merge_passes(reads, tally) if len(reads) > 1 else (reads[0] if reads else {})
+    return lake_name, lake_code, [stations[k] for k in sorted(stations)], tally
 
 
 def load(pages_dir):
-    """<doc>.300.<page>.txt (words) and <doc>.500.<page>.tsv (digits + boxes), paired by page."""
+    """<doc>.<dpi>.<page>.txt is the words pass; .tsv is a digits pass, one per dpi.
+
+    TWO DIGITS PASSES, NOT ONE. See merge_passes() -- a single pass cannot tell a cell it
+    misread from a cell that was blank.
+    """
     pat = re.compile(r'^(?P<doc>.+)\.(?P<dpi>\d+)\.(?P<page>\d+)\.(?P<ext>txt|tsv)$')
     docs = {}
     for fp in sorted(glob.glob(os.path.join(pages_dir, '*.txt'))
@@ -373,7 +460,10 @@ def load(pages_dir):
         if not m:
             continue
         d = docs.setdefault(m.group('doc'), {'words': {}, 'tsv': {}})
-        d['tsv' if m.group('ext') == 'tsv' else 'words'][int(m.group('page'))] = fp
+        if m.group('ext') == 'tsv':
+            d['tsv'].setdefault(int(m.group('dpi')), {})[int(m.group('page'))] = fp
+        else:
+            d['words'][int(m.group('page'))] = fp
     return docs
 
 
@@ -399,14 +489,15 @@ def main(argv=None):
     if not docs:
         raise SystemExit('no <doc>.<dpi>.<page>.txt/.tsv files under %s' % a.pages)
 
-    papers = {}
+    papers, totals = {}, {}
     for doc, got in sorted(docs.items()):
         if not got['tsv']:
             print('   !! %-30s no .tsv pages -- the digits pass did not run' % doc)
             continue
         word_pages = [(n, read(got['words'][n])) for n in sorted(got['words'])]
-        tsv_pages = [(n, read(got['tsv'][n])) for n in sorted(got['tsv'])]
-        name, code, stations = parse_paper(word_pages, tsv_pages, doc)
+        name, code, stations, tally = parse_paper(word_pages, got['tsv'], doc)
+        totals = {k: totals.get(k, 0) + v for k, v in tally.items()}
+        dpis = ', '.join('%d dpi' % d for d in sorted(got['tsv']))
         kept, dropped = [], []
         for st in stations:
             casts = []
@@ -443,9 +534,22 @@ def main(argv=None):
         sdo = sum(1 for s2 in kept for c in s2['casts'] if 6 <= int(c['date'][5:7]) <= 9
                   for r in c['readings'] if 'doMgL' in r)
         print('   %-30s %-4s %-24s %d station(s), %2d cast(s), %2d summer, '
-              '%3d summer DO readings, to %3d ft  (%d refused)'
+              '%3d summer DO readings, to %3d ft  (%d refused)  [%s]'
               % (doc, code or '????', (name or '?')[:24], len(kept), n, summer, sdo, deep,
-                 len(dropped)))
+                 len(dropped), dpis))
+
+    if totals and any(totals.values()):
+        print()
+        print('WHERE THE TWO DIGITS PASSES AGREED AND WHERE THEY DID NOT:')
+        print('   %6d cell(s) both passes read the same way' % totals.get('agreed', 0))
+        print('   %6d cell(s) only one pass could read -- taken, because the row is the same row'
+              % totals.get('one_pass_only', 0))
+        print('   %6d cell(s) read two different ways -- dropped, we cannot say which is right'
+              % totals.get('conflict_dropped', 0))
+        print('   %6d row(s) one pass did not find -- dropped, the depth IS the row'
+              % totals.get('row_in_one_pass', 0))
+        print('   %6d cast(s) and %d station(s) seen by one pass only -- dropped'
+              % (totals.get('cast_in_one_pass', 0), totals.get('station_in_one_pass', 0)))
 
     if not a.go:
         print()

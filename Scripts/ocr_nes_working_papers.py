@@ -12,6 +12,13 @@ the table beautifully and came back with a lake called `?`.
     pass A   300 dpi, plain          <doc>.300.<page>.txt   Appendix D vs E, the lake's name and
                                                             STORET code, `0183 FEET DEPTH`
     pass B   500 dpi, digits, TSV    <doc>.500.<page>.tsv   the rows, with word boxes
+    pass C   300 dpi, digits, TSV    <doc>.300.<page>.tsv   the same rows, read again
+
+PASS C EXISTS BECAUSE ONE SCAN CANNOT CHECK ITSELF. Lake Robinson, 6 July 1973: the page prints
+`0015  31.5  6.6` and pass B read the oxygen as `626`, the numeric whitelist eating the decimal
+point it was added to protect. Pass C read it correctly. On the row below, the page prints `0031`
+and pass B read `00312` while pass C read `0032` -- neither right, and the row is dropped because
+they disagree about WHICH ROW IT IS. See merge_passes() in parse_nes_working_papers.py.
 
 Pass B is TSV because the COLUMN IS A POSITION ON THE PAGE. A surface row often has a blank
 oxygen cell and the next number printed is the Secchi disc in inches; counting tokens files a
@@ -106,7 +113,8 @@ def main(argv=None):
     for pdf in pdfs:
         n = page_count(pdf)
         jobs = ([(pdf, p, WORDS_DPI, a.out, False) for p in range(1, n + 1)]
-                + [(pdf, p, DIGITS_DPI, a.out, True) for p in range(max(1, n // 2), n + 1)])
+                + [(pdf, p, DIGITS_DPI, a.out, True) for p in range(max(1, n // 2), n + 1)]
+                + [(pdf, p, WORDS_DPI, a.out, True) for p in range(max(1, n // 2), n + 1)])
         made = skipped = failed = 0
         with concurrent.futures.ThreadPoolExecutor(max_workers=a.jobs) as pool:
             for got, cached in pool.map(lambda j: one(*j), jobs):
