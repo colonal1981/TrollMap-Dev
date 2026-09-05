@@ -63,8 +63,15 @@ describe('the prompt contract', () => {
   // the opposite: a NEW prompt field wired into only one planner fails this test, and clearing
   // the failure means either wiring the other planner or writing down why it does not apply.
   // That review is the thing that was missing when `intel`, `snapEligible` and `hazards` went in.
+  //
+  // `dayMin` joins them for a different reason and it is written down here because that is the
+  // price of the exemption. It is dayCost()'s price for THE PICKED SET, and Smart Plan has no
+  // picked set when the prompt is built: selectCandidates() trims the OFFER to the window and
+  // the model chooses which of them to fish. `windowMin` -- the budget itself -- is sent by
+  // BOTH, because the constraint applies either way; only the app's price for a chosen day is
+  // one-sided. If Smart Plan ever prices a chosen set before the call, take this back out.
   const PICKED_WATER_DIALECT = ['castStopsWanted', 'chosenCastSpots', 'freeCastSpots',
-                                'orderIsChosen', 'waterIsChosen'];
+                                'orderIsChosen', 'waterIsChosen', 'dayMin'];
 
   // A field name that appears NOWHERE in a planner cannot possibly be sent by it. That is a
   // weaker claim than "the value is right", and it is deliberately the claim that catches the

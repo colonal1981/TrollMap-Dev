@@ -164,6 +164,10 @@ export async function buildSmartPlanV2(o) {
     // one off the lure's name -- see depthNote() in plan-prompt.js.
     lureByName: o.lureByName,
     usableAh: o.usableAh, intel, thermoclineNorm,
+    // No dayMin on this path: selectCandidates() trims the OFFER to the window and the model
+    // chooses which of them to fish, so there is no picked-set total yet. The window itself is
+    // the constraint and it still has to be said.
+    windowMin: o.windowMin,
     // THE SKY BY THE HOUR, for lightPromptBlock(). Computed by fetchForecast() since it was
     // written and read only by the post-plan notification cues -- the model was never told
     // whether the day was overcast, which is half of what 'low light' means.

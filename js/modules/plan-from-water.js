@@ -259,6 +259,12 @@ export async function planFromWater(o) {
 
   const req = buildPlanRequest({
     ...o.planArgs,
+    // THE BUDGET, AND THE APP'S OWN PRICE FOR THE WATER HE PICKED. `cheapest` is dayCost() twenty
+    // lines up -- the same number that decides the battery refusal -- so nothing is re-estimated
+    // to say this. Until 2026-09-05 the model was handed "06:00" and "15:00" and no minutes at
+    // all, and the Sep 6 Wateree day came back at 792 against a 540 minute window.
+    windowMin: o.windowMin,
+    dayMin: Number.isFinite(cheapest && cheapest.min) ? cheapest.min : undefined,
     // So the prompt can say HOW each bait reaches a depth rather than leaving the model to read
     // one off the lure's name. Same resolver the assembler already gets, one line further up.
     lureByName: o.lureByName,

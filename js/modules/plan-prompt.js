@@ -382,6 +382,9 @@ export function riverPromptBlock(ws) {
  * @param {object}   [o.waterState]  fetchWaterState() output — the parsed /conditions object
  *                                  plus the derived river, tidal, hazards and pool blocks.
  * @param {object[]} [o.weatherByHour] hourlyWeather() output — {hour, code, cloudPct, ...}.
+ * @param {number}   [o.windowMin]   minutes from launch to return — the whole budget.
+ * @param {number}   [o.dayMin]      dayCost()'s estimate for the picked water, if the
+ *                                  caller has one. Never re-estimated here.
  * @param {object}   [o.thermoclineNorm] thermoclineNormFor() output — what lakes of this depth
  *                                   usually do this month. Absent whenever this water has a
  *                                   measured thermocline, which is the whole point.
@@ -538,6 +541,51 @@ A depth, a bait or a presentation the research ties to early morning, first ligh
 overcast conditions is an instruction for THOSE HOURS. Do not carry it into the middle of the day
 because it is the only number available — say instead what changes when the light comes up. A
 topwater fish at first light and a trolled bait at ten o'clock are not the same fish.
+`;
+}
+
+/**
+ * HOW LONG THE DAY IS, IN THE UNIT THE PLAN IS COUNTED IN.
+ *
+ * The Sep 6 Wateree plan came back at 792 minutes against a 540 minute window and 80.61 Ah
+ * against 80 usable. The app computes `windowMin` -- plan-water-ui.js works it out of the launch
+ * and return times, dayCost() prices the picked set against it, plan-assemble.js writes
+ * "estimated 792 min against a 540 min window" into the warnings -- and the string "540" has
+ * never appeared in the prompt. The model was handed "06:00" and "15:00" and left to do the
+ * arithmetic, and it does not do the arithmetic.
+ *
+ * The warning fires AFTER the answer comes back, which makes it a receipt, not a constraint.
+ *
+ * It does not ask the model to drop water. On the Pick Water path the prompt says the opposite
+ * three hundred lines down -- "He picked these stretches himself... The list above IS the day" --
+ * and a leg left out is a leg he runs with bare rods. So the instruction is to say WHERE THE
+ * CLOCK RUNS OUT: which leg he will be on, and what he gives up by turning for the ramp there.
+ * The cut stays his; the plan stops pretending the day fits.
+ *
+ * `dayMin` is dayCost()'s own number when the caller has one. Nothing is re-estimated here.
+ */
+export function timeBudgetBlock(windowMin, launchTime, returnTime, dayMin) {
+  const w = Number(windowMin);
+  if (!Number.isFinite(w) || w <= 0) return '';
+  const hrs = (w / 60).toFixed(1).replace(/\.0$/, '');
+  const est = Number(dayMin);
+  const has = Number.isFinite(est) && est > 0;
+  const over = has && est > w;
+  return `
+HOW LONG HE HAS
+${launchTime || '?'} to ${returnTime || '?'} is ${w} MINUTES on the water — ${hrs} hours, ramp to
+ramp, including every transit and every stop. That is the whole budget and it does not stretch.${has ? `
+The app prices the water below at ${Math.round(est)} minutes.` : ''}${over ? ` That is ${Math.round(est - w)} minutes
+MORE than he has.
+
+Do not solve this by dropping a leg — he chose this water and he is going to run it. Solve it by
+saying WHERE THE CLOCK RUNS OUT: name the leg he will be on when the ${w} minutes are gone, give
+the time he reaches it, and say what he gives up by turning for the ramp there instead of
+finishing. Put it in the plan where he will read it before he launches, not in a footnote. The
+cut is his to make; your job is to tell him which one he is making.` : has ? ` That leaves
+${Math.round(w - est)} minutes of slack — spend it on stops, not on padding the legs.` : ''}
+Every duration you write must add up against ${w}. A day that totals more than that is wrong even
+if every leg in it is right.
 `;
 }
 
@@ -861,7 +909,7 @@ wind direction: is it a dangerous windward launch?${o.hazards && o.hazards.lengt
     + `from the research is written advice with no position at all: say the ones that bear on `
     + `today out loud, and never imply an unpositioned one is marked on the chart.`
   : ''}
-${coastalPromptBlock(o.waterState)}${riverPromptBlock(o.waterState)}${poolPromptBlock(o.waterState)}${lightPromptBlock(o.waterState, o.weatherByHour, o.launchTime, o.returnTime)}${thermoclineNormBlock(o.thermoclineNorm)}
+${coastalPromptBlock(o.waterState)}${riverPromptBlock(o.waterState)}${poolPromptBlock(o.waterState)}${lightPromptBlock(o.waterState, o.weatherByHour, o.launchTime, o.returnTime)}${timeBudgetBlock(o.windowMin, o.launchTime, o.returnTime, o.dayMin)}${thermoclineNormBlock(o.thermoclineNorm)}
 WHAT IS ALREADY KNOWN
 ${o.intel || 'NOTHING. No researched profile exists for this water, so everything else here rests '
   + 'on the chart, the gauges and general species knowledge. Say so in the plan rather than '
