@@ -657,8 +657,25 @@ export function researchIntel(profile, species, season, now = Date.now(), packFa
   // the temperature-gradient fallback -- the higher-confidence DO-profile branch computes no
   // gradient at all. One adjective, available only on the weaker of two paths, is not worth a
   // derivation, so it is gone rather than guessed.
+  //
+  // A BOUNDARY IS NOT A TARGET, AND THE LINE BELOW THIS ONE HAS ALWAYS SAID SO WHILE THIS ONE
+  // DID NOT. Ryan, 2026-09-05, on being shown a thermocline estimate: *"as long as the LLM
+  // doesn't take that as the depth the fish are at."*
+  //
+  // This printed `Thermocline in summer: 24 ft` -- a bare number sitting between `Max depth` and
+  // `Anoxic below`, both of which are depths that mean something on their own, and the anoxic
+  // one spells out what it means in plain words. With no such clause the only reading available
+  // to a model is that the number is a depth worth fishing, and the same day the document reader
+  // shipped this line started carrying a thermocline on thirteen more waters.
+  //
+  // It is not a target. It is where the column stops mixing, and what it tells a plan is that
+  // the water under it is cut off from the surface and losing oxygen as the season runs.
+  // `clampToOxygen()` is what acts on that, against the anoxic depth. Bait stacking near the
+  // boundary is a real thing; a lure set at exactly the number is not what it implies.
   if (lim.thermocline?.summerDepthFt) {
-    out.push(`Thermocline in summer: ${lim.thermocline.summerDepthFt} ft`);
+    out.push(`Thermocline in summer: ${lim.thermocline.summerDepthFt} ft — the depth the water `
+           + 'column stops mixing, NOT a depth to fish. Water below it is cut off from the '
+           + 'surface and loses oxygen as summer runs; the fishable band is above it.');
   }
   put('Anoxic below', lim.oxygen?.anoxicBelowFt, ' ft — nothing holds under this in late summer');
   put('Oxygen depletion begins', lim.oxygen?.depletionDepthFt, ' ft');
