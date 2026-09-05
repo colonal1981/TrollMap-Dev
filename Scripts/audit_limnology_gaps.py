@@ -58,6 +58,12 @@ def first(seq, pick):
     return None, None
 
 
+# Worker/research/limnology.js needs three summer dissolved-oxygen records carrying a depth, and
+# it bins them at 2 ft and takes the first bin whose median falls under 4 mg/L. Not a knob: it is
+# the rule's own minimum, and the bins have to clear it too -- see the branch below.
+RULE_NEEDS = 3
+
+
 def hidden_by(probe, hidden):
     """WHICH CEILING IS IT, BECAUSE THERE TURNED OUT TO BE TWO.
 
@@ -73,14 +79,23 @@ def hidden_by(probe, hidden):
     out = ['the 2015 window']
     by = (probe or {}).get('by_api') or {}
     legacy, wqx3 = by.get('legacy'), by.get('wqx3')
-    if not isinstance(wqx3, dict) or 'error' in wqx3:
-        # NOT ASKED IS NOT NOTHING. The 2026-09-04 census carries only a legacy leg because the
-        # sweep was run with --api legacy, and read cold that is indistinguishable from a 3.0
-        # service that answered with nothing.
+
+    # THREE WAYS TO HAVE NO 3.0 ANSWER, AND THEY SEND A PERSON TO THREE DIFFERENT PLACES.
+    # The first version of this said "not asked; re-run with --api both" over Badin Lake, which
+    # HAD been asked with --api both and got HTTP 500 -- telling Ryan to do the thing he had just
+    # done. And a leg deliberately skipped because 2.2 already answered is not a ceiling at all.
+    if not isinstance(wqx3, dict):
         out.append('unknown -- the 3.0 service was not asked; re-run the probe with --api both')
         return out
+    if 'error' in wqx3:
+        out.append('unknown -- the 3.0 service failed (%s); it needs asking again'
+                   % str(wqx3['error'])[:60])
+        return out
+    if 'not_asked' in wqx3:
+        return out                       # skipped on purpose: 2.2 answered, 3.0 could not add
+
     if isinstance(legacy, dict) and 'error' not in legacy \
-            and (legacy.get('hidden_summer_do_depth_recs') or 0) < 3 <= hidden:
+            and (legacy.get('hidden_summer_do_depth_recs') or 0) < RULE_NEEDS <= hidden:
         out.append('the 2.2 service the Worker asks -- these records are only in WQX 3.0')
     return out
 
@@ -114,7 +129,22 @@ def classify(row, prof, nla, probe=None):
     #
     # This outranks the WQP verdict below because it is the SAME SOURCE asked a wider question.
     hidden = (probe or {}).get('hidden_summer_do_depth_recs') or 0
-    if hidden >= 3:
+    bins = (probe or {}).get('distinct_2ft_bins') or 0
+    # AND THE BINS HAVE TO CLEAR IT TOO, BECAUSE A STACK OF GRABS IS NOT A CAST.
+    #
+    # Measured 2026-09-05 on the both-dialect census, three waters crossed the three-record line
+    # for the first time and only one of them is a profile:
+    #
+    #   lake_william_c_bowen   43 records   8 bins   0.1 to 32.2 ft    a cast
+    #   cherokee_lake          60 records   2 bins   0.0 to 220.0 ft   two depths, 220 ft apart
+    #   watauga_lake            8 records   1 bin    1.0 to 1.0 ft     eight grabs at one foot
+    #
+    # Counting records and not their spread is the Wateree mistake exactly -- 3,211 records in a
+    # single 2 ft band, which the Worker's own note already calls "surface grabs with a depth
+    # stamp". The probe computes `distinct_2ft_bins` for this reason and the ledger was ignoring
+    # it. Applied across all 48 waters that clear the record test, this drops those two and keeps
+    # the other 46.
+    if hidden >= RULE_NEEDS and bins >= RULE_NEEDS:
         return 'window_is_hiding_it', {
             'from': 'wqp, full history', 'hidden_summer_do_depth_recs': hidden,
             'hidden_by': hidden_by(probe, hidden),
@@ -174,6 +204,20 @@ def classify(row, prof, nla, probe=None):
     # grab the way Santee Cooper writes 0.3 m. Grouped in the report by that reason, because
     # "the state publishes no profiles here" and "the state publishes thin ones" are different
     # things to go looking for.
+    # RECORDS WITHOUT A COLUMN. The probe saw enough rows and they do not describe a water
+    # column, so this is a gap -- but a differently shaped one from "the state publishes no
+    # profiles here", and it is a wider fact than the Worker's 2015-window note, so it is said
+    # first. NLA still wins above this: a depth we already hold beats a refusal.
+    if hidden >= RULE_NEEDS:
+        return 'needs_a_source', {
+            'from': 'wqp, full history', 'reason': 'records without a column',
+            'hidden_summer_do_depth_recs': hidden, 'distinct_2ft_bins': bins,
+            'organizations': (probe or {}).get('hidden_organizations'),
+            'why': '%d summer depth-bearing oxygen records across only %d distinct 2 ft band(s), '
+                   '%s to %s ft. A stack of grabs, not a cast.'
+                   % (hidden, bins, (probe or {}).get('min_depth_ft'),
+                      (probe or {}).get('max_depth_ft'))}
+
     if wqp.get('ok') and (wqp.get('recordCount') or 0) > 0:
         why = wqp.get('surfaceOnlyNote') or wqp.get('note') or 'pull returned no thermocline'
         low = why.lower()
