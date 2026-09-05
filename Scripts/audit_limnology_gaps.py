@@ -58,6 +58,33 @@ def first(seq, pick):
     return None, None
 
 
+def hidden_by(probe, hidden):
+    """WHICH CEILING IS IT, BECAUSE THERE TURNED OUT TO BE TWO.
+
+    The probe's headline counts are the BEST of the two WQP dialects, so a water whose depth
+    records exist only in WQX 3.0 reads here exactly like one the 2015 window alone is hiding --
+    and `Worker/research/limnology.js` asks 2.2. Lake Bowen, measured 2026-09-05: 43 summer
+    depth-bearing oxygen records in 3.0, ZERO in 2.2. Widening the window alone would have
+    returned nothing and looked like a bug in the widening.
+
+    Returns the list of things standing between the app and the number, so the report can stop
+    saying "the only thing in the way" about a water where it is not.
+    """
+    out = ['the 2015 window']
+    by = (probe or {}).get('by_api') or {}
+    legacy, wqx3 = by.get('legacy'), by.get('wqx3')
+    if not isinstance(wqx3, dict) or 'error' in wqx3:
+        # NOT ASKED IS NOT NOTHING. The 2026-09-04 census carries only a legacy leg because the
+        # sweep was run with --api legacy, and read cold that is indistinguishable from a 3.0
+        # service that answered with nothing.
+        out.append('unknown -- the 3.0 service was not asked; re-run the probe with --api both')
+        return out
+    if isinstance(legacy, dict) and 'error' not in legacy \
+            and (legacy.get('hidden_summer_do_depth_recs') or 0) < 3 <= hidden:
+        out.append('the 2.2 service the Worker asks -- these records are only in WQX 3.0')
+    return out
+
+
 def classify(row, prof, nla, probe=None):
     """(state, detail). Order matters: what the APP shows wins, then what we hold unused."""
     # A THERMOCLINE IS A LAKE QUESTION. The index offers 284 lakes, 58 rivers and 13 coastal
@@ -90,6 +117,7 @@ def classify(row, prof, nla, probe=None):
     if hidden >= 3:
         return 'window_is_hiding_it', {
             'from': 'wqp, full history', 'hidden_summer_do_depth_recs': hidden,
+            'hidden_by': hidden_by(probe, hidden),
             'distinct_2ft_bins': (probe or {}).get('distinct_2ft_bins'),
             'max_depth_ft': (probe or {}).get('max_depth_ft'),
             'organizations': (probe or {}).get('hidden_organizations'),
@@ -277,16 +305,32 @@ def main(argv=None):
 
     got = [r for r in buckets.get('window_is_hiding_it', []) if (r.get('acres') or 0) >= a.min_acres]
     got.sort(key=lambda r: -(r.get('acres') or 0))
-    if got:
-        print()
-        print('THE 2015 WINDOW IS THE ONLY THING IN THE WAY -- %d water(s). Same feed, wider ask.'
-              % len(got))
-        for r in got:
+
+    def hiding_lines(rows):
+        for r in rows:
             print('   %-42s %-3s %8s ac  %6d summer DO before 2015, %2d bins, to %s ft  [%s]'
                   % (r['display_name'][:42], r.get('state') or '',
                      ('%.0f' % r['acres']) if r.get('acres') else '?',
                      r['hidden_summer_do_depth_recs'], r.get('distinct_2ft_bins') or 0,
                      r.get('max_depth_ft'), ', '.join(r.get('organizations') or [])))
+            for extra in (r.get('hidden_by') or [])[1:]:
+                print('        and %s' % extra)
+
+    # ONE HEADLINE PER CAUSE. "The only thing in the way" was printed over Lake Bowen, whose
+    # records are not in the service the Worker asks at all -- so widening the window would have
+    # changed nothing and the report would have been the reason someone believed it should.
+    only = [r for r in got if len(r.get('hidden_by') or ['x']) <= 1]
+    also = [r for r in got if len(r.get('hidden_by') or ['x']) > 1]
+    if only:
+        print()
+        print('THE 2015 WINDOW IS THE ONLY THING IN THE WAY -- %d water(s). Same feed, wider ask.'
+              % len(only))
+        hiding_lines(only)
+    if also:
+        print()
+        print('THE WINDOW IS NOT THE ONLY THING IN THE WAY -- %d water(s). Widening it alone '
+              'returns nothing here.' % len(also))
+        hiding_lines(also)
 
     table('nla_unused', 'ALREADY ON DISK AND NOT WIRED -- NLA has a depth the profile lacks')
 
