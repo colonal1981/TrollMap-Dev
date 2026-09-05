@@ -191,6 +191,32 @@ describe('fetchWaterState — the river half', () => {
   it('a lake with no flow gets no river block at all', async () => {
     const ws = await call({ fetchConditions: async () => conditions({
       featureType: 'lake', belowFullPoolFt: 1.2 }) });
+    expect(ws.river).toBeNull();
+    expect(riverPromptBlock(ws)).toBe('');
+  });
+
+  // WAS `expect(ws).toBeNull()` UNTIL 2026-09-05, and that was the bug written down as an
+  // expectation. A reservoir sitting 1.2 ft below full pool with no river block and no tide is
+  // MOST OF THE REGISTRY, and returning null there threw away the level, the almanac, the water
+  // temperature and the drought notice along with the river block that was correctly absent.
+  // poolPromptBlock() reads belowFullPoolFt off this object, so "WHERE THE WATER IS TODAY" --
+  // the block telling the model every charted depth was sounded at full pool -- printed on
+  // nothing, ever. The absence of a river block is the claim; the absence of the water is not.
+  it('keeps the lake itself when there is no river and no tide', async () => {
+    const ws = await call({ fetchConditions: async () => conditions({
+      featureType: 'lake', belowFullPoolFt: 1.2, levelFt: 98.8, fullPoolFt: 100,
+      civilDawn: '06:34', sunrise: '06:59', sunset: '19:52', civilDusk: '20:17',
+      waterTempF: 85.1 }) });
+    expect(ws).not.toBeNull();
+    expect(ws.belowFullPoolFt).toBe(1.2);
+    expect(ws.civilDawn).toBe('06:34');
+    expect(ws.sunset).toBe('19:52');
+    expect(ws.waterTempF).toBe(85.1);
+    expect(ws.featureType).toBe('lake');
+  });
+
+  it('still returns null when nothing answered at all', async () => {
+    const ws = await call({ fetchConditions: async () => null });
     expect(ws).toBeNull();
   });
 });

@@ -382,8 +382,42 @@ export async function fetchWaterState(lakeName, dateStr, o = {}) {
     ? { seasonalDrawdownFt: c.seasonalDrawdownFt, from: c.seasonalDrawdownFrom || null }
     : null;
 
-  if (!river && !tidal && !hazards && !pool) return null;
-  return { featureType, river, tidal, hazards, hazardsAllClear: allClear, pool };
+  // ── STOP HAND-LISTING WHAT THE READERS ARE ALLOWED TO SEE ──────────────────────────────────
+  //
+  // This returned six keys. `/conditions` parses about sixty, and the two comments above record
+  // two previous rounds of the same repair -- hazards, then the operator's drawdown -- each one
+  // adding a key to the list and a clause to the guard. The third time it is the LIST that is
+  // wrong, not the length of it.
+  //
+  // What the six-key return was throwing away, measured 2026-09-05 against water-conditions.js:
+  //
+  //   civilDawn, civilDusk, sunrise, sunset   the almanac, from USNO. The file's own note says
+  //                                           "CIVIL TWILIGHT, NOT SUNRISE. The fishing day
+  //                                           starts when you can see to launch" -- and civil
+  //                                           dawn has never once reached a prompt.
+  //   moonPhase, moonIllumination, popPct     read, parsed, dropped here.
+  //   levelFt, fullPoolFt, belowFullPoolFt,   poolPromptBlock() and levelSentence() read these
+  //     levelSource, feedName, operatorMessage  OFF THE TOP LEVEL of this object. They are not
+  //                                           in the six, at the top level or anywhere else, so
+  //                                           "WHERE THE WATER IS TODAY" -- the block that tells
+  //                                           the model every charted depth is sounded at full
+  //                                           pool -- has returned '' on every water, always.
+  //                                           the-chart-was-sounded-at-full-pool.test.js is
+  //                                           green because it hands buildPlanRequest a
+  //                                           conditions-shaped object directly. Nothing ever
+  //                                           tested that this function produces that shape.
+  //   waterTempF, dissolvedOxygenMgL,         the numbers the Sep 5 Wateree plan was missing.
+  //     droughtLevel, flowAnomaly, flowMedian
+  //
+  // So: the parsed conditions ARE the water state, and the derived blocks ride on top of it.
+  // Derived keys go last so a computed featureType beats the feed's null. A reader that needs a
+  // field the feed already carries no longer needs this line edited to get it.
+  //
+  // The guard goes with it. `!river && !tidal && !hazards && !pool` is most of the registry --
+  // a plain reservoir with a level and an almanac and nothing else -- and returning null there
+  // threw away exactly what a lake plan needs. Nothing at all is still nothing.
+  if (!c && !river && !tidal && !hazards && !pool) return null;
+  return { ...(c || {}), featureType, river, tidal, hazards, hazardsAllClear: allClear, pool };
 }
 
 function round1(v) {
