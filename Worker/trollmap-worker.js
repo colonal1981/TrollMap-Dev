@@ -17,7 +17,7 @@ import { handleAlerts, runAlertSweep } from './alerts.js';
 import { handleReports } from './reports.js';
 import { fetchStateRegulations, getLakeRegulations } from './research/clients.js';
 import { regulationsTable, lakeIndex, resolveRegistryRow } from './registry.js';
-import { handleResearchThermoclineSearch, handleResearchLimnologyData, refreshStaleLimnology, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, registrySpeciesFor, speciesFoodHabits, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchRegsDebug, handleResearchApprove, handleResearchDelete, handleResearchDeleteNormalizedDoc, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleResearchValidationPass, handleSharedCheck, handleSharedStore, handleSharedQuery, handleSharedPublish, handleSharedStatus, handleSharedQuarantine } from './worker-research.js';
+import { handleResearchThermoclineSearch, handleResearchLimnologyData, refreshStaleLimnology, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, registrySpeciesFor, speciesFoodHabits, speciesMeasuredTraits, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchRegsDebug, handleResearchApprove, handleResearchDelete, handleResearchDeleteNormalizedDoc, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleResearchValidationPass, handleSharedCheck, handleSharedStore, handleSharedQuery, handleSharedPublish, handleSharedStatus, handleSharedQuarantine } from './worker-research.js';
 
 
 /**
@@ -1778,9 +1778,15 @@ var trollmap_worker_default = {
         // with the water's forage, which is the half it is meant to be read against.
         const target = url.searchParams.get("species") || "";
         try {
-          const [reg, food] = await Promise.all([
+          const [reg, food, measured] = await Promise.all([
             registrySpeciesFor(env, name, state),
             target ? speciesFoodHabits(env, target) : Promise.resolve(null),
+            // THE OTHER HALF OF "what is this fish". `food` is SCDNR's paragraph; this is
+            // FishBase's numbers for the same animal -- trophic level, the size it reaches, the
+            // water column it lives in, the temperature range it is recorded in. Both are about
+            // the SPECIES and neither is about this water, which is why they travel together and
+            // are labelled the same way.
+            target ? speciesMeasuredTraits(env, target).catch(() => null) : Promise.resolve(null),
           ]);
           return new Response(JSON.stringify({
             lake: name,
@@ -1793,6 +1799,8 @@ var trollmap_worker_default = {
             // Statewide and per-species; `statewide: true` says so, because a sentence about what
             // stripers eat in South Carolina is not a sentence about this reservoir.
             foodHabits: food,
+            // Measured, per species, global. See speciesMeasuredTraits().
+            speciesTraits: measured,
             // Which of these say what is IN the water and which say only that a rule or an
             // advisory names a fish. A roster and a floor are different claims and the caller
             // has to be able to tell them apart -- see registrySpeciesFor().

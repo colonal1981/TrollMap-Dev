@@ -34,6 +34,7 @@ export const SPECIES_TRAITS_KEY = '_registry/species_traits.json';
 export const REGULATIONS_KEY = '_registry/regulations.json';
 export const FULL_POOL_KEY = '_registry/full_pool.json';
 export const DOCUMENT_LIMNOLOGY_KEY = '_registry/document_limnology.json';
+export const FISHBASE_TRAITS_KEY = '_registry/fishbase_traits.json';
 export const INDEX_TTL_S = 3600;
 
 let _index = null;
@@ -50,6 +51,8 @@ let _speciesTraits = null;
 let _speciesTraitsAt = 0;
 let _docLimno = null;
 let _docLimnoAt = 0;
+let _fishbase = null;
+let _fishbaseAt = 0;
 
 /** Exposed for tests. Nothing in the Worker should need to call this. */
 export function _resetIndexCache() {
@@ -61,6 +64,7 @@ export function _resetIndexCache() {
   _agencyFacts = null; _agencyFactsAt = 0;
   _speciesTraits = null; _speciesTraitsAt = 0;
   _docLimno = null; _docLimnoAt = 0;
+  _fishbase = null; _fishbaseAt = 0;
 }
 
 /**
@@ -247,6 +251,47 @@ export async function agencyLakeFacts(env, opts = {}) {
   _agencyFacts = rows;
   _agencyFactsAt = now;
   return rows;
+}
+
+/**
+ * What is measured about a FISH, keyed by its scientific binomial.
+ *
+ * `build_fishbase_traits.py` reads the FishBase page behind every species in the four state
+ * listings -- 802 of them -- and keeps what is measured rather than described: trophic level with
+ * its standard error and the reference behind it, maximum and common length, the water column the
+ * fish lives in, and the temperature range. `unresolved` records the pages that were fetched and
+ * had no trophic level, which is an answer and not a gap.
+ *
+ * EIGHTH FILE ADDRESSED TO NOBODY, and it was measured this way: Ryan ran verify_registry_r2.py
+ * on 2026-09-05 and it came back 404, so no upload had shipped it -- and grepping Worker/ and js/
+ * for the name found no reader either. 802 species built on 2026-09-04 and nothing to open them.
+ *
+ * KEYED ON THE BINOMIAL, NEVER THE COMMON NAME, and the reason is in the file: FishBase writes
+ * "Blueback shad", "American gizzard shad" and "Largemouth black bass" where this app writes
+ * Blueback Herring, Gizzard Shad and Largemouth Bass. `species_traits.json` carries the
+ * `scientific` field that bridges them.
+ *
+ * Same cadence and same failure mode as the loaders above; THE CALLER CATCHES, because a species
+ * with no FishBase row must still produce a plan.
+ */
+export async function fishbaseTraits(env, opts = {}) {
+  const now = Number.isFinite(opts.now) ? opts.now : Date.now();
+  if (!opts.fresh && _fishbase && now - _fishbaseAt < INDEX_TTL_S * 1000) return _fishbase;
+  const bucket = (env && env.R2_TROLLMAP_CHARTPACKS) || opts.bucket;
+  if (!bucket) throw new Error('R2_TROLLMAP_CHARTPACKS is not bound to this Worker');
+  const obj = await bucket.get(FISHBASE_TRAITS_KEY);
+  if (!obj) {
+    throw new Error(`${FISHBASE_TRAITS_KEY} is not in the bucket -- run build_fishbase_traits.py, `
+                  + 'then upload_garmin_to_r2.py');
+  }
+  const parsed = JSON.parse(await r2Text(obj));
+  const species = parsed && parsed.species;
+  if (!species || typeof species !== 'object' || Array.isArray(species)) {
+    throw new Error(`${FISHBASE_TRAITS_KEY} has no "species" object keyed by binomial`);
+  }
+  _fishbase = species;
+  _fishbaseAt = now;
+  return species;
 }
 
 /**

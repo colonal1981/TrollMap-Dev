@@ -505,8 +505,9 @@ export async function fetchRegistrySpecies(worker, lakeName, state = '', species
     const d = await r.json();
     const forage = Array.isArray(d && d.primaryForage) ? d.primaryForage : [];
     const hasFood = !!(d && d.foodHabits && d.foodHabits.text);
+    const measured = (d && d.speciesTraits && d.speciesTraits.scientific) ? d.speciesTraits : null;
     if (!d || ((!Array.isArray(d.predatorSpecies) || !d.predatorSpecies.length)
-               && !forage.length && !hasFood)) {
+               && !forage.length && !hasFood && !measured)) {
       return null;
     }
     return { predatorSpecies: Array.isArray(d.predatorSpecies) ? d.predatorSpecies : [],
@@ -515,6 +516,8 @@ export async function fetchRegistrySpecies(worker, lakeName, state = '', species
              // sentence, and it was reaching nothing.
              primaryForage: forage,
              foodHabits: (d.foodHabits && d.foodHabits.text) ? d.foodHabits : null,
+             // The measured half. See speciesMeasuredTraits() in Worker/research/deterministic.js.
+             speciesTraits: measured,
              sources: Array.isArray(d.sources) ? d.sources : [] };
   } catch (e) {
     console.warn('[plan] registry species unavailable for', lakeName, e && e.message);
@@ -731,6 +734,46 @@ export function researchIntel(profile, species, season, now = Date.now(), packFa
     const who = [f.agency, f.state].filter(Boolean).join(' ');
     put(`What ${f.species || species || 'the target'} eat`
         + `${who ? ` (${who}, statewide — not measured on this water)` : ''}`, f.text);
+  }
+
+  // WHAT IS MEASURED ABOUT THE FISH, beside what an agency wrote about it.
+  //
+  // 802 species were pulled from FishBase on 2026-09-04 and nothing opened the file. The one
+  // thing in this codebase deciding what is forage and what is a target was NON_GAME_SPECIES in
+  // facts-util.js -- about sixty names typed by hand, whose own comments record every time it was
+  // wrong: hickory shad missing while American shad was in it, `MULLET (STRIPED AND WHITE)`,
+  // `Other Species`, `Black Bass Spp.`
+  //
+  // Trophic level draws that line as a number from diet studies -- Largemouth Bass 3.8 ± 0.4,
+  // Threadfin Shad 2.8 ± 0.1 -- and it comes with three more things the plan has never been told
+  // and cannot infer: how big the fish actually gets, WHICH PART OF THE COLUMN it lives in, and
+  // the temperature range it is recorded in. The water column reads directly against the
+  // thermocline line above it, and the temperature range against the surface temperature.
+  //
+  // GLOBAL, AND SAID SO. The food-habits line above is statewide and labelled; this is a fact
+  // about the species anywhere, which is a weaker claim still, so it carries the stronger caveat.
+  if (bio.speciesTraits && bio.speciesTraits.scientific) {
+    const t = bio.speciesTraits;
+    const bits = [];
+    if (t.trophicLevel != null) {
+      bits.push(`trophic level ${t.trophicLevel}${t.trophicSe != null ? ` ± ${t.trophicSe}` : ''}`
+              + ` (${t.trophicLevel >= 3.5 ? 'eats fish' : t.trophicLevel >= 3.0
+                  ? 'mixed — invertebrates and small fish' : 'plankton and invertebrates'})`);
+    }
+    if (t.waterColumn) bits.push(`lives ${t.waterColumn}`);
+    if (t.maxLengthCm != null) {
+      const inch = (cm) => Math.round(cm / 2.54);
+      bits.push(`reaches ${inch(t.maxLengthCm)} in`
+              + (t.commonLengthCm != null ? `, commonly ${inch(t.commonLengthCm)} in` : ''));
+    }
+    if (t.tempMinC != null && t.tempMaxC != null) {
+      const f2 = (c) => Math.round((c * 9) / 5 + 32);
+      bits.push(`recorded in ${f2(t.tempMinC)}–${f2(t.tempMaxC)}°F water`);
+    }
+    if (bits.length) {
+      put(`${t.species} measured (FishBase, ${t.scientific} — the species anywhere, `
+        + 'NOT this water)', bits.join('; '));
+    }
   }
   put('Secondary forage', bio.secondaryForage);
   put('Stockings', bio.knownStockings);

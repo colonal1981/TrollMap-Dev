@@ -2,7 +2,7 @@
 import { JSON_HEADERS, r2Text } from '../worker-core.js';
 import { researchStorageId, resolveResearchStorageId } from './keys.js';
 import { buildEvidence, buildFactualSummary, canonicalizeResearchSpecies, getAttractorFacts, getRampSpeciesFacts, uniqueResearchSpecies, splitSpeciesText, isKnownResearchSpecies, RESEARCH_SPECIES_CANON } from './facts-util.js';
-import { lakeIndex, ncSpeciesByLake, resolveRegistryRow, identityBaseline, regulationsTable, agencyLakeFacts, fishAdvisories, speciesTraits } from '../registry.js';
+import { lakeIndex, ncSpeciesByLake, resolveRegistryRow, identityBaseline, regulationsTable, agencyLakeFacts, fishAdvisories, speciesTraits, fishbaseTraits} from '../registry.js';
 import { SC_INSHORE_ROSTER, SC_INSHORE_BASIS } from './coastal-agents.js';
 import { dukeRowForNames, fetchDukeAccessAlerts, fetchDukeOperatingRange } from '../worker-data.js';
 import { parseAccessAlerts, dukeLocationIdFor, dukePoolManagement } from '../conditions.js';
@@ -572,6 +572,76 @@ export function forageFromAgencyPages(pages) {
  * Matched through canonicalizeResearchSpecies() on both sides, so the plan form's vocabulary and
  * the guide's find each other without a second name table.
  */
+/**
+ * WHAT IS MEASURED ABOUT THIS FISH, as opposed to what an agency wrote about it.
+ *
+ * `speciesFoodHabits()` above returns SCDNR's Food Habits paragraph -- prose, from a state guide.
+ * This returns numbers from FishBase's own diet studies for the same fish: trophic level with its
+ * error, how big it gets, where in the water column it lives, and the temperature range it is
+ * recorded in. Together they are the two halves of "what is this fish" and neither is about this
+ * particular water.
+ *
+ * THE BINOMIAL IS THE JOIN AND IT COMES FROM species_traits.json. FishBase writes "Largemouth
+ * black bass" where this app writes Largemouth Bass, so a common-name join would silently miss or
+ * silently mismatch. Measured 2026-09-05: 52 of the 56 species SCDNR's guide covers reach a
+ * FishBase row on the exact binomial.
+ *
+ * THE FOUR THAT DO NOT ARE LEFT ALONE, DELIBERATELY:
+ *
+ *   Flathead Catfish   species_traits says `Pylodictus olivaris`; FishBase has `Pylodictis`
+ *   Channel Catfish    species_traits says `Ictalurus punctatu`, a truncated final s
+ *   Redfin Pickerel    FishBase HAS the page and it carries no trophic level -- the builder
+ *                      recorded that in `unresolved`, which is an answer
+ *   Spotted Bass       the field holds TWO binomials, punctulatus and henshalli
+ *
+ * A prefix match would repair the first two and would also, on some future species, quietly bind
+ * a fish to its neighbour. The first two are defects in species_traits.json and belong fixed
+ * there. The last is two answers, which this codebase treats as none.
+ */
+export async function speciesMeasuredTraits(env, speciesName) {
+  const want = canonicalizeResearchSpecies(speciesName);
+  if (!want) return null;
+  let traits;
+  let fish;
+  try {
+    traits = (await speciesTraits(env)) || {};
+    fish = (await fishbaseTraits(env)) || {};
+  } catch (e) {
+    console.warn(`speciesMeasuredTraits: unavailable: ${e && e.message}`);
+    return null;
+  }
+  const key = Object.keys(traits).find((k) => canonicalizeResearchSpecies(k) === want);
+  if (!key) return null;
+  let sci = null;
+  for (const entry of (traits[key] || [])) {
+    if (entry && typeof entry.scientific === 'string' && entry.scientific.trim()) {
+      sci = entry.scientific.trim();
+      break;
+    }
+  }
+  if (!sci) return null;
+  // A field naming two species names neither. See the Spotted Bass note above.
+  const parts = sci.split(',').map((x) => x.trim()).filter(Boolean);
+  const found = parts.filter((p) => fish[p]);
+  if (found.length !== 1) return null;
+  const r = fish[found[0]];
+  if (!r) return null;
+  return {
+    species: key,
+    scientific: found[0],
+    trophicLevel: r.trophic_level ?? null,
+    trophicSe: r.trophic_se ?? null,
+    maxLengthCm: r.max_length_cm ?? null,
+    commonLengthCm: r.common_length_cm ?? null,
+    waterColumn: r.water_column || null,
+    tempMinC: r.temp_min_c ?? null,
+    tempMaxC: r.temp_max_c ?? null,
+    source: 'FishBase',
+    url: r.url || null,
+    statewide: false,          // it is not statewide either -- it is about the SPECIES, globally
+  };
+}
+
 export async function speciesFoodHabits(env, speciesName) {
   const want = canonicalizeResearchSpecies(speciesName);
   if (!want) return null;
