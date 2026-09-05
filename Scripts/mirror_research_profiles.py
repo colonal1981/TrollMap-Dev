@@ -285,7 +285,36 @@ def main(argv=None):
 
     lakes_by_id = {safe_id(r.get('id')): r for r in p['fetch']}
     written = dict((manifest or {}).get('lakes') or {})
+
+    # A FILE NAMED FOR ONE PROFILE MUST NOT HOLD ANOTHER.
+    #
+    # `/research/get?lake=<id>` runs the app's name resolution, which folds a shadowed id onto the
+    # profile that is actually SERVED for that water. So asking for `nottely_lake_ga` returns
+    # `lake_nottely_ga`, and this loop wrote the served profile into `nottely_lake_ga.json`.
+    #
+    # It already knew. `resolved_to` was recorded in the manifest on every one of those rows and
+    # nothing acted on it -- a report that names a condition and does not act on it reads as a
+    # decision. Measured 2026-09-05: three of the eighty mirrored files held someone else's
+    # profile, byte for byte.
+    #
+    #     asked lake_sidney_lanier_hall_co_ga   got lake_lanier_ga     draft(3 sources) -> verified(9)
+    #     asked nottely_lake_ga                 got lake_nottely_ga    5 species -> 8
+    #     asked watauga_lake_tn                 got watauga_tn
+    #
+    # THE COST IS NOT A WRONG FILE, IT IS A WRONG DELETION. This mirror is the local copy the R2
+    # prune rule's middle row depends on -- "no longer offered AND recoverable, may go". A
+    # shadowed profile is not recoverable from a file holding a different profile, so pruning it
+    # would destroy the only copy while every check said there was a backup.
+    #
+    # The read cannot ask for an exact key -- handleResearchGet resolves before it fetches, and a
+    # second route would be a second copy of that resolution. So the honest thing is to refuse the
+    # write and say which ids have no local copy.
+    mismatched = []
     for sid, (profile, sanitized) in sorted(got.items()):
+        if sanitized and sanitized != sid:
+            mismatched.append((sid, sanitized))
+            written.pop(sid, None)
+            continue
         fp = os.path.join(out_dir, sid + '.json')
         blob = json.dumps(profile, indent=1, ensure_ascii=False) + '\n'
         with open(fp, 'w', encoding='utf-8', newline='\n') as fh:
@@ -298,6 +327,16 @@ def main(argv=None):
                         'resolved_to': sanitized,
                         'species': len(profile_species(profile)),
                         'status': profile_status(profile)}
+
+    # AND THE ONES WRITTEN BEFORE THIS CHECK EXISTED. `fetch` only carries profiles that CHANGED,
+    # so a stale wrong file is never revisited on a quiet run. Every manifest row is re-examined.
+    for sid, row in sorted(list(written.items())):
+        r = row.get('resolved_to')
+        if r and r != sid:
+            mismatched.append((sid, r))
+            written.pop(sid, None)
+    seen = set()
+    mismatched = [m for m in mismatched if not (m[0] in seen or seen.add(m[0]))]
 
     summary = summarise({k: v[0] for k, v in got.items()})
     doc = {'generated': datetime.date.today().isoformat(),
@@ -316,6 +355,20 @@ def main(argv=None):
              ', '.join('%s %d' % kv for kv in summary['by_status'].items())))
     for sid, err in failed:
         print('   !! %s: %s' % (sid, err))
+    if mismatched:
+        print()
+        print('   %d id(s) HAVE NO LOCAL COPY -- /research/get resolved each to another profile:'
+              % len(mismatched))
+        for sid, r in mismatched:
+            print('      %-42s is served by %s' % (sid, r))
+        stale = [os.path.join(out_dir, sid + '.json') for sid, _ in mismatched
+                 if os.path.exists(os.path.join(out_dir, sid + '.json'))]
+        if stale:
+            print('   %d file(s) on disk are named for one profile and hold another. Delete them:'
+                  % len(stale))
+            for fp in stale:
+                print('      %s' % fp)
+        print('   These profiles are NOT recoverable from this mirror. Do not prune them from R2.')
     print('-> %s   (%d file(s) on disk)' % (out_dir, len(written)))
     print('   now re-run build_data_map.py -- the fifth place is readable.')
     return 1 if failed else 0
