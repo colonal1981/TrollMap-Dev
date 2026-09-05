@@ -89,6 +89,7 @@ COLUMNS = {
     'depth_unit': ('ActivityDepthHeightMeasure/MeasureUnitCode', 'Activity_DepthHeightMeasureUnit'),
     'rdepth':     ('ResultDepthHeightMeasure/MeasureValue', 'ResultDepthHeight_Measure'),
     'rdepth_unit': ('ResultDepthHeightMeasure/MeasureUnitCode', 'ResultDepthHeight_MeasureUnit'),
+    'station':    ('MonitoringLocationIdentifier', 'Location_Identifier'),
 }
 
 APIS = {
@@ -162,7 +163,15 @@ def depth_ft(raw, unit):
 def census(csv_text):
     """Every number the Worker's thermocline rule consumes, and the same again for the records
     the 2015 window would refuse."""
-    out = {'rows': 0, 'depth_recs': 0, 'summer_do_depth_recs': 0, 'distinct_2ft_bins': 0,
+    # WHAT THE DEEPEST READING ACTUALLY IS. A bBox is a rectangle, not a lake. Lake Moultrie's
+    # probe reported a maximum of 100.0 ft against a Garmin chart whose deepest band is 69-70 ft
+    # over 11,488 polygons -- so either the chart misses the Pinopolis forebay or the rectangle
+    # caught a station that is not the lake, and a groundwater well reads in feet like anything
+    # else. `USGS-SC` is in that water's organisation list beside Santee Cooper. A number that
+    # cannot be traced to a station is an arbitrary number, and this project has a rule about
+    # those, so the deepest record now carries its station and date out with it.
+    out = {'deepest': None,
+           'rows': 0, 'depth_recs': 0, 'summer_do_depth_recs': 0, 'distinct_2ft_bins': 0,
            'min_depth_ft': None, 'max_depth_ft': None, 'first_date': None, 'last_date': None,
            'organizations': [], 'hidden_depth_recs': 0, 'hidden_summer_do_depth_recs': 0,
            'hidden_max_depth_ft': None, 'hidden_first_date': None, 'hidden_last_date': None,
@@ -193,8 +202,12 @@ def census(csv_text):
             continue                                  # a depth on a row with no reading is not a reading
         out['depth_recs'] += 1
         out['min_depth_ft'] = d if out['min_depth_ft'] is None else min(out['min_depth_ft'], d)
-        out['max_depth_ft'] = d if out['max_depth_ft'] is None else max(out['max_depth_ft'], d)
         char = (pick(row, 'char') or '').lower()
+        if out['max_depth_ft'] is None or d > out['max_depth_ft']:
+            out['max_depth_ft'] = d
+            out['deepest'] = {'depthFt': d, 'station': (pick(row, 'station') or '').strip(),
+                              'date': date, 'characteristic': (pick(row, 'char') or '').strip(),
+                              'organization': org}
         is_do = 'oxygen' in char
         month = int(date[5:7]) if len(date) >= 7 and date[5:7].isdigit() else None
         is_summer_do = is_do and month in SUMMER
@@ -371,6 +384,11 @@ def main(argv=None):
                  ('%.0f' % r['acres']) if r.get('acres') else '?',
                  r['hidden_summer_do_depth_recs'], WINDOW_START,
                  r.get('hidden_max_depth_ft'), ', '.join(r.get('hidden_organizations') or [])))
+        dp = r.get('deepest') or {}
+        if dp:
+            print('        deepest record: %s ft at %s on %s (%s)'
+                  % (dp.get('depthFt'), dp.get('station') or '?', dp.get('date') or '?',
+                     dp.get('characteristic') or '?'))
     if a.api == 'both':
         diff = []
         for sl, r in waters.items():

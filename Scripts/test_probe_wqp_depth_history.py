@@ -42,10 +42,10 @@ ROWS = [
     ('2019-08-02', 'Dissolved oxygen (DO)',  '',     '5',   'ft'),
 ]
 
-LEGACY_HEAD = ('OrganizationIdentifier,ActivityStartDate,CharacteristicName,ResultMeasureValue,'
+LEGACY_HEAD = ('MonitoringLocationIdentifier,OrganizationIdentifier,ActivityStartDate,CharacteristicName,ResultMeasureValue,'
                'ActivityDepthHeightMeasure/MeasureValue,ActivityDepthHeightMeasure/MeasureUnitCode,'
                'ResultDepthHeightMeasure/MeasureValue,ResultDepthHeightMeasure/MeasureUnitCode')
-WQX3_HEAD = ('Org_Identifier,Activity_StartDate,Result_Characteristic,Result_Measure,'
+WQX3_HEAD = ('Location_Identifier,Org_Identifier,Activity_StartDate,Result_Characteristic,Result_Measure,'
              'Activity_DepthHeightMeasure,Activity_DepthHeightMeasureUnit,'
              'ResultDepthHeight_Measure,ResultDepthHeight_MeasureUnit')
 
@@ -53,7 +53,7 @@ WQX3_HEAD = ('Org_Identifier,Activity_StartDate,Result_Characteristic,Result_Mea
 def build(head, org):
     lines = [head]
     for date, char, val, dep, unit in ROWS:
-        lines.append('%s,%s,"%s",%s,%s,%s,,' % (org, date, char, val, dep, unit))
+        lines.append('ST-1,%s,%s,"%s",%s,%s,%s,,' % (org, date, char, val, dep, unit))
     return '\n'.join(lines) + '\n'
 
 
@@ -85,6 +85,10 @@ check('hidden first date', legacy['hidden_first_date'], '1983-07-14')
 check('organizations', legacy['organizations'], ['21SCSANT'])
 
 # 5. An empty or header-only body is zeroes, never a crash.
+check('deepest is traced to a station', legacy['deepest']['station'], 'ST-1')
+check('deepest depth', legacy['deepest']['depthFt'], 21.0)
+check('deepest date', legacy['deepest']['date'], '1983-07-14')
+
 check('empty body', P.census('')['rows'], 0)
 check('header only', P.census(LEGACY_HEAD + '\n')['depth_recs'], 0)
 
@@ -142,4 +146,4 @@ if FAILS:
     for f in FAILS:
         print('   ' + f)
     sys.exit(1)
-print('ok  -- %d checks: both dialects agree, and the zip path changes nothing' % 22)
+print('ok  -- %d checks: both dialects agree, and the zip path changes nothing' % 25)
