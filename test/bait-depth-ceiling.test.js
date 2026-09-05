@@ -139,12 +139,23 @@ describe('the lead belongs to the leg, not to the day', () => {
     }) };
   };
 
+  // THESE TWO ASSERTED `rodPlan` WAS undefined ON A LEG THAT NEEDED NO CHANGE, UNTIL 2026-09-06.
+  //
+  // That was the old behaviour and it was the bug next door: capBaitDepth() recorded the window
+  // it had computed only inside its two failure branches, so the one case where the number was
+  // thrown away was the case where nothing was wrong with it -- and the card then printed
+  // whatever the model had typed in the spread row. Ryan, reading a row that said 6-10 ft under
+  // a bait the inventory rates 6-12: "you want me to fish at 6-10 ft but give me a bait that is
+  // probably going to run closer to 12".
+  //
+  // The claim these tests are actually about is untouched and still asserted: the deep leg's
+  // LEAD is not shortened and the bag is not mutated. Only the recording changed.
   it('the shallow leg is shortened and the deep one is not', () => {
     const { plan } = twoLegs();
     const legs = plan.legs.filter((l) => l.type === 'troll');
     const deep = legs.find((l) => l.runId === DEEP.runId);
     const shallow = legs.find((l) => l.runId === SHALLOW.runId);
-    expect((deep.rodPlan || {}).R1).toBe(undefined);          // 25 ft clears 34 ft of water
+    expect(deep.rodPlan.R1.leadFt).toBe(undefined);           // 25 ft clears 34 ft of water
     expect(shallow.rodPlan.R1.leadFt < 120).toBe(true);
     expect(depthWindow(LIPLESS, { speedMph: 2.0, leadFt: shallow.rodPlan.R1.leadFt }).max <= 8)
       .toBe(true);
@@ -154,7 +165,11 @@ describe('the lead belongs to the leg, not to the day', () => {
     const { rod, plan } = twoLegs();
     expect(rod.leadFt).toBe(120);
     const deep = plan.legs.filter((l) => l.type === 'troll').find((l) => l.runId === DEEP.runId);
-    expect(deep.rodPlan).toBe(undefined);
+    expect(deep.rodPlan.R1.leadFt).toBe(undefined);
+    // and it now carries what the app computed, which is the whole point of the change
+    expect(deep.rodPlan.R1.runsDepthFt).toEqual(
+      [depthWindow(LIPLESS, { speedMph: 2.0, leadFt: 120 }).min,
+       depthWindow(LIPLESS, { speedMph: 2.0, leadFt: 120 }).max]);
   });
 
   it('the warning names only the leg it applies to', () => {

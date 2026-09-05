@@ -106,7 +106,7 @@ function fitJighead(lure, rod, speedMph, ceilingFt, id, runId, warnings) {
  * Without a resolver this does nothing at all and says nothing, exactly like a pack with no
  * shoreline: an absent input must not become a claim.
  */
-function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warnings) {
+function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warnings, fish) {
   // RETURNS WHAT THIS LEG FISHES; IT DOES NOT CHANGE THE BAG.
   //
   // This used to write `rod.leadFt = shorter` straight into the loadout, and the loadout is ONE
@@ -197,13 +197,66 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
 
     // The model also CLAIMS a running depth. Nothing has ever checked that claim against the
     // lead it asked for in the same breath, and the two can disagree by a lot.
+    //
+    // THE TOLERANCE IS FOR AN ESTIMATE, AND A RATED BAIT IS NOT ONE. `> 4` exists because a
+    // lead-controlled window is computed by inverting leadForDepth() numerically, so the model
+    // being a couple of feet off is noise. A bait whose depth comes off the box is not estimated
+    // at all -- `depthWindow()` marks it `claimed: true` and returns the manufacturer's own pair
+    // -- so any restatement of it is the model writing a number nobody measured.
+    //
+    // Ryan, 2026-09-06, on an MR Crankbait the inventory rates 6-12 ft, printed on the card as
+    // "6-10ft": "you want me to fish at 6-10 ft but give me a bait that is probably going to run
+    // closer to 12". |10 - 12| is 2, so the tolerance swallowed it and the invented number went
+    // to the card. On a rated bait the test is equality, which is not a threshold at all.
+    const claimedTol = w.claimed === true ? 0 : 4;
     if (Array.isArray(rod.runsDepthFt) && Number.isFinite(rod.runsDepthFt[1])
-        && Math.abs(rod.runsDepthFt[1] - w.max) > 4) {
+        && Math.abs(rod.runsDepthFt[1] - w.max) > claimedTol) {
       warnings.push(`${id} on ${runId} says it runs to ${rod.runsDepthFt[1]} ft, but `
                   + `${leadFt} ft of lead at ${speedMph} mph`
                   + `${fit ? ` on a ${ozLabel(fit.weightOz)} head` : ''} puts a ${rod.lure} at `
                   + `${w.max} ft — going with the measured number`);
       forThisLeg[id] = { ...(forThisLeg[id] || {}), runsDepthFt: [w.min, w.max] };
+    }
+
+    // ── THE APP'S NUMBER, RECORDED WHETHER OR NOT ANYTHING IS WRONG ────────────────────────
+    //
+    // `runsDepthFt` was written only inside the two failure branches, so the one case where the
+    // computed window was never kept was the case where nothing was the matter with it. The card
+    // then printed whatever the model had written in the spread row. Ryan, 2026-09-06, reading a
+    // row that said 6-10 ft under a bait the inventory rates 6-12: "you want me to fish at 6-10
+    // ft but give me a bait that is probably going to run closer to 12". Neither number came
+    // from here; depthWindow() had both ends and was not asked.
+    if (!(forThisLeg[id] && forThisLeg[id].runsDepthFt)) {
+      forThisLeg[id] = { ...(forThisLeg[id] || {}),
+                         runsDepthFt: [w.min, w.max], depthClaimed: w.claimed === true };
+    }
+
+    // ── TOO DEEP WAS CAUGHT AND TOO SHALLOW WAS INVISIBLE ──────────────────────────────────
+    //
+    // Everything else in this function asks one question: is the bait deeper than the bottom.
+    // Nothing has ever asked whether it is anywhere near the FISH. On the Sep 6 Wateree plan the
+    // legs were 26-36, 15-25, 21-31 and 39-49 ft of water and the port rod on four of the five
+    // was a 6-12 ft crankbait -- twenty to thirty feet above the band, with no warning of any
+    // kind, because it was not dragging.
+    //
+    // An interval test, not a threshold: the bait's window and the fish band either overlap or
+    // they do not. And it is a WARNING, not a refusal -- a shallow bait at first light is a real
+    // choice, which is why lightPromptBlock() exists. It states the two numbers and lets the
+    // plan justify itself.
+    //
+    // Skipped entirely when the band is not a fish depth. `fishDepthWasStated()` decides that,
+    // and when it is false the band is the depth of the WATER -- "above the fish" would be a
+    // claim about a quantity nobody measured.
+    if (fish && fish.stated && Array.isArray(fish.bandFt) && fish.bandFt.length === 2
+        && Number.isFinite(w.min) && Number.isFinite(w.max)) {
+      const [fMin, fMax] = fish.bandFt;
+      if (Number.isFinite(fMin) && Number.isFinite(fMax) && (w.max < fMin || w.min > fMax)) {
+        warnings.push(`${id} on ${runId}: a ${rod.lure} works ${w.min}-${w.max} ft and the fish `
+                    + `are ${fMin}-${fMax} ft on this water. Those do not overlap, so this rod is `
+                    + `fishing ${w.max < fMin ? `${Math.round(fMin - w.max)} ft ABOVE`
+                                              : `${Math.round(w.min - fMax)} ft BELOW`} them. Say `
+                    + `why in the leg's notes or put a different bait on it.`);
+      }
     }
 
     if (w.max <= ceilingFt) continue;
@@ -315,6 +368,16 @@ const TROLL_MPH_MAX = 5.0;
  *                                 understates cost on a reservoir and can cross land.
  */
 export function assemblePlan(o) {
+  // WHERE THE FISH ARE, FOR THE ONE CHECK THAT NEEDS IT.
+  //
+  // Read off `conditions.depthBand` rather than added as a new argument, because both planners
+  // already build that object from the same describeDepthBand() and both already pass
+  // `conditions` -- so there is one source and no new plumbing from the UI. `fishDepthStated` is
+  // the field describeDepthBand() writes when the band and the water depth are the same pair;
+  // false means the number is a WATER depth and "above the fish" is not a claim anyone can make.
+  const _db = (o.conditions && o.conditions.depthBand) || null;
+  const fish = _db ? { bandFt: Array.isArray(_db.ft) ? _db.ft : null,
+                       stated: _db.fishDepthStated !== false } : null;
   const trollMph = o.trollMph ?? 2.0;
   const transitMph = o.transitMph ?? 3.5;
   const launchMin = parseClock(o.launchTime) ?? 6 * 60;
@@ -590,7 +653,7 @@ export function assemblePlan(o) {
     // measure both from the same envelope profile — see waterBand() in plan-pieces.js — so the
     // fallback below only fires on a pack fitted before those profiles existed.
     const rodPlan = capBaitDepth(rods, deploy, Number(c.maxRunDepthFt ?? c.depthFt), legMph,
-                                 o.lureByName, c.runId, warnings);
+                                 o.lureByName, c.runId, warnings, fish);
 
     legs.push({
       id: `L${++li}`, type: 'troll',

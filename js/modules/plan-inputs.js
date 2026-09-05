@@ -913,6 +913,24 @@ export function conditionsFrom(inp, ramp, sol, forecast) {
   return c;
 }
 
+/**
+ * Did the source state a FISH depth, or only one number?
+ *
+ * Exported because two readers need the same answer and a second copy of this test is a second
+ * chance to disagree: describeDepthBand() puts it in the prompt, and assemblePlan() needs it
+ * before it may say a bait is "above the fish" -- a claim that means nothing when the band it is
+ * being compared against is the depth of the water.
+ *
+ * A pure equality test on depthBandFor()'s return. No threshold, no language parsing.
+ */
+export function fishDepthWasStated(depth) {
+  const band = (depth && depth.band) || null;
+  const water = (depth && depth.waterDepthFt) || null;
+  if (!Array.isArray(band) || !Array.isArray(water)) return true;
+  if (band.length !== 2 || water.length !== 2) return true;
+  return !(band[0] === water[0] && band[1] === water[1]);
+}
+
 export function describeDepthBand(depth, species, season) {
   const band = (depth && depth.band) || null;
   const holding = (depth && depth.holding) || 'unknown';
@@ -956,9 +974,7 @@ export function describeDepthBand(depth, species, season) {
   //
   // It does not drop the band. A band is still the best thing available; it is just not allowed
   // to claim it is where the fish are when nobody said so.
-  const collapsed = Array.isArray(band) && Array.isArray(depth && depth.waterDepthFt)
-    && band.length === 2 && depth.waterDepthFt.length === 2
-    && band[0] === depth.waterDepthFt[0] && band[1] === depth.waterDepthFt[1];
+  const collapsed = !fishDepthWasStated(depth);
 
   return {
     ft: band,
