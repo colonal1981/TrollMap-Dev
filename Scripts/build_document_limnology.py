@@ -42,16 +42,34 @@ the survey's own index period is summer. Four of the thirteen waters are 2007 ro
 them costs nearly a third of the yield to a field the EPA did not print. The note says the date
 was not published rather than implying one.
 
-WHAT IT WILL NOT WRITE.
+WHEN A PROSE STATEMENT MAY SPEAK FOR A WATER.
 
-The SC DES lake-program statements are collapsed here but **offered to nothing**. The 2021 and
-2022 Lake Murray reports state a boundary below 3-4 m -- at S-326, in the Clouds Creek arm, whose
-average total depth the same report prints as 5.1 m, in a lake our chart takes to 192 ft. The
-depth is real, the station is real, and writing 9.8 ft into `lake_murray` as the lake's oxygen
-boundary is the Lake Wateree 27 ft fabrication with better paperwork. Physics does not settle it
--- the boundary sits inside that station's water column, so a bottom check passes it -- and
-whether an arm may speak for a lake is a fishing judgment, not a threshold. They are written with
-`offered: false` and the two numbers that make the case, and a person decides.
+The SC DES lake-program studies state boundaries in words, at named stations, and the question is
+whether the station stands for the lake. The 2021 and 2022 Lake Murray reports put a boundary
+below 3-4 m at S-326 -- in the Clouds Creek arm, whose average total depth those reports print as
+5.1 m, in a lake our chart takes to 192 ft. Writing 9.8 ft into `lake_murray` as the lake's oxygen
+boundary is the Lake Wateree 27 ft fabrication with better paperwork. The 2024 report puts one at
+B-890 on Monticello, a station bottoming at 40.4 m in a lake charted to 156 ft, which is the main
+basin and is the only depth anybody has published for that water.
+
+Both are real measurements and only one may speak for its lake, so the rule cannot be "trust the
+document". It also cannot be a percentage somebody picked. **The station's stated bottom must be
+deeper than the mean depth of the water** -- two measured numbers, ours and theirs, and no
+constant typed in. A station in water shallower than the lake's own average is in a shallow part
+of it by definition, and a boundary found there is a fact about that part.
+
+    B-890   132.5 ft against Monticello's mean of 50.9   -> speaks
+    S-326    16.7 ft against Lake Murray's mean of 42.8  -> does not
+    CL-089   no bottom printed at all                    -> cannot be tested, so no
+
+WHICH FIELD IT FILLS COMES FROM THE THRESHOLD THE SENTENCE STATES, not from where it sits in the
+report. `fetch_nla_limnology.py` sets ANOXIC_MGL = 2.0 and DEPLETION_MGL = 5.0 and those are the
+same two thresholds the Worker derives against, so a sentence saying oxygen fell under 2.0 mg/L
+is an anoxic depth and one saying under 5.0 is where depletion begins. Murray's says 2.5, which
+is neither, and would be refused on that ground even if its station could speak.
+
+AND THE SHALLOW END OF A RANGE IS THE ANSWER. `below 3-4 m` means oxygen has failed by 3 m
+somewhere; taking 4 would put the boundary under water already known to have failed.
 
 Personal use only, not for distribution or resale; not for navigation.
 """
@@ -59,8 +77,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import statistics
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from fetch_nla_limnology import ANOXIC_MGL, DEPLETION_MGL    # noqa: E402  one pair of thresholds
 
 OUT_NAME = 'document_limnology.json'
 SUMMER = (6, 9)                 # the window derive_nes_limnology.py and the Worker both use
@@ -136,6 +158,47 @@ def gather(waters, field, label):
     return value, note, refused
 
 
+def threshold_mgl(quote):
+    """The oxygen level the sentence says the water fell under, or None."""
+    m = re.search(r'(?:<|less than|below|under)\s*~?\s*(\d+(?:\.\d+)?)\s*mg/L',
+                  str(quote or ''), re.I)
+    return float(m.group(1)) if m else None
+
+
+def prose_offer(fact, bottom_ft, water_mean_ft, mgl):
+    """(field, why_refused). WHETHER THIS STATION MAY SPEAK FOR THIS WATER.
+
+    Two measured numbers and no constant typed in: the station's stated bottom against the mean
+    depth of the water. A station in water shallower than the lake's own average is in a shallow
+    part of it by definition, and a boundary found there is a fact about that part.
+
+        B-890   132.5 ft against Monticello's mean of 50.9   -> speaks
+        S-326    16.7 ft against Lake Murray's mean of 42.8  -> does not
+        CL-089   no bottom printed at all                    -> cannot be tested, so no
+
+    Which field it fills comes from the threshold the sentence states, against the same two
+    numbers the Worker derives with -- ANOXIC_MGL and DEPLETION_MGL, imported and not restated.
+    """
+    station = fact.get('station') or 'this station'
+    if bottom_ft is None:
+        return None, ('the series prints no bottom for %s, so there is no way to ask whether '
+                      'it stands for the water' % station)
+    if water_mean_ft is None:
+        return None, 'we hold no average depth for this water to test the station against'
+    if bottom_ft <= water_mean_ft:
+        return None, ('%s bottoms at %.1f ft and this water averages %.1f ft, so the station '
+                      'is in a shallow part of it and the boundary is a fact about that part'
+                      % (station, bottom_ft, water_mean_ft))
+    if mgl is None:
+        return None, 'the sentence states no threshold in mg/L'
+    if mgl <= ANOXIC_MGL:
+        return 'anoxicBelowFt', None
+    if mgl <= DEPLETION_MGL:
+        return 'depletionDepthFt', None
+    return None, ('the sentence states %g mg/L, which is neither the %.1f the app calls anoxic '
+                  'nor the %.1f it calls depletion' % (mgl, ANOXIC_MGL, DEPLETION_MGL))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0],
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -181,25 +244,33 @@ def main(argv=None):
         }
         offered += 1
 
-    # THE LAKE-PROGRAM STATEMENTS RIDE ALONG AND ARE OFFERED TO NOTHING. See the module docstring.
+    # THE LAKE-PROGRAM STATEMENTS, OFFERED ONLY WHERE THE STATION CAN SPEAK. See the docstring.
     lp_fp = os.path.join(a.registry, 'lake_program_limnology.json')
+    idx_fp = os.path.join(a.registry, 'lake_index.json')
+    IDX = ({k: v for k, v in json.load(open(idx_fp, encoding='utf-8')).items()
+            if isinstance(v, dict)} if os.path.exists(idx_fp) else {})
     held = {}
     if os.path.exists(lp_fp):
         lp = json.load(open(lp_fp, encoding='utf-8'))
         for fname, rep in (lp.get('reports') or {}).items():
             for f in (rep.get('depth_statements') or []):
-                if not f.get('slug'):
+                slug = f.get('slug')
+                if not slug:
                     continue
-                held.setdefault(f['slug'], []).append({
+                bottom = f.get('station_bottom_ft')
+                mean = (IDX.get(slug) or {}).get('avg_depth_ft')
+                mgl = threshold_mgl(f.get('quote'))
+                field, why = prose_offer(f, bottom, mean, mgl)
+                held.setdefault(slug, []).append({
                     'depth_ft_low': f['depth_ft_low'], 'depth_ft_high': f['depth_ft_high'],
                     'as_printed': f['as_printed'], 'station': f.get('station'),
-                    'station_bottom_ft': f.get('station_bottom_ft'),
+                    'station_bottom_ft': bottom, 'water_mean_depth_ft': mean,
                     'charted_max_ft': f.get('charted_max_ft'),
+                    'threshold_mgl': mgl, 'fills': None if why else field,
                     'reach': f.get('reach'), 'months_named': f.get('months_named'),
                     'report': fname, 'page': f.get('page'), 'quote': f.get('quote'),
-                    'offered': False,
-                    'held_because': 'a document statement is not written into a profile until a '
-                                    'person has said the station may speak for the water',
+                    'offered': why is None,
+                    'held_because': why,
                 })
     for slug, sts in held.items():
         rows.setdefault(slug, {'slug': slug, 'thermoclineFt': None, 'thermoclineNote': None,
@@ -207,6 +278,21 @@ def main(argv=None):
                                'depletionDepthFt': None, 'depletionNote': None,
                                'castCount': 0, 'sources': [], 'refused': None, 'offered': False})
         rows[slug]['statedInProse'] = sts
+        # A CAST BEATS A SENTENCE, so prose fills only what the profiles left empty. The shallow
+        # end of a range is the answer: `below 3-4 m` means oxygen has failed by 3 m.
+        for st in sts:
+            if not st['offered'] or not st['fills'] or rows[slug][st['fills']] is not None:
+                continue
+            rows[slug][st['fills']] = st['depth_ft_low']
+            rows[slug]['offered'] = True
+            note = ('stated in the prose of %s p%s at %s: "%s"%s'
+                    % (st['report'], st['page'], st['station'], st['as_printed'],
+                       ' (' + ', '.join(st['months_named']) + ')' if st['months_named'] else ''))
+            rows[slug]['anoxicNote' if st['fills'] == 'anoxicBelowFt'
+                        else 'depletionNote'] = note
+            srcs = set(rows[slug]['sources'] or [])
+            srcs.add('SC DES lake nutrient study')
+            rows[slug]['sources'] = sorted(srcs)
 
     n_th = sum(1 for r in rows.values() if r['thermoclineFt'] is not None)
     n_ox = sum(1 for r in rows.values() if r['anoxicBelowFt'] is not None
@@ -220,10 +306,11 @@ def main(argv=None):
         if r.get('refused'):
             print('   %-34s REFUSED %s' % (slug, '; '.join(r['refused'])[:110]))
     for slug, sts in sorted(held.items()):
-        for s in sts:
-            print('   %-34s HELD    %.1f-%.1f ft at %s -- %s'
-                  % (slug, s['depth_ft_low'], s['depth_ft_high'], s['station'] or '?',
-                     s['reach'] or 'no bottom printed'))
+        for st in sts:
+            print('   %-34s %-7s %.1f-%.1f ft at %-6s -> %s'
+                  % (slug, 'OFFERED' if st['offered'] else 'HELD',
+                     st['depth_ft_low'], st['depth_ft_high'], st['station'] or '?',
+                     st['fills'] or st['held_because']))
 
     if not a.go:
         print()
