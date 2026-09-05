@@ -189,6 +189,54 @@ def oxygen_from(cast, threshold):
                   f'{max(d for d, _o in pts):.1f} m. That is an answer, not a gap.')
 
 
+def boundary_index(reg):
+    """Our waters as polygons, and a containment lookup over them.
+
+    EXTRACTED SO THERE IS ONE OF THESE, NOT TWO. `derive_nes_limnology.py` has the same join to
+    make -- a 1973 survey station's degrees/minutes/seconds against our boundaries -- and the
+    reason it needs the coordinate rather than the printed name is the reason this file already
+    gives: name matching across two federal datasets and our own aliases is how Goat Rock Lake
+    reached rock_eagle_lake 200 km away. It is also how `LAKE WILLIAM C. BOWEN` misses
+    `Lake William C Bowen` over a full stop, and how `LAKE ROBINSON` matches two real waters.
+
+    Returns (at, count): `at(lat, lon)` gives a slug or None; `count` is how many polygons were
+    read. Behaviour is exactly what main() did inline before this was lifted out.
+    """
+    from shapely.geometry import shape, Point
+    from shapely.strtree import STRtree
+
+    bdir = os.path.join(reg, 'boundaries')
+    if not os.path.isdir(bdir):
+        raise SystemExit(f'no boundaries folder at {bdir} -- nothing to match against')
+    geoms, slugs = [], []
+    for fn in sorted(os.listdir(bdir)):
+        if not fn.endswith('.geojson'):
+            continue
+        try:
+            g = json.load(open(os.path.join(bdir, fn), encoding='utf-8'))
+            gm = shape(g['features'][0]['geometry'] if g.get('type') == 'FeatureCollection'
+                       else (g.get('geometry') or g))
+        except Exception:
+            continue
+        geoms.append(gm)
+        slugs.append(fn[:-len('.geojson')])
+    if not geoms:
+        raise SystemExit('no boundary polygons read')
+    tree = STRtree(geoms)
+
+    def at(lat, lon):
+        if lat is None or lon is None:
+            return None
+        p = Point(lon, lat)
+        for i in tree.query(p):
+            idx = int(i)
+            if geoms[idx].contains(p):
+                return slugs[idx]
+        return None
+
+    return at, len(geoms)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('--registry', default='registry')
@@ -203,29 +251,12 @@ def main():
     if not os.path.isdir(bdir):
         sys.exit(f'no boundaries folder at {bdir} -- nothing to match against')
 
+    # ── our waters, as polygons, because a coordinate is the only honest join here ───────────
     try:
-        from shapely.geometry import shape, Point
-        from shapely.strtree import STRtree
+        slug_at, n_poly = boundary_index(reg)
     except ImportError:
         sys.exit('shapely is required: py -m pip install shapely')
-
-    # ── our waters, as polygons, because a coordinate is the only honest join here ───────────
-    geoms, slugs = [], []
-    for fn in sorted(os.listdir(bdir)):
-        if not fn.endswith('.geojson'):
-            continue
-        try:
-            g = json.load(open(os.path.join(bdir, fn), encoding='utf-8'))
-            gm = shape(g['features'][0]['geometry'] if g.get('type') == 'FeatureCollection'
-                       else (g.get('geometry') or g))
-        except Exception:
-            continue
-        geoms.append(gm)
-        slugs.append(fn[:-len('.geojson')])
-    if not geoms:
-        sys.exit('no boundary polygons read')
-    tree = STRtree(geoms)
-    print(f'{len(geoms)} boundary polygons to match against')
+    print(f'{n_poly} boundary polygons to match against')
 
     years = [y.strip() for y in args.years.split(',') if y.strip() in SOURCES]
     if not args.go:
@@ -280,13 +311,7 @@ def main():
             lat, lon = num(r.get(c_lat)), num(r.get(c_lon))
             if lat is None or lon is None:
                 continue
-            p = Point(lon, lat)
-            hit = None
-            for i in tree.query(p):
-                idx = int(i)
-                if geoms[idx].contains(p):
-                    hit = slugs[idx]
-                    break
+            hit = slug_at(lat, lon)
             nm = str(r.get(c_name) or '').strip() if c_name else ''
             if hit:
                 here[str(r.get(c_site)).strip()] = {'slug': hit, 'nla_name': nm,
