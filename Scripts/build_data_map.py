@@ -302,7 +302,28 @@ def grep(repo, needle, dirs=CODE_DIRS):
 # A profile field written in code rather than read from a file. THE CLASS OF THING THAT WAS
 # MISSED TWICE: `profile.biology.predatorSpecies = ...` in deterministic.js is where the SC
 # inshore floor enters, and no amount of reading registry/*.json will ever show it.
-ASSIGN = re.compile(r'profile\.([A-Za-z_]+)\.([A-Za-z_]+)\s*=')
+# TWO SEGMENTS OR NOTHING, WHICH IS NOT HOW THE WORKER WRITES.
+#
+# This required `profile.<a>.<b> =` and so could only ever see a two-deep dotted assignment.
+# Measured against Worker/research/limnology.js on 2026-09-05, where the WQP sweep merges a pull
+# into a stored profile, it saw ONE of the four writes in that function:
+#
+#   profile.limnology = applyWqpToLimnology(...)      one segment  -- missed
+#   profile._wqpLimnology = pull                      one segment  -- missed
+#   profile.evidence[section] = ...                   bracketed    -- missed
+#   profile.metadata.limnologyRefreshedAt = ...       two segments -- found
+#
+# `profile.limnology` is the entire limnology block: thermocline depth, the anoxic boundary, the
+# clarity bucket. It is the most consequential runtime write in the Worker and the map built to
+# surface runtime writes could not see it, because of the shape of the left-hand side.
+#
+# Now: the top field, then any tail of `.name` or `[expr]`, and a single `=` that is not `==`.
+# A bracket is normalised to `[]` in the caller so `evidence[section]` and `evidence[s]` are one
+# field and not two.
+ASSIGN = re.compile(
+    r'profile\.([A-Za-z_$][\w$]*)'                          # the field being written
+    r'((?:\.[A-Za-z_$][\w$]*|\[[^\]\n]{0,40}\])*)'         # .deeper and [computed] tails
+    r'\s*=(?!=)')                                           # assignment, never a comparison
 
 
 def runtime_writers(repo):
@@ -322,7 +343,7 @@ def runtime_writers(repo):
                 m = ASSIGN.search(line)
                 if not m:
                     continue
-                field = '%s.%s' % (m.group(1), m.group(2))
+                field = m.group(1) + re.sub(r'\[[^\]]*\]', '[]', m.group(2) or '')
                 # WHAT IT IS WRITTEN FROM, which is the only useful part. Reading the right
                 # of the `=` alone gave `uniqueResearchSpecies` seven times -- the wrapper every
                 # one of them passes through, and never the source. The statement runs on for a
@@ -349,6 +370,28 @@ def main():
     a = ap.parse_args()
     reg, repo = a.registry, a.repo
     out_fp = a.out or os.path.join(reg, OUT_NAME)
+
+    # THE REPO ARGUMENT IS HALF THIS MAP AND IT WAS NEVER CHECKED.
+    #
+    # `built_by`, `read_by`, `js_data_tables` and `runtime_writers` all come from grepping the
+    # checkout. load_code() skips a directory that is not there, os.walk yields nothing under a
+    # path that does not exist, and every code-derived field comes out empty -- so a wrong
+    # --repo does not fail. It writes a complete-looking map in which nothing is built by
+    # anything, nothing is read by anything, and the Worker writes no profile fields at all.
+    #
+    # 2026-09-05: `--repo repo` -- no such directory, the checkout is TrollMap-Dev -- printed
+    # "runtime writers: 0 profile field(s) written in Worker code" and wrote 57 KB that looked
+    # like an answer. The sweep had written four profiles ten minutes earlier.
+    #
+    # A PARTIAL RUN MUST NOT WRITE A WHOLE FILE. --registry has been checked since this was
+    # written; --repo is the other half and gets the same treatment.
+    missing = [d for d in CODE_DIRS if not os.path.isdir(os.path.join(repo, d))]
+    if missing:
+        raise SystemExit(
+            '--repo %r is not the TrollMap-Dev checkout: no %s directory under it.\n'
+            'Every code-derived field would come out empty and the map would still look whole.\n'
+            'Use the checkout, e.g. --repo "F:\\TrollMapPipeline\\TrollMap-Dev"'
+            % (repo, ', '.join(missing)))
 
     idx_path = os.path.join(reg, 'lake_index.json')
     if not os.path.exists(idx_path):
