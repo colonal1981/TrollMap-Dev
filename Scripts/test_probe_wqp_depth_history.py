@@ -16,9 +16,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import probe_wqp_depth_history as P
 
 FAILS = []
+RAN = []
 
 
 def check(name, got, want):
+    RAN.append(name)                     # counted, not typed -- a hand-kept total goes stale
     if got != want:
         FAILS.append('%s: got %r, want %r' % (name, got, want))
 
@@ -141,6 +143,36 @@ finally:
 
 check('the url asks for the zip', 'zip=yes' in P.wqp_url((0, 0, 1, 1), 'legacy'), True)
 
+# A CUT STREAM IS NOT AN ANSWER, AND WQP PUTS THAT NEWS IN THE BODY.
+# The 3.0 service returned Lake Robinson as one row followed by "ERROR: INCOMPLETE DATA ...
+# PLEASE RETRY THE REQUEST." and the census stored that sentence as the lake's ORGANISATION.
+_cut = (payload.split('\n')[0] + '\n'
+        + 'ERROR: INCOMPLETE DATA - THE RESULTS FOR THIS REQUEST ARE NOT COMPLETE AND MORE DATA '
+          'IS LIKELY AVAILABLE.  PLEASE RETRY THE REQUEST.\n')
+_slept = []
+_real_sleep = P.time.sleep
+try:
+    P.time.sleep = lambda n: _slept.append(n)
+    urllib.request.urlopen = lambda req, timeout=None: FakeResp(_cut.encode())
+    _t, _e = P.fetch('https://example.invalid/x')
+    check('a truncated body is an error, not a census', _t, None)
+    check('and it says the service asked for a retry', 'incomplete stream' in (_e or ''), True)
+    check('and it retried before giving up', len(_slept), 2)
+    _slept.clear()
+    urllib.request.urlopen = lambda req, timeout=None: FakeResp(payload.encode())
+    _t2, _e2 = P.fetch('https://example.invalid/x')
+    check('a clean body still comes back whole', P.census(_t2), legacy)
+    check('and a clean body is not retried', _slept, [])
+finally:
+    P.time.sleep = _real_sleep
+    urllib.request.urlopen = _real
+
+# And the reason fetch() has to be the one to catch it: census() cannot. Handed the cut body it
+# reads the error line as a row and reports a lake with no records and no error.
+_poisoned = P.census(_cut)
+check('census cannot tell a cut stream from an empty lake', _poisoned.get('rows'), 1)
+check('and it raises no objection', 'error' in _poisoned, False)
+
 # A CENSUS HAS TO SAY WHAT IT ASKED, NOT ONLY WHAT ANSWERED.
 # The 2026-09-04 run carries `by_api` with a `legacy` key and nothing else on all 64 waters, and
 # that reads the same whether only the 2.2 service was asked or both were asked and 3.0 vanished.
@@ -163,5 +195,5 @@ if FAILS:
     for f in FAILS:
         print('   ' + f)
     sys.exit(1)
-print('ok  -- %d checks: both dialects agree, the zip path changes nothing, and the\n'
-      '      census records which services it asked' % 28)
+print('ok  -- %d checks: both dialects agree, the zip path changes nothing, the census '
+      'records which services it asked, and a cut stream is not an answer' % len(RAN))

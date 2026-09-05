@@ -78,6 +78,15 @@ SUMMER = (6, 7, 8, 9)                # months 6-9, same as the Worker
 CHARS = ['Temperature, water', 'Dissolved oxygen (DO)', 'Dissolved oxygen']
 UA = 'TrollMap/1.0 (personal fishing project; depth-history probe)'
 
+# WQP REPORTS A CUT STREAM INSIDE THE BODY, NOT IN THE STATUS LINE.
+# 2026-09-05, the 3.0 service returned Lake Robinson as one row followed by
+#   ERROR: INCOMPLETE DATA - THE RESULTS FOR THIS REQUEST ARE NOT COMPLETE AND MORE DATA IS
+#   LIKELY AVAILABLE.  PLEASE RETRY THE REQUEST.
+# The census read that as a data row and stored the error text as an ORGANISATION -- so the file
+# said Lake Robinson is monitored by a sentence. A partial answer wearing a success stamp is the
+# same lie as a partial run writing a whole file, and the service itself says what to do about it.
+TRUNCATED = 'PLEASE RETRY THE REQUEST'
+
 
 # One census, two dialects. First name that exists in the header wins.
 COLUMNS = {
@@ -138,7 +147,14 @@ def fetch(url, timeout=300, tries=3):
                     if not names:
                         return '', None               # an empty archive is an empty answer
                     raw = z.read(names[0])
-            return raw.decode('utf-8', 'replace'), None
+            text = raw.decode('utf-8', 'replace')
+            if TRUNCATED in text.upper():
+                last = 'WQP returned an incomplete stream and asked to be retried'
+                if i < tries - 1:
+                    time.sleep(4 * (i + 1))
+                    continue
+                return None, last
+            return text, None
         except Exception as exc:                      # noqa: BLE001 -- report, do not classify
             last = '%s: %s' % (type(exc).__name__, exc)
             if i < tries - 1:
