@@ -58,7 +58,7 @@ def first(seq, pick):
     return None, None
 
 
-def classify(row, prof, nla):
+def classify(row, prof, nla, probe=None):
     """(state, detail). Order matters: what the APP shows wins, then what we hold unused."""
     # A THERMOCLINE IS A LAKE QUESTION. The index offers 284 lakes, 58 rivers and 13 coastal
     # zones; a river does not stratify and an estuary's structure is tidal, not thermal. Counting
@@ -79,12 +79,43 @@ def classify(row, prof, nla):
                             'method': (lim.get('thermocline') or {}).get('method'),
                             'anoxicBelowFt': ox.get('anoxicBelowFt')}
 
+    # THE WINDOW, NOT THE LAKE. probe_wqp_depth_history.py asks WQP with no start date and
+    # counts the summer dissolved-oxygen records that carry a depth and fall BEFORE 2015-01-01 --
+    # the ones Worker/research/limnology.js cannot see. The rule needs three. Lake Moultrie has
+    # 2,788 across 30 two-foot bins and its profile says "surface/grab samples only", which was
+    # a true statement about the window and a false one about the lake.
+    #
+    # This outranks the WQP verdict below because it is the SAME SOURCE asked a wider question.
+    hidden = (probe or {}).get('hidden_summer_do_depth_recs') or 0
+    if hidden >= 3:
+        return 'window_is_hiding_it', {
+            'from': 'wqp, full history', 'hidden_summer_do_depth_recs': hidden,
+            'distinct_2ft_bins': (probe or {}).get('distinct_2ft_bins'),
+            'max_depth_ft': (probe or {}).get('max_depth_ft'),
+            'organizations': (probe or {}).get('hidden_organizations'),
+            'deepest': (probe or {}).get('deepest')}
+
     nla_th, visit = first(visits, lambda v: v.get('thermoclineFt'))
     if nla_th is not None:
         return 'nla_unused', {'depthFt': nla_th, 'from': 'nla_limnology.json',
                               'year': visit.get('year'), 'note': visit.get('thermoclineNote'),
                               'anoxicBelowFt': visit.get('anoxicBelowFt'),
                               'depletionDepthFt': visit.get('depletionDepthFt')}
+
+    # AN OXYGEN DEPTH WITHOUT A THERMOCLINE IS STILL SOMETHING WE HOLD AND DO NOT USE.
+    # The branch above only fires on a thermocline, so a water whose NLA visit produced an
+    # anoxic or depletion boundary and no thermocline fell through to a gap verdict. Measured
+    # 2026-09-05: one water, Little Ocmulgee Lake, 238 acres, depletion at 3.3 ft. Small, and
+    # exactly the shape of hole that is large somewhere else next month.
+    nla_ox, oxvisit = first(visits, lambda v: v.get('anoxicBelowFt') if v.get('anoxicBelowFt')
+                            is not None else v.get('depletionDepthFt'))
+    if nla_ox is not None and ox.get('anoxicBelowFt') is None \
+            and ox.get('depletionDepthFt') is None:
+        return 'nla_unused', {'depthFt': None, 'from': 'nla_limnology.json (oxygen only)',
+                              'year': oxvisit.get('year'),
+                              'anoxicBelowFt': oxvisit.get('anoxicBelowFt'),
+                              'depletionDepthFt': oxvisit.get('depletionDepthFt'),
+                              'note': oxvisit.get('anoxicNote') or oxvisit.get('depletionNote')}
 
     # A reasoned no-stratify off real readings, from either source.
     note = str(wqp.get('note') or '')
@@ -163,6 +194,17 @@ def main(argv=None):
         raise SystemExit('no _research_profiles in %s -- run mirror_research_profiles.py first'
                          % reg)
 
+    probe_path = os.path.join(reg, '_wqp_depth_history.json')
+    PROBE = {}
+    if os.path.exists(probe_path):
+        pdoc = json.load(open(probe_path, encoding='utf-8')) or {}
+        PROBE = pdoc.get('waters') or {}
+        print('probe: %s waters, %s of %s, complete=%s'
+              % (len(PROBE), pdoc.get('done'), pdoc.get('of'), pdoc.get('complete')))
+    else:
+        print('!! no _wqp_depth_history.json -- run probe_wqp_depth_history.py to learn what the '
+              '2015 window is hiding')
+
     nla_path = os.path.join(reg, 'nla_limnology.json')
     NLA = {}
     if os.path.exists(nla_path):
@@ -191,7 +233,8 @@ def main(argv=None):
     buckets = {}
     rows = []
     for slug, row in IDX.items():
-        state, detail = classify(row, prof_by_slug.get(slug), NLA.get(slug))
+        state, detail = classify(row, prof_by_slug.get(slug), NLA.get(slug),
+                                 PROBE.get(slug))
         rec = {'slug': slug,
                'display_name': row.get('display_name') or row.get('name') or slug,
                'state': row.get('state'), 'acres': row.get('area_acres'),
@@ -200,8 +243,8 @@ def main(argv=None):
         rows.append(rec)
         buckets.setdefault(state, []).append(rec)
 
-    order = ['answered', 'nla_unused', 'does_not_stratify', 'needs_a_source',
-             'never_asked', 'not_applicable']
+    order = ['answered', 'window_is_hiding_it', 'nla_unused', 'does_not_stratify',
+             'needs_a_source', 'never_asked', 'not_applicable']
     lakes = [r for r in rows if r['verdict'] != 'not_applicable']
     big = [r for r in lakes if (r.get('acres') or 0) >= 1000]
     print('%d waters offered -- %d lakes, %d rivers/coastal (a thermocline is a lake question)'
@@ -231,6 +274,19 @@ def main(argv=None):
                   % (r['display_name'][:46], r.get('state') or '',
                      ('%.0f' % r['acres']) if r.get('acres') else '?',
                      (r.get('why') or r.get('note') or '')[:60]))
+
+    got = [r for r in buckets.get('window_is_hiding_it', []) if (r.get('acres') or 0) >= a.min_acres]
+    got.sort(key=lambda r: -(r.get('acres') or 0))
+    if got:
+        print()
+        print('THE 2015 WINDOW IS THE ONLY THING IN THE WAY -- %d water(s). Same feed, wider ask.'
+              % len(got))
+        for r in got:
+            print('   %-42s %-3s %8s ac  %6d summer DO before 2015, %2d bins, to %s ft  [%s]'
+                  % (r['display_name'][:42], r.get('state') or '',
+                     ('%.0f' % r['acres']) if r.get('acres') else '?',
+                     r['hidden_summer_do_depth_recs'], r.get('distinct_2ft_bins') or 0,
+                     r.get('max_depth_ft'), ', '.join(r.get('organizations') or [])))
 
     table('nla_unused', 'ALREADY ON DISK AND NOT WIRED -- NLA has a depth the profile lacks')
 
