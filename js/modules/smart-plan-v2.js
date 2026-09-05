@@ -147,6 +147,12 @@ export async function buildSmartPlanV2(o) {
     depthGeo: null, boundaryGeo: null, contourGeo: null,
   });
   const intel = typeof o.intelFor === 'function' ? o.intelFor(packFacts) : o.intel;
+  // THE SAME DOOR, FOR THE THING THE PROFILE COULD NOT ANSWER. `thermoclineNormFor()` needs the
+  // profile to know whether a cast already answered -- if one did it returns null and the block
+  // never prints -- and it needs the pack for the depth. Neither side has both, which is why
+  // `intelFor` is a callback, and this rides the same reason rather than inventing a second one.
+  const thermoclineNorm = typeof o.thermoclineNormFor === 'function'
+    ? o.thermoclineNormFor(packFacts) : (o.thermoclineNorm || null);
 
   const req = buildPlanRequest({
     candidates: candidates.map((c) => forModel(c)),
@@ -157,7 +163,7 @@ export async function buildSmartPlanV2(o) {
     // So the prompt can say HOW each bait reaches a depth rather than leaving the model to read
     // one off the lure's name -- see depthNote() in plan-prompt.js.
     lureByName: o.lureByName,
-    usableAh: o.usableAh, intel,
+    usableAh: o.usableAh, intel, thermoclineNorm,
     // THE CHART FIRST, THE RESEARCH SECOND. The charted ones come out of the pack this function
     // already fetched; the wiring adds the profile's prose. Each line says which it is, so when
     // navigation.hazards retires this half simply goes empty and the sentence still stands.

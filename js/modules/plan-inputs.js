@@ -8,6 +8,7 @@
  * imported outside a browser at all, since its import graph reaches `window`.
  */
 
+import { thermoclineNorm } from '../data/thermocline-norms.js';
 import { SPECIES_BEHAVIOR_V2, resolveLakeKey } from '../data/species-intel.js';
 
 /**
@@ -519,6 +520,34 @@ export async function fetchRegistrySpecies(worker, lakeName, state = '', species
     console.warn('[plan] registry species unavailable for', lakeName, e && e.message);
     return null;
   }
+}
+
+/**
+ * What lakes of this depth usually do in this month -- or null, which is the common answer.
+ *
+ * NOT PART OF researchIntel(), AND THREE TESTS SAID SO. The first attempt printed this inside
+ * that function's block, which is headed "Researched profile for this lake". plan-depth-band's
+ * "omits what the research could not establish rather than emitting a blank" failed, and two
+ * tests requiring an empty profile to return null failed with it. They are right: a national
+ * table is not a research finding about this water, and a lake nobody has researched must not
+ * read as researched because a table had a row for its depth class. So it travels as its own
+ * named input and prints in its own section of the prompt, beside the coastal and river blocks.
+ *
+ * THE MEASUREMENT STANDS AND THIS NEVER RUNS BESIDE IT. A cast on this water -- from WQP, or
+ * from the documents `document_limnology.json` carries -- answers the question, and a typical
+ * value printed next to a measured one is an invitation to average them.
+ *
+ * Ryan, 2026-09-05: *"but that is backwards... you are saying i must go fish a lake to find out
+ * information to fish a lake"*, and *"estimate is better than nothing for sure... as long as the
+ * LLM doesn't take that as the depth the fish are at"*.
+ */
+export function thermoclineNormFor(profile, now = Date.now(), packFacts = null) {
+  const lim = { ...((profile && profile.limnology) || {}),
+                ...((packFacts && packFacts.limnology) || {}) };
+  if (lim.thermocline && lim.thermocline.summerDepthFt) return null;
+  const id = { ...((profile && profile.identity) || {}),
+               ...((packFacts && packFacts.identity) || {}) };
+  return thermoclineNorm(id.maxDepthFt, new Date(now).getMonth() + 1);
 }
 
 export function researchIntel(profile, species, season, now = Date.now(), packFacts = null) {

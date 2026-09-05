@@ -17,7 +17,7 @@ import { getLoadedAccessIndex, registryRecordFor } from '../data/access-index.js
 import { getSeason, seasonNote } from '../data/species-intel.js';
 import { depthBandFor, usableAhFrom, researchIntel, structureWeights,
          describeDepthBand, conditionsFrom, fetchRegistrySpecies,
-         registryIdentity } from './plan-inputs.js';
+         registryIdentity, thermoclineNormFor } from './plan-inputs.js';
 import { DEFAULT_WEIGHTS, DEFAULT_RELIEF_WEIGHTS } from './plan-candidates.js';
 import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
 import { TRANSIT_MIN_DEPTH_FT } from './plan-water.js';
@@ -233,6 +233,8 @@ export async function runSmartPlanV2() {
       // THE PACK'S FACTS AND THE REGISTRY'S, THROUGH THE ONE DOOR. `regSpecies` is awaited above
       // rather than inside the closure, because buildSmartPlanV2 calls this synchronously while
       // it assembles the prompt -- a promise here would reach researchIntel() as an object.
+      // The estimate that runs ONLY where no cast answered -- see thermoclineNormFor().
+      thermoclineNormFor: (pf) => thermoclineNormFor(researched, Date.now(), pf),
       intelFor: (packFacts) => researchIntel(researched, species, season, Date.now(),
         (regSpecies || regId || regLim)
           ? { ...(packFacts || {}),

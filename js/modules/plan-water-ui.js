@@ -35,7 +35,7 @@ import { state, CF_WORKER_URL } from '../core/state.js';
 import { resolveR2Key } from '../data/lake-keys.js';
 import { getSeason, seasonNote } from '../data/species-intel.js';
 import { depthBandFor, usableAhFrom, researchIntel, describeDepthBand, conditionsFrom,
-         fetchRegistrySpecies, registryIdentity } from './plan-inputs.js';
+         fetchRegistrySpecies, registryIdentity, thermoclineNormFor } from './plan-inputs.js';
 import { solunarFor } from '../utils/solunar.js';
 import { registryRecordFor } from '../data/access-index.js';
 import { packFetcher } from './smart-plan-v2.js';
@@ -1001,6 +1001,8 @@ export async function findWater() {
     // THE PACK'S MEASUREMENT WINS OVER THE REGISTRY'S STAMP, and both beat the profile. This tab
     // HAS the depth areas in hand, so where it measured a depth that number is newer than
     // anything the pipeline wrote down.
+    // The estimate that runs ONLY where no cast answered -- see thermoclineNormFor().
+    thermoclineNormFor: (pf) => thermoclineNormFor(researched, Date.now(), pf),
     intelFor: (extra) => researchIntel(researched, species, getSeason(date, inp.waterTempF),
       Date.now(), (() => {
         const pf = packDerivedFacts({ lakeName: inp.lakeName, structGeo: stFc, featGeo: wfFc,

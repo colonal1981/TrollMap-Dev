@@ -341,11 +341,48 @@ export function riverPromptBlock(ws) {
  *                                   apart, because a dam and a paragraph are not the same claim.
  * @param {string}   [o.intel]       species / research / catch-history prose the app already has
  * @param {object}   [o.waterState]  fetchWaterState() output — {featureType, river, tidal}.
+ * @param {object}   [o.thermoclineNorm] thermoclineNormFor() output — what lakes of this depth
+ *                                   usually do this month. Absent whenever this water has a
+ *                                   measured thermocline, which is the whole point.
  *                                   NOT absent on a reservoir: an impoundment with an inflow
  *                                   gauge or a generating dam carries `river` too, which is why
  *                                   riverPromptBlock() reads `featureType` and not the mere
  *                                   presence of the object. Absent is the same prompt as before.
  */
+// WHAT LAKES LIKE THIS USUALLY DO, IN ITS OWN SECTION AND NOT IN THE RESEARCH BLOCK.
+//
+// 342 of the app's 355 waters have no thermocline cast at all, and a plan is written before the
+// trip. Ryan: *"but that is backwards... you are saying i must go fish a lake to find out
+// information to fish a lake"*. So the table answers where nobody has measured -- and it prints
+// here, beside the coastal and river blocks, rather than inside "WHAT IS ALREADY KNOWN", because
+// that heading is a claim about this water and this is not one.
+//
+// AND IT IS WRITTEN AS PROSE, NOT AS `Label: value`. Ryan's condition on the whole idea was
+// *"as long as the LLM doesn't take that as the depth the fish are at"*, and a bare number in a
+// column of bare numbers is exactly what gets quoted back. The figure cannot be lifted out of
+// this block without the spread, the sample size, the words "not measured", and the sentence
+// saying a thermocline is a boundary -- they are in the same sentences as the number.
+function thermoclineNormBlock(n) {
+  if (!n) return '';
+  const month = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August',
+                 'September', 'October', 'November', 'December'][n.month] || 'this month';
+  return `
+THE THERMOCLINE ON THIS WATER HAS NOT BEEN MEASURED
+Nobody has published a vertical cast for it, so what follows is what lakes of this depth do in
+${month} — across ${n.casts} EPA National Lakes Assessment casts the thermocline sat around
+${n.medianFt} ft, with half of those lakes between ${n.p25Ft} and ${n.p75Ft} ft.
+
+That is a typical value for lakes of this depth. It is NOT a fact about this one, and the survey
+is national, so on a southern reservoir it more likely reads shallow than deep. Do not state it
+as this lake's thermocline and do not build the day around it — say it is the expectation and
+say it is unmeasured.
+
+And a thermocline is a boundary, not a depth to fish. The water beneath it is cut off from the
+surface and loses oxygen as summer runs; the fishable band is above it. Whatever the sounder shows
+on the day beats every word of this.
+`;
+}
+
 export function buildPlanRequest(o) {
   const day = {
     water: o.water, ramp: o.ramp, date: o.date,
@@ -661,7 +698,7 @@ wind direction: is it a dangerous windward launch?${o.hazards && o.hazards.lengt
     + `from the research is written advice with no position at all: say the ones that bear on `
     + `today out loud, and never imply an unpositioned one is marked on the chart.`
   : ''}
-${coastalPromptBlock(o.waterState)}${riverPromptBlock(o.waterState)}
+${coastalPromptBlock(o.waterState)}${riverPromptBlock(o.waterState)}${thermoclineNormBlock(o.thermoclineNorm)}
 WHAT IS ALREADY KNOWN
 ${o.intel || 'NOTHING. No researched profile exists for this water, so everything else here rests '
   + 'on the chart, the gauges and general species knowledge. Say so in the plan rather than '
