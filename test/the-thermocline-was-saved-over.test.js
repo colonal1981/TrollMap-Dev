@@ -94,3 +94,48 @@ test('evidence is written for what WQP supplied and for nothing else', () => {
   assert.equal(thin.limnology.trophicStatus, undefined);
   assert.deepEqual(buildWqpEvidence({ ok: false }), {});
 });
+
+// ── A REFUSAL IS AN ANSWER AND IT HAS TO REACH THE FIELD IT REFUSED ────────────────────────────
+//
+// 2026-09-05, Lake Moultrie (Berkeley Co, SC). `limnology-cache/lake_moultrie_sc.json` holds
+// 5,227 records, `depthProfileCount: 0`, and this sentence: "Monitoring data were found, but
+// available records are surface/grab samples only -- no vertical depth profiles. Thermocline
+// cannot be derived from this source." The profile it belongs to held
+// `thermocline: { summerDepthFt: null, method: null, note: null }` -- three nulls and no reason,
+// because both merge branches were gated on a value existing.
+//
+// Checked at record level against WQP the same day: every published visit at Moultrie, from both
+// organisations that monitor it, is one activity carrying one dissolved-oxygen value and a
+// companion `Depth = 0.3 m` row, and no row in the bucket carries ActivityDepthHeightMeasure.
+// There is nothing to parse. "We asked and the data cannot answer" is a different state from
+// "nobody has asked", and one of the readers who has to tell them apart is a language model
+// filling a silent null from its own recall -- which is how Wateree carried 27 ft for months.
+test('a WQP pull that refuses writes its reason onto the fields it could not fill', async () => {
+  const refusal = 'Monitoring data were found, but available records are surface/grab samples only'
+    + ' — no vertical depth profiles. Thermocline cannot be derived from this source.';
+  const out = applyWqpToLimnology({}, {
+    ok: true, recordCount: 5227, depthProfileCount: 0,
+    thermocline: null, oxygen: null,
+    surfaceOnlyNote: refusal, note: refusal,
+  });
+  assert.equal(out.thermocline.summerDepthFt, undefined, 'the depth stays unanswered');
+  assert.equal(out.thermocline.note, refusal, 'the reason must reach the thermocline');
+  assert.equal(out.oxygen.note, refusal, 'and the oxygen depths it also refused');
+  // The water still needs research -- a reason is not a value.
+  assert.ok(limnologyGaps(out).includes('limnology.thermocline.summerDepthFt'));
+  assert.ok(limnologyGaps(out).includes('limnology.oxygen.anoxicBelowFt'));
+});
+
+test('a refusal never annotates a depth that came from somewhere else', async () => {
+  // A document supplied 27 ft. WQP has nothing to say about it, and must not attach a sentence
+  // about a source that did not produce that number -- the citation-drift failure this file
+  // exists for.
+  const out = applyWqpToLimnology(
+    { thermocline: { summerDepthFt: 27, method: 'document', note: 'From the 2019 study.' },
+      oxygen: { anoxicBelowFt: 30, depletionDepthFt: null, note: 'From the 2019 study.' } },
+    { ok: true, recordCount: 12, thermocline: null, oxygen: null,
+      surfaceOnlyNote: 'surface/grab samples only' });
+  assert.equal(out.thermocline.summerDepthFt, 27);
+  assert.equal(out.thermocline.note, 'From the 2019 study.');
+  assert.equal(out.oxygen.note, 'From the 2019 study.');
+});

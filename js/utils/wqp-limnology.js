@@ -88,6 +88,39 @@ export function applyWqpToLimnology(base = {}, wqp = null) {
     if (wqp.oxygen.depletionDepthFt != null) out.oxygen.depletionDepthFt = wqp.oxygen.depletionDepthFt;
     out.oxygen.note = wqp.oxygen.note || out.oxygen.note || null;
   }
+
+  // A REFUSAL IS AN ANSWER, AND IT HAS TO TRAVEL TO THE FIELD IT REFUSED.
+  //
+  // The pull says WHY it could not derive a depth -- `surfaceOnlyNote` on the cache object reads
+  // "Monitoring data were found, but available records are surface/grab samples only -- no
+  // vertical depth profiles. Thermocline cannot be derived from this source." Until now that
+  // sentence was written into `limnology-cache/<id>.json` and stopped there: both branches above
+  // are gated on a value existing, so a water WQP honestly refused ended up with
+  // `thermocline: { summerDepthFt: null, method: null, note: null }` in its profile.
+  //
+  // Measured 2026-09-05 on Lake Moultrie (Berkeley Co, SC): 5,227 records, `depthProfileCount: 0`,
+  // the note above sitting in the cache, and a profile carrying three nulls and no reason. Checked
+  // at record level against WQP -- every published visit from both organisations that monitor the
+  // lake is one activity with one dissolved-oxygen value and a companion `Depth = 0.3 m` row, and
+  // not one row in the bucket carries `ActivityDepthHeightMeasure`. There is nothing to parse.
+  //
+  // A null with no reason beside it is the hole a model fills from its own recall. Lake Wateree
+  // carried a fabricated thermocline of 27 ft for months in exactly that shape. "We asked and the
+  // data cannot answer" and "nobody has asked" have to look different to whoever reads this next,
+  // and one of those two readers is a language model.
+  //
+  // Written only where the value is still missing, so a depth that came from a document is never
+  // annotated with a sentence about a source that did not produce it. `limnologyGaps` keys on the
+  // value fields alone, so the water still counts as needing research.
+  const refusal = wqp.surfaceOnlyNote || wqp.note || null;
+  if (refusal) {
+    out.thermocline = out.thermocline || {};
+    if (out.thermocline.summerDepthFt == null) out.thermocline.note = refusal;
+    out.oxygen = out.oxygen || {};
+    if (out.oxygen.anoxicBelowFt == null && out.oxygen.depletionDepthFt == null) {
+      out.oxygen.note = refusal;
+    }
+  }
   return out;
 }
 
