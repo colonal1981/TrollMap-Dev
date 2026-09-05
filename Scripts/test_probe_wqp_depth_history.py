@@ -173,6 +173,38 @@ _poisoned = P.census(_cut)
 check('census cannot tell a cut stream from an empty lake', _poisoned.get('rows'), 1)
 check('and it raises no objection', 'error' in _poisoned, False)
 
+# HALF AN ANSWER TO A TWO-PART QUESTION IS NOT AN ANSWER.
+# The 3.0 service returned HTTP 500 on Marion, Thurmond and Hartwell while 2.2 answered. `best`
+# took the 2.2 leg, no top-level error was written, and --resume would have skipped the three
+# biggest lakes for good -- legacy-only, on the exact question the run existed to settle.
+_both = ('legacy', 'wqx3')
+check('both legs answered is done',
+      P.answered({'by_api': {'legacy': {'rows': 1}, 'wqx3': {'rows': 1}}}, _both), True)
+check('a failed 3.0 leg is not done',
+      P.answered({'by_api': {'legacy': {'rows': 1}, 'wqx3': {'error': 'HTTP 500'}}}, _both), False)
+check('a failed 2.2 leg is not done either',
+      P.answered({'by_api': {'legacy': {'error': 'HTTP 500'}, 'wqx3': {'rows': 1}}}, _both), False)
+check('a leg that was never recorded is not done',
+      P.answered({'by_api': {'legacy': {'rows': 1}}}, _both), False)
+check('but it IS done when only that leg was asked',
+      P.answered({'by_api': {'legacy': {'rows': 1}}}, ('legacy',)), True)
+check('a top-level error is still not done',
+      P.answered({'error': 'no bounds', 'by_api': {'legacy': {'rows': 1}, 'wqx3': {'rows': 1}}},
+                 _both), False)
+check('an empty answer is an answer -- zero rows is not a failure',
+      P.answered({'by_api': {'legacy': {'rows': 0}, 'wqx3': {'rows': 0}}}, _both), True)
+
+_dir = os.path.join(__import__('tempfile').mkdtemp(), 'c.json')
+P.save(_dir, {'whole': {'by_api': {'legacy': {'rows': 1}, 'wqx3': {'rows': 1}}},
+              'half': {'by_api': {'legacy': {'rows': 1}, 'wqx3': {'error': 'HTTP 500'}}}},
+       2, apis=_both)
+_saved = __import__('json').load(open(_dir, encoding='utf-8'))
+check('the stamp counts only whole answers', (_saved['done'], _saved['failed']), (1, 1))
+check('and does not call a run with a hole complete', _saved['complete'], False)
+check('and names the water to come back to', _saved['failed_waters'], ['half'])
+check('--resume hands back only the whole one', sorted(P.load_done(_dir, _both)), ['whole'])
+
+
 # A CENSUS HAS TO SAY WHAT IT ASKED, NOT ONLY WHAT ANSWERED.
 # The 2026-09-04 run carries `by_api` with a `legacy` key and nothing else on all 64 waters, and
 # that reads the same whether only the 2.2 service was asked or both were asked and 3.0 vanished.

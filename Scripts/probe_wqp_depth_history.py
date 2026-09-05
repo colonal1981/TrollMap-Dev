@@ -248,7 +248,31 @@ def census(csv_text):
     return out
 
 
-def load_done(fp):
+def answered(rec, apis=None):
+    """A water is done when EVERY SERVICE IT WAS ASKED OF came back.
+
+    One rule, used by both --resume and the completeness stamp, because two copies of "is this
+    water finished" is how a run reports complete over a hole.
+
+    HALF AN ANSWER TO A TWO-PART QUESTION IS NOT AN ANSWER. 2026-09-05, on the both-dialect
+    census: the 3.0 service returned HTTP 500 on Lake Marion, Thurmond and Hartwell while 2.2
+    answered. `best` took the 2.2 leg, so no top-level error was written, `done` counted them and
+    --resume would have skipped them for good -- leaving the three biggest lakes in the census
+    legacy-only, which is the exact question the run was started to settle. And an older file
+    written under `--api legacy` has no 3.0 leg at all; asked for both, those waters are not done
+    either, whatever the old run thought.
+    """
+    if 'error' in rec:
+        return False
+    by = rec.get('by_api') or {}
+    for api in (apis or by.keys()):
+        got = by.get(api)
+        if not isinstance(got, dict) or 'error' in got:
+            return False
+    return True
+
+
+def load_done(fp, apis=None):
     """Only the waters that ACTUALLY ANSWERED. A row carrying an error is not done -- --resume
     must retry it, or one bad afternoon at WQP becomes a permanent hole in the census."""
     if not os.path.exists(fp):
@@ -257,7 +281,7 @@ def load_done(fp):
         got = (json.load(open(fp, encoding='utf-8')) or {}).get('waters') or {}
     except Exception:
         return {}
-    return {k: v for k, v in got.items() if 'error' not in v}
+    return {k: v for k, v in got.items() if answered(v, apis)}
 
 
 def save(fp, waters, total, note=None, apis=None):
@@ -265,7 +289,7 @@ def save(fp, waters, total, note=None, apis=None):
     # `done` and set `complete` from that, so a run in which every single request was refused
     # wrote {"done": 1, "of": 1, "complete": true} -- which is the same lie as a partial run
     # writing a whole file, wearing a success stamp.
-    ok = {k: v for k, v in waters.items() if 'error' not in v}
+    ok = {k: v for k, v in waters.items() if answered(v, apis)}
     bad = sorted(k for k in waters if k not in ok)
     # WHICH SERVICES WERE ACTUALLY ASKED, WRITTEN DOWN.
     # The 2026-09-04 census carries `by_api` with only a `legacy` key on all 64 waters, and read
@@ -345,8 +369,9 @@ def main(argv=None):
         want.append((slug, row, b))
     want.sort(key=lambda t: -(t[1].get('area_acres') or 0))
 
+    apis = ('legacy', 'wqx3') if a.api == 'both' else (a.api,)
     out_fp = a.out or os.path.join(reg, OUT_NAME)
-    waters = load_done(out_fp) if a.resume else {}
+    waters = load_done(out_fp, apis) if a.resume else {}
     todo = [t for t in want if t[0] not in waters]
     print('%d water(s) to probe%s (%d already done)'
           % (len(todo), '' if only else ' at or above %g acres' % a.min_acres, len(waters)))
@@ -355,8 +380,6 @@ def main(argv=None):
         return 0
 
     done = [0]
-
-    apis = ('legacy', 'wqx3') if a.api == 'both' else (a.api,)
 
     def one(t):
         slug, row, b = t
