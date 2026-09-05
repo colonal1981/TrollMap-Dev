@@ -9,9 +9,11 @@ import { handleResearchThermoclineSearch } from './storage.js';
 import { LAKE_NAME_TO_R2_KEY as SUPPLEMENTAL_KEY_MAP, resolveR2Key } from '../../js/data/lake-keys.js';
 
 import { boundsOf } from '../../js/utils/geojson-coords.js';
-import { lakeIndex, resolveRegistryRow, identityNamesForLake } from '../registry.js';
+import { lakeIndex, resolveRegistryRow, identityNamesForLake, documentLimnology } from '../registry.js';
 import { researchStorageId, resolveResearchStorageId } from './keys.js';
-import { applyWqpToLimnology, buildWqpEvidence, limnologyGaps } from '../../js/utils/wqp-limnology.js';
+import { applyWqpToLimnology, buildWqpEvidence, limnologyGaps,
+         applyDocumentsToLimnology, buildDocumentEvidence, documentFieldsApplied }
+  from '../../js/utils/wqp-limnology.js';
 
 function resolveSupplementalKeyWorker(lakeName) {
   return resolveR2Key(lakeName);
@@ -66,10 +68,40 @@ async function handleResearchLimnologyData(request, env, opts = {}) {
 
   const pull = await wqpCached(env, lakeName, body, opts);
   const base = body.base && typeof body.base === 'object' ? body.base : null;
-  const merged = base ? applyWqpToLimnology(base, pull) : null;
+  let merged = base ? applyWqpToLimnology(base, pull) : null;
+  let evidence = buildWqpEvidence(pull);
+
+  // AND THEN THE CASTS WE HOLD, INTO WHAT WQP LEFT NULL.
+  //
+  // `gaps` is what this response is FOR -- the caller passes it to extraction so a document is
+  // asked only for the limnology the measurement missed. Answering a gap from a cast we already
+  // hold before that list is built is the difference between reading a file and paying a model
+  // to re-find what is in it. Thirteen waters, measured 2026-09-05.
+  //
+  // The catch is not optional: this runs on the batch's path and a water with no cast in any
+  // document, or a bucket without the object yet, must still produce a profile.
+  let documents = null;
+  if (merged) {
+    try {
+      const row = resolveRegistryRow(await lakeIndex(env), lakeName);
+      const doc = row?.slug ? (await documentLimnology(env))[row.slug] : null;
+      const after = applyDocumentsToLimnology(merged, doc);
+      const applied = documentFieldsApplied(merged, after);
+      if (applied.thermocline || applied.oxygen) {
+        merged = after;
+        documents = { slug: row.slug, applied };
+        const ev = buildDocumentEvidence(doc, applied);
+        for (const [section, fields] of Object.entries(ev)) {
+          evidence[section] = { ...(evidence[section] || {}), ...fields };
+        }
+      }
+    } catch (e) {
+      console.warn(`[limnology-data] document limnology unavailable for ${lakeName}: ${e.message}`);
+    }
+  }
   return new Response(JSON.stringify({
     ...pull,
-    ...(merged ? { merged, evidence: buildWqpEvidence(pull), gaps: limnologyGaps(merged) } : {}),
+    ...(merged ? { merged, evidence, gaps: limnologyGaps(merged), documents } : {}),
   }), { headers: JSON_HEADERS });
 }
 
@@ -854,7 +886,8 @@ async function writeSweepState(env, waters) {
 
 async function refreshStaleLimnology(env, opts = {}) {
   const limit = opts.limit || SWEEP_PER_FIRING;
-  const out = { checked: 0, stale: 0, refreshed: 0, merged: 0, notOffered: 0, failed: [] };
+  const out = { checked: 0, stale: 0, refreshed: 0, merged: 0, fromDocuments: 0, notOffered: 0,
+                failed: [] };
   if (!env?.R2_TROLLMAP_CHARTPACKS) return out;
 
   // THE LAKES THE APP OFFERS, AND NOTHING ELSE. Ryan, 2026-09-04: "it should only be looking at
@@ -887,6 +920,19 @@ async function refreshStaleLimnology(env, opts = {}) {
   }
   const state = await readSweepState(env);
 
+  // ONCE, NOT PER WATER. Every profile in this loop asks the same object the same question, and
+  // the loader caches per isolate for an hour anyway -- but a throw belongs here, where it can be
+  // reported once and the WQP half of the sweep carries on, rather than inside the loop where it
+  // would be caught eighty times. A bucket without the object yet is a pipeline that has not run
+  // upload_garmin_to_r2.py since build_document_limnology.py first wrote it, which is a thing to
+  // say out loud, not a thing to fail the refresh over.
+  let docs = null;
+  try {
+    docs = await documentLimnology(env);
+  } catch (e) {
+    out.documentsError = String((e && e.message) || e).slice(0, 200);
+  }
+
   const due = [];
   for (const o of profiles) {
     // `lakes/versions/<id>/vN.json` is history, not a profile.
@@ -916,7 +962,10 @@ async function refreshStaleLimnology(env, opts = {}) {
       if (!lakeName) { out.failed.push(`${water.id}: profile carries no lakeName`); continue; }
 
       // The SAME lookup wqpPull makes for its bbox, so this gate cannot disagree with it.
-      if (!resolveRegistryRow(index, lakeName)) {
+      // KEPT, not discarded: `row.slug` is how the document casts below find this water, and
+      // resolving it twice is how two lookups start disagreeing.
+      const row = resolveRegistryRow(index, lakeName);
+      if (!row) {
         state[water.id] = { at: new Date().toISOString(), outcome: 'not offered by the app' };
         stateChanged = true;
         out.notOffered += 1;
@@ -932,7 +981,14 @@ async function refreshStaleLimnology(env, opts = {}) {
         outcome: pull?.ok ? `${pull.recordCount || 0} records` : (pull?.error || 'pull failed'),
       };
       stateChanged = true;
-      if (!pull?.ok || !(pull.recordCount > 0)) continue;
+
+      // THE PULL RETURNING NOTHING IS EXACTLY WHEN THE DOCUMENTS MATTER, so this no longer
+      // `continue`s past the merge. It used to: a water WQP could not answer skipped every line
+      // below and its profile was never touched. That is the shape of the whole defect -- of the
+      // thirteen waters holding a measured cast with a null in their profile, most are waters WQP
+      // has nothing for. Lake Brandt, Quaker Creek and Kings Mountain No. 1 each have one NLA
+      // 2007 profile and no state monitoring at depth at all; under the old guard the sweep
+      // pulled them, wrote "0 records" into its state file, and moved on forever.
 
       // A PULL THAT CHANGED NO VALUE STILL CHANGED WHAT WE KNOW.
       //
@@ -947,16 +1003,45 @@ async function refreshStaleLimnology(env, opts = {}) {
       // The guard's real job is not writing to R2 for nothing, so it now compares the WHOLE
       // document it is about to write, not one field of it.
       const before = JSON.stringify({ lim: profile.limnology || {}, wqp: profile._wqpLimnology || null });
-      profile.limnology = applyWqpToLimnology(profile.limnology || {}, pull);
-      profile._wqpLimnology = pull;
-      const ev = buildWqpEvidence(pull);
-      for (const [section, fields] of Object.entries(ev)) {
-        profile.evidence = profile.evidence || {};
-        profile.evidence[section] = profile.evidence[section] || {};
-        // REPLACED, NOT APPENDED. This row says where the value now stored came from, and there
-        // is one such value; appending would leave last month's citation beside this month's
-        // number claiming to explain it.
-        for (const [field, rows] of Object.entries(fields || {})) profile.evidence[section][field] = rows;
+      const writeEvidence = (ev) => {
+        for (const [section, fields] of Object.entries(ev)) {
+          profile.evidence = profile.evidence || {};
+          profile.evidence[section] = profile.evidence[section] || {};
+          // REPLACED, NOT APPENDED. This row says where the value now stored came from, and there
+          // is one such value; appending would leave last month's citation beside this month's
+          // number claiming to explain it.
+          for (const [field, rows] of Object.entries(fields || {})) profile.evidence[section][field] = rows;
+        }
+      };
+      if (pull?.ok && pull.recordCount > 0) {
+        profile.limnology = applyWqpToLimnology(profile.limnology || {}, pull);
+        profile._wqpLimnology = pull;
+        writeEvidence(buildWqpEvidence(pull));
+      }
+
+      // THEN THE CASTS WE HOLD, INTO WHAT IS STILL NULL. WQP is this water sampled by the agency
+      // that monitors it; a National Lakes Assessment cast is one visit to a selected site and the
+      // 1973 survey is fifty-three years old. So the measurement of record stands where it exists
+      // and an old cast beats nothing where it does not, with the note naming the cast and its
+      // date so 1973 is never mistaken for last summer.
+      //
+      // The catch matters here more than anywhere: this loop runs on cron with nobody listening,
+      // and a bucket that has not been uploaded since build_document_limnology.py first ran must
+      // not take the WQP refresh down with it. The reason goes in the state row, which is the only
+      // durable thing this loop writes.
+      try {
+        const doc = docs && row?.slug ? docs[row.slug] : null;
+        const pre = profile.limnology || {};
+        const after = applyDocumentsToLimnology(pre, doc);
+        const applied = documentFieldsApplied(pre, after);
+        if (applied.thermocline || applied.oxygen) {
+          profile.limnology = after;
+          writeEvidence(buildDocumentEvidence(doc, applied));
+          state[water.id].documents = row.slug;
+          out.fromDocuments += 1;
+        }
+      } catch (e) {
+        state[water.id].documentError = String((e && e.message) || e).slice(0, 200);
       }
       if (JSON.stringify({ lim: profile.limnology, wqp: profile._wqpLimnology }) === before) continue;
       profile.metadata = profile.metadata || {};

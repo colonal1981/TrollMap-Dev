@@ -124,6 +124,94 @@ export function applyWqpToLimnology(base = {}, wqp = null) {
   return out;
 }
 
+// THE CASTS WE HOLD, WRITTEN ONLY INTO WHAT WQP LEFT NULL.
+//
+// `_registry/document_limnology.json` collapses the EPA National Lakes Assessment profiles and
+// the 1973 National Eutrophication Survey casts into the fields above, keyed by registry slug.
+// Built by Scripts/build_document_limnology.py, loaded by Worker/registry.js.
+//
+// SEVENTH FILE ADDRESSED TO NOBODY. `fetch_nla_limnology.py` has written its source since
+// 2026-09-04 and `upload_garmin_to_r2.py` has shipped it to R2 since the same day; the only file
+// that opened it was the audit that COUNTS what it would fix. Measured by that audit on
+// 2026-09-05: thirteen waters hold a measured thermocline or anoxic depth while their stored
+// profile carries null -- Wateree, Brandt, Quaker Creek, Bear Creek, Cooley, Yonah, Little
+// Ocmulgee, Edwin Johnson, Mott, Lee, Russell, Southern Pines Waterworks, Kings Mountain No. 1.
+//
+// HOLES ONLY, AND THE ORDER IS NOT ARBITRARY. WQP is this water, sampled by the agency that
+// monitors it, usually within the last few years. A National Lakes Assessment cast is one visit
+// to a statistically selected site, and the 1973 survey is fifty-three years old. Where the
+// measurement of record exists it stands; where it is null, an old cast beats nothing, and the
+// note says which cast and when so nobody mistakes 1973 for last summer.
+//
+// It also has to beat the REFUSAL that applyWqpToLimnology() writes. That function puts
+// "available records are surface/grab samples only -- no vertical depth profiles" into
+// `thermocline.note` when it cannot derive a depth, and Lake Wateree's profile carries exactly
+// that sentence beside a null while `nla_limnology.json` holds an anoxic depth of 19.7 ft from an
+// actual cast. A note explaining why we have no answer must not survive next to an answer, so
+// the note is REPLACED wherever this writes a value.
+//
+// `offered: false` rows are skipped. The SC DES lake-program statements ride in the same file
+// and are held: the 2021 and 2022 Lake Murray reports state a boundary below 3-4 m at S-326, in
+// the Clouds Creek arm, whose average total depth those reports print as 5.1 m, in a lake our
+// chart takes to 192 ft. Whether an arm may speak for a lake is a fishing judgment, not a
+// threshold, and until someone makes it that number is not a profile field.
+export function applyDocumentsToLimnology(base = {}, doc = null) {
+  const out = clone(base) || {};
+  if (!doc || doc.offered === false) return out;
+  if (doc.thermoclineFt != null) {
+    out.thermocline = out.thermocline || {};
+    if (out.thermocline.summerDepthFt == null) {
+      out.thermocline.summerDepthFt = doc.thermoclineFt;
+      out.thermocline.method = 'document_vertical_profile';
+      out.thermocline.note = doc.thermoclineNote || null;
+    }
+  }
+  if (doc.anoxicBelowFt != null || doc.depletionDepthFt != null) {
+    out.oxygen = out.oxygen || {};
+    const wrote = [];
+    if (doc.anoxicBelowFt != null && out.oxygen.anoxicBelowFt == null) {
+      out.oxygen.anoxicBelowFt = doc.anoxicBelowFt;
+      wrote.push(doc.anoxicNote);
+    }
+    if (doc.depletionDepthFt != null && out.oxygen.depletionDepthFt == null) {
+      out.oxygen.depletionDepthFt = doc.depletionDepthFt;
+      wrote.push(doc.depletionNote);
+    }
+    const note = wrote.filter(Boolean)[0];
+    if (note) out.oxygen.note = note;
+  }
+  return out;
+}
+
+// The citation for what the documents actually supplied, in the same shape buildWqpEvidence()
+// writes and for the same reason: a value stored without a row saying where it came from is how
+// Lake Wateree carried a fabricated 27 ft thermocline for months.
+export function buildDocumentEvidence(doc, applied) {
+  if (!doc || doc.offered === false || !applied) return {};
+  const sourceUrl = 'registry:_registry/document_limnology.json';
+  const LABEL = (doc.sources || []).join(' / ') || 'EPA vertical profile survey';
+  const evidence = { limnology: {} };
+  const row = (quote) => [buildEvidenceEntry('official_structured', LABEL, sourceUrl, quote || null,
+    'document_vertical_profile', { castCount: doc.castCount || null })];
+  if (applied.thermocline) evidence.limnology.thermocline = row(doc.thermoclineNote);
+  if (applied.oxygen) evidence.limnology.oxygen = row(doc.anoxicNote || doc.depletionNote);
+  return Object.keys(evidence.limnology).length ? evidence : {};
+}
+
+// Which fields this pass actually wrote, so the evidence rows describe stored values and no
+// others. Compared before and after rather than re-deriving the conditions in two places.
+export function documentFieldsApplied(before, after) {
+  const at = (o, a, b) => (o && o[a] ? o[a][b] : undefined);
+  return {
+    thermocline: at(before, 'thermocline', 'summerDepthFt') == null
+              && at(after, 'thermocline', 'summerDepthFt') != null,
+    oxygen: (at(before, 'oxygen', 'anoxicBelowFt') == null
+             && at(after, 'oxygen', 'anoxicBelowFt') != null)
+         || (at(before, 'oxygen', 'depletionDepthFt') == null
+             && at(after, 'oxygen', 'depletionDepthFt') != null),
+  };
+}
+
 // An evidence row is a claim about where a stored value came from, so it is written for the
 // fields this pass actually stores and no others. `waterClarity` and `trophicStatus` were once
 // derived and cited nowhere, while `thermocline` was cited whether or not the derived depth

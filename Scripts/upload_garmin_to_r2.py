@@ -550,6 +550,11 @@ PASSTHROUGH_REGISTRIES = {
         "no vertical temperature or oxygen cast for any water -- WQP surface grabs cannot "
         "give a thermocline or the depth oxygen fails at, and 22 waters have WQP data with "
         "no profile in it; build it with fetch_nla_limnology.py",
+    "document_limnology.json":
+        "the casts in nla_limnology.json and nes_limnology.json reach nobody -- this is the "
+        "object Worker/registry.js documentLimnology() loads, and without it thirteen waters "
+        "keep a null thermocline or anoxic depth beside a measured one sitting in the bucket; "
+        "build it with build_document_limnology.py --go",
     "fishbase_traits.json":
         "no measured trophic level or size ceiling for any fish, so the only thing "
         "saying what is forage and what is a target is the hand-written "

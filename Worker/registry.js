@@ -33,6 +33,7 @@ export const AGENCY_FACTS_KEY = '_registry/agency_lake_facts.json';
 export const SPECIES_TRAITS_KEY = '_registry/species_traits.json';
 export const REGULATIONS_KEY = '_registry/regulations.json';
 export const FULL_POOL_KEY = '_registry/full_pool.json';
+export const DOCUMENT_LIMNOLOGY_KEY = '_registry/document_limnology.json';
 export const INDEX_TTL_S = 3600;
 
 let _index = null;
@@ -47,6 +48,8 @@ let _agencyFacts = null;
 let _agencyFactsAt = 0;
 let _speciesTraits = null;
 let _speciesTraitsAt = 0;
+let _docLimno = null;
+let _docLimnoAt = 0;
 
 /** Exposed for tests. Nothing in the Worker should need to call this. */
 export function _resetIndexCache() {
@@ -57,6 +60,7 @@ export function _resetIndexCache() {
   _ncSpecies = null; _ncSpeciesAt = 0;
   _agencyFacts = null; _agencyFactsAt = 0;
   _speciesTraits = null; _speciesTraitsAt = 0;
+  _docLimno = null; _docLimnoAt = 0;
 }
 
 /**
@@ -243,6 +247,44 @@ export async function agencyLakeFacts(env, opts = {}) {
   _agencyFacts = rows;
   _agencyFactsAt = now;
   return rows;
+}
+
+/**
+ * The vertical profiles we hold in documents, keyed by registry slug.
+ *
+ * `build_document_limnology.py` collapses `nla_limnology.json` (EPA National Lakes Assessment,
+ * 2007/2012/2022) and `nes_limnology.json` (EPA National Eutrophication Survey, 1973) into the
+ * three fields a profile stores: `thermoclineFt`, `anoxicBelowFt`, `depletionDepthFt`.
+ *
+ * SEVENTH FILE TO LEARN THE LESSON THE SIX ABOVE CARRY IN THEIR OWN COMMENTS. The NLA file has
+ * been written since 2026-09-04 and uploaded to R2 since the same day, and the only thing that
+ * opened it was the audit counting what it would fix. Thirteen waters had a measured thermocline
+ * or anoxic depth sitting in the bucket while their profile carried null and the plan prompt
+ * printed nothing -- and `researchIntel()` calls those "the two that decide where the fish can
+ * physically be".
+ *
+ * Same cadence and same failure mode as the loaders above: the object changes when the PIPELINE
+ * uploads, not when the Worker deploys. THE CALLER CATCHES -- a water with no cast in any
+ * document must still produce a profile, and the sweep that reads this runs unattended on cron.
+ */
+export async function documentLimnology(env, opts = {}) {
+  const now = Number.isFinite(opts.now) ? opts.now : Date.now();
+  if (!opts.fresh && _docLimno && now - _docLimnoAt < INDEX_TTL_S * 1000) return _docLimno;
+  const bucket = (env && env.R2_TROLLMAP_CHARTPACKS) || opts.bucket;
+  if (!bucket) throw new Error('R2_TROLLMAP_CHARTPACKS is not bound to this Worker');
+  const obj = await bucket.get(DOCUMENT_LIMNOLOGY_KEY);
+  if (!obj) {
+    throw new Error(`${DOCUMENT_LIMNOLOGY_KEY} is not in the bucket -- run `
+                  + 'build_document_limnology.py --go, then upload_garmin_to_r2.py');
+  }
+  const parsed = JSON.parse(await r2Text(obj));
+  const waters = parsed && parsed.waters;
+  if (!waters || typeof waters !== 'object' || Array.isArray(waters)) {
+    throw new Error(`${DOCUMENT_LIMNOLOGY_KEY} has no "waters" object keyed by registry slug`);
+  }
+  _docLimno = waters;
+  _docLimnoAt = now;
+  return waters;
 }
 
 /**
