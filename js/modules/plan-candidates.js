@@ -1158,10 +1158,37 @@ export function selectCandidates(runs, o) {
   // Counted so the caller can say WHY nothing came back. "nothing is inside 15-40 ft" and "every
   // pass on this lake is shallower than 15 ft" are different problems with different fixes, and
   // the old code could only report the first because it never knew which test it had applied.
-  const rejected = { depth: 0, unroutable: 0, noWindow: 0, scoreless: 0,
+  const rejected = { depth: 0, unroutable: 0, noWindow: 0, scoreless: 0, unfitted: 0,
                      // Filled below, after scoring. Declared here so every bucket lives in one
                      // object and the total can be checked against `considered`.
                      battery: 0, window: 0, dedupe: 0, limit: 0 };
+
+  // ── A LANE THE FITTER REFUSED IS NOT A LANE ────────────────────────────────────────────────
+  //
+  // Ryan, on the Sep 5 Wateree plan and the GPX that came out of it: "look at leg 5 the entire
+  // leg is full of sharp turns and literally hugs the shore inside the dock line... if i trolled
+  // this as written i would take out every dock in clearwater cove". Then: "are these fitted
+  // lanes? i thought fitted fixed these angles".
+  //
+  // They were not fitted, and fitting does fix the angles. Counted on wateree_lake's
+  // trolling_runs.geojson, 2026-09-05:
+  //
+  //     2,843 runs      800 fitted      2,043 not
+  //     shallowest_ft present on exactly the 800 fitted and on none of the 2,043
+  //     the four legs the model was handed: all four `fitted: false`; #4 had 44 turns
+  //       over 45 degrees and 16 over 90
+  //     the two fitted candidates in the same set: zero turns over 45 degrees
+  //
+  // The unfitted ones carry `fit_note` recording the refusal in the fitter's own words -- "no
+  // fitted pass of 1500 m survived: this contour is not 2.0 ft deep for..." -- and NOTHING IN
+  // THIS FILE HAS EVER READ `fitted`, `fit_note` OR `shallowest_ft`. The selector offered the
+  // refusals alongside the passes and scored them the same.
+  //
+  // The gate is measured, not chosen: if this pack HAS fitted lanes, only fitted lanes are
+  // offered. A pack with none behaves exactly as it did, because a lake with no fitted runs and
+  // no candidates is worse than a lake with rough ones -- and `selection.fittedAvailable` says
+  // which case the caller is in rather than leaving a silent zero to be guessed at.
+  const fittedAvailable = runs.some((r) => (r.properties || {}).fitted === true);
   let depthRule = null;
   const straight = (a, b) => metresBetween(a, b);
   const transitM = o.transitM || straight;
@@ -1170,6 +1197,7 @@ export function selectCandidates(runs, o) {
   for (let i = 0; i < runs.length; i++) {
     const run = runs[i], p = run.properties || {};
     if (p.routable === false) { rejected.unroutable++; continue; }
+    if (fittedAvailable && p.fitted !== true) { rejected.unfitted++; continue; }
     // THE LINE THAT WAS KNOWN WRONG FOR THREE DAYS. It read:
     //
     //     if (!(p.depth_ft >= dMin && p.depth_ft <= dMax)) continue;
@@ -1480,8 +1508,12 @@ export function selectCandidates(runs, o) {
     // without a counter, which is exactly how the dedupe went unreported for as long as it did.
     accountedFor: kept.length + rejected.depth + rejected.unroutable + rejected.noWindow
                 + rejected.scoreless + rejected.battery + rejected.window + rejected.dedupe
-                + rejected.limit,
+                + rejected.limit + rejected.unfitted,
     depthRule: depthRule || 'no runs reached the depth test',
+    // WHETHER THIS PACK HAD FITTED LANES AT ALL, because "800 unfitted runs were refused" and
+    // "this lake has no fitted lanes so rough ones were offered" are different days on the water
+    // and only this field separates them.
+    fittedAvailable,
     holding: holding || null,
     // SAID OUT LOUD, NOT ASSUMED. When holding is unknown the old fish-band-vs-water-depth
     // comparison is what ran, and that comparison is known to be wrong -- it is kept only because
