@@ -48,6 +48,22 @@ WORDS_DPI = 300
 DIGITS_DPI = 500
 WHITELIST = '0123456789./K '     # K is STORET's "less than the detection limit" remark code
 
+# THE FRONT OF THE PAPER IS A SECOND TABLE AND IT WAS ONLY EVER READ ONCE.
+#
+# Appendix D is at the back and gets all three passes. The front carries two things nothing has
+# ever parsed: a numbered morphometry block on paper page 3-4 -- surface area, mean depth,
+# MAXIMUM depth, volume, hydraulic retention time -- and the LAKE WATER QUALITY SUMMARY table on
+# page 5, three visits wide, with the dissolved-oxygen minimum, Secchi, chlorophyll-a and total
+# phosphorus. That is the only source that will ever speak for Fishing Creek Reservoir, whose
+# Appendix D yielded zero usable casts.
+#
+# It had exactly one 300 dpi words pass, and one scan cannot check itself. Fishing Creek's oxygen
+# row reads `7.6 0° He2 708 728` at 300 dpi. And the morphometry is the reason the second WORDS
+# pass is here rather than digits alone: `Maximum depth: 27.3 meters` sits beside a Garmin chart
+# that bottoms at 39 ft and a stated deepest cast of 11.0 m, so whether that reads 27.3 or 12.3
+# is a question two scans can answer and one cannot.
+FRONT_PAGES = range(8, 19)
+
 
 def need(tool):
     if shutil.which(tool):
@@ -112,9 +128,15 @@ def main(argv=None):
 
     for pdf in pdfs:
         n = page_count(pdf)
+        back = range(max(1, n // 2), n + 1)
+        front = [p for p in FRONT_PAGES if p <= n]
+        tables = sorted(set(back) | set(front))          # both halves carry a table
         jobs = ([(pdf, p, WORDS_DPI, a.out, False) for p in range(1, n + 1)]
-                + [(pdf, p, DIGITS_DPI, a.out, True) for p in range(max(1, n // 2), n + 1)]
-                + [(pdf, p, WORDS_DPI, a.out, True) for p in range(max(1, n // 2), n + 1)])
+                + [(pdf, p, DIGITS_DPI, a.out, True) for p in tables]
+                + [(pdf, p, WORDS_DPI, a.out, True) for p in tables]
+                # The second WORDS read, front only: the morphometry block is prose AND numbers,
+                # and the digits whitelist erases every word on the page.
+                + [(pdf, p, DIGITS_DPI, a.out, False) for p in front])
         made = skipped = failed = 0
         with concurrent.futures.ThreadPoolExecutor(max_workers=a.jobs) as pool:
             for got, cached in pool.map(lambda j: one(*j), jobs):
