@@ -108,6 +108,34 @@ const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
 // v1's copy is left where it is. smart-plan.js still calls it from `runSmartPlan()`, and that
 // file is scheduled for deletion as a whole rather than hollowed out a function at a time.
 
+/**
+ * THE INCH MARK IN A LURE NAME BREAKS THE JSON WE ASK THE MODEL TO WRITE.
+ *
+ * Ryan, 2026-09-05, on a plan that died whole:
+ *
+ *     the model's answer could not be read: Expected ',' or '}' after property value in JSON
+ *     at position 1608 ... { "id": "R5", "lure": "3" <<HERE>>Lipless Crankbait", ...
+ *
+ * The bag holds `3" Lipless Crankbait`. The prompt printed it raw, in the tackle list and again
+ * in the per-bait depth note, and asked for `"lure": "exact name from the list"`. The model did
+ * exactly that and the unescaped quote ended the string four characters in. TWELVE OF SIXTY-ONE
+ * lures carry an inch mark, so a fifth of the bag can kill a plan outright -- not one rod, the
+ * whole day, after the pack was fetched and every leg computed.
+ *
+ * NOT REPAIRED ON THE WAY BACK, DELIBERATELY. parsePlanResponse() does repair a trailing comma,
+ * and says why it is allowed to: "JSON forbids the comma outright, so there is exactly one
+ * reading of the text with it removed." An unescaped quote inside a string has no such property
+ * -- `"3" Lipless Crankbait"` could be the string `3` followed by anything -- so recovering it
+ * means guessing where the value ends. The fix is to stop handing the model a character it has
+ * to escape.
+ *
+ * `in` rather than a typographic prime, because the model has to retype it. Checked against the
+ * whole inventory: 61 names give 61 distinct quote-free forms, so nothing collides.
+ */
+export function promptSafeTackleName(name) {
+  return String(name == null ? '' : name).replace(/"/g, 'in');
+}
+
 /** Strip the `[...]` annotation bracket a prompt may have hung on a lure name. */
 export function stripLureAnnotation(raw) {
   if (!raw) return raw;
@@ -134,6 +162,16 @@ export function resolveTackleName(raw, inventoryNames) {
 
   const exact = cleanMap.find((m) => m.clean.toLowerCase() === r);
   if (exact) return { name: exact.clean, tier: 'exact' };
+
+  // THE FORM THE PROMPT ACTUALLY SHOWED IT, which is not the inventory's spelling. Lure names
+  // carrying an inch mark go to the model as `3in Lipless Crankbait` -- see
+  // promptSafeTackleName() -- so this is the name it was asked to echo and matching it is exact,
+  // not a guess. It has to sit ABOVE the word tier, because that tier resolves
+  // `3in Lipless Crankbait` to `2" Lipless Crankbait`: no shared token carries the size, so it
+  // scores on "lipless" and "crankbait" and takes whichever comes first. A crash traded for a
+  // silently wrong bait is not a fix.
+  const asShown = cleanMap.find((m) => promptSafeTackleName(m.clean).toLowerCase() === r);
+  if (asShown) return { name: asShown.clean, tier: 'exact' };
 
   // THE TIER THAT FIXES THE BUG. 'DD3 Crankbait' is inside 'DD3 Crankbait (20-25ft)', and a
   // model asked for a shorter name than the inventory's is the common direction — but the
@@ -463,9 +501,13 @@ export function buildPlanRequest(o) {
   // what controls its depth, and -- for a bait whose bill controls it -- that the printed range
   // is the maker's word rather than anything measured, so the shallow end is the one to place
   // fish against. `depthWindow().claimed` is that distinction.
-  const depthNote = (name) => {
-    const lure = o.lureByName ? o.lureByName(name) : null;
+  const depthNote = (real) => {
+    const lure = o.lureByName ? o.lureByName(real) : null;
     if (!lure) return null;
+    // LOOKED UP BY THE INVENTORY'S NAME, PRINTED IN THE FORM THE MODEL CAN ECHO. See
+    // promptSafeTackleName(): the bag holds `3" Lipless Crankbait` and an unescaped inch mark
+    // ends the JSON string the model is asked to write.
+    const name = promptSafeTackleName(real);
     const w = depthWindow(lure, { speedMph: 2.0, leadFt: null });
     if (w.mode === 'none') return null;                       // the CAST ONLY block says it better
     if (w.mode === 'lead') {
@@ -520,7 +562,8 @@ export function buildPlanRequest(o) {
       if (!lure) continue;
       const w = depthWindow(lure, { speedMph: 2.0, leadFt: null });
       if (w.mode !== 'rated' || !Number.isFinite(w.min)) continue;
-      if (w.min > ceilingFt) out.push(name);
+      // The same form the tackle list showed, so the model is comparing like with like.
+      if (w.min > ceilingFt) out.push(promptSafeTackleName(name));
     }
     return out.length ? out : undefined;
   };
@@ -556,10 +599,10 @@ A snap adds metal and weight at the nose, which kills the action of anything tha
 own lip or blade. So a lure that must be tied direct can only go on a leader rod.
 
 MAY HANG OFF A SNAP (so may go on ${SNAP_RODS.join(' or ')}, or on a leader rod):
-${[...snapSet].join(', ') || '(unknown — treat everything as tie-only)'}
+${[...snapSet].map(promptSafeTackleName).join(', ') || '(unknown — treat everything as tie-only)'}
 
 MUST BE TIED DIRECT (leader rods only):
-${tieOnly.join(', ') || '(none)'}
+${tieOnly.map(promptSafeTackleName).join(', ') || '(none)'}
 
 **AT MOST FOUR tie-only lures.** Ask for five and he has to cut a snap off, tie on a leader, then
 tie the leader to the lure, in a moving kayak. Do not do that to him.
@@ -578,7 +621,7 @@ Anything you expect to CHANGE during the day belongs on a snap rod if it can be 
 seconds, where a leader rod is a knot with wet hands.
 
 Colour is a free string; assume any colour combination is aboard. Use ONLY these exact lure names:
-${(o.tackle || []).join(', ') || '(inventory unavailable)'}
+${(o.tackle || []).map(promptSafeTackleName).join(', ') || '(inventory unavailable)'}
 ${depthNotes.length ? `
 HOW EACH OF THESE GETS TO A DEPTH. There are only three ways to move a bait: the lead, the speed,
 or a different bait. Do not read a depth off a lure's NAME — the name is what the box says.
@@ -586,7 +629,7 @@ ${depthNotes.map((d) => `- ${d}`).join('\n')}
 ` : ''}
 ${castOnly.length ? `
 CAST ONLY — NEVER BEHIND THE BOAT. These may go on a casting rod at a stop and NOWHERE else:
-${castOnly.join(', ')}
+${castOnly.map(promptSafeTackleName).join(', ')}
 They are unweighted soft plastics. At trolling speed they plane instead of sinking, so they have
 no running depth and no length of lead gives them one. A troll rod carrying one of these is a rod
 fishing nothing.
