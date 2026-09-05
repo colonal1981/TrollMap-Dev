@@ -205,6 +205,7 @@ export async function runSmartPlanV2() {
       dnrAttractors: await (window.getFishAttractors?.() ?? Promise.resolve([]))
         .catch((e) => { console.warn('[plan-v2] DNR attractor feed unavailable:', e?.message); return []; }),
       usableAh: usableAhFrom(inp.motor),
+      weatherByHour: forecast ? forecast.weatherByHour : null,
       conditions: {
         ...conditionsFrom(inp, ramp, sol, forecast),
         // The model is told where the band came from, so a generic one cannot be mistaken for a

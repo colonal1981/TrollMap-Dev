@@ -379,7 +379,9 @@ export function riverPromptBlock(ws) {
  *                                   adds the profile's unpositioned prose. The note keeps them
  *                                   apart, because a dam and a paragraph are not the same claim.
  * @param {string}   [o.intel]       species / research / catch-history prose the app already has
- * @param {object}   [o.waterState]  fetchWaterState() output — {featureType, river, tidal}.
+ * @param {object}   [o.waterState]  fetchWaterState() output — the parsed /conditions object
+ *                                  plus the derived river, tidal, hazards and pool blocks.
+ * @param {object[]} [o.weatherByHour] hourlyWeather() output — {hour, code, cloudPct, ...}.
  * @param {object}   [o.thermoclineNorm] thermoclineNormFor() output — what lakes of this depth
  *                                   usually do this month. Absent whenever this water has a
  *                                   measured thermocline, which is the whole point.
@@ -464,6 +466,78 @@ say it is unmeasured.
 And a thermocline is a boundary, not a depth to fish. The water beneath it is cut off from the
 surface and loses oxygen as summer runs; the fishable band is above it. Whatever the sounder shows
 on the day beats every word of this.
+`;
+}
+
+/**
+ * WHAT THE LIGHT IS DOING, because a depth without a light state is not an instruction.
+ *
+ * Ryan, 2026-09-05, on the Wateree plan: "what the app needs to be able to differentiate is the
+ * time of day when a depth is given... early morning topwater... that doesn't apply to midday".
+ * And then, on what a source actually says: "its not going to say at 6am... early morning...
+ * dawn... first thing... first light... midday... evening... overcast vs daylight".
+ *
+ * So the record carries a light state and this resolves it into hours for THIS day at THIS lake.
+ * Nothing here is invented:
+ *
+ *   The boundaries are civil twilight, from USNO through /conditions. water-conditions.js has
+ *   said why since it was written -- "CIVIL TWILIGHT, NOT SUNRISE. The fishing day starts when
+ *   you can see to launch and ends when you cannot" -- and until 2026-09-05 fetchWaterState
+ *   dropped the almanac on the floor, so no prompt has ever had it.
+ *
+ *   "Overcast" is WMO weather code 3, which is what the word means in the code table Open-Meteo
+ *   answers in. The measured cloud percentage travels beside it as a number, unlabelled.
+ *
+ * Silent when the almanac is missing, like every other block here: a guess about first light is
+ * worse than no sentence about it.
+ */
+export function lightPromptBlock(ws, weatherByHour, launchTime, returnTime) {
+  if (!ws || ws.error) return '';
+  const dawn = ws.civilDawn || null, rise = ws.sunrise || null;
+  const set = ws.sunset || null, dusk = ws.civilDusk || null;
+  if (!dawn && !rise && !set && !dusk) return '';
+
+  const hh = (t) => { const m = /^(\d{1,2}):(\d{2})/.exec(String(t || '')); return m ? +m[1] + (+m[2]) / 60 : null; };
+  const first = [hh(dawn), hh(rise)], last = [hh(set), hh(dusk)];
+  const lo = hh(launchTime), hi = hh(returnTime);
+  const inWindow = (w) => w[0] != null && w[1] != null && lo != null && hi != null
+    && lo < w[1] && hi > w[0];
+
+  const lines = [];
+  if (dawn && rise) lines.push(`First light runs ${dawn} to ${rise} (civil dawn to sunrise).`);
+  if (set && dusk) lines.push(`Last light runs ${set} to ${dusk} (sunset to civil dusk).`);
+  if (lo != null && hi != null) {
+    const hits = [inWindow(first) ? 'first light' : null, inWindow(last) ? 'last light' : null]
+      .filter(Boolean);
+    lines.push(hits.length
+      ? `This trip (${launchTime}–${returnTime}) overlaps ${hits.join(' and ')}; every other hour `
+        + `of it is full daylight.`
+      : `This trip (${launchTime}–${returnTime}) is entirely in full daylight — it does not reach `
+        + `first or last light at all.`);
+  }
+
+  // THE SKY, SEPARATELY, because it is not a time. A guide who says the fish stayed up because it
+  // was cloudy is describing the same low light a dawn bite has, at noon.
+  const wx = Array.isArray(weatherByHour) ? weatherByHour.filter((w) => w && w.cloudPct != null) : [];
+  if (wx.length) {
+    const ovc = wx.filter((w) => w.code === 3);
+    const pcts = wx.map((w) => `${String(w.hour).padStart(2, '0')}:00 ${w.cloudPct}%`).join(' · ');
+    lines.push(`Cloud cover by hour: ${pcts}.`);
+    lines.push(ovc.length
+      ? `${ovc.length} of those hours are OVERCAST (WMO code 3). Guidance the research attributes `
+        + `to low light or to overcast conditions applies in those hours as well as at first and `
+        + `last light.`
+      : `No hour of this trip is overcast, so low-light guidance applies only inside the twilight `
+        + `windows above.`);
+  }
+
+  return `
+WHAT THE LIGHT IS DOING
+${lines.join('\n')}
+A depth, a bait or a presentation the research ties to early morning, first light, dusk or
+overcast conditions is an instruction for THOSE HOURS. Do not carry it into the middle of the day
+because it is the only number available — say instead what changes when the light comes up. A
+topwater fish at first light and a trolled bait at ten o'clock are not the same fish.
 `;
 }
 
@@ -787,7 +861,7 @@ wind direction: is it a dangerous windward launch?${o.hazards && o.hazards.lengt
     + `from the research is written advice with no position at all: say the ones that bear on `
     + `today out loud, and never imply an unpositioned one is marked on the chart.`
   : ''}
-${coastalPromptBlock(o.waterState)}${riverPromptBlock(o.waterState)}${poolPromptBlock(o.waterState)}${thermoclineNormBlock(o.thermoclineNorm)}
+${coastalPromptBlock(o.waterState)}${riverPromptBlock(o.waterState)}${poolPromptBlock(o.waterState)}${lightPromptBlock(o.waterState, o.weatherByHour, o.launchTime, o.returnTime)}${thermoclineNormBlock(o.thermoclineNorm)}
 WHAT IS ALREADY KNOWN
 ${o.intel || 'NOTHING. No researched profile exists for this water, so everything else here rests '
   + 'on the chart, the gauges and general species knowledge. Say so in the plan rather than '

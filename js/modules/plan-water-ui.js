@@ -1158,6 +1158,9 @@ export async function buildFromPicked() {
             ? { limnology: { seasonalDrawdownFt: waterState.pool.seasonalDrawdownFt } } : null)
           : null,
         hazards: T.hazards,
+        // ONE PROMPT, TWO PLANNERS -- the fifth field to get here after intel,
+        // thermoclineNorm and the depth band. lightPromptBlock() reads it.
+        weatherByHour: T.weatherByHour,
         snapEligible: snapEligibleFrom(castable),
         // `castable` is `trollable || castable` -- the whole bag. Which half may go behind the
         // boat has to be said, or a cast-only soft plastic looks like a crankbait to the model.

@@ -176,8 +176,13 @@ export async function fetchForecast(lakeName, dateStr, o = {}) {
       // one too". Lightning is the one hazard a pedal kayak cannot outrun, so the hourly WMO code
       // and the precipitation probability come back with the wind — codes 95/96/99 are
       // thunderstorm, and they are a different question from "is it fishable".
+      // AND THE CLOUD, because "early morning topwater" and "they stayed up all day, it was
+      // cloudy" are the same fact about light and a guide says both. Ryan, 2026-09-05: "its not
+      // going to say at 6am... early morning... dawn... first light... midday... evening...
+      // overcast vs daylight". Civil twilight answers the hour; only this answers the sky, and
+      // it rides the request that was already being made.
       + '&hourly=windspeed_10m,winddirection_10m,windgusts_10m,weather_code,'
-      + 'precipitation_probability,precipitation'
+      + 'precipitation_probability,precipitation,cloudcover'
       + `&timezone=auto&start_date=${dateStr}&end_date=${dateStr}`;
     const res = await fetch(url, { signal: AbortSignal.timeout ? AbortSignal.timeout(4500) : undefined });
     if (!res.ok) return null;
@@ -462,6 +467,7 @@ export function hourlyWeather(hourly, from, to) {
   const codes = (hourly && hourly.weather_code) || [];
   const prob = (hourly && hourly.precipitation_probability) || [];
   const mm = (hourly && hourly.precipitation) || [];
+  const cloud = (hourly && hourly.cloudcover) || [];
   const p = (s) => { const m = /^(\d{1,2}):/.exec(String(s || '')); return m ? +m[1] : null; };
   const lo = p(from), hi = p(to);
   const out = [];
@@ -481,6 +487,9 @@ export function hourlyWeather(hourly, from, to) {
     }
     if (Number.isFinite(Number(prob[i]))) e.chancePct = Number(prob[i]);
     if (Number.isFinite(Number(mm[i]))) e.mm = Number(mm[i]);
+    // Percent sky covered. Kept as the number Open-Meteo sent -- no band, no label. Whoever
+    // reads it decides what counts as overcast, and this file is not that reader.
+    if (Number.isFinite(Number(cloud[i]))) e.cloudPct = Number(cloud[i]);
     out.push(e);
   }
   return out;

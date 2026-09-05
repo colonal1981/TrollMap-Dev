@@ -164,6 +164,10 @@ export async function buildSmartPlanV2(o) {
     // one off the lure's name -- see depthNote() in plan-prompt.js.
     lureByName: o.lureByName,
     usableAh: o.usableAh, intel, thermoclineNorm,
+    // THE SKY BY THE HOUR, for lightPromptBlock(). Computed by fetchForecast() since it was
+    // written and read only by the post-plan notification cues -- the model was never told
+    // whether the day was overcast, which is half of what 'low light' means.
+    weatherByHour: o.weatherByHour,
     // THE CHART FIRST, THE RESEARCH SECOND. The charted ones come out of the pack this function
     // already fetched; the wiring adds the profile's prose. Each line says which it is, so when
     // navigation.hazards retires this half simply goes empty and the sentence still stands.
