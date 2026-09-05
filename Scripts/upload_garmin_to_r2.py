@@ -546,10 +546,16 @@ PASSTHROUGH_REGISTRIES = {
         "42 Georgia waters lose their consumption advisory, and 40 GA waters in the app have no "
         "species source at all -- the largest hole of the four states; build it with "
         "parse_ga_fish_advisories.py",
-    "nla_limnology.json":
-        "no vertical temperature or oxygen cast for any water -- WQP surface grabs cannot "
-        "give a thermocline or the depth oxygen fails at, and 22 waters have WQP data with "
-        "no profile in it; build it with fetch_nla_limnology.py",
+    # `nla_limnology.json` STOOD HERE AND CAME OUT ON 2026-09-05. It was added to this table on
+    # 2026-09-04 and verify_registry_r2.py reported it 404 the next day -- no upload had run
+    # since -- which is how it was noticed that NOTHING IN THE APP OPENS IT. The only mentions
+    # of the name in Worker/ and js/ are comments in the files that supersede it.
+    #
+    # It is a SOURCE file, not a served one. build_document_limnology.py reads it off the disk
+    # and collapses it, with nes_limnology.json, into document_limnology.json below -- which is
+    # the object Worker/registry.js actually loads. audit_limnology_gaps.py reads it locally
+    # too. Shipping the raw casts as well would put a 147 KB object in the bucket for nobody,
+    # and this project has a rule about that.
     "document_limnology.json":
         "the casts in nla_limnology.json and nes_limnology.json reach nobody -- this is the "
         "object Worker/registry.js documentLimnology() loads, and without it thirteen waters "
