@@ -173,6 +173,24 @@ _poisoned = P.census(_cut)
 check('census cannot tell a cut stream from an empty lake', _poisoned.get('rows'), 1)
 check('and it raises no objection', 'error' in _poisoned, False)
 
+# A QUESTION 2.2 ALREADY ANSWERED IS NOT WORTH ASKING 3.0.
+# `not_asked` is a decision, not a failure: --resume must treat it as done, and it must never win
+# the headline. Both were live risks -- a skip that read as an error would loop the resume pass
+# forever, and a skip that read as an answer would replace 2,788 records with zero.
+check('a deliberate skip is done, not a hole',
+      P.answered({'by_api': {'legacy': {'rows': 9},
+                             'wqx3': {'not_asked': '2.2 already found 2788'}}},
+                 ('legacy', 'wqx3')), True)
+_rec = {'by_api': {'legacy': {'hidden_summer_do_depth_recs': 2788, 'depth_recs': 8661},
+                   'wqx3': {'not_asked': 'x'}}}
+_best = max((v for v in _rec['by_api'].values()
+             if 'error' not in v and 'not_asked' not in v),
+            key=lambda v: (v.get('summer_do_depth_recs', 0), v.get('depth_recs', 0)),
+            default=None)
+check('and it cannot become the headline', _best.get('hidden_summer_do_depth_recs'), 2788)
+check('the threshold is the rule\'s own minimum, not a tuning knob', P.RULE_NEEDS, 3)
+
+
 # HALF AN ANSWER TO A TWO-PART QUESTION IS NOT AN ANSWER.
 # The 3.0 service returned HTTP 500 on Marion, Thurmond and Hartwell while 2.2 answered. `best`
 # took the 2.2 leg, no top-level error was written, and --resume would have skipped the three

@@ -87,6 +87,11 @@ UA = 'TrollMap/1.0 (personal fishing project; depth-history probe)'
 # same lie as a partial run writing a whole file, and the service itself says what to do about it.
 TRUNCATED = 'PLEASE RETRY THE REQUEST'
 
+# Worker/research/limnology.js needs three summer dissolved-oxygen records carrying a depth before
+# it will derive anything. Not a tuning knob -- it is the rule's own minimum, and it is what makes
+# "already answered" mean something here.
+RULE_NEEDS = 3
+
 
 # One census, two dialects. First name that exists in the header wins.
 COLUMNS = {
@@ -386,6 +391,27 @@ def main(argv=None):
         rec = {'display_name': row.get('display_name') or slug,
                'state': row.get('state'), 'acres': row.get('area_acres'), 'by_api': {}}
         for api in apis:
+            # DO NOT ASK THE SLOW SERVICE A QUESTION THAT IS ALREADY ANSWERED.
+            #
+            # Ryan, 2026-09-05: *"wouldn't 3.0 only add newer findings from 2024 on. why pull the
+            # history from it that we already have?"* The premise is wrong -- 3.0 carries USGS
+            # records going back to 2005, because "added since March 11 2024" is when they entered
+            # the system, not when the water was sampled -- but the instinct is right. Measured
+            # across 61 waters: 2.2 already finds a profile on 42 of them, and 3.0 changed the
+            # verdict on exactly TWO lakes in the whole census, Cherokee and Bowen, both of which
+            # 2.2 saw nothing on. On a water 2.2 has already answered, 3.0 can only add rows to a
+            # lake we already know stratifies.
+            #
+            # And it is where the failures live: fourteen of the nineteen HTTP 500s from the 3.0
+            # service were on waters 2.2 had already answered. Requests we did not need to make.
+            prior = rec['by_api'].get('legacy') or {}
+            got_already = prior.get('hidden_summer_do_depth_recs') or 0
+            if api != 'legacy' and got_already >= RULE_NEEDS:
+                rec['by_api'][api] = {'not_asked': '2.2 already found %d summer depth records; '
+                                                   '3.0 cannot change the verdict' % got_already}
+                print('        ... %-6s not asked for %s -- 2.2 answered it'
+                      % (api, rec['display_name'][:40]), flush=True)
+                continue
             # SILENCE IS INDISTINGUISHABLE FROM A HANG, and one of these requests can run for
             # minutes. Said before the wait, not after it.
             print('        ... asking %-6s for %s' % (api, rec['display_name'][:40]), flush=True)
@@ -397,7 +423,8 @@ def main(argv=None):
             rec['by_api'][api] = {'error': err} if err else census(text)
         # The headline is the BEST of the two -- whichever service saw more of the lake. They are
         # reported separately underneath because a difference is itself the finding.
-        best = max((v for v in rec['by_api'].values() if 'error' not in v),
+        best = max((v for v in rec['by_api'].values()
+                    if 'error' not in v and 'not_asked' not in v),
                    key=lambda v: (v.get('summer_do_depth_recs', 0), v.get('depth_recs', 0)),
                    default=None)
         if best is None:
@@ -421,7 +448,8 @@ def main(argv=None):
                          rec.get('max_depth_ft'), rec.get('hidden_summer_do_depth_recs', 0)))))
             save(out_fp, waters, len(want), apis=apis)
 
-    gain = [(s, r) for s, r in waters.items() if (r.get('hidden_summer_do_depth_recs') or 0) >= 3]
+    gain = [(s, r) for s, r in waters.items()
+            if (r.get('hidden_summer_do_depth_recs') or 0) >= RULE_NEEDS]
     gain.sort(key=lambda t: -(t[1].get('acres') or 0))
     print()
     print('WATERS THE 2015 WINDOW IS HIDING A PROFILE FROM -- %d' % len(gain))
