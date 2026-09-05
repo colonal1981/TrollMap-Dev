@@ -55,6 +55,7 @@
  */
 
 // ONE PLACE KNOWS HOW DEEP A BAIT RUNS, and until now the prompt was not one of its readers.
+import { levelSentence } from '../utils/water-conditions.js';
 import { depthWindow, jigheadRangeOz } from '../data/lure-knowledge.js';
 
 // Six rods. This never changes; it is the boat, not a setting.
@@ -349,6 +350,51 @@ export function riverPromptBlock(ws) {
  *                                   riverPromptBlock() reads `featureType` and not the mere
  *                                   presence of the object. Absent is the same prompt as before.
  */
+// WHERE THE WATER IS TODAY, AND WHAT THAT DOES TO EVERY DEPTH ON THE CHART.
+//
+// A coastal zone gets coastalPromptBlock and a river gets riverPromptBlock. A reservoir -- which
+// is nearly every water this app covers -- got neither, so the only level information reaching
+// the model was `poolLevel` inside the conditions JSON: the raw string out of a form field, a
+// bare elevation like "355.2" with no datum, no full pool and no sign of which way it was off.
+//
+// Meanwhile the Worker has computed the whole thing per water since chartDatumShape() was
+// written. It carries `charted_at: 'full_pool'`, the drawdown, the operator's own sentence, and
+// this line about itself: "which is exactly why this is REPORTED and never APPLIED". The card
+// shows it, the printable report prints it, `levelSentence()` says it in one line -- and the
+// thing choosing baits against charted depths was never told.
+//
+// THE CONSEQUENCE IS THE POINT, NOT THE NUMBER. Garmin sounded these packs at full pool. When
+// the lake is 2.5 ft down, every contour, every structure depth and every ceiling this prompt
+// quotes reads 2.5 ft DEEPER than the water actually is, and nothing in the app subtracts it.
+// A crankbait picked against a charted 16 ft ceiling on a lake 3 ft down is fishing 13 ft of
+// water. That is the same failure the bait-depth block above exists to prevent, arriving by a
+// different road.
+//
+// Deliberately not corrected here either. `applied: false` is a decision with a reason -- no
+// vertical datum is reconciled between an operator's "full pond" and Garmin's sounding -- so the
+// model is told the size of the offset and told to carry it, rather than handed numbers this
+// file quietly moved.
+function poolPromptBlock(ws) {
+  if (!ws || ws.error) return '';
+  if (ws.featureType && ws.featureType !== 'lake') return '';   // rivers and coast have their own
+  if (ws.belowFullPoolFt == null && ws.levelFt == null) return '';
+  const b = ws.belowFullPoolFt;
+  const off = b == null ? null
+    : b > 0.05 ? `${b.toFixed(1)} ft LOWER than the chart assumes`
+    : b < -0.05 ? `${Math.abs(b).toFixed(1)} ft HIGHER than the chart assumes`
+    : 'right at the level the chart assumes';
+  return `
+WHERE THE WATER IS TODAY
+${levelSentence(ws)}
+${ws.operatorMessage ? `The operator's own note: ${ws.operatorMessage}\n` : ''}
+Every depth in this prompt — the contours, the structure, the ceilings on each leg — comes off a
+Garmin chart sounded at FULL POOL, and nothing in this app has adjusted it.${off ? ` The water is
+${off}.` : ''}${b != null && b > 0.05 ? ` So subtract ${b.toFixed(1)} ft from every charted number
+before you trust it: a bait picked against a charted 16 ft ceiling is working ${(16 - b).toFixed(1)} ft
+of water today, and the shoreline is not where the chart draws it.` : ''}
+`;
+}
+
 // WHAT LAKES LIKE THIS USUALLY DO, IN ITS OWN SECTION AND NOT IN THE RESEARCH BLOCK.
 //
 // 342 of the app's 355 waters have no thermocline cast at all, and a plan is written before the
@@ -698,7 +744,7 @@ wind direction: is it a dangerous windward launch?${o.hazards && o.hazards.lengt
     + `from the research is written advice with no position at all: say the ones that bear on `
     + `today out loud, and never imply an unpositioned one is marked on the chart.`
   : ''}
-${coastalPromptBlock(o.waterState)}${riverPromptBlock(o.waterState)}${thermoclineNormBlock(o.thermoclineNorm)}
+${coastalPromptBlock(o.waterState)}${riverPromptBlock(o.waterState)}${poolPromptBlock(o.waterState)}${thermoclineNormBlock(o.thermoclineNorm)}
 WHAT IS ALREADY KNOWN
 ${o.intel || 'NOTHING. No researched profile exists for this water, so everything else here rests '
   + 'on the chart, the gauges and general species knowledge. Say so in the plan rather than '
