@@ -1147,6 +1147,16 @@ export async function buildFromPicked() {
           (waterState && waterState.pool && Number.isFinite(waterState.pool.seasonalDrawdownFt))
             ? { limnology: { seasonalDrawdownFt: waterState.pool.seasonalDrawdownFt } } : null)
           : null,
+        // THE FOURTH FIELD, AND IT WENT IN THE SAME WAY THE OTHER THREE DID. Smart Plan reaches
+        // buildPlanRequest through buildSmartPlanV2, which resolves `thermoclineNormFor` for it;
+        // Pick Water calls buildPlanRequest itself from plan-from-water.js, so a callback left
+        // here unread means the prompt gets `thermoclineNorm: undefined` and the block never
+        // prints. one-prompt-two-planners.test.js caught it the same day it went in -- which is
+        // the whole reason that test exists, and it names the three that got here before it.
+        thermoclineNorm: T.thermoclineNormFor ? T.thermoclineNormFor(
+          (waterState && waterState.pool && Number.isFinite(waterState.pool.seasonalDrawdownFt))
+            ? { limnology: { seasonalDrawdownFt: waterState.pool.seasonalDrawdownFt } } : null)
+          : null,
         hazards: T.hazards,
         snapEligible: snapEligibleFrom(castable),
         // `castable` is `trollable || castable` -- the whole bag. Which half may go behind the

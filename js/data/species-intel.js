@@ -93,15 +93,42 @@ export const SUMMER_WATER_F = 75;
  * `waterTempF` is typed in by hand and is usually blank; absent, the calendar stands alone.
  */
 export function getSeason(date, waterTempF) {
-  const d = date instanceof Date ? date : new Date(date);
   const t = Number(waterTempF);
   if (Number.isFinite(t) && t > SUMMER_WATER_F) return 'summer';
-  return calendarSeason(d);
+  // THE DATE GOES THROUGH UNTOUCHED. This used to do `new Date(date)` here and hand the result
+  // on, so a missing date arrived at calendarSeason() as an Invalid Date object rather than as
+  // nothing -- which is how "no date given" and "a date I could not read" became the same case,
+  // and both became winter. calendarSeason() tells them apart; this must let it.
+  return calendarSeason(date);
 }
 
-/** The season by the calendar alone, on the astronomical boundaries. */
+/**
+ * The season by the calendar alone, on the astronomical boundaries.
+ *
+ * WINTER WAS THE ANSWER TO EVERY BAD DATE, AND IT LOOKED LIKE AN ANSWER.
+ *
+ * Ryan, 2026-09-05, reading the research tab's prompt viewer: *"can you tell me why i am reading
+ * about winter in september?"*
+ *
+ * `new Date(undefined)` is an Invalid Date, `getMonth()` on it is NaN, so `md` is NaN, and every
+ * comparison against NaN is false -- so all three ranges fell through to the bare `return
+ * 'winter'` at the bottom. `getSeason()` called with no arguments returned winter on every day of
+ * the year, and lake-research-ui.js called it exactly that way. The viewer whose whole job is
+ * showing what Smart Plan receives was showing him the winter bands in September.
+ *
+ * The default is now TODAY, which is what "what season is it" means when nobody names a day. A
+ * date that was supplied and cannot be parsed THROWS: that can only come from code, and a plan
+ * quietly built for the wrong season is the failure this codebase keeps finding -- a partial
+ * answer wearing a success stamp.
+ */
 export function calendarSeason(date) {
-  const d = date instanceof Date ? date : new Date(date);
+  const d = (date === null || date === undefined || date === '')
+    ? new Date()
+    : (date instanceof Date ? date : new Date(date));
+  if (Number.isNaN(d.getTime())) {
+    throw new TypeError(`calendarSeason: cannot read a date from ${JSON.stringify(date)} -- `
+                      + 'an unreadable date used to fall through to winter');
+  }
   const md = (d.getMonth() + 1) * 100 + d.getDate();     // Sep 1 -> 901
   if (md >= 320 && md <= 620) return 'spring';
   if (md >= 621 && md <= 921) return 'summer';

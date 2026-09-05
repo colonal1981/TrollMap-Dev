@@ -1085,7 +1085,11 @@ function renderPlanInput(profile) {
     box.innerHTML = '<div class="muted" style="padding:10px">No profile loaded.</div>';
     return;
   }
-  const season = getSeason();
+  // TODAY, NAMED. This read `getSeason()` and got winter every day of the year -- see
+  // calendarSeason(). The date is shown in the header beside the season so a wrong one can
+  // never again be read as a fact about the profile.
+  const when = new Date();
+  const season = getSeason(when);
   const picked = renderPlanSpecies(profile);
   // A profile with no per-species block, or a row with nothing ticked, still hands the plan its
   // limnology, forage and roster -- so the block is asked for once with no species rather than
@@ -1109,7 +1113,7 @@ function renderPlanInput(profile) {
   for (const b of blocks) for (const l of b.text.split('\n')) if (l.startsWith('- ')) lines.add(l);
 
   let html = '<div style="padding:8px 10px;font-size:12px;color:var(--muted)">'
-    + `Season <b>${esc(season)}</b> · ${blocks.length} target`
+    + `Season <b>${esc(season)}</b> as of ${esc(when.toLocaleDateString(undefined,{ month: 'long', day: 'numeric' }))} · ${blocks.length} target`
     + `${blocks.length === 1 ? '' : 's'} the profile has a researched band for · `
     + `<b>${lines.size}</b> line${lines.size === 1 ? '' : 's'} reach the prompt. `
     + 'Anything in Research Sections below that is not here reaches no plan. '
