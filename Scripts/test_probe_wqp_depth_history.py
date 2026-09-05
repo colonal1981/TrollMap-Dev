@@ -97,9 +97,49 @@ check('legacy profile', 'dataProfile=resultPhysChem' in u_legacy, True)
 check('wqx3 profile', 'dataProfile=basicPhysChem' in u_wqx3, True)
 check('wqx3 endpoint', '/wqx3/Result/search' in u_wqx3, True)
 
+# 7. THE ZIP PATH. WQP is asked with zip=yes on full-history pulls; the census must never know.
+import zipfile
+import urllib.request
+
+payload = build(LEGACY_HEAD, '21SCSANT')
+buf = io.BytesIO()
+with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
+    z.writestr('result.csv', payload)
+zipped = buf.getvalue()
+check('a zip is smaller than the csv', len(zipped) < len(payload.encode()), True)
+
+
+class FakeResp:
+    def __init__(self, body):
+        self.body = body
+
+    def read(self):
+        return self.body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+_real = urllib.request.urlopen
+try:
+    urllib.request.urlopen = lambda req, timeout=None: FakeResp(zipped)
+    text, err = P.fetch('https://example.invalid/x')
+    check('zip unpacked without error', err, None)
+    check('zip round-trips to the same census', P.census(text), legacy)
+    urllib.request.urlopen = lambda req, timeout=None: FakeResp(payload.encode())
+    text2, err2 = P.fetch('https://example.invalid/x')
+    check('a plain CSV body still works', P.census(text2), legacy)
+finally:
+    urllib.request.urlopen = _real
+
+check('the url asks for the zip', 'zip=yes' in P.wqp_url((0, 0, 1, 1), 'legacy'), True)
+
 if FAILS:
     print('FAIL (%d)' % len(FAILS))
     for f in FAILS:
         print('   ' + f)
     sys.exit(1)
-print('ok  -- %d checks, both dialects agree on all of them' % 17)
+print('ok  -- %d checks: both dialects agree, and the zip path changes nothing' % 22)

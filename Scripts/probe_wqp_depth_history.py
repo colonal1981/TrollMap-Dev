@@ -66,6 +66,7 @@ import json
 import os
 import sys
 import time
+import zipfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -104,7 +105,7 @@ def wqp_url(bbox, api):
     parts = ['bBox=%s,%s,%s,%s' % (w, s, e, n)]
     parts += ['characteristicName=' + urllib.parse.quote(c) for c in CHARS]
     # NO startDateLo. That omission is the entire point of this script.
-    parts += ['mimeType=csv', 'zip=no', 'dataProfile=' + profile,
+    parts += ['mimeType=csv', 'zip=yes', 'dataProfile=' + profile,
               'providers=NWIS', 'providers=STORET']
     return base + '?' + '&'.join(parts)
 
@@ -117,13 +118,26 @@ def pick(row, key):
 
 
 def fetch(url, timeout=300, tries=3):
+    """ASK FOR THE ZIP. These are full-history pulls with no date bound -- Lake Moultrie alone
+    carries 5,227 records inside the 2015 window and we are asking for everything back to 1983.
+    `zip=yes` returns the same CSV inside a ZIP; a water-quality CSV is highly repetitive text
+    and compresses to a small fraction of the wire size, which is the difference between an
+    afternoon and an overnight run over 64 lakes. The body is unpacked here so the census never
+    knows the difference."""
     last = None
     for i in range(tries):
         try:
             req = urllib.request.Request(url, headers={'User-Agent': UA,
-                                                       'Accept': 'text/csv'})
+                                                       'Accept': 'application/zip, text/csv'})
             with urllib.request.urlopen(req, timeout=timeout) as r:
-                return r.read().decode('utf-8', 'replace'), None
+                raw = r.read()
+            if raw[:2] == b'PK':
+                with zipfile.ZipFile(io.BytesIO(raw)) as z:
+                    names = [n for n in z.namelist() if n.lower().endswith('.csv')] or z.namelist()
+                    if not names:
+                        return '', None               # an empty archive is an empty answer
+                    raw = z.read(names[0])
+            return raw.decode('utf-8', 'replace'), None
         except Exception as exc:                      # noqa: BLE001 -- report, do not classify
             last = '%s: %s' % (type(exc).__name__, exc)
             if i < tries - 1:
@@ -250,6 +264,10 @@ def main(argv=None):
     ap.add_argument('--min-acres', type=float, default=1000.0)
     ap.add_argument('--jobs', type=int, default=4, help='keep it modest; this is a federal API')
     ap.add_argument('--resume', action='store_true', help='skip waters already in the output')
+    ap.add_argument('--do-only', action='store_true',
+                    help='ask for dissolved oxygen alone. The thermocline rule counts SUMMER DO '
+                         'records with a depth, so this answers the question on a fraction of '
+                         'the payload; temperature only widens the reported depth span.')
     ap.add_argument('--api', default='both', choices=('both', 'legacy', 'wqx3'),
                     help='which service to ask. Default both -- 2.2 is what the Worker uses '
                          'today and it has no USGS data after 2024-03-11')
@@ -258,6 +276,8 @@ def main(argv=None):
     ap.add_argument('--out', default=None)
     a = ap.parse_args(argv)
 
+    if a.do_only:
+        del CHARS[0]                                  # 'Temperature, water'
     if a.from_csv:
         text = open(a.from_csv, encoding='utf-8', errors='replace').read()
         print(json.dumps(census(text), indent=1))
@@ -306,7 +326,14 @@ def main(argv=None):
         rec = {'display_name': row.get('display_name') or slug,
                'state': row.get('state'), 'acres': row.get('area_acres'), 'by_api': {}}
         for api in apis:
+            # SILENCE IS INDISTINGUISHABLE FROM A HANG, and one of these requests can run for
+            # minutes. Said before the wait, not after it.
+            print('        ... asking %-6s for %s' % (api, rec['display_name'][:40]), flush=True)
+            t0 = time.time()
             text, err = fetch(wqp_url(b, api))
+            print('        ... %-6s %s in %.0fs'
+                  % (api, 'failed' if err else '%d KB' % (len(text) // 1024), time.time() - t0),
+                  flush=True)
             rec['by_api'][api] = {'error': err} if err else census(text)
         # The headline is the BEST of the two -- whichever service saw more of the lake. They are
         # reported separately underneath because a difference is itself the finding.
