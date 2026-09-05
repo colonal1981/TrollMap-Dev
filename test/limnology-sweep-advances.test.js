@@ -43,10 +43,21 @@ function makeEnv() {
       get: async (k) => asObj(k),
       head: async (k) => asObj(k),
       put: async (k, v) => { store[k] = v; },
-      list: async ({ prefix }) => ({
-        objects: Object.keys(store).filter((k) => k.startsWith(prefix))
-          .sort().map((k) => ({ key: k, uploaded: new Date(0).toISOString() })),
-      }),
+      // R2 RETURNS ONE PAGE AND A CURSOR, so the fake does too -- `pageSize` is deliberately
+      // small so that any listing this loop makes has to be followed to its end. The old fake
+      // returned the whole bucket in one call, which is why it could not see the bug that was
+      // live in the Worker while every test here passed.
+      list: async ({ prefix, cursor }) => {
+        const keys = Object.keys(store).filter((k) => k.startsWith(prefix)).sort();
+        const start = cursor ? keys.indexOf(cursor) : 0;
+        const page = keys.slice(start, start + (store.__pageSize || 2));
+        const next = start + page.length;
+        return {
+          objects: page.map((k) => ({ key: k, size: (store[k] || '').length, uploaded: new Date(0).toISOString() })),
+          truncated: next < keys.length,
+          cursor: next < keys.length ? keys[next] : undefined,
+        };
+      },
     },
   };
 }
@@ -168,4 +179,49 @@ test('a throw between the pull and the put is recorded in the sweep state', asyn
   await refreshStaleLimnology(env, { limit: 2 });
   const st = sweepState(env);
   assert.ok(st, 'the sweep state must still be written when a merge throws');
+});
+
+
+// ── THE VERSION BLOCK SITS BETWEEN THE PROFILES ────────────────────────────────────────────────
+//
+// 2026-09-05. `lakes/` holds the profiles AND `lakes/versions/<id>/vN.json` history, and R2 orders
+// keys lexicographically, so every profile whose id sorts after the word "versions" comes AFTER
+// the whole history block. On the live bucket that is 802 version objects standing between
+// `lakes/tuckertown_lake_nc.json` and these four:
+//
+//   w_kerr_scott_reservoir_wilkes_co_nc   watauga_lake_tn   watauga_tn   white_lake_bladen_co_nc
+//
+// All four hold a profile. None has a `limnology-cache/<id>.json` and none has a row in
+// `_sweep.json`, so by this loop's own due test they were first in line -- and the sweep asked
+// R2 for one page and never saw them. The firing at 19:06 on 2026-09-04 had two slots, pulled
+// ONE water, and stopped; nothing has been written since. A short firing with work outstanding
+// is what an early-ended listing looks like from the outside.
+
+test('a profile that sorts after the version block is still swept', async () => {
+  failEveryPull();
+  const env = makeEnv();
+  delete env.store['lakes/allatoona_lake_ga.json'];
+  delete env.store['lakes/badin_lake_nc.json'];
+  delete env.store['lakes/belews_lake_nc.json'];
+
+  INDEX.w_kerr_scott = { display_name: 'W Kerr Scott Reservoir (Wilkes Co, NC)',
+    name: 'W Kerr Scott Reservoir', legacy_display_names: ['W. Kerr Scott Reservoir, NC'],
+    bounds_wsen: [-81.3, 36.1, -81.1, 36.2] };
+
+  // The history block, standing where it stands in the bucket.
+  for (let i = 1; i <= 12; i++) {
+    env.store[`lakes/versions/tuckertown_lake_nc/v${i}.json`] = '{}';
+  }
+  env.store['lakes/tuckertown_lake_nc.json'] = profile('Badin Lake, NC');
+  env.store['lakes/w_kerr_scott_reservoir_wilkes_co_nc.json'] =
+    profile('W Kerr Scott Reservoir (Wilkes Co, NC)');
+
+  const out = await refreshStaleLimnology(env, { limit: 2 });
+  const st = sweepState(env) || {};
+  assert.ok(st.w_kerr_scott_reservoir_wilkes_co_nc,
+    'the water behind the version block must be reached');
+  // And the history objects must never be mistaken for profiles.
+  assert.equal(Object.keys(st).some((k) => k.includes('/')), false,
+    'a versions key is not a profile id');
+  assert.equal(out.checked, 2, 'two profiles exist under lakes/ and both must be counted');
 });

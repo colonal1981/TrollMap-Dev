@@ -4,7 +4,7 @@
 // generated generic lake_${base} keys on miss, masking missing entries and
 // causing shoreline.geojson R2 misses → bbox self-derive failed → geospatial
 // adapter / thermocline pipeline silently skipped. Fixed by importing canonical map.
-import { JSON_HEADERS, r2Text } from '../worker-core.js';
+import { JSON_HEADERS, r2Text, listAllR2 } from '../worker-core.js';
 import { handleResearchThermoclineSearch } from './storage.js';
 import { LAKE_NAME_TO_R2_KEY as SUPPLEMENTAL_KEY_MAP, resolveR2Key } from '../../js/data/lake-keys.js';
 
@@ -871,12 +871,16 @@ async function refreshStaleLimnology(env, opts = {}) {
     return { ...out, error: `lake index unavailable, not sweeping: ${e && e.message}` };
   }
 
+  // PAGINATED, BOTH OF THEM. `lakes/` carries 802 version objects between the profiles, and a
+  // single list() page ended inside them -- see listAllR2 in worker-core.js for the four waters
+  // that were invisible to this loop and why the 19:06 firing on 2026-09-04 was the last one to
+  // write anything. `keep` drops the version keys per page so this holds 80 objects, not 882.
   const [profiles, caches] = await Promise.all([
-    env.R2_TROLLMAP_CHARTPACKS.list({ prefix: 'lakes/' }),
-    env.R2_TROLLMAP_CHARTPACKS.list({ prefix: 'limnology-cache/' }),
+    listAllR2(env.R2_TROLLMAP_CHARTPACKS, 'lakes/', (o) => /^lakes\/[^/]+\.json$/.test(o.key)),
+    listAllR2(env.R2_TROLLMAP_CHARTPACKS, 'limnology-cache/'),
   ]);
   const cachedAt = new Map();
-  for (const o of caches.objects || []) {
+  for (const o of caches) {
     const id = o.key.replace(/^limnology-cache\//, '').replace(/\.json$/, '');
     if (id.startsWith('_')) continue;                 // the sweep state is not a pull
     cachedAt.set(id, o.uploaded ? Date.parse(o.uploaded) : 0);
@@ -884,7 +888,7 @@ async function refreshStaleLimnology(env, opts = {}) {
   const state = await readSweepState(env);
 
   const due = [];
-  for (const o of profiles.objects || []) {
+  for (const o of profiles) {
     // `lakes/versions/<id>/vN.json` is history, not a profile.
     const m = /^lakes\/([^/]+)\.json$/.exec(o.key);
     if (!m) continue;

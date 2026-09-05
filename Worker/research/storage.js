@@ -1,5 +1,5 @@
 // research/storage.js — split from worker-research.js (behavior-preserving)
-import { CORS, JSON_HEADERS, callLLM, extractLLMText, r2Text, r2Body } from '../worker-core.js';
+import { CORS, JSON_HEADERS, callLLM, extractLLMText, r2Text, r2Body, listAllR2 } from '../worker-core.js';
 import { getLakeIntel, lakeKeyFromName } from '../worker-data.js';
 import { searchWeb } from './clients.js';
 import { extractJsonPossibly, researchStorageId, resolveResearchStorageId } from './keys.js';
@@ -9,20 +9,19 @@ import { buildFactualSummary } from './facts-util.js';
 
 async function handleResearchList(env) {
   const prefix = "lakes/";
-  let cursor;
   const masters = [];
   const versions = [];
-  do {
-    const listed = await env.R2_TROLLMAP_CHARTPACKS.list({ prefix, cursor });
-    for (const obj of listed.objects) {
-      if (obj.key.includes("/versions/")) {
-        versions.push({key: obj.key, size: obj.size, uploaded: obj.uploaded});
-      } else if (obj.key.startsWith("lakes/") && obj.key.endsWith(".json") && !obj.key.includes("lake_packages")) {
-        masters.push({key: obj.key, size: obj.size, uploaded: obj.uploaded, id: obj.key.replace(/^lakes\//,'').replace(/\.json$/,'')});
-      }
+  // THE SAME READER THE SWEEP USES. This route and refreshStaleLimnology both answer "which
+  // waters have a profile?" off this prefix, and until 2026-09-05 they disagreed -- this one
+  // paginated and the sweep did not, so /research/list said 80 while the sweep could act on 76.
+  // One function, so the two cannot drift apart again.
+  for (const obj of await listAllR2(env.R2_TROLLMAP_CHARTPACKS, prefix)) {
+    if (obj.key.includes("/versions/")) {
+      versions.push({key: obj.key, size: obj.size, uploaded: obj.uploaded});
+    } else if (obj.key.startsWith("lakes/") && obj.key.endsWith(".json") && !obj.key.includes("lake_packages")) {
+      masters.push({key: obj.key, size: obj.size, uploaded: obj.uploaded, id: obj.key.replace(/^lakes\//,'').replace(/\.json$/,'')});
     }
-    cursor = listed.truncated ? listed.cursor : null;
-  } while (cursor);
+  }
   masters.sort((a,b)=>a.key.localeCompare(b.key));
   return new Response(JSON.stringify({ok:true, count: masters.length, lakes: masters, versionFiles: versions.length, timestamp: new Date().toISOString()}), {headers: JSON_HEADERS});
 }

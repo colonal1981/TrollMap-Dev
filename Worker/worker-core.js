@@ -475,8 +475,50 @@ async function r2Text(obj) {
   return new Response(obj.body.pipeThrough(new DecompressionStream("gzip"))).text();
 }
 
+/**
+ * EVERY object under a prefix, following the cursor to the end of the listing.
+ *
+ * R2's `list()` returns ONE page. It sets `truncated` and hands back a `cursor`, and it is
+ * allowed to return fewer keys than the limit and still be truncated -- so "did I get under a
+ * thousand?" is not a safe test, and a caller that asks once is reading a prefix of the bucket
+ * while believing it read the bucket.
+ *
+ * Found for the third time on 2026-09-05, in the WQP limnology sweep. `lakes/` holds 80 profiles
+ * and 802 `lakes/versions/<id>/vN.json` history objects, and R2 orders keys lexicographically, so
+ * the version block sits between `lakes/tuckertown_lake_nc.json` and the four ids that sort after
+ * the word "versions":
+ *
+ *   lakes/w_kerr_scott_reservoir_wilkes_co_nc.json
+ *   lakes/watauga_lake_tn.json
+ *   lakes/watauga_tn.json
+ *   lakes/white_lake_bladen_co_nc.json
+ *
+ * The sweep asked once, so those four were never in its candidate list. All four hold a profile,
+ * none has a `limnology-cache/<id>.json`, and none has a row in `_sweep.json` -- by the sweep's
+ * own due test they were first in line, and they were never reached. The firing at 19:06 on
+ * 2026-09-04 pulled ONE water with two slots to spend and then stopped, because as far as it
+ * could see there was nothing left after Tuckertown. That short firing is the visible symptom of
+ * a listing that ended early.
+ *
+ * `handleResearchList` paginates, which is why /research/list reports all 80 while the sweep
+ * behaves as though there are 76. Two readers of the same prefix disagreeing about what is in it
+ * is the shape this bug takes every time; there is now one reader.
+ *
+ * `keep` is applied per page so a caller that wants 80 of 882 keys does not hold 882.
+ */
+async function listAllR2(bucket, prefix, keep) {
+  const out = [];
+  let cursor;
+  do {
+    const listed = await bucket.list({ prefix, cursor });
+    for (const o of listed.objects || []) if (!keep || keep(o)) out.push(o);
+    cursor = listed.truncated ? listed.cursor : null;
+  } while (cursor);
+  return out;
+}
+
 // chartpackKey and handleChartpackList were defined here AND, byte for byte, again in
 // trollmap-worker.js -- and the copies here were not exported and not called, so this file
 // carried thirty lines that could never run while the live copy drifted independently.
 // Exported now; trollmap-worker.js imports them.
-export { CORS, JSON_HEADERS, TEXT_HEADERS, extractLLMText, callLLM, isAuthorized, chartpackKey, handleChartpackList, r2Body, r2Text };
+export { CORS, JSON_HEADERS, TEXT_HEADERS, extractLLMText, callLLM, isAuthorized, chartpackKey, handleChartpackList, r2Body, r2Text, listAllR2 };
