@@ -25,7 +25,7 @@
  */
 
 import { runSmartPlanV2, readInputs } from './smart-plan-v2-wiring.js';
-import { splitPrompt, droppedFromAnswer } from '../utils/bench-read.js';
+import { splitPrompt, droppedFromAnswer, candidatesFromPrompt } from '../utils/bench-read.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -58,16 +58,28 @@ function render(r, mode) {
   const system = (r.request && r.request.system) || '';
   const secs = splitPrompt(user);
   const empties = secs.filter((s) => !s.body.join('').trim());
+  // EVERY NUMBER ON THIS PAGE COMES OUT OF THE PROMPT ITSELF. Counting candidates off
+  // `r.candidates` was counting a different object -- see candidatesFromPrompt().
+  const cands = candidatesFromPrompt(user);
 
   let html = `<div class="bench-head">`
     + `<b>THE INPUT</b> — ${user.length.toLocaleString()} characters in `
-    + `${secs.length} sections, ${(r.candidates || []).length} candidate legs offered`
+    + `${secs.length} sections, ${cands && cands.count != null ? cands.count
+        : (r.candidates || []).length} candidate legs offered`
     + (empties.length ? ` · <span class="bench-warn">${empties.length} section(s) had nothing `
         + `to say: ${empties.map((s) => esc(s.title)).join(', ')}</span>` : '')
     + `</div>`;
   html += jsonBlock('SYSTEM PROMPT', system, false).replace('(nothing)', esc(system));
   html += secs.map(sectionHtml).join('');
-  html += jsonBlock('THE WATER IT MAY FISH (candidates, as sent)', r.candidates || [], false);
+  // The same bytes the section above already contains, laid out to be read. The heading says
+  // both sizes so the formatting can never be mistaken for something extra that was sent.
+  html += cands
+    ? `<details class="bench-sec"><summary>THE CANDIDATES, LAID OUT TO READ `
+      + `<span class="bench-n">${cands.chars.toLocaleString()} ch as sent, inside the section `
+      + `above · reformatted below, nothing added</span></summary>`
+      + `<pre class="bench-pre">${esc(cands.parsed
+          ? JSON.stringify(cands.parsed, null, 2) : cands.text)}</pre></details>`
+    : '';
 
   if (mode === 'bench') {
     html += `<div class="bench-head" style="margin-top:14px"><b>THE ANSWER</b> — raw, `

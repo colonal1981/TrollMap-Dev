@@ -1,5 +1,5 @@
 import { describe, it, expect } from './expect-shim.mjs';
-import { splitPrompt, droppedFromAnswer } from '../js/utils/bench-read.js';
+import { splitPrompt, droppedFromAnswer, candidatesFromPrompt } from '../js/utils/bench-read.js';
 
 // ---------------------------------------------------------------------------
 // Why this test exists
@@ -114,5 +114,63 @@ describe('droppedFromAnswer — what the model said that the app does not carry'
     // A rod id appearing somewhere in a large object proves nothing.
     const d = droppedFromAnswer({ id: 'R1', n: 2 }, {});
     expect(d).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Ryan, 2026-09-06, reading the bench's header against its own last pane:
+//
+//   "it says that the input is 70,599 characters in 10 sections but the last
+//    section is The water it may fish (candidates, as sent) 212,397 ch....
+//    so does the LLM get that list of 212,397 ch or not"
+//
+// It does not, and the pane was wrong twice over. It serialised `r.candidates`
+// -- the RAW internal candidate objects, a different shape entirely -- with a
+// two-space indent, and called the result "as sent". Measured on that run:
+//
+//     whole prompt                70,534 ch
+//     candidate array as sent     34,333 ch   (49% of the prompt)
+//     the same array pretty       51,278 ch
+//     the pane's number          212,397 ch   (the wrong object, indented)
+//
+// buildPlanRequest returns only {system, user}, so the prompt string is the
+// only place the sent form exists. Reading it back out of there cannot drift
+// from what was sent, because it IS what was sent.
+// ---------------------------------------------------------------------------
+
+const WITH_CANDS = 'THE WATER YOU MAY FISH\nEach candidate is a stretch.\n'
+  + '[{"runId":"w#1","depthFt":20,"structures":[{"type":"point","atM":722}]},'
+  + '{"runId":"w#2","depthFt":31,"structures":[]}]\n\nRULES THAT ARE NOT NEGOTIABLE\n1. Something.';
+
+describe('candidatesFromPrompt — the array exactly as the model received it', () => {
+  it('finds the array and counts the legs', () => {
+    const c = candidatesFromPrompt(WITH_CANDS);
+    expect(c.count).toBe(2);
+    expect(c.parsed[0].runId).toBe('w#1');
+  });
+
+  it('reports the size AS SENT, not the size of a re-serialisation', () => {
+    const c = candidatesFromPrompt(WITH_CANDS);
+    // the exact substring of the prompt, so it is a slice of the prompt's own length
+    expect(WITH_CANDS.includes(c.text)).toBe(true);
+    expect(c.chars).toBe(c.text.length);
+    expect(c.chars < JSON.stringify(c.parsed, null, 2).length).toBe(true);
+  });
+
+  it('stops at the array, not at the first bracket it meets afterwards', () => {
+    const c = candidatesFromPrompt(WITH_CANDS);
+    expect(c.text.endsWith(']')).toBe(true);
+    expect(c.text).not.toMatch(/RULES THAT ARE NOT NEGOTIABLE/);
+  });
+
+  it('handles a nested array inside a candidate without ending early', () => {
+    const c = candidatesFromPrompt(WITH_CANDS);
+    expect(c.parsed[0].structures.length).toBe(1);
+  });
+
+  it('is null rather than wrong when there is no candidate array', () => {
+    expect(candidatesFromPrompt('THE DAY\n{"water":"x"}')).toBe(null);
+    expect(candidatesFromPrompt('')).toBe(null);
+    expect(candidatesFromPrompt(null)).toBe(null);
   });
 });

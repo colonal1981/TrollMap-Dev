@@ -65,3 +65,40 @@ export function droppedFromAnswer(response, plan) {
   walk(response, '');
   return out;
 }
+
+/**
+ * THE CANDIDATE ARRAY EXACTLY AS THE MODEL RECEIVED IT, taken out of the prompt string.
+ *
+ * Ryan, 2026-09-06, reading the bench's own header against its own last pane: "it says that the
+ * input is 70,599 characters in 10 sections but the last section is The water it may fish
+ * (candidates, as sent) 212,397 ch.... so does the LLM get that list of 212,397 ch or not".
+ *
+ * It does not, and the pane was lying twice over. It was serialising `r.candidates` -- the RAW
+ * internal candidate objects -- with two-space indent, while what the model actually gets is
+ * `candidates.map(forModel)` written compactly INSIDE the user string and already counted in its
+ * 70,599. A different object, printed three times larger, labelled "as sent".
+ *
+ * buildPlanRequest returns only {system, user}, so the prompt text is the one place the sent form
+ * exists. Reading it back out of there cannot drift from what was sent, because it IS what was
+ * sent. `text` is the true size; `parsed` is only for laying it out to read.
+ */
+export function candidatesFromPrompt(user) {
+  const s = String(user || '');
+  const start = s.indexOf('[{"runId"');
+  if (start < 0) return null;
+  let depth = 0;
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === '[') depth++;
+    else if (ch === ']') {
+      depth--;
+      if (depth === 0) {
+        const text = s.slice(start, i + 1);
+        let parsed = null;
+        try { parsed = JSON.parse(text); } catch { parsed = null; }
+        return { text, parsed, chars: text.length, count: Array.isArray(parsed) ? parsed.length : null };
+      }
+    }
+  }
+  return null;
+}
