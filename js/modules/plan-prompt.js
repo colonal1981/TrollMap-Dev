@@ -589,6 +589,90 @@ if every leg in it is right.
 `;
 }
 
+/**
+ * THE NUMBERS THE CARD PRINTS AND THE PROMPT NEVER DID.
+ *
+ * Ryan, 2026-09-06, pasting the whole conditions card: "how much of this from conditions is
+ * presented to the LLM... it doesn't look like it".
+ *
+ * Counted against the Sep 6 prompt, fact by fact: FIFTEEN of the card's twenty-four reached the
+ * model and NINE did not. conditions-strip.js and this file read the SAME object -- after the
+ * fetchWaterState repair every one of these fields is on `ws` -- and only the card printed them.
+ *
+ * The nine, and why each one is not decoration:
+ *
+ *   water temperature   85.5 F on the Sep 6 card, from the tailrace gauge. The prompt tells the
+ *                       model to weigh "what the water clarity and temperature argue for" and
+ *                       then never gives it the temperature. It is also the input getSeason()
+ *                       uses to call September summer.
+ *   dissolved oxygen    6.1 mg/L. The card carries the rule with it and this repeats it verbatim
+ *                       rather than inventing a second threshold.
+ *   moon               phase and illumination, already fetched from USNO.
+ *   rain chance        the first forecast period's probability.
+ *   barometer          one reading, and the card is careful that one reading is not a trend.
+ *   releases           whether the operator is sending water. On this lake the answer is no, and
+ *                       the reason -- LIP Stage 2 -- reaches the model while the fact does not.
+ *   access closures    Buck Hill shut for about a year. A closed ramp is a trip that does not
+ *                       happen, and the model plans launches.
+ *   flow vs normal     the National Water Model anomaly. Published with no units, so only the
+ *                       sign is usable, and the card says so.
+ *
+ * Every line is silent when its field is null. Nothing is inferred from an absence.
+ */
+export function conditionsPromptBlock(ws) {
+  if (!ws || ws.error) return '';
+  const L = [];
+
+  if (Number.isFinite(Number(ws.waterTempF))) {
+    // WHERE IT WAS MEASURED TRAVELS WITH IT. A tailrace gauge sits below the dam and is not the
+    // lake; a borrowed upstream reading is not this water at all. The card has said so since it
+    // was written and a number that arrives without its provenance cannot be argued with.
+    const from = ws.waterTempFrom === 'upstream'
+        ? ` — measured UPSTREAM, not on this water${ws.waterTempGauge ? ` (${ws.waterTempGauge})` : ''}`
+      : ws.waterTempGauge ? ` — ${ws.waterTempGauge}` : '';
+    L.push(`Water temperature ${ws.waterTempF} °F${from}.`);
+  }
+  if (Number.isFinite(Number(ws.oxygenMgL))) {
+    L.push(`Dissolved oxygen ${ws.oxygenMgL} mg/L. Below about 4 mg/L is not holding fish.`);
+  }
+  if (ws.moonPhase) {
+    L.push(`Moon ${ws.moonPhase}${ws.moonIllumination ? ` · ${ws.moonIllumination} lit` : ''}.`);
+  }
+  if (Number.isFinite(Number(ws.popPct))) L.push(`Chance of rain ${ws.popPct}% in the first forecast period.`);
+  if (Number.isFinite(Number(ws.pressureMb))) {
+    L.push(`Barometer ${ws.pressureMb} mb — one observation, so there is no trend in it.`);
+  }
+  if (Number.isFinite(Number(ws.flowAnomaly))) {
+    L.push(`Flow versus normal ${ws.flowAnomaly > 0 ? '+' : ''}${ws.flowAnomaly} — National Water `
+         + `Model anomaly, published without units. Only the SIGN is usable.`);
+  }
+
+  const rel = ws.releases;
+  if (rel) {
+    const items = Array.isArray(rel.items) ? rel.items : [];
+    L.push(rel.all_no_release === true || !items.length
+      ? 'The operator has published its release schedule and every day on it reads NO RELEASE. '
+        + 'Do not build the day around current.'
+      : `The operator has published releases: ${items.slice(0, 3)
+          .map((i) => `${i.date || '?'} ${i.text || i.cfs || ''}`.trim()).join('; ')}.`);
+  }
+
+  const acc = Array.isArray(ws.accessAlerts) ? ws.accessAlerts : [];
+  if (acc.length) {
+    L.push(`ACCESS NOTICES from the operator (${acc.length}) — a closed ramp is a trip that does `
+         + `not happen, so say it if it bears on the launch:`);
+    for (const a of acc.slice(0, 4)) {
+      L.push(`  · ${a.place || a.water || 'Access area'}: ${String(a.text || '').replace(/\s+/g, ' ').slice(0, 300)}`);
+    }
+  }
+
+  if (!L.length) return '';
+  return `
+WHAT THE GAUGES SAY TODAY
+${L.join('\n')}
+`;
+}
+
 export function buildPlanRequest(o) {
   const day = {
     water: o.water, ramp: o.ramp, date: o.date,
@@ -909,7 +993,7 @@ wind direction: is it a dangerous windward launch?${o.hazards && o.hazards.lengt
     + `from the research is written advice with no position at all: say the ones that bear on `
     + `today out loud, and never imply an unpositioned one is marked on the chart.`
   : ''}
-${coastalPromptBlock(o.waterState)}${riverPromptBlock(o.waterState)}${poolPromptBlock(o.waterState)}${lightPromptBlock(o.waterState, o.weatherByHour, o.launchTime, o.returnTime)}${timeBudgetBlock(o.windowMin, o.launchTime, o.returnTime, o.dayMin)}${thermoclineNormBlock(o.thermoclineNorm)}
+${coastalPromptBlock(o.waterState)}${riverPromptBlock(o.waterState)}${poolPromptBlock(o.waterState)}${conditionsPromptBlock(o.waterState)}${lightPromptBlock(o.waterState, o.weatherByHour, o.launchTime, o.returnTime)}${timeBudgetBlock(o.windowMin, o.launchTime, o.returnTime, o.dayMin)}${thermoclineNormBlock(o.thermoclineNorm)}
 WHAT IS ALREADY KNOWN
 ${o.intel || 'NOTHING. No researched profile exists for this water, so everything else here rests '
   + 'on the chart, the gauges and general species knowledge. Say so in the plan rather than '
