@@ -1625,6 +1625,29 @@ async function handleResearchAgent(request, env) {
     // is ever going to look. So the outcome of every group is collected and returned, and the
     // response carries which confirmed species did not survive the round trip.
     const groupOutcomes = [];
+    // ONE ANSWER PER LAKE, GATHERED ACROSS THE GROUPS. Every group is shown the same
+    // documents and asked the same lake-level questions, so the answers agree or the first
+    // one that is non-empty stands. A union rather than a last-writer-wins, because a group
+    // that read one more document should not be able to delete what another group found.
+    const lakeLevel = { primary: [], secondary: [], speciesFound: [] };
+    const addAll = (into, from) => {
+      for (const x of (Array.isArray(from) ? from : [])) {
+        const v = typeof x === 'string' ? x.trim() : x;
+        if (!v) continue;
+        const key = typeof v === 'string' ? v.toLowerCase()
+          : String(v.species || v.name || '').trim().toLowerCase();
+        if (!key) continue;
+        if (into.some((y) => (typeof y === 'string' ? y.toLowerCase()
+          : String(y.species || y.name || '').trim().toLowerCase()) === key)) continue;
+        into.push(v);
+      }
+    };
+    const collectLakeLevel = (parsed) => {
+      const f = (parsed && parsed.lakeForage) || {};
+      addAll(lakeLevel.primary, f.primary);
+      addAll(lakeLevel.secondary, f.secondary);
+      addAll(lakeLevel.speciesFound, parsed && parsed.speciesFound);
+    };
 
     // Run all groups concurrently
     // ONE LAKE WAS AN UNBOUNDED BURST OF LLM CALLS.
@@ -1699,6 +1722,22 @@ async function handleResearchAgent(request, env) {
           const section = parsed.trollingIntelligence || parsed[agentKey] || parsed || {};
           const got = Object.keys(section).filter((k) => k !== 'sources');
           if (!got.length) { lastReason = 'empty section'; continue; }
+          // ── THE LAKE-LEVEL ANSWERS, WHICH THIS LINE USED TO THROW AWAY ────────────────────
+          //
+          // `lakeForage` and `speciesFound` are SIBLINGS of trollingIntelligence in the model's
+          // JSON, and the line above keeps only the intelligence. The prompt asks for both --
+          // "THIS LAKE'S FORAGE IS NOT RECORDED. ESTABLISH IT FROM THE DOCUMENTS FIRST... return
+          // it in lakeForage" -- and on the group path the answer was parsed and dropped.
+          //
+          // Ryan, 2026-09-12: "that shouldn't be empty on wateree unless there is still a bug
+          // with the research". It is. Wateree carries 11 predator species, so it groups, so it
+          // takes this path. Measured across the 77 stored profiles: 60 have no forage at all.
+          //
+          // Collected here and returned below, because scripts/research_lakes.py ALREADY reads
+          // `res.data.lakeForage` and `res.data.speciesFound` and writes them into
+          // biology.primaryForage -- and the group path's response has never carried a `data`
+          // key for it to read. Nothing in the batch changes.
+          collectLakeLevel(parsed);
           groupOutcomes.push({ group: groupName, species: groupSpecies, ok: true,
                                returned: got, reason: null, attempts: attempt + 1 });
           return section;
@@ -1807,6 +1846,13 @@ holding: coerceHolding(entry.holding, holdingRejects),
       success: true,
       agent: agentKey,
       section: normalizedMerged,
+      // THE KEY THE BATCH HAS ALWAYS READ AND THIS PATH HAS NEVER SENT. research_lakes.py does
+      // `data = res.get("data") or {}` and then reads `lakeForage` and `speciesFound` out of it.
+      // The single-shot path below returns `data: parsed`; this one returned nothing, so on every
+      // water with enough species to group -- which is nearly all of them -- both answers were
+      // established by the model and discarded on the way home.
+      data: { lakeForage: { primary: lakeLevel.primary, secondary: lakeLevel.secondary },
+              speciesFound: lakeLevel.speciesFound },
       confidence: { percent: 35 },
       // WHAT THE DETERMINISTIC BLOCKS ACTUALLY CONTRIBUTED, carried out so a caller can tell a
       // run that HAD them from a run that did not.
