@@ -536,6 +536,13 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
             out["error"] = ("--limnology-only on a water with NO stored profile would save one "
                             "with no biology at all -- run it without the flag first")
             return out
+        # THE COUNT COMES OFF THE PROFILE, NOT OFF THE AGENT THAT DID NOT RUN. `out["species"]`
+        # is assigned from the agent's response inside the else branch, so a limnology-only pass
+        # printed "0/20 species" for a water whose profile holds twenty -- a summary line that
+        # reads as data loss when nothing was lost. Ryan has one rule for this: a report must show
+        # the change, not the output.
+        out["species"] = len(((profile.get("biology") or {}).get("predatorSpecies")) or [])
+        out["returned"] = list(((profile.get("biology") or {}).get("predatorSpecies")) or [])
         out["warnings"] = list(out.get("warnings") or []) + [
             "limnology-only: discover, analyze-facts and agent-llm were skipped"]
         print(f"      [{lake}] --limnology-only: documents and the fisheries agent skipped")

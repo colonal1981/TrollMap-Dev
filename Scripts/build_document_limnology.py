@@ -305,12 +305,19 @@ def main(argv=None):
     for slug, r in sorted(rows.items()):
         if r.get('refused'):
             print('   %-34s REFUSED %s' % (slug, '; '.join(r['refused'])[:110]))
+    # ONE LINE PER DISTINCT STATEMENT, WITH ITS COUNT -- not one per row.
+    # Lake Murray printed the same S-326 sentence three times because it holds three statements
+    # that say the same thing, and three identical lines read as three different findings.
     for slug, sts in sorted(held.items()):
+        seen = {}
         for st in sts:
-            print('   %-34s %-7s %.1f-%.1f ft at %-6s -> %s'
-                  % (slug, 'OFFERED' if st['offered'] else 'HELD',
-                     st['depth_ft_low'], st['depth_ft_high'], st['station'] or '?',
-                     st['fills'] or st['held_because']))
+            line = ('   %-34s %-7s %.1f-%.1f ft at %-6s -> %s'
+                    % (slug, 'OFFERED' if st['offered'] else 'HELD',
+                       st['depth_ft_low'], st['depth_ft_high'], st['station'] or '?',
+                       st['fills'] or st['held_because']))
+            seen[line] = seen.get(line, 0) + 1
+        for line, n in seen.items():
+            print(line + ('   (x%d)' % n if n > 1 else ''))
 
     if not a.go:
         print()

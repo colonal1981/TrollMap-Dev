@@ -256,6 +256,24 @@ async function handleResearchSave(request, env) {
     sources: incomingProfile.sources || sources || [],
     confidence: {...confidence, overall: {percent: overallConf, level: overallConf>=95?'very high':overallConf>=85?'high':overallConf>=70?'medium':'low'}},
     metadata: {
+      // A KEY THIS SAVE DOES NOT MANAGE MUST SURVIVE IT.
+      //
+      // This object was a literal of ten keys, so every save silently deleted any metadata another
+      // endpoint owns. Two exist and both matter:
+      //
+      //   limnologyRefreshedAt   written by the WQP sweep (research/limnology.js:1048) -- the ONLY
+      //                          record of when a profile's limnology was merged, which is exactly
+      //                          what a "has this merge gone stale?" check has to read. Measured
+      //                          2026-09-12: Lake Moultrie's master carried it and v18 did not,
+      //                          because the 09-04 batch save had already dropped it once.
+      //   approvedBy             written by /research/approve (line ~390) -- WHO approved this
+      //                          profile, erased by the next batch run.
+      //
+      // Same shape as the 2026-09-04 defect this file already carries a comment about: writing a
+      // default over a value someone else set is a write, not a default. The spread goes FIRST and
+      // every one of the ten managed keys is assigned after it, so this can only ever carry forward
+      // a key the save does not own -- it cannot resurrect a managed value.
+      ...(existingMeta || {}),
       version: `${nextVersion}.0`,
       versionNumber: nextVersion,
       status: incomingProfile.metadata?.status || body.status || (nextVersion===1?"draft":"verified"),
