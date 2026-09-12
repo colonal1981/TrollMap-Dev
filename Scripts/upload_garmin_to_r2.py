@@ -542,6 +542,9 @@ PASSTHROUGH_REGISTRIES = {
     "sc_fish_advisories.json":
         "the plan cannot say which fish the state tells you not to eat, and 62 SC waters have "
         "an answer -- fourteen of them a DO NOT EAT; build it with fetch_sc_fish_advisories.py",
+    "nc_fish_advisories.json":
+        "every NC water shows nothing under Eating What You Keep, and 15 of them have an answer "
+        "NCDEQ already published; build it with fetch_nc_fish_advisories.py",
     "ga_fish_advisories.json":
         "42 Georgia waters lose their consumption advisory, and 40 GA waters in the app have no "
         "species source at all -- the largest hole of the four states; build it with "

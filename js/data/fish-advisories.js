@@ -37,9 +37,14 @@
 
 // Both are optional. A bucket with one of them and not the other has to work, because the two
 // are built by different scripts on different days.
-const REGISTRY_PATHS = [
+// EXPORTED so a test can assert "every declared file is asked for, in order" instead of pinning a
+// typed list. `test/fish-advisories.test.js` hardcoded two URLs and went red the moment North
+// Carolina became the third -- a guard on a literal is a placeholder for the contract it stands in
+// for, and this project has a rule about that.
+export const REGISTRY_PATHS = [
   '/chartpacks/_registry/sc_fish_advisories.json',
   '/chartpacks/_registry/ga_fish_advisories.json',
+  '/chartpacks/_registry/nc_fish_advisories.json',
 ];
 const CACHE_MS = 12 * 60 * 60 * 1000;   // the states revise these rarely; twelve hours is generous
 

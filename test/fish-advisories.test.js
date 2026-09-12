@@ -1,6 +1,7 @@
 import { describe, it, expect } from './expect-shim.mjs';
 import {
   advisoryRows, advisoryFor, hasAdvisory, primeFishAdvisories, _setAdvisoryCache,
+  REGISTRY_PATHS,
 } from '../js/data/fish-advisories.js';
 
 /**
@@ -200,7 +201,7 @@ describe('priming never breaks a plan', () => {
     expect(res).toBe(null);
   });
 
-  it('it reads both files and groups them by our slug', async () => {
+  it('it asks for EVERY declared file, in order, and groups them by our slug', async () => {
     _setAdvisoryCache(null);
     const asked = [];
     const res = await primeFishAdvisories({
@@ -212,16 +213,21 @@ describe('priming never breaks a plan', () => {
             source: 'SC DES fish consumption advisories',
             waters: { edisto_river: EDISTO, hartwell_lake: HARTWELL_SC } }) };
         }
+        if (url.endsWith('nc_fish_advisories.json')) {
+          return { ok: true, json: async () => ({
+            source: 'NCDEQ fish consumption advisories',
+            waters: { high_rock_lake: [{ species: ['Largemouth Bass'], advice: 'one meal a week' }] } }) };
+        }
         return { ok: true, json: async () => ({
           source: 'GA EPD, Guidelines For Eating Fish From Georgia Waters 2023',
           waters: { hartwell_lake: HARTWELL_GA } }) };
       },
     });
-    expect(asked).toEqual([
-      'https://example.invalid/chartpacks/_registry/sc_fish_advisories.json',
-      'https://example.invalid/chartpacks/_registry/ga_fish_advisories.json',
-    ]);
-    expect(Object.keys(res).sort()).toEqual(['edisto_river', 'hartwell_lake']);
+    // Asserted against the module's OWN list, so adding a fourth state cannot make this red for
+    // the wrong reason. The ORDER still matters: SC is index 0 and FISH_ADVISORIES_KEY names it.
+    expect(asked).toEqual(REGISTRY_PATHS.map((p) => `https://example.invalid${p}`));
+    expect(asked.length).toBeGreaterThanOrEqual(3);
+    expect(Object.keys(res).sort()).toEqual(['edisto_river', 'hartwell_lake', 'high_rock_lake']);
     expect(res.hartwell_lake).toHaveLength(2);
     expect(advisoryFor('edisto_river')[0].display_name).toBe('Edisto River (Colleton Co, SC)');
   });

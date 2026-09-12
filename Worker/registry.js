@@ -804,6 +804,11 @@ export const mripInshore = passthroughLoader(
 export const FISH_ADVISORY_KEYS = [
   { key: '_registry/sc_fish_advisories.json', script: 'fetch_sc_fish_advisories.py' },
   { key: '_registry/ga_fish_advisories.json', script: 'parse_ga_fish_advisories.py' },
+  // NC arrived 2026-09-05 and reached nobody for a week: built, on the drive, absent from this
+  // list, from PASSTHROUGH_REGISTRIES and from js/data/fish-advisories.js. NCDEQ publishes a
+  // POINT service rather than polygons or a booklet, so fetch_nc_fish_advisories.py binds on
+  // proximity with a 1.5 km gate and reports 15 waters, 0 ambiguous.
+  { key: '_registry/nc_fish_advisories.json', script: 'fetch_nc_fish_advisories.py' },
 ];
 export const FISH_ADVISORIES_KEY = FISH_ADVISORY_KEYS[0].key;   // kept for callers naming SC
 
