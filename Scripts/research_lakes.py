@@ -433,7 +433,7 @@ def registry_ramps(row):
     return out
 
 def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev", alt_names=None,
-                 tpm=DEFAULT_TPM, row=None):
+                 tpm=DEFAULT_TPM, row=None, limnology_only=False):
     """One lake, start to saved profile. Returns a result dict; never raises."""
     t0 = time.perf_counter()
     out = {"lake": lake, "state": state, "aliases": list(alt_names or []),
@@ -516,202 +516,226 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
               f"({(wqp or {}).get('error') or err or 'no merged block'}) "
               f"-- thermocline, anoxic depth, Secchi and trophic status will be blank in the plan")
 
-    code, disc, err = _req("/research/discover",
-                           {"lakeName": lake, "state": state, "agent": "fisheries",
-                            "names": [lake], "predatorSpecies": species})
-    if code != 200 or not disc or not disc.get("success"):
-        out["error"] = f"discover {code}: {err or (disc or {}).get('error') or 'no sources'}"
-        return out
-    found = [s2 for s2 in (disc.get("sources") or [])
-             if not s2.get("agentTags") or "fisheries" in s2["agentTags"]]
-
-    # THE CAP THE BROWSER APPLIES, mirrored: seeds (priority 1) always pass, the rest sort by
-    # prefetchScore and fill what is left of ten. A source with no score defaults to 3 so it is
-    # not cut for a field discovery did not set.
-    seeds = [s2 for s2 in found if s2.get("priority") == 1]
-    rest = sorted((s2 for s2 in found if s2.get("priority") != 1),
-                  key=lambda s2: s2.get("prefetchScore", s2.get("score", 3)), reverse=True)
-    sources = seeds + rest[:max(0, SOURCE_CAP - len(seeds))]
-    out["sources"] = len(sources)
-    if verbose:
-        print(f"      discover: {len(found)} sources ({len(seeds)} seeds) -> {len(sources)}")
-
-    code, norm, err = _req(f"/research/get-normalized?lake={urllib.parse.quote(lake)}")
-    existing = ((norm or {}).get("documents") or (norm or {}).get("docs") or []) if code == 200 else []
-
-    fetched, out["fetch"] = fetch_sources(lake, sources, existing, verbose)
-
-    # The off-lake gate, then back to R2 so the next quarter's run reuses the corpus instead of
-    # paying for it again. Untouched cached docs are merged back in, the way runAgent does.
-    if fetched:
-        touched = {norm_url(d.get("url")) for d in fetched}
-        merged = [d for d in existing if norm_url(d.get("url")) not in touched] + fetched
-        prepared = gate_documents(repo, merged, lake, alt_names)
-        out["rejected_offlake"] = prepared.get("rejected", 0)
-        keep = prepared.get("documents") or []
-        # NAME WHAT THE GATE DROPPED. A count says six documents did not survive; it does not say
-        # whether the gate was right. On 2026-09-01 Lanier fetched nine and kept three, twice, and
-        # there was no way to tell a correctly-rejected off-lake page from a Lake Lanier report
-        # thrown out for not spelling itself "Sidney Lanier". The titles decide that in one read.
-        # AND WHY, FROM THE GATE ITSELF. This used to difference the URL sets, which is a second
-        # copy of a question prepareNormalizedDocuments() has already answered and could only ever
-        # produce a title -- so "is the gate right" had to be settled by opening the pages by hand,
-        # which on 2026-09-02 is exactly what it took for Randleman Lake and Parr Shoals Reservoir.
-        # `why` is one of no_name, named_no_state or other_state, and named_no_state is the only
-        # one worth arguing with.
-        out["rejected_docs"] = prepared.get("refused") or []
-        # AN EMPTY CORPUS IS NOT WORTH A KEY IN R2. On 2026-09-01 three console.info lines were
-        # researched as if they were lakes; the off-lake gate correctly threw out every document
-        # they found, and this then wrote an empty document array to the bucket under each of
-        # their names. Nothing to store means nothing to store.
-        if keep:
-            code, _, err = _req(f"/research/save-normalized?lake={urllib.parse.quote(lake)}"
-                                f"&n={len(keep)}&rejected={out['rejected_offlake']}", keep)
-            if code != 200:
-                print(f"      warn [{lake}]: save-normalized {code}: {err} "
-                      f"-- the corpus was used but not stored")
-        docs = keep
+    # ── DOCUMENTS AND THE MODEL — SKIPPED ENTIRELY BY --limnology-only ─────────────────────
+    #
+    # Ryan, 2026-09-12: "why not just add a flag that will run only limnology". The 2026-09-05 fix
+    # that makes a WQP refusal travel to the field it refused left 28 profiles holding a bare null,
+    # because the merge that wrote them predates it and the sweep is due on CACHE AGE alone. Pushing
+    # those 28 through the full chain measured 193 s and ~58k tokens a lake -- 90 minutes and 1.6M
+    # tokens to attach a sentence. Nothing below decides anything about limnology: that block is
+    # settled by /research/limnology-data above, which also merges document_limnology.json.
+    #
+    # WHAT STILL RUNS: deterministic-facts, carry_forward, limnology-data, the stored status, the
+    # save, and the local mirror. carry_forward() has preserved fields a run did not compute since
+    # 2026-09-04, so a pass that skips the agent cannot cost this profile its species, forage or
+    # trollingIntelligence -- AND THAT GUARANTEE IS THE ONLY REASON THIS FLAG IS SAFE. On a water
+    # with no stored profile there is nothing to carry, so it refuses rather than saving a profile
+    # with no biology in it.
+    if limnology_only:
+        if not prev_profile:
+            out["error"] = ("--limnology-only on a water with NO stored profile would save one "
+                            "with no biology at all -- run it without the flag first")
+            return out
+        out["warnings"] = list(out.get("warnings") or []) + [
+            "limnology-only: discover, analyze-facts and agent-llm were skipped"]
+        print(f"      [{lake}] --limnology-only: documents and the fisheries agent skipped")
     else:
-        docs = existing
+        code, disc, err = _req("/research/discover",
+                               {"lakeName": lake, "state": state, "agent": "fisheries",
+                                "names": [lake], "predatorSpecies": species})
+        if code != 200 or not disc or not disc.get("success"):
+            out["error"] = f"discover {code}: {err or (disc or {}).get('error') or 'no sources'}"
+            return out
+        found = [s2 for s2 in (disc.get("sources") or [])
+                 if not s2.get("agentTags") or "fisheries" in s2["agentTags"]]
 
-    usable = [d for d in docs if len(str(d.get("fullText") or d.get("text") or "")) >= 200]
-    out["documents"] = len(usable)
+        # THE CAP THE BROWSER APPLIES, mirrored: seeds (priority 1) always pass, the rest sort by
+        # prefetchScore and fill what is left of ten. A source with no score defaults to 3 so it is
+        # not cut for a field discovery did not set.
+        seeds = [s2 for s2 in found if s2.get("priority") == 1]
+        rest = sorted((s2 for s2 in found if s2.get("priority") != 1),
+                      key=lambda s2: s2.get("prefetchScore", s2.get("score", 3)), reverse=True)
+        sources = seeds + rest[:max(0, SOURCE_CAP - len(seeds))]
+        out["sources"] = len(sources)
+        if verbose:
+            print(f"      discover: {len(found)} sources ({len(seeds)} seeds) -> {len(sources)}")
 
-    # EXTRACTION IS NOT OPTIONAL, whatever an earlier reading of the template suggested. The Worker
-    # turns these facts into the PARSED OBSERVATION block via parseBehaviour(), and the fisheries
-    # prompt ranks that ABOVE the documents: "If a PARSED OBSERVATION covers this species and
-    # season, its value is the answer -- copy it, do not adjust it."
-    facts = []
-    chosen = usable[:LLM_DOC_LIMIT]
-    for i, d in enumerate(chosen):
-        text = str(d.get("fullText") or d.get("text") or "")[:EXTRACT_DOC_CHARS]
-        code, ex, err = _req("/research/analyze-facts", {
-            # baseName and docIndex are what lake-research-engine.js sends. Without baseName the
-            # Worker derives one, and the prompt then tells the model to extract only facts that
-            # mention it -- so getting it right is the difference between "Sidney Lanier" and a
-            # name no document on earth contains.
-            "lakeName": lake, "baseName": base_name(lake), "state": state,
-            # EVERY NAME THE WATER HAS, into the extractor. Its prompt says to take only facts
-            # that mention the base name, and a base name is one string: "John H. Moss" for a
-            # water the world calls Moss Lake or Kings Mountain Reservoir. Two documents, zero
-            # facts, on 2026-09-01. The registry has carried both other names all along.
-            "aliases": alt_names or [],
-            "docIndex": i, "targetFields": ["trollingIntelligence"],
-            "documents": [{"title": d.get("title"), "url": d.get("url"), "text": text}]})
-        if code == 200:
-            facts.extend((ex or {}).get("extracted_facts") or [])
-        elif verbose:
-            print(f"      analyze-facts {code}: {err}")
-        out["chars_sent"] += len(text)
-        if i + 1 < len(chosen):
-            time.sleep(pace_seconds(len(text), tpm))
+        code, norm, err = _req(f"/research/get-normalized?lake={urllib.parse.quote(lake)}")
+        existing = ((norm or {}).get("documents") or (norm or {}).get("docs") or []) if code == 200 else []
 
-    out["facts"] = len(facts)
-    prev = dict(profile)
-    prev["_extractedFacts"] = facts
-    prev["_normalizedDocuments"] = [
-        {"title": d.get("title"), "url": d.get("url"),
-         "text": str(d.get("fullText") or d.get("text") or "")[:LLM_DOC_CHARS]}
-        for d in usable[:LLM_DOC_LIMIT]]
+        fetched, out["fetch"] = fetch_sources(lake, sources, existing, verbose)
 
-    code, res, err = _req("/research/agent-llm",
-                          {"lakeName": lake, "state": state, "agent": "fisheries",
-                           "previousResults": prev})
-    if code != 200 or not res:
-        out["error"] = f"agent-llm {code}: {err}"
-        return out
-    section = res.get("section") or {}
-    out["species"] = len(section)
-    out["returned"] = [k for k in section.keys() if k != "sources"]
-    out["warnings"] = list(res.get("warnings") or [])
-    # How hard the provider made us work for it. A group that needed a second or third attempt
-    # succeeded, so nothing warns -- but a run where every group is retrying is a run whose load
-    # is still too high, and that is only visible if the number is carried out.
-    meta = res.get("meta") or {}
-    groups = meta.get("groups") or []
-    out["group_attempts"] = {g.get("group"): g.get("attempts", 1) for g in groups if g.get("group")}
-    out["retries"] = sum(max(0, (g.get("attempts") or 1) - 1) for g in groups)
-    # WHICH DETERMINISTIC BLOCKS WERE IN PLAY. This script never names agency_lake_facts.json or
-    # species_traits.json and should not -- it is a driver, and the Worker does the reading inside
-    # /research/agent-llm. But both of those reads are against R2, and both callers swallow a
-    # missing object on purpose, so an object THAT WAS NEVER UPLOADED produces a run identical to
-    # one where it was present and had nothing to say. Recording the counts is what makes the
-    # difference visible without opening the profile.
-    out["agency_entries"] = meta.get("agencyEntries")
-    out["species_trait_rows"] = meta.get("speciesTraitRows")
-    if not meta.get("speciesTraitRows"):
-        print(f"      note [{lake}]: no species traits in the prompt -- is "
-              f"_registry/species_traits.json in the bucket?")
-    for w in out["warnings"]:
-        print(f"      warn [{lake}]: {w}")
+        # The off-lake gate, then back to R2 so the next quarter's run reuses the corpus instead of
+        # paying for it again. Untouched cached docs are merged back in, the way runAgent does.
+        if fetched:
+            touched = {norm_url(d.get("url")) for d in fetched}
+            merged = [d for d in existing if norm_url(d.get("url")) not in touched] + fetched
+            prepared = gate_documents(repo, merged, lake, alt_names)
+            out["rejected_offlake"] = prepared.get("rejected", 0)
+            keep = prepared.get("documents") or []
+            # NAME WHAT THE GATE DROPPED. A count says six documents did not survive; it does not say
+            # whether the gate was right. On 2026-09-01 Lanier fetched nine and kept three, twice, and
+            # there was no way to tell a correctly-rejected off-lake page from a Lake Lanier report
+            # thrown out for not spelling itself "Sidney Lanier". The titles decide that in one read.
+            # AND WHY, FROM THE GATE ITSELF. This used to difference the URL sets, which is a second
+            # copy of a question prepareNormalizedDocuments() has already answered and could only ever
+            # produce a title -- so "is the gate right" had to be settled by opening the pages by hand,
+            # which on 2026-09-02 is exactly what it took for Randleman Lake and Parr Shoals Reservoir.
+            # `why` is one of no_name, named_no_state or other_state, and named_no_state is the only
+            # one worth arguing with.
+            out["rejected_docs"] = prepared.get("refused") or []
+            # AN EMPTY CORPUS IS NOT WORTH A KEY IN R2. On 2026-09-01 three console.info lines were
+            # researched as if they were lakes; the off-lake gate correctly threw out every document
+            # they found, and this then wrote an empty document array to the bucket under each of
+            # their names. Nothing to store means nothing to store.
+            if keep:
+                code, _, err = _req(f"/research/save-normalized?lake={urllib.parse.quote(lake)}"
+                                    f"&n={len(keep)}&rejected={out['rejected_offlake']}", keep)
+                if code != 200:
+                    print(f"      warn [{lake}]: save-normalized {code}: {err} "
+                          f"-- the corpus was used but not stored")
+            docs = keep
+        else:
+            docs = existing
 
-    # WHAT WENT IN AND DID NOT COME BACK -- TAKEN FROM THE WORKER, NOT RECOMPUTED HERE.
-    #
-    # This script used to work it out itself: every confirmed name with no exactly-matching key in
-    # the section. That is a second copy of a rule the Worker already owns, and on 2026-09-02 the
-    # two copies disagreed on thirteen of sixty-four waters. Both directions of the same problem:
-    # the Worker folds Black Crappie and White Crappie onto the one Crappie it asked about, and it
-    # reads a member species as an answer to the group heading the regulations name -- Largemouth,
-    # Smallmouth and Spotted Bass ARE the answer to Tennessee's "Black Bass". The naive check knew
-    # neither, so it printed a loss for eight NC and SC waters that lost nothing and six TN waters
-    # that came back with MORE fish than the roster had names for. The tell was in its own
-    # arithmetic: "Cherokee Lake: 6 of 4".
-    #
-    # See missingConfirmedSpecies() in Worker/research/agents.js, which is now the only copy, and
-    # test/the-shortfall-report-said-six-of-four.test.js, which is these waters.
-    #
-    # IT DOES NOT ABORT THE SAVE. Four species of five is worth keeping, and one flaky group
-    # must not cost the other sixty-three lakes their run. It is counted, printed and reported.
-    out["missing"] = list(meta.get("missingSpecies") or [])
-    # WHAT WAS ACTUALLY ASKED, which is not the roster: the Worker merges names for one fish
-    # before it builds the groups, so the roster is the wrong denominator and printing it is how
-    # "6 of 4" got onto the screen.
-    out["asked"] = sorted({s2 for g in groups for s2 in (g.get("species") or [])})
+        usable = [d for d in docs if len(str(d.get("fullText") or d.get("text") or "")) >= 200]
+        out["documents"] = len(usable)
 
-    # AN EMPTY SECTION IS A FAILED RUN, NOT A QUIET ONE. Ryan found this the hard way on
-    # 2026-08-10: a group came back empty, a quarter of the lake's species vanished, and every
-    # line on screen still said success. It is not written and it is reported.
-    if not section:
-        out["error"] = "agent-llm returned an empty trollingIntelligence section"
-        return out
+        # EXTRACTION IS NOT OPTIONAL, whatever an earlier reading of the template suggested. The Worker
+        # turns these facts into the PARSED OBSERVATION block via parseBehaviour(), and the fisheries
+        # prompt ranks that ABOVE the documents: "If a PARSED OBSERVATION covers this species and
+        # season, its value is the answer -- copy it, do not adjust it."
+        facts = []
+        chosen = usable[:LLM_DOC_LIMIT]
+        for i, d in enumerate(chosen):
+            text = str(d.get("fullText") or d.get("text") or "")[:EXTRACT_DOC_CHARS]
+            code, ex, err = _req("/research/analyze-facts", {
+                # baseName and docIndex are what lake-research-engine.js sends. Without baseName the
+                # Worker derives one, and the prompt then tells the model to extract only facts that
+                # mention it -- so getting it right is the difference between "Sidney Lanier" and a
+                # name no document on earth contains.
+                "lakeName": lake, "baseName": base_name(lake), "state": state,
+                # EVERY NAME THE WATER HAS, into the extractor. Its prompt says to take only facts
+                # that mention the base name, and a base name is one string: "John H. Moss" for a
+                # water the world calls Moss Lake or Kings Mountain Reservoir. Two documents, zero
+                # facts, on 2026-09-01. The registry has carried both other names all along.
+                "aliases": alt_names or [],
+                "docIndex": i, "targetFields": ["trollingIntelligence"],
+                "documents": [{"title": d.get("title"), "url": d.get("url"), "text": text}]})
+            if code == 200:
+                facts.extend((ex or {}).get("extracted_facts") or [])
+            elif verbose:
+                print(f"      analyze-facts {code}: {err}")
+            out["chars_sent"] += len(text)
+            if i + 1 < len(chosen):
+                time.sleep(pace_seconds(len(text), tpm))
+
+        out["facts"] = len(facts)
+        prev = dict(profile)
+        prev["_extractedFacts"] = facts
+        prev["_normalizedDocuments"] = [
+            {"title": d.get("title"), "url": d.get("url"),
+             "text": str(d.get("fullText") or d.get("text") or "")[:LLM_DOC_CHARS]}
+            for d in usable[:LLM_DOC_LIMIT]]
+
+        code, res, err = _req("/research/agent-llm",
+                              {"lakeName": lake, "state": state, "agent": "fisheries",
+                               "previousResults": prev})
+        if code != 200 or not res:
+            out["error"] = f"agent-llm {code}: {err}"
+            return out
+        section = res.get("section") or {}
+        out["species"] = len(section)
+        out["returned"] = [k for k in section.keys() if k != "sources"]
+        out["warnings"] = list(res.get("warnings") or [])
+        # How hard the provider made us work for it. A group that needed a second or third attempt
+        # succeeded, so nothing warns -- but a run where every group is retrying is a run whose load
+        # is still too high, and that is only visible if the number is carried out.
+        meta = res.get("meta") or {}
+        groups = meta.get("groups") or []
+        out["group_attempts"] = {g.get("group"): g.get("attempts", 1) for g in groups if g.get("group")}
+        out["retries"] = sum(max(0, (g.get("attempts") or 1) - 1) for g in groups)
+        # WHICH DETERMINISTIC BLOCKS WERE IN PLAY. This script never names agency_lake_facts.json or
+        # species_traits.json and should not -- it is a driver, and the Worker does the reading inside
+        # /research/agent-llm. But both of those reads are against R2, and both callers swallow a
+        # missing object on purpose, so an object THAT WAS NEVER UPLOADED produces a run identical to
+        # one where it was present and had nothing to say. Recording the counts is what makes the
+        # difference visible without opening the profile.
+        out["agency_entries"] = meta.get("agencyEntries")
+        out["species_trait_rows"] = meta.get("speciesTraitRows")
+        if not meta.get("speciesTraitRows"):
+            print(f"      note [{lake}]: no species traits in the prompt -- is "
+                  f"_registry/species_traits.json in the bucket?")
+        for w in out["warnings"]:
+            print(f"      warn [{lake}]: {w}")
+
+        # WHAT WENT IN AND DID NOT COME BACK -- TAKEN FROM THE WORKER, NOT RECOMPUTED HERE.
+        #
+        # This script used to work it out itself: every confirmed name with no exactly-matching key in
+        # the section. That is a second copy of a rule the Worker already owns, and on 2026-09-02 the
+        # two copies disagreed on thirteen of sixty-four waters. Both directions of the same problem:
+        # the Worker folds Black Crappie and White Crappie onto the one Crappie it asked about, and it
+        # reads a member species as an answer to the group heading the regulations name -- Largemouth,
+        # Smallmouth and Spotted Bass ARE the answer to Tennessee's "Black Bass". The naive check knew
+        # neither, so it printed a loss for eight NC and SC waters that lost nothing and six TN waters
+        # that came back with MORE fish than the roster had names for. The tell was in its own
+        # arithmetic: "Cherokee Lake: 6 of 4".
+        #
+        # See missingConfirmedSpecies() in Worker/research/agents.js, which is now the only copy, and
+        # test/the-shortfall-report-said-six-of-four.test.js, which is these waters.
+        #
+        # IT DOES NOT ABORT THE SAVE. Four species of five is worth keeping, and one flaky group
+        # must not cost the other sixty-three lakes their run. It is counted, printed and reported.
+        out["missing"] = list(meta.get("missingSpecies") or [])
+        # WHAT WAS ACTUALLY ASKED, which is not the roster: the Worker merges names for one fish
+        # before it builds the groups, so the roster is the wrong denominator and printing it is how
+        # "6 of 4" got onto the screen.
+        out["asked"] = sorted({s2 for g in groups for s2 in (g.get("species") or [])})
+
+        # AN EMPTY SECTION IS A FAILED RUN, NOT A QUIET ONE. Ryan found this the hard way on
+        # 2026-08-10: a group came back empty, a quarter of the lake's species vanished, and every
+        # line on screen still said success. It is not written and it is reported.
+        if not section:
+            out["error"] = "agent-llm returned an empty trollingIntelligence section"
+            return out
 
 
-    profile["trollingIntelligence"] = section
+        profile["trollingIntelligence"] = section
 
-    # WHAT DISCOVER MODE ESTABLISHED, WRITTEN WHERE THE ROSTER LIVES.
-    #
-    # Four waters have no deterministic species list -- Lake Robinson (Chesterfield Co, SC), Lake
-    # William C Bowen (Spartanburg Co, SC), Bay Tree Lake and White Lake, both Bladen Co, NC --
-    # and for those the agent establishes one from the documents and returns it as `speciesFound`
-    # beside the section. lake-research-engine.js has folded that into biology.predatorSpecies
-    # since the discover path was written; this script was not, so White Lake would have saved
-    # trolling intelligence for species its own biology section did not list.
-    #
-    # `_speciesDiscoveredBy` is the mark the client sets and the reason it sets it: a reader can
-    # tell a roster a model read out of a document from one a structured feed supplied.
-    data = res.get("data") or {}
-    found = [str((f or {}).get("species") or (f or {}).get("name") or "").strip()
-             for f in (data.get("speciesFound") or [])]
-    found = [f for f in found if f]
-    if found:
-        bio = profile.setdefault("biology", {})
-        have = {str(x).lower() for x in (bio.get("predatorSpecies") or [])}
-        added = [f for f in dict.fromkeys(found) if f.lower() not in have]
-        if added:
-            bio["predatorSpecies"] = list(bio.get("predatorSpecies") or []) + added
-            bio["_speciesDiscoveredBy"] = ("fisheries agent, from agency documents "
-                                           "(no deterministic source for this water)")
-            out["discovered_species"] = added
-            print(f"      [{lake}] established {len(added)} species from documents: "
-                  f"{', '.join(added)}")
-    forage = data.get("lakeForage") or {}
-    if forage.get("primary") or forage.get("secondary"):
-        bio = profile.setdefault("biology", {})
-        if not bio.get("primaryForage") and forage.get("primary"):
-            bio["primaryForage"] = forage["primary"]
-        if not bio.get("secondaryForage") and forage.get("secondary"):
-            bio["secondaryForage"] = forage["secondary"]
-        bio["_forageEstablishedBy"] = "fisheries agent, from the documents it was already reading"
+        # WHAT DISCOVER MODE ESTABLISHED, WRITTEN WHERE THE ROSTER LIVES.
+        #
+        # Four waters have no deterministic species list -- Lake Robinson (Chesterfield Co, SC), Lake
+        # William C Bowen (Spartanburg Co, SC), Bay Tree Lake and White Lake, both Bladen Co, NC --
+        # and for those the agent establishes one from the documents and returns it as `speciesFound`
+        # beside the section. lake-research-engine.js has folded that into biology.predatorSpecies
+        # since the discover path was written; this script was not, so White Lake would have saved
+        # trolling intelligence for species its own biology section did not list.
+        #
+        # `_speciesDiscoveredBy` is the mark the client sets and the reason it sets it: a reader can
+        # tell a roster a model read out of a document from one a structured feed supplied.
+        data = res.get("data") or {}
+        found = [str((f or {}).get("species") or (f or {}).get("name") or "").strip()
+                 for f in (data.get("speciesFound") or [])]
+        found = [f for f in found if f]
+        if found:
+            bio = profile.setdefault("biology", {})
+            have = {str(x).lower() for x in (bio.get("predatorSpecies") or [])}
+            added = [f for f in dict.fromkeys(found) if f.lower() not in have]
+            if added:
+                bio["predatorSpecies"] = list(bio.get("predatorSpecies") or []) + added
+                bio["_speciesDiscoveredBy"] = ("fisheries agent, from agency documents "
+                                               "(no deterministic source for this water)")
+                out["discovered_species"] = added
+                print(f"      [{lake}] established {len(added)} species from documents: "
+                      f"{', '.join(added)}")
+        forage = data.get("lakeForage") or {}
+        if forage.get("primary") or forage.get("secondary"):
+            bio = profile.setdefault("biology", {})
+            if not bio.get("primaryForage") and forage.get("primary"):
+                bio["primaryForage"] = forage["primary"]
+            if not bio.get("secondaryForage") and forage.get("secondary"):
+                bio["secondaryForage"] = forage["secondary"]
+            bio["_forageEstablishedBy"] = "fisheries agent, from the documents it was already reading"
 
     # THE STATUS THIS WATER ALREADY HAS, NEVER A FRESH "draft".
     #
@@ -841,7 +865,7 @@ def status_of(profile, why):
 
 
 def mirror_locally(lake_name):
-    """Write the profile that was just saved into registry\_research_profiles\<id>.json.
+    r"""Write the profile that was just saved into registry\_research_profiles\<id>.json.
 
     WHY THE SAVE IS NOT ENOUGH ON ITS OWN. Until 2026-09-04 a profile existed in exactly one
     place -- R2 -- and three things followed from that: build_data_map.py had to stamp the fifth
@@ -1089,6 +1113,11 @@ def main():
     # -- so the run leaves a file that can be read directly instead. Pass --report to move it.
     ap.add_argument("--report", default=None,
                     help="where the JSON summary goes (default: _reports/research_lakes_<stamp>.json)")
+    ap.add_argument("--limnology-only", action="store_true",
+                    help="deterministic facts + WQP/document limnology + save, and nothing else. "
+                         "Seconds and no model calls instead of ~193 s and ~58k tokens. For "
+                         "re-merging a profile after the limnology rule changed. Refuses a water "
+                         "with no stored profile.")
     ap.add_argument("--verbose", action="store_true")
     a = ap.parse_args()
     if not a.report:
@@ -1152,7 +1181,7 @@ def main():
     def work(pair):
         name, st, alts = pair
         r = research_one(name, st, a.dry_run, a.verbose, a.repo, alts, a.tpm,
-                         ROWS_BY_NAME.get(name.strip().lower()))
+                         ROWS_BY_NAME.get(name.strip().lower()), a.limnology_only)
         done[0] += 1
         mark = "ok " if r["ok"] else "FAIL"
         secs = f'{r.get("seconds", 0):5.1f}s'
