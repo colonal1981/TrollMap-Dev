@@ -1267,67 +1267,68 @@ export const TERMINAL_CONNECTION = {
 export const MAX_TIE_ONLY = 4;
 
 /* ==================================================================================================
- * THE GATE — which baits can PHYSICALLY do today's job, out of facts that have a source.
+ * THE OXYGEN FLOOR IS A FLOOR. IT IS NOT A TARGET.
  *
- * Ryan, 2026-09-14, after the app sent him to 40 ft of water with everything running 6-12 ft and
- * then argued about it for an hour: "where do we get the information to build this the right way"
- * and "0 of my catches have a lure attached to them".
+ * THE FIRST VERSION OF THIS FUNCTION, WRITTEN AND SHIPPED 2026-09-14, WAS WRONG IN THE WORST WAY
+ * AVAILABLE: it asked "can this bait REACH 16.4 ft" and threw out everything that could not.
  *
- * So there is no source, anywhere, for WHICH BAIT IS BEST. Not published -- nobody has run a trial
- * on flutter spoons for Wateree stripers -- and not his own log, which is empty on the question.
- * The 386 species/season/clarity weights in this file are a guess in a .js file and this function
- * does not consult one of them.
+ * Ryan, within the hour: "are you saying that topwater for striper is not a viable method... you
+ * have now made it impossible for the app to suggest topwater first thing in the morning when that
+ * is the best time for striper to be caught on topwater or a squarebill or even on the MR
+ * crankbait".
  *
- * WHAT IT CONSULTS INSTEAD, every item of which has a name attached:
+ * He is right and the error is exactly the one the sentence before it made. "Nothing lives below
+ * 16.4 ft" had been read as "fish shallow of 16.4 ft", i.e. anywhere at all above it, and the day
+ * came back at 2-12 ft over forty feet of water. I corrected that by requiring every bait to
+ * reach 16.4 ft -- which is the same misreading flipped over, and it deleted the entire top of a
+ * column that is fully oxygenated and full of fish at first light.
  *
- *   trollable            his own inventory, and his own words on the fluke: "if it is weightless
- *                        you think a fluke at 2mph is even going to sink?" It does not. It planes.
- *   ratedDepth           printed on the box. Ryan: "the only lure i have that has an actual max
- *                        depth is the crankbaits... it doesn't matter how much line you let out".
- *   maxLeadFt            120, his: "i dont think i would want much more than that dragging behind
- *                        me with 2 lines out".
- *   requiresInlineWeight his rig, 2026-09-14.
- *   targetFt             MEASURED. The deepest oxygenated water, off a vertical cast.
+ * A MEASURED OXYGEN FLOOR CONSTRAINS ONE DIRECTION ONLY. It says nothing holds BELOW it. It says
+ * nothing whatever about where in the water above it the fish are, and that is a question of hour,
+ * light, bait and season that no cast can answer.
  *
- * SINGLE-SIDED ON PURPOSE. It asks "can this bait be worked at `targetFt`", not "is this bait in
- * some band". A band has a top, nobody measured the top, and inventing one is how "above 16.4 ft"
- * came to mean "anywhere shallower" and put a Whopper Plopper in a striper plan.
+ * So this eliminates two things and no others, and both are unconditional:
  *
- * IT RANKS NOTHING. It returns who can do the job and, for everyone else, the sourced reason they
- * cannot. What to tie on among the survivors is a fisherman's call, and the app has no business
- * dressing a guess up as a recommendation.
+ *   A BAIT THAT CANNOT BE TROLLED. Ryan's own inventory, and his own words on the fluke: "if it
+ *   is weightless you think a fluke at 2mph is even going to sink?" It does not. It planes, and a
+ *   troll rod carrying one is a rod fishing nothing.
+ *
+ *   A BAIT THAT ONLY FISHES BELOW THE FLOOR. A DD4 rated 25 ft and down, on a lake with no oxygen
+ *   under 19.7 ft, is working dead water on every pass no matter what else is true. That is what
+ *   a measured floor rules out, and it is the only thing it rules out.
+ *
+ * A topwater is IN the oxygenated column -- at the very top of it. So is a squarebill. So is an
+ * MR crankbait. Whether they are the right call at nine in the morning is a fishing judgement
+ * about light and bait, and the app does not own it and must not pre-empt it by deletion.
+ *
+ * IT STILL RANKS NOTHING. It reports what band each bait covers and what the lead costs, so the
+ * reader can put a bait where the fish are. Which bait, and when, is the fisherman's call.
  * ================================================================================================ */
 
 /**
  * @param {object[]} inventory   TACKLE_INVENTORY (or any subset)
  * @param {object} o
- * @param {number} o.targetFt    the depth the bait has to be able to work — measured, not derived
+ * @param {number} [o.oxygenFloorFt]  measured deepest oxygenated water; only rules out baits that
+ *                                    cannot fish ABOVE it. Omit and nothing is ruled out by depth.
  * @param {number} [o.speedMph=2.0]
  * @param {number} [o.maxLeadFt=120]
- * @param {number} [o.inlineWeightOz]  the trolling weight that is tied on, for baits that need one
+ * @param {number} [o.inlineWeightOz]
  * @returns {{legal: object[], refused: {name, why}[]}}
  */
-export function baitsThatReach(inventory, o = {}) {
-  const targetFt = Number(o.targetFt);
+export function trollableBaits(inventory, o = {}) {
+  const floor = Number(o.oxygenFloorFt);
+  const hasFloor = Number.isFinite(floor) && floor > 0;
   const speedMph = Number(o.speedMph) || 2.0;
   const maxLeadFt = Number(o.maxLeadFt) || 120;
   const legal = [], refused = [];
-  if (!Number.isFinite(targetFt) || targetFt <= 0) {
-    // NO MEASURED DEPTH, NO GATE. Refusing the whole box because nobody measured the water would
-    // be the app inventing a constraint, which is the thing it is here to stop.
-    return { legal: (inventory || []).filter((l) => l && l.trollable), refused: [] };
-  }
 
   for (const bought of (inventory || [])) {
     if (!bought || !bought.type) continue;
-    const say = (why) => refused.push({ name: bought.name, type: bought.type, why });
-
-    // HARDWARE THAT CARRIES A BAIT IS NOT A BAIT. A jighead is what a paddle tail rides on and a
-    // trolling weight is what a spoon swims behind -- Ryan, on why jigheads take a snap: "those go
-    // with swimbaits so swivel snap". Both are `trollable:true` in the inventory because they go
-    // through the water, and offering a bare one as a lure to tie on is nonsense. Skipped, not
-    // refused: a refusal is for a bait that could have been considered.
+    // Hardware that carries a bait is not a bait. Ryan on why jigheads take a snap: "those go with
+    // swimbaits so swivel snap". Skipped, not refused -- a refusal is for a bait that could have
+    // been considered.
     if (bought.type === 'jighead' || bought.type === 'trolling_weight') continue;
+    const say = (why) => refused.push({ name: bought.name, type: bought.type, why });
 
     if (!bought.trollable) {
       if (bought.castable) say('cast only — it planes at trolling speed instead of sinking, so no '
@@ -1340,41 +1341,52 @@ export function baitsThatReach(inventory, o = {}) {
     const lure = requiresInlineWeight(bought.type) && !(Number(bought.inlineWeightOz) > 0)
       ? { ...bought, inlineWeightOz: Number(o.inlineWeightOz) || null } : bought;
 
-    // A RATED BAIT IS CAPPED BY ITS BILL AND NOTHING LIFTS THAT.
-    if (k.depthMode === 'rated' && k.ratedDepth) {
-      if (k.ratedDepth.max < targetFt) {
-        say(`the bill runs it ${k.ratedDepth.min}-${k.ratedDepth.max} ft and no lead takes it to `
-          + `${targetFt} ft — that is the maker's rating, not a guess of ours`);
+    // ── A RATED BAIT COVERS THE BAND ON ITS BOX AND NOTHING MOVES IT ──────────────────────────
+    if (k.depthMode === 'rated' || k.depthMode === 'surface') {
+      const d = k.ratedDepth || { min: 0, max: 1 };
+      if (hasFloor && d.min > floor) {
+        say(`the bill runs it ${d.min}-${d.max} ft and there is no oxygen below ${floor} ft — `
+          + 'every pass would be in dead water');
         continue;
       }
-      legal.push({ ...bought, reach: { leadFt: leadForDepth(lure, targetFt, speedMph),
-                                       window: [k.ratedDepth.min, k.ratedDepth.max],
-                                       controlledBy: 'the bill' } });
+      // A SURFACE BAIT HAS A SETBACK, NOT A LEAD-FOR-DEPTH. leadForDepth() returns the flat 80 ft
+      // setback for one, and printing that as "80 ft of lead at its deepest" reads like a bait
+      // being sunk. It is how far behind the boat it rides, and it is said that way.
+      const surface = k.depthMode === 'surface';
+      legal.push({ ...bought, covers: [d.min, Math.min(d.max, hasFloor ? floor : d.max)],
+                   leadFt: leadForDepth(lure, d.max, speedMph),
+                   leadIsSetback: surface || undefined,
+                   controlledBy: surface ? 'it stays on top' : 'the bill' });
       continue;
     }
-    if (k.depthMode === 'surface' || k.depthMode === 'none') {
-      say('it works on top and has no running depth');
-      continue;
-    }
+    if (k.depthMode === 'none') { say('it has no running depth at trolling speed'); continue; }
 
-    // A WEIGHTED BAIT GETS THERE ON LINE, AND THE LINE IS BOUNDED BY THE BOAT.
-    const w = depthWindow(lure, { speedMph, leadFt: maxLeadFt });
-    if (w.mode === 'needs_weight') {
-      say(`it only fishes behind an inline trolling weight and none was given — ${w.reason}`);
+    // ── A LEAD-CONTROLLED BAIT COVERS FROM SHALLOW DOWN TO WHATEVER THE LINE BUDGET REACHES ───
+    //
+    // It can always be fished shallower by letting out less, so the top of its range is never the
+    // binding end and this never refuses one for being too deep-running. What it reports is the
+    // DEEPEST it can be put, capped at the floor, because past the floor is dead water.
+    const at120 = depthWindow(lure, { speedMph, leadFt: maxLeadFt });
+    if (at120.mode === 'needs_weight') {
+      say(`it only fishes behind an inline trolling weight and none was given — ${at120.reason}`);
       continue;
     }
-    const lead = leadForDepth(lure, targetFt, speedMph);
-    if (!Number.isFinite(lead) || lead <= 0) { say('no lead reaches a depth with this bait'); continue; }
-    if (lead > maxLeadFt) {
-      say(`${targetFt} ft needs ${lead} ft of lead and you run ${maxLeadFt} ft — pick something `
-        + 'heavier, or a weight ahead of it');
-      continue;
-    }
-    legal.push({ ...bought, reach: { leadFt: lead,
-                                     window: [depthWindow(lure, { speedMph, leadFt: lead }).min,
-                                              depthWindow(lure, { speedMph, leadFt: lead }).max],
-                                     inlineWeightOz: lure.inlineWeightOz || null,
-                                     controlledBy: 'lead length + speed + weight' } });
+    if (!Number.isFinite(at120.max)) { say('no lead puts this bait at a depth'); continue; }
+    // THE LEAD FOR THE DEEPEST IS NOT leadForDepth(deepest). The window is a band either side, so
+    // asking for its top edge back returns MORE line than the budget that produced it -- the
+    // 1/8oz Road Runner quoted "138 ft of lead" against the 120 ft it was measured at. When the
+    // budget is what binds, the lead IS the budget, exactly; only a floor that cuts in shallower
+    // needs the maths run again.
+    // AND THE FLOOR ONLY CUTS IF THE LINE CAN GET THERE. An A-Rig Medium needs 128 ft to make
+    // 19.7, which is past the 120 he runs -- so the BUDGET binds, not the floor, and quoting the
+    // floor's lead would print a number he cannot let out.
+    const toFloor = hasFloor && floor < at120.max ? leadForDepth(lure, floor, speedMph) : null;
+    const cut = Number.isFinite(toFloor) && toFloor > 0 && toFloor <= maxLeadFt;
+    const deepest = cut ? floor : at120.max;
+    legal.push({ ...bought, covers: [0, Math.round(deepest * 10) / 10],
+                 leadFt: cut ? toFloor : maxLeadFt,
+                 inlineWeightOz: lure.inlineWeightOz || null,
+                 controlledBy: 'lead length + speed + weight' });
   }
   return { legal, refused };
 }

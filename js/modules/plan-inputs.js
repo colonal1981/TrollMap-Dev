@@ -568,11 +568,16 @@ export function thermoclineNormFor(profile, now = Date.now(), packFacts = null) 
  * after an hour of me quoting my own invented scoring tables back at him as if they were evidence:
  * "where do we get the information to build this the right way".
  *
- * From a vertical cast and nowhere else. `depletionDepthFt` first, because that is where oxygen
- * starts going and therefore the deepest a fish is comfortable; `anoxicBelowFt` is the harder
- * floor and stands in when depletion was not resolved. Null when nobody has cast this water --
- * and a null here must NOT become a gate, because refusing a box over an unmeasured lake is the
- * app inventing a constraint, which is the whole thing it is here to stop.
+ * THE ANOXIC DEPTH, NOT THE DEPLETION DEPTH, and the difference decides whether a working bait
+ * gets deleted. Depletion is where oxygen STARTS going; there are still fish under it. Anoxic is
+ * where there is none, and a bait that can only ever fish below that line is working dead water on
+ * every pass. Since the only thing this number is allowed to do is ELIMINATE, it has to be the
+ * deeper of the two -- eliminating on 16.4 ft would throw out a DD2 rated 16-20, which fishes.
+ * Depletion stands in only when nobody resolved an anoxic depth.
+ *
+ * Null when nobody has cast this water -- and a null must NOT become a gate, because refusing a
+ * box over an unmeasured lake is the app inventing a constraint, which is the whole thing it is
+ * here to stop.
  *
  * Exported because the prompt and the planner must use the SAME number. Two readings of one field
  * is the defect this file has been fixing all month.
@@ -580,10 +585,10 @@ export function thermoclineNormFor(profile, now = Date.now(), packFacts = null) 
 export function oxygenFloorFt(profile, packFacts = null) {
   const lim = { ...((profile && profile.limnology) || {}),
                 ...((packFacts && packFacts.limnology) || {}) };
-  const dep = Number(lim.oxygen && lim.oxygen.depletionDepthFt);
-  if (Number.isFinite(dep) && dep > 0) return dep;
   const an = Number(lim.oxygen && lim.oxygen.anoxicBelowFt);
-  return Number.isFinite(an) && an > 0 ? an : null;
+  if (Number.isFinite(an) && an > 0) return an;
+  const dep = Number(lim.oxygen && lim.oxygen.depletionDepthFt);
+  return Number.isFinite(dep) && dep > 0 ? dep : null;
 }
 
 export function researchIntel(profile, species, season, now = Date.now(), packFacts = null,

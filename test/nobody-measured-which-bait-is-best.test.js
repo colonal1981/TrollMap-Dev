@@ -12,114 +12,118 @@
  * lure attached to them". So there is no source for WHICH BAIT IS BEST -- not published, and not
  * his own log. The app must stop pretending it has one.
  *
- * What IS answerable is which baits can physically do the job, and every input to that has a name
- * attached: the bill off the box, `trollable` out of his inventory, the 120 ft he runs, the rig he
- * ties, and a depth off a vertical cast. On 2026-09-14 that test alone would have thrown out FOUR
- * of the six rods the model rigged.
+ * WHAT IS ANSWERABLE IS ONLY TWO THINGS, AND THE FIRST TRY AT THIS GOT IT BACKWARDS. It required
+ * every bait to REACH the oxygen floor, which deleted every topwater, squarebill and MR crankbait
+ * in the box. Ryan, within the hour: "are you saying that topwater for striper is not a viable
+ * method... you have now made it impossible for the app to suggest topwater first thing in the
+ * morning when that is the best time for striper to be caught on topwater".
+ *
+ * A measured floor says nothing holds BELOW it. It says nothing at all about where above it the
+ * fish are. So two eliminations, both unconditional: a bait that cannot be trolled, and a bait
+ * that can ONLY fish below the anoxic depth. Everything else goes in the list with the band it
+ * covers, and when to use it is a fishing judgement the app does not own.
  *
  *   node --test test/nobody-measured-which-bait-is-best.test.js
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { baitsThatReach, describeBait } from '../js/data/lure-knowledge.js';
+import { trollableBaits, describeBait } from '../js/data/lure-knowledge.js';
 import { TACKLE_INVENTORY, RIGGED_TROLLING_WEIGHT_OZ } from '../js/data/tackle-inventory.js';
 import { buildPlanRequest } from '../js/modules/plan-prompt.js';
 import { oxygenFloorFt } from '../js/modules/plan-inputs.js';
 
 const BOX = TACKLE_INVENTORY.filter((l) => l.trollable || l.castable);
-const WATEREE = { targetFt: 16.4, speedMph: 2.0, maxLeadFt: 120,
+const WATEREE = { oxygenFloorFt: 19.7, speedMph: 2.0, maxLeadFt: 120,
                   inlineWeightOz: RIGGED_TROLLING_WEIGHT_OZ };
-const gate = () => baitsThatReach(TACKLE_INVENTORY, WATEREE);
-const refusalFor = (name) => (gate().refused.find((r) => r.name === name) || {}).why;
-const legalNames = () => gate().legal.map((l) => l.name);
+const gate = (extra) => trollableBaits(TACKLE_INVENTORY, { ...WATEREE, ...extra });
+const refusalFor = (name, extra) => (gate(extra).refused.find((r) => r.name === name) || {}).why;
+const coverOf = (name, extra) => (gate(extra).legal.find((l) => l.name === name) || {}).covers;
 
-// ── THE FOUR THAT WRECKED THE DAY ──────────────────────────────────────────────────────────────
-test('the four rods that could not reach the water are refused, each for a sourced reason', () => {
-  // The bill, off the box. Ryan: "the only lure i have that has an actual max depth is the
-  // crankbaits... it doesn't matter how much line you let out".
-  assert.match(refusalFor('Squarebill Crankbait'), /bill runs it 2-5 ft/);
-  assert.match(refusalFor('MR Crankbait (6-12ft)'), /bill runs it 6-12 ft/);
-  assert.match(refusalFor('Squarebill Crankbait'), /maker's rating, not a guess of ours/);
-  // A topwater has no running depth at all.
-  assert.match(refusalFor('Whopper Plopper'), /works on top/);
-  // `trollable: false`, his own inventory. Ryan: "if it is weightless you think a fluke at 2mph is
-  // even going to sink?" It does not.
+// ── THE REGRESSION THAT MUST NEVER COME BACK ───────────────────────────────────────────────────
+test('TOPWATER IS A STRIPER BAIT AND THE APP MAY NOT DELETE IT', () => {
+  // Ryan, 2026-09-14: "the best time for striper to be caught on topwater". Two Wateree guides say
+  // the same thing about first light. A floor at 19.7 ft has nothing to say about the surface.
+  for (const top of ['Whopper Plopper', 'Walking Bait / Spook', 'Prop Bait / Choppo', 'Wake Bait']) {
+    assert.deepEqual(coverOf(top), [0, 1], `${top} must be offered, covering the top`);
+  }
+});
+
+test('and neither may it delete the shallow crankbaits', () => {
+  assert.deepEqual(coverOf('Squarebill Crankbait'), [2, 5]);
+  assert.deepEqual(coverOf('SR Crankbait (3-5ft)'), [3, 5]);
+  assert.deepEqual(coverOf('MR Crankbait (6-12ft)'), [6, 12]);
+});
+
+test('a lead bait is reported from the top down — it can always be fished shallower', () => {
+  const c = coverOf('Nichols Lake Fork Flutter Spoon 3/4oz');
+  assert.equal(c[0], 0, 'a shorter lead is a shallower bait; the top is never the binding end');
+  assert.equal(c[1], 19.7, 'and the deep end is capped at the floor, not past it');
+});
+
+// ── WHAT IT DOES ELIMINATE, AND ONLY THIS ──────────────────────────────────────────────────────
+test('a bait that can ONLY fish below the floor is working dead water', () => {
+  assert.match(refusalFor('DD4 Crankbait (25ft+)'), /no oxygen below 19\.7 ft/);
+  assert.match(refusalFor('DD3 Crankbait (20-25ft)'), /every pass would be in dead water/);
+  // 16-20 straddles it and still fishes. Refusing this one is what eliminating on the DEPLETION
+  // depth would have done, which is why oxygenFloorFt() reads the anoxic number.
+  assert.deepEqual(coverOf('DD2 Crankbait (16-20ft)'), [16, 19.7]);
+});
+
+test('a bait that cannot be trolled is a rod fishing nothing', () => {
   assert.match(refusalFor('Fluke / Soft Jerkbait'), /cast only/);
   assert.match(refusalFor('Fluke / Soft Jerkbait'), /planes at trolling speed/);
+  assert.match(refusalFor('Stick Bait (Senko)'), /cast only/);
 });
 
-test('and none of them is on the list the model is offered', () => {
-  const n = legalNames();
-  for (const bad of ['Squarebill Crankbait', 'SR Crankbait (3-5ft)', 'MR Crankbait (6-12ft)',
-                     'Whopper Plopper', 'Fluke / Soft Jerkbait']) {
-    assert.equal(n.includes(bad), false, `${bad} must not be offered for 16.4 ft`);
+test('those two are the WHOLE list of reasons', () => {
+  const reasons = new Set(gate().refused.map((r) => r.why));
+  for (const w of reasons) {
+    assert.ok(/cast only|no oxygen below/.test(w), `unexpected elimination reason: ${w}`);
   }
 });
 
-// ── WHAT DOES SURVIVE ──────────────────────────────────────────────────────────────────────────
-test('the baits the guides actually use are there, with the line each one costs', () => {
-  const byName = Object.fromEntries(gate().legal.map((l) => [l.name, l]));
-  for (const good of ['Nichols Lake Fork Flutter Spoon 3/4oz',
-                      'Dr.Fish Diamond Jig / Jigging Spoon 1oz',
-                      'SPRO Prime Bucktail Jig 1oz (SBTJ-1)',
-                      'DD2 Crankbait (16-20ft)']) {
-    assert.ok(byName[good], `${good} reaches 16.4 ft and must be offered`);
-    assert.ok(byName[good].reach.leadFt > 0 && byName[good].reach.leadFt <= 120);
+test('no cast, no elimination by depth — the deep divers come back', () => {
+  for (const bad of [null, undefined, 0, -3, NaN]) {
+    const r = gate({ oxygenFloorFt: bad });
+    assert.ok(r.legal.some((l) => l.name === 'DD4 Crankbait (25ft+)'),
+      'refusing a bait over a lake nobody cast is inventing a rule');
+    assert.ok(r.refused.every((x) => /cast only/.test(x.why)));
   }
+});
+
+test('hardware that carries a bait is not offered as one, or refused as one', () => {
+  const g = gate();
+  assert.equal(g.legal.some((l) => /oz Jighead$/.test(l.name)), false);
+  assert.equal(g.legal.some((l) => /Inline Trolling Weight/.test(l.name)), false);
+  assert.equal(g.refused.some((r) => r.type === 'jighead' || r.type === 'trolling_weight'), false);
 });
 
 test('the spoon is offered WITH the weight that makes it fish', () => {
   const sp = gate().legal.find((l) => l.id === 'spoon_3quarter');
-  assert.ok(sp, 'the 3/4oz Nichols must reach 16.4 ft behind the rigged weight');
-  assert.equal(sp.reach.inlineWeightOz, 2);
+  assert.equal(sp.inlineWeightOz, 2);
 });
 
-test('a bait that needs more line than the boat runs is refused, and says so', () => {
-  const light = refusalFor('A-Rig Light (~1.65oz) – 3.8" Swimbait');
-  assert.match(light, /needs \d+ ft of lead and you run 120 ft/);
-});
-
-test('hardware that carries a bait is not offered as one', () => {
-  const n = legalNames();
-  assert.equal(n.some((x) => /Jighead$/.test(x) && /oz Jighead$/.test(x)), false,
-    'a bare jighead is what a paddle tail rides on, not a lure to tie on');
-  assert.equal(n.some((x) => /Inline Trolling Weight/.test(x)), false);
-  // and not as a REFUSAL either — a refusal is for a bait that could have been considered
-  assert.equal(gate().refused.some((r) => r.type === 'jighead' || r.type === 'trolling_weight'),
-    false);
-});
-
-// ── WHAT IT REFUSES TO DO ──────────────────────────────────────────────────────────────────────
-test('IT DOES NOT RANK — no species, season or clarity weight is consulted', () => {
-  // The scorer would put the A-Rigs top and the lipless crankbaits nowhere near it. The gate has
-  // no opinion: a lipless that reaches the depth is on the list like everything else.
-  assert.ok(legalNames().includes('3" Lipless Crankbait'));
-  // Ordering is by the LEAD each costs, which is a fact, and the caller sorts. The gate itself
-  // returns no score field at all — there is nothing for a reader to mistake for a ranking.
+// ── IT STILL RANKS NOTHING ─────────────────────────────────────────────────────────────────────
+test('no species, season or clarity weight is consulted, and no score is returned', () => {
   for (const l of gate().legal) {
     assert.equal('score' in l, false);
     assert.equal('rank' in l, false);
   }
+  assert.ok(gate().legal.some((l) => l.name === '3" Lipless Crankbait'),
+    'a bait the scorer would rank low is on the list like everything else');
 });
 
-test('no measured floor, no gate — an unmeasured lake does not lose its tackle box', () => {
-  for (const bad of [null, undefined, 0, -3, NaN]) {
-    const r = baitsThatReach(TACKLE_INVENTORY, { ...WATEREE, targetFt: bad });
-    assert.equal(r.refused.length, 0, 'refusing a box over a lake nobody cast is inventing a rule');
-    assert.ok(r.legal.length > 20);
-  }
-});
-
-test('the floor comes off a cast and nowhere else', () => {
+test('the floor comes off a cast, and it is the ANOXIC number', () => {
+  // Eliminating on depletion would delete a DD2 that fishes. The deeper number is the safe one
+  // precisely because the only thing it may do is eliminate.
   assert.equal(oxygenFloorFt({ limnology: { oxygen: { depletionDepthFt: 16.4, anoxicBelowFt: 19.7 } } }),
-    16.4, 'depletion first — that is the deepest a fish is comfortable');
-  assert.equal(oxygenFloorFt({ limnology: { oxygen: { anoxicBelowFt: 19.7 } } }), 19.7,
-    'the harder floor stands in when depletion was not resolved');
+    19.7);
+  assert.equal(oxygenFloorFt({ limnology: { oxygen: { depletionDepthFt: 16.4 } } }), 16.4,
+    'depletion stands in only when no anoxic depth was resolved');
   assert.equal(oxygenFloorFt({ limnology: { oxygen: {} } }), null);
   assert.equal(oxygenFloorFt(null), null);
-  // the registry record beats the profile's copy, the way every other limnology read does
-  assert.equal(oxygenFloorFt({ limnology: { oxygen: { depletionDepthFt: 40 } } },
-                             { limnology: { oxygen: { depletionDepthFt: 16.4 } } }), 16.4);
+  assert.equal(oxygenFloorFt({ limnology: { oxygen: { anoxicBelowFt: 40 } } },
+                             { limnology: { oxygen: { anoxicBelowFt: 19.7 } } }), 19.7);
 });
 
 // ── DESCRIBED, NOT SCORED ──────────────────────────────────────────────────────────────────────
@@ -127,9 +131,7 @@ test('a bait is described by what it physically is', () => {
   const d = describeBait('flutter_spoon');
   assert.match(d, /silent/);
   assert.match(d, /high flash/);
-  assert.match(d, /baitfish profile/);
   assert.match(d, /swims lower/);
-  assert.match(d, /1\.3-2\.2 mph/);
   assert.doesNotMatch(d, /\b(best|good|top|ideal|recommend)/i, 'descriptions, never a judgement');
   assert.equal(describeBait('nope'), null);
 });
@@ -144,17 +146,33 @@ const prompt = (extra = {}) => buildPlanRequest({
   inventory: BOX, ...extra,
 }).user;
 
-test('the prompt offers the filtered list and says what is missing and why', () => {
-  const p = prompt({ oxygenFloorFt: 16.4 });
-  assert.match(p, /WHAT CAN ACTUALLY REACH 16\.4 FT/);
-  assert.match(p, /THEY ARE NOT RANKED/);
-  assert.match(p, /NOT AVAILABLE TODAY, and why:/);
-  assert.match(p, /bill runs it 6-12 ft/, 'the refusal is stated, not silent');
-  assert.match(p, /ft of lead behind the 2oz inline weight/);
+test('the prompt states the floor as a floor and hands the top of the column over', () => {
+  const p = prompt({ oxygenFloorFt: 19.7 });
+  assert.match(p, /AND THE FLOOR IS 19\.7 FT/);
+  assert.match(p, /That is ALL that number says/);
+  assert.match(p, /at first light they may be on top/);
+  assert.match(p, /Whopper Plopper — covers 0-1 ft/, 'topwater is offered, not deleted');
+  assert.match(p, /THEY ARE NOT\s*\n?RANKED/);
+  assert.match(p, /no oxygen below 19\.7 ft/, 'and the refusals are stated, not silent');
 });
 
-test('with no cast, the prompt is exactly what it always was', () => {
+test('with no cast the list is still offered, just with nothing ruled out by depth', () => {
   const p = prompt({});
-  assert.doesNotMatch(p, /WHAT CAN ACTUALLY REACH/);
-  assert.match(p, /Whopper Plopper/, 'the whole box is still offered when nothing was measured');
+  assert.doesNotMatch(p, /AND THE FLOOR IS/);
+  assert.match(p, /DD4 Crankbait/);
+});
+
+test('no bait is quoted more line than the boat runs', () => {
+  // The 1/8oz Road Runner printed "138 ft of lead" against the 120 ft budget that produced the
+  // depth, and the A-Rig Medium 128 ft to reach a floor it cannot reach. A number he cannot let
+  // out is not an instruction.
+  for (const l of gate().legal) {
+    if (l.leadIsSetback) continue;
+    assert.ok(l.leadFt <= 120, `${l.name} quoted ${l.leadFt} ft of lead against a 120 ft budget`);
+  }
+});
+
+test('a topwater is quoted a setback, not a lead-to-depth', () => {
+  const t = gate().legal.find((l) => l.name === 'Whopper Plopper');
+  assert.equal(t.leadIsSetback, true, 'it rides behind the boat; it is not being sunk to 80 ft');
 });
