@@ -541,6 +541,7 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
         # printed "0/20 species" for a water whose profile holds twenty -- a summary line that
         # reads as data loss when nothing was lost. Ryan has one rule for this: a report must show
         # the change, not the output.
+        out["limnology_only"] = True
         out["species"] = len(((profile.get("biology") or {}).get("predatorSpecies")) or [])
         out["returned"] = list(((profile.get("biology") or {}).get("predatorSpecies")) or [])
         out["warnings"] = list(out.get("warnings") or []) + [
@@ -1317,7 +1318,19 @@ def main():
             print(f"  {r['lake']}: {len(r['returned'])} of "
                   f"{len(r['asked']) or len(r['confirmed'])} "
                   f"-- no block for {', '.join(r['missing'])}")
-    dry = [r for r in ok if r["documents"] == 0]
+    # A STAGE THAT WAS SKIPPED BY REQUEST IS NOT A STAGE THAT FOUND NOTHING.
+    #
+    # `documents` is assigned inside the branch --limnology-only skips, so it is 0 on every
+    # limnology-only water and all 29 of them landed in this list on 2026-09-14 under the heading
+    # "ran on no documents at all -- the model had only the deterministic profile". No model ran at
+    # all. Same defect as the "0/20 species" line above it, and the same rule: a report must show
+    # the change, not the output.
+    lim_only = [r for r in ok if r.get("limnology_only")]
+    if lim_only:
+        print(f"\n{len(lim_only)} water(s) ran --limnology-only: documents and the fisheries agent "
+              f"were skipped by request, so the species, document and source counts above are not "
+              f"about them.")
+    dry = [r for r in ok if r["documents"] == 0 and not r.get("limnology_only")]
     if dry:
         print(f"\n{len(dry)} water(s) ran on no documents at all -- the model had only the "
               f"deterministic profile:")
