@@ -932,8 +932,23 @@ function buildFactualSummary(profile) {
     const limBits = [];
     if (lim.waterClarity?.secchiFt) limBits.push(`Secchi clarity around ${lim.waterClarity.secchiFt} ft`);
     const swDated = (own) => sampleDated(own, lim.surfaceWater?.lastObserved);
-    if (lim.surfaceWater?.recentTempF != null) limBits.push(`surface water near ${lim.surfaceWater.recentTempF}°F${swDated(lim.surfaceWater.recentTempLastObserved)}`);
-    if (lim.surfaceWater?.recentDissolvedOxygenMgL != null) limBits.push(`surface dissolved oxygen near ${lim.surfaceWater.recentDissolvedOxygenMgL} mg/L${swDated(lim.surfaceWater.recentDissolvedOxygenLastObserved)}`);
+    // SURFACE TEMPERATURE AND SURFACE OXYGEN ARE NOT IN THIS SENTENCE, DELIBERATELY.
+    //
+    // 2026-09-14, off the bench on Lake Wateree in September: "surface water near 67.19°F when last
+    // sampled 2026-04-06; surface dissolved oxygen near 10.89 mg/L when last sampled 2026-04-06".
+    // April data, in the same prompt as the conditions block's live gauge reading, described as
+    // "surface water near" -- so the model had two temperatures for one lake and a reason to
+    // believe the wrong one. A dated number is not a safe number when a live one sits beside it.
+    //
+    // THE LINE IS WHAT THE LAKE IS VERSUS WHAT IT WAS ON A DAY. Secchi, thermocline, trophic
+    // status and clarity are characteristics and belong here. A surface temperature is weather:
+    // it is a point sample from one visit, it is already served live by Worker/conditions.js
+    // under a heading that says WHAT THE GAUGES SAY TODAY, and on the ~168 waters with no live
+    // gauge an April sample still does not describe September.
+    //
+    // The values are NOT deleted -- limnology.surfaceWater keeps them with their dates, and the
+    // conditions strip and the research tab both still read them. This is about what a durable
+    // profile SENTENCE asserts to a model.
     if (lim.thermocline?.summerDepthFt) limBits.push(`summer thermocline near ${Array.isArray(lim.thermocline.summerDepthFt) ? lim.thermocline.summerDepthFt.join('-') : lim.thermocline.summerDepthFt} ft`);
     if (limBits.length) parts.push(`Available limnology data indicate ${limBits.join('; ')}.`);
   }
