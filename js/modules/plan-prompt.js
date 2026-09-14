@@ -591,8 +591,23 @@ the time he reaches it, and say what he gives up by turning for the ramp there i
 finishing. Put it in the plan where he will read it before he launches, not in a footnote. The
 cut is his to make; your job is to tell him which one he is making.` : has ? ` That leaves
 ${Math.round(w - est)} minutes of slack — spend it on stops, not on padding the legs.` : ''}
+
+THE DAY YOU WRITE MUST ACCOUNT FOR ALL ${w} MINUTES. He is on the water from ${launchTime || '?'}
+until ${returnTime || '?'} whatever you plan, so a plan that runs out at the halfway mark does not
+end his day — it leaves him on the water with nothing written for the rest of it. Measured
+2026-09-14 on Lake Wateree: a 540 minute window came back as a 131 minute plan, two legs and one
+stop, finished before nine in the morning.
+
+Fill it with WATER, not with padding: more legs, more passes over a leg that earns them, more
+stops. Do not stretch a leg's time to make a number add up.
+
+AND IF IT STILL COMES IN SHORT, SAY SO IN THE PLAN AND SAY WHY. A short day is a legitimate answer
+— the water that fits the conditions may genuinely run out, or the battery or the wind may decide
+it — but an unexplained gap is not. Name the reason and name the time it ends, in the plan where he
+reads it before he launches, not in a footnote.
+
 Every duration you write must add up against ${w}. A day that totals more than that is wrong even
-if every leg in it is right.
+if every leg in it is right, and a day that totals far less is wrong unless it says why.
 `;
 }
 

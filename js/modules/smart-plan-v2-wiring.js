@@ -318,8 +318,45 @@ export async function runSmartPlanV2(opts = {}) {
   // `plan` plus `problems` what assemblePlan() made of that. Returning here is what keeps the
   // phone quiet and the GPX unwritten.
   if (opts.bench) {
+    // AND DRAWN THE WAY THE PLAN TAB WOULD DRAW IT. Ryan, 2026-09-14: "could we use the html
+    // ouput and a json output here? that way i can show you what it says but i can see the plan
+    // the way it would have been drawn". So this calls THE renderer, not a second one -- a bench
+    // view that drifts from the real one is worse than no bench view.
+    //
+    // `preview` is what makes that safe. It draws into the bench's own container and suppresses
+    // every window._smartPlan* write, so collectPlan(), Preview, Print, the downloads and the GPX
+    // interleave still see nothing. installTimeline() and syncSpread() are deliberately NOT called
+    // here for the same reason: the spread table and the globals belong to a plan Ryan decided to
+    // fish, and this is not one.
+    try {
+      const shown = planToTimeline(r.plan, {
+        depthBand: depth.band,
+        holding: depth.holding || null,
+        warnings: r.problems || [],
+        rationale: (r.plan.notes && (r.plan.notes.scoutNotes || r.plan.notes.sonar)) || '',
+      });
+      renderSmartPlanUI({
+        routeRods: shown.routeRods, routeSpeeds: shown.routeSpeeds,
+        speedMph: shown.cards[0] ? shown.cards[0].speedMph : 2.0,
+        stopCandidates: shown.stopCandidates,
+        scoutReport: shown.rationale,
+        solunar: sol ? `Majors ${conditionsFrom(inp, ramp, sol, null).solunar.majors.join(', ')}` : '',
+        cardDefs: shown.cards, unified: shown.timeline,
+        preview: 'benchPlan',
+      });
+    } catch (e) {
+      // A DRAW THAT FAILS MUST NOT EAT THE BENCH. The prompt, the answer and the assembled JSON
+      // are the point of this run; the picture is the convenience.
+      console.warn('[bench] preview render failed:', e && e.message);
+      const el = typeof document !== 'undefined' && document.getElementById('benchPlan');
+      if (el) {
+        el.innerHTML = '<p class="pv-empty">The plan could not be drawn — '
+          + String((e && e.message) || e).replace(/[&<>]/g, '')
+          + '. The JSON below is unaffected.</p>';
+      }
+    }
     say(`Answered — ${(r.plan.legs || []).length} legs, ${(r.problems || []).length} warnings. `
-      + 'Nothing saved, nothing sent to the phone.');
+      + 'Drawn below. Nothing saved, nothing sent to the phone.');
     return r;
   }
 

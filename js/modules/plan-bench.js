@@ -116,8 +116,18 @@ async function run(mode) {
   if (!inp.lakeName) return say('Pick a lake on the Plan tab first — the bench runs the same '
                              + 'inputs the planner would.', true);
   if (!inp.species.length) return say('Check at least one species on the Plan tab first.', true);
+  // A STALE PICTURE IS WORSE THAN NO PICTURE. #benchPlan is a sibling of #benchOut and survives
+  // render(), so last run's drawn plan would sit under this run's prompt unless it is cleared --
+  // and on a dry run there is no plan at all, so nothing should be drawn.
+  const drawn = $('benchPlan');
+  const drawnHead = $('benchPlanHead');
+  if (drawn) drawn.innerHTML = '';
+  if (drawnHead) drawnHead.hidden = true;
   say(mode === 'bench' ? 'Building and sending…' : 'Building the input…');
   const r = await runSmartPlanV2(mode === 'bench' ? { bench: true } : { dryRun: true });
+  // runSmartPlanV2 drew into #benchPlan already when it had a plan to draw; the heading only
+  // appears if something actually landed there.
+  if (drawnHead && drawn) drawnHead.hidden = !drawn.firstChild;
   render(r, mode);
   return r;
 }

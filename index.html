@@ -1398,6 +1398,14 @@
           <button id="benchSendBtn">📤 Build it and send it</button>
         </div>
         <div id="benchStatus" class="muted" style="font-size:12px;min-height:16px"></div>
+        <!-- THE PLAN, DRAWN BY THE RENDERER THE PLAN TAB USES. A SIBLING of #benchOut, not a
+             child: render() in plan-bench.js sets benchOut.innerHTML wholesale and would wipe
+             anything nested inside it. renderSmartPlanUI({ preview: 'benchPlan' }) draws here and
+             writes none of the window._smartPlan* globals, so Preview, Print, the downloads and
+             the GPX still see no plan. -->
+        <div id="benchPlanHead" class="bench-head" hidden><b>THE PLAN AS IT WOULD BE DRAWN</b>
+          — the plan tab's own renderer. Nothing here is saved, sent, or written to GPX.</div>
+        <div id="benchPlan"></div>
         <div id="benchOut"><p class="pv-empty">Nothing built yet.</p></div>
       </div>
     </section>

@@ -869,6 +869,28 @@ export function assemblePlan(o) {
   if (windowMin && plan.budget.estPlannedMin > windowMin) {
     warnings.push(`estimated ${plan.budget.estPlannedMin} min against a ${windowMin} min window`);
   }
+  // AND THE OTHER DIRECTION, WHICH NOTHING CHECKED. The over case above has been here since the
+  // schema; a plan that fills a QUARTER of the window went through silently -- 131 minutes of 540
+  // on Lake Wateree, 2026-09-14, finished at 08:12 on a day that runs to 15:00.
+  //
+  // THE THRESHOLD IS THE PLAN'S OWN SHORTEST LEG, not a number somebody picked. If the time left
+  // over is at least as long as the shortest leg already in the plan, then one more leg of the
+  // kind it already chose would have fit, and that is a fact about this plan rather than a rule
+  // about days in general. A plan that leaves less than one leg of slack is simply full.
+  if (windowMin && plan.budget.estPlannedMin < windowMin) {
+    const spans = legs
+      .filter((l) => l && l.type !== 'transit')
+      .map((l) => Number(l.estDurationMin))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    const shortest = spans.length ? Math.min(...spans) : 0;
+    const unspent = windowMin - plan.budget.estPlannedMin;
+    if (shortest > 0 && unspent >= shortest) {
+      warnings.push(`fills ${plan.budget.estPlannedMin} of ${windowMin} min — ${unspent} unspent, `
+        + `and the shortest leg in it runs ${Math.round(shortest)} min, so about `
+        + `${Math.floor(unspent / shortest)} more like it would have fit. A short day is a fine `
+        + 'answer; an unexplained one is not.');
+    }
+  }
   // The old warning that lived here -- "last leg ends 2.8 km from the ramp ... not in the plan"
   // -- is gone because the thing it warned about is now in the plan. `cursor` is the ramp by
   // the time it gets here, unless the last leg finished inside HOME_TOLERANCE_M of it.

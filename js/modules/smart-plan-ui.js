@@ -456,8 +456,27 @@ export function buildUnifiedTimeline({ routeRods, timeline, stopCandidates, rout
  *                               at its own `atM` along its own leg. Weaving it twice would move
  *                               stops the plan had put in the right place.
  */
-export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeeds = {}, phases, solunar, stopCandidates, timeline, cardDefs = null, unified = null }) {
-  let container = document.getElementById('smartPlanUIContainer');
+/**
+ * `preview` DRAWS THE PLAN SOMEWHERE ELSE AND DOES NOT MAKE IT THE APP'S PLAN.
+ *
+ * Ryan, 2026-09-14, on the bench: "could we use the html ouput and a json output here? that way i
+ * can show you what it says but i can see the plan the way it would have been drawn". The way it
+ * would have been drawn is THIS function -- a second renderer for the bench would drift from the
+ * real one within a week, and a bench that shows something the plan tab would not is worse than no
+ * bench.
+ *
+ * But this function also PUBLISHES. The four `window._smartPlan*` globals below are what
+ * collectPlan(), Preview, Print, the JSON and HTML downloads and the GPX interleave all read, so
+ * calling it for a bench render would hand the whole app a plan Ryan has not decided to fish --
+ * which is the one thing the bench exists to prevent: "this way i am not firing alerts off on my
+ * phone for a plan that i will never fish".
+ *
+ * So `preview` is one option, not two: it names the container to draw into AND suppresses every
+ * global write and the waypoint injection. Absent, behaviour is exactly what it has always been.
+ */
+export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeeds = {}, phases, solunar, stopCandidates, timeline, cardDefs = null, unified = null, preview = null }) {
+  const previewEl = typeof preview === 'string' ? document.getElementById(preview) : preview;
+  let container = previewEl || document.getElementById('smartPlanUIContainer');
   if (!container) {
     container = document.createElement('div');
     container.id = 'smartPlanUIContainer';
@@ -481,15 +500,17 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeed
   // Build canonical unified timeline once — unless the caller already has one in order.
   const unifiedTimeline = unified
     || buildUnifiedTimeline({ routeRods, timeline, stopCandidates, routeSpeeds, speedMph });
-  // Persist for collectPlan and GPX interleaving
-  window._smartPlanTimeline = unifiedTimeline;
-  window._smartPlanRouteRods = routeRods;
-  window._smartPlanStopCandidates = stopCandidates;
-  window._smartPlanRouteSpeeds = routeSpeeds;
+  // Persist for collectPlan and GPX interleaving -- NOT on a preview render, see the note above.
+  if (!previewEl) {
+    window._smartPlanTimeline = unifiedTimeline;
+    window._smartPlanRouteRods = routeRods;
+    window._smartPlanStopCandidates = stopCandidates;
+    window._smartPlanRouteSpeeds = routeSpeeds;
+  }
 
   // For GPX interleaving: also ensure casting waypoints exist and are sorted into state.DATA
   try {
-    if (typeof window !== 'undefined' && window._smartPlanTimeline && state?.DATA?.waypoints) {
+    if (!previewEl && typeof window !== 'undefined' && window._smartPlanTimeline && state?.DATA?.waypoints) {
       // Remove previous auto-generated casting waypoints to avoid duplication
       state.DATA.waypoints = state.DATA.waypoints.filter(w => !w.castingStop);
       // Create Casting waypoints from unified stop entries that have lat/lon
