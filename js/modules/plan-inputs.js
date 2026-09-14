@@ -561,7 +561,8 @@ export function thermoclineNormFor(profile, now = Date.now(), packFacts = null) 
   return note ? { ...norm, reason: note } : norm;
 }
 
-export function researchIntel(profile, species, season, now = Date.now(), packFacts = null) {
+export function researchIntel(profile, species, season, now = Date.now(), packFacts = null,
+                              live = null) {
   if (!profile) return null;
   const out = [];
   const s = String(season || '').toLowerCase();
@@ -806,6 +807,56 @@ export function researchIntel(profile, species, season, now = Date.now(), packFa
         + 'NOT this water)', bits.join('; '));
     }
   }
+  // ── SQUEEZED FROM BOTH ENDS ────────────────────────────────────────────────────────────────
+  //
+  // 2026-09-14, Wateree. The prompt carried the oxygen floor AND the species' measured temperature
+  // range and the model used only the floor: it put three of six rods at 0-5 ft and called them
+  // striper presentations, on a day the surface read 84.9 F against a fish recorded to 77 F. Both
+  // numbers were in the prompt. Nothing told it to intersect them, so it did not.
+  //
+  // EVERY NUMBER HERE IS MEASURED. The surface temperature is the live gauge, the range is
+  // FishBase's recorded range for this species, and the oxygen depths came off a vertical cast.
+  // Nothing is a threshold somebody picked.
+  //
+  // AND THE ANOXIA IS THE EVIDENCE FOR THE INFERENCE. A mixed column stays oxygenated to the
+  // bottom, so measured anoxia means this water is stratified, which means temperature falls with
+  // depth -- and therefore the deepest oxygenated water is the coolest oxygenated water. That is
+  // derived from the two measurements, not assumed about reservoirs in general.
+  //
+  // WHAT IT REFUSES TO SAY is where the two meet. That needs a vertical TEMPERATURE profile and
+  // this water has none -- it is the same hole the thermocline block already declares. Naming a
+  // depth here would be the fabrication this whole file exists to prevent.
+  const _sq = (() => {
+    const tF = Number(live && live.tempF);
+    const t = bio.speciesTraits;
+    const maxC = Number(t && t.tempMaxC);
+    if (!Number.isFinite(tF) || !Number.isFinite(maxC)) return null;
+    const ceilF = Math.round((maxC * 9) / 5 + 32);
+    if (tF <= ceilF) return null;                       // no thermal squeeze today: say nothing
+    const dep = Number(lim.oxygen?.depletionDepthFt);
+    const anox = Number(lim.oxygen?.anoxicBelowFt);
+    const floor = Number.isFinite(dep) ? dep : anox;
+    if (!Number.isFinite(floor)) return null;
+    const src = live.tempFrom === 'tailwater'
+      ? ' (TAILWATER gauge below the dam, not the lake itself)'
+      : live.tempFrom === 'upstream' ? ' (an upstream gauge, not the lake itself)' : '';
+    const lines = [
+      `SQUEEZED FROM BOTH ENDS TODAY: the water reads ${tF}\u00b0F${src} and ${t.species} are `
+      + `recorded in ${Math.round((Number(t.tempMinC) * 9) / 5 + 32)}\u2013${ceilF}\u00b0F water, so the top of the `
+      + 'column is warmer than the range this species is recorded in. Oxygen begins depleting '
+      + `below ${floor} ft${Number.isFinite(anox) && anox !== floor ? ` and there is none below ${anox} ft` : ''}, measured.`,
+      '  Those two together are the day\'s constraint. The measured anoxia is itself the evidence '
+      + 'that this column is stratified \u2014 a mixed column stays oxygenated to the bottom \u2014 so '
+      + 'temperature falls with depth here, and THE DEEPEST OXYGENATED WATER IS THE COOLEST '
+      + `OXYGENATED WATER. It sits just above ${floor} ft.`,
+      '  WHERE THE TWO MEET IS NOT KNOWN and must not be stated: that needs a vertical temperature '
+      + 'profile and none has been published for this water. What does follow is that a '
+      + 'presentation worked at the surface is in the warmest water of the day, and one worked '
+      + `below ${Number.isFinite(anox) ? anox : floor} ft is in water with no oxygen in it.`,
+    ];
+    return lines.join('\n');
+  })();
+  if (_sq) out.push(_sq);
   put('Secondary forage', bio.secondaryForage);
   put('Stockings', bio.knownStockings);
   // FOUR LINES STOOD HERE AND WENT WITH THE BIOLOGY AGENT, 2026-09-01.

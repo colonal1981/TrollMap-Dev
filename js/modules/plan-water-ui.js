@@ -1003,6 +1003,9 @@ export async function findWater() {
     // anything the pipeline wrote down.
     // The estimate that runs ONLY where no cast answered -- see thermoclineNormFor().
     thermoclineNormFor: (pf) => thermoclineNormFor(researched, Date.now(), pf),
+    // THE SAME READING getSeason() IS KEYED ON, HANDED TO THE BLOCK THAT NEEDS IT. The squeeze
+    // needs the live surface temperature and its provenance -- a tailwater gauge is not the lake
+    // and the sentence says so rather than quietly treating it as one.
     intelFor: (extra) => researchIntel(researched, species, getSeason(date, inp.waterTempF),
       Date.now(), (() => {
         const pf = packDerivedFacts({ lakeName: inp.lakeName, structGeo: stFc, featGeo: wfFc,
@@ -1014,7 +1017,8 @@ export async function findWater() {
           ...(regSpecies ? { biology: regSpecies } : {}),
           ...(extra || {}),
         };
-      })()),
+      })(),
+      { tempF: inp.waterTempF, tempFrom: inp.waterTempFrom || null }),
     // THE CHART FIRST, THE RESEARCH SECOND -- same order and same reason as Smart Plan. `poFc` is
     // the pois.geojson this function already fetched for the cast spots.
     // The charted POI layer only -- researchHazards() is gone with the navigation agent.

@@ -251,13 +251,22 @@ export async function runSmartPlanV2(opts = {}) {
       // it assembles the prompt -- a promise here would reach researchIntel() as an object.
       // The estimate that runs ONLY where no cast answered -- see thermoclineNormFor().
       thermoclineNormFor: (pf) => thermoclineNormFor(researched, Date.now(), pf),
+      // The live surface reading and where it came from, for the squeeze block -- see
+      // researchIntel(). Same value season is derived from.
       intelFor: (packFacts) => researchIntel(researched, species, season, Date.now(),
         (regSpecies || regId || regLim)
           ? { ...(packFacts || {}),
               ...(regId ? { identity: { ...regId, ...((packFacts || {}).identity || {}) } } : {}),
               ...(regSpecies ? { biology: regSpecies } : {}),
               ...(regLim ? { limnology: regLim } : {}) }
-          : packFacts),
+          : packFacts,
+        // THE SAME NUMBER THE MODEL IS SHOWN. The conditions block prints waterState's live
+        // reading, so the squeeze has to reason about that one -- two temperatures for one lake in
+        // one prompt is the defect fixed in bd48bcf, and reintroducing it here would be worse
+        // because these two would be the SAME field disagreeing. The form value is the fallback.
+        { tempF: (waterState && Number.isFinite(Number(waterState.waterTempF)))
+            ? Number(waterState.waterTempF) : inp.waterTempF,
+          tempFrom: (waterState && waterState.waterTempFrom) || null }),
       // THE SAFETY SECTION'S HAZARD SENTENCE, which has never once had anything to say because
       // nothing filled this. Same profile, already loaded, one field further down.
       tackle: castableOrTrollable.map((l) => l.name),
