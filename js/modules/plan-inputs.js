@@ -848,7 +848,23 @@ export function researchIntel(profile, species, season, now = Date.now(), packFa
       '  Those two together are the day\'s constraint. The measured anoxia is itself the evidence '
       + 'that this column is stratified \u2014 a mixed column stays oxygenated to the bottom \u2014 so '
       + 'temperature falls with depth here, and THE DEEPEST OXYGENATED WATER IS THE COOLEST '
-      + `OXYGENATED WATER. It sits just above ${floor} ft.`,
+      + 'OXYGENATED WATER.',
+      // "IT SITS JUST ABOVE 16.4 FT" WAS READ AS "ANYWHERE SHALLOWER", AND THAT IS THE BUG.
+      //
+      // Lake Wateree, 2026-09-14: the model answered this block with a six-rod bag whose DEEPEST
+      // bait ran 10-15 ft and was a cast rod, and trolled 2-5 ft and 6-12 ft over legs in 36-49 ft
+      // of water. Ryan: "why would i be fishing shallow for stripers". He is right, and so are the
+      // guides -- Carolina Sportsman on Wateree in summer: the thermocline "usually sets up in the
+      // 16-foot depth range", and a guide who trolls "the 12- to 22-foot range" for these fish.
+      //
+      // The old sentence named a CEILING and nothing named a floor, so every depth under it looked
+      // equally good and the model took the middle of the warm water. The band is the answer: the
+      // few feet immediately above the oxygen line, not the top of the column.
+      `  SO THE WATER TO WORK IS THE BAND JUST ABOVE ${floor} FT — come DOWN to it. `
+      + `"Above ${floor} ft" is not an instruction to fish shallow: a bait at half that depth is `
+      + `in the warmest water of the day, which is the end of the squeeze this block opened with. `
+      + `Put the spread within a few feet of ${floor} ft and say so, unless the light or something `
+      + 'measured says otherwise.',
       '  WHERE THE TWO MEET IS NOT KNOWN and must not be stated: that needs a vertical temperature '
       + 'profile and none has been published for this water. What does follow is that a '
       + 'presentation worked at the surface is in the warmest water of the day, and one worked '

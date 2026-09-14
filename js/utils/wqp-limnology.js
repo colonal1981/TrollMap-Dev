@@ -158,12 +158,27 @@ export function applyWqpToLimnology(base = {}, wqp = null) {
 export function applyDocumentsToLimnology(base = {}, doc = null) {
   const out = clone(base) || {};
   if (!doc || doc.offered === false) return out;
-  if (doc.thermoclineFt != null) {
+  // A NOTE THAT CAME WITHOUT A DEPTH IS STILL AN ANSWER, AND THIS DROPPED IT.
+  //
+  // The note was written only inside `doc.thermoclineFt != null`, so a cast that measured the
+  // column and could not NAME a thermocline from it had its finding thrown away -- while the
+  // oxygen branch below, reading the same cast, wrote 16.4 and 19.7 ft. Lake Wateree is exactly
+  // that record. The empty note slot was then filled by the WQP surface-grab refusal, so the
+  // prompt said "these are surface grabs with a depth stamp, not a vertical profile" about a lake
+  // the app holds a real vertical profile for.
+  //
+  // This is the rule already applied to WQP thirty lines up -- a refusal is an answer and must
+  // reach the field it refused -- and the document path was the one place it was not.
+  if (doc.thermoclineFt != null || doc.thermoclineNote) {
     out.thermocline = out.thermocline || {};
     if (out.thermocline.summerDepthFt == null) {
-      out.thermocline.summerDepthFt = doc.thermoclineFt;
-      out.thermocline.method = 'document_vertical_profile';
-      out.thermocline.note = doc.thermoclineNote || null;
+      if (doc.thermoclineFt != null) {
+        out.thermocline.summerDepthFt = doc.thermoclineFt;
+        out.thermocline.method = 'document_vertical_profile';
+      }
+      // A MEASURED REFUSAL OUTRANKS AN UNMEASURED ONE. Only overwritten when this cast has
+      // something to say, so a water with no document keeps whatever WQP left.
+      if (doc.thermoclineNote) out.thermocline.note = doc.thermoclineNote;
     }
   }
   if (doc.anoxicBelowFt != null || doc.depletionDepthFt != null) {

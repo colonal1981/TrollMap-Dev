@@ -171,8 +171,27 @@ def thermocline_from(cast):
         if grad > best:
             best, at = grad, (d1 + d2) / 2.0
     if best < THERMO_GRAD_C_PER_M:
-        return None, (f'no layer reaches {THERMO_GRAD_C_PER_M} C/m -- steepest was {best:.2f} C/m '
-                      f'over {span:.1f} m. This lake did not stratify on this visit.')
+        # THE GUARD REFUSED; IT DID NOT FIND A MIXED LAKE. This branch used to end "This lake did
+        # not stratify on this visit", which is the exact conflation the docstring above forbids --
+        # 1.0 C/m is the classical METALIMNION definition, and a column can be layered enough to
+        # strip its own bottom of oxygen without reaching it.
+        #
+        # Lake Wateree, NLA 2022: steepest 0.50 C/m, so this branch fired and said "did not
+        # stratify" -- while the same cast measured oxygen depleting at 5.0 m and gone by 6.0 m,
+        # and while two Wateree guides put the summer thermocline at 16-20 ft. Carolina Sportsman,
+        # Chris Heinning: "The thermocline usually sets up in the 16-foot depth range, give or take
+        # a foot or two"; and, separately, "By July, we've got a thermocline set up in most of Lake
+        # Wateree, and that's usually in the 20-foot or slightly deeper range." The refusal was
+        # right that no depth may be CLAIMED from this cast. The sentence after it was not.
+        #
+        # The depth of the steepest layer is reported now instead of thrown away: it is not a
+        # thermocline this file may name, and it is the best thing measured, so it is said as what
+        # it is and the reader decides.
+        where = f' at {at * M_TO_FT:.1f} ft' if at is not None else ''
+        return None, (f'no layer reaches {THERMO_GRAD_C_PER_M} C/m, the classical cutoff -- '
+                      f'steepest was {best:.2f} C/m{where} over a {span:.1f} m cast. That is too '
+                      f'weak to NAME a thermocline from and is NOT a finding that the column was '
+                      f'mixed; read the oxygen depths for what the column was doing.')
     return round(at * M_TO_FT, 1), f'steepest gradient {best:.2f} C/m at {at:.1f} m'
 
 

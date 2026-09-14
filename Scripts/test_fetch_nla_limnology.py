@@ -55,11 +55,34 @@ class TheThermocline(unittest.TestCase):
         self.assertIsNone(ft)
         self.assertIn('2 temperature readings', note)
 
-    def test_A_WELL_MIXED_LAKE_IS_AN_ANSWER_NOT_A_GAP(self):
+    def test_A_WEAK_GRADIENT_IS_A_REFUSAL_AND_NOT_A_FINDING_OF_MIXING(self):
+        """This test used to demand the words "did not stratify", and that sentence was wrong.
+
+        1.0 C/m is the classical METALIMNION definition. A column can be layered enough to strip
+        its own bottom of oxygen without reaching it, and Lake Wateree is the case that proved it:
+        NLA 2022 measured 0.50 C/m -- so this branch fired and declared the lake mixed -- while the
+        SAME cast measured oxygen depleting at 5.0 m and gone by 6.0 m, and while two Wateree
+        guides put the summer thermocline at 16-20 ft (Carolina Sportsman: "The thermocline usually
+        sets up in the 16-foot depth range, give or take a foot or two").
+
+        The refusal is right: no depth may be CLAIMED from a cast this weak. The conclusion after
+        it was not, and the docstring on thermocline_from() already forbade it -- "no thermocline"
+        and "we did not measure deep enough to see one" are different claims about the lake, and
+        so is "the gradient was under the cutoff".
+        """
         ft, note = N.thermocline_from(WELL_MIXED)
         self.assertIsNone(ft)
-        self.assertIn('did not stratify', note)
-        self.assertIn('C/m', note)          # it says how close it came
+        self.assertIn('C/m', note)               # it says how close it came
+        self.assertIn('too weak to NAME a thermocline', note)
+        self.assertIn('NOT a finding that the column was mixed', note)
+        self.assertNotIn('did not stratify', note)
+
+    def test_the_refusal_still_reports_where_the_steepest_layer_sat(self):
+        """The depth was computed and thrown away on this branch. It is not a thermocline this
+        file may name; it is the best thing the cast measured, so it is said as what it is."""
+        ft, note = N.thermocline_from(WELL_MIXED)
+        self.assertIsNone(ft)
+        self.assertRegex(note, r'steepest was [0-9.]+ C/m at [0-9.]+ ft')
 
     def test_missing_temperatures_do_not_become_zero(self):
         """`Number(null)` is 0 and 0 is a real temperature. Four occurrences of that trap in this

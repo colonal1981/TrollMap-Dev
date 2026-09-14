@@ -77,3 +77,32 @@ test('silent when there is no squeeze, and when an input is missing', () => {
   assert.doesNotMatch(run({ tempF: 84.9 }, TRAITS, noOx), /SQUEEZED FROM BOTH ENDS/,
     'no measured oxygen depth, no stratification evidence, no claim');
 });
+
+// ── AND THE BAND, NOT A CEILING ────────────────────────────────────────────────────────────────
+//
+// 2026-09-14, the plan this block produced on Lake Wateree: a six-rod bag whose deepest bait ran
+// 10-15 ft and was a CAST rod, trolling 2-5 ft and 6-12 ft over legs in 36-49 ft of water.
+//
+// Ryan: "why would i be fishing shallow for stripers on leg 3". Two Wateree guides agree with him
+// and not with the plan — Carolina Sportsman has the summer thermocline "in the 16-foot depth
+// range, give or take a foot or two", and a guide trolling "the 12- to 22-foot range" for these
+// fish. The app's own measured oxygen says the same thing from the other side: depletion at
+// 16.4 ft, none below 19.7.
+//
+// The block was right about the constraint and wrong about the instruction. "It sits just above
+// 16.4 ft" named a ceiling and no floor, so every depth under it looked equally good.
+test('it names the band to work and refuses to be read as "go shallow"', () => {
+  const t = run({ tempF: 84.9, tempFrom: 'tailwater' });
+  assert.match(t, /SQUEEZED FROM BOTH ENDS/, 'the squeeze must still fire on this water');
+  assert.match(t, /THE WATER TO WORK IS THE BAND JUST ABOVE 16\.4 FT/);
+  assert.match(t, /come DOWN to it/);
+  assert.match(t, /is not an instruction to fish shallow/);
+  assert.match(t, /within a few feet of 16\.4 ft/);
+});
+
+test('the inference itself is unchanged — the anoxia is still the evidence', () => {
+  const t = run({ tempF: 84.9, tempFrom: 'tailwater' });
+  assert.match(t, /a mixed column stays oxygenated to the bottom/);
+  assert.match(t, /THE DEEPEST OXYGENATED WATER IS THE COOLEST OXYGENATED WATER/);
+  assert.match(t, /WHERE THE TWO MEET IS NOT KNOWN and must not be stated/);
+});
