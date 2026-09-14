@@ -195,8 +195,17 @@ describe('the lead belongs to the leg, not to the day', () => {
 describe('a cast-only bait has no trolling depth', () => {
   const FLUKE = TACKLE_INVENTORY.find((l) => l.name === 'Fluke / Soft Jerkbait');
 
-  it('is cast-only in the inventory, which is where this starts', () => {
-    expect(FLUKE.trollable).toBe(false);
+  // WHAT CHANGED 2026-09-14, AND WHAT DID NOT.
+  //
+  // Ryan: "here is the thing about the fluke... rig it up with either a belly weight or a jighead
+  // and now it does troll". So the flag is true now — his rule, in ACTION_SOURCE, says the action
+  // comes from the pull. What has NOT changed is a word of the behaviour this file tests: the
+  // fluke's type is `cast_only`, depthMode 'none', so an UNBALLASTED one still has no running
+  // depth at any lead and a troll rod carrying one is still a rod fishing nothing. The original
+  // quote behind all of this carried the qualifier the old flag dropped: "and if it is WEIGHTLESS
+  // you think a fluke at 2mph is even going to sink?"
+  it('is trollable when ballasted, and its type still says nothing about depth', () => {
+    expect(FLUKE.trollable).toBe(true);
     expect(FLUKE.type).toBe('cast_only');
   });
 

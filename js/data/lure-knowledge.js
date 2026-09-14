@@ -1330,9 +1330,18 @@ export function trollableBaits(inventory, o = {}) {
     if (bought.type === 'jighead' || bought.type === 'trolling_weight') continue;
     const say = (why) => refused.push({ name: bought.name, type: bought.type, why });
 
+    // THE REASON IS THE RULE, NOT A GUESS ABOUT BUOYANCY. This said "it planes at trolling speed
+    // instead of sinking" about everything cast-only, which is true of a weightless fluke and
+    // false of a popper -- a popper floats on purpose and is cast-only because the POP is the rod.
+    // Ryan's rule says which it is, so the refusal quotes the rule.
     if (!bought.trollable) {
-      if (bought.castable) say('cast only — it planes at trolling speed instead of sinking, so no '
-                             + 'length of lead gives it a running depth');
+      if (!bought.castable) continue;
+      const src = actionSourceFor(bought.id);
+      say(src === 'the rod'
+        ? 'cast only — its action comes from the rod, not from being towed: a varied retrieve or a '
+          + 'rod motion is what makes it work, and no rigging replaces that'
+        : 'cast only — nobody has ruled on whether this one works off the pull, so it stays off '
+          + 'the troll rods until somebody does');
       continue;
     }
     const k = LURE_KNOWLEDGE[bought.type];
@@ -1359,7 +1368,22 @@ export function trollableBaits(inventory, o = {}) {
                    controlledBy: surface ? 'it stays on top' : 'the bill' });
       continue;
     }
-    if (k.depthMode === 'none') { say('it has no running depth at trolling speed'); continue; }
+    // A BAIT THE RULE SAYS TROLLS, THAT THE APP STILL CANNOT PLACE, IS A KNOWN GAP AND SAYS SO.
+    //
+    // The fluke is exactly this. Ryan ruled it 'the pull' -- "rig it up with either a belly weight
+    // or a jighead and now it does troll" -- but its type is `cast_only`, which it SHARES with the
+    // Senko, the worm and the creature bait, and that type is `depthMode: 'none'`. A type named
+    // after the conclusion cannot hold two answers. Until it is split, the honest report is that
+    // the rule allows it and the depth model cannot yet say where it runs -- not a claim that it
+    // does not troll.
+    if (k.depthMode === 'none') {
+      say(actionSourceFor(bought.id) === 'the pull'
+        ? `it trolls when it is ballasted, but its depth is filed under the shared '${bought.type}' `
+          + 'type which carries no running depth — the app cannot say where it runs until that '
+          + 'type is split per bait'
+        : 'it has no running depth at trolling speed');
+      continue;
+    }
 
     // ── A LEAD-CONTROLLED BAIT COVERS FROM SHALLOW DOWN TO WHATEVER THE LINE BUDGET REACHES ───
     //
@@ -1482,6 +1506,121 @@ export function presentationDelta(fromLure, toLure, { speedMph, leadFt } = {}) {
     (overlapFt / smaller >= 0.5 ? same : differs).push('depth');
   }
   return { same, differs, depth: { from: [wa.min, wa.max], to: [wb.min, wb.max], overlapFt } };
+}
+
+/* ==================================================================================================
+ * WHERE A BAIT'S ACTION COMES FROM — the rule that decides what may go behind the boat.
+ *
+ * RYAN'S RULE, 2026-09-14, verbatim:
+ *
+ *   "the rule should be if it needs a varied or specific type of retrieve or rod motion then it
+ *    probably needs to be cast only"
+ *
+ * and what it replaced: "here is the thing about the fluke... rig it up with either a belly weight
+ * or a jighead and now it does troll... hell you can troll a senko if you put weight with it... the
+ * only things that really do not troll well are things that have to have a varied retrieve or ones
+ * you have to use twitches or pulls to make move correctly."
+ *
+ * WHY THAT IS BETTER THAN WHAT WAS THERE. `trollable` was a hand-set boolean on nine entries and
+ * SIX of them carried this as their recorded technique: "Cast only — suggest as casting stop at
+ * structure". That is the flag restated, not a reason. Nothing in the file said why.
+ *
+ * And the app was already contradicting itself: every paddle-tail swimbait is `trollable: true`
+ * with `weightOz: null`, because the jighead is the weight. A fluke is the same object with a
+ * different tail and was marked cast-only. No principle separated them.
+ *
+ * WORSE, THE ONE QUOTE BEHIND IT HAD A QUALIFIER THE CODE DROPPED. The `cast_only` block cites
+ * Ryan, 2026-08-30: "and if it is weightless you think a fluke at 2mph is even going to sink?"
+ * WEIGHTLESS. He was answering about an unballasted fluke, and the app generalised it to cast-only
+ * however rigged.
+ *
+ *   'the pull'  the bait works because it is being towed. Trolls, given enough weight.
+ *   'the rod'   the action IS the retrieve -- a pop, a walk, a twitch, a hop, claws flaring when
+ *               the tip moves. No rigging fixes that, so it is cast only.
+ *   (absent)    NOBODY HAS RULED ON IT. Treated as cast only, which is the safe direction -- a
+ *               bait trolled that should not be is a rod fishing nothing all day -- and named by
+ *               `unruledActionTypes()` so the gap gets answered instead of quietly assumed. Same
+ *               construction as TERMINAL_CONNECTION above, for the same reason.
+ *
+ * KEYED BY INVENTORY ID, NOT BY TYPE, AND THAT IS NOT A STYLE CHOICE. Senko, plastic worm,
+ * creature bait and fluke all share ONE type, `cast_only` -- a category named after the conclusion
+ * rather than after what the baits are. Ryan ruled them differently (the fluke trolls on a head,
+ * the Senko and the creature do not, the worm "depends... they actually make paddletail style
+ * worms"), and a type-keyed table physically cannot express that. Splitting the type would mean
+ * four new knowledge blocks, each needing species/season/clarity scores nobody has measured, which
+ * is the thing this repo agreed on 2026-09-14 to stop doing. So the RULE goes where the difference
+ * lives -- on the bait -- and the type keeps the scoring it already had.
+ * ================================================================================================ */
+
+export const ACTION_SOURCE = Object.freeze({
+  // ── 'the pull': towed and it works ──────────────────────────────────────────────────────────
+  // "The buzzbait definitely trollable" — a steady retrieve is how one is fished; the blade turns
+  // off the pull and nothing about that needs a rod tip.
+  tw_buzzbait: 'the pull',
+  // "rig it up with either a belly weight or a jighead and now it does troll". Ballasted, a fluke
+  // rolls and glides off the tow. Unweighted it planes, which is the 2026-08-30 quote — and that
+  // is a fact about the RIG, which `requiresBallastToTroll` below carries.
+  cast_fluke: 'the pull',
+
+  // ── 'the rod': the retrieve IS the action ───────────────────────────────────────────────────
+  // "the action of the claws or tails when the rod tip moves is what really makes them work same
+  // as the stick bait"
+  cast_creature: 'the rod',
+  cast_stickbait: 'the rod',
+  // "ned rig and football jigs are for casting primarily i agree there"
+  jig_finesse_ned: 'the rod',
+  jig_football: 'the rod',
+  // A pop is a rod stroke and a walk is a rhythm; neither survives a constant pull.
+  tw_popper: 'the rod',
+  tw_frog: 'the rod',
+
+  // ── NOT RULED ON ────────────────────────────────────────────────────────────────────────────
+  // `cast_worm` is deliberately absent. Ryan: "the worm it depends... they actually make paddletail
+  // style worms so i argue those could be trollable", then "but honestly i am not sure lol". One
+  // entry covering both a ribbon-tail (rod) and a paddle-tail (pull) cannot be ruled on until the
+  // box says which is in it. Absent means cast-only AND named, not silently decided.
+});
+
+/** Baits that work off the pull but only once something has been added to sink them. */
+export const REQUIRES_BALLAST_TO_TROLL = Object.freeze({
+  // "if it is weightless you think a fluke at 2mph is even going to sink?" It does not — it skis.
+  cast_fluke: true,
+});
+
+/** 'the pull' | 'the rod' | null when nobody has ruled. */
+export function actionSourceFor(lureId) {
+  return ACTION_SOURCE[lureId] || null;
+}
+
+/**
+ * May this bait go behind the boat at all? Ryan's rule, asked of one bait.
+ *
+ * Hardware is not a bait and is not governed by it: a jighead is what a paddle tail rides on and a
+ * trolling weight is what a spoon swims behind, so both keep the flag the inventory gives them.
+ */
+export function trollsBehindTheBoat(lure) {
+  if (!lure) return false;
+  if (lure.type === 'jighead' || lure.type === 'trolling_weight') return !!lure.trollable;
+  const ruled = actionSourceFor(lure.id);
+  if (ruled) return ruled === 'the pull';
+  // No ruling for this id: fall back to what the type says about itself. A type whose depth mode is
+  // 'none' has no trolling depth by its own knowledge block, which is an answer; anything else was
+  // already trolled before this rule existed and is not quietly taken away by it.
+  return LURE_KNOWLEDGE[lure.type]?.depthMode !== 'none';
+}
+
+/**
+ * The baits nobody has ruled on, so the gap is visible instead of hiding inside the default.
+ * Pass the inventory; get back the ids that are cast-only because nothing said otherwise.
+ */
+export function unruledActionTypes(inventory) {
+  const out = [];
+  for (const l of (inventory || [])) {
+    if (!l || !l.id || l.type === 'jighead' || l.type === 'trolling_weight') continue;
+    if (actionSourceFor(l.id)) continue;
+    if (LURE_KNOWLEDGE[l.type]?.depthMode === 'none') out.push(l.id);
+  }
+  return out.sort();
 }
 
 /**

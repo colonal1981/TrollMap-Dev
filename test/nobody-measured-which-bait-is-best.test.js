@@ -70,15 +70,17 @@ test('a bait that can ONLY fish below the floor is working dead water', () => {
 });
 
 test('a bait that cannot be trolled is a rod fishing nothing', () => {
-  assert.match(refusalFor('Fluke / Soft Jerkbait'), /cast only/);
-  assert.match(refusalFor('Fluke / Soft Jerkbait'), /planes at trolling speed/);
+  // Reworded 2026-09-14 when Ryan's rule replaced the flag: the reason is now WHERE THE ACTION
+  // COMES FROM, not an assumption about buoyancy. See the ACTION_SOURCE block below.
   assert.match(refusalFor('Stick Bait (Senko)'), /cast only/);
+  assert.match(refusalFor('Stick Bait (Senko)'), /action comes from the rod/);
 });
 
-test('those two are the WHOLE list of reasons', () => {
+test('the reasons are a closed set — nothing is eliminated for a reason nobody stated', () => {
   const reasons = new Set(gate().refused.map((r) => r.why));
   for (const w of reasons) {
-    assert.ok(/cast only|no oxygen below/.test(w), `unexpected elimination reason: ${w}`);
+    assert.ok(/cast only|no oxygen below|until that type is split/.test(w),
+      `unexpected elimination reason: ${w}`);
   }
 });
 
@@ -87,7 +89,8 @@ test('no cast, no elimination by depth — the deep divers come back', () => {
     const r = gate({ oxygenFloorFt: bad });
     assert.ok(r.legal.some((l) => l.name === 'DD4 Crankbait (25ft+)'),
       'refusing a bait over a lake nobody cast is inventing a rule');
-    assert.ok(r.refused.every((x) => /cast only/.test(x.why)));
+    assert.equal(r.refused.some((x) => /no oxygen below/.test(x.why)), false,
+      'with no floor, nothing may be cut for depth');
   }
 });
 
@@ -175,4 +178,90 @@ test('no bait is quoted more line than the boat runs', () => {
 test('a topwater is quoted a setback, not a lead-to-depth', () => {
   const t = gate().legal.find((l) => l.name === 'Whopper Plopper');
   assert.equal(t.leadIsSetback, true, 'it rides behind the boat; it is not being sunk to 80 ft');
+});
+
+// ── RYAN'S RULE, REPLACING NINE FLAGS NOBODY JUSTIFIED ─────────────────────────────────────────
+//
+// 2026-09-14: "here is the thing about the fluke... rig it up with either a belly weight or a
+// jighead and now it does troll... hell you can troll a senko if you put weight with it... the only
+// things that really do not troll well are things that have to have a varied retrieve or ones you
+// have to use twitches or pulls to make move correctly" — and then the rule itself: "if it needs a
+// varied or specific type of retrieve or rod motion then it probably needs to be cast only".
+//
+// `trollable` had been nine hand-set booleans, six of which justified themselves with a `technique`
+// string reading "Cast only", which is the flag restated. And the app already contradicted itself:
+// every paddle tail is trollable with `weightOz: null` because the jighead is the weight, and a
+// fluke is the same object with a different tail.
+import { ACTION_SOURCE, actionSourceFor, trollsBehindTheBoat,
+         unruledActionTypes } from '../js/data/lure-knowledge.js';
+
+const named = (n) => TACKLE_INVENTORY.find((l) => l.name === n);
+
+test('the rule is keyed by BAIT, because four of them share one type', () => {
+  // Senko, worm, creature and fluke are all `cast_only` — a type named after the conclusion. Ryan
+  // ruled them differently, so a type-keyed table physically could not hold his answer.
+  const ids = ['cast_stickbait', 'cast_worm', 'cast_creature', 'cast_fluke'];
+  assert.equal(new Set(ids.map((i) => TACKLE_INVENTORY.find((l) => l.id === i).type)).size, 1);
+  assert.equal(actionSourceFor('cast_fluke'), 'the pull');
+  assert.equal(actionSourceFor('cast_stickbait'), 'the rod');
+});
+
+test('his rulings, one for one', () => {
+  assert.equal(named('Buzzbait').trollable, true, '"The buzzbait definitely trollable"');
+  assert.equal(named('Fluke / Soft Jerkbait').trollable, true,
+    '"rig it up with either a belly weight or a jighead and now it does troll"');
+  assert.equal(named('Stick Bait (Senko)').trollable, false,
+    '"the action of the claws or tails when the rod tip moves is what really makes them work same '
+    + 'as the stick bait"');
+  assert.equal(named('Creature Bait / Craw').trollable, false, 'same ruling');
+  assert.equal(named('Ned Rig / Finesse Jig').trollable, false,
+    '"ned rig and football jigs are for casting primarily i agree there"');
+  assert.equal(named('Football Jig (Craw/Bluegill Trailer)').trollable, false, 'same ruling');
+  assert.equal(named('Popper / Chugger').trollable, false, 'a pop is a rod stroke');
+  assert.equal(named('Hollow Body Frog').trollable, false, 'a walk is a rhythm');
+});
+
+test('the one he was not sure about is NOT decided — it is named', () => {
+  // "the worm it depends... they actually make paddletail style worms so i argue those could be
+  // trollable", then "but honestly i am not sure lol".
+  assert.equal('cast_worm' in ACTION_SOURCE, false, 'absent, not guessed');
+  assert.equal(named('Plastic Worm').trollable, false, 'cast-only is the safe direction');
+  assert.deepEqual(unruledActionTypes(TACKLE_INVENTORY), ['cast_worm'],
+    'and it is reported so the gap gets answered instead of quietly assumed');
+});
+
+test('trollable is DERIVED — there is one answer, not a flag and a rule', () => {
+  for (const l of TACKLE_INVENTORY) assert.equal(l.trollable, trollsBehindTheBoat(l));
+});
+
+test('hardware is not governed by the rule', () => {
+  // A jighead is what a paddle tail rides on; a trolling weight is what a spoon swims behind.
+  assert.equal(actionSourceFor('jighead_1oz'), null);
+  assert.equal(named('1oz Jighead').trollable, true, 'unchanged by the rule');
+  assert.equal(named('2oz Inline Trolling Weight').trollable, false);
+});
+
+test('the refusal quotes the rule instead of guessing about buoyancy', () => {
+  // It used to say "it planes at trolling speed instead of sinking" about everything cast-only,
+  // which is true of a weightless fluke and false of a popper — a popper FLOATS on purpose.
+  const g = gate();
+  const why = (n) => g.refused.find((r) => r.name === n).why;
+  assert.match(why('Popper / Chugger'), /its action comes from the rod/);
+  assert.doesNotMatch(why('Popper / Chugger'), /planes at trolling speed/);
+  assert.match(why('Plastic Worm'), /nobody has ruled on whether this one works off the pull/);
+});
+
+test('the buzzbait is now offered, on top where it belongs', () => {
+  const b = gate().legal.find((l) => l.name === 'Buzzbait');
+  assert.ok(b, 'a steady retrieve is how one is fished; the blade turns off the pull');
+  assert.equal(b.covers[0], 0);
+});
+
+test('the fluke is a KNOWN GAP, not a denial', () => {
+  // The rule allows it; the depth model cannot place it, because `cast_only` is depthMode 'none'
+  // and it is shared with three baits that do not troll. That is a type to split, not a fact.
+  const why = gate().refused.find((r) => r.name === 'Fluke / Soft Jerkbait').why;
+  assert.match(why, /it trolls when it is ballasted/);
+  assert.match(why, /until that type is split per bait/);
+  assert.doesNotMatch(why, /cast only/);
 });

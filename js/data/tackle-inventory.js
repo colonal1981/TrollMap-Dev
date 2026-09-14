@@ -35,7 +35,11 @@
  *   ❌ No species knowledge
  */
 
-export const TACKLE_INVENTORY = [
+/* THE BOX AS BOUGHT. `trollable` on these entries is the flag AS TYPED; what the app reads is the
+ * derived list below, where it comes from Ryan's own rule instead. Left visible rather than edited
+ * out so a disagreement between the two is findable -- and on 2026-09-14 there were two, the
+ * buzzbait and the fluke, both of which he ruled trollable. */
+const AS_BOUGHT = [
 
   // ── Crankbaits ────────────────────────────────────────────────────────────
   { id:'cb_squarebill', name:'Squarebill Crankbait',
@@ -398,6 +402,23 @@ export async function getInventory() {
   return _inventory;
 }
 
+/**
+ * WHAT MAY GO BEHIND THE BOAT IS A RULE, NOT NINE HAND-SET FLAGS.
+ *
+ * Ryan, 2026-09-14: "the rule should be if it needs a varied or specific type of retrieve or rod
+ * motion then it probably needs to be cast only". `ACTION_SOURCE` in lure-knowledge.js is that
+ * sentence, per bait, in his words -- and `trollable` is derived from it here so there is ONE
+ * answer. Nine booleans with no stated reason were the old answer, and six of them justified
+ * themselves with a `technique` string that read "Cast only", which is the flag restated.
+ *
+ * Every reader of `l.trollable` keeps working untouched; what changed is where the value comes
+ * from. `AS_BOUGHT` above still carries what was typed, so the two can be compared.
+ */
+export const TACKLE_INVENTORY = AS_BOUGHT.map((l) => {
+  const trollable = trollsBehindTheBoat(l);
+  return trollable === l.trollable ? l : { ...l, trollable };
+});
+
 // ── Planner API — delegates all scoring to lure-knowledge.js ─────────────────
 /**
  * Every jighead weight in the box, ascending. Derived, never typed: this is the
@@ -431,7 +452,8 @@ export const RIGGED_TROLLING_WEIGHT_OZ =
   (TACKLE_INVENTORY.find((l) => l.type === 'trolling_weight' && l.rigged)
    || { weightOz: null }).weightOz;
 
-import { scoreLureForContext, getIdealSpeed } from './lure-knowledge.js';
+import { scoreLureForContext, getIdealSpeed,
+         trollsBehindTheBoat } from './lure-knowledge.js';
 
 export async function selectBestLure(context = {}) {
   const inv = await getInventory();
