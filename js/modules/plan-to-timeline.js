@@ -201,6 +201,12 @@ function rodView(rod, side, over, leg) {
   // accident and this field was an empty string on every row of every plan, so there was nowhere
   // to look it up. capBaitDepth() picks the head now; this is where it becomes readable.
   const head = over && over.jigheadOz != null ? ozLabel(over.jigheadOz) : '';
+  // THE WEIGHT AHEAD OF THE BAIT, for the same reason the head is here. Ryan, 2026-09-14: "is
+  // the spoon depths assuming that i am using the 2oz trolling weight rig?" He had to ASK,
+  // because the number the rig produced was on the card and the rig was not. It is the third
+  // thing on this line beside the frame and the head, and all three answer one question: what is
+  // on the line ahead of the lure, and therefore what the lead means.
+  const inline = over && over.inlineWeightOz != null ? ozLabel(over.inlineWeightOz) : '';
   return {
     side,
     rod: rod.id || '',
@@ -211,7 +217,7 @@ function rodView(rod, side, over, leg) {
     // of the crankbaits -- was printing its band as a range against itself.
     depth: Array.isArray(runs) ? (runs[0] === runs[1] ? String(runs[0]) : runs.join('–')) : '',
     reel: '',
-    trailerSize: '', arigWeight: '', jigWeight: head,
+    trailerSize: '', arigWeight: '', jigWeight: head, inlineWeight: inline,
     notes: clean(rod.why),
     // Where it sits against the bottom, which is the part he can act on. Null when the leg has no
     // depth profile or the bait has no running depth — absent, never guessed at.

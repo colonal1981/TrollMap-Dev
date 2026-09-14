@@ -17,6 +17,11 @@
  *   ❌ No inventory management
  */
 
+// ONE COPY OF HOW A WEIGHT IS WRITTEN. oz.js is a pure leaf with no imports of its own, so this
+// adds no cycle, and its own header already says it exists for "jigheads, sinkers and rig
+// weights" — the inline trolling weight is the third of those three finally having a reader.
+import { ozLabel } from '../utils/oz.js';
+
 export const LURE_KNOWLEDGE = {
 
   // ── Crankbaits — PHYSICAL depth limits apply ──────────────────────────────
@@ -246,7 +251,35 @@ export const LURE_KNOWLEDGE = {
     label: 'Flutter Spoon',
     depthMode: 'lead',
     ratedDepth: null,
-    leadRatio: { base: 3.5, refOz: 0.75 },   // quoted for the 3/4oz Nichols
+
+    // THE 3.5 WAS ALWAYS A NUMBER ABOUT THE WEIGHTED RIG; ONLY THE LABEL WAS WRONG.
+    //
+    // It read `refOz: 0.75` -- "quoted for the 3/4oz Nichols" -- which says the reference mass
+    // is the SPOON. It is not. Ryan, 2026-09-14: "the 3/4 spoon is currently rigged with a 2 oz
+    // trolling weight inline... the weight attaches to one of the swivel snap rods then has a
+    // 5ft fluro leader with the spoon tied on with a no slip loop knot." Asked what that rig
+    // actually runs at 70 ft and 2 mph, he said: "About 20 ft sounds right" -- which is what
+    // 3.5 produces. So the constant survives untouched and its reference mass becomes the
+    // SYSTEM, 0.75 + 2.0 = 2.75oz. Nothing here is a new number.
+    //
+    // WHY THE LABEL MATTERED. `applyWeight` scales the ratio by (mass / refOz)^-0.4, so with
+    // refOz on the spoon alone the OTHER Nichols in the box -- the 5" 1-1/8oz, same type, same
+    // 2oz weight -- was scaled as if it were 50% heavier when the two rigs differ by 14% of
+    // system mass. Right constant, wrong axis.
+    leadRatio: { base: 3.5, refOz: 2.75,
+                 quotedFor: 'a 3/4oz Nichols behind a 2oz inline weight' },
+
+    // A FLUTTER SPOON IS A PLANING SURFACE. That is what makes it flutter, and it is why no
+    // amount of line sinks a bare one. Ryan, 2026-09-14: "a 3/4oz spoon unweighted at 2mph is
+    // a surface lure not these depths??? unless i am thinking wrong?" He is not thinking wrong.
+    //
+    // Mass-scaling cannot express this -- feed `applyWeight` a bare 0.75oz and it returns a
+    // depth, because the law knows about weight and nothing about lift. So the type declares
+    // the requirement instead, and `depthWindow()` answers 'needs_weight' rather than a number.
+    // Only THIS type declares it: Ryan has ruled on the flutter spoon and on nothing else, and
+    // a dense diamond jig or a bucktail sinks perfectly well on its own.
+    requiresInlineWeight: true,
+
     speedAffectsLead: true,
     tacticalDepth: { ideal:20 },
     species:   { striped_bass:10, largemouth_bass:6, smallmouth_bass:5, crappie:3, bowfin:4, catfish:1 },
@@ -838,6 +871,27 @@ function speedFactor(speedMph) {
 // not a measurement.
 const WEIGHT_EXPONENT = 0.4;
 
+/**
+ * THE MASS THAT SINKS A BAIT IS EVERYTHING ON THE LINE, NOT JUST THE BAIT.
+ *
+ * `weightOz` is what the lure weighs. `inlineWeightOz` is a trolling weight ahead of it on the
+ * same line, and to the water the pair is one sinking object. Ryan runs a 2oz inline weight on
+ * the spoon, the 3/4oz bucktail and the 1/2oz jighead-and-swimbait, and has 1oz and 3oz in the
+ * bag; until 2026-09-14 the app added none of it to anything, so two of those three rigs were
+ * priced as bare baits and read five to ten feet shallow.
+ *
+ * It is READ OFF THE LURE OBJECT, not passed as an argument, so every existing caller of
+ * `leadForDepth`/`depthWindow` gets it for free the moment the rig is attached -- the same way
+ * `capBaitDepth` already hands the maths `{...lure, weightOz: fittedHead}`.
+ */
+export function systemWeightOz(lure) {
+  const bait = Number(lure?.weightOz);
+  const inline = Number(lure?.inlineWeightOz);
+  const a = Number.isFinite(bait) && bait > 0 ? bait : 0;
+  const b = Number.isFinite(inline) && inline > 0 ? inline : 0;
+  return (a + b) || null;
+}
+
 /** Scale a ratio quoted at refOz to the actual weight. Heavier needs less lead. */
 function applyWeight(ratio, weightOz, refOz) {
   if (!weightOz || weightOz <= 0) return ratio;
@@ -879,7 +933,7 @@ export function leadForDepth(lure, targetDepthFt, speedMph) {
   if (k.depthMode === 'rated' && k.ratedDepth) {
     targetDepthFt = Math.min(targetDepthFt, k.ratedDepth.max);
   }
-  const ratio = resolveLeadRatio(k.leadRatio, { weightOz: lure.weightOz, targetDepthFt });
+  const ratio = resolveLeadRatio(k.leadRatio, { weightOz: systemWeightOz(lure), targetDepthFt });
   const sf = k.speedAffectsLead ? speedFactor(speedMph) : 1;
   return Math.round(targetDepthFt * ratio * sf);
 }
@@ -896,7 +950,26 @@ export function depthWindow(lure, { speedMph, leadFt } = {}) {
   // the callers already treat a non-finite max as "cannot place this" -- see capBaitDepth().
   if (k.depthMode === 'none') {
     return { min: null, max: null, mode: 'none', claimed: false,
-             controlledBy: 'nothing — this bait is not trolled and planes at trolling speed' };
+             controlledBy: 'nothing — this bait is not trolled and planes at trolling speed',
+             reason: 'it is a cast-only bait: at trolling speed it planes instead of sinking, '
+                   + 'so it has no running depth and no lead puts it at one' };
+  }
+
+  // A BAIT THAT NEEDS A WEIGHT AND HAS NONE IS NOT A BAIT AT A DEPTH.
+  //
+  // This is a separate answer from 'none' on purpose, because the two need opposite responses. A
+  // Fluke planes and there is nothing to be done about it — the honest reply is "wrong bait". A
+  // flutter spoon planes only because the weight is missing, and the reply is a thing Ryan can
+  // do on the water: clip the weight on. Collapsing them would have turned a fixable rig into a
+  // refusal, which is the failure this file already names elsewhere as correcting a bait into
+  // something it is not.
+  if (k.requiresInlineWeight && !(Number(lure?.inlineWeightOz) > 0)) {
+    return { min: null, max: null, mode: 'needs_weight', claimed: false,
+             controlledBy: 'an inline trolling weight it has not been given',
+             reason: `a ${k.label.toLowerCase()} is a planing surface — that is what makes it `
+                   + 'flutter — so with nothing ahead of it on the line it rides just under the '
+                   + 'top whatever the lead. It fishes behind an inline trolling weight or it '
+                   + 'does not fish' };
   }
   if (k.depthMode !== 'lead') {
     const d = k.ratedDepth || { min: 0, max: 1 };
@@ -935,8 +1008,18 @@ export function depthWindow(lure, { speedMph, leadFt } = {}) {
     if (guess(mid) < leadFt) lo = mid; else hi = mid;
   }
   const d = Math.round(lo);
+  // NAME THE RIG IN THE ANSWER. "lead length + speed + weight" was true and unreadable: it is
+  // the sentence that let a depth computed for a weighted spoon be printed beside the spoon's
+  // own 3/4oz and leave Ryan to ask which one it meant. When there is a weight on the line, the
+  // string says so, and every warning built on `controlledBy` says so with it.
+  const inline = Number(lure?.inlineWeightOz);
+  const rigged = Number.isFinite(inline) && inline > 0;
   return { min: Math.max(0, d - 2), max: d + 2, mode: 'lead', claimed: false,
-           controlledBy: 'lead length + speed + weight', speedFactor: sf };
+           inlineWeightOz: rigged ? inline : null,
+           controlledBy: rigged
+             ? `lead length + speed + the ${ozLabel(inline)} inline weight ahead of it`
+             : 'lead length + speed + weight',
+           speedFactor: sf };
 }
 
 /**
@@ -998,7 +1081,12 @@ export function jigheadForSwimbait(swimbait, targetDepthFt, speedMph, opts = {})
   }
 
   const maxLeadFt = opts.maxLeadFt ?? 120;
-  const lead = (w) => leadForDepth({ type: swimbait.type, weightOz: w }, targetDepthFt, speedMph);
+  // CARRY THE INLINE WEIGHT THROUGH. Ryan runs "a 1/2 oz jighead with a 4inch swimbait" behind a
+  // 2oz weight; pricing the head against a bare bait picks a heavier head than the rig needs and
+  // asks for a longer lead than the rig needs to reach the same depth.
+  const lead = (w) => leadForDepth({ type: swimbait.type, weightOz: w,
+                                     inlineWeightOz: swimbait.inlineWeightOz },
+                                   targetDepthFt, speedMph);
 
   const usable = heads.filter((w) => w >= range.startOz && w <= range.maxOz);
   if (!usable.length) {
@@ -1122,6 +1210,18 @@ export const TERMINAL_CONNECTION = {
   // Ryan's snap list, verbatim: A-rig, spoons, the spoon trolling rig with a trolling weight tied
   // on, blade baits, bladed jigs (chatterbait), bucktails.
   umbrella_rig: 'snap',
+
+  // THE SNAP HOLDS THE WEIGHT, NOT THE SPOON — which is why Ryan's list above says "the spoon
+  // trolling rig that has a trolling weight tied on" rather than "the spoon". A trolling weight
+  // is therefore snap-legal in its own right, and so is anything tied to the leader behind one:
+  // Ryan, 2026-09-14, on the spare, "the last 2 oz weight i have tied to a swivel snap that
+  // could be used with whatever other lure like a lipless or even a standard crankbait."
+  //
+  // That is NOT wired into `seatRods()` yet and MAX_TIE_ONLY is untouched. It would loosen a
+  // constraint Ryan set himself, and loosening it quietly is how you end up on the water with
+  // five baits that all need a knot. It is written down here, where the rule lives, so it gets
+  // decided rather than assumed.
+  trolling_weight: 'snap',
   flutter_spoon: 'snap',
   spoon_casting: 'snap',
   blade_vibe: 'snap',
@@ -1165,6 +1265,105 @@ export const TERMINAL_CONNECTION = {
  * off in a moving kayak.
  */
 export const MAX_TIE_ONLY = 4;
+
+/**
+ * WHAT A LURE CHANGE ACTUALLY BUYS — and `presentationSignature` finally having a reader.
+ *
+ * Ryan, 2026-09-14, on a plan that swapped a 4.6" swimbait for a 3" blade vibe mid-day: "The
+ * lure changes make no sense."
+ *
+ * He was right, and the app already held every fact needed to know it. On 70 ft at 2 mph both
+ * baits run 11-15 ft. Both sit in the `middle` of the water column. Both read `baitfish`. Both
+ * want 1.4-2.4 mph and ideal 1.8. The swap moved nothing about where the bait is or what it
+ * looks like; it changed `noise` from silent to high_vibe and `flash` from low to medium, and it
+ * cost a change on the water to do it.
+ *
+ * `plan-assemble` could not see any of that. Its only test was whether the rod gets used again
+ * after the change — a test for a change that is WASTED, not for one that is EMPTY — and there
+ * was nothing for a fuller test to read, because `presentationSignature` is declared on thirty
+ * types in this file and had zero readers anywhere in the app. Written and addressed to nobody.
+ *
+ * IT REPORTS, IT DOES NOT JUDGE. The caller warns; it never drops. plan-assemble.js says why, in
+ * its own words, about the other validator: "dropping a legitimate change is a worse failure
+ * than keeping a marginal one." A swap that only changes noise is a real tactic on a slow day —
+ * the point is that the plan has to say that is what it is doing, instead of writing prose about
+ * suspended fish and leaving Ryan to work out that nothing moved.
+ *
+ * @returns {null|{same: string[], differs: string[], depth: {from, to, overlapFt}}}
+ */
+export function presentationDelta(fromLure, toLure, { speedMph, leadFt } = {}) {
+  const a = LURE_KNOWLEDGE[fromLure?.type], b = LURE_KNOWLEDGE[toLure?.type];
+  if (!a || !b) return null;
+  const sa = a.presentationSignature || {}, sb = b.presentationSignature || {};
+
+  const same = [], differs = [];
+  for (const f of ['water_column', 'profile', 'noise', 'flash']) {
+    if (sa[f] == null || sb[f] == null) continue;
+    (sa[f] === sb[f] ? same : differs).push(f);
+  }
+
+  // Speed is a band, not a value: two baits are the same speed answer when you can troll both at
+  // one number, which is the only question a two-rod spread can ask.
+  const lo = Math.max(a.speed?.min ?? 0, b.speed?.min ?? 0);
+  const hi = Math.min(a.speed?.max ?? 99, b.speed?.max ?? 99);
+  (hi >= lo ? same : differs).push('speed');
+
+  // A PADDLE TAIL WITH NO HEAD ON IT IS NOT A BAIT AT A DEPTH — the same trap `fitJighead` was
+  // written for, sprung again one caller further out. The change validator runs BEFORE
+  // capBaitDepth fits anything, so both sides of a swap arrive as bought: `Swimbait 4.6" –
+  // Jighead` carries `weightOz: null`, `applyWeight` short-circuits, and the bait gets priced as
+  // a 1oz. On the swap that prompted all this that put the swimbait at 16-19 ft against the
+  // blade vibe's 11-15, the comparison called the depth CHANGED, and the empty swap sailed
+  // through the very test written to catch it.
+  //
+  // `startOz` is the head the picker starts at, so this is the same head capBaitDepth will fit
+  // unless depth forces it heavier — not a number invented here.
+  const seat = (l) => {
+    if (!l || Number(l.weightOz) > 0) return l;
+    const r = jigheadRangeOz(l.lengthIn, l.type);
+    return r ? { ...l, weightOz: r.startOz } : l;
+  };
+  const wa = depthWindow(seat(fromLure), { speedMph, leadFt });
+  const wb = depthWindow(seat(toLure), { speedMph, leadFt });
+  let overlapFt = null;
+  if ([wa.min, wa.max, wb.min, wb.max].every(Number.isFinite)) {
+    overlapFt = Math.max(0, Math.min(wa.max, wb.max) - Math.max(wa.min, wb.min));
+    const spanA = wa.max - wa.min, spanB = wb.max - wb.min;
+    const smaller = Math.min(spanA, spanB) || 1;
+    (overlapFt / smaller >= 0.5 ? same : differs).push('depth');
+  }
+  return { same, differs, depth: { from: [wa.min, wa.max], to: [wb.min, wb.max], overlapFt } };
+}
+
+/**
+ * Does this lure type only fish behind an inline trolling weight? See `flutter_spoon`.
+ *
+ * A predicate rather than an exported table, for the same reason `canTakeSnap` is one: the
+ * planner asking "does this need a weight" should not have to know that the answer is a field
+ * on a knowledge entry, and there must be no second copy of the list to drift.
+ */
+export function requiresInlineWeight(lureType) {
+  return LURE_KNOWLEDGE[lureType]?.requiresInlineWeight === true;
+}
+
+/**
+ * WHAT CHANGING THIS BAIT ACTUALLY COSTS, which is not always what the rod says.
+ *
+ * `plan-assemble` priced every change off `rod.rig` alone -- a snap rod is seconds, a leader rod
+ * is a knot. That is right until a trolling weight is in the middle of it. Ryan, 2026-09-14:
+ * "the weight attaches to one of the swivel snap rods then has a 5ft fluro leader with the spoon
+ * tied on with a no slip loop knot." The snap is occupied by the WEIGHT; the bait is on the far
+ * end of five feet of fluorocarbon. Swapping it is a no-slip loop with wet hands in a kayak, and
+ * the plan was calling it a snap.
+ *
+ * @param {string} lureType
+ * @param {'snap'|'fluoro'} rodRig
+ * @returns {'snap'|'fluoro'}
+ */
+export function changeCostFor(lureType, rodRig) {
+  if (requiresInlineWeight(lureType)) return 'fluoro';
+  return rodRig === 'fluoro' ? 'fluoro' : 'snap';
+}
 
 /** 'snap' | 'tie' | 'either' — unlisted types are 'tie'. See the note above. */
 export function connectionFor(lureType) {

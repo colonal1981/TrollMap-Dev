@@ -24,8 +24,10 @@
  */
 
 import { ampHours, minutesFor, metresBetween, cumulative, pointAt, orientLegs } from './plan-candidates.js';
-import { depthWindow, leadForDepth, jigheadForSwimbait } from '../data/lure-knowledge.js';
-import { JIGHEADS_OWNED_OZ } from '../data/tackle-inventory.js';
+import { depthWindow, leadForDepth, jigheadForSwimbait,
+         requiresInlineWeight, changeCostFor, presentationDelta } from '../data/lure-knowledge.js';
+import { JIGHEADS_OWNED_OZ, TROLLING_WEIGHTS_OWNED_OZ,
+         RIGGED_TROLLING_WEIGHT_OZ } from '../data/tackle-inventory.js';
 import { FISHING_STYLE } from '../data/fishing-style-profile.js';
 import { ozLabel } from '../utils/oz.js';
 
@@ -76,6 +78,67 @@ function fitJighead(lure, rod, speedMph, ceilingFt, id, runId, warnings) {
                 + `${Math.round(target)} ft, past the ${FISHING_STYLE.rigging?.maxLeadFt} ft you run.`);
   }
   return fit;
+}
+
+/**
+ * A FLUTTER SPOON HAS NO DEPTH UNTIL A WEIGHT IS AHEAD OF IT, AND THE LEAD MATHS NEEDS ONE.
+ *
+ * Exactly the shape of `fitJighead` above, for exactly the same reason: a bait whose mass is
+ * incomplete makes every number after it a number about something that is not on the line.
+ *
+ * Ryan, 2026-09-14, reading his own plan: "is the spoon depths assuming that i am using the 2oz
+ * trolling weight rig? because a 3/4oz spoon unweighted at 2mph is a surface lure not these
+ * depths??? unless i am thinking wrong?" He was not. The app had no weight in it anywhere; the
+ * only reason the spoon's number came out right is that the ratio it inherited had been quoted
+ * for the weighted rig by someone who never wrote that down.
+ *
+ * IT STARTS AT THE WEIGHT THAT IS ACTUALLY TIED ON and goes heavier only to reach the depth
+ * inside the lead budget -- the same rule as the jighead picker, and for a harder reason: "I
+ * have 1 and 3 oz weights that could be used that are not rigged currently." A plan that opens
+ * by telling him to re-rig with a weight sitting in a bag at home is a plan that starts with a
+ * job. When the heavier weight IS what the depth needs, it is asked for out loud, once.
+ */
+function fitInlineWeight(lure, rod, speedMph, ceilingFt, id, runId, warnings) {
+  if (!requiresInlineWeight(lure?.type)) return null;
+  if (Number(lure.inlineWeightOz) > 0) return Number(lure.inlineWeightOz);
+
+  const runs = Array.isArray(rod.runsDepthFt) && rod.runsDepthFt.every(Number.isFinite)
+    ? (rod.runsDepthFt[0] + rod.runsDepthFt[1]) / 2 : null;
+  const target = Number.isFinite(runs) ? runs : ceilingFt;
+  const maxLeadFt = FISHING_STYLE.rigging?.maxLeadFt ?? 120;
+
+  // The box, rigged one first, then the rest ascending. Nothing is sorted by "best" — the order
+  // IS the preference, and the first one that reaches inside the lead budget wins.
+  const owned = [...TROLLING_WEIGHTS_OWNED_OZ].sort((a, b) => a - b);
+  const rigged = Number(RIGGED_TROLLING_WEIGHT_OZ) > 0 ? Number(RIGGED_TROLLING_WEIGHT_OZ) : null;
+  const order = rigged ? [rigged, ...owned.filter((w) => w !== rigged)] : owned;
+
+  if (!order.length) {
+    warnings.push(`${id} on ${runId}: a ${rod.lure} only fishes behind an inline trolling weight `
+                + 'and the app has no weight in the box to give it.');
+    return null;
+  }
+  if (!Number.isFinite(target) || target <= 0) return rigged || order[0];
+
+  for (const w of order) {
+    const lead = leadForDepth({ ...lure, inlineWeightOz: w }, target, speedMph);
+    if (Number.isFinite(lead) && lead > 0 && lead <= maxLeadFt) {
+      if (rigged && w !== rigged) {
+        warnings.push(`${id} on ${runId}: the ${ozLabel(rigged)} weight that is tied on now needs `
+                    + `more than the ${maxLeadFt} ft you run to get a ${rod.lure} to `
+                    + `${Math.round(target)} ft — put the ${ozLabel(w)} weight on instead, which `
+                    + `reaches it on ${lead} ft of lead. That is a change to make at the truck.`);
+      }
+      return w;
+    }
+  }
+  // Nothing in the box reaches it. Say so with the heaviest, rather than silently using the
+  // lightest and reporting a depth it cannot make.
+  const heaviest = order.reduce((a, b) => (b > a ? b : a), order[0]);
+  warnings.push(`${id} on ${runId}: a ${rod.lure} behind the heaviest weight you own `
+              + `(${ozLabel(heaviest)}) still needs more than the ${maxLeadFt} ft of lead you run `
+              + `to make ${Math.round(target)} ft. That depth is not reachable with this rig.`);
+  return heaviest;
 }
 
 /**
@@ -138,9 +201,15 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
     // the model gave a depth and no lead is answerable here. Skipping it -- which is what the
     // guard used to do to every rod without a lead -- is the same silence that let a swimbait
     // fish a whole day at a weight nobody picked.
-    const fit = fitJighead(lureAsBought, rod, speedMph, ceilingFt, id, runId, warnings);
-    const lure = fit ? { ...lureAsBought, weightOz: fit.weightOz } : lureAsBought;
+    // THE WEIGHT GOES ON BEFORE THE HEAD IS PRICED. `fitJighead` leads for the head it picks, and
+    // a head picked against a bare bait is a head picked for a rig that is not on the line.
+    const inlineOz = fitInlineWeight(lureAsBought, rod, speedMph, ceilingFt, id, runId, warnings);
+    const rigged = inlineOz ? { ...lureAsBought, inlineWeightOz: inlineOz } : lureAsBought;
+
+    const fit = fitJighead(rigged, rod, speedMph, ceilingFt, id, runId, warnings);
+    const lure = fit ? { ...rigged, weightOz: fit.weightOz } : rigged;
     let leadFt = fit ? fit.leadFt : rod.leadFt;
+    if (inlineOz) forThisLeg[id] = { ...(forThisLeg[id] || {}), inlineWeightOz: inlineOz };
 
     // A LEAD OF ZERO IS NOT A LEAD.
     //
@@ -193,6 +262,17 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
                   + `puts it at one — that rod is fishing nothing on this leg.`);
       continue;
     }
+
+    // SAME SYMPTOM, OPPOSITE ANSWER. A cast-only bait planing is a bait in the wrong place; a
+    // spoon planing is a weight that is not on it, and the fix is in the tackle box. This branch
+    // should be unreachable in practice -- `fitInlineWeight` runs above and supplies one -- so
+    // reaching it means the box is empty or the fit refused, and that is worth saying rather
+    // than falling through into a `continue` that reports nothing.
+    if (w.mode === 'needs_weight') {
+      warnings.push(`${id} on ${runId}: a ${rod.lure} has no inline trolling weight on it — `
+                  + `${w.reason}. That rod is fishing the top of the water column on this leg.`);
+      continue;
+    }
     if (!Number.isFinite(w.max)) continue;
 
     // The model also CLAIMS a running depth. Nothing has ever checked that claim against the
@@ -211,10 +291,18 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
     const claimedTol = w.claimed === true ? 0 : 4;
     if (Array.isArray(rod.runsDepthFt) && Number.isFinite(rod.runsDepthFt[1])
         && Math.abs(rod.runsDepthFt[1] - w.max) > claimedTol) {
+      // "GOING WITH THE MEASURED NUMBER" WAS A LIE THIS FILE TOLD ABOUT ITS OWN ARITHMETIC.
+      //
+      // Nothing measured it. lure-knowledge.js says so three times in its own header -- "working
+      // values, not measurements", "STILL UNCALIBRATED" -- and then this line called the output
+      // measured and used that standing to overrule the model. The app's number is still the one
+      // to go with, because it is at least computed from the lead and the rig rather than
+      // recalled; but it is computed, and on the one rig Ryan has put a number to, it is his.
       warnings.push(`${id} on ${runId} says it runs to ${rod.runsDepthFt[1]} ft, but `
                   + `${leadFt} ft of lead at ${speedMph} mph`
+                  + `${inlineOz ? ` behind the ${ozLabel(inlineOz)} inline weight` : ''}`
                   + `${fit ? ` on a ${ozLabel(fit.weightOz)} head` : ''} puts a ${rod.lure} at `
-                  + `${w.max} ft — going with the measured number`);
+                  + `${w.max} ft — going with the app's number, worked from ${w.controlledBy}`);
       forThisLeg[id] = { ...(forThisLeg[id] || {}), runsDepthFt: [w.min, w.max] };
     }
 
@@ -286,7 +374,9 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
     // that dives on its own cannot, and there the honest answer is that it is the wrong bait for
     // this leg -- said plainly rather than corrected into something it is not.
     if (w.mode === 'lead' && shorter && shorter < leadFt) {
-      warnings.push(`${id} on ${runId}: a ${rod.lure}${fit ? ` on a ${ozLabel(fit.weightOz)} head` : ''} `
+      warnings.push(`${id} on ${runId}: a ${rod.lure}`
+                  + `${inlineOz ? ` behind the ${ozLabel(inlineOz)} inline weight` : ''}`
+                  + `${fit ? ` on a ${ozLabel(fit.weightOz)} head` : ''} `
                   + `on ${leadFt} ft of lead at ${speedMph} mph runs to ${w.max} ft, and the `
                   + `shallowest water on this leg is ${ceilingFt} ft — shortened the lead to `
                   + `${shorter} ft so it clears`);
@@ -501,10 +591,40 @@ export function assemblePlan(o) {
                     + 'buys nothing');
         continue;
       }
+      // ── DOES THE SWAP BUY ANYTHING? ────────────────────────────────────────────────────
+      //
+      // The test above asks whether the change is WASTED (the rod never fishes again). This one
+      // asks whether it is EMPTY — whether the bait going on does anything different from the
+      // bait coming off. See `presentationDelta()`, which is the first reader
+      // `presentationSignature` has ever had.
+      //
+      // A WARNING, NOT A DROP, for the reason stated eighty lines up: dropping a legitimate
+      // change is a worse failure than keeping a marginal one. A noise-and-flash change on a
+      // slow day is a real thing to do. What Ryan cannot have is a plan that does it while
+      // writing prose about suspended fish.
+      const nameOf = typeof o.lureByName === 'function' ? o.lureByName : null;
+      const fromL = nameOf ? nameOf(ch.from ?? rod.lure) : null;
+      const toL = nameOf ? nameOf(ch.to) : null;
+      const delta = fromL && toL
+        ? presentationDelta(fromL, toL, { speedMph: trollMph, leadFt: rod.leadFt })
+        : null;
+      if (delta && !delta.differs.filter((f) => f !== 'noise' && f !== 'flash').length) {
+        const moved = delta.differs.length ? delta.differs.join(' and ') : 'nothing at all';
+        const [dl, dh] = delta.depth.to;
+        warnings.push(`the lure change on ${ch.rodId} before ${c.runId} changes ${moved}. Both `
+                    + `baits run ${dl}-${dh} ft on ${rod.leadFt} ft of lead, sit in the same part `
+                    + `of the water column, read the same to a fish and troll at the same speed — `
+                    + `so it is a change of sound, not of presentation. Keep it if that is the `
+                    + `plan and say so; it is a job on the water either way.`);
+      }
+
       changes.push({
         id: `C${changes.length + 1}`, atM: runM, rodId: ch.rodId,
-        cost: rod.rig === 'fluoro' ? 'fluoro' : 'snap',
+        // NOT `rod.rig` ALONE. A bait tied to five feet of fluorocarbon behind a trolling
+        // weight is a knot to change even though the snap is what the rod is wearing.
+        cost: changeCostFor(toL ? toL.type : null, rod.rig),
         from: ch.from ?? rod.lure ?? null, to: ch.to ?? null, why: ch.why ?? null,
+        buys: delta ? { same: delta.same, differs: delta.differs } : null,
       });
     }
 

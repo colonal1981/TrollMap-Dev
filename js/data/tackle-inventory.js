@@ -8,6 +8,9 @@
  * Strict boundaries:
  *   ✅ What lures Ryan owns
  *   ✅ Physical specs (weight, sizes)
+ *   ✅ WHICH INLINE TROLLING WEIGHTS ARE IN THE BOX -- as `type:'trolling_weight'` entries,
+ *      and nowhere else. A weight is hardware Ryan owns, so it is this file's business; what
+ *      a weight DOES to the depth of the bait behind it is lure-knowledge.js's.
  *   ✅ WHICH JIGHEADS ARE IN THE BOX -- as `type:'jighead'` entries, and nowhere else.
  *      Each paddle tail used to carry its own `jigWeights` list. Nothing ever read one,
  *      all three disagreed with the box (they offered 1/8 and 3/16oz heads Ryan does not
@@ -113,11 +116,43 @@ export const TACKLE_INVENTORY = [
   { id:'spoon_laser_minnow_2oz', name:'P-Line Laser Minnow 2oz (PLM2)',
     type:'spoon_casting', trollable:true, castable:true, weightOz:2.0 },
 
+  // ── Inline trolling weights ───────────────────────────────────────────────
+  //
+  // THE WEIGHT IS HARDWARE RYAN OWNS, NOT A SENTENCE IN A COMMENT. It was named in three
+  // comments in this repo -- here, and twice in lure-knowledge.js -- and was an object in
+  // none of them, so nothing could add its mass to anything. Ryan, 2026-09-14, asked the
+  // question that found it: "is the spoon depths assuming that i am using the 2oz trolling
+  // weight rig? because a 3/4oz spoon unweighted at 2mph is a surface lure not these depths".
+  //
+  // WHAT IS RIGGED, in his words, same day: "Currently i have the 3/4 oz spoon, a 3/4 oz
+  // bucktail, a 1/2 oz jighead with a 4inch swimbait, and the last 2 oz weight i have tied to
+  // a swivel snap that could be used with whatever other lure like a lipless or even a
+  // standard crankbait. I have 1 and 3 oz weights that could be used that are not rigged
+  // currently."
+  //
+  // So the box is 1, 2 and 3oz, and 2oz is what is actually tied on. `trollable` and
+  // `castable` are both FALSE: a weight is not a bait and must never be offered as one. Both
+  // bag builders filter on `trollable || castable`, so this block is invisible to them.
+  //
+  // THE WEIGHT RIDES THE SNAP AND THE LURE IS TIED TO A LEADER BEHIND IT. That is why a
+  // flutter spoon has always been snap-legal in TERMINAL_CONNECTION -- the snap holds the
+  // weight, not the spoon. It also means changing the bait behind one costs a KNOT, whatever
+  // rod it is on. See TERMINAL_CONNECTION and `changeCostFor()` in lure-knowledge.js.
+  { id:'troll_weight_1oz', name:'1oz Inline Trolling Weight',
+    type:'trolling_weight', trollable:false, castable:false, weightOz:1.0, rigged:false },
+
+  { id:'troll_weight_2oz', name:'2oz Inline Trolling Weight',
+    type:'trolling_weight', trollable:false, castable:false, weightOz:2.0, rigged:true },
+
+  { id:'troll_weight_3oz', name:'3oz Inline Trolling Weight',
+    type:'trolling_weight', trollable:false, castable:false, weightOz:3.0, rigged:false },
+
   // ── Vertical / Knife Jigs ────────────────────────────────────
   // Trollable, not cast-only — a dense wire-through body holds depth at speed.
   // 2-3oz is not heavy in context: a 1oz bucktail behind a 2oz trolling weight is
-  // already 3oz through the water. Depth comes from lead length, so diveDepth stays
-  // null and the planner works it out from tacticalDepth.
+  // already 3oz through the water -- and since 2026-09-14 that is arithmetic the app
+  // does, not a remark. See TROLLING_WEIGHTS_OWNED_OZ below. Depth comes from lead
+  // length, so diveDepth stays null and the planner works it out from tacticalDepth.
   { id:'jig_haruki_21', name:'P-Line Haruki Jig 2.1oz (PHJ21)',
     type:'vertical_jig', trollable:true, castable:true, weightOz:2.1 },
 
@@ -377,6 +412,24 @@ export const JIGHEADS_OWNED_OZ = TACKLE_INVENTORY
   .filter((l) => l.type === 'jighead' && l.weightOz > 0)
   .map((l) => l.weightOz)
   .sort((a, b) => a - b);
+
+/**
+ * Every inline trolling weight in the box, ascending. Derived exactly like the jigheads
+ * above -- the `type:'trolling_weight'` entries and nothing else.
+ *
+ * `RIGGED_TROLLING_WEIGHT_OZ` is the one actually tied on. It is the default the planner
+ * starts from, because an instruction to go and fit a weight that is in a bag at home is not
+ * an instruction Ryan can follow on the water. Going heavier is a thing the plan may ASK for,
+ * and when it does it says so out loud.
+ */
+export const TROLLING_WEIGHTS_OWNED_OZ = TACKLE_INVENTORY
+  .filter((l) => l.type === 'trolling_weight' && l.weightOz > 0)
+  .map((l) => l.weightOz)
+  .sort((a, b) => a - b);
+
+export const RIGGED_TROLLING_WEIGHT_OZ =
+  (TACKLE_INVENTORY.find((l) => l.type === 'trolling_weight' && l.rigged)
+   || { weightOz: null }).weightOz;
 
 import { scoreLureForContext, getIdealSpeed } from './lure-knowledge.js';
 

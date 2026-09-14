@@ -9,14 +9,27 @@
  *
  * Exits 1 on any failure.
  */
-import { TACKLE_INVENTORY, JIGHEADS_OWNED_OZ } from '../js/data/tackle-inventory.js';
+import { TACKLE_INVENTORY, JIGHEADS_OWNED_OZ,
+         RIGGED_TROLLING_WEIGHT_OZ } from '../js/data/tackle-inventory.js';
 import { LURE_KNOWLEDGE, LURE_COLORS, depthWindow, leadForDepth, canReachDepth,
-         jigheadRangeOz, jigheadForSwimbait } from '../js/data/lure-knowledge.js';
+         jigheadRangeOz, jigheadForSwimbait,
+         requiresInlineWeight } from '../js/data/lure-knowledge.js';
 import { TYPE_LABELS } from '../js/modules/tackle-inventory-ui.js';
 import { FISHING_STYLE } from '../js/data/fishing-style-profile.js';
 
-const types = [...new Set(TACKLE_INVENTORY.map(l => l.type))];
+// THE INVENTORY HOLDS HARDWARE AS WELL AS BAITS. An inline trolling weight is never fished
+// (`trollable:false, castable:false`), so a colour or a species score for one would be a fact
+// about nothing. Excluded by the same test the two bag builders use, never by name, so hardware
+// added later is excluded automatically and a bait never can be. See tackle-parity.test.js.
+const isBait = (l) => l.trollable || l.castable;
+const types = [...new Set(TACKLE_INVENTORY.filter(isBait).map(l => l.type))];
 const trollable = TACKLE_INVENTORY.filter(l => l.trollable);
+
+// A bait that only fishes behind a weight is run WITH one in the depth checks below, not skipped:
+// bare, it correctly reports no depth at all, and skipping it would drop the flutter spoon out of
+// the only round-trip check there is.
+const rigged = (l) => (requiresInlineWeight(l.type)
+  ? { ...l, inlineWeightOz: RIGGED_TROLLING_WEIGHT_OZ } : l);
 let failures = 0;
 
 function check(name, fn) {
@@ -105,8 +118,9 @@ check('a rated bait is never leaded past its bill', () =>
     .map(l => l.id));
 check('lead-controlled baits round-trip depth -> lead -> depth', () => {
   const bad = [];
-  for (const l of trollable) {
-    if (LURE_KNOWLEDGE[l.type].depthMode !== 'lead') continue;
+  for (const bought of trollable) {
+    if (LURE_KNOWLEDGE[bought.type].depthMode !== 'lead') continue;
+    const l = rigged(bought);
     for (const d of [8, 15, 25, 35]) {
       const lead = leadForDepth(l, d, 1.8);
       const back = depthWindow(l, { speedMph: 1.8, leadFt: lead });

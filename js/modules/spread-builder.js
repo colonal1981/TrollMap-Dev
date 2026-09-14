@@ -13,10 +13,11 @@
 import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
 import { newRodRow } from '../utils/rod-row.js';
-import { depthWindow, leadForDepth, isLeadControlled, jigheadForSwimbait }
-  from '../data/lure-knowledge.js';
+import { depthWindow, leadForDepth, isLeadControlled, jigheadForSwimbait,
+         requiresInlineWeight } from '../data/lure-knowledge.js';
 import { FISHING_STYLE } from '../data/fishing-style-profile.js';
-import { lureByName, JIGHEADS_OWNED_OZ } from '../data/tackle-inventory.js';
+import { lureByName, JIGHEADS_OWNED_OZ,
+         RIGGED_TROLLING_WEIGHT_OZ } from '../data/tackle-inventory.js';
 
 // ── Catalog of presets ────────────────────────────────────────────────────
 
@@ -231,8 +232,16 @@ function arigDetailRow(rod, i) {
 export function autoCalculateLead(rod, speedMph) {
   const depth = parseFloat(rod.depth);
   if (isNaN(depth)) return rod.lead || '';
-  const lure = lureByName(rod.lure);
-  if (!lure) return Math.round((depth > 0 ? depth : 20) * 4.0);
+  const bought = lureByName(rod.lure);
+  if (!bought) return Math.round((depth > 0 ? depth : 20) * 4.0);
+  // A BAIT THAT ONLY FISHES BEHIND A WEIGHT GETS THE WEIGHT THAT IS TIED ON. Ryan fishes the
+  // flutter spoon behind 2oz and nothing else -- "a 3/4oz spoon unweighted at 2mph is a surface
+  // lure" -- so a lead worked out for a bare one is a lead for a rig that does not exist. The
+  // Spread tab and the planner must not disagree about the same rod: `fitInlineWeight` in
+  // plan-assemble.js starts from the same rigged weight for the same reason.
+  const lure = requiresInlineWeight(bought.type) && !(Number(bought.inlineWeightOz) > 0)
+    ? { ...bought, inlineWeightOz: RIGGED_TROLLING_WEIGHT_OZ }
+    : bought;
   // A paddle tail has no weight of its own -- the jighead is the weight, and lead scales by
   // w^-0.4, so a 1/4oz head needs ~74% more line than a 1oz for the same depth. Without pairing
   // first, `leadForDepth` sees weightOz null, `applyWeight` short-circuits, and every size of
@@ -252,7 +261,7 @@ export function autoCalculateLead(rod, speedMph) {
  * "cannot reach" when the hook-size cap is what is binding.
  */
 export function jigheadForRod(rod, speedMph) {
-  const lure = lureByName(rod.lure);
+  const lure = lureByName(rod.lure);   // paddle tails only; a spoon never reaches the head picker
   const depth = parseFloat(rod.depth);
   if (!lure || isNaN(depth)) return null;
   return jigheadForSwimbait(lure, depth, speedMph,

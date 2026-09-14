@@ -24,14 +24,23 @@
 // fish.
 import { readFileSync } from 'node:fs';
 import { describe, it, expect } from './expect-shim.mjs';
-import { depthWindow, leadForDepth, canReachDepth } from '../js/data/lure-knowledge.js';
+import { depthWindow, leadForDepth, canReachDepth,
+         requiresInlineWeight } from '../js/data/lure-knowledge.js';
 import { buildPlanRequest } from '../js/modules/plan-prompt.js';
 import { TACKLE_INVENTORY } from '../js/data/tackle-inventory.js';
 
 const byName = (n) => TACKLE_INVENTORY.find((l) => l.name === n) || null;
 const DD3 = TACKLE_INVENTORY.find((l) => l.type === 'crankbait_dd3');
-const LEADED = TACKLE_INVENTORY.find((l) => l.type === 'lipless_crank' || l.type === 'flutter_spoon')
-            || TACKLE_INVENTORY.find((l) => depthWindow(l, { leadFt: 100, speedMph: 2 }).mode === 'lead');
+// THE STAND-IN FOR "A BAIT WHOSE DEPTH IS LEAD AND SPEED" MUST NOT BE ONE THAT NEEDS A RIG.
+//
+// It was the flutter spoon, picked by a `lipless_crank` type that has never existed followed by
+// `|| flutter_spoon`. From 2026-09-14 a bare flutter spoon correctly reports `needs_weight` and
+// no depth at all -- Ryan: "a 3/4oz spoon unweighted at 2mph is a surface lure" -- so it is the
+// one bait in the box that cannot stand for the general case. The predicate now says what it
+// means, and the spoon gets its own assertions at the bottom of this file.
+const LEADED = TACKLE_INVENTORY.find((l) => (l.trollable || l.castable)
+  && !requiresInlineWeight(l.type)
+  && depthWindow(l, { leadFt: 100, speedMph: 2 }).mode === 'lead');
 
 describe('a bill and a weight are different claims and now say so', () => {
   it('a rated depth is marked as a claim', () => {
@@ -91,6 +100,7 @@ describe('the model is told how a bait reaches a depth, not left to read the lab
 
   it('says a weighted bait is set by lead and speed, with no ceiling', () => {
     const p = prompt();
+    expect(LEADED.type).not.toBe('flutter_spoon');   // see the note on LEADED
     expect(p).toMatch(/depth set by LEAD and SPEED/);
     expect(p).toMatch(/More line out or slower is deeper/);
     expect(p).toMatch(/No ceiling/);
@@ -179,5 +189,43 @@ describe('the baits that cannot work on a leg are named before the choice, not a
     expect(p).toMatch(/THE LIST OF BAITS THAT WILL NOT CLEAR IT/);
     expect(p).toMatch(/the same lure\s+may be the right answer on the next leg/);
     expect(p).toMatch(/Nothing appears on it that has any way of working/);
+  });
+});
+
+// ── THE THIRD KIND OF CLAIM: A DEPTH THAT DOES NOT EXIST UNTIL THE RIG DOES ────────────────────
+//
+// Ryan, 2026-09-14, on a plan that put his 3/4oz Nichols at 22 ft: "is the spoon depths assuming
+// that i am using the 2oz trolling weight rig? because a 3/4oz spoon unweighted at 2mph is a
+// surface lure not these depths??? unless i am thinking wrong?"
+//
+// A rated depth is the maker's claim. A lead-controlled depth is the app's arithmetic. This is
+// neither: it is a question that has no answer until a weight is on the line, and answering it
+// with a number was the failure.
+describe('a bait that only fishes behind a weight says so instead of guessing', () => {
+  const SPOON = TACKLE_INVENTORY.find((l) => l.type === 'flutter_spoon');
+
+  it('bare, it has no running depth at any lead', () => {
+    const w = depthWindow(SPOON, { speedMph: 2.0, leadFt: 120 });
+    expect(w.mode).toBe('needs_weight');
+    expect(w.min).toBe(null);
+    expect(w.max).toBe(null);
+  });
+
+  it('rigged, it is an ordinary lead-controlled bait again', () => {
+    const w = depthWindow({ ...SPOON, inlineWeightOz: 2 }, { speedMph: 2.0, leadFt: 70 });
+    expect(w.mode).toBe('lead');
+    expect(w.claimed).toBe(false);
+    expect(w.max).toBe(22);
+  });
+
+  it('and the prompt tells the model, instead of letting it read the 3/4oz on the label', () => {
+    const p = buildPlanRequest({
+      water: 'Lake Wateree, SC', ramp: 'Clearwater Cove', date: '2026-09-14',
+      launchTime: '06:00', returnTime: '15:00', species: ['Striped Bass'], conditions: {},
+      tackle: [SPOON.name], trollable: [SPOON.name], lureByName: byName, candidates: [],
+    }).user;
+    expect(p).toMatch(/ONLY fishes behind an inline trolling weight/);
+    expect(p).toMatch(/planing surface/);
+    expect(p.includes('depth set by its BILL')).toBe(false);   // the branch it used to fall into
   });
 });

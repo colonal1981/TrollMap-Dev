@@ -142,10 +142,16 @@ function rodSlotHtml(rod, cardIdx, slotIdx) {
   // jighead swimbait fell through the test, so the one rig whose depth is SET by the head weight
   // was the one rig that never showed it. The gate is gone: if a rod has a frame, a head or a
   // trailer, it says so. An A-rig with all three reads exactly as it always did.
+  //
+  // `Weight:` is the same fix one rig further out. A flutter spoon's depth is set by the inline
+  // trolling weight ahead of it, and until 2026-09-14 no card anywhere said there was one --
+  // which is how a plan came to print "70 ft of lead puts it at 22 ft" beside a bait labelled
+  // 3/4oz, with the 2oz that makes that true nowhere on the page.
   const rigParts = [
-    rod.arigWeight  ? `Frame: ${rod.arigWeight}`    : '',
-    rod.jigWeight   ? `Head: ${rod.jigWeight}`      : '',
-    rod.trailerSize ? `Trailer: ${rod.trailerSize}` : '',
+    rod.arigWeight   ? `Frame: ${rod.arigWeight}`    : '',
+    rod.inlineWeight ? `Weight: ${rod.inlineWeight} inline` : '',
+    rod.jigWeight    ? `Head: ${rod.jigWeight}`      : '',
+    rod.trailerSize  ? `Trailer: ${rod.trailerSize}` : '',
   ].filter(Boolean).join(' · ');
   const arigLine = rigParts
     ? `<div style="font-size:10px;color:var(--muted);margin-top:2px">${esc(rigParts)}</div>`

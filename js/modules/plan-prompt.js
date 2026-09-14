@@ -738,6 +738,23 @@ export function buildPlanRequest(o) {
     const name = promptSafeTackleName(real);
     const w = depthWindow(lure, { speedMph: 2.0, leadFt: null });
     if (w.mode === 'none') return null;                       // the CAST ONLY block says it better
+
+    // A BAIT THAT ONLY FISHES BEHIND A TROLLING WEIGHT MUST SAY SO HERE, OR THE MODEL GUESSES.
+    //
+    // It guessed. Ryan's 2026-09-14 plan had the model declare `runsDepthFt: [10,16]` for the
+    // 3/4oz Nichols; the app computed 18-22 for the same lead and overruled it, and the two
+    // numbers were about two different rigs — the model's about a bare spoon, the app's about
+    // one behind 2oz, and neither said which. Without this branch `depthWindow` returns
+    // mode 'needs_weight' with null ends and the note below would tell the model a flutter
+    // spoon's depth is set by its BILL and that it runs null to null feet.
+    if (w.mode === 'needs_weight') {
+      return `${name} — this bait ONLY fishes behind an inline trolling weight, and the app `
+           + `fits it (Ryan owns 1, 2 and 3 oz; the 2 oz is what is tied on). Bare it is a `
+           + `planing surface and rides just under the top at any lead, so do not put one on a `
+           + `rod expecting it to sink on its own. Say what depth you want it at and leave the `
+           + `weight and the lead to the app — a depth you quote for this bait without a weight `
+           + `behind it is a number about a lure that is skipping along the top.`;
+    }
     if (w.mode === 'lead') {
       // A PADDLE TAIL HAS NO WEIGHT UNTIL A HEAD IS ON IT, and the model was never told so. It
       // picked 60 ft of lead for Ryan's 4.6" swimbait on his 2026-08-30 Wateree plan — a number

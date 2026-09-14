@@ -1,6 +1,7 @@
 import { describe, it, expect } from './expect-shim.mjs';
-import { TACKLE_INVENTORY } from '../js/data/tackle-inventory.js';
-import { LURE_KNOWLEDGE, LURE_COLORS, depthWindow, leadForDepth, canReachDepth } from '../js/data/lure-knowledge.js';
+import { TACKLE_INVENTORY, RIGGED_TROLLING_WEIGHT_OZ } from '../js/data/tackle-inventory.js';
+import { LURE_KNOWLEDGE, LURE_COLORS, depthWindow, leadForDepth, canReachDepth,
+         requiresInlineWeight } from '../js/data/lure-knowledge.js';
 import { TYPE_LABELS } from '../js/modules/tackle-inventory-ui.js';
 import { FISHING_STYLE } from '../js/data/fishing-style-profile.js';
 
@@ -19,7 +20,24 @@ import { FISHING_STYLE } from '../js/data/fishing-style-profile.js';
  * imagined.
  */
 
-const types = [...new Set(TACKLE_INVENTORY.map(l => l.type))];
+// THE INVENTORY HOLDS HARDWARE AS WELL AS BAITS, and only the baits have lure behaviour.
+//
+// Jigheads are in both lists: a jighead with a plastic on it IS a bait, so it keeps its
+// LURE_KNOWLEDGE block, its colour and its label. An inline trolling weight is never fished --
+// `trollable:false, castable:false` -- so a colour or a species score for one would be a fact
+// about nothing. It is excluded by the SAME test the two bag builders use, not by name, so
+// hardware added later is excluded automatically and a bait never can be.
+const isBait = (l) => l.trollable || l.castable;
+const baits = TACKLE_INVENTORY.filter(isBait);
+const types = [...new Set(baits.map(l => l.type))];
+
+describe('hardware is in the box but is not a bait', () => {
+  it('every entry is either fishable or hardware, never neither by accident', () => {
+    const hardware = TACKLE_INVENTORY.filter(l => !isBait(l));
+    expect(hardware.map(l => l.type).sort()).toEqual(['trolling_weight', 'trolling_weight',
+                                                      'trolling_weight']);
+  });
+});
 const trollable = TACKLE_INVENTORY.filter(l => l.trollable);
 
 // ── Debt ledgers ────────────────────────────────────────────────────────────
@@ -218,8 +236,13 @@ describe('depth model — one source, four modes', () => {
   });
 
   it('lead-controlled baits round-trip depth -> lead -> depth', () => {
-    for (const l of trollable) {
-      if (LURE_KNOWLEDGE[l.type].depthMode !== 'lead') continue;
+    for (const bought of trollable) {
+      if (LURE_KNOWLEDGE[bought.type].depthMode !== 'lead') continue;
+      // A BAIT THAT ONLY FISHES BEHIND A WEIGHT IS RUN WITH ONE HERE, not skipped. Skipping it
+      // would drop the flutter spoon out of the only round-trip check in the suite; running it
+      // bare asks a planing bait for a depth, which since 2026-09-14 correctly answers `null`.
+      const l = requiresInlineWeight(bought.type)
+        ? { ...bought, inlineWeightOz: RIGGED_TROLLING_WEIGHT_OZ } : bought;
       for (const d of [8, 15, 25, 35]) {
         const lead = leadForDepth(l, d, 1.8);
         const back = depthWindow(l, { speedMph: 1.8, leadFt: lead });

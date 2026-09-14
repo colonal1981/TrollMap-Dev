@@ -88,16 +88,25 @@ describe('capBaitDepth — too deep was caught and too shallow was invisible', (
 });
 
 describe('a rated depth came off a box, so the model may not restate it', () => {
+  // THE WARNING USED TO END "going with the measured number" AND NOTHING MEASURED IT.
+  //
+  // Changed 2026-09-14. lure-knowledge.js says three times in its own header that the ratios are
+  // "working values, not measurements" and "STILL UNCALIBRATED"; this line then called the output
+  // measured and used that standing to overrule the model. The app's number is still the one to
+  // go with -- it is computed from the lead, the speed and the rig rather than recalled -- and it
+  // now says which of those it was computed from.
   it('flags the model narrowing a 6-12 bait to 6-10', () => {
     const { warnings } = build(WATER_ONLY, { runsDepthFt: [6, 10] });
-    const w = warnings.find((x) => /going with the measured number/.test(x));
+    const w = warnings.find((x) => /going with the app's number/.test(x));
     expect(!!w).toBe(true);
     expect(w).toMatch(/says it runs to 10 ft/);
+    expect(w).toMatch(/worked from /);
+    expect(/measured/.test(w)).toBe(false);
   });
 
   it('accepts the rated pair stated exactly', () => {
     const { warnings } = build(WATER_ONLY, { runsDepthFt: [6, 12] });
-    expect(warnings.some((x) => /going with the measured number/.test(x))).toBe(false);
+    expect(warnings.some((x) => /going with the app's number/.test(x))).toBe(false);
   });
 
   it('records the app number on every leg, not only the ones that warn', () => {
