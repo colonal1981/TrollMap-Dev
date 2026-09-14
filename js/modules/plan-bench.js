@@ -26,6 +26,7 @@
 
 import { runSmartPlanV2, readInputs } from './smart-plan-v2-wiring.js';
 import { splitPrompt, droppedFromAnswer, candidatesFromPrompt } from '../utils/bench-read.js';
+import { benchJson, benchHtml } from '../utils/bench-export.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -107,6 +108,61 @@ function render(r, mode) {
   box.innerHTML = html;
 }
 
+/* ================================================================================================
+ * THE TWO EXPORTS.
+ *
+ * Ryan, 2026-09-14: "can i get json and html export buttons on the bench... that way i do not have
+ * to copy and paste the whole json to you?"
+ *
+ * Two files because they answer two questions. The JSON is the WHOLE RUN — the prompt as sent, the
+ * model's raw answer, the args the app built from it, the assembled plan and every warning — which
+ * is the thing to hand over when something is wrong and nobody knows which side of the seam it is
+ * on. The HTML is the PAGE, the drawn plan included, which is the thing to open and read.
+ *
+ * The two builders themselves are in utils/bench-export.js, pure and testable without a browser --
+ * this file holds only the plumbing: which run is on the screen, and getting bytes onto the disk.
+ * ============================================================================================== */
+
+// The run these buttons export. `render()` has already drawn it; this is the same object, not a
+// re-run -- pressing export must never spend a model call or produce a DIFFERENT plan from the one
+// on screen.
+let lastRun = null;
+let lastMode = null;
+
+function stamp() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
+}
+
+/** A name that says which water and which run, because a folder of bench_1.json answers nothing. */
+function fileBase(inputs) {
+  const i = inputs || {};
+  const water = String(i.lakeName || 'no-water').toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  return `bench_${water}_${lastMode === 'bench' ? 'sent' : 'dryrun'}_${stamp()}`;
+}
+
+function download(name, text, type) {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Revoked on the next tick, not immediately: Firefox cancels an in-flight download if the URL
+  // dies inside the same task.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+/** Both buttons follow the run, so an export can never be of a plan that is not on the screen. */
+function setExportsEnabled(on) {
+  for (const id of ['benchJsonBtn', 'benchHtmlBtn']) {
+    const el = $(id);
+    if (el) el.disabled = !on;
+  }
+}
+
 async function run(mode) {
   const say = (m, bad) => {
     const el = $('benchStatus');
@@ -124,11 +180,15 @@ async function run(mode) {
   if (drawn) drawn.innerHTML = '';
   if (drawnHead) drawnHead.hidden = true;
   say(mode === 'bench' ? 'Building and sending…' : 'Building the input…');
+  setExportsEnabled(false);
   const r = await runSmartPlanV2(mode === 'bench' ? { bench: true } : { dryRun: true });
   // runSmartPlanV2 drew into #benchPlan already when it had a plan to draw; the heading only
   // appears if something actually landed there.
   if (drawnHead && drawn) drawnHead.hidden = !drawn.firstChild;
   render(r, mode);
+  lastRun = r || null;
+  lastMode = mode;
+  setExportsEnabled(!!r);
   return r;
 }
 
@@ -148,6 +208,28 @@ export function wirePlanBench() {
       try { await run('bench'); } finally { a && (a.disabled = false); b.disabled = false; }
     });
   }
+  for (const [id, make, ext, type] of [
+    ['benchJsonBtn', (i) => benchJson(lastRun, lastMode, i), 'json', 'application/json'],
+    ['benchHtmlBtn', (i) => benchHtml(lastMode, i), 'html', 'text/html'],
+  ]) {
+    const el = $(id);
+    if (!el || el.dataset.wired) continue;
+    el.dataset.wired = '1';
+    el.addEventListener('click', () => {
+      if (!lastRun) return;
+      let inputs = null;
+      try { inputs = readInputs(); } catch { inputs = null; }
+      try {
+        download(`${fileBase(inputs)}.${ext}`, make(inputs), `${type};charset=utf-8`);
+      } catch (e) {
+        // SAY IT, do not fail quietly -- a download that silently did not happen looks exactly
+        // like a browser that swallowed it.
+        const st = $('benchStatus');
+        if (st) { st.textContent = `Export failed: ${e && e.message}`; st.style.color = 'var(--warn)'; }
+      }
+    });
+  }
+
   const s = $('benchInputs');
   if (s) {
     const i = readInputs();

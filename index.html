@@ -1396,6 +1396,14 @@
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0">
           <button id="benchBuildBtn" class="primary">📥 Build the input</button>
           <button id="benchSendBtn">📤 Build it and send it</button>
+          <!-- TWO FILES, ONE RUN. Ryan, 2026-09-14: "can i get json and html export buttons on
+               the bench... that way i do not have to copy and paste the whole json to you?"
+               The JSON is the whole run — prompt, answer, args, plan, warnings. The HTML is this
+               page as it stands, the drawn plan included, so it opens on its own. Both are
+               disabled until a run exists; an export button that writes an empty file is worse
+               than one that is greyed out. -->
+          <button id="benchJsonBtn" disabled>⬇ JSON</button>
+          <button id="benchHtmlBtn" disabled>⬇ HTML</button>
         </div>
         <div id="benchStatus" class="muted" style="font-size:12px;min-height:16px"></div>
         <!-- THE PLAN, DRAWN BY THE RENDERER THE PLAN TAB USES. A SIBLING of #benchOut, not a
