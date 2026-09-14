@@ -969,6 +969,79 @@ def load_lakes(args, registry):
             print("nothing to research -- every water the tab offers already has a profile")
         return [(r["name"], args.state or r.get("state") or "SC", r.get("aliases") or [r["name"]])
                 for r in rows]
+    if getattr(args, "needs_limnology", False):
+        # WATERS WHOSE STORED PROFILE HOLDS A NULL THERMOCLINE WITH NO REASON BESIDE IT.
+        #
+        # Ryan, 2026-09-14: "fix it so that it runs what needs to run". The list was being pasted
+        # as thirty --lake lines, which is a stale list the moment one of them is filled, and the
+        # answer to "which waters still need this" belongs in the program that acts on it.
+        #
+        # A NULL WITH NO REASON IS THE TARGET, not a null. "We asked and the data cannot answer"
+        # and "nobody has asked" are different claims: the first is an answer and the second is
+        # work. So a water drops out of this list the moment it gets EITHER a depth or a reason,
+        # which means the list shrinks on its own and empty means done.
+        #
+        # THE MIRROR IS THE SOURCE, and it can be stale -- research_lakes.py writes it on every
+        # save and mirror_research_profiles.py syncs it from R2, so the run says how old it is
+        # rather than assuming. Reading R2 per water instead would be one network call per water
+        # to decide whether to make a network call for that water.
+        import glob as _glob
+        prof_dir = os.path.join(args.registry, "_research_profiles")
+        files = [p for p in sorted(_glob.glob(os.path.join(prof_dir, "*.json")))
+                 if not p.endswith("_manifest.json")]
+        if not files:
+            print(f"!! no mirrored profiles under {prof_dir} -- run mirror_research_profiles.py")
+            return []
+        newest = max(os.path.getmtime(p) for p in files)
+        age_h = (time.time() - newest) / 3600.0
+        by_display = {}
+        for _slug, _row in idx.items():
+            _dn = (_row.get("display_name") or _row.get("name") or _slug).strip().lower()
+            by_display[_dn] = (_row.get("display_name") or _row.get("name") or _slug, _row)
+        picked, unbound, has_reason, has_value = [], [], 0, 0
+        for p in files:
+            try:
+                with open(p, encoding="utf-8") as f:
+                    prof = json.load(f)
+            except Exception as e:
+                print(f"!! unreadable mirror {os.path.basename(p)}: {e}")
+                continue
+            th = ((prof.get("limnology") or {}).get("thermocline") or {})
+            if not isinstance(th, dict):
+                continue
+            if th.get("summerDepthFt") is not None:
+                has_value += 1
+                continue
+            if th.get("note"):
+                has_reason += 1
+                continue
+            nm = (prof.get("lakeName") or "").strip()
+            hit = by_display.get(nm.lower())
+            if not hit:
+                # The unbound mirrors -- a profile whose lakeName matches no water the app offers.
+                # --lake could not resolve these either; naming them is the point, since silently
+                # dropping them is how "34 need this" and "29 ran" stop agreeing.
+                unbound.append(nm or os.path.basename(p))
+                continue
+            name = hit[0]
+            picked.append((name, args.state or hit[1].get("state") or "SC",
+                           alt_names.get(name.strip().lower()) or [name]))
+        print(f"limnology: {has_value} water(s) already carry a depth, {has_reason} carry a reason, "
+              f"{len(picked)} still hold a null with neither")
+        print(f"           read from {prof_dir} ({len(files)} profiles, newest "
+              f"{age_h:.1f} h old)")
+        if age_h > 48:
+            print("           !! that mirror is over two days old -- "
+                  "mirror_research_profiles.py refreshes it from R2 before this decides anything")
+        if unbound:
+            print(f"           {len(unbound)} profile(s) SKIPPED -- lakeName matches no water the "
+                  f"app offers, so --lake could not resolve them either:")
+            for nm in unbound:
+                print(f"              - {nm}")
+        if not picked:
+            print("nothing to do -- every bound profile has a thermocline depth or a stated reason")
+        return picked
+
     if args.lake:
         # THE STATE COMES OFF THE REGISTRY, NOT OFF A DEFAULT. A one-lake run is how the cold-run
         # cost gets measured, and the cold lakes are in GA, NC and TN -- Lanier, Townsend, Watauga.
@@ -1101,6 +1174,12 @@ def main():
     ap.add_argument("--todo", action="store_true",
                     help="research exactly what the app's Research tab lists as not researched "
                          "yet, via Scripts/research_todo.mjs. This is the one to use.")
+    ap.add_argument("--needs-limnology", action="store_true",
+                    help="run exactly the waters whose stored profile holds a null thermocline "
+                         "with no reason beside it, read from the mirrored profiles. Implies "
+                         "--limnology-only: selecting waters whose limnology needs re-merging and "
+                         "then paying for the document chain makes no sense. The list re-derives "
+                         "every run, so it shrinks on its own and empty means done.")
     ap.add_argument("--state", default=None,
                     help="override the state for --lake runs; the registry supplies it otherwise")
     ap.add_argument("--min-acres", type=int, default=1000,
@@ -1184,6 +1263,10 @@ def main():
                        "in_progress": partial, "done": len(results), "of": len(lakes),
                        "results": results}, f, indent=2)
         os.replace(tmp, a.report)          # never leave a half-written report to be read
+
+    if a.needs_limnology and not a.limnology_only:
+        a.limnology_only = True
+        print("--needs-limnology implies --limnology-only (documents and the agent are skipped)")
 
     def work(pair):
         name, st, alts = pair
