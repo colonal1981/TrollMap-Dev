@@ -193,7 +193,13 @@ describe('the lead belongs to the leg, not to the day', () => {
 // cast-only bait on a troll rod look like a plan.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 describe('a cast-only bait has no trolling depth', () => {
-  const FLUKE = TACKLE_INVENTORY.find((l) => l.name === 'Fluke / Soft Jerkbait');
+  // WAS THE FLUKE, AND IS THE SENKO SINCE 2026-09-14. Ryan: "rig it up with either a belly weight
+  // or a jighead and now it does troll", so the fluke moved to `swimbait_paddle` where the head is
+  // the weight. The BEHAVIOUR this block tests -- a cast-only bait reporting no trolling depth
+  // rather than inventing one -- is unchanged and now belongs to the baits that really are
+  // cast-only. The Senko is the cleanest of them: weighted it tracks fine and simply does nothing,
+  // so it is cast-only on action, not on buoyancy.
+  const FLUKE = TACKLE_INVENTORY.find((l) => l.id === 'cast_stickbait');
 
   // WHAT CHANGED 2026-09-14, AND WHAT DID NOT.
   //
@@ -204,8 +210,8 @@ describe('a cast-only bait has no trolling depth', () => {
   // depth at any lead and a troll rod carrying one is still a rod fishing nothing. The original
   // quote behind all of this carried the qualifier the old flag dropped: "and if it is WEIGHTLESS
   // you think a fluke at 2mph is even going to sink?"
-  it('is trollable when ballasted, and its type still says nothing about depth', () => {
-    expect(FLUKE.trollable).toBe(true);
+  it('is cast-only in the inventory, which is where this starts', () => {
+    expect(FLUKE.trollable).toBe(false);
     expect(FLUKE.type).toBe('cast_only');
   });
 

@@ -339,7 +339,14 @@ export const LURE_KNOWLEDGE = {
     structure: ['deep_channel','channel_ledge','hump','suspended_bait','dam_face','thermocline_zone','open_water'],
     speed:     { min:1.5, ideal:2.2, max:3.0 },
     speedIsHardLimit: false,
-    technique: 'Dense wire-through chrome body. Drops fast and HOLDS depth at speed instead of planing up, so it trolls deep on a long lead as well as it jigs vertically. Depth is lead and speed, not a dive lip.',
+    // RYAN HAS TROLLED THESE AND THAT IS THE SOURCE. 2026-09-14, on an AI-written chart claiming a
+    // centre-weighted vertical jig spins out and twists line above 1 mph: "I have trolled them...
+    // but i can't tell if they are spinning in the water or not... didn't see much line twist i
+    // would leave them as trollable." Two AI sentences disagreed about this bait -- the chart's and
+    // the one below -- and neither had a source. His account does, so it stands. It is also worth
+    // noting he applied the same test to the chart's other claims: "google ai tried to tell me that
+    // you can't troll buzzbaits either and i didn't agree with that one."
+    technique: 'Dense wire-through chrome body. Drops fast and HOLDS depth at speed instead of planing up, so it trolls deep on a long lead as well as it jigs vertically. Depth is lead and speed, not a dive lip. Trolled by Ryan without noticeable line twist, 2026-09-14.',
     presentationSignature: { noise:'silent', flash:'high', profile:'baitfish', water_column:'bottom', cover_friendly:['open_water','rock'] }
   },
 
@@ -1347,8 +1354,21 @@ export function trollableBaits(inventory, o = {}) {
     const k = LURE_KNOWLEDGE[bought.type];
     if (!k) { say('no behaviour is recorded for this type'); continue; }
 
-    const lure = requiresInlineWeight(bought.type) && !(Number(bought.inlineWeightOz) > 0)
+    let lure = requiresInlineWeight(bought.type) && !(Number(bought.inlineWeightOz) > 0)
       ? { ...bought, inlineWeightOz: Number(o.inlineWeightOz) || null } : bought;
+
+    // A SOFT PLASTIC ON A HEAD HAS NO MASS UNTIL THE HEAD IS ON IT, and once flukes and speedworms
+    // joined the paddle tails under this type there were seven entries here with `weightOz: null`
+    // and three different length caps. Unfitted they all quoted the SAME lead -- a 3.5" fluke and a
+    // 7" speedworm cannot carry the same head, so one number for both is wrong in the direction
+    // Ryan reads. `jigheadForSwimbait` is the picker that has priced every paddle tail since
+    // 2026-08-30; the box comes in as an argument, because this file keeps no copy of it.
+    if (Array.isArray(o.jigheads) && o.jigheads.length
+        && k.jigheadOzByLengthIn && !(Number(lure.weightOz) > 0)) {
+      const fit = jigheadForSwimbait(lure, hasFloor ? floor : 20, speedMph,
+                                     { jigheads: o.jigheads, maxLeadFt });
+      if (fit && Number(fit.weightOz) > 0) lure = { ...lure, weightOz: fit.weightOz };
+    }
 
     // ── A RATED BAIT COVERS THE BAND ON ITS BOX AND NOTHING MOVES IT ──────────────────────────
     if (k.depthMode === 'rated' || k.depthMode === 'surface') {
@@ -1410,6 +1430,11 @@ export function trollableBaits(inventory, o = {}) {
     legal.push({ ...bought, covers: [0, Math.round(deepest * 10) / 10],
                  leadFt: cut ? toFloor : maxLeadFt,
                  inlineWeightOz: lure.inlineWeightOz || null,
+                 // THE HEAD THIS BAND ASSUMES, said rather than left implicit. Without it two
+                 // entries differing only in length print two different leads for no visible
+                 // reason.
+                 jigheadOz: (!(Number(bought.weightOz) > 0) && Number(lure.weightOz) > 0)
+                   ? lure.weightOz : null,
                  controlledBy: 'lead length + speed + weight' });
   }
   return { legal, refused };
@@ -1558,15 +1583,27 @@ export const ACTION_SOURCE = Object.freeze({
   // off the pull and nothing about that needs a rod tip.
   tw_buzzbait: 'the pull',
   // "rig it up with either a belly weight or a jighead and now it does troll". Ballasted, a fluke
-  // rolls and glides off the tow. Unweighted it planes, which is the 2026-08-30 quote — and that
-  // is a fact about the RIG, which `requiresBallastToTroll` below carries.
-  cast_fluke: 'the pull',
+  // rolls and glides off the tow; unweighted it barrel-rolls and twists the leader, which is the
+  // 2026-08-30 quote and a fact about the RIG, not the bait. Since 2026-09-14 the ballast is in
+  // the inventory instead of in a comment: these are `swimbait_paddle` entries with
+  // `weightOz: null`, so the head IS the weight and the existing fitter prices it.
+  cast_fluke_3in: 'the pull',
+  cast_fluke_4in: 'the pull',
+  cast_fluke_5in: 'the pull',
+  // "they actually make paddletail style worms so i argue those could be trollable" — a swimming
+  // tail works off the tow, which is the whole test.
+  cast_worm_speed_6in: 'the pull',
+  cast_worm_speed_7in: 'the pull',
 
   // ── 'the rod': the retrieve IS the action ───────────────────────────────────────────────────
   // "the action of the claws or tails when the rod tip moves is what really makes them work same
-  // as the stick bait"
+  // as the stick bait". The Senko and the straight-tail worm fail for a softer reason than the
+  // creature bait does: ballasted they track straight and simply do nothing, so they are cast-only
+  // because they are BORING rather than because they foul. That distinction is worth keeping --
+  // boring is a call Ryan can overrule on a slow day, and a barrel-rolling leader is not.
   cast_creature: 'the rod',
   cast_stickbait: 'the rod',
+  cast_worm_straight: 'the rod',
   // "ned rig and football jigs are for casting primarily i agree there"
   jig_finesse_ned: 'the rod',
   jig_football: 'the rod',
@@ -1574,17 +1611,17 @@ export const ACTION_SOURCE = Object.freeze({
   tw_popper: 'the rod',
   tw_frog: 'the rod',
 
-  // ── NOT RULED ON ────────────────────────────────────────────────────────────────────────────
-  // `cast_worm` is deliberately absent. Ryan: "the worm it depends... they actually make paddletail
-  // style worms so i argue those could be trollable", then "but honestly i am not sure lol". One
-  // entry covering both a ribbon-tail (rod) and a paddle-tail (pull) cannot be ruled on until the
-  // box says which is in it. Absent means cast-only AND named, not silently decided.
-});
-
-/** Baits that work off the pull but only once something has been added to sink them. */
-export const REQUIRES_BALLAST_TO_TROLL = Object.freeze({
-  // "if it is weightless you think a fluke at 2mph is even going to sink?" It does not — it skis.
-  cast_fluke: true,
+  // ── AND THE ONE THAT WAS UNRULED IS NOW TWO BAITS ───────────────────────────────────────────
+  // `cast_worm` used to be absent from this table because Ryan could not rule on it: "the worm it
+  // depends... they actually make paddletail style worms", then "but honestly i am not sure lol".
+  // He was not undecided -- the ENTRY was covering two different objects. Splitting it into
+  // `cast_worm_straight` and the two speedworms answered it without anybody guessing.
+  //
+  // WHAT IS NOT IN HERE AND WHY. A T-rigged worm or creature. Ryan owns the gear -- "i do have the
+  // stuff to texas rig creatures and worms and have both" -- and has deliberately never entered
+  // them: "it is not something that is really used for striper or for trolling obviously". A
+  // sliding bullet weight pins the nose down and turns a drag into a snag hunt, so if one is ever
+  // added it is 'the rod'. Written here rather than added as an entry nothing uses.
 });
 
 /** 'the pull' | 'the rod' | null when nobody has ruled. */

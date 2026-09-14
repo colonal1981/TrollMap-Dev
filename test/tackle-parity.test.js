@@ -193,21 +193,17 @@ describe('depth model — one source, four modes', () => {
     }
   });
 
-  // THE FLUKE IS THE ONE EXCEPTION AND IT IS A KNOWN GAP, NOT A DRIFT.
+  // THE EXCEPTION LIST IS EMPTY, AND IT WAS EMPTIED THE RIGHT WAY.
   //
-  // Ryan, 2026-09-14: "rig it up with either a belly weight or a jighead and now it does troll".
-  // So `trollsBehindTheBoat()` rules it 'the pull' and the derived flag is true -- while its type
-  // is `cast_only`, `depthMode: 'none'`, SHARED with the Senko, the worm and the creature bait,
-  // which he ruled the other way. A type named after the conclusion cannot hold two answers, and
-  // splitting it means three or four new knowledge blocks each needing species/season/clarity
-  // scores nobody has measured.
-  //
-  // So the invariant is narrowed rather than deleted, and it is narrowed to exactly one id with
-  // the reason attached. `trollableBaits()` refuses the fluke saying precisely this, so nothing
-  // downstream treats it as placeable. When the type is split, this exception goes.
-  const TROLLS_BUT_CANNOT_BE_PLACED = new Set(['cast_fluke']);
+  // For a few hours on 2026-09-14 this held `cast_fluke`: Ryan had ruled it trollable ("rig it up
+  // with either a belly weight or a jighead and now it does troll") while its type was `cast_only`,
+  // depthMode 'none', shared with three baits he ruled the other way. The fix was not to widen the
+  // invariant -- it was to file the fluke where its behaviour lives, `swimbait_paddle`, whose whole
+  // meaning is "soft plastic, the head IS the weight". The list stays here, empty, because an
+  // invariant with a documented escape hatch is how the next one gets waved through.
+  const TROLLS_BUT_CANNOT_BE_PLACED = new Set([]);
 
-  it('a mode-none type is never trollable in the inventory, except one known gap', () => {
+  it('a mode-none type is never trollable in the inventory', () => {
     // The two must agree or one of them is lying about the same bait.
     for (const l of TACKLE_INVENTORY) {
       if (LURE_KNOWLEDGE[l.type]?.depthMode !== 'none') continue;
@@ -215,8 +211,8 @@ describe('depth model — one source, four modes', () => {
     }
   });
 
-  it('the exception list stays ONE id, so it cannot become a habit', () => {
-    expect([...TROLLS_BUT_CANNOT_BE_PLACED]).toEqual(['cast_fluke']);
+  it('and the exception list is EMPTY, so nothing is riding on a waiver', () => {
+    expect([...TROLLS_BUT_CANNOT_BE_PLACED]).toEqual([]);
   });
 
   it('leadForDepth is monotonic in depth and never negative', () => {

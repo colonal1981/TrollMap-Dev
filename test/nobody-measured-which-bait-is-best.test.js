@@ -28,7 +28,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { trollableBaits, describeBait } from '../js/data/lure-knowledge.js';
-import { TACKLE_INVENTORY, RIGGED_TROLLING_WEIGHT_OZ } from '../js/data/tackle-inventory.js';
+import { TACKLE_INVENTORY, RIGGED_TROLLING_WEIGHT_OZ,
+         JIGHEADS_OWNED_OZ } from '../js/data/tackle-inventory.js';
 import { buildPlanRequest } from '../js/modules/plan-prompt.js';
 import { oxygenFloorFt } from '../js/modules/plan-inputs.js';
 
@@ -197,19 +198,33 @@ import { ACTION_SOURCE, actionSourceFor, trollsBehindTheBoat,
 
 const named = (n) => TACKLE_INVENTORY.find((l) => l.name === n);
 
-test('the rule is keyed by BAIT, because four of them share one type', () => {
-  // Senko, worm, creature and fluke are all `cast_only` — a type named after the conclusion. Ryan
-  // ruled them differently, so a type-keyed table physically could not hold his answer.
-  const ids = ['cast_stickbait', 'cast_worm', 'cast_creature', 'cast_fluke'];
-  assert.equal(new Set(ids.map((i) => TACKLE_INVENTORY.find((l) => l.id === i).type)).size, 1);
-  assert.equal(actionSourceFor('cast_fluke'), 'the pull');
-  assert.equal(actionSourceFor('cast_stickbait'), 'the rod');
+test('the rule is keyed by BAIT, because one entry was covering two objects', () => {
+  // Senko, worm, creature and fluke were ALL `cast_only` — a type named after the conclusion. Ryan
+  // ruled them differently, so a type-keyed table could not hold his answer. Three of them are
+  // still that type and are still cast-only; what changed is that the ones that DO troll moved to
+  // the type that models their behaviour instead of needing a new one.
+  const stillCastOnly = ['cast_stickbait', 'cast_worm_straight', 'cast_creature'];
+  assert.equal(new Set(stillCastOnly.map((i) =>
+    TACKLE_INVENTORY.find((l) => l.id === i).type)).size, 1);
+  for (const i of stillCastOnly) assert.equal(actionSourceFor(i), 'the rod');
+  for (const i of ['cast_fluke_5in', 'cast_worm_speed_7in']) {
+    assert.equal(actionSourceFor(i), 'the pull');
+    assert.equal(TACKLE_INVENTORY.find((l) => l.id === i).type, 'swimbait_paddle',
+      'a ballasted fluke or speedworm IS a soft plastic on a head — no new type invented');
+  }
 });
 
 test('his rulings, one for one', () => {
   assert.equal(named('Buzzbait').trollable, true, '"The buzzbait definitely trollable"');
-  assert.equal(named('Fluke / Soft Jerkbait').trollable, true,
-    '"rig it up with either a belly weight or a jighead and now it does troll"');
+  for (const n of ['Fluke 3.5" – Jighead', 'Fluke 4" – Jighead', 'Fluke 5" – Jighead']) {
+    assert.equal(named(n).trollable, true,
+      '"rig it up with either a belly weight or a jighead and now it does troll"');
+  }
+  for (const n of ['Speedworm 6" – Jighead', 'Speedworm 7" – Jighead']) {
+    assert.equal(named(n).trollable, true, '"they actually make paddletail style worms"');
+  }
+  assert.equal(named('Straight Tail Worm 6-7"').trollable, false,
+    'no swimming tail, no keel — it barrel-rolls bare and does nothing on a head');
   assert.equal(named('Stick Bait (Senko)').trollable, false,
     '"the action of the claws or tails when the rod tip moves is what really makes them work same '
     + 'as the stick bait"');
@@ -221,13 +236,23 @@ test('his rulings, one for one', () => {
   assert.equal(named('Hollow Body Frog').trollable, false, 'a walk is a rhythm');
 });
 
-test('the one he was not sure about is NOT decided — it is named', () => {
+test('the one he could not rule on was one ENTRY covering two baits', () => {
   // "the worm it depends... they actually make paddletail style worms so i argue those could be
-  // trollable", then "but honestly i am not sure lol".
-  assert.equal('cast_worm' in ACTION_SOURCE, false, 'absent, not guessed');
-  assert.equal(named('Plastic Worm').trollable, false, 'cast-only is the safe direction');
-  assert.deepEqual(unruledActionTypes(TACKLE_INVENTORY), ['cast_worm'],
-    'and it is reported so the gap gets answered instead of quietly assumed');
+  // trollable", then "but honestly i am not sure lol". He was not undecided — `Plastic Worm` was
+  // one row standing for a straight tail AND a swimming tail, and no single ruling is right for
+  // both. Splitting it answered the question without anybody guessing.
+  assert.equal('cast_worm' in ACTION_SOURCE, false, 'the ambiguous entry is gone, not ruled on');
+  assert.equal(TACKLE_INVENTORY.some((l) => l.id === 'cast_worm'), false);
+  assert.deepEqual(unruledActionTypes(TACKLE_INVENTORY), [],
+    'and nothing is left sitting on the default');
+});
+
+test('a T-rigged worm is not in the box, and the reason is written down anyway', () => {
+  // "i do have the stuff to texas rig creatures and worms and have both but it is not something
+  // that is really used for striper or for trolling obviously so i have never put them into the
+  // inventory". An entry nothing uses is a dead object; the rule for it lives in ACTION_SOURCE's
+  // own comment so a future add has an answer waiting.
+  assert.equal(TACKLE_INVENTORY.some((l) => /texas|t-rig/i.test(l.name)), false);
 });
 
 test('trollable is DERIVED — there is one answer, not a flag and a rule', () => {
@@ -248,7 +273,7 @@ test('the refusal quotes the rule instead of guessing about buoyancy', () => {
   const why = (n) => g.refused.find((r) => r.name === n).why;
   assert.match(why('Popper / Chugger'), /its action comes from the rod/);
   assert.doesNotMatch(why('Popper / Chugger'), /planes at trolling speed/);
-  assert.match(why('Plastic Worm'), /nobody has ruled on whether this one works off the pull/);
+  assert.match(why('Straight Tail Worm 6-7"'), /action comes from the rod/);
 });
 
 test('the buzzbait is now offered, on top where it belongs', () => {
@@ -257,11 +282,21 @@ test('the buzzbait is now offered, on top where it belongs', () => {
   assert.equal(b.covers[0], 0);
 });
 
-test('the fluke is a KNOWN GAP, not a denial', () => {
-  // The rule allows it; the depth model cannot place it, because `cast_only` is depthMode 'none'
-  // and it is shared with three baits that do not troll. That is a type to split, not a fact.
-  const why = gate().refused.find((r) => r.name === 'Fluke / Soft Jerkbait').why;
-  assert.match(why, /it trolls when it is ballasted/);
-  assert.match(why, /until that type is split per bait/);
-  assert.doesNotMatch(why, /cast only/);
+test('THE GAP IS CLOSED — the fluke is offered, and every length gets its own head', () => {
+  // It used to be refused with "its depth is filed under the shared 'cast_only' type". Filing it
+  // where its behaviour actually lives closed that without minting a type or a single new number.
+  //
+  // And each length is priced separately, which is the point of routing it through the head fitter:
+  // a 3.5" fluke will not carry what a 7" speedworm will, so one lead for both would be wrong in
+  // the direction Ryan reads.
+  const g = gate({ jigheads: JIGHEADS_OWNED_OZ });
+  const lead = (n) => g.legal.find((l) => l.name === n);
+  const small = lead('Fluke 3.5" – Jighead');
+  const big = lead('Speedworm 7" – Jighead');
+  assert.ok(small, 'the fluke is on the list now');
+  assert.ok(small.jigheadOz < big.jigheadOz, 'a small fluke takes a lighter head');
+  assert.ok(small.leadFt > big.leadFt, 'so it needs MORE line to reach the same depth');
+  for (const l of g.legal) {
+    if (l.jigheadOz) assert.ok(l.leadFt <= 120, `${l.name} quoted ${l.leadFt} ft`);
+  }
 });

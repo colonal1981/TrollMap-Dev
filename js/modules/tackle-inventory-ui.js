@@ -25,7 +25,10 @@ export const TYPE_LABELS = {
   lipless:              'Lipless Crankbait',
   blade_vibe:           'Blade Vibe',
   umbrella_rig:         'A-Rig',
-  swimbait_paddle:      'Paddle Tail Swimbait',
+  // Not only paddle tails since 2026-09-14: flukes and speedworms are filed here too, because the
+  // type models "soft plastic, the jighead IS the weight, depth from lead and speed" and all three
+  // are that same object. Labelling it by one of the three read as a mistake on the other two.
+  swimbait_paddle:      'Soft Plastic on a Jighead',
   flutter_spoon:        'Flutter Spoon',
   spinnerbait:          'Spinnerbait',
   chatterbait:          'Chatterbait',

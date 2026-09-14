@@ -269,14 +269,55 @@ const AS_BOUGHT = [
 
   { id:'tw_frog',        name:'Hollow Body Frog',       type:'topwater_cast', trollable:false, castable:true, weightOz:0.625 },
 
-  // ── Soft Plastics / Cast Only ─────────────────────────────────────────────
+  // ── Soft plastics that only fish on a rod stroke ──────────────────────────
+  //
+  // These three stay cast-only, and for two DIFFERENT reasons, which is worth keeping straight.
+  // The Senko and the straight-tail worm track perfectly well on a head -- they just have no
+  // swimming action when towed. Ryan, 2026-09-14, and the chart he brought agree: weighted, a
+  // Senko is "a dead plastic stick with no built-in swimming action when towed horizontally". It
+  // is cast-only because it is BORING, not because it fouls. The creature bait is the other
+  // reason: "the action of the claws or tails when the rod tip moves is what really makes them
+  // work". No rigging replaces a rod tip.
   { id:'cast_stickbait', name:'Stick Bait (Senko)',     type:'cast_only',     trollable:false, castable:true, weightOz:0.375 },
-
-  { id:'cast_worm',      name:'Plastic Worm',           type:'cast_only',     trollable:false, castable:true, weightOz:0.25 },
 
   { id:'cast_creature',  name:'Creature Bait / Craw',  type:'cast_only',     trollable:false, castable:true, weightOz:0.5 },
 
-  { id:'cast_fluke',     name:'Fluke / Soft Jerkbait', type:'cast_only',     trollable:false, castable:true, weightOz:0.375 },
+  // "the worm it depends... they actually make paddletail style worms so i argue those could be
+  // trollable". So the one `Plastic Worm` entry became two, because it was covering two objects:
+  // a straight tail, which barrel-rolls with no keel and does nothing with one, and a swimming
+  // tail, which is a swimbait by any other name. Sizes are his, 2026-09-14.
+  { id:'cast_worm_straight', name:'Straight Tail Worm 6-7"', type:'cast_only', trollable:false, castable:true, weightOz:0.25 },
+
+  // ── Soft plastics that troll once something gives them a keel ─────────────
+  //
+  // RYAN'S RULE, 2026-09-14: "those soft plastics only become non trollable if weightless or
+  // t-rigged". Ballasted by a jighead or a belly weight, a fluke and a speedworm are mechanically
+  // the same object as a paddle tail -- a soft body with its weight at the nose and a tail that
+  // works off the tow. So they are filed under the type that already models exactly that, and the
+  // jighead fitter that has priced every paddle tail since 2026-08-30 prices these too.
+  //
+  // FILED THERE RATHER THAN GIVEN NEW TYPES ON PURPOSE. A new type needs its own
+  // species/season/clarity block, and those are 386 numbers in this repo that nobody has measured.
+  // Reusing a type whose BEHAVIOUR is identical invents nothing.
+  //
+  // `weightOz: null` is the ballast statement: the head IS the weight. An unweightd or T-rigged
+  // one is a different rig and is not in this box -- Ryan owns the T-rig gear and has never
+  // entered it: "it is not something that is really used for striper or for trolling obviously".
+  // If it is ever added it is cast-only, and this is where the reason is written down.
+  { id:'cast_fluke_3in', name:'Fluke 3.5" – Jighead',
+    type:'swimbait_paddle', trollable:true, castable:true, weightOz:null, lengthIn: 3.5 },
+
+  { id:'cast_fluke_4in', name:'Fluke 4" – Jighead',
+    type:'swimbait_paddle', trollable:true, castable:true, weightOz:null, lengthIn: 4.0 },
+
+  { id:'cast_fluke_5in', name:'Fluke 5" – Jighead',
+    type:'swimbait_paddle', trollable:true, castable:true, weightOz:null, lengthIn: 5.0 },
+
+  { id:'cast_worm_speed_6in', name:'Speedworm 6" – Jighead',
+    type:'swimbait_paddle', trollable:true, castable:true, weightOz:null, lengthIn: 6.0 },
+
+  { id:'cast_worm_speed_7in', name:'Speedworm 7" – Jighead',
+    type:'swimbait_paddle', trollable:true, castable:true, weightOz:null, lengthIn: 7.0 },
 ];
 
 /**

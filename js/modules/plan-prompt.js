@@ -58,7 +58,8 @@
 import { levelSentence } from '../utils/water-conditions.js';
 import { depthWindow, jigheadRangeOz, trollableBaits,
          describeBait } from '../data/lure-knowledge.js';
-import { RIGGED_TROLLING_WEIGHT_OZ } from '../data/tackle-inventory.js';
+import { RIGGED_TROLLING_WEIGHT_OZ, JIGHEADS_OWNED_OZ } from '../data/tackle-inventory.js';
+import { ozLabel } from '../utils/oz.js';
 import { FISHING_STYLE } from '../data/fishing-style-profile.js';
 
 // Six rods. This never changes; it is the boat, not a setting.
@@ -838,6 +839,8 @@ export function buildPlanRequest(o) {
       oxygenFloorFt: hasFloor ? floor : null, speedMph: 2.0,
       maxLeadFt: FISHING_STYLE.rigging?.maxLeadFt,
       inlineWeightOz: RIGGED_TROLLING_WEIGHT_OZ,
+      // THE BOX, so a bait whose weight IS its jighead gets priced on a head that fits its length.
+      jigheads: JIGHEADS_OWNED_OZ,
     });
     if (!legal.length) return null;
     const rows = legal.slice().sort((a, b) => (a.covers[0] - b.covers[0]) || (a.covers[1] - b.covers[1]));
@@ -848,6 +851,7 @@ export function buildPlanRequest(o) {
             ? (l.leadIsSetback ? `, ${l.leadFt} ft behind the boat`
                                : `, ${l.leadFt} ft of lead at its deepest`) : ''}`
       + `${l.inlineWeightOz ? ` behind the ${l.inlineWeightOz}oz inline weight` : ''}`
+      + `${l.jigheadOz ? ` on a ${ozLabel(l.jigheadOz)} head` : ''}`
       + `${describeBait(l.type) ? ` — ${describeBait(l.type)}` : ''}`;
     const why = {};
     for (const r of refused) (why[r.why] = why[r.why] || []).push(promptSafeTackleName(r.name));
