@@ -56,7 +56,10 @@
 
 // ONE PLACE KNOWS HOW DEEP A BAIT RUNS, and until now the prompt was not one of its readers.
 import { levelSentence } from '../utils/water-conditions.js';
-import { depthWindow, jigheadRangeOz } from '../data/lure-knowledge.js';
+import { depthWindow, jigheadRangeOz, baitsThatReach,
+         describeBait } from '../data/lure-knowledge.js';
+import { RIGGED_TROLLING_WEIGHT_OZ } from '../data/tackle-inventory.js';
+import { FISHING_STYLE } from '../data/fishing-style-profile.js';
 
 // Six rods. This never changes; it is the boat, not a setting.
 export const ROD_IDS = ['R1', 'R2', 'R3', 'R4', 'R5', 'R6'];
@@ -812,6 +815,67 @@ export function buildPlanRequest(o) {
     }
     return out.length ? out : undefined;
   };
+  /* ── THE GATE ────────────────────────────────────────────────────────────────────────────────
+   *
+   * Ryan's plan of 2026-09-14 rigged six rods to fish a lake whose deepest oxygenated water is
+   * 16.4 ft, and FOUR of the six physically could not get there: a Whopper Plopper (works on
+   * top), a squarebill (bill runs it 2-5 ft), an MR crankbait (6-12 ft) and a Fluke, which is
+   * `trollable: false` in his own inventory and planes behind the boat. His question when he saw
+   * it: "why would i be fishing shallow for stripers".
+   *
+   * Nothing in the prompt stopped it because the prompt offered THE WHOLE BOX and then spent four
+   * hundred words asking nicely. The box is now filtered to what can reach the measured floor,
+   * and the reason each refusal was refused is printed -- so a bait missing from the list is
+   * visibly missing for a stated reason rather than quietly absent.
+   *
+   * EVERY INPUT TO IT HAS A SOURCE: the bill off the box, `trollable` out of his own inventory,
+   * the 120 ft he runs, the rig he ties, and a depth off a vertical cast. Not one of the 386
+   * species/season/clarity weights in lure-knowledge.js is consulted, here or anywhere down this
+   * path. Nobody measured those, and the app has no business laundering them into a ranking.
+   *
+   * IT DOES NOT RANK. The survivors are ordered by the LEAD each one needs -- which is a cost he
+   * pays in line out, not an opinion about which bait is better -- and described by what they
+   * physically are. Which one to tie on is his call.
+   *
+   * SILENT WITH NO MEASURED FLOOR. `oxygenFloorFt` is null until somebody casts the water, and a
+   * gate built on a number nobody measured is exactly the failure this replaces.
+   */
+  const gate = (() => {
+    const floor = Number(o.oxygenFloorFt);
+    if (!Number.isFinite(floor) || floor <= 0 || !Array.isArray(o.inventory) || !o.inventory.length) {
+      return null;
+    }
+    const { legal, refused } = baitsThatReach(o.inventory, {
+      targetFt: floor, speedMph: 2.0,
+      maxLeadFt: FISHING_STYLE.rigging?.maxLeadFt,
+      inlineWeightOz: RIGGED_TROLLING_WEIGHT_OZ,
+    });
+    if (!legal.length) return null;
+    const rows = legal.slice().sort((a, b) => a.reach.leadFt - b.reach.leadFt);
+    const line = (l) => `- ${promptSafeTackleName(l.name)} — ${l.reach.leadFt} ft of lead`
+      + `${l.reach.inlineWeightOz ? ` behind the ${l.reach.inlineWeightOz}oz inline weight` : ''}`
+      + `${describeBait(l.type) ? ` — ${describeBait(l.type)}` : ''}`;
+    const why = {};
+    for (const r of refused) (why[r.why] = why[r.why] || []).push(promptSafeTackleName(r.name));
+    return {
+      names: rows.map((l) => promptSafeTackleName(l.name)).join(', '),
+      block: `
+WHAT CAN ACTUALLY REACH ${floor} FT, WHICH IS THE DEEPEST OXYGENATED WATER ON THIS LAKE
+Measured, from a vertical cast. Every bait below can be worked at that depth inside the
+${FISHING_STYLE.rigging?.maxLeadFt} ft of lead he runs; every bait NOT below is off the list for a
+reason stated underneath. The number beside each one is the lead it takes to get there at 2 mph —
+a cost in line out, not a score. THEY ARE NOT RANKED. Nobody has measured which of these catches
+more fish on this water, this app included, and it will not pretend otherwise: pick on the
+description and say in the rod's \`why\` what you picked it for.
+
+${rows.map(line).join('\n')}
+
+NOT AVAILABLE TODAY, and why:
+${Object.entries(why).map(([w, names]) => `- ${names.join(', ')}: ${w}`).join('\n')}
+`,
+    };
+  })();
+
   const candidates = (o.candidates || []).map((c) => (
     c && Number.isFinite(Number(c.maxRunDepthFt))
       ? { ...c, cannotUse: cannotUseOn(Number(c.maxRunDepthFt)) }
@@ -866,7 +930,8 @@ Anything you expect to CHANGE during the day belongs on a snap rod if it can be 
 seconds, where a leader rod is a knot with wet hands.
 
 Colour is a free string; assume any colour combination is aboard. Use ONLY these exact lure names:
-${(o.tackle || []).map(promptSafeTackleName).join(', ') || '(inventory unavailable)'}
+${gate ? gate.names : ((o.tackle || []).map(promptSafeTackleName).join(', ') || '(inventory unavailable)')}
+${gate ? gate.block : ''}
 ${depthNotes.length ? `
 HOW EACH OF THESE GETS TO A DEPTH. There are only three ways to move a bait: the lead, the speed,
 or a different bait. Do not read a depth off a lure's NAME — the name is what the box says.

@@ -1266,6 +1266,143 @@ export const TERMINAL_CONNECTION = {
  */
 export const MAX_TIE_ONLY = 4;
 
+/* ==================================================================================================
+ * THE GATE — which baits can PHYSICALLY do today's job, out of facts that have a source.
+ *
+ * Ryan, 2026-09-14, after the app sent him to 40 ft of water with everything running 6-12 ft and
+ * then argued about it for an hour: "where do we get the information to build this the right way"
+ * and "0 of my catches have a lure attached to them".
+ *
+ * So there is no source, anywhere, for WHICH BAIT IS BEST. Not published -- nobody has run a trial
+ * on flutter spoons for Wateree stripers -- and not his own log, which is empty on the question.
+ * The 386 species/season/clarity weights in this file are a guess in a .js file and this function
+ * does not consult one of them.
+ *
+ * WHAT IT CONSULTS INSTEAD, every item of which has a name attached:
+ *
+ *   trollable            his own inventory, and his own words on the fluke: "if it is weightless
+ *                        you think a fluke at 2mph is even going to sink?" It does not. It planes.
+ *   ratedDepth           printed on the box. Ryan: "the only lure i have that has an actual max
+ *                        depth is the crankbaits... it doesn't matter how much line you let out".
+ *   maxLeadFt            120, his: "i dont think i would want much more than that dragging behind
+ *                        me with 2 lines out".
+ *   requiresInlineWeight his rig, 2026-09-14.
+ *   targetFt             MEASURED. The deepest oxygenated water, off a vertical cast.
+ *
+ * SINGLE-SIDED ON PURPOSE. It asks "can this bait be worked at `targetFt`", not "is this bait in
+ * some band". A band has a top, nobody measured the top, and inventing one is how "above 16.4 ft"
+ * came to mean "anywhere shallower" and put a Whopper Plopper in a striper plan.
+ *
+ * IT RANKS NOTHING. It returns who can do the job and, for everyone else, the sourced reason they
+ * cannot. What to tie on among the survivors is a fisherman's call, and the app has no business
+ * dressing a guess up as a recommendation.
+ * ================================================================================================ */
+
+/**
+ * @param {object[]} inventory   TACKLE_INVENTORY (or any subset)
+ * @param {object} o
+ * @param {number} o.targetFt    the depth the bait has to be able to work — measured, not derived
+ * @param {number} [o.speedMph=2.0]
+ * @param {number} [o.maxLeadFt=120]
+ * @param {number} [o.inlineWeightOz]  the trolling weight that is tied on, for baits that need one
+ * @returns {{legal: object[], refused: {name, why}[]}}
+ */
+export function baitsThatReach(inventory, o = {}) {
+  const targetFt = Number(o.targetFt);
+  const speedMph = Number(o.speedMph) || 2.0;
+  const maxLeadFt = Number(o.maxLeadFt) || 120;
+  const legal = [], refused = [];
+  if (!Number.isFinite(targetFt) || targetFt <= 0) {
+    // NO MEASURED DEPTH, NO GATE. Refusing the whole box because nobody measured the water would
+    // be the app inventing a constraint, which is the thing it is here to stop.
+    return { legal: (inventory || []).filter((l) => l && l.trollable), refused: [] };
+  }
+
+  for (const bought of (inventory || [])) {
+    if (!bought || !bought.type) continue;
+    const say = (why) => refused.push({ name: bought.name, type: bought.type, why });
+
+    // HARDWARE THAT CARRIES A BAIT IS NOT A BAIT. A jighead is what a paddle tail rides on and a
+    // trolling weight is what a spoon swims behind -- Ryan, on why jigheads take a snap: "those go
+    // with swimbaits so swivel snap". Both are `trollable:true` in the inventory because they go
+    // through the water, and offering a bare one as a lure to tie on is nonsense. Skipped, not
+    // refused: a refusal is for a bait that could have been considered.
+    if (bought.type === 'jighead' || bought.type === 'trolling_weight') continue;
+
+    if (!bought.trollable) {
+      if (bought.castable) say('cast only — it planes at trolling speed instead of sinking, so no '
+                             + 'length of lead gives it a running depth');
+      continue;
+    }
+    const k = LURE_KNOWLEDGE[bought.type];
+    if (!k) { say('no behaviour is recorded for this type'); continue; }
+
+    const lure = requiresInlineWeight(bought.type) && !(Number(bought.inlineWeightOz) > 0)
+      ? { ...bought, inlineWeightOz: Number(o.inlineWeightOz) || null } : bought;
+
+    // A RATED BAIT IS CAPPED BY ITS BILL AND NOTHING LIFTS THAT.
+    if (k.depthMode === 'rated' && k.ratedDepth) {
+      if (k.ratedDepth.max < targetFt) {
+        say(`the bill runs it ${k.ratedDepth.min}-${k.ratedDepth.max} ft and no lead takes it to `
+          + `${targetFt} ft — that is the maker's rating, not a guess of ours`);
+        continue;
+      }
+      legal.push({ ...bought, reach: { leadFt: leadForDepth(lure, targetFt, speedMph),
+                                       window: [k.ratedDepth.min, k.ratedDepth.max],
+                                       controlledBy: 'the bill' } });
+      continue;
+    }
+    if (k.depthMode === 'surface' || k.depthMode === 'none') {
+      say('it works on top and has no running depth');
+      continue;
+    }
+
+    // A WEIGHTED BAIT GETS THERE ON LINE, AND THE LINE IS BOUNDED BY THE BOAT.
+    const w = depthWindow(lure, { speedMph, leadFt: maxLeadFt });
+    if (w.mode === 'needs_weight') {
+      say(`it only fishes behind an inline trolling weight and none was given — ${w.reason}`);
+      continue;
+    }
+    const lead = leadForDepth(lure, targetFt, speedMph);
+    if (!Number.isFinite(lead) || lead <= 0) { say('no lead reaches a depth with this bait'); continue; }
+    if (lead > maxLeadFt) {
+      say(`${targetFt} ft needs ${lead} ft of lead and you run ${maxLeadFt} ft — pick something `
+        + 'heavier, or a weight ahead of it');
+      continue;
+    }
+    legal.push({ ...bought, reach: { leadFt: lead,
+                                     window: [depthWindow(lure, { speedMph, leadFt: lead }).min,
+                                              depthWindow(lure, { speedMph, leadFt: lead }).max],
+                                     inlineWeightOz: lure.inlineWeightOz || null,
+                                     controlledBy: 'lead length + speed + weight' } });
+  }
+  return { legal, refused };
+}
+
+/**
+ * WHAT A BAIT IS, said instead of scored.
+ *
+ * `presentationSignature` describes a lure physically -- noise, flash, profile, where in the column
+ * it swims, what cover it can be worked in. Those are observations about an object. The species,
+ * season and clarity tables next to them are 386 numbers nobody measured, and this function does
+ * not touch them.
+ *
+ * It exists so the survivors of `baitsThatReach()` can be handed over as descriptions and the
+ * choice can stay with the person holding the rod.
+ */
+export function describeBait(lureType) {
+  const k = LURE_KNOWLEDGE[lureType];
+  if (!k) return null;
+  const s = k.presentationSignature || {};
+  const bits = [];
+  if (s.noise) bits.push(s.noise === 'silent' ? 'silent' : s.noise.replace(/_/g, ' '));
+  if (s.flash) bits.push(s.flash === 'none' ? 'no flash' : `${s.flash} flash`);
+  if (s.profile) bits.push(`${String(s.profile).replace(/_/g, ' ')} profile`);
+  if (s.water_column) bits.push(`swims ${String(s.water_column).replace(/_/g, ' ')}`);
+  if (k.speed && k.speed.min != null) bits.push(`${k.speed.min}-${k.speed.max} mph`);
+  return bits.join(', ') || null;
+}
+
 /**
  * WHAT A LURE CHANGE ACTUALLY BUYS — and `presentationSignature` finally having a reader.
  *

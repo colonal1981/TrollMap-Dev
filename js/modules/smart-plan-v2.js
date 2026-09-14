@@ -164,6 +164,13 @@ export async function buildSmartPlanV2(o) {
     // one off the lure's name -- see depthNote() in plan-prompt.js.
     lureByName: o.lureByName,
     usableAh: o.usableAh, intel, thermoclineNorm,
+    // THE ONE MEASURED NUMBER THE BAIT GATE STANDS ON. See the gate in plan-prompt.js: the box
+    // offered to the model is filtered to what can physically reach the deepest oxygenated water,
+    // and this is that depth. Null until somebody casts the water, and then the gate goes silent
+    // rather than inventing a constraint.
+    oxygenFloorFt: typeof o.oxygenFloorFor === 'function'
+      ? o.oxygenFloorFor(packFacts) : (o.oxygenFloorFt ?? null),
+    inventory: o.inventory || null,
     // No dayMin on this path: selectCandidates() trims the OFFER to the window and the model
     // chooses which of them to fish, so there is no picked-set total yet. The window itself is
     // the constraint and it still has to be said.

@@ -561,6 +561,31 @@ export function thermoclineNormFor(profile, now = Date.now(), packFacts = null) 
   return note ? { ...norm, reason: note } : norm;
 }
 
+/**
+ * THE DEEPEST WATER THAT STILL HAS OXYGEN IN IT, or null.
+ *
+ * One number, measured, and the only one the bait gate is allowed to stand on. Ryan, 2026-09-14,
+ * after an hour of me quoting my own invented scoring tables back at him as if they were evidence:
+ * "where do we get the information to build this the right way".
+ *
+ * From a vertical cast and nowhere else. `depletionDepthFt` first, because that is where oxygen
+ * starts going and therefore the deepest a fish is comfortable; `anoxicBelowFt` is the harder
+ * floor and stands in when depletion was not resolved. Null when nobody has cast this water --
+ * and a null here must NOT become a gate, because refusing a box over an unmeasured lake is the
+ * app inventing a constraint, which is the whole thing it is here to stop.
+ *
+ * Exported because the prompt and the planner must use the SAME number. Two readings of one field
+ * is the defect this file has been fixing all month.
+ */
+export function oxygenFloorFt(profile, packFacts = null) {
+  const lim = { ...((profile && profile.limnology) || {}),
+                ...((packFacts && packFacts.limnology) || {}) };
+  const dep = Number(lim.oxygen && lim.oxygen.depletionDepthFt);
+  if (Number.isFinite(dep) && dep > 0) return dep;
+  const an = Number(lim.oxygen && lim.oxygen.anoxicBelowFt);
+  return Number.isFinite(an) && an > 0 ? an : null;
+}
+
 export function researchIntel(profile, species, season, now = Date.now(), packFacts = null,
                               live = null) {
   if (!profile) return null;

@@ -15,7 +15,7 @@ import { state, CF_WORKER_URL } from '../core/state.js';
 import { resolveR2Key } from '../data/lake-keys.js';
 import { getLoadedAccessIndex, registryRecordFor } from '../data/access-index.js';
 import { getSeason, seasonNote } from '../data/species-intel.js';
-import { depthBandFor, usableAhFrom, researchIntel, structureWeights,
+import { depthBandFor, usableAhFrom, researchIntel, structureWeights, oxygenFloorFt,
          describeDepthBand, conditionsFrom, fetchRegistrySpecies,
          registryIdentity, thermoclineNormFor } from './plan-inputs.js';
 import { DEFAULT_WEIGHTS, DEFAULT_RELIEF_WEIGHTS } from './plan-candidates.js';
@@ -251,6 +251,11 @@ export async function runSmartPlanV2(opts = {}) {
       // it assembles the prompt -- a promise here would reach researchIntel() as an object.
       // The estimate that runs ONLY where no cast answered -- see thermoclineNormFor().
       thermoclineNormFor: (pf) => thermoclineNormFor(researched, Date.now(), pf),
+      // THE SAME DOOR AGAIN, for the same reason: the profile is here and the pack is not, and a
+      // registry limnology record may beat the profile's copy. One number, read once, used by the
+      // gate that decides which baits the model is even shown.
+      oxygenFloorFor: (pf) => oxygenFloorFt(researched,
+        regLim ? { ...(pf || {}), limnology: regLim } : pf),
       // The live surface reading and where it came from, for the squeeze block -- see
       // researchIntel(). Same value season is derived from.
       intelFor: (packFacts) => researchIntel(researched, species, season, Date.now(),

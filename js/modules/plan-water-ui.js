@@ -34,7 +34,7 @@
 import { state, CF_WORKER_URL } from '../core/state.js';
 import { resolveR2Key } from '../data/lake-keys.js';
 import { getSeason, seasonNote } from '../data/species-intel.js';
-import { depthBandFor, usableAhFrom, researchIntel, describeDepthBand, conditionsFrom,
+import { depthBandFor, usableAhFrom, researchIntel, describeDepthBand, conditionsFrom, oxygenFloorFt,
          fetchRegistrySpecies, registryIdentity, thermoclineNormFor } from './plan-inputs.js';
 import { solunarFor } from '../utils/solunar.js';
 import { registryRecordFor } from '../data/access-index.js';
@@ -1003,6 +1003,11 @@ export async function findWater() {
     // anything the pipeline wrote down.
     // The estimate that runs ONLY where no cast answered -- see thermoclineNormFor().
     thermoclineNormFor: (pf) => thermoclineNormFor(researched, Date.now(), pf),
+    // ONE PROMPT, TWO PLANNERS -- the sixth field to come through here after intel,
+    // thermoclineNorm, the depth band, hazards and weatherByHour. The bait gate in
+    // plan-prompt.js stands on this one number and nothing else; without it Pick Water would
+    // keep offering the whole box while Smart Plan filtered it, which is two apps.
+    oxygenFloorFor: (pf) => oxygenFloorFt(researched, pf),
     // THE SAME READING getSeason() IS KEYED ON, HANDED TO THE BLOCK THAT NEEDS IT. The squeeze
     // needs the live surface temperature and its provenance -- a tailwater gauge is not the lake
     // and the sentence says so rather than quietly treating it as one.
@@ -1161,6 +1166,9 @@ export async function buildFromPicked() {
           (waterState && waterState.pool && Number.isFinite(waterState.pool.seasonalDrawdownFt))
             ? { limnology: { seasonalDrawdownFt: waterState.pool.seasonalDrawdownFt } } : null)
           : null,
+        // THE DEEPEST OXYGENATED WATER, MEASURED -- the only number the bait gate stands on.
+        oxygenFloorFt: T.oxygenFloorFor ? T.oxygenFloorFor(null) : null,
+        inventory: castable,
         hazards: T.hazards,
         // ONE PROMPT, TWO PLANNERS -- the fifth field to get here after intel,
         // thermoclineNorm and the depth band. lightPromptBlock() reads it.

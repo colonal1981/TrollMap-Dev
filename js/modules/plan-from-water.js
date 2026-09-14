@@ -268,6 +268,11 @@ export async function planFromWater(o) {
     // So the prompt can say HOW each bait reaches a depth rather than leaving the model to read
     // one off the lure's name. Same resolver the assembler already gets, one line further up.
     lureByName: o.lureByName,
+    // THE BAIT GATE'S ONE MEASURED INPUT, AND THE BOX IT FILTERS. Both forwarded rather than
+    // rebuilt: Pick Water and Smart Plan must offer the model the SAME list, or the two planners
+    // disagree about what is in the tackle box.
+    oxygenFloorFt: o.oxygenFloorFt ?? null,
+    inventory: o.inventory || null,
     candidates: legs.map((l) => ({
       runId: l.runId,
       depthFt: l.depthFt,
