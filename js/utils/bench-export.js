@@ -47,78 +47,73 @@ export function benchJson(lastRun, lastMode, i) {
 }
 
 /**
- * THE PAGE, STANDALONE.
+ * THE BENCH RUN, SHAPED THE WAY THE PLAN REPORT EXPECTS IT.
  *
- * The stylesheets are copied from the live document rather than written out here, so the file
- * cannot drift from the app: `document.styleSheets` is walked for rules, and any sheet that throws
- * on `.cssRules` is a cross-origin one (Leaflet from unpkg) and is re-linked by href instead.
- * The custom properties come off `:root` as computed, which is what makes the dark theme survive.
+ * Ryan, 2026-09-14, on the first version of this export: "the html output is not what i was
+ * looking for... i was looking for the html plan output just like if i ran a plan."
+ *
+ * Fair. The first version wrote out the bench PAGE -- the prompt sections, the warnings, the
+ * dropped-value list -- which is what the JSON is for. What he wants out of the HTML button is the
+ * report: the same document `exportPlanHtmlBtn` writes on the Plan tab.
+ *
+ * ONE REPORT BUILDER, AND THIS IS NOT IT. `buildPlanPreviewHtml(p)` renders the document and lives
+ * in plan-builder.js, where the Plan tab's own export calls it. All this does is produce the `p`
+ * it takes.
+ *
+ * AND ONE `p` BUILDER, WHICH IS ALSO NOT THIS. `collectPlan()` reads the Plan tab -- the name, the
+ * date, the ramp, the pool level, the times, the tackle and safety notes -- and every one of those
+ * fields is filled in on a bench run, because the bench runs off that same form. What it CANNOT
+ * read is the plan, because the bench deliberately writes none of the `window._smartPlan*` globals
+ * and never calls installTimeline() or syncSpread(). So the form half is collectPlan's and the
+ * plan half is replaced here, field for field, from the run being exported.
+ *
+ * THE GPX BLOCK IS EMPTIED RATHER THAN LEFT. `collectPlan()` reads `state.DATA.tracks`, and on a
+ * bench run those are whatever real plan was last materialised -- another day's geometry, another
+ * day's waypoints. Carrying it would put a route in this file that this plan never described,
+ * which is the exact failure collectPlan's own `_planV2` guard exists to prevent. Same for
+ * `model`, which reaches for `_planV2Result`: the run's own request and answer are in the JSON
+ * export, in full, and do not belong in a printed report.
+ *
+ * @param {object} run       what runSmartPlanV2({bench:true}) returned; needs `plan` and `shown`
+ * @param {object} formPlan  collectPlan()'s output — the Plan tab half
+ * @param {function} spreadRowsFrom  from smart-plan-ui.js; builds the rod rows without storing them
  */
-export function benchHtml(lastMode, inputs, doc = (typeof document !== 'undefined' ? document : null)) {
-  if (!doc) return '';
-  const i = inputs || {};
-  const el = (id) => (doc.getElementById ? doc.getElementById(id) : null);
-  const varNames = [];
-  for (const sheet of Array.from(doc.styleSheets || [])) {
-    let rules;
-    try { rules = sheet.cssRules; } catch { continue; }
-    for (const r of Array.from(rules || [])) {
-      if (!r.style) continue;
-      for (const prop of Array.from(r.style)) if (prop.startsWith('--')) varNames.push(prop);
-    }
-  }
-  const root = (doc.defaultView || globalThis).getComputedStyle(doc.documentElement);
-  const vars = [...new Set(varNames)]
-    .map((n) => `  ${n}: ${root.getPropertyValue(n).trim()};`).join('\n');
-
-  const css = [];
-  const links = [];
-  for (const sheet of Array.from(doc.styleSheets || [])) {
-    let rules;
-    try { rules = sheet.cssRules; } catch {
-      if (sheet.href) links.push(`<link rel="stylesheet" href="${esc(sheet.href)}">`);
-      continue;
-    }
-    for (const r of Array.from(rules || [])) css.push(r.cssText);
-  }
-
-  // EVERY SECTION OPEN IN THE FILE. On the page a long block is collapsed so the thing is
-  // scannable; in a file it is a page to read end to end, and a reader who has to click twenty
-  // triangles to find out what was sent has been handed the same problem the copy-and-paste was.
-  // `open` is an attribute, not a style, so this is markup and not CSS.
-  const openAll = (h) => String(h || '').replace(/<details(?![^>]*\bopen\b)/g, '<details open');
-
-  const head = el('benchPlanHead');
-  const plan = el('benchPlan');
-  const out = el('benchOut');
-  const title = `TrollMap bench — ${i.lakeName || 'no water'} — ${i.dateStr || ''}`;
-
-  return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${esc(title)}</title>
-${links.join('\n')}
-<style>
-:root {
-${vars}
+export function benchReportPlan(run, formPlan, spreadRowsFrom) {
+  const shown = (run && run.shown) || null;
+  const plan = (run && run.plan) || null;
+  const rows = (shown && typeof spreadRowsFrom === 'function')
+    ? spreadRowsFrom(shown.cards, shown.routeRods, shown.routeSpeeds || {})
+    : [];
+  return {
+    ...(formPlan || {}),
+    meta: {
+      ...((formPlan || {}).meta || {}),
+      // SAID ON THE DOCUMENT, not only known by whoever pressed the button. A bench report that
+      // looks exactly like a real one and is not one is a thing to take on the water by mistake.
+      name: `${((formPlan || {}).meta || {}).name || 'Fishing Plan'} — BENCH (not saved, not sent)`,
+    },
+    plan: plan ? {
+      planVersion: plan.planVersion, meta: plan.meta, conditions: plan.conditions,
+      loadout: plan.loadout, legs: plan.legs, changes: plan.changes,
+      budget: plan.budget, safety: plan.safety, notes: plan.notes,
+      // THE UNION THE BENCH SHOWS, not `plan.warnings` alone -- which is the assembler's third of
+      // it and leaves out everything the app refused while reading the answer.
+      warnings: (run && run.problems) || plan.warnings || [],
+    } : null,
+    timeline: (shown && shown.timeline) || null,
+    unifiedTimeline: (shown && shown.timeline) || null,
+    castRods: (shown && shown.castRods) || [],
+    routeRods: (shown && shown.routeRods) || null,
+    routeSpeeds: (shown && shown.routeSpeeds) || null,
+    rationale: (shown && shown.rationale) || '',
+    spread: rows,
+    gpx: null,
+    model: null,
+  };
 }
-${css.join('\n')}
-/* The app's chrome is not in this file, so the panel has to stand on its own. */
-body { margin: 0; padding: 16px; }
-.bench-export-hdr { font-size: 12px; color: var(--muted); margin: 0 0 14px;
-                    padding-bottom: 10px; border-bottom: 1px solid var(--line); }
-</style></head><body>
-<div class="bench-export-hdr">
-  <b>${esc(title)}</b><br>
-  ${esc(i.rampName || 'no ramp')} · ${esc(i.launchTime || '?')}–${esc(i.returnTime || '?')} ·
-  ${esc((i.species || []).join(', ') || 'no species')}<br>
-  ${esc(lastMode === 'bench' ? 'Sent to the model.' : 'Dry run — the prompt only, nothing sent.')}
-  Exported ${esc(new Date().toLocaleString())}. Nothing in this file was saved, sent to the phone,
-  or written to GPX.<br>
-  Personal use only, not for distribution or resale; not for navigation.
-</div>
-${head && !head.hidden ? `<div class="bench-head">${head.innerHTML}</div>` : ''}
-${plan ? openAll(plan.innerHTML) : ''}
-${out ? openAll(out.innerHTML) : ''}
-</body></html>`;
+
+/** The document, wrapped the way the Plan tab's own export wraps it. */
+export function wrapReport(inner, title) {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(title || 'Fishing Plan')}`
+       + `</title></head><body style="background:#f3f6f9;margin:0;padding:20px">${inner}</body></html>`;
 }

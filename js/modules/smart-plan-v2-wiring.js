@@ -344,6 +344,12 @@ export async function runSmartPlanV2(opts = {}) {
         cardDefs: shown.cards, unified: shown.timeline,
         preview: 'benchPlan',
       });
+      // WHAT WAS DRAWN, KEPT SO IT CAN BE WRITTEN OUT. Ryan, 2026-09-14, on the first version of
+      // the bench's HTML export: "i was looking for the html plan output just like if i ran a
+      // plan." The report builder takes a collectPlan()-shaped object, and every plan-derived
+      // field in one comes from precisely this conversion -- so the export renders THIS, not a
+      // second conversion of its own. Nothing here is written to a global; it rides on `r`.
+      r.shown = shown;
     } catch (e) {
       // A DRAW THAT FAILS MUST NOT EAT THE BENCH. The prompt, the answer and the assembled JSON
       // are the point of this run; the picture is the convenience.

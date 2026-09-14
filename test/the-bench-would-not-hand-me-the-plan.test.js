@@ -20,7 +20,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { benchJson, benchHtml } from '../js/utils/bench-export.js';
+import { benchJson, benchReportPlan, wrapReport } from '../js/utils/bench-export.js';
 
 const RUN = {
   request: { system: 'You are TrollMap Smart Plan', user: 'THE DAY\n{"launch":"06:00"}' },
@@ -60,88 +60,101 @@ test('an empty run still produces a readable file rather than throwing', () => {
   assert.deepEqual(o.warnings, []);
 });
 
-// ── THE HTML ───────────────────────────────────────────────────────────────────────────────────
+// ── THE REPORT OBJECT ──────────────────────────────────────────────────────────────────────────
 //
-// A document stub, not jsdom: the three things benchHtml touches are getElementById, styleSheets
-// and getComputedStyle, and stubbing exactly those is what proves it touches nothing else.
-function docStub({ crossOrigin = true } = {}) {
-  const els = {
-    benchPlanHead: { hidden: false, innerHTML: '<b>THE PLAN AS IT WOULD BE DRAWN</b>' },
-    benchPlan: { innerHTML: '<div class="leg">L1 · 06:12</div>' },
-    benchOut: { innerHTML: '<details class="bench-sec"><summary>THE DAY</summary>'
-                         + '<pre>launch 06:00</pre></details>'
-                         + '<details open class="bench-sec"><summary>WARNINGS</summary></details>' },
-  };
-  const sheets = [
-    { cssRules: [{ cssText: ':root{--bg:#111;--text:#eee}', style: { 0: '--bg', 1: '--text',
-                     length: 2, [Symbol.iterator]: function* () { yield '--bg'; yield '--text'; } } },
-                 { cssText: '.bench-sec{border:1px solid var(--line)}', style: null }] },
-  ];
-  if (crossOrigin) {
-    sheets.push({ href: 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
-                  get cssRules() { throw new Error('SecurityError'); } });
-  }
-  return {
-    getElementById: (id) => els[id] || null,
-    documentElement: {},
-    styleSheets: sheets,
-    defaultView: { getComputedStyle: () => ({ getPropertyValue: (n) => (n === '--bg' ? '#111' : '#eee') }) },
-  };
-}
+// The Plan tab half and the plan half, and which one wins where.
+const FORM = {
+  meta: { name: 'Lake Wateree – Clearwater AM Troll', date: '2026-09-14', ramp: 'Clearwater Cove',
+          launchTime: '06:00', returnTime: '15:00', poolLevel: '222.3' },
+  trolling: { speed: '2.0' },
+  tackle: 'six rods', safety: 'PFD', notes: 'muddy',
+  // What collectPlan() read off a PREVIOUS real plan, which this run did not describe.
+  plan: { legs: [{ id: 'OLD' }] },
+  timeline: [{ type: 'troll', label: 'OLD' }],
+  spread: [{ rod: 'OLD' }],
+  castRods: [{ rod: 'OLD' }],
+  rationale: 'yesterday',
+  gpx: { tracks: 9, trackList: [{ name: 'L1 · someone else' }] },
+  model: { request: 'yesterday' },
+};
+const SHOWN = {
+  timeline: [{ type: 'troll', label: 'L1', step: 1 }],
+  cards: [{ key: 'ph1out', label: 'Leg 1', speedMph: 2.0 }],
+  routeRods: { ph1out: [{ rod: 'R3', lure: 'Squarebill Crankbait', notes: 'port' }] },
+  routeSpeeds: { ph1out: 2.0 },
+  castRods: [{ rod: 'R6', lure: 'Dr.Fish Diamond Jig / Jigging Spoon 1oz' }],
+  rationale: 'today',
+};
+const BENCH = { plan: { planVersion: 2, legs: [{ id: 'L1' }], budget: { estPlannedMin: 1093 },
+                        warnings: ['assembler only'] },
+                problems: ['assembler only', 'over budget', 'not water-routed'],
+                shown: SHOWN };
+const spreadRowsFrom = (cards, routeRods) => (cards || []).flatMap(
+  (c) => (routeRods?.[c.key] || []).map((r) => ({ ...r, speedMph: c.speedMph })));
 
-test('the stylesheet is copied from the live document, never written out here', () => {
-  const h = benchHtml('bench', INPUTS, docStub());
-  assert.match(h, /\.bench-sec\{border:1px solid var\(--line\)\}/, 'the app rule, not a new one');
-  assert.match(h, /--bg: #111;/, 'and the resolved custom properties, so the theme survives');
-  assert.match(h, /--text: #eee;/);
+test('the Plan tab half is kept — the bench runs off that same form', () => {
+  const p = benchReportPlan(BENCH, FORM, spreadRowsFrom);
+  assert.equal(p.meta.ramp, 'Clearwater Cove');
+  assert.equal(p.meta.poolLevel, '222.3');
+  assert.equal(p.tackle, 'six rods');
+  assert.equal(p.trolling.speed, '2.0');
 });
 
-test('a cross-origin sheet is re-linked instead of silently dropped', () => {
-  const h = benchHtml('bench', INPUTS, docStub({ crossOrigin: true }));
-  assert.match(h, /<link rel="stylesheet" href="https:\/\/unpkg\.com\/leaflet/);
+test('the plan half is replaced, because collectPlan cannot see a bench run', () => {
+  const p = benchReportPlan(BENCH, FORM, spreadRowsFrom);
+  assert.deepEqual(p.plan.legs, [{ id: 'L1' }], 'this run, not the last real one');
+  assert.deepEqual(p.timeline, SHOWN.timeline);
+  assert.deepEqual(p.unifiedTimeline, SHOWN.timeline, 'both names, same array');
+  assert.deepEqual(p.castRods, SHOWN.castRods);
+  assert.equal(p.rationale, 'today');
 });
 
-test('a page with no cross-origin sheet links nothing', () => {
-  assert.doesNotMatch(benchHtml('bench', INPUTS, docStub({ crossOrigin: false })), /<link rel=/);
+test('the spread is built from what was drawn and never read off state.SPREAD', () => {
+  const p = benchReportPlan(BENCH, FORM, spreadRowsFrom);
+  assert.equal(p.spread.length, 1);
+  assert.equal(p.spread[0].rod, 'R3');
+  assert.equal(p.spread[0].speedMph, 2.0);
 });
 
-test('the drawn plan and the bench output are both in the file', () => {
-  const h = benchHtml('bench', INPUTS, docStub());
-  assert.match(h, /THE PLAN AS IT WOULD BE DRAWN/);
-  assert.match(h, /L1 · 06:12/, 'the plan as it would have been drawn');
-  assert.match(h, /launch 06:00/, 'and what the model was sent');
+test('the warnings are the union the bench shows, not the assembler third', () => {
+  const p = benchReportPlan(BENCH, FORM, spreadRowsFrom);
+  assert.equal(p.plan.warnings.length, 3);
+  assert.ok(p.plan.warnings.includes('over budget'));
 });
 
-test('every section is open — a file is read, not clicked through', () => {
-  const h = benchHtml('bench', INPUTS, docStub());
-  assert.equal(/<details(?![^>]*\bopen\b)/.test(h), false, 'no collapsed section survives');
-  assert.equal((h.match(/<details open/g) || []).length, 2, 'and none is opened twice');
+test('another day geometry is emptied, never carried', () => {
+  const p = benchReportPlan(BENCH, FORM, spreadRowsFrom);
+  assert.equal(p.gpx, null, 'state.DATA.tracks belong to whatever was last materialised');
+  assert.equal(p.model, null, 'the request and the answer are in the JSON export, in full');
 });
 
-test('the header says which water, which hours, and that nothing was saved', () => {
-  const h = benchHtml('bench', INPUTS, docStub());
-  assert.match(h, /Lake Wateree, SC/);
-  assert.match(h, /Clearwater Cove/);
-  assert.match(h, /06:00–15:00/);
-  assert.match(h, /Striped Bass/);
-  // The source wraps this sentence across two lines, so the test reads it the way a browser
-  // would rather than pinning the line break.
-  assert.match(h.replace(/\s+/g, ' '),
-    /Nothing in this file was saved, sent to the phone, or written to GPX/);
-  assert.match(h, /not for distribution or resale; not for navigation/);
+test('the document says on its face that it is a bench run', () => {
+  const p = benchReportPlan(BENCH, FORM, spreadRowsFrom);
+  assert.match(p.meta.name, /BENCH \(not saved, not sent\)/);
+  assert.match(p.meta.name, /Lake Wateree/, 'and still says which day it is');
 });
 
-test('a dry run says so on the page, so a prompt is never read as a plan', () => {
-  assert.match(benchHtml('dry', INPUTS, docStub()), /Dry run — the prompt only, nothing sent/);
-  assert.match(benchHtml('bench', INPUTS, docStub()), /Sent to the model/);
+test('a run that was never drawn still produces a shaped object rather than throwing', () => {
+  const p = benchReportPlan({ plan: { legs: [] } }, FORM, spreadRowsFrom);
+  assert.deepEqual(p.spread, []);
+  assert.equal(p.timeline, null);
+  assert.equal(p.rationale, '');
 });
 
-test('no document, no file — and no throw', () => {
-  assert.equal(benchHtml('bench', INPUTS, null), '');
+test('no form at all is survivable too', () => {
+  const p = benchReportPlan(BENCH, null, spreadRowsFrom);
+  assert.match(p.meta.name, /Fishing Plan — BENCH/);
 });
 
-test('it is a whole document, not a fragment', () => {
-  const h = benchHtml('bench', INPUTS, docStub());
-  assert.match(h, /^<!doctype html>/);
-  assert.match(h, /<\/html>$/);
+// ── THE WRAPPER ────────────────────────────────────────────────────────────────────────────────
+test('the wrapper matches the Plan tab export byte for byte in shape', () => {
+  const h = wrapReport('<div class="report-page">x</div>', 'Lake Wateree');
+  assert.match(h, /^<!DOCTYPE html><html><head><meta charset="utf-8"><title>Lake Wateree<\/title>/);
+  assert.match(h, /background:#f3f6f9;margin:0;padding:20px/);
+  assert.match(h, /<div class="report-page">x<\/div><\/body><\/html>$/);
+});
+
+test('a title with markup in it cannot break out of the tag', () => {
+  assert.match(wrapReport('x', 'A <script>alert(1)</script> day'),
+    /<title>A &lt;script&gt;alert\(1\)&lt;\/script&gt; day<\/title>/);
 });

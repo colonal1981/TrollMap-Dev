@@ -26,7 +26,7 @@
 
 import { runSmartPlanV2, readInputs } from './smart-plan-v2-wiring.js';
 import { splitPrompt, droppedFromAnswer, candidatesFromPrompt } from '../utils/bench-read.js';
-import { benchJson, benchHtml } from '../utils/bench-export.js';
+import { benchJson, benchReportPlan, wrapReport } from '../utils/bench-export.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -208,25 +208,49 @@ export function wirePlanBench() {
       try { await run('bench'); } finally { a && (a.disabled = false); b.disabled = false; }
     });
   }
-  for (const [id, make, ext, type] of [
-    ['benchJsonBtn', (i) => benchJson(lastRun, lastMode, i), 'json', 'application/json'],
-    ['benchHtmlBtn', (i) => benchHtml(lastMode, i), 'html', 'text/html'],
-  ]) {
-    const el = $(id);
-    if (!el || el.dataset.wired) continue;
-    el.dataset.wired = '1';
-    el.addEventListener('click', () => {
+  const fail = (e) => {
+    // SAY IT, do not fail quietly -- a download that silently did not happen looks exactly like a
+    // browser that swallowed it.
+    const st = $('benchStatus');
+    if (st) { st.textContent = `Export failed: ${(e && e.message) || e}`; st.style.color = 'var(--warn)'; }
+  };
+  const inputsNow = () => { try { return readInputs(); } catch { return null; } };
+
+  const jsonBtn = $('benchJsonBtn');
+  if (jsonBtn && !jsonBtn.dataset.wired) {
+    jsonBtn.dataset.wired = '1';
+    jsonBtn.addEventListener('click', () => {
       if (!lastRun) return;
-      let inputs = null;
-      try { inputs = readInputs(); } catch { inputs = null; }
+      const i = inputsNow();
+      try { download(`${fileBase(i)}.json`, benchJson(lastRun, lastMode, i),
+                     'application/json;charset=utf-8'); }
+      catch (e) { fail(e); }
+    });
+  }
+
+  // THE PLAN REPORT, NOT THE BENCH PAGE. Ryan, 2026-09-14: "i was looking for the html plan output
+  // just like if i ran a plan." So this is the Plan tab's own export path -- collectPlan() for the
+  // form half, benchReportPlan() to swap in THIS run's plan, buildPlanPreviewHtml() to render it.
+  // Imported on click rather than at the top: plan-builder.js is the heaviest module in the app
+  // and the bench does not need it until this button is pressed. Same dynamic import the Plan
+  // tab's own export button uses.
+  const htmlBtn = $('benchHtmlBtn');
+  if (htmlBtn && !htmlBtn.dataset.wired) {
+    htmlBtn.dataset.wired = '1';
+    htmlBtn.addEventListener('click', async () => {
+      if (!lastRun || !lastRun.plan) return;
+      const i = inputsNow();
+      htmlBtn.disabled = true;
       try {
-        download(`${fileBase(inputs)}.${ext}`, make(inputs), `${type};charset=utf-8`);
-      } catch (e) {
-        // SAY IT, do not fail quietly -- a download that silently did not happen looks exactly
-        // like a browser that swallowed it.
-        const st = $('benchStatus');
-        if (st) { st.textContent = `Export failed: ${e && e.message}`; st.style.color = 'var(--warn)'; }
-      }
+        const [{ collectPlan, buildPlanPreviewHtml }, { spreadRowsFrom }] = await Promise.all([
+          import('./plan-builder.js'),
+          import('./smart-plan-ui.js'),
+        ]);
+        const p = benchReportPlan(lastRun, collectPlan(), spreadRowsFrom);
+        download(`${fileBase(i)}.html`,
+                 wrapReport(await buildPlanPreviewHtml(p), p.meta && p.meta.name),
+                 'text/html;charset=utf-8');
+      } catch (e) { fail(e); } finally { htmlBtn.disabled = false; }
     });
   }
 

@@ -857,13 +857,21 @@ function phaseOrderIndex(key, cards) {
 }
 
 // ── Sync to state.SPREAD ──────────────────────────────────────────────────────
-export function syncSpread(cards, routeRods, routeSpeeds = {}) {
+/**
+ * THE SPREAD ROWS, BUILT AND NOT STORED.
+ *
+ * Split out of `syncSpread` so a second reader can have the rows without the write. The bench
+ * needs exactly these rows for its report and must NOT touch `state.SPREAD` -- the spread table
+ * belongs to a plan Ryan decided to fish, and a bench run is not one. A second copy of this loop
+ * living in the bench is how the two would come to disagree about the same day.
+ */
+export function spreadRowsFrom(cards, routeRods, routeSpeeds = {}) {
   const allCards = cards || buildCards(1.8, routeSpeeds);
-  state.SPREAD = [];
+  const rows = [];
   for (const card of allCards) {
     for (const rod of (routeRods?.[card.key] || [])) {
       if (!rod) continue;
-      state.SPREAD.push({
+      rows.push({
         ...rod,
         reel: reelForLure(rod.lure),
         speedMph: card.speedMph,
@@ -871,6 +879,11 @@ export function syncSpread(cards, routeRods, routeSpeeds = {}) {
       });
     }
   }
+  return rows;
+}
+
+export function syncSpread(cards, routeRods, routeSpeeds = {}) {
+  state.SPREAD = spreadRowsFrom(cards, routeRods, routeSpeeds);
 }
 
 // ── Lure resolver ─────────────────────────────────────────────────────────────
