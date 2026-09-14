@@ -455,9 +455,16 @@ function thermoclineNormBlock(n) {
   if (!n) return '';
   const month = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August',
                  'September', 'October', 'November', 'December'][n.month] || 'this month';
+  // DEFER TO THE WATER'S OWN REASON WHERE IT HAS ONE. `reason` is limnology.thermocline.note,
+  // carried here by thermoclineNormFor(). Without it this block asserted that nobody had published
+  // a cast, on waters where one was published and refused for a stated reason -- a claim stronger
+  // than the evidence, sitting directly above oxygen depths derived from that same cast.
+  const why = n.reason
+    ? `${n.reason}\nSo what follows is what lakes of this depth do in`
+    : 'Nobody has published a vertical cast for it, so what follows is what lakes of this depth do in';
   return `
 THE THERMOCLINE ON THIS WATER HAS NOT BEEN MEASURED
-Nobody has published a vertical cast for it, so what follows is what lakes of this depth do in
+${why}
 ${month} — across ${n.casts} EPA National Lakes Assessment casts the thermocline sat around
 ${n.medianFt} ft, with half of those lakes between ${n.p25Ft} and ${n.p75Ft} ft.
 

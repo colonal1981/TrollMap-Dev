@@ -550,7 +550,15 @@ export function thermoclineNormFor(profile, now = Date.now(), packFacts = null) 
   if (lim.thermocline && lim.thermocline.summerDepthFt) return null;
   const id = { ...((profile && profile.identity) || {}),
                ...((packFacts && packFacts.identity) || {}) };
-  return thermoclineNorm(id.maxDepthFt, new Date(now).getMonth() + 1);
+  const norm = thermoclineNorm(id.maxDepthFt, new Date(now).getMonth() + 1);
+  if (!norm) return null;
+  // THE NORM BLOCK OPENED WITH "Nobody has published a vertical cast for it", WHICH IS FALSE ON
+  // ANY WATER THAT HAS A REASON. Wateree's cast was published and refused; saying nobody took one
+  // is a stronger claim than the evidence, printed two lines above the oxygen depths that came
+  // out of that very cast. The reason travels so the block can defer to it.
+  const note = lim.thermocline && typeof lim.thermocline.note === 'string'
+    ? lim.thermocline.note.trim() : '';
+  return note ? { ...norm, reason: note } : norm;
 }
 
 export function researchIntel(profile, species, season, now = Date.now(), packFacts = null) {
@@ -709,8 +717,31 @@ export function researchIntel(profile, species, season, now = Date.now(), packFa
            + 'column stops mixing, NOT a depth to fish. Water below it is cut off from the '
            + 'surface and loses oxygen as summer runs; the fishable band is above it.');
   }
+  // A REFUSAL IS AN ANSWER AND HAS TO REACH THE PROMPT, NOT JUST THE PROFILE.
+  //
+  // The block above prints only when a depth exists, so until 2026-09-14 `thermocline.note` was
+  // written to 27 profiles and read by nothing. The three situations it distinguishes are not the
+  // same and the norm block flattens them into one sentence:
+  //
+  //   Moultrie   5,227 WQP records, every one a surface grab -- nothing to parse, ever
+  //   Wateree    a cast EXISTS (EPA NLA 7/21/2022) and was held because the series prints no
+  //              station bottom, so there is no way to ask whether it stands for the water
+  //   others     no monitoring at depth at all
+  //
+  // "We asked and the data cannot answer" and "nobody has asked" are different claims, and one of
+  // the two readers of this prompt is a language model that will fill a bare null from its own
+  // recall. Wateree carried a fabricated 27 ft for months in exactly that shape.
+  else if (lim.thermocline?.note) {
+    out.push(`Thermocline: NOT established for this water — ${lim.thermocline.note}`);
+  }
   put('Anoxic below', lim.oxygen?.anoxicBelowFt, ' ft — nothing holds under this in late summer');
   put('Oxygen depletion begins', lim.oxygen?.depletionDepthFt, ' ft');
+  // WHERE THE OXYGEN NUMBERS CAME FROM. Wateree's read "measured vertical profile, EPA National
+  // Lakes Assessment 7/21/2022" -- a measured, dated number is a different claim from a modelled
+  // one, and the two lines above carried no provenance at all.
+  if (lim.oxygen?.note && (lim.oxygen?.anoxicBelowFt != null || lim.oxygen?.depletionDepthFt != null)) {
+    out.push(`  those oxygen depths: ${lim.oxygen.note}`);
+  }
   put('Trophic status', lim.trophicStatus);
   put('Typical clarity', lim.waterClarity?.typical);
   put('Secchi', lim.waterClarity?.secchiFt, ' ft');

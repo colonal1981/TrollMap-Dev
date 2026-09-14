@@ -159,3 +159,42 @@ test('the number cannot be quoted without its band, its sample and its warnings'
   assert.match(p, /Whatever the sounder shows\s+on the day beats every word of this/);
   assert.match(p, /July/, 'the trip month, not the word "summer"');
 });
+
+// ── THE WATER'S OWN REASON BEATS THE BLANKET CLAIM ─────────────────────────────────────────────
+//
+// 2026-09-14, off the bench on Lake Wateree. The block opened with "Nobody has published a vertical
+// cast for it" — and a cast HAD been published (EPA National Lakes Assessment 7/21/2022). It was
+// held for the thermocline because the series prints no station bottom, and the oxygen depths two
+// lines further down in the same prompt came out of that very cast. The blanket sentence was a
+// stronger claim than the evidence, and the per-water reason was sitting unread in the profile:
+// plan-inputs.js only printed the thermocline when a DEPTH existed, so `thermocline.note` reached
+// 27 profiles and nothing else.
+test('the norm carries the water\'s own reason when it has one', () => {
+  const WITH_REASON = {
+    identity: { maxDepthFt: 75 },
+    limnology: { thermocline: { summerDepthFt: null, method: null,
+      note: 'a cast exists and its series prints no station bottom' } },
+  };
+  const n = thermoclineNormFor(WITH_REASON, JULY);
+  assert.ok(n, 'a reason must not suppress the norm — there is still no measured depth');
+  assert.equal(n.reason, 'a cast exists and its series prints no station bottom');
+  // and a water with no note carries none, rather than an empty string
+  assert.equal(thermoclineNormFor(DEEP, JULY).reason, undefined);
+});
+
+test('the block prints that reason INSTEAD of claiming nobody published a cast', () => {
+  const WITH_REASON = {
+    identity: { maxDepthFt: 75 },
+    limnology: { thermocline: { summerDepthFt: null,
+      note: 'available records are surface/grab samples only' } },
+  };
+  const p = prompt(thermoclineNormFor(WITH_REASON, JULY));
+  assert.match(p, /available records are surface\/grab samples only/);
+  assert.doesNotMatch(p, /Nobody has published a vertical cast/,
+    'the blanket claim must not sit beside the water\'s own reason');
+  // the estimate and its caveats still stand
+  assert.match(p, /EPA National Lakes Assessment casts/);
+  assert.match(p, /NOT a fact about this one/);
+  // and with no reason, the original sentence is still there
+  assert.match(prompt(thermoclineNormFor(DEEP, JULY)), /Nobody has published a vertical cast/);
+});
