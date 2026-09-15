@@ -195,7 +195,12 @@ export const LAKE_NAME_TO_R2_KEY = {
   'Sapelo Sound / Altamaha River, GA':        'coast_sapelo_altamaha_ga',
   'Brunswick / St. Simons Sound, GA':         'coast_brunswick_st_simons_ga',
 
-  // ── NC Coastal ──────────────────────────────────────────────────────────────
+  // NC COASTAL WAS HERE AND IS GONE -- three rows, cut 2026-09-01 (a4bfd02) with the hand-typed
+  // NCDMF regulation table they had no rules behind, and finished 2026-09-03 (a46f558). Ryan:
+  // "But keep NC coastal cut... i do not want it back in". The heading outlived the rows, and an
+  // empty section heading reads as a place waiting to be filled.
+  //
+  // NC INLAND IS UNAFFECTED and its lakes and rivers are above; this was the coast only.
 };
 
 // Build lowercase lookup once at module load for case-insensitive exact matching.

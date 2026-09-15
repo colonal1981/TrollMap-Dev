@@ -29,6 +29,25 @@ function makeSelect() {
  * of bug: the coastal engine shipped complete while both waterbody dropdowns
  * were still populated exclusively from inland sources, so no coastal zone
  * could be picked and none of the coastal code paths were reachable.
+ *
+ * ── NC COASTAL IS CUT, AND THIS FILE WAS THE LAST THING STILL ASKING FOR IT ──
+ *
+ * The three NC zones went on 2026-09-01 (a4bfd02) with the hand-typed NCDMF
+ * regulation table they had no rules behind, and the cut was finished on
+ * 2026-09-03 (a46f558) in the catalog that GENERATES coastal-zones.js. Ryan,
+ * on the second: "But keep NC coastal cut... i do not want it back in". Asked
+ * again 2026-09-15, on finding these three assertions red: "NC zones used to
+ * exist but they have been removed... the test probably needs to be updated".
+ *
+ * So the catalog has been SC and GA only since -- 13 zones, 9 and 4 -- and this
+ * file spread `g.NC` into two arrays (`g.NC is not iterable`) and expected an
+ * 'NC Coast' optgroup label. It is the same stale-side failure a46f558 records
+ * one layer down: the cut happened and what described it stayed put.
+ *
+ * The assertions below now say SC and GA, and they say it in the direction that
+ * fails if NC comes back rather than the direction that tolerates it -- a
+ * `toContain(['SC','GA','NC'])` on a zone's state passed either way, which is
+ * how it survived the cut without anybody noticing.
  */
 
 describe('the gap this closes', () => {
@@ -104,7 +123,22 @@ describe('both waterbody dropdowns offer coastal zones', () => {
     const added = appendCoastalOptgroups(select);
     expect(added).toBe(COASTAL_SLUGS.length);   // every zone, whatever that count is
     const labels = select.children.map((c) => c.label);
-    expect(labels).toEqual(['SC Coast', 'GA Coast', 'NC Coast']);
+    expect(labels).toEqual(['SC Coast', 'GA Coast']);
+  });
+
+  it('and the groups are the states the catalog declares, not a list typed in the helper', () => {
+    // `GROUPS` in coastal-optgroups.js was a literal that still asked for an NC group two weeks
+    // after NC was cut, and it produced nothing only because the loop skips a state with no
+    // zones -- a dead entry that nothing could see and that NC would have come back through.
+    // It is derived now, so this test reads the catalog and the helper and requires them to
+    // agree, which is a claim that survives a state being added or cut either way.
+    const select = makeSelect();
+    appendCoastalOptgroups(select);
+    const fromHelper = select.children.map((c) => c.label.replace(/ Coast$/, ''));
+    const fromCatalog = [...new Set(COASTAL_SLUGS.map((s) => COASTAL_ZONES[s].state))];
+    expect(fromHelper.slice().sort()).toEqual(fromCatalog.slice().sort());
+    // SC leads, because that is where Ryan fishes, and that is the one thing still stated.
+    expect(fromHelper[0]).toBe('SC');
   });
 
   it('the option value keeps the state suffix, the visible label drops it', () => {
@@ -120,10 +154,17 @@ describe('both waterbody dropdowns offer coastal zones', () => {
   });
 
   it('the grouping covers every zone exactly once', () => {
+    // WAS `[...g.SC, ...g.GA, ...g.NC]`, which threw rather than failed once NC left the catalog.
+    // Reading every bucket the grouping returns is the version that cannot go stale: a state added
+    // or cut changes the data and this still counts all of it.
     const g = coastalNamesByState();
-    const all = [...g.SC, ...g.GA, ...g.NC];
+    const all = Object.values(g).flat();
     expect(all).toHaveLength(COASTAL_SLUGS.length);
     expect(new Set(all).size).toBe(COASTAL_SLUGS.length);
+    // AND NO EMPTY BUCKET, which is what a typed list leaves behind when its state is cut.
+    for (const [st, names] of Object.entries(g)) {
+      expect(names.length > 0, `${st} is an empty bucket`).toBe(true);
+    }
   });
 });
 
@@ -133,7 +174,7 @@ describe('option values round-trip to R2 keys', () => {
     // suffix, because resolveR2Key() keys off it. Using the trimmed label
     // would silently break layer + tide loading.
     const g = coastalNamesByState();
-    for (const name of [...g.SC, ...g.GA, ...g.NC]) {
+    for (const name of Object.values(g).flat()) {
       const key = resolveR2Key(name);
       expect(key, `resolveR2Key(${name})`).toMatch(/^coast_/);
       expect(COASTAL_ZONES[key].name).toBe(name);
@@ -216,7 +257,12 @@ describe('selecting a coastal zone reaches the coastal subsystems', () => {
       const zone = COASTAL_ZONES[slug];
       expect(resolveR2Key(zone.name)).toBe(slug);   // layers + contours
       expect(zone.tideStation).toMatch(/^\d{7}$/);  // tide panel
-      expect(['SC', 'GA', 'NC']).toContain(zone.state); // species + regs
+      // SC AND GA, AND THE ASSERTION FAILS IF A THIRD APPEARS. This read
+      // `['SC','GA','NC']).toContain(zone.state)` and so passed both before and after the NC cut,
+      // which is exactly why nothing flagged the three dead zones for two days. Every state here
+      // must also have a regulation table behind it -- that is what coastal-regulations.test.js
+      // enforces, and it is why the zones and the table had to be cut in the same commit.
+      expect(['SC', 'GA']).toContain(zone.state); // species + regs
     }
   });
 });

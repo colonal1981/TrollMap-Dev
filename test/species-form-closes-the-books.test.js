@@ -40,12 +40,32 @@ const FRESH = speciesGroupsFor(WATEREE, null);
 const SALT = speciesGroupsFor(WINYAH, null);
 
 const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-const between = (src, from, to) => src.slice(src.indexOf(from), src.indexOf(to, src.indexOf(from)));
+// ── ANCHORED ON THE DECLARATION, NOT ON THE NAME ────────────────────────────────────────────────
+//
+// `between(UTIL, 'NON_GAME_SPECIES', ']);')` used indexOf on the NAME, and the first place that
+// name appears in facts-util.js is a COMMENT 173 lines above the declaration -- the alewife note
+// inside RESEARCH_SPECIES_CANON, "NON_GAME_SPECIES has known it since it was written". So the slice
+// started in the middle of the canon table and ran to the first `]);` after it, and this file read
+// half the canon as the forage list: `Hybrid` and `Redear Sunfish (Shellcracker)` came back as
+// forage and the test went red on data that says nothing of the kind.
+//
+// A guard that greps source for a bare identifier is a guard that a comment can move. Both anchors
+// are the declaration now, matched as a declaration, and a missing one throws here rather than
+// silently slicing from position 0 -- an empty CANON would have made the test above pass on nothing.
+const between = (src, declRe, to) => {
+  const m = declRe.exec(src);
+  if (!m) throw new Error(`facts-util.js no longer declares ${declRe} — this guard is reading the wrong file`);
+  const start = m.index;
+  const end = src.indexOf(to, start);
+  if (end < 0) throw new Error(`no ${to} after ${declRe}`);
+  return src.slice(start, end);
+};
 const CANON = Object.fromEntries(
-  [...between(UTIL, 'RESEARCH_SPECIES_CANON', '};').matchAll(/^\s*'([^']+)'\s*:\s*'([^']+)'/gm)]
-    .map((m) => [m[1], m[2]]));
+  [...between(UTIL, /^\s*(?:export\s+)?const RESEARCH_SPECIES_CANON\b/m, '};')
+    .matchAll(/^\s*'([^']+)'\s*:\s*'([^']+)'/gm)].map((m) => [m[1], m[2]]));
 const NON_GAME = new Set(
-  [...between(UTIL, 'NON_GAME_SPECIES', ']);').matchAll(/'([^']+)'/g)].map((m) => m[1]));
+  [...between(UTIL, /^\s*(?:export\s+)?const NON_GAME_SPECIES\b/m, ']);')
+    .matchAll(/'([^']+)'/g)].map((m) => m[1]));
 
 describe('the copy of the catalogue that the regulations build actually reads', () => {
   it('names every checkbox in both catalogues, and nothing else', () => {
