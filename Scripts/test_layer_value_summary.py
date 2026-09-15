@@ -20,12 +20,15 @@ SRC = open(os.path.join(HERE, 'extract_coastal_habitat.py'), encoding='utf-8').r
 
 # Lift the function by parsing the file, not by importing it.
 _tree = ast.parse(SRC)
-_fn = next((n for n in _tree.body
-            if isinstance(n, ast.FunctionDef) and n.name == 'layer_value_summary'), None)
-assert _fn is not None, 'layer_value_summary is gone from extract_coastal_habitat.py'
+_WANT = ['layer_value_summary', 'rarnum_column', 'rows_for_rarnums']
+_fns = [n for n in _tree.body if isinstance(n, ast.FunctionDef) and n.name in _WANT]
+assert len(_fns) == len(_WANT), f'missing from extract_coastal_habitat.py: ' \
+    f'{set(_WANT) - {n.name for n in _fns}}'
 _ns = {}
-exec(compile(ast.Module(body=[_fn], type_ignores=[]), '<lifted>', 'exec'), _ns)
+exec(compile(ast.Module(body=_fns, type_ignores=[]), '<lifted>', 'exec'), _ns)
 summary = _ns['layer_value_summary']
+rarnum_column = _ns['rarnum_column']
+rows_for_rarnums = _ns['rows_for_rarnums']
 
 
 class Summary(unittest.TestCase):
@@ -75,6 +78,51 @@ class Summary(unittest.TestCase):
         rows = [{'C': f'v{i}'} for i in range(40)]
         line = next(l for l in summary(rows, top=5, max_values_per_col=100) if 'C:' in l)
         self.assertIn('+35 more', line)
+
+
+class RarnumJoin(unittest.TestCase):
+    """AN ESI FEATURE CLASS CARRIES GEOMETRY AND A KEY, NOT ATTRIBUTES.
+
+    Measured on the drive 2026-09-15: NC BENTHIC is 9,750 rows of RARNUM, Shape_Length,
+    Shape_Area; GA BENTHIC is 1,208 rows of RARNUM, SHAPE_Length, SHAPE_Area. Two of the three
+    are geometry measurements. Everything about what the polygon IS lives in BIOFILE, joined on
+    RARNUM -- so oyster_beds.geojson has been written for NC and GA with no usable attribute at
+    all, and the map labels it "Oyster bed" on our say-so rather than the data's.
+    """
+
+    def test_finds_the_key_whatever_its_case(self):
+        self.assertEqual(rarnum_column([{'RARNUM': 1}]), 'RARNUM')
+        self.assertEqual(rarnum_column([{'rarnum': 1}]), 'rarnum')
+        self.assertEqual(rarnum_column([{' RarNum ': 1}]), ' RarNum ')
+
+    def test_a_layer_with_no_key_is_None_not_a_guess(self):
+        # Shape_Length is a geometry measurement and Shape_Area is another. Neither identifies
+        # anything, and picking one because it is the only column left would be worse than saying
+        # there is no key.
+        self.assertIsNone(rarnum_column([{'Shape_Length': 1.2, 'Shape_Area': 3.4}]))
+        self.assertIsNone(rarnum_column([]))
+
+    def test_the_join_is_on_STRINGS_because_the_types_do_not_match(self):
+        # The key arrives as an int from the feature class and can arrive as a float or a string
+        # from BIOFILE. 236000023 != 236000023.0 is how a join silently returns nothing, and
+        # nothing reads exactly like "this layer has no attributes".
+        bio = [{'RARNUM': 236000023.0, 'NAME': 'Oyster Reef'},
+               {'RARNUM': '236000025', 'NAME': 'Shell Bottom'},
+               {'RARNUM': 999, 'NAME': 'Something Else'}]
+        hits = rows_for_rarnums(bio, [236000023, '236000025'])
+        self.assertEqual([h['NAME'] for h in hits], ['Oyster Reef', 'Shell Bottom'])
+
+    def test_it_never_matches_everything_by_accident(self):
+        bio = [{'RARNUM': 1, 'NAME': 'a'}, {'RARNUM': 2, 'NAME': 'b'}]
+        self.assertEqual(rows_for_rarnums(bio, []), [])
+        self.assertEqual(rows_for_rarnums(bio, [None, '', '  ']), [])
+        self.assertEqual(rows_for_rarnums([], [1]), [])
+        # BIOFILE with no key column cannot be joined to, and must not return all of it.
+        self.assertEqual(rows_for_rarnums([{'NAME': 'a'}], [1]), [])
+
+    def test_a_null_key_in_BIOFILE_is_skipped_not_matched(self):
+        bio = [{'RARNUM': None, 'NAME': 'unset'}, {'RARNUM': 7, 'NAME': 'real'}]
+        self.assertEqual([h['NAME'] for h in rows_for_rarnums(bio, [7])], ['real'])
 
 
 if __name__ == '__main__':

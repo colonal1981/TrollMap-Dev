@@ -425,6 +425,56 @@ def layer_value_summary(rows, top=15, max_values_per_col=60):
     return lines
 
 
+def rarnum_column(rows):
+    """The column that joins this layer to BIOFILE, or None.
+
+    AN ESI FEATURE CLASS CARRIES GEOMETRY AND A KEY, NOT ATTRIBUTES. Measured 2026-09-15 on both
+    geodatabases: NC BENTHIC is 9,750 rows of three columns -- RARNUM, Shape_Length, Shape_Area --
+    and GA BENTHIC is 1,208 rows of the same, spelled SHAPE_Length. Two of the three are geometry
+    measurements. The ONLY attribute is RARNUM, and it is a foreign key into the BIOFILE table,
+    which is where the species and habitat names live.
+
+    So a reader that takes BENTHIC alone gets polygons whose single property is a number that
+    means nothing outside the geodatabase -- which is exactly what this script has been writing to
+    oyster_beds.geojson for every NC and GA zone. The map then labels them "Oyster bed" on our
+    say-so rather than the data's.
+
+    Case varies BETWEEN the geodatabases -- `Shape_Length` in North Carolina, `SHAPE_Length` in
+    Georgia -- so nothing here may match a column name exactly.
+    """
+    for r in rows:
+        for k in r.keys():
+            if str(k).strip().upper() == 'RARNUM':
+                return k
+    return None
+
+
+def rows_for_rarnums(bio_rows, wanted):
+    """The BIOFILE rows a set of RARNUMs points at.
+
+    Pure, so the join can be tested without a geodatabase. Compared as STRINGS: the key arrives as
+    an int from one layer and can arrive as a float or a string from the other, and 236000023 !=
+    236000023.0 is how a join silently returns nothing and reads as "no attributes exist".
+    """
+    want = {str(w).strip() for w in wanted if w is not None and str(w).strip() != ''}
+    if not want:
+        return []
+    col = rarnum_column(bio_rows)
+    if not col:
+        return []
+    out = []
+    for r in bio_rows:
+        v = r.get(col)
+        if v is None:
+            continue
+        key = str(v).strip()
+        if key.endswith('.0'):
+            key = key[:-2]
+        if key in want:
+            out.append(r)
+    return out
+
+
 def inspect_layer(label, zip_path, layer_name, max_rows=200000):
     """Print what one layer of one ESI geodatabase actually holds. Reads nothing else."""
     if not zip_path.exists():
@@ -450,6 +500,26 @@ def inspect_layer(label, zip_path, layer_name, max_rows=200000):
             print(f'    (summarising the first {max_rows:,} of {len(gdf):,} rows)')
         for line in layer_value_summary(rows):
             print(line)
+
+        # AND WHAT THE KEY POINTS AT, because the key on its own is not an answer. See
+        # rarnum_column(): an ESI feature class holds geometry and a RARNUM, and every word about
+        # what the polygon IS lives in BIOFILE.
+        key_col = rarnum_column(rows)
+        if key_col:
+            bio = [l for l in list_gdb_layers(gdb_path) if l.upper() == 'BIOFILE']
+            if not bio:
+                print(f'    {key_col} is a key into BIOFILE and this geodatabase has no BIOFILE '
+                      f'layer -- the polygons cannot be identified from it at all.')
+            else:
+                wanted = {r.get(key_col) for r in rows}
+                bdf = gpd.read_file(str(gdb_path), layer=bio[0], engine="pyogrio")
+                bgeom = getattr(getattr(bdf, 'geometry', None), 'name', None)
+                bflat = bdf.drop(columns=[bgeom]) if bgeom and bgeom in bdf.columns else bdf
+                hits = rows_for_rarnums(bflat.to_dict('records'), wanted)
+                print(f'\n    {key_col} resolved through BIOFILE ({len(bdf):,} rows) '
+                      f'-> {len(hits):,} matching records for the {len(wanted)} key(s) above:')
+                for line in layer_value_summary(hits):
+                    print(line)
     finally:
         import shutil
         shutil.rmtree(tmp_dir, ignore_errors=True)
