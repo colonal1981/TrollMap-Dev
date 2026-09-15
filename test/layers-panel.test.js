@@ -33,7 +33,12 @@ const HTML = readFileSync(join(ROOT, 'index.html'), 'utf8');
 const TOGGLES = [
   'btnRamps', 'btnBankPier', 'btnPaddle',
   'btnAttractors', 'btnFishingSpots', 'btnPOI', 'btnFetchOsm',
-  'btnOysterBeds', 'btnMarshEdges', 'btnSoundings',
+  // btnHardBottom and btnSav joined the coastal group on 2026-09-15, and they are the reverse of
+  // the deletion this list was written for. extract_coastal_habitat.py had been writing every ESI
+  // BENTHIC polygon into oyster_beds.geojson -- Georgia's hardbottom and North Carolina's
+  // watermilfoil both drawn under the oyster tooltip -- so the two of them came OUT of the oyster
+  // layer rather than being added beside it. One button became three.
+  'btnOysterBeds', 'btnHardBottom', 'btnSav', 'btnMarshEdges', 'btnSoundings',
   'btnShowCatches',
 ];
 

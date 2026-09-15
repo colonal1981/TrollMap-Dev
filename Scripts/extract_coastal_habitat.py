@@ -639,6 +639,29 @@ def inspect_layer(label, zip_path, layer_name, max_rows=200000):
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+def zones_to_process(args):
+    """The (slug, zone) pairs this run will actually touch.
+
+    Pulled out of main() so the SOURCE LOADING can ask it before it reads 340 MB off the drive --
+    see the note at its call site. Returns the same list main() always built; the only change is
+    that it is built first.
+    """
+    if getattr(args, 'zone', None):
+        if args.zone not in COASTAL_CATALOG:
+            print(f"❌ Unknown zone: {args.zone}")
+            sys.exit(1)
+        return [(args.zone, COASTAL_CATALOG[args.zone])]
+    if getattr(args, 'zones', None):
+        out = []
+        for slug in args.zones:
+            if slug not in COASTAL_CATALOG:
+                print(f"❌ Unknown zone: {slug}")
+                sys.exit(1)
+            out.append((slug, COASTAL_CATALOG[slug]))
+        return out
+    return list(COASTAL_CATALOG.items())
+
+
 def main():
     ap = argparse.ArgumentParser(description='Extract coastal habitat data for TrollMap')
     ap.add_argument('--zone',        help='Process single zone by slug')
@@ -676,12 +699,32 @@ def main():
             import shutil; shutil.rmtree(tmp_dir, ignore_errors=True)
         return
 
+    # ── Which zones, BEFORE anything is loaded ────────────────────────────────
+    #
+    # Ryan, 2026-09-15: "why am i extracting NC coastal information when there are no NC coastal
+    # zones in the app anymore?" He was right. The app offers thirteen coastal zones and every one
+    # of them is SC or GA -- coastal_catalog.py carries exactly those thirteen -- so no North
+    # Carolina zone has been PROCESSED for some time. But this function loaded all five sources
+    # unconditionally before it looked at the zone list, so every run still unzipped and read
+    # NCarolina_2016_GDB.zip: 340 MB off the drive, a GDB extract and four layer reads, for zones
+    # that do not exist.
+    #
+    # A SOURCE IS LOADED WHEN A ZONE IN THIS RUN NEEDS IT. Nothing else changes -- the NC rows
+    # stay in OYSTER_SOURCE_BY_STATE and in the ESI table, because they are correct and a zone
+    # list that regains North Carolina must keep working. What is dropped is reading a file for
+    # a state nobody asked about, which is the same rule the rest of this pipeline keeps.
+    zones = zones_to_process(args)
+    states = {z.get('state', '') for _, z in zones}
+    print(f"States in this run: {', '.join(sorted(s for s in states if s)) or '(none)'}")
+
     # ── Load source data ──────────────────────────────────────────────────────
     print("Loading source data...")
 
     # SC oyster
     oyster_sc = None
-    if SC_OYSTER_FILE.exists():
+    if 'SC' not in states:
+        print("  SC oyster: no South Carolina zone in this run — not loaded")
+    elif SC_OYSTER_FILE.exists():
         print(f"  Loading SC oyster ({SC_OYSTER_FILE.stat().st_size // 1024 // 1024} MB)...")
         oyster_sc = gpd.read_file(str(SC_OYSTER_FILE), engine="pyogrio")
         print(f"  SC oyster: {len(oyster_sc):,} features")
@@ -690,7 +733,9 @@ def main():
 
     # NC reef/oyster
     oyster_nc = None
-    if NC_REEF_FILE.exists():
+    if 'NC' not in states:
+        print("  NC reef guide: no North Carolina zone in this run — not loaded")
+    elif NC_REEF_FILE.exists():
         print(f"  Loading NC reef guide...")
         oyster_nc = gpd.read_file(str(NC_REEF_FILE), engine="pyogrio")
         print(f"  NC reef/oyster: {len(oyster_nc):,} features")
@@ -699,7 +744,10 @@ def main():
 
     # SC ESI
     esi_sc = {}
-    if SC_ESI_ZIP.exists():
+    tmp_sc = None
+    if 'SC' not in states:
+        print("  SC ESI: no SC zone in this run — the geodatabase is not unzipped")
+    elif SC_ESI_ZIP.exists():
         gdb_path, tmp_sc = extract_gdb_from_zip(SC_ESI_ZIP)
         if gdb_path:
             esi_sc = load_esi_layers(gdb_path, ESI_HABITAT_LAYERS + [BIOFILE_LAYER])
@@ -709,7 +757,10 @@ def main():
 
     # NC ESI
     esi_nc = {}
-    if NC_ESI_ZIP.exists():
+    tmp_nc = None
+    if 'NC' not in states:
+        print("  NC ESI: no NC zone in this run — the geodatabase is not unzipped")
+    elif NC_ESI_ZIP.exists():
         gdb_path, tmp_nc = extract_gdb_from_zip(NC_ESI_ZIP)
         if gdb_path:
             esi_nc = load_esi_layers(gdb_path, ESI_HABITAT_LAYERS + [BIOFILE_LAYER])
@@ -719,7 +770,10 @@ def main():
 
     # GA ESI
     esi_ga = {}
-    if GA_ESI_ZIP.exists():
+    tmp_ga = None
+    if 'GA' not in states:
+        print("  GA ESI: no GA zone in this run — the geodatabase is not unzipped")
+    elif GA_ESI_ZIP.exists():
         gdb_path, tmp_ga = extract_gdb_from_zip(GA_ESI_ZIP)
         if gdb_path:
             esi_ga = load_esi_layers(gdb_path, ESI_HABITAT_LAYERS + [BIOFILE_LAYER])
@@ -728,21 +782,7 @@ def main():
         tmp_ga = None
 
     # ── Process zones ─────────────────────────────────────────────────────────
-    if args.zone:
-        if args.zone not in COASTAL_CATALOG:
-            print(f"❌ Unknown zone: {args.zone}")
-            sys.exit(1)
-        zones = [(args.zone, COASTAL_CATALOG[args.zone])]
-    elif args.zones:
-        zones = []
-        for s in args.zones:
-            if s not in COASTAL_CATALOG:
-                print(f"❌ Unknown zone: {s}")
-                sys.exit(1)
-            zones.append((s, COASTAL_CATALOG[s]))
-    else:
-        zones = list(COASTAL_CATALOG.items())
-
+    # `zones` was resolved above, before a byte was read. See zones_to_process().
     print(f"\n{'='*60}")
     print(f"Processing {len(zones)} zones...")
     if args.dry_run:
