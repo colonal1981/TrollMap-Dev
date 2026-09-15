@@ -22,6 +22,12 @@ import { resolveR2Key } from '../data/lake-keys.js';
 import { waterZoneCandidates } from '../data/water-aliases.js';
 import { registryStats } from '../data/lake-registry.js';
 import { makePredicate } from '../data/water-filter.js';
+// The picker question moved to js/data/water-picker.js -- see the note at its top for why it is
+// not in here. Re-exported so nothing that imported these from this module had to move.
+import { STATE_ORDER, TYPE_ORDER, pickerLabel, sortForDisplay, stateOf, typeOf,
+         bucketWaters } from '../data/water-picker.js';
+export { STATE_ORDER, TYPE_ORDER, pickerLabel, sortForDisplay, stateOf, typeOf,
+         bucketWaters };
 
 /**
  * THE BASELINE GATE, ON TOP OF THE BOXES HE TICKS.
@@ -59,114 +65,6 @@ const SIZE_BANDS = {
 };
 
 // SC first because that is where Ryan fishes, then the rest of the coverage area in his order.
-export const STATE_ORDER = ['SC', 'NC', 'GA', 'TN'];
-// Lakes, rivers, coast — within each state. Ryan, 2026-08-08: "i want lakes then rivers then
-// coastal for each state... i actually don't like how it is now."
-export const TYPE_ORDER = [['lake', 'Lakes'], ['river', 'Rivers'], ['coastal', 'Coast']];
-
-const RIVERISH = /\b(river|creek|branch|run|fork|canal|slough|bayou|prong|swamp)\b/i;
-
-/** SC / NC / GA / TN for any picker entry, registry-backed or not. */
-/**
- * What a row READS as, once the heading has said everything it already says.
- *
- * The group is "SC — Coast", so "Winyah Bay / Georgetown, SC (Georgetown Co, SC)" says SC three
- * times. This used to strip only a trailing ", SC", which the county parenthetical defeats --
- * so registry rows kept their county while DNR rows did not, and the same group held two shapes.
- *
- * ONLY THE PARENTHETICAL CARRYING "Co" IS REMOVED, and that is the whole trick. Four Saluda
- * Rivers are told apart by "(2)" and "(Lower Saluda)", the two Lake Robinsons by "(Greer)", and
- * a Cane Creek Lake by "(Union County)" -- none of which is a county abbreviation, and all of
- * which survive. Checked across the whole index: exactly one pair would render identically
- * inside one state group, and it is the Robinson pair that lake_display_names.json renames.
- *
- * This is display only. `opt.value` stays the full name, because that is the key every other
- * module looks the water up by.
- */
-export function pickerLabel(name) {
-  return String(name || '')
-    .replace(/\s*\([^)]*\bCo\b[^)]*\)\s*/i, ' ')
-    .replace(/,\s*[A-Z]{2}(?:\/[A-Z]{2})*\s*$/, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-/**
- * THE ORDER OF A GROUP IS THE ORDER OF WHAT IT SAYS, NOT THE ORDER IT WAS COLLECTED IN.
- *
- * Ryan, 2026-09-04, on Richard B Russell: "its at the bottom of the SC list not alphabetically
- * where it should have been."
- *
- * The buckets were rendered in PUSH order and never sorted. That was invisible for every water
- * whose name agrees with its registry about which state it is in, and it is exactly wrong for the
- * ones that do not:
- *
- *   access-index.js sorts `lakeNames` with lakeStatePriority(), which reads the state off the
- *   NAME's suffix -- so "Lake Richard Russell, GA" sits in the GA run, after every SC name.
- *
- *   buildLakeSelect() buckets with stateOf(name, rec), which reads the state off the REGISTRY
- *   RECORD -- and richard_b_russell_lake is "Richard B Russell Lake (Abbeville Co, SC/GA)", so
- *   the row lands in SC.
- *
- * Sorted by one notion of state, grouped by another. The row is placed in the right group and
- * arrives after everything already in it: bottom of "SC — Lakes", under a label reading "Lake
- * Richard Russell", which is neither where it belongs nor anywhere a person would look.
- *
- * Sorted on pickerLabel() and not on the raw name, because the label is the string on screen and
- * a list whose visible order does not match its visible text is the same bug wearing a different
- * hat. The raw name breaks ties so the order is stable when two waters read alike.
- *
- * Fixes the class, not the lake: any water whose registry state and name suffix disagree had this,
- * and eleven rows in lake_index carry a two-state suffix.
- */
-export function sortForDisplay(names) {
-  return [...(names || [])].sort((a, b) =>
-    pickerLabel(a).localeCompare(pickerLabel(b), undefined, { numeric: true, sensitivity: 'base' })
-    || String(a).localeCompare(String(b)));
-}
-
-export function stateOf(lakeName, rec) {
-  if (rec?.state) return rec.state;
-  // Every DNR name gets a ", SC" suffix from displayLakeName(), and coastal zone names carry
-  // one too. That is the only state signal a registry-less entry has, and it is reliable
-  // because the feeds are fetched per state.
-  const m = /,\s*([A-Z]{2})\s*$/.exec(String(lakeName || ''));
-  return m ? m[1] : null;
-}
-
-/**
- * lake / river / coastal.
- *
- * `feature_type` is authoritative and comes from the registry — 1,471 lakes, 229 rivers, 22
- * coastal across the index. For an entry with no registry row there is nothing to read, so the
- * NAME is used, and only to decide which heading it sits under. It is a display grouping, not a
- * claim about the water: putting Enoree River under "Lakes / Reservoirs" is the thing being
- * fixed, and guessing from the word "River" is strictly better than that.
- */
-export function typeOf(lakeName, rec) {
-  if (isCoastalKey(resolveR2Key(lakeName))) return 'coastal';
-  if (rec?.featureType) return rec.featureType;
-  return RIVERISH.test(String(lakeName || '')) ? 'river' : 'lake';
-}
-
-/**
- * True if a picker entry survives the current filters.
- *
- * AN ENTRY THE FILTER CANNOT ANSWER FOR NOW FAILS THAT FILTER. It used to pass everything:
- * `if (!rec) return true`. Ryan, 2026-08-08: "if i choose >1000 acres i still get tiny little
- * mill ponds that do not have contours because they are only being fed by DNR list." Adams Grist
- * Mill Lake, Biggin Creek, Buggy Branch and Horseshoe Creek have no registry row at all, so
- * nothing knows their size — and they were showing under "over 1000 acres" regardless.
- *
- * State and has-ramp ARE answerable without a registry row: the state comes off the name suffix
- * and the ramps are counted from the live access index, which is the same data the Access
- * dropdown under it is built from. Only size and charted are unanswerable, and those are exactly
- * the two that now exclude.
- *
- * This is the second attempt at this bug — see the pass-1 note in access-index.js, which fixed
- * the 641 lakes that HAD a registry row the lookup could not find. What is left after that fix
- * is the genuinely registry-less, and this is what to do about them.
- */
 export function passesFilters(lakeName, f = filters) {
   const rec = registryRecordFor(lakeName);
 
@@ -267,60 +165,8 @@ async function populateLakeSelect() {
   // Coastal zones are folded in here rather than appended by coastal-optgroups.js, because they
   // belong under their state alongside its lakes and rivers. That util still serves the research
   // dropdown, which has not been reworked.
-  const buckets = new Map();          // `${state}|${type}` -> string[]
-  const put = (state, type, name) => {
-    if (!state) return;
-    const k = `${state}|${type}`;
-    if (!buckets.has(k)) buckets.set(k, []);
-    buckets.get(k).push(name);
-  };
-
-  const emittedCoastal = new Set();
-  idx.lakeNames.forEach((lakeName) => {
-    if (!passesFilters(lakeName)) return;
-    const rec = registryRecordFor(lakeName);
-    const slug = rec?.slug || resolveR2Key(lakeName);
-    if (slug && isCoastalKey(slug)) emittedCoastal.add(slug);
-    put(stateOf(lakeName, rec), typeOf(lakeName, rec), lakeName);
-  });
-
-  // ── COASTAL ZONES, ONCE EACH ────────────────────────────────────────────────────────────
-  //
-  // The comment that stood here said "coastal zones are not in the access index — the worker
-  // only covers inland DNR ramps". That was true when it was written and has not been true for
-  // a while: `lake_index.json` carries all 16 `coast_` rows, so the registry merge puts every
-  // one of them into `byLake`, and COASTAL_MANUAL_RAMPS adds zone names there directly too.
-  //
-  // So this loop was adding a SECOND row for every zone, under a different spelling of the same
-  // water. Ryan, 2026-08-23: *"A whole bunch of coastal areas are in the picker twice but they
-  // all seem to have bathymetry"* -- both rows resolve, because both are the same zone.
-  //
-  //   registry:      "Winyah Bay / Georgetown, SC (Georgetown Co, SC)"
-  //   COASTAL_ZONES: "Winyah Bay / Georgetown, SC"
-  //
-  // Murrells Inlet and St. Helena Sound have no county in their registry name, so those two
-  // were being added twice under a string identical to itself. Matching on the SLUG catches
-  // both shapes; matching on the name would have caught only one.
-  //
-  // The loop stays, because a zone the registry has not shipped still has to be reachable --
-  // the tide, oyster and marsh layers hang off it.
-  const zoneSlugByName = new Map();
-  for (const [slug, z] of Object.entries(COASTAL_ZONES || {})) {
-    if (z && z.name) zoneSlugByName.set(z.name, slug);
-  }
-  const coastal = coastalNamesByState();
-  for (const [stateCode, names] of Object.entries(coastal || {})) {
-    for (const name of (names || [])) {
-      // A zone has no acreage and no registry row, so it answers the same filters a DNR-fed
-      // name does — and must not vanish just because the state box is set to its own state.
-      if (filters.state && filters.state !== stateCode) continue;
-      if (filters.size || filters.wellCharted) continue;
-      const slug = zoneSlugByName.get(name);
-      if (slug && emittedCoastal.has(slug)) continue;   // already offered under its registry name
-      put(stateCode, 'coastal', name);
-    }
-  }
-
+  const buckets = bucketWaters((rec, lakeName) => passesFilters(lakeName),
+                              { coastalFilters: filters });
   let total = 0;
   for (const stateCode of STATE_ORDER) {
     for (const [type, typeLabel] of TYPE_ORDER) {

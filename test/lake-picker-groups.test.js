@@ -4,7 +4,12 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const SRC = readFileSync(path.join(REPO, 'js/modules/lake-ramp-select.js'), 'utf8');
+// WHICH WATERS A PICKER OFFERS MOVED OUT OF THE MAP MODULE, 2026-09-15, into js/data/water-picker.js
+// -- see the note at its top. lake-ramp-select.js imported contour-data.js, which touches Leaflet at
+// load, so putting the picker question there made plan-builder.js need a map to be tested. Both
+// files are read here: the shared one for the decisions, the map one for the rendering it still owns.
+const SRC = readFileSync(path.join(REPO, 'js/data/water-picker.js'), 'utf8');
+const MAP_SRC = readFileSync(path.join(REPO, 'js/modules/lake-ramp-select.js'), 'utf8');
 
 // ---------------------------------------------------------------------------
 // Why this test exists
@@ -26,21 +31,22 @@ const SRC = readFileSync(path.join(REPO, 'js/modules/lake-ramp-select.js'), 'utf
 // the next screenshot.
 // ---------------------------------------------------------------------------
 
-// The module reaches window/document at import time via its dependency graph, so the two pure
-// decisions are re-implemented from the SOURCE OF TRUTH constants rather than imported. Anything
-// asserted here that drifts from the file shows up as a source assertion below.
-const RIVERISH = /\b(river|creek|branch|run|fork|canal|slough|bayou|prong|swamp)\b/i;
-const stateOf = (name, rec) => rec?.state
-  || (/,\s*([A-Z]{2})\s*$/.exec(String(name || '')) || [])[1] || null;
+// THESE USED TO BE RE-IMPLEMENTED HERE, because the module reached window and document at import
+// time through its dependency graph. water-picker.js reaches neither -- only access-index, which
+// wants `window` and nothing else -- so the real functions are imported and a copy that could drift
+// from them no longer exists. That is the whole reason the move was worth making.
+globalThis.window = globalThis;
+const { stateOf, typeOf, STATE_ORDER, TYPE_ORDER } = await import('../js/data/water-picker.js');
+const isRiverish = (name) => typeOf(name, null) === 'river';
 
 describe('the picker groups by state, then by water type', () => {
   it('orders states SC, NC, GA, TN', () => {
     // Ryan, 2026-08-08, asked directly. SC first because that is where he fishes.
-    expect(SRC.includes("STATE_ORDER = ['SC', 'NC', 'GA', 'TN']")).toBe(true);
+    expect(STATE_ORDER).toEqual(['SC', 'NC', 'GA', 'TN']);
   });
 
   it('orders lakes, then rivers, then coast inside each state', () => {
-    expect(SRC.includes("[['lake', 'Lakes'], ['river', 'Rivers'], ['coastal', 'Coast']]")).toBe(true);
+    expect(TYPE_ORDER).toEqual([['lake', 'Lakes'], ['river', 'Rivers'], ['coastal', 'Coast']]);
   });
 
   it('reads feature_type off the registry rather than guessing at a name', () => {
@@ -55,9 +61,16 @@ describe('the picker groups by state, then by water type', () => {
     // Comments are stripped first. The first version of this assertion grepped the whole file
     // and failed on the comment explaining the fix -- which is precisely the failure mode
     // DELETION_TAB records as having cost four deploys on 2026-08-04.
-    const code = SRC.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/^\s*\/\/.*$/gm, ' ');
+    const code = MAP_SRC.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/^\s*\/\/.*$/gm, ' ');
     expect(code.includes('Lakes / Reservoirs')).toBe(false);
     expect(code.includes('grp.label = `${stateCode} — ${typeLabel}')).toBe(true);
+    // AND THE PLANNER RENDERS THE SAME GROUPS from the same buckets, which is what Ryan asked for
+    // on 2026-09-15: "i want the exact same 355 bodies of water to be possible in the picker".
+    const plan = readFileSync(path.join(REPO, 'js/modules/plan-builder.js'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/^\s*\/\/.*$/gm, ' ');
+    expect(plan.includes('bucketWaters(')).toBe(true);
+    expect(plan.includes("riversGroup.label = 'Rivers / Tailwaters'")).toBe(false);
+    expect(plan.includes("lakesGroup.label = 'Lakes / Reservoirs'")).toBe(false);
   });
 
   it('folds coastal zones under their state instead of appending them', () => {
@@ -89,30 +102,30 @@ describe('the name heuristic only runs when the registry has nothing', () => {
   it('calls the obvious ones rivers', () => {
     for (const n of ['Enoree River, SC', 'Biggin Creek, SC', 'Buggy Branch, SC',
                      'Horseshoe Creek, SC', 'Congaree Creek, SC']) {
-      expect(RIVERISH.test(n)).toBe(true);
+      expect(isRiverish(n)).toBe(true);
     }
   });
 
   it('leaves lakes alone', () => {
     for (const n of ['Adams Grist Mill Lake, SC', 'Broadway Lake, SC',
                      'Andrew Jackson State Park Lake, SC', 'HB Robinson Lake (Darlington Co, SC)']) {
-      expect(RIVERISH.test(n)).toBe(false);
+      expect(isRiverish(n)).toBe(false);
     }
   });
 
   it('is a display grouping and says so', () => {
     // If this ever starts being treated as data, the comment is the thing that stops it.
-    expect(SRC.includes('display grouping, not a')).toBe(true);
+    expect(SRC.includes('display grouping, not a')).toBe(true);   // in water-picker.js now
   });
 });
 
 describe('a filter an entry cannot answer now excludes it', () => {
   it('no longer passes everything without a registry record', () => {
-    expect(SRC.includes('if (!rec) return true;')).toBe(false);
+    expect(MAP_SRC.includes('if (!rec) return true;')).toBe(false);
   });
 
   it('excludes unknown-size entries from a size band', () => {
-    expect(SRC.includes('if (f.size || f.wellCharted) return false;')).toBe(true);
+    expect(MAP_SRC.includes('if (f.size || f.wellCharted) return false;')).toBe(true);
   });
 
   it('still answers state and ramps for them, because both are knowable', () => {
@@ -124,8 +137,8 @@ describe('a filter an entry cannot answer now excludes it', () => {
     // have a registry record. Three readings of one fact, and the one that mattered read a
     // baked file. They all go through liveAccessFor() now — see
     // test/live-ramps-reach-the-filter.test.js.
-    expect(SRC.includes("if (f.state && stateOf(lakeName, rec) !== f.state) return false;")).toBe(true);
-    expect(SRC.includes('liveAccessFor(lakeName).ramps > 0')).toBe(true);
+    expect(MAP_SRC.includes("if (f.state && stateOf(lakeName, rec) !== f.state) return false;")).toBe(true);
+    expect(MAP_SRC.includes('liveAccessFor(lakeName).ramps > 0')).toBe(true);
   });
 
   it('asks the live index for the has-ramp box even when a registry row exists', () => {
@@ -133,7 +146,7 @@ describe('a filter an entry cannot answer now excludes it', () => {
     // lake_access.json and reads 0 on 67 waters the DNR feeds list ramps for — every river
     // Ryan asked about among them. `rampSources` stays as the OR, never as the AND.
     expect(SRC.includes('if (f.rampOnly && !rec.rampSources) return false;')).toBe(false);
-    expect(SRC.includes('liveAccessFor(lakeName).ramps || rec.rampSources')).toBe(true);
+    expect(MAP_SRC.includes('liveAccessFor(lakeName).ramps || rec.rampSources')).toBe(true);
   });
 });
 

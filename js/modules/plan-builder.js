@@ -11,13 +11,14 @@
 import { state } from "../core/state.js";
 import { esc } from "../utils/escape.js";
 import { planIssues } from "./plan-issues.js";
-import { lakeDbEntryFor, lakeNamesForPicker, lakeRecordFor } from "../data/lake-registry.js";
+import { lakeDbEntryFor, lakeRecordFor } from "../data/lake-registry.js";
 import { renderSpread } from "./spread-builder.js";
 import { newRodRow } from "../utils/rod-row.js";
 import { getFilename, setFilename } from "../core/map-init.js";
 import { COASTAL_ZONES, isCoastalKey } from "../data/coastal-zones.js";
 import { landOnCoastalZone, focusRamp } from "../utils/viewport-cull.js";
-import { appendCoastalOptgroups } from "../utils/coastal-optgroups.js";
+import { bucketWaters, STATE_ORDER, TYPE_ORDER, sortForDisplay,
+         pickerLabel } from '../data/water-picker.js';
 import { resolveR2Key } from "../data/lake-keys.js";
 import { advisoryRows } from "../data/fish-advisories.js";
 // The band is defined once, where the cue line that carries it is built.
@@ -208,7 +209,10 @@ export function collectPlan(){
   })();
   const species = [...document.querySelectorAll('#planSpeciesChecks input:checked')].map(c=>c.value);
   const lakeVal = gV('planLake');
-  const isRiv = isPlanRiverValue(lakeVal);
+  // isRiverWater, NOT isPlanRiverValue. The prefix only ever marked the six curated entries, and
+  // the picker no longer emits it at all -- so this asked "is this one of six" and got `false` for
+  // the other 52 river rows even before tonight. isRiverWater asks the registry.
+  const isRiv = isRiverWater(lakeVal);
   const coastalKey = resolveR2Key(lakeVal);
   const isCoastal = isCoastalKey(coastalKey);
   const phaseSpeeds = normalizedPhaseSpeeds(window._smartPlanPhaseRoutes);
@@ -2401,7 +2405,22 @@ export function isRiverWater(v){
 // while twenty others asked the wrong one and got null. See RIVER_VALUE_ALIASES in
 // js/data/lake-keys.js for what moved and why it moved there rather than being wired into the
 // four places that already had it.
-export function getPlanRiverDef(v){ const key=String(v||'').replace(/^river:/,''); return PLAN_RIVERS.find(r=>r.key===key||r.worker===key); }
+/**
+ * The curated-ramp entry for a water, or undefined.
+ *
+ * MATCHES ON THE SLUG FIRST, because the picker no longer emits `river:<key>` -- it emits the
+ * registry name like every other water, so the thing arriving here is "Congaree River (to SC-601)
+ * (Richland Co, SC)" and not "river:congaree". resolveR2Key() turns either into the slug.
+ *
+ * The key and worker matches stay for a value stored before 2026-09-15, and because
+ * PLAN_RIVERS[].worker is what the river gauge panel asks the Worker for.
+ */
+export function getPlanRiverDef(v){
+  const slug = resolveR2Key(v || '');
+  if (slug) { const bySlug = PLAN_RIVERS.find(r => r.slug === slug); if (bySlug) return bySlug; }
+  const key = String(v||'').replace(/^river:/,'');
+  return PLAN_RIVERS.find(r=>r.key===key||r.worker===key);
+}
 // isDukePlanLakeName() and getPlanLakeLevelUnit() were here. They were the FOURTH copy of the
 // nine-name Duke list in this codebase, matched with `clean.includes(k)||k.includes(clean)` --
 // so "mountain island" also claimed anything containing it -- and what they decided was the
@@ -2450,24 +2469,14 @@ export async function populatePlanLakeDropdown(){
   if(!sel) return;
   const current = sel.value;
   sel.innerHTML = '<option value="">— choose lake or river —</option>';
-  const lakesGroup = document.createElement('optgroup');
-  lakesGroup.label = 'Lakes / Reservoirs';
-  
-  // Wait for the async worker fetch to populate the global index before asking for the names!
-  let lakeNames = [];
-  if (window.getUniversalLakeNamesAsync) {
-    lakeNames = await window.getUniversalLakeNamesAsync();
-  } else if (window.getUniversalLakeNames) {
-    lakeNames = window.getUniversalLakeNames();
-  } else {
-    // Was Object.keys(LAKE_DB).sort() -- a SEVENTH lake list in the UI, 50 curated names,
-    // silently different from the map toolbar's. Same registry, same filter, same list.
-    lakeNames = lakeNamesForPicker();
-  }
-
-  if (lakeNames.length === 0) {
-    lakeNames = lakeNamesForPicker();
-  }
+  // THE THREE WAYS THIS USED TO GET ITS NAMES are gone with the groups they fed:
+  // getUniversalLakeNamesAsync, getUniversalLakeNames and lakeNamesForPicker, tried in turn.
+  // bucketWaters() reads the loaded access index directly, which is what all three resolved to.
+  //
+  // It is SYNCHRONOUS on an index that is already loaded. This function is called from the same
+  // places it always was, after loadAccessIndex() has resolved -- and when it has not, the
+  // buckets come back empty and the picker rebuilds on the next call rather than showing a
+  // half-filtered list, which is what the `|| lakeNamesForPicker()` fallback was papering over.
 
   // THIS DROPDOWN HAD NO FILTER OF ANY KIND ON IT.
   //
@@ -2480,37 +2489,57 @@ export async function populatePlanLakeDropdown(){
   // The planner preset is stricter than the map's on purpose: you cannot plan a trolling day on
   // water with no contours and nowhere to launch, and every such name here is a dead end you have
   // to click to discover. KEEP_ALWAYS still runs first inside the predicate.
+  //
+  // ── AND IT NOW BUILDS THE SAME GROUPS THE MAP DOES ────────────────────────────────────────
+  //
+  // Ryan, 2026-09-15: "the plan picker does not mirror the map picker here for rivers... there are
+  // a lot less rivers in the plan tab than the map tab", and then: "i want the exact same 355
+  // bodies of water to be possible in the picker but filtered as appropriate."
+  //
+  // They were the same waters all along. What differed was the grouping: this built one "Lakes"
+  // group holding every inland name, plus a hardcoded six-row "Rivers / Tailwaters" group. So the
+  // OTHER 52 river rows in the registry -- Edisto, Cooper, Catawba, Black River, Great Pee Dee --
+  // sat under "Lakes", because nothing here asked the registry what they were. The map has asked
+  // since it was rebuilt: `typeOf()` returns `rec.featureType` when there is a record.
+  //
+  // bucketWaters() is that map builder, extracted. The predicate is the only thing this varies.
+  //
+  // THE `river:` VALUE SCHEME IS GONE WITH IT. Those six entries existed to mark a water as a
+  // river without asking the registry; once the registry is asked, the prefix has no job. It was
+  // also the cause of "No chartpack for river:congaree" -- see RIVER_VALUE_ALIASES in
+  // js/data/lake-keys.js, which still resolves it so a session saved before tonight still opens.
+  //
+  // PLAN_RIVERS stays for its CURATED RAMPS -- three named launches on the Wateree that no feed
+  // lists -- and stops being a source of picker rows. getPlanRiverDef() matches on slug now, so
+  // those ramps attach to the registry row the picker offers.
   const plannable = makePredicate('planner', null);
-  // A river entry below already offers this water, with gauges on top of the pack. Listing the
-  // registry row as well is the duplicate Ryan reported on 2026-08-14.
-  const claimedByRiver = new Set(PLAN_RIVERS.map(r => r.slug).filter(Boolean));
-  let dropped = 0;
-  lakeNames.forEach(lakeName => {
-    if (isCoastalKey(resolveR2Key(lakeName))) return;
-    if (claimedByRiver.has(resolveR2Key(lakeName))) return;
-    if (!plannable(registryRecordFor(lakeName), lakeName)) { dropped += 1; return; }
-    const opt = document.createElement('option');
-    opt.value = lakeName; opt.textContent = lakeName;
-    lakesGroup.appendChild(opt);
-  });
-  if (dropped) {
-    console.info('[plan] %d water(s) left out of the planner picker — no bathymetry, no ramp, or '
-               + 'not in the registry at all', dropped);
+  const buckets = bucketWaters((rec, lakeName) => plannable(rec, lakeName));
+  let offered = 0;
+  for (const stateCode of STATE_ORDER) {
+    for (const [type, typeLabel] of TYPE_ORDER) {
+      const names = buckets.get(`${stateCode}|${type}`);
+      if (!names?.length) continue;
+      const grp = document.createElement('optgroup');
+      grp.label = `${stateCode} — ${typeLabel} (${names.length})`;
+      for (const name of sortForDisplay(names)) {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = pickerLabel(name);
+        grp.appendChild(opt);
+      }
+      sel.appendChild(grp);
+      offered += names.length;
+    }
   }
-  sel.appendChild(lakesGroup);
-  const riversGroup = document.createElement('optgroup');
-  riversGroup.label = 'Rivers / Tailwaters';
-  PLAN_RIVERS.forEach(r => {
-    const opt = document.createElement('option');
-    opt.value = `river:${r.key}`; opt.textContent = r.label;
-    riversGroup.appendChild(opt);
-  });
-  sel.appendChild(riversGroup);
+  console.info('[plan] picker offers %d water(s) — the registry\'s own list, filtered by the '
+             + 'planner preset', offered);
 
-  // Coastal / tidal zones, grouped by state. These come from the generated
-  // catalog rather than the worker access index, which only indexes inland
-  // DNR boat ramps and has no coastal coverage.
-  appendCoastalOptgroups(sel);
+  // THE COASTAL APPENDER STOOD HERE and is gone, 2026-09-15. It read the generated catalog on the
+  // stated grounds that "the worker access index only indexes inland DNR boat ramps and has no
+  // coastal coverage" -- true when written, untrue since lake_index.json gained all 13 `coast_`
+  // rows, which carry 14 to 72 ramps each. bucketWaters() emits them under their own state
+  // alongside its lakes and rivers, and emits each one ONCE. The map removed the same duplicate
+  // source after Ryan reported the zones appearing twice on 2026-08-23.
 
   if(current) sel.value = current;
   setLakeOnlyFieldsVisible(!isRiverWater(sel.value));
@@ -2521,9 +2550,12 @@ export function populatePlanRampDropdown(waterbodyName){
   if(!sel) return;
   const current = sel.value;
   sel.innerHTML = '<option value="">— select ramp / launch —</option>';
-  if(isPlanRiverValue(waterbodyName)){
-    const def = getPlanRiverDef(waterbodyName);
-    getPlanRiverRamps(def).forEach(r=>{
+  // THE CURATED LIST, WHERE THERE IS ONE -- a different question from "is this a river". Six
+  // waters carry hand-placed launches no feed lists (three on the Wateree); the other 52 river
+  // rows fall through to the access index below, same as every lake.
+  const curated = getPlanRiverDef(waterbodyName);
+  if(curated){
+    getPlanRiverRamps(curated).forEach(r=>{
       const opt=document.createElement('option');
       opt.value=r.name; opt.textContent=r.name;
       sel.appendChild(opt);
@@ -2609,7 +2641,7 @@ export function populatePlanRampDropdown(waterbodyName){
 
 document.getElementById('planLake')?.addEventListener('change', e=>{
   const v=e.target.value;
-  const isRiver=isPlanRiverValue(v);
+  const isRiver=isRiverWater(v);
   const coastalKey=resolveR2Key(v);
   const isCoastal=isCoastalKey(coastalKey);
   setLakeOnlyFieldsVisible(!isRiver && !isCoastal);
@@ -2652,7 +2684,9 @@ document.getElementById('planLake')?.addEventListener('change', e=>{
 document.getElementById('planRamp')?.addEventListener('change', e=>{
   const waterbodyName = document.getElementById('planLake').value;
   const rampName = e.target.value;
-  if(isPlanRiverValue(waterbodyName)){
+  // Pairs with the curated branch in populatePlanRampDropdown: these options carry no dataset
+  // coordinates, so they are followed through getSelectedPlanRiverRamp rather than the option.
+  if(getPlanRiverDef(waterbodyName)){
     const ramp = getSelectedPlanRiverRamp();
     if(ramp && state.MAP_OK) focusRamp(state.MAP, ramp.lat, ramp.lon);
     if(window.syncPlanRiverData) window.syncPlanRiverData();
@@ -2775,7 +2809,7 @@ window.syncPlanRiverData = async function syncPlanRiverData(){
 
 
 // Expose river helpers for cross-module use
-window.isPlanRiverValue = isPlanRiverValue;
+window.isRiverWater = isRiverWater;
 window.getPlanRiverDef = getPlanRiverDef;
 
 
@@ -2951,7 +2985,7 @@ window.deletePlanById = async function (id) {
 };
 
 // ── Expose river helpers for cross-module use ────────────────────────────────
-window.isPlanRiverValue = isPlanRiverValue;
+window.isRiverWater = isRiverWater;
 window.getPlanRiverDef = getPlanRiverDef;
 
 // ── Button wiring ─────────────────────────────────────────────────────────────

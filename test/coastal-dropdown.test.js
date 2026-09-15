@@ -97,25 +97,39 @@ describe('both waterbody dropdowns offer coastal zones', () => {
   // rather than a literal, because the count is data and hardcoding it means three tests to
   // edit every time a zone is added or cut. It was 22 until the six out-of-region zones went
   // on 2026-08-19.
+  // ── PLAN-BUILDER LEFT THIS LIST ON 2026-09-15, and that is the fix, not a regression ──────
+  //
+  // Ryan: "i want the exact same 355 bodies of water to be possible in the picker but filtered as
+  // appropriate." The map and the plan pickers now build from ONE function -- bucketWaters() in
+  // js/data/water-picker.js -- and lake_index.json carries all 13 `coast_` rows with 14 to 72
+  // ramps each, so the registry merge already puts every zone in `byLake`. Appending them from the
+  // catalog on top of that is the second source that put zones in the picker TWICE, which is what
+  // the map removed on 2026-08-23.
+  //
+  // The helper's last caller is the research dropdown, which has not been reworked and which Ryan
+  // says is going away as redundant. When it goes, the helper goes with it.
   const HELPER_CALLERS = [
-    ['plan-builder', planBuilderSrc],
     ['lake-research-ui', researchUiSrc],
   ];
 
-  it('the dropdowns that share a grouping share the builder', () => {
+  it('the dropdown that still uses the helper still uses it', () => {
     for (const [name, src] of HELPER_CALLERS) {
       expect(src, `${name} does not call appendCoastalOptgroups`).toContain('appendCoastalOptgroups');
       expect(src, `${name} still has its own copy of the loop`).not.toContain('coastalNamesByState()');
     }
   });
 
-  it('the map picker groups coastal by state itself, from the same source', () => {
-    expect(rampSelectSrc, 'picker no longer sources zones from coastal-zones.js')
+  it('the map and the plan pickers get their zones from the shared builder', () => {
+    const pickerSrc = readFileSync(path.join(REPO, 'js/data/water-picker.js'), 'utf8');
+    expect(pickerSrc, 'the shared builder sources zones from coastal-zones.js')
       .toContain('coastalNamesByState');
-    expect(rampSelectSrc, 'picker should not also append the helper groups')
-      .not.toContain('appendCoastalOptgroups');
-    // The grouping it replaced the helper with.
-    expect(rampSelectSrc).toContain("STATE_ORDER = ['SC', 'NC', 'GA', 'TN']");
+    // The grouping that replaced the helper, and it is in ONE file now.
+    expect(pickerSrc).toContain("STATE_ORDER = ['SC', 'NC', 'GA', 'TN']");
+    for (const [name, src] of [['lake-ramp-select', rampSelectSrc], ['plan-builder', planBuilderSrc]]) {
+      expect(src, `${name} should not also append the helper groups`)
+        .not.toContain('appendCoastalOptgroups(');
+      expect(src, `${name} should bucket through the shared builder`).toContain('bucketWaters(');
+    }
   });
 
   it('the shared helper groups coastal zones by state', () => {

@@ -86,8 +86,12 @@ export async function syncUtilityData() {
                 || document.getElementById('lakeSelect')?.value
                 || '';
 
-  // River trips delegate to syncPlanRiverData (when available)
-  if (typeof window.isPlanRiverValue === 'function' && window.isPlanRiverValue(lakeStr)) {
+  // River trips delegate to syncPlanRiverData (when available).
+  //
+  // isRiverWater, not isPlanRiverValue: the prefix marked six curated entries and the picker no
+  // longer emits it, so this tested "is this one of six" and sent the other 52 river rows down the
+  // lake path -- pool level and full pool on moving water.
+  if (typeof window.isRiverWater === 'function' && window.isRiverWater(lakeStr)) {
     if (typeof window.syncPlanRiverData === 'function') await window.syncPlanRiverData();
     return;
   }

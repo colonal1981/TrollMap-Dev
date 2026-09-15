@@ -103,7 +103,8 @@ import './modules/lake-research.js';
 
 // ── Plan-tab dropdown helpers are exposed on `window` so the ──
 //    tab switcher in core/tabs.js can invoke them by name.        ──
-import { populatePlanLakeDropdown, populatePlanRampDropdown, isPlanRiverValue, getPlanRiverDef } from './modules/plan-builder.js';
+import { populatePlanLakeDropdown, populatePlanRampDropdown, isRiverWater,
+         getPlanRiverDef } from './modules/plan-builder.js';
 import { syncLakeIntelData, syncClarityIntelData } from './modules/lake-intel.js';
 import { syncUtilityData } from './modules/utility-sync.js';
 import { renderSpread } from './modules/spread-builder.js';
@@ -132,7 +133,7 @@ window.renderPlanStats = renderPlanStats;
 // selection; both calls are idempotent -- see the dataset.wired guards.
 window.wirePlanBench = wirePlanBench;
 window.pushAllLocalToCloud = pushAllLocalToCloud;
-window.isPlanRiverValue = isPlanRiverValue;
+window.isRiverWater = isRiverWater;
 window.getPlanRiverDef = getPlanRiverDef;
 
 // `window.DB` lived here. It was labelled a "legacy alias — some older modules reference

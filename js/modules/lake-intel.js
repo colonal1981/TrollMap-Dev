@@ -17,11 +17,14 @@ export async function syncLakeIntelData() {
   const out = document.getElementById('planLakeIntel');
   const summary = document.getElementById('lakeIntelSummary');
   const lakeVal = lakeSel?.value || '';
-  const label = window.isPlanRiverValue?.(lakeVal) ? (window.getPlanRiverDef?.(lakeVal)?.label || lakeVal) : lakeVal;
+  // Two different questions, and they used to share one wrong answer. The LABEL comes from a
+  // curated entry when there is one, so it is asked of getPlanRiverDef; whether lake intel applies
+  // at all is asked of isRiverWater, below, which knows all 58 river rows and not just six.
+  const label = window.getPlanRiverDef?.(lakeVal)?.label || lakeVal;
   const worker = (typeof CF_WORKER_URL !== 'undefined' ? CF_WORKER_URL : (window.CF_WORKER_URL || 'https://trollmap-worker.colonal1981.workers.dev'));
   function say(msg, bad){ if(statusEl){ statusEl.textContent=msg; statusEl.style.color=bad?'var(--bad)':'var(--accent2)'; } }
   if(!label){ say('Select waterbody first', true); return null; }
-  if(window.isPlanRiverValue?.(lakeVal)){
+  if(window.isRiverWater?.(lakeVal)){
     say('Lake intel is lake-focused', true);
     if(out) out.value = `River selected: ${label}\nUse the river fields above for live dam schedule, streamflow, surge ETA, and kayak Go/No-Go. Lake Intelligence is currently focused on lakes/reservoirs.`;
     return null;
@@ -279,7 +282,8 @@ export async function syncClarityIntelData(o = {}) {
   const out = document.getElementById('planClarityIntel');
   const summary = document.getElementById('clarityIntelSummary');
   const lakeVal = lakeSel?.value || '';
-  const label = window.isPlanRiverValue?.(lakeVal) ? (window.getPlanRiverDef?.(lakeVal)?.lakeKey || window.getPlanRiverDef?.(lakeVal)?.label || lakeVal) : lakeVal;
+  const label = window.getPlanRiverDef?.(lakeVal)?.lakeKey
+             || window.getPlanRiverDef?.(lakeVal)?.label || lakeVal;
   const date = document.getElementById('planDate')?.value || new Date().toISOString().slice(0,10);
   const worker = (typeof CF_WORKER_URL !== 'undefined' ? CF_WORKER_URL : (window.CF_WORKER_URL || 'https://trollmap-worker.colonal1981.workers.dev'));
   function say(msg,bad){ if(statusEl){ statusEl.textContent=msg; statusEl.style.color=bad?'var(--bad)':'var(--accent2)'; } }
