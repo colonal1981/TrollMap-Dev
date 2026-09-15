@@ -57,7 +57,14 @@ test('no state is ever handed another state’s oyster file', () => {
   const t = routingTable();
   assert.equal(t.SC, 'sc');
   assert.equal(t.NC, 'nc');
-  assert.equal(t.GA, null, 'Georgia must not be routed to the North Carolina reef guide');
+  // AND THE FIRST FIX SAID `'GA': null`, WHICH WAS ALSO WRONG. It carried "Georgia publishes no
+  // statewide oyster layer", lifted out of the coastal-layers.js header -- a sentence that was
+  // TRUE the day it was written and stopped being true on 2026-09-03, when
+  // georgia_oyster_reef_2015.gpkg landed on the drive: 66,935 reef polygons across six coastal
+  // counties, Savannah alone 34,216. A stale claim read as evidence for itself and then written
+  // down harder, as a table row. Ryan caught it: "so how do we get oysterbeds for GA... i thought
+  // we had them." LOOK AT THE DRIVE, NOT AT A COMMENT ABOUT THE DRIVE.
+  assert.equal(t.GA, 'ga', 'Georgia has its own reef layer and must be routed to it');
   // Every row points at its own state or at nothing. This is the whole claim, and it is written
   // so that a fourth state added tomorrow has to satisfy it too.
   for (const [state, src] of Object.entries(t)) {
@@ -73,13 +80,32 @@ test('the chain that hid it is gone from the CODE, comments aside', () => {
   assert.match(SRC, /state in \('NC','GA'\)/);
 });
 
-test('a state with no source SAYS it was not searched, rather than reporting an empty bbox', () => {
-  // "none in bbox" and "there is no such file" are different sentences and only one of them is
-  // about Georgia.
+test('a state whose source did not LOAD says that, not that it has no data', () => {
+  // Every state in the table has a source now, so the only way oyster_src comes back None is a
+  // missing path or a failed read. Reporting that as "this state has no oyster layer" is exactly
+  // how georgia_oyster_reef_2015.gpkg sat unread behind a comment saying Georgia had nothing.
   const blk = CODE.slice(CODE.indexOf('which = OYSTER_SOURCE_BY_STATE.get(state)'),
                          CODE.indexOf('if oyster_src is not None:'));
-  assert.match(blk, /publishes no statewide oyster layer/);
-  assert.match(blk, /not searched/);
+  assert.match(blk, /did not/);
+  assert.match(blk, /NOT the same as having no oyster data/);
+});
+
+test('all three states reach their OWN file, and none reaches another’s', () => {
+  const t = routingTable();
+  assert.deepEqual(Object.keys(t).sort(), ['GA', 'NC', 'SC']);
+  for (const [state, src] of Object.entries(t)) {
+    assert.equal(src, state.toLowerCase(), `${state} is routed to ${src}`);
+  }
+  // And the dispatch reads the table rather than re-deriving it.
+  assert.match(CODE, /\{'sc': oyster_sc, 'nc': oyster_nc, 'ga': oyster_ga\}\.get\(which\)/);
+});
+
+test('the Georgia file is named where the script can find it', () => {
+  // It is NOT in oyster_marsh/ with the other two — it arrived later and sits in its own folder,
+  // which is a large part of why it went unnoticed for twelve days.
+  assert.match(CODE, /GA_OYSTER_FILE\s*=/);
+  assert.match(CODE, /georgia_oyster_reef_2015\.gpkg/);
+  assert.match(CODE, /oyster_ga = gpd\.read_file\(str\(GA_OYSTER_FILE\)/);
 });
 
 test('the simplify loop reports the file it actually wrote', () => {

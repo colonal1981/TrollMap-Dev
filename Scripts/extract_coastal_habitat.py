@@ -51,11 +51,13 @@ WRANGLER_JS = r'C:\Users\Ryan\AppData\Roaming\npm\node_modules\wrangler\bin\wran
 
 SC_OYSTER_FILE = DATA_DIR / 'SCDNROyster2015Live.geojson'
 NC_REEF_FILE   = DATA_DIR / 'DMF_ReefGuide_434636977206671764.geojson'
+# NOT IN oyster_marsh/ -- it arrived later and sits in its own folder beside it.
+GA_OYSTER_FILE = Path(r'F:\TrollMapPipeline\georgia_oyster_reef_2015\georgia_oyster_reef_2015.gpkg')
 SC_ESI_ZIP     = DATA_DIR / 'SCarolina_2015_GDB.zip'
 NC_ESI_ZIP     = DATA_DIR / 'NCarolina_2016_GDB.zip'
 GA_ESI_ZIP     = DATA_DIR / 'Georgia_2015_GDB.zip'
 
-# WHICH STATE'S OYSTER FILE A ZONE IS ALLOWED TO SEE, AND GEORGIA HAS NONE.
+# WHICH STATE'S OYSTER FILE A ZONE IS ALLOWED TO SEE. ALL THREE HAVE ONE.
 #
 # This was written inline as `oyster_sc if state == 'SC' else oyster_nc if state in ('NC','GA')`,
 # so every Georgia zone was clipped against NORTH CAROLINA's DMF reef guide. The two coasts are
@@ -64,19 +66,28 @@ GA_ESI_ZIP     = DATA_DIR / 'Georgia_2015_GDB.zip'
 # of the wrong state. An answer from the wrong book is worse than no answer, because no answer
 # gets looked into.
 #
-# THERE ARE ONLY TWO OYSTER SOURCES ON THE DRIVE and the header of this file names both: SCDNR's
-# 2015 live layer and NCDMF's reef guide. Georgia publishes neither, so its zones get None here
-# and say so. That is not a gap in this script -- where Georgia DOES map shell bottom it is
-# inside its own ESI geodatabase as a BENTHIC layer, and the ESI loop below already merges any
-# BENTHIC layer into oyster_beds.geojson for whatever state carries one. Georgia reaching its own
-# data is the point; reaching North Carolina's never was.
-#
 # A table rather than a chain, because the chain is what hid this: `state in ('NC','GA')` reads
-# as deliberate and a row saying `'GA': None` cannot.
+# as deliberate and a row naming a file cannot.
+#
+# AND THE FIRST VERSION OF THIS TABLE SAID `'GA': None`, WHICH WAS ALSO WRONG.
+#
+# It carried a comment reading "Georgia publishes no statewide oyster layer", lifted from the
+# header of js/modules/coastal-layers.js: "SC/NC only -- GA has no public oyster shapefile, so GA
+# zones legitimately 404." That sentence was TRUE ON THE DAY IT WAS WRITTEN and stopped being true
+# on 2026-09-03, when Ryan downloaded georgia_oyster_reef_2015.gpkg -- 66,935 mapped reef polygons
+# across six coastal counties, with an acreage on every row. The notes from that day record the
+# per-zone counts: Savannah 34,216, Ossabaw/St Catherines 23,950, Brunswick/St Simons 9,907,
+# Sapelo/Altamaha 9,871.
+#
+# So a stale claim was read as evidence for itself and written down a second time, harder, as a
+# table row -- which is the exact failure THE_DRIVE_HELD_MORE_THAN_THE_PIPELINE_KNEW records about
+# this very line. Ryan caught it: "so how do we get oysterbeds for GA... i thought we had them".
+# He was right, and the file had been on the drive the whole time. LOOK AT THE DRIVE, NOT AT A
+# COMMENT ABOUT THE DRIVE.
 OYSTER_SOURCE_BY_STATE = {
-    'SC': 'sc',     # SCDNROyster2015Live.geojson
-    'NC': 'nc',     # DMF_ReefGuide_*.geojson
-    'GA': None,     # no public statewide oyster layer; see the ESI BENTHIC path below
+    'SC': 'sc',     # SCDNROyster2015Live.geojson         -- SCDNR 2015 live layer
+    'NC': 'nc',     # DMF_ReefGuide_*.geojson             -- NCDMF reef guide
+    'GA': 'ga',     # georgia_oyster_reef_2015.gpkg       -- 66,935 reef polygons, six counties
 }
 
 # ESI layer names — matched to actual GDB contents
@@ -247,7 +258,7 @@ def load_esi_layers(gdb_path, target_layers):
     return loaded
 
 
-def process_zone(slug, zone, oyster_sc, oyster_nc, esi_sc, esi_nc, esi_ga,
+def process_zone(slug, zone, oyster_sc, oyster_nc, oyster_ga, esi_sc, esi_nc, esi_ga,
                  dry_run=False, skip_upload=False, gz=True):
     state = zone.get('state', '')
     print(f"\n  {slug}: {zone['name']} ({state})")
@@ -257,10 +268,13 @@ def process_zone(slug, zone, oyster_sc, oyster_nc, esi_sc, esi_nc, esi_ga,
     # ── Oyster beds ───────────────────────────────────────────────────────────
     # See OYSTER_SOURCE_BY_STATE: Georgia is None on purpose and is SAID rather than searched.
     which = OYSTER_SOURCE_BY_STATE.get(state)
-    oyster_src = oyster_sc if which == 'sc' else oyster_nc if which == 'nc' else None
+    oyster_src = {'sc': oyster_sc, 'nc': oyster_nc, 'ga': oyster_ga}.get(which)
     if oyster_src is None and state in OYSTER_SOURCE_BY_STATE:
-        print(f"    oyster_beds: {state} publishes no statewide oyster layer "
-              f"-- not searched. Shell bottom, if any, comes from this state's own ESI BENTHIC.")
+        # The state HAS a source and it did not load -- a missing file or a failed read. That is a
+        # different sentence from "this state has no oyster layer", and saying the second one when
+        # the first is true is how georgia_oyster_reef_2015.gpkg sat unread for twelve days.
+        print(f"    oyster_beds: {state} has a source in OYSTER_SOURCE_BY_STATE and it did not "
+              f"load -- check the path printed above. NOT the same as having no oyster data.")
     if oyster_src is not None:
         clipped = clip_to_zone(oyster_src, zone)
         if clipped is not None and len(clipped) >= MIN_FEATURES:
@@ -742,6 +756,17 @@ def main():
     else:
         print(f"  ⚠️  NC reef file not found: {NC_REEF_FILE}")
 
+    # GA oyster — a GeoPackage rather than a geojson, and in its own folder.
+    oyster_ga = None
+    if 'GA' not in states:
+        print("  GA oyster: no Georgia zone in this run — not loaded")
+    elif GA_OYSTER_FILE.exists():
+        print(f"  Loading GA oyster ({GA_OYSTER_FILE.stat().st_size // 1024 // 1024} MB)...")
+        oyster_ga = gpd.read_file(str(GA_OYSTER_FILE), engine="pyogrio")
+        print(f"  GA oyster: {len(oyster_ga):,} reef polygons")
+    else:
+        print(f"  ⚠️  GA oyster not found: {GA_OYSTER_FILE}")
+
     # SC ESI
     esi_sc = {}
     tmp_sc = None
@@ -792,7 +817,7 @@ def main():
 
     total = 0
     for slug, zone in zones:
-        n = process_zone(slug, zone, oyster_sc, oyster_nc, esi_sc, esi_nc, esi_ga,
+        n = process_zone(slug, zone, oyster_sc, oyster_nc, oyster_ga, esi_sc, esi_nc, esi_ga,
                          dry_run=args.dry_run, skip_upload=args.skip_upload,
                          gz=not args.no_gzip)
         total += n

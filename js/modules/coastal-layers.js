@@ -11,7 +11,15 @@
  *                   NC only — Georgia publishes no statewide oyster layer, so GA
  *                   zones legitimately 404.
  *   hard_bottom     ESI BENTHIC, SUBELEMENT `hardbottom`. GA and NC.
- *   sav             ESI BENTHIC, SUBELEMENT `sav`. NC.
+ *   sav             ESI BENTHIC, SUBELEMENT `sav`. NORTH CAROLINA ONLY, and the app offers no
+ *                   North Carolina zone — so no zone Ryan can select will ever carry this file.
+ *                   It has no button for that reason. The extractor still routes it, because the
+ *                   routing is correct and a zone list that regains NC must keep working; drawing
+ *                   a toggle that can only ever say "none for this zone" is a different thing.
+ *                   Measured 2026-09-03 against the national seagrass compilation, 1,051,164
+ *                   polygons: NC 6,258, SC 0, GA 0 — absent from the file entirely, not merely
+ *                   scarce. On this coast flooded Spartina IS the grass flat, which is why the
+ *                   marsh layer carries that job here.
  *   marsh_edges     ESI code 9/10 salt marsh lines. SC/GA/NC.
  *   depth_soundings Point depths, MLLW. Rendered as labels at zoom >= 13.
  *
@@ -51,10 +59,8 @@ const SOUNDING_MIN_ZOOM = 13;
 const STYLE = {
   oyster: { color: '#c68642', fill: '#c68642' },
   marsh:  { color: '#5cb85c' },
-  // Stone grey and a deeper green: hard bottom and grass must not read as the oyster brown they
-  // were wrongly drawn in, and they must not read as each other.
+  // Stone grey: hard bottom must not read as the oyster brown it was wrongly drawn in.
   hard:   { color: '#8d8b86', fill: '#8d8b86' },
-  sav:    { color: '#2e7d32', fill: '#2e7d32' },
 };
 
 function getMap() { return state.MAP; }
@@ -90,7 +96,7 @@ async function fetchCoastalLayer(zoneKey, layer) {
 //
 // _soundingData stays because soundings are re-labelled in place when the tide moves, which
 // is a different operation from rebuilding them for a new zone.
-const COASTAL_IDS = ['oyster', 'hard', 'sav', 'marsh', 'soundings'];
+const COASTAL_IDS = ['oyster', 'hard', 'marsh', 'soundings'];
 let _activeZoneKey  = null;
 let _soundingData   = null;
 let _zoomHandlerBound = false;
@@ -385,15 +391,6 @@ function init() {
     build: () => benthicLayer(_activeZoneKey, {
       file: 'hard_bottom', style: STYLE.hard, label: '🪨 Hard bottom',
       why: 'sheepshead and black drum hold on it, and reds spawn over it',
-    }),
-  });
-  registerLayer({
-    id: 'sav', button: 'btnSav',
-    enabled: () => !!_activeZoneKey,
-    emptyMessage: 'No grass mapped for this zone',
-    build: () => benthicLayer(_activeZoneKey, {
-      file: 'sav', style: STYLE.sav, label: '🌱 Grass',
-      why: 'a grass flat is the top-rated structure for an adult seatrout',
     }),
   });
   registerLayer({

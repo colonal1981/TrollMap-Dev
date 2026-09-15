@@ -33,12 +33,18 @@ const HTML = readFileSync(join(ROOT, 'index.html'), 'utf8');
 const TOGGLES = [
   'btnRamps', 'btnBankPier', 'btnPaddle',
   'btnAttractors', 'btnFishingSpots', 'btnPOI', 'btnFetchOsm',
-  // btnHardBottom and btnSav joined the coastal group on 2026-09-15, and they are the reverse of
-  // the deletion this list was written for. extract_coastal_habitat.py had been writing every ESI
-  // BENTHIC polygon into oyster_beds.geojson -- Georgia's hardbottom and North Carolina's
-  // watermilfoil both drawn under the oyster tooltip -- so the two of them came OUT of the oyster
-  // layer rather than being added beside it. One button became three.
-  'btnOysterBeds', 'btnHardBottom', 'btnSav', 'btnMarshEdges', 'btnSoundings',
+  // btnHardBottom joined the coastal group on 2026-09-15, and it is the reverse of the deletion
+  // this list was written for. extract_coastal_habitat.py had been writing every ESI BENTHIC
+  // polygon into oyster_beds.geojson -- Georgia's hardbottom and North Carolina's watermilfoil
+  // both drawn under the oyster tooltip -- so hard bottom came OUT of the oyster layer rather
+  // than being added beside it.
+  //
+  // btnSav was added in the same hour and REMOVED again before the day was out. SAV comes only
+  // from North Carolina's BENTHIC and the app offers no NC zone, so it was a toggle that could
+  // only ever say "none for this zone". Measured 2026-09-03: NC 6,258 seagrass polygons, SC 0,
+  // GA 0 -- absent from the national file entirely. On this coast flooded Spartina is the grass
+  // flat and the marsh layer already carries it.
+  'btnOysterBeds', 'btnHardBottom', 'btnMarshEdges', 'btnSoundings',
   'btnShowCatches',
 ];
 
