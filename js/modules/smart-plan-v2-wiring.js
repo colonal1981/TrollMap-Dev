@@ -22,7 +22,8 @@ import { DEFAULT_WEIGHTS, DEFAULT_RELIEF_WEIGHTS } from './plan-candidates.js';
 import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
 import { TRANSIT_MIN_DEPTH_FT } from './plan-water.js';
 import { solunarFor } from '../utils/solunar.js';
-import { checkPlanLegality, ensureRegulations, fetchForecast, fetchWaterState } from './plan-preflight.js';
+import { checkPlanLegality, ensureRegulations, fetchForecast, fetchWaterState,
+         fetchClarityAtRamp } from './plan-preflight.js';
 import { primeFishAdvisories } from '../data/fish-advisories.js';
 import { buildSmartPlanV2, packFetcher, modelAsker, waterRouter } from './smart-plan-v2.js';
 import { planToTimeline, installTimeline } from './plan-to-timeline.js';
@@ -168,6 +169,20 @@ export async function runSmartPlanV2(opts = {}) {
     point: ramp ? { lat: ramp[1], lon: ramp[0] } : undefined,
   });
 
+  // ── THE CLARITY AT HIS LAUNCH, RESOLVED HERE AND NOT READ OFF A SELECT ──────────────────────
+  //
+  // `inp.clarity` is the Water Clarity dropdown, and that dropdown is filled by
+  // syncClarityIntelData() whenever it last happened to run -- which on a reload with the ramp
+  // already set is at +1000ms with an unfilled `planRamp`, so it held the lake-wide MEAN of six
+  // zones. His 22:22 bench on 2026-09-15 sent `"clarity": "Muddy"` while the model was separately
+  // told `Typical clarity: stained`, and his own ramp's zone was the clearest water on the lake.
+  //
+  // Resolved from the ramp on the request instead. Null when the forecast is unreachable, and then
+  // the form's value stands -- a failed fetch is not evidence that the water is clear.
+  const clarityAtRamp = await fetchClarityAtRamp(inp.lakeName, inp.dateStr,
+    { worker: CF_WORKER_URL, rampName: inp.rampName });
+  if (clarityAtRamp && clarityAtRamp.select) inp.clarity = clarityAtRamp.select;
+
   // THE RESEARCH PROFILE IS THE POINT OF THE RESEARCH PIPELINE. The first version of this file
   // ignored it entirely and used the four-lake built-in table — worse than v1, which at least put
   // the research prose in its prompt. Try the in-memory cache the research tab fills, then ask
@@ -228,7 +243,7 @@ export async function runSmartPlanV2(opts = {}) {
       // because this is where the profile is, and sent rendered, like `intel`.
       lightFacts: lightFactsFrom(researched),
       conditions: {
-        ...conditionsFrom(inp, ramp, sol, forecast),
+        ...conditionsFrom(inp, ramp, sol, forecast, clarityAtRamp),
         // The model is told where the band came from, so a generic one cannot be mistaken for a
         // lake-specific one by the thing writing the reasoning.
         //

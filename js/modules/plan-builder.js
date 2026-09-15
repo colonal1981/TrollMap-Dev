@@ -1431,12 +1431,40 @@ ${src}`;
           { signal: rc.signal });
         clearTimeout(rt);
         const rd = await rr.json();
+        // ── A DATE-ONLY STRING IS A CALENDAR DATE, NOT AN INSTANT ────────────────────────────
+        //
+        // Ryan's card, 2026-09-15: "Angler's Headquarters — published Sep 2, 2026 · 12 days old",
+        // on a page that says "Lake Wateree 03 September, 2026" and a report headed "Updated
+        // September 3". parseAhqDate returns '2026-09-03'; `new Date('2026-09-03')` is UTC midnight
+        // and toLocaleDateString renders it in his timezone, which is four hours earlier, so it
+        // printed the 2nd. The AGE was computed off the raw string and stayed right, which is why
+        // the line disagreed with itself: Sep 2, twelve days before Sep 15.
+        //
+        // The fix is this file's own existing idiom — `new Date(date + 'T12:00:00')`, used for
+        // p.meta.date on two other lines here. Local noon cannot be moved across a day boundary by
+        // any real offset. An `it.published` that carries a full timestamp is a genuine instant and
+        // is still rendered as one; only a bare YYYY-MM-DD is pinned.
+        const reportDate = (v) => {
+          const t = String(v || '').trim();
+          if (!t) return null;
+          const d = /^\d{4}-\d{2}-\d{2}$/.test(t) ? new Date(`${t}T12:00:00`) : new Date(t);
+          return Number.isNaN(d.getTime())
+            ? null : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+        };
+        // Whole days between two calendar days, counted the same way the label is rendered, so the
+        // date and the age can never disagree again.
+        const reportAgeDays = (v) => {
+          const t = String(v || '').trim();
+          if (!t) return null;
+          const d = /^\d{4}-\d{2}-\d{2}$/.test(t) ? new Date(`${t}T12:00:00`) : new Date(t);
+          if (Number.isNaN(d.getTime())) return null;
+          const noonToday = new Date();
+          noonToday.setHours(12, 0, 0, 0);
+          return Math.round((noonToday - d) / 86400000);
+        };
         const rows = (rd.items || []).map((it) => {
-          const when = it.published
-            ? new Date(it.published).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
-            : 'no date given';
-          const days = it.published
-            ? Math.floor((Date.now() - Date.parse(it.published)) / 86400000) : null;
+          const when = reportDate(it.published) || 'no date given';
+          const days = reportAgeDays(it.published);
           const age = days == null ? '' : days === 0 ? ' · today' : ` · ${days} day${days === 1 ? '' : 's'} old`;
           const body = it.description ? `<br><span class="rp-small">${esc(it.description)}</span>` : '';
           const warn = it.caution ? `<br><span class="rp-small" style="color:#b3261e">⚠ ${esc(it.caution)}</span>` : '';
@@ -1461,12 +1489,8 @@ ${src}`;
         // lie by name. `rd.undated` is still read for one release, for a browser holding a cached
         // bundle against a Worker that has already deployed — it is a transient, not a dialect.
         const undated = (rd.pages || rd.undated || []).map((u) => {
-          const when = u.published
-            ? new Date(u.published).toLocaleDateString(undefined,
-                { month: 'short', day: 'numeric', year: 'numeric' })
-            : null;
-          const days = u.published
-            ? Math.floor((Date.now() - Date.parse(u.published)) / 86400000) : null;
+          const when = reportDate(u.published);
+          const days = reportAgeDays(u.published);
           const age = days == null ? '' : days === 0 ? ' · today'
             : ` · ${days} day${days === 1 ? '' : 's'} old`;
           const head = when
@@ -1663,14 +1687,27 @@ ${src}`;
     // dam basin runs 0.70, and the profile names CLEARWATER COVE MARINA in that last one. The
     // answer was in the payload, keyed by the ramp he picked.
     //
-    // lake-intel.js now emits `AT YOUR RAMP (<name>) - <zone>: <clarity>` when the ramp matches a
-    // zone, so this reads THAT first and falls through only when there is no ramp-specific answer.
-    // The fallback says LAKE-WIDE out loud instead of implying it is about here.
+    // ── THE VERDICT COMES OFF THE PLAN, NOT OUT OF A REGEX ON A BRIEFING ───────────────────────
+    //
+    // This parsed `AT YOUR RAMP (...)` out of `p.meta.clarityIntel` -- the briefing TEXTAREA, copied
+    // onto the plan at build time. Two things were wrong with reading it: the textarea is written by
+    // syncClarityIntelData() whenever that last ran, so on a reload with the ramp already set it
+    // holds a briefing with no such line at all; and the bench export carries `clarityIntel` as an
+    // empty string, so the card and the export disagreed about the same plan.
+    //
+    // The plan now CARRIES the resolved answer -- conditionsFrom() puts `clarity`, `clarityScope`,
+    // `clarityAt` and `clarityLakeWide` on `plan.conditions` from fetchClarityAtRamp(), worked out
+    // at request time from the ramp on the request. So this reads a field instead of a sentence.
+    // The regex stays as a fallback for a plan saved before this shipped, and for no other reason.
+    const cond = p.conditions || {};
+    const fromPlan = cond.clarityAt && /^Clear|^Stained|^Muddy/i.test(String(cond.clarity || ''))
+      ? { where: String(cond.clarityAt), cls: String(cond.clarity).toLowerCase() } : null;
     const clarityRaw = String(p.meta.clarityIntel || '');
-    const atRamp = clarityRaw.match(/AT YOUR RAMP \(([^)]*)\)[^:]*:\s*(Clear|Stained|Muddy)/i);
+    const m2 = clarityRaw.match(/AT YOUR RAMP \(([^)]*)\)[^:]*:\s*(Clear|Stained|Muddy)/i);
+    const atRamp = fromPlan || (m2 ? { where: m2[1], cls: m2[2].toLowerCase() } : null);
     if (atRamp) {
-      const where = atRamp[1];
-      const cls = atRamp[2].toLowerCase();
+      const where = atRamp.where;
+      const cls = atRamp.cls;
       if (cls === 'muddy') {
         addRisk(`CAUTION: clarity/runoff model predicts MUDDY water at ${where} — adjust colors, `
               + 'and work mudline edges rather than the backs of creeks');
@@ -1680,6 +1717,21 @@ ${src}`;
       } else {
         addPositive(`Clarity model predicts CLEAR water at ${where} — other zones on this lake may `
                   + 'differ; the Clarity & Runoff section says which stain first');
+      }
+    } else if (cond.clarityScope && /lake-wide/i.test(String(cond.clarityScope))
+               && /^(Clear|Stained|Muddy)/i.test(String(cond.clarity || ''))) {
+      // The plan says the mean is all there was, and says why. No parsing, and the sentence names
+      // the scope so the CAUTION is never mistaken for a statement about this ramp.
+      const cls = String(cond.clarity).toLowerCase();
+      const why = String(cond.clarityScope);
+      if (cls === 'clear') {
+        addPositive(`Clarity model predicts CLEAR water — ${why}. The Clarity & Runoff section says `
+                  + 'which zones stain first');
+      } else {
+        addRisk(`CAUTION: clarity/runoff model predicts ${cls.toUpperCase()} water — ${why}. `
+              + (cls === 'muddy'
+                  ? 'Adjust colors and work mudline edges rather than the backs of creeks'
+                  : 'Favor color breaks, vibration and high-contrast colors'));
       }
     } else {
       const clarityIntelText = clarityRaw.toLowerCase();

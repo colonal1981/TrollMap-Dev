@@ -132,3 +132,106 @@ test('and the forecast recomputes when he picks a ramp, with that ramp passed in
     'the ramp must be passed, not re-read out of the DOM by the function');
   assert.match(INTEL, /export async function syncClarityIntelData\(o = \{\}\)/);
 });
+
+// ── AND THE THIRD ATTEMPT: IT CANNOT DEPEND ON WHICH RENDER FINISHED FIRST ──────────────────────
+//
+// His 22:22 bench on 2026-09-15 ran seven minutes after the ramp-aware select shipped, with it live
+// — the AHQ renderer from the same commit was visibly working — and still sent `"clarity": "Muddy"`.
+//
+// Because the briefing that writes that select is produced by syncClarityIntelData(), which fires on
+// lake change, tab switch, app load and a button. On a RELOAD with the ramp already set, no change
+// event fires at all, and the app-load run at +1000ms reads a `planRamp` the access index has not
+// finished filling. The select held the mean and the plan read the select.
+//
+// So the plan stopped reading the select. fetchClarityAtRamp() resolves it from the ramp ON THE
+// REQUEST at the moment the plan is built, and both wirings call it before conditionsFrom().
+const PRE = readFileSync(path.join(ROOT, 'js/modules/plan-preflight.js'), 'utf8');
+const INPUTS = readFileSync(path.join(ROOT, 'js/modules/plan-inputs.js'), 'utf8');
+const SP = readFileSync(path.join(ROOT, 'js/modules/smart-plan-v2-wiring.js'), 'utf8');
+const PW = readFileSync(path.join(ROOT, 'js/modules/plan-water-ui.js'), 'utf8');
+const BUILDER = readFileSync(path.join(ROOT, 'js/modules/plan-builder.js'), 'utf8');
+
+test('the resolver asks the Worker and answers from the ramp on the request', async () => {
+  const { fetchClarityAtRamp } = await import('../js/modules/plan-preflight.js');
+  const asked = [];
+  const got = await fetchClarityAtRamp('Lake Wateree, SC', '2026-09-15', {
+    worker: 'https://w', rampName: 'Clearwater Cove',
+    fetchJson: async (u) => { asked.push(u); return WATEREE; },
+  });
+  assert.equal(asked.length, 1, 'one request');
+  assert.match(asked[0], /\/lake-clarity\?lake=Lake%20Wateree%2C%20SC&date=2026-09-15/);
+  assert.equal(got.select, 'Stained');
+  assert.equal(got.source, 'ramp');
+  assert.equal(got.zoneName, 'Lower main-lake channel / dam basin');
+  // The mean rides along as the different fact it is — a mudline upstream is worth knowing about
+  // while launching in clear water.
+  assert.equal(got.lakeWide, 'Muddy');
+  assert.equal(got.zoneCount, 6);
+});
+
+test('and a failed forecast answers null, so the form value stands rather than becoming Clear', async () => {
+  const { fetchClarityAtRamp } = await import('../js/modules/plan-preflight.js');
+  assert.equal(await fetchClarityAtRamp('Lake Wateree, SC', '2026-09-15',
+    { worker: 'https://w', rampName: 'Clearwater Cove', fetchJson: async () => null }), null);
+  assert.equal(await fetchClarityAtRamp('Lake Wateree, SC', '2026-09-15',
+    { worker: 'https://w', rampName: 'X', fetchJson: async () => { throw new Error('502'); } }), null);
+  // And with no worker there is nothing to ask.
+  assert.equal(await fetchClarityAtRamp('Lake Wateree, SC', '2026-09-15', { rampName: 'X' }), null);
+});
+
+test('the clarity that reaches the model says which water it is about', async () => {
+  const { conditionsFrom } = await import('../js/modules/plan-inputs.js');
+  const { clarityForPlan } = await import('../js/utils/clarity-at-ramp.js');
+  const resolved = { ...clarityForPlan(WATEREE, 'Clearwater Cove'), rampName: 'Clearwater Cove',
+                     zoneName: 'Lower main-lake channel / dam basin', lakeWide: 'Muddy', zoneCount: 6 };
+  const c = conditionsFrom({ clarity: resolved.select }, null, null, null, resolved);
+  assert.equal(c.clarity, 'Stained');
+  assert.equal(c.clarityScope, 'at the launch');
+  assert.match(c.clarityAt, /Clearwater Cove — Lower main-lake channel/);
+  assert.equal(c.clarityLakeWide, 'Muddy', 'the mean is kept beside it, not dropped');
+
+  // And when nothing named the ramp, the word LAKE-WIDE is in the scope rather than implied.
+  const lake = { ...clarityForPlan(WATEREE, 'Nowhere Landing'), rampName: 'Nowhere Landing',
+                 zoneName: null, lakeWide: 'Muddy', zoneCount: 6 };
+  const c2 = conditionsFrom({ clarity: lake.select }, null, null, null, lake);
+  assert.equal(c2.clarity, 'Muddy');
+  assert.match(c2.clarityScope, /LAKE-WIDE MEAN of 6 zones/);
+  assert.equal(c2.clarityAt, undefined, 'nothing may claim a ramp the model did not name');
+
+  // With no resolution at all the shape is exactly what it was before, so an old caller is unharmed.
+  assert.deepEqual(conditionsFrom({ clarity: 'Clear' }, null, null, null), { clarity: 'Clear' });
+});
+
+test('both planners resolve it before they build conditions, not one of them', () => {
+  for (const [who, src] of [['Smart Plan', SP], ['Pick Water', PW]]) {
+    assert.match(src, /fetchClarityAtRamp\(inp\.lakeName, inp\.dateStr/, `${who} must resolve it`);
+    assert.match(src, /if \(clarityAtRamp && clarityAtRamp\.select\) inp\.clarity = clarityAtRamp\.select;/,
+      `${who} must use it`);
+    assert.match(src, /conditionsFrom\(inp, ramp, sol[^)]*, forecast,?\s*\n?\s*(clarityAtRamp|clarityAtRamp\))|conditionsFrom\(inp, ramp, solunarFor\([^)]*\), forecast,\s*\n?\s*clarityAtRamp\)/,
+      `${who} must pass the provenance to conditionsFrom`);
+  }
+  assert.match(PRE, /export async function fetchClarityAtRamp/);
+});
+
+test('the card reads the verdict off the plan instead of grepping the briefing', () => {
+  const live = BUILDER.replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+  assert.match(live, /const cond = p\.conditions \|\| \{\};/);
+  assert.match(live, /cond\.clarityAt/, 'the resolved field is what decides the CAUTION now');
+  // The regex survives ONLY as a fallback for plans saved before this shipped.
+  assert.match(live, /const atRamp = fromPlan \|\| \(m2 \?/);
+});
+
+test('and the report date is the calendar day the page states, not a timezone shift of it', () => {
+  const live = BUILDER.replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+  // `new Date('2026-09-03')` is UTC midnight; rendered in UTC-4 it printed "Sep 2, 2026" beside an
+  // age of 12 days, so the line disagreed with itself. This file's own idiom for a date-only string
+  // is `+ 'T12:00:00'`, already used for p.meta.date twice.
+  assert.match(live, /const reportDate = \(v\) => \{/);
+  assert.match(live, /\$\{t\}T12:00:00/);
+  assert.ok(!/new Date\(it\.published\)\.toLocaleDateString/.test(live),
+    'the feed renderer must go through the shared formatter');
+  assert.ok(!/new Date\(u\.published\)\.toLocaleDateString/.test(live),
+    'and so must the page renderer');
+});

@@ -39,6 +39,7 @@ import { fetchWaterConditions } from '../utils/water-conditions.js';
 import { getTideStateForZone } from './tide-engine.js';
 import { assessZoneIntrusion } from './usgs-gauges.js';
 import { DEPTH_BANDS, normalizeCoastalSpecies, tacticalNote } from './coastal-scoring.js';
+import { clarityForPlan } from '../utils/clarity-at-ramp.js';
 
 /** The coastal zone this water is, or null for everything inland. */
 export function detectCoastalZone(lakeName) {
@@ -218,6 +219,64 @@ function prune(o) {
 const settled = (r) => (r.status === 'fulfilled' ? r.value : null);
 
 /** The launch instant, because a tide stage at noon is not the tide stage at 06:00. */
+/**
+ * THE CLARITY AT THE LAUNCH, RESOLVED WHERE THE PLAN KNOWS ITS RAMP.
+ *
+ * ── THE THIRD ATTEMPT AT THIS, AND THE FIRST ONE THAT CANNOT DEPEND ON RENDER ORDER ────────────
+ *
+ * Ryan, 2026-09-14: "this is probably correct in the creeks or the northern section of the lake but
+ * i highly doubt it is applicable near clearwater cove... what is it using to calculate the
+ * clarity??? i thought we made it location aware?"
+ *
+ * Attempt one added an AT YOUR RAMP sentence to the briefing and left the lake-wide mean going into
+ * the Water Clarity select, which is what the model and the colour engine read. Attempt two made
+ * that select ramp-aware and added a `planRamp` change listener. His 22:22 bench, seven minutes
+ * after that shipped and with it live, still sent `"clarity": "Muddy"`:
+ *
+ *   the briefing is written by syncClarityIntelData(), which fires on lake change, tab switch, app
+ *   load and a button -- and on a reload with the ramp ALREADY set, no change event fires at all,
+ *   while the app-load run at +1000ms reads a `planRamp` the access index has not finished filling.
+ *   So the select held the mean, and the plan read the select.
+ *
+ * A value the plan depends on cannot come out of a DOM element whose contents depend on which async
+ * render finished first. The ramp is on the request; the zones come from the Worker; so the answer
+ * is worked out HERE, beside fetchWaterState() and fetchForecast(), at the moment the plan is built.
+ * The select goes on being set for the colour UI and is no longer what the plan stands on.
+ *
+ * Returns clarityForPlan()'s object plus the lake-wide figure for comparison, or null when the
+ * forecast is unreachable -- and null means the caller keeps whatever the form said, because a
+ * failed fetch is not evidence that the water is clear.
+ */
+export async function fetchClarityAtRamp(lakeName, dateStr, o = {}) {
+  const worker = o.worker;
+  const rampName = String(o.rampName || '').trim();
+  if (!worker || !lakeName) return null;
+  try {
+    const url = `${worker}/lake-clarity?lake=${encodeURIComponent(lakeName)}`
+              + `&date=${encodeURIComponent(dateStr || '')}`;
+    const res = o.fetchJson ? await o.fetchJson(url) : await (await fetch(url)).json();
+    if (!res || res.error) return null;
+    const got = clarityForPlan(res, rampName);
+    if (!got.select) return null;
+    return {
+      ...got,
+      rampName: rampName || null,
+      zoneName: got.zone ? got.zone.name : null,
+      lakeWide: res.overall ? (res.overall.clarity || null) : null,
+      lakeWideScore: res.overall && Number.isFinite(Number(res.overall.score))
+        ? Number(res.overall.score) : null,
+      zoneCount: Array.isArray(res.zones) ? res.zones.length : null,
+      // The zone's own colours where a zone answered, so the card and the spread stop quoting a
+      // palette picked for the average of six.
+      lureColors: got.zone && Array.isArray(got.zone.lureColors) ? got.zone.lureColors
+        : (res.overall && Array.isArray(res.overall.lureColors) ? res.overall.lureColors : []),
+    };
+  } catch (err) {
+    console.warn('[preflight] clarity-at-ramp unavailable:', err && err.message);
+    return null;
+  }
+}
+
 export function launchMoment(dateStr, launchTime) {
   const day = String(dateStr || '').slice(0, 10) || new Date().toISOString().slice(0, 10);
   const m = /^(\d{1,2}):(\d{2})\s*(AM|PM)?/i.exec(String(launchTime || ''));

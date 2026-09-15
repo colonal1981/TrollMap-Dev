@@ -1022,8 +1022,33 @@ export function researchIntel(profile, species, season, now = Date.now(), packFa
  * @param {object} [sol]      solunarFor() output, or null
  * @param {object} [forecast] fetchForecast() output, or null
  */
-export function conditionsFrom(inp, ramp, sol, forecast) {
+export function conditionsFrom(inp, ramp, sol, forecast, clarityAtRamp = null) {
   const c = { clarity: inp.clarity };
+  // ── THE CLARITY SAYS WHICH WATER IT IS ABOUT ─────────────────────────────────────────────────
+  //
+  // `clarity` alone is a bare word, and for months it was the lake-wide MEAN of every zone sent as
+  // though it described the launch. Measured on Ryan's 2026-09-15 Wateree bench: `"clarity":
+  // "Muddy"` -- the mean of six -- two lines above the researched profile's own `Typical clarity:
+  // stained`. Two clarity verdicts for one lake in one prompt, and the one that reads as TODAY was
+  // an average of water he was not going anywhere near.
+  //
+  // So where the answer came from travels with it. `clarityAt` names the ramp and the zone, and
+  // `clarityLakeWide` keeps the mean beside it as the different fact it is -- a mudline in the upper
+  // river is worth knowing about while launching in clear water, which is why it is not dropped.
+  // Absent when no zone named the ramp, and then `clarity` is the mean and `clarityScope` says so,
+  // because an unlabelled average is exactly what this fixes.
+  if (clarityAtRamp && clarityAtRamp.select) {
+    if (clarityAtRamp.source === 'ramp') {
+      c.clarityScope = 'at the launch';
+      c.clarityAt = clarityAtRamp.zoneName
+        ? `${clarityAtRamp.rampName || 'the launch'} — ${clarityAtRamp.zoneName}`
+        : (clarityAtRamp.rampName || null);
+    } else {
+      c.clarityScope = `LAKE-WIDE MEAN of ${clarityAtRamp.zoneCount || '?'} zones — no zone in the `
+                     + `model names ${clarityAtRamp.rampName || 'this launch'}`;
+    }
+    if (clarityAtRamp.lakeWide) c.clarityLakeWide = clarityAtRamp.lakeWide;
+  }
   if (inp.waterTempF) c.waterTempF = inp.waterTempF;
   if (inp.weather) c.forecast = inp.weather;
   if (inp.poolLevel) c.poolLevel = inp.poolLevel;

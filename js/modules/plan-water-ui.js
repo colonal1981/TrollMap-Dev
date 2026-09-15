@@ -44,7 +44,7 @@ import { packFetcher } from './smart-plan-v2.js';
 // THE_PROFILE_BECAME_A_CACHE_AND_NOBODY_MOVED_THE_READS_2026-09-01.md.
 import { packDerivedFacts } from '../utils/pack-facts.js';
 import { checkPlanLegality, ensureRegulations, fetchForecast,
-         fetchWaterState } from './plan-preflight.js';
+         fetchWaterState, fetchClarityAtRamp } from './plan-preflight.js';
 import { primeFishAdvisories } from '../data/fish-advisories.js';
 import { depthSampler, shorelineIndex, waterMask } from './plan-water-index.js';
 import { offerWater, dayCost, priceSpots, searchOrder, optionality, reasons, TROLL_MPH, TRANSIT_MIN_DEPTH_FT, SPOT_KINDS } from './plan-water.js';
@@ -865,6 +865,15 @@ export async function findWater() {
   say('Checking the forecast…');
   const forecast = await fetchForecast(inp.lakeName, inp.dateStr,
     { launchTime: inp.launchTime, returnTime: inp.returnTime }).catch(() => null);
+  // ── THE CLARITY AT HIS LAUNCH, THE SAME WAY THE OTHER TAB GETS IT ────────────────────────────
+  //
+  // One prompt, two planners: `clarity` is a field buildPlanRequest reads and both tabs must fill
+  // it the same way, or Pick Water plans on the lake-wide mean while Smart Plan plans on his zone.
+  // `inp.clarity` is the Water Clarity select, which holds whatever syncClarityIntelData() last
+  // wrote — on a reload with the ramp already chosen, the mean. See fetchClarityAtRamp().
+  const clarityAtRamp = await fetchClarityAtRamp(inp.lakeName, inp.dateStr,
+    { worker: CF_WORKER_URL, rampName: inp.rampName });
+  if (clarityAtRamp && clarityAtRamp.select) inp.clarity = clarityAtRamp.select;
   if (forecast) {
     // The line goes in the form field; the HOURS go to the model. Same two writes the Smart Plan
     // path makes -- `inp.weather` is what conditionsFrom() reads for `conditions.forecast`, and
@@ -958,7 +967,11 @@ export async function findWater() {
     //
     // Solunar was not computed on this path at all; `solunarFor` is pure arithmetic on the date
     // and the ramp position, so it costs nothing and there is no reason one tab should have it.
-    conditions: conditionsFrom(inp, ramp, solunarFor(inp.dateStr, ramp[1], ramp[0]), forecast),
+    conditions: conditionsFrom(inp, ramp, solunarFor(inp.dateStr, ramp[1], ramp[0]), forecast,
+                               clarityAtRamp),
+    // Carried on the tab state so buildFromPicked() — which writes the plan and does not have
+    // `clarityAtRamp` in scope — can put the resolved verdict on the plan for the card to read.
+    clarityAtRamp,
     // The windows themselves, for notifications.js. loadSessionFromPlan() arms the major/minor
     // alerts off this and the Pick Water call handed it `undefined` -- "This path computes no
     // solunar, so it hands over none", which was true and did not have to be.
