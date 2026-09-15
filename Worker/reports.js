@@ -17,7 +17,10 @@
  *                                                        NOTE the /category/ path -- the bare
  *                                                        /field-reports/fishing-reports/feed/ is
  *                                                        the COMMENTS feed and is empty.
- *   SC   anglersheadquarters.com                         Per-water pages, no date anywhere.
+ *   SC   anglersheadquarters.com                         Per-water pages. NOT undated -- see
+ *                                                        parseAhqDate(). This line said "no date
+ *                                                        anywhere" until 2026-09-14 and the page
+ *                                                        states one three ways per report.
  *   TN   tn.gov/twra/fishing/weekly-fishing-report.html  Dated inline, and STALE: every one of
  *                                                        its 13 entries is April or May.
  *
@@ -308,6 +311,52 @@ export function parseAhqHub(html) {
  * to grow five fallback anchors. Kept as a pure function so the anchors can be tested against a
  * saved page instead of against the live site.
  */
+/**
+ * THE DATE AHQ DOES PUBLISH, WHICH THIS MODULE SPENT A MONTH SAYING IT DID NOT.
+ *
+ * The header above still reads "Per-water pages, no date anywhere", and the caller hardcoded
+ * `published: null, undated: true` on that authority. Ryan, 2026-09-14, reading the plan report:
+ *
+ *   "Angler's Headquarters -- no date published. Treat as background, not as current.
+ *    C) 2026 Week 36 Fishing Report - Updated September 3 Sept. 3 Lake Wateree is at 97.2% of full
+ *    pool... Lake Wateree 03 September, 2026
+ *    what more of a date does this need lol???"
+ *
+ * Fetched the live page to check rather than argue: it carries SIX dated reports, newest first,
+ * each stamped three ways -- "Updated September 3", "Sept. 3", and "03 September, 2026". The last
+ * form is unambiguous and is the one parsed here. Whether the page gained dates or always had them
+ * below whatever was looked at in August does not matter; the comment was a fact about the page and
+ * the page is the authority.
+ *
+ * ONLY A FORM THAT CARRIES ALL THREE PARTS. Day, month name and year in one string. "Updated
+ * September 3" has no year and stitching one on from "2026 Week 36" elsewhere in the document would
+ * be a derived claim wearing a fact's clothes -- the exact mistake the header above says cost this
+ * codebase a Duke drawdown number in August.
+ *
+ * THE FIRST MATCH IS THE NEWEST. The page lists reports newest-first, and `parseAhqPage` anchors
+ * its text slice on the first water-temperature mention, which is inside that same newest report.
+ * The two agree because they read the same document in the same direction.
+ */
+const AHQ_MONTHS = ['january', 'february', 'march', 'april', 'may', 'june',
+                    'july', 'august', 'september', 'october', 'november', 'december'];
+
+export function parseAhqDate(html) {
+  const text = String(html || '')
+    .replace(/(?:<script|<style)[\s\S]*?<\/(?:script|style)>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ').replace(/&nbsp;?/g, ' ').replace(/\s+/g, ' ');
+  const m = text.match(/\b(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s*,?\s*(20\d{2})\b/i);
+  if (!m) return null;
+  const day = Number(m[1]);
+  const mon = AHQ_MONTHS.indexOf(m[2].toLowerCase());
+  const year = Number(m[3]);
+  if (!(day >= 1 && day <= 31) || mon < 0) return null;
+  // Built as UTC midnight and checked back, so "31 February" cannot roll into March and be
+  // reported as a date the page states.
+  const d = new Date(Date.UTC(year, mon, day));
+  if (d.getUTCDate() !== day || d.getUTCMonth() !== mon) return null;
+  return d.toISOString().slice(0, 10);
+}
+
 export function parseAhqPage(html) {
   let raw = String(html || '');
   const anchors = [
@@ -400,7 +449,7 @@ export function rssScanPlan(xml, waterNames, nowMs, limit = ARTICLE_SCAN_LIMIT) 
  * `matched` is the registry name that matched, so a wrong hit is debuggable from the response
  * instead of requiring the source to be re-fetched.
  */
-export function shapeReports({ rssByState = {}, articlesByLink = {}, twraText = null,
+export function shapeReports({ rssByState = {}, articlesByLink = {}, twraText = null, ahqDate = null,
                                ahqText = null, ahqUrl = null }, waterNames, state) {
   const items = [];
   for (const [st, xml] of Object.entries(rssByState)) {
@@ -440,8 +489,12 @@ export function shapeReports({ rssByState = {}, articlesByLink = {}, twraText = 
     items,
     // AHQ, kept separate BECAUSE it carries no date. Merging it into `items` would put undated
     // text next to dated text and invite the reader to assume it is current.
+    // DATED WHEN THE PAGE SAYS SO, and still in the `undated` bucket by NAME because that is the
+    // field the caller reads -- what changed is that `published` and `undated` now tell the truth
+    // about it. See parseAhqDate(): the page publishes "03 September, 2026" and this module spent a
+    // month asserting it published nothing.
     undated: ahqText ? [{ source: REPORT_SOURCES.SC.label, link: ahqUrl, text: ahqText,
-                          published: null, undated: true }] : [],
+                          published: ahqDate, undated: !ahqDate }] : [],
     // "Nobody looked here" and "nothing to report" are different answers.
     checked: Object.keys(rssByState).concat(twraText ? ['TN'] : [], ahqUrl ? ['AHQ'] : []),
     // Said out loud, not applied quietly -- AND the units have to match, or the statement is
@@ -487,13 +540,14 @@ export async function fetchReports(waterNames, state) {
     AHQ_HUBS[state] ? cached(`ahqhub:${state}`, 6 * TTL, () => text(AHQ_HUBS[state])) : Promise.resolve(null),
   ]);
 
-  let ahqText = null; let ahqUrl = null;
+  let ahqText = null; let ahqUrl = null; let ahqDate = null;
   if (hubHtml) {
     const best = pickAhqEntry(parseAhqHub(hubHtml), waterNames);
     if (best) {
       ahqUrl = best.entry.url;
       const page = await cached(`ahq:${best.entry.slug}`, TTL, () => text(best.entry.url));
       ahqText = page ? parseAhqPage(page) : null;
+      ahqDate = page ? parseAhqDate(page) : null;
     }
   }
   const rssByState = {};
@@ -510,7 +564,8 @@ export async function fetchReports(waterNames, state) {
     if (html) articlesByLink[link] = articleText(html);
   }));
 
-  return shapeReports({ rssByState, articlesByLink, twraText: twra, ahqText, ahqUrl }, waterNames, state);
+  return shapeReports({ rssByState, articlesByLink, twraText: twra, ahqText, ahqUrl, ahqDate },
+                      waterNames, state);
 }
 
 // ── route ───────────────────────────────────────────────────────────────────────────────────

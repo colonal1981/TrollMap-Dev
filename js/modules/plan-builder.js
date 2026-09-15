@@ -1624,14 +1624,47 @@ ${src}`;
       else addPositive(`Water temperature ${wt}°F — acceptable`);
     }
 
-    const clarityIntelText = String(p.meta.clarityIntel || '').toLowerCase();
-    if(clarityIntelText){
-      if(/muddy\s*\/\s*debris risk|debris risk/.test(clarityIntelText)){
-        addRisk('CAUTION: clarity/runoff model predicts muddy water or debris risk — verify ramps, floating debris, and clearer lower-lake zones');
-      } else if(/overall predicted clarity:\s*muddy|muddy/.test(clarityIntelText)){
-        addRisk('CAUTION: clarity/runoff model predicts muddy water — adjust colors and avoid backs of creeks unless targeting mudlines');
-      } else if(/overall predicted clarity:\s*stained|stained/.test(clarityIntelText)){
-        addRisk('CAUTION: clarity/runoff model predicts stained water — favor color breaks, vibration, and high-contrast colors');
+    // ── THE VERDICT IS ABOUT THE WATER HE LAUNCHES IN ─────────────────────────────────────────
+    //
+    // Ryan, 2026-09-14: "this is probably correct in the creeks or the northern section of the lake
+    // but i highly doubt it is applicable near clearwater cove... what is it using to calculate the
+    // clarity??? i thought we made it location aware?"
+    //
+    // It IS location aware and this line was not reading that half. It matched `\bmuddy\b` ANYWHERE
+    // in the blob, so the lake-wide mean -- or a sentence about a creek arm twelve miles upstream,
+    // "expect mudlines after rain" -- set the trip's decision. Wateree's clarity profile has six
+    // zones: the upper river and Dutchmans Creek run sensitivity 1.45 and 1.35 over clay banks, the
+    // dam basin runs 0.70, and the profile names CLEARWATER COVE MARINA in that last one. The
+    // answer was in the payload, keyed by the ramp he picked.
+    //
+    // lake-intel.js now emits `AT YOUR RAMP (<name>) - <zone>: <clarity>` when the ramp matches a
+    // zone, so this reads THAT first and falls through only when there is no ramp-specific answer.
+    // The fallback says LAKE-WIDE out loud instead of implying it is about here.
+    const clarityRaw = String(p.meta.clarityIntel || '');
+    const atRamp = clarityRaw.match(/AT YOUR RAMP \(([^)]*)\)[^:]*:\s*(Clear|Stained|Muddy)/i);
+    if (atRamp) {
+      const where = atRamp[1];
+      const cls = atRamp[2].toLowerCase();
+      if (cls === 'muddy') {
+        addRisk(`CAUTION: clarity/runoff model predicts MUDDY water at ${where} — adjust colors, `
+              + 'and work mudline edges rather than the backs of creeks');
+      } else if (cls === 'stained') {
+        addRisk(`CAUTION: clarity/runoff model predicts STAINED water at ${where} — favor color `
+              + 'breaks, vibration and high-contrast colors');
+      } else {
+        addPositive(`Clarity model predicts CLEAR water at ${where} — other zones on this lake may `
+                  + 'differ; the Clarity & Runoff section says which stain first');
+      }
+    } else {
+      const clarityIntelText = clarityRaw.toLowerCase();
+      if(clarityIntelText){
+        if(/muddy\s*\/\s*debris risk|debris risk/.test(clarityIntelText)){
+          addRisk('CAUTION: clarity/runoff model predicts muddy water or debris risk somewhere on this lake — no zone in the model names this ramp, so verify ramps, floating debris, and clearer lower-lake zones');
+        } else if(/overall predicted clarity[^\n]*:\s*muddy/.test(clarityIntelText)){
+          addRisk('CAUTION: clarity/runoff model predicts muddy water LAKE-WIDE — that is a mean of every zone, not this ramp. Adjust colors and avoid backs of creeks unless targeting mudlines');
+        } else if(/overall predicted clarity[^\n]*:\s*stained/.test(clarityIntelText)){
+          addRisk('CAUTION: clarity/runoff model predicts stained water LAKE-WIDE — that is a mean of every zone, not this ramp. Favor color breaks, vibration, and high-contrast colors');
+        }
       }
     }
 

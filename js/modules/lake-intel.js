@@ -271,7 +271,41 @@ export async function syncClarityIntelData() {
     lines.push(`${d.summary}`);
     lines.push(`Confidence: ${d.confidence}. ${d.verify}`);
     if(d.rain){ lines.push(`Rain/runoff signal: ${d.rain.weighted72_in}" weighted 72h rain \u00B7 trip-day rain ${Math.round((d.rain.precipTrip_mm||0)/25.4*100)/100}" \u00B7 wind max ${d.rain.windMax_mph||'\u2014'} mph`); }
-    if(d.overall){ lines.push(`Overall predicted clarity: ${d.overall.clarity} (score ${d.overall.score}/100)`); lines.push(`Recommended colors: ${coerceList(d.overall.lureColors).join(', ')}`); lines.push(`Tactics: ${coerceList(d.overall.tactics).join('; ')}`); }
+    // ── THE CLARITY WHERE HE IS LAUNCHING, NOT THE AVERAGE OF THE WHOLE LAKE ──────────────────
+    //
+    // Ryan, 2026-09-14, on a CAUTION line that said the lake was muddy: "this is probably correct
+    // in the creeks or the northern section of the lake but i highly doubt it is applicable near
+    // clearwater cove... what is it using to calculate the clarity??? i thought we made it
+    // location aware?"
+    //
+    // It IS location aware and nothing was reading that half. `overall.score` is the mean of every
+    // zone's score, and Wateree has six: the upper river and Dutchmans Creek run sensitivity 1.45
+    // and 1.35 over clay banks, the dam basin runs 0.70. Averaging them produces a verdict about
+    // water he is not going anywhere near, and the profile names his ramp in the CLEAREST zone --
+    // "Lower main-lake channel / dam basin", ramps: ["Clearwater Cove Marina", ...]. The answer was
+    // in the payload, keyed by the ramp he picked, and the risk line was reading the average.
+    //
+    // NAMED, NOT SUBSTITUTED. Both numbers go in: his zone is the one a decision should rest on,
+    // and the lake-wide figure still says what the rest of the water is doing, because a mudline
+    // upstream is a thing to know about even when you are launching in clear water.
+    const rampNow = (document.getElementById('planRamp')?.value || '').trim();
+    const zoneForRamp = rampNow
+      ? coerceList(d.zones).find((z) => coerceList(z.ramps)
+          .some((r) => {
+            const a = String(r || '').toLowerCase();
+            const b = rampNow.toLowerCase();
+            return a && b && (a.includes(b) || b.includes(a));
+          }))
+      : null;
+    if(zoneForRamp){
+      lines.push(`AT YOUR RAMP (${rampNow}) — ${zoneForRamp.name}: ${zoneForRamp.clarity} `
+               + `(score ${zoneForRamp.score}/100). ${zoneForRamp.likely}.`);
+      lines.push(`Colors for that zone: ${coerceList(zoneForRamp.lureColors).join(', ')}`);
+    } else if(rampNow){
+      lines.push(`No clarity zone in this lake's model lists ${rampNow}, so only the lake-wide `
+               + `figure below applies to it.`);
+    }
+    if(d.overall){ lines.push(`Overall predicted clarity (LAKE-WIDE MEAN of ${coerceList(d.zones).length || '?'} zones, not your ramp): ${d.overall.clarity} (score ${d.overall.score}/100)`); lines.push(`Recommended colors: ${coerceList(d.overall.lureColors).join(', ')}`); lines.push(`Tactics: ${coerceList(d.overall.tactics).join('; ')}`); }
     if(coerceList(d.bestZones).length){ lines.push('Best clarity / safer starting zones:'); coerceList(d.bestZones).forEach(z=>lines.push(`\u2022 ${z.name}: ${z.clarity} \u2014 ${z.likely}`)); }
     if(coerceList(d.dirtyZones).length){ lines.push('Likeliest dirty/muddy zones:'); coerceList(d.dirtyZones).forEach(z=>lines.push(`\u2022 ${z.name}: ${z.clarity} \u2014 ${z.likely}`)); }
     if(coerceList(d.rampRecommendations).length){ lines.push('Ramp / zone recommendations:'); coerceList(d.rampRecommendations).forEach(r=>lines.push(`\u2022 ${r.zone}${coerceList(r.ramps).length?` (${coerceList(r.ramps).join(', ')})`:''}: score ${r.score}/100 \u2014 ${r.why}`)); }

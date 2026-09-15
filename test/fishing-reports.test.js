@@ -328,3 +328,59 @@ test('items are newest first', () => {
   const dates = s.items.map((i) => i.published);
   assert.deepEqual(dates, [...dates].sort().reverse());
 });
+
+// ── THE DATE AHQ DOES PUBLISH ──────────────────────────────────────────────────────────────────
+//
+// reports.js asserted for a month that anglersheadquarters.com carries no date -- its header said
+// "Per-water pages, no date anywhere" and the caller hardcoded `published: null, undated: true` on
+// that authority, so the plan report printed "no date published. Treat as background, not as
+// current."
+//
+// Ryan, 2026-09-14, with the page in front of him:
+//
+//   "C) 2026 Week 36 Fishing Report - Updated September 3 Sept. 3 Lake Wateree is at 97.2% of full
+//    pool... Lake Wateree 03 September, 2026 ... what more of a date does this need lol???"
+//
+// Fetched live rather than argued: SIX dated reports, newest first, each stamped three ways --
+// "Updated September 3", "Sept. 3", and "03 September, 2026". The third form carries all three
+// parts and is the one parsed. The comment was a claim about the page, and the page is the
+// authority for what the page says.
+import { parseAhqDate } from '../Worker/reports.js';
+
+test('it reads the form that carries day, month AND year', () => {
+  assert.equal(parseAhqDate('<p>Lake Wateree 03 September, 2026</p>'), '2026-09-03');
+  assert.equal(parseAhqDate('Lake Wateree 26 August, 2026'), '2026-08-26');
+  assert.equal(parseAhqDate('12 August, 2026'), '2026-08-12');
+});
+
+test('the FIRST match wins, because the page lists reports newest first', () => {
+  // Same order parseAhqPage anchors its text slice in, so the date and the text describe the same
+  // report rather than two different weeks.
+  assert.equal(parseAhqDate('03 September, 2026 ... 26 August, 2026 ... 12 August, 2026'),
+    '2026-09-03');
+});
+
+test('a form with no year is REFUSED rather than stitched to one found elsewhere', () => {
+  // "2026 Week 36 Fishing Report - Updated September 3" has both parts in the document and not in
+  // one string. Joining them would be a derived claim wearing a fact's clothes -- the mistake this
+  // module's own header says cost the codebase a Duke drawdown number in August.
+  assert.equal(parseAhqDate('2026 Week 36 Fishing Report - Updated September 3'), null);
+  assert.equal(parseAhqDate('Updated September 3 Sept. 3'), null);
+});
+
+test('an impossible date is not a date', () => {
+  assert.equal(parseAhqDate('31 February, 2026'), null);
+  assert.equal(parseAhqDate('32 August, 2026'), null);
+});
+
+test('no date at all is still null, and nothing throws', () => {
+  for (const x of ['', null, undefined, 'Lake Wateree is at 97.2% of full pool']) {
+    assert.equal(parseAhqDate(x), null);
+  }
+});
+
+test('markup and scripts do not hide it', () => {
+  const html = '<script>var d="01 January, 1999";</script><div class="rte">'
+             + '<h2>Week 36</h2><span>03 September, 2026</span></div>';
+  assert.equal(parseAhqDate(html), '2026-09-03', 'the script literal must not win');
+});
