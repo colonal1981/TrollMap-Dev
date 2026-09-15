@@ -397,6 +397,9 @@ export function riverPromptBlock(ws) {
  *                                   gauge or a generating dam carries `river` too, which is why
  *                                   riverPromptBlock() reads `featureType` and not the mere
  *                                   presence of the object. Absent is the same prompt as before.
+ * @param {object}   [o.seabedHabitat] seabedHabitatFor() output — the South Atlantic habitat
+ *                                   matrix for this fish beside the ENC's charted bottom for this
+ *                                   zone. Coastal only; null everywhere inland.
  * @param {object}   [o.inshoreSeason] inshoreSeasonFor() output — what NOAA's inshore intercept
  *                                   survey says about this fish in this STATE in this two-month
  *                                   wave. Coastal only, and null on every inland water, which is
@@ -499,6 +502,12 @@ on the day beats every word of this.
  * thermoclineNormBlock above — a survey is not a finding about this creek, and a figure that can
  * be lifted out of the block without the words around it will be quoted back as one.
  *
+ * EXPORTED SO THE TEST CAN RUN IT RATHER THAN READ IT. The first version of that test greped
+ * this source for its own sentences and went red on two of them -- not because the words were
+ * missing but because they sit either side of a string concatenation. That is the
+ * source-reading guard failure this suite has hit four times; the rendered block is the thing
+ * the model is handed, so the rendered block is what gets asserted.
+ *
  * INTERCEPTS ARE ANGLERS, NOT FISH, and the distinction is not pedantry: the number rises with
  * how many people fished as well as with how many fish were there. So it is given as a SHARE of
  * this fish's own year and never as an abundance, and the block says which.
@@ -507,7 +516,7 @@ on the day beats every word of this.
  * exactly that and gives no number, because "no data for February" and "nothing caught in
  * February" are opposite sentences and the second one cancels a trip.
  */
-function inshoreSeasonBlock(s) {
+export function inshoreSeasonBlock(s) {
   if (!s) return '';
   const L = [];
   L.push(`\nWHAT IS CAUGHT INSHORE IN ${s.state} IN ${String(s.waveLabel || '').toUpperCase()}`);
@@ -552,6 +561,101 @@ function inshoreSeasonBlock(s) {
     L.push(`The survey does not work ${others.join(', ')} in ${s.state} at all. Those `
       + 'months are unmeasured here, not empty.');
   }
+  return L.join('\n') + '\n';
+}
+
+/**
+ * WHAT THIS FISH WANTS OFF THE BOTTOM, AND WHAT THIS ZONE'S BOTTOM IS.
+ *
+ * Two registries that are columns of numbers apart and a sentence together -- see
+ * js/data/seabed-habitat.js for why they are read in one module.
+ *
+ * THE STAGES ARE PRINTED APART. Red drum rate marsh edge 4.0 as juveniles and 2.0 as adults, and
+ * a reader that takes the strongest number across stages makes every adult weight too strong.
+ * Whether an 18-25 inch slot fish is an adult is a question about the fish and not about this
+ * table, so every stage is labelled and the model is told to pick, rather than being handed one
+ * number that has quietly already picked.
+ *
+ * AND IT SAYS WHAT THE RANKER CANNOT SEE. Four of the matrix's six structure classes -- marsh
+ * edge, oyster, grass flat and dock piling -- are not in the coastal packs' `near[]` at all, so
+ * the candidate legs were not ordered by them and cannot have been. Saying so is the difference
+ * between the model writing "this leg was chosen for its marsh edge" (false) and "work the marsh
+ * edge along this leg" (an instruction Ryan can follow off the map layer he already draws).
+ */
+export function seabedHabitatBlock(s) {
+  if (!s) return '';
+  const L = [];
+  const pretty = (k) => String(k).replace(/_/g, ' ');
+  const scale = s.rankScale
+    ? Object.entries(s.rankScale).sort((a, b) => b[1] - a[1]).map(([w, n]) => `${n} ${w}`).join(' · ')
+    : null;
+
+  L.push('\nBOTTOM AND HABITAT — WHAT THE FISH WANTS AND WHAT THE CHART SHOWS');
+
+  if (s.matrixName) {
+    L.push(`${s.region || 'South Atlantic'} habitat matrix, for ${s.matrixName}`
+      + (scale ? `. Ratings run ${scale}.` : '.'));
+    // ADULT FIRST because that is the fish being targeted; the rest follow labelled, never merged.
+    for (const stage of ['adult', 'spawning', 'juvenile', 'larva']) {
+      const v = s.stages[stage];
+      if (!v) continue;
+      const st = (v.structures || []).map((x) => `${pretty(x.key)} ${x.rank}`).join(', ');
+      const su = (v.substrates || []).map((x) => `${pretty(x.key)} ${x.rank}`).join(', ');
+      if (!st && !su) continue;
+      L.push(`  ${stage.toUpperCase()}${st ? ` — structure: ${st}` : ''}${su ? ` · bottom: ${su}` : ''}`);
+    }
+    L.push('THESE ARE SEPARATE LIFE STAGES AND THE HIGHEST NUMBER ACROSS THEM IS NOT THE ADULT '
+      + 'NUMBER. Read the stage that matches the size of fish the limit above lets him keep, and '
+      + 'say which stage you read. It is a REGIONAL rating for the whole South Atlantic, not a '
+      + 'measurement of this creek.');
+  }
+
+  if (s.bottom && s.bottom.length) {
+    L.push(`Charted bottom in this zone (NOAA ENC, ${s.seabedFeatures} labelled seabed features `
+      + `of ${s.features} charted): ${s.bottom.map((b) => `${pretty(b.key)} ${b.rank}`).join(', ')}.`);
+    L.push('That is a count of what the CHART LABELS, not a fraction of the bottom, and every '
+      + 'zone on this coast comes back dominated by fine — so it separates one fish from another '
+      + 'here far better than it separates this zone from the next one.');
+  }
+
+  if (s.wantsRare) {
+    const w = s.wantsRare;
+    const names = w.wants.map(pretty).join(' and ');
+    if (w.weak) {
+      // MEDIUM IS NOT A PREFERENCE, and printing one as though it were puts the emphasis on the
+      // half of the matrix that does not decide this fish. Seatrout tops out at Medium on every
+      // substrate and at Very High on grass flat and marsh edge; the bottom is not the argument.
+      L.push(`The best bottom rating this fish carries is only ${w.rating} (${names}) — the matrix `
+        + 'is saying the BOTTOM IS NOT WHAT DECIDES THIS FISH here. The structure ratings above '
+        + 'are, so build the day on those and treat the bottom as a tie-breaker.');
+    } else if (w.scarce) {
+      L.push(`⚠ ${names} is what this fish rates highest (${w.rating}) and the chart labels only `
+        + `${w.chartedFeatures} of the ${w.chartedTotal} substrate-labelled features as that here — `
+        + `the zone is mostly ${pretty(w.dominant)}. Do not hunt for that bottom; meet it on `
+        + 'STRUCTURE instead, and say in the plan that is what you are doing.');
+    } else {
+      L.push(`${names} is what this fish rates highest (${w.rating}) and it is also what the chart `
+        + `labels most of here — the bottom and the fish agree in this zone.`);
+    }
+  }
+
+  if (s.chartStructure && s.chartStructure.length) {
+    L.push(`Hard structure the chart carries here: ${s.chartStructure
+      .map((c) => `${pretty(c.key)} ${c.rank}`).join(', ')}. Counts only — we hold no positions `
+      + 'for these, so name them as water to work, never as a waypoint.');
+  }
+
+  if (s.restricted && s.restricted.length) {
+    L.push(`The chart also marks ${s.restricted.map((r) => `${r.rank} ${pretty(r.key)}`).join(' and ')} `
+      + 'area(s) in this zone. WE HOLD THE COUNT AND NOT THE SHAPES, so the plan cannot claim to '
+      + 'have routed around them — say they exist and that they are his to check on the chart.');
+  }
+
+  // THE HONEST LIMIT, LAST, SO IT IS NOT LOST ABOVE THE NUMBERS.
+  L.push('THE LEG RANKING COULD NOT USE ANY OF THIS. Marsh edge, oyster, grass flat and dock '
+    + 'piling are not marks the coastal chartpacks put on a trolling run, so no candidate below '
+    + 'was ordered by them. Use this to say what to WORK along a leg; never say a leg was chosen '
+    + 'for habitat it was not scored on.');
   return L.join('\n') + '\n';
 }
 
@@ -1302,7 +1406,7 @@ wind direction: is it a dangerous windward launch?${o.hazards && o.hazards.lengt
     + `from the research is written advice with no position at all: say the ones that bear on `
     + `today out loud, and never imply an unpositioned one is marked on the chart.`
   : ''}
-${coastalPromptBlock(o.waterState)}${riverPromptBlock(o.waterState)}${poolPromptBlock(o.waterState)}${conditionsPromptBlock(o.waterState)}${lightPromptBlock(o.waterState, o.weatherByHour, o.launchTime, o.returnTime, o.lightFacts)}${timeBudgetBlock(o.windowMin, o.launchTime, o.returnTime, o.dayMin)}${thermoclineNormBlock(o.thermoclineNorm)}${inshoreSeasonBlock(o.inshoreSeason)}
+${coastalPromptBlock(o.waterState)}${riverPromptBlock(o.waterState)}${poolPromptBlock(o.waterState)}${conditionsPromptBlock(o.waterState)}${lightPromptBlock(o.waterState, o.weatherByHour, o.launchTime, o.returnTime, o.lightFacts)}${timeBudgetBlock(o.windowMin, o.launchTime, o.returnTime, o.dayMin)}${thermoclineNormBlock(o.thermoclineNorm)}${inshoreSeasonBlock(o.inshoreSeason)}${seabedHabitatBlock(o.seabedHabitat)}
 WHAT IS ALREADY KNOWN
 ${o.intel || 'NOTHING. No researched profile exists for this water, so everything else here rests '
   + 'on the chart, the gauges and general species knowledge. Say so in the plan rather than '

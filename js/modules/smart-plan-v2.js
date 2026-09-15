@@ -59,6 +59,8 @@ export const CANDIDATE_LIMIT = 12;
  * @param {string[]} [o.lightFacts] the profile's light-tagged sourced facts, from lightFactsFrom()
  * @param {object}   [o.inshoreSeason] inshoreSeasonFor() output — the intercept survey's answer
  *                                 for this fish, this state, this two-month wave. Coastal only.
+ * @param {object}   [o.seabedHabitat] seabedHabitatFor() output — the habitat matrix beside the
+ *                                 ENC's charted bottom for this zone. Coastal only.
  */
 export async function buildSmartPlanV2(o) {
   const base = o.chartpackBase || '';
@@ -172,6 +174,9 @@ export async function buildSmartPlanV2(o) {
     // which the caller already resolved. Null on every inland water, which is the prompt that
     // was there before.
     inshoreSeason: o.inshoreSeason || null,
+    // AND WHAT THE BOTTOM IS UNDER IT. Same shape, same reason: a zone key and a species,
+    // both already resolved by the caller, and null on every inland water.
+    seabedHabitat: o.seabedHabitat || null,
     // THE ONE MEASURED NUMBER THE BAIT GATE STANDS ON. See the gate in plan-prompt.js: the box
     // offered to the model is filtered to what can physically reach the deepest oxygenated water,
     // and this is that depth. Null until somebody casts the water, and then the gate goes silent

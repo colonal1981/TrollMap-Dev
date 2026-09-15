@@ -203,31 +203,52 @@ describe('it reaches buildPlanRequest, which is the only test that counts', () =
 });
 
 describe('the prompt block says what the number is and what it is not', () => {
-  const prompt = src('js/modules/plan-prompt.js');
-  const block = prompt.slice(prompt.indexOf('function inshoreSeasonBlock('),
-                             prompt.indexOf('function inshoreSeasonBlock(') + 3200);
+  // RUN, DO NOT READ. This described the SOURCE of plan-prompt.js and matched sentences that
+  // happen to sit on one line; its sibling suite went red on two identical assertions purely
+  // because the words fell either side of a string concatenation. The rendered block is what the
+  // model is handed.
+  let render;
+  const out = async (st, sp, d) => {
+    if (!render) ({ inshoreSeasonBlock: render } = await import('../js/modules/plan-prompt.js'));
+    await prime();
+    return render(inshoreSeasonFor(st, sp, new Date(`${d}T12:00:00`)));
+  };
 
-  it('calls it STATEWIDE, not a fact about the creek', () => {
-    expect(block).toContain('STATEWIDE, not this creek');
+  it('calls it STATEWIDE, not a fact about the creek', async () => {
+    expect(await out('SC', 'Red Drum (Redfish)', '2026-09-15')).toContain('STATEWIDE, not this creek');
   });
 
-  it('says an intercept is an angler trip, not a fish', () => {
+  it('says an intercept is an angler trip, not a fish', async () => {
     // The count rises with how many people fished. Read as abundance it is a different claim.
-    expect(block).toMatch(/ANGLER TRIP/);
-    expect(block).toMatch(/never as abundance/);
+    const t = await out('SC', 'Red Drum (Redfish)', '2026-09-15');
+    expect(t).toContain('ANGLER TRIP');
+    expect(t).toContain('never as abundance');
   });
 
-  it('says an unsampled wave is a hole in the survey, in those words', () => {
-    expect(block).toContain('HOLE IN THE SURVEY, NOT AN ABSENCE OF FISH');
+  it('says an unsampled wave is a hole in the survey, in those words', async () => {
+    const t = await out('SC', 'Speckled Trout (Spotted Seatrout)', '2026-02-15');
+    expect(t).toContain('HOLE IN THE SURVEY, NOT AN ABSENCE OF FISH');
+    // ...and carries no count for that wave at all.
+    expect(t).not.toMatch(/intercepts in Jan–Feb/);
   });
 
-  it('puts the median against the slot rather than leaving it to be read as a target', () => {
-    expect(block).toMatch(/median under the slot/);
-  });
-
-  it('does not say the same hole twice', () => {
+  it('does not say the same hole twice', async () => {
     // The unsampled-wave paragraph and the trailing "the survey does not work X" line were both
     // firing on a February plan, which reads as two different holes in the survey.
-    expect(block).toContain('s.unsampledWaves || []).filter');
+    const t = await out('SC', 'Speckled Trout (Spotted Seatrout)', '2026-02-15');
+    expect((t.match(/does not work/gi) || []).length).toBe(1);
+    // ...while a September plan still gets the trailing line, because there the hole is elsewhere.
+    expect(await out('SC', 'Red Drum (Redfish)', '2026-09-15'))
+      .toContain('does not work Jan–Feb in SC at all');
+  });
+
+  it('puts the median against the slot rather than leaving it to be read as a target', async () => {
+    expect(await out('SC', 'Red Drum (Redfish)', '2026-09-15'))
+      .toContain('median under the slot means most of what is landed goes back');
+  });
+
+  it('nothing to say is silence, not an empty heading', async () => {
+    if (!render) ({ inshoreSeasonBlock: render } = await import('../js/modules/plan-prompt.js'));
+    expect(render(null)).toBe('');
   });
 });

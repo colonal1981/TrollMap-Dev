@@ -37,6 +37,7 @@
  */
 
 import { nameForms } from './regulations-live.js';
+import { registryLoader } from './registry-loader.js';
 
 /** The survey's own two-month waves. Kept here so a caller never types a month range. */
 export const WAVES = Object.freeze({
@@ -52,48 +53,25 @@ export function waveFor(date) {
 }
 
 export const REGISTRY_PATH = '/chartpacks/_registry/mrip_inshore.json';
-const CACHE_MS = 12 * 60 * 60 * 1000;   // eleven years of survey; it does not move in a morning
 
-let _cache = null;
-let _at = 0;
-let _inflight = null;
+// ONE LOADER, SHARED. The fetch, the twelve-hour hold, the in-flight guard and the two rules
+// about what must never be cached all live in registry-loader.js -- see the header there for why
+// a bad body is refused rather than held, and why a failure is silence. The shape guard is the
+// only part that is about THIS file: no `states` object means this is not the survey table.
+const _survey = registryLoader(REGISTRY_PATH, (p) => p && p.states && typeof p.states === 'object' && p.states);
 
 /**
- * Load the survey table once and hold it. NEVER THROWS — a bucket with no object and a network
+ * Load the survey table once and hold it. NEVER THROWS -- a bucket with no object and a network
  * that dropped look the same to the caller, and both mean the plan says nothing about seasonality
  * rather than the plan failing.
  */
-export async function primeInshoreSeason(opts = {}) {
-  const now = Number.isFinite(opts.now) ? opts.now : Date.now();
-  if (_cache && now - _at < CACHE_MS) return _cache;
-  if (_inflight) return _inflight;
-  const base = String(opts.worker || '').replace(/\/+$/, '');
-  const impl = opts.fetch || (typeof fetch === 'function' ? fetch : null);
-  if (!base || !impl) return null;
-  _inflight = (async () => {
-    try {
-      const r = await impl(`${base}${REGISTRY_PATH}`);
-      if (!r.ok) return null;
-      const d = await r.json();
-      if (!d || !d.states || typeof d.states !== 'object') return null;
-      _cache = d;
-      _at = now;
-      return d;
-    } catch (e) {
-      console.warn('[inshore-season] could not load the intercept survey:', e && e.message);
-      return null;
-    } finally {
-      _inflight = null;
-    }
-  })();
-  return _inflight;
-}
+export const primeInshoreSeason = (opts = {}) => _survey.prime(opts);
 
 /** Test seam, and the same name regulations-live.js uses for its own. */
-export function _resetInshoreSeason() { _cache = null; _at = 0; _inflight = null; }
+export function _resetInshoreSeason() { _survey.reset(); }
 
 /** Whether the survey table is in hand. A cold table is silence, never an answer. */
-export function inshoreSeasonPrimed() { return !!_cache; }
+export function inshoreSeasonPrimed() { return _survey.primed(); }
 
 /**
  * Find this species in the state's table.
@@ -121,9 +99,10 @@ function rowFor(table, species) {
  *          null when nothing can be said — not primed, no such state, no such fish.
  */
 export function inshoreSeasonFor(state, species, date) {
-  if (!_cache) return null;
+  const table = _survey.get();
+  if (!table) return null;
   const st = String(state || '').trim().toUpperCase();
-  const stateRow = _cache.states && _cache.states[st];
+  const stateRow = table.states && table.states[st];
   if (!stateRow) return null;
   const hit = rowFor(stateRow.species, species);
   if (!hit) return null;
@@ -161,8 +140,8 @@ export function inshoreSeasonFor(state, species, date) {
     sampledWaveCount: sampled.length,
     best: best ? { wave: best.wave, label: WAVES[best.wave] || null, intercepts: best.intercepts } : null,
     lengthIn: (hit.entry && hit.entry.lengthIn) || null,
-    years: Array.isArray(_cache.years) ? _cache.years : [],
-    source: _cache.source || 'NOAA MRIP Access Point Angler Intercept Survey',
+    years: Array.isArray(table.years) ? table.years : [],
+    source: table.source || 'NOAA MRIP Access Point Angler Intercept Survey',
     // NAMED, NOT COUNTED. "the survey does not work Jan–Feb here" is a sentence about the survey;
     // a count of missing waves is a sentence about nothing.
     unsampledWaves: Object.entries(byWave)

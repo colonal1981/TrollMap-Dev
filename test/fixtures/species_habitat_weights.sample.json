@@ -1,0 +1,233 @@
+{
+ "note": "Personal use only, not for distribution or resale; not for navigation.",
+ "generatedBy": "build_species_habitat_weights.py",
+ "generated": "2026-09-03T17:01:38+00:00",
+ "source": "species-habitat-matrix.csv",
+ "region": "South Atlantic",
+ "rankScale": {
+  "Unknown": 0.0,
+  "High": 3.5,
+  "Low": 1.0,
+  "Medium": 2.0,
+  "Very High": 4.0
+ },
+ "structureClasses": [
+  "channel_edge",
+  "creek_mouth",
+  "dock_piling",
+  "grass_flat",
+  "marsh_edge",
+  "oyster"
+ ],
+ "species": {
+  "Black Drum": {
+   "matrixNames": [
+    "Black Drum"
+   ],
+   "structures": {
+    "adult": {
+     "channel_edge": 2.0,
+     "grass_flat": 1.0,
+     "marsh_edge": 4.0,
+     "oyster": 1.0
+    },
+    "juvenile": {
+     "channel_edge": 2.0,
+     "grass_flat": 1.0,
+     "marsh_edge": 4.0,
+     "oyster": 3.5
+    },
+    "larva": {
+     "grass_flat": 1.0,
+     "marsh_edge": 4.0,
+     "oyster": 1.0
+    }
+   },
+   "substrates": {
+    "adult": {
+     "fine": 3.5,
+     "shell": 1.0
+    },
+    "juvenile": {
+     "fine": 1.0,
+     "shell": 1.0
+    },
+    "larva": {
+     "fine": 1.0,
+     "shell": 1.0
+    },
+    "spawning": {
+     "coarse": 2.0,
+     "fine": 1.0,
+     "hard": 3.5
+    }
+   }
+  },
+  "Red Drum (Redfish)": {
+   "matrixNames": [
+    "Red Drum"
+   ],
+   "structures": {
+    "adult": {
+     "marsh_edge": 2.0,
+     "oyster": 2.0
+    },
+    "juvenile": {
+     "channel_edge": 3.5,
+     "grass_flat": 1.0,
+     "marsh_edge": 4.0,
+     "oyster": 3.5
+    },
+    "larva": {
+     "marsh_edge": 4.0
+    },
+    "spawning": {
+     "channel_edge": 4.0
+    }
+   },
+   "substrates": {
+    "adult": {
+     "fine": 3.5,
+     "hard": 1.0,
+     "live_hard": 1.0,
+     "shell": 2.0,
+     "structured_sand": 2.0
+    },
+    "juvenile": {
+     "coarse": 2.0,
+     "fine": 2.0,
+     "hard": 1.0,
+     "shell": 3.5,
+     "structured_sand": 2.0
+    },
+    "spawning": {
+     "coarse": 2.0,
+     "fine": 4.0,
+     "hard": 3.5,
+     "structured_sand": 2.0
+    }
+   }
+  },
+  "Sheepshead": {
+   "matrixNames": [
+    "Sheepshead"
+   ],
+   "structures": {
+    "adult": {
+     "channel_edge": 2.0,
+     "marsh_edge": 3.5,
+     "oyster": 2.0
+    },
+    "juvenile": {
+     "channel_edge": 2.0,
+     "grass_flat": 1.0,
+     "marsh_edge": 3.5,
+     "oyster": 2.0
+    },
+    "larva": {
+     "marsh_edge": 3.5
+    }
+   },
+   "substrates": {
+    "adult": {
+     "coarse": 2.0,
+     "fine": 1.0,
+     "hard": 3.5,
+     "live_hard": 2.0,
+     "shell": 2.0
+    },
+    "juvenile": {
+     "coarse": 2.0,
+     "fine": 1.0,
+     "hard": 3.5,
+     "live_hard": 2.0,
+     "shell": 2.0
+    }
+   }
+  },
+  "Southern Flounder": {
+   "matrixNames": [
+    "Southern Flounder"
+   ],
+   "structures": {
+    "adult": {
+     "channel_edge": 2.0,
+     "marsh_edge": 3.5,
+     "oyster": 3.5
+    },
+    "juvenile": {
+     "channel_edge": 2.0,
+     "grass_flat": 1.0,
+     "marsh_edge": 4.0,
+     "oyster": 1.0
+    },
+    "larva": {
+     "marsh_edge": 4.0
+    }
+   },
+   "substrates": {
+    "adult": {
+     "fine": 3.5,
+     "structured_sand": 1.0
+    },
+    "juvenile": {
+     "fine": 3.5,
+     "shell": 1.0,
+     "structured_sand": 1.0
+    }
+   }
+  },
+  "Speckled Trout (Spotted Seatrout)": {
+   "matrixNames": [
+    "Spotted Sea Trout"
+   ],
+   "structures": {
+    "adult": {
+     "channel_edge": 1.0,
+     "grass_flat": 4.0,
+     "marsh_edge": 4.0,
+     "oyster": 3.5
+    },
+    "juvenile": {
+     "grass_flat": 4.0,
+     "marsh_edge": 4.0,
+     "oyster": 3.5
+    },
+    "larva": {
+     "grass_flat": 4.0,
+     "marsh_edge": 4.0,
+     "oyster": 0.0
+    },
+    "spawning": {
+     "channel_edge": 1.0,
+     "grass_flat": 2.0
+    }
+   },
+   "substrates": {
+    "adult": {
+     "coarse": 1.0,
+     "fine": 2.0,
+     "hard": 1.0,
+     "shell": 2.0,
+     "shellfish_bed": 0.0,
+     "structured_sand": 1.0
+    },
+    "juvenile": {
+     "coarse": 1.0,
+     "fine": 2.0,
+     "hard": 1.0,
+     "shell": 2.0,
+     "shellfish_bed": 0.0,
+     "structured_sand": 1.0
+    },
+    "larva": {
+     "shell": 0.0,
+     "shellfish_bed": 0.0
+    },
+    "spawning": {
+     "fine": 4.0
+    }
+   }
+  }
+ }
+}

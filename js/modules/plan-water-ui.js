@@ -44,9 +44,11 @@ import { packFetcher } from './smart-plan-v2.js';
 // THE_PROFILE_BECAME_A_CACHE_AND_NOBODY_MOVED_THE_READS_2026-09-01.md.
 import { packDerivedFacts } from '../utils/pack-facts.js';
 import { checkPlanLegality, ensureRegulations, fetchForecast,
-         fetchWaterState, fetchClarityAtRamp , regulationStateFor } from './plan-preflight.js';
+         fetchWaterState, fetchClarityAtRamp, regulationStateFor,
+         detectCoastalZone } from './plan-preflight.js';
 import { primeFishAdvisories } from '../data/fish-advisories.js';
 import { primeInshoreSeason, inshoreSeasonFor } from '../data/inshore-season.js';
+import { primeSeabedHabitat, seabedHabitatFor } from '../data/seabed-habitat.js';
 import { depthSampler, shorelineIndex, waterMask } from './plan-water-index.js';
 import { offerWater, dayCost, priceSpots, searchOrder, optionality, reasons, TROLL_MPH, TRANSIT_MIN_DEPTH_FT, SPOT_KINDS } from './plan-water.js';
 import { joinedPiece } from './plan-pieces.js';
@@ -784,6 +786,9 @@ export async function findWater() {
   // in the same place, and a field filled by only one of the two is the bug
   // one-prompt-two-planners.test.js exists to catch.
   await primeInshoreSeason({ worker: CF_WORKER_URL });
+  // AND THE TWO TABLES THAT ANSWER WHAT IS UNDER THE BOAT. Same route, same reason, and
+  // both planners again -- one prompt, two planners.
+  await primeSeabedHabitat({ worker: CF_WORKER_URL });
 
   // THE PROFILE BEFORE THE LAW, because checkPlanLegality() reads its extracted closed seasons
   // and cannot await for them. The long note on why Pick Water loads a profile at all sits below,
@@ -984,6 +989,9 @@ export async function findWater() {
     // state comes off regulationStateFor(), which is the SAME derivation the legality check above
     // used -- two readers of "which state is this water in" is how they drift.
     inshoreSeason: inshoreSeasonFor(regulationStateFor(inp.lakeName), species, date),
+    // THE ZONE, NOT THE STATE -- the ENC bottom is filed per coastal zone. Null inland,
+    // which is exactly when the block must not print.
+    seabedHabitat: seabedHabitatFor(detectCoastalZone(inp.lakeName), species),
     launchTime: inp.launchTime, returnTime: inp.returnTime,
     usableAh: usableAhFrom(inp.motor), band: depth ? depth.band : null,
     holding: depth ? depth.holding : null, lake: inp.lakeName,
@@ -1229,6 +1237,7 @@ export async function buildFromPicked() {
         // AND THE EIGHTH. Resolved in findWater() where the state and the date are; forwarded
         // here for the same reason every field above it is.
         inshoreSeason: T.inshoreSeason || null,
+        seabedHabitat: T.seabedHabitat || null,
         snapEligible: snapEligibleFrom(castable),
         // `castable` is `trollable || castable` -- the whole bag. Which half may go behind the
         // boat has to be said, or a cast-only soft plastic looks like a crankbait to the model.

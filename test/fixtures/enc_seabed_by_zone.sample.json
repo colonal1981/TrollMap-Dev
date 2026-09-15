@@ -1,0 +1,140 @@
+{
+ "note": "Personal use only, not for distribution or resale; not for navigation.",
+ "generatedBy": "extract_enc_seabed.py",
+ "generated": "2026-09-03T17:41:35+00:00",
+ "minBand": 4,
+ "cells": 606,
+ "zones": {
+  "coast_charleston_sc": {
+   "features": 2675,
+   "bySubstrate": {
+    "fine": 212,
+    "shell": 15,
+    "hard": 3,
+    "coarse": 3
+   },
+   "bySurface": {
+    "sand": 109,
+    "mud": 86,
+    "shells": 37,
+    "clay": 22,
+    "stone": 5,
+    "rock": 3,
+    "gravel": 2,
+    "pebbles": 1
+   },
+   "byKind": {
+    "seabed": 270,
+    "shore_structure": 1640,
+    "wreck": 36,
+    "obstruction": 225,
+    "rock": 29,
+    "piling": 281,
+    "bridge": 138,
+    "turbulence": 6,
+    "restricted": 50
+   },
+   "byCategory": {
+    "pier": 1193,
+    "sea_wall": 126,
+    "rip_rap": 88,
+    "groyne": 57,
+    "wharf": 50,
+    "ramp": 26,
+    "fender": 26,
+    "breakwater": 17,
+    "training_wall": 3,
+    "slipway": 3,
+    "solid_face_wharf": 1
+   },
+   "restrictions": {
+    "entry_restricted": 25,
+    "restrn_27": 9,
+    "restrn_25": 7,
+    "entry_prohibited": 5,
+    "anchoring_prohibited": 5
+   },
+   "blocksUs": {
+    "entry_restricted": 25,
+    "entry_prohibited": 5
+   }
+  },
+  "coast_savannah_ga": {
+   "features": 1050,
+   "bySubstrate": {
+    "fine": 44,
+    "shell": 11
+   },
+   "bySurface": {
+    "sand": 27,
+    "mud": 24,
+    "shells": 23,
+    "clay": 1
+   },
+   "byKind": {
+    "seabed": 90,
+    "shore_structure": 635,
+    "piling": 94,
+    "bridge": 62,
+    "restricted": 24,
+    "wreck": 25,
+    "obstruction": 104,
+    "rock": 1,
+    "turbulence": 8,
+    "unsurveyed": 7
+   },
+   "byCategory": {
+    "pier": 416,
+    "rip_rap": 78,
+    "sea_wall": 72,
+    "wharf": 22,
+    "fender": 19,
+    "breakwater": 9,
+    "ramp": 8,
+    "groyne": 3,
+    "training_wall": 3
+   },
+   "restrictions": {
+    "entry_restricted": 8,
+    "anchoring_restricted": 7,
+    "restrn_27": 2
+   },
+   "blocksUs": {
+    "entry_restricted": 8
+   }
+  },
+  "coast_winyah_bay_sc": {
+   "features": 440,
+   "bySubstrate": {
+    "fine": 13
+   },
+   "bySurface": {
+    "sand": 8,
+    "shells": 6,
+    "mud": 5
+   },
+   "byKind": {
+    "seabed": 34,
+    "wreck": 10,
+    "obstruction": 122,
+    "shore_structure": 139,
+    "piling": 123,
+    "bridge": 7,
+    "rock": 1,
+    "restricted": 4
+   },
+   "byCategory": {
+    "pier": 83,
+    "sea_wall": 22,
+    "groyne": 15,
+    "rip_rap": 8,
+    "ramp": 4,
+    "fender": 1
+   },
+   "restrictions": {
+    "restrn_27": 2
+   },
+   "blocksUs": {}
+  }
+ }
+}
