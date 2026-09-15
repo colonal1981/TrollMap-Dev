@@ -17,7 +17,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyWqpToLimnology, applyDocumentsToLimnology,
+import { applyWqpToLimnology, applyDocumentsToLimnology, documentFieldsApplied,
          buildWqpEvidence, limnologyGaps, WQP_LIMNOLOGY_FIELDS }
   from '../js/utils/wqp-limnology.js';
 
@@ -179,4 +179,58 @@ test('and a document with nothing to say leaves the WQP note alone', () => {
     { thermocline: { summerDepthFt: null, note: 'surface grabs with a depth stamp' }, oxygen: {} },
     { offered: true, thermoclineFt: null, anoxicBelowFt: 19.7 });
   assert.match(out.thermocline.note, /surface grabs/);
+});
+
+// ── AND THE ACCEPTANCE TEST AT THE VERY LAST GATE ──────────────────────────────────────────────
+//
+// `handleResearchLimnologyData` keeps the document merge only when `documentFieldsApplied` says
+// something landed:
+//
+//     const after = applyDocumentsToLimnology(merged, doc);
+//     if (applied.thermocline || applied.oxygen) merged = after;
+//
+// It tested for a DEPTH appearing and nothing else. So on 2026-09-15 Ryan reran four waters, all
+// four reported `ok`, and all four came back still carrying the WQP surface-grab refusal — because
+// the only thing the cast had to offer was a NOTE, and a note did not count as applied. The fetcher
+// wrote it, the builder carried it, applyDocumentsToLimnology applied it, R2 served it, and this
+// gate dropped it on the floor.
+//
+// Fourth place in one pipeline where the same sentence had to be written down: a refusal is an
+// answer. Here it wore the shape of an acceptance test that only counted values.
+const WQP_ONLY = () => ({
+  thermocline: { summerDepthFt: null, method: null,
+                 note: 'These are surface grabs with a depth stamp, not a vertical profile.' },
+  oxygen: { depletionDepthFt: 16.4, anoxicBelowFt: 19.7, note: 'measured vertical profile' },
+});
+const CAST_NOTE = 'EPA National Lakes Assessment 7/21/2022: no layer reaches 1.0 C/m, the '
+                + 'classical cutoff -- steepest was 0.50 C/m at 18.0 ft over a 7.6 m cast.';
+
+test('a note-only document merge counts as applied, so the caller keeps it', () => {
+  const before = WQP_ONLY();
+  const after = applyDocumentsToLimnology(before, {
+    offered: true, thermoclineFt: null, thermoclineNote: CAST_NOTE,
+    anoxicBelowFt: 19.7, depletionDepthFt: 16.4 });
+  const applied = documentFieldsApplied(before, after);
+  assert.equal(applied.thermocline, true, 'this is the flag that decides whether `after` survives');
+  assert.match(after.thermocline.note, /18\.0 ft/);
+});
+
+test('and a document that changes nothing is NOT reported as applied', () => {
+  // The opposite failure: document evidence written for a merge that did nothing.
+  const before = WQP_ONLY();
+  const after = applyDocumentsToLimnology(before, {
+    offered: true, thermoclineFt: null, anoxicBelowFt: 19.7, depletionDepthFt: 16.4 });
+  assert.deepEqual(documentFieldsApplied(before, after), { thermocline: false, oxygen: false });
+});
+
+test('a depth still counts, exactly as it did before', () => {
+  const before = { thermocline: { summerDepthFt: null }, oxygen: {} };
+  const after = { thermocline: { summerDepthFt: 22.0 }, oxygen: {} };
+  assert.equal(documentFieldsApplied(before, after).thermocline, true);
+});
+
+test('an oxygen note landing counts too, for the same reason', () => {
+  const before = { thermocline: {}, oxygen: { anoxicBelowFt: null, note: null } };
+  const after = { thermocline: {}, oxygen: { anoxicBelowFt: null, note: 'oxygen never fell under 2 mg/L' } };
+  assert.equal(documentFieldsApplied(before, after).oxygen, true);
 });

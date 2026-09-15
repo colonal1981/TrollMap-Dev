@@ -215,15 +215,43 @@ export function buildDocumentEvidence(doc, applied) {
 
 // Which fields this pass actually wrote, so the evidence rows describe stored values and no
 // others. Compared before and after rather than re-deriving the conditions in two places.
+/**
+ * DID THE DOCUMENT CHANGE ANYTHING — AND A NOTE IS SOMETHING.
+ *
+ * `handleResearchLimnologyData` keeps the document merge only when this says yes:
+ *
+ *     const after = applyDocumentsToLimnology(merged, doc);
+ *     if (applied.thermocline || applied.oxygen) merged = after;
+ *
+ * so a merge this function calls "not applied" is thrown away. It tested for a DEPTH appearing and
+ * nothing else, which meant a cast that measured the column and could not name a depth had its
+ * finding discarded at the very last gate -- after the fetcher wrote the note (6fb33f0), after the
+ * builder carried it (6fb33f0), after this file learned to apply it (ea2a60c), and after it shipped
+ * to R2.
+ *
+ * Lake Wateree, 2026-09-15: four waters were rerun, all four reported `ok`, and all four came back
+ * with `limnology.thermocline.note` still reading the WQP surface-grab refusal -- because the one
+ * thing the document had to offer was a note, and a note did not count as applied. Wateree, Murray,
+ * Monticello, Secession.
+ *
+ * FOURTH PLACE IN ONE PIPELINE WHERE THE SAME RULE HAD TO BE WRITTEN: a refusal is an answer. Here
+ * it takes the form of an acceptance test that only counted values.
+ *
+ * A NOTE CHANGE COUNTS ONLY WHEN IT IS A CHANGE. Reporting `true` for an identical note would write
+ * document evidence for a merge that did nothing, which is the opposite failure.
+ */
 export function documentFieldsApplied(before, after) {
   const at = (o, a, b) => (o && o[a] ? o[a][b] : undefined);
+  const gained = (sec, field) => at(before, sec, field) == null && at(after, sec, field) != null;
+  const noteMoved = (sec) => {
+    const b = at(before, sec, 'note');
+    const a = at(after, sec, 'note');
+    return !!a && a !== b;
+  };
   return {
-    thermocline: at(before, 'thermocline', 'summerDepthFt') == null
-              && at(after, 'thermocline', 'summerDepthFt') != null,
-    oxygen: (at(before, 'oxygen', 'anoxicBelowFt') == null
-             && at(after, 'oxygen', 'anoxicBelowFt') != null)
-         || (at(before, 'oxygen', 'depletionDepthFt') == null
-             && at(after, 'oxygen', 'depletionDepthFt') != null),
+    thermocline: gained('thermocline', 'summerDepthFt') || noteMoved('thermocline'),
+    oxygen: gained('oxygen', 'anoxicBelowFt') || gained('oxygen', 'depletionDepthFt')
+         || noteMoved('oxygen'),
   };
 }
 
