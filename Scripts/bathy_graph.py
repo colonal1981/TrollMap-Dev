@@ -159,6 +159,50 @@ def dock_polygons(pack, slug):
     return out
 
 
+def coarsen_cells(dmap, core, step):
+    """Aggregate a step x step block of raster cells into one routing node. Shallowest wins.
+
+    WHY THIS IS NOT A COARSER RASTER, WHICH IS THE WHOLE POINT.
+    Raising LakeMask.CELL rasterises at the coarse size and fills a cell when its CENTRE lands in
+    a depth band. A creek narrower than the cell then keeps only the centres that happen to fall
+    in water, and the chain along it breaks. That is the resolution loss everybody assumes a
+    coarser grid must cost.
+
+    This does the opposite. The raster stays at 22.3 m, so the water keeps its shape exactly, and
+    only the NODE grid coarsens: a block is water if ANY of its cells is charted. A 30 m creek
+    still yields an unbroken chain of nodes down its length.
+
+    MEASURED 2026-09-15 on three coastal zones, step=2, against the 22.3 m graph, using the same
+    120 m reach rule build_trolling_runs.py applies:
+
+        zone             fine 22.3 m                coarse 44.6 m              runs LOST
+        cape_romain_sc   1,974 runs   9.6 MB 88.18%  1,982 runs  2.6 MB 87.31%       0
+        st_helena_sc     8,844 runs  33.8 MB 99.00%  8,853 runs  8.9 MB 99.18%       0
+        ace_basin_sc    16,376 runs  44.7 MB 96.94% 16,418 runs 12.0 MB 97.45%       0
+
+    Nothing lost, eight/nine/forty-two gained, and BETTER connected on two of the three. Only 0.3%
+    of ACE Basin's runs lie in water 22 m or narrower and that bucket improved too, because the
+    coarse grid has fewer gaps to bridge along a creek than the fine one does.
+
+    WHY IT IS WANTED. Worker/water.js expands this format into Float64 coordinates and a CSR
+    adjacency, and its own comment sizes the cache against a 128 MB isolate. ACE Basin at 22.3 m is
+    44.7 MB on disk and about 104 MB parsed -- one entry would not leave room for a second. At
+    44.6 m it is 12.0 MB and about 18 MB parsed, which fits the way Wateree's 4.57 MB does.
+
+    SHALLOWEST WINS, the same rule rasterise_depths() uses where bands overlap a cell: the boat
+    meets the shallow one. A block that averaged its depths would invent water nobody sounded.
+    """
+    if step <= 1:
+        return dmap, core
+    agg = {}
+    for (i, j), d in dmap.items():
+        key = (i // step, j // step)
+        prev = agg.get(key)
+        if prev is None or d < prev:
+            agg[key] = d
+    return agg, {(i // step, j // step) for (i, j) in core}
+
+
 def rasterise_depths(bands, mask, mark_rings=False):
     """Scanline-fill every depth polygon into the mask's own grid. Shallowest band wins.
 
@@ -223,7 +267,7 @@ def rasterise_depths(bands, mask, mark_rings=False):
 
 
 
-def build_lake(registry, pack, slug, cell=None, quiet=False):
+def build_lake(registry, pack, slug, cell=None, quiet=False, coarsen=1):
     """One lake. Returns a report dict; writes nothing."""
     t0 = time.time()
     rep = {'slug': slug, 'datum': 'chart', 'drawdown_applied': False}
@@ -251,21 +295,37 @@ def build_lake(registry, pack, slug, cell=None, quiet=False):
         cells = sorted(core)
     except TypeError:                      # BboxMask's _BoxCells
         cells = sorted(iter(core))
-    csz = cell or mask.cell
-    rep['cell_deg'] = csz
-    rep['cell_m_ns'] = round(csz * 111320.0, 1)
+    # TWO GRIDS, NAMED SEPARATELY, because conflating them cost a whole wrong recommendation.
+    # `cell` used to be read as `cell or mask.cell` and written to `cell_deg`, and it is the only
+    # thing it did -- the raster came from build_mask regardless. So a caller passing cell=0.0004
+    # got a report claiming a 44.6 m grid and a graph built at 22.3 m. `raster_cell_deg` is what
+    # the water was rasterised at and is not a parameter; `node_cell_deg` is what the routing
+    # nodes sit on and is the one `--coarsen` moves.
+    step = max(1, int(coarsen or 1))
+    rep['raster_cell_deg'] = mask.cell
+    rep['raster_cell_m_ns'] = round(mask.cell * 111320.0, 1)
+    rep['coarsen'] = step
+    node_cell = mask.cell * step
+    rep['cell_deg'] = cell or node_cell
+    rep['cell_m_ns'] = round((cell or node_cell) * 111320.0, 1)
     rep['core_cells'] = len(cells)
 
     # ── nodes: a core cell is a node only if the chart gives it a depth ──────────────────
     dmap = rasterise_depths(bands, mask)
     rep['charted_cells_in_raster'] = len(dmap)
+    # THE RASTER IS NEVER COARSENED, ONLY THE NODE GRID. See coarsen_cells() for the measurements
+    # and for why a coarser raster is the thing that would lose creeks.
+    dmap, cells = coarsen_cells(dmap, cells, step)
+    if step > 1:
+        rep['charted_cells_after_coarsen'] = len(dmap)
+        rep['core_cells_after_coarsen'] = len(cells)
     idx, nodes, depths = {}, [], []
-    for (i, j) in cells:
+    for (i, j) in sorted(cells):
         d = dmap.get((i, j))
         if d is None:
             continue
         idx[(i, j)] = len(nodes)
-        nodes.append((mask.w + (i + 0.5) * mask.cell, mask.s + (j + 0.5) * mask.cell))
+        nodes.append((mask.w + (i + 0.5) * node_cell, mask.s + (j + 0.5) * node_cell))
         depths.append(d)
     rep['nodes'] = len(nodes)
     rep['uncharted_cells'] = len(cells) - len(nodes)
@@ -413,6 +473,15 @@ def main():
                          "routing at all today. Nothing that already works is touched. 'all' "
                          "considers every pack with depth_areas.geojson, and still refuses to "
                          "replace an existing graph without --overwrite.")
+    ap.add_argument('--coarsen', type=int, default=1, metavar='N',
+                    help='aggregate an NxN block of 22.3 m raster cells into ONE routing node. '
+                         'Default 1, unchanged. The raster is never coarsened -- the water keeps '
+                         'its exact shape and only the node grid moves, so a creek narrower than '
+                         'a node still gets an unbroken chain of them. 2 is measured: across '
+                         'Cape Romain, St. Helena and ACE Basin it cost ZERO routable runs, '
+                         'gained 8/9/42, came out better connected on two of the three, and took '
+                         'ACE Basin from 44.7 MB to 12.0 MB -- which is the difference between '
+                         'fitting a 128 MB Worker isolate and not. See coarsen_cells().')
     ap.add_argument('--out-name', default='water_graph.bin')
     ap.add_argument('--report', default='registry/_bathy_graphs.json')
     ap.add_argument('--dry-run', action='store_true', help='measure, write no .bin')
@@ -460,7 +529,7 @@ def main():
     report, built, failed, left, measured = {}, 0, 0, 0, 0
     for s in slugs:
         try:
-            rep, graph = build_lake(reg, pack, s)
+            rep, graph = build_lake(reg, pack, s, coarsen=a.coarsen)
         except Exception as e:
             rep, graph = {'slug': s, 'error': '%s: %s' % (type(e).__name__, e)}, None
             print('  %-30s ERROR %s' % (s, rep['error']), flush=True)
