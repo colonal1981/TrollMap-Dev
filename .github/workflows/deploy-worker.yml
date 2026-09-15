@@ -1,9 +1,31 @@
 name: Deploy Worker
+# NO `paths:` FILTER, AND THAT IS THE WHOLE POINT OF THIS COMMENT.
+#
+# It used to read:
+#
+#     paths:
+#       - 'Worker/**'
+#
+# and the Worker does not live only in Worker/. It imports eight modules from js/ -- the reason
+# test/worker-external-imports.test.js exists at all is that the bundle reaches outside this
+# directory. So a fix to js/utils/wqp-limnology.js, which the Worker imports and runs, pushed to
+# main and DID NOT DEPLOY. The push succeeded, the Action never ran, and the Worker kept serving
+# the old bundle.
+#
+# Measured cost, 2026-09-14/15: Ryan pushed two fixes to that file, uploaded a regenerated
+# registry object to R2, and ran the limnology refresh THREE times across four waters. Every run
+# reported `ok`. Every profile came back with the stale sentence, because the code that would have
+# replaced it was never live. The whole chain -- fetcher, builder, R2, the app module, the
+# acceptance gate -- was correct and provably correct on his own data, and none of it was running.
+#
+# A filter that has to be kept in sync with an import graph is the "three lists" problem this repo
+# already carries a test for. Deleting it deletes the class: every push to main deploys, which
+# costs a wrangler run on pushes that do not touch the Worker and can never again be silently
+# wrong. worker-external-imports.test.js asserts this file has no path gate, so it cannot come
+# back by accident.
 on:
   push:
     branches: [main, refactor]
-    paths:
-      - 'Worker/**'
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -13,4 +35,3 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           workingDirectory: Worker
-

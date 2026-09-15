@@ -107,14 +107,42 @@ describe('the Worker bundle can be built', () => {
     //                          disagree about what a Georgia ramp says is in the water
     //   wqp-limnology.js       the Water Quality Portal profile reader, shared for the same
     //                          reason -- the Worker refreshes it on cron and the client shows it
+    //
+    // TWO MORE ADDED 2026-09-15, and this assertion had been red for days again -- exactly the
+    // failure its own comment above describes, a second time. Both arrived with the research
+    // pipeline: Worker/research/keys.js imports research-ids.js, and lake-registry.js came in
+    // behind it. Being red and ignored is how the list below stopped being the deploy set.
     const EXPECTED = [
       'js/data/ga-access-species.js',
       'js/data/lake-keys.js',
+      'js/data/lake-registry.js',
+      'js/data/research-ids.js',
       'js/data/water-aliases.js',
       'js/utils/coerce.js',
       'js/utils/geojson-coords.js',
       'js/utils/wqp-limnology.js',
     ];
     expect(externalClosure().map((f) => relative(ROOT, f).replace(/\\/g, '/'))).toEqual(EXPECTED);
+  });
+
+  // ── AND THE DEPLOY HAS TO SEE A CHANGE TO ANY OF THEM ────────────────────────────────────────
+  //
+  // THE WORKER DOES NOT LIVE ONLY IN Worker/, AND ITS WORKFLOW SAID IT DID.
+  //
+  // deploy-worker.yml carried `paths: ['Worker/**']`, so a push that changed one of the eight
+  // files above -- files the Worker imports and RUNS -- did not deploy. Measured 2026-09-14/15:
+  // two fixes to js/utils/wqp-limnology.js went to main, a regenerated registry object went to R2,
+  // and Ryan ran the limnology refresh three times over four waters. Every run said `ok`. Every
+  // profile came back stale, because the code that would have fixed it was never live. The chain
+  // was correct end to end and provably correct on his own data, and none of it was running.
+  //
+  // The filter is gone rather than extended: a list that must track an import graph is the same
+  // three-lists problem this file's own EXPECTED list has now drifted from TWICE. This asserts the
+  // gate cannot come back, because the next person to add one will not know about the eight.
+  it('the deploy workflow does not gate on paths, because the Worker reaches outside Worker/', () => {
+    const wf = readFileSync(join(ROOT, '.github/workflows/deploy-worker.yml'), 'utf8');
+    const active = wf.split('\n').filter((l) => !l.trim().startsWith('#')).join('\n');
+    expect(/^\s*paths:/m.test(active)).toBe(false);
+    expect(/branches:\s*\[main/.test(active)).toBe(true);
   });
 });
