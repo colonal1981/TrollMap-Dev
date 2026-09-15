@@ -36,102 +36,54 @@ const src = (f) => readFileSync(join(here, '..', f), 'utf8');
 const LAYERS = src('js/modules/coastal-layers.js');
 const HTML = src('index.html');
 
-/** The builder, lifted and run — the tooltip is the thing that was wrong, so the tooltip is what
- *  gets asserted, not the source line that writes it. */
-function buildTooltips(props, opts, gj = { features: [{ properties: props, geometry: {} }] }) {
-  const i = LAYERS.indexOf('function benthicLayer(');
-  const fn = LAYERS.slice(i, LAYERS.indexOf('\n}\n', i) + 2);
-  const L = { geoJSON: (g, o) => ({ _o: o }) };
-  // eslint-disable-next-line no-new-func
-  const make = new Function('fetchCoastalLayer', '_renderer', 'L', `${fn}; return benthicLayer;`);
-  const benthicLayer = make(async () => gj, null, L);
-  return benthicLayer('coast_test', opts).then((layer) => {
-    if (!layer) return null;
-    let text = null;
-    layer._o.onEachFeature({ properties: props }, { bindTooltip: (t) => { text = t; } });
-    return text;
-  });
-}
-
-const HARD = { file: 'hard_bottom', style: { color: '#8d8b86', fill: '#8d8b86' },
-               label: '🪨 Hard bottom', why: 'sheepshead and black drum hold on it' };
-
-describe('hard bottom is a layer of its own and is not oyster', () => {
-  it('it is registered and has a button to press', () => {
-    expect(LAYERS).toContain("id: 'hard', button: 'btnHardBottom'");
-    expect(HTML).toContain('id="btnHardBottom"');
-  });
-
-  it('it is dropped with the rest when the zone changes', () => {
-    // A layer registered and left out of COASTAL_IDS stays drawn over the next zone's water.
-    const m = /const COASTAL_IDS = \[([^\]]*)\]/.exec(LAYERS);
-    expect(Boolean(m)).toBe(true);
-    for (const id of ['oyster', 'hard', 'marsh', 'soundings']) {
-      expect(m[1]).toContain(`'${id}'`);
+describe('neither BENTHIC layer is drawn, and both are still routed', () => {
+  // MEASURED ON RYAN'S OWN RUN, 2026-09-15. Georgia's BENTHIC loads 1,208 features and all four
+  // Georgia zones report "NONE inside this zone" — it is offshore live bottom, outside every
+  // inshore boundary. South Carolina has no BENTHIC layer at all. SAV exists only in North
+  // Carolina's and the app offers no North Carolina zone. So NO zone the app offers can carry
+  // either file, and a toggle that can only ever say "none for this zone" is an unused object
+  // with a colour.
+  //
+  // The extractor still writes both, because the routing is correct and a zone list that regains
+  // North Carolina must keep working. That asymmetry is the subject of the contract test below.
+  it('no button exists for either', () => {
+    for (const btn of ['btnHardBottom', 'btnSav']) {
+      expect(HTML).not.toContain(`id="${btn}"`);
+      expect(LAYERS).not.toContain(`button: '${btn}'`);
     }
   });
 
-  it('it does not fetch the oyster file', () => {
-    const i = LAYERS.indexOf("id: 'hard'");
-    const blk = LAYERS.slice(i, LAYERS.indexOf("id: 'soundings'"));
-    expect(blk).toContain("file: 'hard_bottom'");
-    expect(blk).not.toContain('oyster');
+  it('and neither is registered as a layer', () => {
+    const m = /const COASTAL_IDS = \[([^\]]*)\]/.exec(LAYERS);
+    expect(Boolean(m)).toBe(true);
+    expect(m[1]).not.toContain("'hard'");
+    expect(m[1]).not.toContain("'sav'");
+    // The three that DO have data are still there.
+    for (const id of ['oyster', 'marsh', 'soundings']) expect(m[1]).toContain(`'${id}'`);
   });
 
-  it('and it does not wear the oyster colour', () => {
-    // Drawn in the same brown it was wrongly drawn in, the correction would be invisible.
-    const m = /const STYLE = \{([\s\S]*?)\n\};/.exec(LAYERS);
-    const oyster = /oyster:\s*\{\s*color:\s*'(#[0-9a-f]{6})'/i.exec(m[1])[1].toLowerCase();
-    const hard = /hard:\s*\{\s*color:\s*'(#[0-9a-f]{6})'/i.exec(m[1])[1].toLowerCase();
-    expect(hard).not.toBe(oyster);
+  it('THE BUILDER WENT WITH THEM — no dead function left behind', () => {
+    // A registered layer removed without its builder is the "unused objects" rule this project
+    // keeps: the next reader cannot tell a retired path from a forgotten one.
+    expect(LAYERS).not.toContain('function benthicLayer(');
+    expect(LAYERS).not.toContain('STYLE.hard');
   });
 
-  it('SAV HAS NO BUTTON, because no zone the app offers can ever carry the file', () => {
-    // A toggle that can only ever say "none for this zone" is an unused object with a colour.
+  it('but the app is NOT blind to hard bottom — the PLANNER reads the count', () => {
+    // Asserted on the reader, not on a sentence about the reader. The first version of this
+    // matched the phrase "ENC seabed registry" in the header comment and went red because the
+    // words fall either side of a line wrap — the sixth time in this suite a guard has read prose
+    // instead of code.
     //
-    // MATCHED ON THE WHOLE ATTRIBUTE, NOT THE PREFIX. The first version of this asserted
-    // `HTML.not.toContain('btnSav')` and went red against `btnSaveMasterJson`, which is a
-    // save button in the research tab. An id test that matches a prefix will eventually meet
-    // a longer id, and this suite has the same lesson written down for species names, where
-    // `Red Drum` sits inside nothing and `Black Drum` contains `Drum`.
-    expect(HTML).not.toContain('id="btnSav"');
-    expect(LAYERS).not.toContain("button: 'btnSav'");
-    expect(LAYERS).not.toContain("id: 'sav'");
-  });
-});
-
-describe('the tooltip says what the polygon is, in the data’s own words', () => {
-  it('leads with the BIOFILE name and the concentration', async () => {
-    // Before this the browser got a RARNUM and nothing else, which is exactly why nobody could
-    // see these were not oyster. DENSE and SPARSE is the difference between a reef worth stopping
-    // on and a scattering.
-    const t = await buildTooltips({ NAME: 'Hardbottom community', CONC: 'DENSE' }, HARD);
-    expect(t).toContain('Hardbottom community');
-    expect(t).toContain('(dense)');
-    expect(t).toContain('sheepshead');
-  });
-
-  it('a name that is not the label still shows — North Carolina’s is "Rock reef"', async () => {
-    const t = await buildTooltips({ NAME: 'Rock reef', CONC: '-' }, HARD);
-    expect(t).toContain('Rock reef');
-    // `-` is the ESI empty marker and must not print as a concentration.
-    expect(t).not.toContain('(-)');
-  });
-
-  it('a feature with no attributes at all still gets a readable tooltip', async () => {
-    const t = await buildTooltips({}, HARD);
-    expect(t).toContain('🪨 Hard bottom');
-    expect(t).not.toContain('undefined');
-    expect(t).not.toContain('—  —');
-  });
-
-  it('a zone with no such file draws nothing rather than an empty layer', async () => {
-    const i = LAYERS.indexOf('function benthicLayer(');
-    const fn = LAYERS.slice(i, LAYERS.indexOf('\n}\n', i) + 2);
-    // eslint-disable-next-line no-new-func
-    const make = new Function('fetchCoastalLayer', '_renderer', 'L', `${fn}; return benthicLayer;`);
-    const built = await make(async () => null, null, { geoJSON: () => ({}) })('coast_x', HARD);
-    expect(built).toBeNull();
+    // Charleston's ENC chart labels three hard-bottom features against 212 fine, and
+    // seabedHabitatFor() carries that per-zone substrate count into the prompt, which is why the
+    // model is told to meet a sheepshead on STRUCTURE rather than hunt for bottom that is not
+    // there. A count in the prompt answers the question; a map toggle with no polygons behind it
+    // does not.
+    const seabed = src('js/data/seabed-habitat.js');
+    expect(seabed).toContain('enc_seabed_by_zone.json');
+    expect(seabed).toMatch(/bySubstrate/);
+    expect(src('js/modules/plan-prompt.js')).toContain('${seabedHabitatBlock(o.seabedHabitat)}');
   });
 });
 

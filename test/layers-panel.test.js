@@ -33,18 +33,22 @@ const HTML = readFileSync(join(ROOT, 'index.html'), 'utf8');
 const TOGGLES = [
   'btnRamps', 'btnBankPier', 'btnPaddle',
   'btnAttractors', 'btnFishingSpots', 'btnPOI', 'btnFetchOsm',
-  // btnHardBottom joined the coastal group on 2026-09-15, and it is the reverse of the deletion
-  // this list was written for. extract_coastal_habitat.py had been writing every ESI BENTHIC
-  // polygon into oyster_beds.geojson -- Georgia's hardbottom and North Carolina's watermilfoil
-  // both drawn under the oyster tooltip -- so hard bottom came OUT of the oyster layer rather
-  // than being added beside it.
+  // TWO BUTTONS WERE ADDED HERE ON 2026-09-15 AND BOTH CAME BACK OUT THE SAME DAY, which is the
+  // reverse of the deletion this list was written for and worth keeping written down.
   //
-  // btnSav was added in the same hour and REMOVED again before the day was out. SAV comes only
-  // from North Carolina's BENTHIC and the app offers no NC zone, so it was a toggle that could
-  // only ever say "none for this zone". Measured 2026-09-03: NC 6,258 seagrass polygons, SC 0,
-  // GA 0 -- absent from the national file entirely. On this coast flooded Spartina is the grass
-  // flat and the marsh layer already carries it.
-  'btnOysterBeds', 'btnHardBottom', 'btnMarshEdges', 'btnSoundings',
+  // extract_coastal_habitat.py had been writing every ESI BENTHIC polygon into
+  // oyster_beds.geojson -- Georgia's hardbottom and North Carolina's watermilfoil both drawn under
+  // the oyster tooltip. Splitting them out produced btnHardBottom and btnSav, and then measurement
+  // killed both: SAV exists only in North Carolina's data and the app offers no NC zone, and
+  // Ryan's own extraction run reported Georgia's 1,208 hardbottom features as "NONE inside this
+  // zone" for all four GA zones -- it is offshore live bottom -- while South Carolina has no
+  // BENTHIC layer at all. Two toggles that could only ever say "none for this zone".
+  //
+  // Both files are still ROUTED by the extractor, because the routing is correct and a zone list
+  // that regains North Carolina must keep working. Neither is drawn. And the app is not blind to
+  // hard bottom either: the ENC seabed registry carries a per-zone substrate count that the
+  // planner reads, which is where a count belongs.
+  'btnOysterBeds', 'btnMarshEdges', 'btnSoundings',
   'btnShowCatches',
 ];
 

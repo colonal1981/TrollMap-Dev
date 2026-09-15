@@ -10,7 +10,19 @@
  *   oyster_beds     SCDNR's own 2015 live layer, and NCDMF's reef guide. SC and
  *                   NC only — Georgia publishes no statewide oyster layer, so GA
  *                   zones legitimately 404.
- *   hard_bottom     ESI BENTHIC, SUBELEMENT `hardbottom`. GA and NC.
+ *   hard_bottom     ESI BENTHIC, SUBELEMENT `hardbottom`. GA and NC — and NO ZONE THE APP
+ *                   OFFERS CARRIES IT, so it has no button, for the same reason sav has none.
+ *                   Measured on Ryan's own run 2026-09-15: Georgia's BENTHIC loads 1,208 features
+ *                   and every one of the four GA zones reports "NONE inside this zone". Georgia's
+ *                   hard bottom is offshore live bottom, outside every inshore boundary. South
+ *                   Carolina has no BENTHIC layer at all. So the file is routed and never drawn.
+ *
+ *                   That is not the same as the app knowing nothing about hard bottom. The ENC
+ *                   seabed registry carries a per-zone substrate count and the planner reads it —
+ *                   Charleston's chart labels three hard-bottom features against 212 fine, which
+ *                   is exactly why the prompt tells the model to meet a sheepshead on STRUCTURE
+ *                   rather than hunt for bottom that is not there. A count in the prompt answers
+ *                   the question; a map toggle with no polygons behind it does not.
  *   sav             ESI BENTHIC, SUBELEMENT `sav`. NORTH CAROLINA ONLY, and the app offers no
  *                   North Carolina zone — so no zone Ryan can select will ever carry this file.
  *                   It has no button for that reason. The extractor still routes it, because the
@@ -59,8 +71,6 @@ const SOUNDING_MIN_ZOOM = 13;
 const STYLE = {
   oyster: { color: '#c68642', fill: '#c68642' },
   marsh:  { color: '#5cb85c' },
-  // Stone grey: hard bottom must not read as the oyster brown it was wrongly drawn in.
-  hard:   { color: '#8d8b86', fill: '#8d8b86' },
 };
 
 function getMap() { return state.MAP; }
@@ -96,7 +106,7 @@ async function fetchCoastalLayer(zoneKey, layer) {
 //
 // _soundingData stays because soundings are re-labelled in place when the tide moves, which
 // is a different operation from rebuilding them for a new zone.
-const COASTAL_IDS = ['oyster', 'hard', 'marsh', 'soundings'];
+const COASTAL_IDS = ['oyster', 'marsh', 'soundings'];
 let _activeZoneKey  = null;
 let _soundingData   = null;
 let _zoomHandlerBound = false;
@@ -150,46 +160,6 @@ async function buildMarshLayer(zoneKey) {
       });
     },
   });
-}
-
-// ── Hard bottom and grass ───────────────────────────────────────────────────
-//
-// ONE BUILDER FOR BOTH, because they differ in a colour, a file and a sentence. The oyster and
-// marsh builders above are the same eleven lines twice already and this would have made it four.
-//
-// THE FEATURE'S OWN WORDS LEAD THE TOOLTIP. These polygons carry SUBELEMENT, NAME, GEN_SPEC and
-// CONC out of BIOFILE now — before 2026-09-15 a BENTHIC feature reached the browser with nothing
-// on it but a RARNUM, which is exactly why nobody could see they were not oyster. `CONC` is the
-// ESI concentration field and on Georgia's hard bottom it is DENSE or SPARSE, which is the
-// difference between a reef worth stopping on and a scattering.
-function benthicLayer(zoneKey, { file, style, label, why }) {
-  return (async () => {
-    const gj = await fetchCoastalLayer(zoneKey, file);
-    if (!gj) return null;
-    return L.geoJSON(gj, {
-      renderer: _renderer,
-      smoothFactor: 1.5,
-      style() {
-        return { color: style.color, weight: 1, opacity: 0.9,
-                 fillColor: style.fill, fillOpacity: 0.3 };
-      },
-      pointToLayer(feat, latlng) {
-        return L.circleMarker(latlng, { radius: 4, color: style.color, weight: 1,
-                                        fillColor: style.fill, fillOpacity: 0.7 });
-      },
-      onEachFeature(feat, layer) {
-        const p = (feat && feat.properties) || {};
-        const named = String(p.NAME || '').trim();
-        const conc = String(p.CONC || '').trim();
-        layer.bindTooltip(
-          `${label}${named && named.toLowerCase() !== label.toLowerCase().replace(/^\S+\s/, '')
-            ? ` — ${named}` : ''}`
-          + `${conc && conc !== '-' ? ` (${conc.toLowerCase()})` : ''}`
-          + ` — ${why}`,
-          { sticky: true, direction: 'top', opacity: 0.85 });
-      },
-    });
-  })();
 }
 
 // ── Depth soundings ─────────────────────────────────────────────────────────
@@ -383,15 +353,6 @@ function init() {
     enabled: () => !!_activeZoneKey,
     emptyMessage: 'No marsh data for this zone',
     build: () => buildMarshLayer(_activeZoneKey),
-  });
-  registerLayer({
-    id: 'hard', button: 'btnHardBottom',
-    enabled: () => !!_activeZoneKey,
-    emptyMessage: 'No hard bottom mapped for this zone',
-    build: () => benthicLayer(_activeZoneKey, {
-      file: 'hard_bottom', style: STYLE.hard, label: '🪨 Hard bottom',
-      why: 'sheepshead and black drum hold on it, and reds spawn over it',
-    }),
   });
   registerLayer({
     id: 'soundings', button: 'btnSoundings',
