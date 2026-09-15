@@ -334,6 +334,18 @@ const STRUCTURE_PHRASES = [
   [/attractor|fish habitat|reef ball|brush\s*pile/i, ['attractor', 'pile']],
   [/bridge|causeway|piling/i, ['bridge', 'pile']],
   [/\bdocks?\b|boat\s*house/i, ['dock_line', 'dock_cluster', 'dock']],
+  // RIPRAP AND SEAWALL WERE THE BIGGEST THING IN `unmatched` AND NOW THEY LAND.
+  //
+  // The note below this table has recorded them since 2026-08-26: "rock and riprap (94 phrases)"
+  // among the 645 structure phrases that mapped to nothing, because "leading them here would
+  // raise a weight for a type nothing emits". The ENC seabed layer emits them now -- 253 armoured
+  // segments on Charleston alone, deduped against everything Garmin charts -- so the 94 phrases
+  // that have been counted and discarded for three weeks can finally lead the type they name.
+  //
+  // `pier` is deliberately NOT in this pattern: a profile saying "fish the docks" means private
+  // docks, and a charted public pier is a different object in a different place.
+  [/rip\s*-?\s*rap|riprap|sea\s*wall|seawall|bulkhead|jetty|jetties|breakwater|groyne|groin/i,
+   ['armored']],
   [/\bflat|shallow|shoreline/i, ['shallow']],
 ];
 

@@ -527,6 +527,114 @@ def _line_points(geom):
             if isinstance(p, (list, tuple)) and len(p) >= 2]
 
 
+# ── charted shore structure, out of the ENC seabed layer ─────────────────────────────────────
+#
+# WHAT IT ADDS THAT GARMIN DOES NOT, measured on coast_charleston_sc against every charted POI and
+# structure point in the pack, deduped at 30 m:
+#
+#     shore_structure   1,640 in the ENC    1,239 not already charted   (76% new)
+#     bridge              138                  78                      (57% new)
+#     obstruction         225                  61                      (27% new)
+#     piling              281                  11                      ( 4% new)
+#     wreck                36                   0                      ( 0% new)
+#
+# So the value is the SHORE STRUCTURE and nothing else. Garmin already charts the pilings and
+# every single wreck; emitting those would double-count what `near[]` has carried all along.
+#
+# AND IT IS THE ANSWER TO A GAP THIS PROJECT ALREADY WROTE DOWN. The South Atlantic habitat matrix
+# rates `hard` 3.5 for sheepshead against 1.0 for the fine bottom that is everywhere, and
+# Charleston's chart labels THREE hard-bottom features in the whole zone -- which is why the plan
+# prompt tells the model to meet that fish on STRUCTURE rather than hunt for bottom that is not
+# there. These 1,239 piers, seawalls and rip-rap runs are that structure, and until now neither
+# the ranker nor the map could see one of them.
+#
+# SUBSTRATE POINTS ARE DELIBERATELY NOT JOINED. `fine` is 212 points and `hard` is 3 across the
+# whole of Charleston Harbour -- too sparse to say anything about one run, and the per-zone
+# composition already reaches the prompt through enc_seabed_by_zone.json. A per-run number built
+# on three points would look like a measurement and be noise.
+#
+# DOCKS STAY OUT, and that is a trap rather than an omission: plan-candidates.js joins
+# docks.geojson to every run in the app, coastal packs included, so a dock emitted here would be
+# counted twice on exactly the water Ryan fishes. When the pipeline takes docks over it has to
+# take them over everywhere and that app-side join has to go in the same commit.
+ENC_STRUCTURE_TYPES = {
+    # A pier is a dock nobody owns, and it fishes like one. Kept apart from the `dock` types so it
+    # cannot confuse groupDocks(), which clusters a shoreline's worth of private docks.
+    'pier': 'pier', 'wharf': 'pier', 'solid_face_wharf': 'pier',
+    # Armoured shoreline: the inshore hard structure. Sheepshead and black drum hold on it.
+    'sea_wall': 'armored', 'rip_rap': 'armored', 'groyne': 'armored',
+    'breakwater': 'armored', 'training_wall': 'armored',
+}
+
+# 30 m, the same radius the state attractor feed is deduped at, and for the same reason: wider
+# than any plausible disagreement between two surveys over one structure, narrower than the gap
+# between two structures anybody would map separately.
+ENC_DEDUP_M = 30.0
+
+
+def load_enc_structure(pack, charted, dedup_m=ENC_DEDUP_M):
+    """ENC shore structure for this zone that Garmin has NOT already charted.
+
+    `charted` is load_points()'s output -- everything already destined for `near[]`. Anything
+    within `dedup_m` of one of those is dropped, so the 4%-new pilings and 0%-new wrecks cost
+    nothing even if a future ENC cell starts carrying them.
+    """
+    slug = os.path.basename(os.path.normpath(pack))
+    path = os.path.join(HABITAT_DIR, slug, 'seabed.geojson')
+    if not os.path.isfile(path):
+        return []
+    try:
+        with open(path, 'r', encoding='utf-8') as fh:
+            feats = (json.load(fh).get('features') or [])
+    except Exception as e:
+        print(f'      seabed: could not read it: {e}')
+        return []
+
+    cell = dedup_m / 111320.0 * 1.5
+    grid = {}
+    for q in charted:
+        grid.setdefault((int(q[0] / cell), int(q[1] / cell)), []).append(q)
+
+    out, dropped = [], 0
+    for f in feats:
+        pr = f.get('properties') or {}
+        g = f.get('geometry') or {}
+        if g.get('type') != 'Point':
+            continue
+        kind = pr.get('kind')
+        if kind == 'bridge':
+            t = 'bridge'                       # an existing near[] type, already weighted
+        elif kind == 'shore_structure':
+            t = ENC_STRUCTURE_TYPES.get(str(pr.get('category') or '').strip().lower())
+        else:
+            t = None                           # piling, wreck, substrate, restricted: see above
+        if not t:
+            continue
+        c = g.get('coordinates') or []
+        if len(c) < 2:
+            continue
+        gx, gy = int(c[0] / cell), int(c[1] / cell)
+        dup = False
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for q in grid.get((gx + dx, gy + dy), ()):
+                    if metres((c[0], c[1]), (q[0], q[1])) <= dedup_m:
+                        dup = True
+                        break
+                if dup:
+                    break
+            if dup:
+                break
+        if dup:
+            dropped += 1
+            continue
+        out.append((c[0], c[1], t, None))
+    if out or dropped:
+        print(f'      seabed: {len(out):,} ENC structure point(s) added, '
+              f'{dropped:,} already charted by Garmin')
+    return out
+
+
 def load_habitat(pack):
     """Oyster centroids and marsh vertices for this pack's zone, or ({}, {}) when it has none.
 
@@ -664,6 +772,9 @@ def build_one(pack, min_len, simplify, reach_m, annotate_m=100.0,
                 dindex = None
 
     pts = load_points(pack)
+    # THE ENC'S SHORE STRUCTURE, deduped against everything Garmin already charted -- so this is
+    # additive by construction and a zone with no seabed file adds nothing. See its note above.
+    pts = pts + load_enc_structure(pack, pts)
     pcell = max(annotate_m, 50.0) / 111320.0 * 1.5
 
     # THE COASTAL HALF, and it is empty on every freshwater pack — see load_habitat().
@@ -871,7 +982,7 @@ def _stamp(pack, params):
     # It also invalidates precisely the right set: a coastal pack gains these keys and rebuilds,
     # and the 1,700-odd freshwater packs have no habitat folder, gain nothing, and are left alone.
     slug = os.path.basename(os.path.normpath(pack))
-    for f in ('oyster_beds.geojson', 'marsh_edges.geojson'):
+    for f in ('oyster_beds.geojson', 'marsh_edges.geojson', 'seabed.geojson'):
         p = os.path.join(HABITAT_DIR, slug, f)
         if os.path.exists(p):
             i = os.stat(p)

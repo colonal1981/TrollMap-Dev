@@ -508,12 +508,45 @@ describe('the phrases the profiles actually use', () => {
   });
 
   it('leaves cover the chartpack does not carry in the open', () => {
-    // 645 phrases still land nowhere, and these are the four largest groups. They are NOT a
-    // regex gap -- there is no riprap, weed, cypress or deep-hole type for a lead to point at,
-    // and inventing one would score a type the pipeline never emits. `unmatched` is where that
-    // stays visible.
+    // Four groups were named here as the largest in the 645 that land nowhere: riprap, weed,
+    // cypress and deep holes. They were NOT a regex gap -- there was no type for a lead to point
+    // at, and inventing one would score a type the pipeline never emits.
+    //
+    // RIPRAP CAME OFF THIS LIST ON 2026-09-15, and it came off the only way it was ever allowed
+    // to: something started emitting it. The ENC seabed layer joins 253 armoured segments to
+    // Charleston's runs -- seawalls, rip-rap, groynes, breakwaters -- deduped against everything
+    // Garmin charts. So the 94 riprap phrases counted and discarded across 59 researched waters
+    // since 2026-08-26 now lead the type they name. The other three still have nothing behind
+    // them and stay exactly where they were.
     const { unmatched } = structureWeights(DEFAULT_WEIGHTS, DEFAULT_RELIEF_WEIGHTS,
-      ['riprap', 'weed edges', 'cypress tree clusters', 'deep holes']);
-    expect(unmatched.length).toBe(4);
+      ['weed edges', 'cypress tree clusters', 'deep holes']);
+    expect(unmatched.length).toBe(3);
+  });
+
+  it('riprap leads `armored` now that the chartpack carries it', () => {
+    const { weights, matched, unmatched } = structureWeights(
+      DEFAULT_WEIGHTS, DEFAULT_RELIEF_WEIGHTS,
+      ['riprap banks', 'rock rip-rap', 'seawall corners', 'the old jetty', 'bulkhead']);
+    expect(unmatched.length).toBe(0);
+    expect(matched).toContain('armored');
+    expect(weights.armored).toBe(DEFAULT_WEIGHTS.armored + RESEARCH_LEAD);
+  });
+
+  it('...and a profile naming DOCKS does not lead it', () => {
+    // A charted public pier and a shoreline of private docks are different objects in different
+    // places. "Fish the docks" means the second one.
+    const { weights, matched } = structureWeights(
+      DEFAULT_WEIGHTS, DEFAULT_RELIEF_WEIGHTS, ['fish the docks in the pocket']);
+    expect(weights.armored).toBe(DEFAULT_WEIGHTS.armored);
+    expect(matched).not.toContain('armored');
+    expect(matched).toContain('dock_line');
+  });
+
+  it('pier is scored but is NOT a phrase target', () => {
+    // It has a weight because the ENC emits 1,094 of them on Charleston, and no phrase pattern
+    // because no researched profile means "public pier" when it writes "dock".
+    expect(DEFAULT_WEIGHTS.pier).toBeGreaterThan(0);
+    const { weights } = structureWeights(DEFAULT_WEIGHTS, DEFAULT_RELIEF_WEIGHTS, ['piers']);
+    expect(weights.pier).toBe(DEFAULT_WEIGHTS.pier);
   });
 });

@@ -634,6 +634,34 @@ export const DEFAULT_WEIGHTS = {
   bridge: 3,
   cove: 8,             // coves are how creek arms and flats present on this lake
   hazard: 0,           // things to steer around, not fish
+
+  // ── CHARTED SHORE STRUCTURE, off the ENC seabed layer, coastal packs only ──────────────────
+  //
+  // Measured on coast_charleston_sc against every point Garmin charts, deduped at 30 m: the ENC
+  // carries 1,640 shore structures and 1,239 of them are NOT charted by Garmin. 1,094 piers, 253
+  // armoured segments and 116 bridges reach `near[]` on that zone alone, and until 2026-09-15 not
+  // one of them was visible to this ranker or to the map.
+  //
+  // THESE TWO NUMBERS ARE THE WEAKEST-JUSTIFIED IN THIS TABLE AND THAT IS SAID OUT LOUD. Every
+  // weight above is a citation count out of TROLLING_RUNS_THE_LINE_WAS_ALWAYS_THERE, and that
+  // table was built on freshwater, where neither of these types exists. So each is set to its
+  // nearest MEASURED sibling rather than to a number somebody liked:
+  //
+  //   pier      4, identical to `dock`, because a pier is a dock nobody owns and fishes like one.
+  //             Kept as its own type so groupDocks() -- which clusters a shoreline of private
+  //             docks into a pocket worth stopping at -- cannot mistake a public pier for one.
+  //   armored   4, the same, because a rip-rap bank and a seawall are the same class of charted
+  //             man-made hard edge as a dock (4) and a bridge (3), and the table has no closer
+  //             thing. It is the inshore hard structure a sheepshead holds on, which the habitat
+  //             matrix rates 3.5 against 1.0 for the fine bottom that is everywhere else.
+  //
+  // THE PER-SPECIES JUDGEMENT IS NOT IN THESE NUMBERS and is not meant to be. It arrives through
+  // structureWeights(): a researched profile that names rip-rap for this fish in this season
+  // leads the type by RESEARCH_LEAD, exactly as it does for timber. That mechanism already
+  // existed and already counted the phrases -- 94 of them across 59 researched waters, recorded
+  // in `unmatched` as cover "the CHARTPACK does not carry". The chartpack carries it now.
+  pier: 4,
+  armored: 4,
 };
 
 // `relief` is a property of the whole run, not a feature it passes, so it is scored once per leg
