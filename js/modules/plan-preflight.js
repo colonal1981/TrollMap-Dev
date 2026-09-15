@@ -39,7 +39,7 @@ import { fetchWaterConditions } from '../utils/water-conditions.js';
 import { getTideStateForZone } from './tide-engine.js';
 import { assessZoneIntrusion } from './usgs-gauges.js';
 import { DEPTH_BANDS, normalizeCoastalSpecies, tacticalNote } from './coastal-scoring.js';
-import { clarityForPlan } from '../utils/clarity-at-ramp.js';
+import { clarityForPlan, versusNormalAt } from '../utils/clarity-at-ramp.js';
 
 /** The coastal zone this water is, or null for everything inland. */
 export function detectCoastalZone(lakeName) {
@@ -264,6 +264,10 @@ export async function fetchClarityAtRamp(lakeName, dateStr, o = {}) {
       // response, and re-fetching it there would be two requests for one answer -- and, worse, two
       // answers if the two requests straddled a forecast update.
       payload: res,
+      // WHAT IT USUALLY IS HERE, AND HOW FAR TODAY IS OFF IT. Ryan, 2026-09-15: "i just need to
+      // know what 'normal' is and how far it is off from that normal... stained water means more
+      // on say lake murray than it does on wateree." See versusNormalAt().
+      versusNormal: versusNormalAt(res, rampName),
       rampName: rampName || null,
       zoneName: got.zone ? got.zone.name : null,
       lakeWide: res.overall ? (res.overall.clarity || null) : null,

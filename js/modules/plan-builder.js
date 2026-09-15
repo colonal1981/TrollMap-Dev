@@ -1752,10 +1752,16 @@ ${src}`;
       //
       // What the clarity DOES change is what you tie on, and that half is untouched — the zone's
       // own colours and tactics are in the Clarity & Runoff section and drive the spread.
+      // AND WHETHER THAT IS AN ORDINARY DAY HERE, which is the half that decides whether it is
+      // worth thinking about. `clarityVsNormal` is the water compared to its own baseline — see
+      // versusNormalAt(). Absent on a plan built before this shipped, and then the line is just
+      // the band, as it was.
+      const usual = String(cond.clarityVsNormal || '');
       addNote(`Water at ${where}: ${cls.toUpperCase()}`
             + (cls === 'muddy' ? ' — work mudline edges rather than the backs of creeks'
              : cls === 'stained' ? ' — favor color breaks, vibration and high-contrast colors'
-             : ' — other zones may differ; the Clarity & Runoff section says which stain first'));
+             : ' — other zones may differ; the Clarity & Runoff section says which stain first')
+            + (usual ? `. ${usual}` : ''));
     } else if (cond.clarityScope && /lake-wide/i.test(String(cond.clarityScope))
                && /^(Clear|Stained|Muddy)/i.test(String(cond.clarity || ''))) {
       // The plan says the mean is all there was, and says why. No parsing, and the sentence names

@@ -81,3 +81,58 @@ export function clarityForPlan(payload, rampName) {
   return { select: null, clarity: null, score: null, source: 'none', zone: null,
            why: 'the clarity model returned nothing to go on' };
 }
+
+// ── WHAT THIS WATER ORDINARILY IS, AND HOW FAR TODAY SITS OFF IT ────────────────────────────────
+//
+// Ryan, 2026-09-15: "i just need to know what 'normal' is and how far it is off from that normal...
+// stained water means more on say lake murray than it does on wateree."
+//
+// The word cannot carry that by itself. STAINED on Wateree, whose 583 measured readings average
+// 2.4 ft, is Tuesday; STAINED on a lake that usually reads eight feet is an event. So the word
+// travels with the water's own baseline, and the baseline is not a new number: /lake-clarity runs
+// its own model with the rainfall taken out and returns each zone's `normalClarity` beside its
+// `clarity`. Rain is the only input describing TODAY, so the gap between the two is exactly what
+// the weather did — a subtraction, with no threshold to choose.
+const BANDS = ['Clear', 'Slight stain', 'Stained', 'Muddy', 'Muddy / debris risk'];
+const bandIndex = (c) => {
+  const i = BANDS.indexOf(String(c || ''));
+  return i < 0 ? null : i;
+};
+
+/**
+ * `{ bands, dirtier, normalClarity, sentence }` for the water he is actually launching in, or null
+ * when the payload predates this and carries no `normalClarity`.
+ *
+ * ZONE FIRST, LAKE SECOND, for the same reason the clarity itself is resolved that way: the lake's
+ * mean is an average of water he is not fishing. Falls back to the payload's lake-wide
+ * `versusNormal` only when no zone named his ramp.
+ */
+export function versusNormalAt(payload, rampName) {
+  const d = payload || {};
+  const zone = zoneForRamp(d.zones, rampName);
+  const now = zone ? bandIndex(zone.clarity) : null;
+  const usual = zone ? bandIndex(zone.normalClarity) : null;
+  if (zone && now != null && usual != null) {
+    const bands = now - usual;
+    const where = zone.name;
+    return {
+      bands,
+      dirtier: bands > 0,
+      normalClarity: zone.normalClarity,
+      scope: 'ramp',
+      sentence: bands === 0
+        ? `${zone.clarity} is NORMAL for ${where}.`
+        : `${where} is usually ${zone.normalClarity}; today ${zone.clarity} — `
+          + `${Math.abs(bands)} band${Math.abs(bands) === 1 ? '' : 's'} `
+          + `${bands > 0 ? 'DIRTIER' : 'CLEANER'} than normal.`,
+    };
+  }
+  // The Worker's own lake-wide comparison, which carries the measured basis in its sentence.
+  const v = d.versusNormal;
+  if (v && typeof v.sentence === 'string') {
+    return { bands: v.bands, dirtier: !!v.dirtier,
+             normalClarity: (d.normally && d.normally.clarity) || null,
+             scope: 'lake', sentence: v.sentence };
+  }
+  return null;
+}

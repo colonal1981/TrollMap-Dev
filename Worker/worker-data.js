@@ -1584,10 +1584,29 @@ async function getLakeClarity(lakeName, tripDate, env) {
     const score = Math.max(0, Math.min(100, base + rainScore * z.sensitivity));
     const cls = classifyClarity(score);
     const pack2 = clarityLurePack(cls.clarity);
-    return { ...z, score: Math.round(score), clarity: cls.clarity, select: cls.select, lureColors: pack2.colors, tactics: pack2.tactics };
+    // ── AND WHAT THIS ZONE IS ON AN ORDINARY DAY ──────────────────────────────────────────────
+    //
+    // Ryan, 2026-09-15: "i just need to know what 'normal' is and how far it is off from that
+    // normal... stained water means more on say lake murray than it does on wateree."
+    //
+    // He is right and the model already contained the answer without ever computing it. The score
+    // is `base + rainScore * sensitivity`, so the SAME model with no rain in it IS this water's
+    // ordinary state -- its own baseline, in its own terms, with nothing invented and no threshold
+    // to pick. Wateree's normal is stained because Wateree's measured secchi is 2.4 ft; Murray's is
+    // clearer because Murray's readings are. One rule, every lake, no per-lake table.
+    //
+    // The rainfall is the ONLY input in here that describes today. So the gap between these two
+    // numbers is exactly, and only, what the weather did -- which is the thing worth telling him.
+    const normalScore = Math.max(0, Math.min(100, base));
+    const normalCls = classifyClarity(normalScore);
+    return { ...z, score: Math.round(score), clarity: cls.clarity, select: cls.select,
+             normalScore: Math.round(normalScore), normalClarity: normalCls.clarity,
+             lureColors: pack2.colors, tactics: pack2.tactics };
   });
   const avg = zones.reduce((a, z) => a + z.score, 0) / Math.max(1, zones.length);
   const overall = classifyClarity(avg);
+  const avgNormal = zones.reduce((a, z) => a + z.normalScore, 0) / Math.max(1, zones.length);
+  const overallNormal = classifyClarity(avgNormal);
   const bestZones = [...zones].sort((a, b) => a.score - b.score).slice(0, 3);
   const dirtyZones = [...zones].sort((a, b) => b.score - a.score).slice(0, 3);
   const rampRecommendations = bestZones.map((z, i) => ({
@@ -1597,10 +1616,56 @@ async function getLakeClarity(lakeName, tripDate, env) {
     why: `${z.clarity}; ${z.likely}. ${i === 0 ? "Best clarity/safety starting point." : "Secondary option."}`
   }));
   const pack = clarityLurePack(overall.clarity);
+
+  // ── WHAT IS NORMAL HERE, AND HOW FAR OFF IS TODAY ─────────────────────────────────────────────
+  //
+  // Ryan, 2026-09-15: "i just need to know what 'normal' is and how far it is off from that
+  // normal... stained water means more on say lake murray than it does on wateree."
+  //
+  // The word on its own cannot carry that and never could. STAINED on Wateree, whose 583 measured
+  // secchi readings average 2.4 ft, is Tuesday; STAINED on a lake that usually reads eight feet is
+  // an event. Both are the same word, so the word has to travel with the water's own baseline.
+  //
+  // `overallNormal` is this model with no rain in it — the lake as it ordinarily sits — and the
+  // rainfall is the only input here that describes TODAY. So `offNormal` is the number of bands the
+  // weather moved it, and it is a subtraction, not a threshold: zero rain gives zero movement and
+  // the honest answer is "normal for this water", which is what his dry-day card should have said
+  // from the start instead of calling his home lake muddy.
+  const BANDS = ["Clear", "Slight stain", "Stained", "Muddy", "Muddy / debris risk"];
+  const bandIndex = (c) => Math.max(0, BANDS.indexOf(String(c)));
+  const offNormal = bandIndex(overall.clarity) - bandIndex(overallNormal.clarity);
+  const dirtier = offNormal > 0;
+  const rainPhrase = rain && rain.weighted72_in
+    ? `${rain.weighted72_in}" of weighted rain in 72 hours`
+    : "no rain worth speaking of in 72 hours";
+  const normally = {
+    clarity: overallNormal.clarity,
+    select: overallNormal.select,
+    score: Math.round(avgNormal),
+    // The evidence for the word, so "normal" is never just an assertion.
+    basis: measured
+      ? `${measured.sampleCount} measured secchi readings averaging ${measured.avgSecchiDepthFt} ft`
+        + ` (${measured.minSecchiDepthFt}\u2013${measured.maxSecchiDepthFt} ft)`
+      : "this water's zone model — no clarity measurements exist for it",
+  };
+  const versusNormal = {
+    bands: offNormal,
+    dirtier,
+    // Written the way he asked for it: what it usually is, what it is today, and what moved it.
+    sentence: offNormal === 0
+      ? `${overall.clarity} is NORMAL for this water — ${normally.basis}, and ${rainPhrase}.`
+      : `Usually ${overallNormal.clarity} here (${normally.basis}). Today ${overall.clarity} — `
+        + `${Math.abs(offNormal)} band${Math.abs(offNormal) === 1 ? "" : "s"} `
+        + `${dirtier ? "DIRTIER" : "CLEANER"} than normal, on ${rainPhrase}.`,
+  };
+
   return {
     lake: profile.displayName || lakeName,
     key,
     tripDate,
+    // What this water ordinarily is, and how far today sits off it. See versusNormal above.
+    normally,
+    versusNormal,
     // Say which of the three this is. "Modelled" and "measured then adjusted" deserve different
     // trust, and "no measurement exists" must never render as "the water is clear".
     confidence: measured && rain ? "good: measured secchi baseline + rainfall adjustment, verify at ramp"

@@ -26,7 +26,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { zoneForRamp, clarityForPlan } from '../js/utils/clarity-at-ramp.js';
+import { zoneForRamp, clarityForPlan, versusNormalAt } from '../js/utils/clarity-at-ramp.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const INTEL_RAW = readFileSync(path.join(ROOT, 'js/modules/lake-intel.js'), 'utf8');
@@ -112,7 +112,9 @@ test('a failed forecast leaves the select alone rather than guessing Clear', () 
 // lake-intel.js touches the DOM at module scope and cannot be imported here; the behaviour it
 // guards is the one that shipped wrong.
 test('the select is written from the resolution, not from the lake-wide mean', () => {
-  assert.match(INTEL_RAW, /import \{ clarityForPlan \} from '\.\.\/utils\/clarity-at-ramp\.js'/);
+  // The SYMBOL, not the exact import line — adding `versusNormalAt` to that import broke this
+  // assertion without breaking anything it was written to protect.
+  assert.match(INTEL_RAW, /import \{[^}]*\bclarityForPlan\b[^}]*\} from '\.\.\/utils\/clarity-at-ramp\.js'/);
   assert.match(INTEL, /if \(claritySel && forPlan\.select\) claritySel\.value = forPlan\.select;/);
   assert.ok(!/claritySel\.value\s*=\s*d\.overall/.test(INTEL),
     'the lake-wide mean must not be written into the plan\'s clarity input');
@@ -401,4 +403,111 @@ test('no clarity, at any level, is a risk — the verdict is about the trip, not
   const top = run({ plan: null, meta: { clarityIntel: 'Overall predicted clarity: Muddy / debris risk' } });
   assert.equal(top.r.length, 0, 'the app must not assert debris it cannot measure');
   assert.match(top.n.join(' '), /measures no debris/);
+});
+
+// ── "STAINED MEANS MORE ON MURRAY THAN IT DOES ON WATEREE" ─────────────────────────────────────
+//
+// Ryan, 2026-09-15, after I offered him published scales and band-naming choices: "that is way too
+// complicated for me... i just need to know what 'normal' is and how far it is off from that
+// normal... stained water means more on say lake murray than it does on wateree."
+//
+// The band name cannot carry that and never could. What makes it carryable without inventing
+// anything is that the model ALREADY contained the answer: a zone's score is `base + rain *
+// sensitivity`, so the same model with the rainfall taken out IS that water's ordinary state, in
+// its own terms. Rain is the only input describing today, so the gap between the two is exactly
+// what the weather did — a subtraction, not a threshold.
+const NORMAL_DRY = {
+  zones: [
+    { name: 'Upper river / north end', ramps: ['Lugoff / upstream river ramps'],
+      clarity: 'Muddy', normalClarity: 'Muddy', score: 24, select: 'Muddy' },
+    { name: 'Lower main-lake channel / dam basin', ramps: ['Clearwater Cove Marina'],
+      clarity: 'Stained', normalClarity: 'Stained', score: 61, select: 'Stained' },
+  ],
+  overall: { clarity: 'Muddy', select: 'Muddy', score: 66 },
+  normally: { clarity: 'Muddy' },
+  versusNormal: { bands: 0, dirtier: false,
+    sentence: 'Muddy is NORMAL for this water — 583 measured secchi readings averaging 2.4 ft.' },
+};
+
+test('an ordinary day on his water says so, instead of naming a band at him', () => {
+  const got = versusNormalAt(NORMAL_DRY, 'Clearwater Cove');
+  assert.equal(got.bands, 0);
+  assert.equal(got.dirtier, false);
+  assert.equal(got.scope, 'ramp');
+  assert.match(got.sentence, /Stained is NORMAL for Lower main-lake channel \/ dam basin/);
+});
+
+test('and the SAME WORD on a lake that is usually clear reads as the event it is', () => {
+  // This is his sentence, made testable. Two lakes, one word, opposite meanings — and nothing
+  // distinguishes them except each water's own measured baseline.
+  const murray = { zones: [{ name: 'Dam / lower lake', ramps: ['Lake Murray Dam'],
+                             clarity: 'Stained', normalClarity: 'Clear', score: 45 }] };
+  const there = versusNormalAt(murray, 'Lake Murray Dam');
+  const here = versusNormalAt(NORMAL_DRY, 'Clearwater Cove');
+  assert.equal(here.sentence.includes('NORMAL'), true, 'Wateree stained is Tuesday');
+  assert.equal(there.bands, 2);
+  assert.match(there.sentence, /usually Clear; today Stained — 2 bands DIRTIER than normal/);
+});
+
+test('rain moving his own zone a band is reported as the move, in bands', () => {
+  const wet = JSON.parse(JSON.stringify(NORMAL_DRY));
+  wet.zones[1].clarity = 'Muddy';                       // the rain pushed it; normal is unchanged
+  const got = versusNormalAt(wet, 'Clearwater Cove');
+  assert.equal(got.bands, 1);
+  assert.equal(got.dirtier, true);
+  assert.match(got.sentence, /usually Stained; today Muddy — 1 band DIRTIER than normal/);
+  // Singular for one band. A sentence he reads on the water should not say "1 bands".
+  assert.ok(!/1 bands/.test(got.sentence));
+});
+
+test('cleaner than normal is said as cleaner, not as a smaller kind of dirty', () => {
+  const clear = JSON.parse(JSON.stringify(NORMAL_DRY));
+  clear.zones[1].clarity = 'Slight stain';
+  const got = versusNormalAt(clear, 'Clearwater Cove');
+  assert.equal(got.bands, -1);
+  assert.equal(got.dirtier, false);
+  assert.match(got.sentence, /1 band CLEANER than normal/);
+});
+
+test('with no zone naming the ramp it falls to the lake-wide answer, which carries its evidence', () => {
+  const got = versusNormalAt(NORMAL_DRY, 'Some Landing Nobody Listed');
+  assert.equal(got.scope, 'lake');
+  assert.match(got.sentence, /583 measured secchi readings/,
+    '"normal" must never be a bare assertion — the count and the average travel with it');
+});
+
+test('and a payload from before this shipped answers null rather than guessing', () => {
+  assert.equal(versusNormalAt({ zones: [{ name: 'x', ramps: ['y'], clarity: 'Muddy' }] }, 'y'), null);
+  assert.equal(versusNormalAt(null, 'y'), null);
+});
+
+// ── AND IT REACHES THE THREE PLACES HE READS ───────────────────────────────────────────────────
+test('the resolver carries it, the model is told it, and the card prints it', async () => {
+  const { fetchClarityAtRamp } = await import('../js/modules/plan-preflight.js');
+  const { conditionsFrom } = await import('../js/modules/plan-inputs.js');
+  const got = await fetchClarityAtRamp('Lake Wateree, SC', '2026-09-15',
+    { worker: 'https://w', rampName: 'Clearwater Cove', fetchJson: async () => NORMAL_DRY });
+  assert.match(got.versusNormal.sentence, /Stained is NORMAL for/);
+
+  const c = conditionsFrom({ clarity: got.select }, null, null, null, got);
+  assert.match(c.clarityVsNormal, /Stained is NORMAL for/,
+    'the model has no way to know Wateree is stained most of the year unless it is told');
+
+  const live = BUILDER.replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+  assert.match(live, /cond\.clarityVsNormal/, 'the card note must say whether today is ordinary');
+
+  // And the briefing leads with it, where he actually reads it.
+  assert.match(INTEL, /versusNormalAt\(d, rampNow\)/);
+});
+
+// THE WORKER HAS TO PRODUCE `normalClarity`, or every one of the above falls back to null.
+test('the Worker computes each zone\'s ordinary state from its own model with the rain removed', () => {
+  const W = readFileSync(path.join(ROOT, 'Worker/worker-data.js'), 'utf8');
+  assert.match(W, /const normalScore = Math\.max\(0, Math\.min\(100, base\)\);/,
+    'normal is the same score with rainScore taken out — no second model, no new constant');
+  assert.match(W, /normalClarity: normalCls\.clarity/);
+  assert.match(W, /const offNormal = bandIndex\(overall\.clarity\) - bandIndex\(overallNormal\.clarity\);/);
+  // The lake-wide sentence has to carry the measurement behind the word.
+  assert.match(W, /measured secchi readings averaging/);
 });

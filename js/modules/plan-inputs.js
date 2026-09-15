@@ -1048,6 +1048,12 @@ export function conditionsFrom(inp, ramp, sol, forecast, clarityAtRamp = null) {
                      + `model names ${clarityAtRamp.rampName || 'this launch'}`;
     }
     if (clarityAtRamp.lakeWide) c.clarityLakeWide = clarityAtRamp.lakeWide;
+    // AND WHETHER THAT IS AN ORDINARY DAY ON THIS WATER. A band name is not a fact about how the
+    // fishing differs from usual, and the model has no way to know that Wateree is stained most of
+    // the year while another lake being stained means it has just been rained on.
+    if (clarityAtRamp.versusNormal && clarityAtRamp.versusNormal.sentence) {
+      c.clarityVsNormal = clarityAtRamp.versusNormal.sentence;
+    }
   }
   if (inp.waterTempF) c.waterTempF = inp.waterTempF;
   if (inp.weather) c.forecast = inp.weather;

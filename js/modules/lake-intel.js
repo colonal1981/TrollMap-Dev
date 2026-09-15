@@ -7,7 +7,7 @@
 import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
 import { coerceList, coerceLabels } from '../utils/coerce.js';
-import { clarityForPlan } from '../utils/clarity-at-ramp.js';
+import { clarityForPlan, versusNormalAt } from '../utils/clarity-at-ramp.js';
 
 /* Lake Intel: species, forage, habitat, hazards, seasonal patterns */
 export async function syncLakeIntelData() {
@@ -324,6 +324,11 @@ export async function syncClarityIntelData(o = {}) {
     if(zoneForRamp){
       lines.push(`AT YOUR RAMP (${rampNow}) — ${zoneForRamp.name}: ${zoneForRamp.clarity} `
                + `(score ${zoneForRamp.score}/100). ${zoneForRamp.likely}.`);
+      // THE HALF THAT SAYS WHETHER TO CARE. "Stained" on Wateree is Tuesday; "stained" on a lake
+      // that usually reads eight feet has just been rained on. Same word, and only the water's own
+      // baseline tells them apart -- see versusNormalAt().
+      const vs = versusNormalAt(d, rampNow);
+      if (vs) lines.push(vs.sentence);
       lines.push(`Colors for that zone: ${coerceList(zoneForRamp.lureColors).join(', ')}`);
     } else if(rampNow){
       lines.push(`No clarity zone in this lake's model lists ${rampNow}, so only the lake-wide `
