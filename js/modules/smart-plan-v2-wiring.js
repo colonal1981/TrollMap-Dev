@@ -130,7 +130,19 @@ export async function runSmartPlanV2(opts = {}) {
   // it prints under. It never throws -- a water with no advisory and no network look the same to
   // the caller, and both mean the section does not appear.
   await primeFishAdvisories({ worker: CF_WORKER_URL });
-  const legality = checkPlanLegality(inp.lakeName, species, date);
+
+  // THE RESEARCH PROFILE IS THE POINT OF THE RESEARCH PIPELINE. The first version of this file
+  // ignored it entirely and used the four-lake built-in table — worse than v1, which at least put
+  // the research prose in its prompt. Try the in-memory cache the research tab fills, then ask
+  // the Worker, because the planner should not depend on someone having opened that tab first.
+  //
+  // LOADED HERE AND NOT SEVENTY LINES DOWN, because the legality check below reads its closed
+  // seasons and cannot await for them. This is the same shape as the ensureRegulations() bug
+  // noted above -- a synchronous check sitting ahead of the only call that fills what it reads --
+  // and it is one load used by both, not a second fetch for the law.
+  const researched = await loadResearchedProfile(inp.lakeName);
+
+  const legality = checkPlanLegality(inp.lakeName, species, date, { profile: researched });
   if (!legality.legal) {
     say(`${species} not legal here today`, true);
     if (out) out.innerHTML = `<p style="color:var(--warn);font-size:12px">REGULATION BLOCK — `
@@ -197,12 +209,6 @@ export async function runSmartPlanV2(opts = {}) {
     await syncClarityIntelData({ rampName: inp.rampName, payload: clarityAtRamp.payload })
       .catch((e) => console.warn('[plan] clarity briefing refresh failed:', e && e.message));
   }
-
-  // THE RESEARCH PROFILE IS THE POINT OF THE RESEARCH PIPELINE. The first version of this file
-  // ignored it entirely and used the four-lake built-in table — worse than v1, which at least put
-  // the research prose in its prompt. Try the in-memory cache the research tab fills, then ask
-  // the Worker, because the planner should not depend on someone having opened that tab first.
-  const researched = await loadResearchedProfile(inp.lakeName);
 
   const depth = depthBandFor(species, inp.lakeName, season, inp.waterTempF, researched);
   if (!depth) return say(`No depth profile for ${species} in ${season}`, true), null;
@@ -347,6 +353,19 @@ export async function runSmartPlanV2(opts = {}) {
     return r;
   }
 
+  // REGULATION ADVISORIES RIDE WITH THE PLAN, not into a console nobody opens. A slot limit, a
+  // gear restriction or an extracted closed season is something you want on the water.
+  // checkPlanLegality returns these separately from `legal` on purpose: a warning is not a block.
+  //
+  // MERGED HERE, WHICH IS BEFORE ANYBODY READS THE LIST. This sat below planToTimeline(), so
+  // every reader above it -- the no-plan branch, the bench's `problems` array and the bench's own
+  // draw -- was handed the list as it stood seven lines earlier, without a word of the law in it.
+  // Ryan has been pasting that bench JSON to me. The value was right and it was addressed after
+  // the readers had already read.
+  if (legality.warnings && legality.warnings.length) {
+    r.problems = [...legality.warnings, ...(r.problems || [])];
+  }
+
   if (!r.plan) {
     say(r.problems[0] || 'No plan', true);
     if (out) out.innerHTML = `<ul style="color:var(--warn);font-size:12px">${
@@ -420,13 +439,6 @@ export async function runSmartPlanV2(opts = {}) {
     warnings: r.problems || [],
     rationale: (r.plan.notes && (r.plan.notes.scoutNotes || r.plan.notes.sonar)) || '',
   });
-  // Regulation advisories ride WITH the plan, not into a console nobody opens. A slot limit or
-  // a gear restriction is something you want on the water. checkPlanLegality returns these
-  // separately from `legal` on purpose: a warning is not a block.
-  if (legality.warnings && legality.warnings.length) {
-    r.problems = [...legality.warnings, ...(r.problems || [])];
-  }
-
   installTimeline(window, built);
 
   renderSmartPlanUI({

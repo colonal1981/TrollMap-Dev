@@ -34,7 +34,7 @@ import { checkCoastalRegulations } from '../data/coastal-regulations.js';
 import { COASTAL_ZONES, isCoastalKey } from '../data/coastal-zones.js';
 import { resolveR2Key } from '../data/lake-keys.js';
 import { lakeDbEntryFor, lakeRecordFor } from '../data/lake-registry.js';
-import { primeRegulations, regulationsPrimed } from '../data/regulations-live.js';
+import { primeRegulations, regulationsPrimed, nameForms } from '../data/regulations-live.js';
 import { fetchWaterConditions } from '../utils/water-conditions.js';
 import { getTideStateForZone } from './tide-engine.js';
 import { assessZoneIntrusion } from './usgs-gauges.js';
@@ -95,15 +95,70 @@ export async function ensureRegulations(lakeName, opts = {}) {
 }
 
 /**
+ * The closed seasons the RESEARCH PIPELINE extracted, as sentences a person can check.
+ *
+ * WRITTEN SINCE 2026-09-01 AND READ BY NOBODY ON THE LEGALITY PATH. The coastal fact assembler
+ * fills `regulations.lakeSpecificRegulations.closedSeasons` from extracted documents
+ * (lake-research-engine.js), the research tab renders it under a red "Closed Seasons" heading,
+ * and `checkPlanLegality()` — the one call on the path whose whole job is "do not plan on closed
+ * water" — never looked at it. A closure that reaches a tab Ryan is not looking at on the morning
+ * he launches is a closure the app did not tell him about.
+ *
+ * IT WARNS AND IT CANNOT BLOCK, and that is not timidity. `closuresFor()` blocks because the
+ * offline book parse types every row — `effect`, `applies_to`, a start and an end. These entries
+ * are free text: a string, or `{species, period, note}` where `period` is whatever the document
+ * said. Parsing "May 1 – June 15" into a gate would mean inventing the two dates the app would
+ * then cancel a morning on, and a planner that refuses a trip on a sentence it guessed at costs
+ * a day for a rule that may not even be in season. So the sentence is carried verbatim, which is
+ * the thing Ryan can hold up against the book.
+ *
+ * A NAMED SPECIES GOVERNS THAT FISH; AN UNNAMED ONE GOVERNS THE WATER. Same rule
+ * `coastalClosuresFor()` uses, and it goes through the same `nameForms()` matcher, because
+ * `Striped Bass / Hybrid` and `Striped Bass` are one fish and neither string contains the other.
+ */
+export function profileClosures(profile, species) {
+  const reg = profile && (profile.regulations || profile.regs);
+  const rows = reg && reg.lakeSpecificRegulations
+    && Array.isArray(reg.lakeSpecificRegulations.closedSeasons)
+    ? reg.lakeSpecificRegulations.closedSeasons : [];
+  if (!rows.length) return [];
+  const want = new Set(nameForms(species));
+  const out = [];
+  for (const c of rows) {
+    if (typeof c === 'string') {
+      if (c.trim()) out.push({ text: c.trim(), source: null });
+      continue;
+    }
+    if (!c || typeof c !== 'object') continue;
+    // A ROW NAMING ANOTHER FISH IS NOT THIS TRIP'S PROBLEM. An unnamed one is.
+    if (c.species && want.size && !nameForms(c.species).some((f) => want.has(f))) continue;
+    const text = [c.species, c.period, c.times ? `(${c.times})` : '', c.note]
+      .map((v) => String(v == null ? '' : v).trim())
+      .filter(Boolean)
+      .join(' — ');
+    if (text) out.push({ text, source: c.source || null });
+  }
+  return out;
+}
+
+/**
  * May this species be fished on this water on this date?
  *
  * CALL `await ensureRegulations(lakeName, { worker })` FIRST. This function cannot await, so a
  * cold cache reads as "we know nothing about this water" -- which is honest, and useless when the
  * book is sitting one fetch away.
  *
+ * AND HAND IT THE RESEARCHED PROFILE when one is loaded. It is the third source of closures on
+ * this path -- the book blocks, the hand table blocks, and the research pipeline's extracted
+ * sentences warn -- and it was the one nothing read. See profileClosures() above for why it
+ * cannot block. The profile is optional because the Water tab and the tests call this without
+ * one; missing it costs the sentences, never permission.
+ *
+ * @param {object} [o]
+ * @param {object} [o.profile] the researched lake profile, if it has been loaded
  * @returns {{legal: boolean, reason: string, warnings: string[], coastal: boolean}}
  */
-export function checkPlanLegality(lakeName, species, date) {
+export function checkPlanLegality(lakeName, species, date, o = {}) {
   const zoneKey = detectCoastalZone(lakeName);
   const st = zoneKey ? (COASTAL_ZONES[zoneKey] || {}).state : null;
   // THE STATE IS WHAT UNLOCKS THE DIGEST. Inland it comes off the registry row, which this file
@@ -122,10 +177,17 @@ export function checkPlanLegality(lakeName, species, date) {
     return { legal: true, reason: '', coastal: !!zoneKey,
              warnings: [`Could not check ${species} regulations here — verify before you keep one.`] };
   }
+  // THE RESEARCH PIPELINE'S CLOSURES RIDE WITH THE BOOK'S, and they are put FIRST because a
+  // closed season is the loudest thing in a warning list. They are said even when the check
+  // already blocked -- a second closure is not redundant with the first, which is the mistake
+  // species-intel.js documents for its own blocking rows.
+  const extracted = profileClosures(o.profile, species).map(
+    (c) => `Closed season on this water: "${c.text}"${c.source ? ` (${c.source})` : ''}`
+         + ' — from the researched profile, not the state book. Check it before you keep one.');
   return {
     legal: r ? r.legal !== false : true,
     reason: (r && r.reason) || '',
-    warnings: (r && r.warnings) || [],
+    warnings: [...extracted, ...((r && r.warnings) || [])],
     // The published limits, when the digest answered. A caller that shows nothing else should
     // still be able to show these.
     limits: (r && r.limits) || null,

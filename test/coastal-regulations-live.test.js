@@ -233,21 +233,83 @@ describe('checkCoastalRegulations consults the digest first', () => {
   });
 });
 
-describe('closures stay the table’s job', () => {
+describe('a live limit is never permission', () => {
+  // WRITTEN ON NC, WHICH IS GONE. All three tests here named NC species and NC closures, and NC
+  // coastal was cut from COASTAL_REGULATIONS on 2026-09-01 -- the cut updated
+  // coastal-regulations.test.js and never opened this file, so they went red pointing at
+  // `undefined`. The CLAIM they protect is not about NC: a published size and creel limit is not
+  // a season, and nothing in the live layer may open a closure. That claim is kept below and now
+  // covers BOTH places a closure can come from, which is one more than it used to.
+  //
+  // The state is synthetic on purpose. Reaching into a real state table to find an example of a
+  // shape is exactly what tied these to data that could be deleted; no SC or GA row carries a
+  // closed season today, and inventing one on a real state would be a regulation nobody printed.
+  const XX_META = { agency: 'Test Marine Resources', digest: 'd', verifyBy: '2099-01-01', url: 'u' };
+  const withState = async (row, salt, date) => {
+    _resetRegulationsCache();
+    await primeRegulations('XX', 'Test Sound, XX', {
+      worker: 'https://w', now: AUG.getTime(),
+      fetch: async () => ({ ok: true, json: async () => ({ ...payload(salt), state: 'XX' }) }),
+    });
+    const saved = COASTAL_REGULATIONS.XX;
+    COASTAL_REGULATIONS.XX = { _meta: XX_META, ...row };
+    try {
+      return checkCoastalRegulations('XX', Object.keys(row)[0], date, AUG);
+    } finally {
+      if (saved === undefined) delete COASTAL_REGULATIONS.XX; else COASTAL_REGULATIONS.XX = saved;
+    }
+  };
+
   it('a live limit cannot open a closed season', async () => {
-    await prime({ 'Speckled Trout (Spotted Seatrout)': { sizeLimit: '14 inch minimum', creelLimit: '3 per day', specialRules: [] } });
-    // NC seatrout is shut by proclamation FF-12-2026 in February. The digest publishes limits;
-    // a size and a creel limit is not a closure, and no live answer may override one.
-    const r = checkCoastalRegulations('NC', 'Speckled Trout (Spotted Seatrout)', new Date('2026-02-15T12:00:00'), AUG);
+    const r = await withState(
+      { 'Speckled Trout (Spotted Seatrout)': {
+          sizeLimit: { min: 14 }, creelLimit: 10, measurement: 'TL',
+          closedSeason: [2, 1, 2, 28], note: 'Closed by proclamation.' } },
+      { 'Speckled Trout (Spotted Seatrout)': { sizeLimit: '14 inch minimum', creelLimit: '3 per day', specialRules: [] } },
+      new Date('2026-02-15T12:00:00'));
+    // The digest was read and published a size and a creel. That is what may be kept when the
+    // season is open; it says nothing about whether it is.
+    expect(r.limits.sizeLimit).toBe('14 inch minimum');
     expect(r.legal).toBe(false);
     expect(r.reason).toMatch(/Closed season/);
   });
 
   it('a live limit cannot open an indefinite closure', async () => {
-    await prime({ 'Southern Flounder': { sizeLimit: '15 inch minimum', creelLimit: '4 per day', specialRules: [] } });
-    const r = checkCoastalRegulations('NC', 'Southern Flounder', AUG, AUG);
+    const r = await withState(
+      { 'Southern Flounder': {
+          sizeLimit: { min: 15 }, creelLimit: 4, measurement: 'TL',
+          harvestClosed: true, note: 'No open harvest season.' } },
+      { 'Southern Flounder': { sizeLimit: '15 inch minimum', creelLimit: '4 per day', specialRules: [] } },
+      AUG);
+    expect(r.limits.creelLimit).toBe('4 per day');
     expect(r.legal).toBe(false);
     expect(r.reason).toMatch(/Harvest closed/);
+  });
+
+  it('a live limit cannot open a closure the BOOK names, on a fish the table does hold', async () => {
+    // THE HOLE THE NC TESTS LEFT. `coastal closures come off the book` below proves a book
+    // closure blocks a species the hand table never heard of -- Atlantic sturgeon, where there
+    // is no table row and no live limit to argue with. The species Ryan actually fishes are in
+    // BOTH, so the case that matters is a red drum with a published slot AND a book closure, and
+    // nothing asserted the closure still won.
+    _resetRegulationsCache();
+    await primeRegulations('GA', 'Wassaw Sound, GA', {
+      worker: 'https://w', now: AUG.getTime(),
+      fetch: async () => ({ ok: true, json: async () => ({
+        ...payload(SC_BOOK), state: 'GA',
+        coastal_source: 'GA ga_digest_2026_2027.pdf',
+        coastal_closures: [{
+          effect: 'closed', applies_to: 'harvest', start: null, end: null,
+          species: 'Red Drum (Redfish)', species_known: true, plan_species: [],
+          text: 'No Harvest', note: 'the OPEN SEASON column says so',
+        }],
+      }) }),
+    });
+    const r = checkCoastalRegulations('GA', 'Red Drum (Redfish)', AUG, AUG);
+    expect(r.limits.sizeLimit).toBe('18-25 inches TL');   // the digest answered
+    expect(r.legal).toBe(false);                           // and it did not open the season
+    expect(r.reason).toMatch(/Harvest closed/);
+    expect(r.reason).toContain('No Harvest');
   });
 
   it('gear windows still warn without blocking', async () => {
@@ -331,7 +393,11 @@ describe('formatCoastalLimit takes either shape', () => {
   });
 
   it('a closure still wins the label', () => {
-    expect(formatCoastalLimit(COASTAL_REGULATIONS.NC['Southern Flounder'])).toBe('No open harvest season');
+    // Was `COASTAL_REGULATIONS.NC['Southern Flounder']`, which went with NC on 2026-09-01. The
+    // branch under test is the FORMATTER'S, not any state's, so it is exercised on a literal --
+    // the same correction coastal-regulations.test.js already made for its own copy.
+    expect(formatCoastalLimit({ harvestClosed: true, sizeLimit: { min: 15 }, creelLimit: 4 }))
+      .toBe('No open harvest season');
   });
 });
 

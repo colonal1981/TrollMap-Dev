@@ -44,9 +44,6 @@ describe('the gap this closes', () => {
 });
 
 describe('closed seasons block, gear closures only warn', () => {
-
-
-
   it('does NOT block SC trout for a gig-only closure', () => {
     // Dec-Feb gigging is closed, but rod and reel is fine — blocking the plan
     // would be wrong.
