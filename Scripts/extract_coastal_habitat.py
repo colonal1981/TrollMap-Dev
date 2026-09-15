@@ -19,6 +19,7 @@ Usage:
 """
 
 import json
+import math
 import sys
 import argparse
 import subprocess
@@ -113,6 +114,40 @@ SAV_HABITAT_TYPES = {'SAV', 'SEAGRASS', 'SUBMERGED AQUATIC', 'OYSTER', 'SHELL'}
 # Minimum features to bother uploading
 MIN_FEATURES = 1
 MAX_SIZE_KB = 10240  # 10MB — simplify harder if over this
+
+# A SLIVER IS A DIGITISING ARTEFACT, NOT A SMALL OYSTER RAKE.
+#
+# This filter was `clipped.geometry.area > 0.000001` under a comment reading "Drop tiny slivers
+# below 10 sq meters", and geopandas warned about it on every single zone: "Geometry is in a
+# geographic CRS. Results from 'area' are likely incorrect." It was telling the truth. The number
+# is in SQUARE DEGREES and the intent was SQUARE METRES, so at this latitude the threshold was
+# 10,399 m² -- two and a half acres -- and it was 1,040x too large.
+#
+# Measured on Charleston's 24,207 oyster beds, 2026-09-15: median area 19.8 m², p90 246 m², and
+# ONE POLYGON IN 5,000 is bigger than two and a half acres. The run that afternoon uploaded
+# Charleston with 1 feature, Winyah Bay and Murrells Inlet with 0, and overwrote the real layer
+# in R2 with all of it.
+#
+# AND 10 m² WOULD ALSO HAVE BEEN WRONG, which is why this is measured rather than repaired to the
+# comment's number: a 10 m² floor drops 31.7% of Charleston's beds. That is not a sliver filter,
+# it is throwing away a third of the oyster. A 1 m² floor drops 1.3%, and a sub-metre polygon in
+# a shellfish survey is a digitising artefact rather than a rake anybody could fish.
+MIN_FEATURE_AREA_M2 = 1.0
+
+
+def sliver_threshold_deg2(zone):
+    """MIN_FEATURE_AREA_M2 as square degrees at this zone's latitude.
+
+    Pure, so the conversion that broke every oyster layer on the coast can be tested with nothing
+    but a bbox. A degree of longitude shrinks with the cosine of latitude, so the same number of
+    square degrees is a different number of square metres in Winyah Bay than at Cumberland Island
+    -- which is exactly why a threshold typed in degrees cannot mean what its comment says.
+    """
+    s, n = float(zone['bbox'][0]), float(zone['bbox'][1])
+    lat = (s + n) / 2.0
+    m_per_deg_lat = 111132.0
+    m_per_deg_lon = 111320.0 * math.cos(math.radians(lat))
+    return MIN_FEATURE_AREA_M2 / (m_per_deg_lat * m_per_deg_lon)
 UPLOAD_TIMEOUT = 300  # 5 minutes for large files
 
 
@@ -266,7 +301,7 @@ def process_zone(slug, zone, oyster_sc, oyster_nc, oyster_ga, esi_sc, esi_nc, es
     results = {}
 
     # ── Oyster beds ───────────────────────────────────────────────────────────
-    # See OYSTER_SOURCE_BY_STATE: Georgia is None on purpose and is SAID rather than searched.
+    # See OYSTER_SOURCE_BY_STATE: all three states have their own file.
     which = OYSTER_SOURCE_BY_STATE.get(state)
     oyster_src = {'sc': oyster_sc, 'nc': oyster_nc, 'ga': oyster_ga}.get(which)
     if oyster_src is None and state in OYSTER_SOURCE_BY_STATE:
@@ -277,15 +312,35 @@ def process_zone(slug, zone, oyster_sc, oyster_nc, oyster_ga, esi_sc, esi_nc, es
               f"load -- check the path printed above. NOT the same as having no oyster data.")
     if oyster_src is not None:
         clipped = clip_to_zone(oyster_src, zone)
-        if clipped is not None and len(clipped) >= MIN_FEATURES:
-            # Drop tiny slivers below 10 sq meters before simplifying
-            clipped = clipped[clipped.geometry.area > 0.000001]
+        n_in_bbox = 0 if clipped is None else len(clipped)
+        if n_in_bbox < MIN_FEATURES:
+            print(f"    oyster_beds: none in bbox")
+            clipped = None
+        else:
+            # SLIVERS, IN SQUARE METRES CONVERTED TO THIS ZONE'S DEGREES. See
+            # sliver_threshold_deg2() for the two separate mistakes that lived in this one line,
+            # and for why the floor is 1 m² rather than the 10 the old comment claimed.
+            clipped = clipped[clipped.geometry.area > sliver_threshold_deg2(zone)]
+            dropped = n_in_bbox - len(clipped)
+            if dropped:
+                print(f"    oyster_beds: dropped {dropped:,} sliver(s) under "
+                      f"{MIN_FEATURE_AREA_M2:g} m², {len(clipped):,} left")
+            # A FILTER THAT EMPTIES THE SET MUST NOT WRITE THE SET. The MIN_FEATURES gate runs
+            # BEFORE this filter, so an emptied collection was uploaded as a 0 KB file -- which
+            # reads to every consumer as "there is no oyster in this zone". Two of those went to
+            # R2 on 2026-09-15 and one of them replaced 24,207 real beds.
+            if len(clipped) < MIN_FEATURES:
+                print(f"    oyster_beds: {n_in_bbox:,} in bbox and none survived the sliver "
+                      f"floor — NOTHING UPLOADED, because an empty file reads as 'no oyster here'.")
+                clipped = None
+
+        if clipped is not None:
             # Adaptive simplification — increase tolerance until under MAX_SIZE_KB.
             #
-            # `clipped` IS REPLACED EVERY TIME, not only on the break. It used to be assigned only
+            # `clipped` IS REPLACED EVERY PASS, not only on the break. It used to be assigned only
             # inside the `if`, so a zone that never got under the cap wrote the most-simplified
             # geojson (`gj` from the last pass) and then PRINTED the feature count of the
-            # unsimplified set beside it. Simplify drops empty geometries, so the two genuinely
+            # unsimplified set beside it. simplify() drops empty geometries, so the two genuinely
             # differ -- the line reported a count for a file that was never written.
             for tolerance in (0.0001, 0.0003, 0.0005, 0.001, 0.002, 0.005):
                 simplified = clipped.copy()
@@ -298,10 +353,12 @@ def process_zone(slug, zone, oyster_sc, oyster_nc, oyster_ga, esi_sc, esi_nc, es
                     break
                 print(f"    oyster_beds: {size_kb} KB at tolerance {tolerance}, trying larger...")
             over = ' — STILL OVER THE CAP' if size_kb > MAX_SIZE_KB else ''
-            print(f"    oyster_beds: {len(clipped):,} features ({size_kb} KB, tolerance={tolerance}){over}")
-            results['oyster_beds.geojson'] = gj
-        else:
-            print(f"    oyster_beds: none in bbox")
+            print(f"    oyster_beds: {len(clipped):,} features "
+                  f"({size_kb} KB, tolerance={tolerance}){over}")
+            if len(clipped) >= MIN_FEATURES:
+                results['oyster_beds.geojson'] = gj
+            else:
+                print(f"    oyster_beds: simplification emptied it — NOTHING UPLOADED.")
 
     # ── ESI habitat layers ────────────────────────────────────────────────────
     esi = esi_sc if state == 'SC' else esi_nc if state == 'NC' else esi_ga if state == 'GA' else {}
@@ -311,11 +368,21 @@ def process_zone(slug, zone, oyster_sc, oyster_nc, oyster_ga, esi_sc, esi_nc, es
     for k, v in list(esi.items()):
         if k.upper() == BIOFILE_LAYER:
             biofile = v.drop(columns=[c for c in ('geometry',) if c in v.columns]).to_dict('records')
+    # THE LAYERS WHOSE SILENCE IS MISLEADING. HABITATS and RESOURCE_POLY clipping to nothing is
+    # routine and printing it every zone is noise; BENTHIC and ESIL clipping to nothing means a
+    # FILE IS NOT WRITTEN, and that has to be said. Georgia's BENTHIC loaded 1,208 features on
+    # 2026-09-15 and produced nothing for all four Georgia zones without one line of output --
+    # Georgia's hard bottom is offshore, outside every inshore box, which is a real finding and
+    # was indistinguishable from the layer being absent.
+    SPEAK_WHEN_EMPTY = ('BENTHIC', 'ESIL')
     for layer_name, gdf in esi.items():
         if layer_name.upper() == BIOFILE_LAYER:
             continue
         clipped = clip_to_zone(gdf, zone)
         if clipped is None or len(clipped) < MIN_FEATURES:
+            if layer_name.upper() in SPEAK_WHEN_EMPTY:
+                print(f"    {layer_name}: {len(gdf):,} features loaded for this state and NONE "
+                      f"inside this zone — no file written. Not the same as the layer being absent.")
             continue
 
         layer_upper = layer_name.upper()

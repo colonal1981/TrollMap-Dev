@@ -13,30 +13,34 @@ list of strings out -- precisely so that is possible.
 
     python3 test_layer_value_summary.py
 """
-import ast, os, sys, unittest
+import ast, math, os, sys, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = open(os.path.join(HERE, 'extract_coastal_habitat.py'), encoding='utf-8').read()
 
 # Lift the function by parsing the file, not by importing it.
 _tree = ast.parse(SRC)
-_WANT = ['layer_value_summary', 'rarnum_column', 'rows_for_rarnums', 'benthic_class']
+_WANT = ['layer_value_summary', 'rarnum_column', 'rows_for_rarnums', 'benthic_class',
+         'sliver_threshold_deg2']
 _fns = [n for n in _tree.body if isinstance(n, ast.FunctionDef) and n.name in _WANT]
 assert len(_fns) == len(_WANT), f'missing from extract_coastal_habitat.py: ' \
     f'{set(_WANT) - {n.name for n in _fns}}'
 # benthic_class reads a module-level table, so the assignment is lifted with it — and it has to
 # come FIRST, because the function closes over it at call time and the exec namespace is flat.
+_WANT_TABLES = ('BENTHIC_SUBELEMENT_FILES', 'MIN_FEATURE_AREA_M2')
 _tables = [n for n in _tree.body if isinstance(n, ast.Assign)
-           and any(getattr(t, 'id', None) == 'BENTHIC_SUBELEMENT_FILES' for t in n.targets)]
-assert _tables, 'BENTHIC_SUBELEMENT_FILES is gone from extract_coastal_habitat.py'
+           and any(getattr(t, 'id', None) in _WANT_TABLES for t in n.targets)]
+assert len(_tables) == len(_WANT_TABLES), 'a module-level constant is gone from the script'
 _fns = _tables + _fns
-_ns = {}
+_ns = {'math': math}
 exec(compile(ast.Module(body=_fns, type_ignores=[]), '<lifted>', 'exec'), _ns)
 summary = _ns['layer_value_summary']
 rarnum_column = _ns['rarnum_column']
 rows_for_rarnums = _ns['rows_for_rarnums']
 benthic_class = _ns['benthic_class']
 BENTHIC_SUBELEMENT_FILES = _ns['BENTHIC_SUBELEMENT_FILES']
+sliver_threshold_deg2 = _ns['sliver_threshold_deg2']
+MIN_FEATURE_AREA_M2 = _ns['MIN_FEATURE_AREA_M2']
 
 
 class Summary(unittest.TestCase):
@@ -179,6 +183,61 @@ class BenthicRouting(unittest.TestCase):
         self.assertIsNone(benthic_class({'NAME': 'Oyster Reef'}))   # no SUBELEMENT at all
         self.assertIsNone(benthic_class(None))
         self.assertIsNone(benthic_class({}))
+
+
+class SliverThreshold(unittest.TestCase):
+    """THE CONSTANT THAT EMPTIED EVERY OYSTER LAYER ON THE COAST.
+
+    The filter was `clipped.geometry.area > 0.000001` under a comment reading "Drop tiny slivers
+    below 10 sq meters", and geopandas warned on every zone: "Geometry is in a geographic CRS.
+    Results from 'area' are likely incorrect." The number was in SQUARE DEGREES and the intent was
+    SQUARE METRES -- at this latitude 0.000001 deg² is 10,399 m², two and a half acres, and 1,040x
+    the intended floor.
+
+    The 2026-09-15 run uploaded Charleston with ONE oyster bed where the real layer has 24,207,
+    Winyah Bay and Murrells Inlet with zero, and every upload overwrote R2.
+    """
+
+    CHARLESTON = {'bbox': [32.6, 32.9, -80.1, -79.6]}     # s, n, w, e
+
+    def test_the_floor_is_a_sliver_and_not_a_third_of_the_oyster(self):
+        # Measured on Charleston's 24,207 beds: median 19.8 m², and a 10 m² floor -- the number
+        # the old comment claimed -- drops 31.7% of them. A 1 m² floor drops 1.3%, which is what a
+        # digitising artefact looks like. The repaired comment would still have been wrong.
+        self.assertEqual(MIN_FEATURE_AREA_M2, 1.0)
+
+    def test_it_converts_to_square_degrees_not_the_other_way_round(self):
+        thr = sliver_threshold_deg2(self.CHARLESTON)
+        # 1 m² at 32.75°N is about 9.6e-11 square degrees. (The first draft of this test said
+        # 9.6e-10 and went red by a factor of ten — the same unit slip, one decade smaller, which
+        # is a fair demonstration of why the production constant is derived and not typed.)
+        self.assertLess(thr, 1e-9)
+        self.assertGreater(thr, 1e-11)
+        # And it is nowhere near the constant that caused this.
+        self.assertLess(thr, 0.000001 / 1000)
+
+    def test_a_real_oyster_rake_survives_it(self):
+        thr = sliver_threshold_deg2(self.CHARLESTON)
+        m2_per_deg2 = 111132.0 * 111320.0 * math.cos(math.radians(32.75))
+        for area_m2 in (2.0, 19.8, 30.0, 246.0):        # p50 and p90 of the real layer
+            self.assertGreater(area_m2 / m2_per_deg2, thr, f'{area_m2} m² must survive')
+        # ...and a sub-metre artefact does not.
+        self.assertLess(0.5 / m2_per_deg2, thr)
+
+    def test_the_SAME_area_is_a_different_number_of_degrees_north_and_south(self):
+        # A degree of longitude shrinks with the cosine of latitude, which is exactly why a
+        # threshold typed in degrees cannot mean what its comment says across thirteen zones.
+        north = sliver_threshold_deg2({'bbox': [33.6, 33.8, -79.0, -78.8]})   # Winyah Bay
+        south = sliver_threshold_deg2({'bbox': [30.7, 31.0, -81.5, -81.3]})   # Cumberland
+        self.assertNotEqual(north, south)
+        self.assertGreater(north, south)      # less metres per degree up north -> more degrees
+
+    def test_it_reads_the_bbox_the_way_the_rest_of_the_script_does(self):
+        # zone_bbox_polygon unpacks `s, n, w, e = zone['bbox']`. Reading it as w,s,e,n here would
+        # put Charleston's latitude at -80 and the threshold would be quietly wrong everywhere.
+        flat = sliver_threshold_deg2({'bbox': [0.0, 0.0, -80.0, -79.0]})       # equator
+        chs = sliver_threshold_deg2(self.CHARLESTON)
+        self.assertLess(flat, chs)            # cos(0)=1 -> most metres per degree -> smallest
 
 
 if __name__ == '__main__':
