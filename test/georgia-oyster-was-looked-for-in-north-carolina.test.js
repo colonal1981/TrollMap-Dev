@@ -119,8 +119,26 @@ test('the simplify loop reports the file it actually wrote', () => {
   const brk = blk.indexOf('break');
   assert.ok(assign > -1 && assign < brk,
     'clipped must be replaced on every pass, not only on the one that breaks');
-  // And an overflow is said out loud rather than written silently.
-  assert.match(blk, /STILL OVER THE CAP/);
+  // And an overflow is said out loud rather than written silently — now with the REASON, because
+  // the message used to read as "try a bigger tolerance" and tolerance is not the lever. Measured
+  // on Beaufort: 35,017 KB at 0.0001 down to 33,883 KB at 0.005, a 3% saving across a fifty-fold
+  // increase. The polygons are ~5 vertices each; the size is feature count, and Port Royal Sound
+  // genuinely holds 68,935 oyster rakes.
+  const after = CODE.slice(CODE.indexOf("results['oyster_beds.geojson'] = gj") - 2000,
+                           CODE.indexOf("results['oyster_beds.geojson'] = gj") + 1200);
+  assert.match(after, /OVER THE .* TARGET and uploaded/);
+  assert.match(after, /Simplify cannot help/);
+});
+
+test('real beds are never dropped to hit a size target', () => {
+  // The alternative to an over-cap upload is throwing away oyster to make a file smaller, and a
+  // filter that did exactly that emptied this layer across the whole coast on 2026-09-15. The
+  // only thing allowed to remove a feature is the sliver floor, which is measured in square
+  // metres and named.
+  const i = CODE.indexOf('for tolerance in (0.0001');
+  const blk = CODE.slice(i, CODE.indexOf("results['oyster_beds.geojson'] = gj", i));
+  assert.ok(!/head\(|sample\(|nlargest|sort_values/.test(blk),
+    'the simplify loop must not trim the feature set to fit a byte target');
 });
 
 test('the two copies of the script on the drive agree', () => {

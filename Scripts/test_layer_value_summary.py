@@ -21,13 +21,14 @@ SRC = open(os.path.join(HERE, 'extract_coastal_habitat.py'), encoding='utf-8').r
 # Lift the function by parsing the file, not by importing it.
 _tree = ast.parse(SRC)
 _WANT = ['layer_value_summary', 'rarnum_column', 'rows_for_rarnums', 'benthic_class',
-         'sliver_threshold_deg2']
+         'sliver_threshold_deg2', 'round_coords']
 _fns = [n for n in _tree.body if isinstance(n, ast.FunctionDef) and n.name in _WANT]
 assert len(_fns) == len(_WANT), f'missing from extract_coastal_habitat.py: ' \
     f'{set(_WANT) - {n.name for n in _fns}}'
 # benthic_class reads a module-level table, so the assignment is lifted with it — and it has to
 # come FIRST, because the function closes over it at call time and the exec namespace is flat.
-_WANT_TABLES = ('BENTHIC_SUBELEMENT_FILES', 'MIN_FEATURE_AREA_M2')
+_WANT_TABLES = ('BENTHIC_SUBELEMENT_FILES', 'MIN_FEATURE_AREA_M2', 'COORD_PRECISION',
+                'KEEP_FIELDS_BY_FILE')
 _tables = [n for n in _tree.body if isinstance(n, ast.Assign)
            and any(getattr(t, 'id', None) in _WANT_TABLES for t in n.targets)]
 assert len(_tables) == len(_WANT_TABLES), 'a module-level constant is gone from the script'
@@ -41,6 +42,9 @@ benthic_class = _ns['benthic_class']
 BENTHIC_SUBELEMENT_FILES = _ns['BENTHIC_SUBELEMENT_FILES']
 sliver_threshold_deg2 = _ns['sliver_threshold_deg2']
 MIN_FEATURE_AREA_M2 = _ns['MIN_FEATURE_AREA_M2']
+round_coords = _ns['round_coords']
+COORD_PRECISION = _ns['COORD_PRECISION']
+KEEP_FIELDS_BY_FILE = _ns['KEEP_FIELDS_BY_FILE']
 
 
 class Summary(unittest.TestCase):
@@ -238,6 +242,54 @@ class SliverThreshold(unittest.TestCase):
         flat = sliver_threshold_deg2({'bbox': [0.0, 0.0, -80.0, -79.0]})       # equator
         chs = sliver_threshold_deg2(self.CHARLESTON)
         self.assertLess(flat, chs)            # cos(0)=1 -> most metres per degree -> smallest
+
+
+class Size(unittest.TestCase):
+    """FORTY-FOUR PERCENT OF THE FILE WAS SURVEY BOOKKEEPING AND EIGHTEEN DIGITS OF COORDINATE.
+
+    Measured on Charleston's oyster layer 2026-09-15: 11.6 MB is 5.1 MB of properties and 6.1 MB
+    of geometry. One feature's properties are two survey row ids, a blank string, a zero and three
+    spellings of the polygon's own size. A coordinate arrives as -79.77273655799996 -- eighteen
+    characters to place a point to within a nanometre.
+
+    Together the two cost 54% of the file, on 24,207 features, over R2, to a phone on the water.
+    """
+
+    def test_six_places_is_a_tenth_of_a_metre_and_that_is_enough(self):
+        self.assertEqual(COORD_PRECISION, 6)
+        self.assertEqual(round_coords(-79.77273655799996), -79.772737)
+
+    def test_it_rounds_every_coordinate_however_deep(self):
+        # Polygon rings nest one deeper than a line, MultiPolygon one deeper again. A rounder that
+        # only handled the shallow case would silently leave MultiPolygons full-precision.
+        poly = [[[-79.123456789, 32.987654321], [-79.2, 32.3]]]
+        multi = [poly, poly]
+        self.assertEqual(round_coords(poly), [[[-79.123457, 32.987654], [-79.2, 32.3]]])
+        self.assertEqual(round_coords(multi)[1][0][0], [-79.123457, 32.987654])
+
+    def test_it_leaves_ints_and_anything_that_is_not_a_number_alone(self):
+        self.assertEqual(round_coords(5), 5)
+        self.assertEqual(round_coords('x'), 'x')
+        self.assertEqual(round_coords(None), None)
+
+    def test_the_acreage_is_kept_for_both_spellings(self):
+        # South Carolina calls it calcgeo_ac and Georgia calls it acre. One table serves both
+        # sources, so a three-acre rake and a hundredth-of-an-acre nubbin stay distinguishable.
+        keep = {k.lower() for k in KEEP_FIELDS_BY_FILE['oyster_beds.geojson']}
+        self.assertIn('calcgeo_ac', keep)
+        self.assertIn('acre', keep)
+
+    def test_the_survey_bookkeeping_is_NOT_kept(self):
+        keep = {k.lower() for k in KEEP_FIELDS_BY_FILE['oyster_beds.geojson']}
+        for junk in ('fid', 'objectid', 'photoedit', 'photo_year',
+                     'shape_leng', 'shape_length', 'shape_area'):
+            self.assertNotIn(junk, keep, f'{junk} is survey bookkeeping, not a fact about oyster')
+
+    def test_A_LAYER_NOT_IN_THE_TABLE_KEEPS_EVERYTHING(self):
+        # Stripping by default would silently empty a layer nobody has looked at yet, which is the
+        # failure mode this script produced twice in one day.
+        self.assertIsNone(KEEP_FIELDS_BY_FILE.get('resource_areas.geojson'))
+        self.assertIsNone(KEEP_FIELDS_BY_FILE.get('hard_bottom.geojson'))
 
 
 if __name__ == '__main__':

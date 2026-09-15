@@ -176,24 +176,76 @@ def clip_to_zone(gdf, zone):
         return None
 
 
-def gdf_to_geojson(gdf):
-    """Convert GeoDataFrame to GeoJSON string, keeping only geometry + minimal props."""
+# SIX DECIMAL PLACES IS ELEVEN CENTIMETRES, and the source gives seventeen.
+#
+# Measured on Charleston's oyster layer 2026-09-15: a coordinate arrives as
+# -79.77273655799996, which is 18 characters to place a point to within a nanometre. Rounding to
+# six decimals is 0.11 m at this latitude -- finer than the survey, finer than GPS, and far finer
+# than a kayak needs -- and it makes the geometry 48% smaller.
+COORD_PRECISION = 6
+
+# THE ATTRIBUTES ARE 44% OF THE FILE AND ALMOST NONE OF THEM MEAN ANYTHING HERE.
+#
+# Same measurement: 11.6 MB of Charleston oyster is 5.1 MB of properties and 6.1 MB of geometry,
+# and a single feature's properties read
+#
+#     {"fid":91127,"objectid":91127,"id":"cainhSE_00282","calcgeo_ac":0.02640556,
+#      "photoedit":" ","photo_year":0.0,"shape_leng":50.19540298,
+#      "shape_Length":0.0004965496611210634,"shape_Area":1.0304737675184381e-08}
+#
+# Two survey row ids, a blank string, a zero, and three different spellings of the polygon's own
+# size -- carried on 24,207 features, over R2, to a phone on the water. The acreage is the one
+# field worth having: a three-acre rake and a hundredth-of-an-acre nubbin are different places.
+#
+# A LAYER NOT IN THIS TABLE KEEPS EVERYTHING. Stripping by default would silently empty a layer
+# nobody has looked at yet, which is the failure mode this file has already produced twice today.
+KEEP_FIELDS_BY_FILE = {
+    # SC: calcgeo_ac. GA: acre, county. Both spellings kept so one table serves both sources.
+    'oyster_beds.geojson': ('calcgeo_ac', 'acre', 'county'),
+    # ESI code is what says salt marsh; the rest is shoreline-cleanup vocabulary.
+    'marsh_edges.geojson': ('ESI', 'ENVIR'),
+}
+
+
+def round_coords(obj, nd=COORD_PRECISION):
+    """Round every coordinate in a geometry's nested lists. Pure, and tested."""
+    if isinstance(obj, float):
+        return round(obj, nd)
+    if isinstance(obj, int):
+        return obj
+    if isinstance(obj, (list, tuple)):
+        return [round_coords(x, nd) for x in obj]
+    return obj
+
+
+def gdf_to_geojson(gdf, keep=None):
+    """Convert GeoDataFrame to GeoJSON string.
+
+    `keep` is a tuple of property names to carry, matched case-insensitively; None keeps them all.
+    Coordinates are rounded to COORD_PRECISION -- see the notes above for what both cost.
+    """
+    want = None if keep is None else {str(k).strip().lower() for k in keep}
     features = []
     for _, row in gdf.iterrows():
         geom = row.geometry
         if geom is None or geom.is_empty:
             continue
-        # Keep only string/numeric props, drop nulls
         props = {}
         for col in gdf.columns:
             if col == 'geometry':
                 continue
+            if want is not None and str(col).strip().lower() not in want:
+                continue
             val = row[col]
-            if val is not None and str(val) not in ('nan', 'None', ''):
-                props[col] = str(val) if not isinstance(val, (int, float, bool)) else val
+            # A BLANK IS NOT A VALUE. `photoedit` is a single space on every SC row and
+            # `photo_year` is 0.0 -- both survive a null check and neither says anything.
+            if val is None or str(val).strip() in ('nan', 'None', ''):
+                continue
+            props[col] = str(val) if not isinstance(val, (int, float, bool)) else val
+        gj = geom.__geo_interface__
         features.append({
             'type': 'Feature',
-            'geometry': geom.__geo_interface__,
+            'geometry': {**gj, 'coordinates': round_coords(gj.get('coordinates'))},
             'properties': props,
         })
     return json.dumps({'type': 'FeatureCollection', 'features': features}, separators=(',', ':'))
@@ -346,15 +398,29 @@ def process_zone(slug, zone, oyster_sc, oyster_nc, oyster_ga, esi_sc, esi_nc, es
                 simplified = clipped.copy()
                 simplified['geometry'] = simplified.geometry.simplify(tolerance, preserve_topology=True)
                 simplified = simplified[~simplified.geometry.is_empty]
-                gj = gdf_to_geojson(simplified)
+                gj = gdf_to_geojson(simplified, KEEP_FIELDS_BY_FILE.get('oyster_beds.geojson'))
                 size_kb = len(gj.encode()) // 1024
                 clipped = simplified
                 if size_kb <= MAX_SIZE_KB:
                     break
                 print(f"    oyster_beds: {size_kb} KB at tolerance {tolerance}, trying larger...")
-            over = ' — STILL OVER THE CAP' if size_kb > MAX_SIZE_KB else ''
             print(f"    oyster_beds: {len(clipped):,} features "
-                  f"({size_kb} KB, tolerance={tolerance}){over}")
+                  f"({size_kb} KB, tolerance={tolerance})")
+            if size_kb > MAX_SIZE_KB:
+                # SIMPLIFY CANNOT FIX THIS AND TUNING THE TOLERANCE IS WASTED EFFORT.
+                #
+                # Measured on Beaufort 2026-09-15: 35,017 KB at tolerance 0.0001 down to 33,883 KB
+                # at 0.005 -- a 3% saving across a FIFTY-FOLD increase. These polygons are already
+                # about five vertices each; you cannot simplify a pentagon. The size here is
+                # FEATURE COUNT, and Port Royal Sound genuinely has 68,935 oyster rakes in it.
+                #
+                # It is left over the cap ON PURPOSE. The alternative is dropping real beds to hit
+                # a round number, and a filter that threw away real oyster to make a file smaller
+                # is exactly what emptied this layer across the whole coast earlier today. The
+                # layer is fetched once, on a button press, and cached.
+                print(f"    oyster_beds: OVER THE {MAX_SIZE_KB // 1024} MB TARGET and uploaded "
+                      f"anyway — {len(clipped):,} real beds. Simplify cannot help: these polygons "
+                      f"are ~5 vertices each, so the size is feature count, not detail.")
             if len(clipped) >= MIN_FEATURES:
                 results['oyster_beds.geojson'] = gj
             else:
@@ -470,7 +536,7 @@ def process_zone(slug, zone, oyster_sc, oyster_nc, oyster_ga, esi_sc, esi_nc, es
                         simplified = marsh.copy()
                         simplified['geometry'] = simplified.geometry.simplify(tolerance, preserve_topology=True)
                         simplified = simplified[~simplified.geometry.is_empty]
-                        gj = gdf_to_geojson(simplified)
+                        gj = gdf_to_geojson(simplified, KEEP_FIELDS_BY_FILE.get('marsh_edges.geojson'))
                         size_kb = len(gj.encode()) // 1024
                         if size_kb <= MAX_SIZE_KB:
                             marsh = simplified
