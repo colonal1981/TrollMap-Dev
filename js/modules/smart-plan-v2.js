@@ -57,6 +57,8 @@ export const CANDIDATE_LIMIT = 12;
  * @param {function} [o.transit]    a synchronous transit function, for tests. Wins over routeWater.
  * @param {object}   [o.waterState] fetchWaterState() output — {featureType, river, tidal}
  * @param {string[]} [o.lightFacts] the profile's light-tagged sourced facts, from lightFactsFrom()
+ * @param {object}   [o.inshoreSeason] inshoreSeasonFor() output — the intercept survey's answer
+ *                                 for this fish, this state, this two-month wave. Coastal only.
  */
 export async function buildSmartPlanV2(o) {
   const base = o.chartpackBase || '';
@@ -165,6 +167,11 @@ export async function buildSmartPlanV2(o) {
     // one off the lure's name -- see depthNote() in plan-prompt.js.
     lureByName: o.lureByName,
     usableAh: o.usableAh, intel, thermoclineNorm,
+    // WHEN THIS FISH IS CAUGHT INSHORE IN THIS STATE, from NOAA's intercept survey. Straight
+    // through -- it needs no pack and no profile, only a state, a species and the date, all of
+    // which the caller already resolved. Null on every inland water, which is the prompt that
+    // was there before.
+    inshoreSeason: o.inshoreSeason || null,
     // THE ONE MEASURED NUMBER THE BAIT GATE STANDS ON. See the gate in plan-prompt.js: the box
     // offered to the model is filtered to what can physically reach the deepest oxygenated water,
     // and this is that depth. Null until somebody casts the water, and then the gate goes silent

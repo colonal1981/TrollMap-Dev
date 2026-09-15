@@ -160,6 +160,24 @@ describe('the wiring actually hands it over', () => {
     expect(loads.length).toBe(1);
   });
 
+  it('AND PICK WATER HANDS IT OVER TOO — two planners, one legality check', () => {
+    // The same defect had the same shape on the other tab: plan-water-ui.js called
+    // checkPlanLegality() and loaded the profile fourteen lines later. A closure that blocks a
+    // Smart Plan day and not a Pick Water day is worse than one that blocks neither, because now
+    // there is a route to the water that does not ask.
+    const pw = src('js/modules/plan-water-ui.js');
+    expect(pw).toMatch(/checkPlanLegality\([^)]*\{\s*profile:\s*researched\s*\}/);
+    const load = pw.indexOf('const researched = await loadResearchedProfile(');
+    const check = pw.indexOf('const legality = checkPlanLegality(');
+    expect(load).toBeGreaterThan(-1);
+    expect(check).toBeGreaterThan(load);
+  });
+
+  it('...and Pick Water still loads that profile exactly once', () => {
+    const pw = src('js/modules/plan-water-ui.js');
+    expect((pw.match(/await loadResearchedProfile\(/g) || []).length).toBe(1);
+  });
+
   it('the warnings are merged BEFORE anything reads r.problems', () => {
     // They were merged below planToTimeline(), which had already snapshotted the list — so the
     // no-plan branch, the bench JSON and the bench draw all got a list with none of the law in

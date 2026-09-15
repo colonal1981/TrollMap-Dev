@@ -1,0 +1,409 @@
+{
+ "note": "Personal use only, not for distribution or resale; not for navigation.",
+ "generatedBy": "build_mrip_inshore.py",
+ "generated": "2026-09-03T17:55:48+00:00",
+ "source": "NOAA MRIP Access Point Angler Intercept Survey",
+ "years": [
+  "2015",
+  "2016",
+  "2017",
+  "2018",
+  "2019",
+  "2020",
+  "2021",
+  "2022",
+  "2023",
+  "2024",
+  "2025"
+ ],
+ "areaCode": "5",
+ "areaMeaning": "inland waters, per the survey's own AREA_X field",
+ "rule": "a species is on the roster when the survey intercepted it inland AND the state book gives it a limit or a season",
+ "minInterceptsForBycatch": 50,
+ "waves": {
+  "1": "Jan-Feb",
+  "2": "Mar-Apr",
+  "3": "May-Jun",
+  "4": "Jul-Aug",
+  "5": "Sep-Oct",
+  "6": "Nov-Dec"
+ },
+ "states": {
+  "SC": {
+   "roster": [
+    "RED DRUM",
+    "SPOTTED SEATROUT",
+    "BLACK DRUM",
+    "SOUTHERN FLOUNDER",
+    "SHEEPSHEAD"
+   ],
+   "species": {
+    "RED DRUM": {
+     "intercepts": 7082,
+     "byWave": {
+      "1": {
+       "sampled": false
+      },
+      "2": {
+       "sampled": true,
+       "intercepts": 974
+      },
+      "3": {
+       "sampled": true,
+       "intercepts": 1237
+      },
+      "4": {
+       "sampled": true,
+       "intercepts": 1368
+      },
+      "5": {
+       "sampled": true,
+       "intercepts": 2133
+      },
+      "6": {
+       "sampled": true,
+       "intercepts": 1370
+      }
+     },
+     "lengthIn": {
+      "n": 3303,
+      "minIn": 10.0,
+      "medianIn": 17.0,
+      "maxIn": 37.0
+     }
+    },
+    "SPOTTED SEATROUT": {
+     "intercepts": 4348,
+     "byWave": {
+      "1": {
+       "sampled": false
+      },
+      "2": {
+       "sampled": true,
+       "intercepts": 507
+      },
+      "3": {
+       "sampled": true,
+       "intercepts": 781
+      },
+      "4": {
+       "sampled": true,
+       "intercepts": 715
+      },
+      "5": {
+       "sampled": true,
+       "intercepts": 1042
+      },
+      "6": {
+       "sampled": true,
+       "intercepts": 1303
+      }
+     },
+     "lengthIn": {
+      "n": 3490,
+      "minIn": 10.0,
+      "medianIn": 15.0,
+      "maxIn": 25.0
+     }
+    },
+    "BLACK DRUM": {
+     "intercepts": 1801,
+     "byWave": {
+      "1": {
+       "sampled": false
+      },
+      "2": {
+       "sampled": true,
+       "intercepts": 286
+      },
+      "3": {
+       "sampled": true,
+       "intercepts": 368
+      },
+      "4": {
+       "sampled": true,
+       "intercepts": 289
+      },
+      "5": {
+       "sampled": true,
+       "intercepts": 451
+      },
+      "6": {
+       "sampled": true,
+       "intercepts": 407
+      }
+     },
+     "lengthIn": {
+      "n": 1688,
+      "minIn": 8.0,
+      "medianIn": 16.0,
+      "maxIn": 26.0
+     }
+    },
+    "SOUTHERN FLOUNDER": {
+     "intercepts": 1183,
+     "byWave": {
+      "1": {
+       "sampled": false
+      },
+      "2": {
+       "sampled": true,
+       "intercepts": 103
+      },
+      "3": {
+       "sampled": true,
+       "intercepts": 533
+      },
+      "4": {
+       "sampled": true,
+       "intercepts": 253
+      },
+      "5": {
+       "sampled": true,
+       "intercepts": 226
+      },
+      "6": {
+       "sampled": true,
+       "intercepts": 68
+      }
+     },
+     "lengthIn": {
+      "n": 2131,
+      "minIn": 9.0,
+      "medianIn": 16.0,
+      "maxIn": 31.0
+     }
+    },
+    "SHEEPSHEAD": {
+     "intercepts": 1028,
+     "byWave": {
+      "1": {
+       "sampled": false
+      },
+      "2": {
+       "sampled": true,
+       "intercepts": 228
+      },
+      "3": {
+       "sampled": true,
+       "intercepts": 185
+      },
+      "4": {
+       "sampled": true,
+       "intercepts": 145
+      },
+      "5": {
+       "sampled": true,
+       "intercepts": 202
+      },
+      "6": {
+       "sampled": true,
+       "intercepts": 268
+      }
+     },
+     "lengthIn": {
+      "n": 1550,
+      "minIn": 10.0,
+      "medianIn": 14.0,
+      "maxIn": 23.0
+     }
+    }
+   },
+   "wavesSampled": [
+    "2",
+    "3",
+    "4",
+    "5",
+    "6"
+   ]
+  },
+  "GA": {
+   "roster": [
+    "SPOTTED SEATROUT",
+    "RED DRUM",
+    "BLACK DRUM",
+    "SOUTHERN FLOUNDER",
+    "SHEEPSHEAD"
+   ],
+   "species": {
+    "SPOTTED SEATROUT": {
+     "intercepts": 6766,
+     "byWave": {
+      "1": {
+       "sampled": false
+      },
+      "2": {
+       "sampled": true,
+       "intercepts": 832
+      },
+      "3": {
+       "sampled": true,
+       "intercepts": 1170
+      },
+      "4": {
+       "sampled": true,
+       "intercepts": 1293
+      },
+      "5": {
+       "sampled": true,
+       "intercepts": 1844
+      },
+      "6": {
+       "sampled": true,
+       "intercepts": 1627
+      }
+     },
+     "lengthIn": {
+      "n": 9351,
+      "minIn": 10.0,
+      "medianIn": 14.0,
+      "maxIn": 24.0
+     }
+    },
+    "RED DRUM": {
+     "intercepts": 4866,
+     "byWave": {
+      "1": {
+       "sampled": false
+      },
+      "2": {
+       "sampled": true,
+       "intercepts": 426
+      },
+      "3": {
+       "sampled": true,
+       "intercepts": 569
+      },
+      "4": {
+       "sampled": true,
+       "intercepts": 1188
+      },
+      "5": {
+       "sampled": true,
+       "intercepts": 1721
+      },
+      "6": {
+       "sampled": true,
+       "intercepts": 962
+      }
+     },
+     "lengthIn": {
+      "n": 6408,
+      "minIn": 9.0,
+      "medianIn": 15.0,
+      "maxIn": 38.0
+     }
+    },
+    "BLACK DRUM": {
+     "intercepts": 1165,
+     "byWave": {
+      "1": {
+       "sampled": false
+      },
+      "2": {
+       "sampled": true,
+       "intercepts": 152
+      },
+      "3": {
+       "sampled": true,
+       "intercepts": 211
+      },
+      "4": {
+       "sampled": true,
+       "intercepts": 232
+      },
+      "5": {
+       "sampled": true,
+       "intercepts": 335
+      },
+      "6": {
+       "sampled": true,
+       "intercepts": 235
+      }
+     },
+     "lengthIn": {
+      "n": 960,
+      "minIn": 9.0,
+      "medianIn": 15.0,
+      "maxIn": 37.0
+     }
+    },
+    "SOUTHERN FLOUNDER": {
+     "intercepts": 1046,
+     "byWave": {
+      "1": {
+       "sampled": false
+      },
+      "2": {
+       "sampled": true,
+       "intercepts": 129
+      },
+      "3": {
+       "sampled": true,
+       "intercepts": 282
+      },
+      "4": {
+       "sampled": true,
+       "intercepts": 301
+      },
+      "5": {
+       "sampled": true,
+       "intercepts": 234
+      },
+      "6": {
+       "sampled": true,
+       "intercepts": 100
+      }
+     },
+     "lengthIn": {
+      "n": 1570,
+      "minIn": 9.0,
+      "medianIn": 14.0,
+      "maxIn": 26.0
+     }
+    },
+    "SHEEPSHEAD": {
+     "intercepts": 958,
+     "byWave": {
+      "1": {
+       "sampled": false
+      },
+      "2": {
+       "sampled": true,
+       "intercepts": 152
+      },
+      "3": {
+       "sampled": true,
+       "intercepts": 146
+      },
+      "4": {
+       "sampled": true,
+       "intercepts": 159
+      },
+      "5": {
+       "sampled": true,
+       "intercepts": 232
+      },
+      "6": {
+       "sampled": true,
+       "intercepts": 269
+      }
+     },
+     "lengthIn": {
+      "n": 2021,
+      "minIn": 6.0,
+      "medianIn": 12.0,
+      "maxIn": 22.0
+     }
+    }
+   },
+   "wavesSampled": [
+    "2",
+    "3",
+    "4",
+    "5",
+    "6"
+   ]
+  }
+ }
+}

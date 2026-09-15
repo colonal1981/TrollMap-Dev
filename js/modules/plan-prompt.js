@@ -397,6 +397,10 @@ export function riverPromptBlock(ws) {
  *                                   gauge or a generating dam carries `river` too, which is why
  *                                   riverPromptBlock() reads `featureType` and not the mere
  *                                   presence of the object. Absent is the same prompt as before.
+ * @param {object}   [o.inshoreSeason] inshoreSeasonFor() output — what NOAA's inshore intercept
+ *                                   survey says about this fish in this STATE in this two-month
+ *                                   wave. Coastal only, and null on every inland water, which is
+ *                                   the same prompt as before.
  */
 // WHERE THE WATER IS TODAY, AND WHAT THAT DOES TO EVERY DEPTH ON THE CHART.
 //
@@ -482,6 +486,73 @@ And a thermocline is a boundary, not a depth to fish. The water beneath it is cu
 surface and loses oxygen as summer runs; the fishable band is above it. Whatever the sounder shows
 on the day beats every word of this.
 `;
+}
+
+/**
+ * WHAT THE INTERCEPT SURVEY SAYS ABOUT THIS FISH THIS MONTH.
+ *
+ * The coastal side has no research profile the way a reservoir does, so until now the only thing
+ * the prompt knew about a redfish in September was its size and creel limit. This is the
+ * measured half: eleven years of NOAA's inshore intercepts, per state, per two-month wave.
+ *
+ * IT IS A STATE FACT AND THE BLOCK SAYS SO IN ITS OWN HEADING, for the reason Ryan gave
+ * thermoclineNormBlock above — a survey is not a finding about this creek, and a figure that can
+ * be lifted out of the block without the words around it will be quoted back as one.
+ *
+ * INTERCEPTS ARE ANGLERS, NOT FISH, and the distinction is not pedantry: the number rises with
+ * how many people fished as well as with how many fish were there. So it is given as a SHARE of
+ * this fish's own year and never as an abundance, and the block says which.
+ *
+ * NOT SAMPLED IS NOT ZERO. When the survey does not work this wave in this state the block says
+ * exactly that and gives no number, because "no data for February" and "nothing caught in
+ * February" are opposite sentences and the second one cancels a trip.
+ */
+function inshoreSeasonBlock(s) {
+  if (!s) return '';
+  const L = [];
+  L.push(`\nWHAT IS CAUGHT INSHORE IN ${s.state} IN ${String(s.waveLabel || '').toUpperCase()}`);
+  L.push(`${s.source}, ${s.years.length ? `${s.years[0]}–${s.years[s.years.length - 1]}` : 'multi-year'}, `
+    + `inland waters only. STATEWIDE, not this creek — it says what the season does, not what is `
+    + `in front of the ramp.`);
+
+  if (!s.sampled) {
+    L.push(`The survey DOES NOT WORK ${s.waveLabel} in ${s.state}, so there is no intercept count `
+      + `for ${s.surveyName} in this wave. THAT IS A HOLE IN THE SURVEY, NOT AN ABSENCE OF FISH — `
+      + `do not read it as a slow season and do not talk the day down over it.`);
+  } else {
+    const share = s.sharePct != null ? `${s.sharePct}% of its year` : 'an unranked share of its year';
+    const ord = ['', '1st', '2nd', '3rd', '4th', '5th', '6th'][s.rank] || `${s.rank}th`;
+    const place = s.rank === 1 ? 'the BUSIEST of the year'
+      : s.rank ? `${ord} busiest of the ${s.sampledWaveCount} waves the survey works here` : null;
+    L.push(`${s.surveyName}: ${s.waveIntercepts.toLocaleString()} intercepts in ${s.waveLabel}, `
+      + `${share}${place ? ` — ${place}` : ''}.`);
+    if (s.best && s.rank !== 1) {
+      L.push(`Its strongest wave is ${s.best.label} (${s.best.intercepts.toLocaleString()}). `
+        + `This is a timing fact, not a forecast for the day.`);
+    }
+    L.push('An intercept is an ANGLER TRIP that produced this fish, so the count carries how many '
+      + 'people fished as well as how many fish were there. Use it for WHEN, never as abundance.');
+  }
+
+  const li = s.lengthIn;
+  if (li && Number.isFinite(Number(li.medianIn))) {
+    L.push(`Measured lengths, all waves: median ${li.medianIn}"`
+      + (Number.isFinite(Number(li.minIn)) && Number.isFinite(Number(li.maxIn))
+          ? `, range ${li.minIn}–${li.maxIn}"` : '')
+      + (Number.isFinite(Number(li.n)) ? ` across ${Number(li.n).toLocaleString()} measured fish` : '')
+      + '. Size the presentation to THAT fish, not to the top of the range — and check the median '
+      + 'against the slot limit above, because a median under the slot means most of what is '
+      + 'landed goes back.');
+  }
+
+  // NOT TWICE. When THIS wave is the unsampled one the paragraph above already said so in
+  // stronger words, and repeating it underneath reads as two different holes.
+  const others = (s.unsampledWaves || []).filter((w) => s.sampled || w !== s.waveLabel);
+  if (others.length) {
+    L.push(`The survey does not work ${others.join(', ')} in ${s.state} at all. Those `
+      + 'months are unmeasured here, not empty.');
+  }
+  return L.join('\n') + '\n';
 }
 
 /**
@@ -1231,7 +1302,7 @@ wind direction: is it a dangerous windward launch?${o.hazards && o.hazards.lengt
     + `from the research is written advice with no position at all: say the ones that bear on `
     + `today out loud, and never imply an unpositioned one is marked on the chart.`
   : ''}
-${coastalPromptBlock(o.waterState)}${riverPromptBlock(o.waterState)}${poolPromptBlock(o.waterState)}${conditionsPromptBlock(o.waterState)}${lightPromptBlock(o.waterState, o.weatherByHour, o.launchTime, o.returnTime, o.lightFacts)}${timeBudgetBlock(o.windowMin, o.launchTime, o.returnTime, o.dayMin)}${thermoclineNormBlock(o.thermoclineNorm)}
+${coastalPromptBlock(o.waterState)}${riverPromptBlock(o.waterState)}${poolPromptBlock(o.waterState)}${conditionsPromptBlock(o.waterState)}${lightPromptBlock(o.waterState, o.weatherByHour, o.launchTime, o.returnTime, o.lightFacts)}${timeBudgetBlock(o.windowMin, o.launchTime, o.returnTime, o.dayMin)}${thermoclineNormBlock(o.thermoclineNorm)}${inshoreSeasonBlock(o.inshoreSeason)}
 WHAT IS ALREADY KNOWN
 ${o.intel || 'NOTHING. No researched profile exists for this water, so everything else here rests '
   + 'on the chart, the gauges and general species knowledge. Say so in the plan rather than '

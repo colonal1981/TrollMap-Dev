@@ -44,8 +44,9 @@ import { packFetcher } from './smart-plan-v2.js';
 // THE_PROFILE_BECAME_A_CACHE_AND_NOBODY_MOVED_THE_READS_2026-09-01.md.
 import { packDerivedFacts } from '../utils/pack-facts.js';
 import { checkPlanLegality, ensureRegulations, fetchForecast,
-         fetchWaterState, fetchClarityAtRamp } from './plan-preflight.js';
+         fetchWaterState, fetchClarityAtRamp , regulationStateFor } from './plan-preflight.js';
 import { primeFishAdvisories } from '../data/fish-advisories.js';
+import { primeInshoreSeason, inshoreSeasonFor } from '../data/inshore-season.js';
 import { depthSampler, shorelineIndex, waterMask } from './plan-water-index.js';
 import { offerWater, dayCost, priceSpots, searchOrder, optionality, reasons, TROLL_MPH, TRANSIT_MIN_DEPTH_FT, SPOT_KINDS } from './plan-water.js';
 import { joinedPiece } from './plan-pieces.js';
@@ -778,7 +779,20 @@ export async function findWater() {
   say('Checking the regulations…');
   await ensureRegulations(inp.lakeName, { worker: CF_WORKER_URL });
   await primeFishAdvisories({ worker: CF_WORKER_URL });
-  const legality = checkPlanLegality(inp.lakeName, species, date);
+  // AND WHAT IS CAUGHT INSHORE IN THIS STATE THIS WAVE. Same reason again: the prompt build is
+  // synchronous and this is a registry fetch. ONE PROMPT, TWO PLANNERS -- Smart Plan primes it
+  // in the same place, and a field filled by only one of the two is the bug
+  // one-prompt-two-planners.test.js exists to catch.
+  await primeInshoreSeason({ worker: CF_WORKER_URL });
+
+  // THE PROFILE BEFORE THE LAW, because checkPlanLegality() reads its extracted closed seasons
+  // and cannot await for them. The long note on why Pick Water loads a profile at all sits below,
+  // where it is used for the depth band; it is loaded HERE so both readers get it. Smart Plan
+  // made the same move for the same reason.
+  say('Reading the research…');
+  const researched = await loadResearchedProfile(inp.lakeName);
+
+  const legality = checkPlanLegality(inp.lakeName, species, date, { profile: researched });
   if (!legality.legal) {
     return say(`${species} not legal here today — `
              + `${legality.reason || 'closed season or closed water'}`, true);
@@ -796,8 +810,6 @@ export async function findWater() {
   // Absence is still normal and still silent — `depthBandFor` falls back exactly as before, and
   // says which source it used in `basis`. What changes is that a researched lake now gets its
   // researched answer here as well as there.
-  say('Reading the research…');
-  const researched = await loadResearchedProfile(inp.lakeName);
   const depth = depthBandFor(species, inp.lakeName, getSeason(date, inp.waterTempF), inp.waterTempF, researched);
 
   say('Reading the pack…');
@@ -967,6 +979,11 @@ export async function findWater() {
     // carried across: `researched` exists in findWater() and does not exist in buildFromPicked(),
     // which writes the prompt. Selected here, where the profile is.
     lightFacts: lightFactsFrom(researched),
+    // WHAT IS CAUGHT INSHORE IN THIS STATE IN THIS WAVE, carried across the same gap: `inp` and
+    // `date` exist in findWater() and not in buildFromPicked(), which writes the prompt. The
+    // state comes off regulationStateFor(), which is the SAME derivation the legality check above
+    // used -- two readers of "which state is this water in" is how they drift.
+    inshoreSeason: inshoreSeasonFor(regulationStateFor(inp.lakeName), species, date),
     launchTime: inp.launchTime, returnTime: inp.returnTime,
     usableAh: usableAhFrom(inp.motor), band: depth ? depth.band : null,
     holding: depth ? depth.holding : null, lake: inp.lakeName,
@@ -1209,6 +1226,9 @@ export async function buildFromPicked() {
         // AND THE SEVENTH, for the same block. The hourly sky says what the light IS; this says
         // what anybody has published about fishing it, with the source on each line.
         lightFacts: T.lightFacts || null,
+        // AND THE EIGHTH. Resolved in findWater() where the state and the date are; forwarded
+        // here for the same reason every field above it is.
+        inshoreSeason: T.inshoreSeason || null,
         snapEligible: snapEligibleFrom(castable),
         // `castable` is `trollable || castable` -- the whole bag. Which half may go behind the
         // boat has to be said, or a cast-only soft plastic looks like a crankbait to the model.

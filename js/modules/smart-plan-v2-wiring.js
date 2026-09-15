@@ -23,8 +23,9 @@ import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
 import { TRANSIT_MIN_DEPTH_FT } from './plan-water.js';
 import { solunarFor } from '../utils/solunar.js';
 import { checkPlanLegality, ensureRegulations, fetchForecast, fetchWaterState,
-         fetchClarityAtRamp } from './plan-preflight.js';
+         fetchClarityAtRamp, regulationStateFor } from './plan-preflight.js';
 import { primeFishAdvisories } from '../data/fish-advisories.js';
+import { primeInshoreSeason, inshoreSeasonFor } from '../data/inshore-season.js';
 import { buildSmartPlanV2, packFetcher, modelAsker, waterRouter } from './smart-plan-v2.js';
 import { planToTimeline, installTimeline } from './plan-to-timeline.js';
 import { renderSmartPlanUI, syncSpread } from './smart-plan-ui.js';
@@ -130,6 +131,10 @@ export async function runSmartPlanV2(opts = {}) {
   // it prints under. It never throws -- a water with no advisory and no network look the same to
   // the caller, and both mean the section does not appear.
   await primeFishAdvisories({ worker: CF_WORKER_URL });
+  // AND WHAT IS CAUGHT INSHORE IN THIS STATE THIS WAVE, warmed here for the same reason: the
+  // prompt build is synchronous and this is a registry fetch. Never throws; a cold table is a
+  // prompt with no seasonality section, which is the prompt that was there before.
+  await primeInshoreSeason({ worker: CF_WORKER_URL });
 
   // THE RESEARCH PROFILE IS THE POINT OF THE RESEARCH PIPELINE. The first version of this file
   // ignored it entirely and used the four-lake built-in table — worse than v1, which at least put
@@ -293,6 +298,11 @@ export async function runSmartPlanV2(opts = {}) {
       // it assembles the prompt -- a promise here would reach researchIntel() as an object.
       // The estimate that runs ONLY where no cast answered -- see thermoclineNormFor().
       thermoclineNormFor: (pf) => thermoclineNormFor(researched, Date.now(), pf),
+      // WHAT IS CAUGHT INSHORE IN THIS STATE IN THIS WAVE. Resolved here because this is where
+      // the state is -- regulationStateFor() is the SAME derivation the legality check used
+      // twenty lines above, and two readers of "which state is this water in" is how they drift.
+      // Inland waters resolve a state and then find no coastal roster, so this is null there.
+      inshoreSeason: inshoreSeasonFor(regulationStateFor(inp.lakeName), species, date),
       // THE SAME DOOR AGAIN, for the same reason: the profile is here and the pack is not, and a
       // registry limnology record may beat the profile's copy. One number, read once, used by the
       // gate that decides which baits the model is even shown.
