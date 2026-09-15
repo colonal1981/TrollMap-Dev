@@ -20,15 +20,23 @@ SRC = open(os.path.join(HERE, 'extract_coastal_habitat.py'), encoding='utf-8').r
 
 # Lift the function by parsing the file, not by importing it.
 _tree = ast.parse(SRC)
-_WANT = ['layer_value_summary', 'rarnum_column', 'rows_for_rarnums']
+_WANT = ['layer_value_summary', 'rarnum_column', 'rows_for_rarnums', 'benthic_class']
 _fns = [n for n in _tree.body if isinstance(n, ast.FunctionDef) and n.name in _WANT]
 assert len(_fns) == len(_WANT), f'missing from extract_coastal_habitat.py: ' \
     f'{set(_WANT) - {n.name for n in _fns}}'
+# benthic_class reads a module-level table, so the assignment is lifted with it — and it has to
+# come FIRST, because the function closes over it at call time and the exec namespace is flat.
+_tables = [n for n in _tree.body if isinstance(n, ast.Assign)
+           and any(getattr(t, 'id', None) == 'BENTHIC_SUBELEMENT_FILES' for t in n.targets)]
+assert _tables, 'BENTHIC_SUBELEMENT_FILES is gone from extract_coastal_habitat.py'
+_fns = _tables + _fns
 _ns = {}
 exec(compile(ast.Module(body=_fns, type_ignores=[]), '<lifted>', 'exec'), _ns)
 summary = _ns['layer_value_summary']
 rarnum_column = _ns['rarnum_column']
 rows_for_rarnums = _ns['rows_for_rarnums']
+benthic_class = _ns['benthic_class']
+BENTHIC_SUBELEMENT_FILES = _ns['BENTHIC_SUBELEMENT_FILES']
 
 
 class Summary(unittest.TestCase):
@@ -123,6 +131,54 @@ class RarnumJoin(unittest.TestCase):
     def test_a_null_key_in_BIOFILE_is_skipped_not_matched(self):
         bio = [{'RARNUM': None, 'NAME': 'unset'}, {'RARNUM': 7, 'NAME': 'real'}]
         self.assertEqual([h['NAME'] for h in rows_for_rarnums(bio, [7])], ['real'])
+
+
+class BenthicRouting(unittest.TestCase):
+    """NEITHER BENTHIC LAYER CONTAINS ANY OYSTER, and both were being written to oyster_beds.geojson.
+
+    Measured on the drive 2026-09-15 by resolving every RARNUM through BIOFILE. Georgia: 1,208
+    polygons, two keys, SUBELEMENT `hardbottom` for both, NAME "Hardbottom community". North
+    Carolina: 9,750 polygons, five keys, four of them SUBELEMENT `sav` -- Loose watermilfoil and
+    submerged aquatic vegetation -- and one `hardbottom`, "Rock reef".
+
+    coastal-layers.js draws oyster_beds.geojson with the tooltip "Oyster bed -- redfish on moving
+    water". Every NC and GA zone would have shown milfoil as oyster rakes, and since the habitat
+    matrix landed the plan would have scored it as oyster too -- 2.0 to 3.5 for every fish in the
+    inshore roster. Charleston escaped only because SC has no BENTHIC layer.
+    """
+
+    def test_oyster_is_not_one_of_the_destinations(self):
+        # The claim in one line. Nothing BENTHIC carries may land in an oyster file.
+        self.assertNotIn('oyster_beds.geojson', BENTHIC_SUBELEMENT_FILES.values())
+
+    def test_georgias_hardbottom_goes_to_hard_bottom(self):
+        self.assertEqual(benthic_class({'SUBELEMENT': 'hardbottom',
+                                        'NAME': 'Hardbottom community'}), 'hard_bottom.geojson')
+
+    def test_north_carolinas_sav_goes_to_sav(self):
+        self.assertEqual(benthic_class({'SUBELEMENT': 'sav',
+                                        'NAME': 'Loose watermilfoil'}), 'sav.geojson')
+        self.assertEqual(benthic_class({'SUBELEMENT': 'sav',
+                                        'NAME': 'Submerged aquatic vegetation'}), 'sav.geojson')
+
+    def test_the_subelement_decides_it_not_the_name(self):
+        # NC's single hardbottom record is NAME "Rock reef", which contains neither "hard" nor
+        # "bottom". A name test would have filed a rock reef as unknown.
+        self.assertEqual(benthic_class({'SUBELEMENT': 'hardbottom',
+                                        'NAME': 'Rock reef'}), 'hard_bottom.geojson')
+
+    def test_case_and_padding_do_not_change_the_answer(self):
+        self.assertEqual(benthic_class({'subelement': ' HardBottom '}), 'hard_bottom.geojson')
+        self.assertEqual(benthic_class({' SUBELEMENT ': 'SAV'}), 'sav.geojson')
+
+    def test_AN_UNKNOWN_SUBELEMENT_IS_None_NOT_A_PLAUSIBLE_GUESS(self):
+        # The whole defect in one assertion. A subelement nobody has looked at must not be filed
+        # somewhere reasonable-looking; that is how milfoil became oyster.
+        self.assertIsNone(benthic_class({'SUBELEMENT': 'coral'}))
+        self.assertIsNone(benthic_class({'SUBELEMENT': ''}))
+        self.assertIsNone(benthic_class({'NAME': 'Oyster Reef'}))   # no SUBELEMENT at all
+        self.assertIsNone(benthic_class(None))
+        self.assertIsNone(benthic_class({}))
 
 
 if __name__ == '__main__':

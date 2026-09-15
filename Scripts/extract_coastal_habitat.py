@@ -86,6 +86,11 @@ OYSTER_SOURCE_BY_STATE = {
 # RESOURCE_POLY = managed resource areas
 ESI_HABITAT_LAYERS = ['HABITATS', 'ESIL', 'BENTHIC', 'RESOURCE_POLY']
 
+# NOT A HABITAT LAYER -- a TABLE, and the only place an ESI geodatabase says what any of its
+# polygons are. Loaded beside the others and pulled out of the dict before the zone loop,
+# because it has no geometry to clip to a bbox.
+BIOFILE_LAYER = 'BIOFILE'
+
 # Within HABITATS, ESI codes for marsh and SAV
 # ESI codes: 10=salt marsh, 9=sheltered rocky shores, 8=sheltered scarps,
 # 7=exposed tidal flats, 6=gravel beaches, 5=mixed sand/gravel,
@@ -286,7 +291,15 @@ def process_zone(slug, zone, oyster_sc, oyster_nc, esi_sc, esi_nc, esi_ga,
 
     # ── ESI habitat layers ────────────────────────────────────────────────────
     esi = esi_sc if state == 'SC' else esi_nc if state == 'NC' else esi_ga if state == 'GA' else {}
+    # BIOFILE is a table, not a habitat layer: it has no geometry, so it cannot be clipped to a
+    # bbox and must come out before the loop. It is what BENTHIC joins to.
+    biofile = None
+    for k, v in list(esi.items()):
+        if k.upper() == BIOFILE_LAYER:
+            biofile = v.drop(columns=[c for c in ('geometry',) if c in v.columns]).to_dict('records')
     for layer_name, gdf in esi.items():
+        if layer_name.upper() == BIOFILE_LAYER:
+            continue
         clipped = clip_to_zone(gdf, zone)
         if clipped is None or len(clipped) < MIN_FEATURES:
             continue
@@ -298,17 +311,70 @@ def process_zone(slug, zone, oyster_sc, oyster_nc, esi_sc, esi_nc, esi_ga,
             print(f"    HABITATS: skipping (rare species layer, not marsh/SAV)")
 
         elif layer_upper == 'BENTHIC':
-            # NC benthic — simplify before saving
+            # BENTHIC IS NOT OYSTER, AND IT NEVER WAS. See BENTHIC_SUBELEMENT_FILES above for the
+            # measurement: Georgia's 1,208 polygons are hardbottom and North Carolina's 9,750 are
+            # four parts submerged aquatic vegetation to one part rock reef. This branch used to
+            # write all of it to oyster_beds.geojson, which the map labels "Oyster bed".
+            #
+            # A BENTHIC FEATURE CLASS CARRIES GEOMETRY AND A RARNUM AND NOTHING ELSE, so the
+            # polygons are joined to BIOFILE here before they are written. Without that the file
+            # has no attribute a reader could use, which is how nobody noticed for this long.
+            if biofile is None:
+                print("    BENTHIC: no BIOFILE in this geodatabase — the polygons cannot be "
+                      "identified, so nothing is written rather than guessing at them.")
+                continue
             clipped['geometry'] = clipped.geometry.simplify(0.0001, preserve_topology=True)
             clipped = clipped[~clipped.geometry.is_empty]
-            gj = gdf_to_geojson(clipped)
-            print(f"    oyster_beds (BENTHIC): {len(clipped):,} features")
-            if 'oyster_beds.geojson' in results:
-                existing = json.loads(results['oyster_beds.geojson'])
-                existing['features'].extend(json.loads(gj)['features'])
-                results['oyster_beds.geojson'] = json.dumps(existing, separators=(',', ':'))
-            else:
-                results['oyster_beds.geojson'] = gj
+            key = rarnum_column(clipped.head(1).to_dict('records'))
+            if not key:
+                print("    BENTHIC: no RARNUM column — nothing to join on, nothing written.")
+                continue
+            # One BIOFILE lookup per RARNUM, not per polygon: GA has 1,208 polygons across 2 keys.
+            by_key = {}
+            for rec in rows_for_rarnums(biofile, {r.get(key) for r in
+                                                  clipped[[key]].to_dict('records')}):
+                kcol = rarnum_column([rec])
+                k = str(rec.get(kcol)).strip()
+                if k.endswith('.0'):
+                    k = k[:-2]
+                by_key[k] = rec
+
+            buckets, unknown = {}, {}
+            for _, row in clipped.iterrows():
+                geom = row.geometry
+                if geom is None or geom.is_empty:
+                    continue
+                k = str(row[key]).strip()
+                if k.endswith('.0'):
+                    k = k[:-2]
+                rec = by_key.get(k)
+                fname = benthic_class(rec)
+                if not fname:
+                    sub = (rec or {}).get('SUBELEMENT') or f'RARNUM {k}'
+                    unknown[str(sub)] = unknown.get(str(sub), 0) + 1
+                    continue
+                props = {f: str(rec[f]).strip() for f in BENTHIC_KEEP_FIELDS
+                         if rec.get(f) is not None and str(rec[f]).strip() not in ('', 'nan', 'None')}
+                props['source_layer'] = 'ESI BENTHIC'
+                buckets.setdefault(fname, []).append(
+                    {'type': 'Feature', 'geometry': geom.__geo_interface__, 'properties': props})
+
+            for fname, feats in sorted(buckets.items()):
+                gj = json.dumps({'type': 'FeatureCollection', 'features': feats},
+                                separators=(',', ':'))
+                print(f"    {fname}: {len(feats):,} features (BENTHIC, "
+                      f"{len({f['properties'].get('NAME') for f in feats})} named type(s))")
+                if fname in results:
+                    existing = json.loads(results[fname])
+                    existing['features'].extend(feats)
+                    results[fname] = json.dumps(existing, separators=(',', ':'))
+                else:
+                    results[fname] = gj
+            # A SUBELEMENT NOBODY HAS LOOKED AT IS SAID OUT LOUD, not filed somewhere plausible.
+            # That is the exact mistake this branch is being fixed for.
+            for sub, n in sorted(unknown.items(), key=lambda kv: -kv[1]):
+                print(f"    BENTHIC: {n:,} features of unrecognised subelement '{sub}' — "
+                      f"NOT written. Add it to BENTHIC_SUBELEMENT_FILES once somebody has looked.")
 
         elif layer_upper == 'ESIL':
             # Filter to marsh shoreline only: ESI code 10 variants = salt marsh
@@ -475,6 +541,54 @@ def rows_for_rarnums(bio_rows, wanted):
     return out
 
 
+# What a BENTHIC subelement is, and the file it belongs in. Measured on both geodatabases
+# 2026-09-15 by resolving every RARNUM through BIOFILE:
+#
+#   GA BENTHIC  1,208 polygons, 2 RARNUMs, SUBELEMENT `hardbottom` for BOTH.
+#               NAME "Hardbottom community", CONC dense and sparse. No oyster. No shell.
+#   NC BENTHIC  9,750 polygons, 5 RARNUMs. Four are SUBELEMENT `sav` -- "Loose watermilfoil"
+#               (Myriophyllum laxum) and "Submerged aquatic vegetation" -- and the fifth is
+#               `hardbottom`, "Rock reef". No oyster. No shell.
+#
+# NEITHER BENTHIC LAYER CONTAINS ANY OYSTER, and this script has been writing both of them to
+# oyster_beds.geojson. coastal-layers.js draws that file with the tooltip "Oyster bed -- redfish
+# on moving water", so every NC and GA zone would have shown milfoil beds and rock reef as oyster
+# rakes. Charleston escaped it only because South Carolina has no BENTHIC layer at all and its
+# oyster comes from SCDNR's own file.
+#
+# THE DATA IS GOOD AND THE FILENAME WAS WRONG, which is a much better problem. The South Atlantic
+# habitat matrix the plan now reads scores six structure classes, and two of them are exactly
+# these: `grass_flat` is SAV, and hard bottom is what a sheepshead wants (`hard` 3.5 against
+# `fine` 1.0) and where a red drum spawns. Filed under its own name each one answers a question;
+# filed as oyster both of them answer it wrongly.
+BENTHIC_SUBELEMENT_FILES = {
+    'hardbottom': 'hard_bottom.geojson',
+    'sav': 'sav.geojson',
+}
+
+# The BIOFILE columns worth carrying onto each polygon. The rest are breeding calendars and empty
+# rank fields -- see the --inspect output. Without these the feature has no attribute at all,
+# which is the state this whole branch was in.
+BENTHIC_KEEP_FIELDS = ('SUBELEMENT', 'NAME', 'GEN_SPEC', 'CONC', 'MAPPING_QUALIFIER')
+
+
+def benthic_class(record):
+    """The output file one BIOFILE record belongs in, or None.
+
+    Pure so the routing can be tested without a geodatabase. `None` means a subelement nobody has
+    looked at yet, and the caller SAYS so rather than filing it somewhere plausible -- which is
+    the mistake that produced oyster_beds.geojson full of milfoil.
+    """
+    if not record:
+        return None
+    sub = None
+    for k, v in record.items():
+        if str(k).strip().upper() == 'SUBELEMENT':
+            sub = str(v or '').strip().lower()
+            break
+    return BENTHIC_SUBELEMENT_FILES.get(sub)
+
+
 def inspect_layer(label, zip_path, layer_name, max_rows=200000):
     """Print what one layer of one ESI geodatabase actually holds. Reads nothing else."""
     if not zip_path.exists():
@@ -588,7 +702,7 @@ def main():
     if SC_ESI_ZIP.exists():
         gdb_path, tmp_sc = extract_gdb_from_zip(SC_ESI_ZIP)
         if gdb_path:
-            esi_sc = load_esi_layers(gdb_path, ESI_HABITAT_LAYERS)
+            esi_sc = load_esi_layers(gdb_path, ESI_HABITAT_LAYERS + [BIOFILE_LAYER])
     else:
         print(f"  ⚠️  SC ESI not found: {SC_ESI_ZIP}")
         tmp_sc = None
@@ -598,7 +712,7 @@ def main():
     if NC_ESI_ZIP.exists():
         gdb_path, tmp_nc = extract_gdb_from_zip(NC_ESI_ZIP)
         if gdb_path:
-            esi_nc = load_esi_layers(gdb_path, ESI_HABITAT_LAYERS)
+            esi_nc = load_esi_layers(gdb_path, ESI_HABITAT_LAYERS + [BIOFILE_LAYER])
     else:
         print(f"  ⚠️  NC ESI not found: {NC_ESI_ZIP}")
         tmp_nc = None
@@ -608,7 +722,7 @@ def main():
     if GA_ESI_ZIP.exists():
         gdb_path, tmp_ga = extract_gdb_from_zip(GA_ESI_ZIP)
         if gdb_path:
-            esi_ga = load_esi_layers(gdb_path, ESI_HABITAT_LAYERS)
+            esi_ga = load_esi_layers(gdb_path, ESI_HABITAT_LAYERS + [BIOFILE_LAYER])
     else:
         print(f"  ⚠️  GA ESI not found: {GA_ESI_ZIP}")
         tmp_ga = None
