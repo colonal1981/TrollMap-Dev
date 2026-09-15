@@ -169,6 +169,7 @@ export function readConditions(j) {
     droughtLevels: null,
     salinityPpt: null,
     conductanceUsCm: null,
+    saltGaugeKm: null,
     saltBasis: null,
     saltGauge: null,
     tidalFlowCfs: null,
@@ -433,6 +434,11 @@ export function readConditions(j) {
   if (w.salt) {
     out.saltBasis = w.salt.basis || null;
     out.saltGauge = w.salt.name || null;
+    // HOW FAR AWAY, for the same reason the tidal-current station carries it: Charleston Harbor
+    // binds TWENTY gauges that publish salinity or conductance, and one up the Cooper reads a
+    // different water from one at the harbour mouth by twenty parts per thousand. "At the gauge"
+    // is not an answer when there are twenty of them.
+    out.saltGaugeKm = Number.isFinite(w.salt.km_from_point) ? w.salt.km_from_point : null;
     if (Number.isFinite(w.salt.ppt)) out.salinityPpt = w.salt.ppt;
     if (Number.isFinite(w.salt.us_cm)) out.conductanceUsCm = w.salt.us_cm;
   }

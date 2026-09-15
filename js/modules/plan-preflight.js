@@ -500,6 +500,13 @@ export async function fetchWaterState(lakeName, dateStr, o = {}) {
     surgeVsPredictedFt: c && Number.isFinite(c.surgeFt) && Math.abs(c.surgeFt) >= 0.3 ? c.surgeFt : null,
     salinityPpt: c && Number.isFinite(c.salinityPpt) ? c.salinityPpt : null,
     conductanceUsCm: c && Number.isFinite(c.conductanceUsCm) ? c.conductanceUsCm : null,
+    // WHICH GAUGE AND HOW FAR, the same three fields the tidal current needed and for the same
+    // reason. `saltGauge` and `saltBasis` have been computed by water-conditions.js since it was
+    // written and have reached nothing; the prompt said "Salinity 12 ppt at the gauge" on a zone
+    // that binds twenty of them.
+    saltGauge: (c && c.saltGauge) || null,
+    saltGaugeKm: c && Number.isFinite(c.saltGaugeKm) ? c.saltGaugeKm : null,
+    saltBasis: (c && c.saltBasis) || null,
     // The tide-stage band and tactic, which only exist for the three species coastal-scoring.js
     // was built around. A fourth species gets the rules and no band, which is honest.
     depthBandFt: (primary && stage && DEPTH_BANDS[primary]) ? DEPTH_BANDS[primary][stage] || null : null,

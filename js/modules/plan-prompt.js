@@ -276,8 +276,28 @@ export function coastalPromptBlock(ws) {
       + `${Math.abs(t.surgeVsPredictedFt).toFixed(1)} ft against the prediction. A foot of surge `
       + 'is not a rounding error on a two-foot tide.');
   }
-  if (t.salinityPpt != null) L.push(`Salinity ${t.salinityPpt} ppt at the gauge.`);
-  else if (t.conductanceUsCm != null) L.push(`Conductance ${t.conductanceUsCm} µS/cm at the gauge.`);
+  // SALT, AND WHICH GAUGE SAID SO. This read "at the gauge" on zones that bind twenty of them --
+  // Charleston has twenty publishing salinity or conductance, and one up the Cooper reads water
+  // twenty parts per thousand different from one at the harbour mouth. Salinity is also the
+  // number that moves redfish up and down a creek system after rain, so an unattributed one is
+  // worse than none.
+  const saltAt = (t.saltGauge || Number.isFinite(t.saltGaugeKm))
+    ? ` at ${t.saltGauge || 'a bound gauge'}`
+      + (Number.isFinite(t.saltGaugeKm) ? `, ${t.saltGaugeKm.toFixed(1)} km from the launch` : '')
+      + (Number.isFinite(t.saltGaugeKm) && t.saltGaugeKm >= 5
+          ? ' — FAR ENOUGH UP OR DOWN THE SYSTEM THAT IT IS A DIRECTION, NOT A READING FOR THIS '
+            + 'creek. Say which way it points and do not state it as the salinity where he launches.'
+          : '.')
+    : ' at the gauge.';
+  if (t.salinityPpt != null) L.push(`Salinity ${t.salinityPpt} ppt${saltAt}`);
+  else if (t.conductanceUsCm != null) {
+    // NOT CONVERTED, ANYWHERE. Conductance and salinity are different numbers and a converted one
+    // would look like a measurement and not be one — water-conditions.js refuses the conversion
+    // for that reason and `saltBasis` exists to say which of the two answered.
+    L.push(`Conductance ${t.conductanceUsCm} µS/cm${saltAt} No salinity is published here, and `
+      + 'conductance is NOT converted to ppt anywhere in this app — treat it as the fresher/'
+      + 'saltier signal it is, not as a salinity.');
+  }
   if (t.depthBandFt) {
     L.push(`Working depth for this species at this stage: ${t.depthBandFt[0]}–${t.depthBandFt[1]} ft, `
       + 'TIDE-CORRECTED — that is water under the boat, not a charted number.');

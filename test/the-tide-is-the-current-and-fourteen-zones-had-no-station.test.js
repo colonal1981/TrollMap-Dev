@@ -149,6 +149,49 @@ describe('the set and the distance reach the prompt', () => {
   });
 });
 
+describe('salt says WHICH gauge, on zones that bind twenty of them', () => {
+  // THE SAME DEFECT ONE FIELD OVER, found while measuring whether the app had any salinity at
+  // all. It has plenty: Charleston Harbor binds 25 gauges and TWENTY publish salinity or
+  // specific conductance, two of them live salinity. The prompt printed "Salinity 12 ppt at the
+  // gauge" — and a gauge up the Cooper reads water twenty parts per thousand different from one
+  // at the harbour mouth. `saltGauge` and `saltBasis` had been computed by water-conditions.js
+  // since it was written and reached nothing.
+  const tidal = (extra) => ({ tidal: { zone: 'Charleston Harbor', stage: 'flood', ...extra } });
+
+  it('names the gauge and its distance', () => {
+    const t = coastalPromptBlock(tidal({ salinityPpt: 28.4, saltGauge: 'Shem Creek', saltGaugeKm: 1.2 }));
+    expect(t).toContain('28.4 ppt at Shem Creek');
+    expect(t).toContain('1.2 km from the launch');
+  });
+
+  it('A GAUGE UP THE SYSTEM IS A DIRECTION, NOT A READING — and says so', () => {
+    const t = coastalPromptBlock(tidal({ salinityPpt: 6.1, saltGauge: 'Cooper River at Goose Creek',
+                                         saltGaugeKm: 18.7 }));
+    expect(t).toContain('IT IS A DIRECTION, NOT A READING');
+    expect(t).toContain('do not state it as the salinity where he launches');
+  });
+
+  it('CONDUCTANCE IS NEVER CONVERTED TO PPT, and the block says that out loud', () => {
+    // water-conditions.js refuses the conversion because a converted number would look like a
+    // measurement and not be one, and `saltBasis` exists to say which of the two answered. A
+    // prompt that quietly let the model do the conversion would undo that.
+    const t = coastalPromptBlock(tidal({ conductanceUsCm: 41200, saltGauge: 'Ashley R', saltGaugeKm: 2 }));
+    expect(t).toContain('41200 µS/cm at Ashley R');
+    expect(t).toContain('NOT converted to ppt');
+    expect(t).not.toContain('ppt at Ashley R');
+  });
+
+  it('an unnamed gauge still reads as a sentence', () => {
+    expect(coastalPromptBlock(tidal({ salinityPpt: 12 }))).toContain('12 ppt at the gauge.');
+  });
+
+  it('and a zone with neither says nothing at all', () => {
+    const t = coastalPromptBlock(tidal({}));
+    expect(t).not.toContain('Salinity');
+    expect(t).not.toContain('Conductance');
+  });
+});
+
 describe('the fields survive the hop from /conditions to the prompt', () => {
   it('water-conditions carries the station distance and its provenance', () => {
     const wc = src('js/utils/water-conditions.js');
@@ -160,7 +203,8 @@ describe('the fields survive the hop from /conditions to the prompt', () => {
     // THIS IS THE HOP THAT WAS BROKEN. Every one of these was computed and handed to the
     // conditions strip alone.
     const pf = src('js/modules/plan-preflight.js');
-    for (const f of ['currentDirDeg', 'currentAt', 'currentStation', 'currentStationKm']) {
+    for (const f of ['currentDirDeg', 'currentAt', 'currentStation', 'currentStationKm',
+                     'saltGauge', 'saltGaugeKm', 'saltBasis']) {
       expect(pf).toContain(`${f}:`);
     }
   });
