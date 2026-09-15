@@ -26,7 +26,8 @@ import ast, json, math, os, unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = open(os.path.join(HERE, 'build_trolling_runs.py'), encoding='utf-8').read()
 
-_WANT = ['metres', '_poly_points', '_line_points', 'load_habitat', 'habitat_stats']
+_WANT = ['metres', '_poly_points', '_line_points', '_any_centroid',
+         'load_habitat', 'habitat_stats']
 _fns = [n for n in ast.parse(SRC).body if getattr(n, 'name', None) in _WANT]
 assert len(_fns) == len(_WANT), \
     f'missing from build_trolling_runs.py: {set(_WANT) - {n.name for n in _fns}}'
@@ -37,6 +38,7 @@ poly_points = _ns['_poly_points']
 line_points = _ns['_line_points']
 habitat_stats = _ns['habitat_stats']
 metres = _ns['metres']
+any_centroid = _ns['_any_centroid']
 
 ANN = 100.0
 CELL = max(ANN, 50.0) / 111320.0 * 1.5
@@ -160,6 +162,44 @@ class Stats(unittest.TestCase):
                             'marsh': grid([east(*v, 10) for v in self.RUN[:2]])},
                            CELL, ANN)
         self.assertEqual(st, {'oyster_n': 1, 'marsh_pct': 50})
+
+
+class GwrapShapes(unittest.TestCase):
+    """ONE FEATURE IS ONE MARK, whatever shape Georgia drew it in.
+
+    G-WRAP's reef structures are polygons and its armoured shoreline is lines -- 4,264 segments
+    typed revetment, bulkhead or causeway. Sampling a line's vertices would make a 900 m revetment
+    outscore a 40 m one purely by having more of them, which measures the digitising and not the
+    water. The same mistake in the other direction is what made marsh a PERCENTAGE rather than a
+    count, and the difference is that a marsh front is a continuous edge while a revetment is a
+    thing somebody built.
+    """
+
+    def test_a_line_becomes_exactly_one_mark(self):
+        short = {'type': 'LineString', 'coordinates': [[0, 0], [0, 0.001]]}
+        long_ = {'type': 'LineString',
+                 'coordinates': [[0, 0], [0, 0.002], [0, 0.004], [0, 0.006], [0, 0.008]]}
+        self.assertEqual(len(any_centroid(short)), 1)
+        self.assertEqual(len(any_centroid(long_)), 1)
+
+    def test_the_mark_sits_on_the_line_not_at_an_end(self):
+        pts = any_centroid({'type': 'LineString', 'coordinates': [[0, 0], [0, 2]]})
+        self.assertAlmostEqual(pts[0][1], 1.0, places=6)
+
+    def test_a_reef_polygon_becomes_one_mark(self):
+        reef = {'type': 'Polygon', 'coordinates': [[[0, 0], [0, 2], [2, 2], [2, 0], [0, 0]]]}
+        self.assertEqual(len(any_centroid(reef)), 1)
+
+    def test_a_multipart_reef_gives_one_mark_per_part(self):
+        ring = [[0, 0], [0, 2], [2, 2], [0, 0]]
+        self.assertEqual(len(any_centroid({'type': 'MultiPolygon',
+                                           'coordinates': [[ring], [ring]]})), 2)
+
+    def test_rubbish_gives_nothing_rather_than_a_mark_at_zero_zero(self):
+        # A centroid of an empty list is a point in the Gulf of Guinea, and it would be scored.
+        for g in (None, {}, {'type': 'LineString', 'coordinates': []},
+                  {'type': 'MultiLineString', 'coordinates': [[]]}):
+            self.assertEqual(any_centroid(g), [])
 
 
 if __name__ == '__main__':

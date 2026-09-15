@@ -635,6 +635,64 @@ def load_enc_structure(pack, charted, dedup_m=ENC_DEDUP_M):
     return out
 
 
+def _any_centroid(geom):
+    """One representative point for any geometry. A reef structure is metres across and an
+    armoured segment is one structure however long its line is, so 1 feature = 1 mark either way.
+    That also keeps a 900 m revetment from outscoring a 40 m one purely by having more vertices.
+    """
+    t = (geom or {}).get('type')
+    if t in ('Polygon', 'MultiPolygon', 'Point'):
+        return _poly_points(geom)
+    pts = _line_points(geom)
+    if not pts:
+        return []
+    return [(sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts))]
+
+
+# G-WRAP's two, and the near[] type each becomes.
+#
+# A GA DNR INSHORE REEF IS A DNR BRUSHPILE IN SALT WATER, so it is an `attractor` and takes that
+# type's weight rather than a new number nobody can justify. The app's own note on the attractor
+# feed says what the type means: "the state publishes where it dropped the brushpile... they are
+# the same object described by two people, and both are worth stopping on." Georgia's 317
+# structures are 201 Fish Aggregating Devices, 40 poultry transport cages, 34 concrete culverts
+# and oyster shell bags, deployed by the state at eight named inshore sites to hold fish. Same
+# agency, same act, same ask.
+#
+# `armored` already exists and is already weighted -- the ENC seabed layer supplies it for South
+# Carolina. Georgia's is 4,264 typed segments against the ENC's couple of hundred points, so on
+# those four zones this is simply the better source of the same thing, and the dedup in
+# load_enc_structure() keeps the two from counting one seawall twice.
+GWRAP_JOIN = {
+    'inshore_reefs.geojson': 'attractor',
+    'armored_shoreline.geojson': 'armored',
+}
+
+
+def load_gwrap_points(pack):
+    """Georgia's reef and armour marks for this zone, as load_points()-shaped tuples."""
+    slug = os.path.basename(os.path.normpath(pack))
+    out = []
+    for fname, kind in GWRAP_JOIN.items():
+        path = os.path.join(HABITAT_DIR, slug, fname)
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path, 'r', encoding='utf-8') as fh:
+                feats = (json.load(fh).get('features') or [])
+        except Exception as e:
+            print(f'      gwrap: could not read {fname}: {e}')
+            continue
+        n = 0
+        for f in feats:
+            for p in _any_centroid(f.get('geometry')):
+                out.append((p[0], p[1], kind, None))
+                n += 1
+        if n:
+            print(f'      gwrap: {n:,} {kind} mark(s) from {fname}')
+    return out
+
+
 def load_habitat(pack):
     """Oyster centroids and marsh vertices for this pack's zone, or ({}, {}) when it has none.
 
@@ -774,6 +832,9 @@ def build_one(pack, min_len, simplify, reach_m, annotate_m=100.0,
     pts = load_points(pack)
     # THE ENC'S SHORE STRUCTURE, deduped against everything Garmin already charted -- so this is
     # additive by construction and a zone with no seabed file adds nothing. See its note above.
+    # GEORGIA'S OWN FIRST, so the ENC dedup below measures against them too and a seawall the
+    # state typed as a revetment is not counted again as an unnamed ENC point.
+    pts = pts + load_gwrap_points(pack)
     pts = pts + load_enc_structure(pack, pts)
     pcell = max(annotate_m, 50.0) / 111320.0 * 1.5
 
@@ -982,7 +1043,8 @@ def _stamp(pack, params):
     # It also invalidates precisely the right set: a coastal pack gains these keys and rebuilds,
     # and the 1,700-odd freshwater packs have no habitat folder, gain nothing, and are left alone.
     slug = os.path.basename(os.path.normpath(pack))
-    for f in ('oyster_beds.geojson', 'marsh_edges.geojson', 'seabed.geojson'):
+    for f in ('oyster_beds.geojson', 'marsh_edges.geojson', 'seabed.geojson',
+              'inshore_reefs.geojson', 'armored_shoreline.geojson'):
         p = os.path.join(HABITAT_DIR, slug, f)
         if os.path.exists(p):
             i = os.stat(p)

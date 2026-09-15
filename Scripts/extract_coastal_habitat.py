@@ -58,6 +58,47 @@ SC_ESI_ZIP     = DATA_DIR / 'SCarolina_2015_GDB.zip'
 NC_ESI_ZIP     = DATA_DIR / 'NCarolina_2016_GDB.zip'
 GA_ESI_ZIP     = DATA_DIR / 'Georgia_2015_GDB.zip'
 
+# ── G-WRAP, Georgia's coastal GIS, opened for the first time 2026-09-15 ──────────────────────
+#
+# 566 MB that had sat unread. Ryan listed its layers and two of them are things no other source
+# on this drive carries, both measured against the four Georgia zones before a line was written:
+#
+#   InshoreReefStructures   317 structures across 8 NAMED INSHORE SITES -- Romerly Marsh Creek,
+#       Troupe Creek, Van Dyke Creek, Halfmoon River, Jove Creek -- with a deployment date and a
+#       material on every one: 201 Fish Aggregating Devices, 40 poultry transport cages, 34
+#       concrete culverts, oyster shell bags, bridge rubble. GA DNR put these there to be fished.
+#       This is the SALTWATER EQUIVALENT OF THE DNR BRUSHPILE FEED the app already scores, and it
+#       is the hard structure the habitat matrix rates 3.5 for sheepshead against 1.0 for the fine
+#       bottom that is everywhere else on that coast.
+#
+#       South Carolina's equivalent was chased and refused on 2026-09-03: ArtReef2021.csv, 14 of
+#       846 inside a real zone boundary and all one site. Georgia's is a different dataset and
+#       the difference is the word inshore.
+#
+#   ArmoredShoreline        4,264 segments inside the GA zones, TYPED -- 1,910 revetment, 1,867
+#       bulkhead, 550 causeway. The ENC seabed layer gives 253 armoured points on Charleston, so
+#       for Georgia this is the better source by an order of magnitude and it says which kind.
+#
+# WHAT IS LEFT ON THE FLOOR, AND WHY, because a layer counted and refused is worth as much as one
+# read:
+#   OysterReefs 66,935          byte-for-byte the georgia_oyster_reef_2015.gpkg already wired.
+#   OysterReefsHighWater 12     eight polygons of 60 to 3,232 acres. A whole sound is not a mark.
+#   Causeways 441               already inside ArmoredShoreline as Structure1 = Causeway.
+#   Tidegates_51 42             real structure, no weight basis, and 40 of the 42 are in one zone.
+#   ShellfishGrowingAreas 5     where shellfish may be HARVESTED. A different question.
+#   SurfaceSalinityPoints       61,972 points and worth its own look -- it is a salinity surface,
+#                               not a fish mark, and guessing at it here would be the mistake this
+#                               file keeps making. Recorded, not wired.
+#   CoastalWaterAccessPoints    66 boat ramps, 31 fishing piers and 5 KAYAK accesses. That belongs
+#                               to the ramp picker, not to a trolling run.
+GWRAP_GDB = Path(r'F:\TrollMapPipeline\G-WRAPVectorData2021\G-WRAPData2021.gdb')
+
+# layer -> (output file, the attribute names worth carrying)
+GWRAP_LAYERS = {
+    'InshoreReefStructures': ('inshore_reefs.geojson', ('ReefName', 'Material', 'Date_deplo')),
+    'ArmoredShoreline': ('armored_shoreline.geojson', ('Structure1', 'County')),
+}
+
 # WHICH STATE'S OYSTER FILE A ZONE IS ALLOWED TO SEE. ALL THREE HAVE ONE.
 #
 # This was written inline as `oyster_sc if state == 'SC' else oyster_nc if state in ('NC','GA')`,
@@ -204,6 +245,9 @@ KEEP_FIELDS_BY_FILE = {
     'oyster_beds.geojson': ('calcgeo_ac', 'acre', 'county'),
     # ESI code is what says salt marsh; the rest is shoreline-cleanup vocabulary.
     'marsh_edges.geojson': ('ESI', 'ENVIR'),
+    # G-WRAP: the reef's name, what it is made of and when it went in; the armour's own type.
+    'inshore_reefs.geojson': ('ReefName', 'Material', 'Date_deplo'),
+    'armored_shoreline.geojson': ('Structure1', 'County'),
 }
 
 
@@ -346,6 +390,7 @@ def load_esi_layers(gdb_path, target_layers):
 
 
 def process_zone(slug, zone, oyster_sc, oyster_nc, oyster_ga, esi_sc, esi_nc, esi_ga,
+                 gwrap=None,
                  dry_run=False, skip_upload=False, gz=True):
     state = zone.get('state', '')
     print(f"\n  {slug}: {zone['name']} ({state})")
@@ -425,6 +470,22 @@ def process_zone(slug, zone, oyster_sc, oyster_nc, oyster_ga, esi_sc, esi_nc, es
                 results['oyster_beds.geojson'] = gj
             else:
                 print(f"    oyster_beds: simplification emptied it — NOTHING UPLOADED.")
+
+    # ── G-WRAP, Georgia only ──────────────────────────────────────────────────
+    for layer, (fname, keep) in GWRAP_LAYERS.items():
+        gdf = (gwrap or {}).get(layer)
+        if gdf is None:
+            continue
+        clipped = clip_to_zone(gdf, zone)
+        if clipped is None or len(clipped) < MIN_FEATURES:
+            # SAID, NOT SKIPPED. A Georgia layer with nothing in a Georgia zone is a fact about
+            # the zone; silence would read as "the layer is not loaded", which is the confusion
+            # BENTHIC produced for four zones and a full day.
+            print(f"    {fname}: {len(gdf):,} in the state and none in this zone")
+            continue
+        gj = gdf_to_geojson(clipped, keep)
+        print(f"    {fname}: {len(clipped):,} features ({len(gj.encode()) // 1024} KB)")
+        results[fname] = gj
 
     # ── ESI habitat layers ────────────────────────────────────────────────────
     esi = esi_sc if state == 'SC' else esi_nc if state == 'NC' else esi_ga if state == 'GA' else {}
@@ -948,6 +1009,22 @@ def main():
         print(f"  ⚠️  GA ESI not found: {GA_ESI_ZIP}")
         tmp_ga = None
 
+    # G-WRAP — Georgia only, and only the two layers measured worth reading. See GWRAP_LAYERS.
+    gwrap = {}
+    if 'GA' not in states:
+        print("  G-WRAP: no Georgia zone in this run — not opened")
+    elif not GWRAP_GDB.exists():
+        print(f"  ⚠️  G-WRAP not found: {GWRAP_GDB}")
+    else:
+        for layer in GWRAP_LAYERS:
+            try:
+                g = gpd.read_file(str(GWRAP_GDB), layer=layer, engine="pyogrio")
+                if not g.empty:
+                    gwrap[layer] = g
+                    print(f"  G-WRAP {layer}: {len(g):,} features")
+            except Exception as e:
+                print(f"  ⚠️  G-WRAP {layer}: {e}")
+
     # ── Process zones ─────────────────────────────────────────────────────────
     # `zones` was resolved above, before a byte was read. See zones_to_process().
     print(f"\n{'='*60}")
@@ -960,6 +1037,7 @@ def main():
     total = 0
     for slug, zone in zones:
         n = process_zone(slug, zone, oyster_sc, oyster_nc, oyster_ga, esi_sc, esi_nc, esi_ga,
+                         gwrap,
                          dry_run=args.dry_run, skip_upload=args.skip_upload,
                          gz=not args.no_gzip)
         total += n
