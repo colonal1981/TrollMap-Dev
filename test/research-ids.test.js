@@ -32,14 +32,36 @@ describe('the client mirror agrees with the Worker', () => {
     }
   });
 
-  it('carries every canonical id the Worker carries, and no extras', () => {
-    const block = /const RESEARCH_CANONICAL_IDS = \{([\s\S]*?)\n\};/.exec(WORKER);
-    expect(Boolean(block)).toBe(true);
-    const theirs = {};
-    for (const m of block[1].matchAll(/'([^']+)':\s*'([^']+)'/g)) theirs[m[1]] = m[2];
-    expect(Object.keys(theirs).length > 0).toBe(true);
-    expect(Object.keys(RESEARCH_CANONICAL_IDS).sort()).toEqual(Object.keys(theirs).sort());
-    for (const k of Object.keys(theirs)) expect(RESEARCH_CANONICAL_IDS[k]).toBe(theirs[k]);
+  // THE DUPLICATION THIS GUARDED IS GONE, AND THAT IS WHY IT WENT RED.
+  //
+  // This used to lift `const RESEARCH_CANONICAL_IDS = {...}` out of the Worker's source and
+  // compare it key by key against the client's. The Worker no longer declares one: keys.js line 1
+  // is `import { RESEARCH_CANONICAL_IDS } from '../../js/data/research-ids.js'`. So the regex
+  // matched nothing, `Boolean(block)` was false, and a test failed because the thing it was
+  // protecting against had been fixed properly.
+  //
+  // A comparison cannot be the guard any more -- there is nothing to compare. THE GUARD IS THAT
+  // THERE IS STILL ONE TABLE, which is a stronger claim than "two tables agree today" and is the
+  // claim that stops a second copy reappearing. Drift here never throws: it reports a researched
+  // lake as unresearched and sends Ryan to re-run a pipeline that spends Firecrawl credits, or
+  // hides a lake from the picker that he still needs.
+  it('THERE IS ONE TABLE, and the Worker imports it rather than keeping its own', () => {
+    expect(WORKER).toMatch(/import \{[^}]*RESEARCH_CANONICAL_IDS[^}]*\}\s*from\s*'[^']*js\/data\/research-ids\.js'/);
+    // No second declaration anywhere in the Worker's research layer.
+    expect(WORKER).not.toMatch(/(const|let|var)\s+RESEARCH_CANONICAL_IDS\s*=/);
+  });
+
+  it('...and the table it imports is a real one, keyed id to id', () => {
+    // The import above proves there is one table; this proves the one is not empty. A mirror that
+    // agreed with an empty table would have passed the old test too.
+    const keys = Object.keys(RESEARCH_CANONICAL_IDS);
+    expect(keys.length > 0).toBe(true);
+    for (const k of keys) {
+      expect(typeof RESEARCH_CANONICAL_IDS[k]).toBe('string');
+      expect(RESEARCH_CANONICAL_IDS[k].length > 0).toBe(true);
+      // A canonical id must itself be a sanitised id, or the fold produces a key nothing stores.
+      expect(sanitizeLakeId(RESEARCH_CANONICAL_IDS[k])).toBe(RESEARCH_CANONICAL_IDS[k]);
+    }
   });
 
   it('folds a border water onto one profile instead of offering it twice', () => {

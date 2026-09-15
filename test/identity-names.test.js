@@ -51,10 +51,19 @@ test('widening the names adds no claim on a water that is not deliberate', () =>
   // reason researchStorageIdCandidates has never been the whole answer. The question is whether
   // the registry names ADD a claim, because that is the one thing this change could break.
   //
-  // Three are added and all three are written down: DOC_ONLY_NAMES deliberately gives "Lake
-  // Lanier" and "Lake Russell" to the reservoirs rather than the ponds. `lake_russell_sc` was
-  // already shared before any of this -- RESEARCH_CANONICAL_IDS maps `lake_russell_ga` onto it,
-  // and the pond is under the 1,000-acre research floor with no profile of its own to lose.
+  // Two are added and both are written down: DOC_ONLY_NAMES deliberately gives "Lake Lanier" and
+  // "Lake Russell" to the reservoirs rather than the ponds.
+  //
+  // THIS ASSERTED THREE, AND THE THIRD WAS A BUG THAT HAS SINCE BEEN FIXED. `lake_russell_sc` was
+  // contested because RESEARCH_CANONICAL_IDS carried `'lake_russell_ga': 'lake_russell_sc'`, and
+  // that row handed Lake Russell (Habersham Co, GA) -- an 88-acre Forest Service lake a hundred
+  // miles from the Savannah -- the entire profile of Richard B Russell: 24,608 acres, 15 species,
+  // its depth and its trolling intelligence, on a lake Ryan could paddle across. It was removed
+  // on 2026-09-04 and this file was not opened, so a test has been red ever since guarding a
+  // state we deliberately left.
+  //
+  // The list below is the fixed state. The assertion under it is the one that matters, and it is
+  // the guard that row could not have passed.
   const shares = (withIdentity) => {
     const by = new Map();
     for (const rec of client.getLoadedRegistry().list) {
@@ -69,7 +78,33 @@ test('widening the names adds no claim on a water that is not deliberate', () =>
   };
   const before = shares(false);
   const added = [...shares(true)].filter((id) => !before.has(id)).sort();
-  assert.deepEqual(added, ['lake_lanier', 'lake_russell', 'lake_russell_sc']);
+  assert.deepEqual(added, ['lake_lanier', 'lake_russell']);
+});
+
+test('the 88-acre pond does not answer to the 24,608-acre reservoir', () => {
+  // THE CLAIM THE REMOVED ROW BROKE, asserted directly instead of as a count. A canonical map
+  // keyed on a name collides when two waters share the name, and "Lake Russell" is shared:
+  // Richard B Russell on the Savannah and an 88-acre Forest Service lake in Habersham County.
+  // "Lake Richard Russell" is not shared, which is why THAT key is in the table and this one is
+  // not. Written as a claim about the two waters, so it cannot be satisfied by a number.
+  const claim = (id) => {
+    const owners = new Set();
+    for (const rec of client.getLoadedRegistry().list) {
+      const names = [rec.displayName, ...client.identityNamesForRecord(rec)];
+      for (const n of names) {
+        if (ids.researchStorageIdCandidates(n).includes(id)) owners.add(rec.slug);
+      }
+    }
+    return [...owners];
+  };
+  assert.deepEqual(claim('lake_russell_sc'), ['richard_b_russell_lake'],
+    'lake_russell_sc must belong to Richard B Russell and to nothing else');
+  // And the pond reaches nothing, because it HAS nothing — it is under the research floor.
+  assert.ok(!ids.researchStorageIdCandidates('Lake Russell (Habersham Co, GA)')
+    .includes('lake_russell_sc'), 'the Habersham Co pond must not reach the reservoir profile');
+  // The row itself stays out.
+  assert.equal(ids.RESEARCH_CANONICAL_IDS.lake_russell_ga, undefined,
+    "the 'lake_russell_ga' row is back in RESEARCH_CANONICAL_IDS");
 });
 
 test('the registry ordinal that separates two rivers is never stripped', () => {

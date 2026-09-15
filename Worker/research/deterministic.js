@@ -176,7 +176,24 @@ async function handleResearchDeterministicFacts(request, env) {
   // matched nothing and reported nothing. `feature_type` is what put the sixteen coastal rows in
   // lake_index.json, and resolveRegistryRow is the resolver that refuses an ambiguous name
   // rather than guessing -- the same one the North Carolina block below uses.
-  const scRow = state === 'SC' ? resolveRegistryRow(await lakeIndex(env), lakeName) : null;
+  //
+  // AND A REGISTRY THAT WILL NOT LOAD IS A SILENCE, NOT A 500. This was a bare
+  // `await lakeIndex(env)` and it is the ONLY reason the whole handler could fail: a bucket
+  // without `_registry/lake_index.json` yet -- a pipeline that has not run upload_garmin_to_r2.py
+  // -- took down every other block on this path, none of which needs the index at all. That is
+  // the same call this file already makes the other way round in limnology.js, where an
+  // unavailable registry is reported in the response and the sweep carries on. The coastal floor
+  // is an ADDITION to a profile; losing it costs five species names, and failing the request
+  // costs the whole profile.
+  let scRow = null;
+  let indexError = null;
+  if (state === 'SC') {
+    try {
+      scRow = resolveRegistryRow(await lakeIndex(env), lakeName);
+    } catch (e) {
+      indexError = String((e && e.message) || e).slice(0, 200);
+    }
+  }
   if (scRow && String(scRow.feature_type || '').toLowerCase() === 'coastal') {
     profile.biology.predatorSpecies = uniqueResearchSpecies(
       [...(profile.biology.predatorSpecies || []), ...SC_INSHORE_ROSTER]);
@@ -262,7 +279,12 @@ async function handleResearchDeterministicFacts(request, env) {
 
 
 
-  return new Response(JSON.stringify({ ok: true, lakeName, state, profile, seededDiscoveryTargets: [] }), { headers: JSON_HEADERS });
+  // `registryError` is present ONLY when the index could not be read, and it is the difference
+  // between "this water is not coastal" and "we could not find out" -- two answers that produce
+  // the same empty roster and must not read the same to a caller.
+  return new Response(JSON.stringify({ ok: true, lakeName, state, profile,
+    seededDiscoveryTargets: [], ...(indexError ? { registryError: indexError } : {}) }),
+    { headers: JSON_HEADERS });
 }
 
 async function handleResearchSaveNormalized(request, env) {

@@ -18,13 +18,45 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { refreshStaleLimnology } from '../Worker/research/limnology.js';
+import { _resetIndexCache } from '../Worker/registry.js';
 
 const DAY = 24 * 60 * 60 * 1000;
 const iso = (msAgo) => new Date(Date.now() - msAgo).toISOString();
 
-/** Enough of R2 for the sweep: list with `uploaded`, get, put. */
-function fakeBucket(objects) {
-  const store = new Map(Object.entries(objects));
+// THE SWEEP GAINED A GATE AND THIS FILE WAS NOT OPENED.
+//
+// Ryan, 2026-09-04: "it should only be looking at lakes in the app... nothing else". Nine stored
+// profiles were for waters that had left the index and could never work -- the bbox comes off the
+// registry row, so a profile with no row self-derives against a pack that is not there and
+// returns ok:false forever. Those nine were the jam at the head of the queue.
+//
+// So refreshStaleLimnology() now reads `_registry/lake_index.json` FIRST and does nothing at all
+// if it cannot -- deliberately, because guessing is the thing the gate exists to stop. This
+// bucket carried no index, so every test here got `{checked: 0, error: 'lake index unavailable'}`
+// and four of the five went red. The gate is right; the fixture was a bucket the app could not
+// have run against.
+//
+// EVERY PROFILE IN THIS FILE NOW HAS A REGISTRY ROW, which is also the honest fixture: a profile
+// with no row is a different case and it has its own test at the bottom.
+const INDEX_ROW = (slug, name) => ({
+  slug, name, display_name: name, state: 'SC', bounds_wsen: [-80.8, 34.2, -80.6, 34.5],
+});
+
+const LAKE_INDEX = (rows) => JSON.stringify({ lakes: Object.fromEntries(rows.map((r) => [r.slug, r])) });
+
+const WATEREE_INDEX = LAKE_INDEX([
+  INDEX_ROW('wateree_lake', 'LAKE WATEREE, SC'),
+  INDEX_ROW('lake_a', 'LAKE A, SC'),
+  INDEX_ROW('lake_b', 'LAKE B, SC'),
+]);
+
+/** Enough of R2 for the sweep: list with `uploaded`, get, put, and the index it gates on. */
+function fakeBucket(objects, index = WATEREE_INDEX) {
+  // THE INDEX IS CACHED PER ISOLATE FOR AN HOUR, so a test that primed it would hand its rows to
+  // every test after it and a bucket without one would still pass. Reset per bucket.
+  _resetIndexCache();
+  const store = new Map(Object.entries(
+    index === null ? objects : { '_registry/lake_index.json': { uploaded: new Date().toISOString(), body: index }, ...objects }));
   return {
     puts: [],
     async list({ prefix }) {
@@ -126,24 +158,92 @@ test('the oldest goes first, and lakes/versions is not a water', async () => {
 });
 
 test('an unchanged pull does not rewrite the profile', async () => {
-  const already = {
+  // THE FIXTURE IS DERIVED, NOT TYPED, and that is the whole correction.
+  //
+  // This used to hand-write a profile whose limnology already matched the pull and assert nothing
+  // was written. It went red when the guard was widened, and the guard was right: it used to
+  // compare ONE FIELD -- `if (merged === profile.limnology) continue;` -- sitting above the lines
+  // that attach `_wqpLimnology` and the evidence rows. So a water whose numbers happened to agree
+  // kept them with no provenance at all, which is exactly the case where provenance is worth most.
+  // Lake Wateree carried a 27 ft thermocline for months beside a note saying the depth was never
+  // provided, and the evidence row that branch discarded is the only defence against that.
+  //
+  // The guard now compares the WHOLE document it is about to write, so "unchanged" means the
+  // values AND their provenance. A typed fixture cannot express that without copying the writer's
+  // output by hand, which is how a test ends up asserting last week's format. So the sweep is run
+  // once, what it wrote is fed back, and the SECOND run is the one under test.
+  const first = fakeBucket({
+    'lakes/lake_wateree_sc.json': { uploaded: iso(40 * DAY), body: PROFILE(SKELETON) },
+    'limnology-cache/lake_wateree_sc.json': { uploaded: iso(31 * DAY), body: PULL },
+  });
+  const run1 = await refreshStaleLimnology({ R2_TROLLMAP_CHARTPACKS: first });
+  assert.equal(run1.merged, 1, 'the first pass writes, or the second proves nothing');
+
+  const settled = first._read('lakes/lake_wateree_sc.json');
+  const second = fakeBucket({
+    'lakes/lake_wateree_sc.json': { uploaded: iso(40 * DAY), body: JSON.stringify(settled) },
+    'limnology-cache/lake_wateree_sc.json': { uploaded: iso(31 * DAY), body: PULL },
+  });
+  const run2 = await refreshStaleLimnology({ R2_TROLLMAP_CHARTPACKS: second });
+  assert.equal(run2.refreshed, 1, 'it was still due, and it was still pulled');
+  assert.equal(run2.merged, 0, 'nothing changed, so nothing is written');
+  assert.deepEqual(second.puts.filter((k) => k.startsWith('lakes/')), []);
+});
+
+test('...but a pull that agrees on the NUMBERS and adds the PROVENANCE does write', async () => {
+  // The other half of the same guard, and the bug it was widened to fix. Same values, no
+  // `_wqpLimnology`, no evidence: the document changes even though not one number does.
+  const agreeing = {
     ...SKELETON,
     waterClarity: { typical: 'stained', secchiFt: 3.1, note: null },
     thermocline: { summerDepthFt: 24, method: 'derived_from_do_profile', note: null },
     oxygen: { depletionDepthFt: null, anoxicBelowFt: 30, note: null },
     trophicStatus: 'eutrophic',
-    surfaceWater: {},
   };
   const R2 = fakeBucket({
-    'lakes/lake_wateree_sc.json': { uploaded: iso(40 * DAY), body: PROFILE(already) },
+    'lakes/lake_wateree_sc.json': { uploaded: iso(40 * DAY), body: PROFILE(agreeing) },
     'limnology-cache/lake_wateree_sc.json': { uploaded: iso(31 * DAY), body: PULL },
   });
   const out = await refreshStaleLimnology({ R2_TROLLMAP_CHARTPACKS: R2 });
-  assert.equal(out.merged, 0);
-  assert.equal(R2.puts.filter((k) => k.startsWith('lakes/')).length, 0);
+  assert.equal(out.merged, 1, 'the provenance is a change even when the numbers are not');
+  const saved = R2._read('lakes/lake_wateree_sc.json');
+  assert.equal(saved._wqpLimnology.recordCount, 412);
+  assert.ok(saved.evidence.limnology.thermocline[0]);
+  assert.equal(saved.limnology.thermocline.summerDepthFt, 24, 'and the number is untouched');
 });
 
 test('no bucket is not a crash', async () => {
   assert.deepEqual(await refreshStaleLimnology({}),
-                   { checked: 0, stale: 0, refreshed: 0, merged: 0, failed: [] });
+                   { checked: 0, stale: 0, refreshed: 0, merged: 0, fromDocuments: 0,
+                     notOffered: 0, failed: [] });
+});
+
+test('NO LAKE INDEX MEANS NO SWEEP — it does not guess', async () => {
+  // The gate's whole point is to stop spending federal API calls on waters the app does not
+  // offer. A sweep that cannot read the index and carries on anyway is the behaviour it replaced.
+  const R2 = fakeBucket({
+    'lakes/lake_wateree_sc.json': { uploaded: iso(40 * DAY), body: PROFILE(SKELETON) },
+    'limnology-cache/lake_wateree_sc.json': { uploaded: iso(31 * DAY), body: PULL },
+  }, null);
+  const out = await refreshStaleLimnology({ R2_TROLLMAP_CHARTPACKS: R2 });
+  assert.equal(out.checked, 0);
+  assert.equal(R2.puts.length, 0);
+  assert.match(String(out.error), /lake index unavailable/);
+});
+
+test('a profile for a water the app no longer offers is marked and skipped, not retried', async () => {
+  // THE JAM, IN ONE TEST. Under the old behaviour this water consumed a slot every five minutes
+  // forever, because the absence of a pull cache read as "due" and sorted first.
+  const R2 = fakeBucket({
+    'lakes/retired_pond_sc.json': { uploaded: iso(40 * DAY), body: PROFILE(SKELETON, 'RETIRED POND, SC') },
+    'lakes/lake_wateree_sc.json': { uploaded: iso(40 * DAY), body: PROFILE(SKELETON) },
+    'limnology-cache/lake_wateree_sc.json': { uploaded: iso(31 * DAY), body: PULL },
+  });
+  const out = await refreshStaleLimnology({ R2_TROLLMAP_CHARTPACKS: R2 }, { limit: 1 });
+  assert.equal(out.notOffered, 1, 'the retired water is named as not offered');
+  // AND IT DID NOT EAT THE SLOT. Wateree still got done in the same firing.
+  assert.equal(out.merged, 1);
+  assert.deepEqual(R2.puts.filter((k) => k.startsWith('lakes/')), ['lakes/lake_wateree_sc.json']);
+  // The attempt is recorded, so the next firing does not sort it first all over again.
+  assert.ok(R2.puts.includes('limnology-cache/_sweep.json'), 'the sweep state is written');
 });
