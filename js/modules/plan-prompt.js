@@ -61,6 +61,7 @@ import { depthWindow, jigheadRangeOz, trollableBaits,
 import { RIGGED_TROLLING_WEIGHT_OZ, JIGHEADS_OWNED_OZ } from '../data/tackle-inventory.js';
 import { ozLabel } from '../utils/oz.js';
 import { FISHING_STYLE } from '../data/fishing-style-profile.js';
+import { lightSummary, lightPhrasesIn } from '../utils/light-state.js';
 
 // Six rods. This never changes; it is the boat, not a setting.
 export const ROD_IDS = ['R1', 'R2', 'R3', 'R4', 'R5', 'R6'];
@@ -505,54 +506,159 @@ on the day beats every word of this.
  * Silent when the almanac is missing, like every other block here: a guess about first light is
  * worse than no sentence about it.
  */
-export function lightPromptBlock(ws, weatherByHour, launchTime, returnTime) {
+export function lightPromptBlock(ws, weatherByHour, launchTime, returnTime, lightFacts) {
   if (!ws || ws.error) return '';
-  const dawn = ws.civilDawn || null, rise = ws.sunrise || null;
-  const set = ws.sunset || null, dusk = ws.civilDusk || null;
-  if (!dawn && !rise && !set && !dusk) return '';
-
-  const hh = (t) => { const m = /^(\d{1,2}):(\d{2})/.exec(String(t || '')); return m ? +m[1] + (+m[2]) / 60 : null; };
-  const first = [hh(dawn), hh(rise)], last = [hh(set), hh(dusk)];
-  const lo = hh(launchTime), hi = hh(returnTime);
-  const inWindow = (w) => w[0] != null && w[1] != null && lo != null && hi != null
-    && lo < w[1] && hi > w[0];
-
+  const sum = lightSummary(ws, weatherByHour, launchTime, returnTime);
   const lines = [];
-  if (dawn && rise) lines.push(`First light runs ${dawn} to ${rise} (civil dawn to sunrise).`);
-  if (set && dusk) lines.push(`Last light runs ${set} to ${dusk} (sunset to civil dusk).`);
-  if (lo != null && hi != null) {
-    const hits = [inWindow(first) ? 'first light' : null, inWindow(last) ? 'last light' : null]
-      .filter(Boolean);
-    lines.push(hits.length
-      ? `This trip (${launchTime}–${returnTime}) overlaps ${hits.join(' and ')}; every other hour `
-        + `of it is full daylight.`
-      : `This trip (${launchTime}–${returnTime}) is entirely in full daylight — it does not reach `
-        + `first or last light at all.`);
+
+  if (ws.civilDawn && ws.sunrise) {
+    lines.push(`First light runs ${ws.civilDawn} to ${ws.sunrise} (civil dawn to sunrise).`);
+  }
+  if (ws.sunset && ws.civilDusk) {
+    lines.push(`Last light runs ${ws.sunset} to ${ws.civilDusk} (sunset to civil dusk).`);
+  }
+  if (!sum) {
+    // The almanac exists but the trip does not resolve against it -- no launch or return time. Say
+    // the two sentences above and stop, rather than describing a day nobody said the length of.
+    return lines.length ? `
+WHAT THE LIGHT IS DOING
+${lines.join('\n')}
+` : '';
   }
 
-  // THE SKY, SEPARATELY, because it is not a time. A guide who says the fish stayed up because it
-  // was cloudy is describing the same low light a dawn bite has, at noon.
-  const wx = Array.isArray(weatherByHour) ? weatherByHour.filter((w) => w && w.cloudPct != null) : [];
-  if (wx.length) {
-    const ovc = wx.filter((w) => w.code === 3);
-    const pcts = wx.map((w) => `${String(w.hour).padStart(2, '0')}:00 ${w.cloudPct}%`).join(' · ');
-    lines.push(`Cloud cover by hour: ${pcts}.`);
-    lines.push(ovc.length
-      ? `${ovc.length} of those hours are OVERCAST (WMO code 3). Guidance the research attributes `
-        + `to low light or to overcast conditions applies in those hours as well as at first and `
-        + `last light.`
-      : `No hour of this trip is overcast, so low-light guidance applies only inside the twilight `
-        + `windows above.`);
+  // ── THE DAY, RESOLVED, RUN BY RUN ────────────────────────────────────────────────────────────
+  //
+  // This block used to print the twilight boundaries and then a list of cloud percentages by hour,
+  // and leave the model to work out which hours were low light. It is the same shape as the time
+  // budget, where the model "was handed '06:00' and '15:00' and left to do the arithmetic, and it
+  // does not do the arithmetic". lightSummary() does the arithmetic: each stretch of the trip with
+  // its light state, whether that light is LOW, and which of the two causes made it low.
+  lines.push(`THE LIGHT ON THIS TRIP, ${launchTime} to ${returnTime} — ${sum.totalMin} minutes, of `
+           + `which ${sum.lowMin} are LOW LIGHT:`);
+  for (const r of sum.runs) {
+    // The cause and the sky are one phrase, not two. Written as two it printed "LOW LIGHT —
+    // overcast · overcast, 95% cloud", which reads as though the app is not sure it already said it.
+    const pct = r.cloudMin == null ? ''
+      : (r.cloudMin === r.cloudMax ? ` ${r.cloudMax}% cloud`
+                                   : ` ${r.cloudMax}–${r.cloudMin}% cloud`);
+    const sky = r.skyWord ? `${r.skyWord}${pct}` : 'sky not forecast for these hours';
+    const cause = r.low
+      ? (r.lowBySun && r.lowBySky ? `LOW LIGHT — twilight, and ${sky}`
+        : r.lowBySun ? `LOW LIGHT — twilight (${sky})`
+        : `LOW LIGHT — ${sky}`)
+      : `full daylight — ${sky}`;
+    lines.push(`- ${r.from}–${r.to} (${r.minutes} min): ${r.state || 'unknown'} · ${cause}`);
+  }
+
+  // AND THE SENTENCE THAT SAYS WHAT KIND OF DAY IT IS, because "3 of 9 hours are overcast" is a
+  // count and this is the thing it means. Ryan, 2026-09-14: "if it was an overcast day then
+  // topwater all day might be ok... i still say might because you just never know with fish" -- so
+  // it is said as permission, not as an instruction, and the "might" is his.
+  if (sum.allLow) {
+    lines.push('EVERY MINUTE OF THIS TRIP IS LOW LIGHT. Guidance the research ties to low light, '
+             + 'first light, dusk or overcast conditions applies for the WHOLE DAY here — a '
+             + 'topwater or a shallow presentation is defensible at noon on a day like this, and '
+             + 'you should say that is why rather than treating midday as bright by default.');
+  } else if (sum.noneLow) {
+    lines.push('NO PART OF THIS TRIP IS LOW LIGHT — it never reaches twilight and the sky is not '
+             + 'closing the light down at any hour. Low-light guidance does not apply anywhere on '
+             + 'this day; do not carry a dawn pattern into it because it is the only one written '
+             + 'down.');
+  } else {
+    lines.push('THE LIGHT CHANGES DURING THIS TRIP, so a presentation is not a property of the day '
+             + '— it belongs to the stretch of it whose light suits it. Put the low-light legs and '
+             + 'the full-daylight legs in the order the light comes, and say in each leg\'s `why` '
+             + 'what the light is on it. A topwater fish in the first run above and a trolled bait '
+             + 'in the middle of the day are not the same fish.');
+  }
+  // THE MEASURED PERCENTAGES, HOUR BY HOUR, UNLABELLED. The runs above are the app's reading of
+  // the sky; this is the sky. hourlyWeather() keeps the figure exactly as Open-Meteo sent it --
+  // "no band, no label" -- and the earlier version of this block sent the whole row, so it still
+  // does. A run's own range is computed off these, and a reader that wants to check the reading
+  // against the numbers can.
+  const pcts = (Array.isArray(weatherByHour) ? weatherByHour : [])
+    .filter((x) => x && x.cloudPct != null)
+    .map((x) => `${String(x.hour).padStart(2, '0')}:00 ${x.cloudPct}%`);
+  if (pcts.length) lines.push(`Cloud cover by hour: ${pcts.join(' · ')}.`);
+
+  if (sum.lowBySkyRuns) {
+    lines.push('AND LOW LIGHT HERE IS NOT ONLY A TIME. Some of the stretches above are low light '
+             + 'because of the SKY, not the hour — which is the same low light a dawn bite has, at '
+             + 'whatever o\'clock it happens.');
+  }
+
+  // ── WHAT ANYBODY HAS ACTUALLY WRITTEN DOWN ABOUT LIGHT ON THIS WATER ─────────────────────────
+  //
+  // Research profiles carry `_extractedFacts` -- a fact, the quote it came from, and the source --
+  // and until now nothing outside the research pipeline read them. Some of them tie a depth or a
+  // presentation to the light, and those are the only SOURCED light guidance this app has: Lake
+  // Marion's says "fishing shallow flats less than 6 feet deep early and late, then drift-fishing
+  // deeper water along the channels mid-day", with the article it came out of.
+  //
+  // Selected by the one light lexicon in light-state.js, not by a regex written here, so a fact
+  // and a lure's technique line are searched with the same words.
+  // NAMED `lightFacts` AND PASSED IN, NOT `researched` AND SELECTED HERE, FOR ONE REASON:
+  // one-prompt-two-planners.test.js holds both planners to every field this file reads off `o`, and
+  // it does that by looking for the field NAME in each planner's source. `researched` is already a
+  // local variable in all four of those files, so a field called that would have passed the guard
+  // on the day it was added and gone unwired in silence -- which is the exact failure that test was
+  // written for, three times over. A name nothing else uses is a name the guard can see.
+  const facts = Array.isArray(lightFacts) ? lightFacts.filter(Boolean) : [];
+  if (facts.length) {
+    lines.push('');
+    lines.push('WHAT THE RESEARCH ON THIS WATER SAYS ABOUT LIGHT — sourced, quoted, and the only '
+             + 'light guidance here that is not general knowledge:');
+    for (const f of facts) lines.push(`- ${f}`);
   }
 
   return `
 WHAT THE LIGHT IS DOING
 ${lines.join('\n')}
 A depth, a bait or a presentation the research ties to early morning, first light, dusk or
-overcast conditions is an instruction for THOSE HOURS. Do not carry it into the middle of the day
-because it is the only number available — say instead what changes when the light comes up. A
-topwater fish at first light and a trolled bait at ten o'clock are not the same fish.
+overcast conditions is an instruction for THOSE STRETCHES, and the table above says which of them
+this trip actually has. Do not carry it into the middle of a bright day because it is the only
+number available — say instead what changes when the light comes up. And do not do the reverse
+either: on a day the table calls low light all the way through, the middle of the day is not bright
+and must not be planned as though it were. A topwater fish at first light and a trolled bait at ten
+o'clock are not the same fish.
 `;
+}
+
+/**
+ * THE SOURCED LIGHT GUIDANCE A PROFILE ALREADY HOLDS, and nothing else.
+ *
+ * `_extractedFacts` is written by the research agents with a `fact`, the `quote` it was taken from
+ * and a `source`. It has never been read outside the research pipeline. This picks the ones whose
+ * text carries a light word and renders them with their source attached, because a fact without its
+ * source is the thing this app keeps promising not to produce.
+ *
+ * Capped, and the cap is not a quality judgement -- the facts arrive in the order the agents found
+ * them and there is no ranking to apply, so it takes the first few and says how many it left.
+ */
+export function lightFactsFrom(researched) {
+  const all = researched && Array.isArray(researched._extractedFacts)
+    ? researched._extractedFacts : [];
+  const picked = [];
+  for (const f of all) {
+    if (!f || typeof f !== 'object') continue;
+    const text = typeof f.fact === 'string' && f.fact.trim() ? f.fact.trim()
+               : (typeof f.quote === 'string' ? f.quote.trim() : '');
+    if (!text) continue;
+    const words = lightPhrasesIn(text);
+    if (!words.length) continue;
+    // A REGULATION IS NOT A FISHING PATTERN. "Jugs must be removed from the water between one hour
+    // after sunrise and one hour before sunset" carries two light words and is a law about jug
+    // fishing; putting it under a heading about presentation would make the app look like it cannot
+    // tell the two apart. The regulations block is where that belongs and it already has it.
+    if (/\b(must|shall|prohibited|unlawful|licen[cs]e|limit of|creel)\b/i.test(text)) continue;
+    const src = typeof f.source === 'string' && f.source.trim() ? f.source.trim()
+              : (typeof f.url === 'string' ? f.url.trim() : '');
+    picked.push(`${text}${src ? ` [${src}]` : ' [source not recorded with the fact]'}`);
+    if (picked.length >= 8) break;
+  }
+  const left = all.length && picked.length >= 8 ? ' (first 8 of the light-tagged facts)' : '';
+  if (left) picked.push(left.trim());
+  return picked;
 }
 
 /**
@@ -1125,7 +1231,7 @@ wind direction: is it a dangerous windward launch?${o.hazards && o.hazards.lengt
     + `from the research is written advice with no position at all: say the ones that bear on `
     + `today out loud, and never imply an unpositioned one is marked on the chart.`
   : ''}
-${coastalPromptBlock(o.waterState)}${riverPromptBlock(o.waterState)}${poolPromptBlock(o.waterState)}${conditionsPromptBlock(o.waterState)}${lightPromptBlock(o.waterState, o.weatherByHour, o.launchTime, o.returnTime)}${timeBudgetBlock(o.windowMin, o.launchTime, o.returnTime, o.dayMin)}${thermoclineNormBlock(o.thermoclineNorm)}
+${coastalPromptBlock(o.waterState)}${riverPromptBlock(o.waterState)}${poolPromptBlock(o.waterState)}${conditionsPromptBlock(o.waterState)}${lightPromptBlock(o.waterState, o.weatherByHour, o.launchTime, o.returnTime, o.lightFacts)}${timeBudgetBlock(o.windowMin, o.launchTime, o.returnTime, o.dayMin)}${thermoclineNormBlock(o.thermoclineNorm)}
 WHAT IS ALREADY KNOWN
 ${o.intel || 'NOTHING. No researched profile exists for this water, so everything else here rests '
   + 'on the chart, the gauges and general species knowledge. Say so in the plan rather than '

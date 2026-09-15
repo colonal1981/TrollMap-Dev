@@ -56,6 +56,7 @@ export const CANDIDATE_LIMIT = 12;
  *                                  straight line between two leg ends, which can cross land.
  * @param {function} [o.transit]    a synchronous transit function, for tests. Wins over routeWater.
  * @param {object}   [o.waterState] fetchWaterState() output — {featureType, river, tidal}
+ * @param {string[]} [o.lightFacts] the profile's light-tagged sourced facts, from lightFactsFrom()
  */
 export async function buildSmartPlanV2(o) {
   const base = o.chartpackBase || '';
@@ -179,6 +180,13 @@ export async function buildSmartPlanV2(o) {
     // written and read only by the post-plan notification cues -- the model was never told
     // whether the day was overcast, which is half of what 'low light' means.
     weatherByHour: o.weatherByHour,
+    // AND THE ONLY SOURCED LIGHT GUIDANCE THIS APP HAS, which is the other half. The research
+    // agents write `_extractedFacts` with a fact, its quote and its source, and some of those tie a
+    // depth or a presentation to the light -- Marion's "shallow flats less than 6 feet deep early
+    // and late, then drift-fishing deeper water along the channels mid-day". Nothing outside the
+    // research pipeline had ever read one. Selected by lightFactsFrom() at the wiring, where the
+    // profile lives, and sent already rendered like `intel` is.
+    lightFacts: o.lightFacts || null,
     // THE CHART FIRST, THE RESEARCH SECOND. The charted ones come out of the pack this function
     // already fetched; the wiring adds the profile's prose. Each line says which it is, so when
     // navigation.hazards retires this half simply goes empty and the sentence still stands.
@@ -265,6 +273,13 @@ export async function buildSmartPlanV2(o) {
     launchTime: o.launchTime, returnTime: o.returnTime,
     species: o.species ? [].concat(o.species) : [],
     conditions: o.conditions, usableAh: o.usableAh,
+    // THE ALMANAC AND THE SKY, so every leg can carry the light it is fished in.
+    //
+    // Both already go to buildPlanRequest for lightPromptBlock(); the ASSEMBLER had neither, so a
+    // leg knew its own start time and nothing about what that time means. Ryan, 2026-09-15: "make
+    // sure that the app is light aware through out the whole day". The card, the export and the
+    // phone all read the leg, so the leg is where the light belongs.
+    waterState: o.waterState, weatherByHour: o.weatherByHour,
     transit,
     // THE SAME RESOLVER THE PROMPT GOT, HANDED TO THE CHECK ON THE ANSWER.
     //

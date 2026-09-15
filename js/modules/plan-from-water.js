@@ -272,6 +272,9 @@ export async function planFromWater(o) {
     // rebuilt: Pick Water and Smart Plan must offer the model the SAME list, or the two planners
     // disagree about what is in the tackle box.
     oxygenFloorFt: o.oxygenFloorFt ?? null,
+    // THE PROFILE'S LIGHT-TAGGED SOURCED FACTS, for lightPromptBlock(). Forwarded for the same
+    // reason as the line above: one prompt, and the two planners must fill the same fields of it.
+    lightFacts: o.lightFacts || null,
     inventory: o.inventory || null,
     candidates: legs.map((l) => ({
       runId: l.runId,
@@ -407,6 +410,14 @@ export async function planFromWater(o) {
     launchTime: o.launchTime,
     returnTime: o.returnTime,
     usableAh: o.usableAh,
+    // THE ALMANAC AND THE SKY, so every leg can carry the light it is fished in.
+    //
+    // Both already go to buildPlanRequest for lightPromptBlock(); the ASSEMBLER had neither, so a
+    // leg knew its own start time and nothing about what that time means. Ryan, 2026-09-15: "make
+    // sure that the app is light aware through out the whole day". The card, the export and the
+    // phone all read the leg, so the leg is where the light belongs.
+    waterState: (o.planArgs && o.planArgs.waterState) ?? o.waterState ?? null,
+    weatherByHour: (o.planArgs && o.planArgs.weatherByHour) ?? o.weatherByHour ?? null,
     transit,
     // So the assembler can check what the model's lead and speed actually put the bait at
     // against the shallowest water on each leg. See capBaitDepth().

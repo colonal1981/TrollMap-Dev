@@ -21,6 +21,7 @@
 // adds no cycle, and its own header already says it exists for "jigheads, sinkers and rig
 // weights" — the inline trolling weight is the third of those three finally having a reader.
 import { ozLabel } from '../utils/oz.js';
+import { lightKindsIn } from '../utils/light-state.js';
 
 export const LURE_KNOWLEDGE = {
 
@@ -655,7 +656,9 @@ export function scoreLureForContext(lureType, context = {}) {
     if (delta > 10)  warnings.push(`Far from ideal depth — adjust lead/weight`);
   }
 
-  // ── 6. Preferred type priority (from species-strategies) (weight: 2×) ────
+  // ── 6. Preferred type priority (weight: 2×) ────
+  // The list used to be attributed to species-strategies.js, a file nothing imported, removed
+  // 2026-09-15. It comes in through the caller; the attribution was wrong, not the input.
   if (preferredTypes?.length) {
     const typeIdx = preferredTypes.indexOf(lureType);
     if (typeIdx === 0)      { score += 20; reasons.push('Top priority presentation for these conditions'); }
@@ -789,6 +792,33 @@ export const LURE_COLORS = {
     jig_finesse_ned:      { clear:'Green Pumpkin',         stained:'Coppertreuse',        muddy:'Black / Blue' },
     popping_cork:         { clear:'Natural Shrimp',        stained:'Vudu Orange',         muddy:'Gulp Chartreuse' },
 };
+
+/**
+ * THE LIGHT A BAIT'S OWN RECORD NAMES, if it names one.
+ *
+ * Two of the twenty-nine entries in this table say it out loud -- 'Shallow flat runner — points and
+ * creek mouths at dawn' and 'Surface troll at dawn — schooling striper and largemouth' -- and until
+ * 2026-09-15 nothing in the app read the `technique` string at all. It was written, shown to nobody,
+ * and never compared against the hour the bait was actually being fished in.
+ *
+ * SO WHAT THIS RETURNS IS A QUOTE, NOT A RULE. These technique lines are free text with no source
+ * behind them, which is this file's standing problem -- 386 numbers in here have no citation and 34
+ * do, in the same font. A caller may therefore say "the app's own record for this bait says dawn,
+ * and this leg is measured to be in full daylight" and let Ryan decide. It may not say "topwater is
+ * a low-light bait", because nothing here establishes that.
+ *
+ * Expandable by writing it down: any bait whose technique names a light is covered, and the words
+ * that count are the one lexicon in light-state.js, the same one the research facts are read with.
+ *
+ * @returns {{kinds: string[], says: string}|null}
+ */
+export function lightWindowFor(lure) {
+  const k = LURE_KNOWLEDGE[lure && lure.type];
+  const says = k && typeof k.technique === 'string' ? k.technique : '';
+  if (!says) return null;
+  const kinds = lightKindsIn(says);
+  return kinds.length ? { kinds, says } : null;
+}
 
 export function getLureColor(lureType, clarityKey) {
   const c = clarityKey || 'clear';

@@ -152,17 +152,19 @@ export function seasonNote(date, waterTempF) {
        + 'not a measurement.';
 }
 
-export const TOD = { DAWN: 'dawn', DAY: 'day', DUSK: 'dusk', NIGHT: 'night' };
-
-export function getTimeOfDay(launchTimeStr) {
-  if (!launchTimeStr) return TOD.DAY;
-  const hour = parseInt(String(launchTimeStr).split(':')[0], 10);
-  if (isNaN(hour)) return TOD.DAY;
-  if (hour < 8) return TOD.DAWN;
-  if (hour < 17) return TOD.DAY;
-  if (hour < 20) return TOD.DUSK;
-  return TOD.NIGHT;
-}
+// TOD AND getTimeOfDay() WERE HERE AND ARE GONE -- 2026-09-15.
+//
+//     if (hour < 8) return TOD.DAWN;  if (hour < 17) return TOD.DAY;
+//     if (hour < 20) return TOD.DUSK; return TOD.NIGHT;
+//
+// Four invented numbers, no almanac, no sky, and read off the LAUNCH time -- so it answered once
+// for a nine-hour day and called 07:59 in December dawn and 08:01 in June day. Ryan, 2026-09-14:
+// "it really is light blindness... meaning if it was an overcast day then topwater all day might
+// be ok". A clock cannot answer that and this function was the clock.
+//
+// js/utils/light-state.js answers it instead, from civil twilight and the hourly WMO code, at any
+// moment of the day rather than at the launch. Nothing ever imported these two, which is the only
+// reason they did no harm; they are not re-added here in any form.
 
 export function resolveLakeKey(lakeName, table) {
   if (!lakeName) return null;

@@ -29,6 +29,7 @@ import { planToTimeline, installTimeline } from './plan-to-timeline.js';
 import { renderSmartPlanUI, syncSpread } from './smart-plan-ui.js';
 import { materialisePlan } from './plan-tracks.js';
 import { loadSessionFromPlan, launchFrom } from './notifications.js';
+import { lightFactsFrom } from './plan-prompt.js';
 import { planIssuesHtml } from './plan-issues.js';
 import { renderAll } from '../core/map-init.js';
 
@@ -221,6 +222,11 @@ export async function runSmartPlanV2(opts = {}) {
         .catch((e) => { console.warn('[plan-v2] DNR attractor feed unavailable:', e?.message); return []; }),
       usableAh: usableAhFrom(inp.motor),
       weatherByHour: forecast ? forecast.weatherByHour : null,
+      // THE LIGHT GUIDANCE ANYBODY ACTUALLY WROTE DOWN ABOUT THIS WATER. `_extractedFacts` carries
+      // a fact, the quote it came from and the source; some of them tie a depth or a presentation
+      // to the light, and until now nothing outside the research pipeline read one. Selected here
+      // because this is where the profile is, and sent rendered, like `intel`.
+      lightFacts: lightFactsFrom(researched),
       conditions: {
         ...conditionsFrom(inp, ramp, sol, forecast),
         // The model is told where the band came from, so a generic one cannot be mistaken for a

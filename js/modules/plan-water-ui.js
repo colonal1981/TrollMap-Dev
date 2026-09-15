@@ -55,6 +55,7 @@ import { poiSpotFeatures, attractorSpotFeatures, dockSpotFeatures, chartedGrid, 
   from './plan-candidates.js';
 import { planToTimeline, installTimeline } from './plan-to-timeline.js';
 import { renderSmartPlanUI, syncSpread } from './smart-plan-ui.js';
+import { lightFactsFrom } from './plan-prompt.js';
 import { planIssuesHtml } from './plan-issues.js';
 import { materialisePlan } from './plan-tracks.js';
 import { loadSessionFromPlan, isEnabled, launchFrom } from './notifications.js';
@@ -938,6 +939,10 @@ export async function findWater() {
     // which season it is, which is exactly the class of bug `dateStr` is carried for.
     waterTempF: inp.waterTempF,
     weatherByHour: forecast ? forecast.weatherByHour : null,
+    // THE PROFILE'S LIGHT-TAGGED SOURCED FACTS, carried across the same gap `weatherByHour` is
+    // carried across: `researched` exists in findWater() and does not exist in buildFromPicked(),
+    // which writes the prompt. Selected here, where the profile is.
+    lightFacts: lightFactsFrom(researched),
     launchTime: inp.launchTime, returnTime: inp.returnTime,
     usableAh: usableAhFrom(inp.motor), band: depth ? depth.band : null,
     holding: depth ? depth.holding : null, lake: inp.lakeName,
@@ -1173,6 +1178,9 @@ export async function buildFromPicked() {
         // ONE PROMPT, TWO PLANNERS -- the fifth field to get here after intel,
         // thermoclineNorm and the depth band. lightPromptBlock() reads it.
         weatherByHour: T.weatherByHour,
+        // AND THE SEVENTH, for the same block. The hourly sky says what the light IS; this says
+        // what anybody has published about fishing it, with the source on each line.
+        lightFacts: T.lightFacts || null,
         snapEligible: snapEligibleFrom(castable),
         // `castable` is `trollable || castable` -- the whole bag. Which half may go behind the
         // boat has to be said, or a cast-only soft plastic looks like a crankbait to the model.

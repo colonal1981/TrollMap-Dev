@@ -64,6 +64,7 @@
 
 import { planCues } from './plan-assemble.js';
 import { ozLabel } from '../utils/oz.js';
+import { lightLabel } from '../utils/light-state.js';
 
 // THE MAP AND THE CARD SHARE ONE PALETTE, and this is where it lives.
 //
@@ -333,7 +334,10 @@ export function planToTimeline(plan, o = {}) {
         unrouted: !!leg.unrouted,
         icon: home ? '🏁' : '➡️', color: home ? RETURN_COLOR : TRANSIT_COLOR,
         desc: `From ${mark} in · ${home ? 'back to the launch' : 'deadhead'} at ${leg.speedMph} mph`
-            + ` · ${leg.batteryAh} Ah · est ${leg.estDurationMin} min`,
+            + ` · ${leg.batteryAh} Ah · est ${leg.estDurationMin} min`
+            // On the run home this is the one number that matters more than the amp-hours: a
+            // return leg that ends after civil dusk is a return leg in the dark.
+            + (lightLabel(leg.light) ? ` · ${lightLabel(leg.light)}` : ''),
         longDesc: leg.unrouted
           ? (home ? 'THE ROUTE HOME IS A STRAIGHT LINE — not water-routed, do not follow it'
                   : 'Moving between legs — STRAIGHT LINE, not water-routed')
@@ -346,6 +350,9 @@ export function planToTimeline(plan, o = {}) {
       legEntries.push({
         ...card, type: 'troll', rods: [],
         depthMin: null, depthMax: null,
+        // The same object the troll entry carries. A transit has no spread, but it has a time and
+        // therefore a light, and the run home is the one where that matters most.
+        light: leg.light || null,
         port: '', starboard: '', portColor: '', starboardColor: '',
         portLeadFt: '', starboardLeadFt: '',
         why: card.longDesc, phaseName: card.label,
@@ -392,7 +399,12 @@ export function planToTimeline(plan, o = {}) {
                                : `Leg ${trollN}`,
       icon: '🎣', color: LEG_COLORS[(trollN - 1) % LEG_COLORS.length],
       desc: samePhrase + (waterPhrase ? `${waterPhrase} · ` : '')
-          + `from ${mark} in · ${leg.speedMph} mph · ${leg.batteryAh} Ah`,
+          + `from ${mark} in · ${leg.speedMph} mph · ${leg.batteryAh} Ah`
+          // THE LIGHT ON THIS LEG, beside the water and the speed, because it belongs with them.
+          // Ryan, 2026-09-15: "make sure that the app is light aware through out the whole day".
+          // assemblePlan stamps it from the almanac and the hour's own sky; lightLabel() is the
+          // short form, and it is empty rather than a dash when there is no almanac.
+          + (lightLabel(leg.light) ? ` · ${lightLabel(leg.light)}` : ''),
       longDesc: clean(leg.why),
       speedMph: leg.speedMph,
       // Carried so every reader downstream can tell a second pass from a second stretch without
@@ -429,6 +441,9 @@ export function planToTimeline(plan, o = {}) {
       depthFt: leg.depthFt ?? null,
       speciesBandFt: band,
       holding,
+      // THE LIGHT AS AN OBJECT, not only as words inside `desc`. A reader that has to parse a
+      // sentence to get a fact back is the shape this file already fixed once for the depth band.
+      light: leg.light || null,
       // The warnings that name THIS leg, by the runId they were written with.
       warnings: leg.runId ? legWarnings.filter((w) => String(w).includes(leg.runId)) : [],
       pass: leg.pass, ofPasses: leg.ofPasses,

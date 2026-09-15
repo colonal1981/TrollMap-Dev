@@ -3,7 +3,9 @@
  *
  * This file ONLY answers: "What does Ryan own?"
  * All fishing behavior lives in lure-knowledge.js.
- * All species strategy lives in species-strategies.js.
+ * Species strategy USED to live in species-strategies.js, which nothing imported and which was
+ * removed on 2026-09-15. What the plan actually reads is the researched profile first and
+ * species-intel.js second — see depthBandFor() in plan-inputs.js.
  *
  * Strict boundaries:
  *   ✅ What lures Ryan owns

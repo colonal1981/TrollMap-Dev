@@ -24,12 +24,13 @@
  */
 
 import { ampHours, minutesFor, metresBetween, cumulative, pointAt, orientLegs } from './plan-candidates.js';
-import { depthWindow, leadForDepth, jigheadForSwimbait,
+import { depthWindow, lightWindowFor, leadForDepth, jigheadForSwimbait,
          requiresInlineWeight, changeCostFor, presentationDelta } from '../data/lure-knowledge.js';
 import { JIGHEADS_OWNED_OZ, TROLLING_WEIGHTS_OWNED_OZ,
          RIGGED_TROLLING_WEIGHT_OZ } from '../data/tackle-inventory.js';
 import { FISHING_STYLE } from '../data/fishing-style-profile.js';
 import { ozLabel } from '../utils/oz.js';
+import { legLightFor, lightAgrees } from '../utils/light-state.js';
 
 /**
  * A PADDLE TAIL HAS NO WEIGHT UNTIL A HEAD IS ON IT, AND THE LEAD MATHS NEEDS ONE.
@@ -170,7 +171,7 @@ function fitInlineWeight(lure, rod, speedMph, ceilingFt, id, runId, warnings) {
  * shoreline: an absent input must not become a claim.
  */
 function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warnings, fish,
-                      legDepth = null) {
+                      legDepth = null, legLight = null) {
   // RETURNS WHAT THIS LEG FISHES; IT DOES NOT CHANGE THE BAG.
   //
   // This used to write `rod.leadFt = shorter` straight into the loadout, and the loadout is ONE
@@ -345,6 +346,42 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
                     + `fishing ${w.max < fMin ? `${Math.round(fMin - w.max)} ft ABOVE`
                                               : `${Math.round(w.min - fMax)} ft BELOW`} them. Say `
                     + `why in the leg's notes or put a different bait on it.`);
+      }
+    }
+
+    // ── AND WHETHER THE LIGHT ON THIS LEG IS THE LIGHT THE BAIT'S OWN RECORD NAMES ──────────
+    //
+    // Ryan, 2026-09-15: "make sure that the app is light aware through out the whole day... so that
+    // techniques that work in low light or colors that should be used during low light are known".
+    // The light is now measured per leg -- see lightOn() above -- and five of the baits in his bag
+    // carry a light in their own recorded technique ('Surface troll at dawn'). Nothing had ever
+    // compared the two.
+    //
+    // IT QUOTES THE RECORD AND ASSERTS NOTHING. Those technique lines are unsourced free text, the
+    // standing problem with lure-knowledge.js, so the app is not entitled to say "topwater is a
+    // low-light bait" -- only that its own note says dawn and this leg is measured not to be. That
+    // is the shape Ryan asked for on the shoal the day before: "flag the rise and let me decide."
+    //
+    // And it is not a refusal in either direction. His own words on the case this must not get
+    // wrong: "if it was an overcast day then topwater all day might be ok... i still say might
+    // because you just never know with fish". An overcast leg IS low light here, by the sky rather
+    // than the hour, so on that day this says nothing at all -- which is the point of measuring the
+    // light instead of reading the clock.
+    if (legLight && legLight.state) {
+      const named = lightWindowFor(lure);
+      const agrees = named ? lightAgrees(legLight, named.kinds) : null;
+      if (agrees === false) {
+        const sky = legLight.skyWord
+          ? `${legLight.skyWord}${legLight.cloudPct != null ? ` at ${legLight.cloudPct}% cloud`
+                                                           : ''}`
+          : 'no sky forecast for that hour';
+        warnings.push(`${id} on ${runId}: the app's own recorded technique for a ${rod.lure} is `
+                    + `"${named.says}", and this leg starts ${legLight.from} in ${legLight.state} `
+                    + `— ${sky}, so ${legLight.low ? 'low light' : 'NOT low light'}`
+                    + `${legLight.changesTo ? `, turning ${legLight.changesTo} at `
+                                            + `${legLight.changesAt}` : ''}. That note has no `
+                    + `source behind it and this is not a refusal — say why the bait suits this `
+                    + `light, or put it on a leg whose light it does.`);
       }
     }
 
@@ -569,6 +606,24 @@ export function assemblePlan(o) {
   let fishingM = 0, transitM = 0, ah = 0;
   let ti = 0, li = 0;
 
+  // ── WHAT THE LIGHT IS ON THIS LEG ───────────────────────────────────────────────────────────
+  //
+  // Ryan, 2026-09-15: "lets go ahead and make sure that the app is light aware through out the
+  // whole day... so that techniques that work in low light or colors that should be used during
+  // low light are known". And the correction that sets how: "we need to be careful with just
+  // saying hour blindness... it really is light blindness... meaning if it was an overcast day then
+  // topwater all day might be ok".
+  //
+  // The clock is already here -- every leg's `estStartTime` comes off it -- so each leg knows WHEN
+  // it is fished and has never known what that means. legLightFor() turns the when into the light,
+  // from the almanac and that hour's own WMO code, and stamps it on the leg, so the card, the
+  // export, the phone and the warning further down read one answer instead of four.
+  //
+  // Undefined when there is no almanac, and that silence is deliberate: a guess about first light
+  // is worse than no sentence about it.
+  const lightOn = (startMin, minutes) =>
+    legLightFor(o.waterState, o.weatherByHour, formatClock(startMin), minutes) || undefined;
+
   const stopsByRun = new Map();
   for (const s of (o.stops || [])) {
     if (!stopsByRun.has(s.runId)) stopsByRun.set(s.runId, []);
@@ -689,6 +744,7 @@ export function assemblePlan(o) {
         startM: runM, lengthM: len,
         speedMph: transitMph, batteryAh: round2(a),
         estDurationMin: Math.round(mins), estStartTime: formatClock(clock),
+        light: lightOn(clock, mins),
         coordinates: p.coordinates,
       };
       // Troll legs are safe by provenance — they are stitched contour geometry out of
@@ -814,6 +870,11 @@ export function assemblePlan(o) {
       }
     }
 
+    // THE LIGHT THIS LEG IS FISHED IN, worked out before the rods are checked because the check
+    // reads it: a bait whose own recorded technique names a light window is worth a word when the
+    // leg is measured to be in another one. See capBaitDepth().
+    const legLight = lightOn(clock, mins + stopMin);
+
     // No bait may run deeper than the shallowest water on this leg. See capBaitDepth().
     // `maxRunDepthFt` is preferred over `depthFt` because the two answer different questions:
     // the ceiling is the SHALLOWEST water on the leg, `depthFt` the MEDIAN. Both planners now
@@ -824,7 +885,7 @@ export function assemblePlan(o) {
                                  // THE LEG'S OWN ENVELOPE, so a one-shoal ceiling can be told apart
                                  // from water that is shallow all the way along. See capBaitDepth.
                                  { medianFt: Number(c.depthFt), minFt: Number(c.depthMinFt),
-                                   maxFt: Number(c.depthMaxFt) });
+                                   maxFt: Number(c.depthMaxFt) }, legLight);
 
     legs.push({
       id: `L${++li}`, type: 'troll',
@@ -841,6 +902,7 @@ export function assemblePlan(o) {
       rodPlan: rodPlan || undefined,
       batteryAh: round2(a),
       estDurationMin: Math.round(mins + stopMin), estStartTime: formatClock(clock),
+      light: legLight,
       why: c.why ?? null,
       // Drawn the way it will be RUN. The GPX, the map and the phone's "what is next" all read
       // this array in order, so a flipped leg whose geometry still ran the other way would draw
@@ -928,6 +990,9 @@ export function assemblePlan(o) {
         startM: runM,
         // No `stopMin`: the stops are on the first pass and are not repeated.
         estDurationMin: Math.round(mins), estStartTime: formatClock(clock),
+        // ITS OWN LIGHT, NOT THE FIRST PASS'S. A leg fished back is a later leg, and on a first-
+        // light launch the pass down and the pass back are not in the same light at all.
+        light: lightOn(clock, mins),
         // Drawn the way it will be RUN, which is the way the pass before it was not.
         coordinates: (prev.coordinates || []).slice().reverse(),
         trolledReversed: prev.trolledReversed ? undefined : true,
@@ -989,6 +1054,7 @@ export function assemblePlan(o) {
         startM: runM, lengthM: len,
         speedMph: transitMph, batteryAh: round2(a),
         estDurationMin: Math.round(mins), estStartTime: formatClock(clock),
+        light: lightOn(clock, mins),
         coordinates: p.coordinates,
       };
       if (p.minDepthHeld === false) {
