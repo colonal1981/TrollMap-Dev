@@ -414,10 +414,52 @@ function hasNoPack(name) {
  * `BATES_HAS_ITS_OWN_ROW_2026-08-22.md`, `A_LINE_IS_ENOUGH_TO_CUT_A_BOUNDARY_2026-08-22.md`.
  */
 
+/**
+ * THE PLAN PICKER'S OWN VALUE SCHEME, WHICH NOTHING ELSE EVER LEARNED.
+ *
+ * `#planLake` emits `river:<key>` for six hardcoded river entries while `#lakeSelect` on the map
+ * emits ordinary names. resolveR2Key() had never seen that shape, so it returned null, and every
+ * caller on the plan path read that as "this water has no chartpack".
+ *
+ * Ryan, 2026-09-15, running a bench plan on the Congaree: "build and send it returns Nothing came
+ * back... 'No chartpack for river:congaree'" — with the contours and the depth areas drawn on the
+ * map beside it, because the MAP had resolved the same water from the other picker's value.
+ *
+ * It was not one call site. `runSmartPlanV2`, `plan-water-ui`, `detectCoastalZone` and
+ * `smart-plan-route` all call resolveR2Key() on whatever the plan picker holds, so ALL SIX rivers
+ * — Wateree, Congaree, Lower Saluda, Broad, Santee and the Tail Race Canal — could draw contours
+ * and could not produce a plan. plan-builder.js has a `planWaterKey()` that translates the shape,
+ * written for exactly this, and its own docblock says so; it has four callers and all four are
+ * inside plan-builder.
+ *
+ * SO THE TRANSLATION BELONGS HERE, where every caller already is, rather than being bolted onto
+ * four of them and forgotten by the fifth.
+ *
+ * THE PICKER WILL STOP EMITTING THIS, and this table still stays. A saved session, a restored
+ * plan and a bookmarked state all hold the value that was current when they were written, and a
+ * resolver that only understands what the app emits TODAY breaks every one of them.
+ *
+ * The keys are PLAN_RIVERS' own, and they are six rows of data rather than a rule, because
+ * `broad` -> broad_river_2 and `cooper` -> tail_race_canal cannot be derived from the string.
+ */
+const RIVER_VALUE_ALIASES = {
+  wateree: 'wateree_river',
+  congaree: 'congaree_river',
+  saluda:   'saluda_river_lower_saluda',
+  broad:    'broad_river_2',
+  santee:   'santee_river',
+  cooper:   'tail_race_canal',
+};
+
 export function resolveR2Key(displayName) {
   if (!displayName || typeof displayName !== 'string') return null;
   const trimmed = displayName.trim();
   if (!trimmed) return null;
+
+  // Before every other pass, because it is an exact scheme and not a guess.
+  if (trimmed.toLowerCase().startsWith('river:')) {
+    return RIVER_VALUE_ALIASES[trimmed.slice(6).trim().toLowerCase()] || null;
+  }
 
   // Refused before any matching runs. See LAKE_NAMES_WITHOUT_PACK above.
   if (hasNoPack(trimmed)) return null;

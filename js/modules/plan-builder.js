@@ -209,7 +209,7 @@ export function collectPlan(){
   const species = [...document.querySelectorAll('#planSpeciesChecks input:checked')].map(c=>c.value);
   const lakeVal = gV('planLake');
   const isRiv = isPlanRiverValue(lakeVal);
-  const coastalKey = planWaterKey(lakeVal);
+  const coastalKey = resolveR2Key(lakeVal);
   const isCoastal = isCoastalKey(coastalKey);
   const phaseSpeeds = normalizedPhaseSpeeds(window._smartPlanPhaseRoutes);
 
@@ -2306,7 +2306,7 @@ export function renderPlanStats(){
  *
  * His call was to MERGE rather than pick a winner, which is right -- they are complementary, not
  * redundant. So the river entry now names its registry slug, the picker drops the registry row
- * that a river entry already claims, and the pack resolves through planWaterKey() below. One
+ * that a river entry already claims, and the pack resolves through resolveR2Key(). One
  * entry, tailwater conditions AND trolling lanes.
  *
  * COOPER IS HONESTLY PARTIAL. Its label spans "Pinopolis tailrace -> Charleston Harbor" and no
@@ -2314,6 +2314,11 @@ export function renderPlanStats(){
  * harbour end is coast_charleston_sc. The slug gives it a pack for the water you would troll and
  * does not pretend to cover the rest.
  */
+// The key->slug mapping now exists in two files: here, where the picker and the curated ramps
+// are, and js/data/lake-keys.js, where every resolver already is. Two copies of a mapping that
+// nothing compares is how the first one rots, so a test reads this table OUT OF THE SOURCE and
+// asserts the resolver agrees on every row -- source rather than an import, because this module
+// touches `document` at load and a DOM stub to read six rows is a worse trade than a regex.
 const PLAN_RIVERS = [
   { key:'wateree', slug:'wateree_river', label:'Wateree River', worker:'wateree', center:[34.24,-80.65,11], lakeKey:'Lake Wateree', ramps:[
     {name:'Lugoff (just below dam)', lat:34.33346, lon:-80.69973},
@@ -2390,13 +2395,12 @@ export function isRiverWater(v){
   return !!rec && rec.featureType === 'river';
 }
 
-export function planWaterKey(v){
-  if (isPlanRiverValue(v)) {
-    const def = getPlanRiverDef(v);
-    return (def && def.slug) || null;
-  }
-  return resolveR2Key(v || '');
-}
+// planWaterKey() STOOD HERE and it is gone, 2026-09-15. It translated `river:<key>` to a slug and
+// fell through to resolveR2Key() for everything else -- and resolveR2Key() now understands the
+// prefix itself, so this was a second resolver answering the identical question for four callers
+// while twenty others asked the wrong one and got null. See RIVER_VALUE_ALIASES in
+// js/data/lake-keys.js for what moved and why it moved there rather than being wired into the
+// four places that already had it.
 export function getPlanRiverDef(v){ const key=String(v||'').replace(/^river:/,''); return PLAN_RIVERS.find(r=>r.key===key||r.worker===key); }
 // isDukePlanLakeName() and getPlanLakeLevelUnit() were here. They were the FOURTH copy of the
 // nine-name Duke list in this codebase, matched with `clean.includes(k)||k.includes(clean)` --
@@ -2544,7 +2548,7 @@ export function populatePlanRampDropdown(waterbodyName){
   //
   // Order of preference, unchanged in spirit: the loaded index first, then whatever static list
   // the water has, so a picker opened before the index finishes loading still offers something.
-  const coastalKey = planWaterKey(waterbodyName || '');
+  const coastalKey = resolveR2Key(waterbodyName || '');
   const isCoastal = isCoastalKey(coastalKey);
   let accessPoints = [];
   if (waterbodyName && window.getLoadedAccessIndex) {
@@ -2606,7 +2610,7 @@ export function populatePlanRampDropdown(waterbodyName){
 document.getElementById('planLake')?.addEventListener('change', e=>{
   const v=e.target.value;
   const isRiver=isPlanRiverValue(v);
-  const coastalKey=planWaterKey(v);
+  const coastalKey=resolveR2Key(v);
   const isCoastal=isCoastalKey(coastalKey);
   setLakeOnlyFieldsVisible(!isRiver && !isCoastal);
   populatePlanRampDropdown(v);
