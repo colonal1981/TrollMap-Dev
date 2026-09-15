@@ -60,6 +60,7 @@ LAYERS = [
     'Causeways',
     'Tidegates_51',
     'SurfaceSalinityPoints',
+    'SurfaceSalinityLines',
     'ShellfishGrowingAreas',
     'RecreationalHarvestAreasShellfish',
     'CoastalWaterAccessPoints',
@@ -78,7 +79,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--gdb', default=str(GDB))
     ap.add_argument('--layers', default=None, help='comma list; default is the fishing-relevant set')
-    ap.add_argument('--attrs', type=int, default=6, help='how many attribute values to show')
+    ap.add_argument('--attrs', type=int, default=8, help='how many attribute values to show')
     a = ap.parse_args()
 
     gdb = Path(a.gdb)
@@ -123,14 +124,34 @@ def main():
             continue
         for slug, n in sorted(hits.items(), key=lambda kv: -kv[1]):
             print(f'     {slug:34} {n:>6,}')
+        # A COLUMN OF NUMBERS IS A RANGE, NOT A TALLY. The first version printed value counts for
+        # everything and skipped any column with more than 25 distinct values -- so
+        # SurfaceSalinityPoints, 61,972 readings, printed nothing at all about its salinity and the
+        # layer looked empty of attributes. A count answers "what kinds"; a range answers "what
+        # values", and a salinity layer is the second question.
         cols = [c for c in gdf.columns if c != gdf.geometry.name][:a.attrs]
         for c in cols:
+            ser = gdf[c]
+            nums = None
             try:
-                vc = gdf[c].astype(str).value_counts()
+                import pandas as pd
+                nums = pd.to_numeric(ser, errors='coerce').dropna()
+            except Exception:
+                nums = None
+            if nums is not None and len(nums) > len(ser) * 0.5 and nums.nunique() > 25:
+                q = nums.quantile([0, .25, .5, .75, 1])
+                print(f'   {c}: n={len(nums):,}  min {q.iloc[0]:.3g} | p25 {q.iloc[1]:.3g} | '
+                      f'med {q.iloc[2]:.3g} | p75 {q.iloc[3]:.3g} | max {q.iloc[4]:.3g}')
+                continue
+            try:
+                vc = ser.astype(str).value_counts()
             except Exception:
                 continue
             if 1 < len(vc) <= 25:
                 print(f'   {c}: ' + ', '.join(f'{k}={v:,}' for k, v in list(vc.items())[:8]))
+            elif len(vc) > 25:
+                print(f'   {c}: {len(vc):,} distinct values, e.g. '
+                      + ', '.join(str(k) for k in list(vc.index)[:4]))
         print()
 
 
