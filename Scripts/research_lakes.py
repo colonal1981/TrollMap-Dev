@@ -999,7 +999,7 @@ def load_lakes(args, registry):
         for _slug, _row in idx.items():
             _dn = (_row.get("display_name") or _row.get("name") or _slug).strip().lower()
             by_display[_dn] = (_row.get("display_name") or _row.get("name") or _slug, _row)
-        picked, unbound, has_reason, has_value = [], [], 0, 0
+        picked, unbound, has_reason, has_value, superseded = [], [], 0, 0, 0
         for p in files:
             try:
                 with open(p, encoding="utf-8") as f:
@@ -1013,9 +1013,30 @@ def load_lakes(args, registry):
             if th.get("summerDepthFt") is not None:
                 has_value += 1
                 continue
-            if th.get("note"):
+            # A REASON FROM THE WRONG SOURCE IS NOT THIS WATER'S REASON.
+            #
+            # `if th.get("note"): continue` treated any sentence as done, and on 2026-09-15 four
+            # waters -- Wateree, Murray, Monticello, Secession -- held a WQP SURFACE-GRAB refusal
+            # ("these are surface grabs with a depth stamp, not a vertical profile") in that slot
+            # while the pipeline held a real vertical cast for each of them. build_document_limnology
+            # was dropping the cast's own note, so the weaker sentence won the slot; 6fb33f0 fixed
+            # that upstream and left these four profiles stale relative to their own producer.
+            #
+            # THE TEST IS WHETHER THE CAST THAT ANSWERED THE OXYGEN ALSO ANSWERED THE THERMOCLINE.
+            # Every note fetch_nla_limnology.py writes for a refused thermocline names the gradient
+            # in C/m -- that is the shape of a cast's answer -- so a profile whose OXYGEN came off a
+            # cast and whose thermocline note does not mention one is holding two different sources
+            # in two fields that should agree. No date, no version constant, nothing to keep in
+            # sync: it self-empties the moment the profile is rewritten.
+            ox = ((prof.get("limnology") or {}).get("oxygen") or {})
+            cast_oxygen = (ox.get("anoxicBelowFt") is not None
+                           or ox.get("depletionDepthFt") is not None)
+            note = str(th.get("note") or "")
+            if note and not (cast_oxygen and "C/m" not in note):
                 has_reason += 1
                 continue
+            if note:
+                superseded += 1
             nm = (prof.get("lakeName") or "").strip()
             hit = by_display.get(nm.lower())
             if not hit:
@@ -1028,7 +1049,11 @@ def load_lakes(args, registry):
             picked.append((name, args.state or hit[1].get("state") or "SC",
                            alt_names.get(name.strip().lower()) or [name]))
         print(f"limnology: {has_value} water(s) already carry a depth, {has_reason} carry a reason, "
-              f"{len(picked)} still hold a null with neither")
+              f"{len(picked)} need a run")
+        if superseded:
+            print(f"           of those {superseded} DO carry a reason, from a source that has "
+                  f"since been beaten: their oxygen came off a vertical cast and their thermocline "
+                  f"note did not")
         print(f"           read from {prof_dir} ({len(files)} profiles, newest "
               f"{age_h:.1f} h old)")
         if age_h > 48:

@@ -122,9 +122,18 @@ test('the warnings are the union the bench shows, not the assembler third', () =
   assert.ok(p.plan.warnings.includes('over budget'));
 });
 
-test('another day geometry is emptied, never carried', () => {
+test('another day geometry is emptied — but EMPTY-SHAPED, not null', () => {
   const p = benchReportPlan(BENCH, FORM, spreadRowsFrom);
-  assert.equal(p.gpx, null, 'state.DATA.tracks belong to whatever was last materialised');
+  // Emptied because state.DATA.tracks belong to whatever real plan was last materialised, and
+  // another day's route in a file describing this one is the failure collectPlan's own `_planV2`
+  // guard exists to prevent.
+  assert.deepEqual(p.gpx.waypointList, []);
+  assert.deepEqual(p.gpx.trackList, []);
+  assert.equal(p.gpx.waypoints, 0);
+  // AND SHAPED, because `buildPlanPreviewHtml` reads `p.gpx.waypoints` in one place among four
+  // that use `p.gpx?.`. Null threw "Cannot read properties of null (reading 'waypoints')" and
+  // killed the export on Ryan's first try, 2026-09-14.
+  assert.notEqual(p.gpx, null, 'a null where a renderer has always had an object is our bug');
   assert.equal(p.model, null, 'the request and the answer are in the JSON export, in full');
 });
 

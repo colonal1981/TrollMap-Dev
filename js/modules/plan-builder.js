@@ -1995,7 +1995,7 @@ ${arigRows ? `
   <tbody>${arigRows}</tbody>
 </table>` : ''}
 
-${(p.gpx.waypoints||p.gpx.tracks) ? `
+${(p.gpx?.waypoints || p.gpx?.tracks) ? `
 <h2>10 · Waypoints &amp; Operational Tracks Summary</h2>
 <div class="rp-grid2">
   <div>

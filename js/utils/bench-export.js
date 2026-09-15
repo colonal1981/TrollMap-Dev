@@ -107,7 +107,17 @@ export function benchReportPlan(run, formPlan, spreadRowsFrom) {
     routeSpeeds: (shown && shown.routeSpeeds) || null,
     rationale: (shown && shown.rationale) || '',
     spread: rows,
-    gpx: null,
+    // EMPTY-SHAPED, NOT NULL. `buildPlanPreviewHtml` reads `p.gpx.waypoints` in one place among
+    // four that use `p.gpx?.`, so a null here threw "Cannot read properties of null (reading
+    // 'waypoints')" and killed the export -- Ryan hit it on the first try. The deref is guarded
+    // now as well, but the shape is supplied regardless: a caller that hands a renderer a null
+    // where it has always had an object is the caller's bug, and the next field added there would
+    // break this again.
+    //
+    // EMPTY rather than carried: collectPlan() reads state.DATA.tracks, and on a bench run those
+    // are whatever real plan was last materialised. Another day's route in a file describing this
+    // one is the failure collectPlan's own `_planV2` guard exists to prevent.
+    gpx: { waypoints: 0, tracks: 0, trackPoints: 0, waypointList: [], trackList: [] },
     model: null,
   };
 }
