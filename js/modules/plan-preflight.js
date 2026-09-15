@@ -40,6 +40,7 @@ import { getTideStateForZone } from './tide-engine.js';
 import { assessZoneIntrusion } from './usgs-gauges.js';
 import { DEPTH_BANDS, normalizeCoastalSpecies, tacticalNote } from './coastal-scoring.js';
 import { clarityForPlan, versusNormalAt } from '../utils/clarity-at-ramp.js';
+import { compassOf } from '../utils/compass.js';
 
 /** The coastal zone this water is, or null for everything inland. */
 export function detectCoastalZone(lakeName) {
@@ -195,8 +196,7 @@ export function checkPlanLegality(lakeName, species, date, o = {}) {
   };
 }
 
-const DIRS = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE',
-              'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
+// THE COMPASS IS IN ONE PLACE NOW -- see js/utils/compass.js for the four copies this was.
 
 /**
  * The day's forecast for this water: the line the plan form shows, AND the hourly wind the
@@ -252,7 +252,7 @@ export async function fetchForecast(lakeName, dateStr, o = {}) {
     const d = await res.json();
     const D = d && d.daily;
     if (!D) return null;
-    const dir = DIRS[Math.round(((D.winddirection_10m_dominant || [])[0] || 0) / 22.5) % 16];
+    const dir = compassOf((D.winddirection_10m_dominant || [])[0] || 0);
     const mph = Math.round(((D.windspeed_10m_max || [])[0] || 0) * 0.621371);
     const precip = (D.precipitation_sum || [])[0] || 0;
     const hi = (D.temperature_2m_max || [])[0];
@@ -484,6 +484,19 @@ export async function fetchWaterState(lakeName, dateStr, o = {}) {
     nextEvent: next,
     currentKn: c && Number.isFinite(c.currentKn) ? c.currentKn : null,
     currentType: (c && c.currentType) || null,
+    // THE SET, AND WHERE THE PREDICTION WAS TAKEN. All four of these were computed by
+    // water-conditions.js and forwarded to the conditions STRIP and nowhere else, so the prompt's
+    // Current line has said "flood 1.8 kn" with no direction and no station since it was written.
+    //
+    // The direction is the half that decides a drift: there is no spot-lock on a pedal kayak, so
+    // which way the water is running is which way the bait goes and which way the pedal work is.
+    // And the distance is what says whether the prediction is about this creek at all -- the
+    // nearest station to a Charleston marsh ramp can be the harbour entrance.
+    currentDirDeg: c && Number.isFinite(c.currentDirDeg) ? c.currentDirDeg : null,
+    currentAt: (c && c.currentAt) || null,
+    currentStation: (c && c.currentStation) || null,
+    currentStationKm: c && Number.isFinite(c.currentStationKm) ? c.currentStationKm : null,
+    currentBoundBy: (c && c.currentBoundBy) || null,
     surgeVsPredictedFt: c && Number.isFinite(c.surgeFt) && Math.abs(c.surgeFt) >= 0.3 ? c.surgeFt : null,
     salinityPpt: c && Number.isFinite(c.salinityPpt) ? c.salinityPpt : null,
     conductanceUsCm: c && Number.isFinite(c.conductanceUsCm) ? c.conductanceUsCm : null,

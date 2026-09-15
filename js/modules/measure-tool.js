@@ -5,6 +5,7 @@
  */
 
 import { state } from '../core/state.js';
+import { compassOf } from '../utils/compass.js';
 import { distFt } from '../utils/geo.js';
 import { setBanner } from '../core/map-init.js';
 
@@ -20,8 +21,7 @@ function calcBearing(p1, p2) {
   const dLon = (p2.lng - p1.lng) * Math.cos((p1.lat + p2.lat) / 2 * Math.PI / 180);
   const dLat = p2.lat - p1.lat;
   const deg = (Math.atan2(dLon, dLat) * 180 / Math.PI + 360) % 360;
-  const dirs = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
-  return `${Math.round(deg)}° ${dirs[Math.round(deg / 22.5) % 16]}`;
+  return `${Math.round(deg)}° ${compassOf(deg)}`;
 }
 
 function exitMeasure() {

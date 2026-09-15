@@ -59,10 +59,32 @@ test('a served record carries its species, its checkboxes and its sentence', () 
 test('the builder puts the species on the record, not only on its closures', () => {
   assert.match(SRC, /if sp and not all_species:\s*\n\s*rec\['species'\] = sp/);
   assert.match(SRC, /rec\['plan_species'\] = ex\['plan_species'\]/);
-  // A saltwater fish has no business in the freshwater plan form, and says so rather than
-  // arriving as UNMAPPED, which reads like a lookup that failed.
+});
+
+// THIS TEST ASSERTED THE BRANCH THAT COST THE COAST ITS REGULATIONS, and it asserted it by
+// greping a COMMENT.
+//
+// It required the block to contain "coastal species -- the freshwater plan", the basis string a
+// now-deleted branch wrote when it refused to map a saltwater row -- reasoning that a saltwater
+// fish has no checkbox in a freshwater form. That reasoning stopped being true when the form
+// became every species the four books name as a row of its own. The script's own note on the
+// deletion says what it cost: "an SC or GA coastal water reached checkPlanLegality() with no
+// species on any rule, so a closed season or a slot limit governed no checkbox and the planner
+// was told the book says nothing."
+//
+// So the script was fixed and this file was not opened, and it has been red since. The claim is
+// inverted below and written on the BEHAVIOUR: a coastal row goes through the same resolution as
+// a freshwater one. The guard against the branch returning is a search for the excuse string in
+// the whole file, not a search for a sentence inside one block.
+test('a COASTAL row is resolved the same way a freshwater one is, never excused', () => {
   const blk = SRC.slice(SRC.indexOf("if sp and not all_species:"), SRC.indexOf("last_species = sp"));
-  assert.match(blk, /coastal species -- the freshwater plan/);
+  assert.match(blk, /ex = expand_species\(sp, smap or \{\}\)/);
+  assert.match(blk, /rec\['species_basis'\] = ex\['basis'\]/);
+  // No branch anywhere still hands a row the old refusal as its basis.
+  assert.ok(!/['"]coastal species -- the freshwater plan[^'"]*['"]/.test(SRC),
+    'the excuse basis is back in build_regulations_table.py');
+  // And the closure half resolves the same way, or the two halves disagree about one row.
+  assert.match(SRC, /c\['plan_species'\] = ex\['plan_species'\]/);
 });
 
 test("Tennessee's statewide rows go through the same species resolution as every other row", () => {

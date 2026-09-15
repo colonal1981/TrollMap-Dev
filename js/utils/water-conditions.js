@@ -147,6 +147,8 @@ export function readConditions(j) {
     currentType: null,
     currentAt: null,
     currentStation: null,
+    currentStationKm: null,
+    currentBoundBy: null,
     tideStation: null,
     nextTide: null,
     floodCategory: null,
@@ -545,6 +547,14 @@ export function readConditions(j) {
       out.currentType = cev[0].type || null;
       out.currentAt = cev[0].time || null;
       out.currentStation = (td.currents.station && (td.currents.station.name || td.currents.station.id)) || null;
+      // HOW FAR AWAY IT IS, which is the difference between a fact about this creek and a fact
+      // about the harbour entrance. Charleston's nearest current station can be eight kilometres
+      // from a marsh ramp, and a prediction from the jetties is not the water under the boat.
+      out.currentStationKm = Number.isFinite(Number(td.currents.station && td.currents.station.km_from_point))
+        ? Number(td.currents.station.km_from_point) : null;
+      // WHICH REGISTRY CHOSE IT. See currentStationFor() in Worker/conditions.js: the pipeline's
+      // own binding answers for two of sixteen coastal zones, and a boundary test fills the rest.
+      out.currentBoundBy = (td.currents.station && td.currents.station.bound_by) || null;
     }
     // BAROMETRIC PRESSURE, and the trend is the part that matters. A stale reading is dropped
     // rather than shown: Charleston answered `date=latest` with an eleven-day-old value on

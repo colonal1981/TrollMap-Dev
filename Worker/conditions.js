@@ -62,7 +62,7 @@
 import { CORS, JSON_HEADERS, r2Text } from './worker-core.js';
 import { ndbcReadings } from './ndbc.js';
 import { sensorReading, sensorSourceOf } from './sensor.js';
-import { waterChain, damTable, fullPoolTable } from './registry.js';
+import { waterChain, damTable, fullPoolTable, coastalCurrentStations } from './registry.js';
 // RIVERS and lakeKeyFromName came out with dukeBasinFor: the basin is resolved from Duke's own
 // /rivers/get-rivers roster now, so this file no longer reads the six-entry hand table at all.
 import { dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun,
@@ -4693,12 +4693,56 @@ export function pressureTrend(j, nowMs, maxAgeMin = 180) {
   };
 }
 
-async function tideBlock(b, lat, lon, date) {
+/**
+ * THE CURRENT STATION, FROM THE BINDINGS IF IT IS THERE AND FROM THE COASTAL REGISTRY IF IT IS NOT.
+ *
+ * THE TIDE IS THE CURRENT on the water Ryan fishes -- the coastal prompt block says so in those
+ * words, and there is no spot-lock on a pedal kayak, so which way it is running decides every
+ * stop. That line and the conditions strip's Current row have both been reading
+ * `currentpredictions` out of water_bindings.json since they were written.
+ *
+ * Measured over all 207 bindings, 2026-09-15: THIRTY waters carry `tides` and only SEVEN carry a
+ * current station. Of the sixteen coastal zones the app offers, TWO have one -- Cape Fear and
+ * Brunswick/St Simons. Charleston has none. So on fourteen of sixteen zones, including every
+ * South Carolina zone, both readers have been starved since the day they were written and there
+ * was no way to tell that from either of them: a blank Current row and a zone with slack water
+ * look identical.
+ *
+ * `registry/coastal_current_stations.json` was built for exactly this on 2026-09-03 --
+ * fetch_noaa_current_stations.py, 2,785 CO-OPS stations filtered to those INSIDE a zone boundary,
+ * 360 bindings across 16 of 22 zones, 75 of them in Charleston Harbour alone -- and nothing has
+ * ever read it. This is the read. Nothing else changes: the station goes into the same
+ * currents_predictions call that was already there, and the same fields come back out.
+ *
+ * THE BINDINGS WIN WHERE THEY ANSWER. A zone with a bound station keeps it; this only fills a
+ * silence. And the answer says WHICH source it came from, because a station chosen by a boundary
+ * test and one chosen by the pipeline's own binding are different provenance and a reader that is
+ * never told cannot weigh them.
+ *
+ * A registry that will not load is a SILENCE, not a failure: the current row goes empty exactly as
+ * it does today, and the tide block -- which is the part that keeps a kayak off the mud -- still
+ * returns. Nothing here can make a missing registry into a cancelled trip.
+ */
+async function currentStationFor(b, slug, lat, lon, env) {
+  const bound = nearest((b.tides || []).filter((t) => t && t.kind === 'currentpredictions'), lat, lon);
+  if (bound && bound.id) return { ...bound, from: 'water_bindings' };
+  if (!slug || !env) return null;
+  try {
+    const zones = await coastalCurrentStations(env);
+    const inZone = (zones && zones[slug]) || [];
+    const hit = nearest(Array.isArray(inZone) ? inZone : [], lat, lon);
+    return (hit && hit.id) ? { ...hit, from: 'coastal_current_stations' } : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+async function tideBlock(b, lat, lon, date, slug, env) {
   const all = b.tides || [];
   const levels = all.filter((t) => t && (t.kind === 'tidepredictions' || t.kind === 'waterlevels'));
   const st = nearest(levels, lat, lon);
   if (!st || !st.id) return null;
-  const cur = nearest(all.filter((t) => t && t.kind === 'currentpredictions'), lat, lon);
+  const cur = await currentStationFor(b, slug, lat, lon, env);
 
   const b1 = date.replace(/-/g, '');
   const b2 = dayAfter(date).replace(/-/g, '');
@@ -4757,7 +4801,11 @@ async function tideBlock(b, lat, lon, date) {
     measured_level: wl ? { ft: num(wl.v), at: wl.t } : null,
     measured_level_error: errOf(w),
     currents: (c && c.current_predictions) ? {
-      station: { id: cur.id, name: cur.name || null, km_from_point: cur.km },
+      // `bound_by` says which registry chose this station -- see currentStationFor(). A station
+      // picked by a boundary test and one picked by the pipeline's binding are different
+      // provenance, and the caller has to be able to tell them apart.
+      station: { id: cur.id, name: cur.name || null, km_from_point: cur.km,
+                 bound_by: cur.from || null },
       units: c.current_predictions.units || null,
       events: (c.current_predictions.cp || []).map((x) => ({
         time: x.Time, type: x.Type,
@@ -4876,7 +4924,7 @@ export async function handleConditions(request, env, url) {
     ['tide', bindingsP.then(({ all, err }) => {
       if (err) throw new Error(err);
       const b = all[slug];
-      return (b && (b.tides || []).length) ? tideBlock(b, lat, lon, date) : null;
+      return (b && (b.tides || []).length) ? tideBlock(b, lat, lon, date, slug, env) : null;
     })],
     // CLARITY MOVED HERE from its own /lake-clarity route, so a caller that wants the state of
     // the water makes ONE request instead of three. It is a model, not a reading: a measured

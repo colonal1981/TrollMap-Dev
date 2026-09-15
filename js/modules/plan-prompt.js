@@ -56,6 +56,7 @@
 
 // ONE PLACE KNOWS HOW DEEP A BAIT RUNS, and until now the prompt was not one of its readers.
 import { levelSentence } from '../utils/water-conditions.js';
+import { compassOf } from '../utils/compass.js';
 import { depthWindow, jigheadRangeOz, trollableBaits,
          describeBait } from '../data/lure-knowledge.js';
 import { RIGGED_TROLLING_WEIGHT_OZ, JIGHEADS_OWNED_OZ } from '../data/tackle-inventory.js';
@@ -241,10 +242,34 @@ export function coastalPromptBlock(ws) {
       + `${t.nextEvent.heightFt != null ? ` (${t.nextEvent.heightFt} ft)` : ''}`
       + ' — the day has a shape around that, and the plan should say what changes when it turns.');
   }
+  // THE CURRENT, AND EVERYTHING THAT SAYS WHETHER IT IS ABOUT THIS CREEK.
+  //
+  // This line used to say "Current: flood 1.8 kn" and stop. It asked the model to say which way
+  // the water is running while giving it no direction -- the set was computed by
+  // water-conditions.js, forwarded to the conditions strip and dropped on the way here. And it
+  // gave no station and no distance, so a prediction taken at the harbour entrance read exactly
+  // like one taken in the creek. On a pedal kayak both halves decide the day.
   if (t.currentType || t.currentKn != null) {
+    const set = Number.isFinite(t.currentDirDeg)
+      ? ` setting ${Math.round(t.currentDirDeg)}° (${compassOf(t.currentDirDeg)})` : '';
     L.push(`Current: ${[t.currentType, t.currentKn != null ? `${Math.abs(t.currentKn).toFixed(1)} kn` : '']
-      .filter(Boolean).join(' ')}. THE TIDE IS THE CURRENT here — there is no spot-lock, so every `
-      + 'stop is pedal work against moving water and you must say which way it is running.');
+      .filter(Boolean).join(' ')}${set}${t.currentAt ? ` at ${t.currentAt}` : ''}. `
+      + 'THE TIDE IS THE CURRENT here — there is no spot-lock, so every stop is pedal work '
+      + 'against moving water and you must say which way it is running.');
+    if (t.currentStation) {
+      const far = Number.isFinite(t.currentStationKm) && t.currentStationKm >= 3;
+      L.push(`  Predicted at ${t.currentStation}`
+        + (Number.isFinite(t.currentStationKm) ? `, ${t.currentStationKm.toFixed(1)} km from the launch` : '')
+        + (far ? ' — FAR ENOUGH THAT IT IS THE TIMING THAT TRANSFERS, NOT THE SPEED. Use it for '
+               + 'when the water turns; do not state that speed as the current in his creek.'
+               : '.'));
+    }
+  } else if (t.zone) {
+    // A BLANK CURRENT ROW AND SLACK WATER LOOK IDENTICAL, and until 2026-09-15 fourteen of the
+    // sixteen coastal zones had no bound current station at all -- so the model was reading
+    // silence as calm on every South Carolina zone. Say which it is.
+    L.push('NO CURRENT PREDICTION ANSWERED for this zone. That is a missing station, NOT slack '
+      + 'water — the tide is still running and the plan must say the speed was not read.');
   }
   if (t.surgeVsPredictedFt != null) {
     L.push(`Observed water is ${t.surgeVsPredictedFt > 0 ? '+' : '−'}`
