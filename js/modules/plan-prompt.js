@@ -810,9 +810,28 @@ export function buildPlanRequest(o) {
       const lure = o.lureByName(name);
       if (!lure) continue;
       const w = depthWindow(lure, { speedMph: 2.0, leadFt: null });
-      if (w.mode !== 'rated' || !Number.isFinite(w.min)) continue;
-      // The same form the tackle list showed, so the model is comparing like with like.
-      if (w.min > ceilingFt) out.push(promptSafeTackleName(name));
+      if (w.mode !== 'rated' || !Number.isFinite(w.max)) continue;
+      // ── max, NOT min, AND THE COMMENT ABOVE CLAIMED THEY WERE THE SAME TEST ──────────────────
+      //
+      // This read `w.min > ceilingFt` and called itself "precisely capBaitDepth()'s test, asked
+      // earlier". capBaitDepth's test is `w.max <= ceilingFt`. They are not the same test, and the
+      // model was being handed the lenient one.
+      //
+      // Measured on Ryan's 2026-09-14 plan: wateree_lake#216 has an 11 ft ceiling, `cannotUse`
+      // named the four deep divers and NOT the MR Crankbait (6-12 ft) -- because 6 > 11 is false.
+      // The model duly put the MR on that leg, and capBaitDepth then wrote "runs to 12 ft and the
+      // shallowest water on this leg is 11 ft. Its depth is the lure itself, so lead will not lift
+      // it -- it is the wrong bait for this pass." Told afterwards, having been offered it.
+      //
+      // Ryan settled the principle on the plan that prompted this whole block: "telling me that the
+      // baits are wrong... so they shouldn't be offered in the first place... that means that the
+      // model is not being told the right things." A rated bait whose MAX clears the ceiling is
+      // fine; one whose max does not will drag somewhere on the pass and no lead lifts a bill.
+      //
+      // The shallow end is deliberately NOT what is compared. `depthWindow()` on a rated bait
+      // returns the maker's own pair, and this file's own note on which end to read says it plainly:
+      // "will it drag the bottom? assume it makes `max`. Pessimistic, and it saves the lure."
+      if (w.max > ceilingFt) out.push(promptSafeTackleName(name));
     }
     return out.length ? out : undefined;
   };

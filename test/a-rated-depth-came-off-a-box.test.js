@@ -229,3 +229,64 @@ describe('a bait that only fishes behind a weight says so instead of guessing', 
     expect(p.includes('depth set by its BILL')).toBe(false);   // the branch it used to fall into
   });
 });
+
+// ── cannotUse USED THE SHALLOW END, AND capBaitDepth USES THE DEEP ONE ──────────────────────────
+//
+// `cannotUseOn()` in plan-prompt.js tested `w.min > ceilingFt` and its own comment called that
+// "precisely capBaitDepth()'s test, asked earlier". capBaitDepth's test is `w.max <= ceilingFt`.
+// Not the same test, and the model was handed the lenient one.
+//
+// Measured on Ryan's 2026-09-14 plan: wateree_lake#216 has an 11 ft ceiling, and `cannotUse` named
+// the four deep divers and NOT the MR Crankbait (6-12 ft), because 6 > 11 is false. The model put
+// the MR on that leg and capBaitDepth then wrote "runs to 12 ft and the shallowest water on this
+// leg is 11 ft. Its depth is the lure itself, so lead will not lift it -- it is the wrong bait for
+// this pass." Told afterwards, having been offered it.
+//
+// Ryan, on the plan that caused this block to exist: "telling me that the baits are wrong... so
+// they shouldn't be offered in the first place... that means that the model is not being told the
+// right things."
+describe('a rated bait is refused a leg its BILL cannot clear, before the model picks', () => {
+  const askFor = (ceilingFt) => buildPlanRequest({
+    water: 'Lake Wateree, SC', ramp: 'Clearwater Cove', date: '2026-09-14',
+    launchTime: '06:00', returnTime: '15:00', species: ['Striped Bass'], conditions: {},
+    candidates: [{ runId: 'wateree_lake#216', depthFt: 20, maxRunDepthFt: ceilingFt,
+                   lengthM: 2000, structures: [] }],
+    tackle: TACKLE_INVENTORY.filter((l) => l.trollable || l.castable).map((l) => l.name),
+    trollable: TACKLE_INVENTORY.filter((l) => l.trollable).map((l) => l.name),
+    lureByName: byName,
+  }).user;
+  const cannotUse = (ceilingFt) => {
+    const m = askFor(ceilingFt).match(/"cannotUse":\[([^\]]*)\]/);
+    return m ? m[1] : '';
+  };
+
+  it('an 11 ft ceiling refuses the 6-12 ft crankbait, not only the deep divers', () => {
+    const list = cannotUse(11);
+    expect(list.includes('MR Crankbait (6-12ft)')).toBe(true);
+    expect(list.includes('DD4 Crankbait (25ft+)')).toBe(true);
+  });
+
+  it('a ceiling the bill clears leaves the bait on the table', () => {
+    const list = cannotUse(14);
+    expect(list.includes('MR Crankbait (6-12ft)')).toBe(false);     // max 12, clears 14
+    // AND THE DD1 IS STILL REFUSED AT 14 FT, which is the whole point of reading `max`. It is
+    // rated 14-18: its shallowest is exactly the ceiling and its deepest is four feet under it, so
+    // it drags somewhere on the pass. My first draft of this assertion expected it to pass and the
+    // code was right -- written down because "rated 14-18 on 14 ft of water" reads fine until you
+    // notice which end the bait actually makes.
+    expect(list.includes('DD1 Crankbait (14-18ft)')).toBe(true);
+  });
+
+  it('deep water refuses nothing', () => {
+    expect(cannotUse(40)).toBe('');
+  });
+
+  it('a lead-controlled bait is NEVER on the list, at any ceiling', () => {
+    // It can always be brought up by shortening the lead, which is what capBaitDepth does for it
+    // rather than complaining. Naming it here would delete water he can fish.
+    for (const ceiling of [5, 11, 14, 40]) {
+      expect(cannotUse(ceiling).includes('Flutter Spoon')).toBe(false);
+      expect(cannotUse(ceiling).includes('Swimbait')).toBe(false);
+    }
+  });
+});
