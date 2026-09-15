@@ -55,6 +55,30 @@ SC_ESI_ZIP     = DATA_DIR / 'SCarolina_2015_GDB.zip'
 NC_ESI_ZIP     = DATA_DIR / 'NCarolina_2016_GDB.zip'
 GA_ESI_ZIP     = DATA_DIR / 'Georgia_2015_GDB.zip'
 
+# WHICH STATE'S OYSTER FILE A ZONE IS ALLOWED TO SEE, AND GEORGIA HAS NONE.
+#
+# This was written inline as `oyster_sc if state == 'SC' else oyster_nc if state in ('NC','GA')`,
+# so every Georgia zone was clipped against NORTH CAROLINA's DMF reef guide. The two coasts are
+# four hundred kilometres apart, so the clip returned nothing and the run printed
+# "oyster_beds: none in bbox" -- which reads as a fact about Georgia and is a fact about a search
+# of the wrong state. An answer from the wrong book is worse than no answer, because no answer
+# gets looked into.
+#
+# THERE ARE ONLY TWO OYSTER SOURCES ON THE DRIVE and the header of this file names both: SCDNR's
+# 2015 live layer and NCDMF's reef guide. Georgia publishes neither, so its zones get None here
+# and say so. That is not a gap in this script -- where Georgia DOES map shell bottom it is
+# inside its own ESI geodatabase as a BENTHIC layer, and the ESI loop below already merges any
+# BENTHIC layer into oyster_beds.geojson for whatever state carries one. Georgia reaching its own
+# data is the point; reaching North Carolina's never was.
+#
+# A table rather than a chain, because the chain is what hid this: `state in ('NC','GA')` reads
+# as deliberate and a row saying `'GA': None` cannot.
+OYSTER_SOURCE_BY_STATE = {
+    'SC': 'sc',     # SCDNROyster2015Live.geojson
+    'NC': 'nc',     # DMF_ReefGuide_*.geojson
+    'GA': None,     # no public statewide oyster layer; see the ESI BENTHIC path below
+}
+
 # ESI layer names — matched to actual GDB contents
 # HABITATS = primary habitat polygons (marsh, SAV, beach, etc.)
 # ESIL = ESI shoreline lines with habitat coding
@@ -226,24 +250,36 @@ def process_zone(slug, zone, oyster_sc, oyster_nc, esi_sc, esi_nc, esi_ga,
     results = {}
 
     # ── Oyster beds ───────────────────────────────────────────────────────────
-    oyster_src = oyster_sc if state == 'SC' else oyster_nc if state in ('NC', 'GA') else None
+    # See OYSTER_SOURCE_BY_STATE: Georgia is None on purpose and is SAID rather than searched.
+    which = OYSTER_SOURCE_BY_STATE.get(state)
+    oyster_src = oyster_sc if which == 'sc' else oyster_nc if which == 'nc' else None
+    if oyster_src is None and state in OYSTER_SOURCE_BY_STATE:
+        print(f"    oyster_beds: {state} publishes no statewide oyster layer "
+              f"-- not searched. Shell bottom, if any, comes from this state's own ESI BENTHIC.")
     if oyster_src is not None:
         clipped = clip_to_zone(oyster_src, zone)
         if clipped is not None and len(clipped) >= MIN_FEATURES:
             # Drop tiny slivers below 10 sq meters before simplifying
             clipped = clipped[clipped.geometry.area > 0.000001]
-            # Adaptive simplification — increase tolerance until under MAX_SIZE_KB
+            # Adaptive simplification — increase tolerance until under MAX_SIZE_KB.
+            #
+            # `clipped` IS REPLACED EVERY TIME, not only on the break. It used to be assigned only
+            # inside the `if`, so a zone that never got under the cap wrote the most-simplified
+            # geojson (`gj` from the last pass) and then PRINTED the feature count of the
+            # unsimplified set beside it. Simplify drops empty geometries, so the two genuinely
+            # differ -- the line reported a count for a file that was never written.
             for tolerance in (0.0001, 0.0003, 0.0005, 0.001, 0.002, 0.005):
                 simplified = clipped.copy()
                 simplified['geometry'] = simplified.geometry.simplify(tolerance, preserve_topology=True)
                 simplified = simplified[~simplified.geometry.is_empty]
                 gj = gdf_to_geojson(simplified)
                 size_kb = len(gj.encode()) // 1024
+                clipped = simplified
                 if size_kb <= MAX_SIZE_KB:
-                    clipped = simplified
                     break
                 print(f"    oyster_beds: {size_kb} KB at tolerance {tolerance}, trying larger...")
-            print(f"    oyster_beds: {len(clipped):,} features ({size_kb} KB, tolerance={tolerance})")
+            over = ' — STILL OVER THE CAP' if size_kb > MAX_SIZE_KB else ''
+            print(f"    oyster_beds: {len(clipped):,} features ({size_kb} KB, tolerance={tolerance}){over}")
             results['oyster_beds.geojson'] = gj
         else:
             print(f"    oyster_beds: none in bbox")
