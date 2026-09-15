@@ -375,6 +375,86 @@ def process_zone(slug, zone, oyster_sc, oyster_nc, esi_sc, esi_nc, esi_ga,
     return ok
 
 
+# ── looking before writing ──────────────────────────────────────────────────────────────────
+
+def layer_value_summary(rows, top=15, max_values_per_col=60):
+    """Columns and their commonest values for one layer, as printable lines.
+
+    PURE ON PURPOSE -- it takes a list of plain dicts and returns a list of strings, so the thing
+    that decides what a layer CONTAINS can be tested without a geodatabase, geopandas, or the
+    1.2 GB oyster file. The GDB read around it is the thin untestable shell.
+
+    WHY THIS EXISTS. The BENTHIC branch below writes an ENTIRE benthic layer to
+    oyster_beds.geojson with no filter on what kind of bottom it is, and the map draws that file
+    with the tooltip "Oyster bed -- redfish on moving water". That branch was written for North
+    Carolina, whose BENTHIC is shell bottom, and never looked at again. Georgia has a BENTHIC
+    layer too -- confirmed 2026-09-15 -- and nobody has looked at what is in it. Soft bottom
+    drawn and labelled as an oyster rake is a claim the data does not make, and the plan now
+    scores oyster off the South Atlantic habitat matrix, so it would be a wrong claim twice.
+
+    A COLUMN WITH A VALUE PER ROW IS AN ID, NOT A CLASSIFICATION, and printing sixty thousand
+    distinct values teaches nothing -- those columns are named and skipped.
+    """
+    lines = []
+    if not rows:
+        return ['    (no rows)']
+    cols = []
+    for r in rows:
+        for k in r.keys():
+            if k not in cols:
+                cols.append(k)
+    lines.append(f'    {len(rows):,} rows, {len(cols)} columns')
+    for c in cols:
+        counts = {}
+        for r in rows:
+            v = r.get(c)
+            if v is None or v == '':
+                continue
+            key = str(v)
+            counts[key] = counts.get(key, 0) + 1
+        if not counts:
+            lines.append(f'      {c}: (all empty)')
+            continue
+        if len(counts) > max_values_per_col:
+            lines.append(f'      {c}: {len(counts):,} distinct values — looks like an id, skipped')
+            continue
+        ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:top]
+        shown = ', '.join(f'{k}={n:,}' for k, n in ordered)
+        more = '' if len(counts) <= top else f' … +{len(counts) - top} more'
+        lines.append(f'      {c}: {shown}{more}')
+    return lines
+
+
+def inspect_layer(label, zip_path, layer_name, max_rows=200000):
+    """Print what one layer of one ESI geodatabase actually holds. Reads nothing else."""
+    if not zip_path.exists():
+        print(f"{label}: not found at {zip_path}")
+        return
+    gdb_path, tmp_dir = extract_gdb_from_zip(zip_path)
+    try:
+        if not gdb_path:
+            return
+        have = [l for l in list_gdb_layers(gdb_path) if l.upper() == layer_name.upper()]
+        if not have:
+            print(f"\n{label}: no {layer_name} layer")
+            return
+        gdf = gpd.read_file(str(gdb_path), layer=have[0], engine="pyogrio")
+        print(f"\n{label} — {have[0]}:")
+        if gdf.empty:
+            print('    (empty)')
+            return
+        geom = gdf.geometry.name if hasattr(gdf, 'geometry') else None
+        flat = gdf.drop(columns=[geom]) if geom and geom in gdf.columns else gdf
+        rows = flat.head(max_rows).to_dict('records')
+        if len(gdf) > max_rows:
+            print(f'    (summarising the first {max_rows:,} of {len(gdf):,} rows)')
+        for line in layer_value_summary(rows):
+            print(line)
+    finally:
+        import shutil
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 def main():
     ap = argparse.ArgumentParser(description='Extract coastal habitat data for TrollMap')
     ap.add_argument('--zone',        help='Process single zone by slug')
@@ -384,9 +464,18 @@ def main():
                     help='upload raw -- only if the Worker predates r2Body()')
     ap.add_argument('--skip-upload', action='store_true', help='Save locally instead of uploading')
     ap.add_argument('--list-layers', action='store_true', help='List ESI GDB layers and exit')
+    ap.add_argument('--inspect', metavar='LAYER',
+                    help='Print one ESI layer\'s columns and commonest values, then exit. '
+                         'Use before trusting a layer -- see layer_value_summary().')
     args = ap.parse_args()
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    # ── Inspect one layer ─────────────────────────────────────────────────────
+    if args.inspect:
+        for label, zip_path in [('SC ESI', SC_ESI_ZIP), ('NC ESI', NC_ESI_ZIP), ('GA ESI', GA_ESI_ZIP)]:
+            inspect_layer(label, zip_path, args.inspect)
+        return
 
     # ── List layers mode ──────────────────────────────────────────────────────
     if args.list_layers:
