@@ -24,9 +24,38 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
+//
+// ── THE COMPUTATION MOVED AND THIS FILE KEPT READING ITS OLD ADDRESS ───────────────────────────
+//
+// d2c0219, 2026-09-04, "Pick Water now derives the pack's facts from the pack it just downloaded",
+// lifted the whole depth-band computation out of lake-research-engine.js into js/utils/pack-facts.js
+// so both planners derive it from the pack instead of one of them reading a stored profile. Nothing
+// about the behaviour below changed. This file went on reading the engine, so three of its tests
+// failed looking for code that had moved, and the fourth -- "nothing computes an open band any
+// more" -- started passing VACUOUSLY, because a file with none of the computation in it also has
+// none of the retired names.
+//
+// Same defect as `between(UTIL, 'NON_GAME_SPECIES', ...)` in species-form-closes-the-books, fixed
+// the same day: a test that reads source by name cannot tell "the concept is gone" from "I am
+// looking at the wrong file". So HOME is asserted to still hold the computation before anything is
+// asserted about it, and the retired names are checked in all three files -- the one that computes
+// it and the two it used to pass through.
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
+const HOME_PATH = 'js/utils/pack-facts.js';
+const HOME = readFileSync(path.join(ROOT, HOME_PATH), 'utf8');
 const ENGINE = readFileSync(path.join(ROOT, 'js/modules/lake-research-engine.js'), 'utf8');
 const INPUTS = readFileSync(path.join(ROOT, 'js/modules/plan-inputs.js'), 'utf8');
+
+test('this file is reading the file that holds the computation', () => {
+  // If the depth stats move again, THIS fails first and names the problem, instead of three
+  // behaviour tests failing as though the behaviour had been deleted.
+  for (const anchor of ['const bandsSeen = new Set();', 'unreadableCeilings++;',
+                        'out.bandCount = bandsSeen.size;']) {
+    assert.ok(HOME.includes(anchor),
+      `the depth-band computation is no longer in ${HOME_PATH} — find where it went and repoint `
+      + 'this file at it; the tests below are about the behaviour, not about this path');
+  }
+});
 
 // Comments may discuss the retired names; code may not use them.
 const codeOnly = (src) => src
@@ -34,22 +63,24 @@ const codeOnly = (src) => src
   .split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
 
 test('nothing computes, stores or reads an open band any more', () => {
-  const engine = codeOnly(ENGINE);
-  const inputs = codeOnly(INPUTS);
+  // ALL THREE FILES, and pack-facts.js first, because that is the one that could bring it back.
+  // Checking only the engine and plan-inputs was checking two files the computation had left.
+  const files = [[HOME_PATH, codeOnly(HOME)],
+                 ['js/modules/lake-research-engine.js', codeOnly(ENGINE)],
+                 ['js/modules/plan-inputs.js', codeOnly(INPUTS)]];
   for (const name of ['openBanded', 'openBandArea', 'openBandAreaAcres', 'openBandAreaShare',
                       'averageDepthIsLowerBound', 'bathymetryOpenBanded',
                       'bathymetryOpenBandAreaAcres', 'bathymetryOpenBandShare']) {
-    assert.ok(!engine.includes(name), `lake-research-engine.js still uses ${name}`);
-    assert.ok(!inputs.includes(name), `plan-inputs.js still uses ${name}`);
+    for (const [label, src] of files) assert.ok(!src.includes(name), `${label} still uses ${name}`);
   }
 });
 
 test('a record with no readable ceiling is counted at its floor, not dropped', () => {
   // The area is real water. Dropping it would move coverage and the average with nothing saying
   // so — the failure this whole family of bugs is made of.
-  const i = ENGINE.indexOf('} else if (isFinite(zMin)) {');
+  const i = HOME.indexOf('} else if (isFinite(zMin)) {');
   assert.ok(i > 0, 'the guard must still exist');
-  const branch = ENGINE.slice(i, i + 900);
+  const branch = HOME.slice(i, i + 900);
   assert.ok(/zEffective = zMin;/.test(branch), 'the floor is the only honest term');
   assert.ok(/unreadableCeilings\+\+;/.test(branch), 'and it must be counted');
   assert.ok(!/zMax|midpoint|\* 1\.5|\* 2/.test(branch.split('zEffective = zMin;')[1].slice(0, 200)),
@@ -57,10 +88,10 @@ test('a record with no readable ceiling is counted at its floor, not dropped', (
 });
 
 test('the unreadable count travels with the numbers it could have moved', () => {
-  assert.ok(/out\.unreadableCeilings = unreadableCeilings;/.test(ENGINE));
-  assert.ok(/geoMeta\.bathymetryUnreadableCeilings/.test(ENGINE),
+  assert.ok(/out\.unreadableCeilings = unreadableCeilings;/.test(HOME));
+  assert.ok(/geoMeta\.bathymetryUnreadableCeilings/.test(HOME),
     '_bathymetryMeta is what survives save/load');
-  assert.ok(/unreadableCeilings: depthStats\.unreadableCeilings/.test(ENGINE),
+  assert.ok(/unreadableCeilings: depthStats\.unreadableCeilings/.test(HOME),
     'and the evidence entry has to carry it too');
 });
 
@@ -68,12 +99,12 @@ test('bandCount counts BANDS, and the ring count is its own field', () => {
   // It counted rings until 2026-08-23. That told the habitat agent Lake Jocassee has 18,967
   // depth bands when it has 135, and set the no-boundary trust gate on a number that could be
   // three rings of a single band.
-  assert.ok(/const bandsSeen = new Set\(\);/.test(ENGINE));
-  assert.ok(/out\.bandCount = bandsSeen\.size;/.test(ENGINE));
-  assert.ok(/out\.polygonCount = ringCount;/.test(ENGINE));
-  assert.ok(/\(bandsSeen\.size >= 3\)/.test(ENGINE),
+  assert.ok(/const bandsSeen = new Set\(\);/.test(HOME));
+  assert.ok(/out\.bandCount = bandsSeen\.size;/.test(HOME));
+  assert.ok(/out\.polygonCount = ringCount;/.test(HOME));
+  assert.ok(/\(bandsSeen\.size >= 3\)/.test(HOME),
     'the minimum-data bar has to be three distinct bands, not three rings');
-  assert.ok(/geoMeta\.bathymetryPolygonCount = depthStats\.polygonCount;/.test(ENGINE));
+  assert.ok(/geoMeta\.bathymetryPolygonCount = depthStats\.polygonCount;/.test(HOME));
 });
 
 test('the plan prompt prints a mean as a mean', () => {

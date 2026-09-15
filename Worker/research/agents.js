@@ -977,17 +977,64 @@ async function agencyGuidanceEntries(env, lakeName) {
 
   const clean = (v) => (Array.isArray(v) ? v : [v]).map((x) => String(x || '').replace(/\s+/g, ' ').trim())
     .filter((x) => x.length > 20);
+  const KEYS = ['target', 'technique', 'prospect', 'tips', 'notes'];
   const entries = [];
   for (const page of pages) {
     const label = `${page.agency || 'state agency'} — ${page.page_name || lakeName}`;
     const url = (page.source && page.source.url) || 'registry:agency_lake_facts.json';
     const dated = (page.source && (page.source.published || page.source.saved_at)) || null;
-    for (const sp of (page.species || [])) {
-      const name = String((sp && sp.name) || '').trim();
-      if (!name) continue;
+    const named = (page.species || []).filter((sp) => String((sp && sp.name) || '').trim());
+
+    // ── A SENTENCE EVERY SPECIES CARRIES IS ABOUT THE WATER, NOT ABOUT ANY OF THEM ────────────
+    //
+    // Lake Wateree's whole agency block was this, four times over, once per species:
+    //
+    //   black crappie   — SCDNR: NOTES: Popular sport fish on Lake Wateree include black crappie,
+    //   striped bass    — SCDNR: NOTES: Popular sport fish on Lake Wateree include black crappie,
+    //   largemouth bass — SCDNR: NOTES: Popular sport fish on Lake Wateree include black crappie,
+    //   catfish         — SCDNR: NOTES: Popular sport fish on Lake Wateree include black crappie,
+    //
+    // That is SC_ROSTER in build_agency_lake_facts.py working exactly as designed -- it reads the
+    // species NAMES out of a roster sentence, which is how Wateree has a species list at all --
+    // and then the sentence it read them FROM is stored as each one's `notes`, correctly as the
+    // quote the name came from. Reading `notes` as guidance turns provenance into four pseudo-
+    // recommendations that say only which fish are in the lake, under a heading that tells the
+    // model "this is the strongest source you have" and "where this disagrees, this wins".
+    //
+    // NOT DELETED -- HOISTED. The sentence is a real published statement about the water and it
+    // belongs in the block once, as what it is. Detected by being IDENTICAL on every named species
+    // on the page, which is a property of the text rather than a pattern typed here, so any other
+    // page-level sentence any state writes is caught by the same rule. A page with one species
+    // cannot trip it: with nothing to be identical to, the sentence is about that fish.
+    const shared = new Set();
+    if (named.length > 1) {
+      for (const key of KEYS) {
+        for (const line of clean(named[0][key])) {
+          if (named.every((sp) => clean(sp[key]).includes(line))) shared.add(`${key}\u0000${line}`);
+        }
+      }
+    }
+    const pageLines = [];
+    for (const key of KEYS) {
+      for (const line of clean(named[0] && named[0][key])) {
+        if (shared.has(`${key}\u0000${line}`)) pageLines.push(`      ${key.toUpperCase()}: ${line}`);
+      }
+    }
+    if (pageLines.length) {
+      // `species: null` is what makes it survive the per-group filter in agencyGuidanceBlock: a
+      // statement about the lake is as true in a catfish call as in a crappie one.
+      entries.push({ species: null,
+                     text: `  THIS WATER — ${label}${dated ? ` (${dated})` : ''}\n${pageLines.join('\n')}` });
+    }
+
+    for (const sp of named) {
+      const name = String(sp.name).trim();
       const parts = [];
-      for (const key of ['target', 'technique', 'prospect', 'tips', 'notes']) {
-        for (const line of clean(sp[key])) parts.push(`      ${key.toUpperCase()}: ${line}`);
+      for (const key of KEYS) {
+        for (const line of clean(sp[key])) {
+          if (shared.has(`${key}\u0000${line}`)) continue;
+          parts.push(`      ${key.toUpperCase()}: ${line}`);
+        }
       }
       if (parts.length) {
         entries.push({ species: name, text: `  ${name} — ${label}${dated ? ` (${dated})` : ''}\n${parts.join('\n')}` });
@@ -1010,7 +1057,10 @@ function agencyGuidanceBlock(entries, species) {
   // is the codebase's own rule for that and is what the roster upstream was folded with.
   const canon = (n) => String(canonicalizeResearchSpecies(n) || n || '').toLowerCase().trim();
   const want = new Set((Array.isArray(species) ? species : []).map(canon).filter(Boolean));
-  const shown = want.size ? all.filter((e) => want.has(canon(e.species))) : all;
+  // A page-level entry carries no species and is shown to every group -- see the hoist above.
+  const shown = want.size
+    ? all.filter((e) => e.species == null || want.has(canon(e.species)))
+    : all;
   if (!shown.length) return '';
   return `\n\nTHE STATE AGENCY'S OWN LAKE PAGE FOR THIS WATER — this is the strongest source you have.\n`
     + `Each block below was read off the published page for THIS lake by a deterministic parser and\n`
