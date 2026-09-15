@@ -320,3 +320,48 @@ test('and the report date is the calendar day the page states, not a timezone sh
   assert.ok(!/new Date\(u\.published\)\.toLocaleDateString/.test(live),
     'and so must the page renderer');
 });
+
+// ── AND THE WHOLE CHAIN, RUN, WITH THE CARD'S OWN SHIPPED SOURCE AS THE LAST STEP ──────────────
+//
+// Every test above checks one hop. `p.conditions` got through all of them because the hop it broke
+// -- does the sentence the angler reads come out right, given the payload the Worker returns -- was
+// the one nobody ran. Three rounds of "still getting this" is what that costs.
+//
+// So this runs the real resolver, the real conditionsFrom, the real assemblePlan, and then LIFTS
+// THE CARD'S DECISION OUT OF plan-builder.js AND EXECUTES IT. Not a copy of the logic -- the shipped
+// bytes -- because a copy is exactly what would have agreed with itself while the app was wrong.
+test('END TO END: the Worker payload becomes the sentence on his card', async () => {
+  const { fetchClarityAtRamp } = await import('../js/modules/plan-preflight.js');
+  const { conditionsFrom } = await import('../js/modules/plan-inputs.js');
+  const { assemblePlan } = await import('../js/modules/plan-assemble.js');
+
+  const resolved = await fetchClarityAtRamp('Lake Wateree, SC', '2026-09-15',
+    { worker: 'https://w', rampName: 'Clearwater Cove', fetchJson: async () => WATEREE });
+  const conditions = conditionsFrom({ clarity: resolved.select }, null, null, null, resolved);
+
+  // THE HOP NOBODY HAD TESTED: assemblePlan carrying `conditions` onto the plan unchanged.
+  const plan = assemblePlan({
+    candidates: [{ runId: 'wateree_lake#216', lengthM: 2400, depthFt: 26, depthMinFt: 24,
+                   depthMaxFt: 29, maxRunDepthFt: 24, start: [-80.70, 34.35], end: [-80.68, 34.36],
+                   coordinates: [[-80.70, 34.35], [-80.68, 34.36]], passes: [], speedMph: 2.0 }],
+    launch: [-80.71, 34.348], loadout: { rods: [] }, deploy: {},
+    stops: [], changes: [], launchTime: '06:00', returnTime: '15:00', usableAh: 80, conditions,
+  });
+  assert.equal(plan.conditions.clarityAt, 'Clearwater Cove — Lower main-lake channel / dam basin');
+  assert.equal(plan.conditions.clarity, 'Stained');
+
+  // The card's decision, sliced out of the shipped file and run against the real plan object.
+  const i = BUILDER.indexOf('const cond = (p.plan && p.plan.conditions)');
+  const j = BUILDER.indexOf('// If Open-Meteo failed but the weather text field', i);
+  assert.ok(i > 0 && j > i, 'the card decision block moved — repoint this slice');
+  const risks = []; const goods = [];
+  const decide = new Function('p', 'addRisk', 'addPositive',
+    BUILDER.slice(i, j).replace(/^\s*\/\/.*$/gm, ''));
+  decide({ plan: { conditions: plan.conditions }, meta: { clarityIntel: '' } },
+         (m) => risks.push(m), (m) => goods.push(m));
+
+  const said = risks.concat(goods).join(' | ');
+  assert.match(said, /STAINED water at Clearwater Cove — Lower main-lake channel \/ dam basin/);
+  assert.ok(!/LAKE-WIDE/.test(said), 'the mean must not be the verdict when his zone answered');
+  assert.equal(risks.length + goods.length, 1, 'one clarity verdict, not two');
+});
