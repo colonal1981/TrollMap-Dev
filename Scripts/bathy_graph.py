@@ -38,7 +38,7 @@ OUTPUT is byte-identical in FORMAT to what build_water_graphs.py writes -- same 
 same node/edge/depth layout -- so the Worker, the packs, build_trolling_runs.py and
 fit_trolling_runs.py never learn anything changed.
 """
-import argparse, json, math, os, struct, sys, time
+import argparse, json, math, os, shutil, struct, sys, time
 from collections import deque
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -55,6 +55,7 @@ try:
 except ImportError:
     sys.exit('shapely is required: pip install shapely --break-system-packages')
 
+STAMP = time.strftime('%Y-%m-%d')
 MAGIC = b'TMWG'
 VERSION = 2
 NOTE = 'Personal use only, not for distribution or resale; not for navigation.'
@@ -488,7 +489,10 @@ def main():
     ap.add_argument('--overwrite', action='store_true',
                     help="replace an existing file at --out-name. Without this the script "
                          "REFUSES rather than clobber Garmin's graph, which is the product of "
-                         "a full card pass.")
+                         "a full card pass. WITH it, the file being replaced is MOVED to "
+                         "<packs>/_to_delete/graph_replaced_<date>/ rather than overwritten, so "
+                         "putting it back is a file move and not a rebuild of 455 lakes. The "
+                         "report records where each one went.")
     a = ap.parse_args()
     reg = a.registry or os.path.join(a.root, 'registry')
     pack = a.pack or os.path.join(a.root, 'chartpack')
@@ -543,6 +547,29 @@ def main():
                 print('  %-30s HAS A GARMIN GRAPH, left alone' % s, flush=True)
                 left += 1
                 continue
+            # --overwrite USED TO CLOBBER, AND WHAT IT CLOBBERS COSTS A FULL CARD PASS.
+            #
+            # The graph being replaced is the product of build_water_graphs.py over the whole
+            # Garmin mesh. If a bathy graph turns out worse on some water -- fewer routable runs,
+            # a worse largest component -- putting the old one back should be a file move, not a
+            # rebuild of 455 lakes.
+            #
+            # It goes to _to_delete/ rather than beside the pack, which is this repo's own rule for
+            # a file that should stop being used but must not vanish, and it keeps the uploader
+            # from ever seeing it: upload_garmin_to_r2.py maps the layer to the exact name
+            # "water_graph.bin", so a file called anything else is not a layer.
+            #
+            # Written the day registry/_bathy_graphs.json was destroyed by a --dry-run that still
+            # wrote its report. A flag that removes something should say so, and should leave the
+            # something somewhere.
+            if os.path.exists(dest):
+                keep = os.path.join(pack, '_to_delete', 'graph_replaced_' + STAMP)
+                os.makedirs(keep, exist_ok=True)
+                kept = os.path.join(keep, '%s_%s' % (s, a.out_name))
+                shutil.move(dest, kept)
+                rep['replaced_graph_moved_to'] = os.path.relpath(kept, pack)
+                print('  %-30s previous graph -> %s' % (s, rep['replaced_graph_moved_to']),
+                      flush=True)
             n, e2, d = graph
             rep['bytes'] = write_graph(dest, n, e2, d)
             built += 1
