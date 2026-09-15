@@ -999,6 +999,20 @@ def load_lakes(args, registry):
         for _slug, _row in idx.items():
             _dn = (_row.get("display_name") or _row.get("name") or _slug).strip().lower()
             by_display[_dn] = (_row.get("display_name") or _row.get("name") or _slug, _row)
+        # THE SERVED OBJECT, read once. Missing is not fatal: with nothing to compare against, every
+        # profile's note is as good as it is going to get, and an empty list is the honest answer
+        # rather than selecting all of them.
+        DOC_LIMNO = {}
+        _dl = os.path.join(args.registry, "document_limnology.json")
+        if os.path.exists(_dl):
+            try:
+                with open(_dl, encoding="utf-8") as _f:
+                    _parsed = json.load(_f)
+                DOC_LIMNO = _parsed.get("waters") or _parsed or {}
+            except Exception as _e:
+                print(f"!! unreadable {_dl}: {_e} -- nothing can be compared against it")
+        else:
+            print(f"!! no {_dl} -- build it with build_document_limnology.py --go")
         picked, unbound, has_reason, has_value, superseded = [], [], 0, 0, 0
         for p in files:
             try:
@@ -1013,47 +1027,62 @@ def load_lakes(args, registry):
             if th.get("summerDepthFt") is not None:
                 has_value += 1
                 continue
-            # A REASON FROM THE WRONG SOURCE IS NOT THIS WATER'S REASON.
+            # RESOLVED HERE -- after the depth check and before the note is judged.
             #
-            # `if th.get("note"): continue` treated any sentence as done, and on 2026-09-15 four
-            # waters -- Wateree, Murray, Monticello, Secession -- held a WQP SURFACE-GRAB refusal
-            # ("these are surface grabs with a depth stamp, not a vertical profile") in that slot
-            # while the pipeline held a real vertical cast for each of them. build_document_limnology
-            # was dropping the cast's own note, so the weaker sentence won the slot; 6fb33f0 fixed
-            # that upstream and left these four profiles stale relative to their own producer.
+            # After, because the document is keyed by registry slug while the mirror is named by
+            # research id, and a water that already carries a depth needs neither. Putting it FIRST
+            # took the unbound report from 5 profiles to 15: it began naming profiles that were
+            # finished and were never going to be picked, which is noise in a list whose whole job
+            # is to say what still needs work.
             #
-            # THE TEST IS WHETHER THE CAST THAT ANSWERED THE OXYGEN ALSO ANSWERED THE THERMOCLINE.
-            # Every note fetch_nla_limnology.py writes for a refused thermocline names the gradient
-            # in C/m -- that is the shape of a cast's answer -- so a profile whose OXYGEN came off a
-            # cast and whose thermocline note does not mention one is holding two different sources
-            # in two fields that should agree. No date, no version constant, nothing to keep in
-            # sync: it self-empties the moment the profile is rewritten.
-            ox = ((prof.get("limnology") or {}).get("oxygen") or {})
-            cast_oxygen = (ox.get("anoxicBelowFt") is not None
-                           or ox.get("depletionDepthFt") is not None)
-            note = str(th.get("note") or "")
-            if note and not (cast_oxygen and "C/m" not in note):
+            # Before, because the note test below has to ask the document what it offers. The
+            # unbound mirrors are NAMED rather than dropped: --lake could not resolve them either,
+            # and dropping them silently is how "34 need this" and "29 ran" stop agreeing.
+            nm = (prof.get("lakeName") or "").strip()
+            hit = by_display.get(nm.lower())
+            if not hit:
+                unbound.append(nm or os.path.basename(p))
+                continue
+            slug_for_doc = (hit[1] or {}).get("slug")
+            # A REASON FROM THE WRONG SOURCE IS NOT THIS WATER'S REASON, AND THE TEST IS EXACT.
+            #
+            # `if th.get("note"): continue` treated any sentence as done. On 2026-09-15 four waters
+            # held a WQP SURFACE-GRAB refusal in that slot -- "these are surface grabs with a depth
+            # stamp, not a vertical profile" -- while the pipeline held a real vertical cast for
+            # each. build_document_limnology was dropping the cast's own note and the Worker's
+            # accept-check was discarding a note-only merge, so the weaker sentence won the slot.
+            #
+            # THE FIRST FIX USED A PROXY AND THE PROXY WAS WRONG. It asked whether the note named a
+            # gradient in C/m, on the theory that every cast refusal does. National Lakes Assessment
+            # notes do; National Eutrophication Survey notes do not -- "only 3 temperature readings
+            # in the cast; 4 needed", "the 8 readings that survived the scan show no layer". So
+            # Murray and Secession stayed selected after they were already fixed, and Monticello --
+            # whose oxygen comes off a lake-program statement, with no thermocline cast at all --
+            # would have been selected forever. A selector that never empties is a lying counter,
+            # and Ryan set the rule for this flag on 2026-09-14: empty means done.
+            #
+            # SO ASK THE DOCUMENT DIRECTLY. The served object sits in this same registry folder, and
+            # "is this profile carrying what the cast says" has an exact answer that needs no
+            # heuristic. A profile whose note already matches its document is done. A profile whose
+            # document offers no note is done too -- there is no run that would change it.
+            doc_note = None
+            if slug_for_doc:
+                doc_note = (str((DOC_LIMNO.get(slug_for_doc) or {}).get("thermoclineNote") or "")
+                            .strip() or None)
+            note = str(th.get("note") or "").strip() or None
+            if doc_note is None or doc_note == note:
                 has_reason += 1
                 continue
             if note:
                 superseded += 1
-            nm = (prof.get("lakeName") or "").strip()
-            hit = by_display.get(nm.lower())
-            if not hit:
-                # The unbound mirrors -- a profile whose lakeName matches no water the app offers.
-                # --lake could not resolve these either; naming them is the point, since silently
-                # dropping them is how "34 need this" and "29 ran" stop agreeing.
-                unbound.append(nm or os.path.basename(p))
-                continue
             name = hit[0]
             picked.append((name, args.state or hit[1].get("state") or "SC",
                            alt_names.get(name.strip().lower()) or [name]))
         print(f"limnology: {has_value} water(s) already carry a depth, {has_reason} carry a reason, "
               f"{len(picked)} need a run")
         if superseded:
-            print(f"           of those {superseded} DO carry a reason, from a source that has "
-                  f"since been beaten: their oxygen came off a vertical cast and their thermocline "
-                  f"note did not")
+            print(f"           of those {superseded} DO carry a reason -- it just is not the one "
+                  f"the cast gives, which document_limnology.json now holds for them")
         print(f"           read from {prof_dir} ({len(files)} profiles, newest "
               f"{age_h:.1f} h old)")
         if age_h > 48:
