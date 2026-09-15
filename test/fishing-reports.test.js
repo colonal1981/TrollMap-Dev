@@ -296,7 +296,12 @@ test('TWRA reaches the caller flagged, and its tailwater entry does not reach it
   assert.equal(shapeReports({ twraText: TWRA_PAGE }, NORRIS, 'TN').items.length, 0);
 });
 
-test('undated AHQ text is kept apart from dated items, and never sorted among them', () => {
+// WAS `s.undated`. The bucket is `pages` now, because it was renamed on 2026-09-15 for what it
+// actually is: AHQ is a whole PAGE and the feeds are RSS, and that -- not datelessness -- is why the
+// two are kept apart. Keeping the old name is what let the one renderer decide "undated" from the
+// ARRAY it was in and never read the `published` the Worker had been sending since parseAhqDate()
+// went in. Ryan: "this note is still there ... what more of a date does this need lol???"
+test('page text is kept apart from dated feed items, and never sorted among them', () => {
   const s = shapeReports({
     rssByState: { NC: NC_FEED },
     twraText: null,
@@ -304,11 +309,32 @@ test('undated AHQ text is kept apart from dated items, and never sorted among th
     ahqUrl: 'https://www.anglersheadquarters.com/pages/lake-wateree-fishing-report',
   }, JUNALUSKA, 'NC');
   assert.equal(s.items.length, 1);
-  assert.equal(s.undated.length, 1);
-  assert.equal(s.undated[0].published, null);
-  assert.equal(s.undated[0].undated, true);
+  assert.equal(s.pages.length, 1);
+  // This sample states no date, so the entry says so -- on the ENTRY, which is where the renderer
+  // has to look now that the bucket name cannot answer it.
+  assert.equal(s.pages[0].published, null);
+  assert.equal(s.pages[0].undated, true);
   assert.ok(!s.items.some((i) => i.undated));
   assert.equal(s.none_found, false);
+  assert.equal(s.undated, undefined, 'the misleading bucket name is gone, not aliased server-side');
+});
+
+test('and a page that DOES state a date carries it, dated and not flagged', () => {
+  // The real AHQ Wateree page, 2026-09-03: "Lake Wateree 03 September, 2026". The live Worker
+  // returns published 2026-09-03 / undated false for it; what was broken was the reader.
+  const page = 'C) 2026 Week 36 Fishing Report - Updated September 3 Sept. 3 Lake Wateree is at '
+             + '97.2% of full pool. Exclusive Content Lake Wateree 03 September, 2026';
+  // Through parseAhqDate, not with the answer typed in, so this covers the whole chain the card
+  // reads: the page's own words -> the date -> the entry -> the fields the renderer prints.
+  const ahqDate = parseAhqDate(page);
+  assert.equal(ahqDate, '2026-09-03', 'the page states it three ways and this reads one');
+  const s = shapeReports({
+    ahqText: page, ahqDate,
+    ahqUrl: 'https://www.anglersheadquarters.com/pages/lake-wateree-fishing-report',
+  }, MARION, 'SC');
+  assert.equal(s.pages.length, 1);
+  assert.equal(s.pages[0].published, '2026-09-03');
+  assert.equal(s.pages[0].undated, false);
 });
 
 test('"nobody looked" and "nothing to report" are different answers', () => {

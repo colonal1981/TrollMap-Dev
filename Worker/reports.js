@@ -487,14 +487,25 @@ export function shapeReports({ rssByState = {}, articlesByLink = {}, twraText = 
     water_state: state || null,
     // Dated items, newest first. The only ones that can honestly claim to be recent.
     items,
-    // AHQ, kept separate BECAUSE it carries no date. Merging it into `items` would put undated
-    // text next to dated text and invite the reader to assume it is current.
-    // DATED WHEN THE PAGE SAYS SO, and still in the `undated` bucket by NAME because that is the
-    // field the caller reads -- what changed is that `published` and `undated` now tell the truth
-    // about it. See parseAhqDate(): the page publishes "03 September, 2026" and this module spent a
-    // month asserting it published nothing.
-    undated: ahqText ? [{ source: REPORT_SOURCES.SC.label, link: ahqUrl, text: ahqText,
-                          published: ahqDate, undated: !ahqDate }] : [],
+    // ── AHQ IS A PAGE, NOT A FEED — AND THAT, NOT DATELESSNESS, IS WHY IT IS SEPARATE ──────────
+    //
+    // This array was called `undated` and on 2026-09-14 I taught parseAhqDate() to read the date
+    // AHQ does publish -- "03 September, 2026" -- then left the entry in a bucket named `undated`
+    // with a comment saying it stays there "because that is the field the caller reads". The caller
+    // reads the ARRAY and renders every member with a hardcoded "no date published. Treat as
+    // background, not as current." It has never read `published` or `undated`. So the Worker told
+    // the truth in two new fields and nothing on the other end was listening.
+    //
+    // Ryan, 2026-09-15, holding the card: "this note is still there ... Lake Wateree 03 September,
+    // 2026 / what more of a date does this need lol???"
+    //
+    // Renamed for what it actually is. `items` is RSS, newest-first, with a real pubDate; `pages`
+    // is a per-water page fetched whole. They stay apart so page text is never mixed into a dated
+    // list, which is the reason that predates the date parsing and survives it. Whether a page is
+    // dated is now a property of the ENTRY -- `published` and `undated` -- and the renderer has to
+    // read it, because a bucket name can no longer answer the question for it.
+    pages: ahqText ? [{ source: REPORT_SOURCES.SC.label, link: ahqUrl, text: ahqText,
+                        published: ahqDate, undated: !ahqDate }] : [],
     // "Nobody looked here" and "nothing to report" are different answers.
     checked: Object.keys(rssByState).concat(twraText ? ['TN'] : [], ahqUrl ? ['AHQ'] : []),
     // Said out loud, not applied quietly -- AND the units have to match, or the statement is
@@ -573,6 +584,9 @@ export async function fetchReports(waterNames, state) {
 /**
  * GET /reports/<slug>?names=A|B|C&state=SC
  *
+ * -> { items: [...dated feed items], pages: [...whole pages, each with `published` and `undated`],
+ *      checked: [...], ... }
+ *
  * Returns null when the path is not ours, the same contract handleWaterRoute and
  * handleConditions use, so this cannot shadow an existing route.
  *
@@ -599,7 +613,7 @@ export async function handleReports(request, env, url) {
     }), { status: 400, headers: { ...CORS, ...JSON_HEADERS } });
   }
   const body = await fetchReports(names, state).catch((err) => ({
-    error: 'fetch failed', detail: err && err.message, items: [], undated: [], checked: [], none_found: true,
+    error: 'fetch failed', detail: err && err.message, items: [], pages: [], checked: [], none_found: true,
   }));
   return new Response(JSON.stringify({ slug: mm[1], sources: REPORT_SOURCES, ...body }, null, 2), {
     headers: { ...CORS, ...JSON_HEADERS, 'Cache-Control': 'public, max-age=900' },

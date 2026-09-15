@@ -7,6 +7,7 @@
 import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
 import { coerceList, coerceLabels } from '../utils/coerce.js';
+import { clarityForPlan } from '../utils/clarity-at-ramp.js';
 
 /* Lake Intel: species, forage, habitat, hazards, seasonal patterns */
 export async function syncLakeIntelData() {
@@ -248,7 +249,14 @@ export async function syncLakeIntelData() {
 }
 
 /* Clarity Forecast: zone-based clarity + lure recommendations */
-export async function syncClarityIntelData() {
+/**
+ * @param {object} [o]
+ * @param {string} [o.rampName] the ramp this forecast is FOR. Defaults to the plan tab's select,
+ *        which is where the event handlers get it, but it is a parameter because the answer depends
+ *        on it and a function that reaches into the DOM for an input answers differently depending
+ *        on what has rendered. That is the whole of the bug below.
+ */
+export async function syncClarityIntelData(o = {}) {
   const lakeSel = document.getElementById('planLake');
   const statusEl = document.getElementById('clarityIntelStatus');
   const btn = document.getElementById('syncClarityIntelBtn');
@@ -288,15 +296,12 @@ export async function syncClarityIntelData() {
     // NAMED, NOT SUBSTITUTED. Both numbers go in: his zone is the one a decision should rest on,
     // and the lake-wide figure still says what the rest of the water is doing, because a mudline
     // upstream is a thing to know about even when you are launching in clear water.
-    const rampNow = (document.getElementById('planRamp')?.value || '').trim();
-    const zoneForRamp = rampNow
-      ? coerceList(d.zones).find((z) => coerceList(z.ramps)
-          .some((r) => {
-            const a = String(r || '').toLowerCase();
-            const b = rampNow.toLowerCase();
-            return a && b && (a.includes(b) || b.includes(a));
-          }))
-      : null;
+    const rampNow = String(o.rampName != null ? o.rampName
+      : (document.getElementById('planRamp')?.value || '')).trim();
+    // ONE RESOLUTION, TWO READERS: this sentence and the Water Clarity select further down. See
+    // js/utils/clarity-at-ramp.js for why it is not inlined here any more.
+    const forPlan = clarityForPlan(d, rampNow);
+    const zoneForRamp = forPlan.zone;
     if(zoneForRamp){
       lines.push(`AT YOUR RAMP (${rampNow}) — ${zoneForRamp.name}: ${zoneForRamp.clarity} `
                + `(score ${zoneForRamp.score}/100). ${zoneForRamp.likely}.`);
@@ -311,8 +316,29 @@ export async function syncClarityIntelData() {
     if(coerceList(d.rampRecommendations).length){ lines.push('Ramp / zone recommendations:'); coerceList(d.rampRecommendations).forEach(r=>lines.push(`\u2022 ${r.zone}${coerceList(r.ramps).length?` (${coerceList(r.ramps).join(', ')})`:''}: score ${r.score}/100 \u2014 ${r.why}`)); }
     if(d.note) lines.push(`Lake profile note: ${d.note}`);
     if(out) out.value = lines.join('\n');
-    // Drive existing lure-color engine by updating Water Clarity select.
-    if(d.overall?.select){ const claritySel=document.getElementById('planClarity'); if(claritySel) claritySel.value=d.overall.select; }
+    // ── THE CLARITY THE PLAN IS BUILT ON, NOT JUST THE SENTENCE ABOVE IT ─────────────────────
+    //
+    // This line was `claritySel.value = d.overall.select` — the LAKE-WIDE MEAN — and that select is
+    // not a label. smart-plan-v2-wiring.js:49 reads it as `clarity`, it reaches the model as
+    // `conditions.clarity`, and getLureColor() picks every colour off it.
+    //
+    // Measured on Ryan's 2026-09-14 Wateree bench: the prompt carried `"clarity": "Muddy"` — the
+    // mean of six zones — two lines above the profile's own `Typical clarity: stained`. Two clarity
+    // verdicts for one lake in one prompt, and the one that reads as TODAY was an average of water
+    // he was not going anywhere near. His ramp is in "Lower main-lake channel / dam basin", the
+    // CLEAREST zone on the lake at 39/100, Stained.
+    //
+    // Ryan, the day before: "this is probably correct in the creeks or the northern section of the
+    // lake but i highly doubt it is applicable near clearwater cove... what is it using to
+    // calculate the clarity??? i thought we made it location aware?"
+    //
+    // I answered that by adding the AT YOUR RAMP sentence and left this line alone, so the app said
+    // the right thing in prose and reasoned with the wrong number. The zone he launches in is the
+    // one the plan is built on now, and the lake-wide figure stays in the text where it belongs.
+    // When no zone names his ramp the mean is still used — it is the only answer there is — and the
+    // sentence above already says so rather than implying the number is about here.
+    const claritySel = document.getElementById('planClarity');
+    if (claritySel && forPlan.select) claritySel.value = forPlan.select;
 
     // Populate planWeather hidden field for Smart Plan / Groq consumption
     const weatherEl = document.getElementById('planWeather');
@@ -329,7 +355,15 @@ export async function syncClarityIntelData() {
       const windSummary = d.rain?.windMax_mph != null
         ? `Wind: ${Math.round(d.rain.windMax_mph)} mph${d.rain.windDirection_deg != null ? ` ${Math.round(d.rain.windDirection_deg)}\u00B0` : ''} \u00B7 `
         : '';
-      summary.innerHTML = `<b style="color:var(--warn)">🌦 ${esc(d.lake)}</b><br><span>Predicted: <b>${esc(d.overall?.clarity||'Unknown')}</b></span>${d.rain?`<br><span class="muted">${esc(windSummary)}Rain signal: ${esc(d.rain.weighted72_in)}" weighted 72h \u00B7 verify at ramp</span>`:''}`;
+      // THE BADGE SAYS WHICH WATER IT IS ABOUT. It read `Predicted: Muddy` off the lake-wide mean,
+      // which is the same unattributed number the CAUTION line and the clarity select were reading.
+      // With a zone resolved it names his ramp's zone and keeps the mean beside it; without one it
+      // says lake-wide, so the word "Predicted" is never standing over an unqualified average.
+      const badge = forPlan.source === 'ramp'
+        ? `At ${esc(rampNow)}: <b>${esc(forPlan.clarity || 'Unknown')}</b>`
+          + `<span class="muted"> · lake-wide ${esc(d.overall?.clarity || '?')}</span>`
+        : `Predicted (lake-wide): <b>${esc(d.overall?.clarity || 'Unknown')}</b>`;
+      summary.innerHTML = `<b style="color:var(--warn)">🌦 ${esc(d.lake)}</b><br><span>${badge}</span>${d.rain?`<br><span class="muted">${esc(windSummary)}Rain signal: ${esc(d.rain.weighted72_in)}" weighted 72h \u00B7 verify at ramp</span>`:''}`;
     }
     say('Clarity ready', false);
     window.LAST_CLARITY_INTEL=d;
@@ -354,6 +388,23 @@ setTimeout(() => {
     lakeSel.addEventListener('change', () => {
       // Small delay to let other handlers run first
       setTimeout(() => syncClarityIntelData?.(), 300);
+    });
+  }
+
+  // ── AND WHEN HE PICKS THE RAMP, BECAUSE THE ANSWER DEPENDS ON IT ────────────────────────────
+  //
+  // The forecast fired on lake change, on tab switch, on load and on the button — never on the
+  // ramp. So it ran while `planRamp` was still empty or still the previous lake's ramp, wrote a
+  // briefing with no AT YOUR RAMP line and the lake-wide clarity into the select, and nothing
+  // recomputed when he chose Clearwater Cove. Measured on the 2026-09-14 Wateree bench: the card
+  // said "muddy water LAKE-WIDE" on a day his own zone modelled Stained at 39/100.
+  //
+  // The ramp is passed rather than re-read, so what this run is ABOUT is the ramp that changed.
+  const rampSel = document.getElementById('planRamp');
+  if (rampSel) {
+    rampSel.addEventListener('change', (e) => {
+      const rampName = (e.target && e.target.value) || '';
+      setTimeout(() => syncClarityIntelData?.({ rampName }), 300);
     });
   }
 

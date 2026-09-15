@@ -1447,10 +1447,36 @@ ${src}`;
                + `${where}${body}${warn}</td>`
                + `<td class="rp-small">${esc(it.source || '')}</td></tr>`;
         }).join('');
-        const undated = (rd.undated || []).map((u) => `<div class="rp-callout rp-info" style="margin-top:8px">`
-          + `<b>${esc(u.source || '')}</b> — <b style="color:#b06a00">no date published</b>. `
-          + `Treat as background, not as current.<br><span class="rp-small">${esc(u.text || '')}</span>`
-          + `${u.link ? `<br><a href="${esc(u.link)}" target="_blank" rel="noopener">${esc(u.link)}</a>` : ''}</div>`).join('');
+        // ── THE PAGE SAYS WHEN, AND THIS PRINTS WHAT IT SAYS ────────────────────────────────
+        //
+        // This read the bucket's NAME and nothing else: every entry in `undated` got a hardcoded
+        // "no date published. Treat as background, not as current." parseAhqDate() has read AHQ's
+        // own date since 2026-09-14 and the Worker has sent `published` and `undated` per entry
+        // ever since; neither was read here, so the card kept calling a dated report undated.
+        //
+        // Ryan, 2026-09-15: "this note is still there ... Lake Wateree 03 September, 2026 / what
+        // more of a date does this need lol???" Nothing. It needed a reader.
+        //
+        // `rd.pages` is the field now, because a bucket called `undated` holding dated entries is a
+        // lie by name. `rd.undated` is still read for one release, for a browser holding a cached
+        // bundle against a Worker that has already deployed — it is a transient, not a dialect.
+        const undated = (rd.pages || rd.undated || []).map((u) => {
+          const when = u.published
+            ? new Date(u.published).toLocaleDateString(undefined,
+                { month: 'short', day: 'numeric', year: 'numeric' })
+            : null;
+          const days = u.published
+            ? Math.floor((Date.now() - Date.parse(u.published)) / 86400000) : null;
+          const age = days == null ? '' : days === 0 ? ' · today'
+            : ` · ${days} day${days === 1 ? '' : 's'} old`;
+          const head = when
+            ? `<b style="color:#1a7f37">published ${esc(when)}</b><span class="rp-small">${esc(age)}</span>`
+            : `<b style="color:#b06a00">no date published</b>. Treat as background, not as current.`;
+          return `<div class="rp-callout rp-info" style="margin-top:8px">`
+            + `<b>${esc(u.source || '')}</b> — ${head}`
+            + `<br><span class="rp-small">${esc(u.text || '')}</span>`
+            + `${u.link ? `<br><a href="${esc(u.link)}" target="_blank" rel="noopener">${esc(u.link)}</a>` : ''}</div>`;
+        }).join('');
         // "Nobody looked" and "nothing to report" are different answers, and the report says which.
         const checked = (rd.checked || []).length
           ? `Checked ${esc((rd.checked || []).join(', '))}.` : 'No source was reachable.';
