@@ -1074,6 +1074,8 @@ ${src}`;
   let twilightHtml = "";
   // ── GO / NO-GO decision ──────────────────────────────────────────────────
   let goNoGo = 'UNKNOWN', goClass = 'rp-info', goReasons = [], noGoReasons = [];
+  // Facts that describe the day without ruling on it. See addNote().
+  const conditionNotes = [];
   // We'll populate this from weather data after fetch — placeholder for now
   // (populated below after weather fetch section)
 
@@ -1640,6 +1642,16 @@ ${src}`;
     // closed seasons, and river go/no-go / dam surge data from the Plan form.
     function addRisk(msg){ if(msg && !noGoReasons.includes(msg)) noGoReasons.push(msg); }
     function addPositive(msg){ if(msg && !goReasons.includes(msg)) goReasons.push(msg); }
+    // ── AND A CONDITION, WHICH IS NEITHER ───────────────────────────────────────────────────────
+    //
+    // This card had two buckets: `noGoReasons`, which is printed with a ❌ and DECIDES the verdict,
+    // and `goReasons`, printed with a ✓. Every fact had to be good or bad, so a neutral one got
+    // filed as a hazard — and a hazard downgrades the whole trip.
+    //
+    // Ryan, 2026-09-15, on his own lake being called CAUTION for stained water: "wateree is
+    // typically stained... that is its normal operating level... so caution for stained is wrong."
+    // A note is printed, and counted toward nothing.
+    function addNote(msg){ if(msg && !conditionNotes.includes(msg)) conditionNotes.push(msg); }
     // ONE SET OF THRESHOLDS, IN FEET. There were two, and which one ran was decided by the
     // nine-name Duke list: eight feet down on Wateree was NO-GO while eight feet down on
     // Hartwell was only CAUTION, for the same physical drawdown, because one was labelled a
@@ -1723,40 +1735,56 @@ ${src}`;
     if (atRamp) {
       const where = atRamp.where;
       const cls = atRamp.cls;
-      if (cls === 'muddy') {
-        addRisk(`CAUTION: clarity/runoff model predicts MUDDY water at ${where} — adjust colors, `
-              + 'and work mudline edges rather than the backs of creeks');
-      } else if (cls === 'stained') {
-        addRisk(`CAUTION: clarity/runoff model predicts STAINED water at ${where} — favor color `
-              + 'breaks, vibration and high-contrast colors');
-      } else {
-        addPositive(`Clarity model predicts CLEAR water at ${where} — other zones on this lake may `
-                  + 'differ; the Clarity & Runoff section says which stain first');
-      }
+      // ── CLARITY IS A CONDITION TO FISH, NOT A HAZARD TO THE TRIP ────────────────────────
+      //
+      // All three of these were `addRisk`, so any clarity but CLEAR pushed the day to CAUTION.
+      // Ryan: "wateree is typically stained... that is its normal operating level... so caution
+      // for stained is wrong." Measured on his own water, he is plainly right: Wateree's secchi
+      // baseline is 2.4 ft, the model's own profile says "Typical clarity: stained", and on a day
+      // with 0" of rain in 72 hours every zone still scored 61-69 — Stained at his ramp and Muddy
+      // lake-wide from the BASELINE ALONE. A caution that fires on a lake's normal state fires on
+      // nearly every trip, and a warning that is always on is one you stop reading.
+      //
+      // "hell unless there is actual debris in the water caution for muddy is probably wrong...
+      // but there is no way to measure debris in the water" — so the app does not claim it here.
+      // Turbidity is suspended sediment; it is not a log. The one debris claim on this card that
+      // IS measured stays where it is, forty lines up: the lake being above full pool.
+      //
+      // What the clarity DOES change is what you tie on, and that half is untouched — the zone's
+      // own colours and tactics are in the Clarity & Runoff section and drive the spread.
+      addNote(`Water at ${where}: ${cls.toUpperCase()}`
+            + (cls === 'muddy' ? ' — work mudline edges rather than the backs of creeks'
+             : cls === 'stained' ? ' — favor color breaks, vibration and high-contrast colors'
+             : ' — other zones may differ; the Clarity & Runoff section says which stain first'));
     } else if (cond.clarityScope && /lake-wide/i.test(String(cond.clarityScope))
                && /^(Clear|Stained|Muddy)/i.test(String(cond.clarity || ''))) {
       // The plan says the mean is all there was, and says why. No parsing, and the sentence names
       // the scope so the CAUTION is never mistaken for a statement about this ramp.
       const cls = String(cond.clarity).toLowerCase();
       const why = String(cond.clarityScope);
-      if (cls === 'clear') {
-        addPositive(`Clarity model predicts CLEAR water — ${why}. The Clarity & Runoff section says `
-                  + 'which zones stain first');
-      } else {
-        addRisk(`CAUTION: clarity/runoff model predicts ${cls.toUpperCase()} water — ${why}. `
-              + (cls === 'muddy'
-                  ? 'Adjust colors and work mudline edges rather than the backs of creeks'
-                  : 'Favor color breaks, vibration and high-contrast colors'));
-      }
+      addNote(`Water ${cls.toUpperCase()} — ${why}. `
+            + (cls === 'muddy'
+                ? 'Work mudline edges rather than the backs of creeks'
+                : cls === 'stained'
+                  ? 'Favor color breaks, vibration and high-contrast colors'
+                  : 'The Clarity & Runoff section says which zones stain first'));
     } else {
       const clarityIntelText = clarityRaw.toLowerCase();
       if(clarityIntelText){
+        // THE TOP BAND IS NAMED "Muddy / debris risk" AND THE SCORE BEHIND IT MEASURES NO DEBRIS.
+        // classifyClarity() calls anything over 85 that, off a turbidity/secchi number — which is
+        // suspended sediment, not floating timber. The words are the Worker's and are repeated as
+        // its words; the app does not turn them into a hazard it cannot see.
         if(/muddy\s*\/\s*debris risk|debris risk/.test(clarityIntelText)){
-          addRisk('CAUTION: clarity/runoff model predicts muddy water or debris risk somewhere on this lake — no zone in the model names this ramp, so verify ramps, floating debris, and clearer lower-lake zones');
+          addNote('Clarity model is at its top band LAKE-WIDE — it calls that band "debris risk", '
+                + 'but the score behind it is turbidity and measures no debris. No zone in the '
+                + 'model names this ramp. Look at the water at the ramp.');
         } else if(/overall predicted clarity[^\n]*:\s*muddy/.test(clarityIntelText)){
-          addRisk('CAUTION: clarity/runoff model predicts muddy water LAKE-WIDE — that is a mean of every zone, not this ramp. Adjust colors and avoid backs of creeks unless targeting mudlines');
+          addNote('Water MUDDY LAKE-WIDE — that is a mean of every zone, not this ramp. Work '
+                + 'mudline edges rather than the backs of creeks');
         } else if(/overall predicted clarity[^\n]*:\s*stained/.test(clarityIntelText)){
-          addRisk('CAUTION: clarity/runoff model predicts stained water LAKE-WIDE — that is a mean of every zone, not this ramp. Favor color breaks, vibration, and high-contrast colors');
+          addNote('Water STAINED LAKE-WIDE — that is a mean of every zone, not this ramp. Favor '
+                + 'color breaks, vibration and high-contrast colors');
         }
       }
     }
@@ -1895,6 +1923,7 @@ ${reportsHtml}
   <b style="font-size:16px">${goNoGo==='GO'?'✅':goNoGo==='CAUTION'?'⚠':'🚫'} TRIP DECISION: ${goNoGo}</b><br>
   ${noGoReasons.map(r=>`❌ ${r}`).join('<br>')}
   ${goReasons.map(r=>`✓ ${r}`).join('<br>')}
+  ${conditionNotes.map(r=>`ℹ ${r}`).join('<br>')}
 </div>
 
 ${closedWarning}

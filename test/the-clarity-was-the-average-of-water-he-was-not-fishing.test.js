@@ -354,14 +354,51 @@ test('END TO END: the Worker payload becomes the sentence on his card', async ()
   const i = BUILDER.indexOf('const cond = (p.plan && p.plan.conditions)');
   const j = BUILDER.indexOf('// If Open-Meteo failed but the weather text field', i);
   assert.ok(i > 0 && j > i, 'the card decision block moved — repoint this slice');
-  const risks = []; const goods = [];
-  const decide = new Function('p', 'addRisk', 'addPositive',
+  const risks = []; const goods = []; const notes = [];
+  const decide = new Function('p', 'addRisk', 'addPositive', 'addNote',
     BUILDER.slice(i, j).replace(/^\s*\/\/.*$/gm, ''));
   decide({ plan: { conditions: plan.conditions }, meta: { clarityIntel: '' } },
-         (m) => risks.push(m), (m) => goods.push(m));
+         (m) => risks.push(m), (m) => goods.push(m), (m) => notes.push(m));
 
-  const said = risks.concat(goods).join(' | ');
-  assert.match(said, /STAINED water at Clearwater Cove — Lower main-lake channel \/ dam basin/);
+  const said = risks.concat(goods).concat(notes).join(' | ');
+  assert.match(said, /Water at Clearwater Cove — Lower main-lake channel \/ dam basin: STAINED/);
   assert.ok(!/LAKE-WIDE/.test(said), 'the mean must not be the verdict when his zone answered');
-  assert.equal(risks.length + goods.length, 1, 'one clarity verdict, not two');
+  assert.equal(risks.length + goods.length + notes.length, 1, 'one clarity line, not two');
+
+  // ── AND IT IS A NOTE, NOT A RISK ────────────────────────────────────────────────────────────
+  //
+  // Ryan, 2026-09-15: "wateree is typically stained... that is its normal operating level... so
+  // caution for stained is wrong." Measured on his own water: the secchi baseline is 2.4 ft, the
+  // profile's own line is "Typical clarity: stained", and on a day with 0" of rain in 72 hours
+  // every zone still scored 61-69 — Stained at his ramp and Muddy lake-wide FROM THE BASELINE
+  // ALONE. A caution on a lake's normal state fires on nearly every trip there, and `noGoReasons`
+  // is what sets the verdict, so it was dropping every Wateree day to CAUTION.
+  assert.equal(risks.length, 0, 'clarity must not push the trip to CAUTION');
+  assert.equal(notes.length, 1, 'it is a condition, printed and counted toward nothing');
+});
+
+test('no clarity, at any level, is a risk — the verdict is about the trip, not the water colour', () => {
+  const i = BUILDER.indexOf('const cond = (p.plan && p.plan.conditions)');
+  const j = BUILDER.indexOf('// If Open-Meteo failed but the weather text field', i);
+  const block = BUILDER.slice(i, j);
+  assert.ok(!/addRisk\(/.test(block),
+    'the clarity block must raise no risks at all — Clear, Stained, Muddy or the top band');
+  assert.ok(!/addPositive\(/.test(block),
+    'nor call any of them good: "stained" is not a blessing either, it is a condition');
+  assert.match(block, /addNote\(/);
+
+  // Every level, executed, on the three shapes that reach it.
+  const run = (p) => { const r = [], n = [];
+    new Function('p', 'addRisk', 'addPositive', 'addNote', block.replace(/^\s*\/\/.*$/gm, ''))
+      (p, (m) => r.push(m), () => {}, (m) => n.push(m));
+    return { r, n }; };
+  for (const cls of ['Clear', 'Stained', 'Muddy']) {
+    const got = run({ plan: { conditions: { clarity: cls, clarityAt: 'X — Y' } }, meta: {} });
+    assert.equal(got.r.length, 0, `${cls} at the ramp must not be a risk`);
+    assert.equal(got.n.length, 1, `${cls} at the ramp must be a note`);
+  }
+  // And the top band, whose NAME claims debris off a turbidity score.
+  const top = run({ plan: null, meta: { clarityIntel: 'Overall predicted clarity: Muddy / debris risk' } });
+  assert.equal(top.r.length, 0, 'the app must not assert debris it cannot measure');
+  assert.match(top.n.join(' '), /measures no debris/);
 });
