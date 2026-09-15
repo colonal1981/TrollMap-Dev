@@ -13,6 +13,7 @@
 
 import { state, CF_WORKER_URL } from '../core/state.js';
 import { resolveR2Key } from '../data/lake-keys.js';
+import { isNum } from '../utils/num.js';
 import { getLoadedAccessIndex, registryRecordFor } from '../data/access-index.js';
 import { getSeason, seasonNote } from '../data/species-intel.js';
 import { depthBandFor, usableAhFrom, researchIntel, structureWeights, oxygenFloorFt,
@@ -328,7 +329,19 @@ export async function runSmartPlanV2(opts = {}) {
         // reading, so the squeeze has to reason about that one -- two temperatures for one lake in
         // one prompt is the defect fixed in bd48bcf, and reintroducing it here would be worse
         // because these two would be the SAME field disagreeing. The form value is the fallback.
-        { tempF: (waterState && Number.isFinite(Number(waterState.waterTempF)))
+        //
+        // AND THE GUARD HAS TO BE isNum, NOT Number.isFinite(Number(...)). `waterTempF` is
+        // declared `null` in water-conditions.js's defaults on purpose, so the shape is the same
+        // on a water with no thermometer -- and Number(null) is 0, which is finite. This line
+        // therefore passed on every ungauged water and handed the squeeze a water temperature of
+        // ZERO DEGREES, while `inp.waterTempF` -- the fallback the paragraph above calls the
+        // fallback -- was never reached.
+        //
+        // Worse than a wrong number, given what the comment above promises: the conditions block
+        // was fixed this morning to stay silent when nothing measured a temperature, so the two
+        // had begun DISAGREEING about the same field, which is exactly the defect bd48bcf closed.
+        // See js/utils/num.js -- eighth instance of this family.
+        { tempF: isNum(waterState && waterState.waterTempF)
             ? Number(waterState.waterTempF) : inp.waterTempF,
           tempFrom: (waterState && waterState.waterTempFrom) || null }),
       // THE SAFETY SECTION'S HAZARD SENTENCE, which has never once had anything to say because
