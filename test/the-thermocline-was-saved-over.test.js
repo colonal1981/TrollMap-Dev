@@ -17,7 +17,8 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyWqpToLimnology, buildWqpEvidence, limnologyGaps, WQP_LIMNOLOGY_FIELDS }
+import { applyWqpToLimnology, applyDocumentsToLimnology,
+         buildWqpEvidence, limnologyGaps, WQP_LIMNOLOGY_FIELDS }
   from '../js/utils/wqp-limnology.js';
 
 /** What the deterministic pass hands over: one real value and the rest holes. */
@@ -138,4 +139,44 @@ test('a refusal never annotates a depth that came from somewhere else', async ()
   assert.equal(out.thermocline.summerDepthFt, 27);
   assert.equal(out.thermocline.note, 'From the 2019 study.');
   assert.equal(out.oxygen.note, 'From the 2019 study.');
+});
+
+// ── A NOTE THAT CAME WITHOUT A DEPTH IS STILL AN ANSWER ────────────────────────────────────────
+//
+// 2026-09-14/15, Lake Wateree, across three files:
+//
+//   nla_limnology.json        thermoclineFt: null, thermoclineNote: "no layer reaches 1.0 C/m...
+//                             steepest was 0.50 C/m at 18.0 ft over a 7.6 m cast"
+//   document_limnology.json   thermoclineNote: null        <- build_document_limnology dropped it
+//   the app                   thermocline.note = the WQP surface-grab refusal
+//
+// So the prompt told the model "these are surface grabs with a depth stamp, not a vertical
+// profile" about a lake the pipeline holds a real vertical cast for — one whose steepest layer sat
+// at 18 ft, between the 16 and 20 ft two Wateree guides put the summer thermocline at.
+//
+// Three layers, and the reason evaporated at the middle one. This is the app-side half: a document
+// that measured the column and could not NAME a depth must still reach the note field, and it must
+// outrank a refusal from a source that never went below the surface.
+test('a document note reaches the field even with no depth to go with it', () => {
+  const out = applyDocumentsToLimnology(
+    { thermocline: { summerDepthFt: null, note: null }, oxygen: {} },
+    { offered: true, thermoclineFt: null,
+      thermoclineNote: 'NLA 7/21/2022: steepest 0.50 C/m at 18.0 ft', anoxicBelowFt: 19.7 });
+  assert.match(out.thermocline.note, /18\.0 ft/);
+  assert.equal(out.thermocline.summerDepthFt, null, 'and it still invents no depth');
+});
+
+test('a MEASURED refusal outranks an unmeasured one', () => {
+  const out = applyDocumentsToLimnology(
+    { thermocline: { summerDepthFt: null, note: 'surface grabs with a depth stamp' }, oxygen: {} },
+    { offered: true, thermoclineFt: null,
+      thermoclineNote: 'NLA 7/21/2022: steepest 0.50 C/m at 18.0 ft', anoxicBelowFt: 19.7 });
+  assert.match(out.thermocline.note, /18\.0 ft/, 'the cast that went down the column wins');
+});
+
+test('and a document with nothing to say leaves the WQP note alone', () => {
+  const out = applyDocumentsToLimnology(
+    { thermocline: { summerDepthFt: null, note: 'surface grabs with a depth stamp' }, oxygen: {} },
+    { offered: true, thermoclineFt: null, anoxicBelowFt: 19.7 });
+  assert.match(out.thermocline.note, /surface grabs/);
 });

@@ -22,7 +22,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from build_document_limnology import (threshold_mgl, prose_offer, collapse, in_window,
-                                      MIN_THERMOCLINE_FT)
+                                      MIN_THERMOCLINE_FT, gather)
 
 MONTICELLO = {'station': 'B-890',
               'quote': 'Bottom water DO concentrations of <2.0 mg/L were observed at the end of '
@@ -113,3 +113,62 @@ class CollapseAndWindow(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
+
+
+class TheNoteThatCameWithoutADepth(unittest.TestCase):
+    """A cast that measured the column and could not NAME a number still said something.
+
+    `gather` used to `continue` in silence on a null value, so the upstream note -- which
+    fetch_nla_limnology.py writes for exactly this case, with the reason AND the depth it saw --
+    never reached the served file. Lake Wateree, 2026-09-14:
+
+        nla_limnology.json      thermoclineFt: null
+                                thermoclineNote: "...steepest was 0.50 C/m at 18.0 ft..."
+        document_limnology.json thermoclineNote: null
+
+    and the app, finding that slot empty, filled it with a WQP surface-grab refusal -- telling the
+    model there was no vertical profile for a lake the pipeline holds one for, whose steepest layer
+    sat at 18 ft, between the 16 and 20 ft two Wateree guides give for the summer thermocline.
+    """
+
+    WATEREE = [('EPA National Lakes Assessment', {
+        'date': '7/21/2022', 'year': '2022',
+        'thermoclineFt': None,
+        'thermoclineNote': 'no layer reaches 1.0 C/m, the classical cutoff -- steepest was '
+                           '0.50 C/m at 18.0 ft over a 7.6 m cast.',
+        'anoxicBelowFt': 19.7, 'anoxicNote': '0.80 mg/L at 6.0 m',
+        'depletionDepthFt': 16.4, 'depletionNote': '2.40 mg/L at 5.0 m'})]
+
+    def test_the_note_survives_a_null_value(self):
+        th, note, _ = gather(self.WATEREE, 'thermoclineFt', 'measured vertical profile',
+                               'thermoclineNote')
+        self.assertIsNone(th, 'no depth is invented')
+        self.assertIsNotNone(note, 'and the reason is not thrown away')
+        self.assertIn('18.0 ft', note)
+        self.assertIn('EPA National Lakes Assessment 7/21/2022', note,
+                      'attributed to the cast that said it')
+
+    def test_a_value_still_carries_its_own_note_not_the_refusal(self):
+        an, note, _ = gather(self.WATEREE, 'anoxicBelowFt', 'measured vertical profile',
+                               'anoxicNote')
+        self.assertEqual(an, 19.7)
+        self.assertIn('measured vertical profile', note)
+        self.assertNotIn('1.0 C/m', note, 'the thermocline refusal is not this field business')
+
+    def test_no_note_field_asked_for_means_no_note_invented(self):
+        th, note, _ = gather(self.WATEREE, 'thermoclineFt', 'measured vertical profile')
+        self.assertIsNone(th)
+        self.assertIsNone(note)
+
+    def test_a_water_with_nothing_measured_at_all_is_still_skipped(self):
+        """The notes explain a missing value; they are not a reason to publish a water the casts
+        could not measure in any respect."""
+        blank = [('EPA National Lakes Assessment',
+                  {'year': '2012', 'thermoclineFt': None, 'thermoclineNote': 'only 3 readings',
+                   'anoxicBelowFt': None, 'depletionDepthFt': None})]
+        th, thn, _ = gather(blank, 'thermoclineFt', 'x', 'thermoclineNote')
+        an, _, _ = gather(blank, 'anoxicBelowFt', 'x', 'anoxicNote')
+        de, _, _ = gather(blank, 'depletionDepthFt', 'x', 'depletionNote')
+        self.assertIsNotNone(thn, 'the note exists')
+        self.assertTrue(th is None and an is None and de is None,
+                        'and main() drops the row on exactly this test')

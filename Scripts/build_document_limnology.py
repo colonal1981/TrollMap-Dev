@@ -131,12 +131,35 @@ def collapse(values):
     return statistics.median_high(sorted(values))
 
 
-def gather(waters, field, label):
-    """Every summer cast that offers `field`, collapsed. Returns (value, note, refusals)."""
-    taken, refused = [], []
+def gather(waters, field, label, note_field=None):
+    """Every summer cast that offers `field`, collapsed. Returns (value, note, refusals).
+
+    A CAST THAT MEASURED THE COLUMN AND COULD NOT NAME A NUMBER STILL SAID SOMETHING, AND THIS
+    DROPPED IT. `v is None` used to `continue` in silence, so the upstream note -- which
+    fetch_nla_limnology.py writes for exactly this case, with the reason and the depth it saw --
+    never reached the served file. Lake Wateree is the whole bug in one record:
+
+        nla_limnology.json      thermoclineFt: null
+                                thermoclineNote: "no layer reaches 1.0 C/m, the classical cutoff
+                                -- steepest was 0.50 C/m at 18.0 ft over a 7.6 m cast..."
+        document_limnology.json thermoclineNote: null
+
+    and the app, finding that slot empty, filled it with the WQP surface-grab refusal -- so the
+    prompt said "these are surface grabs with a depth stamp, not a vertical profile" about a lake
+    the pipeline holds a real vertical profile for, whose steepest layer sat at 18 ft, between the
+    16 and 20 ft two Wateree guides put the summer thermocline at.
+
+    Same rule the app applies one layer down and the fetcher applies one layer up: a refusal is an
+    answer and must reach the field it refused. `note_field` is passed rather than derived because
+    the three names are irregular -- thermoclineNote, anoxicNote, depletionNote.
+    """
+    taken, refused, unmeasured = [], [], []
     for src, visit in waters:
         v = visit.get(field)
         if v is None:
+            said = note_field and str(visit.get(note_field) or '').strip()
+            if said:
+                unmeasured.append('%s %s: %s' % (src, when(visit), said))
             continue
         ok, undated = in_window(visit)
         if not ok:
@@ -148,7 +171,10 @@ def gather(waters, field, label):
             continue
         taken.append((v, '%s %s%s' % (src, when(visit), ' (%s)' % undated if undated else '')))
     if not taken:
-        return None, None, refused
+        # NO NUMBER, BUT NOT NOTHING. What the casts said about why goes into the note slot, which
+        # is the only field downstream reads, instead of being left for an unmeasured source to
+        # fill. Still `None` for the value: nothing here invents one.
+        return None, ('; '.join(unmeasured) or None), refused
     value = collapse([t[0] for t in taken])
     if len(taken) == 1:
         note = '%s, %s' % (label, taken[0][1])
@@ -226,9 +252,14 @@ def main(argv=None):
 
     rows, offered = {}, 0
     for slug, waters in sorted(by_slug.items()):
-        th, thn, th_ref = gather(waters, 'thermoclineFt', 'measured vertical profile')
-        an, ann, an_ref = gather(waters, 'anoxicBelowFt', 'measured vertical profile')
-        de, den, de_ref = gather(waters, 'depletionDepthFt', 'measured vertical profile')
+        th, thn, th_ref = gather(waters, 'thermoclineFt', 'measured vertical profile',
+                                 'thermoclineNote')
+        an, ann, an_ref = gather(waters, 'anoxicBelowFt', 'measured vertical profile',
+                                 'anoxicNote')
+        de, den, de_ref = gather(waters, 'depletionDepthFt', 'measured vertical profile',
+                                 'depletionNote')
+        # A ROW WITH NO NUMBERS AT ALL IS STILL SKIPPED. The notes explain a missing value; they
+        # are not a reason to publish a water the casts could not measure in any respect.
         if th is None and an is None and de is None:
             continue
         srcs = sorted({s for s, _ in waters})
