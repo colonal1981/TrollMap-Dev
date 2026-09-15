@@ -255,6 +255,22 @@ export async function syncLakeIntelData() {
  *        which is where the event handlers get it, but it is a parameter because the answer depends
  *        on it and a function that reaches into the DOM for an input answers differently depending
  *        on what has rendered. That is the whole of the bug below.
+ * @param {object} [o.payload] a /lake-clarity response already in hand. The planners fetch it to
+ *        resolve the clarity the plan is built on — see fetchClarityAtRamp() — and pass it here so
+ *        the briefing is rendered from the SAME response rather than a second request that could
+ *        answer differently.
+ *
+ * ── AND WHY A PLANNER CALLS THIS AT ALL ─────────────────────────────────────────────────────────
+ *
+ * The briefing is a SNAPSHOT: it is written into the #planClarityIntel textarea whenever this last
+ * ran, saved into the plan from there, and restored into the textarea when a plan is loaded. It runs
+ * on lake change, tab switch, app load and a button — and a restored form does not fire a change
+ * event, so on a reload the only run is the one at +1000ms, while the ramp dropdown is still being
+ * filled from the access index. Ryan, 2026-09-15, with Clearwater Cove selected the whole time:
+ * "I did have a ramp selected". He did. The briefing was rendered before the box had it, and nothing
+ * regenerated it when he built the plan.
+ *
+ * So the planners refresh it with the ramp on the request, before they collect the plan.
  */
 export async function syncClarityIntelData(o = {}) {
   const lakeSel = document.getElementById('planLake');
@@ -271,9 +287,12 @@ export async function syncClarityIntelData(o = {}) {
   try{
     say('Modeling runoff...', false);
     if(btn){ btn.disabled=true; btn.textContent='Modeling...'; }
-    const res = await fetch(`${worker}/lake-clarity?lake=${encodeURIComponent(label)}&date=${encodeURIComponent(date)}`);
-    if(!res.ok) throw new Error(`Worker HTTP ${res.status}`);
-    const d = await res.json();
+    let d = o.payload || null;
+    if (!d) {
+      const res = await fetch(`${worker}/lake-clarity?lake=${encodeURIComponent(label)}&date=${encodeURIComponent(date)}`);
+      if(!res.ok) throw new Error(`Worker HTTP ${res.status}`);
+      d = await res.json();
+    }
     const lines=[];
     lines.push(`${d.lake} \u2014 Clarity & Runoff Forecast for ${d.tripDate}`);
     lines.push(`${d.summary}`);

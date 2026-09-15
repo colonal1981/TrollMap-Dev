@@ -260,6 +260,10 @@ export async function fetchClarityAtRamp(lakeName, dateStr, o = {}) {
     if (!got.select) return null;
     return {
       ...got,
+      // THE PAYLOAD IT ALREADY PAID FOR. The briefing on the card is rendered from this same
+      // response, and re-fetching it there would be two requests for one answer -- and, worse, two
+      // answers if the two requests straddled a forecast update.
+      payload: res,
       rampName: rampName || null,
       zoneName: got.zone ? got.zone.name : null,
       lakeWide: res.overall ? (res.overall.clarity || null) : null,

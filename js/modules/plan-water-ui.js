@@ -56,6 +56,7 @@ import { poiSpotFeatures, attractorSpotFeatures, dockSpotFeatures, chartedGrid, 
 import { planToTimeline, installTimeline } from './plan-to-timeline.js';
 import { renderSmartPlanUI, syncSpread } from './smart-plan-ui.js';
 import { lightFactsFrom } from './plan-prompt.js';
+import { syncClarityIntelData } from './lake-intel.js';
 import { planIssuesHtml } from './plan-issues.js';
 import { materialisePlan } from './plan-tracks.js';
 import { loadSessionFromPlan, isEnabled, launchFrom } from './notifications.js';
@@ -874,6 +875,20 @@ export async function findWater() {
   const clarityAtRamp = await fetchClarityAtRamp(inp.lakeName, inp.dateStr,
     { worker: CF_WORKER_URL, rampName: inp.rampName });
   if (clarityAtRamp && clarityAtRamp.select) inp.clarity = clarityAtRamp.select;
+  // ── AND THE BRIEFING ON THE CARD IS REGENERATED WITH THAT RAMP, BEFORE THE PLAN IS COLLECTED ──
+  //
+  // #planClarityIntel is a snapshot: written whenever syncClarityIntelData last ran, saved into the
+  // plan from there, and read back onto the card. It runs on lake change, tab switch, app load and a
+  // button — and a restored form fires no change event, so on a reload the only run is at +1000ms
+  // while the ramp dropdown is still filling. Ryan had Clearwater Cove selected the whole time and
+  // the briefing still carried no line about it, because it was rendered before the box had it.
+  //
+  // Handed the payload fetchClarityAtRamp already fetched, so this is a re-render and not a second
+  // request. Awaited, because collectPlan() reads that textarea.
+  if (clarityAtRamp && clarityAtRamp.payload) {
+    await syncClarityIntelData({ rampName: inp.rampName, payload: clarityAtRamp.payload })
+      .catch((e) => console.warn('[plan] clarity briefing refresh failed:', e && e.message));
+  }
   if (forecast) {
     // The line goes in the form field; the HOURS go to the model. Same two writes the Smart Plan
     // path makes -- `inp.weather` is what conditionsFrom() reads for `conditions.forecast`, and

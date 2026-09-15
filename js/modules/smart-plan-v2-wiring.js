@@ -31,6 +31,7 @@ import { renderSmartPlanUI, syncSpread } from './smart-plan-ui.js';
 import { materialisePlan } from './plan-tracks.js';
 import { loadSessionFromPlan, launchFrom } from './notifications.js';
 import { lightFactsFrom } from './plan-prompt.js';
+import { syncClarityIntelData } from './lake-intel.js';
 import { planIssuesHtml } from './plan-issues.js';
 import { renderAll } from '../core/map-init.js';
 
@@ -182,6 +183,20 @@ export async function runSmartPlanV2(opts = {}) {
   const clarityAtRamp = await fetchClarityAtRamp(inp.lakeName, inp.dateStr,
     { worker: CF_WORKER_URL, rampName: inp.rampName });
   if (clarityAtRamp && clarityAtRamp.select) inp.clarity = clarityAtRamp.select;
+  // ── AND THE BRIEFING ON THE CARD IS REGENERATED WITH THAT RAMP, BEFORE THE PLAN IS COLLECTED ──
+  //
+  // #planClarityIntel is a snapshot: written whenever syncClarityIntelData last ran, saved into the
+  // plan from there, and read back onto the card. It runs on lake change, tab switch, app load and a
+  // button — and a restored form fires no change event, so on a reload the only run is at +1000ms
+  // while the ramp dropdown is still filling. Ryan had Clearwater Cove selected the whole time and
+  // the briefing still carried no line about it, because it was rendered before the box had it.
+  //
+  // Handed the payload fetchClarityAtRamp already fetched, so this is a re-render and not a second
+  // request. Awaited, because collectPlan() reads that textarea.
+  if (clarityAtRamp && clarityAtRamp.payload) {
+    await syncClarityIntelData({ rampName: inp.rampName, payload: clarityAtRamp.payload })
+      .catch((e) => console.warn('[plan] clarity briefing refresh failed:', e && e.message));
+  }
 
   // THE RESEARCH PROFILE IS THE POINT OF THE RESEARCH PIPELINE. The first version of this file
   // ignored it entirely and used the four-lake built-in table — worse than v1, which at least put

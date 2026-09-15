@@ -135,6 +135,33 @@ test('with no launch selected the briefing says so, instead of going quiet', () 
   assert.match(INTEL, /\} else if\(rampNow\)\{[\s\S]{0,400}?\} else \{/);
 });
 
+// ── THE BRIEFING IS A SNAPSHOT, AND NOTHING USED TO REGENERATE IT AT PLAN TIME ─────────────────
+//
+// Ryan, with Clearwater Cove selected the whole time: "I did have a ramp selected". He did — and the
+// briefing still carried no line about it. #planClarityIntel is written whenever syncClarityIntelData
+// last ran, saved into the plan from there and read back onto the card; it runs on lake change, tab
+// switch, app load and a button, and a RESTORED form fires no change event. So on a reload the only
+// run is the one at +1000ms, while the ramp dropdown is still being filled from the access index.
+// Selected-but-not-yet-rendered and never-selected produce the same page.
+test('the planners re-render the briefing with the ramp before collecting the plan', () => {
+  for (const [who, src] of [['Smart Plan', SP], ['Pick Water', PW]]) {
+    assert.match(src, /await syncClarityIntelData\(\{ rampName: inp\.rampName, payload: clarityAtRamp\.payload \}\)/,
+      `${who} must refresh the briefing with the ramp on the request`);
+    assert.match(src, /import \{ syncClarityIntelData \} from '\.\/lake-intel\.js'/, `${who} import`);
+  }
+  // AWAITED, because collectPlan() reads that textarea — a fire-and-forget refresh would land after
+  // the snapshot and the card would show the old text anyway.
+  for (const src of [SP, PW]) assert.ok(!/(?<!await )syncClarityIntelData\(\{ rampName/.test(src));
+});
+
+test('and it re-renders from the payload already fetched, not a second request', () => {
+  // Two requests for one answer is wasteful; two requests straddling a forecast update is two
+  // different answers on one card.
+  assert.match(INTEL, /let d = o\.payload \|\| null;/);
+  assert.match(INTEL, /if \(!d\) \{[\s\S]{0,300}?await fetch\(`\$\{worker\}\/lake-clarity/);
+  assert.match(PRE, /payload: res,/, 'the resolver has to hand the payload back for that to work');
+});
+
 test('and the forecast recomputes when he picks a ramp, with that ramp passed in', () => {
   assert.match(INTEL, /rampSel\.addEventListener\('change'/,
     'no planRamp listener means the ramp-aware answer never runs for the ramp he chose');
