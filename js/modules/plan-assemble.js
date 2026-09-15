@@ -169,7 +169,8 @@ function fitInlineWeight(lure, rod, speedMph, ceilingFt, id, runId, warnings) {
  * Without a resolver this does nothing at all and says nothing, exactly like a pack with no
  * shoreline: an absent input must not become a claim.
  */
-function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warnings, fish) {
+function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warnings, fish,
+                      legDepth = null) {
   // RETURNS WHAT THIS LEG FISHES; IT DOES NOT CHANGE THE BAG.
   //
   // This used to write `rod.leadFt = shorter` straight into the loadout, and the loadout is ONE
@@ -373,12 +374,58 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
     // Lead-controlled baits can be brought up by shortening the lead. A lipped or weighted bait
     // that dives on its own cannot, and there the honest answer is that it is the wrong bait for
     // this leg -- said plainly rather than corrected into something it is not.
+    // ── A ONE-SHOAL CEILING IS A RISE TO AVOID, NOT A REASON TO FISH THE WHOLE PASS SHALLOW ──
+    //
+    // `maxRunDepthFt` is a THRESHOLD -- the shallowest point the whole stretch clears, set by one
+    // rise somewhere along it -- and this function's own note says so. It then shortened the lead
+    // for the ENTIRE pass to clear that rise. On wateree_lake#216, 2026-09-14, that meant pulling a
+    // lipless off 17 ft down to 11 across a leg that runs 11-25 ft with a MEDIAN of 20.
+    //
+    // Ryan, reading it: "i dont see anything wrong with leg 8... 11-25ft of water with the median
+    // being 20ft... it is not much different than the other water offered". Asked whether he wanted
+    // the cap kept or the rise flagged: "flag the rise and let me decide."
+    //
+    // AND THIS IS A NARROWING OF HIS 2026-08-11 RULE, NOT A RESTATEMENT OF IT. That rule was "the
+    // shallowest that water runs is 20ft... even if the water is 25-35ft don't give me a bait that
+    // runs deeper than 20ft" -- 25-35 ft of water with a 20 ft shoal is the SAME SHAPE as leg 8,
+    // so pretending the two situations differ would be this file telling itself a story. What
+    // changed is that he read the rule's output on real water and narrowed it. Do not "restore"
+    // the cap on the strength of the August quote; the September one was written knowing it.
+    //
+    // The flag is not a smaller answer than the cap was. It hands him the identical number the cap
+    // would have applied -- `shorter`, below -- and leaves the applying to him, which is the whole
+    // of what he asked for: "flag the rise and let me decide."
+    //
+    // THE SPLIT USES THE LEG'S OWN TWO NUMBERS, so there is no threshold to invent: a bait that
+    // clears the MEDIAN is a bait for this water with a rise to get over, and it is flagged with
+    // the lead that would clear so he can shorten there if he wants. A bait that does not clear the
+    // median is too deep for the stretch generally, and that is still corrected as before.
+    const medianFt = Number(legDepth && legDepth.medianFt);
+    const clearsMedian = Number.isFinite(medianFt) && medianFt > ceilingFt && w.max <= medianFt;
+    if (w.mode === 'lead' && clearsMedian) {
+      const env = [legDepth.minFt, legDepth.maxFt].every(Number.isFinite)
+        ? `${legDepth.minFt}-${legDepth.maxFt} ft` : `${ceilingFt} ft at its shallowest`;
+      warnings.push(`${id} on ${runId}: a ${rod.lure}`
+                  + `${inlineOz ? ` behind the ${ozLabel(inlineOz)} inline weight` : ''}`
+                  + `${fit ? ` on a ${ozLabel(fit.weightOz)} head` : ''} `
+                  + `runs ${w.min}-${w.max} ft, and this leg is ${env} with a median of `
+                  + `${medianFt} ft. THE LEAD IS LEFT WHERE YOU SET IT — the bait clears the water `
+                  + `this pass mostly is, and there is a rise to ${ceilingFt} ft on it somewhere `
+                  + `that it will not clear. Shorten to ${shorter ?? '—'} ft over the rise if you `
+                  + `want it off the bottom there; the chart does not say where the rise is.`);
+      forThisLeg[id] = { ...(forThisLeg[id] || {}),
+                         runsDepthFt: [w.min, w.max],
+                         clearsAt: shorter ?? null };
+      continue;
+    }
     if (w.mode === 'lead' && shorter && shorter < leadFt) {
       warnings.push(`${id} on ${runId}: a ${rod.lure}`
                   + `${inlineOz ? ` behind the ${ozLabel(inlineOz)} inline weight` : ''}`
                   + `${fit ? ` on a ${ozLabel(fit.weightOz)} head` : ''} `
-                  + `on ${leadFt} ft of lead at ${speedMph} mph runs to ${w.max} ft, and the `
-                  + `shallowest water on this leg is ${ceilingFt} ft — shortened the lead to `
+                  + `on ${leadFt} ft of lead at ${speedMph} mph runs to ${w.max} ft, and this leg `
+                  + `runs ${ceilingFt} ft at its shallowest with a median of `
+                  + `${Number.isFinite(medianFt) ? `${medianFt} ft` : 'no median on the pack'} — `
+                  + `too shallow for it along the whole stretch, so shortened the lead to `
                   + `${shorter} ft so it clears`);
       const nw = depthWindow(lure, { speedMph, leadFt: shorter });
       forThisLeg[id] = { ...(forThisLeg[id] || {}), leadFt: shorter,
@@ -773,7 +820,11 @@ export function assemblePlan(o) {
     // measure both from the same envelope profile — see waterBand() in plan-pieces.js — so the
     // fallback below only fires on a pack fitted before those profiles existed.
     const rodPlan = capBaitDepth(rods, deploy, Number(c.maxRunDepthFt ?? c.depthFt), legMph,
-                                 o.lureByName, c.runId, warnings, fish);
+                                 o.lureByName, c.runId, warnings, fish,
+                                 // THE LEG'S OWN ENVELOPE, so a one-shoal ceiling can be told apart
+                                 // from water that is shallow all the way along. See capBaitDepth.
+                                 { medianFt: Number(c.depthFt), minFt: Number(c.depthMinFt),
+                                   maxFt: Number(c.depthMaxFt) });
 
     legs.push({
       id: `L${++li}`, type: 'troll',

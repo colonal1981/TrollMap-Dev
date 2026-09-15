@@ -136,8 +136,16 @@ function bottomNote(rods, leg) {
   const taps = withGap.filter((r) => r.clearance.taps);
   const runs = withGap.map((r) => r.depth).filter(Boolean).join(' and ');
   if (taps.length) {
+    // AND WHAT TO DO ABOUT IT IF HE WANTS THE BAIT OFF THE RISE. Since 2026-09-14 a bait that
+    // clears the water the pass mostly is keeps the lead he set and the rise is flagged instead
+    // ("flag the rise and let me decide"), so this sentence is where the decision gets made and
+    // the lead that clears has to be IN it. One number, whichever bait is deepest into the rise.
+    const lifts = taps.map((r) => r.clearance.clearsAt).filter((n) => Number.isFinite(n));
+    const lift = lifts.length ? ` Shorten to ${Math.min(...lifts)} ft if you want it up over the `
+                              + `rise instead — the chart does not say where on the leg it is.` : '';
     return `Bottom is ${floorFt} ft here and the ${taps.length > 1 ? 'baits' : taps[0].lure} `
-         + `${taps.length > 1 ? 'find' : 'finds'} it — let it tap and come up, that rise is the spot.`;
+         + `${taps.length > 1 ? 'find' : 'finds'} it — let it tap and come up, that rise is the `
+         + `spot.${lift}`;
   }
   // NOT "this is not a leg to fish down", WHICH IS A JUDGEMENT WITH A THRESHOLD BEHIND IT.
   //
@@ -177,14 +185,28 @@ function bottomNote(rods, leg) {
  * water on the leg as the ceiling, and a bait whose run depth clears it clears it. Above the
  * ceiling it taps; below it, the gap is how far up it is riding.
  */
-function bottomClearance(runs, leg) {
+function bottomClearance(runs, leg, over) {
   const floorFt = Number(leg && (leg.depthMinFt ?? leg.depthFt));
   const deep = Array.isArray(runs) ? Number(runs[1]) : NaN;
   if (!Number.isFinite(floorFt) || !Number.isFinite(deep)) return null;
   const gap = Math.round(floorFt - deep);
-  if (gap < 0) return { gap, floorFt, taps: true, note: `digs into the ${floorFt} ft rise` };
-  if (gap === 0) return { gap, floorFt, taps: true, note: `rides right on the ${floorFt} ft rise` };
-  return { gap, floorFt, taps: false, note: `${gap} ft up off the bottom` };
+  // WHAT WOULD LIFT IT, ON THE ROW THAT SAYS IT IS DOWN THERE.
+  //
+  // capBaitDepth() stopped shortening the lead for a whole pass to clear one rise -- Ryan,
+  // 2026-09-14: "flag the rise and let me decide" -- and put the lead that WOULD clear on the leg
+  // as `clearsAt`. A number the app computed and nobody reads is the failure this pipeline keeps
+  // making, and the decision it was computed for is made on the water, off this card. So it rides
+  // with the clearance, which is the field already saying the bait is into the bottom.
+  const clearsAt = over && Number.isFinite(Number(over.clearsAt)) ? Number(over.clearsAt) : null;
+  const lift = clearsAt ? ` — ${clearsAt} ft of lead clears it` : '';
+  if (gap < 0) {
+    return { gap, floorFt, taps: true, clearsAt, note: `digs into the ${floorFt} ft rise${lift}` };
+  }
+  if (gap === 0) {
+    return { gap, floorFt, taps: true, clearsAt,
+             note: `rides right on the ${floorFt} ft rise${lift}` };
+  }
+  return { gap, floorFt, taps: false, clearsAt: null, note: `${gap} ft up off the bottom` };
 }
 
 function rodView(rod, side, over, leg) {
@@ -221,7 +243,7 @@ function rodView(rod, side, over, leg) {
     notes: clean(rod.why),
     // Where it sits against the bottom, which is the part he can act on. Null when the leg has no
     // depth profile or the bait has no running depth — absent, never guessed at.
-    clearance: bottomClearance(runs, leg),
+    clearance: bottomClearance(runs, leg, over),
   };
 }
 

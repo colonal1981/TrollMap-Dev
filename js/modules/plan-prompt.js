@@ -1092,19 +1092,28 @@ RULES THAT ARE NOT NEGOTIABLE
    may be the right answer on the next leg, and the list is worked out per leg for that reason.
    Nothing appears on it that has any way of working, because a weighted bait is simply given a
    shorter lead instead.
-   \`maxRunDepthFt\` is a CEILING and nothing else. It is the SHALLOWEST water anywhere on that
-   leg, measured within the boat's wander, and it exists for one purpose — so a bait does not drag
-   on a rise you cannot see. A leg reading 25-31 ft of water with \`maxRunDepthFt: 20\` has a 20 ft
-   shoal somewhere along it, so a bait running 26 ft hangs up there on every pass. It is a number
-   you must stay ABOVE. It is not a number to aim at, and a low one never means "skip this leg".
-   FISH LOOK UP, so the error is not symmetric and this is why the ceiling is safe to obey. A bait
-   running ABOVE the fish still gets eaten — they come up to it. A bait running BELOW them is
-   behind them and out of sight, and one dragging bottom is fouled. So when the ceiling forces you
-   shallower than the band, take it and do not apologise for it: shallow is the cheap direction to
-   be wrong in, deep is the expensive one.
-   So, per leg: pick the depth from the fish, then check it against the ceiling. If the ceiling is
-   shallower than the band, fish the ceiling. Shorten the lead or take a shallower bait; never
-   raise the ceiling, and never leave the rods out of the water.
+   \`maxRunDepthFt\` IS ONE RISE, NOT THE DEPTH OF THE LEG. It is the shallowest water anywhere on
+   that leg, measured within the boat's wander — one spot somewhere along the pass, and the chart
+   does not say where. A leg reading 25-31 ft with \`maxRunDepthFt: 20\` is twenty-five to thirty-one
+   feet of water that comes up to 20 once. It is NOT a 20 ft leg.
+   So size the bait against \`depthFt\`, the median — that is the water the pass mostly is — and read
+   the rise as a thing to know about rather than a limit on the whole stretch. A bait that clears
+   the median is right for this leg; the rise gets flagged on the card with the lead that would lift
+   it over, and the angler decides there. A bait deeper than the MEDIAN is a bait too deep for the
+   stretch generally, and that one is wrong: take a shallower bait or a shorter lead.
+   That is the angler's own correction, on being shown a lipless pulled off 17 ft down to 11 for a
+   whole pass on 11-25 ft water with a median of 20: "i dont see anything wrong with leg 8... it is
+   not much different than the other water offered", then "flag the rise and let me decide". Do not
+   set every lead on the day to the shallowest rise on it.
+   A BILL IS THE EXCEPTION, and it is already worked out for you: \`cannotUse\` is computed against
+   the rise, not the median, because no length of lead lifts a lipped bait off a shoal it meets on
+   every pass and a dragged crankbait is a lost crankbait. There is nothing to adjust at the rise
+   with one of those, so it is simply not offered on that leg.
+   FISH LOOK UP, so the error is not symmetric. A bait running ABOVE the fish still gets eaten —
+   they come up to it. A bait running BELOW them is behind them and out of sight, and one dragging
+   bottom is fouled. So when the water forces you shallower than the band, take it and do not
+   apologise for it: shallow is the cheap direction to be wrong in, deep is the expensive one. A low
+   \`maxRunDepthFt\` never means "skip this leg", and never leave the rods out of the water.
 
 SAFETY — judge it honestly for a 12.5 ft kayak
 Sustained wind over 15 mph, or gusts over 20, is a no-go. Judge ${o.ramp || 'the ramp'} against the

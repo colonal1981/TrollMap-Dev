@@ -122,15 +122,21 @@ test('a lure that carries its own weight is not given a head', () => {
 
 // ── the bug, end to end ──────────────────────────────────────────────────────
 
-const LEG = (maxRunDepthFt = 24) => ({
-  runId: 'wateree_lake#14', lengthM: 4345, depthFt: 43, depthMinFt: 38, depthMaxFt: 48,
+// THE ENVELOPE IS AN ARGUMENT NOW, BECAUSE SINCE 2026-09-14 THE ANSWER DEPENDS ON IT.
+//
+// This is 38-48 ft of water with a median of 43 and a rise to 24 -- and capBaitDepth no longer
+// shortens a whole pass to clear one rise on water like that ("flag the rise and let me decide").
+// A leg that means shallow water all the way along has to say so, so `env` overrides the three
+// depth numbers and defaults to the deep envelope the head tests were written against.
+const LEG = (maxRunDepthFt = 24, env = {}) => ({
+  runId: 'wateree_lake#14', lengthM: 4345, depthFt: 43, depthMinFt: 38, depthMaxFt: 48, ...env,
   maxRunDepthFt, start: [-80.70, 34.35], end: [-80.68, 34.36],
   coordinates: [[-80.70, 34.35], [-80.69, 34.355], [-80.68, 34.36]],
   passes: [], speedMph: 2.0,
 });
 
-const planWith = (rod, maxRunDepthFt) => assemblePlan({
-  candidates: [LEG(maxRunDepthFt)], launch: [-80.71, 34.348],
+const planWith = (rod, maxRunDepthFt, env) => assemblePlan({
+  candidates: [LEG(maxRunDepthFt, env)], launch: [-80.71, 34.348],
   loadout: { rods: [rod] },
   deploy: { 'wateree_lake#14': { port: rod.id } },
   stops: [], changes: [], launchTime: '06:30', returnTime: '13:00', usableAh: 80,
@@ -184,13 +190,38 @@ test('a rod the model gave no lead at all still gets a head and a lead', () => {
 });
 
 test('the ceiling still wins over the head', () => {
-  // maxRunDepthFt 24 on this leg. A head fitted for 40 ft must still be pulled up to clear.
+  // 26 ft of water coming up to 24 -- shallow the whole way along. A head fitted for 40 ft must
+  // still be pulled up to clear, and fitting a head is not an exemption from that.
+  //
+  // THIS USED TO RUN ON THE 38-48 FT ENVELOPE ABOVE, where a bait at 42 ft clears the water the
+  // pass mostly is and only touches the 24 ft rise. That leg is flagged now rather than capped
+  // (the test below), so asserting the cap there was asserting the behaviour Ryan removed. The
+  // claim this test is about -- a head does not get a bait out of the ceiling -- needed water the
+  // ceiling is actually the character of.
   const plan = planWith({ id: 'R5', lure: 'Swimbait 4.6" – Jighead', leadFt: 60,
-                          runsDepthFt: [38, 42], role: 'troll', rig: 'snap' });
+                          runsDepthFt: [38, 42], role: 'troll', rig: 'snap' },
+                        24, { depthFt: 26, depthMinFt: 24, depthMaxFt: 29 });
   const over = planned(plan, 'R5');
   const w = depthWindow({ ...sb46, weightOz: over.jigheadOz },
                         { speedMph: 2, leadFt: over.leadFt });
   assert.ok(w.max <= 24, `runs to ${w.max} ft over a 24 ft ceiling`);
+});
+
+test('and on deep water with a rise, the head is fitted and the rise is flagged', () => {
+  // The same rod on the 38-48 ft envelope: the bait is right for the pass and wrong for one rise.
+  // Ryan, 2026-09-14: "flag the rise and let me decide". What has to be true is that the head was
+  // still fitted first -- the flag is about a bait with mass on it, or the window it quotes is
+  // about a bait with none -- and that the sentence names the head, since the head is what he
+  // ties on and therefore what the number depends on.
+  const plan = planWith({ id: 'R5', lure: 'Swimbait 4.6" – Jighead', leadFt: 60,
+                          runsDepthFt: [38, 42], role: 'troll', rig: 'snap' });
+  const over = planned(plan, 'R5');
+  assert.ok(Number.isFinite(over.jigheadOz), 'a head was still fitted');
+  assert.equal(over.leadFt > 60, true, 'the lead followed the head and was not pulled back up');
+  assert.ok(Number.isFinite(over.clearsAt), 'the lead that would clear the rise is handed over');
+  const said = plan.warnings.filter((w) => /^R5 /.test(w)).join(' | ');
+  assert.match(said, /THE LEAD IS LEFT WHERE YOU SET IT/);
+  assert.match(said, /on a .*oz head/);
 });
 
 test('a bait that carries its own weight is untouched by any of this', () => {
