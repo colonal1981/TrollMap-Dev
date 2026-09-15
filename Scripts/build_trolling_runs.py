@@ -464,6 +464,135 @@ POI_KINDS = {
 }
 
 
+# ── coastal habitat, joined per run ──────────────────────────────────────────────────────────
+#
+# WHY THESE TWO ARE STATISTICS AND NOT `near[]` ENTRIES.
+#
+# The South Atlantic habitat matrix scores six structure classes and rates oyster and marsh edge
+# at or near the top for every inshore fish in the roster -- marsh_edge 4.0 for juvenile red drum
+# and adult seatrout, oyster 3.5 -- and the leg ranker could not see either, because a coastal
+# pack's `near[]` carries hump, pile, hazard, point, cove, obstruction and creek_mouth and nothing
+# else. Measured on coast_charleston_sc 2026-09-15: 11,939 runs, not one marsh or oyster mark.
+#
+# LISTING THEM WOULD REPEAT THE LEDGE MISTAKE. Charleston has 29,687 oyster beds. Sampled over 400
+# runs at the 100 m annotate radius: median 0, p90 17, max 227, and about 78,000 extra `near`
+# entries across the pack -- which would roughly double a 24 MB file and let one creek out-score
+# the lake, exactly as 6,915 ledges did. Ledges were solved by collapsing them to `ledge_n` and
+# the same answer applies here.
+#
+# BUT OYSTER GENUINELY DISCRIMINATES, WHICH LEDGES DID NOT. 223 of those 400 runs have NO oyster
+# within 100 m. A count that is zero on half the water is worth scoring; a count that is 36-55 on
+# every leg is not. That is the whole difference and it is why this is a count rather than a
+# dropped layer.
+#
+# MARSH IS A FRACTION, NOT A COUNT. `marsh_edges.geojson` is a shoreline TYPE -- Charleston's is
+# 531 lines carrying 130,168 vertices along the whole marsh front -- so counting vertices measures
+# the survey, not the water. What discriminates is how much of the RUN lies alongside grass:
+# measured on the same 400, 30% touch none, the median run is 81% alongside, and 45% are entirely
+# alongside. A run down the middle of a wide channel and one hugging the spartina are different
+# trips and this is the number that says which.
+HABITAT_DIR = os.environ.get('TROLLMAP_HABITAT_DIR') or os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'habitat_output')
+
+
+def _poly_points(geom):
+    """One representative point per polygon ring. An oyster bed is metres across and the run is
+    hundreds of metres long, so its centroid and its edge are the same answer at this resolution --
+    and walking every vertex of 29,687 beds to learn that is work for nothing."""
+    t = (geom or {}).get('type')
+    c = (geom or {}).get('coordinates') or []
+    rings = []
+    if t == 'Polygon':
+        rings = c[:1]
+    elif t == 'MultiPolygon':
+        rings = [p[0] for p in c if p]
+    elif t == 'Point':
+        return [(c[0], c[1])] if len(c) >= 2 else []
+    out = []
+    for r in rings:
+        pts = [p for p in r if isinstance(p, (list, tuple)) and len(p) >= 2]
+        if not pts:
+            continue
+        out.append((sum(p[0] for p in pts) / len(pts), sum(p[1] for p in pts) / len(pts)))
+    return out
+
+
+def _line_points(geom):
+    """Every vertex of a line. Marsh is measured as coverage ALONG the run, so the shape of the
+    shoreline is the thing being sampled and its vertices are the sample."""
+    t = (geom or {}).get('type')
+    c = (geom or {}).get('coordinates') or []
+    lines = [c] if t == 'LineString' else (c if t == 'MultiLineString' else [])
+    return [(p[0], p[1]) for ln in lines for p in ln
+            if isinstance(p, (list, tuple)) and len(p) >= 2]
+
+
+def load_habitat(pack):
+    """Oyster centroids and marsh vertices for this pack's zone, or ({}, {}) when it has none.
+
+    Reads habitat_output/<slug>/, which extract_coastal_habitat.py writes beside its upload. A
+    freshwater pack has no such folder and this returns empty -- the join then adds no property at
+    all, rather than adding a zero. `oyster_n: 0` and "nobody ran the extractor" are different
+    sentences and only one of them is about the water.
+    """
+    slug = os.path.basename(os.path.normpath(pack))
+    base = os.path.join(HABITAT_DIR, slug)
+    out = {}
+    for fname, key, reader in (('oyster_beds.geojson', 'oyster', _poly_points),
+                               ('marsh_edges.geojson', 'marsh', _line_points)):
+        path = os.path.join(base, fname)
+        if not os.path.isfile(path):
+            continue
+        try:
+            with open(path, 'r', encoding='utf-8') as fh:
+                feats = (json.load(fh).get('features') or [])
+            pts = [p for f in feats for p in reader(f.get('geometry'))]
+            if pts:
+                out[key] = pts
+        except Exception as e:
+            print(f'      habitat: could not read {fname}: {e}')
+    return out
+
+
+def habitat_stats(geom, hab_grid, cell, annotate_m):
+    """`oyster_n` and `marsh_pct` for one run, or {} when the zone has neither layer."""
+    stats = {}
+    if not hab_grid:
+        return stats
+    if 'oyster' in hab_grid:
+        seen = set()
+        for v in geom:
+            gx, gy = int(v[0] / cell), int(v[1] / cell)
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for q in hab_grid['oyster'].get((gx + dx, gy + dy), ()):
+                        if metres(v, q) <= annotate_m:
+                            seen.add((round(q[0], 6), round(q[1], 6)))
+        stats['oyster_n'] = len(seen)
+    if 'marsh' in hab_grid:
+        near = 0
+        for v in geom:
+            gx, gy = int(v[0] / cell), int(v[1] / cell)
+            hit = False
+            for dx in (-1, 0, 1):
+                if hit:
+                    break
+                for dy in (-1, 0, 1):
+                    if hit:
+                        break
+                    for q in hab_grid['marsh'].get((gx + dx, gy + dy), ()):
+                        if metres(v, q) <= annotate_m:
+                            hit = True
+                            break
+            if hit:
+                near += 1
+        # PERCENT OF THE RUN'S OWN VERTICES, so a long run and a short one are comparable. The
+        # vertices are already rdp-simplified and roughly even along the line, which is what makes
+        # the count a proxy for length rather than for detail.
+        stats['marsh_pct'] = round(near / max(1, len(geom)) * 100)
+    return stats
+
+
 def load_points(pack):
     """Every feature a run can be annotated with: charted cover from the POI layer, humps and
     ledges from the structure layer. Returns [(lon, lat, kind, depth_ft or None)]."""
@@ -536,6 +665,17 @@ def build_one(pack, min_len, simplify, reach_m, annotate_m=100.0,
 
     pts = load_points(pack)
     pcell = max(annotate_m, 50.0) / 111320.0 * 1.5
+
+    # THE COASTAL HALF, and it is empty on every freshwater pack — see load_habitat().
+    hab = load_habitat(pack)
+    hab_grid = {}
+    for key, plist in hab.items():
+        g = {}
+        for q in plist:
+            g.setdefault((int(q[0] / pcell), int(q[1] / pcell)), []).append(q)
+        hab_grid[key] = g
+    if hab_grid:
+        print('      habitat: ' + ', '.join(f'{len(v):,} {k} point(s)' for k, v in hab.items()))
     pgrid = defaultdict(list)
     for q in pts:
         pgrid[(int(q[0] / pcell), int(q[1] / pcell))].append(q)
@@ -655,6 +795,13 @@ def build_one(pack, min_len, simplify, reach_m, annotate_m=100.0,
                     stats['near_ledge'] = stats.get('near_ledge', 0) + len(led)
                     for t, n in counts.items():
                         stats['near_' + t] = stats.get('near_' + t, 0) + n
+            # OYSTER AND MARSH, as statistics on the run rather than entries in `near` — see the
+            # note above load_habitat() for the measurement that decided which.
+            hs = habitat_stats(geom, hab_grid, pcell, annotate_m)
+            for k, v in hs.items():
+                props[k] = v
+                stats['hab_' + k] = stats.get('hab_' + k, 0) + (1 if v else 0)
+
             out.append({'type': 'Feature', 'properties': props,
                         'geometry': {'type': 'LineString', 'coordinates':
                                      [[round(x, 6), round(y, 6)] for x, y in

@@ -570,15 +570,24 @@ def process_zone(slug, zone, oyster_sc, oyster_nc, oyster_ga, esi_sc, esi_nc, es
         print(f"    No habitat data found for this zone")
         return 0
 
+    # WRITTEN LOCALLY *AND* UPLOADED, NOT ONE OR THE OTHER.
+    #
+    # This was an either/or, and the either/or is why habitat_output/ held Charleston alone for
+    # twelve days while R2 had nothing: every real run took the upload branch and left no copy
+    # behind. The local copy is not a debugging convenience -- build_trolling_runs.py reads
+    # habitat_output/<zone>/ to join oyster and marsh onto the trolling runs, and it runs on the
+    # drive, where R2 is not. A pipeline stage that cannot see the stage before it is a pipeline
+    # in name only.
+    #
+    # `--skip-upload` still means what it says: write locally and do NOT upload.
+    zone_dir = OUTPUT_DIR / slug
+    zone_dir.mkdir(parents=True, exist_ok=True)
+    for fname, gj in results.items():
+        out_path = zone_dir / fname
+        out_path.write_text(gj, encoding='utf-8')
+    print(f"    saved {len(results)} file(s) to {zone_dir}")
+
     if skip_upload:
-        # Write to output dir instead
-        zone_dir = OUTPUT_DIR / slug
-        zone_dir.mkdir(parents=True, exist_ok=True)
-        for fname, gj in results.items():
-            out_path = zone_dir / fname
-            out_path.write_text(gj, encoding='utf-8')
-            kb = len(gj.encode()) // 1024
-            print(f"    Saved {fname} ({kb} KB) → {out_path}")
         return len(results)
 
     ok = 0
