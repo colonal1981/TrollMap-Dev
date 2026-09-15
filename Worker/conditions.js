@@ -4292,15 +4292,54 @@ async function waterBlock(b, lat, lon, env) {
   // LAST, AND ONLY IF NOTHING ON THIS WATER ANSWERED. The order is deliberate: a reading taken
   // ON the water beats a sonde beside it, which beats one taken upstream. Each of the three says
   // where it came from, so a card is never quietly upgraded from borrowed to measured.
-  if (!out.water_temp && out.ndbc && out.ndbc.ocean && Number.isFinite(out.ndbc.ocean.water_c)) {
-    const o = out.ndbc.ocean;
-    out.water_temp = {
-      ndbc_station: o.station, name: o.name,
-      km_from_point: o.km_from_water,
-      c: o.water_c, f: o.water_f,
-      observed_at: o.observed_at, age_minutes: o.age_minutes, stale: o.stale,
-      source: 'NDBC — realtime2 ocean, OTMP',
-    };
+  //
+  // AND THE REST OF THE SONDE, WHICH THIS USED TO DROP. Temperature was the only field promoted.
+  // The comment beside the card's salinity row says the rest of the sonde "stays in the payload
+  // for SmartPlan" — a promise nothing kept: `out.salt` and `out.dissolved_oxygen` were filled
+  // from USGS sites only, so on a water with no USGS site they stayed null while the sonde's own
+  // numbers sat one key away under `out.ndbc.ocean`.
+  //
+  // COUNTED 2026-09-15 across the thirteen coastal zones in registry/water_bindings.json: five
+  // bind a water-quality sonde, and on TWO of them — ACE Basin and St. Helena — the sonde is
+  // the ONLY source of temperature, salinity and oxygen. Both cards have been showing a measured
+  // salinity from that sonde while the SmartPlan for the same water on the same day said nothing
+  // about salt at all.
+  //
+  // UNITS TRAVEL AND ARE NEVER CONVERTED. Each row carries its own value key rather than
+  // borrowing the USGS one, because they are not the same measurement: the sonde reports psu and
+  // USGS publishes ppt under 00480, and the sonde's oxygen column is ppm where USGS 00300 is
+  // mg/L. `basis` and the unit key say which answered; nothing here turns one into the other.
+  //
+  // ADDING A FIELD IS ADDING A ROW. Turbidity is deliberately not one yet: the card hides its
+  // modelled clarity whenever a measured turbidity exists and the plan still reads that modelled
+  // clarity, so promoting the sonde's FTU would set card and plan disagreeing on five zones.
+  // That is a decision about clarity, not about the sonde, and it is Ryan's to make.
+  const SONDE_PROMOTIONS = [
+    { field: 'water_temp', from: 'water_c', parm: 'OTMP',
+      shape: (o) => ({ c: o.water_c, f: o.water_f }) },
+    { field: 'salt', from: 'salinity_psu', parm: 'SAL',
+      shape: (o) => ({ basis: 'salinity_psu', psu: o.salinity_psu }) },
+    { field: 'dissolved_oxygen', from: 'oxygen_ppm', parm: 'O2PPM',
+      shape: (o) => ({ ppm: o.oxygen_ppm }) },
+  ];
+  const sonde = (out.ndbc && out.ndbc.ocean) || null;
+  if (sonde) {
+    for (const p of SONDE_PROMOTIONS) {
+      // A reading from this water already won. The binding order is a preference, not a result.
+      if (out[p.field]) continue;
+      // The sonde is bound but did not measure this today. Not an error, and not a zero.
+      if (!Number.isFinite(sonde[p.from])) continue;
+      out[p.field] = {
+        // There is no `usgs_site` key on purpose: there is no USGS site behind this, and a card
+        // must never be quietly upgraded from borrowed to measured by a field naming the wrong
+        // network.
+        ndbc_station: sonde.station, name: sonde.name,
+        km_from_point: sonde.km_from_water,
+        ...p.shape(sonde),
+        observed_at: sonde.observed_at, age_minutes: sonde.age_minutes, stale: sonde.stale,
+        source: `NDBC — realtime2 ocean, ${p.parm}`,
+      };
+    }
   }
   // THE INFLOW ROUTE. Only when this water produced nothing of its own -- not as a second
   // opinion, because two temperatures on one card is two numbers that can disagree.

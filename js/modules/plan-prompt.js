@@ -57,6 +57,7 @@
 // ONE PLACE KNOWS HOW DEEP A BAIT RUNS, and until now the prompt was not one of its readers.
 import { levelSentence } from '../utils/water-conditions.js';
 import { compassOf } from '../utils/compass.js';
+import { isNum, num } from '../utils/num.js';
 import { depthWindow, jigheadRangeOz, trollableBaits,
          describeBait } from '../data/lure-knowledge.js';
 import { RIGGED_TROLLING_WEIGHT_OZ, JIGHEADS_OWNED_OZ } from '../data/tackle-inventory.js';
@@ -83,7 +84,9 @@ export const SNAP_RODS = ROD_IDS.filter((id) => ROD_RIG[id] === 'snap');
 export const SIDES = ['port', 'starboard'];
 
 const str = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null);
-const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
+// `num` and `isNum` now come from utils/num.js. The local copy read
+// `Number.isFinite(Number(v)) ? Number(v) : null` and returned 0 for null, '' and blanks — see
+// that file for the five prompt lines it printed and the eight times this family has come back.
 
 // ── The tackle-name resolver, moved from smart-plan.js:111-196 ────────────────────────────────
 //
@@ -276,11 +279,12 @@ export function coastalPromptBlock(ws) {
       + `${Math.abs(t.surgeVsPredictedFt).toFixed(1)} ft against the prediction. A foot of surge `
       + 'is not a rounding error on a two-foot tide.');
   }
-  // SALT, AND WHICH GAUGE SAID SO. This read "at the gauge" on zones that bind twenty of them --
-  // Charleston has twenty publishing salinity or conductance, and one up the Cooper reads water
-  // twenty parts per thousand different from one at the harbour mouth. Salinity is also the
+  // SALT, AND WHICH GAUGE SAID SO. This read "at the gauge" on zones that bind eight of them --
+  // Charleston binds twenty-six gauges and eight publish salinity or specific conductance, and
+  // one up the Cooper reads a different water from one at the harbour mouth. Salinity is also the
   // number that moves redfish up and down a creek system after rain, so an unattributed one is
-  // worse than none.
+  // worse than none. (Counted 2026-09-15; an earlier revision of this comment said twenty, which
+  // was estimated and not counted.)
   const saltAt = (t.saltGauge || Number.isFinite(t.saltGaugeKm))
     ? ` at ${t.saltGauge || 'a bound gauge'}`
       + (Number.isFinite(t.saltGaugeKm) ? `, ${t.saltGaugeKm.toFixed(1)} km from the launch` : '')
@@ -290,6 +294,17 @@ export function coastalPromptBlock(ws) {
           : '.')
     : ' at the gauge.';
   if (t.salinityPpt != null) L.push(`Salinity ${t.salinityPpt} ppt${saltAt}`);
+  // THE SONDE, WHERE NO USGS SITE PUBLISHES SALT AT ALL. ACE Basin and St. Helena bind no gauge
+  // carrying 00480 or 00095; a NERRS sonde in the reserve is the only salinity either water has,
+  // and until 2026-09-15 it reached the card and never reached this prompt. psu is said as psu:
+  // it is the Practical Salinity Scale and USGS publishes ppt, and no line in this app converts
+  // between them. For a fisherman the two read the same at these magnitudes, and the model is
+  // told that outright rather than being handed a silently relabelled number.
+  else if (t.salinityPsu != null) {
+    L.push(`Salinity ${t.salinityPsu} psu${saltAt} That is a reserve sonde on the Practical `
+      + 'Salinity Scale, not the ppt USGS publishes — read it as the same kind of number for '
+      + 'fishing purposes, and do not restate it as ppt.');
+  }
   else if (t.conductanceUsCm != null) {
     // NOT CONVERTED, ANYWHERE. Conductance and salinity are different numbers and a converted one
     // would look like a measurement and not be one — water-conditions.js refuses the conversion
@@ -589,11 +604,11 @@ export function inshoreSeasonBlock(s) {
   }
 
   const li = s.lengthIn;
-  if (li && Number.isFinite(Number(li.medianIn))) {
+  if (li && isNum(li.medianIn)) {
     L.push(`Measured lengths, all waves: median ${li.medianIn}"`
-      + (Number.isFinite(Number(li.minIn)) && Number.isFinite(Number(li.maxIn))
+      + (isNum(li.minIn) && isNum(li.maxIn)
           ? `, range ${li.minIn}–${li.maxIn}"` : '')
-      + (Number.isFinite(Number(li.n)) ? ` across ${Number(li.n).toLocaleString()} measured fish` : '')
+      + (isNum(li.n) ? ` across ${Number(li.n).toLocaleString()} measured fish` : '')
       + '. Size the presentation to THAT fish, not to the top of the range — and check the median '
       + 'against the slot limit above, because a median under the slot means most of what is '
       + 'landed goes back.');
@@ -975,7 +990,7 @@ export function conditionsPromptBlock(ws) {
   if (!ws || ws.error) return '';
   const L = [];
 
-  if (Number.isFinite(Number(ws.waterTempF))) {
+  if (isNum(ws.waterTempF)) {
     // WHERE IT WAS MEASURED TRAVELS WITH IT. A tailrace gauge sits below the dam and is not the
     // lake; a borrowed upstream reading is not this water at all. The card has said so since it
     // was written and a number that arrives without its provenance cannot be argued with.
@@ -984,17 +999,25 @@ export function conditionsPromptBlock(ws) {
       : ws.waterTempGauge ? ` — ${ws.waterTempGauge}` : '';
     L.push(`Water temperature ${ws.waterTempF} °F${from}.`);
   }
-  if (Number.isFinite(Number(ws.oxygenMgL))) {
+  if (isNum(ws.oxygenMgL)) {
     L.push(`Dissolved oxygen ${ws.oxygenMgL} mg/L. Below about 4 mg/L is not holding fish.`);
+  } else if (isNum(ws.oxygenPpm)) {
+    // THE SONDE'S COLUMN IS ppm. Same threshold, said in the unit that was actually measured:
+    // the two differ by about the density of seawater, which is well inside the slop of a
+    // rule of thumb, and saying so is cheaper than converting a number and pretending it came
+    // back that way. On ACE Basin and St. Helena this is the only oxygen there is.
+    L.push(`Dissolved oxygen ${ws.oxygenPpm} ppm at the reserve sonde. Below about 4 is not `
+      + 'holding fish — the sonde reports ppm and the USGS gauges report mg/L, and at these '
+      + 'magnitudes the threshold is the same number.');
   }
   if (ws.moonPhase) {
     L.push(`Moon ${ws.moonPhase}${ws.moonIllumination ? ` · ${ws.moonIllumination} lit` : ''}.`);
   }
-  if (Number.isFinite(Number(ws.popPct))) L.push(`Chance of rain ${ws.popPct}% in the first forecast period.`);
-  if (Number.isFinite(Number(ws.pressureMb))) {
+  if (isNum(ws.popPct)) L.push(`Chance of rain ${ws.popPct}% in the first forecast period.`);
+  if (isNum(ws.pressureMb)) {
     L.push(`Barometer ${ws.pressureMb} mb — one observation, so there is no trend in it.`);
   }
-  if (Number.isFinite(Number(ws.flowAnomaly))) {
+  if (isNum(ws.flowAnomaly)) {
     L.push(`Flow versus normal ${ws.flowAnomaly > 0 ? '+' : ''}${ws.flowAnomaly} — National Water `
          + `Model anomaly, published without units. Only the SIGN is usable.`);
   }
@@ -1222,7 +1245,7 @@ ${Object.entries(why).map(([w, names]) => `- ${names.join(', ')}: ${w}`).join('\
   })();
 
   const candidates = (o.candidates || []).map((c) => (
-    c && Number.isFinite(Number(c.maxRunDepthFt))
+    c && isNum(c.maxRunDepthFt)
       ? { ...c, cannotUse: cannotUseOn(Number(c.maxRunDepthFt)) }
       : c));
 

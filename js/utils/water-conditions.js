@@ -129,6 +129,7 @@ export function readConditions(j) {
     turbidityFnu: null,
     turbidityGauge: null,
     oxygenMgL: null,
+    oxygenPpm: null,
     oxygenGauge: null,
     clarityScore: null,
     clarityIsMeasured: false,
@@ -168,6 +169,7 @@ export function readConditions(j) {
     droughtLevel: null,
     droughtLevels: null,
     salinityPpt: null,
+    salinityPsu: null,
     conductanceUsCm: null,
     saltGaugeKm: null,
     saltBasis: null,
@@ -336,8 +338,15 @@ export function readConditions(j) {
     out.turbidityFnu = w.turbidity.fnu;
     out.turbidityGauge = w.turbidity.name || null;
   }
+  // TWO UNITS, NEVER ONE. USGS 00300 publishes mg/L and the NERRS sonde's column is ppm; on the
+  // two zones where the sonde is the only instrument, dropping the ppm because it was not mg/L
+  // meant the card and the plan both showed nothing. They are kept in separate fields so no
+  // reader can print one unit over the other's number.
   if (w.dissolved_oxygen && Number.isFinite(w.dissolved_oxygen.mg_l)) {
     out.oxygenMgL = w.dissolved_oxygen.mg_l;
+    out.oxygenGauge = w.dissolved_oxygen.name || null;
+  } else if (w.dissolved_oxygen && Number.isFinite(w.dissolved_oxygen.ppm)) {
+    out.oxygenPpm = w.dissolved_oxygen.ppm;
     out.oxygenGauge = w.dissolved_oxygen.name || null;
   }
 
@@ -435,11 +444,18 @@ export function readConditions(j) {
     out.saltBasis = w.salt.basis || null;
     out.saltGauge = w.salt.name || null;
     // HOW FAR AWAY, for the same reason the tidal-current station carries it: Charleston Harbor
-    // binds TWENTY gauges that publish salinity or conductance, and one up the Cooper reads a
-    // different water from one at the harbour mouth by twenty parts per thousand. "At the gauge"
-    // is not an answer when there are twenty of them.
+    // binds twenty-six gauges, EIGHT of which publish salinity or specific conductance, and one
+    // up the Cooper reads a different water from one at the harbour mouth. "At the gauge" is not
+    // an answer when eight of them could be it.
+    //
+    // COUNTED, 2026-09-15, from registry/water_bindings.json. An earlier revision of this comment
+    // said twenty and was a number I invented rather than counted; the eight is a count.
     out.saltGaugeKm = Number.isFinite(w.salt.km_from_point) ? w.salt.km_from_point : null;
     if (Number.isFinite(w.salt.ppt)) out.salinityPpt = w.salt.ppt;
+    // psu FROM A SONDE IS NOT ppt FROM USGS 00480, and the two never share a field. On ACE Basin
+    // and St. Helena the sonde is the only salinity there is; before this line both zones sent a
+    // plan with no salt in it while their own card showed the reading.
+    if (Number.isFinite(w.salt.psu)) out.salinityPsu = w.salt.psu;
     if (Number.isFinite(w.salt.us_cm)) out.conductanceUsCm = w.salt.us_cm;
   }
   // Net flow with the tidal sloshing removed. On a tidal river the raw discharge swings sign
@@ -874,9 +890,11 @@ export function conditionsStrip(c) {
   if (c.turbidityFnu != null) bits.push(`${c.turbidityFnu} FNU`);
   else if (c.clarity) bits.push(`${c.clarityIsMeasured ? '' : '~'}${c.clarity}`);
   if (c.oxygenMgL != null) bits.push(`${c.oxygenMgL} mg/L O₂`);
+  else if (c.oxygenPpm != null) bits.push(`${c.oxygenPpm} ppm O₂`);
   // On an estuary this is the line trout and redfish sit on. Conductance is shown in its own
   // unit rather than converted, so nothing reads as a salinity that was not measured as one.
   if (c.salinityPpt != null) bits.push(`${c.salinityPpt} ppt`);
+  else if (c.salinityPsu != null) bits.push(`${c.salinityPsu} psu`);
   else if (c.conductanceUsCm != null) bits.push(`${c.conductanceUsCm.toLocaleString()} µS/cm`);
 
   // Only a PROJECTION gets a place in the strip. An observed discharge is already the flow

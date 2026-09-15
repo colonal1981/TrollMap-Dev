@@ -499,11 +499,16 @@ export async function fetchWaterState(lakeName, dateStr, o = {}) {
     currentBoundBy: (c && c.currentBoundBy) || null,
     surgeVsPredictedFt: c && Number.isFinite(c.surgeFt) && Math.abs(c.surgeFt) >= 0.3 ? c.surgeFt : null,
     salinityPpt: c && Number.isFinite(c.salinityPpt) ? c.salinityPpt : null,
+    // THE SONDE'S psu, WHICH IS THE ONLY SALT ACE BASIN AND ST. HELENA HAVE. Neither zone binds
+    // a USGS site publishing 00480 or 00095, so `salinityPpt` and `conductanceUsCm` are null on
+    // both and this line is the whole difference between a plan that knows the water is salt and
+    // one that does not. It is a separate field because psu is not ppt and nothing converts.
+    salinityPsu: c && Number.isFinite(c.salinityPsu) ? c.salinityPsu : null,
     conductanceUsCm: c && Number.isFinite(c.conductanceUsCm) ? c.conductanceUsCm : null,
     // WHICH GAUGE AND HOW FAR, the same three fields the tidal current needed and for the same
     // reason. `saltGauge` and `saltBasis` have been computed by water-conditions.js since it was
     // written and have reached nothing; the prompt said "Salinity 12 ppt at the gauge" on a zone
-    // that binds twenty of them.
+    // binding eight that publish it.
     saltGauge: (c && c.saltGauge) || null,
     saltGaugeKm: c && Number.isFinite(c.saltGaugeKm) ? c.saltGaugeKm : null,
     saltBasis: (c && c.saltBasis) || null,
