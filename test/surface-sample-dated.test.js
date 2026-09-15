@@ -20,6 +20,26 @@
 // The fix is not a staleness threshold. A winter surface reading is a real part of a lake's
 // thermal range and arbitrary cutoffs are an AI problem, not a fishing problem. The fix is that
 // the number is dated wherever it is spoken, and a reader decides.
+//
+// ── AND ON 2026-09-14 IT STOPPED BEING SPOKEN THERE AT ALL ─────────────────────────────────────
+//
+// Dating it was not enough. Off the bench on Lake Wateree in September, the profile sentence read
+// "surface water near 67.19°F when last sampled 2026-04-06" -- correctly dated -- in the same
+// prompt as the conditions block's live gauge reading. The model had two temperatures for one lake
+// and a reason to believe the wrong one. A dated number is not a safe number when a live one sits
+// beside it.
+//
+// So the surface temperature and surface oxygen came OUT of the profile summary in both builders,
+// and the reasoning is written above the cut in each: a summary asserts what the lake IS, and a
+// point sample from one visit is weather. The values are not deleted -- limnology.surfaceWater
+// keeps them with their dates, and the conditions strip and the research tab both still read them.
+//
+// THIS FILE WAS THE STALE SIDE. Four of its tests still required the summary to date two numbers
+// it no longer states, so they failed on the change that superseded them. They are rewritten to
+// the claim that replaced theirs, which is the stronger one: the summary does not assert a surface
+// temperature at all, `sampleDated` still behaves exactly as specified for wherever the number IS
+// spoken, and the two builders still agree. The dating rule was not relaxed; it was made moot in
+// this one sentence and it still governs the rest.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -56,29 +76,36 @@ test('sampleDated admits an undated sample rather than going quiet', () => {
   assert.equal(sampleDated(undefined, ''), ' (grab sample, date not recorded)');
 });
 
-test('the worker summary dates the surface temperature it hands to the plan', () => {
-  const text = buildFactualSummary(NORMAN({
+// WAS THREE TESTS REQUIRING THE SUMMARY TO DATE THE TEMPERATURE. It does not state it now, so
+// dated or undated is not the question any more -- the question is whether it states it, and the
+// answer has to be no on every shape of input, including the well-dated one. A number that is
+// absent cannot be believed over the live gauge, which is the whole of the 2026-09-14 change.
+test('the worker summary states no surface temperature at all, however well dated', () => {
+  const dated = buildFactualSummary(NORMAN({
     recentTempF: 43.88, recentTempLastObserved: '2025-12-16',
     recentDissolvedOxygenMgL: 9.2, recentDissolvedOxygenLastObserved: '2025-12-16',
     lastObserved: '2025-12-16',
   }));
-  assert.match(text, /43\.88°F when last sampled 2025-12-16/);
-  assert.match(text, /9\.2 mg\/L when last sampled 2025-12-16/);
-  assert.doesNotMatch(text, /recent surface water/,
-    'the word "recent" on an eight-month-old grab sample is the bug');
+  assert.doesNotMatch(dated, /43\.88/, 'a dated surface temperature is still a second temperature');
+  assert.doesNotMatch(dated, /9\.2 mg/);
+  assert.doesNotMatch(dated, /surface water near/);
+  assert.doesNotMatch(dated, /recent surface water/,
+    'the word "recent" on an eight-month-old grab sample was the original bug');
+
+  // The group-date-only shape -- the 61 profiles already in R2 -- and the undated one.
+  for (const sw of [{ recentTempF: 43.88, recentDissolvedOxygenMgL: 9.2, lastObserved: '2025-12-16' },
+                    { recentTempF: 43.88 }]) {
+    assert.doesNotMatch(buildFactualSummary(NORMAN(sw)), /43\.88/);
+  }
 });
 
-test('a profile written before per-characteristic dates still gets dated', () => {
-  const text = buildFactualSummary(NORMAN({
-    recentTempF: 43.88, recentDissolvedOxygenMgL: 9.2, lastObserved: '2025-12-16',
-  }));
-  assert.match(text, /43\.88°F \(grab sample; newest surface sample here 2025-12-16\)/,
-    'the 61 profiles already in R2 carry only the group date and must not stay undated');
-});
-
-test('a surface temperature never reaches the summary undated', () => {
-  const text = buildFactualSummary(NORMAN({ recentTempF: 43.88 }));
-  assert.match(text, /43\.88°F \(grab sample, date not recorded\)/);
+// AND THE CHARACTERISTICS IT DOES STATE ARE STILL THERE, because "removed the surface sample" must
+// not have quietly become "removed the limnology sentence". Ryan's own line on what belongs: a
+// thermocline is a boundary and a property of the lake; a surface grab is what it was on one day.
+test('but the durable characteristics still reach the plan', () => {
+  const text = buildFactualSummary(NORMAN({ recentTempF: 43.88, lastObserved: '2025-12-16' }));
+  assert.match(text, /summer thermocline near 16 ft/);
+  assert.match(text, /Available limnology data indicate/);
 });
 
 // Each characteristic is its own sample. On a lake monitored for DO this summer and temperature
@@ -96,15 +123,25 @@ test('limnology.js keeps the per-characteristic sample dates it computes', () =>
 // The client builds the same sentence and cannot import from Worker/. If one side is changed
 // alone, a plan built in the browser and a profile built in the worker disagree about the same
 // lake.
-test('the client mirror dates the same two numbers', () => {
+// THE CLIENT CANNOT IMPORT FROM Worker/, SO IT CARRIES A COPY, and a change made on one side alone
+// means a plan built in the browser and a profile built in the worker disagree about the same lake.
+// This used to require both to date the two numbers; it now requires both to have dropped them, and
+// it requires the helper to still be there and still be the same helper, because the dating rule
+// still governs every other place the number is spoken.
+test('the client mirror drops the same two numbers, and keeps the same helper', () => {
   const src = read('js/modules/lake-research-engine.js');
   assert.ok(src.includes('function sampleDated(ownDate, groupDate)'),
     'lake-research-engine.js must carry the mirrored helper');
-  assert.ok(src.includes('surface water near ${lim.surfaceWater.recentTempF}°F${swDated('),
-    'the client temperature sentence must be dated');
-  assert.ok(src.includes('surface dissolved oxygen near ${lim.surfaceWater.recentDissolvedOxygenMgL} mg/L${swDated('),
-    'the client dissolved-oxygen sentence must be dated');
-  assert.ok(!/recent surface water near/.test(src), 'the undated client phrasing is the bug');
+  assert.ok(!/surface water near \$\{lim\.surfaceWater\.recentTempF\}/.test(src),
+    'the client still asserts a surface temperature the worker no longer does');
+  assert.ok(!/surface dissolved oxygen near \$\{lim\.surfaceWater\.recentDissolvedOxygenMgL\}/.test(src),
+    'the client still asserts a surface DO the worker no longer does');
+  assert.ok(!/recent surface water near/.test(src), 'the undated client phrasing was the bug');
+  // AND NEITHER SIDE LEAVES THE HELPER'S CALLER BEHIND. `swDated` was defined in both files and
+  // called by nobody after the cut, which is what makes a removed sentence look half-removed.
+  assert.ok(!/const swDated =/.test(src), 'dead swDated binding in the client');
+  assert.ok(!/const swDated =/.test(read('Worker/research/facts-util.js')),
+    'dead swDated binding in the worker');
 });
 
 test('both mirrors answer the three cases identically', () => {

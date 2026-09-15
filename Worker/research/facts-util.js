@@ -931,7 +931,9 @@ function buildFactualSummary(profile) {
   if (hasResearchValue(lim.surfaceWater) || lim.waterClarity?.secchiFt || lim.thermocline?.summerDepthFt) {
     const limBits = [];
     if (lim.waterClarity?.secchiFt) limBits.push(`Secchi clarity around ${lim.waterClarity.secchiFt} ft`);
-    const swDated = (own) => sampleDated(own, lim.surfaceWater?.lastObserved);
+    // `swDated` WAS DEFINED HERE AND CALLED BY NOBODY once the two sentences below were cut. A
+    // helper left standing after its only callers go is the thing that makes a deleted feature look
+    // half-present; `sampleDated` itself stays, because it is exported, mirrored and tested.
     // SURFACE TEMPERATURE AND SURFACE OXYGEN ARE NOT IN THIS SENTENCE, DELIBERATELY.
     //
     // 2026-09-14, off the bench on Lake Wateree in September: "surface water near 67.19°F when last
