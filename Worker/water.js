@@ -43,20 +43,86 @@ import { CORS, JSON_HEADERS, chartpackKey, r2Text } from './worker-core.js';
 // reading order (0x474d5754) is the big-endian value and silently fails every load — the
 // header check just returns "no water graph for this water", which reads like a missing file.
 const MAGIC = 0x47574d54;
-const CACHE_MAX = 8;                 // parsed packs held per isolate
+// ── THE CACHE IS BOUNDED BY BYTES NOW, NOT BY A COUNT OF PACKS ────────────────────────
+//
+// `CACHE_MAX = 8` was right when every graph came off Garmin's MAR mesh. Wateree's bathymetric
+// graph is 4.57 MB on the wire and 5.9 MiB once this function expands it, so eight of them is
+// 47 MiB of a 128 MiB isolate — comfortable, which is why a count was enough.
+//
+// The coastal graphs built from our own bathymetry on 2026-09-15 are a different size. ACE Basin
+// is 321,844 nodes and 1,140,629 edges, 10.9 MiB on the wire, and the arrays kept below come to
+// 15.1 MiB. Eight of those is 121 MiB, which leaves under 7 MiB of a 128 MiB isolate for the
+// Worker and everything else in it. A COUNT CANNOT EXPRESS THAT: no one number of packs is right
+// for both a 5.9 MiB graph and a 15.1 MiB one.
+//
+// THE BUDGET IS DERIVED, NOT PICKED. Parsing that graph needs its retained 15.1 MiB and, alive at
+// the same moment, the 10.9 MiB source buffer plus the transient `deg`, `ea`, `eb`, `fill` and
+// `lens` arrays — another 19.9 MiB, of which `lens` alone is a Float64Array over every edge.
+// That is a 45.9 MiB peak landing on top of whatever the cache already holds. At 40 MiB of cache
+// the worst moment is 86 MiB, leaving 42 MiB for the Worker itself.
+//
+// UNITS, SAID ONCE: every figure here is MiB, because the 128 MB isolate limit is. An earlier
+// draft of this note mixed MB and MiB and put the same array at 15.9 and 15.1.
+//
+// THE COUNT CAP STAYS as a second bound. A hundred small entries carry a hundred lots of Map and
+// object overhead that summing byteLength does not see.
+const CACHE_MAX = 8;                              // parsed packs held per isolate
+const CACHE_MAX_BYTES = 40 * 1024 * 1024;
 const _cache = new Map();
+const _cacheBytes = new Map();
+let _cacheTotal = 0;
+
+/**
+ * What one entry actually costs, in bytes.
+ *
+ * A typed array knows its own size, and that covers the water graph — the only entry here
+ * measured in megabytes. Everything else reports what its caller already knew (the JSON text
+ * length, for a parsed pack file) or falls back to a floor. The floor is a floor and is named as
+ * one: it is not a measurement of a Map of vertex buckets, and a number invented for one would be
+ * worse than admitting the bound is approximate above the megabyte scale that matters.
+ */
+export function entryBytes(v, given) {
+  if (Number.isFinite(given)) return given;
+  if (!v || typeof v !== 'object') return 64;
+  let n = 0;
+  for (const x of Object.values(v)) {
+    if (x && typeof x.byteLength === 'number') n += x.byteLength;
+  }
+  return n || 4096;
+}
+
+/** The cache's own accounting, so a test can assert the bound instead of trusting it. */
+export function cacheStats() {
+  return { entries: _cache.size, bytes: _cacheTotal, maxBytes: CACHE_MAX_BYTES, maxEntries: CACHE_MAX };
+}
 
 function cacheGet(k) {
   if (!_cache.has(k)) return null;
   const v = _cache.get(k);
   _cache.delete(k);                  // LRU: reinsert to mark as most recent
   _cache.set(k, v);
-  return v;
+  return v;                          // the byte total is unchanged: same key, same value
 }
 
-function cacheSet(k, v) {
+function cacheSet(k, v, bytes) {
+  if (_cache.has(k)) {               // a re-set replaces, so drop the old cost first
+    _cacheTotal -= _cacheBytes.get(k) || 0;
+    _cache.delete(k);
+    _cacheBytes.delete(k);
+  }
+  const b = entryBytes(v, bytes);
   _cache.set(k, v);
-  while (_cache.size > CACHE_MAX) _cache.delete(_cache.keys().next().value);
+  _cacheBytes.set(k, b);
+  _cacheTotal += b;
+  // NEVER EVICT TO EMPTY. The entry just added is the one the caller is about to use, and a graph
+  // bigger than the whole budget must still be usable once rather than thrown away and re-fetched
+  // on every request — which would be slower AND peak higher than keeping it.
+  while (_cache.size > 1 && (_cache.size > CACHE_MAX || _cacheTotal > CACHE_MAX_BYTES)) {
+    const oldest = _cache.keys().next().value;
+    _cacheTotal -= _cacheBytes.get(oldest) || 0;
+    _cache.delete(oldest);
+    _cacheBytes.delete(oldest);
+  }
   return v;
 }
 
@@ -77,7 +143,9 @@ async function packJson(env, slug, file) {
   if (!obj) return cacheSet(k, false);
   const txt = await r2Text(obj);            // honours the stored gzip; obj.text() would not
   try {
-    return cacheSet(k, JSON.parse(txt));
+    // The source length is the honest size for a parsed object: the parse is the same order of
+    // magnitude as its text and this is the only place that still has the text to ask.
+    return cacheSet(k, JSON.parse(txt), txt.length);
   } catch {
     return cacheSet(k, false);
   }
