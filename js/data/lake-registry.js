@@ -444,6 +444,40 @@ function normName(s) {
 let _normIndex = null;
 let _normStateIndex = null;
 
+/**
+ * A PARENTHETICAL THE SLUG DOES NOT SHARE IS A NOTE ABOUT THE WATER, NOT PART OF ITS NAME.
+ *
+ * normName() keeps the words of any parenthetical that is not a county or state stamp, and it is
+ * right to: `(Lower Saluda)`, `(Union County)` and `(2)` are the only thing separating two real
+ * waters, and a matcher that deletes them is guessing. But the registry also writes REACH notes
+ * in the same brackets, and those are not what anyone calls the water.
+ *
+ * Congaree River, 2026-09-15. Every name the row carries says `Congaree River (to SC-601)` --
+ * name, display name and both legacy names -- so every key it claims is `601 congaree river sc
+ * to`. The picker offers `Congaree River, SC`, which normalises to `congaree river`, and nothing
+ * matched. The conditions strip said "does not resolve to a registry record" on a water that has
+ * a row, a pack, 2,543 contour features and fourteen ramps.
+ *
+ * THE SLUG SETTLES WHICH KIND IT IS, and it settles it for every row rather than for Congaree.
+ * consolidate_lake_index.py builds the slug from the name it considers identifying, so when a
+ * parenthetical's words are in the slug it is a disambiguator and must be kept; when they are not
+ * it is a note and the water answers to the name without it. Checked against all 355 rows: ten
+ * parentheticals are kept -- `(2)` on broad_river_2, `(Greer)` on lake_robinson_greer, `(Union
+ * County)` on cane_creek_lake_union_county, `(Lower Saluda)` on saluda_river_lower_saluda and the
+ * rest -- and exactly one is dropped, `(to SC-601)` on congaree_river.
+ *
+ * IT ADDS KEYS AND TAKES NONE AWAY. Measured over the same 355 rows: 2 new keys, 0 collisions
+ * with each other, 0 overriding a key an existing row already held. The second is `bid sands` for
+ * the legacy `Bid Sands Lake (East)` on sands_pond, which is the same defect and nobody had hit it.
+ */
+function withoutNotes(name, slug) {
+  const sl = String(slug || '').toLowerCase();
+  return String(name || '').replace(/\(([^()]*)\)/g, (whole, inner) => {
+    const words = String(inner).toLowerCase().match(/[a-z0-9]+/g);
+    return words && words.length && words.every((w) => sl.includes(w)) ? whole : ' ';
+  });
+}
+
 function buildNormIndexes() {
   _normIndex = new Map();
   _normStateIndex = new Map();
@@ -452,6 +486,13 @@ function buildNormIndexes() {
       if (!n) continue;
       const k = normName(n);
       if (!k) continue;
+      // The same name with its reach notes removed, claimed as a second key. First-writer-wins
+      // applies to it exactly as it does to the full one, so a note-stripped key can never take a
+      // key a real name already holds. DISTINCT FROM `bare` below, which strips ORDINALS for the
+      // state index: that one answers "which Broad River", this one answers "is this bracket part
+      // of the name at all", and they are different questions on different indexes.
+      const noteFree = normName(withoutNotes(n, r.slug));
+      if (noteFree && noteFree !== k && !_normIndex.has(noteFree)) _normIndex.set(noteFree, r);
       // First writer wins, and the list is sorted largest-first below, so a 30-acre namesake
       // cannot claim the key belonging to the reservoir everyone means.
       if (!_normIndex.has(k)) _normIndex.set(k, r);
