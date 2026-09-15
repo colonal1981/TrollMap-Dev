@@ -860,6 +860,22 @@ def _stamp(pack, params):
         if os.path.exists(p):
             i = os.stat(p)
             st['inputs'][f] = [i.st_size, int(i.st_mtime)]
+    # THE HABITAT LAYERS ARE INPUTS AND THEY LIVE OUTSIDE THE PACK.
+    #
+    # oyster_n and marsh_pct are computed from habitat_output/<slug>/, so a pack whose oyster file
+    # was re-extracted this morning is NOT current even though nothing in its own folder moved.
+    # Without this, adding the habitat join changed no `params` and touched no INPUT, so every
+    # coastal pack would have reported itself up to date and the run would have done nothing at
+    # all -- the quietest possible failure, and one that looks exactly like success.
+    #
+    # It also invalidates precisely the right set: a coastal pack gains these keys and rebuilds,
+    # and the 1,700-odd freshwater packs have no habitat folder, gain nothing, and are left alone.
+    slug = os.path.basename(os.path.normpath(pack))
+    for f in ('oyster_beds.geojson', 'marsh_edges.geojson'):
+        p = os.path.join(HABITAT_DIR, slug, f)
+        if os.path.exists(p):
+            i = os.stat(p)
+            st['inputs']['habitat/' + f] = [i.st_size, int(i.st_mtime)]
     return st
 
 
