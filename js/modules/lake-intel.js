@@ -309,6 +309,20 @@ export async function syncClarityIntelData(o = {}) {
     } else if(rampNow){
       lines.push(`No clarity zone in this lake's model lists ${rampNow}, so only the lake-wide `
                + `figure below applies to it.`);
+    } else {
+      // ── SILENCE HERE READ AS "THERE IS NO RAMP-SPECIFIC ANSWER" ────────────────────────────
+      //
+      // With no ramp selected, both branches above were skipped and the briefing simply had no line
+      // about the launch -- so a reader saw the lake-wide figure and nothing telling him it was the
+      // lake-wide figure BY DEFAULT rather than by finding. This runs on lake change, tab switch and
+      // app load, and on a reload the ramp dropdown is filled asynchronously after the access index
+      // lands, so the +1000ms run genuinely has no launch to answer about.
+      //
+      // Ryan's 2026-09-15 briefing had neither line, which is how I knew the ramp was empty when it
+      // ran rather than unmatched. An absent input says so now, the same rule the rest of this app
+      // follows.
+      lines.push('No launch was selected when this was modelled, so everything below is LAKE-WIDE. '
+               + 'Pick a ramp and this recomputes for the zone it is in.');
     }
     if(d.overall){ lines.push(`Overall predicted clarity (LAKE-WIDE MEAN of ${coerceList(d.zones).length || '?'} zones, not your ramp): ${d.overall.clarity} (score ${d.overall.score}/100)`); lines.push(`Recommended colors: ${coerceList(d.overall.lureColors).join(', ')}`); lines.push(`Tactics: ${coerceList(d.overall.tactics).join('; ')}`); }
     if(coerceList(d.bestZones).length){ lines.push('Best clarity / safer starting zones:'); coerceList(d.bestZones).forEach(z=>lines.push(`\u2022 ${z.name}: ${z.clarity} \u2014 ${z.likely}`)); }

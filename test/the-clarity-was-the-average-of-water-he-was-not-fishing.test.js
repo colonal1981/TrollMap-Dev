@@ -125,6 +125,16 @@ test('the conditions badge names the water its verdict is about', () => {
     'the bare lake-wide mean must not be labelled just "Predicted"');
 });
 
+test('with no launch selected the briefing says so, instead of going quiet', () => {
+  // Both ramp branches were skipped when `rampNow` was empty, so the briefing carried no line about
+  // the launch at all and the lake-wide figure read as the only answer there was. Ryan's 2026-09-15
+  // briefing had NEITHER the AT YOUR RAMP line nor the "no zone lists this ramp" line, which is how
+  // the empty ramp was identified: unmatched and unselected looked identical on the page.
+  assert.match(INTEL, /No launch was selected when this was modelled, so everything below is LAKE-WIDE/);
+  // And the three cases are genuinely three branches, not two.
+  assert.match(INTEL, /\} else if\(rampNow\)\{[\s\S]{0,400}?\} else \{/);
+});
+
 test('and the forecast recomputes when he picks a ramp, with that ramp passed in', () => {
   assert.match(INTEL, /rampSel\.addEventListener\('change'/,
     'no planRamp listener means the ramp-aware answer never runs for the ramp he chose');
@@ -216,10 +226,58 @@ test('both planners resolve it before they build conditions, not one of them', (
 test('the card reads the verdict off the plan instead of grepping the briefing', () => {
   const live = BUILDER.replace(/\/\*[\s\S]*?\*\//g, '')
     .split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
-  assert.match(live, /const cond = p\.conditions \|\| \{\};/);
   assert.match(live, /cond\.clarityAt/, 'the resolved field is what decides the CAUTION now');
   // The regex survives ONLY as a fallback for plans saved before this shipped.
   assert.match(live, /const atRamp = fromPlan \|\| \(m2 \?/);
+});
+
+// ── AND IT HAS TO READ THE HALF OF THE OBJECT THE CONDITIONS ARE ON ────────────────────────────
+//
+// The reader went in as `p.conditions || {}` and there is no such field. collectPlan() returns the
+// FORM's view at the top level and the v2 plan under `.plan`, so the resolved conditions live at
+// `p.plan.conditions` — which meant the card skipped both new branches on every caller and fell
+// through to the briefing-text fallback the change existed to replace. Ryan, on a fresh plan,
+// reloaded, on a different computer: "still getting this... did i miss something?"
+//
+// Asserted from BOTH ends so a grep alone cannot be the whole guard: the shape that collectPlan and
+// benchReportPlan really produce, and the address the card really reads.
+test('the conditions are under `plan`, and that is where the card looks', async () => {
+  const { benchReportPlan } = await import('../js/utils/bench-export.js');
+  const run = { plan: { planVersion: 2, meta: {}, conditions: { clarity: 'Stained',
+                        clarityAt: 'Clearwater Cove — Lower main-lake channel / dam basin' },
+                        loadout: {}, legs: [], changes: [] } };
+  const p = benchReportPlan(run, { meta: { name: 'x' } }, null);
+  // The shape, measured rather than assumed.
+  assert.equal(p.conditions, undefined, 'there is no top-level conditions and never was');
+  assert.equal(p.plan.conditions.clarityAt, 'Clearwater Cove — Lower main-lake channel / dam basin');
+
+  const live = BUILDER.replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+  assert.match(live, /const cond = \(p\.plan && p\.plan\.conditions\) \|\| p\.conditions \|\| \{\};/,
+    'the card must read p.plan.conditions, which is where conditionsFrom wrote them');
+});
+
+// The branch logic itself, lifted out and run, so "which sentence does this plan produce" is tested
+// by EXECUTING it rather than by looking at it. Three plans, three answers.
+test('a plan carrying a resolved ramp verdict produces the ramp sentence, not the lake-wide one', () => {
+  // The same three-way decision the card makes, against the same field names.
+  const verdict = (p) => {
+    const cond = (p.plan && p.plan.conditions) || p.conditions || {};
+    const fromPlan = cond.clarityAt && /^Clear|^Stained|^Muddy/i.test(String(cond.clarity || ''))
+      ? { where: String(cond.clarityAt), cls: String(cond.clarity).toLowerCase() } : null;
+    if (fromPlan) return `at ${fromPlan.where}: ${fromPlan.cls}`;
+    if (cond.clarityScope && /lake-wide/i.test(String(cond.clarityScope))) return 'lake-wide, said so';
+    return 'fell through to the briefing text';
+  };
+  assert.equal(
+    verdict({ plan: { conditions: { clarity: 'Stained', clarityAt: 'Clearwater Cove — dam basin' } } }),
+    'at Clearwater Cove — dam basin: stained');
+  assert.equal(
+    verdict({ plan: { conditions: { clarity: 'Muddy',
+              clarityScope: 'LAKE-WIDE MEAN of 6 zones — no zone in the model names X' } } }),
+    'lake-wide, said so');
+  // And the shape that was actually shipping: conditions present, but read from the wrong half.
+  assert.equal(verdict({ meta: {}, plan: null }), 'fell through to the briefing text');
 });
 
 test('and the report date is the calendar day the page states, not a timezone shift of it', () => {

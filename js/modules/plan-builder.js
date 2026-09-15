@@ -1699,7 +1699,22 @@ ${src}`;
     // `clarityAt` and `clarityLakeWide` on `plan.conditions` from fetchClarityAtRamp(), worked out
     // at request time from the ramp on the request. So this reads a field instead of a sentence.
     // The regex stays as a fallback for a plan saved before this shipped, and for no other reason.
-    const cond = p.conditions || {};
+    //
+    // ── AND IT IS `p.plan.conditions`, WHICH I GOT WRONG IN THE COMMIT THAT ADDED THIS ──────────
+    //
+    // `p` here is collectPlan()'s object and it has TWO halves: the FORM's view at the top level
+    // (`p.meta.clarity`, `p.meta.clarityIntel`, read straight off the Plan tab's inputs) and the v2
+    // plan itself under `p.plan` (`p.plan.conditions`, written by conditionsFrom). There is no
+    // top-level `conditions` key on it at all, and benchReportPlan() builds the same shape -- so
+    // `p.conditions` was undefined on every caller, both branches above were skipped, and the card
+    // fell through to the briefing-text fallback that the whole change existed to replace.
+    //
+    // Ryan, on a fresh plan, reloaded, on a different computer: "still getting this... did i miss
+    // something?" He had not. The reader was at the wrong address, in the commit whose own message
+    // is about readers at the wrong address.
+    //
+    // `p.conditions` is still accepted after it, so a caller handing over a bare v2 plan works.
+    const cond = (p.plan && p.plan.conditions) || p.conditions || {};
     const fromPlan = cond.clarityAt && /^Clear|^Stained|^Muddy/i.test(String(cond.clarity || ''))
       ? { where: String(cond.clarityAt), cls: String(cond.clarity).toLowerCase() } : null;
     const clarityRaw = String(p.meta.clarityIntel || '');
