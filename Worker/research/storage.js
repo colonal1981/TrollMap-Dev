@@ -2,8 +2,9 @@
 import { CORS, JSON_HEADERS, callLLM, extractLLMText, r2Text, r2Body, listAllR2 } from '../worker-core.js';
 import { getLakeIntel, lakeKeyFromName } from '../worker-data.js';
 import { searchWeb } from './clients.js';
-import { extractJsonPossibly, researchStorageId, resolveResearchStorageId } from './keys.js';
-import { lakeIndex, identityNamesForLake } from '../registry.js';
+import { extractJsonPossibly, researchStorageId, resolveResearchStorageId, stripLakeQualifiers } from './keys.js';
+import { stateFullName } from './dataset.js';
+import { lakeIndex, identityNamesForLake, resolveRegistryRow } from '../registry.js';
 import { calculateSectionConfidence, gateOverallConfidence } from './agents.js';
 import { buildFactualSummary } from './facts-util.js';
 
@@ -634,13 +635,45 @@ async function handleResearchThermoclineSearch(request, env) {
   const { lakeName } = body;
   if (!lakeName) return new Response(JSON.stringify({ ok: false, error: 'missing lakeName' }), { status: 400, headers: JSON_HEADERS });
 
-  // Strip state suffix for queries
-  const queryLake = lakeName.replace(/,\s*(SC|NC|GA|TN)(\/(?:SC|NC|GA|TN))*\s*$/i, '').trim();
+  // THE SECOND COPY OF THE ANCHOR BUG, FOUND 2026-09-16 IN THE DEPLOYED BUNDLE.
+  //
+  // This was the identical end-anchored strip discover.js carried, and it fails the identical
+  // way: a registry display name ends in a county parenthetical, not ", SC", so nothing was
+  // stripped and all three queries went out quoting a phrase no page contains. Fixing it in
+  // discover.js alone would have been "a fix applied to one caller of a shared misconception is
+  // not applied to the misconception", which is a rule this project wrote down after the approve
+  // and delete paths disagreed fourteen lines apart in one file.
+  const waterRow = await (async () => {
+    try { return resolveRegistryRow(await lakeIndex(env), lakeName); } catch { return null; }
+  })();
+  const waterType = String(waterRow?.feature_type || '').toLowerCase();
+
+  // AND A RIVER IS NOT ASKED AT ALL. `water-type-hints.js` tells the fisheries agent "a river does
+  // not stratify -- do NOT report a thermocline", and js/utils/wqp-limnology.js stopped listing it
+  // as a gap for the same reason. Searching for one here would be the third half of the pipeline
+  // hunting for what the other two refuse. THE REFUSAL TRAVELS: a caller gets a reason rather than
+  // an empty result, because "we asked and it cannot answer" and "nobody asked" must look
+  // different -- that is what the null-with-no-reason rule is for. Saves three searches and an LLM
+  // extract on each of the 57 rivers.
+  if (waterType === 'river') {
+    return new Response(JSON.stringify({
+      ok: true,
+      lakeName,
+      thermocline: null,
+      articles: [],
+      queryResults: [],
+      note: 'Not searched: this water is a river. Moving water does not stratify, so there is no '
+          + 'summer thermocline to find. This is a refusal, not a gap.',
+    }), { headers: JSON_HEADERS });
+  }
+
+  const queryLake = stripLakeQualifiers(lakeName) || String(lakeName).trim();
+  const st = stateFullName(waterRow?.state || 'SC');
 
   const queries = [
-    `"${queryLake}" thermocline depth summer`,
-    `"${queryLake}" summer fishing depth water temperature`,
-    `"${queryLake}" fishing guide summer depths`,
+    `"${queryLake}" ${st} thermocline depth summer`,
+    `"${queryLake}" ${st} summer fishing depth water temperature`,
+    `"${queryLake}" ${st} fishing guide summer depths`,
   ];
 
   const articles = [];
