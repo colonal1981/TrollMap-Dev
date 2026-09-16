@@ -136,6 +136,18 @@ class FactsReachTheSavedProfile(unittest.TestCase):
         self.assertNotIn('_extractedFactsCount', profile,
                          'the script wrote a count the Worker already derives')
 
+    def test_a_carried_count_does_not_outlive_the_facts_it_counted(self):
+        """carry_forward() preserves _extractedFactsCount because the run did not compute it.
+        storage.js:292 reads `incoming._extractedFactsCount || facts.length`, so a carried 99
+        would win over a fresh list of two and the profile would claim a number its own array
+        contradicts. The stale count has to be dropped before the save."""
+        mod, saved, _ = self.build(stored={'_extractedFactsCount': 99,
+                                           '_extractedFacts': [{'fact': 'Stale.'}]})
+        profile, _ = self.saved_profile(mod, saved)
+        self.assertEqual(len(profile['_extractedFacts']), len(FACTS))
+        self.assertNotIn('_extractedFactsCount', profile,
+                         'a count carried from the stored profile outlived the facts it counted')
+
     def test_documents_are_not_copied_into_the_profile(self):
         """The corpus has its own store; south_holston_tn carries 137 facts and no documents."""
         mod, saved, _ = self.build()

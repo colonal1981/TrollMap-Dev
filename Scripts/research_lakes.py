@@ -674,6 +674,20 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
         if facts:
             profile["_extractedFacts"] = facts
 
+        # A DERIVED NUMBER MUST NOT BE CARRIED FORWARD, OR IT OUTLIVES WHAT IT COUNTS.
+        #
+        # carry_forward() brings `_extractedFactsCount` over from the stored profile -- it is a
+        # field the run did not compute, so the rule preserves it. storage.js:292 then reads
+        # `incomingProfile._extractedFactsCount || (incomingProfile._extractedFacts||[]).length`,
+        # so a carried 20 WINS over a fresh list of 35 and the profile ends up claiming a count
+        # its own array contradicts. It only escaped notice on the Congaree because the stored
+        # count was 0 and 0 is falsy.
+        #
+        # Dropping it is always right. Whichever facts reach the document -- the fresh ones
+        # above, or the stored ones carry_forward kept -- the count derives from those, in the
+        # one place that owns it.
+        profile.pop("_extractedFactsCount", None)
+
         # `_normalizedDocuments` stays on the copy on purpose. The corpus already has its own
         # store via /research/save-normalized, south_holston_tn carries 137 facts and no
         # documents, and putting ten documents of full text into every profile would multiply
