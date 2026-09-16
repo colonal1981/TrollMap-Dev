@@ -297,10 +297,46 @@ export const WQP_LIMNOLOGY_FIELDS = [
   'limnology.trophicStatus',
 ];
 
-export function limnologyGaps(limnology) {
+/**
+ * WHICH OF THOSE FIVE CAN EXIST ON A GIVEN KIND OF WATER.
+ *
+ * Four of the five describe a water column that separates into layers and holds them. A river
+ * does not stratify -- `Worker/research/water-type-hints.js` tells the fisheries agent so in as
+ * many words: *"a river does not stratify -- do NOT report a thermocline, an anoxic layer, a pool
+ * elevation or a percentage of full pond"*. So on all 57 rivers those four came back null every
+ * run, `limnologyGaps` read null as NOT YET FOUND, and the gap list sent the document extractor
+ * hunting for a thermocline in moving water -- the exact three things the prompt forbids. One
+ * half of the pipeline was looking for what the other half refuses to report.
+ *
+ * THE DISTINCTION IS THE SAME ONE THIS FILE ALREADY MAKES ELSEWHERE: "we asked and the data
+ * cannot answer" and "nobody has asked" are different claims, and a null with no reason beside it
+ * is the hole a model fills from its own recall.
+ *
+ * Clarity is the one that carries over -- Secchi is measured on rivers and means the same thing.
+ * Temperature and dissolved oxygen are not in this list at all; they come straight off the pull,
+ * which works on a river exactly as it does on a lake, since USGS stations sit on rivers.
+ *
+ * Coastal is deliberately absent: those zones do not take this path, and inventing a row for one
+ * that never asks would be a claim nothing tests.
+ */
+export const WQP_FIELDS_BY_WATER_TYPE = {
+  river: ['limnology.waterClarity.secchiFt'],
+};
+
+/** The fields worth asking about for this water, defaulting to all five. */
+export function limnologyFieldsFor(waterType) {
+  return WQP_FIELDS_BY_WATER_TYPE[String(waterType || '').toLowerCase()] || WQP_LIMNOLOGY_FIELDS;
+}
+
+/**
+ * @param {object} limnology
+ * @param {string} [waterType]  `feature_type` off the registry row. Omitted means ask for all
+ *                              five, which is what every caller did before rivers were a thing.
+ */
+export function limnologyGaps(limnology, waterType) {
   const at = (path) => path.split('.').slice(1)
     .reduce((o, k) => (o == null ? o : o[k]), limnology || {});
-  return WQP_LIMNOLOGY_FIELDS.filter((p) => {
+  return limnologyFieldsFor(waterType).filter((p) => {
     const v = at(p);
     return v === null || v === undefined || v === '';
   });

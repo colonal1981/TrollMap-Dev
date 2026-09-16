@@ -80,10 +80,21 @@ async function handleResearchLimnologyData(request, env, opts = {}) {
   //
   // The catch is not optional: this runs on the batch's path and a water with no cast in any
   // document, or a bucket without the object yet, must still produce a profile.
+  // THE ROW ONCE, FOR BOTH THE THINGS THAT WANT IT. It was already being resolved here for the
+  // document lookup, inside a try, inside an `if (merged)` -- so the gap list below, which is the
+  // other consumer of the same fact, could not see it and asked every water for all five fields.
+  // Hoisting is the merge; a second resolution would have been the bolt-on.
+  let row = null;
+  try {
+    row = resolveRegistryRow(await lakeIndex(env), lakeName);
+  } catch {
+    row = null;   // no index is a reason to ask for all five, not to fail the pull
+  }
+  const waterType = String(row?.feature_type || '').toLowerCase();
+
   let documents = null;
   if (merged) {
     try {
-      const row = resolveRegistryRow(await lakeIndex(env), lakeName);
       const doc = row?.slug ? (await documentLimnology(env))[row.slug] : null;
       const after = applyDocumentsToLimnology(merged, doc);
       const applied = documentFieldsApplied(merged, after);
@@ -101,7 +112,7 @@ async function handleResearchLimnologyData(request, env, opts = {}) {
   }
   return new Response(JSON.stringify({
     ...pull,
-    ...(merged ? { merged, evidence, gaps: limnologyGaps(merged), documents } : {}),
+    ...(merged ? { merged, evidence, gaps: limnologyGaps(merged, waterType), waterType, documents } : {}),
   }), { headers: JSON_HEADERS });
 }
 
