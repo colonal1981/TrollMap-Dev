@@ -15,8 +15,25 @@ rather than as a river gauge panel on a 66-acre oxbow.
 import json, os, re, sys, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
 SRC = open(os.path.join(HERE, 'consolidate_lake_index.py'), encoding='utf-8').read()
+
+
+def find_registry():
+    """registry/lake_index.json, from either place this script is delivered.
+
+    Scripts are delivered to BOTH F:/TrollMapPipeline/scripts/ and
+    F:/TrollMapPipeline/TrollMap-Dev/Scripts/, and `os.path.dirname(HERE)` is the pipeline root from
+    the first and the REPO root from the second -- where there is no registry/. The first cut of
+    this assumed one of the two and errored in the other, which I found by running it in the second
+    place only after committing it. Walk up instead of assuming a depth.
+    """
+    d = HERE
+    for _ in range(4):
+        d = os.path.dirname(d)
+        p = os.path.join(d, 'registry', 'lake_index.json')
+        if os.path.exists(p):
+            return p
+    return None
 CODE = '\n'.join(l for l in SRC.split('\n') if not l.strip().startswith('#'))
 
 
@@ -53,7 +70,10 @@ class TheShippedIndex(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        with open(os.path.join(ROOT, 'registry', 'lake_index.json'), encoding='utf-8') as fh:
+        p = find_registry()
+        if not p:
+            raise unittest.SkipTest('no registry/lake_index.json above %s' % HERE)
+        with open(p, encoding='utf-8') as fh:
             d = json.load(fh)
         cls.rows = d.get('lakes') or d
         # THE TABLE IS IN THE SCRIPT AND THE INDEX IS BUILT BY RUNNING IT. Until it is re-run these
