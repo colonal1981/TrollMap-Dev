@@ -127,12 +127,18 @@ LAYERS = {
     "trolling_runs":    "trolling_runs.geojson",
     # Points, coves and named creek mouths. build_water_features.py.
     "water_features":   "water_features.geojson",
+    # The river's own centreline in downstream order, with a bearing, a curvature radius and a
+    # channel width at every station, plus the tributary confluences. build_river_centrelines.py,
+    # rivers only. Opt-in for the same reason as the three above: a separate pass builds it, and
+    # the 1,700-odd lake packs do not have one.
+    "centreline":       "centreline.geojson",
     "areas":            "areas.geojson",
     "boundary":         "boundary.geojson",
 }
 # Not uploaded unless named explicitly with --layers. `boundary` would replace the NHD/3DHP
 # polygon the app renders as the lake outline.
-LAYERS_OPT_IN = {"boundary", "areas", "water_graph", "structure", "trolling_runs", "water_features"}
+LAYERS_OPT_IN = {"boundary", "areas", "water_graph", "structure", "trolling_runs", "water_features",
+                 "centreline"}
 
 # ── What R2 does not need ─────────────────────────────────────────────────────────────
 #

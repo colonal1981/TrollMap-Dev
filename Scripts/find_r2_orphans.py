@@ -50,6 +50,7 @@ LAYERS = {
     'contours.geojson', 'depth_areas.geojson', 'depth_regions.geojson', 'waterbodies.geojson',
     'docks.geojson', 'garmin_shoreline.geojson', 'pois.geojson', 'water_graph.bin',
     'structure.geojson', 'trolling_runs.geojson', 'water_features.geojson',
+    'centreline.geojson',
     'areas.geojson', 'boundary.geojson',
 }
 
