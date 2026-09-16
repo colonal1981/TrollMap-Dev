@@ -1044,6 +1044,44 @@ def main():
     #
     # A NAME IS THE LAST RESORT, NOT THE FIRST. 00_START_HERE has said "plain substring matching
     # cannot be made safe" through five instances; this was the sixth.
+    # ── A CORRECTION FROM THE PERSON WHO FISHES IT OUTRANKS EVERY SOURCE BELOW ──────────────
+    #
+    # Nine of 355 rows carry `feature_type_guessed` -- no 3DHP type, no classification in the
+    # boundary file, no NHD FType, so the name decided. All nine were guessed 'river'. Ryan read
+    # the list on 2026-09-16 and found EIGHT of them right and one wrong:
+    #
+    #   "Bates is a lake not a river ... i do not see any of the known to me oxbows listed as a
+    #    river other than bates"
+    #
+    # Bates Old River is a cut-off meander of the Congaree at Fort Motte -- 66.5 acres, 23 ft at
+    # its deepest. The name carries "River" because the channel used to be one.
+    #
+    # WHY THIS IS A TABLE AND NOT A DERIVED RULE, both attempts having been measured and failed:
+    #
+    #   SHAPE. Perimeter against area over all 58 river rows puts Bates at 6.4, between Diversion
+    #   Canal at 4.5 and Chessie Creek at 8.3. The two Santee Cooper canals are the most compact
+    #   things in the set and they are genuinely flowing water, so no threshold separates an oxbow
+    #   from a canal. There is no gap to cut at.
+    #
+    #   3DHP. Queried directly -- the waterbody layer is EPSG:6350 Conus Albers, and the R-tree
+    #   answers a projected bbox in milliseconds. Wateree Lake comes back as featuretype 3 'Lake'
+    #   at 47.576 km2, which is its registry area to three decimals, so the method works. For Bates
+    #   the only features whose bbox contains it are two 'River' multiparts of 11.7 and 12.0 km2
+    #   with bounding boxes 45x23 km and 22x64 km -- the Congaree and Santee networks, not Bates.
+    #   3DHP has no feature that IS this water reachable from here: the row's gnis is the synthetic
+    #   `slug:bates_old_river` and it has no 3dhp staging file, which is exactly why it fell through
+    #   to the name in the first place.
+    #
+    # So the best evidence available is a person who has fished it, and that is what this records --
+    # with who said it and when, so it can be argued with later. It is checked FIRST, above 3DHP,
+    # because on a 66-acre oxbow he outranks a national dataset; `feature_type_corrected` marks the
+    # row so a future 3DHP pass that disagrees is visible rather than silently overridden.
+    #
+    # Expandable by adding a row. Nothing else here needs to change for the tenth one.
+    FEATURE_TYPE_CORRECTIONS = {
+        'bates_old_river': ('lake', 'Ryan, 2026-09-16: oxbow off the Congaree, not a reach'),
+    }
+
     RIVERISH = re.compile(r'\b(river|creek|run|branch|fork|stream|canal|slough|bayou)\b', re.I)
     tdhp_ft, tdhp_note = load_3dhp_feature_types(R)
     print(tdhp_note)
@@ -1052,7 +1090,15 @@ def main():
     ft_counts = {}
     ft_src = {'record': 0, '3dhp_type': 0, 'boundary': 0, 'slug_prefix': 0, 'nhd': 0, 'name': 0}
     ft_named = []
+    ft_src['corrected'] = 0
     for slug, rec in idx.items():
+        fix = FEATURE_TYPE_CORRECTIONS.get(slug)
+        if fix:
+            rec['feature_type'], rec['feature_type_corrected'] = fix
+            rec.pop('feature_type_guessed', None)
+            ft_src['corrected'] += 1
+            ft_counts[rec['feature_type']] = ft_counts.get(rec['feature_type'], 0) + 1
+            continue
         if rec.get('feature_type'):
             ft_src['record'] += 1
         else:
