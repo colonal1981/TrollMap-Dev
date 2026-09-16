@@ -160,12 +160,18 @@ export function typeOf(lakeName, rec) {
  * is skipped for anything already emitted -- which is the double-listing Ryan reported on
  * 2026-08-23: "A whole bunch of coastal areas are in the picker twice."
  *
+ * `opts.index` IS INJECTED FOR THE SAME REASON ndbcReadings() takes its own fetcher: so this can
+ * be run in a test without standing up the app. That is not a nicety here -- this function shipped
+ * once with the map's entire render loop still inside it, `node --check` passed because render code
+ * is valid JavaScript anywhere, and nothing called it until both pickers threw on a live page.
+ *
  * @param {(rec:object|null, name:string) => boolean} keep  the surface's own predicate
- * @param {{coastalFilters?: object}} opts  the map's toolbar state, when there is one
+ * @param {{coastalFilters?: object, index?: object}} opts  the map's toolbar state, when there is
+ *        one, and an access index to read instead of the loaded one
  * @returns {Map<string, string[]>} `${state}|${type}` -> names
  */
 export function bucketWaters(keep, opts = {}) {
-  const idx = getLoadedAccessIndex();
+  const idx = opts.index || getLoadedAccessIndex();
   const f = opts.coastalFilters || null;
   const buckets = new Map();          // `${state}|${type}` -> string[]
   const put = (state, type, name) => {
@@ -222,40 +228,20 @@ export function bucketWaters(keep, opts = {}) {
     }
   }
 
-  let total = 0;
-  for (const stateCode of STATE_ORDER) {
-    for (const [type, typeLabel] of TYPE_ORDER) {
-      const names = buckets.get(`${stateCode}|${type}`);
-      if (!names?.length) continue;
-      const grp = document.createElement('optgroup');
-      grp.label = `${stateCode} — ${typeLabel} (${names.length})`;
-      for (const name of sortForDisplay(names)) {
-        const opt = document.createElement('option');
-        opt.value = name;
-        // The group heading already says the state and the county, so both are noise on the row.
-        opt.textContent = pickerLabel(name) + lakeBadge(name);
-        grp.appendChild(opt);
-      }
-      lakeSelect.appendChild(grp);
-      total += names.length;
-    }
-  }
-
-  // Anything the state suffix could not place. Better visible under a plain heading than
-  // silently dropped -- a name that vanishes from the picker reads as lost data.
-  const orphans = [];
-  for (const [k, names] of buckets) if (!STATE_ORDER.includes(k.split('|')[0])) orphans.push(...names);
-  if (orphans.length) {
-    const grp = document.createElement('optgroup');
-    grp.label = `Other (${orphans.length})`;
-    for (const name of sortForDisplay(orphans)) {
-      const opt = document.createElement('option');
-      opt.value = name;
-      opt.textContent = name + lakeBadge(name);
-      grp.appendChild(opt);
-    }
-    lakeSelect.appendChild(grp);
-  }
+  // THE RENDER BELONGS TO THE CALLER AND USED TO BE IN HERE, 2026-09-15 -> 2026-09-16.
+  //
+  // Extracting the map's builder, I cut the block at the wrong place and left its whole render
+  // loop inside this function -- optgroups, options, `lakeSelect`, and a call to lakeBadge() that
+  // stayed behind in lake-ramp-select.js. `node --check` passed, because the render code is valid
+  // JavaScript wherever it sits, and the tests I wrote read the source and imported typeOf and
+  // stateOf rather than CALLING this. So both pickers threw `lakeBadge is not defined` on the
+  // first load after the deploy and neither one populated at all.
+  //
+  // Ryan: "you broke it". He was right, and the lesson is the cheap one: a function that has just
+  // been extracted has to be RUN, not type-checked. There is a test that runs it now.
+  //
+  // This returns buckets and touches no DOM. The two callers render them, and they differ --
+  // the map adds lakeBadge() to every row and the planner does not.
   return buckets;
 }
 
