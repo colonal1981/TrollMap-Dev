@@ -773,11 +773,11 @@ setLiveAccessSource((name) => liveAccessFor(name));
  * state suffix — NOT the water-type word, and NOT token order. "Lake Wallace" and "Wallace
  * Lake" are two different waters in SC, and there are two Lake Wallaces besides.
  */
-export function registryRecordFor(lakeName) {
+export function registryRecordFor(lakeName, index = accessIndex) {
   if (!lakeName) return null;
-  const direct = accessIndex.registryByName?.get(lakeName);
+  const direct = index.registryByName?.get(lakeName);
   if (direct) return direct;
-  const norm = registryNameIndex();
+  const norm = registryNameIndex(index);
   if (!norm) return null;
   const cands = norm.get(normalizeRegistryKey(lakeName));
   if (!cands || !cands.length) return null;
@@ -799,9 +799,42 @@ export function registryRecordFor(lakeName) {
   //
   // A registry lake with no ramp is not affected: pass 2 files it in registryByName under its
   // own display name, so it hits `direct` and never reaches here.
-  const pts = accessIndex.byLake?.get(lakeName) || [];
+  // THE STATE THE CALLER STAMPED IS HALF THE NAME, AND THIS THREW IT AWAY.
+  //
+  // normalizeRegistryKey() strips the trailing ", SC" along with the county parenthetical,
+  // deliberately -- the caller rarely has the county. But the STATE it usually does have, and on
+  // two same-named waters it is the only thing separating them.
+  //
+  // Ryan, 2026-09-16, reading the map picker's own groups: `Broad River, SC` was listed under
+  // **NC — Rivers (17)**. A name carrying an explicit SC suffix had resolved to broad_river
+  // (Cherokee Co, NC, 4,084 ac) instead of broad_river_2 (Union Co, SC, 5,166 ac), and then
+  // stateOf() correctly filed it by the record's own state. The picker was not wrong; the record
+  // it was handed was.
+  //
+  // It got there through the corroboration below: two candidates share the key `broad river`, so
+  // the nearer-ramp test decided, and it decided on geography with no idea that the question had
+  // already been answered. The Broad River runs across the state line; its ramps are on both
+  // sides of it.
+  //
+  // lake-registry.js has keyed its own index `${state}|${name}` since it was written, for exactly
+  // this, and its note says so: "Broad River, SC is the 5,166-acre Union County reach, and with
+  // the ordinal in the key it could only reach the 4,084-acre Cherokee County NC one through the
+  // state-blind fallback." Two resolvers, one question, and only one of them knew about states.
+  // Fourth instance of that shape in one night.
+  //
+  // NARROWS, NEVER EMPTIES. If the stamp matches no candidate the full set is used, because a DNR
+  // feed stamping a water with the state of the office that listed it is a real thing -- a name
+  // that resolved yesterday must not stop resolving today.
+  const stamped = /(?:,\s*|\(\s*)([A-Za-z]{2})(?:\s*\/\s*[A-Za-z]{2})*\s*\)?\s*$/
+    .exec(String(lakeName));
+  const inState = stamped
+    ? cands.filter((r) => String(r.state || '').toUpperCase() === stamped[1].toUpperCase())
+    : [];
+  const pool = inState.length ? inState : cands;
+
+  const pts = index.byLake?.get(lakeName) || [];
   let best = null, bestDist = Infinity;
-  for (const rec of cands) {
+  for (const rec of pool) {
     if (!Number.isFinite(rec.lat) || !Number.isFinite(rec.lon)) continue;
     for (const p of pts) {
       if (!Number.isFinite(p.lat) || !Number.isFinite(p.lon)) continue;
@@ -825,11 +858,11 @@ function normalizeRegistryKey(name) {
 // Built once per index load and thrown away with it.
 let _normIndex = null;
 let _normFor = null;
-function registryNameIndex() {
-  if (!accessIndex.registryByName) return null;
-  if (_normFor === accessIndex.registryByName) return _normIndex;
+function registryNameIndex(index = accessIndex) {
+  if (!index.registryByName) return null;
+  if (_normFor === index.registryByName) return _normIndex;
   const m = new Map();
-  for (const [name, rec] of accessIndex.registryByName) {
+  for (const [name, rec] of index.registryByName) {
     const k = normalizeRegistryKey(name);
     if (!k) continue;
     // EVERY candidate, not the first. registryByName is populated shipped-first, largest-first,
@@ -841,7 +874,7 @@ function registryNameIndex() {
     if (!list.includes(rec)) list.push(rec);
   }
   _normIndex = m;
-  _normFor = accessIndex.registryByName;
+  _normFor = index.registryByName;
   return m;
 }
 
