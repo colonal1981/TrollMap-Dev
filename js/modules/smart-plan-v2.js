@@ -115,12 +115,45 @@ export async function buildSmartPlanV2(o) {
     const s = candidates.selection || {};
     const r = s.rejected || {};
     const [lo, hi] = o.fishDepthFt || [];
+    // EVERY REASON, LARGEST FIRST -- and this used to name three of nine.
+    //
+    // Ryan, 2026-09-16, on a Congaree bench plan that came back empty: "of 1473 runs, 101 failed
+    // the depth rule, 42 had no window worth trolling, 0 passed nothing worth trolling". That
+    // accounts for 143 of 1,473. The dominant reason was UNROUTABLE -- 915 of them, 62% of the
+    // water -- and the sentence whose whole job is to say which test emptied the list did not
+    // mention it, because it printed `depth`, `noWindow` and `scoreless` and selectCandidates
+    // counts nine.
+    //
+    // Built from the counter object rather than written out per reason, so a tenth filter appears
+    // here the day it starts rejecting something. The old form is how the biggest cause stayed
+    // invisible: three hand-picked fields cannot grow with the thing they describe.
+    const WHY = {
+      unroutable: 'could not be reached from the ramp over this water\'s graph',
+      unfitted: 'are not fitted lanes, and this pack has fitted lanes',
+      depth: 'failed the depth rule',
+      noWindow: 'had no window worth trolling',
+      scoreless: 'scored nothing worth trolling',
+      battery: 'were over the battery budget',
+      window: 'fell outside the trip window',
+      dedupe: 'duplicated a lane already offered',
+      limit: 'were past the candidate limit',
+    };
+    const why = Object.entries(r)
+      .filter(([, n]) => Number(n) > 0)
+      .sort((a, b) => b[1] - a[1])
+      .map(([k, n]) => `${n} ${WHY[k] || `were rejected by ${k}`}`);
+    // A RUN THAT IS IN NO BUCKET IS A FILTER WITHOUT A COUNTER, which is the defect this whole
+    // block exists to prevent. selectCandidates computes accountedFor for exactly this check.
+    const gap = (s.considered != null && s.accountedFor != null)
+      ? s.considered - s.accountedFor : 0;
     return { plan: null, candidates: [],
              problems: [`nothing on ${o.r2Key} is both fishable for ${lo}–${hi} ft fish `
                       + `(${s.depthRule || 'depth rule unknown'}) and reachable from this ramp `
-                      + `inside the day — of ${s.considered ?? runs.length} runs, ${r.depth ?? 0} `
-                      + `failed the depth rule, ${r.noWindow ?? 0} had no window worth trolling, `
-                      + `${r.scoreless ?? 0} passed nothing worth trolling`
+                      + `inside the day — of ${s.considered ?? runs.length} runs, `
+                      + (why.length ? why.join('; ') : 'none were rejected by any rule, which '
+                                                     + 'means none were offered either')
+                      + (gap ? ` · ${gap} run(s) fell out of no counted rule at all — a filter `
+                             + 'has been added without a counter' : '')
                       + (s.holdingUnknown ? ' · holding unknown for this species and season, so '
                                           + 'the old fish-band-vs-water-depth test was used' : '')] };
   }
