@@ -9,12 +9,19 @@ async function handleResearchAnalyzeFacts(request, env) {
   // The county stamp goes first, and it has to go here too: this is the fallback for a caller
   // that sends no baseName, and the prompt below tells the model to extract only facts that
   // mention this string. "(Hall Co, GA)" is consolidate_lake_index.py's handwriting, not a name
-  // any document uses. Same regex as cleanLakeBaseName() in lake-research-engine.js,
-  // legacyStorageName() in research/keys.js and lakeTerms() in js/utils/doc-relevance.js -- `Co`
-  // as a word, so "Saluda River (2)" keeps the ordinal that is the only thing telling four
-  // Saluda Rivers apart.
+  // any document uses. CORRECTED 2026-09-16: it strips EVERY parenthetical, not just the county.
+  //
+  // The old rule kept "Saluda River (2)" on the argument that the ordinal is the only thing
+  // telling four Saluda Rivers apart. That is true of a STORAGE KEY and false here, because this
+  // string is matched against DOCUMENT TEXT and no document contains it. Two jobs, two rules:
+  // `legacyStorageName()` in research/keys.js keeps the ordinal because a key must be UNIQUE, and
+  // `lakeTerms()` in js/utils/doc-relevance.js strips every parenthetical because a match must be
+  // FINDABLE. This line was using the storage rule to do the matching job.
+  //
+  // 11 of 355 waters were affected, 8 of them rivers. The Congaree was handed ten good documents
+  // and told to keep only facts mentioning "Congaree River (to SC-601)". It returned zero.
   const baseName = String(body.baseName || body.lakeName || "")
-    .replace(/\s*\([^)]*\bCo\b[^)]*\)\s*/i, ' ').replace(/\s+/g, ' ')
+    .replace(/\s*\([^)]*\)\s*/g, ' ').replace(/\s+/g, ' ')
     .replace(/^Lake\s+/i,'').replace(/,\s*(SC|NC|GA|TN)(\/(?:SC|NC|GA|TN))*\s*$/i,'').trim() || lakeName;
   const state = String(body.state||'SC').trim();
   const documents = body.documents || [];
@@ -307,9 +314,27 @@ PRIORITY FIELDS — extract any of the following present in this document:
     // that is true, generates the Lake/Reservoir spellings the table listed one water at a time,
     // and reaches all 358 rows instead of eleven. County stamps are dropped on the way in for the
     // same reason baseName drops them: they are consolidate_lake_index.py's handwriting.
+    // 2026-09-16: THE PARENTHETICAL CAME OFF, AND WHAT WAS INSIDE IT CAME BACK AS ITS OWN ALIAS.
+    //
+    // This dropped only the county stamp, so "Saluda River (2)" survived into the alias clause as
+    // a name no document contains -- the same defect as baseName above, in the one list that is
+    // supposed to be the safety net for it. But stripping the parenthetical alone would have
+    // thrown away something real: "Saluda River (Lower Saluda)" becomes "Saluda River" and the
+    // term that actually distinguishes it -- the one Ryan said documents would use, *"you might
+    // see upper and lower but that is about it"* -- is INSIDE the brackets.
+    //
+    // So both: the bare name, and the contents of any parenthetical that reads like a name rather
+    // than a county stamp or a bare ordinal. That is what keeps the two Saluda Rivers apart now
+    // that they share a base name, and it is derived from the registry rather than typed.
+    const _stripParens = (a) => String(a || '').replace(/\s*\([^)]*\)\s*/g, ' ')
+                                               .replace(/\s+/g, ' ').trim();
+    const _insideParens = (a) => (String(a || '').match(/\(([^)]*)\)/g) || [])
+      .map((p) => p.slice(1, -1).trim())
+      .filter((p) => !/\bCo\b|\bCounty\b/i.test(p))   // our handwriting, not the water's
+      .filter((p) => /[A-Za-z]{3}/.test(p));          // "(2)" is not a name
     const _fromCaller = (Array.isArray(body.aliases) ? body.aliases : [])
-      .map((a) => String(a || '').replace(/\s*\([^)]*\bCo\b[^)]*\)\s*/i, ' ')
-                                 .replace(/\s+/g, ' ').trim())
+      .flatMap((a) => [_stripParens(a), ..._insideParens(a)])
+      .map((a) => String(a || '').trim())
       .filter((a) => a.length >= 4);
     const _docAliases = [..._fromCaller]
       .filter((a) => a.toLowerCase() !== _baseNameStripped.toLowerCase())

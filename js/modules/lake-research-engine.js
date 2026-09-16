@@ -325,11 +325,26 @@ function cleanLakeBaseName(lakeName) {
   // Measured 2026-09-01: Lanier returned ONE fact from three documents; Lake Townsend
   // (Guilford Co, NC), whose base name survives as plain "Townsend", returned eight from six.
   //
-  // Third place the county stamp has done this. `legacyStorageName()` in Worker/research/keys.js
-  // strips it for storage ids and `lakeTerms()` in js/utils/doc-relevance.js strips it for the
-  // off-lake gate; both use this same regex, which wants `Co` as a word so that "Saluda River
-  // (2)" keeps its ordinal.
-  base = base.replace(/\s*\([^)]*\bCo\b[^)]*\)\s*/i, ' ').replace(/\s+/g, ' ').trim();
+  // AND ON 2026-09-16 IT TURNED OUT THE COUNTY WAS ONLY THE COMMONEST PARENTHETICAL, NOT THE
+  // ONLY ONE. Stripping `Co` as a word deliberately kept "Saluda River (2)", on the argument that
+  // the ordinal is the only thing telling four Saluda Rivers apart. That argument is right about
+  // a STORAGE KEY and wrong about this: `baseName` is matched against DOCUMENT TEXT, and no
+  // document says "Saluda River (2)" -- it is our bookkeeping. Ryan, that day: *"the 2 is our own
+  // made up thing... the saluda is the saluda... you might see upper and lower but that is about
+  // it"*. The registry agrees with him: one of them is already qualified "(Lower Saluda)", a name
+  // a document would actually use, and the other got an ordinal.
+  //
+  // TWO JOBS, TWO RULES, AND ONE REGEX CANNOT DO BOTH:
+  //   a name that IDENTIFIES A STORED OBJECT must be UNIQUE    -> legacyStorageName keeps "(2)"
+  //   a name that MATCHES DOCUMENT TEXT must be FINDABLE       -> this one, and lakeTerms()
+  // `lakeTerms()` in js/utils/doc-relevance.js already strips every parenthetical and was right
+  // all along. `legacyStorageName()` keeps the ordinal and is also right. This sat between them
+  // using the storage rule to do the matching job.
+  //
+  // Measured 2026-09-16 across lake_index.json: 11 of 355 waters kept a parenthetical here -- 8
+  // of 57 rivers -- and every one was told to find a name that does not exist. The Congaree ran
+  // ten good documents through the extractor and returned ZERO facts.
+  base = base.replace(/\s*\([^)]*\)\s*/g, ' ').replace(/\s+/g, ' ').trim();
   base = base.replace(/^Lake\s+/i, '');
   base = base.replace(/,\s*(SC|NC|GA|TN)(?:\/(?:SC|NC|GA|TN))*\s*$/i, '').trim();
   base = base.replace(/\s+Reservoir$/i, '').trim();

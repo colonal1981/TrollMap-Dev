@@ -371,8 +371,19 @@ def fetch_sources(lake, sources, existing, verbose=False):
 
 
 def base_name(lake_name):
-    """cleanLakeBaseName() in lake-research-engine.js. The county stamp is ours, not the water's."""
-    b = re.sub(r"\s*\([^)]*\bCo\b[^)]*\)\s*", " ", str(lake_name or ""), flags=re.I)
+    """cleanLakeBaseName() in lake-research-engine.js. The county stamp is ours, not the water's.
+
+    CORRECTED 2026-09-16: every parenthetical goes, not just the county one. This string is what
+    /research/analyze-facts is told to match against DOCUMENT TEXT, and "Congaree River (to
+    SC-601)" appears in no document ever written -- the Congaree ran ten good documents through
+    the extractor and got zero facts back. 11 of 355 waters were in that state, 8 of them rivers.
+
+    A name that IDENTIFIES A STORED OBJECT must be UNIQUE, which is why legacyStorageName() in
+    Worker/research/keys.js still keeps "Saluda River (2)". A name that MATCHES DOCUMENT TEXT must
+    be FINDABLE, which is what this one and lakeTerms() in js/utils/doc-relevance.js are for. One
+    regex cannot do both jobs and this was the storage rule doing the matching one.
+    """
+    b = re.sub(r"\s*\([^)]*\)\s*", " ", str(lake_name or ""), flags=re.I)
     b = re.sub(r"\s+", " ", b).strip()
     b = re.sub(r"^Lake\s+", "", b, flags=re.I)
     b = re.sub(r",\s*(SC|NC|GA|TN)(/(?:SC|NC|GA|TN))*\s*$", "", b, flags=re.I).strip()
