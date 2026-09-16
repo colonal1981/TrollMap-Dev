@@ -155,5 +155,115 @@ class FactsReachTheSavedProfile(unittest.TestCase):
         self.assertNotIn('_normalizedDocuments', profile)
 
 
+class FreshDocumentsGoFirst(unittest.TestCase):
+    """`chosen = usable[:LLM_DOC_LIMIT]` takes twelve, so whatever sorts first is what gets read.
+
+    Cached documents sorted ahead of fetched ones, which meant an old run's corpus held every slot
+    and a newly fetched document was the first thing the limit cut. Two Congaree runs either side of
+    replacing the paddling query returned the same eight sources and Paddle SC went from 5 facts to
+    11 -- the query had changed and nothing downstream could see it.
+    """
+
+    def build(self):
+        mod = load_module()
+        extracted_from = []
+
+        def fake_req(path, payload=None, timeout=300):
+            if path.startswith('/research/deterministic-facts'):
+                return 200, {'profile': {'lakeName': LAKE, 'state': 'SC',
+                                         'biology': {'predatorSpecies': ['Striped Bass']},
+                                         'limnology': {}, 'evidence': {}, 'sources': [],
+                                         'trollingIntelligence': {}}}, None
+            if path.startswith('/research/limnology-data'):
+                return 200, {}, None
+            if path.startswith('/research/discover'):
+                return 200, {'success': True, 'sources': [{'url': 'https://example.org/fresh'}],
+                             'queryLog': []}, None
+            if path.startswith('/research/get-normalized'):
+                return 200, {'documents': [
+                    {'title': 'Cached paddle trail', 'url': 'https://example.org/paddle',
+                     'fullText': 'Paddle the blue trail. ' * 40}]}, None
+            if path.startswith('/research/save-normalized'):
+                return 200, {'ok': True}, None
+            if path.startswith('/research/analyze-facts'):
+                extracted_from.append((payload['documents'][0] or {}).get('title'))
+                return 200, {'extracted_facts': []}, None
+            if path.startswith('/research/agent-llm'):
+                return 200, {'section': {'Striped Bass': {'depthFt': 12}},
+                             'meta': {'groups': [], 'speciesTraitRows': 4}}, None
+            if path.startswith('/research/save'):
+                return 200, {'key': 'k', 'version': 2}, None
+            return 200, {}, None
+
+        mod._req = fake_req
+        mod.stored_profile = lambda lake: ({}, 'no profile yet')
+        mod.mirror_locally = lambda lake: True
+        mod.registry_ramps = lambda row: []
+        mod.fetch_sources = lambda *a, **k: ([{
+            'title': 'Fresh seasonal report', 'url': 'https://example.org/fresh',
+            'fullText': 'Stripers run in early summer. ' * 40}], {})
+        # The gate passes everything through, in the order it was given.
+        mod.gate_documents = lambda repo, docs, lake, alt: {'documents': list(docs),
+                                                            'rejected': 0, 'refused': []}
+        return mod, extracted_from
+
+    def test_the_freshly_fetched_document_is_extracted_first(self):
+        mod, extracted_from = self.build()
+        out = mod.research_one(LAKE, 'SC', row={})
+        self.assertIsNone(out.get('error'), out.get('error'))
+        self.assertTrue(extracted_from, 'nothing reached /research/analyze-facts')
+        self.assertEqual(extracted_from[0], 'Fresh seasonal report',
+                         'a cached document was read before the one this run just fetched')
+        self.assertIn('Cached paddle trail', extracted_from,
+                      'the cached document was dropped rather than demoted')
+
+
+class TheDiscoverLogReachesTheScreen(unittest.TestCase):
+    """The Worker records why a run found 15 sources and the next found 23. Nothing read it."""
+
+    LOG = [
+        '[fisheries] river query set (3) in place of the SC table, naming Largemouth Bass',
+        '[fisheries] tinyfish: "Congaree River" fishing report water level flow  4 results',
+        '[fisheries] recency fallback 180d: 2 additional results',
+        '[fisheries] TinyFish failed: 429 rate limited',
+        'Grokipedia citation fetch failed: timeout',
+        '  ? off-lake (no_name): Sunfish Lake Park',
+        '  ? below threshold (score 1): Uncovering the Seams in Mainframes',
+        '  found (score 7): Dial up South Carolina river monsters',
+        '  merged tags for https://example.org/x  [fisheries]',
+    ]
+
+    def setUp(self):
+        self.mod = load_module()
+
+    def test_a_failure_prints_without_verbose(self):
+        lines = self.mod.discover_log_lines(self.LOG, verbose=False)
+        self.assertEqual(len(lines), 2, lines)
+        self.assertTrue(all(l.startswith('!! discover:') for l in lines), lines)
+        self.assertTrue(any('429 rate limited' in l for l in lines))
+        self.assertTrue(any('Grokipedia' in l for l in lines))
+
+    def test_per_query_counts_print_under_verbose(self):
+        lines = self.mod.discover_log_lines(self.LOG, verbose=True)
+        self.assertTrue(any('4 results' in l for l in lines))
+        self.assertTrue(any('recency fallback 180d' in l for l in lines))
+        self.assertTrue(any('query set (3)' in l for l in lines))
+
+    def test_per_result_lines_are_counted_not_printed(self):
+        lines = self.mod.discover_log_lines(self.LOG, verbose=True)
+        for noisy in ('Sunfish Lake Park', 'Mainframes', 'river monsters', 'merged tags'):
+            self.assertFalse(any(noisy in l for l in lines), f'{noisy} was printed')
+        self.assertTrue(any('4 per-result line(s) not shown' in l for l in lines), lines)
+
+    def test_an_empty_or_missing_log_prints_nothing(self):
+        self.assertEqual(self.mod.discover_log_lines([], verbose=True), [])
+        self.assertEqual(self.mod.discover_log_lines(None, verbose=True), [])
+
+    def test_the_log_is_carried_into_the_run_result(self):
+        mod, saved, _ = FactsReachTheSavedProfile().build()
+        out = mod.research_one(LAKE, 'SC', row={})
+        self.assertIn('query_log', out)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

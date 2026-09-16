@@ -370,6 +370,41 @@ def fetch_sources(lake, sources, existing, verbose=False):
     return docs, stats
 
 
+# The Worker writes three kinds of line into `queryLog` and they deserve three fates.
+#
+# A FAILURE prints whether or not --verbose is on. A query that threw contributed zero sources and
+# that is the difference between "quiet week on the river" and "the provider refused", which is the
+# question the source count cannot answer.
+#
+# A PER-QUERY line -- the provider, the query, the result count -- prints under --verbose. That is
+# the actual answer to why a run says 15 and the next says 23.
+#
+# A PER-RESULT line is counted and not printed. `found (score 7): <title>` fifteen times per query
+# is what made this log worth ignoring, and it is already recoverable from the report JSON.
+_LOG_PER_RESULT = ('off-lake (', 'below threshold (', 'found (score', 'merged tags for',
+                   'citation rejected', 'citation skipped')
+_LOG_FAILURE = ('failed', 'no valid page', 'no page found')
+
+
+def discover_log_lines(query_log, verbose):
+    """The lines of the Worker's discover log worth putting on screen, in order."""
+    out, per_result = [], 0
+    for raw in (query_log or []):
+        line = " ".join(str(raw or "").split())
+        if not line:
+            continue
+        low = line.lower()
+        if any(t in low for t in _LOG_PER_RESULT):
+            per_result += 1
+        elif any(t in low for t in _LOG_FAILURE):
+            out.append(f"!! discover: {line}")
+        elif verbose:
+            out.append(f"discover: {line}")
+    if verbose and per_result:
+        out.append(f"discover: {per_result} per-result line(s) not shown -- they are in the report")
+    return out
+
+
 def base_name(lake_name):
     """cleanLakeBaseName() in lake-research-engine.js. The county stamp is ours, not the water's.
 
@@ -579,6 +614,18 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
         if verbose:
             print(f"      discover: {len(found)} sources ({len(seeds)} seeds) -> {len(sources)}")
 
+        # WHAT THE WORKER ALREADY WROTE DOWN AND NOTHING READ.
+        #
+        # handleResearchDiscover builds `queryLog` -- one line per query with the provider and its
+        # result count, one per failure, one per recency fallback -- and returns it in the response.
+        # The word `queryLog` appeared nowhere in this file, so "why does it say 15 sources one run
+        # and 23 the next" had no answer on screen. Ryan asked exactly that, 2026-09-16, and the
+        # honest answer was that some of the movement is a live index and some of it is a query that
+        # threw, and the printed total cannot tell them apart.
+        out["query_log"] = list(disc.get("queryLog") or [])
+        for line in discover_log_lines(out["query_log"], verbose):
+            print(f"      {line}")
+
         code, norm, err = _req(f"/research/get-normalized?lake={urllib.parse.quote(lake)}")
         existing = ((norm or {}).get("documents") or (norm or {}).get("docs") or []) if code == 200 else []
 
@@ -586,9 +633,22 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
 
         # The off-lake gate, then back to R2 so the next quarter's run reuses the corpus instead of
         # paying for it again. Untouched cached docs are merged back in, the way runAgent does.
+        #
+        # FRESHLY FETCHED DOCUMENTS GO FIRST, AND THEY USED TO GO LAST.
+        #
+        # `chosen = usable[:LLM_DOC_LIMIT]` takes twelve. With cached documents ahead of fetched
+        # ones, the twelve slots went to whatever an older run happened to store and the newest
+        # documents were the first thing the limit cut. Measured on the Congaree, 2026-09-16, across
+        # two runs either side of replacing the paddling query: the same eight sources both times,
+        # and Paddle SC's Blue Trail went from 5 facts to 11. The query had changed and the corpus
+        # had not, so nothing downstream could see the change.
+        #
+        # The stored corpus inherits this order, so it becomes recency-ordered too and the next run
+        # starts from the newest rather than re-sorting. Nothing here deletes a cached document; a
+        # stale one simply stops holding a slot a fresher one wants.
         if fetched:
             touched = {norm_url(d.get("url")) for d in fetched}
-            merged = [d for d in existing if norm_url(d.get("url")) not in touched] + fetched
+            merged = fetched + [d for d in existing if norm_url(d.get("url")) not in touched]
             prepared = gate_documents(repo, merged, lake, alt_names)
             out["rejected_offlake"] = prepared.get("rejected", 0)
             keep = prepared.get("documents") or []
