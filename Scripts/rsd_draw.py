@@ -45,6 +45,12 @@ PALETTES = {
     'blue':  [(0, (2, 6, 18)), (0.20, (10, 34, 78)), (0.45, (18, 86, 150)),
               (0.70, (60, 158, 202)), (0.88, (158, 214, 232)), (1.0, (245, 252, 255))],
     'grey':  [(0, (0, 0, 0)), (1.0, (255, 255, 255))],
+    # Garmin's SideVu default, read off the unit: black shadow, deep green, through to a hot
+    # yellow-white return. The steps are close together at the top end, which is what gives the
+    # screen its hard edges between a return and the shadow behind it.
+    'garmin': [(0, (0, 0, 0)), (0.10, (4, 26, 8)), (0.30, (18, 84, 22)),
+               (0.52, (60, 150, 30)), (0.72, (140, 200, 30)), (0.88, (208, 232, 40)),
+               (1.0, (246, 252, 170))],
 }
 
 
@@ -128,6 +134,25 @@ def to_bytes(pings, apply_tvg, lo_pct=1.0, hi_pct=99.5):
     return [bytes(max(0, min(255, int(255 * (v - lo) / (hi - lo)))) for v in r) for r in logs]
 
 
+def stretch_rows(rows, factor):
+    """Repeat each ping `factor` times so across-track and along-track share a scale.
+
+    A SideVu screen is a PICTURE of the bottom, and a picture needs its two axes in proportion.
+    Across-track, one sample is a fixed slice of range; along-track, one ping is however far the
+    boat moved -- a median of 0.29 ft here, measured from the GPS fixes in the file. Drawn one
+    ping to one pixel the image is squashed by whatever the ratio happens to be, and a round
+    feature comes out as a smear. This is the correction; the exact factor waits on the
+    feet-per-sample scale, so it is an argument and not a constant.
+    """
+    if factor <= 1:
+        return rows
+    out = []
+    for r in rows:
+        for _ in range(int(factor)):
+            out.append(r)
+    return out
+
+
 def ppm(rows, pal, path):
     w, h = len(rows[0]), len(rows)
     with open(path, 'wb') as f:
@@ -143,16 +168,18 @@ def main():
     ap.add_argument('--start', type=int, default=1 << 29)
     ap.add_argument('--read', type=int, default=20_000_000)
     ap.add_argument('--pings', type=int, default=900)
-    ap.add_argument('--palette', default='amber', choices=sorted(PALETTES))
+    ap.add_argument('--palette', default='garmin', choices=sorted(PALETTES))
     # THE TWO VIEWS DO NOT SHARE LEVELS, and using one set for both is what crushed the side
     # scan to black. The down channel is mostly water -- a high black point is what makes the
     # water column dark and leaves the bottom bright. The side beams have already been flattened
     # by TVG, so the same black point throws away the whole swath and leaves only the nadir and
     # a few noise-burst pings. Separate defaults, each measured against its own histogram.
-    ap.add_argument('--down-black', type=float, default=70.0)
-    ap.add_argument('--down-white', type=float, default=99.7)
-    ap.add_argument('--side-black', type=float, default=8.0)
-    ap.add_argument('--side-white', type=float, default=99.4)
+    ap.add_argument('--down-black', type=float, default=68.0)
+    ap.add_argument('--down-white', type=float, default=99.0)
+    ap.add_argument('--side-black', type=float, default=22.0)
+    ap.add_argument('--side-white', type=float, default=97.0)
+    ap.add_argument('--aspect', type=int, default=1,
+                    help='repeat each ping N times along-track to square the image')
     ap.add_argument('--out-dir', default='_scratch')
     a = ap.parse_args()
 
@@ -182,7 +209,7 @@ def main():
         conv = to_bytes(both, apply_tvg=True, lo_pct=a.side_black, hi_pct=a.side_white)
         half = len(shared)
         rows = [bytes(reversed(conv[i])) + conv[half + i] for i in range(half)]
-        ppm(rows, pal, os.path.join(a.out_dir, 'side.ppm'))
+        ppm(stretch_rows(rows, a.aspect), pal, os.path.join(a.out_dir, 'side.ppm'))
     return 0
 
 
