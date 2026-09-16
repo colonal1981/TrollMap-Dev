@@ -130,6 +130,28 @@ describe('the shared builder answers which waters, and nothing about drawing the
   });
 });
 
+describe('both callers await the index and hand it over', () => {
+  const read = (f) => readFileSync(join(here, '..', f), 'utf8')
+    .split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');
+
+  it('neither picker lets bucketWaters reach for whatever is loaded', () => {
+    // `[plan] picker offers 1 water(s)`, printed at boot BEFORE access-index's own
+    // "registry contributed 163 lakes" line. The plan picker was bucketing an index that had not
+    // arrived, because I replaced an awaited getUniversalLakeNamesAsync() with a synchronous read
+    // and asserted in a comment that the caller had already waited. main.js does not wait.
+    for (const f of ['js/modules/lake-ramp-select.js', 'js/modules/plan-builder.js']) {
+      const src = read(f);
+      expect(src, `${f} must await the index`).toContain('await loadAccessIndex()');
+      expect(src, `${f} must pass it to bucketWaters`).toMatch(/bucketWaters\([\s\S]{0,200}index/);
+    }
+  });
+
+  it('the fallback to module state stays, for a caller that has one already', () => {
+    // opts.index || getLoadedAccessIndex() -- the fallback is not the bug, calling it too early was.
+    expect(CODE).toContain('opts.index || getLoadedAccessIndex()');
+  });
+});
+
 describe('both callers render the buckets themselves', () => {
   const read = (f) => readFileSync(join(here, '..', f), 'utf8')
     .split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n');

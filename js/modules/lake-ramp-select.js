@@ -165,8 +165,10 @@ async function populateLakeSelect() {
   // Coastal zones are folded in here rather than appended by coastal-optgroups.js, because they
   // belong under their state alongside its lakes and rivers. That util still serves the research
   // dropdown, which has not been reworked.
+  // `idx` is awaited above. Passed in rather than reached for, for the reason recorded in
+  // populatePlanLakeDropdown: an index read from module state has an invisible precondition.
   const buckets = bucketWaters((rec, lakeName) => passesFilters(lakeName),
-                              { coastalFilters: filters });
+                              { coastalFilters: filters, index: idx });
   let total = 0;
   for (const stateCode of STATE_ORDER) {
     for (const [type, typeLabel] of TYPE_ORDER) {

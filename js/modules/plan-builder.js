@@ -24,7 +24,7 @@ import { advisoryRows } from "../data/fish-advisories.js";
 // The band is defined once, where the cue line that carries it is built.
 import { HAND_STEER_BAND_FT } from "./plan-tracks.js";
 import { makePredicate } from "../data/water-filter.js";
-import { registryRecordFor } from "../data/access-index.js";
+import { loadAccessIndex, registryRecordFor } from "../data/access-index.js";
 // distFt() was CALLED below and never imported -- a latent ReferenceError predating the
 // registry refactor. renderPlanStats() died at the distance line whenever a track had two or
 // more points, so planDist and planGroups never filled in. Found 2026-08-02 by a scope check
@@ -2470,13 +2470,24 @@ export async function populatePlanLakeDropdown(){
   const current = sel.value;
   sel.innerHTML = '<option value="">— choose lake or river —</option>';
   // THE THREE WAYS THIS USED TO GET ITS NAMES are gone with the groups they fed:
-  // getUniversalLakeNamesAsync, getUniversalLakeNames and lakeNamesForPicker, tried in turn.
-  // bucketWaters() reads the loaded access index directly, which is what all three resolved to.
+  // getUniversalLakeNamesAsync, getUniversalLakeNames and lakeNamesForPicker, tried in turn. The
+  // first of those AWAITED the worker fetch, and that await is the only reason the picker was ever
+  // populated at boot.
   //
-  // It is SYNCHRONOUS on an index that is already loaded. This function is called from the same
-  // places it always was, after loadAccessIndex() has resolved -- and when it has not, the
-  // buckets come back empty and the picker rebuilds on the next call rather than showing a
-  // half-filtered list, which is what the `|| lakeNamesForPicker()` fallback was papering over.
+  // I removed it and wrote "this is called after loadAccessIndex() has resolved" in its place.
+  // That was an assumption and it was wrong: main.js calls this from boot without awaiting it, so
+  // the index was still empty and the log read
+  //
+  //     [plan] picker offers 1 water(s)
+  //
+  // printed BEFORE access-index's own "registry contributed 163 lakes" line, which is the proof.
+  // The map picker never had this problem because populateLakeSelect() awaits loadAccessIndex()
+  // and always did.
+  //
+  // So the index is awaited here and PASSED IN, rather than bucketWaters reaching for whatever
+  // happens to be loaded when it runs. A function that silently returns one row instead of 261
+  // when it is called a moment too early is a function with an invisible precondition.
+  const idx = await loadAccessIndex();
 
   // THIS DROPDOWN HAD NO FILTER OF ANY KIND ON IT.
   //
@@ -2513,7 +2524,7 @@ export async function populatePlanLakeDropdown(){
   // lists -- and stops being a source of picker rows. getPlanRiverDef() matches on slug now, so
   // those ramps attach to the registry row the picker offers.
   const plannable = makePredicate('planner', null);
-  const buckets = bucketWaters((rec, lakeName) => plannable(rec, lakeName));
+  const buckets = bucketWaters((rec, lakeName) => plannable(rec, lakeName), { index: idx });
   let offered = 0;
   for (const stateCode of STATE_ORDER) {
     for (const [type, typeLabel] of TYPE_ORDER) {
