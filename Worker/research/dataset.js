@@ -101,9 +101,22 @@ function scoreDatasetUrl(url, title, lakeName) {
 //   Wateree etc: "Report on Wateree Lake"  (name before Lake)
 // Using title filter "Report on" (not "Report on Lake") catches BOTH conventions
 // since the lake name is in the Query field anyway.
+// LIFTED OUT OF buildNepisSearchUrl 2026-09-16 so discover.js can disambiguate a search by state
+// without writing a second copy of the same four rows. `"Broad River"` returns the SC one, the NC
+// one, the French Broad and Virginia's New River; `"Broad River" South Carolina` drops the last
+// two outright. Measured that day.
+const STATE_NAMES = {
+  SC: 'South Carolina', NC: 'North Carolina', GA: 'Georgia', VA: 'Virginia', TN: 'Tennessee',
+};
+
+/** The spelled-out state, which is what a fishing page says. Falls back to SC, as it always did. */
+function stateFullName(state) {
+  return STATE_NAMES[String(state || 'SC').toUpperCase()] || 'South Carolina';
+}
+
 function buildNepisSearchUrl(lakeName, state, queryOverride = null) {
   const baseName = String(lakeName || '').replace(/^Lake\s+/i, '').replace(/,\s*(SC|NC|GA|VA|TN).*$/i, '').trim();
-  const stateName = { SC: 'South Carolina', NC: 'North Carolina', GA: 'Georgia', VA: 'Virginia', TN: 'Tennessee' }[String(state || 'SC').toUpperCase()] || 'South Carolina';
+  const stateName = stateFullName(state);
   const query = encodeURIComponent(queryOverride || baseName || stateName);
   // Use "Report on" (not "Report on Lake") so both naming conventions match:
   //   "Report on Lake Murray" AND "Report on Wateree Lake"
@@ -426,4 +439,4 @@ async function handleResearchDatasetHunt(request, env) {
   }), { headers: JSON_HEADERS });
 }
 
-export { DATASET_HUNT_TARGETS, DATASET_KEYWORDS, KNOWN_BAD_NEPIS_IDS, scoreDatasetUrl, buildNepisSearchUrl, toNepisRawTextUrl, buildNepisQueryVariants, handleResearchDatasetHunt };
+export { STATE_NAMES, stateFullName, DATASET_HUNT_TARGETS, DATASET_KEYWORDS, KNOWN_BAD_NEPIS_IDS, scoreDatasetUrl, buildNepisSearchUrl, toNepisRawTextUrl, buildNepisQueryVariants, handleResearchDatasetHunt };

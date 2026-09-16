@@ -1,8 +1,8 @@
 // research/discover.js — split from worker-research.js (behavior-preserving)
 import { JSON_HEADERS } from '../worker-core.js';
 import { STATE_REGULATIONS_CONFIG, tinyfishFetch, searchWeb } from './clients.js';
-import { KNOWN_BAD_NEPIS_IDS, buildNepisSearchUrl } from './dataset.js';
-import { parseLakeBaseName } from './keys.js';
+import { KNOWN_BAD_NEPIS_IDS, buildNepisSearchUrl, stateFullName } from './dataset.js';
+import { parseLakeBaseName, stripLakeQualifiers } from './keys.js';
 import { resolveAgencyPage } from './agency-pages.js';
 import { matchWaterName, reportTokens } from '../reports.js';
 // WHAT KIND OF WATER THIS IS, ASKED THE SAME WAY THE AGENT ASKS IT. agents.js:1327 resolves the
@@ -115,7 +115,32 @@ async function handleResearchDiscover(request, env) {
   const waterNames = (Array.isArray(body.names) ? body.names : [])
     .map((x) => String(x || '').trim()).filter(Boolean);
   const agencyNames = waterNames.length ? waterNames : [lakeName, baseName].filter(Boolean);
-  const queryLake = lakeName.replace(/,\s*(SC|NC|GA|TN)(\/(?:SC|NC|GA|TN))*\s*$/i, '').trim();
+  // THE PHRASE EVERY SEARCH IS ANCHORED ON, AND IT USED TO BE ONE NO PAGE CONTAINS.
+  //
+  // This was `lakeName.replace(/,\s*(SC|NC|GA|TN)...$/i, '')` -- a strip anchored to the END of
+  // the string. Registry display names do not end in ", SC", they end in a county parenthetical,
+  // so nothing was stripped and the quoted phrase went out as
+  //
+  //     "Congaree River (to SC-601) (Richland Co, SC)" fishing shoals ledges bends ...
+  //
+  // Measured 2026-09-16 against lake_index.json: 285 of 285 lakes, 57 of 57 rivers and 11 of 13
+  // coastal zones -- 353 of 355 -- carried a parenthetical into the quoted phrase. Every research
+  // pass this project has ever run was anchored on a string that exists nowhere, and what came
+  // back was about the COUNTY. The trial that found it had a hail map for Columbia among its
+  // candidates.
+  //
+  // keys.js DIAGNOSED THIS EXACT REGEX ON 2026-08-16 and its comment is still there: "the
+  // state-suffix regex below is anchored to the END of the string -- so a trailing `)` defeats it
+  // and the parenthetical survives into the key... that is why J. Strom Thurmond discovered
+  // '0 seeds' with 41 agency pages sitting in the table waiting for it." `stripLakeQualifiers()`
+  // was written to fix it and exported. This file already imports its sibling `parseLakeBaseName`,
+  // calls it on the line above, and uses the result for relevance scoring, agency names and three
+  // Grokipedia URLs -- every consumer in here used the cleaned name except the one that searches.
+  //
+  // WHY stripLakeQualifiers AND NOT parseLakeBaseName: the latter also drops a leading "Lake" and
+  // a trailing "Reservoir"/"Lake", which is right for a KEY and wrong for a SEARCH -- "Wateree" is
+  // a worse phrase than "Wateree Lake". This keeps the name a person would type.
+  const queryLake = stripLakeQualifiers(lakeName) || lakeName.trim();
 
   const offLakePattern = (title, url) => {
     const combined = `${title} ${url}`.toLowerCase();
@@ -951,7 +976,19 @@ const AGENT_TO_TAGS = {
       || (purposeFn ? purposeFn(queryLake, state) : `Find authoritative ${agentKey} information about ${lakeName} in ${state}`);
 
     for (let qIndex = 0; qIndex < queries.length; qIndex++) {
-      const q = queries[qIndex];
+      // THE STATE, ONCE, HERE -- not in fourteen query templates.
+      //
+      // Cleaning the anchor above costs the disambiguation the county was accidentally providing.
+      // Measured 2026-09-16: `"Broad River" fishing shoals ledges bends current seams holes`
+      // returns the SC Broad, the NC Broad, the French Broad AND Virginia's New River. Adding the
+      // spelled-out state drops the last two outright and lifts the SC pages. An abbreviation does
+      // not do it -- a fishing page says "South Carolina", and stateFullName() is the map
+      // buildNepisSearchUrl has always used, now exported rather than copied.
+      //
+      // Skipped where the template already pins the state with a `site:` on a state agency, which
+      // is a harder constraint than a loose term and does not want diluting.
+      const base = queries[qIndex];
+      const q = /\bsite:/i.test(base) ? base : `${base} ${stateFullName(state)}`;
       const domainTypes = AGENT_DISCOVERY_QUERIES._domainTypes?.[agentKey];
       const domainType = domainTypes?.[qIndex] || 'web';
 
