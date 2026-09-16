@@ -18,8 +18,10 @@ import assert from 'node:assert/strict';
 
 import { WATER_TYPE_SEARCH, waterTypeSearch } from '../Worker/research/water-type-hints.js';
 
-const ROSTER = ['Striped Bass', 'Channel Catfish', 'Largemouth Bass', 'Smallmouth Bass',
-                'Bluegill', 'Black Crappie', 'White Perch'];
+// The Congaree's actual roster, labels and all. These are the strings deterministic.js unions out
+// of five sources, and "White Bass / Hybrid" is a regulatory heading, not something a page says.
+const ROSTER = ['Largemouth Bass', 'Striped Bass', 'White Bass / Hybrid', 'Channel Catfish',
+                'Redear Sunfish (Shellcracker)', 'Catfish', 'Black Crappie'];
 
 const build = (species) => WATER_TYPE_SEARCH.river.fisheries('Congaree River', 'SC', species);
 
@@ -34,25 +36,38 @@ test('no river query asks for a paddle trip any more', () => {
 
 test('a river is asked about seasons, which is what the registry cannot answer', () => {
   const qs = build(ROSTER).queries;
-  assert.ok(qs.some((q) => /seasonal/i.test(q) && /spring/i.test(q)),
+  assert.ok(qs.some((q) => /seasonal fishing patterns/i.test(q)),
     'no river query asks when');
 });
 
 test('the seasonal query names the water\'s own fish, not a typed-in three', () => {
   const seasonal = build(ROSTER).queries.find((q) => /seasonal/i.test(q));
-  assert.match(seasonal, /Striped Bass/);
-  assert.match(seasonal, /Channel Catfish/);
+  assert.match(seasonal, /"Largemouth Bass"/);
+  assert.match(seasonal, /"Striped Bass"/);
   // The lake set hardcodes "bass crappie striped bass" for every water in four states. A river
   // must not inherit that: a trout tailwater does not hold crappie.
   assert.doesNotMatch(seasonal, /bass crappie striped bass/i);
 });
 
-test('four fish at most, because thirteen nouns dilute the match', () => {
+test('a roster label is turned into something a page would say', () => {
   const seasonal = build(ROSTER).queries.find((q) => /seasonal/i.test(q));
-  for (const late of ['Bluegill', 'Black Crappie', 'White Perch']) {
+  // "White Bass / Hybrid" is a heading in a regulations table. Asking the web for a page
+  // containing the word Hybrid and a slash is how the Congaree came back with 8 sources.
+  assert.match(seasonal, /"White Bass"/, 'the slash form was not reduced to the fish');
+  assert.doesNotMatch(seasonal, /Hybrid/, 'a regulatory label reached the query');
+  assert.doesNotMatch(seasonal, /[/]/, 'a slash reached the query');
+  // The parentheses in this query group the OR-ed fish; what must not survive is the roster's
+  // own parenthetical, "Redear Sunfish (Shellcracker)".
+  assert.doesNotMatch(seasonal, /Shellcracker/, 'a roster parenthetical reached the query');
+});
+
+test('three fish, OR-ed, because four AND-ed asks for a page that names all four', () => {
+  const seasonal = build(ROSTER).queries.find((q) => /seasonal/i.test(q));
+  assert.match(seasonal, /\("[^)]+ OR [^)]+ OR [^)]+\)/,
+    'the fish are not an OR group');
+  for (const late of ['Channel Catfish', 'Black Crappie', 'Redear']) {
     assert.ok(!seasonal.includes(late), `${late} is past the cap and still in the query`);
   }
-  assert.ok(seasonal.includes('Smallmouth Bass'), 'the fourth fish was dropped');
 });
 
 test('a river with no roster is asked about seasons without inventing a fish', () => {
@@ -75,7 +90,11 @@ test('every river query is still anchored on the bare base name', () => {
   for (const q of build(ROSTER).queries) {
     assert.ok(q.startsWith('"Congaree River"'),
       `a query is not anchored on the quoted base name: ${q}`);
-    assert.doesNotMatch(q, /\(/, `a parenthetical reached the query: ${q}`);
+    // The seasonal query legitimately contains parentheses now -- they group the OR-ed fish. What
+    // must never reach a query is the display name's own parenthetical, which is the bug that put
+    // "Congaree River (to SC-601) (Richland Co, SC)" inside quotes on 353 of 355 waters.
+    assert.doesNotMatch(q, /SC-601|Richland|\bCo,|\bCounty\b/,
+      `the display name's parenthetical reached the query: ${q}`);
   }
 });
 

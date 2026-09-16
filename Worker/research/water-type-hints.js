@@ -154,6 +154,29 @@ function waterTypeHint(waterType, agentKey) {
 const NO_SOCIAL = '-site:facebook.com -site:instagram.com -site:youtube.com';
 
 /**
+ * A ROSTER NAME IDENTIFIES A SPECIES RECORD; A QUERY TERM HAS TO MATCH DOCUMENT TEXT.
+ *
+ * The same two-jobs-one-string defect as the base name, one field over, found the same day. The
+ * roster carries regulatory labels -- "White Bass / Hybrid", "Redear Sunfish (Shellcracker)",
+ * "Catfish" -- and the first version of the seasonal query dropped them in verbatim, so the engine
+ * was asked for a page containing the word Hybrid and a slash. The Congaree came back with 8
+ * sources where the old set had returned 15 to 23.
+ *
+ * Takes the form before the slash, drops the parenthetical, and keeps only what reads as a plain
+ * species name. Three of them, OR'd rather than piled up: the lake set's precedent is three, and
+ * four labels AND-ed together asks for a page that names all four, which almost nothing does.
+ */
+function searchableSpecies(list) {
+  return [...new Set((Array.isArray(list) ? list : [])
+    .map((s) => String(s || '')
+      .split('/')[0]
+      .replace(/\([^)]*\)/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim())
+    .filter((s) => /^[A-Za-z][A-Za-z' -]{2,}$/.test(s)))];
+}
+
+/**
  * QUERY 2 WAS A PADDLING QUERY AND IT COST THE RIVERS THEIR SEASONAL ONE.
  *
  * Measured on the Congaree, 2026-09-16 -- the first river ever researched with this set. Twenty
@@ -176,25 +199,23 @@ const NO_SOCIAL = '-site:facebook.com -site:instagram.com -site:youtube.com';
  * early summer. Having the species was never having the timing.
  *
  * SO IT NAMES THE WATER'S OWN FISH, NOT A TYPED-IN THREE. `predatorSpecies` has been posted on
- * every discover call by research_lakes.py and this file never read it. Capped at four because a
- * query of thirteen nouns dilutes the match and the lake set's precedent is three; the cap is a
- * query-length constraint, not a ranking. The roster arrives as a union of five sources and its
- * order is not a priority order -- if that turns out to matter, rank the roster, do not lengthen
- * the query. The eight rivers with no species list get the seasonal query without a fish in it
- * rather than a fish this water may not hold.
+ * every discover call by research_lakes.py and this file never read it. Three of them, OR'd, run
+ * through searchableSpecies() first -- see that function for why the raw roster label is not a
+ * search term. The roster arrives as a union of five sources and its order is not a priority
+ * order; if the wrong three get picked, rank the roster rather than lengthen the query. The eight
+ * rivers with no species list get the seasonal query with no fish in it rather than a fish this
+ * water may not hold.
  */
 const WATER_TYPE_SEARCH = {
   river: {
     fisheries: (name, state, species = []) => {
-      const named = (Array.isArray(species) ? species : [])
-        .map((s) => String(s || '').trim()).filter(Boolean).slice(0, 4).join(' ');
+      const named = searchableSpecies(species).slice(0, 3);
+      const fish = named.length ? ` (${named.map((s) => `"${s}"`).join(' OR ')})` : '';
       return {
       queries: [
         `"${name}" fishing report water level flow ${NO_SOCIAL}`,
         `"${name}" fishing shoals ledges bends current seams holes ${NO_SOCIAL}`,
-        named
-          ? `"${name}" ${named} seasonal fishing patterns spring summer fall ${NO_SOCIAL}`
-          : `"${name}" seasonal fishing patterns spring summer fall ${NO_SOCIAL}`,
+        `"${name}" seasonal fishing patterns${fish} ${NO_SOCIAL}`,
       ],
       purpose: `Find seasonal and current fishing information for ${name}, which is a RIVER in `
         + `${state} -- moving water, not a reservoir. Prefer sources that say where fish hold in `
