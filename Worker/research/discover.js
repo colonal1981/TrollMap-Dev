@@ -170,6 +170,100 @@ function resultNamesWater(title, url, snippet, baseLower) {
   return `${title || ''} ${snippet || ''} ${url || ''}`.toLowerCase().includes(baseLower);
 }
 
+// ─── PRE-FETCH RELEVANCE SCORER ──────────────────────────────────────────────────────────────
+//
+// Section 5 scoring. Guaranteed seeds always pass (999). Candidates below threshold are logged and
+// not fetched, and SOURCE_CAP then keeps the top ten by this number -- so this function decides
+// which ten of seventeen candidates the extractor ever sees.
+//
+// MODULE SCOPE AND EXPORTED, as of 2026-09-16. It was a local of handleResearchDiscover, so nothing
+// could put a number in front of it, which is how it went a long time ranking a watershed grant
+// announcement above a catfish article with no one seeing the arithmetic.
+const PRE_FETCH_THRESHOLD = 2; // minimum score to fetch a discovered candidate
+
+function scoreCandidateRelevance(candidate, lakeName, baseName, aliases, state, agentKey = '') {
+  if (candidate.priority === 1) return 999; // guaranteed seed — always fetch
+  const title = (candidate.title || '').toLowerCase();
+  const snippet = (candidate.snippet || '').toLowerCase();
+  const url = (candidate.url || '').toLowerCase();
+  const baseLower = baseName.toLowerCase();
+  const lakeNameLower = lakeName.toLowerCase();
+  const aliasesLower = (aliases || []).map((a) => a.toLowerCase());
+
+  let score = 0;
+
+  // Positive signals
+  if (title.includes(baseLower) || title.includes(lakeNameLower)) score += 5;
+  if (snippet.includes(baseLower) || snippet.includes(lakeNameLower)) score += 4;
+  if (aliasesLower.some((a) => title.includes(a))) score += 4;
+  if (aliasesLower.some((a) => snippet.includes(a))) score += 3;
+
+  // Authority domain bonus
+  try {
+    const host = new URL(candidate.url).hostname.toLowerCase();
+    if (/\.gov$|usace\.army\.mil|epa\.gov|usgs\.gov|ferc\.gov|tva\.com|tva\.gov|osti\.gov|noaa\.gov|santeecooper\.com|duke-energy\.com|georgiapower\.com/.test(host)) score += 3;
+    else if (/\.edu$/.test(host) && (url.includes(baseLower) || title.includes(baseLower))) score += 2;
+  } catch {
+    // Intentionally silent: this block only ADDS a domain bonus. An unparseable URL simply does not
+    // earn one, and every other signal still applies. Audited 2026-08-03.
+  }
+
+  // ── DOCUMENT TYPE: THE SAME WORDS MEAN OPPOSITE THINGS TO DIFFERENT AGENTS ──
+  //
+  // report / assessment / survey / management plan / study / investigation are what an agency
+  // document calls itself. For limnology, biology and identity that is the thing being hunted and
+  // the bonus is right. For fisheries it is the tell of paperwork -- and the measured cost was
+  // exact: `An Assessment of Fisheries Species`, `Appendix Z: Environmental Clearances` and `SCDES
+  // Now Accepting Grant Applications` took three of ten cap slots on the Congaree, and the off-lake
+  // gate then threw two of them out for not naming the water. The slots bought nothing.
+  //
+  // So for fisheries the sign flips rather than the bonus being dropped. Same magnitude, opposite
+  // direction, because the same evidence means the opposite thing to the one agent asking how to
+  // fish rather than what the water is. Picking any other number here would be picking a number.
+  const paperwork = /report|assessment|survey|management.plan|study|investigation/.test(title + snippet);
+  if (paperwork) score += (agentKey === 'fisheries' ? -2 : 2);
+  if (url.endsWith('.pdf') || /\/open$|download\?attachment|\/media\/\d+\/download/.test(url)) score += 1;
+
+  // ── THE OUTDOOR PRESS EARNS WHAT AN AGENCY EARNS, FOR THE ONE AGENT THAT WANTS WRITING ──
+  //
+  // Measured on the Congaree, 2026-09-16. Seventeen candidates found, ten kept by SOURCE_CAP on
+  // this number. `An Assessment of Fisheries Species to Inform Time-of-Year` scored 12 (.gov +3,
+  // "assessment" +2, named in snippet +4); `Appendix Z: Environmental Clearances` and `SCDES Now
+  // Accepting Grant Applications` scored 10 each. `AN OLD-SCHOOL BAIT IS BACK IN THE LIMELIGHT` --
+  // the catalpa-worm piece Ryan's agent pulled off carolinasportsman -- scored 7, tied with three
+  // others for one remaining slot, and lost. Two of the winners were then thrown out by the
+  // off-lake gate for not naming the water, so those slots bought nothing at all.
+  //
+  // Nothing above gives a fishing magazine a point. No .gov, no "assessment" in the title, no .pdf
+  // -- the paper that actually says where the fish are scored as an anonymous web page, and
+  // ANGLING_PRESS_DOMAINS sat a hundred lines up unread.
+  //
+  // FISHERIES ONLY, deliberately. The authority and document-type bonuses are right for limnology,
+  // biology and identity: those agents want an agency study and should keep preferring one.
+  // Fisheries is the agent asking how to fish, and Ryan is right that there is no official source
+  // for that -- "it is fishing and there are no 'official' sources on how to fish."
+  if (agentKey === 'fisheries') {
+    try {
+      const host = new URL(candidate.url).hostname.toLowerCase().replace(/^www\./, '');
+      if (ANGLING_PRESS_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`))) score += 4;
+    } catch { /* no bonus for an unparseable host; every other signal still applies */ }
+  }
+
+  // Negative signals — another state named in the title is a rough but useful tell.
+  const otherStates = ['florida', 'virginia', 'alabama', 'mississippi', 'arkansas', 'ohio',
+                       'indiana', 'michigan', 'wisconsin', 'illinois', 'minnesota'];
+  if (otherStates.some((s) => title.includes(s))) score -= 5;
+
+  // THE -5 FOR SOCIAL AND VIDEO IS GONE, for the same reason the ban in offLakePattern is gone: it
+  // was the same categorical judgment in a second place. It would have buried the best seasonal
+  // fact this pipeline has -- the Congaree striper-run video names the water in its title and its
+  // description, earning +5 and +4, and this line took nine of that straight back. A page that
+  // names the water is evidence for any agent, and one that does not is already refused upstream by
+  // resultNamesWater() before it ever reaches a score.
+
+  return score;
+}
+
 async function handleResearchDiscover(request, env) {
   let body;
   try { body = await request.json(); } catch { body = {}; }
@@ -379,52 +473,6 @@ async function handleResearchDiscover(request, env) {
 
     const canonicalUrl = `https://${host}${path}${qString}`;
     return { canonicalUrl, requestedUrl: rawUrl, urlAliases, sourceRevision };
-  }
-
-  // ─── PRE-FETCH RELEVANCE SCORER ──────────────────────────────────────────
-  // Implements section 5 scoring. Guaranteed seeds always pass (score=999).
-  // Discovered candidates below threshold are logged but not fetched.
-  const PRE_FETCH_THRESHOLD = 2; // minimum score to fetch a discovered candidate
-  function scoreCandidateRelevance(candidate, lakeName, baseName, aliases, state) {
-    if (candidate.priority === 1) return 999; // guaranteed seed — always fetch
-    const title = (candidate.title || '').toLowerCase();
-    const snippet = (candidate.snippet || '').toLowerCase();
-    const url = (candidate.url || '').toLowerCase();
-    const baseLower = baseName.toLowerCase();
-    const lakeNameLower = lakeName.toLowerCase();
-    const stateLower = state.toLowerCase();
-    const aliasesLower = (aliases || []).map(a => a.toLowerCase());
-
-    let score = 0;
-
-    // Positive signals
-    if (title.includes(baseLower) || title.includes(lakeNameLower)) score += 5;
-    if (snippet.includes(baseLower) || snippet.includes(lakeNameLower)) score += 4;
-    if (aliasesLower.some(a => title.includes(a))) score += 4;
-    if (aliasesLower.some(a => snippet.includes(a))) score += 3;
-
-    // Authority domain bonus
-    try {
-      const host = new URL(candidate.url).hostname.toLowerCase();
-      if (/\.gov$|usace\.army\.mil|epa\.gov|usgs\.gov|ferc\.gov|tva\.com|tva\.gov|osti\.gov|noaa\.gov|santeecooper\.com|duke-energy\.com|georgiapower\.com/.test(host)) score += 3;
-      else if (/\.edu$/.test(host) && (candidate.url.toLowerCase().includes(baseLower) || title.includes(baseLower))) score += 2;
-    } catch {
-      // Intentionally silent: this block only ADDS a domain bonus. An unparseable URL simply
-      // does not earn one, and the title/snippet signals above and the negative signals below
-      // still score it. Audited 2026-08-03 -- no branch downstream reads "did the host parse".
-    }
-
-    // Document type bonuses
-    if (/report|assessment|survey|management.plan|study|investigation/.test(title + snippet)) score += 2;
-    if (url.endsWith('.pdf') || /\/open$|download\?attachment|\/media\/\d+\/download/.test(url)) score += 1;
-
-    // Negative signals
-    // Another state in title context (rough signal)
-    const otherStates = ['florida','virginia','alabama','mississippi','arkansas','ohio','indiana','michigan','wisconsin','illinois','minnesota'];
-    if (otherStates.some(s => title.includes(s))) score -= 5;
-    if (/facebook\.com|instagram\.com|youtube\.com|pinterest\.com|twitter\.com/.test(url)) score -= 5;
-
-    return score;
   }
 
   // ─── AGENT-SPECIFIC DISCOVERY QUERIES ───
@@ -1106,8 +1154,21 @@ const AGENT_TO_TAGS = {
       //
       // Skipped where the template already pins the state with a `site:` on a state agency, which
       // is a harder constraint than a loose term and does not want diluting.
+      // AND `include_domains` IS THE SAME KIND OF HARDER CONSTRAINT. The rule above is that a
+      // `site:` pin does not want diluting with a loose state term; a closed press-domain set is a
+      // stricter pin than one site:, so it does not want it either. A press query also has nothing
+      // to disambiguate: the state term exists because "Broad River" matches four rivers in four
+      // states, and carolinasportsman.com is not going to hand back Virginia's New River.
+      //
+      // The press query went out as `"Congaree River" fishing seasonal patterns bait depth
+      // technique South Carolina` and returned ten homepages, product pages and a privacy policy,
+      // every one scoring 0. Ryan ran the same query WITHOUT the state suffix in TinyFish's
+      // playground and got ten articles about this river. That is one paste short of proof -- the
+      // A/B with the suffix added is still worth running -- but skipping the state here follows the
+      // rule this comment block already states, whatever the homepages turn out to be caused by.
       const base = queries[qIndex];
-      const q = /\bsite:/i.test(base) ? base : `${base} ${stateFullName(state)}`;
+      const statePinned = /\bsite:/i.test(base) || !!typed?.pressScoped?.[qIndex];
+      const q = statePinned ? base : `${base} ${stateFullName(state)}`;
       const domainTypes = AGENT_DISCOVERY_QUERIES._domainTypes?.[agentKey];
       const domainType = domainTypes?.[qIndex] || 'web';
 
@@ -1218,7 +1279,7 @@ const AGENT_TO_TAGS = {
             publishedDate: r.date || r.published_date || '',
             searchScore: r.score || 0,
           };
-          const prefetchScore = scoreCandidateRelevance(candidate, lakeName, baseName, discoveryAliases, state);
+          const prefetchScore = scoreCandidateRelevance(candidate, lakeName, baseName, discoveryAliases, state, agentKey);
 
           if (prefetchScore < PRE_FETCH_THRESHOLD) {
             queryLog.push(`  ✗ below threshold (score ${prefetchScore}): ${(r.title||r.url).slice(0,80)}`);
@@ -1325,3 +1386,4 @@ const AGENT_TO_TAGS = {
 export { STATE_FISH_AGENCY_DOMAINS, STATE_ENVIRONMENT_DOMAINS, siteFilter };
 export { handleResearchDiscover, authorityForUrl };
 export { resultNamesWater, ANGLING_PRESS_DOMAINS, TOURISM_DOMAINS, SEARCH_EXCLUDE_DOMAINS };
+export { scoreCandidateRelevance, PRE_FETCH_THRESHOLD };
