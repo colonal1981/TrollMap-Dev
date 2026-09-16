@@ -137,6 +137,7 @@ export async function buildSmartPlanV2(o) {
       window: 'fell outside the trip window',
       dedupe: 'duplicated a lane already offered',
       limit: 'were past the candidate limit',
+      geometry: 'carried fewer than two coordinates',
     };
     const why = Object.entries(r)
       .filter(([, n]) => Number(n) > 0)

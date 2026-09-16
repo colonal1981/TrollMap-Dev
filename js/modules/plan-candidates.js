@@ -1186,7 +1186,7 @@ export function selectCandidates(runs, o) {
   // Counted so the caller can say WHY nothing came back. "nothing is inside 15-40 ft" and "every
   // pass on this lake is shallower than 15 ft" are different problems with different fixes, and
   // the old code could only report the first because it never knew which test it had applied.
-  const rejected = { depth: 0, unroutable: 0, noWindow: 0, scoreless: 0, unfitted: 0,
+  const rejected = { depth: 0, unroutable: 0, noWindow: 0, scoreless: 0, unfitted: 0, geometry: 0,
                      // Filled below, after scoring. Declared here so every bucket lives in one
                      // object and the total can be checked against `considered`.
                      battery: 0, window: 0, dedupe: 0, limit: 0 };
@@ -1250,7 +1250,11 @@ export function selectCandidates(runs, o) {
     if (!depthRule) depthRule = elig.rule;
     if (!elig.ok) { rejected.depth++; continue; }
     const coords = run.geometry && run.geometry.coordinates;
-    if (!Array.isArray(coords) || coords.length < 2) continue;
+    // A COUNTER, BECAUSE A RUN THAT LEAVES THIS LOOP IN NO BUCKET IS INVISIBLE. This `continue`
+    // had none, so `accountedFor` below could not balance and nothing said why. It is zero on
+    // every pack measured -- congaree_river has 0 of 1,473 -- but "it does not happen today" is
+    // the reason a missing counter survives, not a reason it should.
+    if (!Array.isArray(coords) || coords.length < 2) { rejected.geometry++; continue; }
 
     // Docks join here rather than in the pipeline -- see dockHits(). Merged into `near` before
     // the window slides, so a dock counts toward WHICH window is chosen, not just what the chosen
@@ -1536,7 +1540,7 @@ export function selectCandidates(runs, o) {
     // without a counter, which is exactly how the dedupe went unreported for as long as it did.
     accountedFor: kept.length + rejected.depth + rejected.unroutable + rejected.noWindow
                 + rejected.scoreless + rejected.battery + rejected.window + rejected.dedupe
-                + rejected.limit + rejected.unfitted,
+                + rejected.limit + rejected.unfitted + rejected.geometry,
     depthRule: depthRule || 'no runs reached the depth test',
     // WHETHER THIS PACK HAD FITTED LANES AT ALL, because "800 unfitted runs were refused" and
     // "this lake has no fitted lanes so rough ones were offered" are different days on the water

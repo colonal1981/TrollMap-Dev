@@ -38,6 +38,12 @@ const WHY = {
   window: 'fell outside the trip window',
   dedupe: 'duplicated a lane already offered',
   limit: 'were past the candidate limit',
+  // Added 2026-09-16 with its counter. The `continue` for a run with fewer than two coordinates
+  // had none at all, so accountedFor could not balance and nothing said why -- zero on every pack
+  // measured, but "it does not happen today" is why a missing counter survives, not a reason to
+  // leave it. This test failed the moment the counter was added and the wording was not, which is
+  // the drift check working in the direction it was written for.
+  geometry: 'carried fewer than two coordinates',
 };
 const reasons = (r) => Object.entries(r).filter(([, n]) => Number(n) > 0)
   .sort((a, b) => b[1] - a[1]).map(([k, n]) => `${n} ${WHY[k] || `were rejected by ${k}`}`);
