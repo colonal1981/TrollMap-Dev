@@ -163,8 +163,28 @@ const NO_SOCIAL = '-site:facebook.com -site:instagram.com -site:youtube.com';
  * sources where the old set had returned 15 to 23.
  *
  * Takes the form before the slash, drops the parenthetical, and keeps only what reads as a plain
- * species name. Three of them, OR'd rather than piled up: the lake set's precedent is three, and
- * four labels AND-ed together asks for a page that names all four, which almost nothing does.
+ * species name.
+ *
+ * AND THE FISH DO NOT GO IN THE QUERY AT ALL. They go in `purpose`.
+ *
+ * Measured from the per-result log, 2026-09-16 -- the run where the seasonal query named Bluegill.
+ * Its ten results were "Panfish on the Fly", "The Ultimate Bluegill Catch and Cook Adventure -
+ * TikTok", "Making A Bluegill Lure", "Bluegill Gets DEVOURED!!! - YouTube", "Mr. Bluegill Outdoors
+ * - Facebook", "New scientific term: #bluegill - Instagram", "Crispy Bluegill Tacos on the Weber
+ * Slate", a Reddit thread and an FWS species sheet. Not one of them is about the Congaree.
+ *
+ * THE PROVIDER DOES NOT HONOUR THE OPERATORS. Every one of those queries carried
+ * `-site:youtube.com -site:facebook.com -site:instagram.com` and YouTube, Facebook, Instagram and
+ * TikTok results came back anyway. Every one of them was anchored on `"Congaree River"` in quotes
+ * and the structure query returned "Coal seam gas", "How to Sew an Inseam Pocket with French
+ * Seams!" and "Satin seam puckering ruins all my hard work : r/sewhelp". The quoted phrase is
+ * advisory and the exclusions are inert.
+ *
+ * So a distinctive word in the query text does not narrow the search onto this water -- it drags
+ * the search off it, toward whatever that word is famous for. `seams` belongs to sewing, coal and
+ * software. `Bluegill` belongs to everyone's pond. The steering that DOES work is `purpose`, which
+ * goes to the provider as an API parameter and is ranked against, not matched. That is where the
+ * roster belongs, and searchableSpecies() still earns its place preparing it.
  */
 function searchableSpecies(list) {
   return [...new Set((Array.isArray(list) ? list : [])
@@ -199,23 +219,30 @@ function searchableSpecies(list) {
  * early summer. Having the species was never having the timing.
  *
  * SO IT NAMES THE WATER'S OWN FISH, NOT A TYPED-IN THREE. `predatorSpecies` has been posted on
- * every discover call by research_lakes.py and this file never read it. Three of them, OR'd, run
- * through searchableSpecies() first -- see that function for why the raw roster label is not a
- * search term. The roster arrives as a union of five sources and its order is not a priority
- * order; if the wrong three get picked, rank the roster rather than lengthen the query. The eight
- * rivers with no species list get the seasonal query with no fish in it rather than a fish this
- * water may not hold.
+ * every discover call by research_lakes.py and this file never read it. All of them, OR-ed, run
+ * through searchableSpecies() first -- see that function for why a raw roster label is not a search
+ * term and why there is no longer a cap. The eight rivers with no species list get the seasonal
+ * query with no fish in it rather than a fish this water may not hold.
+ *
+ * `namedSpecies` comes back beside the queries so the caller logs what the query actually says.
+ * The first version logged `predatorSpecies.slice(0, 4)` instead, which printed "naming Largemouth
+ * Bass, Bluegill, Redear Sunfish (Shellcracker), White Perch" next to a query that said
+ * `("Largemouth Bass" OR "Bluegill" OR "Redear Sunfish")`. A diagnostic that disagrees with the
+ * thing it is describing is worse than no diagnostic.
  */
 const WATER_TYPE_SEARCH = {
   river: {
     fisheries: (name, state, species = []) => {
-      const named = searchableSpecies(species).slice(0, 3);
+      const named = searchableSpecies(species);
       const fish = named.length ? ` (${named.map((s) => `"${s}"`).join(' OR ')})` : '';
       return {
+      namedSpecies: named,
       queries: [
         `"${name}" fishing report water level flow ${NO_SOCIAL}`,
-        `"${name}" fishing shoals ledges bends current seams holes ${NO_SOCIAL}`,
-        `"${name}" seasonal fishing patterns${fish} ${NO_SOCIAL}`,
+        // `seams` is out. It carried this query to coal mining, dressmaking and a Martin Fowler
+        // essay on mainframes. Every word here now has to be one that only a river page uses.
+        `"${name}" fishing shoals ledges outside bends deep holes riprap ${NO_SOCIAL}`,
+        `"${name}" river fishing seasonal patterns spring summer fall ${NO_SOCIAL}`,
       ],
       purpose: `Find seasonal and current fishing information for ${name}, which is a RIVER in `
         + `${state} -- moving water, not a reservoir. Prefer sources that say where fish hold in `
@@ -224,7 +251,12 @@ const WATER_TYPE_SEARCH = {
         + `obstruction, tributary mouths, point bars and sandbars, bridge piers and riprap. The `
         + `water-level facts that matter are flow in cfs and gauge stage, NOT pool elevation. `
         + `Float-trip and wade-fishing writeups that name individual shoals, bends and access `
-        + `points are valuable even when informal. ALSO WANTED: which months each species runs, `
+        + `points are valuable even when informal. `
+        + (fish ? `THE SPECIES THIS RIVER HOLDS are ${named.join(', ')} -- a page is relevant only `
+                + `if it is about one of them IN THIS RIVER. A general species profile, a recipe, a `
+                + `lure build or a video about the fish somewhere else is not relevant no matter `
+                + `how well it matches the fish's name. ` : '')
+        + `ALSO WANTED: which months each species runs, `
         + `spawns, or feeds hardest in this river, and how high or low water changes that -- a `
         + `roster of species is already known and the timing is not. Reject reservoir and lake `
         + `content, pool levels and drawdown, thermocline and stratification studies, paddling `

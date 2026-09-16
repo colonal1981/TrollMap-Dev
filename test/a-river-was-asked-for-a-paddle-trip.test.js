@@ -36,37 +36,62 @@ test('no river query asks for a paddle trip any more', () => {
 
 test('a river is asked about seasons, which is what the registry cannot answer', () => {
   const qs = build(ROSTER).queries;
-  assert.ok(qs.some((q) => /seasonal fishing patterns/i.test(q)),
+  assert.ok(qs.some((q) => /seasonal patterns/i.test(q) && /spring/i.test(q)),
     'no river query asks when');
 });
 
-test('the seasonal query names the water\'s own fish, not a typed-in three', () => {
-  const seasonal = build(ROSTER).queries.find((q) => /seasonal/i.test(q));
-  assert.match(seasonal, /"Largemouth Bass"/);
-  assert.match(seasonal, /"Striped Bass"/);
+test('the water\'s own fish reach the provider, not a typed-in three', () => {
+  const { purpose, namedSpecies } = build(ROSTER);
+  assert.ok(namedSpecies.includes('Largemouth Bass'));
+  assert.ok(namedSpecies.includes('Striped Bass'));
   // The lake set hardcodes "bass crappie striped bass" for every water in four states. A river
   // must not inherit that: a trout tailwater does not hold crappie.
-  assert.doesNotMatch(seasonal, /bass crappie striped bass/i);
+  assert.doesNotMatch(purpose, /bass crappie striped bass/i);
 });
 
 test('a roster label is turned into something a page would say', () => {
-  const seasonal = build(ROSTER).queries.find((q) => /seasonal/i.test(q));
-  // "White Bass / Hybrid" is a heading in a regulations table. Asking the web for a page
-  // containing the word Hybrid and a slash is how the Congaree came back with 8 sources.
-  assert.match(seasonal, /"White Bass"/, 'the slash form was not reduced to the fish');
-  assert.doesNotMatch(seasonal, /Hybrid/, 'a regulatory label reached the query');
-  assert.doesNotMatch(seasonal, /[/]/, 'a slash reached the query');
-  // The parentheses in this query group the OR-ed fish; what must not survive is the roster's
-  // own parenthetical, "Redear Sunfish (Shellcracker)".
-  assert.doesNotMatch(seasonal, /Shellcracker/, 'a roster parenthetical reached the query');
+  const { namedSpecies, purpose } = build(ROSTER);
+  // "White Bass / Hybrid" is a heading in a regulations table and "Redear Sunfish (Shellcracker)"
+  // is a record's name. Neither is a form a page uses.
+  assert.ok(namedSpecies.includes('White Bass'), 'the slash form was not reduced to the fish');
+  assert.ok(namedSpecies.includes('Redear Sunfish'), 'the parenthetical form was not reduced');
+  assert.ok(!namedSpecies.some((s) => /Hybrid|Shellcracker|[/(]/.test(s)),
+    `a raw roster label survived: ${namedSpecies.join(' | ')}`);
+  assert.doesNotMatch(purpose, /Hybrid|Shellcracker/, 'a raw roster label reached the provider');
 });
 
-test('three fish, OR-ed, because four AND-ed asks for a page that names all four', () => {
-  const seasonal = build(ROSTER).queries.find((q) => /seasonal/i.test(q));
-  assert.match(seasonal, /\("[^)]+ OR [^)]+ OR [^)]+\)/,
-    'the fish are not an OR group');
-  for (const late of ['Channel Catfish', 'Black Crappie', 'Redear']) {
-    assert.ok(!seasonal.includes(late), `${late} is past the cap and still in the query`);
+test('no fish name goes in the query text, because the provider will chase the fish', () => {
+  // Naming Bluegill returned Panfish on the Fly, a TikTok cook-and-eat, a lure build, a Reddit
+  // thread, an Instagram hashtag and Crispy Bluegill Tacos. None about the Congaree. A distinctive
+  // word does not narrow the search onto this water, it drags the search toward whatever that word
+  // is famous for.
+  for (const q of build(ROSTER).queries) {
+    assert.doesNotMatch(q, /bluegill|sunfish|crappie|perch|largemouth|striped|catfish/i,
+      `a species name is still in the query text: ${q}`);
+  }
+});
+
+test('the roster steers through purpose, which the provider ranks against', () => {
+  const { purpose, namedSpecies } = build(ROSTER);
+  for (const s of namedSpecies) {
+    assert.ok(purpose.includes(s), `${s} is in namedSpecies and not in the purpose`);
+  }
+  assert.match(purpose, /IN THIS RIVER/, 'the purpose does not tie the species to this water');
+  assert.match(purpose, /recipe/i, 'the purpose does not reject the cook-and-eat results');
+});
+
+test('a river with no roster gets a purpose with no species paragraph', () => {
+  const { purpose, namedSpecies } = build([]);
+  assert.deepEqual(namedSpecies, []);
+  assert.doesNotMatch(purpose, /THE SPECIES THIS RIVER HOLDS/);
+});
+
+test('no query word belongs to another trade', () => {
+  // `seams` took the structure query to coal mining, dressmaking and a Martin Fowler essay on
+  // mainframes -- "Coal seam gas", "How to Sew an Inseam Pocket with French Seams!", "Satin seam
+  // puckering ruins all my hard work : r/sewhelp", "Uncovering the Seams in Mainframes".
+  for (const q of build(ROSTER).queries) {
+    assert.doesNotMatch(q, /\bseams?\b/i, `a word that belongs to sewing and coal is in: ${q}`);
   }
 });
 
@@ -80,7 +105,7 @@ test('a river with no roster is asked about seasons without inventing a fish', (
 test('the structure query is untouched -- it was never the problem', () => {
   const qs = build(ROSTER).queries;
   assert.equal(qs.length, 3, 'the river set is no longer three queries');
-  assert.ok(qs.some((q) => /shoals ledges bends current seams holes/.test(q)),
+  assert.ok(qs.some((q) => /shoals ledges outside bends deep holes riprap/.test(q)),
     'the structure query was lost in the swap');
   assert.ok(qs.some((q) => /fishing report water level flow/.test(q)),
     'the current-conditions query was lost in the swap');
@@ -101,8 +126,10 @@ test('every river query is still anchored on the bare base name', () => {
 test('waterTypeSearch carries the roster through to the builder', () => {
   const typed = waterTypeSearch('river', 'fisheries', 'Congaree River', 'SC', ROSTER);
   assert.ok(typed, 'a river got no typed query set');
-  assert.ok(typed.queries.some((q) => q.includes('Striped Bass')),
-    'the roster reached waterTypeSearch and not the query');
+  assert.ok(typed.namedSpecies.includes('Striped Bass'),
+    'the roster reached waterTypeSearch and not the builder');
+  assert.ok(typed.purpose.includes('Striped Bass'),
+    'the roster reached the builder and not the provider');
 });
 
 test('waterTypeSearch called without a roster still returns a usable set', () => {

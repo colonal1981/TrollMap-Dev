@@ -951,9 +951,13 @@ const AGENT_TO_TAGS = {
     const typed = waterTypeSearch(waterType, agentKey, queryLake, state, predatorSpecies);
     const stateQueries = AGENT_DISCOVERY_QUERIES[agentKey][state];
     if (!typed && !stateQueries) continue;
+    // WHAT THE QUERY SAYS, NOT WHAT THE ROSTER SAYS. This logged `predatorSpecies.slice(0, 4)` for
+    // one run and printed "naming Largemouth Bass, Bluegill, Redear Sunfish (Shellcracker), White
+    // Perch" beside a query reading `("Largemouth Bass" OR "Bluegill" OR "Redear Sunfish")` -- a
+    // different count and a different spelling. `namedSpecies` is what the builder actually used.
     if (typed) queryLog.push(`[${agentKey}] ${waterType} query set (${typed.queries.length}) in place of the ${state} table`
-      + (predatorSpecies.length ? `, naming ${predatorSpecies.slice(0, 4).join(', ')}`
-                                : ', no species roster to name'));
+      + (typed.namedSpecies?.length ? `, naming ${typed.namedSpecies.join(', ')}`
+                                    : ', no species named'));
 
     const discoveryLakeNames = [queryLake];
     const queryCandidates = [];
@@ -1029,7 +1033,9 @@ const AGENT_TO_TAGS = {
           rawResults = tfResult.results || [];
           // WHICH PROVIDER ANSWERED goes in the query log. A run that quietly fell through to
           // the metered rungs used to look identical to one TinyFish answered for free.
-          queryLog.push(`[${agentKey}${domainType !== 'web' ? ':' + domainType : ''}${recencyMinutes ? ':' + recencyMinutes + 'm' : ''}] ${tfResult.provider || 'no provider'}: ${q.slice(0,80)} → ${rawResults.length} results`
+          // 160 and not 80: the seasonal query's OR-ed fish group is the part worth reading and it
+          // sits at the end, so a short truncation showed everything except what changed.
+          queryLog.push(`[${agentKey}${domainType !== 'web' ? ':' + domainType : ''}${recencyMinutes ? ':' + recencyMinutes + 'm' : ''}] ${tfResult.provider || 'no provider'}: ${q.slice(0,160)} → ${rawResults.length} results`
             + ((tfResult.skipped || []).length ? ` (skipped: ${tfResult.skipped.join('; ')})` : ''));
 
           // Fisheries current-report fallback: if < 3 results at 45d, retry at 180d
@@ -1049,7 +1055,10 @@ const AGENT_TO_TAGS = {
           continue;
         }
 
-        queryLog.push(`[${agentKey}] ${q.slice(0, 100)} → ${rawResults.length} results`);
+        // The line that used to sit here logged the query and its result count a SECOND time. The
+        // TinyFish branch above already did, with the provider attached, and its catch path
+        // `continue`s -- so this could only ever fire after that one and every run printed each
+        // query twice. Removed rather than made conditional: one event, one line.
 
         for (const r of rawResults) {
           const off = offLakePattern(r.title||'', r.url||'');
