@@ -358,6 +358,135 @@ def signed_offset(pts, i, x, y):
     return (-hy / h) * (x - pts[i][0]) + (hx / h) * (y - pts[i][1])
 
 
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+# Charted depth, from depth_areas.geojson.
+#
+# Ryan, 2026-09-16: "if i am dragging baits then i still need to know what the shallowest depth is
+# on the line so we can figure out baits... if it changes drastically then i would probably need
+# bait changes."
+#
+# THE SHALLOWEST IN THE SECTION IS NOT THE SHALLOWEST ON THE LINE, and measuring it the obvious way
+# says 1 ft at every station on the Congaree -- a cross-section runs bank to bank and the margin is
+# always in the 0-1 ft band. What he asked for is the minimum along the PATH, which depends on which
+# side he takes: on the Congaree the median depth is 3 ft a quarter of the way across, 5 ft
+# mid-channel and 9 ft on the deepest line. So the profile is stored ACROSS the section and the
+# minimum along a chosen line is the consumer's to take.
+#
+# TWO CONVENTIONS, ON PURPOSE, because the two numbers answer different questions. The profile
+# carries the SHALLOW EDGE of the charted band -- the depth a bait has to clear. The area carries
+# the band MIDPOINT, which is the better estimate of the volume the discharge is moving through.
+# Bands are one foot wide, so the two differ by at most a foot.
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+DEPTH_FRACTIONS = (0.0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1.0)
+
+
+class DepthIndex:
+    """Deepest charted band at a point, from the depth polygons of one pack."""
+
+    def __init__(self, path, cell=200.0):
+        self.cell = cell
+        self.rings = []          # (pts, shallow_edge_ft, midpoint_ft)
+        self.g = collections.defaultdict(list)
+        self.polygons = 0
+        if not os.path.exists(path):
+            return
+        with open(path, encoding='utf-8') as fh:
+            fc = json.load(fh)
+        for feat in fc.get('features') or []:
+            pr = feat.get('properties') or {}
+            lo, hi = pr.get('depth_min_ft'), pr.get('depth_max_ft')
+            if lo is None and hi is None:
+                continue
+            lo = float(lo if lo is not None else hi)
+            hi = float(hi if hi is not None else lo)
+            self.polygons += 1
+            for ring in rings_of(feat.get('geometry') or {}):
+                pts = [to_albers(q[0], q[1]) for q in ring]
+                if len(pts) < 3:
+                    continue
+                i = len(self.rings)
+                xs = [q[0] for q in pts]
+                ys = [q[1] for q in pts]
+                # The ring's own bbox, kept beside it: four comparisons reject most candidates a
+                # 200 m index cell hands over, before any ray cast. Without it the Congaree takes
+                # 25 s and a 15,000-polygon pack takes minutes.
+                self.rings.append((pts, lo, (lo + hi) / 2.0,
+                                   min(xs), max(xs), min(ys), max(ys)))
+                for gx in range(int(min(xs) // cell), int(max(xs) // cell) + 1):
+                    for gy in range(int(min(ys) // cell), int(max(ys) // cell) + 1):
+                        self.g[(gx, gy)].append(i)
+
+    def at(self, x, y):
+        """(shallow_edge_ft, midpoint_ft) of the DEEPEST band covering this point, or None."""
+        best = None
+        for i in self.g.get((int(x // self.cell), int(y // self.cell)), ()):
+            pts, lo, mid, x0, x1, y0, y1 = self.rings[i]
+            if x < x0 or x > x1 or y < y0 or y > y1:
+                continue
+            if best is not None and mid <= best[1]:
+                continue
+            c = False
+            n = len(pts)
+            j = n - 1
+            for k in range(n):
+                xi, yi = pts[k]
+                xj, yj = pts[j]
+                j = k
+                if (yi > y) != (yj > y) and x < (xj - xi) * (y - yi) / (yj - yi) + xi:
+                    c = not c
+            if c:
+                best = (lo, mid)
+        return best
+
+
+def cross_sections(pts, wid, depth, probe):
+    """Per station: cross-section area, the deepest charted line, coverage, and the profile.
+
+    ONE SWEEP, ONE ANSWER. The profile positions are read out of the same sweep that measures the
+    area rather than re-queried afterwards -- two passes over the same section is two chances to
+    disagree about the same water, which is the defect this project keeps finding.
+    """
+    n = len(pts)
+    area = [None] * n
+    deepest = [None] * n
+    charted = [None] * n
+    profile = [None] * n
+    if not depth.rings:
+        return area, deepest, charted, profile
+    for i in range(n):
+        w = wid[i]
+        if not w:
+            continue
+        a = pts[max(i - 1, 0)]
+        b = pts[min(i + 1, n - 1)]
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        h = math.hypot(dx, dy)
+        if h == 0:
+            continue
+        px, py = -dy / h, dx / h
+        half = w / 2.0
+        samples = []                       # (offset from the left bank, shallow_edge, midpoint)
+        k = -half
+        while k <= half:
+            samples.append((k + half, depth.at(pts[i][0] + px * k, pts[i][1] + py * k)))
+            k += probe
+        if not samples:
+            continue
+        hits = [(off, v) for off, v in samples if v is not None]
+        charted[i] = round(len(hits) / len(samples), 3)
+        if not hits:
+            continue
+        area[i] = round(sum(v[1] * 0.3048 * probe for _off, v in hits), 1)
+        deepest[i] = max(v[0] for _off, v in hits)
+        prof = []
+        for fr in DEPTH_FRACTIONS:
+            want = fr * w
+            off, v = min(samples, key=lambda s: abs(s[0] - want))
+            prof.append(v[0] if v else None)
+        profile[i] = prof
+    return area, deepest, charted, profile
+
+
 class StationIndex:
     """Grid index over the resampled stations, so 22,940 features do not each scan 3,800 points."""
 
@@ -486,6 +615,13 @@ def build_one(row, a, db, stamp):
     brg = bearings(pts)
     wid = widths(pts, mask, a.max_width_m, a.probe)
 
+    if a.no_depth:
+        depth = DepthIndex(os.devnull)
+    else:
+        depth = DepthIndex(os.path.join(pack, 'depth_areas.geojson'), a.depth_cell)
+    xarea, xdeep, xchart, xprof = cross_sections(pts, wid, depth, a.probe)
+    rep['depth_polygons'] = depth.polygons
+
     good_w = sorted(w for w in wid if w is not None)
     rep.update({
         'mainstem_id': main_id,
@@ -499,6 +635,15 @@ def build_one(row, a, db, stamp):
         'width_m': {'n': len(good_w), 'p10': pct(good_w, .10), 'p50': pct(good_w, .50),
                     'p90': pct(good_w, .90)},
     })
+    good_a = sorted(v for v in xarea if v is not None)
+    good_d = sorted(v for v in xdeep if v is not None)
+    rep['section'] = {
+        'stations_with_depth': len(good_a),
+        'area_m2': {'p10': pct(good_a, .10), 'p50': pct(good_a, .50), 'p90': pct(good_a, .90)},
+        'deepest_line_ft': {'p10': pct(good_d, .10), 'p50': pct(good_d, .50),
+                            'max': (good_d[-1] if good_d else None)},
+    }
+
     good_r = sorted(r for r in rad if r is not None)
     rep['radius_m'] = {'n': len(good_r), 'p10': pct(good_r, .10), 'p25': pct(good_r, .25),
                        'p50': pct(good_r, .50), 'p75': pct(good_r, .75)}
@@ -579,6 +724,13 @@ def build_one(row, a, db, stamp):
                   'bearing_deg is a compass bearing of flow; radius_m is unsigned curvature over a '
                   '%d m window and is null where the reach is straight; width_m is the channel '
                   'width from perpendicular rays and is null where a ray ran past --max-width-m. '
+                  'area_m2 is the charted cross-section, summed from the MIDPOINT of each depth '
+                  'band, and is what a discharge divides by to give a velocity. depth_profile_ft '
+                  'carries the SHALLOW EDGE of the band at each of profile_fractions across the '
+                  'section -- the depth a dragged bait has to clear -- and deepest_line_ft is that '
+                  'same shallow edge on the deepest line found. charted_frac is the share of the '
+                  'section that had any charted depth at all: where it is low the depth is UNKNOWN '
+                  'and not shallow, and a station with none carries nulls rather than a number. '
                   'Arrays are parallel to the LineString coordinates. No threshold is applied here.'
                   % a.window),
         'features': [{
@@ -593,6 +745,11 @@ def build_one(row, a, db, stamp):
                 'bearing_deg': [round(b, 1) for b in brg],
                 'radius_m': [round(r, 1) if r is not None else None for r in rad],
                 'width_m': wid,
+                'area_m2': xarea,
+                'deepest_line_ft': xdeep,
+                'charted_frac': xchart,
+                'profile_fractions': list(DEPTH_FRACTIONS),
+                'depth_profile_ft': xprof,
                 'tributaries': trib_list,
             },
         }],
@@ -614,7 +771,13 @@ def main():
                     help='curvature window in metres (default 400). The outside/inside split was '
                          'measured as insensitive to this between 400 and 1000.')
     ap.add_argument('--mask-cell', type=float, default=10.0, help='inside-test row height in metres (default 10)')
-    ap.add_argument('--probe', type=float, default=5.0, help='width ray step in metres (default 5)')
+    ap.add_argument('--probe', type=float, default=5.0,
+                    help='width ray step in metres, also the cross-section sample spacing (default 5)')
+    ap.add_argument('--depth-cell', type=float, default=200.0,
+                    help='depth-polygon index cell in metres (default 200)')
+    ap.add_argument('--no-depth', action='store_true',
+                    help='skip the cross-section entirely. Faster, and the centreline then carries '
+                         'no area, no depth profile and no coverage.')
     ap.add_argument('--max-width-m', type=float, default=3000.0, help='give up on a width ray past this (default 3000)')
     ap.add_argument('--trib-m', type=float, default=120.0, help='a tributary mouth is this close to the centreline (default 120)')
     ap.add_argument('--min-chain-m', type=float, default=1000.0, help='skip a water whose longest chain is shorter (default 1000)')
@@ -677,6 +840,12 @@ def main():
                   'radius p10/p50 %s/%s m'
                   % (n, len(riv), row['slug'], rep['chain_km'], rep['stations'],
                      w['p10'], w['p50'], w['p90'], r['p10'], r['p50']))
+            sec = rep['section']
+            print('           section %d/%d charted   area p10/p50/p90 %s/%s/%s m2   deepest line '
+                  'p50/max %s/%s ft'
+                  % (sec['stations_with_depth'], rep['stations'], sec['area_m2']['p10'],
+                     sec['area_m2']['p50'], sec['area_m2']['p90'],
+                     sec['deepest_line_ft']['p50'], sec['deepest_line_ft']['max']))
             print('           stamped %s   tributary mouths %d   snap cap %s m   %.1fs'
                   % (', '.join('%s %d' % (k, v) for k, v in sorted(st.items())),
                      rep['tributary_mouths'], rep['snap_cap_m'], rep['seconds']))

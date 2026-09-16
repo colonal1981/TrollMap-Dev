@@ -204,5 +204,93 @@ class RepresentativePoint(unittest.TestCase):
         self.assertEqual(ll, (-80.0, 33.0))
 
 
+class DepthAndSection(unittest.TestCase):
+    """The cross-section, and the one thing that must never be reported as a number.
+
+    Ryan needs the shallowest depth on the line he travels. Measured across the whole section the
+    answer is always the bank, so the profile is stored across the section and the minimum along a
+    chosen line is the consumer's. And on the Congaree roughly a tenth of stations have no charted
+    depth at all -- those are UNKNOWN, not shallow, and writing a number there would be the same
+    defect as pack-facts.js printing "0 ft relief" from a null.
+    """
+
+    def setUp(self):
+        import json as _json
+        import tempfile
+        self.tmp = tempfile.mkdtemp()
+        # Charted water 120 m wide centred on x=0: 0-1 ft margins and a 9-10 ft channel through the
+        # middle 60 m. The sections tested below are 100 m, so every sample lands STRICTLY inside
+        # the charted water -- a sample sitting exactly on a polygon edge is ambiguous to any
+        # point-in-polygon test, and a fixture that puts one there is testing the tie, not the code.
+        # Built in Albers metres and written out as lon/lat, the way a pack is.
+        def band(x0, x1, lo, hi):
+            ring = [(x0, -500.0), (x1, -500.0), (x1, 500.0), (x0, 500.0), (x0, -500.0)]
+            return {'type': 'Feature',
+                    'properties': {'depth_min_ft': lo, 'depth_max_ft': hi},
+                    'geometry': {'type': 'Polygon',
+                                 'coordinates': [[list(B.to_lonlat(x + 1400000.0, y + 1300000.0))
+                                                  for x, y in ring]]}}
+        fc = {'type': 'FeatureCollection',
+              'features': [band(-60.0, -30.0, 0, 1), band(30.0, 60.0, 0, 1),
+                           band(-30.0, 30.0, 9, 10)]}
+        self.path = os.path.join(self.tmp, 'depth_areas.geojson')
+        with open(self.path, 'w') as fh:
+            _json.dump(fc, fh)
+        self.idx = B.DepthIndex(self.path, 200.0)
+        self.centre = B.to_albers(*B.to_lonlat(1400000.0, 1300000.0))
+
+    def _station(self, dx=0.0):
+        cx, cy = self.centre
+        return [(cx + dx, cy - 100.0), (cx + dx, cy), (cx + dx, cy + 100.0)]
+
+    def test_it_loaded_the_bands(self):
+        self.assertEqual(self.idx.polygons, 3)
+
+    def test_deepest_band_wins_and_outside_is_none(self):
+        cx, cy = self.centre
+        self.assertEqual(self.idx.at(cx, cy)[0], 9)          # shallow edge of the 9-10 band
+        self.assertEqual(self.idx.at(cx - 40.0, cy)[0], 0)   # the margin band
+        self.assertIsNone(self.idx.at(cx - 400.0, cy))       # off the charted water
+
+    def test_area_and_deepest_line(self):
+        pts = self._station()
+        area, deep, chart, prof = B.cross_sections(pts, [100.0] * 3, self.idx, 5.0)
+        i = 1
+        self.assertEqual(deep[i], 9)
+        self.assertAlmostEqual(chart[i], 1.0, places=2)
+        # 60 m of 9.5 ft and 40 m of 0.5 ft, in metres, summed on 5 m samples
+        self.assertGreater(area[i], 150.0)
+        self.assertLess(area[i], 200.0)
+
+    def test_the_profile_is_the_shallow_edge_across_the_section(self):
+        pts = self._station()
+        _a, _d, _c, prof = B.cross_sections(pts, [100.0] * 3, self.idx, 5.0)
+        p = prof[1]
+        self.assertEqual(len(p), len(B.DEPTH_FRACTIONS))
+        self.assertEqual(p[0], 0)                 # left bank, the margin band
+        self.assertEqual(p[len(p) // 2], 9)       # mid-channel, the SHALLOW edge, not 9.5 or 10
+        self.assertEqual(p[-1], 0)                # right bank
+
+    def test_uncharted_water_is_null_and_never_a_number(self):
+        pts = self._station(dx=5000.0)            # a station nowhere near any depth polygon
+        area, deep, chart, prof = B.cross_sections(pts, [100.0] * 3, self.idx, 5.0)
+        i = 1
+        self.assertEqual(chart[i], 0.0)
+        self.assertIsNone(area[i])
+        self.assertIsNone(deep[i])
+        self.assertIsNone(prof[i])
+
+    def test_partial_coverage_is_reported_as_partial(self):
+        pts = self._station(dx=70.0)              # part of the section hangs off the charted water
+        _a, _d, chart, _p = B.cross_sections(pts, [100.0] * 3, self.idx, 5.0)
+        self.assertGreater(chart[1], 0.0)
+        self.assertLess(chart[1], 1.0)
+
+    def test_no_depth_file_means_nulls_not_a_crash(self):
+        empty = B.DepthIndex(os.path.join(self.tmp, 'does_not_exist.geojson'))
+        area, deep, chart, prof = B.cross_sections(self._station(), [100.0] * 3, empty, 5.0)
+        self.assertEqual((area[1], deep[1], chart[1], prof[1]), (None, None, None, None))
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
