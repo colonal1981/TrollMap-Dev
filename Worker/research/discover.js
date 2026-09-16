@@ -95,6 +95,81 @@ function siteFilter(domains) {
   return `(${list.map((d) => `site:${d}`).join(' OR ')})`;
 }
 
+// ── WHERE WE LOOK, AND WHAT WE REFUSE ───────────────────────────────────────────────────────
+//
+// Module scope, because these have to be exported to be tested and because a copy inside the
+// handler is a copy nothing else can see -- the same reason line 55 gives for
+// STATE_FISH_AGENCY_DOMAINS.
+//
+// EXCLUSIONS ARE EMPTY, AND THE MECHANISM IS KEPT. This list held facebook, instagram, youtube,
+// tiktok and reddit for about an hour on 2026-09-16, on my reasoning that they had only ever cost
+// us a result slot. Ryan, who fishes these waters: *"i argue that your exclusion domains are the
+// exact ones we should be including... guides post on all of those with actual information...
+// this isn't a peer reviewed research paper... it is fishing and there are no 'official' sources
+// on how to fish."* Then the measurement: tinyfishFetch pulled the full description off
+// https://www.youtube.com/watch?v=X5fd8JYaU2o in 29 seconds, free, and it reads "In the early
+// summer, Striped Bass run up the Santee Cooper lakes and all the way up the Congaree river to
+// Columbia, SC" -- the best seasonal fact this pipeline has for that river.
+//
+// Excluding a domain was the wrong instrument regardless: it cannot tell a video about this river
+// from a video about a bluegill, and that is exactly the call resultNamesWater() now makes per
+// result. A domain goes back in here only on a measurement that it is worthless for every water,
+// which is a far higher bar than "it produced junk on one query that had drifted".
+//
+// AND TWO PARAMETERS TOGETHER BREAK THE FIRST. Ryan ran the press query in TinyFish's playground
+// and got nothing but YouTube until he cleared the exclusions: `include_domains` and
+// `exclude_domains` in the same call break the include. The press branch deletes the exclusions,
+// which was luck dressed as logic -- I dropped them because sending both is contradictory, not
+// because I knew it breaks.
+const SEARCH_EXCLUDE_DOMAINS = [];
+
+// ── THE OUTDOOR PRESS, WHICH WE RECOGNISED AND NEVER ASKED FOR ──────────────────────────────
+//
+// The authority ladder in this file carried both halves of this as one regex, and used it only to
+// LABEL a result that happened to arrive: `authority = 'Fishing Guide'`. So the pipeline has always
+// known carolinasportsman.com is fishing writing. It had never once requested it.
+//
+// What that cost: Ryan pointed a TinyFish agent at that domain and asked for Congaree fishing
+// facts, and got catalpa worms as the primary bait, a 3/4-to-1-ounce sinker chosen by current,
+// tying to snags and willows rather than anchoring, "seldom fish the middle of the river", outside
+// bends where the water is deeper, and inside bends with willow-lined sandbars. Three hours of our
+// keyword searches returned the river's elevation and a national park's acreage. The difference was
+// not the extractor and not the query -- it was being told where to look.
+//
+// SPLIT IN TWO, BECAUSE ONE LIST CONFLATED TWO TRADES. visitnc, scprt, southcarolinaparks,
+// visitlakelanier and visitfloridakeys write about VISITING a water -- the same kind of source that
+// gave us 15,000 acres of wilderness and a bald eagle. They keep their label, since a tourism page
+// beats an unknown one, but they are not who we go asking.
+const ANGLING_PRESS_DOMAINS = [
+  // Already recognised here as fishing writing.
+  'carolinasportsman.com', 'anglersheadquarters.com', 'gameandfishmag.com', 'takemefishing.org',
+  'santeecoopercountry.com',
+  // Added on measurement, not taste. Ryan's press-scoped playground run returned ten results, all
+  // real fishing writing about this river: deeper holes on the lower end, bait moving to the upper
+  // reaches in winter with the stripers following, stripers pulled into the Saluda by cold water
+  // off Lake Murray's depths, the confluence as a spring striper spot.
+  'columbiametro.com', 'fishbrain.com', 'onwaterapp.com', 'guidesly.com',
+];
+
+const TOURISM_DOMAINS = ['visitlakelanier.com', 'lakelanier.com', 'visitfloridakeys.com',
+                         'visitnc.com', 'scprt.com', 'southcarolinaparks.com',
+                         'lakemartinvoice.com'];
+
+/**
+ * Does a search RESULT name the water -- title, snippet or url.
+ *
+ * This is the whole of the behaviour change that replaced two categorical domain bans, so it is the
+ * thing worth pinning: "Non-Stop! Small mouth & Striped bass fishing Congaree River Columbia SC."
+ * passes, "Bluegill Gets DEVOURED!!!" does not, and neither verdict depends on the platform.
+ *
+ * An empty base name returns false -- with nothing to match on, the old categorical ban is all
+ * there is, and waving everything through would be worse.
+ */
+function resultNamesWater(title, url, snippet, baseLower) {
+  if (!baseLower) return false;
+  return `${title || ''} ${snippet || ''} ${url || ''}`.toLowerCase().includes(baseLower);
+}
+
 async function handleResearchDiscover(request, env) {
   let body;
   try { body = await request.json(); } catch { body = {}; }
@@ -149,8 +224,12 @@ async function handleResearchDiscover(request, env) {
   // a worse phrase than "Wateree Lake". This keeps the name a person would type.
   const queryLake = stripLakeQualifiers(lakeName) || lakeName.trim();
 
-  const offLakePattern = (title, url) => {
+  const offLakePattern = (title, url, snippet = '') => {
     const combined = `${title} ${url}`.toLowerCase();
+    // Kept separate from `combined` on purpose: every rule above was written against title-and-url
+    // and folding a snippet into it would quietly change all of them across 355 waters. This one
+    // boolean is used only by the two domain bans below, which is the whole behaviour change.
+    const namesWater = resultNamesWater(title, url, snippet, baseLower);
     const nepisIdMatch = url.match(/\/([A-Z0-9]{6,12})\.txt/i);
     if (nepisIdMatch && KNOWN_BAD_NEPIS_IDS.has(nepisIdMatch[1].toUpperCase())) return 'known_bad_nepis_doc';
     if (/wetlands.management|wma.wetlands|wildlife.management.area|hunting.*pdf|upland.*habitat|prescribed.burn|waterfowl.impound/i.test(combined)) return 'irrelevant_doc_type';
@@ -165,10 +244,32 @@ async function handleResearchDiscover(request, env) {
     // County/township boundary articles — "Marion and Lake County line", "Marion County line", etc.
     // These match lake base names that are also common county names (Marion, Norman, etc.)
     if (/county\s+line|township\s+line|\bcounty\b.*\bline\b/i.test(title) && !/lake\s+marion|marion\s+lake|lake\s+norman|norman\s+lake/i.test(title)) return 'county_boundary_article';
-    // Social media and video platforms — never fetchable, never useful as evidence
-    if (/facebook\.com|youtube\.com|instagram\.com|tiktok\.com|twitter\.com|x\.com\/(?!ai)|pinterest\.com/i.test(url)) return 'social_media';
-    // Fishing forums — usable content rate is near zero, TinyFish can't fetch them anyway
-    if (/stripersonline\.com|bassresource\.com|carolinasportsman\.com\/forums|fishingnc\.com\/forum|fishingsc\.com\/forum|theoutdoorstrader\.com|scstriperfishing|bassfishingforum|iceshanty\.com|fishingcommunity|thefishingwebsite|southernfishingnews\.com\/forum|fishingtalkforums|angler\.com\/forum|reddit\.com/i.test(url)) return 'fishing_forum';
+    // ── A PLATFORM IS NOT A VERDICT. THE NAME IS. ────────────────────────────────────────────
+    //
+    // These two rules used to ban the domain outright, on two stated grounds that are both wrong.
+    //
+    // "never fetchable" / "TinyFish can't fetch them anyway" -- MEASURED FALSE, 2026-09-16.
+    // tinyfishFetch on https://www.youtube.com/watch?v=X5fd8JYaU2o returned the title, the view
+    // count, the date and the full description in 29 seconds, free. The description reads: "In the
+    // early summer, Striped Bass run up the Santee Cooper lakes and all the way up the Congaree
+    // river to Columbia, SC... In our half day on the water we caught, small mouthed bass, striped
+    // bass, channel catfish, and bowfin!" That is the best seasonal fact this pipeline has seen for
+    // that river, and it sat behind a categorical ban.
+    //
+    // "usable content rate is near zero" -- Ryan, who fishes these waters: *"i argue that your
+    // exclusion domains are the exact ones we should be including... guides post on all of those
+    // with actual information... this isn't a peer reviewed research paper... it is fishing and
+    // there are no 'official' sources on how to fish."* He is right, and the authority ladder in
+    // this file ranks a tourism page above a guide with twenty years on the water.
+    //
+    // The junk was real -- Bluegill tacos, a TikTok cook-and-eat, an Instagram hashtag -- but it
+    // arrived on a query that had DRIFTED off the river, not because the platform is worthless.
+    // Every one of those fails `namesWater`; the striper video passes it. So the test is whether
+    // the result names this water, applied before we pay to fetch, and the domain is no longer a
+    // verdict on its own. `carolinasportsman.com/forums` was in the second list while the magazine
+    // is now in the press include list -- one domain, two opposite rulings.
+    if (!namesWater && /facebook\.com|youtube\.com|instagram\.com|tiktok\.com|twitter\.com|x\.com\/(?!ai)|pinterest\.com/i.test(url)) return 'social_media_unnamed';
+    if (!namesWater && /stripersonline\.com|bassresource\.com|carolinasportsman\.com\/forums|fishingnc\.com\/forum|fishingsc\.com\/forum|theoutdoorstrader\.com|scstriperfishing|bassfishingforum|iceshanty\.com|fishingcommunity|thefishingwebsite|southernfishingnews\.com\/forum|fishingtalkforums|angler\.com\/forum|reddit\.com/i.test(url)) return 'fishing_forum_unnamed';
     // Review/booking/aggregator sites — no fishing intelligence value
     if (/yelp\.com|tripadvisor\.com|fishingbooker\.com|getmyboat\.com|viator\.com|expedia\.com|booking\.com/i.test(url)) return 'review_booking_site';
     return null;
@@ -536,42 +637,10 @@ const AGENT_DISCOVERY_QUERIES = {
 
 // Coastal zones use the marine agent set. Freshwater lakes never reach these
 // because the plan is only consulted for coast_* keys.
-// Passed to every discovery search as a PARAMETER. See the note at the tfParams that carries it
-// for why the `-site:` operator in the query text was never doing this job.
-const SEARCH_EXCLUDE_DOMAINS = ['facebook.com', 'instagram.com', 'youtube.com', 'tiktok.com',
-                               'reddit.com'];
-
-// ── THE OUTDOOR PRESS, WHICH WE RECOGNISED AND NEVER ASKED FOR ──────────────────────────────
-//
-// One regex below used to carry both halves of this and served only to LABEL a result that
-// happened to arrive: `authority = 'Fishing Guide'`. So the pipeline has always known that
-// carolinasportsman.com is fishing writing. It has never once requested it.
-//
-// What that cost, 2026-09-16. Ryan pointed a TinyFish agent at carolinasportsman.com and asked
-// for Congaree fishing facts, and got catalpa worms as the primary bait, a 3/4-to-1-ounce sinker
-// chosen by current, tying to snags and willows instead of anchoring, "seldom fish the middle of
-// the river", outside bends where the water is deeper, and inside bends with willow-lined
-// sandbars. Three hours of our keyword searches returned the river's elevation and the national
-// park's acreage. The difference was not the extractor and not the query -- it was being told
-// where to look.
-//
-// SPLIT IN TWO, BECAUSE THE OLD LIST CONFLATED TWO TRADES. `visitnc`, `scprt`,
-// `southcarolinaparks`, `visitlakelanier` and `visitfloridakeys` write about VISITING a water.
-// They are the same kind of source that gave us 15,000 acres of wilderness and a bald eagle.
-// They keep their label -- a tourism page is still better than an unknown one -- but they are not
-// what we go asking for.
-const ANGLING_PRESS_DOMAINS = [
-  // Already recognised here as fishing writing.
-  'carolinasportsman.com', 'anglersheadquarters.com', 'gameandfishmag.com', 'takemefishing.org',
-  'santeecoopercountry.com',
-  // Added on measurement, not taste: every one of these was returned by a plain hand search for
-  // Congaree fishing facts and carried real content -- species, seasons, water level, technique.
-  'columbiametro.com', 'fishbrain.com', 'onwaterapp.com', 'guidesly.com',
-];
-
-const TOURISM_DOMAINS = ['visitlakelanier.com', 'lakelanier.com', 'visitfloridakeys.com',
-                         'visitnc.com', 'scprt.com', 'southcarolinaparks.com',
-                         'lakemartinvoice.com'];
+// SEARCH_EXCLUDE_DOMAINS, ANGLING_PRESS_DOMAINS, TOURISM_DOMAINS and resultNamesWater() are at
+// MODULE scope, above handleResearchDiscover, with the notes that explain them. They spent an hour
+// here first and could not be exported or tested, because everything in this block is a local of
+// the handler -- which is the same lesson line 55 records about STATE_FISH_AGENCY_DOMAINS.
 
 const COASTAL_AGENT_KEYS = new Set(['estuary', 'tidal', 'saltwater_regulations']);
 
@@ -1129,13 +1198,15 @@ const AGENT_TO_TAGS = {
         // query twice. Removed rather than made conditional: one event, one line.
 
         for (const r of rawResults) {
-          const off = offLakePattern(r.title||'', r.url||'');
+          // The snippet is read BEFORE the gate now, not after it. A video or a forum thread is
+          // judged on whether it names this water, and the description is where it says so --
+          // the YouTube title that carried the Congaree striper run says it in both, but a guide's
+          // page often names the water only in the snippet.
+          const snippet = r.snippet || r.description || r.summary || '';
+          const off = offLakePattern(r.title||'', r.url||'', snippet);
           if (off) { queryLog.push(`  ✗ off-lake (${off}): ${(r.title||r.url).slice(0,80)}`); continue; }
 
           const { canonicalUrl, urlAliases, sourceRevision } = canonicalizeUrl(r.url || '');
-
-          // Pre-fetch relevance score — using preserved snippet from TinyFish result
-          const snippet = r.snippet || r.description || r.summary || '';
           const candidate = {
             title: (r.title || `${queryLake} - Web`).replace(/\s+/g,' ').trim().slice(0,180),
             url: r.url,
@@ -1253,3 +1324,4 @@ const AGENT_TO_TAGS = {
 
 export { STATE_FISH_AGENCY_DOMAINS, STATE_ENVIRONMENT_DOMAINS, siteFilter };
 export { handleResearchDiscover, authorityForUrl };
+export { resultNamesWater, ANGLING_PRESS_DOMAINS, TOURISM_DOMAINS, SEARCH_EXCLUDE_DOMAINS };
