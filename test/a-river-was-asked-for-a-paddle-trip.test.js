@@ -36,8 +36,11 @@ test('no river query asks for a paddle trip any more', () => {
 
 test('a river is asked about seasons, which is what the registry cannot answer', () => {
   const qs = build(ROSTER).queries;
-  assert.ok(qs.some((q) => /seasonal patterns/i.test(q) && /spring/i.test(q)),
-    'no river query asks when');
+  assert.ok(qs.some((q) => /seasonal patterns/i.test(q)), 'no river query asks when');
+  // `spring summer fall` came out of the query text with the other loose keywords. The calendar
+  // question lives in the purpose, which is ranked against rather than matched.
+  assert.match(build(ROSTER).purpose, /which months each species runs/i,
+    'nothing asks the provider for the calendar');
 });
 
 test('the water\'s own fish reach the provider, not a typed-in three', () => {
@@ -109,6 +112,24 @@ test('a river with no roster is asked about seasons without inventing a fish', (
   assert.ok(seasonal, 'the seasonal query vanished when the roster was empty');
   assert.doesNotMatch(seasonal, /bass|catfish|crappie|trout|perch|bream/i,
     'a river with no species list was told which fish it holds');
+});
+
+test('exactly one query is scoped to the outdoor press, and it is the seasonal one', () => {
+  // Ryan pointed an agent at carolinasportsman.com and got catalpa worms, a 3/4-to-1oz sinker
+  // chosen by current, tying to snags instead of anchoring, and "seldom fish the middle of the
+  // river". Our keyword searches returned the river's elevation. The pipeline had always
+  // recognised that domain as fishing writing and had never asked it anything.
+  const { queries, pressScoped } = build(ROSTER);
+  assert.equal(pressScoped.length, queries.length, 'pressScoped is not index-aligned with queries');
+  assert.deepEqual(pressScoped, [false, false, true]);
+  assert.match(queries[pressScoped.indexOf(true)], /seasonal patterns/i,
+    'the press scope landed on the wrong query');
+});
+
+test('a press-scoped query names no domain itself -- discover.js owns the list', () => {
+  for (const q of build(ROSTER).queries) {
+    assert.doesNotMatch(q, /\.com|\.org|\.gov/i, `a domain is hardcoded into a query: ${q}`);
+  }
 });
 
 test('the structure query is untouched -- it was never the problem', () => {

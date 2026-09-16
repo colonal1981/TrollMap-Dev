@@ -257,8 +257,15 @@ const WATER_TYPE_SEARCH = {
         // `seams` is out. It carried this query to coal mining, dressmaking and a Martin Fowler
         // essay on mainframes. Every word here now has to be one that only a river page uses.
         `"${name}" fishing shoals ledges outside bends deep holes riprap`,
-        `"${name}" river fishing seasonal patterns spring summer fall`,
+        // QUERY 2 ASKS THE OUTDOOR PRESS AND NOBODY ELSE. `pressScoped` below tells discover.js
+        // to put `include_domains` on this one, which RESTRICTS rather than prefers -- so the
+        // seasonal keywords that drifted to Bluegill tacos on the open web cannot drift here,
+        // because the domain set is closed. Same question, a channel that holds.
+        `"${name}" fishing seasonal patterns bait depth technique`,
       ],
+      // Index-aligned with `queries`, the way _domainTypes and _fisheries_recency already are.
+      // discover.js owns which domains count as the press; this only says which query wants them.
+      pressScoped: [false, false, true],
       };
     },
   },

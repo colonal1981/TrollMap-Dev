@@ -541,6 +541,38 @@ const AGENT_DISCOVERY_QUERIES = {
 const SEARCH_EXCLUDE_DOMAINS = ['facebook.com', 'instagram.com', 'youtube.com', 'tiktok.com',
                                'reddit.com'];
 
+// ── THE OUTDOOR PRESS, WHICH WE RECOGNISED AND NEVER ASKED FOR ──────────────────────────────
+//
+// One regex below used to carry both halves of this and served only to LABEL a result that
+// happened to arrive: `authority = 'Fishing Guide'`. So the pipeline has always known that
+// carolinasportsman.com is fishing writing. It has never once requested it.
+//
+// What that cost, 2026-09-16. Ryan pointed a TinyFish agent at carolinasportsman.com and asked
+// for Congaree fishing facts, and got catalpa worms as the primary bait, a 3/4-to-1-ounce sinker
+// chosen by current, tying to snags and willows instead of anchoring, "seldom fish the middle of
+// the river", outside bends where the water is deeper, and inside bends with willow-lined
+// sandbars. Three hours of our keyword searches returned the river's elevation and the national
+// park's acreage. The difference was not the extractor and not the query -- it was being told
+// where to look.
+//
+// SPLIT IN TWO, BECAUSE THE OLD LIST CONFLATED TWO TRADES. `visitnc`, `scprt`,
+// `southcarolinaparks`, `visitlakelanier` and `visitfloridakeys` write about VISITING a water.
+// They are the same kind of source that gave us 15,000 acres of wilderness and a bald eagle.
+// They keep their label -- a tourism page is still better than an unknown one -- but they are not
+// what we go asking for.
+const ANGLING_PRESS_DOMAINS = [
+  // Already recognised here as fishing writing.
+  'carolinasportsman.com', 'anglersheadquarters.com', 'gameandfishmag.com', 'takemefishing.org',
+  'santeecoopercountry.com',
+  // Added on measurement, not taste: every one of these was returned by a plain hand search for
+  // Congaree fishing facts and carried real content -- species, seasons, water level, technique.
+  'columbiametro.com', 'fishbrain.com', 'onwaterapp.com', 'guidesly.com',
+];
+
+const TOURISM_DOMAINS = ['visitlakelanier.com', 'lakelanier.com', 'visitfloridakeys.com',
+                         'visitnc.com', 'scprt.com', 'southcarolinaparks.com',
+                         'lakemartinvoice.com'];
+
 const COASTAL_AGENT_KEYS = new Set(['estuary', 'tidal', 'saltwater_regulations']);
 
 const AGENT_TO_TAGS = {
@@ -1052,6 +1084,18 @@ const AGENT_TO_TAGS = {
             // about forums. A domain that has only ever cost us a result slot loses the slot.
             exclude_domains: SEARCH_EXCLUDE_DOMAINS,
           };
+          // A PRESS-SCOPED QUERY ASKS THE OUTDOOR WRITERS AND NOBODY ELSE.
+          //
+          // `include_domains` restricts rather than prefers, which is the point: this query cannot
+          // drift, because the domain set is closed. It is how Ryan got in one hand-run agent call
+          // what three hours of keyword tuning did not -- carolinasportsman.com knows the Congaree
+          // and was never asked. The typed query set flags WHICH of its queries wants this;
+          // discover.js owns the list, so there is one copy of it.
+          if (typed?.pressScoped?.[qIndex]) {
+            tfParams.include_domains = ANGLING_PRESS_DOMAINS;
+            // Excluding while including is contradictory and the press list holds none of them.
+            delete tfParams.exclude_domains;
+          }
           if (recencyMinutes) tfParams.recency_minutes = recencyMinutes;
           const tfResult = await searchWeb(tfParams, env);
           rawResults = tfResult.results || [];
@@ -1059,7 +1103,7 @@ const AGENT_TO_TAGS = {
           // the metered rungs used to look identical to one TinyFish answered for free.
           // 160 and not 80: the seasonal query's OR-ed fish group is the part worth reading and it
           // sits at the end, so a short truncation showed everything except what changed.
-          queryLog.push(`[${agentKey}${domainType !== 'web' ? ':' + domainType : ''}${recencyMinutes ? ':' + recencyMinutes + 'm' : ''}] ${tfResult.provider || 'no provider'}: ${q.slice(0,160)} → ${rawResults.length} results`
+          queryLog.push(`[${agentKey}${domainType !== 'web' ? ':' + domainType : ''}${recencyMinutes ? ':' + recencyMinutes + 'm' : ''}${tfParams.include_domains ? ':press' : ''}] ${tfResult.provider || 'no provider'}: ${q.slice(0,160)} → ${rawResults.length} results`
             + ((tfResult.skipped || []).length ? ` (skipped: ${tfResult.skipped.join('; ')})` : ''));
 
           // Fisheries current-report fallback: if < 3 results at 45d, retry at 180d
@@ -1143,7 +1187,12 @@ const AGENT_TO_TAGS = {
             else if (/georgiawildlife\.com/.test(host)) authority = 'GADNR';
             else if (/tn\.gov/.test(host)) authority = 'TWRA';
             else if (/eregulations\.com/.test(host)) authority = dnrName;
-            else if (/carolinasportsman|anglersheadquarters|gameandfishmag|takemefishing|santeecoopercountry|lakemartinvoice|visitlakelanier|lakelanier|visitfloridakeys|visitnc|scprt|southcarolinaparks/.test(host)) authority = 'Fishing Guide';
+            // Built from the two lists rather than a third copy of them, so a domain added to the
+            // press list is asked for AND recognised by the one edit.
+            else if ([...ANGLING_PRESS_DOMAINS, ...TOURISM_DOMAINS]
+                       .some((d) => host === d || host.endsWith(`.${d}`)
+                                 || host === d.replace(/\.(com|org)$/, '')
+                                 || host.includes(d.replace(/\.(com|org)$/, '')))) authority = 'Fishing Guide';
             else if (/grokipedia\.com/.test(host)) authority = 'Grokipedia';
             else if (/tva\.com|tva\.gov/.test(host)) authority = 'TVA';
             else if (/osti\.gov/.test(host)) authority = 'Academic';
