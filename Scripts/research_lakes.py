@@ -652,6 +652,32 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
         out["facts"] = len(facts)
         prev = dict(profile)
         prev["_extractedFacts"] = facts
+
+        # THE FACTS ARE THE PAYLOAD, AND `prev` IS A COPY THAT NOTHING SAVES.
+        #
+        # `prev = dict(profile)` builds the agent's input. The object that reaches
+        # /research/save is `profile`, so setting the facts only on the copy computes them
+        # correctly and addresses them to nobody. Measured 2026-09-16: 72 of 79 stored
+        # profiles carry no facts at all, and the seven that do were written by
+        # lake-research-engine.js -- which has persisted them since it was written -- with
+        # carry_forward() keeping those seven alive rather than any batch refreshing them.
+        #
+        # This is not a debug field. plan-prompt.js:874, smart-plan-v2.js:230 and
+        # smart-plan-v2-wiring.js:270 all read `_extractedFacts` off the research profile to
+        # build the plan prompt. Every water this script researched has been handing SmartPlan
+        # nothing but registry floors.
+        #
+        # Empty never overwrites, for the reason carry_forward() gives: a run that extracted
+        # nothing has not established that there is nothing. And the COUNT is not set here --
+        # storage.js:292 derives it from the list, and a second writer for one number is how
+        # the two copies end up disagreeing.
+        if facts:
+            profile["_extractedFacts"] = facts
+
+        # `_normalizedDocuments` stays on the copy on purpose. The corpus already has its own
+        # store via /research/save-normalized, south_holston_tn carries 137 facts and no
+        # documents, and putting ten documents of full text into every profile would multiply
+        # what R2 holds for a second copy of something already saved.
         prev["_normalizedDocuments"] = [
             {"title": d.get("title"), "url": d.get("url"),
              "text": str(d.get("fullText") or d.get("text") or "")[:LLM_DOC_CHARS]}
