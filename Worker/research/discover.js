@@ -536,6 +536,11 @@ const AGENT_DISCOVERY_QUERIES = {
 
 // Coastal zones use the marine agent set. Freshwater lakes never reach these
 // because the plan is only consulted for coast_* keys.
+// Passed to every discovery search as a PARAMETER. See the note at the tfParams that carries it
+// for why the `-site:` operator in the query text was never doing this job.
+const SEARCH_EXCLUDE_DOMAINS = ['facebook.com', 'instagram.com', 'youtube.com', 'tiktok.com',
+                               'reddit.com'];
+
 const COASTAL_AGENT_KEYS = new Set(['estuary', 'tidal', 'saltwater_regulations']);
 
 const AGENT_TO_TAGS = {
@@ -1027,6 +1032,25 @@ const AGENT_TO_TAGS = {
             purpose: purposeStr,
             location: 'US',
             language: 'en',
+            // THE PARAMETER THAT WORKS, WHICH clients.js BUILT AND NOBODY PASSED.
+            //
+            // tinyfishSearch() has taken `exclude_domains` since it was written, and the comment
+            // beside it already says why it exists: TinyFish documents `site:`/`-site:` as
+            // DEPRECATED because the dedicated params "don't collide with other query syntax",
+            // and "ours collide constantly -- 52 of the 76 operator uses in discover.js sit next
+            // to a quoted phrase in the same string". It was measured, the plumbing was built,
+            // and no caller ever filled it.
+            //
+            // The cost of that, 2026-09-16: every river query carried
+            // `-site:youtube.com -site:facebook.com -site:instagram.com` and the results included
+            // a TikTok cook-and-eat, a Facebook page, an Instagram hashtag, two YouTube videos
+            // and two Reddit threads. The off-lake gate threw out all of it, having paid to
+            // fetch nothing, because the operator never reached the provider as a filter.
+            //
+            // Reddit is here on the same evidence -- r/sewhelp and "Who Would I Be Mailing This
+            // Poor Bluegill To?" both arrived and both were rejected -- and not on a judgment
+            // about forums. A domain that has only ever cost us a result slot loses the slot.
+            exclude_domains: SEARCH_EXCLUDE_DOMAINS,
           };
           if (recencyMinutes) tfParams.recency_minutes = recencyMinutes;
           const tfResult = await searchWeb(tfParams, env);

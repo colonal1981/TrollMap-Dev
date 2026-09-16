@@ -151,7 +151,12 @@ function waterTypeHint(waterType, agentKey) {
  * NOT KEYED ON STATE, DELIBERATELY. Nothing below is state-specific; a shoal is a shoal in four
  * states. `state` is passed only so the purpose can name it.
  */
-const NO_SOCIAL = '-site:facebook.com -site:instagram.com -site:youtube.com';
+// The river queries used to end in `-site:facebook.com -site:instagram.com -site:youtube.com`.
+// TinyFish documents those operators as DEPRECATED and they demonstrably do nothing -- every one of
+// those queries carried them and TikTok, Facebook, Instagram, YouTube and Reddit results came back.
+// discover.js now passes `exclude_domains` as a parameter instead, which is what clients.js built
+// the plumbing for, so the operator is gone from the query text: it was three dead terms competing
+// with the anchor for the provider's attention.
 
 /**
  * A ROSTER NAME IDENTIFIES A SPECIES RECORD; A QUERY TERM HAS TO MATCH DOCUMENT TEXT.
@@ -233,18 +238,36 @@ function searchableSpecies(list) {
 const WATER_TYPE_SEARCH = {
   river: {
     fisheries: (name, state, species = []) => {
-      const named = searchableSpecies(species);
-      const fish = named.length ? ` (${named.map((s) => `"${s}"`).join(' OR ')})` : '';
+      // TinyFish caps `purpose` at 2000 characters. Compose it, and if a long roster pushes it
+      // over, drop fish from the end until it fits -- rather than send a request the API documents
+      // as invalid. `namedSpecies` reports what SURVIVED, so the query log can never name a fish
+      // the provider was not told about. 18 species comes to about 1,530 characters, so this only
+      // fires on a roster far larger than any in the registry today.
+      let named = searchableSpecies(species);
+      let purpose = composeRiverPurpose(name, state, named);
+      while (named.length && purpose.length > PURPOSE_MAX_CHARS) {
+        named = named.slice(0, -1);
+        purpose = composeRiverPurpose(name, state, named);
+      }
       return {
       namedSpecies: named,
+      purpose,
       queries: [
-        `"${name}" fishing report water level flow ${NO_SOCIAL}`,
+        `"${name}" fishing report water level flow`,
         // `seams` is out. It carried this query to coal mining, dressmaking and a Martin Fowler
         // essay on mainframes. Every word here now has to be one that only a river page uses.
-        `"${name}" fishing shoals ledges outside bends deep holes riprap ${NO_SOCIAL}`,
-        `"${name}" river fishing seasonal patterns spring summer fall ${NO_SOCIAL}`,
+        `"${name}" fishing shoals ledges outside bends deep holes riprap`,
+        `"${name}" river fishing seasonal patterns spring summer fall`,
       ],
-      purpose: `Find seasonal and current fishing information for ${name}, which is a RIVER in `
+      };
+    },
+  },
+};
+
+const PURPOSE_MAX_CHARS = 2000;
+
+function composeRiverPurpose(name, state, named) {
+  return `Find seasonal and current fishing information for ${name}, which is a RIVER in `
         + `${state} -- moving water, not a reservoir. Prefer sources that say where fish hold in `
         + `relation to CURRENT: outside bends and their scour holes, shoals, ledges and rock `
         + `gardens, laydowns and root wads, current seams and eddy lines, the slack behind an `
@@ -252,20 +275,18 @@ const WATER_TYPE_SEARCH = {
         + `water-level facts that matter are flow in cfs and gauge stage, NOT pool elevation. `
         + `Float-trip and wade-fishing writeups that name individual shoals, bends and access `
         + `points are valuable even when informal. `
-        + (fish ? `THE SPECIES THIS RIVER HOLDS are ${named.join(', ')} -- a page is relevant only `
-                + `if it is about one of them IN THIS RIVER. A general species profile, a recipe, a `
-                + `lure build or a video about the fish somewhere else is not relevant no matter `
-                + `how well it matches the fish's name. ` : '')
+        + (named.length
+            ? `THE SPECIES THIS RIVER HOLDS are ${named.join(', ')} -- a page is relevant only `
+            + `if it is about one of them IN THIS RIVER. A general species profile, a recipe, a `
+            + `lure build or a video about the fish somewhere else is not relevant no matter `
+            + `how well it matches the fish's name. ` : '')
         + `ALSO WANTED: which months each species runs, `
         + `spawns, or feeds hardest in this river, and how high or low water changes that -- a `
         + `roster of species is already known and the timing is not. Reject reservoir and lake `
         + `content, pool levels and drawdown, thermocline and stratification studies, paddling `
         + `and float-trip itineraries that do not mention fish, park visitor information, and `
-        + `social media.`,
-      };
-    },
-  },
-};
+        + `social media.`;
+}
 
 /**
  * The queries and purpose for this water type and agent, or null -- so a caller that gets null

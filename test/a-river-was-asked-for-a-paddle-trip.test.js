@@ -86,6 +86,15 @@ test('a river with no roster gets a purpose with no species paragraph', () => {
   assert.doesNotMatch(purpose, /THE SPECIES THIS RIVER HOLDS/);
 });
 
+test('the dead -site: operator is out of the query text', () => {
+  // TinyFish documents site:/-site: as DEPRECATED and they did nothing: every river query carried
+  // three of them and TikTok, Facebook, Instagram, YouTube and Reddit results all came back.
+  // discover.js passes exclude_domains as a parameter now, which is what clients.js built for.
+  for (const q of build(ROSTER).queries) {
+    assert.doesNotMatch(q, /-?site:/i, `a dead search operator is still in the query: ${q}`);
+  }
+});
+
 test('no query word belongs to another trade', () => {
   // `seams` took the structure query to coal mining, dressmaking and a Martin Fowler essay on
   // mainframes -- "Coal seam gas", "How to Sew an Inseam Pocket with French Seams!", "Satin seam
@@ -135,6 +144,31 @@ test('waterTypeSearch carries the roster through to the builder', () => {
 test('waterTypeSearch called without a roster still returns a usable set', () => {
   const typed = waterTypeSearch('river', 'fisheries', 'Congaree River', 'SC');
   assert.ok(typed && typed.queries.length === 3);
+});
+
+test('the purpose stays inside the 2000 characters TinyFish allows', () => {
+  // Letters only: searchableSpecies() rejects a name with a digit in it, so a numbered fixture
+  // tests the filter rather than the cap. That is how the first version of this test read 0 of 200.
+  const huge = Array.from({ length: 200 }, (_, i) =>
+    `Fabricated Fish ${String.fromCharCode(65 + (i % 26)).repeat(1 + Math.floor(i / 26))}`);
+  const { purpose, namedSpecies } = build(huge);
+  assert.ok(purpose.length <= 2000, `purpose is ${purpose.length} characters`);
+  // What survived the trim is what the provider was told, and namedSpecies has to agree -- a log
+  // line built from it must not name a fish the purpose never mentioned.
+  assert.ok(namedSpecies.length > 0 && namedSpecies.length < huge.length,
+    `namedSpecies is ${namedSpecies.length} of ${huge.length}`);
+  for (const s of namedSpecies) assert.ok(purpose.includes(s), `${s} is claimed and not sent`);
+});
+
+test('an ordinary roster is nowhere near the cap', () => {
+  const real = ['Largemouth Bass', 'Smallmouth Bass', 'Striped Bass', 'White Bass / Hybrid',
+                'Channel Catfish', 'Blue Catfish', 'Flathead Catfish', 'Catfish', 'Bluegill',
+                'Redear Sunfish (Shellcracker)', 'White Perch', 'Bowfin', 'Chain Pickerel',
+                'Black Crappie', 'White Crappie', 'American Shad', 'Longnose Gar',
+                'Spotted Sucker'];
+  const { purpose, namedSpecies } = build(real);
+  assert.equal(namedSpecies.length, 18, 'a real roster was trimmed and should not have been');
+  assert.ok(purpose.length < 1800, `purpose is ${purpose.length} characters`);
 });
 
 test('a lake still gets nothing, so its state table runs exactly as before', () => {
