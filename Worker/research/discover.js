@@ -115,6 +115,13 @@ async function handleResearchDiscover(request, env) {
   const waterNames = (Array.isArray(body.names) ? body.names : [])
     .map((x) => String(x || '').trim()).filter(Boolean);
   const agencyNames = waterNames.length ? waterNames : [lakeName, baseName].filter(Boolean);
+  // WHAT THE WATER HOLDS, WHICH THE CLIENT HAS BEEN SENDING AND THIS FILE NEVER READ.
+  // research_lakes.py posts `predatorSpecies` on every discover call and the word appeared
+  // nowhere in here. It is the roster deterministic.js unions from five sources, and it is the
+  // difference between asking the web about a typed-in "bass crappie striped bass" and asking it
+  // about the fish this water's own rules and advisories name.
+  const predatorSpecies = (Array.isArray(body.predatorSpecies) ? body.predatorSpecies : [])
+    .map((x) => String(x || '').trim()).filter(Boolean);
   // THE PHRASE EVERY SEARCH IS ANCHORED ON, AND IT USED TO BE ONE NO PAGE CONTAINS.
   //
   // This was `lakeName.replace(/,\s*(SC|NC|GA|TN)...$/i, '')` -- a strip anchored to the END of
@@ -941,10 +948,12 @@ const AGENT_TO_TAGS = {
     // `waterTypeSearch` returns null for every water it has nothing to say about, so a lake runs
     // exactly the queries it ran yesterday. A river runs searches that name a shoal, a bend and a
     // flow, which is what its own prompt has been asking the agent to report all along.
-    const typed = waterTypeSearch(waterType, agentKey, queryLake, state);
+    const typed = waterTypeSearch(waterType, agentKey, queryLake, state, predatorSpecies);
     const stateQueries = AGENT_DISCOVERY_QUERIES[agentKey][state];
     if (!typed && !stateQueries) continue;
-    if (typed) queryLog.push(`[${agentKey}] ${waterType} query set (${typed.queries.length}) in place of the ${state} table`);
+    if (typed) queryLog.push(`[${agentKey}] ${waterType} query set (${typed.queries.length}) in place of the ${state} table`
+      + (predatorSpecies.length ? `, naming ${predatorSpecies.slice(0, 4).join(', ')}`
+                                : ', no species roster to name'));
 
     const discoveryLakeNames = [queryLake];
     const queryCandidates = [];

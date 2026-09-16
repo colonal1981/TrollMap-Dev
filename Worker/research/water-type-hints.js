@@ -142,21 +142,59 @@ function waterTypeHint(waterType, agentKey) {
  * stratify either and nobody had said so.
  *
  * THREE QUERIES AND NOT TWO. Lakes get two because they are well covered; 51 of 57 rivers have a
- * species source but almost none has a fisheries survey, and the detail that exists is in
- * float-trip and wade writeups that name individual shoals. The third query is aimed there.
+ * species source but almost none has a fisheries survey. The third query was aimed at float-trip
+ * and wade writeups; measured against the first river ever run, it found paddling brochures and
+ * no fish, and it is now the seasonal query -- see the block above WATER_TYPE_SEARCH.
  * Query 0 keeps the fisheries recency window -- `_fisheries_recency` is [64800, null] and a third
  * index reads undefined, which is no window, which is what an evergreen query wants.
  *
  * NOT KEYED ON STATE, DELIBERATELY. Nothing below is state-specific; a shoal is a shoal in four
  * states. `state` is passed only so the purpose can name it.
  */
+const NO_SOCIAL = '-site:facebook.com -site:instagram.com -site:youtube.com';
+
+/**
+ * QUERY 2 WAS A PADDLING QUERY AND IT COST THE RIVERS THEIR SEASONAL ONE.
+ *
+ * Measured on the Congaree, 2026-09-16 -- the first river ever researched with this set. Twenty
+ * facts came back and the categories were 12 summary, 4 ramp, 2 county, 1 consumptionAdvisory,
+ * 1 navigation. Not one about a season, a depth or a fish. The sources were Paddle SC's Blue
+ * Trail, Discover South Carolina Outdoors, a topo-map page and the National Park Service, and the
+ * facts they yielded were the river's elevation in feet and the park's acreage of wilderness.
+ * `float trip paddle access` asked for paddling content and got it.
+ *
+ * What the lake set asks and this one did not: `seasonal fishing patterns bass crappie striped
+ * bass`. A plain search Ryan ran by hand -- no structure vocabulary, no exclusions -- returned
+ * carolinasportsman ("big catfish, striped bass, especially in late spring"), columbiametro
+ * ("trophy smallmouth bass fisheries") and fishbrain's species list. None of those pages contains
+ * the words shoals, ledges, seams or float trip, so the river set was filtering out the fishing
+ * writing with its own vocabulary while two of its three queries asked for structure.
+ *
+ * THE REASONING IT REPLACED WAS HALF RIGHT. 50 of 58 rivers already have a species list, so the
+ * queries were spent on structure instead. But a roster and a calendar are different things. The
+ * registry says the Congaree holds striped bass; only the web says they run up it to Columbia in
+ * early summer. Having the species was never having the timing.
+ *
+ * SO IT NAMES THE WATER'S OWN FISH, NOT A TYPED-IN THREE. `predatorSpecies` has been posted on
+ * every discover call by research_lakes.py and this file never read it. Capped at four because a
+ * query of thirteen nouns dilutes the match and the lake set's precedent is three; the cap is a
+ * query-length constraint, not a ranking. The roster arrives as a union of five sources and its
+ * order is not a priority order -- if that turns out to matter, rank the roster, do not lengthen
+ * the query. The eight rivers with no species list get the seasonal query without a fish in it
+ * rather than a fish this water may not hold.
+ */
 const WATER_TYPE_SEARCH = {
   river: {
-    fisheries: (name, state) => ({
+    fisheries: (name, state, species = []) => {
+      const named = (Array.isArray(species) ? species : [])
+        .map((s) => String(s || '').trim()).filter(Boolean).slice(0, 4).join(' ');
+      return {
       queries: [
-        `"${name}" fishing report water level flow -site:facebook.com -site:instagram.com -site:youtube.com`,
-        `"${name}" fishing shoals ledges bends current seams holes -site:facebook.com -site:instagram.com -site:youtube.com`,
-        `"${name}" float trip paddle access shoals fishing -site:facebook.com -site:instagram.com -site:youtube.com`,
+        `"${name}" fishing report water level flow ${NO_SOCIAL}`,
+        `"${name}" fishing shoals ledges bends current seams holes ${NO_SOCIAL}`,
+        named
+          ? `"${name}" ${named} seasonal fishing patterns spring summer fall ${NO_SOCIAL}`
+          : `"${name}" seasonal fishing patterns spring summer fall ${NO_SOCIAL}`,
       ],
       purpose: `Find seasonal and current fishing information for ${name}, which is a RIVER in `
         + `${state} -- moving water, not a reservoir. Prefer sources that say where fish hold in `
@@ -165,9 +203,14 @@ const WATER_TYPE_SEARCH = {
         + `obstruction, tributary mouths, point bars and sandbars, bridge piers and riprap. The `
         + `water-level facts that matter are flow in cfs and gauge stage, NOT pool elevation. `
         + `Float-trip and wade-fishing writeups that name individual shoals, bends and access `
-        + `points are valuable even when informal. Reject reservoir and lake content, pool levels `
-        + `and drawdown, thermocline and stratification studies, and social media.`,
-    }),
+        + `points are valuable even when informal. ALSO WANTED: which months each species runs, `
+        + `spawns, or feeds hardest in this river, and how high or low water changes that -- a `
+        + `roster of species is already known and the timing is not. Reject reservoir and lake `
+        + `content, pool levels and drawdown, thermocline and stratification studies, paddling `
+        + `and float-trip itineraries that do not mention fish, park visitor information, and `
+        + `social media.`,
+      };
+    },
   },
 };
 
@@ -175,11 +218,11 @@ const WATER_TYPE_SEARCH = {
  * The queries and purpose for this water type and agent, or null -- so a caller that gets null
  * falls through to the state table exactly as before and nothing else has to change.
  */
-function waterTypeSearch(waterType, agentKey, name, state) {
+function waterTypeSearch(waterType, agentKey, name, state, species = []) {
   const byAgent = WATER_TYPE_SEARCH[String(waterType || '').toLowerCase()];
   const build = byAgent && byAgent[agentKey];
   if (!build) return null;
-  const out = build(name, state);
+  const out = build(name, state, species);
   return (out && Array.isArray(out.queries) && out.queries.length) ? out : null;
 }
 
