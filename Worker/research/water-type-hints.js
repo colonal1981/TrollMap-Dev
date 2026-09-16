@@ -121,4 +121,66 @@ function waterTypeHint(waterType, agentKey) {
   return (byAgent && byAgent[agentKey]) || '';
 }
 
-export { WATER_TYPE_HINTS, waterTypeHint };
+/**
+ * THE SEARCHES FOR A KIND OF WATER LIVE BESIDE THE FRAMING FOR IT.
+ *
+ * WHY THIS IS HERE AND NOT IN discover.js. `AGENT_DISCOVERY_QUERIES` is keyed agent -> STATE, and
+ * a state is not a kind of water, so a river has always been handed the lake query set verbatim.
+ * Measured 2026-09-16 across the 68 query and purpose strings in that table: "reservoir" appears
+ * eight times, "thermocline" six, "dam" six, "hydrilla" four -- and "river", "discharge", "cfs",
+ * "streamflow", "tailrace", "scour" and "bend" appear ZERO times between them.
+ *
+ * Coastal was fixed by giving it its own agents. Rivers do not need their own agents -- the driver
+ * posts exactly one, `fisheries`, and that one already gets the river hint above. What it never
+ * got was searches that look for any of the things the hint tells it to report. So this is the
+ * other half of the same lookup rather than a second mechanism: same key order, same fallback to
+ * nothing, and one file that owns what a river IS for the prompt and for the search together.
+ *
+ * THE PURPOSE STRING IS NOT DECORATION. It is prose the search ranker reads, and the coastal ones
+ * already earn their place by rejecting the wrong shape outright -- "reject reservoir thermocline
+ * and dissolved-oxygen studies, this system does not thermally stratify". A river does not
+ * stratify either and nobody had said so.
+ *
+ * THREE QUERIES AND NOT TWO. Lakes get two because they are well covered; 51 of 57 rivers have a
+ * species source but almost none has a fisheries survey, and the detail that exists is in
+ * float-trip and wade writeups that name individual shoals. The third query is aimed there.
+ * Query 0 keeps the fisheries recency window -- `_fisheries_recency` is [64800, null] and a third
+ * index reads undefined, which is no window, which is what an evergreen query wants.
+ *
+ * NOT KEYED ON STATE, DELIBERATELY. Nothing below is state-specific; a shoal is a shoal in four
+ * states. `state` is passed only so the purpose can name it.
+ */
+const WATER_TYPE_SEARCH = {
+  river: {
+    fisheries: (name, state) => ({
+      queries: [
+        `"${name}" fishing report water level flow -site:facebook.com -site:instagram.com -site:youtube.com`,
+        `"${name}" fishing shoals ledges bends current seams holes -site:facebook.com -site:instagram.com -site:youtube.com`,
+        `"${name}" float trip paddle access shoals fishing -site:facebook.com -site:instagram.com -site:youtube.com`,
+      ],
+      purpose: `Find seasonal and current fishing information for ${name}, which is a RIVER in `
+        + `${state} -- moving water, not a reservoir. Prefer sources that say where fish hold in `
+        + `relation to CURRENT: outside bends and their scour holes, shoals, ledges and rock `
+        + `gardens, laydowns and root wads, current seams and eddy lines, the slack behind an `
+        + `obstruction, tributary mouths, point bars and sandbars, bridge piers and riprap. The `
+        + `water-level facts that matter are flow in cfs and gauge stage, NOT pool elevation. `
+        + `Float-trip and wade-fishing writeups that name individual shoals, bends and access `
+        + `points are valuable even when informal. Reject reservoir and lake content, pool levels `
+        + `and drawdown, thermocline and stratification studies, and social media.`,
+    }),
+  },
+};
+
+/**
+ * The queries and purpose for this water type and agent, or null -- so a caller that gets null
+ * falls through to the state table exactly as before and nothing else has to change.
+ */
+function waterTypeSearch(waterType, agentKey, name, state) {
+  const byAgent = WATER_TYPE_SEARCH[String(waterType || '').toLowerCase()];
+  const build = byAgent && byAgent[agentKey];
+  if (!build) return null;
+  const out = build(name, state);
+  return (out && Array.isArray(out.queries) && out.queries.length) ? out : null;
+}
+
+export { WATER_TYPE_HINTS, waterTypeHint, WATER_TYPE_SEARCH, waterTypeSearch };

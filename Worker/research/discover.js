@@ -5,6 +5,12 @@ import { KNOWN_BAD_NEPIS_IDS, buildNepisSearchUrl } from './dataset.js';
 import { parseLakeBaseName } from './keys.js';
 import { resolveAgencyPage } from './agency-pages.js';
 import { matchWaterName, reportTokens } from '../reports.js';
+// WHAT KIND OF WATER THIS IS, ASKED THE SAME WAY THE AGENT ASKS IT. agents.js:1327 resolves the
+// registry row and reads `feature_type`, which consolidate_lake_index.py decides in one place;
+// this file had only a `coast_` prefix test on the key and therefore could not tell a river from
+// a reservoir at all. Same lookup, same fallback, one answer.
+import { lakeIndex, resolveRegistryRow } from '../registry.js';
+import { waterTypeSearch } from './water-type-hints.js';
 
 // Which organisation stands behind a URL. Two callers below -- Grok citations and Wikipedia
 // citations -- carried byte-identical copies of this ladder, so a domain added to one was
@@ -874,7 +880,22 @@ const AGENT_TO_TAGS = {
   // split a lake would run estuary/tidal/saltwater_regulations queries (and
   // burn searches on salt marsh acreage for Lake Murray), and a coastal zone
   // would run identity/limnology queries looking for a dam and a thermocline.
-  const isCoastalTarget = String(body.zoneKey || body.lakeKey || '').startsWith('coast_');
+  // WHAT KIND OF WATER, FROM THE REGISTRY ROW. `feature_type` is on every index row -- 285 lake,
+  // 57 river, 13 coastal on 2026-09-16 -- and the key prefix stays as the fallback so a caller
+  // that sends an explicit zone key still works with no index. Without this the only question
+  // this file could ask was "is the key spelled coast_", which is why a river ran reservoir
+  // searches for as long as rivers have been in the app.
+  let waterRow = null;
+  try {
+    waterRow = resolveRegistryRow(await lakeIndex(env), lakeName);
+  } catch {
+    waterRow = null;   // no index is a reason to search unframed, not to fail discovery
+  }
+  const waterType = String(waterRow?.feature_type || '').toLowerCase();
+  const isCoastalTarget = waterType
+    ? waterType === 'coastal'
+    : String(body.zoneKey || body.lakeKey || '').startsWith('coast_');
+  if (waterType) queryLog.push(`water type: ${waterType} (from the registry row)`);
   const agentsToDiscover = agent
     ? [agent]
     : Object.keys(AGENT_DISCOVERY_QUERIES).filter((k) => {
@@ -891,16 +912,26 @@ const AGENT_TO_TAGS = {
   for (const agentKey of agentsToDiscover) {
     if (!AGENT_DISCOVERY_QUERIES[agentKey]) continue;
 
+    // THE KIND OF WATER ANSWERS FIRST; THE STATE TABLE IS THE FALLBACK AND IS UNCHANGED.
+    // `waterTypeSearch` returns null for every water it has nothing to say about, so a lake runs
+    // exactly the queries it ran yesterday. A river runs searches that name a shoal, a bend and a
+    // flow, which is what its own prompt has been asking the agent to report all along.
+    const typed = waterTypeSearch(waterType, agentKey, queryLake, state);
     const stateQueries = AGENT_DISCOVERY_QUERIES[agentKey][state];
-    if (!stateQueries) continue;
+    if (!typed && !stateQueries) continue;
+    if (typed) queryLog.push(`[${agentKey}] ${waterType} query set (${typed.queries.length}) in place of the ${state} table`);
 
     const discoveryLakeNames = [queryLake];
     const queryCandidates = [];
-    for (const name of discoveryLakeNames) {
-      try {
-        queryCandidates.push(...(stateQueries(name) || []));
-      } catch (e) {
-        queryLog.push(`[${agentKey}] query builder failed for ${name}: ${e.message}`);
+    if (typed) {
+      queryCandidates.push(...typed.queries);
+    } else {
+      for (const name of discoveryLakeNames) {
+        try {
+          queryCandidates.push(...(stateQueries(name) || []));
+        } catch (e) {
+          queryLog.push(`[${agentKey}] query builder failed for ${name}: ${e.message}`);
+        }
       }
     }
     const queries = [...new Set(queryCandidates.filter(Boolean))];
@@ -913,7 +944,11 @@ const AGENT_TO_TAGS = {
 
     const agentTags = AGENT_TO_TAGS[agentKey] || [agentKey];
     const purposeFn = AGENT_DISCOVERY_QUERIES._purposes?.[agentKey];
-    const purposeStr = purposeFn ? purposeFn(queryLake, state) : `Find authoritative ${agentKey} information about ${lakeName} in ${state}`;
+    // The typed purpose wins where there is one -- it is the half that tells the ranker to REJECT
+    // the wrong shape of document, which is what the coastal purposes already do and what a river
+    // needed: no pool elevation, no thermocline, no drawdown.
+    const purposeStr = typed?.purpose
+      || (purposeFn ? purposeFn(queryLake, state) : `Find authoritative ${agentKey} information about ${lakeName} in ${state}`);
 
     for (let qIndex = 0; qIndex < queries.length; qIndex++) {
       const q = queries[qIndex];
