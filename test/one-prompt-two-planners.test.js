@@ -73,6 +73,19 @@ describe('the prompt contract', () => {
   const PICKED_WATER_DIALECT = ['castStopsWanted', 'chosenCastSpots', 'freeCastSpots',
                                 'orderIsChosen', 'waterIsChosen', 'dayMin'];
 
+  // AND ONE FIELD PICK WATER CANNOT REACH THE CASE FOR, WHICH IS A DIFFERENT EXEMPTION.
+  //
+  // `isRiver` switches the prompt onto the river rules: the day is one path out and back, and
+  // there are no stops on it. Pick Water REFUSES a river before it fetches anything -- "a river
+  // day is one path up one side and back down the other. Use Smart Plan for this one" -- so the
+  // only value it could ever send is false, and a field that can only carry one value is a dead
+  // object being kept alive to satisfy a test.
+  //
+  // THE EXEMPTION IS CHECKED, NOT ASSERTED. The test below reads the refusal out of
+  // plan-water-ui.js, so the day Pick Water starts planning rivers this list stops being true and
+  // says so, instead of silently excusing an unwired field.
+  const SMART_PLAN_ONLY = ['isRiver'];
+
   // A field name that appears NOWHERE in a planner cannot possibly be sent by it. That is a
   // weaker claim than "the value is right", and it is deliberately the claim that catches the
   // bug that actually happened three times: the field was simply absent.
@@ -80,7 +93,8 @@ describe('the prompt contract', () => {
     it(`${who} mentions every field the prompt reads`, () => {
       const text = files.map((f) => live(src(f))).join('\n');
       const missing = CONTRACT.filter((f) => !new RegExp(`\\b${f}\\b`).test(text));
-      const unexplained = missing.filter((f) => !PICKED_WATER_DIALECT.includes(f));
+      const unexplained = missing.filter((f) => !PICKED_WATER_DIALECT.includes(f)
+                                             && !SMART_PLAN_ONLY.includes(f));
       expect(unexplained).toEqual([]);
     });
   }
@@ -88,6 +102,15 @@ describe('the prompt contract', () => {
   it('and every one-sided field really is one of the picked-water pair', () => {
     const pw = live(src('js/modules/plan-from-water.js')) + live(src('js/modules/plan-water-ui.js'));
     for (const f of PICKED_WATER_DIALECT) expect(new RegExp(`\\b${f}\\b`).test(pw)).toBe(true);
+  });
+
+  it('and Pick Water really does refuse a river, which is why isRiver is exempt', () => {
+    const ui = live(src('js/modules/plan-water-ui.js'));
+    // The gate itself, not a comment about one: saysRiver() on the registry row, returning before
+    // anything is fetched. If this stops being the shape of the refusal, the exemption above needs
+    // re-reading rather than keeping.
+    expect(/if\s*\(saysRiver\(registryRecordFor\([^)]*\)\)\)\s*\{[\s\S]{0,400}?return say\(/.test(ui))
+      .toBe(true);
   });
 });
 
