@@ -209,7 +209,24 @@ for (const f of workerFiles) {
     const method = (tail.match(/request\.method\s*===\s*["'](\w+)["']/) || [])[1] || 'ANY';
     // outbound hosts inside this route's rough block
     const block = code.slice(at, at + 3000);
-    const hosts = [...new Set([...block.matchAll(/https?:\/\/([a-z0-9.-]+)/gi)].map(x => x[1].toLowerCase()))];
+    // ── A FIXED-WIDTH SLICE CUTS A TOKEN IN HALF, AND THIS REGEX WAS HAPPY TO MATCH THE HALF ──────
+    //
+    // `[a-z0-9.-]+` is greedy and has no right-hand boundary, so a URL straddling the 3,000-character
+    // cut matched whatever fell inside it. One route did: `/lake-research` in trollmap-worker.js
+    // reported an outbound host of `services1.` where the code says `services1.arcgis.com`.
+    //
+    // WORSE THAN WRONG, IT MOVES. Where the cut lands depends on how much code sits above the route,
+    // so an unrelated edit three hundred lines up makes a host appear, disappear or change spelling
+    // in a table whose whole job is "which routes reach outside, and where". Found 2026-09-17 in a
+    // regenerated report, as a diff line nobody had changed anything to cause.
+    //
+    // A match that ends exactly at the slice boundary is a match that was cut, so it is dropped
+    // rather than widened: widening moves the cut, it does not remove it. Dropping loses at most the
+    // last host of an over-long route block, and under-reporting a host is the safe direction for a
+    // table somebody reads to find an ungated fetch.
+    const hosts = [...new Set([...block.matchAll(/https?:\/\/([a-z0-9.-]+)/gi)]
+      .filter((x) => x.index + x[0].length < block.length)
+      .map(x => x[1].toLowerCase()))];
     const r2 = [...new Set([...block.matchAll(/env\.(R2_[A-Z0-9_]+)\.(get|put|list|delete|head)\(/g)].map(x => `${x[1]}.${x[2]}`))];
     const existing = routes.find(x => x.route === route && x.file === f && x.method === method);
     if (existing) continue;
