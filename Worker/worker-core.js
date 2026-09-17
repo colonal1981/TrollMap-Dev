@@ -201,7 +201,32 @@ function extractLLMText(data) {
 
 // Round-robin counter for gemini-free key rotation across concurrent requests
 // Incremented atomically per call so concurrent analyze-facts requests hit different keys
-let _geminiRoundRobinIdx = 0;
+//
+// SEEDED RANDOMLY, BECAUSE ZERO IS NOT A NEUTRAL STARTING POINT.
+//
+// This is module state in a Worker isolate, and Cloudflare recycles isolates constantly. Every
+// analyze-facts call is its own request, so a cold isolate started this counter at 0 and picked
+// the FIRST free key -- again and again, for as long as cold starts kept happening.
+//
+// Measured 2026-09-16 across Ryan's five Gemini projects after six research runs (152 requests):
+//
+//     key 1   60 / 500 RPD        key 4   14 / 500
+//     key 2   43 / 500            key 5   12 / 500
+//     key 3   22 / 500
+//
+// An even spread would be about 30 each. That decay is not the designed fallback cascade either --
+// the cascade only fires on a failure, and key 1 peaked at 8 of 15 RPM with zero retries recorded,
+// so nothing was failing. It is the counter starting from the same place every time.
+//
+// The cost is where the ceiling actually sits. At 39% of the load on one key, that key reaches its
+// 500 RPD when the pool has done about 1,280 requests -- half the 2,500 the five keys nominally
+// carry. And the moment it does, the failure is the one already recorded twice in
+// RESEARCH_502S_ARE_ARITHMETIC: "This model is currently experiencing high demand", each time
+// costing a whole species group off a lake.
+//
+// A random start needs no coordination and no storage: whatever isolate serves a request begins
+// somewhere different, and the modulo below keeps it in range however large this grows.
+let _geminiRoundRobinIdx = Math.floor(Math.random() * 1000);
 
 async function callLLM(env, payload, preferredProvider = null) {
   // If no preferred provider specified and we have multiple gemini-free keys,

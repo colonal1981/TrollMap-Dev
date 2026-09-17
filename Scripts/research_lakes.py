@@ -64,13 +64,47 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 
 # Matches lake-research-engine.js: the Worker injects 8 docs at 20,000 chars, the client sends a
 # little more so the Worker's relevance filter still has something to choose from.
+#
+# THIS NUMBER IS THE AGENT'S PAYLOAD AND NOTHING ELSE. It bounded extraction as well until
+# 2026-09-16, which is two different jobs sharing one constant -- the pattern this project keeps
+# finding. Twelve is right for the agent: agents.js ranks by behaviour density and keeps eight, so
+# sending twelve gives that ranker something to choose between without growing the prompt that has
+# to reason. Twelve is wrong for extraction, which is one cheap call per document and has no reason
+# to stop at twelve when discovery found twenty-seven.
 LLM_DOC_LIMIT = 12
 LLM_DOC_CHARS = 20000
+
+# EXTRACTION READS EVERYTHING THAT SURVIVED THE GATE. 0 means no limit.
+#
+# Each document is its own /research/analyze-facts call, paced against the token budget below, and
+# measured at ~4,000 characters a document that is about 1,000 input tokens each. Raising
+# SOURCE_CAP to take every discovered source would have bought nothing while this stayed at twelve:
+# the extra documents would have been fetched, gated, and then dropped one step before the only
+# step that turns them into facts.
+EXTRACT_DOC_LIMIT = 0
 
 # research/extract.js slices every document to 150,000 characters before it builds the prompt,
 # and lake-research-engine.js sends exactly that. This script was sending 200,000 -- 50,000
 # characters uploaded on every extraction call for the Worker to throw away.
-EXTRACT_DOC_CHARS = 150000
+#
+# NOW 20,000, AND THE REASON IS BLAST RADIUS RATHER THAN COST.
+#
+# Measured over six runs on 2026-09-16: 85 extraction calls, 341,278 characters sent, which is
+# 4,015 characters per document. The 150,000 ceiling was being used at under three per cent, so
+# lowering it changes nothing about what the extractor reads on an ordinary fishing article.
+#
+# What it bounds is the unusual one. RESEARCH_502S_ARE_ARITHMETIC counted a limnology run whose
+# corpus held 419-, 317- and 274-page PDFs, every one of them hitting the 150,000 cap, and put
+# 1.8 MB into a 128 MB isolate that concurrent requests share. That doc's own recommendation was a
+# total budget across the batch; this is the same protection with one number instead of a new
+# mechanism. Raising SOURCE_CAP below makes pulling such a PDF more likely, not less, so the bound
+# goes in first.
+#
+# And 20,000 is not a guess: it is what agents.js already spends per document on the prompt that
+# has to REASON about the text, decided there with the reasoning written down -- "a fishing report
+# says everything useful about where fish sit in its first few thousand characters". Extraction
+# reading seven times more than the agent does was the two-numbers-disagreeing pattern again.
+EXTRACT_DOC_CHARS = 20000
 
 # PACE BY TOKENS, NOT BY A FIXED SLEEP.
 #
@@ -144,7 +178,29 @@ def _raw(path, timeout=300):
 # that way would have written sixty-four profiles with no document behind any of them, which is
 # the one thing trollingIntelligence exists to avoid.
 
-SOURCE_CAP = 10          # AGENT_SOURCE_CAPS.fisheries in lake-research-engine.js
+# ── HOW MANY DISCOVERED SOURCES WE ARE WILLING TO READ ──────────────────────────────────────
+#
+# Ryan, 2026-09-16: *"are we discarding those before we have checked them for information or
+# after?"* Before. The cap ran the moment discover returned, on a title, a url and a snippet cut to
+# 400 characters -- so on the Congaree that night, seventeen of twenty-seven candidates were thrown
+# out without a word of their text ever being fetched. Every cut AFTER this one reads the document
+# first: the off-lake gate, the usable-length filter, and the behaviour-density ranking in
+# agents.js, which is the best-informed cut in the chain. Only this one was blind.
+#
+# WHAT THE CAP WAS PROTECTING, COUNTED. Fetching is free -- download.js: "TinyFish primary (free)"
+# -- and batches ten URLs per call. Extraction is the only spend, and six runs on 2026-09-16 used
+# 152 requests and ~85,000 tokens across five keys whose pooled limits are 2,500 requests/day and
+# 1.25M tokens/minute. Three and a half per cent of one day. There was no budget here to defend.
+#
+# WHAT IT COSTS TO LIFT IT. At ~25 requests per water the pooled daily ceiling is about 100 waters;
+# reading everything discovery returns puts it near 38 requests, so about 65 waters a day. A full
+# 355-water pass goes from roughly two days to four. Ryan took that trade for a permanent stop to
+# discarding unread documents. For single-water work, which is how this is actually used, it costs
+# nothing but wall clock.
+#
+# 0 MEANS NO CAP. Named rather than set to a large number, because a large number is a guess about
+# how many sources discovery will ever return and this is a statement that we read what we find.
+SOURCE_CAP = 0           # AGENT_SOURCE_CAPS.fisheries in lake-research-engine.js is the browser's
 BATCH_SIZE = 10          # what /research/proxy-download-batch takes per call
 DAY_MS = 24 * 60 * 60 * 1000
 TTL_MS = {"academic": 365 * DAY_MS, "official": 90 * DAY_MS,
@@ -603,13 +659,16 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
         found = [s2 for s2 in (disc.get("sources") or [])
                  if not s2.get("agentTags") or "fisheries" in s2["agentTags"]]
 
-        # THE CAP THE BROWSER APPLIES, mirrored: seeds (priority 1) always pass, the rest sort by
-        # prefetchScore and fill what is left of ten. A source with no score defaults to 3 so it is
-        # not cut for a field discovery did not set.
+        # Seeds (priority 1) always pass; the rest sort by prefetchScore. A source with no score
+        # defaults to 3 so it is not cut for a field discovery did not set. SOURCE_CAP = 0 means we
+        # take everything discovery found -- see the note at SOURCE_CAP for why the cap it replaces
+        # was spending nothing to protect. The sort still runs, because order decides which
+        # documents reach the agent's twelve even when nothing is dropped.
         seeds = [s2 for s2 in found if s2.get("priority") == 1]
         rest = sorted((s2 for s2 in found if s2.get("priority") != 1),
                       key=lambda s2: s2.get("prefetchScore", s2.get("score", 3)), reverse=True)
-        sources = seeds + rest[:max(0, SOURCE_CAP - len(seeds))]
+        sources = seeds + (rest if not SOURCE_CAP
+                           else rest[:max(0, SOURCE_CAP - len(seeds))])
         out["sources"] = len(sources)
         if verbose:
             print(f"      discover: {len(found)} sources ({len(seeds)} seeds) -> {len(sources)}")
@@ -685,7 +744,7 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
         # prompt ranks that ABOVE the documents: "If a PARSED OBSERVATION covers this species and
         # season, its value is the answer -- copy it, do not adjust it."
         facts = []
-        chosen = usable[:LLM_DOC_LIMIT]
+        chosen = usable if not EXTRACT_DOC_LIMIT else usable[:EXTRACT_DOC_LIMIT]
         for i, d in enumerate(chosen):
             text = str(d.get("fullText") or d.get("text") or "")[:EXTRACT_DOC_CHARS]
             code, ex, err = _req("/research/analyze-facts", {
@@ -708,6 +767,49 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
             out["chars_sent"] += len(text)
             if i + 1 < len(chosen):
                 time.sleep(pace_seconds(len(text), tpm))
+
+        # ── THE SNIPPETS WE ALREADY PAID FOR ────────────────────────────────────────────────
+        #
+        # Ryan, 2026-09-16, on the source cap: *"are we discarding those before we have checked them
+        # for information or after?"* Before -- and the snippets came back in the discover response
+        # either way. Even with no cap, a source whose page fails to fetch, or that the off-lake gate
+        # refuses, or that returns under 200 characters, still arrives here with 400 characters of
+        # text that discovery already had in hand.
+        #
+        # Those 400 characters are not filler. Verbatim from searches on this water:
+        #
+        #   "Even on the lower end of the Congaree River, I focus on the deeper holes of water"
+        #   "Use cut bait like shad or Herron on bottom... Saluda is the place to be after may"
+        #   "Striped bass in the Congaree River will hold against tree lines and readily take
+        #    live herring early in the day"
+        #
+        # A position, a bait, a season, a time of day. Complete facts, in text we fetched, scored,
+        # logged and then dropped on the floor -- the same shape as every other defect found today.
+        #
+        # ONE CALL, NOT ONE PER SOURCE. The snippets are short enough to travel together, so this
+        # costs a single request however many sources discovery returned. `docIndex` is -1 so a fact
+        # from here is distinguishable downstream from one taken out of a fetched document.
+        snippet_docs = [{"title": s2.get("title"), "url": s2.get("url"),
+                         "text": str(s2.get("snippet") or "")}
+                        for s2 in found if len(str(s2.get("snippet") or "")) >= 80]
+        if snippet_docs:
+            code, ex, err = _req("/research/analyze-facts", {
+                "lakeName": lake, "baseName": base_name(lake), "state": state,
+                "aliases": alt_names or [], "docIndex": -1,
+                "targetFields": ["trollingIntelligence"],
+                "documents": snippet_docs})
+            if code == 200:
+                got = (ex or {}).get("extracted_facts") or []
+                facts.extend(got)
+                out["snippet_facts"] = len(got)
+                out["snippet_sources"] = len(snippet_docs)
+                if verbose:
+                    print(f"      snippets: {len(snippet_docs)} source(s) discovery returned "
+                          f"-> {len(got)} fact(s) with no fetch")
+            else:
+                print(f"      warn [{lake}]: analyze-facts on snippets {code}: {err}")
+                out["snippet_facts"] = 0
+            out["chars_sent"] += sum(len(d["text"]) for d in snippet_docs)
 
         out["facts"] = len(facts)
         prev = dict(profile)

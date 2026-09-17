@@ -265,5 +265,156 @@ class TheDiscoverLogReachesTheScreen(unittest.TestCase):
         self.assertIn('query_log', out)
 
 
+class SnippetsAreEvidenceWeAlreadyPaidFor(unittest.TestCase):
+    """Discovery hands back a 400-character snippet per source and the driver dropped them.
+
+    Ryan, 2026-09-16: "are we discarding those before we have checked them for information or
+    after?" Before. And the snippets were in hand the whole time -- "Striped bass in the Congaree
+    River will hold against tree lines and readily take live herring early in the day" is a
+    position, a bait and a time of day, in text discovery already returned.
+    """
+
+    # Three sources with real snippets, one with a stub too short to be worth a call.
+    FOUND = [
+        {'url': 'https://www.gameandfishmag.com/a', 'title': 'Summer Bass',
+         'snippet': 'Even on the lower end of the Congaree River, I focus on the deeper holes of '
+                    'water to find the larger fish through the summer months.'},
+        {'url': 'https://www.carolinasportsman.com/b', 'title': 'Save the Stripers',
+         'snippet': 'Striped bass in the Congaree River will hold against tree lines and readily '
+                    'take live herring early in the day.'},
+        {'url': 'https://www.facebook.com/groups/x/posts/y', 'title': 'Striper tips',
+         'snippet': 'Use cut bait like shad or herring on bottom, also swim baits and bucktails. '
+                    'Saluda is the place to be after May, Congaree has slowed down.'},
+        {'url': 'https://example.com/tiny', 'title': 'Stub', 'snippet': 'Congaree.'},
+    ]
+
+    SNIPPET_FACTS = [{'fact': 'Stripers hold against tree lines on the Congaree River.',
+                      'source': 'Save the Stripers', 'category': 'habitatCover'}]
+
+    def build(self, found=None):
+        mod = load_module()
+        saved, calls = [], []
+
+        def fake_req(path, payload=None, timeout=300):
+            if path.startswith('/research/deterministic-facts'):
+                return 200, {'profile': {'lakeName': LAKE, 'state': 'SC',
+                                         'biology': {'predatorSpecies': ['Striped Bass']},
+                                         'limnology': {}, 'evidence': {}, 'sources': [],
+                                         'trollingIntelligence': {}}}, None
+            if path.startswith('/research/limnology-data'):
+                return 200, {}, None
+            if path.startswith('/research/discover'):
+                return 200, {'success': True,
+                             'sources': list(self.FOUND if found is None else found),
+                             'queryLog': []}, None
+            if path.startswith('/research/get-normalized'):
+                return 200, {'documents': [{
+                    'title': 'A cached river page', 'url': 'https://example.org/cached',
+                    'fullText': 'The Congaree River below the shoals. ' * 40}]}, None
+            if path.startswith('/research/save-normalized'):
+                return 200, {'ok': True}, None
+            if path.startswith('/research/analyze-facts'):
+                calls.append(payload)
+                if payload.get('docIndex') == -1:
+                    return 200, {'extracted_facts': list(self.SNIPPET_FACTS)}, None
+                return 200, {'extracted_facts': []}, None
+            if path.startswith('/research/agent-llm'):
+                return 200, {'section': {'Striped Bass': {'depthFt': 12}},
+                             'meta': {'groups': [], 'speciesTraitRows': 4}}, None
+            if path.startswith('/research/save'):
+                saved.append(payload)
+                return 200, {'key': 'k', 'version': 2}, None
+            return 200, {}, None
+
+        mod._req = fake_req
+        mod.stored_profile = lambda lake: ({}, 'no profile yet')
+        mod.mirror_locally = lambda lake: True
+        mod.registry_ramps = lambda row: []
+        mod.fetch_sources = lambda *a, **k: ([], {})
+        return mod, saved, calls
+
+    def run_one(self, mod, saved):
+        out = mod.research_one(LAKE, 'SC', row={}, verbose=False)
+        self.assertTrue(saved, f'nothing was saved; error={out.get("error")!r}')
+        return saved[-1]['profile'], out
+
+    def test_a_fact_taken_from_a_snippet_reaches_the_profile(self):
+        mod, saved, _ = self.build()
+        profile, out = self.run_one(mod, saved)
+        self.assertEqual(out.get('snippet_facts'), len(self.SNIPPET_FACTS))
+        facts = profile.get('_extractedFacts') or []
+        self.assertIn(self.SNIPPET_FACTS[0], facts,
+                      'the snippet fact was extracted and then not saved')
+
+    def test_one_call_for_every_snippet_not_one_each(self):
+        mod, saved, calls = self.build()
+        self.run_one(mod, saved)
+        snippet_calls = [c for c in calls if c.get('docIndex') == -1]
+        self.assertEqual(len(snippet_calls), 1,
+                         f'{len(snippet_calls)} snippet calls; it must cost one request')
+        self.assertEqual(len(snippet_calls[0]['documents']), 3,
+                         'the too-short stub should not have travelled')
+
+    def test_a_snippet_too_short_to_hold_a_fact_is_skipped(self):
+        mod, saved, calls = self.build()
+        self.run_one(mod, saved)
+        sent = [d['url'] for d in
+                [c for c in calls if c.get('docIndex') == -1][0]['documents']]
+        self.assertNotIn('https://example.com/tiny', sent)
+
+    def test_no_snippets_means_no_call_at_all(self):
+        mod, saved, calls = self.build(found=[{'url': 'https://example.com/a', 'title': 'x',
+                                              'snippet': ''}])
+        self.run_one(mod, saved)
+        self.assertEqual([c for c in calls if c.get('docIndex') == -1], [],
+                         'a request went out carrying nothing')
+
+    def test_the_snippet_pass_counts_its_own_characters(self):
+        mod, saved, _ = self.build()
+        _, out = self.run_one(mod, saved)
+        self.assertGreater(out['chars_sent'], 0)
+        self.assertEqual(out.get('snippet_sources'), 3)
+
+
+class TheCapsMeanWhatTheySay(unittest.TestCase):
+    """SOURCE_CAP = 0 and EXTRACT_DOC_LIMIT = 0 both mean no limit, and 0 is easy to get wrong.
+
+    `rest[:max(0, 0 - 0)]` is the empty list, so the old expression would have discarded every
+    discovered source the moment the cap became 0.
+    """
+
+    def test_source_cap_zero_takes_everything_rather_than_nothing(self):
+        mod = load_module()
+        self.assertEqual(mod.SOURCE_CAP, 0, 'the cap is no longer 0; this test guards that shape')
+        found = [{'url': f'https://example.com/{i}', 'title': str(i), 'snippet': 'x' * 100}
+                 for i in range(27)]
+        seeds = [s for s in found if s.get('priority') == 1]
+        rest = sorted((s for s in found if s.get('priority') != 1),
+                      key=lambda s: s.get('prefetchScore', s.get('score', 3)), reverse=True)
+        taken = seeds + (rest if not mod.SOURCE_CAP
+                         else rest[:max(0, mod.SOURCE_CAP - len(seeds))])
+        self.assertEqual(len(taken), 27, 'a cap of 0 discarded sources instead of keeping them')
+
+    def test_extract_limit_zero_reads_every_usable_document(self):
+        mod = load_module()
+        self.assertEqual(mod.EXTRACT_DOC_LIMIT, 0)
+        usable = list(range(27))
+        chosen = usable if not mod.EXTRACT_DOC_LIMIT else usable[:mod.EXTRACT_DOC_LIMIT]
+        self.assertEqual(len(chosen), 27)
+
+    def test_the_agent_payload_is_still_capped_at_twelve(self):
+        """Extraction reading everything must not grow the prompt that has to reason."""
+        mod = load_module()
+        self.assertEqual(mod.LLM_DOC_LIMIT, 12,
+                         'the agent payload limit moved; agents.js keeps 8 of what it is sent')
+
+    def test_the_per_document_character_bound_came_down(self):
+        mod = load_module()
+        self.assertEqual(mod.EXTRACT_DOC_CHARS, 20000,
+                         'extraction is reading more per document than the agent does')
+        self.assertLessEqual(mod.EXTRACT_DOC_CHARS, mod.LLM_DOC_CHARS,
+                             'extraction should never read more per document than the agent prompt')
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

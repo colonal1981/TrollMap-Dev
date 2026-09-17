@@ -1416,7 +1416,19 @@ async function handleResearchAgent(request, env) {
       fisheries: /fish|bass|crappie|striper|catfish|pattern|season|depth|behavior|report|tactic|guide|omnia|conventional|sportsman/i,
     };
     const filter = docFilter[agentKey];
-    // Gemini free-tier requests must stay comfortably below token-per-minute limits.
+    // EIGHT IS A STEERING LIMIT, NOT A QUOTA ONE -- DO NOT RAISE IT ON A TOKEN ARGUMENT.
+    //
+    // This line used to read "Gemini free-tier requests must stay comfortably below
+    // token-per-minute limits", and that reason does not survive measurement. Counted 2026-09-16
+    // across five free keys after six research runs: peak 38.8K TPM against a 250K limit on the
+    // busiest key, 152 requests against a pooled 2,500 RPD. Tokens are not the constraint and were
+    // not the constraint when this was written.
+    //
+    // The real reason is the one in the note immediately below: past a certain prompt size the
+    // model stops reading its own schema. Eight documents at 20,000 characters is about 40,000
+    // tokens of source text, which steers. Raising this because "we have quota" is how the
+    // 150,000-character version happened, and that version returned well-formed output with the new
+    // schema fields absent from all 31 entries, twice.
     const maxDocs = 8;
     // 150,000 CHARACTERS PER DOCUMENT WAS NOT A BUDGET, IT WAS THE ABSENCE OF ONE.
     //
