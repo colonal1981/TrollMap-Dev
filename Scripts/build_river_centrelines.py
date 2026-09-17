@@ -45,6 +45,15 @@ WHAT IT WRITES
   chartpack/<slug>/water_features.geojson  bend_side. Nothing is removed and no feature is added, so
                                          nothing downstream goes stale.
 
+TWO OF THOSE FIVE ARE ABOUT THE FEATURE AND THREE ARE ABOUT THE RIVER, and the difference is the
+snap cap. `river_m` and `off_m` are a position -- nearest the channel here, that far off it -- and
+they are true at any distance, so they are always stamped. `flow_deg`, `bend_r_m` and `bend_side`
+describe the CHANNEL at that station, and a feature three channel widths off the centreline is, in
+this script's own words below, off this river; stamping the channel's direction on it would be
+saying something false about a thing nobody measured. So all three are gated on the cap together.
+Until 2026-09-17 only `bend_side` was, and 5,288 of 22,939 features -- 23.1% -- carried a flow
+direction measured somewhere they are not.
+
   <registry>/_river_centrelines.json     the build record.
 
 THE TRIBUTARIES GO ON THE CENTRELINE, NOT INTO water_features.geojson. Adding creek_mouth features
@@ -682,6 +691,10 @@ def build_one(row, a, db, stamp):
     writes = {}
     stamped = collections.Counter()
     sides = collections.Counter()
+    off_cap = collections.Counter()
+    # THE ONE NUMBER THAT SEPARATES A TIGHT CAP FROM THE WRONG WATER. If the closest feature in the
+    # whole pack is kilometres from the centreline, no cap would have saved it.
+    nearest_feature_m = None
     for fn in FEATURE_FILES:
         p = os.path.join(pack, fn)
         if not os.path.exists(p):
@@ -699,22 +712,57 @@ def build_one(row, a, db, stamp):
             i, d = idxr.nearest(x, y)
             if i is None:
                 continue
+            if nearest_feature_m is None or d < nearest_feature_m:
+                nearest_feature_m = d
             off = signed_offset(pts, i, x, y)
+            # WHERE THE THING IS RELATIVE TO THE RIVER. True at any distance, and the pair is the
+            # whole answer: nearest the channel at `river_m`, and `off_m` away from it. A reader
+            # that looks at one without the other is reading half a coordinate.
             props['river_m'] = round(i * a.step, 1)
             props['off_m'] = round(off, 1)
-            props['flow_deg'] = round(brg[i], 1)
-            props['bend_r_m'] = round(rad[i], 1) if rad[i] is not None else None
+            # WHAT THE CHANNEL IS DOING AT THAT STATION -- WHICH IS ONLY ABOUT THIS FEATURE IF THE
+            # FEATURE IS IN THE CHANNEL.
+            #
+            # `flow_deg` and `bend_r_m` describe the RIVER at station i. They were stamped at any
+            # distance while `bend_side` alone respected the cap, so a feature this script's own
+            # comment calls "off this river" -- three channel widths out -- still came away with a
+            # flow direction and a bend radius measured somewhere it is not. Nothing read them yet,
+            # which is the only reason it cost nothing; `deepest_within_m` is the standing lesson on
+            # what a field that quietly says something false costs the day something does read it.
+            #
+            # Measured 2026-09-17 across all 57 rivers, 22,939 stamped features: 5,288 (23.1%) are
+            # beyond their own pack's cap, and every one of them carried a `flow_deg`. On the
+            # Congaree -- a river this works on -- |off_m| is 54 m at the median and 918 m at worst
+            # against a 435 m cap. On south_yadkin_river, pee_dee_river_2 and nolichucky_river_2 it
+            # is 100%, and the NEAREST feature in those three packs is 1.5 km, 1.8 km and 3.1 km
+            # from the centreline. Those are not tight caps, they are packs whose chart and whose
+            # boundary are on different water, and this gate is what makes them say so.
+            on_river = cap is None or d <= cap
+            props['flow_deg'] = round(brg[i], 1) if on_river else None
+            props['bend_r_m'] = (round(rad[i], 1)
+                                 if on_river and rad[i] is not None else None)
             side = None
-            if rad[i] is not None and turn[i] is not None and (cap is None or d <= cap):
+            if on_river and rad[i] is not None and turn[i] is not None:
                 side = 'outside' if (off > 0) != (turn[i] > 0) else 'inside'
             props['bend_side'] = side
             kind = props.get('kind') or 'unknown'
             stamped[kind] += 1
+            if not on_river:
+                off_cap[kind] += 1
             if side:
                 sides['%s %s' % (kind, side)] += 1
         writes[p] = fc
     rep['stamped'] = dict(stamped)
     rep['bend_sides'] = dict(sides)
+    # A CONDITION THIS SCRIPT CAN SEE MUST REACH THE REPORT, or the next person measures it again.
+    # `off_cap` counts the features this pack put beyond its own three-widths rule -- a handful is
+    # ordinary on a wide reach, and a pack where it approaches everything is a pack whose chart and
+    # whose boundary are on different water. `off_cap_frac` is what a checker reads.
+    n_stamped = sum(stamped.values())
+    rep['off_cap'] = dict(off_cap)
+    rep['off_cap_n'] = sum(off_cap.values())
+    rep['off_cap_frac'] = (round(sum(off_cap.values()) / n_stamped, 4) if n_stamped else None)
+    rep['nearest_feature_m'] = round(nearest_feature_m, 1) if nearest_feature_m is not None else None
 
     coords = [list(to_lonlat(*p)) for p in pts]
     writes[os.path.join(pack, 'centreline.geojson')] = {
@@ -849,6 +897,13 @@ def main():
             print('           stamped %s   tributary mouths %d   snap cap %s m   %.1fs'
                   % (', '.join('%s %d' % (k, v) for k, v in sorted(st.items())),
                      rep['tributary_mouths'], rep['snap_cap_m'], rep['seconds']))
+            # SAID OUT LOUD, EVERY RUN. A pack whose chart and whose boundary are on different water
+            # looks exactly like a healthy one in every line above; this is the line it fails.
+            if rep.get('off_cap_n'):
+                print('           OFF THIS RIVER  %d of %d (%.0f%%) beyond the %s m cap; nearest '
+                      'feature %s m -- no channel direction or bend radius stamped on those'
+                      % (rep['off_cap_n'], sum(st.values()), 100.0 * (rep['off_cap_frac'] or 0),
+                         rep['snap_cap_m'], rep['nearest_feature_m']))
     db.close()
 
     if not a.dry_run:
