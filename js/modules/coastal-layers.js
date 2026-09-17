@@ -7,9 +7,30 @@
  * works for coastal zones unchanged).
  *
  * Data provenance (see Scripts/extract_coastal_habitat.py):
- *   oyster_beds     SCDNR's own 2015 live layer, and NCDMF's reef guide. SC and
- *                   NC only — Georgia publishes no statewide oyster layer, so GA
- *                   zones legitimately 404.
+ *   oyster_beds     THREE STATES, THREE SOURCES — SCDNR's own 2015 live layer, NCDMF's reef
+ *                   guide, and georgia_oyster_reef_2015.gpkg. See OYSTER_SOURCE_BY_STATE in the
+ *                   extractor, which is a table rather than a chain precisely so that no state
+ *                   can be quietly handed another state's file.
+ *
+ *                   THIS ENTRY USED TO READ "SC and NC only — Georgia publishes no statewide
+ *                   oyster layer, so GA zones legitimately 404", AND THAT SENTENCE IS WHERE THE
+ *                   BUG CAME FROM. It was true the day it was written and stopped being true on
+ *                   2026-09-03, when Ryan put 66,935 mapped reef polygons across six coastal
+ *                   counties on the drive. It was then lifted out of THIS HEADER into the
+ *                   extractor as `'GA': None` — a stale claim read as evidence for itself and
+ *                   written down a second time, harder, as a table row. Ryan caught it: "so how
+ *                   do we get oysterbeds for GA... i thought we had them."
+ *
+ *                   The extractor was fixed on 2026-09-15 and this header was not, so the
+ *                   sentence that caused it stayed in shipped code for two more days with a test
+ *                   in the suite naming this file as its origin. Corrected 2026-09-17, and
+ *                   georgia-oyster-was-looked-for-in-north-carolina.test.js now asserts it is
+ *                   gone from here, because a lesson that lives only in prose is the thing this
+ *                   whole episode is about.
+ *
+ *                   Four of the five GA zones carry an extracted file — Savannah, Ossabaw/St
+ *                   Catherines, Sapelo/Altamaha, Brunswick/St Simons. Cumberland/St Marys does
+ *                   not, which is a fact about that bbox and not about the state.
  *   hard_bottom     ESI BENTHIC, SUBELEMENT `hardbottom`. GA and NC — and NO ZONE THE APP
  *                   OFFERS CARRIES IT, so it has no button, for the same reason sav has none.
  *                   Measured on Ryan's own run 2026-09-15: Georgia's BENTHIC loads 1,208 features
@@ -86,8 +107,12 @@ async function fetchCoastalLayer(zoneKey, layer) {
   const url = `${CF_WORKER_URL}/chartpacks/${zoneKey}/${layer}.geojson`;
   const res = await fetch(url, { cache: 'default' });
   if (!res.ok) {
-    // 404 is expected and normal (GA has no oyster data) — cache the miss so
-    // toggling the button repeatedly does not re-request it every time.
+    // A 404 IS A ZONE WITH NO FILE, NOT A STATE WITH NO DATA. Cached either way so that toggling
+    // the button does not re-request it. This used to name Georgia as the state that has none,
+    // which stopped being true on 2026-09-03 — the header carries that quote and the whole story,
+    // ONCE, because a second copy of the evidence is what a guard on the claim trips over. A
+    // zone-level miss is the only thing this branch can honestly say, and Cumberland/St Marys is
+    // what one actually looks like.
     _memCache.set(cacheKey, null);
     if (res.status === 404) return null;
     throw new Error(`HTTP ${res.status}`);

@@ -73,6 +73,26 @@ test('no state is ever handed another state’s oyster file', () => {
   }
 });
 
+test('and the sentence it was lifted FROM is gone from the header it was lifted from', () => {
+  // THE PROSE IS WHERE THIS STARTED. `'GA': None` carried a comment quoting js/modules/
+  // coastal-layers.js: "SC/NC only -- GA has no public oyster shapefile, so GA zones legitimately
+  // 404." The extractor was fixed on 2026-09-15 and that header was not, so the claim that caused
+  // the bug stayed in shipped code for two more days -- with THIS FILE naming it in a comment and
+  // checking only the Python.
+  //
+  // So it is checked. Anchored on the two load-bearing phrases rather than the whole paragraph,
+  // because the paragraph is allowed to be rewritten and the claim is not.
+  const LAYERS = readFileSync(path.join(REPO, 'js/modules/coastal-layers.js'), 'utf8');
+  const claims = LAYERS.split('THIS ENTRY USED TO READ')[0];
+  assert.ok(!/Georgia publishes no statewide\s*\n?\s*\*?\s*oyster layer/.test(claims),
+            'the header still says Georgia publishes no statewide oyster layer');
+  assert.ok(!/GA has no oyster data/.test(LAYERS),
+            'the 404 branch still says Georgia has no oyster data');
+  // And it says what is true instead, so this cannot be satisfied by deleting the line.
+  assert.match(LAYERS, /georgia_oyster_reef_2015\.gpkg/);
+  assert.match(LAYERS, /OYSTER_SOURCE_BY_STATE/);
+});
+
 test('the chain that hid it is gone from the CODE, comments aside', () => {
   assert.ok(!/state in \('NC',\s*'GA'\)/.test(CODE), "the ('NC','GA') chain is back");
   assert.match(CODE, /which = OYSTER_SOURCE_BY_STATE\.get\(state\)/);
