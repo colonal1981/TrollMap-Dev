@@ -354,3 +354,60 @@ test('the current reaches the model, because the model owns the order', () => {
     assert.ok(m.drift && m.drift.side, 'and so does which line it is');
   }
 });
+
+test('a river pass is priced both ways, and the gate takes the dearer one', () => {
+  // The direction is not chosen at candidate time -- orientLegs and the model decide later -- so the
+  // feasibility gate has to pick a price without knowing. It takes the upstream one, because the gate
+  // exists to stop him committing to a day he cannot finish.
+  const { structures, coords } = scoredRiver();
+  const river = sectionedRiver();
+  const drifts = riverDriftRuns(river, { structures, slug: 'test_river', flowCfs: 3000 });
+  const cands = selectCandidates(drifts, SELECT(structures, coords[0]));
+  assert.ok(cands.length > 0);
+  for (const c of cands) {
+    assert.ok(c.batteryAhUpstream > c.batteryAhDownstream,
+              `upstream ${c.batteryAhUpstream} should cost more than downstream ${c.batteryAhDownstream}`);
+    // batteryAh is one pass plus transit, and the pass it prices is the upstream one.
+    assert.ok(c.batteryAh >= c.batteryAhUpstream,
+              'batteryAh carries the upstream pass plus the transit on top');
+    const m = forModel(c);
+    assert.equal(m.batteryAhUpstream, c.batteryAhUpstream, 'both prices reach the model');
+    assert.equal(m.batteryAhDownstream, c.batteryAhDownstream);
+  }
+});
+
+test('still water gets one price, because one number is the whole answer there', () => {
+  // The lake path must be untouched: no current means no second price and no change to batteryAh.
+  const { structures, coords } = scoredRiver();
+  const drifts = riverDriftRuns(eastwardRiver(), { structures, slug: 'test_river' });
+  const cands = selectCandidates(drifts, SELECT(structures, coords[0]));
+  assert.ok(cands.length > 0);
+  for (const c of cands) {
+    assert.equal(c.batteryAhUpstream, null);
+    assert.equal(c.batteryAhDownstream, null);
+    assert.equal(forModel(c).batteryAhUpstream, undefined);
+  }
+});
+
+test('a faster river costs more to fish, which is the point of supplying the current at all', () => {
+  const { structures, coords } = scoredRiver();
+  const slow = selectCandidates(
+    riverDriftRuns(sectionedRiver(), { structures, slug: 'test_river', flowCfs: 3000 }),
+    SELECT(structures, coords[0]));
+  const fast = selectCandidates(
+    riverDriftRuns(sectionedRiver(), { structures, slug: 'test_river', flowCfs: 12000 }),
+    SELECT(structures, coords[0]));
+  assert.ok(slow.length > 0 && fast.length > 0);
+  const byId = new Map(slow.map((c) => [c.runId, c]));
+  let compared = 0;
+  for (const f of fast) {
+    const s = byId.get(f.runId);
+    if (!s) continue;
+    compared++;
+    assert.ok(f.batteryAhUpstream > s.batteryAhUpstream,
+              `${f.runId}: 12,000 cfs upstream ${f.batteryAhUpstream} vs 3,000 cfs ${s.batteryAhUpstream}`);
+    assert.ok(f.batteryAhDownstream < s.batteryAhDownstream,
+              'and going with a faster push is cheaper, not floored at zero');
+  }
+  assert.ok(compared > 0, 'at least one reach survived both discharges to be compared');
+});

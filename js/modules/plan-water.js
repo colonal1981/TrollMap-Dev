@@ -49,7 +49,15 @@
  */
 
 import { buildPieces, joinsFor, followBar } from './plan-pieces.js';
-import { ampHours, ampsAtMph, minutesFor, metresBetween } from './plan-candidates.js';
+import { ampHours, minutesFor, metresBetween,
+         ampHoursBand, headwindMph } from './plan-candidates.js';
+
+// RE-EXPORTED, NOT REDEFINED. `ampHoursBand()` and `headwindMph()` moved into plan-candidates.js on
+// 2026-09-16 so the whole battery model sits in one file beside the two-point fit it is built on.
+// This file imports that one, so the move was the only way the candidate selector could reach them
+// without a second copy of the arithmetic -- and two implementations of one measurement is the defect
+// this project keeps finding. Everything that imported them from here still does.
+export { ampHoursBand, headwindMph };
 
 /**
  * CLEARANCE IS ZERO BECAUSE THE AXIS IS WATER DEPTH. Not a tuning constant — see the header. If
@@ -562,20 +570,8 @@ export function bearingDeg(a, b) {
   return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
 }
 
-/**
- * How much of a wind blows straight down the leg, in mph. Positive = headwind.
- *
- * Meteorological convention: `windDeg` is the direction the wind is coming FROM. A boat heading
- * 090 into a wind from 090 has a pure headwind, so the two agreeing means cos(0) = 1.
- *
- * Pure trigonometry. A crosswind returns ~0 along-track, which is correct for this purpose even
- * though a crosswind absolutely pushes a kayak sideways — that is a steering problem and a wander
- * problem, not an amp-hour problem, and the envelope already covers the wander.
- */
-export function headwindMph(courseDeg, windDeg, windMph) {
-  if (!Number.isFinite(courseDeg) || !Number.isFinite(windDeg) || !Number.isFinite(windMph)) return 0;
-  return windMph * Math.cos(((windDeg - courseDeg) * Math.PI) / 180);
-}
+// `headwindMph()` lives in plan-candidates.js beside the battery curve that consumes it, and is
+// re-exported from the top of this file. Moved 2026-09-16 -- see the note there.
 
 /**
  * HOW HARD THE WIND SETS YOU SIDEWAYS ON THIS LEG, and why that is the number that matters.
@@ -837,57 +833,10 @@ export function worstWind(windByHour) {
   return best;
 }
 
-/** Wind-driven surface drift, as a fraction of wind speed. A standing result, not a fitted one. */
-const DRIFT_FRACTION = 0.03;
-
-/**
- * Amp-hours for one straight run, plus the headwind it is NOT costed for.
- *
- * @param {number} metres
- * @param {number} mph        speed over ground
- * @param {number} courseDeg  bearing of the run
- * @param {object} [env]      {wind:{mph,deg}, currentMph, currentDeg}
- */
-export function ampHoursBand(metres, mph, courseDeg, env) {
-  const cur = env && Number.isFinite(env.currentMph)
-    ? headwindMph(courseDeg, env.currentDeg, env.currentMph) : 0;
-  const head = env && env.wind ? headwindMph(courseDeg, env.wind.deg, env.wind.mph) : 0;
-  // Only the part of the water that is genuinely moving against the boat is charged: measured
-  // current, plus the 3% of the wind that shows up as surface drift. A tailwind and a following
-  // current both help, so neither is floored at zero -- clamping a push to zero would make every
-  // day cost more than it does, which is the same dishonesty pointing the other way.
-  const throughWater = Math.max(0.1, mph + cur + head * DRIFT_FRACTION);
-  // ── THE DRAW IS AT THROUGH-WATER SPEED AND THE CLOCK RUNS AT GROUND SPEED ─────────────────────
-  //
-  // This was `ampHours(metres, throughWater)`, and `ampHours()` uses its one speed argument for BOTH
-  // the current draw and the elapsed time. In still water that is right, because the two speeds are
-  // the same number. The moment the water moves they are not, and this function's own signature says
-  // which is which: `@param mph speed over ground`.
-  //
-  // The propeller only knows the water it is pushing against, so the AMPS come from `throughWater`.
-  // The boat only covers ground, so the HOURS come from `mph`. Worked on his own numbers -- 8 km
-  // upstream at 2.0 mph over ground against 1.0 mph of current, so 3.0 mph through the water:
-  //
-  //     amps(3.0) = 10.19 A,  time = 8000 m / 2.0 mph = 2.485 h   ->  25.3 Ah   (what it costs)
-  //     amps(3.0) = 10.19 A,  time = 8000 m / 3.0 mph = 1.657 h   ->  16.9 Ah   (what it said)
-  //
-  // A THIRD UNDERSTATED, in the direction that matters most. Ryan on the one thing allowed to be
-  // rigid: "if it is a battery thing i would say we need a safety hard stop... if they are going to
-  // run out of battery because of choice they shouldn't be able to make that choice." A cost model
-  // that reads low is how that stop fails to fire. It also ran on every windy lake day, because the
-  // same conflation applies to the 3% of the wind charged as surface drift.
-  //
-  // No test pinned the old value -- plan-water-geometry.test.js asserts `throughWaterMph` and never
-  // the amp-hours -- so nothing about this was deliberate.
-  const overGround = Math.max(0.1, Number(mph) || 0);
-  return {
-    ah: ampsAtMph(throughWater) * (metres / 1609.34) / overGround,
-    // Positive is on the nose. Reported, never costed -- see the note above.
-    headwindMph: Number(head.toFixed(1)),
-    currentMph: Number(cur.toFixed(2)),
-    throughWaterMph: Number(throughWater.toFixed(2)),
-  };
-}
+// `ampHoursBand()` and `DRIFT_FRACTION` live in plan-candidates.js beside the fitted curve they are
+// built on, and the function is re-exported from the top of this file. Moved 2026-09-16 -- see the
+// note there for why, and the-clock-runs-at-ground-speed-and-the-draw-does-not.test.js for the defect
+// found on the way.
 
 /**
  * WHAT A DAY OF TICKED PIECES COSTS, AND WHETHER IT FITS.

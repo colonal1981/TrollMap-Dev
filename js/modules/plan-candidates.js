@@ -56,6 +56,82 @@ export function minutesFor(metres, mph) {
   return (metres / 1609.34) / v * 60;
 }
 
+// ── MOVED HERE FROM plan-water.js ON 2026-09-16, AND THE REASON IS THE WHOLE POINT ───────────────
+//
+// `ampHoursBand()` is the env-aware form of `ampHours()` above -- same fitted curve, resolved against
+// a course. It lived in plan-water.js, which imports this file, so this file could not reach it: the
+// selector that costs every candidate on the card had no way to call the only function that knows
+// what wind or current does, and the alternative was a second copy of the arithmetic here. Two
+// implementations of one measurement is the defect this project keeps finding.
+//
+// So the battery model is now in ONE file, beside the two-point fit it is built on, and plan-water.js
+// imports it back and re-exports it for its own callers. Nothing outside these two files ever
+// imported it except plan-water-geometry.test.js, which still gets it from where it always did.
+
+/**
+ * How much of a wind blows straight down the leg, in mph. Positive = headwind.
+ *
+ * Meteorological convention: `windDeg` is the direction the wind is coming FROM. A boat heading
+ * 090 into a wind from 090 has a pure headwind, so the two agreeing means cos(0) = 1.
+ *
+ * Pure trigonometry. A crosswind returns ~0 along-track, which is correct for this purpose even
+ * though a crosswind absolutely pushes a kayak sideways — that is a steering problem and a wander
+ * problem, not an amp-hour problem, and the envelope already covers the wander.
+ */
+export function headwindMph(courseDeg, windDeg, windMph) {
+  if (!Number.isFinite(courseDeg) || !Number.isFinite(windDeg) || !Number.isFinite(windMph)) return 0;
+  return windMph * Math.cos(((windDeg - courseDeg) * Math.PI) / 180);
+}
+
+/** Wind-driven surface drift, as a fraction of wind speed. A standing result, not a fitted one. */
+const DRIFT_FRACTION = 0.03;
+
+/**
+ * Amp-hours for one straight run, plus the headwind it is NOT costed for.
+ *
+ * @param {number} metres
+ * @param {number} mph        speed over ground
+ * @param {number} courseDeg  bearing of the run
+ * @param {object} [env]      {wind:{mph,deg}, currentMph, currentDeg}
+ */
+export function ampHoursBand(metres, mph, courseDeg, env) {
+  const cur = env && Number.isFinite(env.currentMph)
+    ? headwindMph(courseDeg, env.currentDeg, env.currentMph) : 0;
+  const head = env && env.wind ? headwindMph(courseDeg, env.wind.deg, env.wind.mph) : 0;
+  // Only the part of the water that is genuinely moving against the boat is charged: measured
+  // current, plus the 3% of the wind that shows up as surface drift. A tailwind and a following
+  // current both help, so neither is floored at zero -- clamping a push to zero would make every
+  // day cost more than it does, which is the same dishonesty pointing the other way.
+  const throughWater = Math.max(0.1, mph + cur + head * DRIFT_FRACTION);
+  // ── THE DRAW IS AT THROUGH-WATER SPEED AND THE CLOCK RUNS AT GROUND SPEED ─────────────────────
+  //
+  // This was `ampHours(metres, throughWater)`, and `ampHours()` uses its one speed argument for BOTH
+  // the current draw and the elapsed time. In still water that is right, because the two speeds are
+  // the same number. The moment the water moves they are not, and this function's own signature says
+  // which is which: `@param mph speed over ground`.
+  //
+  // The propeller only knows the water it is pushing against, so the AMPS come from `throughWater`.
+  // The boat only covers ground, so the HOURS come from `mph`. Worked on his own numbers -- 8 km
+  // upstream at 2.0 mph over ground against 1.0 mph of current, so 3.0 mph through the water:
+  //
+  //     amps(3.0) = 10.19 A,  time = 8000 m / 2.0 mph = 2.485 h   ->  25.3 Ah   (what it costs)
+  //     amps(3.0) = 10.19 A,  time = 8000 m / 3.0 mph = 1.657 h   ->  16.9 Ah   (what it said)
+  //
+  // A THIRD UNDERSTATED, in the direction that matters most. Ryan on the one thing allowed to be
+  // rigid: "if it is a battery thing i would say we need a safety hard stop... if they are going to
+  // run out of battery because of choice they shouldn't be able to make that choice." A cost model
+  // that reads low is how that stop fails to fire. It also ran on every windy lake day, because the
+  // same conflation applies to the 3% of the wind charged as surface drift.
+  const overGround = Math.max(0.1, Number(mph) || 0);
+  return {
+    ah: ampsAtMph(throughWater) * (metres / 1609.34) / overGround,
+    // Positive is on the nose. Reported, never costed -- see the note above.
+    headwindMph: Number(head.toFixed(1)),
+    currentMph: Number(cur.toFixed(2)),
+    throughWaterMph: Number(throughWater.toFixed(2)),
+  };
+}
+
 const R = 6371000;
 export function metresBetween(a, b) {
   const p1 = a[1] * Math.PI / 180, p2 = b[1] * Math.PI / 180;
@@ -1347,7 +1423,40 @@ export function selectCandidates(runs, o) {
     // a preference about location, and the min is the right shape for that.
     const fromRampM = Math.min(inM, outM);
     const proximity = 1 / (1 + fromRampM / rampBiasM);
-    const fishAh = ampHours(win.lengthM, trollMph);
+    // ── COSTED WITH THE CURRENT, WHERE THERE IS ONE ──────────────────────────────────────────────
+    //
+    // `ampHoursBand()` has modelled a current since it was written and this is the first caller ever
+    // to supply one. It could not be called from here until 2026-09-16 because it lived in
+    // plan-water.js, which imports this file.
+    //
+    // NO CHORD BEARING IS GUESSED. A drift follows the channel by construction, so the current is
+    // along the line: one pass runs straight into it and the other straight with it. That is why the
+    // two calls below can pass course 0 against a current from 0 (full head) and course 180 against
+    // the same current (full tail) rather than measuring an angle off a line that bends.
+    //
+    // ONE PASS, NOT THE PAIR. plan-assemble.js materialises each pass as a real leg with its own
+    // amp-hours -- "the alternative, one leg carrying a multiplier, would have every reader of
+    // lengthM, coordinates and estDurationMin quietly understating the day" -- so a candidate's
+    // `batteryAh` is one pass and `trollPasses` is what asks for the second.
+    //
+    // AND THE SINGLE NUMBER IS THE UPSTREAM ONE. The direction is not chosen yet -- orientLegs and
+    // the model decide that later -- so the gate below has to pick a price without knowing. It takes
+    // the dearer one, because the gate exists to stop him committing to a day he cannot finish: "if
+    // they are going to run out of battery because of choice they shouldn't be able to make that
+    // choice." Both prices are reported, the same way `transitToM` and `transitToMIfFishedBack` are
+    // two prices on one decision rather than two decisions.
+    const cur = Number(p.current_mph);
+    const hasCurrent = Number.isFinite(cur) && cur > 0;
+    const upAh = hasCurrent
+      ? ampHoursBand(win.lengthM, trollMph, 0, { currentMph: cur, currentDeg: 0 }).ah : null;
+    const downAh = hasCurrent
+      ? ampHoursBand(win.lengthM, trollMph, 180, { currentMph: cur, currentDeg: 0 }).ah : null;
+    const fishAh = hasCurrent ? upAh : ampHours(win.lengthM, trollMph);
+    // TRANSIT IS STILL COSTED IN STILL WATER, AND THAT IS A KNOWN GAP RATHER THAN AN OVERSIGHT. The
+    // hop to and from the ramp is not necessarily along the channel -- it crosses it, leaves it, or
+    // runs up a different reach -- so the current's component on it is not `cur` and cannot be had
+    // without routing the transit over the river first. Naming it here so the next pass does not have
+    // to rediscover which half was done.
     const moveAh = ampHours(inM + outM, transitMph);
     const totalAh = fishAh + moveAh;
     const totalMin = minutesFor(win.lengthM, trollMph) + minutesFor(inM + outM, transitMph);
@@ -1467,6 +1576,10 @@ export function selectCandidates(runs, o) {
       // here picks a cutoff -- see the note in river-drifts.js.
       currentFrac: p.current_frac ?? null,
       flowDeg: p.flow_deg ?? null,
+      // WHAT THIS PASS COSTS EACH WAY. Null on still water, where one number is the whole answer.
+      // `batteryAh` above is the upstream price plus transit -- see the note at fishAh.
+      batteryAhUpstream: upAh != null ? Number(upAh.toFixed(2)) : null,
+      batteryAhDownstream: downAh != null ? Number(downAh.toFixed(2)) : null,
     });
   }
 
@@ -1888,6 +2001,11 @@ export function forModel(c, cap = MODEL_STRUCTURE_CAP) {
     currentDeg: c.currentDeg ?? undefined,
     currentBasis: c.currentBasis || undefined,
     currentFrac: c.currentFrac ?? undefined,
+    // THE PRICE OF THIS PASS EACH WAY, so the order can be chosen on it. His own practice is upstream
+    // first while the battery is full and back down on the push, and these two numbers are what make
+    // that decidable rather than a habit the app cannot see. `batteryAh` above is the upstream price.
+    batteryAhUpstream: c.batteryAhUpstream ?? undefined,
+    batteryAhDownstream: c.batteryAhDownstream ?? undefined,
     drift: c.drift ? { side: c.drift.side, label: c.drift.label } : undefined,
     passes: counts,
     structures: shown,
