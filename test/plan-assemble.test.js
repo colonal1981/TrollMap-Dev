@@ -506,9 +506,13 @@ describe('plan-candidates — resolving a pass to a real structure', () => {
     expect(resolveStructure([-80.7000, 34.3800], 'hump', 60, null)).toBe(null);
   });
 
-  it('never reads deepest_within_m as a depth', () => {
-    // A creek mouth carries `deepest_within_m: 9`. That is metres of something, not 9 ft of
-    // water, and reading it as depth would put a stop on a hole that is not there.
+  it('never reads deepest_within_m as the structure\'s own depth', () => {
+    // A creek mouth carries `deepest_within_m: 9`. That IS feet -- the `_m` in the name is the
+    // radius, not the unit -- but it is the deepest water anywhere within 250 m of the mouth, not
+    // the depth AT it. A stop set to it would put the bait on the bottom of the deepest hole in
+    // the circle rather than in the mouth. See the note above resolveStructure() in
+    // plan-candidates.js; the reason here used to be "that is metres of something", which was
+    // wrong about the field and right about the behaviour for the wrong reason.
     const hit = resolveStructure([-80.6100, 34.3700], 'creek_mouth', 60, idx);
     expect(hit.depthFt).toBe(null);
     expect(hit.what.includes('Crooked Creek')).toBe(true);

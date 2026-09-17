@@ -462,9 +462,29 @@ export function pointAt(coords, cum, m) {
 // instead of implied away. When the pipeline finally emits an id in `near[]` this whole thing
 // collapses into a lookup and should be deleted, not kept alongside it.
 //
-// NOT USED AS A DEPTH: `deepest_within_m`. It is metres, and a run 8.9 ft deep carries a value of
-// 57 — whatever it measures, it is not feet of water, and reading it as depth would put a stop on
-// the bottom of a hole that does not exist.
+// NOT USED AS A STOP'S DEPTH: `deepest_within_m` — AND THE NAME IS THE TRAP, NOT THE FIELD.
+//
+// The `_m` is the RADIUS, not the unit. `build_water_features.py` sets it from `grid.span(lon,
+// lat, --relief-m)`, whose own docstring reads "(deepest, shallowest) charted depth within
+// radius", off a raster of `depth_max_ft`. It is FEET: the deepest charted water within 250 m of
+// the position, never the depth AT it. `fit_trolling_runs.py` agrees for structure-seeded passes
+// — `d = np.nanmax(box) / 3.048`, decimetres to feet — and Scripts/test_structure_seeds.py has
+// asserted it in feet since it was written: "deepest_within_m carries the drop".
+//
+// THIS COMMENT USED TO SAY THE OPPOSITE, and the way it got there is the whole lesson. It read:
+// "It is metres, and a run 8.9 ft deep carries a value of 57 — whatever it measures, it is not
+// feet of water." 57 ft of water within 250 m of an 8.9 ft run is not a contradiction, it is a
+// channel edge, and the producer's own header predicts it in the same words: "the 12.1 ft runs on
+// Wateree split into channel-edge runs with 34-56 ft of water within 250 m, against flats with
+// 14-16 ft." The value was read as the run's OWN depth, found impossible at that depth, and the
+// unit was blamed rather than the reading. Measured 2026-09-17 across 2,387,113 runs in 631
+// packs: `channel_edge` carries a drop of 19.0 ft at p10 and 64.0 ft at p90, and every one of the
+// 14,398 negative drops on the whole card is a `flat`.
+//
+// It is still not a STOP's depth, for the reason the name never gave: the deepest water within
+// 250 m of a creek mouth is not the creek mouth, and a lure set to it sits in the mud. What it is
+// is the water BESIDE the line, which is the thing `relief` is the word for — see reliefDropOf()
+// and forModel(), which now send both.
 // ---------------------------------------------------------------------------------------------
 
 /** Mean of a polygon's outer ring. Good enough for a boathouse; these are metres across. */
@@ -1028,6 +1048,42 @@ export const DEFAULT_RELIEF_WEIGHTS = {
   flat: 8,
   steep_bank: 4,
 };
+
+// THE RADIUS BOTH THE WORD AND THE DROP ARE MEASURED OVER. COPIED FROM THE PRODUCER, NOT CHOSEN
+// HERE. `build_water_features.py --relief-m` and `fit_trolling_runs.py --relief-m` both default to
+// 250, and every pack on the card was built on that default. The pack ships the ANSWER -- `relief`
+// and `deepest_within_m` -- and not the radius, so the app cannot read it back off the chart; a
+// number the app states ABOUT the chart has to be pinned to the thing that made it instead. The
+// test reads both Python files and goes red the day either default moves. Same arrangement as
+// POI_KINDS above, and for the same reason.
+export const RELIEF_RADIUS_M = 250;
+
+/**
+ * THE WATER BESIDE A RUN, from the pack's own relief probe.
+ *
+ * `relief` is the word `build_water_features.py` classified this run's surroundings as; these two
+ * numbers are the measurement it classified. The word has been scored since 2026-08-08 and has
+ * reached the model never, and the word alone is not enough anyway: `channel_edge` covers a 15 ft
+ * drop and a 251 ft one, and they score the same 12.
+ *
+ * NULL WHEN THE DROP IS NEGATIVE, and that is not a threshold anybody picked. `depth_ft` is the
+ * contour's own value and `deepest_within_m` comes off the depth-area raster; where the two
+ * disagree the difference is the disagreement, not a drop. Measured across the card: 0.60% of
+ * runs, and all 14,398 of them are `flat`, where the word already says there is nothing beside the
+ * line worth naming a number for.
+ *
+ * @param {object} p  a trolling run's properties
+ * @returns {{deepestFt:number, dropFt:number}|null}
+ */
+export function reliefDropOf(p) {
+  const deepestFt = Number(p && p.deepest_within_m);
+  const ownFt = Number(p && p.depth_ft);
+  if (!Number.isFinite(deepestFt) || deepestFt <= 0) return null;
+  if (!Number.isFinite(ownFt) || ownFt <= 0) return null;
+  const dropFt = deepestFt - ownFt;
+  if (dropFt < 0) return null;
+  return { deepestFt: Number(deepestFt.toFixed(1)), dropFt: Number(dropFt.toFixed(1)) };
+}
 
 /**
  * Score one window of a run by what it passes.
@@ -1664,6 +1720,11 @@ export function selectCandidates(runs, o) {
     // in the count -- and nothing scored them until 2026-08-08.
     const reliefScore = opts.reliefWeights[p.relief] || 0;
     win.score += reliefScore;
+    // The same probe's other half, read here so the word and its size are resolved in one place.
+    // NOT SCORED, and deliberately: the weights above are research-led counts of what a species is
+    // cited on, and multiplying one of them by a depth would be a coefficient nobody measured.
+    // This is a fact for whoever writes the plan -- see forModel().
+    const reliefDrop = reliefDropOf(p);
     if (win.score <= 0) { rejected.scoreless++; continue; }
 
     const cum = cumulative(coords);
@@ -1952,6 +2013,11 @@ export function selectCandidates(runs, o) {
       // nothing downstream mistakes them for "ledges on this leg".
       runLedges: p.ledge_n ? { n: p.ledge_n, minFt: p.ledge_min_ft, maxFt: p.ledge_max_ft } : null,
       relief: p.relief ?? null,
+      // THE WATER BESIDE THE LINE, which is what `relief` above is the WORD for. See
+      // reliefDropOf() for the measurement, and for why a negative drop is dropped rather than
+      // clamped. Null on the 8.9% of runs the relief probe never answered for.
+      deepestNearbyFt: reliefDrop ? reliefDrop.deepestFt : null,
+      reliefDropFt: reliefDrop ? reliefDrop.dropFt : null,
       // WHICH LINE OF WATER THIS IS, on a river. Null on a lake, where a candidate is a contour
       // lane and there is no side to pick. Read by the dedupe below — see the note there — and it
       // is what lets a plan say "quarter-left, downstream past three holes" instead of naming a
@@ -2435,6 +2501,20 @@ export function forModel(c, cap = MODEL_STRUCTURE_CAP) {
     // shown list about how much was hidden and was wrong about both. `passes` above breaks the
     // same total down by type, hazards included, so the gap is readable rather than just numeric.
     structuresTotal: c.passes.length,
+    // ── WHAT THE BOTTOM DOES BESIDE THIS LINE ────────────────────────────────────────────────────
+    //
+    // `relief` is the chart pipeline's word for the water within RELIEF_RADIUS_M of the pass, and
+    // the two numbers are the measurement it was classified from. The selector has SCORED that word
+    // since 2026-08-08 -- a channel edge is worth 12 and a flat 8, which is part of why these twelve
+    // legs are the twelve -- and then never told the model which it was looking at. So the thing
+    // writing the plan could not tell a lane with a 19 ft drop off its shoulder from one with 64,
+    // and Ryan's own note in fit_trolling_runs.py is the whole reason it matters: "following a
+    // contour line with a drop off near it is great."
+    //
+    // Absent rather than zero where the probe never answered -- see reliefDropOf().
+    relief: c.relief || undefined,
+    deepestNearbyFt: c.deepestNearbyFt ?? undefined,
+    reliefDropFt: c.reliefDropFt ?? undefined,
     runLedges: c.runLedges,
     // "You have caught 6 fish along this stretch, 4 of them stripers" is a fact the model should
     // weigh. "You have never fished here" is equally a fact, and equally worth saying.

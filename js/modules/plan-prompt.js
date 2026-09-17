@@ -63,6 +63,10 @@ import { depthWindow, jigheadRangeOz, trollableBaits,
 import { RIGGED_TROLLING_WEIGHT_OZ, JIGHEADS_OWNED_OZ } from '../data/tackle-inventory.js';
 import { ozLabel } from '../utils/oz.js';
 import { FISHING_STYLE } from '../data/fishing-style-profile.js';
+// The radius `relief`, `deepestNearbyFt` and `reliefDropFt` are all measured over. Imported rather
+// than typed here so the prompt cannot come to say a distance the selector does not mean; see
+// RELIEF_RADIUS_M for why the app holds the number at all instead of reading it off the pack.
+import { RELIEF_RADIUS_M } from './plan-candidates.js';
 import { lightSummary, lightPhrasesIn } from '../utils/light-state.js';
 
 // Six rods. This never changes; it is the boat, not a setting.
@@ -1499,6 +1503,18 @@ RULES THAT ARE NOT NEGOTIABLE
    bottom is fouled. So when the water forces you shallower than the band, take it and do not
    apologise for it: shallow is the cheap direction to be wrong in, deep is the expensive one. A low
    \`maxRunDepthFt\` never means "skip this leg", and never leave the rods out of the water.
+   WHAT IS BESIDE THE LINE IS NOT WHAT IS UNDER IT. \`relief\` is the chart pipeline's word for the
+   water within ${RELIEF_RADIUS_M} m of the pass — \`channel_edge\`, \`break\`, \`steep_bank\` or
+   \`flat\` — and \`deepestNearbyFt\` and \`reliefDropFt\` are the measurement it was classified from:
+   the deepest charted water in that circle, and how much deeper that is than the line itself. A leg
+   reading 25-31 ft with \`reliefDropFt: 38\` has sixty-odd feet of water off its shoulder and fish
+   that can sit in it and come up; the same leg with \`reliefDropFt: 3\` is a shelf with nothing
+   beside it. Both are 25-31 ft of water under the boat, and the bait depth is the same question on
+   each — this changes WHICH LEG IS WORTH THE BATTERY, and which end of a long pass to start on.
+   IT IS NOT A DEPTH YOU CAN FISH. The deep water is somewhere in that circle and the chart does not
+   say where, exactly as \`maxRunDepthFt\` does not say where its rise is. Never set a bait to
+   \`deepestNearbyFt\` — nothing is trolling over it — and never call a leg deep because of it. Where
+   the fields are absent the pipeline's probe had no answer there; that is not a flat.
 
 SAFETY — judge it honestly for a 12.5 ft kayak
 Sustained wind over 15 mph, or gusts over 20, is a no-go. Judge ${o.ramp || 'the ramp'} against the
