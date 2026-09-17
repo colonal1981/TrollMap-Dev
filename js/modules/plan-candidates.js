@@ -816,6 +816,51 @@ function describeStructure(kind, p) {
  * A lookup from structure.geojson + water_features.geojson, bucketed so a pass costs a handful of
  * distance checks instead of 7,900. Pass the FEATURES, in any order; kinds are read off each one.
  */
+/** Square metres in an acre. The survey unit the packs publish areas in. */
+const ACRES_TO_M2 = 4046.8564224;
+
+/**
+ * HOW FAR THIS THING REACHES FROM THE POINT THE PACK RECORDED IT AT, in metres. 0 where the pack
+ * does not say.
+ *
+ * A STRUCTURE IS NOT A PIN. `kindHits()` measures the line to a feature's recorded position, and
+ * every reader since has treated that as the distance to the thing itself. A hole 40 m off the line
+ * that is 30 m across is water the bait crosses; a hole 40 m off the line that is 5 m across is not.
+ * Until now they scored identically, and the flat `maxOffM` was doing the work of "centroid distance
+ * minus how big it is" with one number for every kind of thing.
+ *
+ * Measured on Wateree, 2026-09-17: the sized features have a median radius of 34 m and a p90 of 95 m,
+ * while the median `near[]` distance is 89 m. So the typical hit is a thing whose EDGE is around
+ * fifty metres off the line, and on the largest it is water the boat is already over.
+ *
+ * ── ONLY `area_acres`, AND THE OTHERS ARE EXCLUDED FOR STATED REASONS ─────────────────────────────
+ *
+ * `area_acres` is `ring_area_acres()` in build_structure.py -- the enclosed area of the closed
+ * contour loop the hole or hump was cut from -- and the recorded position is that loop's centroid.
+ * A circle of the same area is therefore an honest half-extent about the recorded point. It is on
+ * holes and humps only: 260 of Wateree's 1,462 features and 189 of the Congaree's 711, which are the
+ * heaviest-weighted and most numerous things on a river.
+ *
+ * `bulge_m` IS NOT A RADIUS AND USING IT WOULD HAVE BEEN WRONG. build_water_features.py measures it
+ * from the midpoint of a 200 m chord to the vertex -- it is how far the shoreline bulges INLAND on a
+ * point, or into the land on a cove -- and the feature is recorded AT THE TIP. A point with a 221 m
+ * bulge does not hold fish 221 m out into the lake; a boat 80 m off the tip is 80 m off the point.
+ * `cove_m` on a creek mouth is the same family and was not traced. A ledge's `run_ft` is the
+ * horizontal run of the fall, across the slope, and the feature is a point on a contour the leg may
+ * be running parallel to.
+ *
+ * So four kinds keep centroid distance, and that is a NAMED GAP rather than an oversight: **the
+ * corridor cannot be narrowed to the 15 m Ryan measured until points, coves, creek mouths and ledges
+ * have an extent that means something**, because at 15 m from a centroid they would simply vanish
+ * from every plan. That is a pipeline question -- the shoreline is there and nobody has asked it --
+ * not a number to invent here.
+ */
+export function featureReachM(kind, p) {
+  const acres = Number(p && p.area_acres);
+  if (!Number.isFinite(acres) || acres <= 0) return 0;
+  return Math.sqrt((acres * ACRES_TO_M2) / Math.PI);
+}
+
 export function structureIndex(...featureLists) {
   const grid = new Map();
   let n = 0;
@@ -837,6 +882,9 @@ export function structureIndex(...featureLists) {
         kind, lon, lat,
         id: p.id || null,
         depthFt: Number.isFinite(depth) && depth > 0 ? Number(depth.toFixed(1)) : null,
+        // How far it reaches from the point recorded above; 0 where the pack does not say. See
+        // featureReachM() for which fields are trusted and, more to the point, which are not.
+        reachM: featureReachM(kind, p),
         what: describeStructure(kind, p),
       };
       const key = `${Math.floor(lon / RESOLVE_CELL)},${Math.floor(lat / RESOLVE_CELL)}`;
@@ -1098,7 +1146,14 @@ export function kindHits(coords, cum, index, maxOffM, kind, asType = kind) {
             const d = pointToSegmentM([r.lon, r.lat], coords[k], coords[k + 1]);
             if (d < best) { best = d; bestAt = cum[k]; }
           }
-          if (best <= maxOffM) out.push({ s: bestAt, t: asType, d: best });
+          // ── THE DISTANCE TO THE THING, NOT TO ITS MIDDLE ──────────────────────────────────
+          //
+          // `best` is the line to the feature's recorded position. Where the pack knows how big the
+          // feature is, the distance that decides whether the bait crosses it is to its EDGE. Never
+          // negative: a line INSIDE a hole is on it, and 0 is what that means -- a negative would
+          // walk straight into scoreWindow's `1 - d/maxOffM` and score above a direct hit.
+          const edge = Math.max(0, best - (r.reachM || 0));
+          if (edge <= maxOffM) out.push({ s: bestAt, t: asType, d: edge });
         }
       }
     }
