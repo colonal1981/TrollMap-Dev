@@ -130,8 +130,28 @@ export async function buildSmartPlanV2(o) {
   // AND THERE IS NO SILENT FALLBACK TO THE LANES. A river whose pack has no centreline says so and
   // stops, because quietly planning a river as a reservoir is exactly how this failure stayed
   // invisible while the bench blamed the depth rule.
-  const isRiver = !!(o.waterState && o.waterState.river);
-  if (isRiver && !centrelineFc) {
+  // WHAT MAKES THIS A RIVER, AND WHY IT IS NOT `waterState.river`.
+  //
+  // The first version of this tested `!!o.waterState.river` and it was wrong twice over.
+  // `waterState.river` is a DETAILS OBJECT -- flow, stage, gauge, generating -- not a flag, and
+  // fetchWaterState() only builds it when the live /conditions call came back: `const river = c &&
+  // (isRiver || c.flowCfs != null || c.generatingNow != null) ? prune({...})`. So a timeout on that
+  // request would have quietly planned the Congaree as a reservoir over lanes, which is the failure
+  // the comment beside that very line warns about -- "a network failure quietly deleting a
+  // constraint". And it fires on a LAKE: a Duke tailwater with `generatingNow` gets a river block
+  // too, which would have sent this function looking for a centreline in a reservoir pack and made
+  // it refuse to plan the lake at all.
+  //
+  // `featureType` is the real answer and it falls back to the registry record, so it survives a
+  // dead gauge. Beside it, the PACK ITSELF is evidence that needs no network: only a river pack has
+  // a centreline, because build_river_centrelines.py only writes one for a river. Either signal is
+  // enough, and together they mean a river with a silent gauge still gets drifts while a lake can
+  // never be mistaken for one.
+  const stateSaysRiver = ((o.waterState && o.waterState.featureType) || '') === 'river';
+  const packHasCentreline = !!(centrelineFc && Array.isArray(centrelineFc.features)
+                               && centrelineFc.features.length);
+  const isRiver = stateSaysRiver || packHasCentreline;
+  if (isRiver && !packHasCentreline) {
     return { plan: null, candidates: [],
              problems: [`${o.r2Key} is a river and its chartpack carries no centreline.geojson, so `
                       + 'a drift cannot be laid out — and its trolling runs are lanes, which is the '
@@ -144,7 +164,7 @@ export async function buildSmartPlanV2(o) {
   // would come apart the first time either was tuned.
   const maxOffM = o.maxOffM ?? 100;
   const legMaxM = o.maxM ?? 8000;
-  const drifts = isRiver
+  const drifts = isRiver && packHasCentreline
     ? riverDriftRuns(centrelineFc, { structures, slug: o.r2Key, maxOffM, maxM: legMaxM })
     : null;
   if (drifts && !drifts.length) {
