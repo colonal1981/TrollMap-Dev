@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""
+r"""
 build_river_centrelines.py -- give every river a centreline, a direction and a curvature, and stamp
 those onto the structure that is already in its chartpack.
 
