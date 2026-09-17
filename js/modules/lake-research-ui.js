@@ -331,7 +331,7 @@ async function loadProfile(lakeName, silent = false) {
     if (_state.currentProfile?.metadata?.status === 'verified') {
       window.TROLLMAP_RESEARCHED_CACHE[`${lakeName}_verified`] = _state.currentProfile;
     }
-    if (!silent) log(`Loaded ${lakeName} v${_state.currentProfile?.metadata?.version} status=${_state.currentProfile?.metadata?.status} overall=${_state.currentProfile?.confidence?.overall?.percent}%`);
+    if (!silent) log(`Loaded ${lakeName} v${_state.currentProfile?.metadata?.version} status=${_state.currentProfile?.metadata?.status}`);
     renderProfile(_state.currentProfile);
     return _state.currentProfile;
   } catch (e) {
@@ -389,18 +389,16 @@ function renderProfile(profile) {
   const statusPill = document.getElementById('researchStatusPill');
   const versionPill = document.getElementById('researchVersionPill');
   const updatedPill = document.getElementById('researchUpdatedPill');
-  const confPill = document.getElementById('researchConfidencePill');
+  // THE CONFIDENCE PILL IS GONE AND SO IS THE SCORE BEHIND IT -- see the note in
+  // Worker/research/agents.js. The element is left in index.html rather than removed in the same
+  // change, because the tab is being replaced by a Smart Plan prompt viewer and cutting its markup
+  // twice is two chances to cut the wrong thing.
   if (statusPill) {
     statusPill.textContent = `Status: ${status}${profile.metadata?.verified ? ' ✔' : ''}`;
     statusPill.className = `meta-pill ${status === 'verified' ? 'verified' : 'draft'}`;
   }
   if (versionPill) versionPill.textContent = `Version: ${profile.metadata?.version || '?'} `;
   if (updatedPill) updatedPill.textContent = `Last Updated: ${profile.metadata?.lastUpdated?.slice(0, 10) || '?'}`;
-  if (confPill) {
-    const overall = profile.confidence?.overall?.percent || 0;
-    confPill.textContent = `Overall: ${overall}% ${profile.confidence?.overall?.level || ''}`;
-  }
-
   const approveBtn = document.getElementById('btnApprove');
   if (approveBtn) {
     approveBtn.style.display = status === 'verified' ? 'none' : 'inline-flex';
@@ -1901,7 +1899,6 @@ function initLakeResearch() {
       }
 
       const statusIcon = function(s) { return s === 'verified' ? '✅' : s === 'draft' ? '🔄' : '❓'; };
-      const pct = function(p) { return p && p.confidence && p.confidence.overall ? p.confidence.overall.percent : '—'; };
       const stateOf = function(id) {
         if (/_sc$/.test(id) || id.includes('_sc_')) return 'SC';
         if (/_nc$/.test(id) || id.includes('_nc_')) return 'NC';
@@ -1916,7 +1913,6 @@ function initLakeResearch() {
         + '<th style="padding:8px 18px;text-align:left;font-size:0.78em;color:var(--muted);font-weight:600;">LAKE</th>'
         + '<th style="padding:8px 12px;text-align:left;font-size:0.78em;color:var(--muted);font-weight:600;">STATE</th>'
         + '<th style="padding:8px 12px;text-align:left;font-size:0.78em;color:var(--muted);font-weight:600;">STATUS</th>'
-        + '<th style="padding:8px 12px;text-align:left;font-size:0.78em;color:var(--muted);font-weight:600;">OVERALL</th>'
         + '<th style="padding:8px 18px;text-align:left;font-size:0.78em;color:var(--muted);font-weight:600;">LAST UPDATED</th>'
         + '</tr></thead><tbody>';
 
@@ -1924,11 +1920,9 @@ function initLakeResearch() {
         const profile = p.profile;
         const status = (profile && profile.metadata && profile.metadata.status) || '—';
         const lakeName = (profile && profile.lakeName) || p.id.replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
-        const overall = pct(profile);
         const updated = (profile && profile.metadata && profile.metadata.lastUpdated)
           ? new Date(profile.metadata.lastUpdated).toLocaleDateString() : '—';
         const state = stateOf(p.id);
-        const pctColor = overall >= 90 ? 'var(--accent2,#4ade80)' : overall >= 70 ? 'var(--accent,#38bdf8)' : 'var(--muted,#888)';
         if (status === 'verified') verified++;
         else if (status === 'draft') draft++;
         tableHTML += '<tr class="lake-status-row"'
@@ -1940,7 +1934,6 @@ function initLakeResearch() {
           + '<td style="padding:8px 18px;font-size:0.85em;font-weight:500;">' + lakeName + '</td>'
           + '<td style="padding:8px 12px;font-size:0.8em;color:var(--muted);">' + state + '</td>'
           + '<td style="padding:8px 12px;font-size:0.85em;">' + statusIcon(status) + ' ' + status + '</td>'
-          + '<td style="padding:8px 12px;font-size:0.85em;color:' + pctColor + ';">' + (overall !== '—' ? overall + '%' : '—') + '</td>'
           + '<td style="padding:8px 18px;font-size:0.8em;color:var(--muted);">' + updated + '</td>'
           + '</tr>';
       });

@@ -750,187 +750,29 @@ JSON only.`;
   // off the same numbers, and it cannot say anything the profile does not contain.
 };
 
-function calculateSectionConfidence(sources, hasData, sectionType) {
-  if (!hasData) return { percent: 0, level: "missing", reason: "no data" };
-  const src = Array.isArray(sources) ? sources : [];
-
-  // ── Trolling / TrollingIntelligence — data-structure validated scoring ──
-  // Trolling has no citable sources (fishing tactics aren't USGS-published),
-  // so source-count scoring always under-reports. Instead, validate the output
-  // structure: does it have species × season entries with depth/structure/forage?
-  if (sectionType === 'trollingIntelligence') {
-    const sectionData = arguments[3]; // passed by handleResearchAgent
-    let speciesCount = 0, structuredSeasons = 0;
-    if (sectionData && typeof sectionData === 'object') {
-      for (const [species, seasons] of Object.entries(sectionData)) {
-        if (typeof seasons !== 'object' || !seasons) continue;
-        speciesCount++;
-        for (const season of ['spring','summer','fall','winter']) {
-          const s = seasons[season];
-          if (s && typeof s === 'object') {
-            const hasDepth = Array.isArray(s.preferredDepth) && s.preferredDepth.length === 2;
-            const hasStruct = Array.isArray(s.structures) && s.structures.length > 0;
-            const hasForage = Array.isArray(s.forage) && s.forage.length > 0;
-            if (hasDepth && (hasStruct || hasForage)) structuredSeasons++;
-          }
-        }
-      }
-    }
-    if (speciesCount >= 3 && structuredSeasons >= 6) return { percent: 80, level: "high", reason: `validated: ${speciesCount} species, ${structuredSeasons} structured seasons`, trollingValidation: true };
-    if (speciesCount >= 2 && structuredSeasons >= 3) return { percent: 65, level: "medium", reason: `validated: ${speciesCount} species, ${structuredSeasons} structured seasons`, trollingValidation: true };
-    if (speciesCount >= 1 && structuredSeasons >= 1) return { percent: 50, level: "low", reason: `validated: ${speciesCount} species, ${structuredSeasons} structured seasons`, trollingValidation: true };
-    // Fall through to source-count scoring if structure is empty
-  }
-
-  // ── Regulations — data-structure validation for general statewide limits + lake-specific exceptions ──
-  if (sectionType === 'regulations') {
-    const sectionData = arguments[3];
-    if (sectionData && typeof sectionData === 'object') {
-      const hasLakeSpecific = sectionData.lakeSpecificRegulations && typeof sectionData.lakeSpecificRegulations === 'object';
-      const hasGeneralState = sectionData.generalStateRegulations && typeof sectionData.generalStateRegulations === 'object';
-      const hasClosedSeasons = (hasLakeSpecific && Array.isArray(sectionData.lakeSpecificRegulations.closedSeasons)) || Array.isArray(sectionData.seasonalClosures);
-      let officialSources = 0;
-      for (const s of src) {
-        if (String(s.trust||'').toUpperCase().includes('OFFICIAL') || /DNR|WILDLIFE|FISHREGS|CODE|AGENCY/.test(String(s.label||'').toUpperCase())) officialSources++;
-      }
-      if (hasLakeSpecific && hasGeneralState && officialSources >= 1) {
-        const pct = Math.min(99, 85 + (officialSources > 1 ? 8 : 0) + (hasClosedSeasons ? 5 : 0));
-        return { percent: pct, level: pct >= 95 ? "very high" : "high", reason: `validated: state limits + lake exceptions (${officialSources} official sources)`, regulationsValidation: true };
-      }
-      if ((hasLakeSpecific || hasGeneralState) && officialSources >= 1) {
-        return { percent: 75, level: "medium", reason: `validated regulations structure (${officialSources} official sources)`, regulationsValidation: true };
-      }
-    }
-  }
-
-  // ── Biology — predatorSpecies is the field Smart Plan consumes ──
-  // Source-count scoring over-reports when forage/stocking facts exist but the
-  // confirmed predator list is empty. A biology section with zero predator
-  // species is not actionable for the app regardless of how many sources
-  // contributed forage notes, so cap it low instead of letting the source count
-  // inflate it. Only penalize an explicitly-empty array; leave undefined alone.
-  if (sectionType === 'biology') {
-    const sectionData = arguments[3];
-    const predators = sectionData && Array.isArray(sectionData.predatorSpecies) ? sectionData.predatorSpecies : null;
-    if (predators !== null && predators.length === 0) {
-      return { percent: 35, level: "low", reason: "validated: 0 predator species — unusable for Smart Plan", biologyValidation: true };
-    }
-  }
-
-  if (!src.length) return { percent: 45, level: "low", reason: "no sources, AI estimate" };
-  let score = 0;
-  let official = 0, secondary = 0, model = 0, derived = 0;
-  for (const s of src) {
-    const trust = String(s.trust || '').toUpperCase();
-    const label = String(s.label || '').toUpperCase();
-    if (trust.includes('OFFICIAL') || /USGS|USACE|EPA|DNR|WILDLIFE|DUKE|DOMINION|SANTEE|SAVANNAH|CORPS/.test(label)) {
-      score += 30; official++;
-    } else if (trust.includes('DERIVED')) {
-      score += 20; derived++;
-    } else if (trust.includes('OFFICIAL_GIS') || trust.includes('THIRD_PARTY') || /SURVEY|FISH|REPORT|SAMPLE/.test(label)) {
-      score += 15; secondary++;
-    } else {
-      score += 5; model++;
-    }
-  }
-  // bonus for multiple agreeing sources
-  if (official >= 3) score += 20;
-  else if (official >=2) score += 10;
-  else if (official >=1 && secondary >=1) score += 8;
-  if (src.length >=3) score += 10;
-  else if (src.length >=2) score += 5;
-
-  let pct = Math.min(99, Math.max(10, score));
-  // cap based on source quality
-  if (official ===0 && secondary ===0) pct = Math.min(pct, 65);
-  if (official ===0 && derived===0) pct = Math.min(pct, 75);
-
-  let level = "low";
-  if (pct >= 95) level = "very high";
-  else if (pct >= 85) level = "high";
-  else if (pct >= 70) level = "medium";
-  else if (pct >= 50) level = "low";
-  else level = "needs review";
-
-  return {
-    percent: pct,
-    level,
-    officialCount: official,
-    secondaryCount: secondary,
-    totalSources: src.length,
-    reason: `${official} official, ${secondary} secondary, ${src.length} total`
-  };
-}
-
-// True when a trollingIntelligence object carries at least one species with a
-// season entry that has a usable depth range, structure list, or forage list.
-// Shared by the section validator and the overall confidence gate.
-function hasStructuredTrollingIntel(trolling) {
-  if (!trolling || typeof trolling !== 'object') return false;
-  return Object.values(trolling).some(seasons => {
-    if (!seasons || typeof seasons !== 'object' || Array.isArray(seasons)) return false;
-    return ['spring', 'summer', 'fall', 'winter'].some(s => {
-      const e = seasons[s];
-      if (!e || typeof e !== 'object') return false;
-      const hasDepth = Array.isArray(e.preferredDepth) && e.preferredDepth.length === 2
-        && e.preferredDepth.every(n => typeof n === 'number' && isFinite(n));
-      const hasStruct = Array.isArray(e.structures) && e.structures.length > 0;
-      const hasForage = Array.isArray(e.forage) && e.forage.length > 0;
-      return hasDepth || hasStruct || hasForage;
-    });
-  });
-}
-
-/**
- * Apply null-field penalties + Smart Plan critical-field gates to the
- * section-averaged overall confidence.
- *
- * predatorSpecies and trollingIntelligence are the two fields Smart Plan
- * actually consumes. A profile with empty species is functionally useless to
- * the app no matter how many sources the other sections found, so these cap the
- * overall score hard rather than just nudging it. Pure function — shared by
- * storage.save and the tests so there is exactly one implementation.
- *
- * @param {number} rawOverall   confidence averaged across sections (0-99)
- * @param {object} profile      incoming lake profile
- * @param {object} fieldStatus  profile.fieldStatus (exemption map)
- * @returns {{ percent: number, penalties: string[] }}
- */
-function gateOverallConfidence(rawOverall, profile, fieldStatus = {}) {
-  const lim = profile.limnology || {};
-  const bio = profile.biology || {};
-  const id = profile.identity || {};
-  const trolling = profile.trollingIntelligence || profile.fisheries || {};
-  const penalties = [];
-  const exempt = (path) => ['not_applicable', 'not_available_after_targeted_review'].includes(fieldStatus[path]?.status);
-  let conf = rawOverall;
-
-  // Limnology / identity null-field penalties (behavior preserved from the
-  // previous inline scoring — 99% with no thermocline depth is misleading).
-  if (lim.thermocline?.summerDepthFt == null && !exempt('limnology.thermocline.summerDepthFt')) { conf -= 8; penalties.push('thermocline.summerDepthFt'); }
-  if (lim.oxygen?.depletionDepthFt == null && !exempt('limnology.oxygen.depletionDepthFt')) { conf -= 6; penalties.push('oxygen.depletionDepthFt'); }
-  if (lim.waterClarity?.secchiFt == null && !exempt('limnology.waterClarity.secchiFt')) { conf -= 3; penalties.push('secchiFt'); }
-  if (!bio.knownStockings?.length && !exempt('biology.knownStockings')) { conf -= 3; penalties.push('knownStockings'); }
-  if (!id.damName && !exempt('identity.damName')) { conf -= 2; penalties.push('damName'); }
-  if (!id.yearImpounded) { conf -= 2; penalties.push('yearImpounded'); }
-
-  // ── Smart Plan critical fields — heavily weighted ──
-  const hasPredatorSpecies = Array.isArray(bio.predatorSpecies) && bio.predatorSpecies.length > 0;
-  const hasTrollingIntel = hasStructuredTrollingIntel(trolling);
-  if (!hasPredatorSpecies && !exempt('biology.predatorSpecies')) {
-    conf -= 28; penalties.push('predatorSpecies (empty — unusable for Smart Plan)');
-  }
-  if (!hasTrollingIntel && !exempt('fisheries.trollingIntelligence')) {
-    conf -= 18; penalties.push('trollingIntelligence (empty — unusable for Smart Plan)');
-  }
-
-  // Hard caps — these two fields gate Smart Plan entirely. No amount of source
-  // count in identity/limnology/habitat can make an empty-species profile useful.
-  if (!hasPredatorSpecies && !exempt('biology.predatorSpecies')) conf = Math.min(conf, 45);
-  if (!hasTrollingIntel && !exempt('fisheries.trollingIntelligence')) conf = Math.min(conf, 58);
-
-  return { percent: Math.max(30, Math.min(99, conf)), penalties };
-}
+// ── THE CONFIDENCE SCORE IS GONE, AND IT DECIDED NOTHING ──────────────────────────────────────
+//
+// `calculateSectionConfidence`, `gateOverallConfidence` and `hasStructuredTrollingIntel` stood here
+// and computed a percentage per section plus an overall, out of a SOURCE COUNT: +30 for a DNR feed,
+// +15 for a fishing report. Ryan, 2026-09-17: *"the only thing that matters for research is whether
+// or not it helps make smartplan smarter... so if smartplan doesn't see the scoring then it doesn't
+// matter... where a fishing fact comes from to me is irrelevant... a guide on youtube is going to
+// know more about how to fish a particular river or lake than a dnr report."*
+//
+// VERIFIED BEFORE IT WENT, not assumed. The whole 51,000-character Smart Plan prompt was searched
+// for `confidence`, `very high`, `official`, `trust` and `sources` and none of them appear. The
+// score reached the research tab, a `display:none` textarea, and the save response. It gated
+// nothing -- `gateOverallConfidence` only ever adjusted the NUMBER, it never refused a save or
+// changed a stored field.
+//
+// AND IT SCORED THE OPPOSITE OF HIS STANDING RULE. *"INFO IS INFO, AND THERE ARE NO OFFICIAL
+// SOURCES ON HOW TO FISH."* A profile that read seventy-two facts out of two dozen web pages scored
+// LOWER than one that read none, because facts never became entries in `sources`.
+//
+// The per-FACT `confidence` in extract.js stays: it ranks and de-duplicates `_extractedFacts`, and
+// the prompt readers take the top eight in that order. The thermocline's and the oxygen's own
+// `confidence`, `method` and `note` stay too -- those ride on the measured value and the notes
+// reach the prompt.
 
 /**
  * THE STATE BIOLOGIST ALREADY ANSWERED, AND THE APP TOOK THE FISH NAMES OFF THE PAGE.
@@ -1915,7 +1757,6 @@ holding: coerceHolding(entry.holding, holdingRejects),
       // established by the model and discarded on the way home.
       data: { lakeForage: { primary: lakeLevel.primary, secondary: lakeLevel.secondary },
               speciesFound: lakeLevel.speciesFound },
-      confidence: { percent: 35 },
       // WHAT THE DETERMINISTIC BLOCKS ACTUALLY CONTRIBUTED, carried out so a caller can tell a
       // run that HAD them from a run that did not.
       //
@@ -2130,9 +1971,6 @@ holding: coerceHolding(entry.holding, holdingRejects),
     sectionData = normalized;
   }
 
-  const hasData = sectionData && (typeof sectionData === 'object' ? Object.keys(sectionData).filter(k => k !== 'sources').length > 0 : true);
-  const confidence = calculateSectionConfidence(sources, hasData, agentKey, sectionData);
-
   return new Response(JSON.stringify({
     success: true,
     agent: agentKey,
@@ -2144,7 +1982,6 @@ holding: coerceHolding(entry.holding, holdingRejects),
     section: sectionData,
     sectionKey: dataKey,
     sources,
-    confidence,
     meta: {
       provider: llmResult.provider,
       model: llmResult.model,
@@ -2161,8 +1998,7 @@ holding: coerceHolding(entry.holding, holdingRejects),
 Object.assign(RESEARCH_AGENTS, COASTAL_AGENTS);
 
 export {
-  RESEARCH_AGENTS, calculateSectionConfidence, gateOverallConfidence,
-  hasStructuredTrollingIntel, handleResearchAgent,
+  RESEARCH_AGENTS, handleResearchAgent,
   COASTAL_AGENTS, COASTAL_SKIPPED_AGENTS,
   isCoastalZone, coastalAgentPlan,
   splitConjunctiveName, missingConfirmedSpecies,

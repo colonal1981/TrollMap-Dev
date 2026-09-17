@@ -42,7 +42,10 @@ export async function syncLakeIntelData() {
     // Header
     lines.push(`${d.lake || label} \u2014 Lake Intelligence Briefing`);
     if(rp) {
-      lines.push(`\uD83E\uDDE0 Verified Research Profile v${rp.metadata?.version||'?'} \u00B7 ${rp.confidence?.overall?.percent||'?'}% confidence \u00B7 ${new Date(rp.metadata?.lastUpdated||Date.now()).toLocaleDateString()}`);
+      // NO CONFIDENCE ON THIS LINE. It was a percentage out of a source count that decided
+      // nothing -- see Worker/research/agents.js. The version and the date are facts about the
+      // profile; the score was a claim about it.
+      lines.push(`\uD83E\uDDE0 Verified Research Profile v${rp.metadata?.version||'?'} \u00B7 ${new Date(rp.metadata?.lastUpdated||Date.now()).toLocaleDateString()}`);
     } else if(d.confidence && String(d.confidence).includes('generic')) {
       lines.push('VERIFY: No curated lake profile is available yet; this is a research checklist, not confirmed lake intelligence.');
     }
@@ -232,7 +235,7 @@ export async function syncLakeIntelData() {
     if(out) out.value = lines.join('\n');
     if(summary){
       summary.style.display='block';
-      const verifiedBadge = rp ? `<br><span style="color:var(--accent2);font-weight:700">\uD83E\uDDE0 Verified Research v${rp.metadata?.version||'?'} \u00B7 ${rp.confidence?.overall?.percent||'?'}% confidence</span>` : (d.confidence&&String(d.confidence).includes('generic')?`<br><span style="color:var(--warn);font-weight:700">\u26A0 VERIFY: generic/unconfirmed profile</span>`:'');
+      const verifiedBadge = rp ? `<br><span style="color:var(--accent2);font-weight:700">\uD83E\uDDE0 Verified Research v${rp.metadata?.version||'?'}</span>` : (d.confidence&&String(d.confidence).includes('generic')?`<br><span style="color:var(--warn);font-weight:700">\u26A0 VERIFY: generic/unconfirmed profile</span>`:'');
       const spList = [rp?.biology?.predatorSpecies, rp?.biology?.primaryGameFish, p.primarySportFish]
         .map(coerceList).find((l) => l.length) || [];
       const speciesDisplay = spList.join(', ') || 'Profile generated';

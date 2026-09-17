@@ -5,7 +5,6 @@ import { searchWeb } from './clients.js';
 import { extractJsonPossibly, researchStorageId, resolveResearchStorageId, stripLakeQualifiers } from './keys.js';
 import { stateFullName } from './dataset.js';
 import { lakeIndex, identityNamesForLake, resolveRegistryRow } from '../registry.js';
-import { calculateSectionConfidence, gateOverallConfidence } from './agents.js';
 import { buildFactualSummary } from './facts-util.js';
 
 async function handleResearchList(env) {
@@ -191,36 +190,25 @@ async function handleResearchSave(request, env) {
     throw new Error(`cannot determine next version for ${safe}: ${err && err.message}`);
   }
 
-  // Calculate confidence per section if not provided
-  // Canonical sections only — skip aliased duplicates (forage=biology, trollingIntelligence=trolling)
-  const sections = ["identity","limnology","biology","habitat","navigation","regulations","fisheries","summary"];
-  const confidence = incomingProfile.confidence || {};
+  // ── NO CONFIDENCE AND NO EVIDENCE MAP ARE COMPUTED OR STORED ────────────────────────────────
+  //
+  // Both stood here and both reached nothing that decides anything -- see the note in agents.js for
+  // the confidence, and below for the evidence map. A save no longer invents a percentage.
+  //
+  // `sources` STAYS. It is the list of feeds and documents a run consulted, it is what the research
+  // tab lists, and it is not a score.
   const sources = incomingProfile.sources || [];
-  // build overall confidence
-  let confSum = 0, confCount = 0;
-  for (const sec of sections) {
-    const secData = incomingProfile[sec] || packageParts[sec];
-    if (secData) {
-      if (!confidence[sec]) {
-        // Look for sources on the section data or use incomingProfile sources
-        const src = (typeof secData === 'object' && secData.sources) || incomingProfile.sources || [];
-        const calc = calculateSectionConfidence(src, true, sec, secData);
-        confidence[sec] = calc;
-      }
-      if (confidence[sec]?.percent) { confSum += confidence[sec].percent; confCount++; }
-    }
-  }
-  // Remove any aliased duplicate confidence keys that would bloat the object
-  delete confidence.trollingIntelligence; delete confidence.fisheries;
-  let overallConf = confCount ? Math.round(confSum/confCount) : 75;
 
-  // Penalize for null critical fields and gate on the Smart Plan critical fields
-  // (predatorSpecies + trollingIntelligence). The gate lives in agents.js so the
-  // same implementation is shared with the test suite — previously this was
-  // inline and only counted sources, so an empty-species profile still read 94%.
-  const gated = gateOverallConfidence(overallConf, incomingProfile, incomingProfile.fieldStatus || {});
-  overallConf = gated.percent;
-  const nullPenalties = gated.penalties;
+  // AND ANY CONFIDENCE OR EVIDENCE ON THE INCOMING PROFILE IS DROPPED RATHER THAN CARRIED.
+  //
+  // Ryan's own rule: "do not leave unused objects behind, this is how stuff gets missed." A field we
+  // stop writing and never strip becomes immortal, because every save merges the stored profile
+  // forward -- so the 78 profiles that already carry these would have kept them for ever while
+  // nothing wrote or read them. Stripping on save is what makes the deletion actually happen, one
+  // water at a time as each is next saved.
+  delete incomingProfile.confidence;
+  delete incomingProfile.evidence;
+  if (packageParts && typeof packageParts === 'object') delete packageParts.evidence;
 
   // Merge master profile per spec section 6
   const now = new Date().toISOString();
@@ -252,10 +240,8 @@ async function handleResearchSave(request, env) {
     regulations: incomingProfile.regulations || packageParts.regulations || {},
     trollingIntelligence: incomingProfile.trollingIntelligence || incomingProfile.fisheries || packageParts.trollingIntelligence || packageParts.fisheries || null,
     summary: incomingProfile.summary || packageParts.summary || {},
-    evidence: incomingProfile.evidence || packageParts.evidence || {},
     fieldStatus: incomingProfile.fieldStatus || {},
     sources: incomingProfile.sources || sources || [],
-    confidence: {...confidence, overall: {percent: overallConf, level: overallConf>=95?'very high':overallConf>=85?'high':overallConf>=70?'medium':'low'}},
     metadata: {
       // A KEY THIS SAVE DOES NOT MANAGE MUST SURVIVE IT.
       //
@@ -349,7 +335,7 @@ async function handleResearchSave(request, env) {
   });
 
   // Save package parts (hybrid)
-  const partKeys = ['identity','limnology','biology','forage','habitat','navigation','regulations','trollingIntelligence','summary','evidence'];
+  const partKeys = ['identity','limnology','biology','forage','habitat','navigation','regulations','trollingIntelligence','summary'];
   for (const k of partKeys) {
     const partData = packageParts[k] || master[k];
     if (partData) {
@@ -362,13 +348,12 @@ async function handleResearchSave(request, env) {
   // Save sources, research_log, metadata as separate files for Inspector
   await env.R2_TROLLMAP_CHARTPACKS.put(`lake_packages/${safe}/sources.json`, JSON.stringify(master.sources||[], null, 2), {httpMetadata:{contentType:"application/json"}});
   await env.R2_TROLLMAP_CHARTPACKS.put(`lake_packages/${safe}/metadata.json`, JSON.stringify(master.metadata, null, 2), {httpMetadata:{contentType:"application/json"}});
-  await env.R2_TROLLMAP_CHARTPACKS.put(`lake_packages/${safe}/evidence.json`, JSON.stringify(master.evidence||{}, null, 2), {httpMetadata:{contentType:"application/json"}});
   await env.R2_TROLLMAP_CHARTPACKS.put(`lake_packages/${safe}/research_log.json`, JSON.stringify(master.researchLog||{}, null, 2), {httpMetadata:{contentType:"application/json"}});
   if (master.notes) {
     await env.R2_TROLLMAP_CHARTPACKS.put(`lake_packages/${safe}/notes.md`, String(master.notes), {httpMetadata:{contentType:"text/markdown"}});
   }
 
-  return new Response(JSON.stringify({ok:true, lakeId: safe, lakeName, version: nextVersion, masterKey: `lakes/${safe}.json`, overallConfidence: overallConf, status: master.metadata.status, bytes: masterJson.length}), {headers: JSON_HEADERS});
+  return new Response(JSON.stringify({ok:true, lakeId: safe, lakeName, version: nextVersion, masterKey: `lakes/${safe}.json`, status: master.metadata.status, bytes: masterJson.length}), {headers: JSON_HEADERS});
 }
 
 async function handleResearchApprove(request, env) {
@@ -557,7 +542,6 @@ async function handleEnhancedLakeIntel(lakeName, env) {
         version: researchedProfile.metadata?.version,
         status: researchedProfile.metadata?.status,
         lastUpdated: researchedProfile.metadata?.lastUpdated,
-        overallConfidence: researchedProfile.confidence?.overall,
         summary: researchedProfile.summary,
         trollingIntelligence: researchedProfile.trollingIntelligence,
         fullProfile: researchedProfile
