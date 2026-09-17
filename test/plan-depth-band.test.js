@@ -198,10 +198,23 @@ describe('researchIntel — the rest of the profile, which v2 was throwing away'
     expect(s.includes('26-34 ft')).toBe(true);
   });
 
-  it('says out loud when a profile has not been verified', () => {
-    expect(researchIntel(profile, 'Striped Bass', 'summer').includes('(verified)')).toBe(true);
-    const unver = { ...profile, metadata: {} };
-    expect(researchIntel(unver, 'Striped Bass', 'summer').includes('NOT yet verified')).toBe(true);
+  // THIS ASSERTED THE OPPOSITE UNTIL 2026-09-17, and the assertion was right about the code and
+  // wrong about the app. The header read "(NOT yet verified — weigh accordingly)" whenever
+  // `metadata.status !== 'verified'`, which means: whenever Ryan had not clicked a button in the
+  // research tab. It was telling the model to discount a profile over a click nobody is going to
+  // make — the tab is being replaced by a prompt viewer, and "once we remove the research tab...
+  // there won't be a way to verify them or mark them verified". The thing that was to replace it,
+  // the confidence score, turned out to be a source count and was deleted the same day.
+  it('does not tell the model to discount the research over a missing click', () => {
+    for (const p of [profile, { ...profile, metadata: {} }]) {
+      const s = researchIntel(p, 'Striped Bass', 'summer');
+      expect(s.includes('NOT yet verified')).toBe(false);
+      expect(s.includes('(verified)')).toBe(false);
+      expect(s.includes('weigh accordingly')).toBe(false);
+    }
+    // What the header DOES still say is what the profile is and when it was taken.
+    expect(researchIntel(profile, 'Striped Bass', 'summer')
+      .startsWith('Researched profile for this water')).toBe(true);
   });
 
   it('omits what the research could not establish rather than emitting a blank', () => {

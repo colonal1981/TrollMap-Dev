@@ -623,7 +623,48 @@ export function thermoclineNormFor(profile, now = Date.now(), packFacts = null) 
  * Exported because the prompt and the planner must use the SAME number. Two readings of one field
  * is the defect this file has been fixing all month.
  */
+/**
+ * ── A RIVER DOES NOT STRATIFY, AND THE APP WAS DELETING BAITS BECAUSE IT THOUGHT ONE DID ────────
+ *
+ * Found by Ryan reading the Congaree's own prompt, 2026-09-17. The profile carried
+ * `thermocline.summerDepthFt: 8`, `oxygen.anoxicBelowFt: 8` and `trophicStatus: 'eutrophic'` -- all
+ * three lake objects, on moving water -- and the anoxic number is not decoration. It is the one
+ * measured number `trollableBaits()` is allowed to stand on, and the Congaree prompt duly read:
+ *
+ *     WHAT EACH OF THESE COVERS, SHALLOWEST FIRST -- AND THE FLOOR IS 8 FT
+ *     NOT AVAILABLE BEHIND THE BOAT, and why:
+ *     - DD1 Crankbait (14-18ft): ... there is no oxygen below 8 ft -- every pass would be in dead water
+ *     - DD2, DD3, DD4: the same
+ *
+ * FOUR CRANKBAITS DELETED FROM THE BOX because a stratification model ran on a river that was
+ * moving 2,840 ft3/s that morning. A flowing channel is mixed top to bottom; there is no
+ * hypolimnion for oxygen to be cut off in, which is why the derivation is named
+ * `derived_from_do_profile` and why its premise is a stable column.
+ *
+ * AND THE WQP FETCH ALREADY KNEW: its own result carries `waterType: "river"`. The number was
+ * derived anyway, off FIVE summer DO records whose deepest sample is 10.5 ft and whose SHALLOWEST
+ * reads 0.1 mg/L -- on water whose surface DO was measured at 5.45 mg/L the same month. One of
+ * those samples is not the main channel.
+ *
+ * THE GATE IS THE WATER TYPE, WHICH IS A FACT, NOT A THRESHOLD ON THE SUPPORT. "How many depth
+ * records is enough" is a number nobody has measured and inventing one is the thing this project
+ * keeps removing. Whether the column stratifies at all is answered by what the water IS.
+ *
+ * ONE RIVER CARRIES THIS TODAY and 56 more are about to be researched, so it is fixed before the
+ * run rather than after it.
+ */
+function stratifies(profile, packFacts = null) {
+  const id = { ...((profile && profile.identity) || {}),
+               ...((packFacts && packFacts.identity) || {}) };
+  return !saysRiver({ featureType: id.bodyType }, { featureType: id.archetype });
+}
+
 export function oxygenFloorFt(profile, packFacts = null) {
+  // NULL ON A RIVER, AND A NULL HERE IS THE RIGHT KIND OF ABSENCE -- the gate's own note says a
+  // null "must NOT become a gate, because refusing a box over an unmeasured lake is the app
+  // inventing a constraint". Refusing a box over a river it modelled as a lake is worse: an
+  // invented constraint wearing a measurement's clothes.
+  if (!stratifies(profile, packFacts)) return null;
   const lim = { ...((profile && profile.limnology) || {}),
                 ...((packFacts && packFacts.limnology) || {}) };
   const an = Number(lim.oxygen && lim.oxygen.anoxicBelowFt);
@@ -745,6 +786,34 @@ export function researchIntel(profile, species, season, now = Date.now(), packFa
     // facts. A profile that carries a forage species the agency page does not mention keeps it.
     primaryForage: unionSpecies((profile.biology || {}).primaryForage, packBio.primaryForage),
   };
+  // ── A GROUP TERM IS A RULE, NOT A FISH ───────────────────────────────────────────────────────
+  //
+  // The Congaree's roster reached the prompt as "Largemouth Bass; Bluegill; ...; Channel Catfish;
+  // Blue Catfish; Flathead Catfish; Striped Bass; White Bass / Hybrid; CATFISH; Bowfin; ...". That
+  // last one is the regulations digest's `Catfish (all species)` -- a rule written in group terms,
+  // which the roster builders read as a species. Counted across all 78 profiles: 28 of them, and
+  // `Catfish` x14 and `Crappie` x10 are most of it.
+  //
+  // THE RULE IS READ OFF THE LIST ITSELF, NOT OFF A TABLE OF GROUP NAMES. An entry is a group term
+  // when it is ONE WORD and some other entry in the SAME list ends with it -- "Catfish" beside
+  // "Channel Catfish", "Crappie" beside "Black Crappie". Nothing is hand-written and it grows with
+  // the roster.
+  //
+  // THE ONE-WORD CLAUSE IS WHAT MAKES IT SAFE, and it was found by running the rule without it.
+  // "Striped Bass" is a suffix of "Hybrid Striped Bass" on four waters and they are DIFFERENT FISH;
+  // a bare suffix test would have deleted the striper from four rosters. Measured: one word catches
+  // 28 and keeps all four stripers.
+  const dropGroupTerms = (list) => {
+    const rows = asList(list);
+    const names = rows.map((x) => String(typeof x === 'string' ? x : (x && x.species) || '')
+                                  .trim().toLowerCase());
+    return rows.filter((_, i) => {
+      const a = names[i];
+      if (!a || a.includes(' ')) return true;
+      return !names.some((b, j) => j !== i && b.endsWith(` ${a}`));
+    });
+  };
+
   const hab = {
     ...(profile.habitat || {}),
     ...packHab,
@@ -754,7 +823,10 @@ export function researchIntel(profile, species, season, now = Date.now(), packFa
     },
   };
 
-  put('Lake type', id.archetype || id.bodyType);
+  // `Water type`, NOT `Lake type`. It printed "Lake type: river" on the Congaree. The field is
+  // `feature_type` off the registry row and its three values are lake, river and coastal, so the
+  // label was wrong on two of the three the day it was written.
+  put('Water type', id.archetype || id.bodyType);
   put('Max depth', id.maxDepthFt, ' ft');
   // This said "at least 29.4 ft" whenever the profile carried `averageDepthIsLowerBound`, which
   // existed because `be` was read as a band with no ceiling. It is not one -- it straddles a
@@ -784,7 +856,21 @@ export function researchIntel(profile, species, season, now = Date.now(), packFa
   // the water under it is cut off from the surface and losing oxygen as the season runs.
   // `clampToOxygen()` is what acts on that, against the anoxic depth. Bait stacking near the
   // boundary is a real thing; a lure set at exactly the number is not what it implies.
-  if (lim.thermocline?.summerDepthFt) {
+  //
+  // ── AND NONE OF THE THREE IS PRINTED ON A RIVER ───────────────────────────────────────────────
+  //
+  // See stratifies() above for what the Congaree's copy of these did to the tackle box. SAID, NOT
+  // SILENTLY DROPPED: a missing line reads the same as "nobody measured", and the reason a river
+  // has no thermocline is a fact about rivers that a plan can use.
+  const columnStratifies = stratifies(profile, packFacts);
+  if (!columnStratifies) {
+    out.push('Thermocline / oxygen floor: NOT APPLICABLE — this is moving water. A flowing channel '
+           + 'mixes top to bottom, so there is no thermocline, no layer cut off from the surface '
+           + 'and no depth below which nothing holds. Any bait that clears the bottom is fishing '
+           + 'live water. Trophic status is a standing-water measure and is left out for the same '
+           + 'reason.');
+  }
+  if (columnStratifies && lim.thermocline?.summerDepthFt) {
     out.push(`Thermocline in summer: ${lim.thermocline.summerDepthFt} ft — the depth the water `
            + 'column stops mixing, NOT a depth to fish. Water below it is cut off from the '
            + 'surface and loses oxygen as summer runs; the fishable band is above it.');
@@ -803,18 +889,21 @@ export function researchIntel(profile, species, season, now = Date.now(), packFa
   // "We asked and the data cannot answer" and "nobody has asked" are different claims, and one of
   // the two readers of this prompt is a language model that will fill a bare null from its own
   // recall. Wateree carried a fabricated 27 ft for months in exactly that shape.
-  else if (lim.thermocline?.note) {
+  else if (columnStratifies && lim.thermocline?.note) {
     out.push(`Thermocline: NOT established for this water — ${lim.thermocline.note}`);
   }
-  put('Anoxic below', lim.oxygen?.anoxicBelowFt, ' ft — nothing holds under this in late summer');
-  put('Oxygen depletion begins', lim.oxygen?.depletionDepthFt, ' ft');
+  if (columnStratifies) {
+    put('Anoxic below', lim.oxygen?.anoxicBelowFt, ' ft — nothing holds under this in late summer');
+    put('Oxygen depletion begins', lim.oxygen?.depletionDepthFt, ' ft');
+  }
   // WHERE THE OXYGEN NUMBERS CAME FROM. Wateree's read "measured vertical profile, EPA National
   // Lakes Assessment 7/21/2022" -- a measured, dated number is a different claim from a modelled
   // one, and the two lines above carried no provenance at all.
-  if (lim.oxygen?.note && (lim.oxygen?.anoxicBelowFt != null || lim.oxygen?.depletionDepthFt != null)) {
+  if (columnStratifies && lim.oxygen?.note
+      && (lim.oxygen?.anoxicBelowFt != null || lim.oxygen?.depletionDepthFt != null)) {
     out.push(`  those oxygen depths: ${lim.oxygen.note}`);
   }
-  put('Trophic status', lim.trophicStatus);
+  if (columnStratifies) put('Trophic status', lim.trophicStatus);
   put('Typical clarity', lim.waterClarity?.typical);
   put('Secchi', lim.waterClarity?.secchiFt, ' ft');
   put('Seasonal drawdown', lim.seasonalDrawdownFt, ' ft');
@@ -826,8 +915,17 @@ export function researchIntel(profile, species, season, now = Date.now(), packFa
 
   // Ryan's call, 2026-08-07: what else is in the lake is an argument about lure and
   // presentation, so the species list and the forage base stay.
-  put('Other predators here', bio.predatorSpecies);
-  put('Primary forage', bio.primaryForage);
+  //
+  // "OTHER" MEANS OTHER, AND IT DID NOT. The Congaree's line opened `Other predators here:
+  // Largemouth Bass; Bluegill; ...` on a day planned FOR largemouth bass -- the label promises the
+  // fish beside the target and the list led with the target itself. The roster is a presence claim
+  // and the target's presence is the premise of the whole plan, so it is not news here.
+  const targetKey = String(species || '').trim().toLowerCase();
+  const others = dropGroupTerms(bio.predatorSpecies)
+    .filter((x) => String(typeof x === 'string' ? x : (x && x.species) || '')
+                     .trim().toLowerCase() !== targetKey);
+  put('Other predators here', others);
+  put('Primary forage', dropGroupTerms(bio.primaryForage));
   // WHAT THE TARGET EATS, AND IT IS NOT A FACT ABOUT THIS WATER. The label carries the state and
   // the agency because species_traits.json's own note says "Per-SPECIES and statewide, not
   // per-water" -- and a sentence about what stripers eat in South Carolina read as a sentence
@@ -944,7 +1042,7 @@ export function researchIntel(profile, species, season, now = Date.now(), packFa
     return lines.join('\n');
   })();
   if (_sq) out.push(_sq);
-  put('Secondary forage', bio.secondaryForage);
+  put('Secondary forage', dropGroupTerms(bio.secondaryForage));
   put('Stockings', bio.knownStockings);
   // FOUR LINES STOOD HERE AND WENT WITH THE BIOLOGY AGENT, 2026-09-01.
   //
@@ -1021,13 +1119,40 @@ export function researchIntel(profile, species, season, now = Date.now(), packFa
     }
   }
 
-  const summary = profile.summary?.text || (typeof profile.summary === 'string' ? profile.summary : null);
+  let summary = profile.summary?.text || (typeof profile.summary === 'string' ? profile.summary : null);
+  // AND A STORED SUMMARY MUST NOT CONTRADICT THE LINE FOUR ABOVE IT.
+  //
+  // The summary is a sentence this app wrote at research time, and on the Congaree it ends
+  // "Available limnology data indicate Secchi clarity around 4.5 ft; summer thermocline near 8 ft."
+  // The producer no longer derives a thermocline on moving water -- see
+  // dropFieldsThisWaterCannotHave() -- but the 78 stored summaries keep theirs until each water is
+  // next researched, and a prompt that says NOT APPLICABLE and then quotes a depth three lines
+  // later has told the model nothing.
+  //
+  // SENTENCE-LEVEL, NOT A REGEX OVER PROSE. On a river a sentence asserting a thermocline is wrong
+  // whoever wrote it, so the test is the claim and not the template, and nothing else in the
+  // summary is touched.
+  if (summary && !columnStratifies) {
+    const kept = String(summary).split(/(?<=\.)\s+/).filter((x) => !/thermocline/i.test(x));
+    summary = kept.join(' ').trim() || null;
+  }
   if (summary) out.push(`Summary: ${String(summary).slice(0, 1200)}`);
 
   if (!out.length) return null;
-  const verified = profile.metadata?.status === 'verified' || profile.metadata?.verified;
-  return `Researched profile for this lake${verified ? ' (verified)' : ' (NOT yet verified — weigh accordingly)'}`
-       + `${ageSentence(profile, now)}:\n`
+  // ── NO "NOT YET VERIFIED — WEIGH ACCORDINGLY" ────────────────────────────────────────────────
+  //
+  // This opened every Congaree prompt, and what it meant was `metadata.status !== 'verified'` --
+  // whether Ryan had clicked a button in the research tab. It was telling the model to discount a
+  // profile on the strength of a click that nobody is going to make: the tab is being replaced by a
+  // prompt viewer and, in his words, "once we remove the research tab... there won't be a way to
+  // verify them or mark them verified".
+  //
+  // The thing that was going to replace it -- the confidence score -- turned out to be a source
+  // COUNT that reached nothing and was deleted the same day. So the honest header is what the
+  // profile IS and when it was taken, which `ageSentence()` already says. A plan that discounts its
+  // own research because of a missing click plans off general knowledge instead, which is the
+  // failure this whole block exists to prevent.
+  return `Researched profile for this water${ageSentence(profile, now)}:\n`
        + out.map((l) => `- ${l}`).join('\n');
 }
 

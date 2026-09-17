@@ -329,6 +329,59 @@ export function limnologyFieldsFor(waterType) {
 }
 
 /**
+ * ── THE TABLE ABOVE DECIDED WHAT TO GO LOOKING FOR AND NOT WHAT TO KEEP ─────────────────────────
+ *
+ * It said "a river does not stratify" and used that to stop the DOCUMENT extractor hunting for a
+ * thermocline. The WQP pull in the same request went on deriving one from the depth-profile samples
+ * and storing it. So the Congaree's profile carried `thermocline.summerDepthFt: 8` and
+ * `oxygen.anoxicBelowFt: 8` on water moving 2,840 ft3/s, and `oxygenFloorFt()` -- the one number the
+ * bait gate stands on -- read the 8 and deleted four crankbaits from the box. Found by Ryan reading
+ * his own Congaree prompt, 2026-09-17.
+ *
+ * One table, one more consumer, no second answer to "can this water stratify".
+ *
+ * IT DROPS RATHER THAN NULLS, AND LEAVES THE REASON. A null with no reason beside it is the hole a
+ * model fills from its own recall -- the rule this file already applies to a missing thermocline.
+ * `waterClarity.secchiFt` is untouched: Secchi is measured on rivers and means the same thing, which
+ * is why it is the one entry in the river row.
+ *
+ * @param {object} limnology  the merged block, mutated in place and returned
+ * @param {string} waterType  `feature_type` off the registry row
+ */
+export function dropFieldsThisWaterCannotHave(limnology, waterType) {
+  if (!limnology || typeof limnology !== 'object') return limnology;
+  const keep = new Set(limnologyFieldsFor(waterType));
+  const gone = WQP_LIMNOLOGY_FIELDS.filter((f) => !keep.has(f));
+  if (!gone.length) return limnology;
+  const why = `not applicable on ${String(waterType || 'this water').toLowerCase()} — a flowing `
+            + 'channel mixes top to bottom, so it has no thermocline, no layer cut off from the '
+            + 'surface and no depth below which nothing holds';
+  for (const path of gone) {
+    const parts = path.split('.').slice(1);           // strip the leading `limnology.`
+    let node = limnology;
+    for (let i = 0; i < parts.length - 1; i++) {
+      if (!node[parts[i]] || typeof node[parts[i]] !== 'object') { node = null; break; }
+      node = node[parts[i]];
+    }
+    if (!node) continue;
+    const leaf = parts[parts.length - 1];
+    if (node[leaf] === undefined) continue;
+    delete node[leaf];
+    // THE NOTE IS REPLACED, NOT PRESERVED, AND THE TEST CAUGHT ME KEEPING IT. The Congaree's
+    // oxygen note read "Median dissolved oxygen drops below 2 mg/L near 8 ft in available
+    // depth-profile samples" -- a claim about the very number being deleted, and on moving water a
+    // claim about a layer that does not exist. A stale reason beside a removed value is worse than
+    // no reason: it reads as the measurement still standing.
+    if (parts.length > 1) node.note = why;
+  }
+  if (limnology.trophicStatus === undefined && !keep.has('limnology.trophicStatus')) {
+    limnology.trophicStatusNote = limnology.trophicStatusNote
+      || 'trophic status is a standing-water measure and is not reported here';
+  }
+  return limnology;
+}
+
+/**
  * @param {object} limnology
  * @param {string} [waterType]  `feature_type` off the registry row. Omitted means ask for all
  *                              five, which is what every caller did before rivers were a thing.

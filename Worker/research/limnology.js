@@ -11,7 +11,7 @@ import { LAKE_NAME_TO_R2_KEY as SUPPLEMENTAL_KEY_MAP, resolveR2Key } from '../..
 import { boundsOf } from '../../js/utils/geojson-coords.js';
 import { lakeIndex, resolveRegistryRow, identityNamesForLake, documentLimnology } from '../registry.js';
 import { researchStorageId, resolveResearchStorageId } from './keys.js';
-import { applyWqpToLimnology, buildWqpEvidence, limnologyGaps,
+import { applyWqpToLimnology, buildWqpEvidence, limnologyGaps, dropFieldsThisWaterCannotHave,
          applyDocumentsToLimnology, buildDocumentEvidence, documentFieldsApplied }
   from '../../js/utils/wqp-limnology.js';
 
@@ -110,6 +110,12 @@ async function handleResearchLimnologyData(request, env, opts = {}) {
       console.warn(`[limnology-data] document limnology unavailable for ${lakeName}: ${e.message}`);
     }
   }
+  // AND WHAT THIS WATER CANNOT HAVE IS DROPPED BEFORE IT IS STORED, not merely left off the gap
+  // list. `waterType` was computed six lines above and spent only on `limnologyGaps` -- so the pull
+  // went on deriving a thermocline and an anoxic depth from a river's depth-profile samples and
+  // storing both, and `oxygenFloorFt()` read the anoxic one and deleted four crankbaits from the
+  // Congaree's box. Same table, both directions. See dropFieldsThisWaterCannotHave().
+  if (merged) dropFieldsThisWaterCannotHave(merged, waterType);
   return new Response(JSON.stringify({
     ...pull,
     ...(merged ? { merged, evidence, gaps: limnologyGaps(merged, waterType), waterType, documents } : {}),
