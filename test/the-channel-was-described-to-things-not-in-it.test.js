@@ -91,6 +91,39 @@ describe('build_river_centrelines.py — the cap gates every field that is about
       + 'mentions is a condition nobody sees');
   });
 
+  test('the mainstem is picked by charted metres, and falls back to length', () => {
+    // The centreline exists to serve a planner that needs depth, so the objective is charted
+    // metres. Measured over all 57 rivers on 2026-09-17, dry: four packs moved and NOT ONE lost
+    // charted coverage.
+    //
+    //   pee_dee_river_2      111.3 km at   2/2226 charted  ->  34.7 km at  691/695
+    //   nolichucky_river_2    81.3 km at   0/1627          ->  69.9 km at  776/1398
+    //   broad_river_2        136.9 km at 342/2739          ->  54.1 km at 1082/1083
+    //   first_broad_river     74.0 km at 107/1480          ->  35.6 km at  701/713
+    //
+    // The Congaree, the Wateree, the Great Pee Dee and the other 49 did not move a station.
+    assert.match(CODE, /main_id = charted_len\.most_common\(1\)\[0\]\[0\]/,
+      'the mainstem is no longer picked by charted length');
+    assert.match(CODE, /if charted_len and max\(charted_len\.values\(\)\) > 0:/,
+      'the fallback guard changed: a river Garmin never sounded, a pack with no depth areas and '
+      + '--no-depth must all fall back to length rather than pick arbitrarily among zeroes');
+    assert.match(CODE, /else:\s*\n\s*main_id = inside_len\.most_common\(1\)\[0\]\[0\]/,
+      'the length fallback is gone');
+    // MOST CHARTED METRES, NOT THE HIGHEST CHARTED FRACTION. A fraction would let a 2 km fully
+    // charted creek beat a 120 km river that is 95% charted.
+    assert.match(CODE, /charted_len\[mid\] \+= math\.dist\(pin\[k\], pin\[k \+ 1\]\)/,
+      'the score is no longer metres — a count or a fraction would prefer a short tributary');
+    // The depth index has to exist before the pick, or there is nothing to score against.
+    const pick = CODE.indexOf('main_id = charted_len');
+    assert.ok(CODE.indexOf('depth = DepthIndex(') < pick && CODE.indexOf('depth = DepthIndex(') > 0,
+      'DepthIndex is built after the mainstem pick again, so the pick cannot see the chart');
+    assert.match(CODE, /rep\['mainstem_basis'\]/,
+      'the report no longer says which rule chose the mainstem');
+    assert.match(CODE, /rep\['mainstem_changed'\]/,
+      'the report no longer records when the two rules disagree — a silent change of answer is '
+      + 'how the old pick survived three dead rivers');
+  });
+
   test('every stamped field is still cleared before a rebuild', () => {
     assert.match(CODE, /STAMP_FIELDS\s*=\s*\('river_m',\s*'off_m',\s*'flow_deg',\s*'bend_r_m',\s*'bend_side'\)/,
       'STAMP_FIELDS changed — a field left out of it survives a rebuild that meant to drop it, '

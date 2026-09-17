@@ -613,10 +613,59 @@ def build_one(row, a, db, stamp):
         rep['skipped'] = 'no 3DHP flowline inside the boundary'
         return rep, {}
 
-    main_id = inside_len.most_common(1)[0][0]
+    # ── WHICH MAINSTEM IS THIS RIVER: THE ONE THE CHART IS ON, NOT THE LONGEST ─────────────────
+    #
+    # A registry boundary can hold more than one river, and the longest one inside it is not always
+    # the one Garmin surveyed. Measured 2026-09-17: on `pee_dee_river_2` the longest chain inside
+    # the boundary is 111 km and NOT ONE of the pack's 104 charted features is within 1.8 km of it,
+    # while the pack's own depth areas sit in the eastern third of the same boundary. Same on
+    # `south_yadkin_river`, whose chart overlaps 69% of the `yadkin_river` pack's depth areas, and
+    # on `nolichucky_river_2`. Three of 57 rivers were building a centreline through water their
+    # own chartpack has no soundings for, which is a river day with nothing on it by construction.
+    #
+    # THE CENTRELINE EXISTS TO SERVE A PLANNER THAT NEEDS DEPTH, so the objective is charted metres,
+    # not metres. The depth index moved above this pick for it; it was built a dozen lines below and
+    # is per-pack either way, so nothing is computed twice.
+    #
+    # PER SEGMENT, ON ITS MIDPOINT. 3DHP segments are short and this is a SELECTION heuristic, not a
+    # measurement that reaches a plan -- a segment half in charted water counts whole or not at all,
+    # and that is fine for choosing between two rivers tens of kilometres apart.
+    #
+    # LENGTH IS STILL THE ANSWER WHERE THERE IS NO CHART TO ASK. `--no-depth`, a pack with no
+    # depth_areas.geojson, and a river Garmin never sounded -- chauga_river has 4.7% of its stations
+    # charted with every feature a few metres off the line -- all fall back to the old rule rather
+    # than picking arbitrarily among zeroes. `mainstem_basis` on the report says which rule ran.
+    if a.no_depth:
+        depth = DepthIndex(os.devnull)
+    else:
+        depth = DepthIndex(os.path.join(pack, 'depth_areas.geojson'), a.depth_cell)
+
+    charted_len = collections.Counter()
+    if depth.polygons:
+        for mid, lines in by_main.items():
+            for line in lines:
+                pin = [p for p in line if mask.inside(*p)]
+                for k in range(len(pin) - 1):
+                    if depth.at((pin[k][0] + pin[k + 1][0]) / 2.0,
+                                (pin[k][1] + pin[k + 1][1]) / 2.0) is not None:
+                        charted_len[mid] += math.dist(pin[k], pin[k + 1])
+
+    if charted_len and max(charted_len.values()) > 0:
+        main_id = charted_len.most_common(1)[0][0]
+        rep['mainstem_basis'] = 'charted'
+    else:
+        main_id = inside_len.most_common(1)[0][0]
+        rep['mainstem_basis'] = 'length'
+    rep['mainstem_charted_m'] = round(charted_len.get(main_id, 0.0), 1)
+    rep['mainstem_inside_m'] = round(inside_len.get(main_id, 0.0), 1)
+    # SAY IT WHEN THE TWO RULES DISAGREE. A silent change of answer is how the old pick survived.
+    longest_id = inside_len.most_common(1)[0][0]
+    rep['mainstem_longest_id'] = longest_id
+    rep['mainstem_changed'] = bool(main_id != longest_id)
+
     chain, chain_m = chain_mainstem(by_main[main_id])
     if chain_m < a.min_chain_m:
-        rep['skipped'] = 'longest chain %.0f m is under --min-chain-m' % chain_m
+        rep['skipped'] = 'chain %.0f m is under --min-chain-m' % chain_m
         return rep, {}
 
     pts = resample(chain, a.step)
@@ -624,10 +673,6 @@ def build_one(row, a, db, stamp):
     brg = bearings(pts)
     wid = widths(pts, mask, a.max_width_m, a.probe)
 
-    if a.no_depth:
-        depth = DepthIndex(os.devnull)
-    else:
-        depth = DepthIndex(os.path.join(pack, 'depth_areas.geojson'), a.depth_cell)
     xarea, xdeep, xchart, xprof = cross_sections(pts, wid, depth, a.probe)
     rep['depth_polygons'] = depth.polygons
 
