@@ -334,7 +334,11 @@ test('the flow direction is a circular mean, not an arithmetic one', () => {
   // And the drift carries it, because until now nothing in the app knew which way the water went.
   const drifts = riverDriftRuns(sectionedRiver(), { slug: 'test_river', flowCfs: 3000 });
   assert.equal(drifts[0].properties.flow_deg, 90, 'due east, which is how the fixture is built');
-  assert.equal(drifts[0].properties.current_deg, 90);
+  // ONE ANGLE, ONE MEANING. `current_deg` used to be emitted here holding the same value, which is a
+  // trap: ampHoursBand() wants the direction a flow comes FROM and this is where it is going, so
+  // passing it straight through is 180 degrees wrong. The reciprocal is taken at the point of use.
+  assert.ok(!('current_deg' in drifts[0].properties),
+            'no second name for the same angle with the opposite meaning');
 });
 
 test('the current reaches the model, because the model owns the order', () => {
@@ -345,14 +349,38 @@ test('the current reaches the model, because the model owns the order', () => {
   assert.ok(cands.length > 0);
   for (const c of cands) {
     assert.equal(c.currentMph, 0.95);
-    assert.equal(c.currentDeg, 90);
+    assert.equal(c.flowDeg, 90, 'where the water is going, in plain English');
     assert.ok(c.currentBasis, 'and the basis is never null');
     const m = forModel(c);
     assert.equal(m.currentMph, 0.95, 'it survives the trim to what the model sees');
-    assert.equal(m.currentDeg, 90);
+    assert.equal(m.flowDeg, 90);
     assert.ok(m.currentBasis);
     assert.ok(m.drift && m.drift.side, 'and so does which line it is');
   }
+});
+
+test('the upstream price is upstream whichever way the river happens to run', () => {
+  // THE TEST THAT CATCHES A HARD-CODED 0/180. The first version of the cost passed course 0 against
+  // a current from 0, which is correct by construction and therefore says nothing about whether the
+  // real bearing is being used. A river running WEST must still charge more upstream.
+  const { structures, coords } = scoredRiver();
+  const west = sectionedRiver();
+  const p = west.features[0].properties;
+  for (let i = 0; i < p.bearing_deg.length; i++) p.bearing_deg[i] = 270;
+  const drifts = riverDriftRuns(west, { structures, slug: 'test_river', flowCfs: 3000 });
+  assert.equal(drifts[0].properties.flow_deg, 270, 'the fixture flows west');
+  const cands = selectCandidates(drifts, SELECT(structures, coords[0]));
+  assert.ok(cands.length > 0, 'a westward river still produces candidates');
+  for (const c of cands) {
+    assert.ok(c.batteryAhUpstream > c.batteryAhDownstream,
+              `west-flowing: upstream ${c.batteryAhUpstream} must still exceed ${c.batteryAhDownstream}`);
+  }
+  // And the magnitudes match the eastward case, because a river's cost does not depend on which way
+  // the compass happens to point.
+  const east = riverDriftRuns(sectionedRiver(), { structures, slug: 'test_river', flowCfs: 3000 });
+  const eastCands = selectCandidates(east, SELECT(structures, coords[0]));
+  assert.equal(eastCands.length, cands.length);
+  assert.ok(Math.abs(eastCands[0].batteryAhUpstream - cands[0].batteryAhUpstream) < 0.01);
 });
 
 test('a river pass is priced both ways, and the gate takes the dearer one', () => {

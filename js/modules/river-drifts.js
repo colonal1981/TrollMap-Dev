@@ -281,7 +281,15 @@ export function riverDriftRuns(centrelineFc, o = {}) {
           ? v[(v.length - 1) / 2]
           : (v[v.length / 2 - 1] + v[v.length / 2]) / 2;
         props.current_mph = Number(mid.toFixed(2));
-        props.current_deg = props.flow_deg ?? null;
+        // THERE IS ONE ANGLE HERE AND IT IS `flow_deg`, WHICH IS WHERE THE WATER IS GOING.
+        //
+        // The first version also emitted `current_deg` set to the same value, which was a trap:
+        // `headwindMph()` follows the meteorological convention and wants the direction a flow comes
+        // FROM, so a field named for a current and holding a heading it is going TO is 180 degrees
+        // wrong the first time somebody passes it straight through. Two names for one angle with
+        // opposite meanings is the defect this project keeps finding, so there is one name, it means
+        // the plain-English thing, and the conversion happens at the point of use with a note on it.
+        // See the cost in plan-candidates.js.
         props.current_area_m2 = Number((areas.reduce((a, b) => a + b, 0) / areas.length).toFixed(1));
         // HOW MUCH OF THE REACH IS BEHIND THAT NUMBER, as a field and not only as prose. A velocity
         // from 2 of 161 stations and one from 150 of 161 deserve different amounts of trust, and NO

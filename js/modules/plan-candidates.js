@@ -1447,10 +1447,20 @@ export function selectCandidates(runs, o) {
     // two prices on one decision rather than two decisions.
     const cur = Number(p.current_mph);
     const hasCurrent = Number.isFinite(cur) && cur > 0;
+    // `flow_deg` is where the water is GOING. `ampHoursBand()` takes the direction a flow comes
+    // FROM, meteorological convention, because that is what `headwindMph()` was written against --
+    // so the current's argument is the reciprocal, and heading upstream is that same reciprocal.
+    // Written out rather than folded into a constant because a silent 180 is how this goes wrong.
+    const flowTo = Number(p.flow_deg);
+    const comesFrom = Number.isFinite(flowTo) ? (flowTo + 180) % 360 : 0;
+    const upstreamCourse = comesFrom;          // into the water, so bow points where it comes from
+    const downstreamCourse = Number.isFinite(flowTo) ? flowTo : 180;
     const upAh = hasCurrent
-      ? ampHoursBand(win.lengthM, trollMph, 0, { currentMph: cur, currentDeg: 0 }).ah : null;
+      ? ampHoursBand(win.lengthM, trollMph, upstreamCourse,
+                     { currentMph: cur, currentDeg: comesFrom }).ah : null;
     const downAh = hasCurrent
-      ? ampHoursBand(win.lengthM, trollMph, 180, { currentMph: cur, currentDeg: 0 }).ah : null;
+      ? ampHoursBand(win.lengthM, trollMph, downstreamCourse,
+                     { currentMph: cur, currentDeg: comesFrom }).ah : null;
     const fishAh = hasCurrent ? upAh : ampHours(win.lengthM, trollMph);
     // TRANSIT IS STILL COSTED IN STILL WATER, AND THAT IS A KNOWN GAP RATHER THAN AN OVERSIGHT. The
     // hop to and from the ramp is not necessarily along the channel -- it crosses it, leaves it, or
@@ -1569,7 +1579,6 @@ export function selectCandidates(runs, o) {
       // fills from its own recall -- tidal, no gauge and no charted section are three different
       // answers and all three are useful.
       currentMph: p.current_mph ?? null,
-      currentDeg: p.current_deg ?? null,
       currentBasis: p.current_basis || null,
       // WHAT FRACTION OF THE REACH THE VELOCITY IS MEASURED FROM. On the Congaree that runs from 2
       // stations in 161 to most of them, so the number and its support travel together and nothing
@@ -1998,7 +2007,9 @@ export function forModel(c, cap = MODEL_STRUCTURE_CAP) {
     // `currentBasis` goes too, unconditionally. "Tidal, so Q/A does not describe it" and "no gauge
     // on this water" are different days, and a bare absent field reads as neither.
     currentMph: c.currentMph ?? undefined,
-    currentDeg: c.currentDeg ?? undefined,
+    // WHERE THE WATER IS GOING, in the plain-English direction. Not the reciprocal the cost model
+    // uses internally -- the model is being told a fact about the river, not handed a parameter.
+    flowDeg: c.flowDeg ?? undefined,
     currentBasis: c.currentBasis || undefined,
     currentFrac: c.currentFrac ?? undefined,
     // THE PRICE OF THIS PASS EACH WAY, so the order can be chosen on it. His own practice is upstream
