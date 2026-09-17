@@ -86,17 +86,70 @@ export function headwindMph(courseDeg, windDeg, windMph) {
 /** Wind-driven surface drift, as a fraction of wind speed. A standing result, not a fitted one. */
 const DRIFT_FRACTION = 0.03;
 
+// ── MOVED HERE FROM plan-water.js ON 2026-09-17, FOR THE SAME REASON ampHoursBand() MOVED ──────
+//
+// `ampHoursAlong()` below walks a leg segment by segment, so it needs a bearing; and `worstWind()`
+// is how a day of hourly forecast becomes the one wind the battery gate is costed against, which
+// the candidate selector now has to do for itself. Both lived in plan-water.js, which imports this
+// file, so neither could be reached from here and the alternative was a second copy of each. Two
+// implementations of one measurement is the defect this project keeps finding.
+//
+// plan-water.js imports them back and re-exports them, so plan-water-geometry.test.js and every
+// other reader still gets them from where it always did.
+
+/** Bearing in degrees from a to b, 0 = north, clockwise. Both points are [lon, lat]. */
+export function bearingDeg(a, b) {
+  const p1 = (a[1] * Math.PI) / 180, p2 = (b[1] * Math.PI) / 180;
+  const dl = ((b[0] - a[0]) * Math.PI) / 180;
+  const y = Math.sin(dl) * Math.cos(p2);
+  const x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl);
+  return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
+}
+
+/** The worst wind in the window, which is what the pessimistic end is costed against. */
+export function worstWind(windByHour) {
+  let best = null;
+  for (const w of (windByHour || [])) {
+    const mph = Number(w && (w.gustMph ?? w.mph));
+    if (Number.isFinite(mph) && (!best || mph > best.mph)) {
+      best = { mph, deg: Number(w.deg) };
+    }
+  }
+  return best;
+}
+
 /**
  * Amp-hours for one straight run, plus the headwind it is NOT costed for.
  *
  * @param {number} metres
  * @param {number} mph        speed over ground
  * @param {number} courseDeg  bearing of the run
- * @param {object} [env]      {wind:{mph,deg}, currentMph, currentDeg}
+ * @param {object} [env]      {wind:{mph,deg}} plus EITHER {currentMph, currentDeg} -- a flow with a
+ *                            compass direction, resolved against `courseDeg` -- OR
+ *                            {alongCurrentMph} -- that resolution already done, signed, positive on
+ *                            the nose. Never both; see below.
  */
 export function ampHoursBand(metres, mph, courseDeg, env) {
-  const cur = env && Number.isFinite(env.currentMph)
-    ? headwindMph(courseDeg, env.currentDeg, env.currentMph) : 0;
+  // ── A CURRENT ARRIVES AS A DIRECTION TO RESOLVE, OR AS THE RESOLUTION. NEVER AS BOTH ─────────
+  //
+  // `currentMph` + `currentDeg` is a flow somewhere out there, resolved against this course exactly
+  // as the wind is. `alongCurrentMph` is that same component handed over already resolved, which is
+  // what a river drift has: the channel carries the current ALONG the line by construction, so
+  // there is no angle to measure, and measuring one off a line that bends would be precisely the
+  // guess this project keeps removing. It is the quantity this function returns as `currentMph`,
+  // supplied instead of derived -- not a second name for the flow's speed.
+  //
+  // Supplying both is a programming error, not a preference between two conventions, so it throws
+  // rather than quietly picking one. Two names for one angle with opposite conventions is how the
+  // flow direction went wrong once already -- see the note at `flow_deg` in river-drifts.js.
+  const hasAlong = !!env && Number.isFinite(env.alongCurrentMph);
+  if (hasAlong && Number.isFinite(env.currentMph)) {
+    throw new Error('ampHoursBand: pass `alongCurrentMph` (already resolved along the course) or '
+                  + '`currentMph` with `currentDeg` (a flow to resolve), never both.');
+  }
+  const cur = hasAlong ? Number(env.alongCurrentMph)
+    : (env && Number.isFinite(env.currentMph)
+        ? headwindMph(courseDeg, env.currentDeg, env.currentMph) : 0);
   const head = env && env.wind ? headwindMph(courseDeg, env.wind.deg, env.wind.mph) : 0;
   // Only the part of the water that is genuinely moving against the boat is charged: measured
   // current, plus the 3% of the wind that shows up as surface drift. A tailwind and a following
@@ -129,6 +182,66 @@ export function ampHoursBand(metres, mph, courseDeg, env) {
     headwindMph: Number(head.toFixed(1)),
     currentMph: Number(cur.toFixed(2)),
     throughWaterMph: Number(throughWater.toFixed(2)),
+  };
+}
+
+/**
+ * AMP-HOURS FOR A LEG THAT BENDS, WALKED SEGMENT BY SEGMENT IN TRAVEL ORDER.
+ *
+ * `ampHoursBand()` above resolves an environment against ONE course, which is exactly right for a
+ * straight run and wrong for every real trolling leg. A contour follows the bottom; a drift follows
+ * the channel; neither is a chord. Both planners took the bearing of the straight line between a
+ * leg's two ends and costed the whole leg against it, and on a leg that hooks around a point that
+ * bearing is a direction the boat never actually travels.
+ *
+ * ── AND THE MEAN HEAD COMPONENT IS NOT THE ANSWER EITHER ─────────────────────────────────────
+ *
+ * This is a SUM and not an average, and that is the whole point. Amps go as mph^1.756 -- the fit
+ * above -- so the draw is CONVEX in water speed: a mph added on the nose costs more than the same
+ * mph taken off the tail gives back. A leg that doubles back has a headwind on one half and a
+ * tailwind on the other, so its mean head component is about zero while its real cost is above
+ * still water. Averaging the wind before costing it throws that away. It is the same asymmetry
+ * `turnaroundMiles()` below is built on, and the reason the river pass is priced twice rather than
+ * once at an average speed.
+ *
+ * The mean head component IS reported, because "9 mph on the nose for the whole of leg 2" is a
+ * thing he can act on. It is a fact about the leg, not the basis of the number beside it.
+ *
+ * DIRECTION IS THE CALLER'S. The boat travels the array from index 0 onward; reverse the array to
+ * price the other way, which flips every segment bearing by 180 and so resolves the wind correctly
+ * for the return without a second code path. On a river the drift is drawn DOWNSTREAM -- 3DHP's
+ * `flowdirection` means vertex order is downstream, see river-drifts.js -- so the upstream pass is
+ * the reversed line.
+ *
+ * @param {number[][]} coords  [lon, lat] in TRAVEL order
+ * @param {number}     mph     speed over ground
+ * @param {object}     [env]   as ampHoursBand()
+ */
+export function ampHoursAlong(coords, mph, env) {
+  const c = Array.isArray(coords) ? coords : [];
+  let ah = 0, headM = 0, curM = 0, totalM = 0, segments = 0;
+  for (let i = 1; i < c.length; i++) {
+    const m = metresBetween(c[i - 1], c[i]);
+    // Duplicate vertices are real in sliced geometry -- sliceLine() cuts at an exact distance and
+    // can land on a vertex. A zero-length segment has no bearing, so it is skipped rather than
+    // costed at whatever atan2(0, 0) returns.
+    if (!(m > 0)) continue;
+    const b = ampHoursBand(m, mph, bearingDeg(c[i - 1], c[i]), env);
+    ah += b.ah;
+    headM += b.headwindMph * m;
+    curM += b.currentMph * m;
+    totalM += m;
+    segments++;
+  }
+  return {
+    ah,
+    // Length-weighted, so a long straight into it is not outvoted by three short wiggles at the end.
+    headwindMph: totalM ? Number((headM / totalM).toFixed(1)) : 0,
+    currentMph: totalM ? Number((curM / totalM).toFixed(2)) : 0,
+    // The geometry's OWN length, which is what was costed. A caller holding a separate length for
+    // the same leg can check the two agree rather than assume it.
+    lengthM: Math.round(totalM),
+    segments,
   };
 }
 
@@ -1348,6 +1461,22 @@ export function selectCandidates(runs, o) {
   };
   const trollMph = o.trollMph ?? 2.0;
   const transitMph = o.transitMph ?? 3.5;
+  // ── THE WORST WIND IN THE WINDOW, AND WHY THE SELECTOR SEES ONE AT ALL ────────────────────────
+  //
+  // Same idiom as dayCost() in plan-water.js: an explicit `wind` wins, otherwise the hourly
+  // forecast is reduced to the hour that blows hardest. A day that is calm at six and blowing
+  // fifteen at eleven has to be costed for eleven, which is the reason `windByHour` replaced a
+  // daily maximum in the first place.
+  //
+  // Until now only the Pick Water path -- where he ticks pieces himself -- costed a leg against
+  // the wind at all. Smart Plan chose the day's legs in flat calm, handed them to the model, and
+  // the safety section then ruled on a wind the battery gate had never seen. The gate and the
+  // warning now read the same forecast.
+  //
+  // Null when nothing was forecast, and then every leg is priced in flat calm exactly as before.
+  // A failed forecast is not evidence of a calm day, and the caller says so out loud rather than
+  // letting the silence read as calm -- see the `problems` line in smart-plan-v2-wiring.js.
+  const wind = o.wind || worstWind(o.windByHour);
   // THIS NUMBER IS A GUESS AND IT NEEDS RYAN'S EYE.
   //
   // It is the distance from the ramp at which a leg is worth HALF what the identical leg would be
@@ -1521,45 +1650,56 @@ export function selectCandidates(runs, o) {
     // a preference about location, and the min is the right shape for that.
     const fromRampM = Math.min(inM, outM);
     const proximity = 1 / (1 + fromRampM / rampBiasM);
-    // ── COSTED WITH THE CURRENT, WHERE THERE IS ONE ──────────────────────────────────────────────
+    // ── COSTED WITH THE WATER AND WITH THE AIR, WHERE THERE IS EITHER ───────────────────────────
     //
-    // `ampHoursBand()` has modelled a current since it was written and this is the first caller ever
-    // to supply one. It could not be called from here until 2026-09-16 because it lived in
-    // plan-water.js, which imports this file.
+    // `ampHoursBand()` has modelled both a current and a wind since it was written, and for most of
+    // that time no caller on this path supplied either -- it lived in plan-water.js, which imports
+    // this file. The current arrived on 2026-09-16. The wind arrives now, and it brings with it the
+    // reason neither can be priced off a chord: see ampHoursAlong(), which both calls below go
+    // through and which walks the leg's real geometry instead of the straight line between its ends.
     //
-    // NO CHORD BEARING IS GUESSED. A drift follows the channel by construction, so the current is
-    // along the line: one pass runs straight into it and the other straight with it. That is why the
-    // two calls below can pass course 0 against a current from 0 (full head) and course 180 against
-    // the same current (full tail) rather than measuring an angle off a line that bends.
+    // THE TWO ENVIRONMENTS ARE NOT THE SAME SHAPE, and that is why this block reads as it does. A
+    // drift follows the channel by construction, so the current is ALONG the line: one pass runs
+    // straight into it and the other straight with it, and there is no angle to measure. The wind
+    // is along nothing, so it must be resolved against each segment's own bearing. `alongCurrentMph`
+    // is how one call carries both -- the current already resolved, the wind still to be.
+    //
+    // DIRECTION IS THE ORDER THE LINE IS WALKED, not a pair of courses. A drift is drawn downstream,
+    // so the line as it stands IS the downstream pass and the reversed line is the upstream one;
+    // reversing it flips every segment bearing by 180, which is exactly what the wind needs on the
+    // way back. The old code passed `comesFrom` and `flowTo` as two courses and priced the whole leg
+    // against each -- correct for a current that follows the channel, and with nowhere to put a wind.
     //
     // ONE PASS, NOT THE PAIR. plan-assemble.js materialises each pass as a real leg with its own
     // amp-hours -- "the alternative, one leg carrying a multiplier, would have every reader of
     // lengthM, coordinates and estDurationMin quietly understating the day" -- so a candidate's
     // `batteryAh` is one pass and `trollPasses` is what asks for the second.
     //
-    // AND THE SINGLE NUMBER IS THE UPSTREAM ONE. The direction is not chosen yet -- orientLegs and
-    // the model decide that later -- so the gate below has to pick a price without knowing. It takes
-    // the dearer one, because the gate exists to stop him committing to a day he cannot finish: "if
-    // they are going to run out of battery because of choice they shouldn't be able to make that
-    // choice." Both prices are reported, the same way `transitToM` and `transitToMIfFishedBack` are
-    // two prices on one decision rather than two decisions.
+    // AND THE SINGLE NUMBER IS THE DEARER DIRECTION. Which way this leg gets fished is not decided
+    // yet -- orientLegs and the model do that later -- so the gate below has to pick a price without
+    // knowing. It takes the dearer, because the gate exists to stop him committing to a day he
+    // cannot finish: "if they are going to run out of battery because of choice they shouldn't be
+    // able to make that choice." On a river both prices are reported, the same way `transitToM` and
+    // `transitToMIfFishedBack` are two prices on one decision rather than two decisions. On a lake
+    // the two directions have no names worth printing, so only the dearer one is.
     const cur = Number(p.current_mph);
     const hasCurrent = Number.isFinite(cur) && cur > 0;
-    // `flow_deg` is where the water is GOING. `ampHoursBand()` takes the direction a flow comes
-    // FROM, meteorological convention, because that is what `headwindMph()` was written against --
-    // so the current's argument is the reciprocal, and heading upstream is that same reciprocal.
-    // Written out rather than folded into a constant because a silent 180 is how this goes wrong.
-    const flowTo = Number(p.flow_deg);
-    const comesFrom = Number.isFinite(flowTo) ? (flowTo + 180) % 360 : 0;
-    const upstreamCourse = comesFrom;          // into the water, so bow points where it comes from
-    const downstreamCourse = Number.isFinite(flowTo) ? flowTo : 180;
-    const upAh = hasCurrent
-      ? ampHoursBand(win.lengthM, trollMph, upstreamCourse,
-                     { currentMph: cur, currentDeg: comesFrom }).ah : null;
-    const downAh = hasCurrent
-      ? ampHoursBand(win.lengthM, trollMph, downstreamCourse,
-                     { currentMph: cur, currentDeg: comesFrom }).ah : null;
-    const fishAh = hasCurrent ? upAh : ampHours(win.lengthM, trollMph);
+    // Positive is on the nose, so upstream is `+cur` and downstream is `-cur`. A following current
+    // is deliberately NOT floored at zero -- clamping a push to nothing would make every river day
+    // cost more than it does, which is the same dishonesty pointing the other way. See ampHoursBand().
+    const upEnv = { wind, ...(hasCurrent ? { alongCurrentMph: cur } : {}) };
+    const downEnv = { wind, ...(hasCurrent ? { alongCurrentMph: -cur } : {}) };
+    const downBand = ampHoursAlong(line, trollMph, downEnv);
+    const upBand = ampHoursAlong([...line].reverse(), trollMph, upEnv);
+    const upAh = hasCurrent ? upBand.ah : null;
+    const downAh = hasCurrent ? downBand.ah : null;
+    // On still air and still water these two are the same number and either will do. They stop being
+    // the same the moment anything is moving, and then the dearer is the honest one to gate on.
+    //
+    // NOT `fishBand` -- that name is taken, twenty lines up, by the depth band the FISH are in.
+    // Shadowing it here put every earlier read of it in this block into the temporal dead zone.
+    const costBand = upBand.ah >= downBand.ah ? upBand : downBand;
+    const fishAh = costBand.ah;
     // TRANSIT IS STILL COSTED IN STILL WATER, AND THAT IS A KNOWN GAP RATHER THAN AN OVERSIGHT. The
     // hop to and from the ramp is not necessarily along the channel -- it crosses it, leaves it, or
     // runs up a different reach -- so the current's component on it is not `cur` and cannot be had
@@ -1607,6 +1747,21 @@ export function selectCandidates(runs, o) {
       fromRampM: Math.round(fromRampM),
       proximity: Number(proximity.toFixed(3)),
       batteryAh: Number((fishAh + moveAh).toFixed(2)),
+      // ON THE NOSE, IN MPH, FOR THE DIRECTION `batteryAh` WAS PRICED AT -- length-weighted along
+      // the leg's real geometry, not taken off a chord. Positive is a headwind, negative a push.
+      //
+      // REPORTED AND PARTLY COSTED, WHICH IS NOT A CONTRADICTION. Only the 3% of a wind that shows
+      // up as surface drift is charged, because that is water genuinely moving against the hull.
+      // The other 97% is aerodynamic drag on a 12.5 ft kayak, nothing has ever measured it on this
+      // boat, and a coefficient nobody fitted would be exactly the arbitrary number this project
+      // refuses to invent. So the full component is stated and the day's arithmetic does not
+      // include it. See the note above ampHoursBand() and § 10 in plan-water.js.
+      //
+      // NULL WHEN NOTHING WAS FORECAST, AND NOT ZERO. A leg that a forecast says is crosswind is
+      // genuinely 0 on the nose and that is worth saying; a leg nobody forecast is not calm, it is
+      // unknown, and a zero printed there is the silence-reads-as-calm defect the `problems` line in
+      // smart-plan-v2-wiring.js exists to prevent. forModel() drops the null and sends the zero.
+      headwindMph: wind ? costBand.headwindMph : null,
       estMin: Math.round(totalMin),
       score: Number(win.score.toFixed(1)),
       reliefScore,
@@ -2093,6 +2248,11 @@ export function forModel(c, cap = MODEL_STRUCTURE_CAP) {
     // the other -- a day that looks cheaper at both ends than any route can be.
     transitToRampM: c.transitOutM,
     batteryAh: c.batteryAh,
+    // WHAT IS ON THE NOSE WHILE HE FISHES IT. The model has been asked to rule on wind for safety
+    // since the safety section was written, and it was ruling on a single day-level number with no
+    // idea which legs faced into it -- so a plan could open with the one leg that runs straight into
+    // fifteen and read as fine. This is per leg, in mph, at the direction its battery price assumes.
+    headwindMph: c.headwindMph ?? undefined,
     estMin: c.estMin,
     // WHICH WAY THE WATER IS GOING AND HOW FAST, or why that is not known.
     //

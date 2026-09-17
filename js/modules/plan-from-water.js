@@ -164,6 +164,13 @@ function legFrom(piece, i, ramp, slug) {
     passes,
     transitInM: ramp ? Math.round(metresBetween(ramp, a)) : 0,
     transitOutM: ramp ? Math.round(metresBetween(b, ramp)) : 0,
+    // PRICED IN FLAT CALM, AND THAT IS A NAMED GAP RATHER THAN AN OVERSIGHT. dayCost() twenty
+    // lines further down prices the whole picked set against the worst hour of the forecast, and
+    // that is the number the refusal and the budget are made of. THIS one is per piece, and the
+    // wind has not been resolved against this piece's geometry the way selectCandidates() does it
+    // on the Smart Plan path -- so a Pick Water leg tells the model a still-water price while the
+    // day around it is costed for the wind. Naming it here so the next pass does not have to
+    // rediscover which half was done. Same shape as the river transit gap in plan-candidates.js.
     batteryAh: Number(ampHours(lengthM, TROLL_MPH).toFixed(2)),
     estMin: Math.round(minutesFor(lengthM, TROLL_MPH)),
     runLedges: null,
@@ -189,6 +196,7 @@ function legFrom(piece, i, ramp, slug) {
  * @param {object[]} [o.spots]     cast spots from offerWater()
  * @param {number[]} o.ramp        [lon, lat]
  * @param {number}   o.usableAh    LiFePO4 reserve already removed
+ * @param {object[]} [o.windByHour] the day's hourly wind; dayCost() costs against its worst hour
  * @param {number[]} [o.order]     HIS override. Absent = the app's search order.
  * @param {function} o.askModel    ({system,user}) => Promise<string>
  * @param {function} [o.routeWater] transit router; a straight line is marked `unrouted`
@@ -209,7 +217,8 @@ export async function planFromWater(o) {
   // THE ONLY REFUSAL, and it is checked against the CHEAPEST possible ordering, not this one --
   // so "it does not fit" means no ordering fits, and the answer is to drop water rather than to
   // shuffle it. § 9.
-  const cheapest = dayCost(picked, { ramp: o.ramp, usableAh: o.usableAh, windowMin: o.windowMin });
+  const cheapest = dayCost(picked, { ramp: o.ramp, usableAh: o.usableAh, windowMin: o.windowMin,
+                                    windByHour: o.windByHour });
   if (!cheapest.fits) {
     return {
       plan: null,

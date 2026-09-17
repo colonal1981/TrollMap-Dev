@@ -205,6 +205,18 @@ export async function buildSmartPlanV2(o) {
     // Per species, per season, per lake, from the research profile — see structureWeights().
     weights: o.weights, reliefWeights: o.reliefWeights, docks, attractors,
     transitM: o.transitM, limit: CANDIDATE_LIMIT,
+    // ── THE DAY'S WIND, TO THE THING THAT CHOOSES THE DAY ─────────────────────────────────────
+    //
+    // The forecast has reached this function since plan-preflight.js started returning it, and it
+    // went to the prompt and to the safety call and nowhere else. The selector below picks which
+    // water is offered at all, and it was picking in flat calm -- so on a day blowing fifteen the
+    // model was handed legs chosen as though it were blowing nothing, and then asked whether the
+    // day was safe. Now the same forecast reaches both.
+    //
+    // Reduced to one wind inside selectCandidates() rather than here, because dayCost() on the
+    // other path reduces it there too and two readers of "which hour is this day costed against"
+    // is how the two planners start disagreeing about one day.
+    windByHour: o.windByHour,
   });
   if (!candidates.length) {
     // SAY WHICH TEST EMPTIED IT. selectCandidates now reports the rule it applied and how many

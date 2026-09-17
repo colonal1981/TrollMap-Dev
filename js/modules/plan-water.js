@@ -50,14 +50,18 @@
 
 import { buildPieces, joinsFor, followBar } from './plan-pieces.js';
 import { ampHours, minutesFor, metresBetween,
-         ampHoursBand, headwindMph } from './plan-candidates.js';
+         ampHoursBand, ampHoursAlong, headwindMph, bearingDeg, worstWind } from './plan-candidates.js';
 
 // RE-EXPORTED, NOT REDEFINED. `ampHoursBand()` and `headwindMph()` moved into plan-candidates.js on
-// 2026-09-16 so the whole battery model sits in one file beside the two-point fit it is built on.
-// This file imports that one, so the move was the only way the candidate selector could reach them
-// without a second copy of the arithmetic -- and two implementations of one measurement is the defect
-// this project keeps finding. Everything that imported them from here still does.
-export { ampHoursBand, headwindMph };
+// 2026-09-16, and `bearingDeg()` and `worstWind()` followed them on 2026-09-17, so the whole battery
+// model sits in one file beside the two-point fit it is built on. This file imports that one, so the
+// move was the only way the candidate selector could reach them without a second copy of the
+// arithmetic -- and two implementations of one measurement is the defect this project keeps finding.
+// Everything that imported any of them from here still does.
+//
+// `ampHoursAlong()` was born over there for the same reason and is re-exported beside them, because
+// this file's own day-cost walks the same geometry and must not do it a second way.
+export { ampHoursBand, ampHoursAlong, headwindMph, bearingDeg, worstWind };
 
 /**
  * CLEARANCE IS ZERO BECAUSE THE AXIS IS WATER DEPTH. Not a tuning constant — see the header. If
@@ -453,6 +457,16 @@ export function reasons(piece, o) {
 
   // WIND, AGAINST THE LINE THIS LEG ACTUALLY RUNS. Only said when there is a forecast: a missing
   // forecast is silence, not a claim of calm.
+  //
+  // STILL THE CHORD, AND THAT IS A NAMED GAP AS OF 2026-09-17. `bearingDeg(co[0], co.at(-1))` is the
+  // straight line between the piece's two ends, which is the direction the boat travels only on a
+  // piece that happens to be straight. The BATTERY price stopped using it today -- see
+  // ampHoursAlong() in plan-candidates.js and the note at dayCost() below -- and this paragraph did
+  // not, because it is prose and every sentence in it keys off one bearing: the crosswind number,
+  // which side the wind sets you toward, and whether the bank is in the lee. A length-weighted mean
+  // would fix the first; the other two want a per-segment answer and a sentence that can hold more
+  // than one. Named here rather than half-done, so the sentence and the number it sits beside can be
+  // brought into line in one pass instead of drifting apart in two.
   const wind = o.wind;
   const co = piece.coords || [];
   if (wind && Number.isFinite(wind.mph) && co.length > 1) {
@@ -561,14 +575,8 @@ export function reasons(piece, o) {
 // Per the standing rule -- "dont build something with the intent of having to change it later...
 // let it be a blocker" -- the coefficient is a blocker and is named as one rather than defaulted.
 
-/** Bearing in degrees from a to b, 0 = north, clockwise. */
-export function bearingDeg(a, b) {
-  const p1 = (a[1] * Math.PI) / 180, p2 = (b[1] * Math.PI) / 180;
-  const dl = ((b[0] - a[0]) * Math.PI) / 180;
-  const y = Math.sin(dl) * Math.cos(p2);
-  const x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl);
-  return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
-}
+// `bearingDeg()` lives in plan-candidates.js beside ampHoursAlong(), which walks a leg segment by
+// segment and is the reason it had to move. Re-exported from the top of this file. Moved 2026-09-17.
 
 // `headwindMph()` lives in plan-candidates.js beside the battery curve that consumes it, and is
 // re-exported from the top of this file. Moved 2026-09-16 -- see the note there.
@@ -821,17 +829,9 @@ export function sunBehindBank(piece, dateUTC, tzOffset, { withinDeg = 50, maxEle
   return from === null ? null : { fromLocal: from, toLocal: to, distM: sh.distM };
 }
 
-/** The worst wind in the window, which is what the pessimistic end is costed against. */
-export function worstWind(windByHour) {
-  let best = null;
-  for (const w of (windByHour || [])) {
-    const mph = Number(w && (w.gustMph ?? w.mph));
-    if (Number.isFinite(mph) && (!best || mph > best.mph)) {
-      best = { mph, deg: Number(w.deg) };
-    }
-  }
-  return best;
-}
+// `worstWind()` lives in plan-candidates.js, because selectCandidates() has to reduce the same
+// forecast to the same one wind and two readers of "which hour is this day costed against" is how
+// the two planners would start disagreeing about the same day. Re-exported above. Moved 2026-09-17.
 
 // `ampHoursBand()` and `DRIFT_FRACTION` live in plan-candidates.js beside the fitted curve they are
 // built on, and the function is re-exported from the top of this file. Moved 2026-09-16 -- see the
@@ -878,11 +878,14 @@ export function dayCost(picked, o) {
   // costed for eleven -- the same reason windByHour replaced a daily maximum in the first place.
   const wind = o.wind || worstWind(o.windByHour);
   const env = { wind, currentMph: o.currentMph, currentDeg: o.currentDeg };
-  const legBand = picked.map((p) => {
-    const c = p.coords || [];
-    const deg = c.length > 1 ? bearingDeg(c[0], c[c.length - 1]) : 0;
-    return ampHoursBand(p.lengthM, trollMph, deg, env);
-  });
+  // ── AND ALONG THE PIECE, NOT ACROSS IT ────────────────────────────────────────────────────────
+  //
+  // This took `bearingDeg(c[0], c[c.length - 1])` -- the chord between a piece's two ends -- and
+  // costed the whole piece against it. A contour follows the bottom, so on anything that wraps a
+  // point or runs into a pocket that chord is a direction the boat never travels, and on a piece
+  // that comes back on itself it is close to meaningless. ampHoursAlong() prices each segment at
+  // its own bearing and adds them up; see the note there for why the sum is not the average.
+  const legBand = picked.map((p) => ampHoursAlong(p.coords || [], trollMph, env));
   const legAh = legBand.map((b) => b.ah);
   const legMin = picked.map((p) => minutesFor(p.lengthM, trollMph));
 

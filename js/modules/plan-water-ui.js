@@ -1179,6 +1179,12 @@ export async function buildFromPicked() {
       slug: T.r2Key,
       usableAh: T.usableAh,
       windowMin: T.windowMin,
+      // THE SAME FORECAST THE CARD PRICED THE DAY WITH. The Water tab's cost card has called
+      // dayCost() with `T.windByHour` since the hourly forecast existed; planFromWater() called it
+      // without, so the card and the refusal were two prices for one day and the card's was the
+      // dearer. A budget that disagrees with the number beside the tick boxes is worse than no
+      // budget, because both look measured.
+      windByHour: T.windByHour,
       launchTime: T.launchTime,
       returnTime: T.returnTime,
       planArgs: {

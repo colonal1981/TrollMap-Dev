@@ -266,6 +266,11 @@ export async function runSmartPlanV2(opts = {}) {
       dnrAttractors: await (window.getFishAttractors?.() ?? Promise.resolve([]))
         .catch((e) => { console.warn('[plan-v2] DNR attractor feed unavailable:', e?.message); return []; }),
       usableAh: usableAhFrom(inp.motor),
+      // HOURLY, NOT A DAILY MAXIMUM, and it now reaches the candidate selector as well as the
+      // prompt -- see the note at the selectCandidates() call in smart-plan-v2.js. Null when the
+      // forecast is unreachable, and the `problems` line further down says so rather than letting
+      // a missing forecast read as a calm day.
+      windByHour: forecast ? forecast.windByHour : null,
       weatherByHour: forecast ? forecast.weatherByHour : null,
       // THE LIGHT GUIDANCE ANYBODY ACTUALLY WROTE DOWN ABOUT THIS WATER. `_extractedFacts` carries
       // a fact, the quote it came from and the source; some of them tie a depth or a presentation
