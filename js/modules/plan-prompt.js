@@ -359,7 +359,14 @@ export function riverPromptBlock(ws, o = {}) {
   //
   // The discriminator was already computed one file over and carried on the object the whole
   // time. `ws.featureType` is 'lake' for Wateree and 'river' for the Congaree.
-  const isRiver = String((ws && ws.featureType) || '') === 'river';
+  // ONE ANSWER, AND THE CALLER'S WHERE IT HAS ONE. smart-plan-v2 decides this from saysRiver() plus
+  // the presence of a centreline in the pack -- neither of which needs the network, and the second
+  // of which survives a dead gauge. This block used to re-derive it from `featureType` alone, so a
+  // river whose /conditions call timed out got the lake prompt and the river candidates in the same
+  // message. The fallback stays for the Pick Water path, which has a waterState and no flag.
+  const isRiver = o.isRiver != null
+    ? !!o.isRiver
+    : String((ws && ws.featureType) || '') === 'river';
   const L = [];
   L.push(isRiver
     ? '\n\u{1F3DE} RIVER — THE FLOW IS THE DAY'
@@ -1345,12 +1352,17 @@ HOW EACH OF THESE GETS TO A DEPTH. There are only three ways to move a bait: the
 or a different bait. Do not read a depth off a lure's NAME — the name is what the box says.
 ${depthNotes.map((d) => `- ${d}`).join('\n')}
 ` : ''}
-${castOnly.length ? `
+${castOnly.length && !o.isRiver ? `
 CAST ONLY — NEVER BEHIND THE BOAT. These may go on a casting rod at a stop and NOWHERE else:
 ${castOnly.map(promptSafeTackleName).join(', ')}
 They are unweighted soft plastics. At trolling speed they plane instead of sinking, so they have
 no running depth and no length of lead gives them one. A troll rod carrying one of these is a rod
 fishing nothing.
+` : ''}${castOnly.length && o.isRiver ? `
+NOT ON THE WATER TODAY: ${castOnly.map(promptSafeTackleName).join(', ')}.
+These are unweighted soft plastics — they plane at trolling speed and have no running depth, so
+they are cast baits, and there is no stop to cast them at on a river (rule 4). Do not name one on
+a rod. The six rods are six trolling baits.
 ` : ''}
 ${o.waterIsChosen ? 'THE WATER HE CHOSE' : 'THE WATER YOU MAY FISH'}
 Each candidate is a stretch of a real trolling run, already filtered to water he can reach and
@@ -1424,7 +1436,24 @@ RULES THAT ARE NOT NEGOTIABLE
 1. Name legs by \`runId\` and stops by a structure \`id\`, both copied exactly from the list above.
    Anything invented is thrown away and the plan comes up short.
 2. NEVER write a latitude, a longitude, or a place name of your own. The app owns every position.
-3. ${o.orderIsChosen
+3. ${o.isRiver ? `THE DAY IS ONE PATH AND ITS SHAPE IS ALREADY DECIDED: OUT FROM THE RAMP, TURN,
+   FISH BACK. Every leg above is a piece of that one path, laid end to end from where he launches,
+   which is why the hop between two neighbouring legs is a few metres and not a few miles. There is
+   nowhere else to go — this is a river, and the water is a line.
+   \`fromRamp\` ON EACH LEG SAYS WHICH HALF OF THE DAY IT IS: \`{direction: 'upstream', m: 8000}\`
+   is a reach whose near end is eight kilometres up from the launch. ORDER THE OUTWARD HALF
+   NEAREST-FIRST AND GO UPSTREAM WHILE THE BATTERY IS FULL — that is how he fishes, and the river
+   block above says where it turns him around. Then come back down the same water on the push.
+   SO DECIDE HOW FAR OUT TO GO, NOT WHICH WATER. Adding a leg adds its whole length TWICE, because
+   he has to come back past it. Take the turnaround in the river block, the window in the time
+   budget and \`estMinFishedBack\` on each leg, and pick a day that gets home. On 2026-09-17 this
+   prompt was handed one reach at three lateral positions, fished all three as separate legs, and
+   planned 731 minutes into a 540 minute window. A day that does not fit is not a plan.
+   AND THE WAY HOME IS FISHED. \`trollPasses: 2\` on a river leg means out and back over the same
+   water, which is the day — not an extra. \`batteryAhFishedBack\` and \`estMinFishedBack\` are
+   that whole cost, trip out and back included, so compare those against the window and not
+   \`batteryAh\`, which is one pass. A leg you troll out and do not fish back is a leg he pedals
+   past twice with the rods out of the water, and there is no reason for that on moving water.` : `${o.orderIsChosen
    ? `THE ORDER IS FIXED AND IT IS NOT YOURS. Fish them in the order given. If the deadheading
    between two of them looks genuinely wasteful, SAY SO in the notes and leave the order alone —
    he has veto over his own plan and does not need it exercised for him.`
@@ -1448,13 +1477,24 @@ RULES THAT ARE NOT NEGOTIABLE
    six stretches each fished once, with a transit between every pair, is the shape this is here to
    break. Do not set it on every leg to run the clock up — set it where the water deserves a
    second look, and say why in \`why\`. The app stops adding passes at the first one that would end
-   after he is due back.
-4. A stop is a pause ON a leg, not instead of one. Stop where the structure is better cast at
-   than trolled over — a hump crown, a dock line, a creek mouth, a laydown — and only ever on a
+   after he is due back.`}
+4. ${o.isRiver ? `THERE ARE NO STOPS ON A RIVER. Return \`"stops": []\` and mean it.
+   Ryan, 2026-09-17: "i do not typically anchor in a river so stop and cast really isn't going to be
+   a thing... i am not going to try and hover with either the trolling motor or the pedals." The
+   motor has no spot-lock, the pedal drive cannot hold a 12.5 ft kayak against moving water for
+   fifteen minutes, and he has said he will be moving no matter what. A stop on a river is a boat
+   going backwards downstream while both hands are on a rod.
+   THAT IS A CONSTRAINT ON THE BOAT, NOT A VIEW ABOUT CASTING. The structure list is still there to
+   be READ: say which side of the channel a hole is on, which way the bend throws the current, what
+   it means for the pass. Work it into the TROLL — a lead change, a speed change, a lane held wide
+   of the point bar — because that is the only way this boat fishes it. Every rod on this day is a
+   trolling rod.` : `A stop is a pause ON a leg, not instead of one. Stop where the structure is
+   better cast at than trolled over — a hump crown, a dock line, a creek mouth, a laydown — and
+   only ever on a
    structure carrying \`worthFishing: true\`. Judge every leg's structures on their own merits: a
    day that passes a dozen castable features and stops at one of them has ignored the water the
    app just handed you. Do not pad the list to hit a number either. Stop at what earns it, leg by
-   leg, and the count will take care of itself.
+   leg, and the count will take care of itself.`}
 5. \`depthFt\` on a structure is that structure's own depth — size the presentation from it. Where
    it is null the pipeline has no depth for that kind of feature; say so rather than guessing.
 6. TWO RODS IN THE WATER ON EVERY SINGLE LEG. Exactly one port, one starboard, on every leg in the
@@ -1540,10 +1580,12 @@ RETURN EXACTLY THIS SHAPE
     "why": "how these six cover the day's depth bands",
     "rods": [
       { "id": "R1", "lure": "exact name from the list", "color": "free text",
-        "role": "troll" or "cast", "leadFt": 95, "runsDepthFt": [22, 28],
+        "role": ${o.isRiver ? '"troll"' : '"troll" or "cast"'}, "leadFt": 95, "runsDepthFt": [22, 28],
         "why": "one sentence" }
       // Only the rods this plan uses — two is a complete answer. Put tie-only lures on
-      // ${FLUORO_RODS.join('/')} and snap-friendly ones on ${SNAP_RODS.join('/')} where you can.
+      // ${FLUORO_RODS.join('/')} and snap-friendly ones on ${SNAP_RODS.join('/')} where you can.${o.isRiver ? `
+      // EVERY ROD IS "troll" ON THIS DAY. There are no stops on a river (rule 4), so a rod set to
+      // "cast" is a rod that never gets picked up.` : ''}
     ]
   },
   "legs": [
@@ -1553,7 +1595,7 @@ RETURN EXACTLY THIS SHAPE
     // \`trollPasses\` is how many times you troll this stretch before moving on — down, back,
     // down again. Omit it or say 1 for a single pass. See rule 3.
   ],
-  "stops": [
+  "stops": [${o.isRiver ? `],  // EMPTY, ALWAYS, ON A RIVER. See rule 4 — he cannot hold the boat.` : `
     { "runId": "copied exactly", "id": "that structure's \`id\`, copied exactly",
       "rods": ["R6"], "durationMin": 15,
       "why": "why this is worth stopping for rather than trolling over",
@@ -1562,7 +1604,7 @@ RETURN EXACTLY THIS SHAPE
     // ONE ENTRY PER STRUCTURE WORTH STOPPING AT, across the whole day. Several is normal; one
     // for a whole day almost never is. Copy \`id\` — NOT \`structureId\`, which is the lake's own
     // name for the feature and is there to be read, not returned.
-  ],
+  ],`}
   "changes": [
     { "beforeRunId": "copied exactly", "rodId": "R5", "to": "exact name from the list",
       "why": "what changed to make this worth the swap" }
@@ -1881,7 +1923,24 @@ export function planArgsFrom(res, candidates, ctx = {}) {
   //
   // The shape block now says `id`. This accepts either, because a prompt is a request and a
   // parser should not lose a day's fishing over which of two field names a model reached for.
+  //
+  // AND A RIVER DAY HAS NO STOPS AT ALL, whatever the model returns. Ryan, 2026-09-17: "i do not
+  // typically anchor in a river so stop and cast really isn't going to be a thing... i am not going
+  // to try and hover with either the trolling motor or the pedals." Rule 4 says so and the shape
+  // block asks for an empty array, and a rule stated in a prompt is a request — the 2026-09-17
+  // Congaree bench came back with a stop that told him to "use a brush gripper to tie off silently
+  // to nearby shoreline timber" in a river, which is a boat swinging on a branch in current.
+  //
+  // `c.drift` IS THE TEST, the same one selectCandidates uses for `isDrift` and for the whole
+  // fished-back price. A river candidate is a drift by construction and a lake candidate is a
+  // contour lane, so the day answers this about itself rather than being told twice.
+  const riverDay = (candidates || []).some((c) => c && c.drift);
   const stops = (Array.isArray(res.stops) ? res.stops : []).filter((s) => {
+    if (riverDay) {
+      problems.push('dropped a stop-and-cast: this is a river and the boat cannot be held on a '
+                  + `spot — ${str(s && s.why) || JSON.stringify(s)}`);
+      return false;
+    }
     if (s && str(s.runId) && (str(s.id) || str(s.structureId))) return true;
     problems.push(`dropped a stop with no runId or structure reference: ${JSON.stringify(s)}`);
     return false;

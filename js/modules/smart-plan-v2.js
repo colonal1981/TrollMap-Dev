@@ -171,8 +171,19 @@ export async function buildSmartPlanV2(o) {
   // would come apart the first time either was tuned.
   const maxOffM = o.maxOffM ?? 100;
   const legMaxM = o.maxM ?? 8000;
+  // BUILT BEFORE THE DRIFTS, BECAUSE THE DRIFTS NOW NEED IT. It memoises every point it is asked
+  // about and the ramp is the same point on every call, so projecting the ramp here costs the one
+  // scan the transit was going to pay for anyway.
+  const riverTransit = isRiver && packHasCentreline ? centrelineTransit(centrelineFc) : null;
+  // WHERE HE LAUNCHES, AS A STATION ON THIS RIVER. The day is one path through it -- out, turn,
+  // back -- so this is what the reaches are laid out from; see riverDriftRuns(). Null only when the
+  // centreline could not be projected at all, and the reaches then fall back to the whole river,
+  // which is the layout that produced the 731-minute bench.
+  const rampStationM = riverTransit && typeof riverTransit.stationAt === 'function'
+    ? riverTransit.stationAt(o.ramp) : null;
   const drifts = isRiver && packHasCentreline
     ? riverDriftRuns(centrelineFc, { structures, slug: o.r2Key, maxOffM, maxM: legMaxM,
+                                     rampStationM,
                                      // Q FOR Q/A, FROM THE READING THE PREFLIGHT ALREADY TOOK. The
                                      // discharge has been reaching the prompt as a raw ft3/s number
                                      // since plan-prompt.js was written; this is what turns it into
@@ -192,9 +203,6 @@ export async function buildSmartPlanV2(o) {
                       + 'it carried two stations and a length, so the layer is present and empty'] };
   }
   const legRuns = drifts || runs;
-  // Built once and shared with the selector below; it memoises every point it is asked about, and
-  // the ramp is the same point on every call.
-  const riverTransit = isRiver && packHasCentreline ? centrelineTransit(centrelineFc) : null;
   // THE DAY'S CURRENT AND WHERE IT TURNS HIM AROUND, for the prompt block that has been asking for
   // both since it was written and had only a raw discharge in ft3/s to answer with -- which is not a
   // speed. Computed HERE, where the drifts are: the prompt formats and does not calculate. Null on a
@@ -371,6 +379,11 @@ export async function buildSmartPlanV2(o) {
     // WHAT THE WATER IS DOING TODAY -- tide on the coast, flow and generation on a river.
     // Absent on a reservoir, and absent is the prompt this file has always built.
     waterState: o.waterState,
+    // AND WHETHER THIS IS A RIVER, DECIDED ONCE, HERE. The prompt used to re-derive it from
+    // `waterState.featureType` alone -- so a river whose /conditions call timed out was handed
+    // river candidates under the lake rules: order the legs to save deadhead, and stop and cast on
+    // the good structure. This is the same answer the drifts were built from, which is the point.
+    isRiver,
   });
 
   // ── STOP HERE AND HAND BACK THE PROMPT, WITHOUT SPENDING A CALL ───────────────────────────

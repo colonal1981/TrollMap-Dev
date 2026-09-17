@@ -42,6 +42,55 @@ export const LATERALS = [
   { key: 'quarter_right', frac: 0.75, label: 'quarter-right, a rod off the right bank' },
 ];
 
+/**
+ * HOW MANY LINES THIS RIVER HAS, AND IT IS A FUNCTION OF THE CORRIDOR, NOT A WIDTH SOMEBODY PICKED.
+ *
+ * FORTY_THREE_OF_FIFTY_SEVEN_RIVERS_HAVE_NO_SIDE_TO_PICK measured the Congaree's 189 holes against
+ * how wide a corridor the boat actually fishes, and the answer moves with the corridor:
+ *
+ *     plan                              15m    25m    40m    60m   100m
+ *     one line: mid-channel              45     80    116    154    177
+ *     up one quarter, back the other     98    145    171    180    180
+ *
+ * At a 15 m corridor the pair is worth 2.2x the single line. At 100 m it is worth 1.02x, because a
+ * 100 m corridor from mid-channel already covers a 145 m river bank to bank. The published split --
+ * "43 rivers under 80 m gain 1.03x, the 14 wide ones gain 3.16x" -- was that same comparison at one
+ * corridor, and 80 m is where THAT corridor happened to put the line. It is not a property of rivers.
+ *
+ * SO THE RULE IS THE GEOMETRY AND NOT THE TABLE. The quarter lines sit at 0.25 and 0.75 of the
+ * width, so they are `0.5 * width` apart, and they are two lines rather than one line drawn twice
+ * only when their corridors do not overlap: `0.5 * width >= 2 * corridor`. At today's 100 m corridor
+ * no river in the card qualifies -- all 57 have a median channel under 200 m -- so every river is one
+ * mid-channel line, which is exactly what the 177-vs-180 row says it should be. When the corridor
+ * comes down to the 15 m he measured his own reach at, the threshold falls to 60 m of width and the
+ * 14 wide rivers become two lanes, which is what the 45-vs-98 row says.
+ *
+ * MID-CHANNEL IS THE ONE LINE. Which single quarter is best varies per river with where its bends
+ * fall -- on the Congaree quarter-right wins at 15 m and mid-channel wins at 60 and 100 -- so
+ * choosing a quarter needs a measurement this app does not have per river. Mid-channel needs none,
+ * carries the deepest water of the three (p50 5 ft against 3 ft either side, which is a bait-depth
+ * decision), and is the measured best at the corridor actually in force.
+ *
+ * @param {number} medianWidthM  the river's median charted channel width
+ * @param {number} corridorM     how far off the line a feature is still his -- `maxOffM`
+ */
+export function lateralsFor(medianWidthM, corridorM) {
+  const w = Number(medianWidthM);
+  const c = Number(corridorM);
+  const apart = Number.isFinite(w) && w > 0 ? 0.5 * w : 0;
+  const disjoint = Number.isFinite(c) && c > 0 && apart >= 2 * c;
+  return disjoint ? [LATERALS[0], LATERALS[2]] : [LATERALS[1]];
+}
+
+/** The median of the charted station widths, which is what lateralsFor() asks about. */
+export function medianWidthM(widths) {
+  const v = (Array.isArray(widths) ? widths : [])
+    .map(Number).filter((x) => Number.isFinite(x) && x > 0).sort((a, b) => a - b);
+  if (!v.length) return null;
+  const mid = v.length % 2 ? v[(v.length - 1) / 2] : (v[v.length / 2 - 1] + v[v.length / 2]) / 2;
+  return Number(mid.toFixed(1));
+}
+
 // The pack's structure kinds, joined to a drift by real distance. Docks and the state attractor
 // feed are deliberately NOT here: selectCandidates() joins those itself for every run it is given,
 // and joining them twice would count every dock on the river twice.
@@ -169,12 +218,19 @@ export function centrelineTransit(centrelineFc) {
     return val;
   };
 
-  return (a, b) => {
+  const transit = (a, b) => {
     const straight = (Array.isArray(a) && Array.isArray(b)) ? metresBetween(a, b) : 0;
     const ma = riverMetreAt(a), mb = riverMetreAt(b);
     if (ma == null || mb == null) return straight;
     return Math.max(straight, Math.abs(ma - mb));
   };
+  // WHERE A POINT IS ON THE RIVER, not just how far it is from another one. The ramp's station is
+  // what anchors the day's reaches (see riverDriftRuns), and it is the SAME projection, with the
+  // SAME hairpin-proof coarse pass and the same cache -- attached to the closure rather than
+  // exported separately, because a second projector is a second answer to "where on the river is
+  // this", and the two would come apart the first time either was tuned.
+  transit.stationAt = riverMetreAt;
+  return transit;
 }
 
 /**
@@ -243,15 +299,31 @@ export function profileIndexFor(fractions, frac) {
 }
 
 /**
- * RUN-SHAPED LINES ALONG A RIVER, ONE PER LATERAL POSITION PER REACH.
+ * THE ONE PATH THROUGH THE RAMP, CUT INTO LEGS.
  *
- * THE REACH LENGTH AND STRIDE ARE DERIVED, NOT PICKED. A reach is `maxM` long -- the ceiling
- * selectCandidates already applies to a leg -- and they start every `maxM / 2`, so every metre of
- * river appears whole inside at least one reach rather than being cut across by a boundary
- * somebody chose. Consecutive reaches therefore overlap by half, and the existing spatial dedupe
- * is what collapses the ones that end up describing the same water: that is what it was written
- * for, and two overlapping reaches through the same holes are the same case as the 15 and 16 ft
- * contours through one pocket.
+ * A RIVER DAY IS ONE PATH, NOT A SET OF LEGS TO CHOOSE BETWEEN. Ryan, 2026-09-17: "up one side and
+ * down the other is probably the right answer... that is probably the easiest." He launches, fishes
+ * outward -- upstream while the battery is full, by preference -- turns, and fishes back to the
+ * ramp. There is no driving to a spot: "its a kayak you just start fishing."
+ *
+ * SO THE REACHES ARE ANCHORED AT THE RAMP AND CONTIGUOUS. They are laid out from his launch
+ * outward, each `maxM` long -- the ceiling selectCandidates already applies to a leg -- butted end
+ * to end in both directions, so every candidate is a PIECE OF THE ONE PATH and the transit between
+ * two consecutive ones is zero. Before this they were laid on a fixed grid from station 0 with a
+ * `maxM / 2` stride, which is 126 km of Congaree cut into 96 overlapping options with no relation
+ * to where the boat starts. The 2026-09-17 bench is what that produces: five candidates, three of
+ * them the same eight kilometres of river at three lateral positions, all five fished, 731 minutes
+ * against a 540 minute window.
+ *
+ * THE STRIDE IS `maxM` AND NOT `maxM / 2` FOR THE SAME REASON. Overlapping reaches existed to give
+ * a ranker choices over one piece of water; a path has no choices to offer, and two halves of one
+ * pass are not two legs.
+ *
+ * THE TURNAROUND IS STILL NOT IMPOSED HERE. Reaches run to both ends of the centreline and the
+ * battery and window gates in selectCandidates reject what he cannot reach -- see centrelineTransit
+ * above, which says the same thing about the same question. A bound here would be a second gate
+ * saying it in a different place, and it would have to know a current this function has not
+ * measured yet.
  *
  * WHAT IS DELIBERATELY ABSENT FROM THE PROPERTIES. `fitted` is not set, because the fitter never
  * saw these lines and a batch may not assert a field it did not compute -- and because
@@ -270,11 +342,45 @@ export function profileIndexFor(fractions, frac) {
  *                               selectCandidates rejects the lot as scoreless. Say so rather than
  *                               returning legs over water nothing was ever checked against.
  * @param {number} [o.maxM]      the leg ceiling, matched to selectCandidates' own default
- * @param {number} [o.maxOffM]   how far off the line a feature can be and still be on the way
+ * @param {number} [o.maxOffM]   how far off the line a feature can be and still be on the way, and
+ *                               the corridor lateralsFor() decides the number of lines on
+ * @param {number} [o.rampStationM] where he launches, as a station on this centreline --
+ *                               `centrelineTransit(fc).stationAt(ramp)`. Without it the reaches
+ *                               fall back to the whole river from station 0, which is a river with
+ *                               no day on it: every caller that is planning has a ramp.
  * @param {string[]} [o.kinds]   which pack kinds to join
- * @param {object[]} [o.laterals] override the three positions, for tests
+ * @param {object[]} [o.laterals] override the lines lateralsFor() would choose, for tests
  * @returns {object[]} GeoJSON LineString features, shaped like trolling_runs.geojson entries
  */
+/**
+ * THE DAY'S REACHES, BUTTED END TO END AND WALKING OUTWARD FROM THE RAMP.
+ *
+ * Returns `[startM, endM]` pairs covering the whole centreline, ordered nearest-the-ramp-first in
+ * each direction -- upstream first, because that is the half of the day he fishes first and the
+ * order the reaches are offered in is the order they read in.
+ *
+ * Station increases DOWNSTREAM (3DHP's `flowdirection` sets vertex order), so upstream of the ramp
+ * is the lower stations. That is the only place in this function a direction is decided, and it is
+ * decided from the builder's convention rather than from a bearing.
+ */
+function reachesFromRamp(totalM, maxM, rampStationM) {
+  const out = [];
+  if (!(totalM > 0) || !(maxM > 0)) return out;
+  const r = Number(rampStationM);
+  if (!Number.isFinite(r)) {
+    for (let a = 0; a < totalM; a += maxM) out.push([a, Math.min(totalM, a + maxM), null]);
+    return out;
+  }
+  const ramp = Math.min(Math.max(r, 0), totalM);
+  for (let e = ramp; e > 0; e -= maxM) {
+    out.push([Math.max(0, e - maxM), e, { direction: 'upstream', m: Math.round(ramp - e) }]);
+  }
+  for (let a = ramp; a < totalM; a += maxM) {
+    out.push([a, Math.min(totalM, a + maxM), { direction: 'downstream', m: Math.round(a - ramp) }]);
+  }
+  return out;
+}
+
 export function riverDriftRuns(centrelineFc, o = {}) {
   const feat = centrelineFc && centrelineFc.features && centrelineFc.features[0];
   const line = feat && feat.geometry && feat.geometry.coordinates;
@@ -294,16 +400,17 @@ export function riverDriftRuns(centrelineFc, o = {}) {
   const maxM = o.maxM ?? 8000;
   const maxOffM = o.maxOffM ?? 100;
   const kinds = o.kinds || DRIFT_JOIN_KINDS;
-  const laterals = o.laterals || LATERALS;
   const slug = p.slug || o.slug || 'river';
-  const strideM = maxM / 2;
   const totalM = Number(p.length_m) || stationM[n - 1] || 0;
+  // ONE LINE OR TWO, DECIDED BY THE CORRIDOR AGAINST THIS RIVER'S OWN WIDTH -- see lateralsFor().
+  // Overridable for tests, which is the only caller that should be naming positions by hand.
+  const laterals = o.laterals || lateralsFor(medianWidthM(width), maxOffM);
+  const reaches = reachesFromRamp(totalM, maxM, o.rampStationM);
 
   const out = [];
   for (const lat of laterals) {
     const col = profileIndexFor(fractions, lat.frac);
-    for (let reachStart = 0; reachStart < Math.max(1, totalM - 1); reachStart += strideM) {
-      const reachEnd = reachStart + maxM;
+    for (const [reachStart, reachEnd, fromRamp] of reaches) {
       const coords = [];
       const depths = [];
       const bearings = [];
@@ -351,6 +458,13 @@ export function riverDriftRuns(centrelineFc, o = {}) {
         // exist on moving water.
         drift: { side: lat.key, label: lat.label, frac: lat.frac },
         reachFromM: Math.round(reachStart),
+        // WHICH HALF OF THE DAY THIS IS, IN WORDS AND NOT A SIGN. The model is told to fish upstream
+        // first and had no way to tell which leg was upstream: `flow_deg` says where the water goes,
+        // not which side of the launch a reach is on. `{direction, m}` -- m being river metres from
+        // the ramp to the NEAR end of the reach -- because a signed distance is the convention this
+        // project keeps getting backwards, and there is nothing to get backwards about a word.
+        // Absent when the caller gave no ramp, which is a river with no day laid out on it.
+        ...(fromRamp ? { from_ramp: fromRamp } : {}),
         length_m: Number(lengthM.toFixed(1)),
         near,
         // The stations on this drift that the chart can answer for. Reported beside the depth

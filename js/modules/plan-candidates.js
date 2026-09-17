@@ -2019,6 +2019,11 @@ export function selectCandidates(runs, o) {
       // is what lets a plan say "quarter-left, downstream past three holes" instead of naming a
       // contour depth that does not exist on moving water.
       drift: p.drift || null,
+      // WHICH SIDE OF THE RAMP THIS REACH IS ON, AND HOW FAR OUT. `{direction: 'upstream', m: 8000}`
+      // -- see river-drifts.js. The day is one path through the launch and this is the only field
+      // that says which half of it a leg belongs to; `flowDeg` says where the water goes, which is
+      // a different question. Null on a lake and on a river laid out with no ramp.
+      fromRamp: p.from_ramp || null,
       // THE CURRENT ON THIS LINE, AND THE REASON WHERE THERE IS NONE.
       //
       // `ampHoursBand()` in plan-water.js has modelled a current since it was written -- resolves it
@@ -2489,6 +2494,11 @@ export function forModel(c, cap = MODEL_STRUCTURE_CAP) {
     estMinFishedBack: c.estMinFishedBack ?? undefined,
     transitToRampMIfFishedBack: c.transitToRampMIfFishedBack ?? undefined,
     drift: c.drift ? { side: c.drift.side, label: c.drift.label } : undefined,
+    // WHICH HALF OF THE DAY THIS LEG IS. The river block tells the model to order the day upstream
+    // first and, until this, gave it nothing to order BY -- the legs on both sides of the launch
+    // looked identical and the 2026-09-17 bench duly fished three passes of one reach before it
+    // went anywhere. Absent on a lake, where a day is not out and back along one line.
+    fromRamp: c.fromRamp || undefined,
     passes: counts,
     structures: shown,
     structuresShown: shown.length,

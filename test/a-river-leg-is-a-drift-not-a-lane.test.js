@@ -8,8 +8,8 @@
 // ones that will fail again if a drift is ever given a lane's properties.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { riverDriftRuns, offsetPoint, profileIndexFor, LATERALS,
-         meanBearingDeg } from '../js/modules/river-drifts.js';
+import { riverDriftRuns, offsetPoint, profileIndexFor, LATERALS, lateralsFor, medianWidthM,
+         meanBearingDeg, centrelineTransit } from '../js/modules/river-drifts.js';
 import { structureIndex, DEFAULT_WEIGHTS, eligibleForHolding,
          selectCandidates, forModel } from '../js/modules/plan-candidates.js';
 
@@ -52,7 +52,11 @@ test('a hole has a weight, or every river scores zero', () => {
 });
 
 test('three positions, and picking a side actually moves the boat', () => {
-  const drifts = riverDriftRuns(eastwardRiver(), { slug: 'test_river' });
+  // NAMED EXPLICITLY, because the default is now lateralsFor() and this 120 m test river gets ONE
+  // line at the 100 m corridor in force. What is being checked here is that the three positions are
+  // where they say they are -- the geometry that lateralsFor() picks between -- so the positions are
+  // the input, not the thing under test. See the corridor tests below for the choosing.
+  const drifts = riverDriftRuns(eastwardRiver(), { slug: 'test_river', laterals: LATERALS });
   assert.ok(drifts.length >= 3, 'at least one reach per lateral position');
   const sides = new Set(drifts.map((d) => d.properties.drift.side));
   assert.deepEqual([...sides].sort(), ['mid_channel', 'quarter_left', 'quarter_right']);
@@ -72,7 +76,7 @@ test('three positions, and picking a side actually moves the boat', () => {
 });
 
 test('the depth under the boat is the depth on the line he picked, not the deepest in the section', () => {
-  const drifts = riverDriftRuns(eastwardRiver(), { slug: 'test_river' });
+  const drifts = riverDriftRuns(eastwardRiver(), { slug: 'test_river', laterals: LATERALS });
   const at = (side) => drifts.find((d) => d.properties.drift.side === side
                                        && d.properties.reachFromM === 0).properties.mean_depth_ft;
   // The section runs 18 ft on the left bank to 2 ft on the right. Asking for the minimum across
@@ -122,7 +126,7 @@ test('structure joins by measured distance, and on a narrow river that reaches b
   // off the river entirely.
   const structures = structureIndex([pointFeat(lon0, lat0 + 30 * m, 'hole', 'hole_near'),
                                      pointFeat(lon0, lat0 + 300 * m, 'hole', 'hole_far')]);
-  const drifts = riverDriftRuns(river, { structures, slug: 'test_river' });
+  const drifts = riverDriftRuns(river, { structures, slug: 'test_river', laterals: LATERALS });
   const marks = (side) => drifts.filter((d) => d.properties.drift.side === side)
     .flatMap((d) => d.properties.near).filter((n) => n.t === 'hole');
 
@@ -185,7 +189,7 @@ test('the dedupe does not get to decide which side he fishes', () => {
   // the winner as if it were the only water there. The start-distance test did it: three lines over
   // one reach start 30-60 m apart against a 1,200 m rule.
   const { river, coords, structures } = scoredRiver();
-  const drifts = riverDriftRuns(river, { structures, slug: 'test_river' });
+  const drifts = riverDriftRuns(river, { structures, slug: 'test_river', laterals: LATERALS });
   const cands = selectCandidates(drifts, SELECT(structures, coords[0]));
   assert.ok(cands.length > 0, 'candidates came back at all');
 
@@ -204,7 +208,7 @@ test('and a lane still dedupes against a lane, because a lake has no side to pic
   // The A/B that proves the change is the QUESTION and not the thresholds. Same geometry, same
   // scores, same numbers -- the only difference is whether a candidate knows which line it is on.
   const { river, coords, structures } = scoredRiver();
-  const drifts = riverDriftRuns(river, { structures, slug: 'test_river' });
+  const drifts = riverDriftRuns(river, { structures, slug: 'test_river', laterals: LATERALS });
   const asLanes = drifts.map((d) => {
     const props = { ...d.properties };
     delete props.drift;
@@ -223,10 +227,10 @@ test('the reported depth rule is the one applied, not the first one seen', () =>
   // rule latched. The sentence whose whole job is saying WHICH test emptied the list was naming the
   // wrong test.
   const { structures, coords } = scoredRiver();
-  // A reach is maxM (8000 m) long at maxM/2 stride, so to get one reach entirely uncharted the
-  // river has to be longer than one reach: 400 stations is 20 km, and nulling the first 161 of them
-  // makes the reach at 0 uncharted end to end while the reach at 4000 still has charted water.
-  // Station 0 is where the latch used to happen.
+  // A reach is maxM (8000 m) long and they are butted end to end, so to get one reach entirely
+  // uncharted the river has to be longer than one reach: 400 stations is 20 km, and nulling the
+  // first 161 of them makes the reach at 0 uncharted end to end while the reach at 8000 still has
+  // charted water. Station 0 is where the latch used to happen.
   const river = eastwardRiver({ stations: 400 });
   const props = river.features[0].properties;
   for (let i = 0; i <= 160; i++) props.depth_profile_ft[i] = new Array(9).fill(null);
