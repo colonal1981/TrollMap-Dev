@@ -339,7 +339,7 @@ export function coastalPromptBlock(ws) {
  * GENERATION IS THE CURRENT on a tailwater, and `false` is as useful as `true`: "not generating"
  * is the reason nothing is moving and nothing is feeding.
  */
-export function riverPromptBlock(ws) {
+export function riverPromptBlock(ws, o = {}) {
   const r = ws && ws.river;
   if (!r) return '';
   // A RESERVOIR IS NOT A RIVER, AND THIS BLOCK USED TO TELL THE MODEL IT WAS.
@@ -381,6 +381,42 @@ export function riverPromptBlock(ws) {
   } else if (r.gaugeOutOfService) {
     L.push('The gauge is OUT OF SERVICE — there is no flow reading today. Do not infer one from '
       + 'the stage, and say in the plan that the river was not measured.');
+  }
+  // ── HOW MUCH OF THE TROLLING SPEED IS THE RIVER, AND WHERE THE DAY TURNS HIM AROUND ───────────
+  //
+  // This block has asked the model "how much of the trolling speed is the river rather than the
+  // motor" and "whether a leg is worth running upstream at all" since it was written, and had
+  // NOTHING BUT A DISCHARGE IN ft3/s to answer either with — which is a volume, not a speed. The
+  // centreline's charted cross-section turns it into one: V = Q/A, guarded so a section with no real
+  // charted depth in it never divides a discharge. Computed in smart-plan-v2 off the drifts; this
+  // block formats and does not calculate.
+  //
+  // THE SUPPORT GOES WITH THE NUMBER. The current varies seven-fold along one river at a single
+  // discharge, so "n of N reaches measurable" is part of the fact rather than a footnote under it.
+  const rc = isRiver ? o.riverCurrent : null;
+  if (rc && Number.isFinite(rc.medianMph)) {
+    const troll = 2.0;
+    L.push(`Current about ${rc.medianMph.toFixed(2)} mph down the channel`
+      + ` · ${rc.n} of ${rc.ofN} reaches measurable`
+      + `${rc.basis ? ` · ${rc.basis}` : ''}`);
+    L.push(`That is ${Math.round((rc.medianMph / troll) * 100)}% of a ${troll} mph trolling speed, so `
+      + 'upstream and downstream are not the same leg: each candidate carries both prices as '
+      + '`batteryAhUpstream` and `batteryAhDownstream`.');
+    const t = rc.turnaround;
+    if (t) {
+      L.push(`The day turns him around at about ${t.milesUp} miles up, and the ${t.binding} is what `
+        + `binds — battery ${t.batteryMiles} mi`
+        + `${t.clockMiles != null ? `, clock ${t.clockMiles} mi` : ''}`
+        + ` · ${t.ahPerMileUp} Ah a mile against it, ${t.ahPerMileDown} with it. Assumes trolling `
+        + 'the whole way at one speed and one current, and no transit.');
+      L.push('ORDER THE DAY UPSTREAM FIRST while the battery is full and come back down on the push — '
+        + 'that is how he fishes it, and the arithmetic above is why it is also the cheap order.');
+    }
+  } else if (rc && rc.basis) {
+    // A REFUSAL IS AN ANSWER AND MUST REACH THE FIELD IT REFUSED. Tidal, no gauge and no charted
+    // section are three different days, and the model must not fill the gap from its own recall.
+    L.push(`No channel velocity for this water — ${rc.basis}. Do not invent one, and do not write `
+      + 'about how much of the trolling speed is the river.');
   }
   if (r.stageFt != null) L.push(`Stage ${Number(r.stageFt).toFixed(1)} ft`
     + `${r.stageBasis ? ` (${r.stageBasis})` : ''}.`);
@@ -1474,7 +1510,7 @@ wind direction: is it a dangerous windward launch?${o.hazards && o.hazards.lengt
     + `from the research is written advice with no position at all: say the ones that bear on `
     + `today out loud, and never imply an unpositioned one is marked on the chart.`
   : ''}
-${coastalPromptBlock(o.waterState)}${riverPromptBlock(o.waterState)}${poolPromptBlock(o.waterState)}${conditionsPromptBlock(o.waterState)}${lightPromptBlock(o.waterState, o.weatherByHour, o.launchTime, o.returnTime, o.lightFacts)}${timeBudgetBlock(o.windowMin, o.launchTime, o.returnTime, o.dayMin)}${thermoclineNormBlock(o.thermoclineNorm)}${inshoreSeasonBlock(o.inshoreSeason)}${seabedHabitatBlock(o.seabedHabitat)}
+${coastalPromptBlock(o.waterState)}${riverPromptBlock(o.waterState, o)}${poolPromptBlock(o.waterState)}${conditionsPromptBlock(o.waterState)}${lightPromptBlock(o.waterState, o.weatherByHour, o.launchTime, o.returnTime, o.lightFacts)}${timeBudgetBlock(o.windowMin, o.launchTime, o.returnTime, o.dayMin)}${thermoclineNormBlock(o.thermoclineNorm)}${inshoreSeasonBlock(o.inshoreSeason)}${seabedHabitatBlock(o.seabedHabitat)}
 WHAT IS ALREADY KNOWN
 ${o.intel || 'NOTHING. No researched profile exists for this water, so everything else here rests '
   + 'on the chart, the gauges and general species knowledge. Say so in the plan rather than '

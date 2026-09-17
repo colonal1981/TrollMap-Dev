@@ -86,6 +86,41 @@ export function meanBearingDeg(degs) {
   return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
 }
 
+/**
+ * THE DAY'S CURRENT, FROM THE REACHES THAT HAVE ONE.
+ *
+ * A day-level figure for the prompt, which has asked "how much of the trolling speed is the river
+ * rather than the motor" since it was written with nothing but a raw discharge to answer it.
+ *
+ * THE MEDIAN, AND THE SUPPORT BESIDE IT. The current varies seven-fold along one river at a single
+ * discharge, so one number cannot describe a river and this one does not pretend to -- `n of ofN`
+ * says how many reaches could be measured at all, and the basis says why the rest could not. A
+ * consumer that wants per-reach numbers has them on each drift.
+ */
+export function driftCurrentSummary(drifts) {
+  const v = [];
+  let measuredBasis = null, unmeasuredBasis = null;
+  const list = Array.isArray(drifts) ? drifts : [];
+  for (const d of list) {
+    const p = (d && d.properties) || {};
+    const c = Number(p.current_mph);
+    if (Number.isFinite(c)) { v.push(c); if (!measuredBasis) measuredBasis = p.current_basis || null; }
+    else if (!unmeasuredBasis) unmeasuredBasis = p.current_basis || null;
+  }
+  if (!list.length) return null;
+  v.sort((a, b) => a - b);
+  const medianMph = v.length
+    ? (v.length % 2 ? v[(v.length - 1) / 2] : (v[v.length / 2 - 1] + v[v.length / 2]) / 2)
+    : null;
+  return {
+    medianMph: medianMph == null ? null : Number(medianMph.toFixed(2)),
+    n: v.length,
+    ofN: list.length,
+    // The reason travels with the absence, as it does on every drift.
+    basis: v.length ? measuredBasis : unmeasuredBasis,
+  };
+}
+
 /** A point `dxM` east and `dyM` north of [lon, lat]. Flat enough over a channel width. */
 function shift(lon, lat, dxM, dyM) {
   const mPerDegLon = DEG_LAT_M * Math.cos((lat * Math.PI) / 180);

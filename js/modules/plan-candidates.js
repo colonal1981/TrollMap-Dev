@@ -132,6 +132,64 @@ export function ampHoursBand(metres, mph, courseDeg, env) {
   };
 }
 
+/**
+ * HOW FAR UP HE CAN GO BEFORE SOMETHING TURNS HIM AROUND, AND WHICH THING IT IS.
+ *
+ * Ryan, on how a river day actually runs: "i go up stream against the current for at least half the day
+ * but keeping an eye on battery usage... then i come back down... speed on the way back is much easier
+ * and usage will be close to 0 if there is river current... if it can draw a line that i can follow and
+ * then turn me back around based on speed, and can actually predict river current and how much battery
+ * i would use that would be even better."
+ *
+ * The asymmetry is real and it is not a guess: the draw curve is convex (amps go as mph^1.756), so a mph
+ * added on the nose costs more than a mph taken off the tail saves. Half the battery therefore lands
+ * well past half the distance, which is exactly why "at least half the day" is the right instinct and a
+ * bad rule.
+ *
+ * TWO CONSTRAINTS, AND SAYING WHICH ONE BINDS IS THE WHOLE VALUE. On his boat the clock usually wins:
+ * 80 usable Ah against 0.95 mph of current buys about 13.9 miles up, and a nine-hour window at 2.0 mph
+ * buys 9.0. A number that quoted only the battery would send him planning water he has no hours for.
+ *
+ * WHAT IT ASSUMES, SAID OUT LOUD rather than buried: trolling the whole way at one speed, one current
+ * for the whole reach, and no transit. The current varies seven-fold along one river at a single
+ * discharge, so this is a day-level budget and not a promise about any particular mile.
+ *
+ * AND ONE EDGE WHERE THE MODEL STOPS DESCRIBING THE BOAT. Where the current equals or exceeds the
+ * trolling speed, "2 mph over the ground going downstream" is not something the motor is doing any
+ * more — the river is carrying him faster than that and holding him back is a braking problem, not a
+ * draw problem. The through-water speed floors at 0.1 so the arithmetic stays finite, but the
+ * downstream figure below is not meaningful past that point. It has not come up: the Congaree's
+ * measured p90 is 2.17 mph against a 2.0 mph troll and its median is 0.96.
+ *
+ * @param {object} o {usableAh, windowMin, trollMph, currentMph}
+ * @returns {{batteryMiles:number, clockMiles:number|null, milesUp:number, binding:string,
+ *            ahPerMileUp:number, ahPerMileDown:number}|null}
+ */
+export function turnaroundMiles(o = {}) {
+  const troll = Math.max(0.1, Number(o.trollMph) || 0);
+  const usableAh = Number(o.usableAh);
+  if (!Number.isFinite(usableAh) || usableAh <= 0) return null;
+  const cur = Number.isFinite(Number(o.currentMph)) ? Math.max(0, Number(o.currentMph)) : 0;
+  // Amp-hours per mile is the draw at through-water speed over the hours a mile takes at ground speed
+  // -- the same split as ampHoursBand(), for the same reason.
+  const ahPerMileUp = ampsAtMph(troll + cur) / troll;
+  const ahPerMileDown = ampsAtMph(Math.max(0.1, troll - cur)) / troll;
+  const batteryMiles = usableAh / (ahPerMileUp + ahPerMileDown);
+  const windowMin = Number(o.windowMin);
+  // Up and back at trolling speed, so the hours buy half the distance each way.
+  const clockMiles = Number.isFinite(windowMin) && windowMin > 0
+    ? (windowMin / 60) * troll / 2 : null;
+  const milesUp = clockMiles == null ? batteryMiles : Math.min(batteryMiles, clockMiles);
+  return {
+    batteryMiles: Number(batteryMiles.toFixed(1)),
+    clockMiles: clockMiles == null ? null : Number(clockMiles.toFixed(1)),
+    milesUp: Number(milesUp.toFixed(1)),
+    binding: clockMiles == null ? 'battery' : (clockMiles < batteryMiles ? 'clock' : 'battery'),
+    ahPerMileUp: Number(ahPerMileUp.toFixed(2)),
+    ahPerMileDown: Number(ahPerMileDown.toFixed(2)),
+  };
+}
+
 const R = 6371000;
 export function metresBetween(a, b) {
   const p1 = a[1] * Math.PI / 180, p2 = b[1] * Math.PI / 180;

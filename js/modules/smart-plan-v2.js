@@ -18,11 +18,12 @@
  */
 
 import { selectCandidates, structureIndex, forModel, orientLegs, poiSpotFeatures,
-         attractorSpotFeatures, chartedGrid, chartedHazards } from './plan-candidates.js';
+         attractorSpotFeatures, chartedGrid, chartedHazards,
+         turnaroundMiles } from './plan-candidates.js';
 import { buildPlanRequest, parsePlanResponse, planArgsFrom } from './plan-prompt.js';
 // A RIVER LEG IS A DRIFT, NOT A LANE. See river-drifts.js for what that means, what it measures
 // and why the trolling runs are the wrong object on moving water.
-import { riverDriftRuns } from './river-drifts.js';
+import { riverDriftRuns, driftCurrentSummary } from './river-drifts.js';
 // THE PACK'S OWN FACTS. Pure, and it takes the layers fetched below -- see researchIntel() in
 // plan-inputs.js and THE_PROFILE_BECAME_A_CACHE_AND_NOBODY_MOVED_THE_READS_2026-09-01.md item 1.
 import { packDerivedFacts } from '../utils/pack-facts.js';
@@ -185,6 +186,17 @@ export async function buildSmartPlanV2(o) {
                       + 'it carried two stations and a length, so the layer is present and empty'] };
   }
   const legRuns = drifts || runs;
+  // THE DAY'S CURRENT AND WHERE IT TURNS HIM AROUND, for the prompt block that has been asking for
+  // both since it was written and had only a raw discharge in ft3/s to answer with -- which is not a
+  // speed. Computed HERE, where the drifts are: the prompt formats and does not calculate. Null on a
+  // lake, so that block cannot print a river sentence about still water.
+  const driftCurrent = drifts ? driftCurrentSummary(drifts) : null;
+  const riverCurrent = driftCurrent ? {
+    ...driftCurrent,
+    turnaround: turnaroundMiles({ usableAh: o.usableAh, windowMin: o.windowMin,
+                                  trollMph: o.trollMph ?? 2.0,
+                                  currentMph: driftCurrent.medianMph }),
+  } : null;
 
   const candidates = selectCandidates(legRuns, {
     ramp: o.ramp, slug: o.r2Key, fishDepthFt: o.fishDepthFt, holding: o.holding,
@@ -290,7 +302,7 @@ export async function buildSmartPlanV2(o) {
     // So the prompt can say HOW each bait reaches a depth rather than leaving the model to read
     // one off the lure's name -- see depthNote() in plan-prompt.js.
     lureByName: o.lureByName,
-    usableAh: o.usableAh, intel, thermoclineNorm,
+    usableAh: o.usableAh, intel, thermoclineNorm, riverCurrent,
     // WHEN THIS FISH IS CAUGHT INSHORE IN THIS STATE, from NOAA's intercept survey. Straight
     // through -- it needs no pack and no profile, only a state, a species and the date, all of
     // which the caller already resolved. Null on every inland water, which is the prompt that

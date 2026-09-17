@@ -275,6 +275,19 @@ export async function planFromWater(o) {
     // THE PROFILE'S LIGHT-TAGGED SOURCED FACTS, for lightPromptBlock(). Forwarded for the same
     // reason as the line above: one prompt, and the two planners must fill the same fields of it.
     lightFacts: o.lightFacts || null,
+    // ── AND THE ONE FIELD PICK WATER GENUINELY CANNOT FILL YET, NAMED RATHER THAN ABSENT ──────────
+    //
+    // `riverCurrent` carries the channel velocity and the battery turnaround to riverPromptBlock().
+    // Smart Plan builds it from the DRIFTS it lays out on the centreline; Pick Water plans from the
+    // pieces the person ticked, which on a river are still contour-shaped -- the same wrong object
+    // the Smart Plan path stopped using on 2026-09-17. So there is nothing here to derive it from,
+    // and the prompt block prints nothing when it is null, which is correct rather than merely safe.
+    //
+    // IT IS NAMED, AS null, ON PURPOSE. one-prompt-two-planners.test.js exists because a prompt field
+    // that reaches one planner and not the other is this project's most repeated defect -- it caught
+    // this the moment the field was added, which is the test working. An explicit null with the reason
+    // beside it makes the gap visible in the code; leaving the key out makes it invisible again.
+    riverCurrent: null,
     inventory: o.inventory || null,
     candidates: legs.map((l) => ({
       runId: l.runId,
