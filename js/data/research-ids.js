@@ -99,6 +99,40 @@ export const RESEARCH_CANONICAL_IDS = {
   'nottely_lake_ga': 'lake_nottely_ga',
   'watauga_lake_tn': 'watauga_tn',
   'watagua_tn': 'watauga_tn',
+  // ── THE CONGAREE, 2026-09-17, AND IT IS THE SAME CAUSE POINTING THE OTHER WAY ─────────────────
+  //
+  // The whole of 2026-09-16 went into researching this river -- 62 extracted facts, a per-species
+  // trollingIntelligence block including the Largemouth Bass entry -- and NOT ONE LINE OF IT REACHED
+  // A PLAN. Found by running the app: a dry bench from Barney Jordan logged
+  //
+  //     [plan-v2] no research profile answered to "Congaree River, SC"
+  //     [plan-candidates] holding unknown for this species/season -- water was filtered with the
+  //     old fish-band-vs-water-depth test. Bands from the built-in table never carry holding; only
+  //     a researched profile does.
+  //
+  // so the day ran on the generic depth band, the default structure weights and no thermocline,
+  // while the river's own profile sat in the bucket.
+  //
+  // THE PICKER'S NAME COMES FROM THE DNR RAMP FEED AND THE PROFILE IS FILED UNDER THE REGISTRY'S.
+  // The feed says `wb: "Congaree River"` + SC, so the picker offers "Congaree River, SC"; the
+  // registry row is "Congaree River (to SC-601) (Richland Co, SC)" and research_lakes.py drove from
+  // that. researchStorageIdCandidates("Congaree River, SC") tries `congaree_river` and
+  // `congaree_river_sc`; the object is `congaree_river_to_sc_601_richland_co_sc`. Two spellings, no
+  // overlap -- the same shape as the four waters above, except that here the batch wrote the LONG
+  // name and the picker asks for the short one.
+  //
+  // BOTH KEYS, BECAUSE THE READ AND THE WRITE ASK DIFFERENTLY. `researchStorageIdCandidates()`
+  // reaches for the bare `congaree_river` first, and `researchStorageId()` -- the WRITE rule --
+  // sanitizes the picker name to `congaree_river_sc`. Mapping only the read would leave the next
+  // save creating a second profile under the picker's spelling, which is precisely how the
+  // 2026-09-01 fork happened.
+  //
+  // COLLISION CHECKED in the running app against the picker's own list: `congaree_river` and
+  // `congaree_river_sc` are each produced by EXACTLY ONE name, "Congaree River, SC", and it is the
+  // only name in the index containing the word at all. which_profile_serves.mjs reported it as
+  // STRANDED before this row and does not after.
+  'congaree_river': 'congaree_river_to_sc_601_richland_co_sc',
+  'congaree_river_sc': 'congaree_river_to_sc_601_richland_co_sc',
 };
 
 /** Mirror of `researchStorageId` in worker/research/keys.js. */

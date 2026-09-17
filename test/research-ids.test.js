@@ -158,4 +158,38 @@ describe('the pre-county spelling resolves', () => {
   it('still refuses a lake with no profile under ANY spelling', () => {
     expect(researchedNames(['Lake Wateree (Kershaw Co, SC)'], [{ id: 'lake_murray_sc' }]).size).toBe(0);
   });
+
+  it('the Congaree reaches the profile a whole evening went into', () => {
+    // 2026-09-17, found by RUNNING the app: a dry bench from Barney Jordan logged "no research
+    // profile answered to Congaree River, SC" and planned the day on the generic depth band, while
+    // congaree_river_to_sc_601_richland_co_sc sat in the bucket with 62 extracted facts and a
+    // Largemouth Bass trollingIntelligence entry.
+    //
+    // The picker's name comes from the DNR ramp feed (`wb: "Congaree River"` + SC); the profile is
+    // filed under the registry's county form, because research_lakes.py drove from that.
+    const STORED = [{ id: 'congaree_river_to_sc_601_richland_co_sc' }];
+    expect(researchedNames(['Congaree River, SC'], STORED).size).toBe(1);
+    expect(researchStorageIdCandidates('Congaree River, SC'))
+      .toContain('congaree_river_to_sc_601_richland_co_sc');
+  });
+
+  it('and the WRITE rule canonicalises too, or the next save forks it again', () => {
+    // researchStorageIdCandidates() reaches for the bare `congaree_river`; researchStorageId() --
+    // what a save uses -- sanitizes the picker name to `congaree_river_sc`. Mapping only the read
+    // would leave the next save writing a second, thinner profile under the picker's spelling,
+    // which is exactly how Lanier, Nottely, Watauga and Russell forked on 2026-09-01.
+    expect(researchStorageId('Congaree River, SC')).toBe('congaree_river_to_sc_601_richland_co_sc');
+    expect(RESEARCH_CANONICAL_IDS.congaree_river).toBe('congaree_river_to_sc_601_richland_co_sc');
+    expect(RESEARCH_CANONICAL_IDS.congaree_river_sc).toBe('congaree_river_to_sc_601_richland_co_sc');
+  });
+
+  it('every canonical row points at something, and never at another key', () => {
+    // A row whose target is itself a key is a chain, and a chain is a rename nobody finished.
+    // Written generally so a row added tomorrow has to satisfy it too.
+    for (const [from, to] of Object.entries(RESEARCH_CANONICAL_IDS)) {
+      expect(typeof to === 'string' && to.length > 0).toBe(true);
+      if (from === to) continue;   // the Thurmond self-map, which is deliberate
+      expect(RESEARCH_CANONICAL_IDS[to] === undefined || RESEARCH_CANONICAL_IDS[to] === to).toBe(true);
+    }
+  });
 });
