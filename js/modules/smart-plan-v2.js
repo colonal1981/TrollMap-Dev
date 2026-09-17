@@ -20,6 +20,9 @@
 import { selectCandidates, structureIndex, forModel, orientLegs, poiSpotFeatures,
          attractorSpotFeatures, chartedGrid, chartedHazards } from './plan-candidates.js';
 import { buildPlanRequest, parsePlanResponse, planArgsFrom } from './plan-prompt.js';
+// A RIVER LEG IS A DRIFT, NOT A LANE. See river-drifts.js for what that means, what it measures
+// and why the trolling runs are the wrong object on moving water.
+import { riverDriftRuns } from './river-drifts.js';
 // THE PACK'S OWN FACTS. Pure, and it takes the layers fetched below -- see researchIntel() in
 // plan-inputs.js and THE_PROFILE_BECAME_A_CACHE_AND_NOBODY_MOVED_THE_READS_2026-09-01.md item 1.
 import { packDerivedFacts } from '../utils/pack-facts.js';
@@ -64,7 +67,7 @@ export const CANDIDATE_LIMIT = 12;
  */
 export async function buildSmartPlanV2(o) {
   const base = o.chartpackBase || '';
-  const [runsFc, structFc, waterFc, docksFc, poisFc] = await Promise.all([
+  const [runsFc, structFc, waterFc, docksFc, poisFc, centrelineFc] = await Promise.all([
     o.fetchJson(`${base}/${o.r2Key}/trolling_runs.geojson`),
     o.fetchJson(`${base}/${o.r2Key}/structure.geojson`),
     o.fetchJson(`${base}/${o.r2Key}/water_features.geojson`),
@@ -75,6 +78,12 @@ export async function buildSmartPlanV2(o) {
     // are 17% of Wateree's near[] marks and live only here — see poiSpotFeatures(). Optional:
     // a pack without pois is a pack whose runs carry no marks of those kinds either.
     Promise.resolve(o.fetchJson(`${base}/${o.r2Key}/pois.geojson`)).catch(() => null),
+    // SIXTH, AND RIVERS ONLY. build_river_centrelines.py put one of these in all 57 river packs on
+    // 2026-09-16 -- the 3DHP mainstem inside the river's own boundary, in downstream order, a
+    // station every 50 m carrying a bearing, a bend radius, a channel width and a charted
+    // cross-section -- and until now NOTHING in js/ or Worker/ opened it. A lake pack has none,
+    // which is why this is optional in exactly the way pois.geojson is.
+    Promise.resolve(o.fetchJson(`${base}/${o.r2Key}/centreline.geojson`)).catch(() => null),
   ]);
   const runs = (runsFc && runsFc.features) || [];
   if (!runs.length) {
@@ -99,9 +108,55 @@ export async function buildSmartPlanV2(o) {
   const attractors = structureIndex(attractorSpotFeatures(o.dnrAttractors, poiSpots,
                                     { onWater, where: `smart-plan ${o.r2Key}` }));
 
-  const candidates = selectCandidates(runs, {
+  // ── A RIVER LEG IS A DRIFT, NOT A LANE ───────────────────────────────────────────────────────
+  //
+  // Ryan, 2026-09-16, after this function came back with nothing twice on congaree_river: "for most
+  // narrower rivers there aren't going to be a bunch of different lanes you can follow... you are
+  // going to either pick a side or the middle... i am not equipped on the kayak to really anchor on
+  // a river so i am going to be moving no matter what." Then: "its the routes just like i thought."
+  //
+  // He was right about where it broke. Of the Congaree's 1,473 trolling runs, 915 were rejected as
+  // unreachable over the water graph and 415 as not fitted -- 90% of the water gone to two tests
+  // that are both about LANES, before depth was consulted at all. The graph could not route them
+  // because its cells are wider than a 145 m channel, so the chord between two cell centres cuts
+  // the inside of every bend. The charted water's own continuity, measured with no land test, is
+  // 88-99%. The river was never discontinuous; the lane routing was.
+  //
+  // So on a river the lines come from the centreline instead, and EVERYTHING AFTER THIS POINT IS
+  // UNCHANGED -- same window slider, same structure scoring, same per-type caps, same battery and
+  // trip-window checks, same spatial dedupe, same ranking. A drift differs from a contour lane in
+  // where the line comes from, not in what a leg is.
+  //
+  // AND THERE IS NO SILENT FALLBACK TO THE LANES. A river whose pack has no centreline says so and
+  // stops, because quietly planning a river as a reservoir is exactly how this failure stayed
+  // invisible while the bench blamed the depth rule.
+  const isRiver = !!(o.waterState && o.waterState.river);
+  if (isRiver && !centrelineFc) {
+    return { plan: null, candidates: [],
+             problems: [`${o.r2Key} is a river and its chartpack carries no centreline.geojson, so `
+                      + 'a drift cannot be laid out — and its trolling runs are lanes, which is the '
+                      + 'wrong object on moving water. Build and upload the centreline layer for '
+                      + 'this pack before planning it.'] };
+  }
+  // ONE NUMBER, TWO READERS. How far off a line a feature can be and still be on the way is one
+  // question with one answer, and both the drift builder and the selector need it; the leg ceiling
+  // is the same. Set here once and handed to both, rather than defaulted in two files where they
+  // would come apart the first time either was tuned.
+  const maxOffM = o.maxOffM ?? 100;
+  const legMaxM = o.maxM ?? 8000;
+  const drifts = isRiver
+    ? riverDriftRuns(centrelineFc, { structures, slug: o.r2Key, maxOffM, maxM: legMaxM })
+    : null;
+  if (drifts && !drifts.length) {
+    return { plan: null, candidates: [],
+             problems: [`${o.r2Key} has a centreline and it yielded no drift at all — no reach of `
+                      + 'it carried two stations and a length, so the layer is present and empty'] };
+  }
+  const legRuns = drifts || runs;
+
+  const candidates = selectCandidates(legRuns, {
     ramp: o.ramp, slug: o.r2Key, fishDepthFt: o.fishDepthFt, holding: o.holding,
-    usableAh: o.usableAh, windowMin: o.windowMin,
+    usableAh: o.usableAh, windowMin: o.windowMin, maxOffM, maxM: legMaxM,
     structures, catches: o.catches, catchSpecies: o.species, month: o.month,
     // Per species, per season, per lake, from the research profile — see structureWeights().
     weights: o.weights, reliefWeights: o.reliefWeights, docks, attractors,
@@ -150,7 +205,8 @@ export async function buildSmartPlanV2(o) {
     return { plan: null, candidates: [],
              problems: [`nothing on ${o.r2Key} is both fishable for ${lo}–${hi} ft fish `
                       + `(${s.depthRule || 'depth rule unknown'}) and reachable from this ramp `
-                      + `inside the day — of ${s.considered ?? runs.length} runs, `
+                      + `inside the day — of ${s.considered ?? legRuns.length} `
+                      + `${drifts ? 'drifts' : 'runs'}, `
                       + (why.length ? why.join('; ') : 'none were rejected by any rule, which '
                                                      + 'means none were offered either')
                       + (gap ? ` · ${gap} run(s) fell out of no counted rule at all — a filter `

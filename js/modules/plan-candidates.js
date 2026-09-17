@@ -628,6 +628,25 @@ export const DEFAULT_WEIGHTS = {
   dock_cluster: 10,    // a pocket to stop and cast at
   dock: 4,             // a lone dock. Real, but not the ask -- the ask is a line or a pocket.
   shallow: 8,          // flats. Cited by six species. NOT a navigational mark.
+  // ── A SCOUR HOLE IS A RIVER FEATURE AND THIS TABLE WAS COUNTED ON A RESERVOIR ──────────────
+  //
+  // `hole` had no entry here until 2026-09-16, so on congaree_river the 189 holes in
+  // structure.geojson scored ZERO and only the 173 ledges could move a window -- on a river where
+  // the scour hole is the whole point, and where build_structure.py has been finding outside bends
+  // and calling them `hole` since the day it ran. That was not carelessness in the table: every
+  // count above comes from Wateree's trollingIntelligence, 11 species x 4 seasons, and a reservoir
+  // has no scour holes to cite.
+  //
+  // So it is counted the same way, on a river. congaree_river's own researched profile, 13 species
+  // x 4 seasons, written 2026-09-16 and on the drive at
+  // registry/_research_profiles/congaree_river_to_sc_601_richland_co_sc.json: `deep holes` is cited
+  // 15 times across 6 SPECIES -- the most-cited structure on that river by both measures, ahead of
+  // logs (7 cites / 4 species), feeder creeks (3/3) and undercut banks (3/2). It lands between
+  // creek mouths (10) and brush (27), which is where a hole belongs on moving water.
+  //
+  // NOT A NUMBER ANYBODY LIKED. It is a citation count, by the same method as every sibling, and
+  // the profile that produced it can be re-counted.
+  hole: 15,
   ledge: 4,
   hump: 3,
   pile: 3,             // counted within brush/wood; scarce, so it keeps its own low weight

@@ -1,0 +1,162 @@
+// A RIVER LEG IS A DRIFT, NOT A LANE.
+//
+// On 2026-09-16 a Congaree bench plan returned "0 candidate legs" twice. Of 1,473 trolling runs,
+// 915 were rejected as unreachable over the water graph and 415 as not fitted -- 90% of the water
+// gone to two tests that are both about lanes. Ryan: "its the routes just like i thought."
+//
+// These assertions are the ones that would have failed before river-drifts.js existed, and the
+// ones that will fail again if a drift is ever given a lane's properties.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { riverDriftRuns, offsetPoint, profileIndexFor, LATERALS } from '../js/modules/river-drifts.js';
+import { structureIndex, DEFAULT_WEIGHTS, eligibleForHolding } from '../js/modules/plan-candidates.js';
+
+// A straight river running due east at 34.0 N, 200 stations at 50 m = 10 km, 120 m wide.
+// Depth profile: 9 columns left-to-right, deep on the left bank, shallowing to the right.
+function eastwardRiver({ stations = 200, width = 120, nullFrom = null } = {}) {
+  const station_m = [], bearing_deg = [], width_m = [], depth_profile_ft = [], coords = [];
+  const lon0 = -81.0, lat0 = 34.0, mPerDegLon = 111320 * Math.cos((lat0 * Math.PI) / 180);
+  for (let i = 0; i < stations; i++) {
+    station_m.push(i * 50);
+    bearing_deg.push(90);
+    width_m.push(width);
+    coords.push([lon0 + (i * 50) / mPerDegLon, lat0]);
+    depth_profile_ft.push(nullFrom != null && i >= nullFrom
+      ? [null, null, null, null, null, null, null, null, null]
+      : [18, 15, 13, 11, 9, 6, 4, 2, null]);
+  }
+  return { type: 'FeatureCollection', features: [{
+    type: 'Feature',
+    geometry: { type: 'LineString', coordinates: coords },
+    properties: { slug: 'test_river', step_m: 50, length_m: (stations - 1) * 50,
+                  stations, station_m, bearing_deg, width_m, depth_profile_ft,
+                  profile_fractions: [0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1] },
+  }] };
+}
+
+const pointFeat = (lon, lat, kind, id) => ({
+  type: 'Feature', geometry: { type: 'Point', coordinates: [lon, lat] },
+  properties: { kind, id, depth_ft: 20 },
+});
+
+test('a hole has a weight, or every river scores zero', () => {
+  // congaree_river's structure.geojson is 189 holes and 173 ledges. With no `hole` entry the holes
+  // scored nothing and only the ledges could move a window, on a river where the scour hole IS the
+  // structure. The weight is the citation count off the river's own researched profile -- `deep
+  // holes`, 15 cites across 6 species -- by the same method as every sibling in that table.
+  assert.equal(DEFAULT_WEIGHTS.hole, 15);
+  assert.ok(DEFAULT_WEIGHTS.hole > DEFAULT_WEIGHTS.creek_mouth,
+            'a scour hole outranks a creek mouth on moving water, 15 cites against 10');
+});
+
+test('three positions, and picking a side actually moves the boat', () => {
+  const drifts = riverDriftRuns(eastwardRiver(), { slug: 'test_river' });
+  assert.ok(drifts.length >= 3, 'at least one reach per lateral position');
+  const sides = new Set(drifts.map((d) => d.properties.drift.side));
+  assert.deepEqual([...sides].sort(), ['mid_channel', 'quarter_left', 'quarter_right']);
+
+  const first = (side) => drifts.find((d) => d.properties.drift.side === side
+                                          && d.properties.reachFromM === 0);
+  const left = first('quarter_left'), mid = first('mid_channel'), right = first('quarter_right');
+  // Looking downstream on an eastward river, left is NORTH. If this inverts, every drift picks up
+  // the structure on the wrong bank and nothing else in the file would say so.
+  assert.ok(left.geometry.coordinates[0][1] > mid.geometry.coordinates[0][1],
+            'quarter-left sits north of mid-channel on an eastward river');
+  assert.ok(right.geometry.coordinates[0][1] < mid.geometry.coordinates[0][1],
+            'quarter-right sits south of mid-channel on an eastward river');
+  // A quarter of a 120 m channel is 30 m off the centre, so the two sides are 60 m apart.
+  const dLat = left.geometry.coordinates[0][1] - right.geometry.coordinates[0][1];
+  assert.ok(Math.abs(dLat * 111320 - 60) < 2, `sides 60 m apart, got ${(dLat * 111320).toFixed(1)}`);
+});
+
+test('the depth under the boat is the depth on the line he picked, not the deepest in the section', () => {
+  const drifts = riverDriftRuns(eastwardRiver(), { slug: 'test_river' });
+  const at = (side) => drifts.find((d) => d.properties.drift.side === side
+                                       && d.properties.reachFromM === 0).properties.mean_depth_ft;
+  // The section runs 18 ft on the left bank to 2 ft on the right. Asking for the minimum across
+  // the whole section gives the margin at every station, which is why the profile is read at the
+  // fraction actually travelled.
+  assert.equal(at('quarter_left'), 13);
+  assert.equal(at('mid_channel'), 9);
+  assert.equal(at('quarter_right'), 4);
+  assert.ok(at('quarter_left') > at('quarter_right'), 'picking a side changes the water under him');
+});
+
+test('an uncharted station is uncharted, not one foot deep', () => {
+  // On the Congaree 105 of 2,537 stations have no charted depth at all. Storing a shallow number
+  // there is the `0 ft relief` defect -- a missing measurement wearing the clothes of a real one.
+  const drifts = riverDriftRuns(eastwardRiver({ nullFrom: 0 }), { slug: 'test_river' });
+  assert.ok(drifts.length > 0, 'the reach is still laid out');
+  for (const d of drifts) {
+    assert.equal(d.properties.mean_depth_ft, undefined, 'no depth is asserted where none is charted');
+    assert.equal(d.properties.charted_frac, 0);
+    // And the selector must REJECT it rather than plan over water nothing measured.
+    const elig = eligibleForHolding(d.properties, [5, 20], null);
+    assert.equal(elig.ok, false);
+    assert.match(elig.rule, /no charted depth/);
+  }
+});
+
+test('a drift carries no lane properties, so no lane test can fire on it', () => {
+  const drifts = riverDriftRuns(eastwardRiver(), { slug: 'test_river' });
+  for (const d of drifts) {
+    // `routable` means the water graph could route this. The graph was never asked and on a river
+    // it should not be: the charted water's own continuity is 88-99% with no land test at all.
+    assert.ok(!('routable' in d.properties), 'routable is absent, not asserted true');
+    // `fitted` belongs to fit_trolling_runs.py. A batch may not assert a field it did not compute,
+    // and selectCandidates derives fittedAvailable from the array it is handed -- so a set of only
+    // drifts switches that gate off by itself rather than by being lied to.
+    assert.ok(!('fitted' in d.properties), 'fitted is absent, not asserted true');
+    assert.ok(!('depth_ft' in d.properties), 'there is no contour behind a drift');
+    assert.ok(d.properties.length_m > 0 && Array.isArray(d.properties.near));
+  }
+});
+
+test('structure joins by measured distance, and on a narrow river that reaches both banks', () => {
+  const river = eastwardRiver();
+  const [lon0, lat0] = river.features[0].geometry.coordinates[100];
+  const m = 1 / 111320;
+  // One hole 30 m NORTH of the centre -- on the quarter-left line -- and one 300 m north, which is
+  // off the river entirely.
+  const structures = structureIndex([pointFeat(lon0, lat0 + 30 * m, 'hole', 'hole_near'),
+                                     pointFeat(lon0, lat0 + 300 * m, 'hole', 'hole_far')]);
+  const drifts = riverDriftRuns(river, { structures, slug: 'test_river' });
+  const marks = (side) => drifts.filter((d) => d.properties.drift.side === side)
+    .flatMap((d) => d.properties.near).filter((n) => n.t === 'hole');
+
+  // THE FIRST VERSION OF THIS TEST ASSERTED THE OPPOSITE AND WAS WRONG, which is worth keeping
+  // rather than quietly correcting. A 120 m channel puts the two quarter lines 60 m apart, and
+  // `maxOffM` is 100, so a hole on the left bank is still "on the way" from the right one. On a
+  // card where 43 of 57 rivers are under 80 m wide that is the normal case, not an edge: PICKING A
+  // SIDE ON A NARROW RIVER CHANGES THE WATER UNDER THE BOAT AND THE DISTANCE TO THE STRUCTURE, NOT
+  // WHICH STRUCTURE HE PASSES. Ryan said exactly that -- "you are going to either pick a side or
+  // the middle and then kind of follow where the fish might be" -- and the depth test above is
+  // where the three positions genuinely differ, by three times the median depth.
+  assert.ok(marks('quarter_left').length > 0, 'the hole reaches the line it sits on');
+  assert.ok(marks('quarter_right').length > 0, 'and, at 60 m, the far quarter line too');
+  const nearest = (side) => Math.min(...marks(side).map((n) => n.d));
+  assert.ok(nearest('quarter_left') < nearest('quarter_right'),
+            'but it is nearer the bank it is on, which is what the scoring reads');
+  assert.ok(Math.abs(nearest('quarter_left')) < 5, 'a hole on the line is on the line');
+  assert.ok(Math.abs(nearest('quarter_right') - 60) < 5, 'and 60 m off the opposite quarter');
+  // The one 300 m out is off the river and reaches nothing, whichever side he takes.
+  for (const side of ['quarter_left', 'mid_channel', 'quarter_right']) {
+    for (const n of marks(side)) assert.ok(n.d <= 100, 'nothing past maxOffM is ever joined');
+  }
+});
+
+test('the lateral fraction maps to a real profile column', () => {
+  const fr = [0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1];
+  assert.equal(profileIndexFor(fr, 0.25), 2);
+  assert.equal(profileIndexFor(fr, 0.5), 4);
+  assert.equal(profileIndexFor(fr, 0.75), 6);
+  assert.equal(profileIndexFor([], 0.5), -1);
+  assert.deepEqual(LATERALS.map((l) => l.frac), [0.25, 0.5, 0.75]);
+});
+
+test('offsetPoint puts a positive offset to the right of downstream', () => {
+  // Bearing 0 is due north, so right of it is due east: longitude increases, latitude does not.
+  const [lon, lat] = offsetPoint(-81, 34, 0, 100);
+  assert.ok(lon > -81, 'right of north is east');
+  assert.ok(Math.abs(lat - 34) < 1e-9, 'and not north or south of it');
+});
