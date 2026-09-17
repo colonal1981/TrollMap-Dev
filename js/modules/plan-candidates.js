@@ -1709,10 +1709,80 @@ export function selectCandidates(runs, o) {
     const totalAh = fishAh + moveAh;
     const totalMin = minutesFor(win.lengthM, trollMph) + minutesFor(inM + outM, transitMph);
 
-    // Reachable means: fish this one thing and get home, inside the day. A plan chains several,
-    // so this is a ceiling on what is worth offering, not a promise the whole set fits.
-    if (o.usableAh && totalAh > o.usableAh) { rejected.battery++; continue; }
-    if (o.windowMin && totalMin > o.windowMin) { rejected.window++; continue; }
+    // ── THE TRIP HOME IS THE OTHER HALF OF THE DAY, AND IT IS FISHING ────────────────────────────
+    //
+    // Ryan, 2026-09-17, shown that the app charged him 8.2 km of deadhead home on a leg that starts
+    // 0.2 km from the ramp: "the trip home is the other half of the day... fishing... so yeah that
+    // needs to be fixed whatever that looks like."
+    //
+    // A LEG FISHED TWICE ENDS WHERE IT STARTED. That is already why `transitToMIfFishedBack` exists
+    // for the hop to the NEXT leg -- "a leg fished twice ends where it started, so the hop to the
+    // next leg is measured from the OTHER end and `transitToM` no longer describes the boat". The
+    // run back to the RAMP is the same sentence and nobody had written it: it is `inM`, not `outM`,
+    // because the boat finishes at the start.
+    //
+    // SO THERE ARE TWO WHOLE DAYS HERE, NOT TWO NUMBERS. Fishing it back costs LESS BATTERY and MORE
+    // CLOCK, and covers twice the water:
+    //
+    //     congaree quarter_right@48000, 8 km, 0.2 km off the ramp
+    //       one pass out and deadhead home   15.64 + 8.4 km of transit   = 35.65 Ah   239 min
+    //       fished up and drifted back       15.64 + 9.58 + 0.4 km       = 25.7 Ah   ~305 min
+    //
+    // THE GATE THEREFORE REFUSES ONLY WHEN NEITHER DAY FITS. Its job is to stop him committing to a
+    // day he CANNOT finish -- "if they are going to run out of battery because of choice they
+    // shouldn't be able to make that choice" -- and refusing a leg that has a feasible reading is a
+    // different thing entirely. Each day is checked whole, battery AND clock together, because they
+    // move in opposite directions and a leg that fits the battery only by taking all night fits
+    // nothing.
+    //
+    // `batteryAh` BELOW IS STILL THE ONE-PASS PRICE and keeps its documented meaning; the fished-back
+    // figures ride beside it, the same way `transitToM` and `transitToMIfFishedBack` do, and
+    // `trollPasses` is what chooses. Only the GATE and the RANKING read both, because those are the
+    // two places that were quietly assuming a deadhead he would never make.
+    // ── RIVERS ONLY, AND THAT IS A DECISION RATHER THAN A HALF-MEASURE ───────────────────────────
+    //
+    // A lake leg fished twice also ends where it started, so the arithmetic below is true there as
+    // well. It is not applied there. Tried on 2026-09-17 and plan-weights.test.js went red on two
+    // assertions immediately: `rampBiasM` -- the 4 km at which a leg is worth half what the same leg
+    // is worth off the ramp -- was tuned against the one-pass transit share, and changing the
+    // denominator under it moves an ordering Ryan set by looking at his own plans. "why would i
+    // launch at clearwater cove and then go fish the opposite side of the lake" was that tuning.
+    //
+    // So this is scoped to the object it was asked about. A drift is a river leg by construction --
+    // `p.drift` exists only on the lines river-drifts.js lays out -- and doing lakes too is a
+    // deliberate second change with its own measurement, not a free generalisation.
+    const isDrift = !!p.drift;
+    const outBackM = inM;                       // fished back, the boat finishes where it started
+    const moveAhBack = ampHours(2 * inM, transitMph);
+    // Both directions. On a river these differ by the current; the pair is what `batteryAhUpstream`
+    // and `batteryAhDownstream` already report.
+    const bothWaysAh = upBand.ah + downBand.ah;
+    const totalAhBack = bothWaysAh + moveAhBack;
+    const totalMinBack = minutesFor(2 * win.lengthM, trollMph) + minutesFor(2 * inM, transitMph);
+    const fits = (ah, min) => !(o.usableAh && ah > o.usableAh) && !(o.windowMin && min > o.windowMin);
+    const onePassFits = fits(totalAh, totalMin);
+    const fishedBackFits = isDrift && fits(totalAhBack, totalMinBack);
+    if (!onePassFits && !fishedBackFits) {
+      // SAY WHICH ONE STOPPED IT, and over the days that were actually on offer -- a leg refused on
+      // the clock and a leg refused on the battery are different problems with different fixes, and
+      // the counters are what the empty-list sentence is built from.
+      //
+      // THE FIRST VERSION TOOK `Math.min(totalAh, totalAhBack)` UNCONDITIONALLY and the suite caught
+      // it in one run: on a LAKE the fished-back day is not on offer at all, but its cheaper battery
+      // still won the min, so a leg refused for the battery was counted against the clock.
+      // `the-chord-is-a-direction-the-boat-never-travels.test.js` asserts that counter.
+      //
+      // Battery only when EVERY day on offer is over it; otherwise one of them was inside the
+      // battery and over the clock, which is a clock refusal.
+      const days = isDrift ? [[totalAh, totalMin], [totalAhBack, totalMinBack]] : [[totalAh, totalMin]];
+      if (o.usableAh && days.every(([a]) => a > o.usableAh)) rejected.battery++; else rejected.window++;
+      continue;
+    }
+    // THE DAY HE WOULD ACTUALLY CHOOSE, for the ranking below. Where both fit, the cheaper battery
+    // wins, because that is the one that leaves him something in hand -- and on a river it is also
+    // the one that fishes twice the water.
+    const rankMoveAh = (fishedBackFits && (!onePassFits || totalAhBack <= totalAh)) ? moveAhBack : moveAh;
+    const rankFishAh = (fishedBackFits && (!onePassFits || totalAhBack <= totalAh)) ? bothWaysAh : fishAh;
 
     out.push({
       // THE PACK'S OWN ID WHEN IT HAS ONE, the array index only as a fallback.
@@ -1747,6 +1817,18 @@ export function selectCandidates(runs, o) {
       fromRampM: Math.round(fromRampM),
       proximity: Number(proximity.toFixed(3)),
       batteryAh: Number((fishAh + moveAh).toFixed(2)),
+      // ── AND WHAT THE SAME WATER COSTS FISHED BOTH WAYS ───────────────────────────────────────
+      //
+      // Two prices on one decision rather than two decisions, exactly as `transitToM` and
+      // `transitToMIfFishedBack` are. `trollPasses: 2` is what asks for this day; these are the
+      // numbers that make that choice decidable instead of a habit the app cannot see.
+      //
+      // `transitToRampMIfFishedBack` is `transitInM` and not a second measurement: the boat
+      // finishes where it started, so the run home is the run out.
+      // Null on a lake: see the note at `isDrift`. An absent number is the absence of a claim.
+      batteryAhFishedBack: isDrift ? Number(totalAhBack.toFixed(2)) : null,
+      estMinFishedBack: isDrift ? Math.round(totalMinBack) : null,
+      transitToRampMIfFishedBack: isDrift ? Math.round(outBackM) : null,
       // ON THE NOSE, IN MPH, FOR THE DIRECTION `batteryAh` WAS PRICED AT -- length-weighted along
       // the leg's real geometry, not taken off a chord. Positive is a headwind, negative a push.
       //
@@ -1780,7 +1862,7 @@ export function selectCandidates(runs, o) {
       // large fishAh, which dilutes the deadhead in the denominator, so an 8 km leg four miles
       // out is barely taxed while a 2 km leg four miles out is taxed hard. Distance from the ramp
       // is not a property of the leg's length and should not be scaled by it.
-      value: Number((win.score / (1 + moveAh / Math.max(0.1, fishAh)) * proximity).toFixed(2)),
+      value: Number((win.score / (1 + rankMoveAh / Math.max(0.1, rankFishAh)) * proximity).toFixed(2)),
       // Every pass gets an id and, where the lake data can name it, the real structure behind it.
       // The id is what the model returns to ask for a stop -- it can only name something it was
       // handed, which is what makes an invented stop like "Main Lake Point Alpha" impossible
@@ -2275,6 +2357,20 @@ export function forModel(c, cap = MODEL_STRUCTURE_CAP) {
     // that decidable rather than a habit the app cannot see. `batteryAh` above is the upstream price.
     batteryAhUpstream: c.batteryAhUpstream ?? undefined,
     batteryAhDownstream: c.batteryAhDownstream ?? undefined,
+    // ── AND THE WHOLE DAY, FISHED UP AND DRIFTED BACK ────────────────────────────────────────────
+    //
+    // Ryan, 2026-09-17: "the trip home is the other half of the day... fishing." A leg fished twice
+    // ends where it started, so the run home is the run out -- `transitToRampMIfFishedBack` is
+    // `transitFromRampM`, not a second measurement. On the Congaree it is the difference between
+    // 8.2 km of deadhead and 0.2 km.
+    //
+    // THIS IS THE DAY `trollPasses: 2` BUYS, priced whole: both directions plus the trip out and
+    // back. It costs LESS BATTERY and MORE CLOCK than one pass and a deadhead, and covers twice the
+    // water. Sent so the choice is made on numbers rather than on habit, exactly as `transitToM` and
+    // `transitToMIfFishedBack` are. Absent on a lake, where it is not offered -- see `isDrift`.
+    batteryAhFishedBack: c.batteryAhFishedBack ?? undefined,
+    estMinFishedBack: c.estMinFishedBack ?? undefined,
+    transitToRampMIfFishedBack: c.transitToRampMIfFishedBack ?? undefined,
     drift: c.drift ? { side: c.drift.side, label: c.drift.label } : undefined,
     passes: counts,
     structures: shown,
