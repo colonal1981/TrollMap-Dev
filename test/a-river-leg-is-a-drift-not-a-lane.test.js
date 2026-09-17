@@ -9,7 +9,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { riverDriftRuns, offsetPoint, profileIndexFor, LATERALS } from '../js/modules/river-drifts.js';
-import { structureIndex, DEFAULT_WEIGHTS, eligibleForHolding } from '../js/modules/plan-candidates.js';
+import { structureIndex, DEFAULT_WEIGHTS, eligibleForHolding,
+         selectCandidates } from '../js/modules/plan-candidates.js';
 
 // A straight river running due east at 34.0 N, 200 stations at 50 m = 10 km, 120 m wide.
 // Depth profile: 9 columns left-to-right, deep on the left bank, shallowing to the right.
@@ -159,4 +160,93 @@ test('offsetPoint puts a positive offset to the right of downstream', () => {
   const [lon, lat] = offsetPoint(-81, 34, 0, 100);
   assert.ok(lon > -81, 'right of north is east');
   assert.ok(Math.abs(lat - 34) < 1e-9, 'and not north or south of it');
+});
+
+// A river with a hole every 500 m, so every reach scores and nothing is cut for being empty.
+function scoredRiver() {
+  const river = eastwardRiver();
+  const coords = river.features[0].geometry.coordinates;
+  const feats = [];
+  for (let i = 10; i < coords.length; i += 10) {
+    feats.push(pointFeat(coords[i][0], coords[i][1], 'hole', `h${i}`));
+  }
+  return { river, coords, structures: structureIndex(feats) };
+}
+
+const SELECT = (structures, ramp) => ({
+  ramp, slug: 'test_river', fishDepthFt: [0, 30], holding: 'suspended',
+  usableAh: 200, windowMin: 900, structures, limit: 12,
+});
+
+test('the dedupe does not get to decide which side he fishes', () => {
+  // Measured on congaree_river the first day this ran: 96 drifts in, 7 out, 24 cut by the dedupe,
+  // and every survivor was a DIFFERENT REACH -- so the app was picking his side for him and showing
+  // the winner as if it were the only water there. The start-distance test did it: three lines over
+  // one reach start 30-60 m apart against a 1,200 m rule.
+  const { river, coords, structures } = scoredRiver();
+  const drifts = riverDriftRuns(river, { structures, slug: 'test_river' });
+  const cands = selectCandidates(drifts, SELECT(structures, coords[0]));
+  assert.ok(cands.length > 0, 'candidates came back at all');
+
+  const byReach = {};
+  for (const c of cands) {
+    assert.ok(c.drift && c.drift.side, 'every drift candidate says which line it is on');
+    const reach = c.runId.split('@')[1];
+    (byReach[reach] = byReach[reach] || new Set()).add(c.drift.side);
+  }
+  const offeredBothWays = Object.values(byReach).filter((s) => s.size > 1);
+  assert.ok(offeredBothWays.length > 0,
+            'at least one reach is offered at more than one lateral position');
+});
+
+test('and a lane still dedupes against a lane, because a lake has no side to pick', () => {
+  // The A/B that proves the change is the QUESTION and not the thresholds. Same geometry, same
+  // scores, same numbers -- the only difference is whether a candidate knows which line it is on.
+  const { river, coords, structures } = scoredRiver();
+  const drifts = riverDriftRuns(river, { structures, slug: 'test_river' });
+  const asLanes = drifts.map((d) => {
+    const props = { ...d.properties };
+    delete props.drift;
+    return { ...d, properties: props };
+  });
+  const withSides = selectCandidates(drifts, SELECT(structures, coords[0])).length;
+  const withoutSides = selectCandidates(asLanes, SELECT(structures, coords[0])).length;
+  assert.ok(withoutSides < withSides,
+            `stripping the side collapses the lines: ${withSides} with, ${withoutSides} without`);
+  assert.ok(withoutSides > 0, 'and does not collapse them to nothing');
+});
+
+test('the reported depth rule is the one applied, not the first one seen', () => {
+  // congaree_river's first drift run reported "no charted depth" while 66 of 96 drifts were being
+  // judged against the band, because the first drift in the array sat on an uncharted reach and the
+  // rule latched. The sentence whose whole job is saying WHICH test emptied the list was naming the
+  // wrong test.
+  const { structures, coords } = scoredRiver();
+  // A reach is maxM (8000 m) long at maxM/2 stride, so to get one reach entirely uncharted the
+  // river has to be longer than one reach: 400 stations is 20 km, and nulling the first 161 of them
+  // makes the reach at 0 uncharted end to end while the reach at 4000 still has charted water.
+  // Station 0 is where the latch used to happen.
+  const river = eastwardRiver({ stations: 400 });
+  const props = river.features[0].properties;
+  for (let i = 0; i <= 160; i++) props.depth_profile_ft[i] = new Array(9).fill(null);
+  const drifts = riverDriftRuns(river, { structures, slug: 'test_river' });
+  assert.ok(drifts.some((d) => d.properties.mean_depth_ft == null), 'some reach is uncharted');
+  assert.ok(drifts.some((d) => d.properties.mean_depth_ft != null), 'and some reach is not');
+
+  const cands = selectCandidates(drifts, SELECT(structures, coords[0]));
+  const rule = cands.selection.depthRule;
+  assert.match(rule, /suspended/, `the band rule is reported, got: ${rule}`);
+  assert.doesNotMatch(rule, /no charted depth/,
+                      'and not the failure wording off an uncharted reach');
+});
+
+test('but when nothing is charted it says exactly that', () => {
+  // The other half: "we applied a rule and nothing passed" and "nothing here has a depth to judge"
+  // are different days, and the fallback must not go silent.
+  const { structures, coords } = scoredRiver();
+  const drifts = riverDriftRuns(eastwardRiver({ nullFrom: 0 }), { structures, slug: 'test_river' });
+  const cands = selectCandidates(drifts, SELECT(structures, coords[0]));
+  assert.equal(cands.length, 0);
+  assert.match(cands.selection.depthRule, /no charted depth/);
+  assert.equal(cands.selection.rejected.depth, drifts.length);
 });

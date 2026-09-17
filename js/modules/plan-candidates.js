@@ -1236,7 +1236,19 @@ export function selectCandidates(runs, o) {
   // no candidates is worse than a lake with rough ones -- and `selection.fittedAvailable` says
   // which case the caller is in rather than leaving a silent zero to be guessed at.
   const fittedAvailable = runs.some((r) => (r.properties || {}).fitted === true);
+  // THE RULE ACTUALLY APPLIED, NOT THE FIRST ONE SEEN.
+  //
+  // This was a single `if (!depthRule) depthRule = elig.rule` inside the loop, which latched onto
+  // whatever the first run produced. On congaree_river's first drift run it reported "no charted
+  // depth" for a pass in which 66 of 96 drifts were judged against the band, because the first
+  // drift in the array happened to sit on an uncharted reach. The sentence whose entire job is to
+  // say WHICH TEST emptied the list was naming the wrong test — the same defect as the message that
+  // counted nine rejection buckets and printed three.
+  //
+  // So the two answers are kept apart. A rule from water that HAD a depth is the rule applied; "no
+  // charted depth" is only the report when nothing had one, which is itself worth saying plainly.
   let depthRule = null;
+  let depthRuleUnmeasured = null;
   const straight = (a, b) => metresBetween(a, b);
   const transitM = o.transitM || straight;
 
@@ -1266,7 +1278,8 @@ export function selectCandidates(runs, o) {
     // The old comparison still runs, unchanged, for exactly one case: holding unknown. That is
     // deliberate and it is Ryan's call to make, not this file's.
     const elig = eligibleForHolding(p, fishBand, holding);
-    if (!depthRule) depthRule = elig.rule;
+    if (Number.isFinite(elig.waterFt)) { if (!depthRule) depthRule = elig.rule; }
+    else if (!depthRuleUnmeasured) depthRuleUnmeasured = elig.rule;
     if (!elig.ok) { rejected.depth++; continue; }
     const coords = run.geometry && run.geometry.coordinates;
     // A COUNTER, BECAUSE A RUN THAT LEAVES THIS LOOP IN NO BUCKET IS INVISIBLE. This `continue`
@@ -1430,6 +1443,11 @@ export function selectCandidates(runs, o) {
       // nothing downstream mistakes them for "ledges on this leg".
       runLedges: p.ledge_n ? { n: p.ledge_n, minFt: p.ledge_min_ft, maxFt: p.ledge_max_ft } : null,
       relief: p.relief ?? null,
+      // WHICH LINE OF WATER THIS IS, on a river. Null on a lake, where a candidate is a contour
+      // lane and there is no side to pick. Read by the dedupe below — see the note there — and it
+      // is what lets a plan say "quarter-left, downstream past three holes" instead of naming a
+      // contour depth that does not exist on moving water.
+      drift: p.drift || null,
     });
   }
 
@@ -1465,11 +1483,36 @@ export function selectCandidates(runs, o) {
   const corridorM = o.dedupeCorridorM ?? 100;
   const maxOverlap = o.dedupeOverlap ?? 0.35;
   const kept = [];
+  // ── AND ON A RIVER IT WAS DELETING THE ONLY CHOICE HE HAS ────────────────────────────────────
+  //
+  // Measured 2026-09-16 on congaree_river, the first day this function was given drifts instead of
+  // lanes: 96 drifts in, 7 out, 24 cut here — and every one of the seven survivors was a DIFFERENT
+  // REACH. Not one reach was offered at more than one lateral position, so the app was deciding
+  // whether he fishes quarter-left, mid-channel or quarter-right, and then showing him the winner
+  // as though it were the only water there.
+  //
+  // That is the one decision he said a river day actually is: "you are going to either pick a side
+  // or the middle and then kind of follow where the fish might be." And the three are not the same
+  // water by the measurement that matters — on the Congaree the median depth under the boat is 3 ft
+  // quarter-left, 5 ft mid-channel and 3 ft quarter-right, a three-fold difference that changes the
+  // bait, the lead and the battery.
+  //
+  // It was the START-DISTANCE test that did it, not the corridor: three lines over one reach start
+  // 30–60 m apart against a 1,200 m rule, so they never reached the geometry comparison. Both tests
+  // would have fired anyway — 36 m apart is inside a 100 m corridor.
+  //
+  // NEITHER NUMBER IS TOUCHED. The bug was not the thresholds, it was the QUESTION: "is this the
+  // same piece of water" has a different answer on a river, where the line you are on is part of
+  // what the water IS. So two candidates are only compared when they are on the same line. A lake
+  // candidate has no `drift`, so every lake key is identical and the behaviour there is exactly
+  // what it was — the 1,750-run Wateree measurement above still holds.
+  const lineKey = (c) => (c.drift && c.drift.side) || '';
   for (const c of out) {
     const duplicate = kept.some((k) =>
-      metresBetween(k.start, c.start) < apart
-      || overlapFraction(c.coordinates, k.coordinates, corridorM) >= maxOverlap
-      || overlapFraction(k.coordinates, c.coordinates, corridorM) >= maxOverlap);
+      lineKey(k) === lineKey(c) && (
+        metresBetween(k.start, c.start) < apart
+        || overlapFraction(c.coordinates, k.coordinates, corridorM) >= maxOverlap
+        || overlapFraction(k.coordinates, c.coordinates, corridorM) >= maxOverlap));
     // COUNTED, BECAUSE THIS IS THE BIGGEST FILTER IN THE FUNCTION AND IT WAS THE ONLY SILENT ONE.
     //
     // Measured 2026-08-26 on the real Wateree pack: 1,750 runs in, 504 cut on depth, 639 as
@@ -1560,7 +1603,7 @@ export function selectCandidates(runs, o) {
     accountedFor: kept.length + rejected.depth + rejected.unroutable + rejected.noWindow
                 + rejected.scoreless + rejected.battery + rejected.window + rejected.dedupe
                 + rejected.limit + rejected.unfitted + rejected.geometry,
-    depthRule: depthRule || 'no runs reached the depth test',
+    depthRule: depthRule || depthRuleUnmeasured || 'no runs reached the depth test',
     // WHETHER THIS PACK HAD FITTED LANES AT ALL, because "800 unfitted runs were refused" and
     // "this lake has no fitted lanes so rough ones were offered" are different days on the water
     // and only this field separates them.
