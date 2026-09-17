@@ -206,6 +206,23 @@ test('both planners hand the same forecast to the thing that prices the day', ()
   assert.ok(V2.includes('windByHour: o.windByHour'), 'and buildSmartPlanV2 forwards it');
   // Pick Water: the cost card has costed against it for months; the refusal did not.
   assert.ok(PW_UI.includes('windByHour: T.windByHour,'), 'planFromWater is given the same hours');
-  assert.ok(/dayCost\(picked, \{[\s\S]{0,200}windByHour: o\.windByHour/.test(PW),
-            'and dayCost is costed against them');
+  // Reduced ONCE on this path, then handed to the refusal and to every leg. Reducing it privately
+  // inside dayCost() is how the budget and the legs came to disagree in the first place.
+  assert.ok(PW.includes('const wind = o.wind || worstWind(o.windByHour);'),
+            'planFromWater reduces the forecast itself');
+  assert.ok(/dayCost\(picked, \{[\s\S]{0,200}\bwind\b/.test(PW), 'the refusal is costed against it');
+  assert.ok(PW.includes('legFrom(p, i, o.ramp, o.slug, wind)'), 'and so is every leg');
+});
+
+test('and a picked piece is priced the same way a chosen one is', () => {
+  // The two planners build a leg through different code -- Pick Water deliberately does not call
+  // selectCandidates(), see the header of plan-from-water.js -- so the only thing keeping their
+  // battery prices in step is that both walk the geometry through the same function.
+  assert.ok(PW.includes("import { ampHoursAlong"), 'Pick Water walks the leg, it does not chord it');
+  // Comments stripped first: this file explains what the old still-water call WAS, and a claim
+  // about what the code does must not be satisfied or broken by prose about what it used to do.
+  const code = PW.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  assert.ok(!/\bampHours\(/.test(code), 'and nothing on that path is priced in flat calm any more');
+  assert.ok(PW.includes('headwindMph: l.headwindMph ?? undefined'),
+            'and the model is told the same field it gets from Smart Plan');
 });

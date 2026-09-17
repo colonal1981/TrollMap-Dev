@@ -34,7 +34,7 @@
  * choice they shouldn't be able to make that choice."
  */
 
-import { ampHours, minutesFor, metresBetween, cumulative } from './plan-candidates.js';
+import { ampHoursAlong, minutesFor, metresBetween, cumulative, worstWind } from './plan-candidates.js';
 import { assemblePlan } from './plan-assemble.js';
 import { buildPlanRequest, parsePlanResponse, planArgsFrom, MODEL_LEG_FIELDS }
   from './plan-prompt.js';
@@ -53,8 +53,10 @@ function positionOn(coords, cum, fraction) {
  * Deliberately NOT a call into selectCandidates — see the header. The fields below are the ones
  * plan-assemble.js actually reads, and each is either carried by the piece or computed here from
  * geometry the app owns.
+ *
+ * @param {?{mph:number,deg:number}} wind  the day's worst hour, or null when nothing was forecast
  */
-function legFrom(piece, i, ramp, slug) {
+function legFrom(piece, i, ramp, slug, wind) {
   const coords = piece.coords || [];
   const cum = cumulative(coords);
   const lengthM = piece.lengthM;
@@ -89,6 +91,11 @@ function legFrom(piece, i, ramp, slug) {
     .sort((a, b) => a.atM - b.atM);
 
   const a = coords[0], b = coords[coords.length - 1];
+  // Walked both ways along the piece's real geometry rather than resolved against the chord between
+  // its ends -- see ampHoursAlong() in plan-candidates.js for why a bending leg needs a sum.
+  const legBand = ampHoursAlong(coords, TROLL_MPH, { wind });
+  const legBandBack = ampHoursAlong([...coords].reverse(), TROLL_MPH, { wind });
+  const dearer = legBand.ah >= legBandBack.ah ? legBand : legBandBack;
   return {
     runId: piece.runId || piece.key,
     // WHAT HE PICKED, TO THE METRE. Not a re-derived window.
@@ -164,14 +171,20 @@ function legFrom(piece, i, ramp, slug) {
     passes,
     transitInM: ramp ? Math.round(metresBetween(ramp, a)) : 0,
     transitOutM: ramp ? Math.round(metresBetween(b, ramp)) : 0,
-    // PRICED IN FLAT CALM, AND THAT IS A NAMED GAP RATHER THAN AN OVERSIGHT. dayCost() twenty
-    // lines further down prices the whole picked set against the worst hour of the forecast, and
-    // that is the number the refusal and the budget are made of. THIS one is per piece, and the
-    // wind has not been resolved against this piece's geometry the way selectCandidates() does it
-    // on the Smart Plan path -- so a Pick Water leg tells the model a still-water price while the
-    // day around it is costed for the wind. Naming it here so the next pass does not have to
-    // rediscover which half was done. Same shape as the river transit gap in plan-candidates.js.
-    batteryAh: Number(ampHours(lengthM, TROLL_MPH).toFixed(2)),
+    // COSTED AGAINST THE SAME WIND THE DAY IS. This was `ampHours(lengthM, TROLL_MPH)` -- a flat-calm
+    // price -- while dayCost() sixty lines down priced the whole picked set against the worst hour of
+    // the forecast. So the model was told a leg costs X and a budget that said the day costs rather
+    // more than the sum of its legs, with nothing to explain the difference. "a field that reaches
+    // one planner and not the other is this project's most repeated defect" -- and this was the same
+    // field disagreeing with itself on one path.
+    //
+    // THE DEARER OF THE TWO DIRECTIONS, because which way this piece gets trolled is not settled
+    // here -- orientLegs() decides it after the model has chosen the order -- and the battery is the
+    // one thing allowed to say no. Same rule, same reason, as selectCandidates().
+    batteryAh: Number(dearer.ah.toFixed(2)),
+    // On the nose, in mph, length-weighted along the piece's own line. Null when nothing was
+    // forecast: a piece nobody forecast is not calm, it is unknown.
+    headwindMph: wind ? dearer.headwindMph : null,
     estMin: Math.round(minutesFor(lengthM, TROLL_MPH)),
     runLedges: null,
     support: null,
@@ -217,8 +230,12 @@ export async function planFromWater(o) {
   // THE ONLY REFUSAL, and it is checked against the CHEAPEST possible ordering, not this one --
   // so "it does not fit" means no ordering fits, and the answer is to drop water rather than to
   // shuffle it. § 9.
+  // ONE READER OF "WHICH HOUR IS THIS DAY COSTED AGAINST". Reduced here and handed to both the
+  // refusal and every leg, rather than letting dayCost() reduce it privately and legFrom() price in
+  // calm -- which is exactly how the budget and the legs came to disagree.
+  const wind = o.wind || worstWind(o.windByHour);
   const cheapest = dayCost(picked, { ramp: o.ramp, usableAh: o.usableAh, windowMin: o.windowMin,
-                                    windByHour: o.windByHour });
+                                    wind });
   if (!cheapest.fits) {
     return {
       plan: null,
@@ -228,7 +245,7 @@ export async function planFromWater(o) {
     };
   }
 
-  const legs = ordered.map((p, i) => legFrom(p, i, o.ramp, o.slug));
+  const legs = ordered.map((p, i) => legFrom(p, i, o.ramp, o.slug, wind));
 
   // What the ordering costs, leg to leg, for the order actually chosen.
   for (let i = 0; i < legs.length; i++) {
@@ -307,6 +324,10 @@ export async function planFromWater(o) {
       lengthM: l.lengthM,
       estMin: l.estMin,
       batteryAh: l.batteryAh,
+      // WHAT IS ON THE NOSE WHILE HE FISHES IT, the same field Smart Plan's forModel() sends. The
+      // safety section rules on wind, and until both planners sent this it ruled on one day-level
+      // number with no idea which legs faced into it.
+      headwindMph: l.headwindMph ?? undefined,
       transitFromRampM: l.transitInM,
       transitToRampM: l.transitOutM,
       structures: l.passes.map((h) => ({ id: h.id, type: h.type, atM: h.atM, offM: h.offM,
