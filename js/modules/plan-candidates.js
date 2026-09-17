@@ -863,24 +863,47 @@ const ACRES_TO_M2 = 4046.8564224;
  * holes and humps only: 260 of Wateree's 1,462 features and 189 of the Congaree's 711, which are the
  * heaviest-weighted and most numerous things on a river.
  *
- * `bulge_m` IS NOT A RADIUS AND USING IT WOULD HAVE BEEN WRONG. build_water_features.py measures it
- * from the midpoint of a 200 m chord to the vertex -- it is how far the shoreline bulges INLAND on a
- * point, or into the land on a cove -- and the feature is recorded AT THE TIP. A point with a 221 m
- * bulge does not hold fish 221 m out into the lake; a boat 80 m off the tip is 80 m off the point.
- * `cove_m` on a creek mouth is the same family and was not traced. A ledge's `run_ft` is the
- * horizontal run of the fall, across the slope, and the feature is a point on a contour the leg may
- * be running parallel to.
+ * `bulge_m` IS NOT A RADIUS, AND IT IS NOT THE SAME THING ON A POINT AS ON A COVE. That second half
+ * was missing here until 2026-09-17 and it is what makes the field usable. build_water_features.py
+ * measures it from the midpoint of a ~400 m shoreline chord to the vertex between its ends, and the
+ * SIGN of that offset is what decides the kind -- it probes the depth either side and calls the
+ * vertex a point when the water is beyond it and a cove when the water is behind it.
  *
- * So four kinds keep centroid distance, and that is a NAMED GAP rather than an oversight: **the
- * corridor cannot be narrowed to the 15 m Ryan measured until points, coves, creek mouths and ledges
- * have an extent that means something**, because at 15 m from a centroid they would simply vanish
- * from every plan. That is a pipeline question -- the shoreline is there and nobody has asked it --
- * not a number to invent here.
+ *   A POINT IS RECORDED AT ITS TIP, the part nearest a passing boat, and `bulge_m` is how far that
+ *   tip reaches out past its own neck. A boat 80 m off the tip is 80 m off the point. **Reach 0 is
+ *   the right answer, not a gap** -- measured on all 79,723 points on the card, the water beyond the
+ *   vertex is deeper than the water behind it 100% of the time.
+ *
+ *   A COVE IS RECORDED AT ITS BACK, and `bulge_m` is how far back that is from the mouth -- a median
+ *   of 111 m, p90 188 m. The water a boat passes is at the MOUTH. So the reach toward the line is
+ *   `bulge_m`, and measuring to the recorded point overstated the distance by that much on all
+ *   65,277 of them. Confirmed the same way: the water beyond a cove's vertex is deeper than the
+ *   water behind it on ZERO of them.
+ *
+ *   A CREEK MOUTH IS A COVE WITH A NAME ON IT, placed at the paired cove's own vertex. It carries
+ *   the cove's `bulge_m` as of the 2026-09-17 rebuild; before that the producer dropped it and the
+ *   3,983 of them had no size at all. `cove_m` is NOT it -- that is how far the creek's name was
+ *   from the cove it was matched to.
+ *
+ * ONE DIRECTION, USED AS IF IT WERE ALL OF THEM, and that is the conservative way round. `area_acres`
+ * gives a hole or hump a radius that holds whichever side the boat passes. A cove's `bulge_m` points
+ * one way only -- out toward open water -- and that is the only side a boat can be on, so subtracting
+ * it from the centroid distance is right in the only case that occurs.
+ *
+ * A LEDGE IS THE ONE KIND STILL WITHOUT AN EXTENT, and there are 142,915 of them. `run_ft` is the
+ * horizontal run of the fall, across the slope, and the feature is a point on a contour the leg may
+ * be running parallel to. Nothing else on it is a distance. **That is the remaining block on
+ * narrowing the corridor to the 15 m Ryan measured** -- at 15 m from a bare centroid a ledge would
+ * vanish from every plan -- and it is a pipeline question, not a number to invent here.
  */
 export function featureReachM(kind, p) {
   const acres = Number(p && p.area_acres);
-  if (!Number.isFinite(acres) || acres <= 0) return 0;
-  return Math.sqrt((acres * ACRES_TO_M2) / Math.PI);
+  if (Number.isFinite(acres) && acres > 0) return Math.sqrt((acres * ACRES_TO_M2) / Math.PI);
+  if (kind === 'cove' || kind === 'creek_mouth') {
+    const bulge = Number(p && p.bulge_m);
+    if (Number.isFinite(bulge) && bulge > 0) return bulge;
+  }
+  return 0;
 }
 
 export function structureIndex(...featureLists) {

@@ -114,8 +114,32 @@ enclosing 60-87% dry ground, which are islands. That is why enabling "creeks" in
 line around every island. It is the right layer to walk for points and coves; it is the wrong
 name. See HYDROGRAPHY_IS_NOT_CREEKS_2026-08-06.md.
 """
-import argparse, json, math, os, sys, time
+import argparse, json, math, os, shutil, sys, time
 from collections import Counter, defaultdict
+
+
+def write_json(path, obj, pack=None, stamp=None):
+    """Write a pack file so an interruption cannot destroy the one it replaces.
+
+    THIS SCRIPT USED TO `open(path, 'w')` AND `json.dump` STRAIGHT OVER THE LIVE FILE, with no
+    copy and no temp file. A crash, a full disk or a Ctrl-C between the truncate and the last byte
+    left a half-written `trolling_runs.geojson` -- on Wateree a 20 MB file that every planner
+    reads -- and there was nothing to put back. `build_river_centrelines.py` has backed up and
+    written atomically since it was written; this is the same two lines, and it is the precondition
+    for ever running this across all 1,710 packs with --force.
+
+    The backup goes to `_to_delete/` under the chartpack, the same place and shape the other
+    builder uses, so one rule covers both: nothing in this pipeline deletes, it moves.
+    """
+    if pack and stamp and os.path.exists(path):
+        dest = os.path.join(os.path.dirname(pack.rstrip('\\/')), '_to_delete',
+                            'water_features_%s' % stamp, os.path.basename(pack.rstrip('\\/')))
+        os.makedirs(dest, exist_ok=True)
+        shutil.copy2(path, os.path.join(dest, os.path.basename(path)))
+    tmp = path + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as fh:
+        json.dump(obj, fh)
+    os.replace(tmp, path)
 
 CELL_M = 25.0
 
@@ -279,8 +303,22 @@ def points_and_coves(edge_feats, grid, win_m, probe_m, min_bulge_m, sep_m):
             if any(abs(cum[i] - cum[j]) < sep_m for j in taken):
                 continue
             taken.append(i)
+            # NAMED BY WHICH IS DEEPER, NOT BY WHICH WAY THE PROBE WENT -- and for a cove those are
+            # opposite. `do` is the probe BEYOND the vertex and `di` the one back toward the chord.
+            # A point's vertex is its tip, so beyond it is open water and `do` is the deep side. A
+            # cove's vertex is its BACK, so beyond it is dry land and `di`, out at the mouth, is the
+            # deep side. The kind is already decided on exactly that comparison one line above.
+            #
+            # Measured 2026-09-17 over all 1,710 packs before this was fixed: of 65,277 coves,
+            # `deep_side_ft > shallow_side_ft` on ZERO of them -- median "deep side" 0 ft, i.e. dry
+            # land, against 5.8 ft of real water outside. On 52% the water outside was 5 ft or more
+            # deeper than the field called the deep side, p90 22.8 ft, worst 247.6 ft. 12,674 of
+            # them carried a non-zero value, which is what reaches describeStructure() and the
+            # model: "cove, 4 ft on the deep side" about a cove with 27 ft at its mouth. Points were
+            # right on all 79,723, which is why it stayed invisible.
+            deep, shal = (do, di) if do > di else (di, do)
             out.append({'kind': kind, 'lon': c[i][0], 'lat': c[i][1], 'bulge_m': round(bul),
-                        'deep_side_ft': round(do, 1), 'shallow_side_ft': round(di, 1)})
+                        'deep_side_ft': round(deep, 1), 'shallow_side_ft': round(shal, 1)})
     return out
 
 
@@ -346,8 +384,28 @@ FEAT_INPUTS = ('depth_areas.geojson', 'hydrography.geojson', 'pois.geojson',
                'trolling_runs.geojson')
 FEAT_OUT = 'water_features.geojson'
 
+# The three `near[]` kinds this script writes, and therefore the only three it may remove. Taken
+# from what points_and_coves() and the creek-mouth pairing actually emit as `kind`, not from a list
+# maintained by hand -- every feature this script produces is one of these three.
+OWNED_MARKS = frozenset(('point', 'cove', 'creek_mouth'))
 
-def build_one(pack, a):
+# WHAT THIS SCRIPT DOES TO IDENTICAL INPUTS, so the pack stamp can tell that the CODE moved.
+#
+# `is_current()` compares input mtimes and FEAT_PARAMS. Neither sees a change in here, so the day
+# the deep/shallow swap and the `near[]` append were fixed, a plain run reported every pack up to
+# date and rebuilt nothing -- the fix would have sat on disk and reached no chartpack, and the only
+# way to ship it would have been to remember `--force`. build_structure.py has carried a
+# RULES_VERSION for exactly this since it was written; this is the same idea in FEAT_PARAMS, so one
+# ordinary run picks the change up and every run after it is cached again.
+#
+# BUMP THIS whenever a change here would produce a different file from the same inputs.
+#   1  2026-09-17  deep_side_ft/shallow_side_ft named by which is deeper rather than by probe
+#                  direction; creek mouths inherit the cove's bulge_m and depths; `near[]` is
+#                  recomputed for the three owned kinds instead of appended to.
+RULES_VERSION = 1
+
+
+def build_one(pack, a, stamp=None):
     da = load(pack, 'depth_areas.geojson')
     if not da:
         return None
@@ -377,8 +435,19 @@ def build_one(pack, a):
             if key in seen:
                 continue
             seen.add(key)
+            # A CREEK MOUTH IS A COVE WITH A NAME ON IT, so it inherits what the cove measured.
+            #
+            # It is placed at `best['lon'], best['lat']` -- the cove's own vertex, which is the BACK
+            # of the cove, a median 111 m inland of the water a boat passes. The cove carries that
+            # distance as `bulge_m` and its two depths, and this dict was built without any of them,
+            # so 3,983 creek mouths had no size and no depth at all. `cove_m` is a different number
+            # and was the only one here: how far the creek's NAME was from the cove it was paired
+            # with, which says nothing about the mouth.
             feats.append({'kind': 'creek_mouth', 'lon': best['lon'], 'lat': best['lat'],
-                          'name': nm, 'cove_m': round(bd)})
+                          'name': nm, 'cove_m': round(bd),
+                          'bulge_m': best.get('bulge_m'),
+                          'deep_side_ft': best.get('deep_side_ft'),
+                          'shallow_side_ft': best.get('shallow_side_ft')})
 
     for f in feats:
         d, s = grid.span(f['lon'], f['lat'], a.relief_m)
@@ -394,8 +463,7 @@ def build_one(pack, a):
                                       'coordinates': [round(f['lon'], 6), round(f['lat'], 6)]},
                          'properties': {k: v for k, v in f.items() if k not in ('lon', 'lat')}}
                         for f in feats]}
-    with open(os.path.join(pack, 'water_features.geojson'), 'w', encoding='utf-8') as fh:
-        json.dump(out, fh)
+    write_json(os.path.join(pack, 'water_features.geojson'), out, pack, stamp)
 
     # Annotate the trolling runs in place with relief, and with the points/coves they pass.
     runs_p = os.path.join(pack, 'trolling_runs.geojson')
@@ -424,7 +492,30 @@ def build_one(pack, a):
                     pr['relief'] = cls.most_common(1)[0][0]
                     pr['relief_mix'] = dict(cls)
                     pr['deepest_within_m'] = deep
-                near = pr.get("near") or []
+                # RECOMPUTED, NOT APPENDED TO. This read `pr.get("near") or []` and then appended
+                # to it, so every rebuild of this script added a second copy of every mark it had
+                # already written -- and `seen2` below only dedupes within the current run, so it
+                # could not catch them.
+                #
+                # Measured on Wateree, 2026-09-17, by rebuilding it twice and hashing the file: the
+                # run file went from 15,921 marks to 20,580 in one rerun, +29%, and exact duplicate
+                # marks inside a single run went 4,669 -> 9,328. The 4,669 it started with are from
+                # earlier rebuilds. `near_counts` tracks the inflated total exactly (15,921 ->
+                # 20,580) and that field is what the planner reads as `passes`, while scoreWindow()
+                # scores once per entry in `near` -- so a leg's SCORE grew every time the pipeline
+                # was rebuilt, and the ranking it feeds moved with it.
+                #
+                # ONLY THE KINDS THIS SCRIPT OWNS ARE DROPPED, AND CLEARING THE WHOLE LIST WOULD BE
+                # THE WORSE BUG. `near` is written by TWO producers: build_trolling_runs.py puts
+                # humps, ledges, timber, hazards, obstructions and attractors there, and this script
+                # adds points, coves and creek mouths afterwards. Wateree run #0 carries
+                # `{"point":53,"cove":8,"hazard":3,"hole":23,"timber":7,"obstruction":3,
+                # "attractor":2}` -- five of those seven kinds are not this script's, and emptying
+                # the list would delete them with nothing to put them back.
+                #
+                # So the three kinds below are removed and recomputed from `feats`, which is rebuilt
+                # from the chart every run, and everything else is left exactly as it was found.
+                near = [e for e in (pr.get('near') or []) if e.get('t') not in OWNED_MARKS]
                 seen2 = set()
                 slen = 0.0
                 for vi, c in enumerate(co):
@@ -450,8 +541,7 @@ def build_one(pack, a):
                         cc[e['t']] = cc.get(e['t'], 0) + 1
                     pr['near_counts'] = cc
                 n_runs += 1
-            with open(runs_p, 'w', encoding='utf-8') as fh:
-                json.dump(doc, fh)
+            write_json(runs_p, doc, pack, stamp)
         except Exception as e:
             print('   ! could not annotate trolling_runs: %s: %s' % (type(e).__name__, e))
 
@@ -532,8 +622,11 @@ def main():
     tot = Counter()
     done = skipped = 0
     # The settings that change the output from identical inputs.
-    FEAT_PARAMS = (a.relief_m, a.curve_m, a.probe_m, a.min_bulge_m, a.sep_m, a.mouth_m,
-                   a.annotate_m)
+    FEAT_PARAMS = (RULES_VERSION, a.relief_m, a.curve_m, a.probe_m, a.min_bulge_m, a.sep_m,
+                   a.mouth_m, a.annotate_m)
+    # ONE FOLDER FOR THE WHOLE RUN, so a --force sweep of 1,710 packs leaves one restorable set
+    # rather than a thousand. Same shape as build_river_centrelines.py's.
+    stamp = time.strftime('%Y-%m-%d_%H%M%S')
     current = 0
     for k, slug in enumerate(slugs, 1):
         pack_d = os.path.join(a.packs, slug)
@@ -541,7 +634,7 @@ def main():
             current += 1
             continue
         try:
-            r = build_one(os.path.join(a.packs, slug), a)
+            r = build_one(os.path.join(a.packs, slug), a, stamp)
         except Exception as e:
             rep[slug] = {'error': '%s: %s' % (type(e).__name__, e)}
             skipped += 1

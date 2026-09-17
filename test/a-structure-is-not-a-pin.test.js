@@ -50,15 +50,37 @@ test('no area is no claim, and it is zero rather than a guess', () => {
   assert.equal(featureReachM('dock', {}), 0);
 });
 
-test('`bulge_m` is NOT a radius, and using it would have been wrong', () => {
-  // build_water_features.py measures bulge_m from the midpoint of a 200 m chord to the vertex — how
-  // far the shoreline bulges INLAND on a point — and records the feature AT THE TIP. A point with a
-  // 221 m bulge does not hold fish 221 m out into the lake; a boat 80 m off the tip is 80 m off the
-  // point. Same family for `cove_m`. A ledge's `run_ft` is the run of the fall, across the slope.
+test('`bulge_m` is NOT a radius, and on a point it is not a reach at all', () => {
+  // build_water_features.py measures bulge_m from the midpoint of a ~400 m shoreline chord to the
+  // vertex between its ends. A POINT is recorded AT ITS TIP — the part nearest a passing boat — so a
+  // point with a 221 m bulge does not hold fish 221 m out into the lake, and a boat 80 m off the tip
+  // is 80 m off the point. Confirmed on all 79,723 points on the card: the water beyond the vertex
+  // is deeper than the water behind it 100% of the time.
   assert.equal(featureReachM('point', { bulge_m: 221 }), 0);
-  assert.equal(featureReachM('cove', { bulge_m: 158 }), 0);
+  // `cove_m` is how far the creek's NAME was from the cove it was matched to, not a size.
   assert.equal(featureReachM('creek_mouth', { cove_m: 90 }), 0);
+  // A ledge's `run_ft` is the run of the fall, across the slope. It is the one kind with nothing.
   assert.equal(featureReachM('ledge', { run_ft: 40 }), 0);
+});
+
+test('but on a COVE the same field is the reach, because the cove is recorded at its back', () => {
+  // The sign of the offset is what decides the kind — the producer probes the depth either side and
+  // calls the vertex a point when the water is beyond it and a cove when the water is BEHIND it. So
+  // a cove is recorded at its back and `bulge_m` is how far back that is from the mouth, which is
+  // the water a boat actually passes. Median 111 m, p90 188 m, over 65,277 coves; the water beyond
+  // a cove's vertex is deeper than the water behind it on ZERO of them.
+  assert.equal(featureReachM('cove', { bulge_m: 158 }), 158);
+  // A creek mouth is a cove with a name on it, placed at the paired cove's own vertex, and carries
+  // the cove's bulge as of the 2026-09-17 rebuild.
+  assert.equal(featureReachM('creek_mouth', { bulge_m: 96, cove_m: 90 }), 96);
+  // Nothing else gets to read it, and a missing or junk value is still silence.
+  assert.equal(featureReachM('hump', { bulge_m: 158 }), 0);
+  assert.equal(featureReachM('cove', { bulge_m: 0 }), 0);
+  assert.equal(featureReachM('cove', { bulge_m: -4 }), 0);
+  assert.equal(featureReachM('cove', {}), 0);
+  // `area_acres` still wins where a kind has one — it is a radius in every direction, and a cove's
+  // bulge is a reach in one.
+  assert.ok(Math.abs(featureReachM('cove', { area_acres: acresFor(30), bulge_m: 158 }) - 30) < 0.01);
 });
 
 test('the distance reported is to the edge, not to the middle', () => {
