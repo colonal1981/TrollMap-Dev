@@ -107,7 +107,22 @@ describe('amp-hours cost what is measurable and never what is not', () => {
     const b = ampHoursBand(5000, 2.0, 90, { wind: { mph: 12, deg: 90 } });
     expect(b.headwindMph).toBe(12);
     expect(b.throughWaterMph).toBe(2.36);
-    expect(b.ah < 10).toBe(true);
+    // REBASED 2026-09-16, and the reason is recorded because rebasing an assertion is how a real
+    // regression gets waved through. `ampHoursBand` was computing the elapsed time at THROUGH-WATER
+    // speed while its own signature says `mph` is speed over ground, so every leg with moving water
+    // over it read low -- an upstream river leg by a third. Fixed to draw at through-water and clock
+    // at ground; see the-clock-runs-at-ground-speed-and-the-draw-does-not.test.js.
+    //
+    // This case went 8.80 -> 10.39 Ah, so the literal `< 10` no longer holds. It was never the point:
+    // the bound exists to catch the FIRST version, which charged the full 12 mph as water speed,
+    // evaluated a curve anchored at 2.0 and 5.0 mph out at fourteen, and returned 33.8 Ah against
+    // 7.8 calm -- refusing fishable days. So the claim is stated as the physics instead of a number
+    // that happened to be true. He still makes 2.0 mph over the ground into this wind, so the clock
+    // is unchanged and the ENTIRE cost of the wind is the draw at 2.36 mph rather than 2.0 -- a third
+    // dearer than calm, and nothing like four times it.
+    const calm = ampHoursBand(5000, 2.0, 90, {}).ah;
+    expect(b.ah > calm).toBe(true);
+    expect(b.ah < calm * 1.4).toBe(true);
   });
 });
 

@@ -49,7 +49,7 @@
  */
 
 import { buildPieces, joinsFor, followBar } from './plan-pieces.js';
-import { ampHours, minutesFor, metresBetween } from './plan-candidates.js';
+import { ampHours, ampsAtMph, minutesFor, metresBetween } from './plan-candidates.js';
 
 /**
  * CLEARANCE IS ZERO BECAUSE THE AXIS IS WATER DEPTH. Not a tuning constant — see the header. If
@@ -857,8 +857,31 @@ export function ampHoursBand(metres, mph, courseDeg, env) {
   // current both help, so neither is floored at zero -- clamping a push to zero would make every
   // day cost more than it does, which is the same dishonesty pointing the other way.
   const throughWater = Math.max(0.1, mph + cur + head * DRIFT_FRACTION);
+  // ── THE DRAW IS AT THROUGH-WATER SPEED AND THE CLOCK RUNS AT GROUND SPEED ─────────────────────
+  //
+  // This was `ampHours(metres, throughWater)`, and `ampHours()` uses its one speed argument for BOTH
+  // the current draw and the elapsed time. In still water that is right, because the two speeds are
+  // the same number. The moment the water moves they are not, and this function's own signature says
+  // which is which: `@param mph speed over ground`.
+  //
+  // The propeller only knows the water it is pushing against, so the AMPS come from `throughWater`.
+  // The boat only covers ground, so the HOURS come from `mph`. Worked on his own numbers -- 8 km
+  // upstream at 2.0 mph over ground against 1.0 mph of current, so 3.0 mph through the water:
+  //
+  //     amps(3.0) = 10.19 A,  time = 8000 m / 2.0 mph = 2.485 h   ->  25.3 Ah   (what it costs)
+  //     amps(3.0) = 10.19 A,  time = 8000 m / 3.0 mph = 1.657 h   ->  16.9 Ah   (what it said)
+  //
+  // A THIRD UNDERSTATED, in the direction that matters most. Ryan on the one thing allowed to be
+  // rigid: "if it is a battery thing i would say we need a safety hard stop... if they are going to
+  // run out of battery because of choice they shouldn't be able to make that choice." A cost model
+  // that reads low is how that stop fails to fire. It also ran on every windy lake day, because the
+  // same conflation applies to the 3% of the wind charged as surface drift.
+  //
+  // No test pinned the old value -- plan-water-geometry.test.js asserts `throughWaterMph` and never
+  // the amp-hours -- so nothing about this was deliberate.
+  const overGround = Math.max(0.1, Number(mph) || 0);
   return {
-    ah: ampHours(metres, throughWater),
+    ah: ampsAtMph(throughWater) * (metres / 1609.34) / overGround,
     // Positive is on the nose. Reported, never costed -- see the note above.
     headwindMph: Number(head.toFixed(1)),
     currentMph: Number(cur.toFixed(2)),
