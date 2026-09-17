@@ -439,3 +439,50 @@ test('a faster river costs more to fish, which is the point of supplying the cur
   }
   assert.ok(compared > 0, 'at least one reach survived both discharges to be compared');
 });
+
+test('a scour hole reaches the model as a scour hole, with its depth and its bend', () => {
+  // `bend_side` and `bend_r_m` were stamped onto 22,939 features on 2026-09-16 and nothing read
+  // either. And `hole` was missing from DEPTH_FIELD, so every one of the 7,854 river holes reached
+  // the model with no depth -- on water where the hole's depth is the reason to go there.
+  const hole = {
+    type: 'Feature', geometry: { type: 'Point', coordinates: [-81, 34] },
+    properties: { kind: 'hole', id: 'hole_1', depth_ft: 20, rim_ft: 7.9, relief_ft: 12.1,
+                  area_acres: 62.23, bend_side: 'outside', bend_r_m: 224.8 },
+  };
+  const ix = structureIndex([hole]);
+  const rec = [...ix.grid.values()].flat().find((r) => r.kind === 'hole');
+  assert.ok(rec, 'the hole is indexed');
+  assert.equal(rec.depthFt, 20, 'and it has a depth, which it did not before');
+  assert.match(rec.what, /scour hole/, 'named as what it is, not the bare word "hole"');
+  assert.match(rec.what, /20 ft/);
+  assert.match(rec.what, /12\.1 ft below the rim/);
+  assert.match(rec.what, /on the outside of the bend/);
+  assert.match(rec.what, /225 m bend radius/, 'the radius is a measurement, not a category');
+});
+
+test('a point on the inside of a bend is the app saying "point bar"', () => {
+  // Card-wide from one sign convention: holes 65% outside, coves 88%, creek mouths 94% -- and points
+  // 65% INSIDE, which is where a point bar forms. Two feature types river physics puts on opposite
+  // banks, coming out on opposite banks.
+  const pt = {
+    type: 'Feature', geometry: { type: 'Point', coordinates: [-81, 34] },
+    properties: { kind: 'point', id: 'point_9', deep_side_ft: 11, bulge_m: 40,
+                  bend_side: 'inside', bend_r_m: 600 },
+  };
+  const rec = [...structureIndex([pt]).grid.values()].flat()[0];
+  assert.match(rec.what, /^point/);
+  assert.match(rec.what, /on the inside of the bend/);
+});
+
+test('a lake feature says nothing about bends, because it has no bend to speak of', () => {
+  // The regression guard: bend_side is stamped on river packs only, and a reservoir hump must
+  // describe exactly as it always did.
+  const hump = {
+    type: 'Feature', geometry: { type: 'Point', coordinates: [-80.7, 34.4] },
+    properties: { kind: 'hump', id: 'hump_3', depth_ft: 18, relief_ft: 9, area_acres: 2.4 },
+  };
+  const rec = [...structureIndex([hump]).grid.values()].flat()[0];
+  assert.match(rec.what, /offshore hump/);
+  assert.doesNotMatch(rec.what, /bend/);
+  assert.equal(rec.depthFt, 18);
+});

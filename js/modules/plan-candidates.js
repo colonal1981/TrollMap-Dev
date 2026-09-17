@@ -566,12 +566,31 @@ export function attractorSpotFeatures(dnrRows, poiSpots = [], opts = {}) {
 
 const DEPTH_FIELD = {
   hump: 'depth_ft', ledge: 'depth_ft', point: 'deep_side_ft', cove: 'deep_side_ft',
+  // A SCOUR HOLE HAS A CHARTED DEPTH AND NOTHING WAS READING IT. Added 2026-09-16: `hole` was
+  // missing from this table, so every one of the 7,854 holes across the 57 rivers resolved with
+  // `depthFt: null` and reached the model as a place with no depth -- on water where the hole's
+  // depth is the entire reason to go there, and where `deep holes` is the most-cited structure in
+  // the river's own researched profile. `depth_ft` is the same field humps and ledges read and it
+  // is on the feature: congaree_river's hole_1 carries depth_ft 20, rim_ft 7.9, relief_ft 12.1.
+  //
+  // This does NOT contradict the rule above that the table must not grow an entry for the POI
+  // kinds. That rule is about kinds with no charted depth to read; a hole has one.
+  hole: 'depth_ft',
 };
 
 function describeStructure(kind, p) {
   const n = (v, u, d = 0) => (Number.isFinite(Number(v)) ? `${Number(v).toFixed(d)}${u}` : null);
   const bits = [];
-  if (kind === 'hump') {
+  if (kind === 'hole') {
+    // THE FEATURE THE RIVER RESEARCH ASKED FOR, and it has been in the packs since build_structure.py
+    // first ran. There was no branch for it here, so it fell through to the point/cove branch and
+    // described as the bare word "hole" while being read for `bulge_m` and `deep_side_ft`, which a
+    // hole does not carry. 7,854 of them across the 57 rivers.
+    bits.push('scour hole');
+    if (n(p.depth_ft, ' ft')) bits.push(n(p.depth_ft, ' ft'));
+    if (n(p.relief_ft, ' ft below the rim', 1)) bits.push(n(p.relief_ft, ' ft below the rim', 1));
+    if (n(p.area_acres, ' ac', 1)) bits.push(n(p.area_acres, ' ac', 1));
+  } else if (kind === 'hump') {
     bits.push('offshore hump');
     if (n(p.area_acres, ' ac', 1)) bits.push(n(p.area_acres, ' ac', 1));
     if (n(p.relief_ft, ' ft of relief')) bits.push(n(p.relief_ft, ' ft of relief'));
@@ -598,6 +617,27 @@ function describeStructure(kind, p) {
     if (n(p.deep_side_ft, ' ft on the deep side', 1)) bits.push(n(p.deep_side_ft, ' ft on the deep side', 1));
   }
   if (p.relief) bits.push(String(p.relief).replace(/_/g, ' '));
+  // ── WHICH SIDE OF THE BEND, AND IT NEEDED NO NEW PLUMBING AT ALL ──────────────────────────────
+  //
+  // build_river_centrelines.py stamped `bend_side` and `bend_r_m` onto 22,939 features on
+  // 2026-09-16 and nothing in the app has ever read either. This function already receives the
+  // whole property bag and its output is the `what` string that reaches the model per pass, so the
+  // vocabulary arrives without a new field, a new join or a new parameter anywhere.
+  //
+  // IT IS NOT DECORATION. Measured card-wide from one sign convention: holes sit on the OUTSIDE of
+  // the bend 65% of the time, ledges 62%, coves 88%, creek mouths 94% -- and points are 65% INSIDE,
+  // which is exactly where a point bar forms. So "point, on the inside of the bend" is the app
+  // telling the model it is looking at a point bar, in the words a river angler uses. The lure
+  // engine has asked for `current_seam`, `riprap` and `laydown` since it was written and had
+  // nothing on any river to match against; this is the first river vocabulary to reach it.
+  //
+  // The radius goes with it as a measurement and is NOT bucketed into sharp/gentle, because there
+  // is no bend threshold anywhere in this pipeline on purpose: the radius is measured and a cutoff
+  // would be invented. Whoever reads it picks.
+  if (p.bend_side === 'outside' || p.bend_side === 'inside') {
+    bits.push(`on the ${p.bend_side} of the bend`);
+    if (n(p.bend_r_m, ' m bend radius')) bits.push(n(p.bend_r_m, ' m bend radius'));
+  }
   return bits.filter(Boolean).join(', ');
 }
 
