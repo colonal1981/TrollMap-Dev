@@ -12,7 +12,8 @@
 // and already holds the documents — and that the rule is now something a test can run.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { lakeTerms, isOnLakeDoc, prepareNormalizedDocuments, offLakeReason } from '../js/utils/doc-relevance.js';
+import { lakeTerms, isOnLakeDoc, prepareNormalizedDocuments, offLakeReason,
+         WORKER_NAME_WINDOW, LOCAL_NAME_WINDOW } from '../js/utils/doc-relevance.js';
 
 const doc = (o) => ({ title: '', url: '', fullText: '', ...o });
 
@@ -54,6 +55,50 @@ test('only the first 3,000 characters are scanned, which is the CPU the Worker d
   const early = doc({ title: 'Report', url: 'https://example.com/y',
     fullText: `Lake Marion South Carolina ${'x'.repeat(5000)}` });
   assert.equal(isOnLakeDoc(early, 'Lake Marion, SC'), true);
+});
+
+// A CALLER THAT IS NOT THE WORKER CAN AFFORD MORE, AND THE DEFAULT MUST NOT MOVE.
+//
+// The 3,000 above is 10 ms of Cloudflare free-plan CPU, not a property of the rule. research_lakes.py
+// runs this same function through node on a desktop, feeding an extractor that reads 20,000
+// characters -- so a document naming the water at character 4,000 was refused on a limit that does
+// not apply to the caller. Measured 2026-09-16, first run with SOURCE_CAP lifted: 13 of 36 dropped,
+// including a Carolina Sportsman issue and `Lured In - Columbia Metropolitan Magazine`.
+test('a caller off the Worker can widen the name window, and the default stays at the Worker budget', () => {
+  assert.equal(WORKER_NAME_WINDOW, 3000, 'the Worker default moved; 10 ms of CPU has not');
+  assert.equal(LOCAL_NAME_WINDOW, 20000, 'the local window no longer matches what extraction reads');
+
+  const buried = doc({ title: 'May 2019', url: 'https://www.carolinasportsman.com/x.pdf',
+    fullText: `${'x'.repeat(5000)} Lake Marion South Carolina` });
+  assert.equal(isOnLakeDoc(buried, 'Lake Marion, SC'), false,
+    'the default window must still refuse this');
+  assert.equal(isOnLakeDoc(buried, 'Lake Marion, SC', [], LOCAL_NAME_WINDOW), true,
+    'the wider window did not reach a name at character 5,000');
+
+  // Past the wider window it is still refused -- widening is not removing.
+  const deeper = doc({ title: 'May 2019', url: 'https://www.carolinasportsman.com/x.pdf',
+    fullText: `${'x'.repeat(25000)} Lake Marion South Carolina` });
+  assert.equal(isOnLakeDoc(deeper, 'Lake Marion, SC', [], LOCAL_NAME_WINDOW), false);
+});
+
+test('the window threads through prepareNormalizedDocuments, not just the single-doc helpers', () => {
+  const docs = [doc({ title: 'Report', url: 'https://example.com/y',
+    fullText: `${'x'.repeat(5000)} Lake Marion South Carolina` })];
+  assert.equal(prepareNormalizedDocuments(docs, 'Lake Marion, SC').documents.length, 0,
+    'the default should refuse it');
+  assert.equal(
+    prepareNormalizedDocuments(docs, 'Lake Marion, SC', [], null, [], LOCAL_NAME_WINDOW)
+      .documents.length, 1,
+    'the window was accepted and then not passed to offLakeReason');
+});
+
+test('the other-state guard survives a wider window', () => {
+  // claimedByAnotherState reads the title and url only, so widening the body window must not
+  // let a Minnesota page in on the strength of naming the water deep in its text.
+  const mn = doc({ title: 'Marion Lake fisheries survey',
+    url: 'https://www.dnr.state.mn.us/lakefind/marion.html',
+    fullText: `${'x'.repeat(5000)} Marion Lake Minnesota walleye` });
+  assert.equal(isOnLakeDoc(mn, 'Lake Marion, SC', [], LOCAL_NAME_WINDOW), false);
 });
 
 test('the prepared array is exactly what the Worker will store, counts included', () => {

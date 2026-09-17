@@ -185,7 +185,10 @@ function namesTheWater(hay, names) {
  * must not read the body: "Texas rig" and "Carolina rig" are bass fishing, and a page about Lake
  * Wateree that mentions one would refuse itself.
  */
-export function offLakeReason(doc, lakeName, altNames = []) {
+export const WORKER_NAME_WINDOW = 3000;   // what 10 ms of Cloudflare free-plan CPU affords
+export const LOCAL_NAME_WINDOW = 20000;   // what extraction reads, for callers off the Worker
+
+export function offLakeReason(doc, lakeName, altNames = [], nameWindowChars = WORKER_NAME_WINDOW) {
   const { baseName, state } = lakeTerms(lakeName);
   const url = String(doc?.url || '').toLowerCase();
   if (OFFICIAL_SOURCE.test(url)) return null;
@@ -198,7 +201,30 @@ export function offLakeReason(doc, lakeName, altNames = []) {
   // caught it on the first run, which is the whole reason that test exists.
   const foreign = claimedByAnotherState(titleHay, state);
 
-  const body = String(doc?.fullText || doc?.text || '').slice(0, 3000);
+  // ── THE NAME WINDOW IS THE CALLER'S CPU BUDGET, NOT A PROPERTY OF THE RULE ────────────────
+  //
+  // 3,000 is the DEFAULT and it must stay the default, because this module is imported by the
+  // Worker (research/extract.js, research/deterministic.js) and that Worker is on Cloudflare's free
+  // plan: 10 ms of CPU per request, and unlike the paid plan's 30 s that number is not
+  // configurable. Scanning more than this is what produced, from wrangler tail on 2026-08-16:
+  //
+  //     POST /research/save-normalized - Exceeded CPU Limit
+  //     Error: Worker exceeded CPU time limit.
+  //
+  // WHAT THE DEFAULT COSTS WHERE THERE IS NO CEILING. research_lakes.py runs this rule through node
+  // on a desktop -- gate_documents() spawns it rather than reimplementing it -- and there 3,000 is
+  // not a budget, it is an inherited limp. Extraction reads 20,000 characters per document, so a
+  // document naming the water at character 4,000 was refused before the step that would have read
+  // it. Measured 2026-09-16, the first run with SOURCE_CAP lifted: 13 of 36 documents dropped,
+  // including `May 2019` (a Carolina Sportsman issue whose Congaree coverage sits deep inside), and
+  // `Lured In - Columbia Metropolitan Magazine`. A magazine feature rarely names its river in the
+  // first two paragraphs.
+  //
+  // WHAT STILL STOPS A STATEWIDE REPORT FROM WALKING IN when the window widens: the state test
+  // below is unchanged, claimedByAnotherState() is unchanged, /research/analyze-facts is told to
+  // take only facts that mention the base name, and agents.js ranks by behaviour-language density
+  // so a long survey cannot crowd out a guide article by being long.
+  const body = String(doc?.fullText || doc?.text || '').slice(0, nameWindowChars);
   if (!foreign && (namesTheWater(titleHay, every) || namesTheWater(flat(body), every))) return null;
 
   const combined = `${String(doc?.title || '').toLowerCase()} ${url} ${body.toLowerCase()}`;
@@ -242,12 +268,17 @@ export function offLakeReason(doc, lakeName, altNames = []) {
 }
 
 /** Does this document plausibly concern this lake? `offLakeReason` with the reason thrown away. */
-export function isOnLakeDoc(doc, lakeName, altNames = []) {
-  return offLakeReason(doc, lakeName, altNames) === null;
+export function isOnLakeDoc(doc, lakeName, altNames = [], nameWindowChars = WORKER_NAME_WINDOW) {
+  return offLakeReason(doc, lakeName, altNames, nameWindowChars) === null;
 }
 
-/** The finished array the Worker will store verbatim. */
-export function prepareNormalizedDocuments(documents, lakeName, agentTags = [], nowIso = null, altNames = []) {
+/** The finished array the Worker will store verbatim.
+ *
+ * `nameWindowChars` defaults to the Worker's CPU budget. research_lakes.py runs this through node
+ * on a desktop and passes LOCAL_NAME_WINDOW, because 3,000 there is an inherited limp rather than a
+ * limit -- see the note in offLakeReason(). */
+export function prepareNormalizedDocuments(documents, lakeName, agentTags = [], nowIso = null,
+                                           altNames = [], nameWindowChars = WORKER_NAME_WINDOW) {
   const all = Array.isArray(documents) ? documents : [];
   const stamp = nowIso || new Date().toISOString();
   // AGENT TAGS ARE POSITIONAL AGAINST THE ORIGINAL LIST, so the original index has to be
@@ -256,7 +287,8 @@ export function prepareNormalizedDocuments(documents, lakeName, agentTags = [], 
   // discovered by `identity` gets filed as `habitat`. Faithfully ported, then caught by the
   // first test that had ever been able to run this code, which is the whole argument for
   // moving it out of an HTTP handler.
-  const judged = all.map((doc, i) => ({ doc, i, why: offLakeReason(doc, lakeName, altNames) }));
+  const judged = all.map((doc, i) => ({ doc, i,
+    why: offLakeReason(doc, lakeName, altNames, nameWindowChars) }));
   const kept = judged.filter(({ why }) => why === null);
   return {
     documents: kept.map(({ doc, i }) => ({

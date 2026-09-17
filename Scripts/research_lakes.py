@@ -264,7 +264,18 @@ def gate_documents(repo, documents, lake, alt_names=None):
         f"const m = await import({json.dumps('file://' + src.replace(os.sep, '/'))});"
         "const inp = JSON.parse(readFileSync(0,'utf8'));"
         "process.stdout.write(JSON.stringify("
-        "m.prepareNormalizedDocuments(inp.documents, inp.lakeName, [], null, inp.altNames)));"
+        # THE SIXTH ARGUMENT IS THE NAME WINDOW, AND THIS CALLER IS NOT THE WORKER.
+        #
+        # offLakeReason() scans the first 3,000 characters of a document for the water's name by
+        # default, and that number is a Cloudflare free-plan CPU budget -- 10 ms per request, not
+        # configurable, and exceeding it produced "Error: Worker exceeded CPU time limit" on
+        # save-normalized in August. This gate runs in node on a desktop, where there is no such
+        # ceiling, and it feeds an extractor that reads 20,000 characters per document. Passing the
+        # Worker's budget here refused documents on a limit that does not apply to us: the first run
+        # with SOURCE_CAP lifted dropped 13 of 36, including a Carolina Sportsman issue and a
+        # Columbia Metro feature that both name the river past their opening pages.
+        "m.prepareNormalizedDocuments(inp.documents, inp.lakeName, [], null, inp.altNames,"
+        " m.LOCAL_NAME_WINDOW)));"
     )
     proc = subprocess.run(["node", "--input-type=module", "-e", script],
                           input=json.dumps({"documents": documents, "lakeName": lake,
