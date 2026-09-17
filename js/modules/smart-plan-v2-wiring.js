@@ -33,7 +33,7 @@ import { planToTimeline, installTimeline } from './plan-to-timeline.js';
 import { renderSmartPlanUI, syncSpread } from './smart-plan-ui.js';
 import { materialisePlan } from './plan-tracks.js';
 import { loadSessionFromPlan, launchFrom } from './notifications.js';
-import { lightFactsFrom } from './plan-prompt.js';
+import { patternFactsFrom, lightFactsFrom } from './plan-prompt.js';
 import { syncClarityIntelData } from './lake-intel.js';
 import { planIssuesHtml } from './plan-issues.js';
 import { renderAll } from '../core/map-init.js';
@@ -277,6 +277,12 @@ export async function runSmartPlanV2(opts = {}) {
       // to the light, and until now nothing outside the research pipeline read one. Selected here
       // because this is where the profile is, and sent rendered, like `intel`.
       lightFacts: lightFactsFrom(researched),
+      // AND THE FACTS ABOUT WHERE THE FISH SIT. `seasonalDepth`, `waterDepthUnderFish`,
+      // `holdingPattern` and `seasonalPattern` are the four categories in `_extractedFacts` with
+      // no structured home, so until now they reached nothing unless they happened to contain a
+      // light word. Measured 2026-09-17: nine such facts on the card, all of them on the Congaree,
+      // and the bench plan run on that river saw none of them. Selected here, where the profile is.
+      patternFacts: patternFactsFrom(researched),
       conditions: {
         ...conditionsFrom(inp, ramp, sol, forecast, clarityAtRamp),
         // The model is told where the band came from, so a generic one cannot be mistaken for a

@@ -907,40 +907,157 @@ o'clock are not the same fish.
 }
 
 /**
+ * ── WHAT A FACT IS, ACCORDING TO THE FACT ────────────────────────────────────────────────────
+ *
+ * Every `_extractedFacts` entry carries a `category` off an ENUMERATED list in
+ * Worker/research/extract.js -- 34 names, written into the extraction prompt. Nothing outside the
+ * research pipeline had ever read it, so the one reader that existed searched the fact's TEXT for
+ * a light word and then hand-patched the misfires with a regex for "must|shall|creel".
+ *
+ * MEASURED ON THE REAL CARD, 2026-09-17, all 716 facts across 78 profiles. Eleven carry a light
+ * word and all eleven were being sent under a heading about light. Four of them are not about
+ * light at all:
+ *
+ *     poolLevel    "Watauga generation starts at 1 PM Monday-Friday and noon on Saturday"  x3
+ *     tidalRange   "high tide mid-morning and falling tide after lunch"
+ *
+ * A dam's generation schedule and a tide are both LIVE in this app -- riverPromptBlock reads the
+ * gauge and the tide engine reads the station -- so a written one arriving as light guidance is
+ * wrong twice: wrong heading, and able to contradict a reading taken this morning. The law regex
+ * never had a chance at either, because neither sentence says "must".
+ *
+ * So the category decides. These are the ones this app already speaks with a live or structured
+ * source of its own, and a fact carrying one is not re-sent as prose beside it.
+ */
+const FACT_SPOKEN_ELSEWHERE = new Set([
+  // live, and a written copy can contradict this morning's reading
+  'poolLevel', 'drawdownSchedule', 'tidalRange', 'tidalCurrent',
+  // limnology: the oxygen floor the bait gate stands on, the thermocline block, measured clarity
+  'oxygen', 'thermocline', 'secchi',
+  // the regulations block reads the state book, and the advisory rides with it
+  'creelLimit_general', 'creelLimit_lakeSpecific', 'sizeLimit_general', 'sizeLimit_lakeSpecific',
+  'closedSeason', 'saltwaterRegulation', 'consumptionAdvisory',
+  // the hazards block reads the charted POI layer, and the ramps come off the state feed
+  'ramp', 'hazard', 'navigation', 'navigationMarker',
+  // identity and morphometry, all of which researchIntel() prints off the structured profile
+  'surfaceArea', 'maxDepthFt', 'averageDepthFt', 'county', 'damName', 'yearImpounded',
+  'reservoirOwner', 'riverSystem', 'waterBodyType', 'trophicStatus', 'estuaryIdentity',
+  'hydraulicRetentionDays', 'flushingTime',
+]);
+
+/**
+ * ── THE FOUR CATEGORIES NOTHING ELSE IN THIS APP CARRIES ─────────────────────────────────────
+ *
+ * The extraction prompt says it in as many words: "FISHING BEHAVIOUR IS A FIRST-CLASS FACT...
+ * A sentence naming a species, a depth and a time of year is worth more than any morphometry in
+ * the document." These four are that sentence, and they are the only categories with no structured
+ * home -- `seasonalDepth` is where the FISH are, `waterDepthUnderFish` is the water that happens
+ * over, `holdingPattern` is bottom versus suspended, `seasonalPattern` is how it MOVES.
+ *
+ * Everything large in the corpus is already spoken: `summary` (147 facts) is printed by
+ * researchIntel as `Summary`, `predatorSpecies` (44) as `Other predators here`, `primaryForage`
+ * (16), `structuralElement` (35) and `habitatCover` (11) off the habitat and structure sections,
+ * `speciesAbundance` (42) beside them. Re-sending the raw sentence behind a field the model is
+ * already shown is duplication, and duplication in a prompt reads as emphasis.
+ *
+ * WHAT THIS IS WORTH TODAY: nine facts, all on the Congaree, which is the water the 2026-09-17
+ * bench was run on and not one of them reached it. "Fish in the Congaree River are heavily
+ * influenced by current, becoming more aggressive and more likely to be in shallower water
+ * surface-feeding when current is present" is a bait-depth instruction tied to the current this
+ * app now measures at that hour, and there is nowhere else in the prompt it could have come from.
+ */
+const FACT_FISHING_PATTERN = new Set([
+  'seasonalDepth', 'waterDepthUnderFish', 'holdingPattern', 'seasonalPattern',
+]);
+
+/** The fact's own sentence, falling back to the quote it was taken from. */
+function factText(f) {
+  if (!f || typeof f !== 'object') return '';
+  if (typeof f.fact === 'string' && f.fact.trim()) return f.fact.trim();
+  return typeof f.quote === 'string' ? f.quote.trim() : '';
+}
+
+/** The fact with its source in brackets, because a fact without its source is not one. */
+function factLine(f, text) {
+  const src = typeof f.source === 'string' && f.source.trim() ? f.source.trim()
+            : (typeof f.url === 'string' ? f.url.trim() : '');
+  return `${text}${src ? ` [${src}]` : ' [source not recorded with the fact]'}`;
+}
+
+function factsOf(researched) {
+  return researched && Array.isArray(researched._extractedFacts) ? researched._extractedFacts : [];
+}
+
+/**
  * THE SOURCED LIGHT GUIDANCE A PROFILE ALREADY HOLDS, and nothing else.
  *
- * `_extractedFacts` is written by the research agents with a `fact`, the `quote` it was taken from
- * and a `source`. It has never been read outside the research pipeline. This picks the ones whose
- * text carries a light word and renders them with their source attached, because a fact without its
- * source is the thing this app keeps promising not to produce.
+ * Picks the facts whose text carries a light word -- by the one light lexicon in light-state.js,
+ * so a fact and a lure's technique line are searched with the same words -- and drops anything
+ * this app speaks with a source of its own. See FACT_SPOKEN_ELSEWHERE above for what that is and
+ * what it measured.
+ *
+ * A LIGHT-TAGGED FACT COMES HERE EVEN WHEN IT IS ONE OF THE FOUR PATTERN CATEGORIES, and that is
+ * deliberate rather than an accident of ordering: this block sits beside the computed hour-by-hour
+ * light table, which is the thing such a fact has to be read against. patternFactsFrom() below
+ * takes the rest, so no fact appears under two headings.
  *
  * Capped, and the cap is not a quality judgement -- the facts arrive in the order the agents found
  * them and there is no ranking to apply, so it takes the first few and says how many it left.
  */
 export function lightFactsFrom(researched) {
-  const all = researched && Array.isArray(researched._extractedFacts)
-    ? researched._extractedFacts : [];
+  const all = factsOf(researched);
   const picked = [];
   for (const f of all) {
-    if (!f || typeof f !== 'object') continue;
-    const text = typeof f.fact === 'string' && f.fact.trim() ? f.fact.trim()
-               : (typeof f.quote === 'string' ? f.quote.trim() : '');
+    const text = factText(f);
     if (!text) continue;
-    const words = lightPhrasesIn(text);
-    if (!words.length) continue;
-    // A REGULATION IS NOT A FISHING PATTERN. "Jugs must be removed from the water between one hour
-    // after sunrise and one hour before sunset" carries two light words and is a law about jug
-    // fishing; putting it under a heading about presentation would make the app look like it cannot
-    // tell the two apart. The regulations block is where that belongs and it already has it.
-    if (/\b(must|shall|prohibited|unlawful|licen[cs]e|limit of|creel)\b/i.test(text)) continue;
-    const src = typeof f.source === 'string' && f.source.trim() ? f.source.trim()
-              : (typeof f.url === 'string' ? f.url.trim() : '');
-    picked.push(`${text}${src ? ` [${src}]` : ' [source not recorded with the fact]'}`);
+    if (!lightPhrasesIn(text).length) continue;
+    if (FACT_SPOKEN_ELSEWHERE.has(f.category)) continue;
+    picked.push(factLine(f, text));
     if (picked.length >= 8) break;
   }
-  const left = all.length && picked.length >= 8 ? ' (first 8 of the light-tagged facts)' : '';
-  if (left) picked.push(left.trim());
+  if (all.length && picked.length >= 8) picked.push('(first 8 of the light-tagged facts)');
   return picked;
+}
+
+/**
+ * WHAT ANYBODY HAS WRITTEN DOWN ABOUT WHERE THE FISH SIT ON THIS WATER.
+ *
+ * The four categories in FACT_FISHING_PATTERN, minus whatever lightFactsFrom() has already taken,
+ * each with its source. Same cap and the same reason.
+ */
+export function patternFactsFrom(researched) {
+  const all = factsOf(researched);
+  const picked = [];
+  for (const f of all) {
+    const text = factText(f);
+    if (!text) continue;
+    if (!FACT_FISHING_PATTERN.has(f && f.category)) continue;
+    if (lightPhrasesIn(text).length) continue;   // it went to the light block
+    picked.push(factLine(f, text));
+    if (picked.length >= 8) break;
+  }
+  if (all.length && picked.length >= 8) picked.push('(first 8 of them)');
+  return picked;
+}
+
+/**
+ * The block those go in, beside the research rather than beside the light -- these are facts about
+ * the fish, not about the hour. Empty string when there are none, which is 77 of 78 waters today
+ * and is the prompt this file has always built.
+ */
+export function patternFactsBlock(patternFacts) {
+  const facts = Array.isArray(patternFacts) ? patternFacts.filter(Boolean) : [];
+  if (!facts.length) return '';
+  return `
+AND WHAT ANGLERS HAVE WRITTEN DOWN ABOUT WHERE THE FISH SIT HERE — sourced and quoted, off this
+water's own researched documents, and not general knowledge about the species:
+${facts.map((f) => `- ${f}`).join('\n')}
+These are the sentences behind the depth band and the structure weights above, not a second opinion
+about them. A pattern tied to a SEASON is a fact about that season: check it against today's date
+and say so when it does not apply, rather than planning the day on a striper run that happens in
+April. A pattern tied to the CURRENT, the water level or the forage is a fact about a condition —
+the conditions block says whether that condition is in force today.
+`;
 }
 
 /**
@@ -1572,7 +1689,7 @@ ${o.intel || 'NOTHING. No researched profile exists for this water, so everythin
   + 'on the chart, the gauges and general species knowledge. Say so in the plan rather than '
   + 'writing as though this water had been studied — an absent profile is not a profile that '
   + 'looked and found nothing.'}
-
+${patternFactsBlock(o.patternFacts)}
 RETURN EXACTLY THIS SHAPE
 {
   "safety": { "isGo": true, "warning": "", "rampEvaluation": "one sentence on wind exposure at this ramp" },

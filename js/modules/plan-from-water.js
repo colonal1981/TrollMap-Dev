@@ -301,6 +301,9 @@ export async function planFromWater(o) {
     // THE PROFILE'S LIGHT-TAGGED SOURCED FACTS, for lightPromptBlock(). Forwarded for the same
     // reason as the line above: one prompt, and the two planners must fill the same fields of it.
     lightFacts: o.lightFacts || null,
+    // AND THE PROFILE'S FISHING-PATTERN FACTS, for patternFactsBlock(). Forwarded for exactly the
+    // same reason: one prompt, and the two planners must fill the same fields of it.
+    patternFacts: o.patternFacts || null,
     // ── AND THE ONE FIELD PICK WATER GENUINELY CANNOT FILL YET, NAMED RATHER THAN ABSENT ──────────
     //
     // `riverCurrent` carries the channel velocity and the battery turnaround to riverPromptBlock().

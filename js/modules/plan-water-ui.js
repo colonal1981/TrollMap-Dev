@@ -58,7 +58,7 @@ import { poiSpotFeatures, attractorSpotFeatures, dockSpotFeatures, chartedGrid, 
   from './plan-candidates.js';
 import { planToTimeline, installTimeline } from './plan-to-timeline.js';
 import { renderSmartPlanUI, syncSpread } from './smart-plan-ui.js';
-import { lightFactsFrom } from './plan-prompt.js';
+import { lightFactsFrom, patternFactsFrom } from './plan-prompt.js';
 import { syncClarityIntelData } from './lake-intel.js';
 import { planIssuesHtml } from './plan-issues.js';
 import { materialisePlan } from './plan-tracks.js';
@@ -1010,6 +1010,9 @@ export async function findWater() {
     // carried across: `researched` exists in findWater() and does not exist in buildFromPicked(),
     // which writes the prompt. Selected here, where the profile is.
     lightFacts: lightFactsFrom(researched),
+    // AND THE ONES ABOUT WHERE THE FISH SIT, which carry no light word and so have no other way
+    // into the prompt. Same gap, same reason, same profile -- see patternFactsFrom().
+    patternFacts: patternFactsFrom(researched),
     // WHAT IS CAUGHT INSHORE IN THIS STATE IN THIS WAVE, carried across the same gap: `inp` and
     // `date` exist in findWater() and not in buildFromPicked(), which writes the prompt. The
     // state comes off regulationStateFor(), which is the SAME derivation the legality check above
@@ -1266,6 +1269,10 @@ export async function buildFromPicked() {
         // AND THE SEVENTH, for the same block. The hourly sky says what the light IS; this says
         // what anybody has published about fishing it, with the source on each line.
         lightFacts: T.lightFacts || null,
+        // AND WHERE THE FISH SIT, off the same profile. seasonalDepth, waterDepthUnderFish,
+        // holdingPattern and seasonalPattern are the four fact categories nothing else in this
+        // prompt carries -- the rest are printed off the structured profile by researchIntel().
+        patternFacts: T.patternFacts || null,
         // AND THE EIGHTH. Resolved in findWater() where the state and the date are; forwarded
         // here for the same reason every field above it is.
         inshoreSeason: T.inshoreSeason || null,
