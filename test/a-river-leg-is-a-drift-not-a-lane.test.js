@@ -8,9 +8,10 @@
 // ones that will fail again if a drift is ever given a lane's properties.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { riverDriftRuns, offsetPoint, profileIndexFor, LATERALS } from '../js/modules/river-drifts.js';
+import { riverDriftRuns, offsetPoint, profileIndexFor, LATERALS,
+         meanBearingDeg } from '../js/modules/river-drifts.js';
 import { structureIndex, DEFAULT_WEIGHTS, eligibleForHolding,
-         selectCandidates } from '../js/modules/plan-candidates.js';
+         selectCandidates, forModel } from '../js/modules/plan-candidates.js';
 
 // A straight river running due east at 34.0 N, 200 stations at 50 m = 10 km, 120 m wide.
 // Depth profile: 9 columns left-to-right, deep on the left bank, shallowing to the right.
@@ -249,4 +250,107 @@ test('but when nothing is charted it says exactly that', () => {
   assert.equal(cands.length, 0);
   assert.match(cands.selection.depthRule, /no charted depth/);
   assert.equal(cands.selection.rejected.depth, drifts.length);
+});
+
+// ── THE CURRENT ────────────────────────────────────────────────────────────────────────────────
+// A river 10 km long, 120 m wide, with a charted section at every station: area 200 m2 and a
+// deepest line of 10 ft, so every station is eligible to divide a discharge.
+function sectionedRiver({ area = 200, deepestFt = 10, stations = 200 } = {}) {
+  const river = eastwardRiver({ stations });
+  const p = river.features[0].properties;
+  p.area_m2 = new Array(stations).fill(area);
+  p.deepest_line_ft = new Array(stations).fill(deepestFt);
+  return river;
+}
+
+test('V = Q/A, in the units the gauge actually publishes', () => {
+  // 3,000 cfs over a 200 m2 section: 3000 * 0.0283168466 = 84.95 m3/s, / 200 = 0.4248 m/s,
+  // * 2.2369363 = 0.950 mph. Worked by hand so a bad conversion constant cannot hide behind a
+  // plausible-looking number -- the whole point of V = Q/A is that it is checkable.
+  const drifts = riverDriftRuns(sectionedRiver(), { slug: 'test_river', flowCfs: 3000 });
+  for (const d of drifts) {
+    assert.equal(d.properties.current_mph, 0.95);
+    assert.equal(d.properties.current_frac, 1);
+    assert.match(d.properties.current_basis, /Q\/A/);
+  }
+  // Double the discharge, double the speed. Halve the section, double the speed.
+  const fast = riverDriftRuns(sectionedRiver(), { slug: 'test_river', flowCfs: 6000 });
+  assert.equal(fast[0].properties.current_mph, 1.9);
+  const narrow = riverDriftRuns(sectionedRiver({ area: 100 }), { slug: 'test_river', flowCfs: 3000 });
+  assert.equal(narrow[0].properties.current_mph, 1.9);
+});
+
+test('a section with no real depth in it may not divide a discharge', () => {
+  // THE GUARD IS THE CHART, NOT THE CODE. On the Congaree 877 stations have no charted point deeper
+  // than 2 ft on a river that is 76% charted, and dividing 3,000 cfs by one of those sections
+  // returns 8.30 mph, which is not a river.
+  const river = sectionedRiver({ area: 20, deepestFt: 1 });
+  const drifts = riverDriftRuns(river, { slug: 'test_river', flowCfs: 3000 });
+  for (const d of drifts) {
+    assert.equal(d.properties.current_mph, undefined, 'no velocity off a section with no depth');
+    assert.match(d.properties.current_basis, /2 ft or more of charted section/);
+  }
+});
+
+test('the support travels with the number', () => {
+  // A velocity from a handful of stations and one from all of them are different claims. No cutoff
+  // is applied here -- the fraction is reported so whoever consumes it can pick.
+  const river = sectionedRiver();
+  const p = river.features[0].properties;
+  for (let i = 0; i < 200; i++) if (i % 10) p.deepest_line_ft[i] = 1;  // 1 station in 10 survives
+  const drifts = riverDriftRuns(river, { slug: 'test_river', flowCfs: 3000 });
+  const d = drifts.find((x) => x.properties.current_mph != null);
+  assert.ok(d, 'a thinly supported reach still reports a velocity');
+  assert.ok(d.properties.current_frac > 0 && d.properties.current_frac < 0.2,
+            `and says how thin: ${d.properties.current_frac}`);
+  assert.equal(d.properties.current_mph, 0.95, 'the value itself is unaffected');
+});
+
+test('a tidal river is told it is tidal instead of quoted a number', () => {
+  // Eleven of the 57 carry a NOAA tide station and reverse twice a day, so an instantaneous
+  // discharge is not the flow and Q/A does not describe it.
+  const drifts = riverDriftRuns(sectionedRiver(), { slug: 'test_river', flowCfs: 3000, tidal: true });
+  for (const d of drifts) {
+    assert.equal(d.properties.current_mph, undefined);
+    assert.match(d.properties.current_basis, /tidal/);
+  }
+});
+
+test('no gauge says no gauge, rather than going quiet', () => {
+  const drifts = riverDriftRuns(sectionedRiver(), { slug: 'test_river' });
+  for (const d of drifts) {
+    assert.equal(d.properties.current_mph, undefined);
+    assert.match(d.properties.current_basis, /no discharge/);
+  }
+});
+
+test('the flow direction is a circular mean, not an arithmetic one', () => {
+  // 350 and 10 average to 0, not to 180. A river doubling back on itself is what the naive version
+  // reports on any reach that crosses north.
+  assert.equal(Math.round(meanBearingDeg([350, 10])), 0);
+  assert.equal(Math.round(meanBearingDeg([80, 100])), 90);
+  assert.equal(meanBearingDeg([]), null);
+  assert.equal(meanBearingDeg([0, 180]), null, 'bearings that cancel have no mean to report');
+  // And the drift carries it, because until now nothing in the app knew which way the water went.
+  const drifts = riverDriftRuns(sectionedRiver(), { slug: 'test_river', flowCfs: 3000 });
+  assert.equal(drifts[0].properties.flow_deg, 90, 'due east, which is how the fixture is built');
+  assert.equal(drifts[0].properties.current_deg, 90);
+});
+
+test('the current reaches the model, because the model owns the order', () => {
+  const { structures, coords } = scoredRiver();
+  const river = sectionedRiver();
+  const drifts = riverDriftRuns(river, { structures, slug: 'test_river', flowCfs: 3000 });
+  const cands = selectCandidates(drifts, SELECT(structures, coords[0]));
+  assert.ok(cands.length > 0);
+  for (const c of cands) {
+    assert.equal(c.currentMph, 0.95);
+    assert.equal(c.currentDeg, 90);
+    assert.ok(c.currentBasis, 'and the basis is never null');
+    const m = forModel(c);
+    assert.equal(m.currentMph, 0.95, 'it survives the trim to what the model sees');
+    assert.equal(m.currentDeg, 90);
+    assert.ok(m.currentBasis);
+    assert.ok(m.drift && m.drift.side, 'and so does which line it is');
+  }
 });

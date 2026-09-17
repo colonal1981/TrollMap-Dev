@@ -165,7 +165,19 @@ export async function buildSmartPlanV2(o) {
   const maxOffM = o.maxOffM ?? 100;
   const legMaxM = o.maxM ?? 8000;
   const drifts = isRiver && packHasCentreline
-    ? riverDriftRuns(centrelineFc, { structures, slug: o.r2Key, maxOffM, maxM: legMaxM })
+    ? riverDriftRuns(centrelineFc, { structures, slug: o.r2Key, maxOffM, maxM: legMaxM,
+                                     // Q FOR Q/A, FROM THE READING THE PREFLIGHT ALREADY TOOK. The
+                                     // discharge has been reaching the prompt as a raw ft3/s number
+                                     // since plan-prompt.js was written; this is what turns it into
+                                     // a speed and a direction. 53 of 57 rivers publish 00060 and 47
+                                     // carry an NWM reach, so it can be forecast as well as read.
+                                     flowCfs: (o.waterState && o.waterState.river
+                                               && o.waterState.river.flowCfs) ?? null,
+                                     // AND THE ELEVEN WHERE IT DOES NOT APPLY. A tidal river's
+                                     // current reverses twice a day, so an instantaneous discharge
+                                     // is not its flow -- the drift says so rather than quoting a
+                                     // number that is wrong half of every day.
+                                     tidal: !!(o.waterState && o.waterState.tidal) })
     : null;
   if (drifts && !drifts.length) {
     return { plan: null, candidates: [],

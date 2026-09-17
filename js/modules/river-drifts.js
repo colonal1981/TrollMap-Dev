@@ -50,6 +50,42 @@ export const DRIFT_JOIN_KINDS = ['hole', 'ledge', 'point', 'cove', 'creek_mouth'
 
 const DEG_LAT_M = 111320;
 
+// ── THE CURRENT, AND WHY THE GUARD IS 2 FT ────────────────────────────────────────────────────
+//
+// `ampHoursBand()` in plan-water.js has resolved a current against a course since the day it was
+// written, charged the component on the nose, and deliberately not floored a following current at
+// zero -- which is exactly Ryan's "usage will be close to 0 if there is river current". Nobody has
+// ever supplied it. `currentMph` occurs nowhere else in js/ or Worker/. This is where the supply
+// starts, because the centreline is the first thing in the app that knows a cross-section.
+//
+// V = Q/A, and it is only as good as the charted section. On the Congaree 105 of 2,537 stations have
+// no charted depth at all and 877 MORE have no charted point deeper than 2 ft -- thin chart, not a
+// shallow river, on water that is 76% charted. Dividing 3,000 cfs by one of those sections returns
+// 8.30 mph, which is not a river. Reading only the sections with at least two feet somewhere returns
+// p10 0.60, p50 0.96, p90 2.17 mph, which is. So 2 ft is where the arithmetic stopped being
+// nonsense, measured by the builder before any of this was wired -- not a number anybody liked.
+const REAL_SECTION_FT = 2;
+const CFS_TO_CMS = 0.0283168466;
+const MS_TO_MPH = 2.2369363;
+
+/**
+ * The mean of a set of bearings, which is NOT the mean of their numbers.
+ *
+ * Averaging 350 and 10 arithmetically gives 180 -- a river doubling back on itself -- so the mean
+ * is taken on the unit circle. Returns null when the bearings cancel, which is a reach that goes
+ * nowhere on average and has no direction to report.
+ */
+export function meanBearingDeg(degs) {
+  let x = 0, y = 0, n = 0;
+  for (const d of degs) {
+    if (!Number.isFinite(d)) continue;
+    const r = (d * Math.PI) / 180;
+    x += Math.cos(r); y += Math.sin(r); n++;
+  }
+  if (!n || (Math.abs(x) < 1e-12 && Math.abs(y) < 1e-12)) return null;
+  return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
+}
+
 /** A point `dxM` east and `dyM` north of [lon, lat]. Flat enough over a channel width. */
 function shift(lon, lat, dxM, dyM) {
   const mPerDegLon = DEG_LAT_M * Math.cos((lat * Math.PI) / 180);
@@ -124,6 +160,8 @@ export function riverDriftRuns(centrelineFc, o = {}) {
   const width = p.width_m || [];
   const profiles = p.depth_profile_ft || [];
   const fractions = p.profile_fractions || [];
+  const areaM2 = p.area_m2 || [];
+  const deepest = p.deepest_line_ft || [];
   const n = Math.min(line.length, stationM.length, bearing.length, width.length);
   if (n < 2) return [];
 
@@ -142,6 +180,8 @@ export function riverDriftRuns(centrelineFc, o = {}) {
       const reachEnd = reachStart + maxM;
       const coords = [];
       const depths = [];
+      const bearings = [];
+      const areas = [];
       let charted = 0, stations = 0;
       for (let i = 0; i < n; i++) {
         const sm = Number(stationM[i]);
@@ -149,7 +189,16 @@ export function riverDriftRuns(centrelineFc, o = {}) {
         const w = Number(width[i]);
         const offM = Number.isFinite(w) ? (lat.frac - 0.5) * w : 0;
         coords.push(offsetPoint(line[i][0], line[i][1], Number(bearing[i]) || 0, offM));
+        bearings.push(Number(bearing[i]));
         stations++;
+        // ONLY A SECTION WITH REAL DEPTH IN IT MAY DIVIDE A DISCHARGE. `deepest_line_ft` is the
+        // guard the builder left for exactly this, and a station that fails it is left out of the
+        // area rather than dragged into an average where it inflates the velocity.
+        const a = Number(areaM2[i]);
+        const dl = Number(deepest[i]);
+        if (Number.isFinite(a) && a > 0 && Number.isFinite(dl) && dl >= REAL_SECTION_FT) {
+          areas.push(a);
+        }
         // A NULL HERE IS AN UNCHARTED STATION, NOT SHALLOW WATER. On the Congaree 105 of 2,537
         // stations have no charted depth at all and 877 more have nothing deeper than 2 ft on a
         // river that is 76% charted. Storing a 1 for those would be the `0 ft relief` defect --
@@ -194,6 +243,56 @@ export function riverDriftRuns(centrelineFc, o = {}) {
         props.mean_depth_ft = Number((depths.reduce((a, b) => a + b, 0) / depths.length).toFixed(1));
         props.shallowest_ft = Math.min(...depths);
         props.deepest_ft = Math.max(...depths);
+      }
+
+      // ── WHICH WAY THE WATER IS GOING, AND HOW FAST ────────────────────────────────────────────
+      //
+      // The bearing is free -- 3DHP's `flowdirection` means vertex order is downstream, so the
+      // builder's per-station bearing already points the way the water goes. Until now not one line
+      // of js/ or Worker/ carried a flow direction at all; `upstream` and `downstream` appear 164
+      // times and every one is a dam chain, a gauge chain or prose.
+      //
+      // AND THE REASON TRAVELS WITH THE ABSENCE. `current_basis` is always set, because "we asked
+      // and the chart cannot answer" and "nobody asked" are different claims and a null with no
+      // reason beside it is the hole a model fills from its own recall.
+      const meanBearing = meanBearingDeg(bearings);
+      if (meanBearing != null) props.flow_deg = Number(meanBearing.toFixed(1));
+      const cfs = Number(o.flowCfs);
+      if (o.tidal) {
+        // Eleven of the 57 carry a NOAA tide station and their current REVERSES. An instantaneous
+        // discharge is not the flow there, and Q/A does not describe it at all.
+        props.current_basis = 'tidal — the current reverses here, so Q/A does not describe it';
+      } else if (!Number.isFinite(cfs)) {
+        props.current_basis = 'no discharge reading for this water';
+      } else if (!areas.length) {
+        props.current_basis = `no station on this reach has ${REAL_SECTION_FT} ft or more of charted `
+                            + 'section, so there is nothing honest to divide the discharge by';
+      } else {
+        // PER STATION, THEN THE MEDIAN — not the discharge over a mean section.
+        //
+        // The two are not the same and the difference is not academic. Measured on the Congaree, a
+        // reach can carry 2 supported stations out of 161, and an area averaged from two sections is
+        // one number wearing a reach's clothes. The median of the per-station velocities is also the
+        // statistic FOUR_THINGS_A_RIVER_DAY_HAS_TO_TELL_HIM measured this river with, so computing it
+        // the same way means this wiring can be CHECKED against that measurement instead of merely
+        // believed — and it reproduces it exactly: p10 0.60, p50 0.96, p90 2.17 mph at 3,000 cfs.
+        const v = areas.map((a) => (cfs * CFS_TO_CMS / a) * MS_TO_MPH).sort((x, y) => x - y);
+        const mid = v.length % 2
+          ? v[(v.length - 1) / 2]
+          : (v[v.length / 2 - 1] + v[v.length / 2]) / 2;
+        props.current_mph = Number(mid.toFixed(2));
+        props.current_deg = props.flow_deg ?? null;
+        props.current_area_m2 = Number((areas.reduce((a, b) => a + b, 0) / areas.length).toFixed(1));
+        // HOW MUCH OF THE REACH IS BEHIND THAT NUMBER, as a field and not only as prose. A velocity
+        // from 2 of 161 stations and one from 150 of 161 deserve different amounts of trust, and NO
+        // THRESHOLD IS INVENTED HERE — whoever consumes it picks, which is the same rule the bend
+        // radius follows. What is not acceptable is offering the number with the support invisible.
+        props.current_stations = areas.length;
+        props.current_frac = Number((areas.length / Math.max(1, stations)).toFixed(3));
+        props.current_basis = `Q/A — median of ${areas.length} station velocities at `
+                            + `${Math.round(cfs).toLocaleString()} ft3/s, ${areas.length} of `
+                            + `${stations} stations carrying ${REAL_SECTION_FT} ft or more of `
+                            + 'charted section';
       }
       out.push({ type: 'Feature',
                  geometry: { type: 'LineString', coordinates: coords },

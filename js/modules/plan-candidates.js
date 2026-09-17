@@ -1448,6 +1448,25 @@ export function selectCandidates(runs, o) {
       // is what lets a plan say "quarter-left, downstream past three holes" instead of naming a
       // contour depth that does not exist on moving water.
       drift: p.drift || null,
+      // THE CURRENT ON THIS LINE, AND THE REASON WHERE THERE IS NONE.
+      //
+      // `ampHoursBand()` in plan-water.js has modelled a current since it was written -- resolves it
+      // against the course, charges the head component, deliberately does not floor a following
+      // current at zero -- and no caller has ever supplied one. `currentMph` occurred nowhere else
+      // in js/ or Worker/. This is the supply, and it comes from Q/A off the centreline's charted
+      // cross-section against the live discharge; see river-drifts.js for the 2 ft guard on it.
+      //
+      // `currentBasis` is never null, because a null with no reason beside it is the hole a model
+      // fills from its own recall -- tidal, no gauge and no charted section are three different
+      // answers and all three are useful.
+      currentMph: p.current_mph ?? null,
+      currentDeg: p.current_deg ?? null,
+      currentBasis: p.current_basis || null,
+      // WHAT FRACTION OF THE REACH THE VELOCITY IS MEASURED FROM. On the Congaree that runs from 2
+      // stations in 161 to most of them, so the number and its support travel together and nothing
+      // here picks a cutoff -- see the note in river-drifts.js.
+      currentFrac: p.current_frac ?? null,
+      flowDeg: p.flow_deg ?? null,
     });
   }
 
@@ -1855,6 +1874,21 @@ export function forModel(c, cap = MODEL_STRUCTURE_CAP) {
     transitToRampM: c.transitOutM,
     batteryAh: c.batteryAh,
     estMin: c.estMin,
+    // WHICH WAY THE WATER IS GOING AND HOW FAST, or why that is not known.
+    //
+    // Ryan on how a river day is actually run: "i go up stream against the current for at least half
+    // the day but keeping an eye on battery usage... then i come back down... speed on the way back
+    // is much easier and usage will be close to 0 if there is river current." The order of a river
+    // day is decided by this, and the model owns the order -- so the model is the thing that has to
+    // see it. Until now nothing in the app carried a flow direction at all.
+    //
+    // `currentBasis` goes too, unconditionally. "Tidal, so Q/A does not describe it" and "no gauge
+    // on this water" are different days, and a bare absent field reads as neither.
+    currentMph: c.currentMph ?? undefined,
+    currentDeg: c.currentDeg ?? undefined,
+    currentBasis: c.currentBasis || undefined,
+    currentFrac: c.currentFrac ?? undefined,
+    drift: c.drift ? { side: c.drift.side, label: c.drift.label } : undefined,
     passes: counts,
     structures: shown,
     structuresShown: shown.length,
