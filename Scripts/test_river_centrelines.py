@@ -137,19 +137,45 @@ class BendSide(unittest.TestCase):
 
 
 class Chaining(unittest.TestCase):
-    def test_longest_chain_wins_and_keeps_flow_order(self):
+    def test_longest_chain_wins_when_there_is_no_chart_to_ask(self):
         a = [(0.0, 0.0), (0.0, 100.0)]
         b = [(0.0, 100.0), (0.0, 400.0)]
         stub = [(900.0, 900.0), (900.0, 950.0)]
-        chain, length = B.chain_mainstem([b, stub, a])
+        chain, length, basis = B.chain_mainstem([b, stub, a])
         self.assertEqual(chain[0], (0.0, 0.0))
         self.assertEqual(chain[-1], (0.0, 400.0))
         self.assertAlmostEqual(length, 400.0, places=6)
+        self.assertEqual(basis, 'length')
 
     def test_a_single_reach_still_chains(self):
-        chain, length = B.chain_mainstem([[(0.0, 0.0), (0.0, 50.0)]])
+        chain, length, basis = B.chain_mainstem([[(0.0, 0.0), (0.0, 50.0)]])
         self.assertEqual(len(chain), 2)
         self.assertAlmostEqual(length, 50.0, places=6)
+        self.assertEqual(basis, 'length')
+
+    # THE CASE THAT WAS BUILDING A CENTRELINE THROUGH UNCHARTED WATER.
+    #
+    # south_yadkin_river, measured 2026-09-17: the picked mainstem broke into two runs, 71.3 km with
+    # nothing charted on it and 24.8 km with 20.5 km charted. Length won, and the pack's centreline
+    # stopped 1,141 m short of the pack's own chart. Same shape here, shrunk.
+    def test_the_charted_chain_beats_the_longer_one(self):
+        far_a = [(0.0, 0.0), (0.0, 400.0)]          # long, and nothing is charted on it
+        far_b = [(0.0, 400.0), (0.0, 900.0)]
+        near  = [(5000.0, 0.0), (5000.0, 300.0)]    # shorter, and it is the charted water
+        charted = lambda a, b: (math.dist(a, b) if a[0] > 1000.0 else 0.0)
+        chain, length, basis = B.chain_mainstem([far_a, far_b, near], charted)
+        self.assertEqual(chain[0], (5000.0, 0.0))
+        self.assertAlmostEqual(length, 300.0, places=6)
+        self.assertEqual(basis, 'charted')
+
+    # AND THE FALLBACK IS NOT AN ARBITRARY PICK AMONG ZEROES. chauga_river has 4.7% of its stations
+    # charted and rivers Garmin never sounded have none at all; those keep the old rule.
+    def test_no_charted_metres_anywhere_falls_back_to_length(self):
+        a = [(0.0, 0.0), (0.0, 400.0)]
+        b = [(5000.0, 0.0), (5000.0, 300.0)]
+        chain, length, basis = B.chain_mainstem([a, b], lambda p, q: 0.0)
+        self.assertAlmostEqual(length, 400.0, places=6)
+        self.assertEqual(basis, 'length')
 
 
 class Resample(unittest.TestCase):

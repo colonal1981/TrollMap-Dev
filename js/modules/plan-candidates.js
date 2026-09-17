@@ -2398,6 +2398,159 @@ const ALWAYS_SHOW = new Set(['hazard', 'obstruction', 'pile', 'shallow', 'bridge
 // waiting to be wrong, and this file is not the place to record what the pipeline might do later.
 
 /** Trim a candidate to what the model needs to choose. Geometry stays server-side. */
+/**
+ * ── THE APP DRAWS THE RIVER DAY. THERE IS NOTHING ABOUT THE WATER TO CHOOSE ─────────────────────
+ *
+ * Ryan, 2026-09-17, after the second Congaree bench: *"is there anything to actually choose on a
+ * river... are there multiple paths that can be picked... or should it just be that the app figures
+ * out where i should turn around and draws a route that goes up one side and back down the other?"*
+ *
+ * MEASURED FROM HIS OWN RAMP BEFORE IT WAS BUILT. Barney Jordan sits at km 123.8 of a 126.8 km
+ * centreline, so there is 123.8 km of river upstream and 3.0 km down. The downstream structure count
+ * stops rising after 4 km because the river ENDS. There is no direction to pick, no lane to pick
+ * (see lateralsFor), no order to pick, and the distance is whatever the battery and the clock allow.
+ * Four questions, four arithmetic answers.
+ *
+ * AND THE MODEL HAD BEEN GETTING THEM WRONG. Three water decisions across two benches: 191 minutes
+ * over the window, then 149 under it, then an 18.30 Ah pass chosen over a 12.13 Ah one that covered
+ * twice the water. Its bait choices in the same two runs were not obviously wrong. So this is not a
+ * demotion, it is putting each half of the plan where the evidence says it belongs.
+ *
+ * ── THERE IS NO TRANSIT ON A RIVER DAY, AND THAT IS A RESULT, NOT AN ASSUMPTION ────────────────
+ *
+ * Motoring past water to reach better water is never worth it on this boat. Upstream against the
+ * Congaree's measured current, trolling a mile costs 4.63 Ah and motoring it costs 5.57 -- 1.2x --
+ * and skipping the mile saves about 13 minutes, which at trolling speed buys back 0.43 of a mile.
+ * You pay more amp-hours, fish nothing for a mile, and get less than half a mile back. So the day
+ * fishes every metre it covers, and the only number left is how far out to turn.
+ *
+ * THE COST IS RECOMPUTED HERE AND NOT READ OFF THE CANDIDATE. `estMinFishedBack` on the 2026-09-17
+ * bench said 468 minutes for a reach the assembler then built as 149 + 149, and `transitFromRampM`
+ * reached the model as null on both candidates while the prompt told it to add them up. Those are
+ * per-leg numbers built for a menu; a chain is not a menu, and its cost is the sum of the fishing.
+ *
+ * @param {object[]} gated  candidates that already passed depth, structure and the day gates
+ * @param {object} o        {usableAh, windowMin, trollMph}
+ * @returns {object[]} the day's legs in travel order, with `.day` describing how it was chosen
+ */
+export function riverDay(gated, o = {}) {
+  const trollMph = o.trollMph ?? 2.0;
+  const usableAh = Number(o.usableAh) > 0 ? Number(o.usableAh) : Infinity;
+  const windowMin = Number(o.windowMin) > 0 ? Number(o.windowMin) : Infinity;
+
+  // Nearest the launch first, on each side of it. A candidate with no `fromRamp` is not part of a
+  // river day -- it is a lake lane, and this function has nothing to say about one.
+  const armOf = (dir) => gated
+    .filter((c) => c.fromRamp && c.fromRamp.direction === dir)
+    .sort((a, b) => a.fromRamp.m - b.fromRamp.m);
+
+  // OUT AND BACK OVER THE SAME WATER IS THE DAY, so every reach is costed twice: once up, once
+  // down. On a river those two are not the same price, which is why both are carried. Where the
+  // pack could not measure a current the two collapse to one number and this still holds.
+  const costOf = (c) => {
+    const up = Number(c.batteryAhUpstream);
+    const down = Number(c.batteryAhDownstream);
+    const ah = Number.isFinite(up) && Number.isFinite(down)
+      ? up + down
+      : (Number(c.batteryAh) || 0) * 2;
+    return { ah, min: minutesFor(2 * c.lengthM, trollMph) };
+  };
+
+  // How much fishable water each way is worth, so the richer bank of the launch goes first. This is
+  // the ONE place direction is chosen, and it is chosen on the structure the pack actually holds
+  // rather than on which way the river is longer.
+  const worth = (arm) => arm.reduce((t, c) => t + (Number(c.score) || 0), 0);
+
+  const arms = [armOf('upstream'), armOf('downstream')];
+  // UPSTREAM FIRST WHEN THEY TIE, because that is how he fishes it -- against the current while the
+  // battery is full, home on the push -- and because the dearer direction belongs at the full end.
+  arms.sort((a, b) => worth(b) - worth(a));
+
+  // ── THE LAST REACH IS CUT TO FIT, AND THAT IS MOST OF THE DAY ─────────────────────────────────
+  //
+  // A reach is up to `maxM` -- 8 km -- and out and back over 8 km is 9.94 miles, which at 2 mph is
+  // 298 MINUTES. More than half a nine-hour day in one indivisible lump. Taking only whole reaches
+  // would have handed him 298 of 540 minutes and called the other 242 unspendable, which is the
+  // same under-filled day the model produced and the thing this function exists to fix. So the reach
+  // that does not fit whole is TRIMMED to whatever the budget has left.
+  //
+  // The turnaround is therefore a distance and not a reach boundary, which is what it always was --
+  // reaches are how the path gets cut into legs, not what decides how far the boat goes.
+  const trimTo = (c, frac) => {
+    const lengthM = c.lengthM * frac;
+    const cum = cumulative(c.coordinates || []);
+    const coords = (c.coordinates && cum.length)
+      ? sliceLine(c.coordinates, cum, 0, lengthM) : c.coordinates;
+    const scale = (v) => (Number.isFinite(Number(v)) ? Number((Number(v) * frac).toFixed(2)) : v);
+    return {
+      ...c,
+      lengthM: Math.round(lengthM),
+      coordinates: coords,
+      end: coords && coords.length ? coords[coords.length - 1] : c.end,
+      batteryAh: scale(c.batteryAh),
+      batteryAhUpstream: scale(c.batteryAhUpstream),
+      batteryAhDownstream: scale(c.batteryAhDownstream),
+      // SAID ON THE LEG, because a trimmed reach is not the reach the pack holds and anything that
+      // compares the two -- a saved plan, a re-plan, the card -- must be able to tell.
+      trimmedFrom: c.lengthM,
+      // The structure past the cut is not on this leg any more. `passes` is what the prompt and the
+      // assembler read, so it is the one that has to be told.
+      passes: (c.passes || []).filter((h) => h.atM <= lengthM),
+    };
+  };
+
+  const legs = [];
+  let ah = 0, min = 0, fishedM = 0;
+  let binding = 'the river ran out';
+  let full = true;
+  for (const arm of arms) {
+    if (!full) break;
+    for (const c of arm) {
+      const k = costOf(c);
+      const ahRoom = usableAh - ah;
+      const minRoom = windowMin - min;
+      if (k.ah <= ahRoom && k.min <= minRoom) {
+        ah += k.ah; min += k.min; fishedM += 2 * c.lengthM;
+        legs.push({ ...c, trollPasses: 2 });
+        continue;
+      }
+      // What fraction of this reach the budget still affords, on whichever of the two runs out
+      // first. Below a tenth there is no leg worth drawing and the day simply ends here.
+      const frac = Math.max(0, Math.min(k.ah > 0 ? ahRoom / k.ah : 1,
+                                        k.min > 0 ? minRoom / k.min : 1));
+      binding = (k.ah > 0 && ahRoom / k.ah < (k.min > 0 ? minRoom / k.min : 1)) ? 'battery' : 'clock';
+      if (frac >= 0.1) {
+        const t = trimTo(c, frac);
+        const tk = costOf(t);
+        ah += tk.ah; min += tk.min; fishedM += 2 * t.lengthM;
+        legs.push({ ...t, trollPasses: 2 });
+      }
+      full = false;
+      break;
+    }
+  }
+  const turnaroundM = legs.length
+    ? Math.max(...legs.map((c) => c.fromRamp.m + c.lengthM))
+    : 0;
+  legs.day = {
+    turnaroundM: Math.round(turnaroundM),
+    fishedM: Math.round(fishedM),
+    plannedAh: Number(ah.toFixed(2)),
+    plannedMin: Math.round(min),
+    // WHAT STOPPED IT GOING FURTHER, in the same vocabulary turnaroundMiles() uses. "The river ran
+    // out" is a third answer and it is the Congaree's downstream one -- 3.0 km and then nothing.
+    binding,
+    unspentMin: Number.isFinite(windowMin) ? Math.round(windowMin - min) : null,
+    unspentAh: Number.isFinite(usableAh) ? Number((usableAh - ah).toFixed(2)) : null,
+    // Both arms, so a plan can say what it did NOT take and why.
+    offered: arms.map((arm, i) => ({
+      direction: arm.length ? arm[0].fromRamp.direction : null,
+      reaches: arm.length, worth: Number(worth(arm).toFixed(1)), takenFirst: i === 0,
+    })).filter((x) => x.direction),
+  };
+  return legs;
+}
+
 export function forModel(c, cap = MODEL_STRUCTURE_CAP) {
   const counts = {};
   for (const h of c.passes) counts[h.type] = (counts[h.type] || 0) + 1;

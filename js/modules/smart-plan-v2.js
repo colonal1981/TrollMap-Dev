@@ -19,7 +19,7 @@
 
 import { selectCandidates, structureIndex, forModel, orientLegs, poiSpotFeatures,
          attractorSpotFeatures, chartedGrid, chartedHazards,
-         turnaroundMiles } from './plan-candidates.js';
+         turnaroundMiles, riverDay } from './plan-candidates.js';
 import { buildPlanRequest, parsePlanResponse, planArgsFrom } from './plan-prompt.js';
 // A RIVER LEG IS A DRIFT, NOT A LANE. See river-drifts.js for what that means, what it measures
 // and why the trolling runs are the wrong object on moving water.
@@ -215,7 +215,7 @@ export async function buildSmartPlanV2(o) {
                                   currentMph: driftCurrent.medianMph }),
   } : null;
 
-  const candidates = selectCandidates(legRuns, {
+  let candidates = selectCandidates(legRuns, {
     ramp: o.ramp, slug: o.r2Key, fishDepthFt: o.fishDepthFt, holding: o.holding,
     usableAh: o.usableAh, windowMin: o.windowMin, maxOffM, maxM: legMaxM,
     structures, catches: o.catches, catchSpecies: o.species, month: o.month,
@@ -242,6 +242,24 @@ export async function buildSmartPlanV2(o) {
     // is how the two planners start disagreeing about one day.
     windByHour: o.windByHour,
   });
+  // ── ON A RIVER THE APP DRAWS THE DAY; THE LIST WAS NEVER A CHOICE ─────────────────────────────
+  //
+  // selectCandidates has done the work that still matters on moving water -- the depth rule, the
+  // structure join, the per-reach current, and the battery and window gates -- and then RANKED what
+  // survived, because on a lake the model picks between pieces of water. On a river there are no
+  // pieces: it is one path through the launch and the only open number is how far out to turn.
+  // riverDay() walks outward from the ramp and stops where the budget stops. See its note for the
+  // measurement that settled it, and for why there is no transit in a river day.
+  //
+  // THE RANKING IS NOT WASTED. `score` is what riverDay() weighs the two banks of the ramp by, so
+  // the richer side of the launch is fished first.
+  const day = isRiver ? riverDay(candidates, {
+    usableAh: o.usableAh, windowMin: o.windowMin, trollMph: o.trollMph ?? 2.0,
+  }) : null;
+  if (day) {
+    day.selection = candidates.selection;
+    candidates = day;
+  }
   if (!candidates.length) {
     // SAY WHICH TEST EMPTIED IT. selectCandidates now reports the rule it applied and how many
     // runs each stage rejected, so "the band is wrong" and "this fish does not live on this lake"

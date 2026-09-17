@@ -257,16 +257,43 @@ def first_point(geom):
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────
-def chain_mainstem(segments):
-    """Longest downstream-ordered chain through `segments`, which are already in flow order."""
+def chain_mainstem(segments, charted_m=None):
+    """The chain through `segments` that carries the most CHARTED water, falling back to the
+    longest. `segments` are already in flow order.
+
+    ── THE MAINSTEM PICK WAS TAUGHT TO COUNT CHARTED METRES AND THIS WAS NOT ─────────────────────
+
+    `8bdc635` fixed the pick one level up: choose the mainstem the CHART is on, not the longest one
+    inside the boundary. It left this function scoring by length, and a mainstem does not arrive in
+    one piece -- 3DHP breaks it wherever the reach ids change, so one `mainstemid` inside a boundary
+    can yield several disconnected runs and this picks between them.
+
+    MEASURED ON `south_yadkin_river`, 2026-09-17, which was the last river planning to nothing:
+
+        the picked mainstem      93,197 m inside the boundary, 20,268 m of it charted
+        its chains               2 heads
+          chain A                71.3 km long,  0.0 km charted   <- what this function returned
+          chain B                24.8 km long, 20.5 km charted   <- the water the pack is FOR
+
+    So the right mainstem was chosen and then the wrong 71 km of it was kept, and the centreline
+    stopped 1,141 m short of the pack's own chart. Ryan found it by disagreeing with the reason this
+    file previously recorded -- "its chart overlaps 69% of the yadkin_river pack" -- which turned out
+    to be a BOUNDING BOX. The two packs share 59 boundary lines and ZERO area: they abut at the
+    confluence and tile the river, exactly as he said.
+
+    `charted_m(a, b)` is the caller's metre-counter for one segment, or None where there is no chart
+    to ask -- `--no-depth`, a pack with no depth areas, a river Garmin never sounded. Absent, and
+    when no chain carries a charted metre, length is still the answer rather than an arbitrary pick
+    among zeroes. Same rule and same fallback as the mainstem pick above, which is the point: the
+    two decisions are the same question asked twice and they now answer it the same way.
+    """
     key = lambda p: (round(p[0], 1), round(p[1], 1))
     starts = collections.defaultdict(list)
     for s in segments:
         starts[key(s[0])].append(s)
     ends = {key(s[-1]) for s in segments}
     heads = [s for s in segments if key(s[0]) not in ends] or segments[:1]
-    best = []
-    best_len = -1.0
+    chains = []
     for h in heads:
         chain, cur, seen = [], h, set()
         while cur is not None and id(cur) not in seen:
@@ -275,9 +302,17 @@ def chain_mainstem(segments):
             nxt = [x for x in starts.get(key(cur[-1]), []) if id(x) not in seen]
             cur = nxt[0] if nxt else None
         length = sum(math.dist(chain[i], chain[i + 1]) for i in range(len(chain) - 1))
-        if length > best_len:
-            best, best_len = chain, length
-    return best, best_len
+        charted = 0.0
+        if charted_m is not None:
+            charted = sum(charted_m(chain[i], chain[i + 1]) for i in range(len(chain) - 1))
+        chains.append((chain, length, charted))
+    if not chains:
+        return [], -1.0, 'length'
+    best_charted = max(chains, key=lambda c: c[2])
+    if best_charted[2] > 0:
+        return best_charted[0], best_charted[1], 'charted'
+    best_len = max(chains, key=lambda c: c[1])
+    return best_len[0], best_len[1], 'length'
 
 
 def resample(line, step):
@@ -663,7 +698,20 @@ def build_one(row, a, db, stamp):
     rep['mainstem_longest_id'] = longest_id
     rep['mainstem_changed'] = bool(main_id != longest_id)
 
-    chain, chain_m = chain_mainstem(by_main[main_id])
+    # THE SAME DEPTH INDEX THE PICK ABOVE USED, HANDED DOWN RATHER THAN REBUILT. A segment counts
+    # its whole length when its midpoint is in charted water -- the same per-segment heuristic, for
+    # the same reason: this chooses between runs tens of kilometres apart, it does not reach a plan.
+    def _charted_m(a, b):
+        mx, my = (a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0
+        if not mask.inside(mx, my):
+            return 0.0
+        return math.dist(a, b) if depth.at(mx, my) is not None else 0.0
+
+    chain, chain_m, chain_basis = chain_mainstem(by_main[main_id],
+                                                _charted_m if depth.polygons else None)
+    rep['chain_basis'] = chain_basis
+    rep['chain_charted_m'] = round(
+        sum(_charted_m(chain[i], chain[i + 1]) for i in range(len(chain) - 1)), 1)
     if chain_m < a.min_chain_m:
         rep['skipped'] = 'chain %.0f m is under --min-chain-m' % chain_m
         return rep, {}
