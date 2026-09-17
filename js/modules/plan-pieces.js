@@ -200,6 +200,49 @@ export function waterBand(props, fromM, toM) {
   return l && s ? { line: l, side: s } : null;
 }
 
+// THE RADIUS BOTH THE RELIEF WORD AND THE DROP ARE MEASURED OVER. COPIED FROM THE PRODUCER, NOT
+// CHOSEN HERE. `build_water_features.py --relief-m` and `fit_trolling_runs.py --relief-m` both
+// default to 250, and every pack on the card was built on that default. The pack ships the ANSWER
+// -- `relief` and `deepest_within_m` -- and not the radius, so the app cannot read it back off the
+// chart; a number the app states ABOUT the chart has to be pinned to the thing that made it
+// instead. The test reads both Python files and goes red the day either default moves, or the day
+// the two stop agreeing. Same arrangement as POI_KINDS in plan-candidates.js, for the same reason.
+//
+// IT LIVES IN THIS FILE, not in plan-candidates.js, because both planners read the same probe and
+// plan-candidates.js already imports waterBand() from here. Putting it the other way round would
+// close a cycle between the two.
+export const RELIEF_RADIUS_M = 250;
+
+/**
+ * THE WATER BESIDE A RUN, from the pack's own relief probe.
+ *
+ * `relief` is the word `build_water_features.py` classified this run's surroundings as; these two
+ * numbers are the measurement it classified. `deepest_within_m` IS FEET -- the `_m` is the radius
+ * the probe searched, not the unit of the answer; see the long note above resolveStructure() in
+ * plan-candidates.js for how that name cost the app the field for a month.
+ *
+ * The word alone is not enough anyway: `channel_edge` covers a 15 ft drop and a 251 ft one, and
+ * both score the same 12.
+ *
+ * NULL WHEN THE DROP IS NEGATIVE, and that is not a threshold anybody picked. `depth_ft` is the
+ * contour's own value and `deepest_within_m` comes off the depth-area raster; where the two
+ * disagree the difference is the disagreement, not a drop. Measured across the card: 0.60% of
+ * runs, and all 14,398 of them are `flat`, where the word already says there is nothing beside the
+ * line worth naming a number for.
+ *
+ * @param {object} p  a trolling run's properties
+ * @returns {{deepestFt:number, dropFt:number}|null}
+ */
+export function reliefDropOf(p) {
+  const deepestFt = Number(p && p.deepest_within_m);
+  const ownFt = Number(p && p.depth_ft);
+  if (!Number.isFinite(deepestFt) || deepestFt <= 0) return null;
+  if (!Number.isFinite(ownFt) || ownFt <= 0) return null;
+  const dropFt = deepestFt - ownFt;
+  if (dropFt < 0) return null;
+  return { deepestFt: Number(deepestFt.toFixed(1)), dropFt: Number(dropFt.toFixed(1)) };
+}
+
 /**
  * Min, median and max of one profile, in the units the pack stamped: whole feet.
  *
@@ -468,6 +511,11 @@ export function joinedPiece(pieces, join) {
     // both halves, so the weaker one wins.
     chartedFrac: Math.min(a.chartedFrac ?? 1, b.chartedFrac ?? 1),
     relief: a.relief && a.relief === b.relief ? a.relief : null,
+    // THE SMALLER DROP, on the same rule as `chartedFrac` and `duplicates` above: a claim about
+    // the whole run has to hold for both halves. A 40 ft drop joined to a 5 ft one is not a 40 ft
+    // drop, and reasons() only says it at all when `relief` survived the line above anyway.
+    deepestNearbyFt: minOrNull(a.deepestNearbyFt, b.deepestNearbyFt),
+    reliefDropFt: minOrNull(a.reliefDropFt, b.reliefDropFt),
     near: [...(a.near || []), ...(b.near || [])],
     duplicates: Math.min(a.duplicates || 1, b.duplicates || 1),
     coords,
@@ -475,6 +523,12 @@ export function joinedPiece(pieces, join) {
     // The nearest point of the union is the nearer of the two, and the gap lies between them.
     rampM: mergeRampM(a.rampM, b.rampM),
   };
+}
+
+/** The weaker of two numbers, where a missing one means there is no claim to make at all. */
+function minOrNull(x, y) {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return Math.min(x, y);
 }
 
 /** waterBand()'s answer, from profiles already in hand rather than from a pass's properties. */
@@ -812,6 +866,7 @@ export function buildPieces(lanes, o) {
       if (best.lengthM < minM) continue;   // what is left is not a pass by his own measure
     }
     const coords = stretchCoords(f.geometry.coordinates, step, best.from, best.to);
+    const drop = reliefDropOf(p);
     entries.push({
       runId: p.id || null,
       // THE PROFILE TRAVELS WITH THE PIECE, and until 2026-08-11 it did not.
@@ -857,6 +912,11 @@ export function buildPieces(lanes, o) {
       water: waterBand(p, best.from * step, best.to * step),
       chartedFrac: p.charted_frac ?? null,
       relief: p.relief ?? null,
+      // WHAT IS BESIDE THE LINE, which is what `relief` above is the WORD for. Both come off one
+      // probe of the whole pass, so both belong to the piece the same way `chartedFrac` does: a
+      // property of the lane this stretch was cut from, not of the stretch. reasons() says it.
+      deepestNearbyFt: drop ? drop.deepestFt : null,
+      reliefDropFt: drop ? drop.dropFt : null,
       near: p.near || [],
       holdsFt: best.depthFt,
       lengthM: best.lengthM,
@@ -887,6 +947,8 @@ export function buildPieces(lanes, o) {
       water: win.water,
       chartedFrac: win.chartedFrac,
       relief: win.relief,
+      deepestNearbyFt: win.deepestNearbyFt,
+      reliefDropFt: win.reliefDropFt,
       near: win.near,
       envelope: win.envelope,
       envelopeDeep: win.envelopeDeep,

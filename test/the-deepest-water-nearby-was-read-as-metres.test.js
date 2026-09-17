@@ -26,6 +26,8 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { reliefDropOf, RELIEF_RADIUS_M, forModel } from '../js/modules/plan-candidates.js';
 import { buildPlanRequest } from '../js/modules/plan-prompt.js';
+import { reasons } from '../js/modules/plan-water.js';
+import { joinedPiece } from '../js/modules/plan-pieces.js';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FEATURES_PY = readFileSync(path.join(REPO, 'Scripts/build_water_features.py'), 'utf8');
@@ -135,5 +137,67 @@ describe('what reaches the model', () => {
     assert.ok(/Never set a bait to/.test(user) && /deepestNearbyFt/.test(user),
       'the prompt no longer forbids fishing the nearby deep water, which is the one way this '
       + 'field can still put a bait in the wrong place');
+  });
+});
+
+describe('and the card Ryan reads, which is the other planner', () => {
+  const piece = { lengthM: 2200, holdsFt: 18, duplicates: 1, chartedFrac: 1,
+                  envelope: [18, 18], envelopeDeep: [19, 19], near: [], relief: 'channel_edge' };
+
+  test('the relief line carries the size of the thing it names', () => {
+    const r = reasons({ ...piece, deepestNearbyFt: 64, reliefDropFt: 36 },
+                      { minM: 600, partners: [] });
+    const line = r.for.find((s) => /channel edge/.test(s));
+    assert.ok(line, 'the relief sentence is gone');
+    assert.match(line, /64 ft of water within 250 m of this line/);
+    assert.match(line, /36 ft below it/);
+    // The same caveat `maxRunDepthFt` carries, for the same reason: a circle is not a position.
+    assert.match(line, /does not say where/);
+  });
+
+  test('a piece the probe never answered for still gets the word, and no number', () => {
+    const r = reasons(piece, { minM: 600, partners: [] });
+    const line = r.for.find((s) => /channel edge/.test(s));
+    assert.equal(line, 'sits on channel edge');
+  });
+
+  test('a flat says nothing about a drop it does not have', () => {
+    const r = reasons({ ...piece, relief: 'flat', deepestNearbyFt: null, reliefDropFt: null },
+                      { minM: 600, partners: [] });
+    assert.ok(r.for.some((s) => s === 'sits on flat'));
+  });
+
+  test('two joined halves make the weaker claim, the way chartedFrac does', () => {
+    const half = (relief, deepestNearbyFt, reliefDropFt) => ({
+      runId: 'wateree_lake#1', relief, deepestNearbyFt, reliefDropFt, chartedFrac: 1,
+      coords: [[-80.7, 34.38], [-80.69, 34.38]],
+      envelope: [20, 20], envelopeLine: [22, 22], envelopeDeep: [24, 24], envelopeM: 25,
+      near: [], duplicates: 1, rampM: {},
+    });
+    const a = half('channel_edge', 64, 40);
+    const b = { ...half('channel_edge', 30, 5), runId: 'wateree_lake#2' };
+    const join = { from: 0, to: 1, _step: 40, _sideA: 1, _sideB: 0, baitFt: 18, gapM: 60,
+                   turnDeg: 10, offers: [], lengthM: 2000,
+                   _gap: { coords: [[-80.689, 34.38]], shallow: [20], line: [22], deep: [24] } };
+    const j = joinedPiece([a, b], join);
+    assert.equal(j.reliefDropFt, 5, 'a 40 ft drop joined to a 5 ft one is not a 40 ft drop');
+    assert.equal(j.deepestNearbyFt, 30);
+  });
+
+  test('a join where one half never had an answer claims nothing', () => {
+    const base = {
+      runId: 'x', relief: 'channel_edge', chartedFrac: 1,
+      coords: [[-80.7, 34.38], [-80.69, 34.38]],
+      envelope: [20, 20], envelopeLine: [22, 22], envelopeDeep: [24, 24], envelopeM: 25,
+      near: [], duplicates: 1, rampM: {},
+    };
+    const j = joinedPiece(
+      [{ ...base, deepestNearbyFt: 64, reliefDropFt: 40 },
+       { ...base, runId: 'y', deepestNearbyFt: null, reliefDropFt: null }],
+      { from: 0, to: 1, _step: 40, _sideA: 1, _sideB: 0, baitFt: 18, gapM: 60, turnDeg: 10,
+        offers: [], lengthM: 2000,
+        _gap: { coords: [[-80.689, 34.38]], shallow: [20], line: [22], deep: [24] } });
+    assert.equal(j.reliefDropFt, null);
+    assert.equal(j.deepestNearbyFt, null);
   });
 });

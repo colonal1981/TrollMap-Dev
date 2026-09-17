@@ -24,10 +24,12 @@
  * like this isn't something a script can solve."
  */
 
-// ONE MEASUREMENT, BOTH PLANNERS. plan-pieces.js owns what the envelope profiles mean and how a
-// stretch of one is summarised; Smart Plan reads the same function rather than growing its own
-// answer to the same question. Nothing else crosses between the two files.
-import { waterBand } from './plan-pieces.js';
+// ONE MEASUREMENT, BOTH PLANNERS. plan-pieces.js owns what the pack's stamped profiles and probes
+// MEAN; Smart Plan reads the same two functions rather than growing its own answer to the same
+// question. `waterBand` summarises a stretch of envelope, `reliefDropOf` reads the relief probe.
+// Both cross in one direction only -- see the re-export below DEFAULT_RELIEF_WEIGHTS for why the
+// relief pair is defined over there and not here.
+import { waterBand, reliefDropOf } from './plan-pieces.js';
 
 // Fitted to Ryan's own two observations, 2026-08-07, because Newport publishes no curve:
 // trolling 1.8–2.2 mph draws 3–7 A; 100% throttle (~5 mph, no wind or current) draws 25 A.
@@ -1049,41 +1051,12 @@ export const DEFAULT_RELIEF_WEIGHTS = {
   steep_bank: 4,
 };
 
-// THE RADIUS BOTH THE WORD AND THE DROP ARE MEASURED OVER. COPIED FROM THE PRODUCER, NOT CHOSEN
-// HERE. `build_water_features.py --relief-m` and `fit_trolling_runs.py --relief-m` both default to
-// 250, and every pack on the card was built on that default. The pack ships the ANSWER -- `relief`
-// and `deepest_within_m` -- and not the radius, so the app cannot read it back off the chart; a
-// number the app states ABOUT the chart has to be pinned to the thing that made it instead. The
-// test reads both Python files and goes red the day either default moves. Same arrangement as
-// POI_KINDS above, and for the same reason.
-export const RELIEF_RADIUS_M = 250;
-
-/**
- * THE WATER BESIDE A RUN, from the pack's own relief probe.
- *
- * `relief` is the word `build_water_features.py` classified this run's surroundings as; these two
- * numbers are the measurement it classified. The word has been scored since 2026-08-08 and has
- * reached the model never, and the word alone is not enough anyway: `channel_edge` covers a 15 ft
- * drop and a 251 ft one, and they score the same 12.
- *
- * NULL WHEN THE DROP IS NEGATIVE, and that is not a threshold anybody picked. `depth_ft` is the
- * contour's own value and `deepest_within_m` comes off the depth-area raster; where the two
- * disagree the difference is the disagreement, not a drop. Measured across the card: 0.60% of
- * runs, and all 14,398 of them are `flat`, where the word already says there is nothing beside the
- * line worth naming a number for.
- *
- * @param {object} p  a trolling run's properties
- * @returns {{deepestFt:number, dropFt:number}|null}
- */
-export function reliefDropOf(p) {
-  const deepestFt = Number(p && p.deepest_within_m);
-  const ownFt = Number(p && p.depth_ft);
-  if (!Number.isFinite(deepestFt) || deepestFt <= 0) return null;
-  if (!Number.isFinite(ownFt) || ownFt <= 0) return null;
-  const dropFt = deepestFt - ownFt;
-  if (dropFt < 0) return null;
-  return { deepestFt: Number(deepestFt.toFixed(1)), dropFt: Number(dropFt.toFixed(1)) };
-}
+// THE SAME PROBE, READ ONCE, FOR BOTH PLANNERS. `relief` above is the word; reliefDropOf() is the
+// measurement it was classified from, and RELIEF_RADIUS_M is the circle both are measured over.
+// They live in plan-pieces.js because Pick Water reads them too and this file already imports
+// waterBand() from there -- defining them here and importing them there would close a cycle. Named
+// in this file's exports so a reader who found the weights above finds the rest of the probe.
+export { RELIEF_RADIUS_M, reliefDropOf } from './plan-pieces.js';
 
 /**
  * Score one window of a run by what it passes.

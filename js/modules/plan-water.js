@@ -48,7 +48,7 @@
  * that knows about `document`, and the fetch comes in as an argument.
  */
 
-import { buildPieces, joinsFor, followBar } from './plan-pieces.js';
+import { buildPieces, joinsFor, followBar, RELIEF_RADIUS_M } from './plan-pieces.js';
 import { ampHours, minutesFor, metresBetween,
          ampHoursBand, ampHoursAlong, headwindMph, bearingDeg, worstWind } from './plan-candidates.js';
 
@@ -439,7 +439,23 @@ export function reasons(piece, o) {
              + `a suggestion rather than something to hold`);
   }
 
-  if (piece.relief) forIt.push(`sits on ${String(piece.relief).replace(/_/g, ' ')}`);
+  // THE WORD, AND THE SIZE OF THE THING IT NAMES. This said "sits on channel edge" and stopped,
+  // which is the same sentence on a lane with 19 ft of water off its shoulder and one with 64 --
+  // and on the card that is the difference between a drop worth following and a shelf. The number
+  // was in the pack the whole time as `deepest_within_m`; see reliefDropOf() in plan-pieces.js for
+  // what it is, and why the name says metres and the value is feet.
+  //
+  // The drop is what the pipeline classified on, so it leads; the absolute depth follows it,
+  // because "36 ft below this line" is the fishing fact and "64 ft of water" is how deep the fish
+  // can actually be sitting. Silent where the probe had no answer, which is not a flat.
+  if (piece.relief) {
+    const word = String(piece.relief).replace(/_/g, ' ');
+    forIt.push(Number.isFinite(piece.reliefDropFt) && Number.isFinite(piece.deepestNearbyFt)
+      ? `sits on ${word} — ${Math.round(piece.deepestNearbyFt)} ft of water within `
+        + `${RELIEF_RADIUS_M} m of this line, ${Math.round(piece.reliefDropFt)} ft below it. The `
+        + `chart does not say where in that circle it is`
+      : `sits on ${word}`);
+  }
 
   // BEST TIME OF DAY, as far as the geometry honestly goes. Only said when the leg is close
   // enough to the bank for the answer to matter -- past a couple of hundred metres no plausible
