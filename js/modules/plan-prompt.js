@@ -1554,8 +1554,9 @@ RULES THAT ARE NOT NEGOTIABLE
    Anything invented is thrown away and the plan comes up short.
 2. NEVER write a latitude, a longitude, or a place name of your own. The app owns every position.
 3. ${o.isRiver ? `THE DAY IS ONE PATH AND ITS SHAPE IS ALREADY DECIDED: OUT FROM THE RAMP, TURN,
-   FISH BACK. Every leg above is a piece of that one path, laid end to end from where he launches,
-   which is why the hop between two neighbouring legs is a few metres and not a few miles. There is
+   FISH BACK. Every leg above is a piece of that one path, laid out from where he launches, so the
+   hop between two neighbouring legs is short — the app trims a leg back to where the structure
+   stops, and whatever quiet water it trimmed is what \`transitToM\` charges you to cross. There is
    nowhere else to go — this is a river, and the water is a line.
    \`fromRamp\` ON EACH LEG SAYS WHICH HALF OF THE DAY IT IS: \`{direction: 'upstream', m: 8000}\`
    is a reach whose near end is eight kilometres up from the launch. ORDER THE OUTWARD HALF
