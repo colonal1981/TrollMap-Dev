@@ -71,6 +71,26 @@ describe('build_river_centrelines.py — the cap gates every field that is about
       + 'does not act on it reads as a decision, and one that never names it reads as health');
   });
 
+  test('a pack with nothing on its own centreline is named in the run summary', () => {
+    // ONE TEST, off the pack's own numbers: the nearest feature in the whole pack is further out
+    // than three channel widths, so nothing the chart knows about is on the line. It names exactly
+    // three of 57 — 6001.6/45, 1798/150, 1461/75 — and the next river along is 27.9 against 105.
+    assert.match(CODE, /r\['nearest_feature_m'\] > r\['snap_cap_m'\]/,
+      'the dead-river test changed: it must compare the nearest feature against the pack’s own '
+      + 'cap, not a number chosen here');
+    assert.match(CODE, /WHOSE CHART IS NOT ON THIS CENTRELINE/,
+      'the run summary no longer names the packs whose chart and centreline are on different '
+      + 'water');
+    // The per-river line lives in the verbose branch. This one must not, or a --quiet run — which
+    // is how the 57-river rebuild is actually invoked — reports nothing but health.
+    const summary = CODE.slice(CODE.indexOf('river(s) built'));
+    assert.ok(summary.includes('WHOSE CHART IS NOT ON THIS CENTRELINE'),
+      'the summary moved above the totals, where --quiet may skip it');
+    assert.equal(/if a\.quiet/.test(summary), false,
+      'the dead-river summary is now behind a quiet check — a condition only a verbose run '
+      + 'mentions is a condition nobody sees');
+  });
+
   test('every stamped field is still cleared before a rebuild', () => {
     assert.match(CODE, /STAMP_FIELDS\s*=\s*\('river_m',\s*'off_m',\s*'flow_deg',\s*'bend_r_m',\s*'bend_side'\)/,
       'STAMP_FIELDS changed — a field left out of it survives a rebuild that meant to drop it, '

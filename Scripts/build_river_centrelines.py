@@ -920,6 +920,35 @@ def main():
         if o or i:
             print('   %-12s outside %6d   inside %6d   (%.0f%% outside)'
                   % (kind, o, i, 100.0 * o / max(1, o + i)))
+    # ── THE PACKS WHOSE CHART AND WHOSE CENTRELINE ARE ON DIFFERENT WATER ────────────────────────
+    #
+    # ONE TEST, AND IT IS THE PACK'S OWN NUMBERS: the nearest feature in the whole pack is further
+    # from the centreline than three channel widths. Not one thing the chart knows about is on the
+    # line this script just built, so no cap would have saved it and there is nothing here to plan.
+    #
+    # It names exactly three of 57 and nothing else is close. Measured 2026-09-17, nearest feature
+    # against cap: nolichucky_river_2 6001.6 / 45, pee_dee_river_2 1798 / 150, south_yadkin_river
+    # 1461 / 75 -- then a gap to broad_river_2 at 27.9 / 105 and uwharrie_river at 18.1 / 90, both
+    # of which are simply charted wider than one channel thread.
+    #
+    # PRINTED IN --quiet TOO, on purpose. The per-river OFF THIS RIVER line above is in the verbose
+    # branch, and a condition only a verbose run mentions is a condition nobody sees.
+    dead = [(slug, r) for slug, r in sorted(report['rivers'].items())
+            if isinstance(r, dict) and r.get('nearest_feature_m') is not None
+            and r.get('snap_cap_m') and r['nearest_feature_m'] > r['snap_cap_m']]
+    if dead:
+        print('\n   %d RIVER(S) WHOSE CHART IS NOT ON THIS CENTRELINE -- nothing in the pack is'
+              ' within three channel widths of the line, so there is no river day to plan here:'
+              % len(dead))
+        for slug, r in dead:
+            sec = r.get('section') or {}
+            print('     %-28s nearest feature %8.1f m vs a %s m cap; %s of %s stations charted'
+                  % (slug, r['nearest_feature_m'], r['snap_cap_m'],
+                     sec.get('stations_with_depth'), r.get('stations')))
+        print('     The centreline is the longest 3DHP mainstem inside the registry BOUNDARY, and')
+        print('     the boundary can hold more than one river. Compare the pack against its')
+        print('     neighbours before researching or planning one of these.')
+
     if a.dry_run:
         print('\n   DRY RUN -- no chartpack file, no centreline and no report was written.')
     else:
