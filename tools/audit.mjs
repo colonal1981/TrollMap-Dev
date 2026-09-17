@@ -39,7 +39,7 @@
  *
  * RUN
  *     node tools/audit.mjs                 # writes AUDIT.md + audit.json, prints a summary
- *     node tools/audit.mjs --check         # non-zero exit if new dead code appeared
+ *     node tools/audit.mjs --check         # READ ONLY. non-zero exit if new dead code appeared
  *     node tools/audit.mjs --what ramps    # what touches "ramps"? files, routes, feeds, keys
  */
 
@@ -471,15 +471,31 @@ if (missingImports.length) {
   P('');
 }
 
-fs.writeFileSync(path.join(ROOT, 'AUDIT.md'), md.join('\n'));
-fs.writeFileSync(path.join(ROOT, 'audit.json'), JSON.stringify(
-  { generatedFrom: 'tools/audit.mjs', summary, routes, modules, feeds: Object.fromEntries(
-      Object.entries(feeds).map(([k, v]) => [k, { ...v, files: [...v.files], side: [...v.side] }])),
-    r2ops, dataRefs, pyScripts, dupFns, globals, orphanModules, missingImports }, null, 2));
+// ── A CHECK THAT REWRITES TWO TRACKED FILES IS NOT A CHECK ───────────────────────────────────────
+//
+// These two writes were unconditional, so `npm run lint:audit` -- documented one screen up as
+// "non-zero exit if new dead code appeared", and part of `npm run lint` and therefore of
+// `npm run check` -- rewrote AUDIT.md and audit.json every time anyone ran the suite. The reports
+// were 242 files stale, so a run that was meant to verify nothing had rotted instead dropped a
+// 19,000-line diff into the working tree, ready to be swept into whatever commit came next.
+//
+// Caught on 2026-09-17 by running the lint before a commit and finding two files changed that the
+// commit had nothing to do with. Writing is what `node tools/audit.mjs` with no flags is for, and
+// it still does it; --check now reads and reports without touching the tree. (`--what` never got
+// this far: it prints its answer and exits(0) around line 330.)
+if (!CHECK) {
+  fs.writeFileSync(path.join(ROOT, 'AUDIT.md'), md.join('\n'));
+  fs.writeFileSync(path.join(ROOT, 'audit.json'), JSON.stringify(
+    { generatedFrom: 'tools/audit.mjs', summary, routes, modules, feeds: Object.fromEntries(
+        Object.entries(feeds).map(([k, v]) => [k, { ...v, files: [...v.files], side: [...v.side] }])),
+      r2ops, dataRefs, pyScripts, dupFns, globals, orphanModules, missingImports }, null, 2));
+}
 
 console.log('\n=== TrollMap audit ===');
 for (const [k, v] of Object.entries(summary)) console.log(`  ${String(v).padStart(5)}  ${k}`);
-console.log('\n  wrote AUDIT.md and audit.json');
+console.log(CHECK
+  ? '\n  read only — run `node tools/audit.mjs` with no flags to rewrite AUDIT.md and audit.json'
+  : '\n  wrote AUDIT.md and audit.json');
 if (missingImports.length) {
   console.log('\n  UNRESOLVED IMPORTS (these break a clean checkout):');
   for (const m of missingImports) console.log(`    ${m.file} -> ${m.spec}`);
