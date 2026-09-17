@@ -29,6 +29,9 @@ import { riverDriftRuns, driftCurrentSummary } from './river-drifts.js';
 import { packDerivedFacts } from '../utils/pack-facts.js';
 import { assemblePlan, validatePlan } from './plan-assemble.js';
 import { connectionFor, snapEligibleFrom } from '../data/lure-knowledge.js';
+// ONE SPELLING OF "IS THIS A RIVER", shared with the Water tab -- see saysRiver() for why it is not
+// a string compare in two files, and why it is not `waterState.river`.
+import { saysRiver } from './plan-inputs.js';
 
 // How many candidates the model is shown. Enough to make the ordering a real choice, few enough
 // that the prompt does not turn into a phone book. NOT a cap on what it may fish — it may use all
@@ -148,7 +151,10 @@ export async function buildSmartPlanV2(o) {
   // a centreline, because build_river_centrelines.py only writes one for a river. Either signal is
   // enough, and together they mean a river with a silent gauge still gets drifts while a lake can
   // never be mistaken for one.
-  const stateSaysRiver = ((o.waterState && o.waterState.featureType) || '') === 'river';
+  // saysRiver() rather than a string compare written out here, because the Water tab asks the same
+  // question of a registry row and two spellings of one question is how they would come to disagree
+  // about the same water. See its note in plan-inputs.js.
+  const stateSaysRiver = saysRiver(o.waterState);
   const packHasCentreline = !!(centrelineFc && Array.isArray(centrelineFc.features)
                                && centrelineFc.features.length);
   const isRiver = stateSaysRiver || packHasCentreline;

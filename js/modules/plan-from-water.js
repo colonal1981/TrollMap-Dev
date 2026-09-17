@@ -304,10 +304,15 @@ export async function planFromWater(o) {
     // ── AND THE ONE FIELD PICK WATER GENUINELY CANNOT FILL YET, NAMED RATHER THAN ABSENT ──────────
     //
     // `riverCurrent` carries the channel velocity and the battery turnaround to riverPromptBlock().
-    // Smart Plan builds it from the DRIFTS it lays out on the centreline; Pick Water plans from the
-    // pieces the person ticked, which on a river are still contour-shaped -- the same wrong object
-    // the Smart Plan path stopped using on 2026-09-17. So there is nothing here to derive it from,
-    // and the prompt block prints nothing when it is null, which is correct rather than merely safe.
+    // Smart Plan builds it from the DRIFTS it lays out on the centreline. Pick Water never will,
+    // and as of 2026-09-17 that is a DECISION rather than a gap: findWater() refuses a river before
+    // it offers a single piece. Ryan, on being shown that up one bank and back down the other beats
+    // every other river shape and that 43 of the 57 rivers are too narrow to have a side worth
+    // picking: "up one side and down the other is probably the right answer... so for rivers
+    // pickwater will just not be applicable that is more of a lake thing anyways."
+    //
+    // So this stays null permanently, and the prompt block prints nothing when it is null, which is
+    // correct rather than merely safe. It is not waiting on anything.
     //
     // IT IS NAMED, AS null, ON PURPOSE. one-prompt-two-planners.test.js exists because a prompt field
     // that reaches one planner and not the other is this project's most repeated defect -- it caught

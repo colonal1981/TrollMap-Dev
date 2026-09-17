@@ -35,7 +35,7 @@ import { state, CF_WORKER_URL } from '../core/state.js';
 import { resolveR2Key } from '../data/lake-keys.js';
 import { getSeason, seasonNote } from '../data/species-intel.js';
 import { depthBandFor, usableAhFrom, researchIntel, describeDepthBand, conditionsFrom, oxygenFloorFt,
-         fetchRegistrySpecies, registryIdentity, thermoclineNormFor } from './plan-inputs.js';
+         fetchRegistrySpecies, registryIdentity, thermoclineNormFor, saysRiver } from './plan-inputs.js';
 import { solunarFor } from '../utils/solunar.js';
 import { registryRecordFor } from '../data/access-index.js';
 import { packFetcher } from './smart-plan-v2.js';
@@ -761,6 +761,32 @@ export async function findWater() {
   if (!r2Key) return say(`No chartpack for ${inp.lakeName}`, true);
   const ramp = rampCoords(inp.lakeName, inp.rampName);
   if (!ramp) return say('Could not place that ramp', true);
+
+  // ── PICK WATER IS A LAKE THING, AND ON A RIVER IT STOPS HERE ─────────────────────────────────
+  //
+  // Ryan, 2026-09-17, after being shown that up one bank and back down the other beats every other
+  // river shape on his own packs -- 145 holes against 91 for the best single line -- and that 43 of
+  // the 57 rivers have a median channel under 80 m, narrower than the corridor his rods cover:
+  // "up one side and down the other is probably the right answer... that is probably the easiest...
+  // so for rivers pickwater will just not be applicable that is more of a lake thing anyways."
+  //
+  // THIS TAB'S WHOLE SHAPE IS THE WRONG SHAPE FOR A RIVER. It lays out pieces and he ticks the ones
+  // he wants; a river day is ONE path, up until the battery or the clock turns him around and back
+  // down the other side, and there is nothing to tick. Offering contour-shaped pieces on moving
+  // water is the same wrong object Smart Plan stopped using -- see river-drifts.js.
+  //
+  // REFUSED BEFORE A SINGLE FETCH, and with the reason, because a tab that quietly produces a worse
+  // plan is more expensive than one that says it is the wrong tab. The registry row is already in
+  // hand and answers synchronously; Smart Plan asks the same question of the live waterState and
+  // both go through saysRiver(), because two spellings of one question is how they would come to
+  // disagree about the same water.
+  //
+  // COASTAL ZONES ARE NOT CAUGHT BY THIS. `feature_type` is river, lake or coastal, and only the
+  // first is refused.
+  if (saysRiver(registryRecordFor(inp.lakeName))) {
+    return say(`${inp.lakeName} is a river — Pick Water lays out pieces to tick, and a river day is `
+             + `one path up one side and back down the other. Use Smart Plan for this one.`, true);
+  }
 
   const species = inp.species[0];
   const date = new Date(`${inp.dateStr}T12:00:00`);

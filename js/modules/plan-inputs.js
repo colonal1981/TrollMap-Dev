@@ -490,6 +490,35 @@ export function structureWeights(base, baseRelief, structures) {
  *
  * @param {?object} rec  registryRecordFor(lakeName) — null is normal and answers nothing
  */
+/**
+ * DOES ANYTHING HERE SAY THIS WATER IS A RIVER? One spelling of one question.
+ *
+ * The same fact arrives from two places and neither planner has both: Smart Plan is handed the live
+ * `waterState` off /conditions, and the Water tab holds the registry row synchronously and fetches
+ * no conditions at all. `feature_type` and `featureType` are the same field in two casings -- the
+ * registry writes the first and the Worker the second -- and the registry knows 57 rivers, 285 lakes
+ * and 13 coastal zones.
+ *
+ * NOT `waterState.river`, WHICH IS A DETAILS OBJECT AND IS TRUTHY ON A LAKE. A Duke tailwater with
+ * `generatingNow` carries one. Testing it would plan the Congaree over contour lanes on any
+ * /conditions timeout and refuse to plan a tailwater reservoir at all -- see the drift READ FIRST in
+ * 00_START_HERE.md, where that is the whole of the 615ff69 fix.
+ *
+ * Takes any number of carriers so a caller can offer whichever it has, and answers false when it has
+ * none. Absence is not a claim that the water is a lake; it is the absence of a claim, and every
+ * caller that needs certainty has a second signal -- Smart Plan looks for the pack's centreline.
+ *
+ * @param {...?object} carriers  a registry row, a waterState, anything with a feature type on it
+ */
+export function saysRiver(...carriers) {
+  for (const c of carriers) {
+    if (!c || typeof c !== 'object') continue;
+    const t = c.feature_type ?? c.featureType;
+    if (String(t ?? '').trim().toLowerCase() === 'river') return true;
+  }
+  return false;
+}
+
 export function registryIdentity(rec) {
   if (!rec || typeof rec !== 'object') return null;
   const out = {};
