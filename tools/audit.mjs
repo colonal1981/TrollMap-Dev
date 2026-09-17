@@ -224,6 +224,13 @@ for (const f of workerFiles) {
     // rather than widened: widening moves the cut, it does not remove it. Dropping loses at most the
     // last host of an over-long route block, and under-reporting a host is the safe direction for a
     // table somebody reads to find an ungated fetch.
+    //
+    // AND THE WINDOW ITSELF IS PROXIMITY, NOT A CALL GRAPH -- SAID IN THE REPORT, NOT ONLY HERE.
+    // Tried 2026-09-17: ending the block at the NEXT route match instead of at a fixed width takes
+    // the host entries from 32 to 13 and leaves `/ramps` with none, because the arcgis URLs live in
+    // shared constants the handlers reach through helpers. So the narrow answer is not the true one,
+    // it is a differently wrong one, and a real answer needs following a call rather than slicing a
+    // string. The wide window stays, the header says what it is, and `--check` does not gate on it.
     const hosts = [...new Set([...block.matchAll(/https?:\/\/([a-z0-9.-]+)/gi)]
       .filter((x) => x.index + x[0].length < block.length)
       .map(x => x[1].toLowerCase()))];
@@ -399,7 +406,14 @@ P('');
 
 P('## Worker routes');
 P('');
-P('| route | method | auth | fetches | R2 | called from |');
+P('**The `hosts near` column is PROXIMITY, NOT A CALL GRAPH.** It is every outbound URL literal');
+P('within 3,000 characters of the route match, first three shown. Measured 2026-09-17: bounding it');
+P('to the route\'s own handler instead drops 32 host entries to 13, because the arcgis URLs are in');
+P('shared constants that the handlers reach through helpers -- so the narrow answer is EMPTY for');
+P('`/ramps`, which certainly does fetch them. Neither window can follow a helper call. Read this');
+P('column as "arcgis is reachable from around here", never as "this route fetches that".');
+P('');
+P('| route | method | auth | hosts near | R2 | called from |');
 P('|---|---|---|---|---|---|');
 for (const r of routes.sort((a, b) => a.route.localeCompare(b.route))) {
   P(`| \`${r.route}\` | ${r.method} | ${r.auth.startsWith('REQUIRED') ? '**' + r.auth + '**' : 'open'} | ${r.fetches.slice(0, 3).join('<br>') || '—'} | ${r.r2.join('<br>') || '—'} | ${r.calledFrom.length ? r.calledFrom.map(f => f.split('/').pop()).join('<br>') : '**nothing**'} |`);
