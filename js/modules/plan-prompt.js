@@ -58,8 +58,8 @@
 import { levelSentence } from '../utils/water-conditions.js';
 import { compassOf } from '../utils/compass.js';
 import { isNum, num } from '../utils/num.js';
-import { depthWindow, jigheadRangeOz, trollableBaits,
-         describeBait } from '../data/lure-knowledge.js';
+import { depthWindow, jigheadRangeOz, trollableBaits, describeBait, LURE_KNOWLEDGE,
+         gpsWindowFor } from '../data/lure-knowledge.js';
 import { RIGGED_TROLLING_WEIGHT_OZ, JIGHEADS_OWNED_OZ } from '../data/tackle-inventory.js';
 import { ozLabel } from '../utils/oz.js';
 import { FISHING_STYLE } from '../data/fishing-style-profile.js';
@@ -1212,6 +1212,27 @@ ${L.join('\n')}
 `;
 }
 
+/**
+ * ── SPEED FOLLOWS FROM THE BAIT, AND THE GPS IS NOT THE BAIT'S NUMBER ───────────────────
+ *
+ * gpsWindowFor() and sharedSpeedWindow() live in lure-knowledge.js beside the windows they read --
+ * the conversion is bait physics in moving water, not prose, and plan-assemble.js sets the leg's
+ * actual ground speed from the same two functions. This file only says it out loud.
+ */
+/** One line of prompt for what a bait needs on the water, on a river leg carrying a current. */
+export function riverSpeedNote(speed, currentMph) {
+  const w = gpsWindowFor(speed, currentMph);
+  if (!w) return '';
+  const say = (b, lab) => (b
+    ? `${lab} ${b.min}-${b.max} (best ${b.ideal})`
+    : `${lab} cannot be slowed enough to fish it`);
+  // A CLARIFICATION OF THE NUMBER ALREADY ON THE LINE, NOT A SECOND ONE. describeBait() ends with
+  // the bait's speed range, and on a river that bare figure is exactly the thing being misread --
+  // so this names it as a through-water number and then gives the two ground speeds that hold it.
+  return ` — that ${speed.min}-${speed.max} mph is THROUGH THE WATER, so hold `
+       + `${say(w.up, 'going up')}, ${say(w.down, 'coming back')} on the GPS`;
+}
+
 export function buildPlanRequest(o) {
   const day = {
     water: o.water, ramp: o.ramp, date: o.date,
@@ -1220,6 +1241,11 @@ export function buildPlanRequest(o) {
     usableAh: o.usableAh ?? null,
     conditions: o.conditions || {},
   };
+  // THE CURRENT THIS DAY IS FISHED IN, for the speed notes below. One number for the prompt, off
+  // the reaches the app actually chose -- riverCurrent.medianMph is driftCurrentSummary's, and the
+  // per-leg value rides on each candidate for anything that needs finer than that.
+  const riverCurrentMph = o.isRiver && o.riverCurrent && Number.isFinite(Number(o.riverCurrent.medianMph))
+    ? Number(o.riverCurrent.medianMph) : null;
   const snapSet = new Set(o.snapEligible || []);
   const tieOnly = (o.tackle || []).filter((n) => !snapSet.has(n));
   // WHICH OF THE BAG MAY BE TROLLED. The bag was handed over as one flat list of names and the
@@ -1253,7 +1279,14 @@ export function buildPlanRequest(o) {
     // promptSafeTackleName(): the bag holds `3" Lipless Crankbait` and an unescaped inch mark
     // ends the JSON string the model is asked to write.
     const name = promptSafeTackleName(real);
-    const w = depthWindow(lure, { speedMph: 2.0, leadFt: null });
+    // AT THE SPEED THIS BAIT WILL ACTUALLY BE FISHED AT. On a lake the boat holds one speed and
+    // 2.0 is the app's own trollMph, so that is the honest assumption. On a river the app now tells
+    // him the GPS speed that puts THIS bait in ITS window, so the depth it runs at is the depth at
+    // its own ideal through-water speed -- not at a number nobody is holding.
+    const kSpeed = (LURE_KNOWLEDGE[lure.type] || {}).speed;
+    const atMph = (riverCurrentMph != null && kSpeed && Number.isFinite(Number(kSpeed.ideal)))
+      ? Number(kSpeed.ideal) : 2.0;
+    const w = depthWindow(lure, { speedMph: atMph, leadFt: null });
     if (w.mode === 'none') return null;                       // the CAST ONLY block says it better
 
     // A BAIT THAT ONLY FISHES BEHIND A TROLLING WEIGHT MUST SAY SO HERE, OR THE MODEL GUESSES.
@@ -1369,6 +1402,12 @@ export function buildPlanRequest(o) {
     const hasFloor = Number.isFinite(floor) && floor > 0;
     const { legal, refused } = trollableBaits(o.inventory, {
       oxygenFloorFt: hasFloor ? floor : null, speedMph: 2.0,
+      // AND ON A RIVER, AT THE SPEED EACH BAIT WILL ACTUALLY BE FISHED AT. The app now holds a
+      // ground speed that puts the bait at its own best through the water, so the covers and the
+      // lead below are computed there. 2.0 stays the still-water answer, because on a lake it is
+      // the boat's one speed. See trollableBaits() and gpsWindowFor().
+      speedMphFor: riverCurrentMph != null
+        ? (type) => ((LURE_KNOWLEDGE[type] || {}).speed || {}).ideal : undefined,
       maxLeadFt: FISHING_STYLE.rigging?.maxLeadFt,
       inlineWeightOz: RIGGED_TROLLING_WEIGHT_OZ,
       // THE BOX, so a bait whose weight IS its jighead gets priced on a head that fits its length.
@@ -1384,7 +1423,10 @@ export function buildPlanRequest(o) {
                                : `, ${l.leadFt} ft of lead at its deepest`) : ''}`
       + `${l.inlineWeightOz ? ` behind the ${l.inlineWeightOz}oz inline weight` : ''}`
       + `${l.jigheadOz ? ` on a ${ozLabel(l.jigheadOz)} head` : ''}`
-      + `${describeBait(l.type) ? ` — ${describeBait(l.type)}` : ''}`;
+      + `${describeBait(l.type) ? ` — ${describeBait(l.type)}` : ''}`
+      // AND WHAT TO HOLD ON THE GPS TO GET IT THERE, on a river. See riverSpeedNote().
+      + `${riverCurrentMph != null
+            ? riverSpeedNote((LURE_KNOWLEDGE[l.type] || {}).speed, riverCurrentMph) : ''}`;
     const why = {};
     for (const r of refused) (why[r.why] = why[r.why] || []).push(promptSafeTackleName(r.name));
     return {
@@ -1398,7 +1440,19 @@ on the floor. That is your call and the light block above is what informs it.
 
 ` : ''}A range below is what the bait can be worked at, not where the fish are. THEY ARE NOT
 RANKED: nobody has measured which of these catches more fish on this water, this app included, so
-pick on the depth you want and the description, and say in the rod's \`why\` what you picked it for.
+pick on the depth you want and the description, and say in the rod's \`why\` what you picked it for.${
+riverCurrentMph != null ? `
+
+THE GPS IS NOT THE SPEED THE BAIT SEES, AND ON THIS WATER THE DIFFERENCE IS ${riverCurrentMph.toFixed(2)} MPH.
+The lure only knows the water it is moving through. Going UPSTREAM the water runs past it at your
+GPS speed PLUS the current; coming back down, MINUS it. So the same number on the screen is two
+different presentations on the two halves of the day, and at 2.0 on the GPS here the bait is doing
+${(2 + riverCurrentMph).toFixed(2)} mph going up and ${Math.max(0, 2 - riverCurrentMph).toFixed(2)} coming back. Each line below says what to hold instead.
+THE APP SETS THE SPEED FROM THE BAIT YOU CHOOSE, so you do not return one — but TWO RODS SHARE ONE
+BOAT, and therefore one ground speed. PICK A PORT AND A STARBOARD WHOSE WINDOWS OVERLAP. Where they
+do not, the app holds the SLOWER bait's ceiling so that nothing blows out, and the faster one runs
+under its window for the whole pass — that is a real cost and it is yours to spend or avoid. If no
+overlapping pair covers the water you want, say so and pick the pair that costs the least.` : ''}
 
 ${rows.map(line).join('\n')}
 ${refused.length ? `
@@ -1558,20 +1612,25 @@ RULES THAT ARE NOT NEGOTIABLE
    hop between two neighbouring legs is short — the app trims a leg back to where the structure
    stops, and whatever quiet water it trimmed is what \`transitToM\` charges you to cross. There is
    nowhere else to go — this is a river, and the water is a line.
-   \`fromRamp\` ON EACH LEG SAYS WHICH HALF OF THE DAY IT IS: \`{direction: 'upstream', m: 8000}\`
-   is a reach whose near end is eight kilometres up from the launch. ORDER THE OUTWARD HALF
-   NEAREST-FIRST AND GO UPSTREAM WHILE THE BATTERY IS FULL — that is how he fishes, and the river
-   block above says where it turns him around. Then come back down the same water on the push.
-   SO DECIDE HOW FAR OUT TO GO, NOT WHICH WATER. Adding a leg adds its whole length TWICE, because
-   he has to come back past it. Take the turnaround in the river block, the window in the time
-   budget and \`estMinFishedBack\` on each leg, and pick a day that gets home. On 2026-09-17 this
-   prompt was handed one reach at three lateral positions, fished all three as separate legs, and
-   planned 731 minutes into a 540 minute window. A day that does not fit is not a plan.
-   AND THE WAY HOME IS FISHED. \`trollPasses: 2\` on a river leg means out and back over the same
-   water, which is the day — not an extra. \`batteryAhFishedBack\` and \`estMinFishedBack\` are
-   that whole cost, trip out and back included, so compare those against the window and not
-   \`batteryAh\`, which is one pass. A leg you troll out and do not fish back is a leg he pedals
-   past twice with the rods out of the water, and there is no reason for that on moving water.` : `${o.orderIsChosen
+   THE DAY IS ALREADY DRAWN, AND THE ORDER IS THE ORDER HE WILL FISH IT IN. The app has picked how
+   far out to go, which reaches that is, which side of the launch to take first and where it turns
+   him around — against the battery and the window together, which is arithmetic and not judgement.
+   \`fromRamp\` on each leg says which half of the day it is: \`{direction: 'upstream', m: 8000}\` is
+   a reach whose near end is eight kilometres up from the launch. The list is already nearest-first
+   on the outward half.
+   SO DO NOT REORDER THE LEGS AND DO NOT DROP ONE. Every leg handed to you is part of the day the
+   app costed; rig them all, in the order given. A leg you would rather not fish is a sentence in
+   the notes, not a leg left out of the list.
+   EVERY LEG IS TROLLED OUT AND FISHED BACK, AND THE APP HAS ALREADY SAID SO. That is the day, not
+   an extra — a leg trolled out and pedalled back with the rods in is water he paid for twice and
+   fished once. There is no pass count to return.
+   AND THERE IS NO SPEED TO RETURN EITHER. The app sets the ground speed from the baits you rig,
+   once for the run up and once for the run back, because a bait's window is a speed THROUGH THE
+   WATER and the current makes those two different numbers on the GPS. See the speed block above the
+   bait list, and pick a pair whose windows overlap.
+   WHAT IS LEFT IS THE FISHING: which two baits go in the water on each leg, at what lead, why that
+   water at that hour, and what the sonar should show. That is the whole of your job here, and it is
+   the part nothing in this app can compute.` : `${o.orderIsChosen
    ? `THE ORDER IS FIXED AND IT IS NOT YOURS. Fish them in the order given. If the deadheading
    between two of them looks genuinely wasteful, SAY SO in the notes and leave the order alone —
    he has veto over his own plan and does not need it exercised for him.`
@@ -1707,11 +1766,12 @@ RETURN EXACTLY THIS SHAPE
     ]
   },
   "legs": [
-    { "runId": "copied exactly", "speedMph": 2.0, "trollPasses": 1,
-      "deploy": { "port": "R1", "starboard": "R5" },
-      "why": "one sentence on why this water, now" }
+    { "runId": "copied exactly", ${o.isRiver ? '' : '"speedMph": 2.0, "trollPasses": 1,\n      '}"deploy": { "port": "R1", "starboard": "R5" },
+      "why": "one sentence on why this water, now" }${o.isRiver ? `
+    // EVERY LEG, IN THE ORDER GIVEN, AND NOTHING ELSE ON IT. No \`speedMph\` and no
+    // \`trollPasses\`: the app sets both on a river and returning one is ignored. See rule 3.` : `
     // \`trollPasses\` is how many times you troll this stretch before moving on — down, back,
-    // down again. Omit it or say 1 for a single pass. See rule 3.
+    // down again. Omit it or say 1 for a single pass. See rule 3.`}
   ],
   "stops": [${o.isRiver ? `],  // EMPTY, ALWAYS, ON A RIVER. See rule 4 — he cannot hold the boat.` : `
     { "runId": "copied exactly", "id": "that structure's \`id\`, copied exactly",
@@ -1970,10 +2030,32 @@ export function planArgsFrom(res, candidates, ctx = {}) {
     return false;
   };
 
+  /* ── ON A RIVER THE APP HAS ALREADY DECIDED THE SHAPE OF THE DAY ───────────────────────────────
+   *
+   * riverDay() in plan-candidates.js picks the reaches, the order, which side of the launch to take
+   * first and where it turns him around; the assembler sets the ground speed from the baits. So
+   * three of the four things this loop reads off a leg are not the model's to send on a river -- the
+   * ORDER, `trollPasses` and `speedMph` -- and what is left is the rods and the sentence.
+   *
+   * AND SPREADING AN ABSENT FIELD IS NOT A NO-OP, WHICH IS THE BUG THIS FIXES. `{...c, trollPasses:
+   * undefined}` REPLACES the app's 2 with undefined, orientLegs' laps() reads that as one pass, and
+   * the river day silently loses the entire way home -- half the water fished and the cheaper half
+   * of the battery. The day the app costed only survived if the model happened to echo a number it
+   * had already been told.
+   *
+   * `c.drift` IS THE TEST, the same one selectCandidates uses for `isDrift` and the stops block
+   * below uses for the same reason: a river candidate is a drift by construction, so the day answers
+   * this about itself rather than being told twice.
+   */
+  const riverDay = (candidates || []).some((c) => c && c.drift);
+
   // --- the legs, in the model's order ---------------------------------------------------------
   const ordered = [];
   const deploy = {};
   const seen = new Set();
+  // What the model sent on a river that the app was never going to read. Collected rather than
+  // reported leg by leg, because one sentence about the day is the useful shape.
+  const sentAnyway = new Set();
   for (const leg of (Array.isArray(res.legs) ? res.legs : [])) {
     const c = byRun.get(leg && leg.runId);
     if (!c) { problems.push(`no such run: ${JSON.stringify(leg && leg.runId)}`); continue; }
@@ -1997,7 +2079,8 @@ export function planArgsFrom(res, candidates, ctx = {}) {
     // which are real, both already measured, and assemblePlan() stops adding passes at the first
     // one that would end after he is due back.
     let trollPasses;
-    if (leg.trollPasses != null) {
+    if (riverDay && (leg.trollPasses != null || leg.speedMph != null)) sentAnyway.add(c.runId);
+    if (!riverDay && leg.trollPasses != null) {
       // NOT TRUNCATED. `Math.trunc(1.5)` is a finite 1, so rounding here would accept a request
       // for one and a half passes and fish it once without ever saying it had refused anything.
       const n = Number(leg.trollPasses);
@@ -2008,8 +2091,12 @@ export function planArgsFrom(res, candidates, ctx = {}) {
     // WHAT THE MODEL SAID ABOUT THIS PARTICULAR LEG, riding on the candidate into the assembler.
     // Built through MODEL_LEG_FIELDS rather than written out here, because there is a second
     // reader -- see plan-from-water.js, which wants these and not the ordering they come in.
-    const answer = { why: str(leg.why), speedMph: num(leg.speedMph) ?? undefined, trollPasses };
-    for (const k of MODEL_LEG_FIELDS) if (!(k in answer)) answer[k] = undefined;
+    const answer = { why: str(leg.why) };
+    if (!riverDay) {
+      answer.speedMph = num(leg.speedMph) ?? undefined;
+      answer.trollPasses = trollPasses;
+      for (const k of MODEL_LEG_FIELDS) if (!(k in answer)) answer[k] = undefined;
+    }
     ordered.push({ ...c, ...answer });
 
     const d = leg.deploy || {};
@@ -2025,6 +2112,39 @@ export function planArgsFrom(res, candidates, ctx = {}) {
     }
   }
   if (!ordered.length) problems.push('the model chose no legs the app recognised');
+
+  // ── PUT A RIVER DAY BACK IN THE APP'S ORDER, AND PUT BACK WHAT WAS LEFT OUT ──────────────────
+  //
+  // Checked AFTER the "no legs at all" line above, so a river day where nothing came back still
+  // reports that rather than looking complete because the app refilled it.
+  //
+  // A REACH THE MODEL DID NOT RIG IS KEPT, WITH NOTHING IN THE WATER, and assemblePlan says so --
+  // "A LEG WITH NOTHING IN THE WATER IS SAID OUT LOUD. IT IS NOT FILLED IN." Dropping it instead
+  // would quietly shorten the day the battery and the clock were spent on, and shortening a day is
+  // exactly the decision the app made on his behalf and can therefore be held to.
+  if (riverDay && ordered.length) {
+    const got = new Map(ordered.map((c) => [c.runId, c]));
+    const inOrder = [];
+    for (const c of (candidates || [])) {
+      const hit = got.get(c.runId);
+      if (hit) { inOrder.push(hit); continue; }
+      problems.push(`${c.runId} is part of the day the app drew and came back with no rods — kept `
+                  + 'in the plan with nothing in the water rather than dropped from it');
+      inOrder.push({ ...c });
+    }
+    if (ordered.map((c) => c.runId).join('|') !== inOrder.map((c) => c.runId).join('|')) {
+      problems.push('the river legs came back in a different order, or short — a river day is one '
+                  + 'path through the launch and the app chose that path, so the order it handed '
+                  + 'over is the order kept');
+    }
+    ordered.length = 0;
+    for (const c of inOrder) ordered.push(c);
+  }
+  if (sentAnyway.size) {
+    problems.push(`ignored a speed or a pass count on ${[...sentAnyway].join(', ')} — on a river `
+                + 'the app sets both: the reaches are trolled out and fished back, and the ground '
+                + 'speed comes from the baits and the current, once each way');
+  }
 
   // --- stops and changes ----------------------------------------------------------------------
   // Only shape is checked here. Whether a structure id exists on its leg is assemblePlan's job,
@@ -2052,7 +2172,6 @@ export function planArgsFrom(res, candidates, ctx = {}) {
   // `c.drift` IS THE TEST, the same one selectCandidates uses for `isDrift` and for the whole
   // fished-back price. A river candidate is a drift by construction and a lake candidate is a
   // contour lane, so the day answers this about itself rather than being told twice.
-  const riverDay = (candidates || []).some((c) => c && c.drift);
   const stops = (Array.isArray(res.stops) ? res.stops : []).filter((s) => {
     if (riverDay) {
       problems.push('dropped a stop-and-cast: this is a river and the boat cannot be held on a '

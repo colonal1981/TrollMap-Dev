@@ -74,7 +74,11 @@ export function laneTelemetry(plan) {
       // leg type -- see the route-home block in plan-assemble.js.
       kind: l.type === 'transit'
         ? (l.role === 'return' ? 'Transit — back to the ramp' : 'Transit — nothing in the water')
-        : (l.depthFt != null ? `Troll · ${l.depthFt} ft` : 'Troll'),
+        // `heading` is on a river leg only, and it is what tells the two rows over the same water
+        // apart: the pass up and the pass back carry two different `speedMph` because the bait's
+        // window is fixed through the water and the current has changed sign. See plan-assemble.js.
+        : (l.depthFt != null ? `Troll · ${l.depthFt} ft` : 'Troll')
+          + (l.heading ? ` · ${l.heading}` : ''),
       distMi: (lengthM / 1609.34).toFixed(2),
       speedMph: Number.isFinite(mph) ? mph.toFixed(1) : '—',
       mins: Number.isFinite(mins) ? mins : '—',

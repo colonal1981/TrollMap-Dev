@@ -23,9 +23,11 @@
  * leg this file invents.
  */
 
-import { ampHours, minutesFor, metresBetween, cumulative, pointAt, orientLegs } from './plan-candidates.js';
+import { ampHours, ampHoursAlong, minutesFor, metresBetween, cumulative, pointAt,
+         orientLegs } from './plan-candidates.js';
 import { depthWindow, lightWindowFor, leadForDepth, jigheadForSwimbait,
-         requiresInlineWeight, changeCostFor, presentationDelta } from '../data/lure-knowledge.js';
+         requiresInlineWeight, changeCostFor, presentationDelta,
+         LURE_KNOWLEDGE, gpsWindowFor, sharedSpeedWindow } from '../data/lure-knowledge.js';
 import { JIGHEADS_OWNED_OZ, TROLLING_WEIGHTS_OWNED_OZ,
          RIGGED_TROLLING_WEIGHT_OZ } from '../data/tackle-inventory.js';
 import { FISHING_STYLE } from '../data/fishing-style-profile.js';
@@ -522,6 +524,67 @@ const FLUORO_RETIE_WARN = 3;
 const TROLL_MPH_MIN = 0.5;
 const TROLL_MPH_MAX = 5.0;
 
+/* ==============================================================================================
+ * THE SPEED COMES FROM THE BAIT, AND ON A RIVER THE APP HOLDS THE PENCIL.
+ *
+ * Ryan, 2026-09-17, asked what is actually left to decide on a river once the app draws the path:
+ * "so what should we leave to the LLM on river planning? bait choice? speed doesn't seem to make
+ * sense unless you give it all that math you just gave me... where does that leave us?"
+ *
+ * It leaves the model the bait and leaves the app the number, because the number is arithmetic the
+ * model cannot do from the prompt: the bait's window is a speed THROUGH THE WATER, the screen shows
+ * speed over the GROUND, and on a river those differ by the current -- one way up, the other way
+ * back. See gpsWindowFor() and sharedSpeedWindow() in lure-knowledge.js.
+ *
+ * SCOPED TO RIVERS, AND THAT IS A DECISION RATHER THAN A HALF-MEASURE. On still water the two speeds
+ * are the same number, the box already prints each bait's rated range, and the model picking a pair
+ * and a speed together is not wrong there. Nothing about the lake path is changed, including the
+ * amp-hours: `ampHours()` and `ampHoursAlong()` agree exactly when there is nothing to resolve.
+ * ============================================================================================== */
+
+/**
+ * The baits ACTUALLY IN THE WATER on a leg, with the rod each came from -- so a speed conflict can
+ * be named rather than counted. Port first, then starboard; a rod with no known lure type has no
+ * speed window and is skipped, which is the same silence the depth ceiling keeps.
+ */
+function deployedBaits(rods, deploy, lureByName) {
+  const byId = new Map((rods || []).map((r) => [r.id, r]));
+  const out = [];
+  for (const side of ['port', 'starboard']) {
+    const rod = byId.get(deploy && deploy[side]);
+    if (!rod) continue;
+    const lure = typeof lureByName === 'function' ? lureByName(rod.lure) : null;
+    const k = lure && LURE_KNOWLEDGE[lure.type];
+    if (!k || !k.speed) continue;
+    out.push({ side, rodId: rod.id, name: rod.lure, type: lure.type, speed: k.speed });
+  }
+  return out;
+}
+
+/**
+ * THE GROUND SPEED TO HOLD so the baits in the water are inside their own window, one direction at
+ * a time.
+ *
+ * `held: false` is the case where no speed this boat can troll at puts them there -- the current is
+ * faster than the bait's ceiling, or what is left after subtracting it is below the slowest speed
+ * the motor holds. Then the floor is what it returns, because over-driven and fishing is a thing he
+ * can see and correct and a ground speed of zero is not a troll.
+ *
+ * @param {?object} window     shared through-water window, from sharedSpeedWindow()
+ * @param {number}  currentMph unsigned current along the leg
+ * @param {boolean} upstream   which way the boat is pointed on this pass
+ */
+function groundSpeedFor(window, currentMph, upstream) {
+  const g = gpsWindowFor(window, currentMph);
+  const band = g && (upstream ? g.up : g.down);
+  const clamp = (v) => Number(Math.min(TROLL_MPH_MAX, Math.max(TROLL_MPH_MIN, v)).toFixed(1));
+  if (!band) return { mph: TROLL_MPH_MIN, held: false, band: null };
+  const lo = Math.max(TROLL_MPH_MIN, band.min);
+  const hi = Math.min(TROLL_MPH_MAX, band.max);
+  if (hi < lo) return { mph: clamp(hi), held: false, band };
+  return { mph: clamp(Math.min(hi, Math.max(lo, band.ideal))), held: true, band };
+}
+
 /**
  * @param {object}   o
  * @param {object[]} o.candidates  from selectCandidates(), IN THE ORDER THE MODEL CHOSE
@@ -776,16 +839,51 @@ export function assemblePlan(o) {
       runM += len; transitM += len; ah += a; clock += mins;
     }
 
-    // The trolling leg, AT THE SPEED THE MODEL SET FOR IT. `trollMph` was a scaffold from before
-    // the prompt asked for a speed at all, and it outlived its reason: plan-prompt.js validates
-    // `speedMph` on every leg and rides it in on the candidate, and this file used to overwrite it
-    // with one day-wide number -- so a day running one leg at 1.8 and the next at 2.2 reported
-    // both at 2.0 and budgeted both at 2.0. It is a DEFAULT now, used only for a leg the model
-    // gave no speed for, and the minutes and the amp-hours come from the leg's own speed. A speed
-    // outside the bounds is refused the way everything else here is refused: ignored, said out
-    // loud, fallen back from.
+    // WHICH TWO RODS GO IN THE WATER, read here rather than eighty lines down because on a river it
+    // is what SETS THE SPEED -- see riverCur below. Everything else about it is unchanged.
+    const deploy = (o.deploy && o.deploy[c.runId]) || null;
+
+    // ── ON A RIVER THE APP SETS THE SPEED, AND THE MODEL IS NOT ASKED FOR ONE ────────────────────
+    //
+    // `drift` exists only on the lines river-drifts.js lays out, and `currentMph` is Q/A off the
+    // centreline's charted cross-section against the live discharge. Both present is a river leg
+    // carrying a measured current, which is the only case where the GPS number and the bait's number
+    // differ -- so it is the only case that takes this path. See the block above TROLL_MPH_MIN.
+    const riverCur = (c.drift && Number.isFinite(Number(c.currentMph)) && Number(c.currentMph) > 0)
+      ? Number(c.currentMph) : null;
+    const baits = riverCur != null ? deployedBaits(rods, deploy, o.lureByName) : [];
+    const baitBand = baits.length ? sharedSpeedWindow(baits.map((b) => b.speed)) : null;
+    // TWO RODS SHARE ONE BOAT, SO A PAIR WHOSE WINDOWS DO NOT MEET COSTS ONE OF THEM. Said once per
+    // leg, naming both baits, because the fix is a bait change and that is the model's call.
+    if (baitBand && baitBand.overlap === false) {
+      const [slow, fast] = baits[0].speed.max <= baits[1].speed.max ? [baits[0], baits[1]]
+                                                                    : [baits[1], baits[0]];
+      warnings.push(`${c.runId} has no one speed that fishes both baits: ${fast.name} needs at `
+                  + `least ${baitBand.needsAtLeast} mph through the water and ${slow.name} blows `
+                  + `out above ${baitBand.max}. Held at ${baitBand.max} so nothing blows out, `
+                  + `which leaves the ${fast.name} under its window all day -- pick a pair whose `
+                  + `speed ranges overlap.`);
+    }
+    // WHICH WAY THE BOAT IS POINTED ON EACH PASS. A drift is drawn DOWNSTREAM -- 3DHP's
+    // `flowdirection` sets vertex order, see river-drifts.js -- so the line as drawn is the
+    // downstream run and `flipped` is the upstream one. Each further pass turns around again, so the
+    // parity of the pass number is the rest of the answer.
+    const upstreamOn = (np) => (np % 2 === 1 ? !!flipped : !flipped);
+
+    // The trolling leg, AT THE SPEED THE MODEL SET FOR IT -- on still water. `trollMph` was a
+    // scaffold from before the prompt asked for a speed at all, and it outlived its reason:
+    // plan-prompt.js validates `speedMph` on every leg and rides it in on the candidate, and this
+    // file used to overwrite it with one day-wide number -- so a day running one leg at 1.8 and the
+    // next at 2.2 reported both at 2.0 and budgeted both at 2.0. It is a DEFAULT now, used only for
+    // a leg the model gave no speed for, and the minutes and the amp-hours come from the leg's own
+    // speed. A speed outside the bounds is refused the way everything else here is refused:
+    // ignored, said out loud, fallen back from.
     let legMph = trollMph;
-    if (c.speedMph != null) {
+    let legHeld = null;
+    if (baitBand) {
+      const g = groundSpeedFor(baitBand, riverCur, upstreamOn(1));
+      legMph = g.mph; legHeld = g;
+    } else if (c.speedMph != null) {
       const want = Number(c.speedMph);
       if (want >= TROLL_MPH_MIN && want <= TROLL_MPH_MAX) legMph = want;
       else warnings.push(`${c.runId} asked for ${c.speedMph} mph -- outside `
@@ -793,8 +891,31 @@ export function assemblePlan(o) {
     }
     const legStartM = runM;
     const legLen = Math.round(c.lengthM);
+    // Drawn the way it will be RUN, and priced the same way. The GPX, the map and the phone's "what
+    // is next" all read this array in order, so a flipped leg whose geometry still ran the other way
+    // would draw the boat backwards along its own track -- and cost the current the wrong way round.
+    const trollCoords = flipped
+      ? (c.coordinates ? c.coordinates.slice().reverse() : [legStart, legEnd])
+      : (c.coordinates || [legStart, legEnd]);
     const mins = minutesFor(c.lengthM, legMph);
-    const a = ampHours(c.lengthM, legMph);
+    // ── THE AMPS COME FROM THE WATER SPEED AND THE CLOCK FROM THE GROUND SPEED ───────────────────
+    //
+    // `ampHours()` uses its one speed argument for both, which is right on still water and wrong the
+    // moment the water moves -- and it is WRONG IN THE DIRECTION THAT STRANDS HIM, because setting
+    // the speed from the bait makes the upstream pass the SLOWER one over the ground, so a
+    // current-blind cost reads the dearer direction as the cheaper. `ampHoursAlong()` walks the real
+    // geometry and charges the draw at through-water speed; see its note in plan-candidates.js. No
+    // wind here -- the assembler is never handed one -- and with nothing to resolve the two agree.
+    const a = riverCur != null
+      ? ampHoursAlong(trollCoords, legMph,
+                      { alongCurrentMph: upstreamOn(1) ? riverCur : -riverCur }).ah
+      : ampHours(c.lengthM, legMph);
+    if (legHeld && legHeld.held === false) {
+      warnings.push(`${c.runId} cannot be trolled slow enough going `
+                  + `${upstreamOn(1) ? 'upstream' : 'downstream'}: ${riverCur} mph of current puts `
+                  + `the baits above their window at every speed this boat holds, so it runs at `
+                  + `${legMph} mph over the ground and they are over-driven. Watch for blow-out.`);
+    }
     // BOTH NAMES RESOLVE TO THE SAME PASS. `id` is the app's handle (`wateree_lake#412:p3`);
     // `structureId` is the lake's own name for the thing (`hump_7`) and is null for every type
     // the packs cannot name. The model is shown both and asked for `id`, so a stop that arrives
@@ -843,7 +964,6 @@ export function assemblePlan(o) {
     stops.forEach((s, k) => { s.id = `S${li + 1}.${k + 1}`; });
 
     const stopMin = stops.reduce((t, s) => t + (s.durationMin || 0), 0);
-    const deploy = (o.deploy && o.deploy[c.runId]) || null;
 
     // A LEG WITH NOTHING IN THE WATER IS SAID OUT LOUD. IT IS NOT FILLED IN.
     //
@@ -880,7 +1000,18 @@ export function assemblePlan(o) {
     // the ceiling is the SHALLOWEST water on the leg, `depthFt` the MEDIAN. Both planners now
     // measure both from the same envelope profile — see waterBand() in plan-pieces.js — so the
     // fallback below only fires on a pack fitted before those profiles existed.
-    const rodPlan = capBaitDepth(rods, deploy, Number(c.maxRunDepthFt ?? c.depthFt), legMph,
+    // ── AND THE BAIT'S DEPTH IS SET BY THE WATER SPEED, NOT THE GROUND SPEED ────────────────────
+    //
+    // `capBaitDepth` runs the same physics the box does -- leadForDepth(), depthWindow() -- and every
+    // one of those takes a speed THROUGH THE WATER, because that is the only speed a lip or a blade
+    // or a lead responds to. It was handed `legMph`, which is now a GROUND speed on a river and is
+    // out by the whole current in one direction and the whole current the other way: the same bait
+    // on the same lead would have been reported running two different depths on the pass out and the
+    // pass back, when in fact it runs the same depth both ways. That identity is also why `rodPlan`
+    // may be copied onto pass 2 unchanged.
+    const waterMph = riverCur != null
+      ? Number((legMph + (upstreamOn(1) ? riverCur : -riverCur)).toFixed(2)) : legMph;
+    const rodPlan = capBaitDepth(rods, deploy, Number(c.maxRunDepthFt ?? c.depthFt), waterMph,
                                  o.lureByName, c.runId, warnings, fish,
                                  // THE LEG'S OWN ENVELOPE, so a one-shoal ceiling can be told apart
                                  // from water that is shallow all the way along. See capBaitDepth.
@@ -904,12 +1035,12 @@ export function assemblePlan(o) {
       estDurationMin: Math.round(mins + stopMin), estStartTime: formatClock(clock),
       light: legLight,
       why: c.why ?? null,
-      // Drawn the way it will be RUN. The GPX, the map and the phone's "what is next" all read
-      // this array in order, so a flipped leg whose geometry still ran the other way would draw
-      // the boat backwards along its own track.
-      coordinates: flipped
-        ? (c.coordinates ? c.coordinates.slice().reverse() : [legStart, legEnd])
-        : (c.coordinates || [legStart, legEnd]),
+      // WHICH WAY THE BOAT IS POINTED ON A RIVER, which is why the pass up and the pass back carry
+      // two different `speedMph` over the same water. Read by laneTelemetry() in plan-builder.js,
+      // which labels the leg with it; absent on a lake, where the question has no answer.
+      heading: riverCur != null ? (upstreamOn(1) ? 'upstream' : 'downstream') : undefined,
+      // Drawn the way it will be RUN -- see trollCoords, which is also what the leg was priced on.
+      coordinates: trollCoords,
       trolledReversed: flipped || undefined,
       // Reversed with the geometry, because station 0 is the start of the line AS DRAWN and a
       // flipped leg meets the stations the other way round. Absent on candidates that never
@@ -975,26 +1106,51 @@ export function assemblePlan(o) {
     // repeating it because the trolling pass repeated would invent time he never agreed to spend.
     if (legPasses > 1) { first.pass = 1; first.ofPasses = legPasses; }
     for (let np = 2; np <= legPasses; np++) {
+      const prev = legs[legs.length - 1];
+      const passCoords = (prev.coordinates || []).slice().reverse();
+      // ── AND ITS OWN SPEED, BECAUSE IT IS POINTED THE OTHER WAY ──────────────────────────────
+      //
+      // The pass back is not the pass out at the same number. On a river the bait's window is fixed
+      // through the water and the current has changed sign, so the ground speed that holds it is a
+      // different number -- and so are the minutes it takes and the amp-hours it costs. This is the
+      // whole reason each pass is a real leg rather than one leg carrying a multiplier.
+      const up = upstreamOn(np);
+      const g = baitBand ? groundSpeedFor(baitBand, riverCur, up) : null;
+      const passMph = g ? g.mph : legMph;
+      const passMin = g ? minutesFor(c.lengthM, passMph) : mins;
+      const passAh = riverCur != null
+        ? ampHoursAlong(passCoords, passMph, { alongCurrentMph: up ? riverCur : -riverCur }).ah
+        : a;
       // NO INVENTED CEILING ON THE PASS COUNT. What bounds the day is the time he has to be off
       // the water, which is already known here and already what the budget is judged against. So
       // the passes stop at the first one that would end after it, and say which one.
-      if (returnMin != null && clock + mins > returnMin) {
+      if (returnMin != null && clock + passMin > returnMin) {
         warnings.push(`${c.runId} asked for ${legPasses} passes — stopped after ${np - 1}, `
                     + `pass ${np} would end after ${formatClock(returnMin)}`);
         break;
       }
-      const prev = legs[legs.length - 1];
+      // Once per direction, not once per pass: passes 3 and 4 repeat 1 and 2 and the warning with
+      // them, and the same sentence four times reads as four problems.
+      if (np === 2 && g && g.held === false) {
+        warnings.push(`${c.runId} cannot be trolled slow enough going ${up ? 'upstream' : 'downstream'}: `
+                    + `${riverCur} mph of current puts the baits above their window at every speed `
+                    + `this boat holds, so pass ${np} runs at ${passMph} mph over the ground and they `
+                    + `are over-driven. Watch for blow-out.`);
+      }
       legs.push({
         ...first,
         id: `L${++li}`,
         startM: runM,
+        speedMph: passMph,
+        heading: riverCur != null ? (up ? 'upstream' : 'downstream') : undefined,
+        batteryAh: round2(passAh),
         // No `stopMin`: the stops are on the first pass and are not repeated.
-        estDurationMin: Math.round(mins), estStartTime: formatClock(clock),
+        estDurationMin: Math.round(passMin), estStartTime: formatClock(clock),
         // ITS OWN LIGHT, NOT THE FIRST PASS'S. A leg fished back is a later leg, and on a first-
         // light launch the pass down and the pass back are not in the same light at all.
-        light: lightOn(clock, mins),
+        light: lightOn(clock, passMin),
         // Drawn the way it will be RUN, which is the way the pass before it was not.
-        coordinates: (prev.coordinates || []).slice().reverse(),
+        coordinates: passCoords,
         trolledReversed: prev.trolledReversed ? undefined : true,
         envelope: prev.envelope ? prev.envelope.slice().reverse() : undefined,
         // Mirrored off the pass before, for the same reason that one was mirrored off the line as
@@ -1005,7 +1161,7 @@ export function assemblePlan(o) {
         stops: [],
         pass: np, ofPasses: legPasses,
       });
-      runM += legLen; fishingM += legLen; ah += a; clock += mins;
+      runM += legLen; fishingM += legLen; ah += passAh; clock += passMin;
     }
 
     // WHERE THE BOAT STANDS WHEN THE LEG IS DONE. Fished an even number of times it is back at

@@ -1212,6 +1212,97 @@ export function canReachDepth(lure, depthFt, speedMph, { maxLeadFt, jigheads } =
   return { ok: true, leadFt, limitedBy: null };
 }
 
+/* ==============================================================================================
+ * THE LURE ONLY KNOWS THE WATER IT IS MOVING THROUGH.
+ *
+ * Every `speed` window above is a speed THROUGH THE WATER, because that is the only speed a bait
+ * responds to -- the lip bites on water, the tail kicks against water, the blade spins in water.
+ * On still water that is also the number on the GPS, and the distinction never had to be made.
+ *
+ * On a river it is the whole problem. Going UPSTREAM the water runs past the bait at the boat's
+ * ground speed PLUS the current; coming back down, MINUS it. So one number on the screen is two
+ * different presentations on the two halves of the day, and the app held 2.0 mph for both.
+ *
+ * MEASURED ON HIS OWN BOX, at the Congaree's median 0.84 mph, holding 2.0 on the GPS: the bait sees
+ * 2.84 going up and 1.16 coming back. 49 of his 57 rated baits are OVER-DRIVEN upstream and 55 are
+ * UNDER-SPEED downstream. At the 2.5 he prefers, NOTHING in the box is inside its window going up.
+ *
+ * Ryan, 2026-09-17, on how he does this now: "gps and watching if the lures are blowing out or
+ * not... i have to really watch it going up river... i like to troll at 2-2.5mph but at current
+ * that may be way too fast for some baits." He is doing the correction by eye, on the water, one
+ * glance at a time. The two functions below are the app doing it for him.
+ * ============================================================================================== */
+
+/**
+ * THE GROUND SPEEDS THAT HOLD A BAIT IN ITS OWN WINDOW, each way along a current.
+ *
+ * @param {object} speed       {min, ideal, max} through the water -- LURE_KNOWLEDGE[type].speed,
+ *                             or a shared window from sharedSpeedWindow() below
+ * @param {number} currentMph  the current along the line, unsigned
+ * @returns {?{up: ?object, down: ?object}} {min, ideal, max} over the GROUND for each direction, or
+ *          null for a direction that cannot be held at all -- when the current alone is faster than
+ *          the bait's top speed, the boat would have to travel backwards over the ground to slow it
+ *          down. Null overall when there is no window to convert.
+ */
+export function gpsWindowFor(speed, currentMph) {
+  if (!speed || !Number.isFinite(Number(speed.min)) || !Number.isFinite(Number(speed.max))) return null;
+  // NULL IS NOT ZERO. `currentMph` is null when the pack could not measure one -- tidal, no gauge,
+  // no charted cross-section -- and `Number(null)` is a finite 0, which would quietly turn "we do
+  // not know" into "there is no current" and print a GPS band as if it were the bait's own.
+  if (currentMph == null || currentMph === '') return null;
+  const c = Number(currentMph);
+  if (!Number.isFinite(c)) return null;
+  const r = (x) => Number(x.toFixed(1));
+  const ideal = Number.isFinite(Number(speed.ideal)) ? Number(speed.ideal) : Number(speed.min);
+  // Upstream the water runs at ground + current, so the ground speed is the water speed LESS the
+  // current. The floor is clamped at zero because a negative ground speed is not a speed; the
+  // CEILING is not, because a ceiling at or below zero is the refusal this returns null for.
+  const band = (sign) => {
+    const lo = Number(speed.min) - sign * c, hi = Number(speed.max) - sign * c;
+    if (hi <= 0) return null;
+    return { min: r(Math.max(0, lo)), ideal: r(Math.max(0, ideal - sign * c)), max: r(hi) };
+  };
+  return { up: band(+1), down: band(-1) };
+}
+
+/**
+ * TWO RODS SHARE ONE BOAT, AND THEREFORE ONE SPEED.
+ *
+ * The pair in the water has to be trolled at the same ground speed, so the speed the app holds is
+ * the OVERLAP of what the two baits want, not either one's own best. This is the reason bait choice
+ * stays a real judgement after the app took the speed over: picking a pair whose windows do not
+ * meet is a decision that costs one of them.
+ *
+ * WHERE THEY DO NOT MEET, THE SLOWER BAIT'S CEILING GOVERNS, and the reason is his: a bait driven
+ * past its top speed BLOWS OUT and fishes nothing, while a bait under its window still swims -- the
+ * presentation is dull, not absent. So the app holds the lower of the two ceilings, reports the
+ * conflict, and the faster bait is the one running below its best.
+ *
+ * @param {object[]} speeds  {min, ideal, max} windows, one per bait in the water; nulls are skipped
+ * @returns {?{min, ideal, max, overlap, needsAtLeast, n}} the shared window through the water.
+ *          `overlap: false` collapses min/ideal/max onto the governing ceiling so every caller's
+ *          arithmetic stays valid, and `needsAtLeast` is the floor that could not be met.
+ */
+export function sharedSpeedWindow(speeds) {
+  const ws = (Array.isArray(speeds) ? speeds : [speeds])
+    .filter((s) => s && Number.isFinite(Number(s.min)) && Number.isFinite(Number(s.max)));
+  if (!ws.length) return null;
+  const r = (x) => Number(x.toFixed(2));
+  const min = Math.max(...ws.map((s) => Number(s.min)));
+  const max = Math.min(...ws.map((s) => Number(s.max)));
+  const idealOf = (s) => (Number.isFinite(Number(s.ideal)) ? Number(s.ideal) : Number(s.min));
+  if (min > max) {
+    return { min: r(max), ideal: r(max), max: r(max), overlap: false,
+             needsAtLeast: r(min), n: ws.length };
+  }
+  // EACH BAIT AS NEAR ITS OWN BEST AS ONE SPEED ALLOWS: the mean of the ideals, clamped into the
+  // shared band. Every ideal lies inside the band when the windows overlap, so the mean does too
+  // and the clamp only fires on a window whose own ideal sits outside its own min/max.
+  const mean = ws.reduce((t, s) => t + idealOf(s), 0) / ws.length;
+  return { min: r(min), ideal: r(Math.min(max, Math.max(min, mean))), max: r(max),
+           overlap: true, needsAtLeast: null, n: ws.length };
+}
+
 
 /* ==============================================================================================
  * TERMINAL CONNECTION — whether a lure may hang off a swivel snap.
@@ -1355,7 +1446,19 @@ export const MAX_TIE_ONLY = 4;
 export function trollableBaits(inventory, o = {}) {
   const floor = Number(o.oxygenFloorFt);
   const hasFloor = Number.isFinite(floor) && floor > 0;
-  const speedMph = Number(o.speedMph) || 2.0;
+  // ── A SPEED PER BAIT, WHERE THE CALLER HAS ONE ────────────────────────────────────────────────
+  //
+  // On still water the boat holds ONE speed and every bait in the box is priced at it, which is what
+  // `speedMph` has always been. On a river it cannot be: the app sets the ground speed FROM the bait
+  // so the bait sees its own best THROUGH THE WATER -- see gpsWindowFor() above -- so the lead and
+  // the depth reported here have to be computed at that speed. Priced at a day-wide 2.0 the box
+  // quotes a lead nobody will be running, on the one water where the number differs most.
+  //
+  // `speedMphFor(type)` is how a caller says "ask me, per bait". Absent is the old behaviour exactly.
+  const oneSpeed = Number(o.speedMph) || 2.0;
+  const speedFor = typeof o.speedMphFor === 'function'
+    ? (type) => (Number(o.speedMphFor(type)) || oneSpeed)
+    : () => oneSpeed;
   const maxLeadFt = Number(o.maxLeadFt) || 120;
   const legal = [], refused = [];
 
@@ -1395,7 +1498,7 @@ export function trollableBaits(inventory, o = {}) {
     // 2026-08-30; the box comes in as an argument, because this file keeps no copy of it.
     if (Array.isArray(o.jigheads) && o.jigheads.length
         && k.jigheadOzByLengthIn && !(Number(lure.weightOz) > 0)) {
-      const fit = jigheadForSwimbait(lure, hasFloor ? floor : 20, speedMph,
+      const fit = jigheadForSwimbait(lure, hasFloor ? floor : 20, speedFor(bought.type),
                                      { jigheads: o.jigheads, maxLeadFt });
       if (fit && Number(fit.weightOz) > 0) lure = { ...lure, weightOz: fit.weightOz };
     }
@@ -1413,7 +1516,7 @@ export function trollableBaits(inventory, o = {}) {
       // being sunk. It is how far behind the boat it rides, and it is said that way.
       const surface = k.depthMode === 'surface';
       legal.push({ ...bought, covers: [d.min, Math.min(d.max, hasFloor ? floor : d.max)],
-                   leadFt: leadForDepth(lure, d.max, speedMph),
+                   leadFt: leadForDepth(lure, d.max, speedFor(bought.type)),
                    leadIsSetback: surface || undefined,
                    controlledBy: surface ? 'it stays on top' : 'the bill' });
       continue;
@@ -1440,7 +1543,7 @@ export function trollableBaits(inventory, o = {}) {
     // It can always be fished shallower by letting out less, so the top of its range is never the
     // binding end and this never refuses one for being too deep-running. What it reports is the
     // DEEPEST it can be put, capped at the floor, because past the floor is dead water.
-    const at120 = depthWindow(lure, { speedMph, leadFt: maxLeadFt });
+    const at120 = depthWindow(lure, { speedMph: speedFor(bought.type), leadFt: maxLeadFt });
     if (at120.mode === 'needs_weight') {
       say(`it only fishes behind an inline trolling weight and none was given — ${at120.reason}`);
       continue;
@@ -1454,7 +1557,8 @@ export function trollableBaits(inventory, o = {}) {
     // AND THE FLOOR ONLY CUTS IF THE LINE CAN GET THERE. An A-Rig Medium needs 128 ft to make
     // 19.7, which is past the 120 he runs -- so the BUDGET binds, not the floor, and quoting the
     // floor's lead would print a number he cannot let out.
-    const toFloor = hasFloor && floor < at120.max ? leadForDepth(lure, floor, speedMph) : null;
+    const toFloor = hasFloor && floor < at120.max
+      ? leadForDepth(lure, floor, speedFor(bought.type)) : null;
     const cut = Number.isFinite(toFloor) && toFloor > 0 && toFloor <= maxLeadFt;
     const deepest = cut ? floor : at120.max;
     legal.push({ ...bought, covers: [0, Math.round(deepest * 10) / 10],

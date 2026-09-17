@@ -118,3 +118,80 @@ test('a reach with no measured current still costs two passes', () => {
   assert.equal(legs.length, 1);
   assert.equal(legs.day.plannedAh, 14);
 });
+
+// ── AND THE MODEL DOES NOT GET TO UNDRAW IT ───────────────────────────────────────────────────
+//
+// Added 2026-09-17 with the speed work, because the two halves are one change: once riverDay()
+// picks the reaches, the order and the turnaround, and the assembler sets the speed from the bait,
+// there is nothing left on a river leg for the model to send but the rods and a sentence.
+//
+// AND THE FIRST TEST HERE IS A BUG THAT SHIPPED WITH STAGE ONE. `planArgsFrom` spread the model's
+// answer over the candidate, absent fields included -- `{...c, trollPasses: undefined}` REPLACES
+// the 2 riverDay() stamped, orientLegs' laps() reads undefined as one pass, and the day silently
+// loses the whole way home. It only worked when the model echoed a number it had been told.
+const { planArgsFrom } = await import('../js/modules/plan-prompt.js');
+
+const RIVER = ['upstream', 'upstream'].map((d, i) => ({
+  ...reach(d, i * 8000, 8000, 100, 12, 3),
+  trollPasses: 2, currentMph: 0.84, passes: [],
+  start: [-80.9, 33.88], end: [-80.8, 33.88],
+}));
+const RODS = [{ id: 'R1', lure: 'MR Crankbait (6-12ft)', color: 'shad', why: 'x' },
+              { id: 'R5', lure: 'Nichols Lake Fork Flutter Spoon 3/4oz', color: 'chrome', why: 'y' }];
+const answered = (legs) => planArgsFrom(
+  { loadout: { why: 'two rods', rods: RODS }, legs, stops: [], changes: [], notes: {} },
+  RIVER, { tackle: RODS.map((r) => r.lure) });
+
+test('a river leg keeps the app\'s pass count when the model does not echo it', () => {
+  const out = answered(RIVER.map((c) => ({ runId: c.runId, deploy: { port: 'R1', starboard: 'R5' },
+                                           why: 'good water' })));
+  for (const c of out.candidates) assert.equal(c.trollPasses, 2, `${c.runId} lost the way home`);
+});
+
+test('a speed or a pass count sent anyway is ignored, once, by name', () => {
+  const out = answered(RIVER.map((c) => ({ runId: c.runId, speedMph: 3.4, trollPasses: 1,
+                                           deploy: { port: 'R1', starboard: 'R5' }, why: 'x' })));
+  for (const c of out.candidates) {
+    assert.equal(c.trollPasses, 2);
+    assert.equal(c.speedMph, undefined);
+  }
+  const said = out.problems.filter((p) => p.startsWith('ignored a speed or a pass count'));
+  assert.equal(said.length, 1, out.problems.join('\n'));
+  assert.ok(said[0].includes(RIVER[0].runId) && said[0].includes(RIVER[1].runId));
+});
+
+test('the order is the app\'s, and a reordered day is put back and said out loud', () => {
+  const back = [RIVER[1], RIVER[0]].map((c) => ({ runId: c.runId, why: 'x',
+                                                  deploy: { port: 'R1', starboard: 'R5' } }));
+  const out = answered(back);
+  assert.deepEqual(out.candidates.map((c) => c.runId), RIVER.map((c) => c.runId));
+  assert.ok(out.problems.some((p) => p.includes('one path through the launch')));
+});
+
+test('a reach the model left out stays in the day with nothing in the water', () => {
+  const out = answered([{ runId: RIVER[0].runId, why: 'x',
+                          deploy: { port: 'R1', starboard: 'R5' } }]);
+  assert.equal(out.candidates.length, 2, 'the app drew two reaches and spent the battery on two');
+  assert.ok(out.problems.some((p) => p.includes(RIVER[1].runId) && p.includes('no rods')));
+  // Not filled in from the leg beside it -- assemblePlan reports the empty spread on its own.
+  assert.equal(out.deploy[RIVER[1].runId], undefined);
+});
+
+test('nothing at all still reads as nothing, rather than a day the app refilled', () => {
+  const out = answered([]);
+  assert.ok(out.problems.some((p) => p === 'the model chose no legs the app recognised'));
+  assert.equal(out.candidates.length, 0);
+});
+
+test('a lake day is untouched: the model still sets the speed and the order', () => {
+  const lake = RIVER.map((c) => ({ ...c, drift: null, currentMph: null, trollPasses: undefined }));
+  const out = planArgsFrom(
+    { loadout: { why: 'two rods', rods: RODS },
+      legs: [lake[1], lake[0]].map((c) => ({ runId: c.runId, speedMph: 2.2, trollPasses: 2,
+                                             deploy: { port: 'R1', starboard: 'R5' }, why: 'x' })),
+      stops: [], changes: [], notes: {} },
+    lake, { tackle: RODS.map((r) => r.lure) });
+  assert.deepEqual(out.candidates.map((c) => c.runId), [lake[1].runId, lake[0].runId]);
+  assert.equal(out.candidates[0].speedMph, 2.2);
+  assert.equal(out.candidates[0].trollPasses, 2);
+});

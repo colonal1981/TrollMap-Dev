@@ -226,7 +226,12 @@ test('the prompt gives a river the one path and a lake the ordering problem', ()
   const lake = buildPlanRequest({ ...common, candidates: LAKE_CANDS, water: 'Lake Wateree, SC' });
 
   assert.ok(river.user.includes('THE DAY IS ONE PATH'));
-  assert.ok(river.user.includes('ORDER THE OUTWARD HALF'));
+  // THE ORDER MOVED FROM THE MODEL TO THE APP ON 2026-09-17, when riverDay() started choosing the
+  // reaches and the turnaround. The prompt used to say "ORDER THE OUTWARD HALF NEAREST-FIRST"; it
+  // now hands the list over already in that order and asks for it back unchanged.
+  assert.ok(river.user.includes('THE DAY IS ALREADY DRAWN'));
+  assert.ok(river.user.includes('DO NOT REORDER THE LEGS'));
+  assert.ok(!river.user.includes('ORDER THE OUTWARD HALF'));
   // The lake paragraph is actively wrong on a river: it says there is no out and back, and tells
   // the model to hunt for legs that are near each other. On a river they all are.
   assert.ok(!river.user.includes('There is no "out and back"'));
