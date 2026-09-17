@@ -580,6 +580,12 @@ def main():
                          '<registry>/charted.json (734 of 1732 today). Off by default. Exits if '
                          'charted.json cannot be read rather than quietly processing every '
                          'pack. An explicit --only <slug> wins over this.')
+    ap.add_argument('--index',
+                    help='lake_index.json. Default <registry>/lake_index.json, or '
+                         '<packs>/../registry/lake_index.json when --registry is not given.')
+    ap.add_argument('--all-packs', action='store_true',
+                    help='ignore the index gate and build every pack dir under --packs. Off by '
+                         'default: most of them are not offered by the app.')
     a = ap.parse_args()
     if a.ship_only and not a.registry:
         ap.error('--ship-only needs --registry (the folder holding charted.json)')
@@ -605,6 +611,42 @@ def main():
             # in place -- a silent no-op here reads as "features are current" to whoever runs
             # fit next.
             sys.exit('STOP: --only-lakes matched no pack directory at all. Nothing was done.')
+    # ── THE INDEX GATE, THE SAME ONE build_structure.py AND upload_garmin_to_r2.py ALREADY USE ──
+    #
+    # Ryan, 2026-09-17, watching this walk the whole disk: *"It shouldn't be running on 1710 packs...
+    # why would we run on those if they aren't in the app... the number should be around 355."*
+    #
+    # He is right and this was the third builder of three without the gate. `lake_index.json` is what
+    # the app offers -- 355 slugs -- and the uploader refuses to push anything outside it, so every
+    # pack this script touched beyond that list was work that could never reach a chart. It is the
+    # same file and the same test in all three now, so they agree on what "a lake we ship" means
+    # instead of disagreeing by 1,355 packs.
+    #
+    # NOT --ship-only, WHICH IS A DIFFERENT AND LOOSER QUESTION. That reads charted.json and answers
+    # "did this pack get built at all" -- 734 of 1732. The index answers "can the app pick it", which
+    # is the one that decides whether the work reaches anybody.
+    #
+    # FAILS CLOSED, for the reason the other two do: a builder that reads "I cannot find the list of
+    # what to build" as "build everything" turns a missing input into hours of work. --only and
+    # --only-lakes name lakes explicitly and win over it, the same way they win over --ship-only.
+    if not a.all_packs and not a.only and not a.only_lakes:
+        reg = a.registry or os.path.join(os.path.dirname(a.packs.rstrip('\\/')), 'registry')
+        ipath = a.index or os.path.join(reg, 'lake_index.json')
+        try:
+            _idx = json.load(open(ipath, encoding='utf-8'))
+            offered = set(_idx if isinstance(_idx, dict) else
+                          (r.get('slug') or r.get('key') for r in _idx))
+        except Exception as exc:
+            sys.exit('NO USABLE INDEX at %s (%s).\n'
+                     'Refusing to build: without it this walks every pack dir under %s, most of '
+                     'which the app does not offer.\n'
+                     'Pass --index explicitly, or --all-packs if a full archive build is what '
+                     'you actually want.' % (ipath, exc.__class__.__name__, a.packs))
+        kept = [x for x in slugs if x in offered]
+        print('index gate: %d of %d pack dirs are slugs the app offers; %d passed over '
+              '(--all-packs to ignore it)' % (len(kept), len(slugs), len(slugs) - len(kept)))
+        slugs = kept
+
     if a.ship_only:
         if a.only:
             print('--ship-only: not applied, --only %s names a lake explicitly' % a.only)
