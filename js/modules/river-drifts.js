@@ -27,7 +27,7 @@
 // it. One less convention to get backwards, and it is the same join docks and attractors use.
 // ---------------------------------------------------------------------------------------------
 
-import { cumulative, kindHits } from './plan-candidates.js';
+import { cumulative, kindHits, metresBetween } from './plan-candidates.js';
 
 // THE THREE POSITIONS ARE HIS, AND THE FRACTIONS ARE THE ONES ALREADY MEASURED.
 //
@@ -84,6 +84,97 @@ export function meanBearingDeg(degs) {
   }
   if (!n || (Math.abs(x) < 1e-12 && Math.abs(y) < 1e-12)) return null;
   return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
+}
+
+/**
+ * TRANSIT ON A RIVER IS RIVER MILES, AND UNTIL NOW IT WAS A STRAIGHT LINE.
+ *
+ * `selectCandidates()` prices the hop from the ramp to a leg and back with `o.transitM`, which
+ * defaults to the straight line between two points. On a lake that is the deliberate, documented
+ * choice -- it is the optimistic answer, and understating a refusal is the safe direction. On a
+ * river it is not a trade-off, it is wrong: a river bends back on itself, and the straight line
+ * between the ramp and a leg crosses ground.
+ *
+ * MEASURED ON THE LIVE APP, 2026-09-17, Congaree from Barney Jordan. The one candidate that
+ * survived was priced at 11.2 km in and 14.2 km back -- straight lines -- for 5 km of fishing, so
+ * the day came out 70.3 Ah of an 80 Ah budget and 364 of 540 minutes, 84% of its distance dead.
+ * Meanwhile the river block in the same prompt told the model the day turns him around at 9 miles
+ * up and assumes no transit at all. Two halves of one prompt describing different days.
+ *
+ * Ryan, on what a river day actually is: "its not like you are going to drive to a certain spot to
+ * start fishing, its a kayak you just start fishing", and "up one side and down the other is
+ * probably the right answer."
+ *
+ * SO THE TURNAROUND IS NOT IMPOSED, IT EMERGES. Nothing here bounds, filters or clips the reaches.
+ * The distance is simply measured along the channel the boat has to follow, and the battery and
+ * window gates that already exist then reject what he cannot reach -- which is what they are for.
+ * A bound would have been a second gate saying the same thing in a different place.
+ *
+ * `Math.max(straight, along)` AND NO THRESHOLD. A point that is not on this channel projects onto
+ * some station anyway, and its along-river distance is then meaningless -- but it can never be
+ * nearer than the straight line, so the max is honest for both cases and needs no "is this point on
+ * the river" cutoff, which would be a number nobody measured.
+ *
+ * @param {object} centrelineFc  the pack's centreline.geojson
+ * @returns {?function} (aLonLat, bLonLat) => metres, or null when there is no usable centreline
+ */
+export function centrelineTransit(centrelineFc) {
+  const feat = centrelineFc && centrelineFc.features && centrelineFc.features[0];
+  const line = feat && feat.geometry && feat.geometry.coordinates;
+  const p = (feat && feat.properties) || {};
+  const stationM = p.station_m || [];
+  const n = Math.min(Array.isArray(line) ? line.length : 0, stationM.length);
+  if (n < 2) return null;
+
+  // ── COARSE THEN FINE, AND REFINING AROUND ONE COARSE WINNER IS WRONG ON A RIVER ───────────────
+  //
+  // This is called twice per window and there are thousands of windows, so a full scan of 2,537
+  // stations per lookup is not free. But the obvious coarse-then-fine -- take the best coarse
+  // sample, refine around it -- FAILS ON EXACTLY THE SHAPE A RIVER IS. A hairpin brings two arms
+  // within a couple of hundred metres of each other, the nearest coarse sample lands on the WRONG
+  // ARM, and the refine never leaves it. The test caught it on a 4 km hairpin: a point 2,450 m
+  // along resolved to 5,600 m, on the way back.
+  //
+  // THE BOUND IS DERIVED, NOT PICKED. With a coarse step of K stations at spacing s, the nearest
+  // coarse sample to the true best station is at most (K/2)·s further along the line, so its
+  // straight-line distance can exceed the true best's by at most K·s. Every coarse sample within
+  // that of the coarse winner is therefore a candidate for containing the true nearest station,
+  // and all of them are refined. On a river that is a handful of arms, not the whole line.
+  const COARSE = 20;
+  const spacing = Math.abs(Number(stationM[1]) - Number(stationM[0])) || 50;
+  const SLACK = COARSE * spacing;
+  const cache = new Map();
+  const riverMetreAt = (pt) => {
+    if (!Array.isArray(pt) || pt.length < 2) return null;
+    const key = `${pt[0].toFixed(5)},${pt[1].toFixed(5)}`;
+    if (cache.has(key)) return cache.get(key);
+    const coarse = [];
+    let cBest = Infinity;
+    for (let i = 0; i < n; i += COARSE) {
+      const d = metresBetween(line[i], pt);
+      coarse.push([i, d]);
+      if (d < cBest) cBest = d;
+    }
+    let bi = 0, bd = Infinity;
+    for (const [i, d] of coarse) {
+      if (d > cBest + SLACK) continue;
+      for (let j = Math.max(0, i - COARSE); j < Math.min(n, i + COARSE + 1); j++) {
+        const dj = metresBetween(line[j], pt);
+        if (dj < bd) { bd = dj; bi = j; }
+      }
+    }
+    const out = Number(stationM[bi]);
+    const val = Number.isFinite(out) ? out : null;
+    cache.set(key, val);
+    return val;
+  };
+
+  return (a, b) => {
+    const straight = (Array.isArray(a) && Array.isArray(b)) ? metresBetween(a, b) : 0;
+    const ma = riverMetreAt(a), mb = riverMetreAt(b);
+    if (ma == null || mb == null) return straight;
+    return Math.max(straight, Math.abs(ma - mb));
+  };
 }
 
 /**

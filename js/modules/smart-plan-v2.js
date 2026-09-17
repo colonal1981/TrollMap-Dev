@@ -23,7 +23,7 @@ import { selectCandidates, structureIndex, forModel, orientLegs, poiSpotFeatures
 import { buildPlanRequest, parsePlanResponse, planArgsFrom } from './plan-prompt.js';
 // A RIVER LEG IS A DRIFT, NOT A LANE. See river-drifts.js for what that means, what it measures
 // and why the trolling runs are the wrong object on moving water.
-import { riverDriftRuns, driftCurrentSummary } from './river-drifts.js';
+import { riverDriftRuns, driftCurrentSummary, centrelineTransit } from './river-drifts.js';
 // THE PACK'S OWN FACTS. Pure, and it takes the layers fetched below -- see researchIntel() in
 // plan-inputs.js and THE_PROFILE_BECAME_A_CACHE_AND_NOBODY_MOVED_THE_READS_2026-09-01.md item 1.
 import { packDerivedFacts } from '../utils/pack-facts.js';
@@ -192,6 +192,9 @@ export async function buildSmartPlanV2(o) {
                       + 'it carried two stations and a length, so the layer is present and empty'] };
   }
   const legRuns = drifts || runs;
+  // Built once and shared with the selector below; it memoises every point it is asked about, and
+  // the ramp is the same point on every call.
+  const riverTransit = isRiver && packHasCentreline ? centrelineTransit(centrelineFc) : null;
   // THE DAY'S CURRENT AND WHERE IT TURNS HIM AROUND, for the prompt block that has been asking for
   // both since it was written and had only a raw discharge in ft3/s to answer with -- which is not a
   // speed. Computed HERE, where the drifts are: the prompt formats and does not calculate. Null on a
@@ -210,7 +213,14 @@ export async function buildSmartPlanV2(o) {
     structures, catches: o.catches, catchSpecies: o.species, month: o.month,
     // Per species, per season, per lake, from the research profile — see structureWeights().
     weights: o.weights, reliefWeights: o.reliefWeights, docks, attractors,
-    transitM: o.transitM, limit: CANDIDATE_LIMIT,
+    // ── ON A RIVER THE HOP IS RIVER MILES, NOT A STRAIGHT LINE ────────────────────────────────
+    //
+    // The straight line is the right answer on a lake and a wrong one on moving water -- see
+    // centrelineTransit(). It is passed INSTEAD of `o.transitM` rather than beside it, because a
+    // river has one honest transit distance and offering two would be the same field disagreeing
+    // with itself. Null centreline falls back to whatever the caller had, which is the lake path.
+    transitM: (isRiver && riverTransit) || o.transitM,
+    limit: CANDIDATE_LIMIT,
     // ── THE DAY'S WIND, TO THE THING THAT CHOOSES THE DAY ─────────────────────────────────────
     //
     // The forecast has reached this function since plan-preflight.js started returning it, and it
