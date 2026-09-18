@@ -399,8 +399,36 @@ export function renderContourLayer(showSmart = true, showRaw = false) {
 }
 
 // Re-render contour lines on zoom changes so threshold gating takes effect
+//
+// ── THE WAIT FOR THE MAP IS BOUNDED NOW, AND IT WAS AN INFINITE RETRY ─────────────────────────
+//
+// This rescheduled itself every 500 ms for as long as there was no map, with no end. In the browser
+// that is invisible while the map is merely slow and a SILENT SPIN FOREVER when the map fails to
+// initialise at all -- the one case where somebody wants to be told.
+//
+// And it is why the test suite could not finish. Importing lake-ramp-select.js reaches this module
+// at line 140, the import runs `_wireZoomHandler()`, there is never a map in a test, and the chain
+// of timers keeps the node process alive after every assertion has passed. Measured 2026-09-18:
+// `process.getActiveResourcesInfo()` reported two live `Timeout` handles after the import and node
+// never exited, so `node --test` hung on test/picker-order.test.js and the whole suite with it.
+// A gate that runs the suite would have burned a runner rather than reported anything.
+//
+// 20 attempts at 500 ms is ten seconds, which is far longer than a map takes to come up and far
+// shorter than forever. Giving up says so once, because a handler that never attached and never
+// mentioned it is the same silence this file's own comments keep arguing against.
+const WIRE_ZOOM_TRIES = 20;
+let _wireZoomTries = 0;
 function _wireZoomHandler() {
-  if (!state.MAP_OK || !state.MAP) { setTimeout(_wireZoomHandler, 500); return; }
+  if (!state.MAP_OK || !state.MAP) {
+    if (++_wireZoomTries > WIRE_ZOOM_TRIES) {
+      console.warn('[contour-data] no map after %d tries (%ds) — the zoom/pan re-render is NOT '
+                   + 'wired. Contours will not re-render on zoom or pan for this session.',
+                   WIRE_ZOOM_TRIES, WIRE_ZOOM_TRIES / 2);
+      return;
+    }
+    setTimeout(_wireZoomHandler, 500);
+    return;
+  }
   state.MAP.on('zoomend', () => {
     const showLayer = document.getElementById('cdShowContourLayer')?.checked !== false;
     if (showLayer && state.ACTIVE_CONTOUR) renderContourLayer(true, false);

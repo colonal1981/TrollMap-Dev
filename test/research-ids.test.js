@@ -7,7 +7,7 @@ import { sanitizeLakeId, researchStorageId, researchStorageIdCandidates, legacyS
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // A SECOND COPY OF A RULE, AND THE TEST THAT MAKES IT SAFE
 //
-// `js/data/research-ids.js` mirrors `worker/research/keys.js` so the research picker can answer
+// `js/data/research-ids.js` mirrors `Worker/research/keys.js` so the research picker can answer
 // "which of these do I not have a profile for" without fetching all sixty profiles to read their
 // names back out.
 //
@@ -16,7 +16,12 @@ import { sanitizeLakeId, researchStorageId, researchStorageIdCandidates, legacyS
 // lake from the picker that he still needs. So the Worker's own source is READ, not paraphrased.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
-const WORKER = readFileSync(new URL('../worker/research/keys.js', import.meta.url), 'utf8');
+// `Worker`, WITH THE CAPITAL, AND THAT IS NOT A STYLE POINT. This read `../worker/research/keys.js`
+// and passed for months on Ryan's machine, because Windows does not care about the case of a path.
+// The directory is `Worker`. A GitHub runner is Linux and does care, so this threw ENOENT the first
+// time the suite ran anywhere but his desk -- found 2026-09-18 while proving out the deploy gate,
+// which is the exact class of defect a gate exists to catch and the reason it goes in.
+const WORKER = readFileSync(new URL('../Worker/research/keys.js', import.meta.url), 'utf8');
 
 describe('the client mirror agrees with the Worker', () => {
   it('sanitizeLakeId does what the Worker does, character for character', () => {

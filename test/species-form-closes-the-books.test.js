@@ -20,15 +20,41 @@
  *
  * Personal use only, not for distribution or resale; not for navigation.
  */
-import { describe, it, expect } from './expect-shim.mjs';
-import { readFileSync } from 'node:fs';
+import { describe as nodeDescribe, it, expect } from './expect-shim.mjs';
+import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { speciesGroupsFor } from '../js/modules/species-selector.js';
 import { resolveR2Key } from '../js/data/lake-keys.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const MAP = JSON.parse(readFileSync(path.join(ROOT, '..', 'registry', 'species_map.json'), 'utf8'));
+
+// ── THE ONE FILE THE DEPLOY GATE CANNOT FETCH ─────────────────────────────────────────────────
+//
+// `registry/species_map.json` is pipeline data, not repo data, and unlike the other three registry
+// objects the suite reads it is NOT published to R2 -- deliberately. It is resolved at BUILD time
+// into `regulations.json` (see Worker/trollmap-worker.js, "Resolved at BUILD time from
+// registry/species_map.json"), so nothing in the app ever fetches it, and adding it to the
+// uploader's PASSTHROUGH_REGISTRIES to make CI's life easier would repeat the mistake that table
+// already records: `nla_limnology.json` was added there on 2026-09-04 and taken out the next day
+// because NOTHING IN THE APP OPENS IT.
+//
+// So this file skips when the map is absent, with the reason printed, rather than the workflow
+// carrying a list of tests to leave out. A list of exceptions in a second place is the two-lists
+// problem this repo already has a test against, and it drifts the first time a test is added.
+//
+// IT SKIPS, IT DOES NOT PASS. A test that quietly reports success over a file it could not read is
+// verify_registry_r2.py printing that twenty objects matched over twenty it never compared.
+const MAP_PATH = path.join(ROOT, '..', 'registry', 'species_map.json');
+const HAVE_MAP = existsSync(MAP_PATH);
+const MAP = HAVE_MAP ? JSON.parse(readFileSync(MAP_PATH, 'utf8')) : { species: {} };
+// ONE WRAPPER, NOT TWELVE OPTIONS OBJECTS. Every suite in this file reads the map, so the skip goes
+// on `describe` once and cannot be forgotten on a suite added later.
+const describe = HAVE_MAP
+  ? nodeDescribe
+  : (name, fn) => nodeDescribe(name, { skip: 'registry/species_map.json is not beside the repo -- '
+      + 'it is a BUILD-time input, deliberately unpublished, so a runner cannot fetch it. Run this '
+      + 'on the pipeline machine.' }, fn);
 const UTIL = readFileSync(path.join(ROOT, 'Worker', 'research', 'facts-util.js'), 'utf8');
 
 const WATEREE = resolveR2Key('Lake Wateree, SC');

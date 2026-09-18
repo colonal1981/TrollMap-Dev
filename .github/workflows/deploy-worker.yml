@@ -26,8 +26,63 @@ name: Deploy Worker
 on:
   push:
     branches: [main, refactor]
+
+# ── THE SUITE RUNS BEFORE THE DEPLOY, AND THE DEPLOY WAITS ON IT ──────────────────────────────
+#
+# Ryan, 2026-09-18: "nothing gates the Worker deploy. Every push to main deploys, with no test run
+# in between. A GitHub Action that runs the test suite on push, and refuses the deploy on red,
+# costs one file and removes a whole category of bad day."
+#
+# `needs: test` is the whole gate. A red suite fails the `test` job, `deploy` never starts, and the
+# Worker keeps serving the bundle that was green.
+#
+# WHY THE REGISTRY IS FETCHED FIRST. Four test files read pipeline data that is not in this repo and
+# never will be -- registry/lake_index.json, agency_lake_facts.json, species_traits.json and
+# species_map.json. On Ryan's machine `../registry` is the real thing beside the repo and they pass.
+# A runner has no such folder at any path, so in CI they threw ENOENT and failed.
+#
+# HIS IDEA, IN THE SHAPE THAT WORKS: three of those four are PUBLISHED, on the same public
+# chartpack route the browser reads, no credentials of any kind. So CI pulls them into the place the
+# tests already look. Verified 2026-09-18 by hashing both ends: the served bytes are identical to
+# the files on his disk, so this is not a fixture that can drift from the data -- it IS the data.
+#
+# A symlink was the first idea and cannot work: a link committed to git points at a path that does
+# not exist on a runner, so it lands as a dangling link and fails worse than the missing folder.
+#
+# `curl -f` ON PURPOSE. A fetch that quietly writes an empty file would leave the suite testing less
+# than it says it does, which is the exact failure verify_registry_r2.py shipped with -- a green
+# summary over comparisons nobody performed. If an object 404s, this job fails and says which.
+#
+# WHAT THIS GATE DOES NOT COVER, said out loud rather than discovered later: the 79 python tests
+# under Scripts/ are not run here. They test the PIPELINE, which produces packs on Ryan's machine
+# and is not what this push deploys. The Worker is JavaScript and `npm test` is the suite that
+# covers it. A pipeline change still wants `py Scripts/test_<name>.py` before it is trusted.
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: fetch the registry objects the suite reads
+        # Into `..` because that is where the tests look -- path.join(ROOT, '..', 'registry') -- and
+        # it is the same relative position the registry sits in beside the repo on his machine.
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/../registry"
+          for f in lake_index.json agency_lake_facts.json species_traits.json; do
+            curl -fsS \
+              -A 'trollmap-ci/1.0 (+personal use; https://github.com/colonal1981/TrollMap-Dev)' \
+              -o "$GITHUB_WORKSPACE/../registry/$f" \
+              "https://trollmap-worker.colonal1981.workers.dev/chartpacks/_registry/$f"
+            echo "  $f  $(wc -c < "$GITHUB_WORKSPACE/../registry/$f") bytes"
+          done
+      # `npm test` and not a command line of its own. The suite has one spelling, in package.json,
+      # and a second one here is the two-lists problem this repo already carries a test against.
+      - run: npm test
+
   deploy:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

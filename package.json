@@ -4,7 +4,7 @@
   "type": "module",
   "description": "TrollMap \u2014 Kayak Fishing Intelligence Platform \u2014 refactor safety net",
   "scripts": {
-    "test": "node --test \"test/*.test.js\"",
+    "test": "node --test --test-timeout=45000 \"test/*.test.js\"",
     "test:watch": "node --test --watch \"test/*.test.js\"",
     "lint:keys": "node test/check-lake-keys-parity.mjs",
     "lint:tackle": "node test/check-tackle-parity.mjs",
