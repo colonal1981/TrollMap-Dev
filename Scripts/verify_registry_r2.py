@@ -49,8 +49,30 @@ be the same length.
 projection. `slim_registry()` is imported from `upload_garmin_to_r2.py` rather than restated
 here, so this cannot drift from what the uploader actually builds and then agree with itself.
 
-EXIT CODE IS THE POINT. 0 = all three present and current. 1 = something is missing or stale,
-which almost always means the last upload ran without a registry directory. Safe in a chain:
+EXIT CODE IS THE POINT. 0 = every object present AND compared AND current. 1 = something is
+missing, stale, or **was not compared at all**. That last one is not pedantry; it is the defect
+this script shipped with.
+
+    2026-09-18. Run as `py F:\\TrollMapPipeline\\scripts\\verify_registry_r2.py` from
+    `C:\\Users\\Ryan`, it resolved `--registry` to `C:\\Users\\Ryan\\registry`, which does not
+    exist. Every row found no local file, every verdict read `served; NO LOCAL COPY to compare`
+    -- and `NO LOCAL COPY` was never added to `bad`. So it printed
+
+        All 20 registry objects are published and match the local files.
+
+    over twenty comparisons it had not performed, and exited 0. A verifier that says "match"
+    when it compared nothing is worse than no verifier: the whole reason this file exists is
+    that three sessions in a row trusted an artefact that had not answered the question, and
+    this made itself the fourth.
+
+Two fixes, because the false green had two independent causes and either alone would have
+produced it again. The registry directory is now FOUND rather than assumed -- searched in a
+short ordered list, reported by absolute path, and a hard failure when no candidate holds a
+lake_index.json. And `NO LOCAL COPY` is now counted as UNVERIFIED, which is a non-zero exit and
+a footer that says how many were compared. Presence is not currency; this file says so four
+times in its own comments and then said "match" in its summary line.
+
+Safe in a chain:
 
     py .\\scripts\\upload_garmin_to_r2.py --root ... --all
     py .\\scripts\\verify_registry_r2.py || echo "REGISTRY DID NOT PUBLISH"
@@ -203,6 +225,51 @@ def fetch(url, timeout):
         return None, 0, "served but NOT VALID JSON (%s) -- suspect a Content-Encoding echo" % exc
 
 
+def resolve_registry(explicit, script_dir):
+    """Find the registry dir, or return (None, reasons). Never guess silently.
+
+    `--registry` DEFAULTED to `./registry` -- relative to whatever directory the shell happened
+    to be in. Every other script in the pipeline defaults it the same way and that is fine for
+    a BUILDER: a builder with no registry writes nothing and says so. A CHECKER with no registry
+    finds nothing to compare and, before 2026-09-18, called that a match.
+
+    So: an explicit --registry must exist, and a wrong one is a hard failure rather than a
+    silent fall-back to somewhere that happens to work. Otherwise the candidates are tried in
+    order and the winner is printed by absolute path, so the output always says which disk the
+    bucket was compared against.
+
+    A candidate counts only if it holds lake_index.json -- the file the app itself fetches on
+    load. An empty directory named `registry` is not a registry, and accepting one is how this
+    would come back.
+    """
+    def ok(d):
+        return d and os.path.isdir(d) and os.path.exists(os.path.join(d, 'lake_index.json'))
+
+    if explicit:
+        if ok(explicit):
+            return os.path.abspath(explicit), 'as given'
+        why = 'is not a directory' if not os.path.isdir(explicit) else 'holds no lake_index.json'
+        return None, ['--registry %s %s' % (os.path.abspath(explicit), why)]
+
+    # realpath, not abspath: F:\TrollMapPipeline\scripts is a DIRECTORY SYMLINK to the repo's
+    # Scripts\, so abspath() leaves the script two levels from the pipeline root when invoked
+    # through the link and three when invoked through the repo. realpath() lands in the same
+    # place either way, which is the only reason the last candidate below can be written at all.
+    real = os.path.realpath(script_dir)
+    cands = [
+        (os.path.join('registry'), 'beside the working directory'),
+        (os.path.join(os.path.dirname(real), 'registry'), 'beside the repo'),
+        (os.path.join(os.path.dirname(os.path.dirname(real)), 'registry'),
+         'beside the pipeline root'),
+    ]
+    tried = []
+    for d, how in cands:
+        if ok(d):
+            return os.path.abspath(d), how
+        tried.append('%-11s %s' % ('no' if os.path.isdir(d) else '--', os.path.abspath(d)))
+    return None, tried
+
+
 def count_of(obj) -> str:
     if isinstance(obj, dict):
         # 'waters' ADDED 2026-08-17 with water_chain.json. Without it the chain reported
@@ -222,12 +289,26 @@ def main() -> int:
     here = os.path.dirname(os.path.abspath(__file__))
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('--registry', default=os.path.join('registry'),
-                    help='local registry dir to compare against (default: ./registry)')
+    ap.add_argument('--registry', default=None,
+                    help='local registry dir to compare against. Found automatically when '
+                         'omitted -- ./registry, then beside the repo, then beside the '
+                         'pipeline root. A path given here must exist and hold lake_index.json.')
     ap.add_argument('--worker', default=WORKER)
     ap.add_argument('--prefix', default='', help='same --prefix the uploader used, if any')
     ap.add_argument('--timeout', type=float, default=120.0)
     a = ap.parse_args()
+
+    # BEFORE ANYTHING ELSE. Fetching twenty objects and then discovering there was nothing to
+    # compare them against is how 2026-09-18 happened; see the module docstring.
+    reg, how = resolve_registry(a.registry, here)
+    if reg is None:
+        print('!! NO REGISTRY DIRECTORY -- there is nothing to compare the bucket against.')
+        for line in how:
+            print('   %s' % line)
+        print('\nNothing was checked. Name it explicitly:')
+        print('   py .\\scripts\\verify_registry_r2.py --registry F:\\TrollMapPipeline\\registry')
+        return 1
+    a.registry = reg
 
     # Imported, not restated -- see the module docstring.
     #
@@ -273,11 +354,12 @@ def main() -> int:
               'unfiltered slim list, which is what that version publishes')
 
     print('worker   %s' % a.worker)
-    print('registry %s\n' % os.path.abspath(a.registry))
+    print('registry %s  (%s)\n' % (a.registry, how))
     print('%-22s %-9s %-11s %-22s %s'
           % ('OBJECT', 'SERVED', 'LOCAL', 'CONTENT', 'VERDICT'))
 
     bad = []
+    unchecked = []
     for name, local_name, kind, why in FILES:
         key = '%s_registry/%s' % (a.prefix, name)
         url = '%s/chartpacks/%s' % (a.worker.rstrip('/'), key)
@@ -323,7 +405,12 @@ def main() -> int:
 
         served_h = canon(served)
         if local is None:
-            verdict = 'served; NO LOCAL COPY to compare'
+            # NOT A PASS. The object is in the bucket and nothing on this machine says whether
+            # it is the object the app should be getting. Three things land here -- no file on
+            # disk, a file that would not parse, and a slim function that did not import -- and
+            # all three mean the same thing: this row was not verified.
+            verdict = 'PUBLISHED but NOT COMPARED -- no local copy'
+            unchecked.append((name, verdict, why))
         elif served_h == canon(local):
             verdict = 'OK -- current'
         else:
@@ -334,12 +421,29 @@ def main() -> int:
                  count_of(served), verdict))
 
     print()
-    if not bad:
+    if not bad and not unchecked:
         # COUNTED, NOT SPELLED OUT. This said "All three" while checking four, one commit
         # after the fourth was added -- the same drift the module docstring warns about, in the
         # summary line of the script that warns about it.
+        #
+        # AND COUNTED OVER WHAT WAS ACTUALLY COMPARED. The count was right on 2026-09-18 and
+        # the sentence was still a lie: twenty objects, twenty fetched, nought compared, "match".
         print('All %d registry objects are published and match the local files.' % len(FILES))
         return 0
+
+    if unchecked:
+        print('%d of %d objects were PUBLISHED BUT NOT COMPARED -- this is not a pass:'
+              % (len(unchecked), len(FILES)))
+        for name, verdict, why in unchecked:
+            print('   %-22s %s' % (name, 'no readable %s to compare against'
+                                   % os.path.join(os.path.basename(a.registry), '...')))
+        print('   The bucket may be serving anything. Check the registry directory above '
+              'holds these files.')
+        if bad:
+            print()
+
+    if not bad:
+        return 1
 
     print('%d PROBLEM(S):' % len(bad))
     for name, verdict, why in bad:
