@@ -253,8 +253,18 @@ export async function buildSmartPlanV2(o) {
   //
   // THE RANKING IS NOT WASTED. `score` is what riverDay() weighs the two banks of the ramp by, so
   // the richer side of the launch is fished first.
+  //
+  // ── AND THE DAY IS TOLD WHAT TIME IT IS ───────────────────────────────────────────────────────
+  //
+  // riverDay() is the only thing that knows the ORDER a river day is fished in, so it is the only
+  // thing that can say what o'clock each pass is -- and until 2026-09-18 nothing asked it to. The
+  // model was handed a reach with a DURATION on it and no hour, and then asked which baits to rig
+  // for a nine-hour day. See stampPassClock(): the launch clock, the almanac and the sky by the hour
+  // are the whole of what it needs, and all three were already in scope here.
   const day = isRiver ? riverDay(candidates, {
     usableAh: o.usableAh, windowMin: o.windowMin, trollMph: o.trollMph ?? 2.0,
+    transitMph: o.transitMph ?? 3.5, launchTime: o.launchTime, launch: o.ramp,
+    waterState: o.waterState, weatherByHour: o.weatherByHour,
   }) : null;
   if (day) {
     day.selection = candidates.selection;
@@ -397,6 +407,20 @@ export async function buildSmartPlanV2(o) {
     // WHAT THE WATER IS DOING TODAY -- tide on the coast, flow and generation on a river.
     // Absent on a reservoir, and absent is the prompt this file has always built.
     waterState: o.waterState,
+    // ── WHERE THE DRAWN DAY TURNS, AND WHAT IT LEFT BEHIND ────────────────────────────────────
+    //
+    // riverDay() has hung `.day` on its own output since it was written -- the turnaround, the
+    // fished total, what stopped the day going further, what is left unspent, and BOTH arms of the
+    // launch with the one that was taken first marked. Its own comment says `offered` is there "so a
+    // plan can say what it did NOT take and why", and no plan ever said it, because nothing in the
+    // codebase read the object. `candidates.map()` below drops it, so it is named here.
+    //
+    // CALLED `drawnDay` AND NOT `riverDay`, and the reason is the guard in
+    // one-prompt-two-planners.test.js: it checks each planner MENTIONS every field the prompt reads,
+    // and `riverDay` is already an import in this file -- so a field by that name would have passed
+    // the guard on the day it was added whether or not it was ever wired. A name nothing else uses
+    // is a name the guard can actually see. That exact failure is why the test exists.
+    drawnDay: candidates.day || null,
     // AND WHETHER THIS IS A RIVER, DECIDED ONCE, HERE. The prompt used to re-derive it from
     // `waterState.featureType` alone -- so a river whose /conditions call timed out was handed
     // river candidates under the lake rules: order the legs to save deadhead, and stop and cast on

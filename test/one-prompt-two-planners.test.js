@@ -84,7 +84,14 @@ describe('the prompt contract', () => {
   // THE EXEMPTION IS CHECKED, NOT ASSERTED. The test below reads the refusal out of
   // plan-water-ui.js, so the day Pick Water starts planning rivers this list stops being true and
   // says so, instead of silently excusing an unwired field.
-  const SMART_PLAN_ONLY = ['isRiver'];
+  //
+  // `drawnDay` JOINS IT FOR THE SAME REASON, AND IT IS WRITTEN DOWN HERE BECAUSE THAT IS THE PRICE
+  // OF THE EXEMPTION. It is riverDay()'s `.day` -- where the drawn path turns, what stopped it going
+  // further, what is left unspent, and which arm of the launch was taken first. riverDay() only ever
+  // runs on moving water, and Pick Water refuses moving water before it fetches anything, so the only
+  // value it could send is null. The refusal is checked below, so the day Pick Water starts planning
+  // rivers this list stops being true and says so.
+  const SMART_PLAN_ONLY = ['isRiver', 'drawnDay'];
 
   // A field name that appears NOWHERE in a planner cannot possibly be sent by it. That is a
   // weaker claim than "the value is right", and it is deliberately the claim that catches the

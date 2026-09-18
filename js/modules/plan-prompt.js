@@ -68,7 +68,7 @@ import { FISHING_STYLE } from '../data/fishing-style-profile.js';
 // than typed here so the prompt cannot come to say a distance the selector does not mean; see
 // RELIEF_RADIUS_M for why the app holds the number at all instead of reading it off the pack.
 import { RELIEF_RADIUS_M } from './plan-candidates.js';
-import { lightSummary, lightPhrasesIn } from '../utils/light-state.js';
+import { lightSummary, lightPhrasesIn, lightLabel } from '../utils/light-state.js';
 
 // Six rods. This never changes; it is the boat, not a setting.
 export const ROD_IDS = ['R1', 'R2', 'R3', 'R4', 'R5', 'R6'];
@@ -470,6 +470,9 @@ export function riverPromptBlock(ws, o = {}) {
  *
  * @param {object}   o
  * @param {object[]} o.candidates    forModel() output — what the model may choose from
+ * @param {object} [o.drawnDay]      riverDay()'s `.day` — where the drawn day turns, what stopped
+ *                                  it, what is left unspent and which arm was taken first. River
+ *                                  only, and the object existed for weeks before anything read it.
  * @param {string}   o.water
  * @param {string}   o.ramp
  * @param {string}   o.date
@@ -790,7 +793,123 @@ export function seabedHabitatBlock(s) {
  * Silent when the almanac is missing, like every other block here: a guess about first light is
  * worse than no sentence about it.
  */
-export function lightPromptBlock(ws, weatherByHour, launchTime, returnTime, lightFacts) {
+/**
+ * ── THE DAY THE APP DREW, AND WHAT TIME OF DAY EACH PIECE OF IT IS ──────────────────────────────
+ *
+ * Ryan, 2026-09-17, looking at a nine-hour Congaree plan that rigged one pair of baits and never
+ * mentioned the other four rods: *"but if it is only an up and back am i using the same rods all day
+ * long... no matter what? that doesn't make sense"*. And then, on what the fix is not: *"dividing it
+ * into legs that do not exist just to change baits at arbitrary times doesn't seem to make sense to
+ * me either"*.
+ *
+ * Both are right, and the thing between them is this block. A river leg is a piece of WATER and two
+ * legs for an up-and-back is the truth about the day; nothing here subdivides it. What was missing is
+ * that the model was never told WHEN any of it happens. The candidate carried `estMin` -- a duration
+ * -- and not one field anywhere said what o'clock. So a reach fished out at first light and back in
+ * the afternoon arrived as one anonymous stretch, and "the same baits all day" was not a judgement
+ * the model made badly, it was the only judgement available to it.
+ *
+ * riverDay() now stamps `passClock` on each reach: one entry per pass, in the order fished, with its
+ * start, its length, which way the boat is going and the light on it. This says it in prose as well,
+ * because the day read as a sequence of hours is the thing being reasoned about and a table of two
+ * rows per candidate buried in JSON is not that.
+ *
+ * AND IT SAYS THE SHAPE OF THE DAY, WHICH `legs.day` HAS DESCRIBED SINCE IT WAS WRITTEN AND NOTHING
+ * HAS EVER READ. Where the day turns, what stopped it going further, how much of the budget is left
+ * over, and which arm of the launch was NOT the one taken first. Its own comment says `offered` is
+ * there "so a plan can say what it did NOT take and why" -- and until now no plan could, because the
+ * object died in the array it was hung on.
+ *
+ * Empty string on a lake and on any day with no clock, which is the same silence every other block
+ * here keeps rather than printing a heading over nothing.
+ */
+function drawnDayBlock(day, candidates) {
+  const rows = [];
+  for (const c of (candidates || [])) {
+    for (const p of (Array.isArray(c.passClock) ? c.passClock : [])) {
+      if (p && p.at) rows.push({ runId: c.runId, ...p });
+    }
+  }
+  // IN THE ORDER HE FISHES THEM, WHICH IS NOT THE ORDER OF THE LIST. The candidates are a list of
+  // REACHES and the day runs out through all of them and back through all of them, so reach A's second
+  // pass comes after reach B's second pass. `seq` is stampPassClock's own count of the day, which is
+  // the only place that order is known. Without this the table said "in the order he will actually
+  // fish them" over an order nobody fishes.
+  rows.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
+  if (!rows.length && !day) return '';
+  const lines = [];
+
+  if (day) {
+    const km = (m) => (Number(m) / 1000).toFixed(1);
+    lines.push(`THE DAY AS DRAWN — the app costed this against the battery and the clock together, `
+             + 'which is arithmetic; everything left over is fishing.');
+    lines.push(`- The path turns ${km(day.turnaroundM)} km from the ramp, and covers `
+             + `${km(day.fishedM)} km of fished water getting out there and back.`);
+    // WHAT STOPPED IT, IN ITS OWN WORDS. "the river ran out" is a real answer on the Congaree's
+    // downstream arm -- 3.2 km and then nothing -- and it is a different sentence from "the battery".
+    const spare = [
+      day.unspentMin != null ? `${day.unspentMin} min` : null,
+      day.unspentAh != null ? `${day.unspentAh} Ah` : null,
+    ].filter(Boolean).join(' and ');
+    lines.push(`- What stopped it going further: ${day.binding}.`
+             + (spare ? ` That leaves ${spare} of the budget unspent.` : ''));
+    if (day.transitM != null) {
+      lines.push(`- ${day.transitM} m of the whole day is transit. Every other metre has baits in `
+               + 'it, which is what a river day is for.');
+    }
+    const arms = (day.offered || []);
+    if (arms.length > 1) {
+      lines.push(`- There is water on BOTH sides of the launch, and the app took the richer side `
+               + `first: ${arms.map((a) => `${a.reaches} reach${a.reaches === 1 ? '' : 'es'} `
+               + `${a.direction} (worth ${a.worth})${a.takenFirst ? ' ← first' : ''}`).join(', ')}. `
+               + 'A day with two arms crosses the launch in the middle of itself.');
+    }
+    lines.push('');
+  }
+
+  if (rows.length) {
+    lines.push(`WHEN EACH LEG IS FISHED, AND IN WHAT LIGHT — read the day as hours, not as a list`);
+    lines.push('Every reach below is fished TWICE, once out from the ramp and once back, and THE TWO '
+             + 'PASSES ARE HOURS APART. In the order he will actually fish them:');
+    for (const r of rows) {
+      const way = r.upstream ? 'against the current' : 'with the current';
+      const sp = r.overGroundMph != null ? `, ${r.overGroundMph} mph over the ground` : '';
+      const lit = lightLabel(r.light);
+      lines.push(`- ${r.at}—${r.ends} (${r.min} min) ${r.runId} pass ${r.pass} of 2, ${way}${sp}`
+               + (lit ? ` · ${lit}` : ''));
+    }
+    lines.push('');
+    lines.push(`The hours are an ESTIMATE at the app's provisional 2.0 mph THROUGH THE WATER, for the `
+             + 'same reason `estMin` is one: the real speed comes from the baits you have not chosen '
+             + 'yet, and the app re-fits the day once you have. The light on them is not an estimate '
+             + `— it is the almanac and that hour's own forecast cloud cover.`);
+    lines.push('');
+    lines.push('SO ONE PAIR OF BAITS FOR THE WHOLE DAY IS NOW A CHOICE, AND NOT A DEFAULT.');
+    lines.push('It is a perfectly good answer. If the right topwater and the right bladed jig cover '
+             + 'every hour of this water, rig them, fish them all day, and SAY that is what you are '
+             + 'doing and why. What is no longer an answer is rigging for "the day" as though it had '
+             + 'one light and one hour in it, because you can now see that it does not.');
+    lines.push('WHERE SOMETHING ACTUALLY CHANGES IS WHERE A CHANGE BELONGS. The light going from '
+             + 'twilight to bright. The pass turning, so the current is pushing the boat instead of '
+             + 'holding it back and every bait behind it is running at a different speed. The far '
+             + 'reach being deeper water than the near one.');
+    lines.push('AND THE CHEAP WAY TO ACT ON IT IS `deployBack`, NOT `changes`. Four rods are already '
+             + 'rigged and standing behind the seat, so putting two down and picking two up at the '
+             + 'turnaround costs seconds and no knots \u2014 name a second pair in `deployBack` on that '
+             + 'leg. `changes` reties a lure on a rod that is already out, which on a leader rod is '
+             + 'two knots with cold wet hands in a moving kayak: keep it for when NO rigged rod '
+             + 'carries what the water now wants, and then name the `beforeRunId` AND the `pass` so '
+             + 'the app puts the swap at that point in the day rather than at the ramp.');
+    lines.push('AND NOWHERE ELSE. Do not put a change on a timer, and do not reach for one because '
+             + 'the day looks long. Nothing here is cut into pieces that do not exist just to give a '
+             + 'swap somewhere to sit: there are two legs per reach because the boat goes out and '
+             + 'comes back, and that is all there is.');
+  }
+  return `\n${lines.join('\n')}\n`;
+}
+
+export function lightPromptBlock(ws, weatherByHour, launchTime, returnTime, lightFacts,
+                                isRiver) {
   if (!ws || ws.error) return '';
   const sum = lightSummary(ws, weatherByHour, launchTime, returnTime);
   const lines = [];
@@ -848,6 +967,21 @@ ${lines.join('\n')}
              + 'closing the light down at any hour. Low-light guidance does not apply anywhere on '
              + 'this day; do not carry a dawn pattern into it because it is the only one written '
              + 'down.');
+  } else if (isRiver) {
+    // ── AND ON A RIVER THE ORDER IS NOT THE MODEL'S TO ARRANGE ──────────────────────────────────
+    //
+    // The sentence below used to read "Put the low-light legs and the full-daylight legs in the
+    // order the light comes" on every water. On a river that is an instruction to do something the
+    // app has already done and the model is explicitly forbidden to undo -- rule 3, "DO NOT REORDER
+    // THE LEGS" -- so the prompt asked for one thing in one block and its opposite in another, and
+    // the model got no say in either. What replaces it points the same idea at what is still open.
+    lines.push('THE LIGHT CHANGES DURING THIS TRIP, so a presentation is not a property of the day '
+             + '— it belongs to the stretch of it whose light suits it. THE ORDER IS ALREADY '
+             + 'FIXED HERE (rule 3) and you are not being asked to arrange the day by light: every '
+             + 'leg carries its own clock and its own light in `passClock`, so match what you rig to '
+             + 'the light that leg actually has, and say in its `why` what that light is. A topwater '
+             + 'fish on the run out at first light and a trolled bait on the way back at noon are '
+             + 'not the same fish — and on a river they are the SAME WATER.');
   } else {
     lines.push('THE LIGHT CHANGES DURING THIS TRIP, so a presentation is not a property of the day '
              + '— it belongs to the stretch of it whose light suits it. Put the low-light legs and '
@@ -1550,7 +1684,11 @@ is the reason a leg is worth fishing in one direction and not the other. \`struc
 everything on the leg and \`structuresShown\` counts what you were handed; where they differ, the
 list is the best of the targets plus every hazard, and there is more castable water than you see.
 
-WHAT THE ORDER COSTS. Each candidate also carries \`transitToM\` — metres of deadhead from the END
+${o.isRiver ? `THE ORDER IS NOT YOURS HERE AND NEITHER IS THE DEADHEAD. \`transitToM\` and
+\`transitToMIfFishedBack\` are on the candidates because the same objects describe a lake day, where
+they are a real choice. On a river they are not being offered to you: the app drew the path and the
+order is the order (rule 3). What is yours is what goes in the water, and WHEN.
+${drawnDayBlock(o.drawnDay, candidates)}` : `WHAT THE ORDER COSTS. Each candidate also carries \`transitToM\` — metres of deadhead from the END
 of that leg to the START of every other leg — \`transitFromRampM\` from the ramp to its start, and
 \`transitToRampM\` from its end back to the ramp. Those are the only numbers that change when you
 reorder the day, and they are yours to spend: the app computes the legs, you choose the sequence.
@@ -1559,7 +1697,7 @@ AND WHAT TURNING AROUND COSTS. \`transitToMIfFishedBack\` is the same table for 
 EVEN number of times: turn at each end and you finish where you started, so the hop to the next
 leg is measured from the other end of the pass. Where that number is much smaller than
 \`transitToM\`, fishing the leg back is cheaper in deadhead AND longer in the water — the two
-things almost never point the same way and here they do.
+things almost never point the same way and here they do.`}
 
 ${JSON.stringify(candidates)}
 ${o.waterIsChosen ? `
@@ -1745,7 +1883,7 @@ wind direction: is it a dangerous windward launch?${o.hazards && o.hazards.lengt
     + `from the research is written advice with no position at all: say the ones that bear on `
     + `today out loud, and never imply an unpositioned one is marked on the chart.`
   : ''}
-${coastalPromptBlock(o.waterState)}${riverPromptBlock(o.waterState, o)}${poolPromptBlock(o.waterState)}${conditionsPromptBlock(o.waterState)}${lightPromptBlock(o.waterState, o.weatherByHour, o.launchTime, o.returnTime, o.lightFacts)}${timeBudgetBlock(o.windowMin, o.launchTime, o.returnTime, o.dayMin)}${thermoclineNormBlock(o.thermoclineNorm)}${inshoreSeasonBlock(o.inshoreSeason)}${seabedHabitatBlock(o.seabedHabitat)}
+${coastalPromptBlock(o.waterState)}${riverPromptBlock(o.waterState, o)}${poolPromptBlock(o.waterState)}${conditionsPromptBlock(o.waterState)}${lightPromptBlock(o.waterState, o.weatherByHour, o.launchTime, o.returnTime, o.lightFacts, o.isRiver)}${timeBudgetBlock(o.windowMin, o.launchTime, o.returnTime, o.dayMin)}${thermoclineNormBlock(o.thermoclineNorm)}${inshoreSeasonBlock(o.inshoreSeason)}${seabedHabitatBlock(o.seabedHabitat)}
 WHAT IS ALREADY KNOWN
 ${o.intel || 'NOTHING. No researched profile exists for this water, so everything else here rests '
   + 'on the chart, the gauges and general species knowledge. Say so in the plan rather than '
@@ -1767,11 +1905,25 @@ RETURN EXACTLY THIS SHAPE
       // "cast" is a rod that never gets picked up.` : ''}
     ]
   },
-  "legs": [
-    { "runId": "copied exactly", ${o.isRiver ? '' : '"speedMph": 2.0, "trollPasses": 1,\n      '}"deploy": { "port": "R1", "starboard": "R5" },
-      "why": "one sentence on why this water, now" }${o.isRiver ? `
-    // EVERY LEG, IN THE ORDER GIVEN, AND NOTHING ELSE ON IT. No \`speedMph\` and no
-    // \`trollPasses\`: the app sets both on a river and returning one is ignored. See rule 3.` : `
+  "legs": [${o.isRiver ? `
+    { "runId": "copied exactly", "deploy": { "port": "R1", "starboard": "R5" },
+      "deployBack": { "port": "R2", "starboard": "R6" },
+      "why": "one sentence on why this water, at the hours it is fished, in the light it has" }
+    // EVERY LEG, IN THE ORDER GIVEN. No \`speedMph\` and no \`trollPasses\`: the app sets both on a
+    // river and returning one is ignored. See rule 3.
+    //
+    // \`deploy\` IS THE RUN OUT AND \`deployBack\` IS THE RUN BACK, and that is the cheapest thing on
+    // this boat. The four rods not in the water are already rigged and standing behind the seat, so
+    // picking two of them up at the turnaround costs SECONDS. Retying a lure on a deployed rod
+    // (\`changes\`) is a knot with cold wet hands in a moving kayak, and on a leader rod it is two
+    // knots. So where the run back wants something different, name a different PAIR here first and
+    // reach for \`changes\` only when no rigged rod carries what the water now wants.
+    // \`deployBack\` IS OPTIONAL, AND LEAVING IT OUT IS A REAL ANSWER: the same two rods come back.
+    // Say in \`why\` that you meant it, because the pass coming back may be in different light,
+    // against a current that is now behind the boat, and hours from the one going out.` : `
+    { "runId": "copied exactly", "speedMph": 2.0, "trollPasses": 1,
+      "deploy": { "port": "R1", "starboard": "R5" },
+      "why": "one sentence on why this water, now" }
     // \`trollPasses\` is how many times you troll this stretch before moving on — down, back,
     // down again. Omit it or say 1 for a single pass. See rule 3.`}
   ],
@@ -1786,8 +1938,12 @@ RETURN EXACTLY THIS SHAPE
     // name for the feature and is there to be read, not returned.
   ],`}
   "changes": [
-    { "beforeRunId": "copied exactly", "rodId": "R5", "to": "exact name from the list",
-      "why": "what changed to make this worth the swap" }
+    { "beforeRunId": "copied exactly", ${o.isRiver ? '"pass": 2, ' : ''}"rodId": "R5", "to": "exact name from the list",
+      "why": "what changed to make this worth the swap" }${o.isRiver ? `
+    // \`pass\` IS WHICH OF THE TWO PASSES OVER THAT REACH THE SWAP HAPPENS BEFORE, and on a river
+    // it is the whole of how you place a change in TIME. 1 is the run out, 2 is the run back, and
+    // they can be hours and a light change apart \u2014 see the day above. Leave it out and the app
+    // puts the swap before the run out, which on a reach fished at first light is rarely the point.` : ''}
   ],
   "notes": {
     "structureFocus": "the sonar signature to look for",
@@ -2054,6 +2210,18 @@ export function planArgsFrom(res, candidates, ctx = {}) {
   // --- the legs, in the model's order ---------------------------------------------------------
   const ordered = [];
   const deploy = {};
+  // ── AND THE TWO RODS HE PICKS UP FOR THE RUN BACK ─────────────────────────────────────────────
+  //
+  // Ryan, 2026-09-17: *"and this dashboard doesn't tell me to switch if they aren't working or even
+  // mention the other 4 rods?"*. `deploy` is keyed by runId and a river reach is fished out and back
+  // under one runId, so the two rods on the way out WERE the two rods on the way back and no plan
+  // could say otherwise. The only tool for changing the day was `changes`, which reties a lure on a
+  // deployed rod -- the expensive move, a knot with cold wet hands -- while the cheap one, putting
+  // two rods down and picking up two of the four already rigged behind the seat, could not be
+  // expressed at all. Keyed by runId in its own map rather than by a compound key in `deploy`,
+  // because a runId may itself contain a `#` and because every existing reader of `deploy` iterates
+  // its values.
+  const deployBack = {};
   const seen = new Set();
   // What the model sent on a river that the app was never going to read. Collected rather than
   // reported leg by leg, because one sentence about the day is the useful shape.
@@ -2111,6 +2279,25 @@ export function planArgsFrom(res, candidates, ctx = {}) {
     } else {
       problems.push(`${c.runId} needs one port rod and one starboard rod, got `
                   + `${JSON.stringify(d)} — no rods deployed`);
+    }
+
+    // OPTIONAL, AND ABSENT MEANS THE SAME PAIR COMES BACK. That is the right answer on a day whose
+    // light and current do not change, and it is what every plan before this field did, so silence
+    // here is not a gap to report. Only a pair that is named and unusable is.
+    if (riverDay) {
+      const b = leg.deployBack || {};
+      const bp = reseat(str(b.port)), bs = reseat(str(b.starboard));
+      if (bp || bs) {
+        if (bp && bs && bp !== bs
+            && usable(bp, `${c.runId} port on the run back`)
+            && usable(bs, `${c.runId} starboard on the run back`)) {
+          deployBack[c.runId] = { port: bp, starboard: bs };
+        } else if (!(bp && bs && bp !== bs)) {
+          problems.push(`${c.runId} asked for a different pair on the run back and named `
+                      + `${JSON.stringify(b)} — that is not one port rod and one starboard rod, so `
+                      + 'the run back keeps the rods from the run out');
+        }
+      }
     }
   }
   if (!ordered.length) problems.push('the model chose no legs the app recognised');
@@ -2206,8 +2393,22 @@ export function planArgsFrom(res, candidates, ctx = {}) {
       problems.push(`a lure change on ${reseat(str(c.rodId))} ties on "${asked}", which is not `
                   + 'in the tackle inventory');
     }
+    // ── WHICH PASS, WHICH IS HOW A CHANGE GETS A TIME ─────────────────────────────────────────
+    //
+    // A river reach is fished twice and both passes carry the SAME `runId`, so `beforeRunId` alone
+    // could only ever mean "before the run out" -- the assembler gated changes on the first visit
+    // for exactly that reason. That made a swap at the turnaround structurally impossible, which is
+    // most of why every river plan rigged one pair of baits for nine hours: the app had nowhere to
+    // put a second one. Absent, out of range, or on a leg fished once, it is 1 and the behaviour is
+    // the behaviour every plan before this one had.
+    const onPass = num(c.pass);
+    if (c.pass != null && onPass !== 1 && onPass !== 2) {
+      problems.push(`a lure change on ${reseat(str(c.rodId))} names pass ${JSON.stringify(c.pass)}, `
+                  + 'which is not a pass -- placed on the first pass instead');
+    }
     return {
       beforeRunId: c.beforeRunId, rodId: reseat(c.rodId),
+      pass: onPass === 2 ? 2 : 1,
       to: (hit && hit.name) || asked, why: str(c.why),
     };
   });
@@ -2216,7 +2417,7 @@ export function planArgsFrom(res, candidates, ctx = {}) {
   return {
     candidates: ordered,
     loadout: { why: str(res.loadout && res.loadout.why), rods: seat.rods },
-    deploy, stops, changes,
+    deploy, deployBack, stops, changes,
     safety: {
       isGo: safety.isGo !== false,
       warning: str(safety.warning) || '',

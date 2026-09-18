@@ -620,6 +620,32 @@ function riverPassNumbers(c, flipped, deploy, rods, lureByName) {
  *
  * @returns {{legs: object[], facing: object[], dropped: string[]}}
  */
+/**
+ * ── WHICH TWO RODS ARE IN THE WATER ON ONE PASS ─────────────────────────────────────────────────
+ *
+ * Ryan, 2026-09-17: *"but if it is only an up and back am i using the same rods all day long... no
+ * matter what? that doesn't make sense... and this dashboard doesn't tell me to switch if they aren't
+ * working or even mention the other 4 rods?"*
+ *
+ * He was reading the app correctly. `deploy` is keyed by `runId`, a river reach is fished out and
+ * back, and both passes carry the same runId -- so the two rods on the run out were the two rods on
+ * the run back BY CONSTRUCTION, with no way for a plan to say otherwise. The only tool for changing
+ * the day was `changes`, which reties a lure on a deployed rod, and that is the EXPENSIVE move on the
+ * water: a fluoro leader is a knot with cold wet hands in a moving kayak. The cheap move -- put the
+ * two rods down and pick up two of the four already rigged behind the seat -- could not be expressed
+ * at all, which is why the other four rods never got mentioned.
+ *
+ * `deployBack` is that second pair, one per reach, and it is OPTIONAL: absent, the run back keeps the
+ * rods from the run out, which is what every plan before 2026-09-18 did and is still the right answer
+ * on a day whose light and current do not change.
+ */
+function deployOn(o, c, pass) {
+  if (!c) return null;
+  const p = Number(pass ?? c.pass ?? 1);
+  return (p === 2 && o.deployBack && o.deployBack[c.runId])
+    || (o.deploy && o.deploy[c.runId]) || null;
+}
+
 function fitRiverDay(cands, launch, o, rods, windowMin, transitMph) {
   const n = Array.isArray(cands) ? cands.length : 0;
   if (!n) return { legs: cands || [], facing: [], dropped: [], droppedRuns: [] };
@@ -649,9 +675,12 @@ function fitRiverDay(cands, launch, o, rods, windowMin, transitMph) {
   // Each reach's own out-and-back, at the speed its own two baits will be held at. The orientation
   // comes from riverPassFlipped(), the same function travelOrder() lays the day out with.
   const costOf = (c) => {
-    const dep = (o.deploy && o.deploy[c.runId]) || null;
-    const out = riverPassNumbers(c, riverPassFlipped(c, true), dep, rods, o.lureByName);
-    const back = riverPassNumbers(c, riverPassFlipped(c, false), dep, rods, o.lureByName);
+    // EACH PASS AT ITS OWN PAIR'S SPEED. A plan may put a different two rods in the water for the run
+    // back (`deployBack`, see deployOn), and two different baits are two different speed windows --
+    // so pricing both halves off the outward pair would fit the day to a speed half of it is not
+    // trolled at, and the half it got wrong is the half nearest the end of the battery.
+    const out = riverPassNumbers(c, riverPassFlipped(c, true), deployOn(o, c, 1), rods, o.lureByName);
+    const back = riverPassNumbers(c, riverPassFlipped(c, false), deployOn(o, c, 2), rods, o.lureByName);
     return { min: (out.min ?? 0) + (back.min ?? 0), ah: (out.ah ?? 0) + (back.ah ?? 0),
              // A reach with no priced pass is one this function cannot judge, so it is never cut on.
              priced: out.min != null && back.min != null };
@@ -739,6 +768,9 @@ function groundSpeedFor(window, currentMph, upstream) {
  * @param {number[]} o.launch      [lon, lat] of the ramp
  * @param {object}   o.loadout     the model's six rods; passed through untouched
  * @param {object}   [o.deploy]    { [runId]: {port, starboard} } — which two rods go in the water
+ * @param {object} [o.deployBack]  the same, for the RUN BACK over a river reach. Optional, and
+ *                               absent means the run back keeps the rods from the run out.
+ *                               See deployOn().
  * @param {object[]} [o.stops]     [{runId, structureId, rods, durationMin, why, presentation,
  *                                 positioning}] — structureId names a pass the app supplied
  * @param {object[]} [o.changes]   [{beforeRunId, rodId, from, to, why}]
@@ -861,9 +893,20 @@ export function assemblePlan(o) {
 
   for (const w of fitted.dropped) warnings.push(w);
 
-  // What the bait ceiling decided for each reach, so the return pass over the same water reads the
-  // answer instead of recomputing it and saying it twice. See the note at capBaitDepth's call.
-  const rodPlanByRun = new Map();
+  // ── WHAT HAS ALREADY BEEN SAID ABOUT EACH REACH ─────────────────────────────────────────────
+  //
+  // A river reach is fished out and back, so a warning about the rig on it can arrive twice about one
+  // decision -- and whether it SHOULD depends entirely on whether the thing it is about changed
+  // between the two passes. This used to be answered two ad-hoc ways, both keyed on the pass: the
+  // bait-ceiling answer was cached on the runId and copied onto the return pass, and the no-overlap
+  // sentence was gated on `firstVisit`. Both are wrong now for the same reason -- the two passes can
+  // carry DIFFERENT RODS (`deployBack`) and always carried DIFFERENT LIGHT, and capBaitDepth's light
+  // check is exactly the one that catches a first-light topwater note being dragged back at two in
+  // the afternoon. Keyed on the pass, that check never ran on the half of the day it was written for.
+  //
+  // So the rule is one rule, and it is about the sentence rather than the pass: identical news is
+  // said once, different news is said twice, because two different sentences are two different facts.
+  const saidForRun = new Map();
 
   const stopsByRun = new Map();
   for (const s of (o.stops || [])) {
@@ -888,17 +931,26 @@ export function assemblePlan(o) {
   // one the change happens before. Stops are read RAW here, before structure resolution -- a
   // change justified by a stop that is later refused stays, because dropping a legitimate change
   // is a worse failure than keeping a marginal one.
-  // THE FIRST TIME THE BOAT MEETS THIS RUN, because that is where a change "before" it happens. A
-  // river reach appears twice in `legList` and a Map built by assignment would keep the return pass.
+  // WHERE IN THE DAY EACH PASS OF EACH RUN SITS, because that is where a change "before" it happens.
+  //
+  // KEYED BY RUN **AND PASS**, which is the whole of how a change gets a time on a river. A reach
+  // appears twice in `legList` under one `runId`, so a Map keyed by runId alone can only ever point
+  // at one of the two -- it pointed at the run out, and the run back could not be reached. The two
+  // are hours and a light change apart. `c.pass` is undefined on every lake leg and resolves to 1, so
+  // a lake day keys exactly as it did.
+  const passKey = (runId, pass) => `${runId}\u0000${Number(pass ?? 1) === 2 ? 2 : 1}`;
   const legOrder = new Map();
-  legList.forEach((c, i) => { if (!legOrder.has(c.runId)) legOrder.set(c.runId, i); });
+  legList.forEach((c, i) => {
+    const k = passKey(c.runId, c.pass);
+    if (!legOrder.has(k)) legOrder.set(k, i);
+  });
   const rodLastUsed = new Map();
   const useRod = (id, i) => {
     if (!id) return;
     if (!rodLastUsed.has(id) || rodLastUsed.get(id) < i) rodLastUsed.set(id, i);
   };
   legList.forEach((c, i) => {
-    const d = (o.deploy && o.deploy[c.runId]) || {};
+    const d = deployOn(o, c) || {};
     useRod(d.port, i);
     useRod(d.starboard, i);
     for (const s of (stopsByRun.get(c.runId) || [])) for (const r of (s.rods || [])) useRod(r, i);
@@ -908,10 +960,23 @@ export function assemblePlan(o) {
   for (const s of (o.stops || [])) {
     if (!planned.has(s.runId)) warnings.push(`dropped a stop on ${s.runId} — that run is not in the plan`);
   }
+  // WHICH PASS EACH CHANGE LANDS ON, resolved once here so the leg loop below is a lookup and not a
+  // decision. A change that names the run back on a stretch fished only once has no home, and it is
+  // put on the one pass there is rather than silently vanishing -- a dropped change is a bait he does
+  // not put on, which is worse than a change placed a few hours early.
+  const changeAtPass = new Map();
   for (const c of (o.changes || [])) {
     if (c.beforeRunId && !planned.has(c.beforeRunId)) {
       warnings.push(`dropped a lure change before ${c.beforeRunId} — that run is not in the plan`);
+      continue;
     }
+    const asked = Number(c.pass ?? 1) === 2 ? 2 : 1;
+    const has = legOrder.has(passKey(c.beforeRunId, asked));
+    if (asked === 2 && !has) {
+      warnings.push(`the lure change on ${c.rodId} asked to happen before the run back over `
+                  + `${c.beforeRunId}, which is fished once — put it before the one pass instead`);
+    }
+    changeAtPass.set(c, has ? asked : 1);
   }
 
   const rods = (o.loadout && o.loadout.rods) || [];
@@ -926,11 +991,16 @@ export function assemblePlan(o) {
     // cumulative distance, not a time. Cost comes from the rod's rig, not from the model's
     // opinion: a snap is seconds, a fluoro leader is a knot with wet hands. A change naming a rod
     // that is not in the loadout is a change to a seventh rod, and is refused.
-    for (const ch of (firstVisit ? (changeByRun.get(c.runId) || []) : [])) {
+    // A CHANGE HAPPENS BEFORE ONE PASS, NOT BEFORE A RUN. This used to be `firstVisit ? ... : []`,
+    // which put every change on the run out and made a swap at the turnaround impossible -- see
+    // changeAtPass above and `pass` in planArgsFrom().
+    const thisPass = (c.pass ?? 1) === 2 ? 2 : 1;
+    for (const ch of (changeByRun.get(c.runId) || [])
+           .filter((ch) => (changeAtPass.get(ch) ?? 1) === thisPass)) {
       const rod = rods.find((r) => r.id === ch.rodId);
       if (!rod) { warnings.push(`dropped a lure change on ${ch.rodId} — no such rod in the loadout`); continue; }
       const usedAt = rodLastUsed.has(ch.rodId) ? rodLastUsed.get(ch.rodId) : -1;
-      if (usedAt < (legOrder.get(c.runId) ?? 0)) {
+      if (usedAt < (legOrder.get(passKey(c.runId, thisPass)) ?? 0)) {
         warnings.push(`dropped a lure change on ${ch.rodId} before ${c.runId} — that rod is `
                     + 'never trolled or cast again after it, so the swap costs a retie and '
                     + 'buys nothing');
@@ -1021,7 +1091,7 @@ export function assemblePlan(o) {
 
     // WHICH TWO RODS GO IN THE WATER, read here rather than eighty lines down because on a river it
     // is what SETS THE SPEED -- see riverCur below. Everything else about it is unchanged.
-    const deploy = (o.deploy && o.deploy[c.runId]) || null;
+    const deploy = deployOn(o, c);
 
     // ── ON A RIVER THE APP SETS THE SPEED, AND THE MODEL IS NOT ASKED FOR ONE ────────────────────
     //
@@ -1032,15 +1102,32 @@ export function assemblePlan(o) {
     // fitRiverDay() made a hundred lines up to decide this leg was affordable at all.
     const P = riverPassNumbers(c, flipped, deploy, rods, o.lureByName);
     const { riverCur, baits, baitBand } = P;
-    // TWO RODS SHARE ONE BOAT, SO A PAIR WHOSE WINDOWS DO NOT MEET COSTS ONE OF THEM. Said once per
-    // REACH, naming both baits, because the fix is a bait change and that is the model's call -- and
-    // because a river reach is fished out and back, so without `firstVisit` the same sentence arrives
-    // twice about one decision. The over-driven warning further down is NOT deduped that way, on
-    // purpose: that one is about the direction and the two directions are genuinely different news.
-    if (firstVisit && baitBand && baitBand.overlap === false) {
+    // TWO RODS SHARE ONE BOAT, SO A PAIR WHOSE WINDOWS DO NOT MEET COSTS ONE OF THEM. Naming both
+    // baits, because the fix is a bait change and that is the model's call. Through sayOnce(), so a
+    // reach fished out and back says it once about one pair -- and TWICE where the two passes carry
+    // different pairs, which is two pairs and therefore two decisions. The over-driven warning
+    // further down is not deduped at all, on purpose: that one is about the direction, and the two
+    // directions are genuinely different news.
+    // WHAT THIS LEG MAY SAY, ONCE. See saidForRun: the two passes over one reach are siblings in
+    // `legList`, so anything said about the rig has to decide whether it is one piece of news or two.
+    if (!saidForRun.has(c.runId)) saidForRun.set(c.runId, new Set());
+    const said = saidForRun.get(c.runId);
+    // THE SAME NEWS AT A DIFFERENT MINUTE IS THE SAME NEWS. Several of these sentences quote the
+    // leg's own start clock -- "this leg starts 09:12 in daylight" -- and the two passes over one
+    // reach never start at the same minute, so comparing the rendered text would call every sentence
+    // new and dedupe nothing. The clock is masked out of the KEY only: what is left is the light
+    // words, the rod, the bait and the depths, which is the news. So a reach fished twice in the same
+    // light says it once, and a reach fished once at dawn and once at noon says it twice, because
+    // "low light" and "NOT low light" are different words and survive the mask.
+    const newsOf = (w) => String(w).replace(/\b\d{1,2}:\d{2}\b/g, '\u00b7');
+    const sayOnce = (w) => {
+      const k = newsOf(w);
+      if (!said.has(k)) { said.add(k); warnings.push(w); }
+    };
+    if (baitBand && baitBand.overlap === false) {
       const [slow, fast] = baits[0].speed.max <= baits[1].speed.max ? [baits[0], baits[1]]
                                                                     : [baits[1], baits[0]];
-      warnings.push(`${c.runId} has no one speed that fishes both baits: ${fast.name} needs at `
+      sayOnce(`${c.runId} has no one speed that fishes both baits: ${fast.name} needs at `
                   + `least ${baitBand.needsAtLeast} mph through the water and ${slow.name} blows `
                   + `out above ${baitBand.max}. Held at ${baitBand.max} so nothing blows out, `
                   + `which leaves the ${fast.name} under its window all day -- pick a pair whose `
@@ -1193,25 +1280,29 @@ export function assemblePlan(o) {
     // may be copied onto pass 2 unchanged.
     const waterMph = riverCur != null
       ? Number((legMph + (upstreamOn(1) ? riverCur : -riverCur)).toFixed(2)) : legMph;
-    // ── JUDGED ONCE PER REACH, NOT ONCE PER PASS ────────────────────────────────────────────────
+    // ── JUDGED ON EVERY PASS, AND SAID ONCE PER SENTENCE ────────────────────────────────────────
     //
-    // On a river the same water is fished out and back, and the bait's depth is identical both ways
-    // -- that is the whole point of handing this the WATER speed rather than the ground speed, a few
-    // lines up. So the answer is the same on the return pass, and computing it again produced every
-    // "put a Squarebill on no lead at all" sentence twice about one rig. Cached on the runId; a leg
-    // the boat has not met before always computes.
-    let rodPlan;
-    if (!firstVisit && rodPlanByRun.has(c.runId)) {
-      rodPlan = rodPlanByRun.get(c.runId);
-    } else {
-      rodPlan = capBaitDepth(rods, deploy, Number(c.maxRunDepthFt ?? c.depthFt), waterMph,
-                             o.lureByName, c.runId, warnings, fish,
-                             // THE LEG'S OWN ENVELOPE, so a one-shoal ceiling can be told apart
-                             // from water that is shallow all the way along. See capBaitDepth.
-                             { medianFt: Number(c.depthFt), minFt: Number(c.depthMinFt),
-                               maxFt: Number(c.depthMaxFt) }, legLight);
-      rodPlanByRun.set(c.runId, rodPlan);
-    }
+    // The bait's DEPTH really is identical both ways on a river -- that is the whole point of handing
+    // this the WATER speed rather than the ground speed, a few lines up -- so this was computed once
+    // per reach and the answer copied onto the return pass, which stopped "put a Squarebill on no
+    // lead at all" arriving twice about one rig.
+    //
+    // TWO THINGS IN HERE ARE NOT THE SAME ON BOTH PASSES, THOUGH. The rods can differ now
+    // (`deployBack`), and the LIGHT never was the same: this call carries `legLight`, and the check it
+    // feeds is the one that catches a bait whose own technique note says first light being dragged
+    // back through full sun. Cached on the runId, the return pass inherited the outward answer and
+    // that check never ran on the afternoon -- the half of the day it exists for.
+    //
+    // So it runs every pass, into a scratch list, and saidForRun decides what is news. Identical
+    // sentences collapse; a sentence that differs because the hour or the pair differs is kept.
+    const fresh = [];
+    const rodPlan = capBaitDepth(rods, deploy, Number(c.maxRunDepthFt ?? c.depthFt), waterMph,
+                                 o.lureByName, c.runId, fresh, fish,
+                                 // THE LEG'S OWN ENVELOPE, so a one-shoal ceiling can be told apart
+                                 // from water that is shallow all the way along. See capBaitDepth.
+                                 { medianFt: Number(c.depthFt), minFt: Number(c.depthMinFt),
+                                   maxFt: Number(c.depthMaxFt) }, legLight);
+    for (const w of fresh) sayOnce(w);
 
     legs.push({
       id: `L${++li}`, type: 'troll',
@@ -1457,10 +1548,14 @@ export function assemblePlan(o) {
   }
   const strandedBy = new Map();
   for (const runId of (fitted.droppedRuns || [])) {
-    const d = (o.deploy && o.deploy[runId]) || {};
-    for (const side of ['port', 'starboard']) {
-      const id = d[side];
-      if (id && !inWater.has(id) && !strandedBy.has(id)) strandedBy.set(id, runId);
+    // BOTH PAIRS, because a reach that came off the day may have had a second pair named for the run
+    // back, and a rod rigged only for that is stranded by the cut exactly as an outward one is.
+    for (const d of [(o.deploy && o.deploy[runId]) || {},
+                     (o.deployBack && o.deployBack[runId]) || {}]) {
+      for (const side of ['port', 'starboard']) {
+        const id = d[side];
+        if (id && !inWater.has(id) && !strandedBy.has(id)) strandedBy.set(id, runId);
+      }
     }
   }
   // A PLAN WITH NO WATER IN IT HAS NOTHING TO DEPLOY ON, and saying "this rod never fishes" six times

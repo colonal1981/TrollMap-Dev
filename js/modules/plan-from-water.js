@@ -456,6 +456,12 @@ export async function planFromWater(o) {
     launch: o.ramp,
     loadout: args.loadout,
     deploy: args.deploy,
+    // THE RUN-BACK PAIR. Always empty on this path, because Pick Water refuses a river before it
+    // fetches anything and `deployBack` exists only for a reach fished out and back. Wired anyway:
+    // the field is part of the assembler's contract, and a planner that names every other field and
+    // silently omits one is the exact shape of the three bugs one-prompt-two-planners.test.js exists
+    // to catch. If this path ever plans moving water it is already correct.
+    deployBack: args.deployBack,
     stops: args.stops,
     changes: args.changes,
     launchTime: o.launchTime,

@@ -31,6 +31,14 @@
 // relief pair is defined over there and not here.
 import { waterBand, reliefDropOf } from './plan-pieces.js';
 
+// ── AND WHEN EACH PASS HAPPENS, WHICH IS A FISHING FACT AND WAS NEVER SENT ───────────────────────
+//
+// riverDay() draws the whole day, so it is the only thing that knows the ORDER the water is fished
+// in -- and therefore the only thing that can say what o'clock each pass is. The light follows from
+// the clock, and legLightFor() is the one reader of the almanac every other surface already uses.
+// Imported from utils/ rather than from plan-assemble.js, which imports THIS file.
+import { legLightFor, hhmmToHours, hoursToHhmm } from '../utils/light-state.js';
+
 // Fitted to Ryan's own two observations, 2026-08-07, because Newport publishes no curve:
 // trolling 1.8–2.2 mph draws 3–7 A; 100% throttle (~5 mph, no wind or current) draws 25 A.
 // Anchoring 5 A at 2.0 and 25 A at 5.0 gives an exponent of ln(5)/ln(2.5) = 1.756, which lands
@@ -2540,8 +2548,13 @@ const ALWAYS_SHOW = new Set(['hazard', 'obstruction', 'pile', 'shallow', 'bridge
  * per-leg numbers built for a menu; a chain is not a menu, and its cost is the sum of the fishing.
  *
  * @param {object[]} gated  candidates that already passed depth, structure and the day gates
- * @param {object} o        {usableAh, windowMin, trollMph}
- * @returns {object[]} the day's legs in travel order, with `.day` describing how it was chosen
+ * @param {object} o        {usableAh, windowMin, trollMph, transitMph, launchTime, launch,
+ *                          waterState, weatherByHour} -- the last five only to put a CLOCK and a
+ *                          LIGHT on each pass, which is what stampPassClock() is for. Without them
+ *                          the day still draws; it just cannot say what time of day any of it is.
+ * @returns {object[]} the day's legs in travel order, each carrying `passClock` -- one entry per
+ *          pass, in the order fished, with its start, its length and the light on it -- and `.day`
+ *          describing how the day was chosen
  */
 /**
  * A REACH CUT TO A FRACTION OF ITSELF, FROM ITS NEAR END.
@@ -2589,6 +2602,101 @@ export function trimReach(c, frac) {
       .filter((h) => Number(h.atM) >= a && Number(h.atM) <= b)
       .map((h) => (a > 0 ? { ...h, atM: Math.max(0, Math.round(Number(h.atM) - a)) } : h)),
   };
+}
+
+/**
+ * ── WHAT O'CLOCK EACH PASS IS, AND WHAT THE LIGHT IS ON IT ──────────────────────────────────────
+ *
+ * Ryan, 2026-09-17, on a river plan that rigged one pair of baits for a nine-hour day: *"if it is
+ * only an up and back am i using the same rods all day long... no matter what? that doesn't make
+ * sense"*. It does not, and the cause was never the model's judgement -- the model had no way to
+ * know. A river candidate carried `estMin`, which is a DURATION, and nothing anywhere said WHEN. So
+ * the day it was rigging had no morning and no afternoon in it, and a bait picked for first light
+ * and a bait picked for three in the afternoon are the same choice when you cannot tell which one
+ * you are making.
+ *
+ * Measured on his own Congaree bench, launching 06:00 from Bates Bridge: the reach at `@115600` is
+ * fished OUT from 06:00 to 08:44 and again BACK from 13:31 to 15:19. Same water, same `runId`, one
+ * leg each way, seven and a half hours and a whole light change apart.
+ *
+ * THE ORDER COMES FROM travelOrder(), NOT FROM A SECOND WALK OF THE SAME LIST. That function is
+ * already the one answer to what order a river day is fished in -- one out-and-back per arm, arms in
+ * the order riverDay() committed them -- and deriving it again here is how two answers to one
+ * question start disagreeing. See its note for the 12.9 km that bought.
+ *
+ * THE BOAT'S PLACE IS A SCALAR, because a river day is a line through the launch. `fromRamp.m` is
+ * how far a reach's near end lies from the ramp along the centreline, so a pass runs between `m` and
+ * `m + lengthM` and the hop between two passes is the difference of two such numbers -- or, where
+ * the day crosses the launch out of one arm and into the other, their sum. No coordinates and no
+ * router: on a line there is nothing to route.
+ *
+ * AND IT IS AN ESTIMATE, AT THE APP'S PROVISIONAL TROLL SPEED, for exactly the reason `estMin` is:
+ * no bait has been chosen yet and the bait is what sets the speed. fitRiverDay() in
+ * plan-assemble.js re-fits the day once one has, and the assembler stamps each leg's real light off
+ * its own clock. This is the honest number available at prompt time, and the prompt says which it
+ * is rather than letting it read as the plan.
+ *
+ * @returns {number} metres of transit in the drawn day, which on a ramp-anchored river day is
+ *          small and was previously neither charged nor reported. 49 m at Bates Bridge.
+ */
+function stampPassClock(legs, o) {
+  const startHours = hhmmToHours(o.launchTime);
+  if (startHours == null || !legs.length) return 0;
+  const { legs: order, river } = travelOrder(legs, o.launch);
+  if (!river) return 0;
+  const trollMph = o.trollMph ?? 2.0;
+  const transitMph = o.transitMph ?? 3.5;
+  const byRun = new Map();
+  let posM = 0, armDir = null, mins = 0, transitM = 0, byRunSeq = 0;
+  for (const leg of order) {
+    const nearM = Number(leg.fromRamp.m), lenM = Number(leg.lengthM);
+    if (!Number.isFinite(nearM) || !Number.isFinite(lenM)) return 0;
+    const outward = leg.pass === 1;
+    const enterM = outward ? nearM : nearM + lenM;
+    const exitM = outward ? nearM + lenM : nearM;
+    const hopM = armDir && armDir !== leg.fromRamp.direction
+      ? posM + enterM
+      : Math.abs(enterM - posM);
+    if (hopM > 0) { transitM += hopM; mins += minutesFor(hopM, transitMph); }
+    // Travelling the drawn line in reverse is travelling against the flow -- a drift is drawn
+    // downstream. riverPassFlipped() is the one answer to that and both callers use it.
+    const upstream = riverPassFlipped(leg, outward);
+    const cur = Number(leg.currentMph);
+    const overGround = !Number.isFinite(cur) || cur <= 0
+      ? trollMph
+      : (upstream ? Math.max(0.1, trollMph - cur) : trollMph + cur);
+    const passMin = Math.round(minutesFor(lenM, overGround));
+    const at = hoursToHhmm(startHours + mins / 60);
+    const row = {
+      pass: leg.pass,
+      // WHERE THIS PASS COMES IN THE DAY, 1-based, ACROSS EVERY REACH. `pass` says which of the two
+      // runs over this reach it is; this says where it sits in the whole day, which is the only thing
+      // that can put the passes of different reaches in order. Carried rather than re-derived from the
+      // clock, because this function is the one that knows the order and a reader sorting on `at`
+      // would be re-deriving it from a rounded string.
+      seq: byRunSeq + 1,
+      at,
+      ends: hoursToHhmm(startHours + (mins + passMin) / 60),
+      min: passMin,
+      // WHICH WAY THE BOAT IS GOING, because it is the difference between the two passes that is
+      // not the clock: one is trolled against the current and one with it, and the bait feels that.
+      upstream,
+      overGroundMph: Number(overGround.toFixed(2)),
+      // Null when the almanac is missing, which is the silence every other reader of it keeps.
+      light: legLightFor(o.waterState, o.weatherByHour, at, passMin) || null,
+    };
+    if (!byRun.has(leg.runId)) byRun.set(leg.runId, []);
+    byRun.get(leg.runId).push(row);
+    byRunSeq += 1;
+    mins += passMin;
+    posM = exitM;
+    armDir = leg.fromRamp.direction;
+  }
+  for (const c of legs) {
+    const rows = byRun.get(c.runId);
+    if (rows && rows.length) c.passClock = rows.slice().sort((a, b) => a.pass - b.pass);
+  }
+  return transitM;
 }
 
 export function riverDay(gated, o = {}) {
@@ -2703,6 +2811,17 @@ export function riverDay(gated, o = {}) {
       reaches: arm.length, worth: Number(worth(arm).toFixed(1)), takenFirst: i === 0,
     })).filter((x) => x.direction),
   };
+  // ── AND WHEN EACH PASS OF EACH REACH IS FISHED ───────────────────────────────────────────────
+  //
+  // Last, because it needs the finished list: the clock depends on the order, and the order is not
+  // settled until the trim above has settled. See stampPassClock() for the measurement.
+  //
+  // `transitM` IS NOT IN `plannedMin` OR `plannedAh`, and that is deliberate rather than forgotten.
+  // fitRiverDay() in plan-assemble.js is where the window is actually enforced and it reserves the
+  // near-end hop there, against the speed the BAITS set, which is the only place that reservation
+  // can be made honestly. What this adds is the number itself, so a day that happens to be built
+  // out of reaches with gaps between them cannot hide the crossing.
+  legs.day.transitM = Math.round(stampPassClock(legs, o));
   return legs;
 }
 
@@ -2807,6 +2926,19 @@ export function forModel(c, cap = MODEL_STRUCTURE_CAP) {
     // looked identical and the 2026-09-17 bench duly fished three passes of one reach before it
     // went anywhere. Absent on a lake, where a day is not out and back along one line.
     fromRamp: c.fromRamp || undefined,
+    // ── AND WHAT TIME OF DAY EACH PASS OVER IT IS ────────────────────────────────────────────────
+    //
+    // The single most consequential thing this object did not say. Every field above describes the
+    // WATER -- how deep it is, what is on the bottom, what it costs to fish -- and not one of them
+    // described the DAY, so a reach fished out at first light and back in the afternoon reached the
+    // model as one anonymous stretch with a duration on it, and the plan that came back rigged one
+    // pair of baits for all of it. Ryan: "if it is only an up and back am i using the same rods all
+    // day long... no matter what? that doesn't make sense".
+    //
+    // One entry per pass, in the order fished, each with its clock, its length, which way the boat
+    // is going and the light on it. See stampPassClock() for where the clock comes from and why it
+    // is an estimate. Absent on a lake and absent when there is no launch time to count from.
+    passClock: Array.isArray(c.passClock) && c.passClock.length ? c.passClock : undefined,
     passes: counts,
     structures: shown,
     structuresShown: shown.length,
