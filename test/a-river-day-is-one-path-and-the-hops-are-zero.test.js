@@ -251,3 +251,104 @@ describe('trimReach — the same cut riverDay makes', () => {
     expect(t.trimmedFrom).toBe(A.lengthM);
   });
 });
+
+// ── AND A DAY CAN BE TWO OUT-AND-BACKS FROM ONE LAUNCH ────────────────────────────────────────
+//
+// riverDay() fills the richer side of the launch first and carries on into the other side if the
+// budget has room. Ryan launches at BATES BRIDGE, station 123,600 of a 126,843 m centreline, so his
+// Congaree day is exactly that: 8 km of river above him and 3.2 km below.
+//
+// THE FIRST VERSION OF travelOrder() MIRRORED THE WHOLE LIST — A-out, B-out, B-back, A-back — which
+// is right for one arm and reintroduces the bug it was written to kill the moment there are two: the
+// boat runs 8 km up, comes back past the launch to fish the downstream arm, then goes back up to
+// where the first arm ended. Measured from Bates Bridge: T2 and T3 at 4,821 m each, 9,691 m of
+// deadhead on a 29.5 km day.
+//
+// A reach ABOVE the ramp is drawn downstream too, so its drawn `start` is the FAR end. That is what
+// made the second and third defects here: the hop reserve read `transitInM` — the distance to the
+// drawn start — and trimReach() cut the drawn prefix.
+
+// 8 km of river ABOVE the launch, drawn downstream, so coords run far → near.
+// THE NEAR END IS PASSED IN AND NOT DERIVED. The first draft computed it from `fromM / 111320` and
+// left gaps of 22 m and 4 m against the reach it was meant to butt onto -- then failed the test that
+// hops are zero, on the fixture's own rounding rather than on the code. Contiguity is the premise of
+// every assertion below, so it is built rather than approximated. Second time tonight.
+function upReach(n, fromM, lengthDeg, latNear) {
+  const coordinates = [];
+  for (let i = 0; i <= 20; i++) coordinates.push([-81.0368, latNear + lengthDeg * (1 - i / 20)]);
+  const lengthM = metresBetween(coordinates[0], coordinates[coordinates.length - 1]);
+  return {
+    runId: `congaree_river:drift:mid_channel@${115600 - fromM}`, runIndex: n,
+    startM: 0, lengthM, depthFt: 22, maxRunDepthFt: 30,
+    start: coordinates[0], end: coordinates[coordinates.length - 1], coordinates,
+    passes: [{ id: 'p1', atM: 200, type: 'hole', offM: 10, weight: 3, at: coordinates[1] },
+             { id: 'p2', atM: Math.round(lengthM - 200), type: 'hole', offM: 10, weight: 3,
+               at: coordinates[19] }],
+    support: null, drift: true, currentMph: 0.66, trollPasses: 2,
+    fromRamp: { direction: 'upstream', m: fromM },
+    // THE TRAP: `transitInM` is the distance to the DRAWN start, which on an upstream reach is the far
+    // end. `fromRampM` is the near end. Both are real fields off selectCandidates.
+    transitInM: fromM + Math.round(lengthM), transitOutM: fromM, fromRampM: fromM || 49,
+  };
+}
+// Its near end IS reach A's near end, which is where the boat launches from.
+const UP = upReach(1, 0, 0.0717, A.start[1]);            // ~7.98 km above the launch
+
+describe('a river day with two arms, and the ends that are not where they look', () => {
+  it('two arms are two out-and-backs, and every hop is still zero', () => {
+    const { legs, facing } = travelOrder([UP, A], LAUNCH);
+    expect(legs.map((c) => `${c.fromRamp.direction.slice(0, 2)}#${c.pass}`))
+      .toEqual(['up#1', 'up#2', 'do#1', 'do#2']);
+    for (let i = 1; i < legs.length; i++) {
+      expect(Math.round(metresBetween(facing[i - 1].finish, facing[i].start))).toBeLessThan(2);
+    }
+    // It starts and finishes at the launch end of the first arm.
+    expect(Math.round(metresBetween(facing[0].start, facing[3].finish))).toBeLessThan(2);
+  });
+
+  it('the outward pass of an upstream reach runs the drawn line BACKWARDS', () => {
+    const { facing } = travelOrder([UP], LAUNCH);
+    expect(facing[0].flipped).toBe(true);
+    // It enters at the near end, which is the drawn line's LAST coordinate.
+    expect(facing[0].start).toEqual(UP.end);
+    expect(facing[1].flipped).toBe(false);
+  });
+
+  it('THE HOP RESERVE IS THE NEAR END, NOT `transitInM`', () => {
+    // `transitInM` on this reach is 7,978 + 0 metres — the distance to its far end. Reserving that hop
+    // both ways at 3.5 mph is 170 MINUTES, which on his Bates Bridge bench ate the whole remainder and
+    // dropped the second arm of his day while the budget printed 99 minutes still unspent.
+    const plan = build({ usableAh: 200 }, [UP]);
+    const troll = plan.legs.filter((l) => l.type === 'troll');
+    expect(troll.length).toBe(2);
+    expect(troll.every((l) => !l.trimmedFrom)).toBe(true);
+    expect(plan.warnings.some((w) => w.includes('is off the day') || w.includes('is cut to'))).toBe(false);
+    // And the hop it actually pays is the 49 m one.
+    expect(plan.budget.transitM).toBeLessThan(200);
+  });
+
+  it('trimReach cuts the FAR end of an upstream reach, and keeps the end the boat comes in by', () => {
+    const t = trimReach(UP, 0.5);
+    expect(t.lengthM).toBe(Math.round(UP.lengthM * 0.5));
+    // The near end does not move; the far one does.
+    expect(t.end).toEqual(UP.end);
+    expect(t.start).not.toEqual(UP.start);
+    // The structure past the cut is gone and what survives has its distance along the line rebased,
+    // because the line no longer starts where it did.
+    expect(t.passes.length).toBe(1);
+    expect(t.passes[0].id).toBe('p2');
+    expect(t.passes[0].atM).toBeLessThan(UP.passes[1].atM);
+    // A downstream reach still cuts the other way, which is what it always did.
+    const d = trimReach(A, 0.5);
+    expect(d.start).toEqual(A.start);
+    expect(d.end).not.toEqual(A.end);
+  });
+
+  it('a cut upstream reach still butts onto the one before it', () => {
+    const near = upReach(1, 0, 0.0717, A.start[1]);
+    const far = upReach(2, 7978, 0.0717, near.start[1]);   // butted onto `near`'s far end exactly
+    const t = trimReach(far, 0.5);
+    // The cut keeps the half nearest the launch, so its near end is still where `near` ends.
+    expect(Math.round(metresBetween(t.end, near.start))).toBeLessThan(2);
+  });
+});

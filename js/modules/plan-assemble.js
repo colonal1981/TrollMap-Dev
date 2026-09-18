@@ -24,7 +24,7 @@
  */
 
 import { ampHours, ampHoursAlong, minutesFor, metresBetween, cumulative, pointAt,
-         travelOrder, trimReach } from './plan-candidates.js';
+         travelOrder, trimReach, riverPassFlipped } from './plan-candidates.js';
 import { depthWindow, lightWindowFor, leadForDepth, jigheadForSwimbait,
          requiresInlineWeight, changeCostFor, presentationDelta,
          LURE_KNOWLEDGE, gpsWindowFor, sharedSpeedWindow } from '../data/lure-knowledge.js';
@@ -620,86 +620,92 @@ function riverPassNumbers(c, flipped, deploy, rods, lureByName) {
  *
  * @returns {{legs: object[], facing: object[], dropped: string[]}}
  */
-function fitRiverDay(legList, facing, o, rods, windowMin, transitMph) {
-  const n = legList.length / 2;
-  if (!Number.isInteger(n) || n < 1) return { legs: legList, facing, dropped: [] };
+function fitRiverDay(cands, launch, o, rods, windowMin, transitMph) {
+  const n = Array.isArray(cands) ? cands.length : 0;
+  if (!n) return { legs: cands || [], facing: [], dropped: [] };
   const usableAh0 = Number(o.usableAh) > 0 ? Number(o.usableAh) : Infinity;
+
   // ── THE HOP TO THE WATER IS SPENT BEFORE A ROD GOES IN, SO IT COMES OFF THE BUDGET FIRST ────────
   //
-  // riverDay() counts only the fishing, and this function inherited that. On his bench the reach came
-  // out at 541 minutes of a 540 minute window -- one minute, and it was the 105 m hop from Barney
-  // Jordan to the head of the first reach. Charged BOTH WAYS: the last fished pass ends at the near
-  // end of the first reach, so the same hop is the run home unless it is inside HOME_TOLERANCE_M, and
-  // reserving it when it is free is the safe direction to be wrong in.
-  const hopM = Number(legList[0] && (legList[0].transitInM ?? legList[0].fromRampM));
-  const hopMin = Number.isFinite(hopM) && hopM > 0 ? 2 * minutesFor(hopM, transitMph) : 0;
-  const hopAh = Number.isFinite(hopM) && hopM > 0 ? 2 * ampHours(hopM, transitMph) : 0;
+  // `fromRampM` IS THE NEAR END AND `transitInM` IS NOT. `transitInM` is the distance to the reach's
+  // `start` AS DRAWN, and a drift is drawn downstream -- so on a reach ABOVE the ramp that is the FAR
+  // end. This read `transitInM` and on Ryan's 2026-09-18 Bates Bridge bench reserved 170 MINUTES for
+  // a 49 m hop, because the first reach was upstream and its `transitInM` was 8,000. That reserve ate
+  // the whole remainder and the second arm of his day was dropped as unaffordable while the budget
+  // printed beside it showed 99 minutes and 50 Ah still unspent. A warning that contradicts the
+  // number next to it is the tell.
+  //
+  // Charged BOTH WAYS: every arm of a river day starts and ends at the launch, so the same hop is
+  // also the run home unless it is inside HOME_TOLERANCE_M, and reserving it when it turns out free is
+  // the safe direction to be wrong in.
+  const nearM = [cands[0].fromRampM, cands[0].transitInM, cands[0].transitOutM]
+    .map(Number).filter((x) => Number.isFinite(x) && x >= 0);
+  const hopM = nearM.length ? Math.min(...nearM) : 0;
+  const hopMin = hopM > 0 ? 2 * minutesFor(hopM, transitMph) : 0;
+  const hopAh = hopM > 0 ? 2 * ampHours(hopM, transitMph) : 0;
   const usableAh = usableAh0 - hopAh;
   const room0 = (Number.isFinite(windowMin) && windowMin > 0 ? windowMin : Infinity) - hopMin;
-  // Each reach's own out-and-back, at the speed its own two baits will be held at.
-  const cost = [];
-  for (let i = 0; i < n; i++) {
-    const out = riverPassNumbers(legList[i], facing[i].flipped,
-                                (o.deploy && o.deploy[legList[i].runId]) || null, rods, o.lureByName);
-    const j = legList.length - 1 - i;
-    const back = riverPassNumbers(legList[j], facing[j].flipped,
-                                 (o.deploy && o.deploy[legList[j].runId]) || null, rods, o.lureByName);
-    // A reach with no priced pass is one this function cannot judge, so it is never the reason to cut.
-    const min = (out.min ?? 0) + (back.min ?? 0);
-    const ah = (out.ah ?? 0) + (back.ah ?? 0);
-    cost.push({ min, ah, priced: out.min != null && back.min != null });
-  }
-  let keep = n, dropped = [];
+
+  // Each reach's own out-and-back, at the speed its own two baits will be held at. The orientation
+  // comes from riverPassFlipped(), the same function travelOrder() lays the day out with.
+  const costOf = (c) => {
+    const dep = (o.deploy && o.deploy[c.runId]) || null;
+    const out = riverPassNumbers(c, riverPassFlipped(c, true), dep, rods, o.lureByName);
+    const back = riverPassNumbers(c, riverPassFlipped(c, false), dep, rods, o.lureByName);
+    return { min: (out.min ?? 0) + (back.min ?? 0), ah: (out.ah ?? 0) + (back.ah ?? 0),
+             // A reach with no priced pass is one this function cannot judge, so it is never cut on.
+             priced: out.min != null && back.min != null };
+  };
+  const cost = cands.map(costOf);
   const total = (k) => cost.slice(0, k).reduce((t, x) => ({ min: t.min + x.min, ah: t.ah + x.ah }),
                                                { min: 0, ah: 0 });
+  let keep = n;
   while (keep > 1) {
     const t = total(keep);
     if (t.min <= room0 && t.ah <= usableAh) break;
     keep -= 1;
   }
-  if (keep === n) return { legs: legList, facing, dropped: [] };
+  if (keep === n) {
+    const t = travelOrder(cands, launch);
+    return { legs: t.legs, facing: t.facing, dropped: [] };
+  }
 
   // ── AND THE FIRST REACH THAT DOES NOT FIT WHOLE IS CUT, NOT BINNED ──────────────────────────────
   //
-  // Dropping whole reaches alone left 142 of 540 minutes unspendable on his own bench — two hours of
+  // Dropping whole reaches alone left 142 of 540 minutes unspendable on his own bench -- two hours of
   // his day handed back because one 6.5 km reach would not fit. riverDay() already solved this shape
-  // and the cut is its own: trimReach(), from the near end, because the water given up is the water
+  // and the cut is its own: trimReach(), from the NEAR end, because the water given up is the water
   // furthest out. Below a tenth of a reach there is no leg worth drawing, which is riverDay's floor
   // and is here for its reason rather than a second opinion about it.
   const spent = total(keep);
-  const room = { min: room0 - spent.min, ah: usableAh - spent.ah };
+  const left = { min: room0 - spent.min, ah: usableAh - spent.ah };
   let frac = 0;
-  if (keep < n && cost[keep].priced && cost[keep].min > 0) {
-    frac = Math.max(0, Math.min(Number.isFinite(room.min) ? room.min / cost[keep].min : 1,
-                                Number.isFinite(room.ah) ? room.ah / cost[keep].ah : 1));
+  if (cost[keep].priced && cost[keep].min > 0) {
+    frac = Math.max(0, Math.min(Number.isFinite(left.min) ? left.min / cost[keep].min : 1,
+                                Number.isFinite(left.ah) && cost[keep].ah > 0
+                                  ? left.ah / cost[keep].ah : 1));
   }
-  const cut = frac >= 0.1 ? trimReach(legList[keep], frac) : null;
+  const cut = frac >= 0.1 ? trimReach(cands[keep], frac) : null;
 
-  const kept = [], keptFacing = [];
-  for (let i = 0; i < keep; i++) { kept.push(legList[i]); keptFacing.push(facing[i]); }
-  if (cut) {
-    const j = legList.length - 1 - keep;
-    kept.push({ ...cut, pass: 1, ofPasses: 2 });
-    keptFacing.push({ ...facing[keep], end: cut.end, finish: cut.end });
-    // The way back over the cut water: same reach, the other way, entered where the outward pass
-    // stopped. `trimReach` cuts from the near end, so the far end of the cut IS the turnaround.
-    kept.push({ ...cut, pass: 2, ofPasses: 2 });
-    keptFacing.push({ ...facing[j], start: cut.end, end: facing[keep].start, finish: facing[keep].start });
-  }
-  for (let i = keep - 1; i >= 0; i--) {
-    const j = legList.length - 1 - i;
-    kept.push(legList[j]); keptFacing.push(facing[j]);
-  }
+  // REBUILT THROUGH travelOrder(), NOT SPLICED OUT OF ITS OUTPUT. A river day can be TWO
+  // out-and-backs from one launch -- riverDay fills the richer arm and carries on into the other --
+  // and only travelOrder knows how to order that. Slicing a mirror was right for one arm and wrong
+  // for two.
+  const kept = cands.slice(0, keep);
+  if (cut) kept.push(cut);
+  const t = travelOrder(kept, launch);
+
+  const dropped = [];
   for (let i = keep; i < n; i++) {
     const what = (i === keep && cut)
-      ? `is cut to ${Math.round(100 * frac)}% of itself — ${cut.lengthM} m of ${Math.round(legList[i].lengthM)}`
+      ? `is cut to ${Math.round(100 * frac)}% of itself — ${cut.lengthM} m of ${Math.round(cands[i].lengthM)}`
       : 'is off the day';
-    dropped.push(`${legList[i].runId} ${what}: with the baits chosen for it, trolling it out and `
+    dropped.push(`${cands[i].runId} ${what}: with the baits chosen for it, trolling it out and `
                + `back whole costs ${Math.round(cost[i].min)} min and ${cost[i].ah.toFixed(1)} Ah, `
                + `and the day has neither. The reaches were chosen against 2.0 mph before a bait was `
                + `picked; this is the same day priced at the speed those baits are actually held at.`);
   }
-  return { legs: kept, facing: keptFacing, dropped };
+  return { legs: t.legs, facing: t.facing, dropped };
 }
 
 /**
@@ -811,9 +817,11 @@ export function assemblePlan(o) {
   const t0 = travelOrder(candidates, o.launch);
   // AND ON A RIVER, RE-FITTED TO THE WINDOW NOW THAT THE SPEED IS KNOWN. See fitRiverDay(): the
   // reaches were chosen against 2.0 mph before a bait existed, and the bait is what sets the speed.
+  // It takes the CANDIDATES and rebuilds through travelOrder(), because a river day can be two
+  // out-and-backs from one launch and only that function knows how to order them.
   const riverDayPath = t0.river;
   const fitted = riverDayPath
-    ? fitRiverDay(t0.legs, t0.facing, o, (o.loadout && o.loadout.rods) || [],
+    ? fitRiverDay(candidates, o.launch, o, (o.loadout && o.loadout.rods) || [],
                   returnMin != null ? returnMin - launchMin : Infinity, transitMph)
     : { legs: t0.legs, facing: t0.facing, dropped: [] };
   const legList = fitted.legs;

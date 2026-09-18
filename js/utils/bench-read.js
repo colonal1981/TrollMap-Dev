@@ -19,6 +19,8 @@ const HEADING = /^[A-Z0-9][A-Z0-9 ,\'\u2019\-\u2014\u2013()/.:!?]{6,}$/;
  * those reads the structure the prompt already has rather than inventing one for it, so a block
  * added to plan-prompt.js shows up in the bench without this file being touched.
  */
+import { promptSafeTackleName } from './tackle-name.js';
+
 export function splitPrompt(user) {
   const lines = String(user || '').split('\n');
   const out = [];
@@ -49,6 +51,32 @@ export function splitPrompt(user) {
  */
 export function droppedFromAnswer(response, plan) {
   const hay = JSON.stringify(plan || {});
+  // ── AND THE APP'S OWN ESCAPING IS NOT A VALUE GOING MISSING ────────────────────────────────────
+  //
+  // Ryan, 2026-09-18, on seeing the same row on every bench: *"what is with this every time though?
+  // specifically the lipless being rejected?"* It was not rejected. The inventory holds
+  // `3" Lipless Crankbait`; an unescaped inch mark would end the JSON string the model is asked to
+  // write, so promptSafeTackleName() sends it as `3in Lipless Crankbait`, the model echoes that back,
+  // and resolveTackleName() matches it at its `asShown` tier and puts the REAL name in the plan. That
+  // round trip working correctly is exactly what made the raw string absent from the plan.
+  //
+  // So the comparison is done in BOTH spellings: the plan as it is, and the plan with the same
+  // transform the prompt applied. A value that differs only by the app's own deliberate substitution
+  // is a value that arrived, and reporting it as dropped on every single bench trains him to ignore
+  // this panel -- which is the one thing it cannot afford, because its whole job is being read.
+  // APPLIED TO THE PLAN'S STRING VALUES, NOT TO THE SERIALISED JSON. Running it over the whole
+  // `JSON.stringify` turns every structural quote into `in` and leaves the inch mark as `\in`,
+  // because inside a JSON string it is escaped -- so the one comparison this is for is the one it
+  // breaks. Only strings that actually carry an inch mark are collected, which keeps it cheap.
+  const shown = [];
+  const gather = (node) => {
+    if (node == null) return;
+    if (Array.isArray(node)) { node.forEach(gather); return; }
+    if (typeof node === 'object') { Object.values(node).forEach(gather); return; }
+    if (typeof node === 'string' && node.includes('"')) shown.push(promptSafeTackleName(node));
+  };
+  gather(plan);
+  const haySafe = shown.join('\u0000');
   const out = [];
   const walk = (node, path) => {
     if (node == null) return;
@@ -60,7 +88,9 @@ export function droppedFromAnswer(response, plan) {
     const s = String(node);
     if (!s.trim() || s.length < 3) return;
     const probe = s.length > 40 ? s.slice(0, 40) : s;
-    if (!hay.includes(probe)) out.push({ path, value: s.length > 120 ? `${s.slice(0, 120)}\u2026` : s });
+    if (!hay.includes(probe) && !haySafe.includes(probe)) {
+      out.push({ path, value: s.length > 120 ? `${s.slice(0, 120)}\u2026` : s });
+    }
   };
   walk(response, '');
   return out;

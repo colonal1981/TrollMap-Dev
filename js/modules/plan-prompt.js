@@ -62,6 +62,7 @@ import { depthWindow, jigheadRangeOz, trollableBaits, describeBait, LURE_KNOWLED
          gpsWindowFor } from '../data/lure-knowledge.js';
 import { RIGGED_TROLLING_WEIGHT_OZ, JIGHEADS_OWNED_OZ } from '../data/tackle-inventory.js';
 import { ozLabel } from '../utils/oz.js';
+import { promptSafeTackleName } from '../utils/tackle-name.js';
 import { FISHING_STYLE } from '../data/fishing-style-profile.js';
 // The radius `relief`, `deepestNearbyFt` and `reliefDropFt` are all measured over. Imported rather
 // than typed here so the prompt cannot come to say a distance the selector does not mean; see
@@ -145,9 +146,10 @@ const str = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null);
  * `in` rather than a typographic prime, because the model has to retype it. Checked against the
  * whole inventory: 61 names give 61 distinct quote-free forms, so nothing collides.
  */
-export function promptSafeTackleName(name) {
-  return String(name == null ? '' : name).replace(/"/g, 'in');
-}
+// THE ONE COPY IS IN js/utils/tackle-name.js, so the bench reader can undo exactly this substitution
+// without importing the prompt builder. Re-exported here because this is where every caller in the
+// planner already reaches for it.
+export { promptSafeTackleName };
 
 /** Strip the `[...]` annotation bracket a prompt may have hung on a lure name. */
 export function stripLureAnnotation(raw) {

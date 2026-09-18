@@ -474,20 +474,57 @@ export function travelOrder(candidates, launch) {
     && Array.isArray(c.start) && Array.isArray(c.end));
   if (!river) return { legs: cands, facing: orientLegs(cands, launch), river: false };
 
-  const up = (c) => c.fromRamp.direction === 'upstream';
   const legs = [], facing = [];
-  const add = (c, outward) => {
-    // Outward is away from the launch. On a reach upstream of the ramp the entry is the drawn line's
-    // END, so the outward pass is the reversed one; downstream of the ramp it is the other way.
-    const flipped = outward ? up(c) : !up(c);
+  const add = (c, i, outward) => {
+    const flipped = riverPassFlipped(c, outward);
     const start = flipped ? c.end : c.start;
     const end = flipped ? c.start : c.end;
-    legs.push({ ...c, trollPasses: 1, pass: outward ? 1 : 2, ofPasses: 2 });
+    legs.push({ ...c, trollPasses: 1, pass: outward ? 1 : 2, ofPasses: 2, reachIx: i });
     facing.push({ flipped, start, end, passes: 1, finish: end });
   };
-  for (const c of cands) add(c, true);
-  for (let i = cands.length - 1; i >= 0; i--) add(cands[i], false);
+  // ── ONE OUT-AND-BACK PER ARM, NOT ONE FOR THE WHOLE DAY ─────────────────────────────────────
+  //
+  // riverDay() fills the richer side of the launch first and then carries on into the other side if
+  // the budget has room -- so a day can be TWO out-and-backs from the same point, not one. Ryan
+  // launches at Bates Bridge, 123,600 m along a 126,843 m centreline, and that is exactly such a
+  // day: 8 km of river above him and 3.2 km below.
+  //
+  // THE FIRST VERSION OF THIS FUNCTION EMITTED ONE MIRROR OVER THE WHOLE LIST -- A-out, B-out,
+  // B-back, A-back -- which is right for one arm and reintroduces the bug it was written to kill the
+  // moment there are two: the boat runs 8 km up, then has to come back past the launch to fish the
+  // downstream arm, then go back up to where the first arm ended. Measured from Bates Bridge: T2 and
+  // T3 at 4,821 m each, 9,691 m of deadhead on a 29.5 km day.
+  //
+  // Each arm is its own out-and-back and the arms run in the order riverDay committed them.
+  const arms = [];
+  for (const [i, c] of cands.entries()) {
+    const key = c.fromRamp.direction;
+    let arm = arms.find((a) => a.dir === key);
+    if (!arm) arms.push(arm = { dir: key, list: [] });
+    arm.list.push([c, i]);
+  }
+  for (const arm of arms) {
+    for (const [c, i] of arm.list) add(c, i, true);
+    for (let k = arm.list.length - 1; k >= 0; k--) add(arm.list[k][0], arm.list[k][1], false);
+  }
   return { legs, facing, river: true };
+}
+
+/**
+ * WHICH WAY ROUND ONE PASS OVER A RIVER REACH IS TROLLED.
+ *
+ * `true` means the boat travels the drawn line in reverse, which on a drift is UPSTREAM -- 3DHP's
+ * `flowdirection` sets vertex order, so the line as drawn runs downstream. Outward is away from the
+ * launch, so on a reach ABOVE the ramp the entry is the drawn line's END and the outward pass is the
+ * reversed one; below the ramp it is the other way.
+ *
+ * Exported because fitRiverDay() in plan-assemble.js has to price both passes of a reach BEFORE the
+ * legs exist, and deriving the orientation a second time there is how two answers to one question
+ * start disagreeing.
+ */
+export function riverPassFlipped(c, outward) {
+  const up = !!(c && c.fromRamp && c.fromRamp.direction === 'upstream');
+  return outward ? up : !up;
 }
 
 /** Cumulative distance along a LineString, so `s` from the pipeline resolves to a coordinate. */
@@ -2518,25 +2555,39 @@ const ALWAYS_SHOW = new Set(['hazard', 'obstruction', 'pile', 'shallow', 'bridge
  * water furthest out, which is what a turnaround is.
  */
 export function trimReach(c, frac) {
-  const lengthM = c.lengthM * frac;
+  const keepM = c.lengthM * frac;
   const cum = cumulative(c.coordinates || []);
-  const coords = (c.coordinates && cum.length)
-    ? sliceLine(c.coordinates, cum, 0, lengthM) : c.coordinates;
+  const total = cum.length ? cum[cum.length - 1] : Number(c.lengthM) || 0;
+  // ── WHICH END IS THE NEAR ONE DEPENDS ON WHICH SIDE OF THE LAUNCH THIS REACH IS ────────────────
+  //
+  // A drift is drawn DOWNSTREAM, so on a reach BELOW the ramp the drawn start is the near end and
+  // keeping the first `frac` of the line is right. On a reach ABOVE the ramp the drawn start is the
+  // FAR end, and keeping the first `frac` keeps the wrong half -- a detached piece of river 16 km out
+  // with a gap between it and the reach before it. That is what this did until 2026-09-18, on every
+  // upstream arm, which is every day Ryan launches at Bates Bridge.
+  const fromTail = c.fromRamp && c.fromRamp.direction === 'upstream';
+  const a = fromTail ? Math.max(0, total - keepM) : 0;
+  const b = fromTail ? total : Math.min(total, keepM);
+  const coords = (c.coordinates && cum.length) ? sliceLine(c.coordinates, cum, a, b) : c.coordinates;
   const scale = (v) => (Number.isFinite(Number(v)) ? Number((Number(v) * frac).toFixed(2)) : v);
   return {
     ...c,
-    lengthM: Math.round(lengthM),
+    lengthM: Math.round(keepM),
     coordinates: coords,
-    end: coords && coords.length ? coords[coords.length - 1] : c.end,
+    // The end that MOVED is the far one; the near end is where the boat comes in and does not move.
+    start: fromTail ? (coords && coords.length ? coords[0] : c.start) : c.start,
+    end: fromTail ? c.end : (coords && coords.length ? coords[coords.length - 1] : c.end),
     batteryAh: scale(c.batteryAh),
     batteryAhUpstream: scale(c.batteryAhUpstream),
     batteryAhDownstream: scale(c.batteryAhDownstream),
     // SAID ON THE LEG, because a trimmed reach is not the reach the pack holds and anything that
     // compares the two -- a saved plan, a re-plan, the card -- must be able to tell.
     trimmedFrom: c.trimmedFrom ?? c.lengthM,
-    // The structure past the cut is not on this leg any more. `passes` is what the prompt and the
-    // assembler read, so it is the one that has to be told.
-    passes: (c.passes || []).filter((h) => h.atM <= lengthM),
+    // The structure past the cut is not on this leg any more, and on a tail cut every survivor's
+    // distance along the line has moved. `passes` is what the prompt and the assembler read.
+    passes: (c.passes || [])
+      .filter((h) => Number(h.atM) >= a && Number(h.atM) <= b)
+      .map((h) => (a > 0 ? { ...h, atM: Math.max(0, Math.round(Number(h.atM) - a)) } : h)),
   };
 }
 

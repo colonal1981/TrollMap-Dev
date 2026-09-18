@@ -22,6 +22,7 @@ import assert from 'node:assert/strict';
 import { buildPlanRequest, resolveTackleName, promptSafeTackleName }
   from '../js/modules/plan-prompt.js';
 import { TACKLE_INVENTORY } from '../js/data/tackle-inventory.js';
+import { readFileSync } from 'node:fs';
 
 const NAMES = TACKLE_INVENTORY.map((l) => l.name);
 const QUOTED = NAMES.filter((n) => n.includes('"'));
@@ -87,4 +88,39 @@ test('the older tiers are untouched', () => {
   assert.equal(resolveTackleName('DD3 Crankbait', NAMES).name, 'DD3 Crankbait (20-25ft)');
   assert.equal(resolveTackleName('DD3 Crankbait', NAMES).tier, 'substring');
   assert.equal(resolveTackleName('Nothing By That Name At All', NAMES.slice(0, 2)), null);
+});
+
+// ── AND THE BENCH MUST NOT REPORT THE ROUND TRIP AS A LOSS ─────────────────────────────────────
+//
+// Ryan, 2026-09-18, on seeing the same row on every single bench: "what is with this every time
+// though? specifically the lipless being rejected?" It was never rejected. The model echoed
+// `3in Lipless Crankbait`, resolveTackleName() matched it at the `asShown` tier and the plan carries
+// `3" Lipless Crankbait` — so the raw string is absent from the plan BECAUSE the round trip worked.
+//
+// A panel whose whole job is being read cannot cry wolf on every run.
+const { droppedFromAnswer } = await import('../js/utils/bench-read.js');
+
+test('a name that differs only by the prompt escaping is not reported as dropped', () => {
+  const LIPLESS = NAMES.find((n) => n.includes('"') && /lipless/i.test(n));
+  assert.ok(LIPLESS, 'the inventory still carries an inch-marked lipless');
+  const response = { loadout: { rods: [{ id: 'R5', lure: promptSafeTackleName(LIPLESS) }] } };
+  const plan = { loadout: { rods: [{ id: 'R5', lure: LIPLESS }] } };
+  assert.deepEqual(droppedFromAnswer(response, { plan }), []);
+});
+
+test('and a bait that genuinely never reached the plan still is', () => {
+  const response = { loadout: { rods: [{ id: 'R5', lure: 'Purple Banana Special' }] } };
+  const plan = { loadout: { rods: [{ id: 'R5', lure: NAMES[0] }] } };
+  const out = droppedFromAnswer(response, { plan });
+  assert.equal(out.length, 1);
+  assert.match(out[0].value, /Purple Banana/);
+});
+
+test('the escaping is one function, so the two spellings cannot drift apart', () => {
+  // bench-read.js undoes exactly what the prompt did, from the same source. Both reach for
+  // js/utils/tackle-name.js; plan-prompt.js re-exports it for the planner's own callers.
+  const src = readFileSync(new URL('../js/utils/bench-read.js', import.meta.url), 'utf8');
+  assert.match(src, /from '\.\/tackle-name\.js'/);
+  const pp = readFileSync(new URL('../js/modules/plan-prompt.js', import.meta.url), 'utf8');
+  assert.match(pp, /from '\.\.\/utils\/tackle-name\.js'/);
 });
