@@ -588,7 +588,11 @@ export function riverDriftRuns(centrelineFc, o = {}) {
   // axis measured in the same unit is exactly the swap this project keeps making; see `off_m` and
   // the two conventions for which side is positive. `length_m` is still right for what it says --
   // how long the written line is -- and nothing here needed it.
-  const totalM = Number(stationM[n - 1]) || Number(p.length_m) || 0;
+  //
+  // `station_span_m` IS THE PRODUCER SAYING THE SAME NUMBER OUT LOUD. It writes both since the
+  // 2026-09-18 rebuild, named for what each one is, so this reads the name rather than deriving
+  // it -- and the fallback is the derivation, for a pack built before the producer said it.
+  const totalM = Number(p.station_span_m) || Number(stationM[n - 1]) || Number(p.length_m) || 0;
   // ONE LINE OR TWO, DECIDED BY THE CORRIDOR AGAINST THIS RIVER'S OWN WIDTH -- see lateralsFor().
   // Overridable for tests, which is the only caller that should be naming positions by hand.
   const laterals = o.laterals || lateralsFor(medianWidthM(width), maxOffM);

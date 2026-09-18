@@ -191,3 +191,21 @@ test('the reaches run to the last STATION, not to the written length of the line
   const stations = runs.reduce((a, r) => a + r.properties.stations, 0);
   assert.equal(stations, p.station_m.length, 'and every station is on one of them');
 });
+
+test('the producer names the station axis, and this reads the name', () => {
+  // The rebuild writes `station_span_m` beside `length_m`, so the axis has a name instead of being
+  // derived here. A pack built before it still works off the last station -- which is the same
+  // number -- and neither may fall back to `length_m`, which is the chord sum and 0.8% short.
+  const river = meanderingRiver({ stations: 40 });
+  const p = props(river);
+  const last = p.station_m[p.station_m.length - 1];
+  p.length_m = last * 0.9;
+  p.station_span_m = last;
+  const named = riverDriftRuns(river, { slug: 'test_river', rampStationM: 0 });
+  delete p.station_span_m;
+  const derived = riverDriftRuns(river, { slug: 'test_river', rampStationM: 0 });
+  const span = (rs) => Math.max(...rs.map((r) => r.properties.reachFromM
+                                              + Math.round(r.properties.length_m)));
+  assert.equal(span(named), span(derived), 'the name and the derivation are the same number');
+  assert.equal(named.reduce((a, r) => a + r.properties.stations, 0), p.station_m.length);
+});
