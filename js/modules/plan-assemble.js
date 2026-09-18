@@ -622,7 +622,7 @@ function riverPassNumbers(c, flipped, deploy, rods, lureByName) {
  */
 function fitRiverDay(cands, launch, o, rods, windowMin, transitMph) {
   const n = Array.isArray(cands) ? cands.length : 0;
-  if (!n) return { legs: cands || [], facing: [], dropped: [] };
+  if (!n) return { legs: cands || [], facing: [], dropped: [], droppedRuns: [] };
   const usableAh0 = Number(o.usableAh) > 0 ? Number(o.usableAh) : Infinity;
 
   // ── THE HOP TO THE WATER IS SPENT BEFORE A ROD GOES IN, SO IT COMES OFF THE BUDGET FIRST ────────
@@ -667,7 +667,7 @@ function fitRiverDay(cands, launch, o, rods, windowMin, transitMph) {
   }
   if (keep === n) {
     const t = travelOrder(cands, launch);
-    return { legs: t.legs, facing: t.facing, dropped: [] };
+    return { legs: t.legs, facing: t.facing, dropped: [], droppedRuns: [] };
   }
 
   // ── AND THE FIRST REACH THAT DOES NOT FIT WHOLE IS CUT, NOT BINNED ──────────────────────────────
@@ -705,7 +705,8 @@ function fitRiverDay(cands, launch, o, rods, windowMin, transitMph) {
                + `and the day has neither. The reaches were chosen against 2.0 mph before a bait was `
                + `picked; this is the same day priced at the speed those baits are actually held at.`);
   }
-  return { legs: t.legs, facing: t.facing, dropped };
+  return { legs: t.legs, facing: t.facing, dropped,
+           droppedRuns: cands.slice(cut ? keep + 1 : keep, n).map((c) => c.runId) };
 }
 
 /**
@@ -823,7 +824,7 @@ export function assemblePlan(o) {
   const fitted = riverDayPath
     ? fitRiverDay(candidates, o.launch, o, (o.loadout && o.loadout.rods) || [],
                   returnMin != null ? returnMin - launchMin : Infinity, transitMph)
-    : { legs: t0.legs, facing: t0.facing, dropped: [] };
+    : { legs: t0.legs, facing: t0.facing, dropped: [], droppedRuns: [] };
   const legList = fitted.legs;
   const facing = fitted.facing;
 
@@ -1427,6 +1428,56 @@ export function assemblePlan(o) {
       legs.push(homeLeg);
       runM += len; transitM += len; ah += a; clock += mins;
       cursor = o.launch;
+    }
+  }
+
+  /* ── A ROD RIGGED AND NEVER PUT IN THE WATER IS A KNOT TIED FOR NOTHING ────────────────────────
+   *
+   * The mirror of "A LEG WITH NOTHING IN THE WATER IS SAID OUT LOUD", and nothing said it. Ryan,
+   * 2026-09-18, reading a plan whose loadout carried a lipless crankbait: *"but a rod with a lipless
+   * crankbait isnt offered on any leg?"* It was offered -- on the one reach the APP had removed.
+   *
+   * TWO DIFFERENT SENTENCES, BECAUSE THEY ARE TWO DIFFERENT FAULTS.
+   *
+   * A rod the MODEL rigged and then never deployed is its own miss, and it is the same currency as the
+   * lure-change guard above: "a snap change is seconds, a fluoro leader is a knot with cold wet hands
+   * in a moving kayak". The schema tells it that two rods is a complete answer and that rods it does
+   * not name stay staged with whatever is already on them -- so naming a rod is asking for a retie.
+   *
+   * A rod stranded because fitRiverDay() CUT THE REACH IT WAS FOR is the app's doing, not the model's,
+   * and saying "you rigged this for nothing" about it would be blaming him for our arithmetic. That
+   * one names the reach that went, because the fix is a different day and not a different bait.
+   */
+  const inWater = new Set();
+  for (const l of legs) {
+    for (const side of ['port', 'starboard']) {
+      if (l.deploy && l.deploy[side]) inWater.add(l.deploy[side]);
+    }
+    for (const st of (l.stops || [])) for (const r of (st.rods || [])) inWater.add(r);
+  }
+  const strandedBy = new Map();
+  for (const runId of (fitted.droppedRuns || [])) {
+    const d = (o.deploy && o.deploy[runId]) || {};
+    for (const side of ['port', 'starboard']) {
+      const id = d[side];
+      if (id && !inWater.has(id) && !strandedBy.has(id)) strandedBy.set(id, runId);
+    }
+  }
+  // A PLAN WITH NO WATER IN IT HAS NOTHING TO DEPLOY ON, and saying "this rod never fishes" six times
+  // about an empty day is noise on top of the one thing that matters. The emptiness is already the
+  // story -- `assemblePlan({candidates: []})` must warn about nothing, which is its own test.
+  const anyFished = legs.some((l) => l.type === 'troll');
+  for (const r of (anyFished ? rods : [])) {
+    if (!r || r.staged || !r.id || inWater.has(r.id)) continue;
+    const lure = r.lure ? `a ${r.lure}` : 'a bait';
+    if (strandedBy.has(r.id)) {
+      warnings.push(`${r.id} is rigged with ${lure} and its only water came off the day — it was `
+                  + `deployed on ${strandedBy.get(r.id)} and nothing else. THAT IS THE APP'S DOING, `
+                  + `not a bad pick: re-plan with a shorter day or a later return and it fishes.`);
+    } else {
+      warnings.push(`${r.id} is rigged with ${lure} and never goes in the water on any leg. Two rods `
+                  + `is a complete answer and the other four stay staged with whatever is on them, so `
+                  + `a rod this plan names is a retie it is asking for — and this one buys nothing.`);
     }
   }
 

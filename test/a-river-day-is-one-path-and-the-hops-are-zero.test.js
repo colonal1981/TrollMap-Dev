@@ -35,6 +35,8 @@ const PLOPPER = TACKLE_INVENTORY.find((l) => l.type === 'topwater_troll');
 const SQUARE = TACKLE_INVENTORY.find((l) => l.type === 'crankbait_squarebill');
 const SPINNER = TACKLE_INVENTORY.find((l) => l.type === 'spinnerbait');
 const DD1 = TACKLE_INVENTORY.find((l) => l.type === 'crankbait_dd1');
+const LIPLESS = TACKLE_INVENTORY.find((l) => l.type === 'lipless');
+const SPOON = TACKLE_INVENTORY.find((l) => l.type === 'flutter_spoon');
 
 // A ramp at the top, then two reaches butted end to end running away from it downstream — the shape
 // riverDay() emits and the shape that used to cost 6.5 km a hop.
@@ -350,5 +352,54 @@ describe('a river day with two arms, and the ends that are not where they look',
     const t = trimReach(far, 0.5);
     // The cut keeps the half nearest the launch, so its near end is still where `near` ends.
     expect(Math.round(metresBetween(t.end, near.start))).toBeLessThan(2);
+  });
+});
+
+// ── A ROD RIGGED AND NEVER PUT IN THE WATER IS A KNOT TIED FOR NOTHING ─────────────────────────
+//
+// Ryan, 2026-09-18, reading a plan whose loadout carried a lipless crankbait: "but a rod with a
+// lipless crankbait isnt offered on any leg?" It was offered — on the one reach the APP had removed.
+// Nothing said so, and the mirror of "A LEG WITH NOTHING IN THE WATER IS SAID OUT LOUD" did not exist.
+describe('a rod with no water is said out loud, and whose fault it is', () => {
+  const ROD = (id, lure) => ({ id, rig: 'snap', role: 'troll', lure: lure.name, color: 'x', leadFt: 60 });
+  const SIX = { rods: [ROD('R1', PLOPPER), ROD('R3', DD1), ROD('R2', SQUARE), ROD('R4', SPINNER),
+                       ROD('R5', LIPLESS), ROD('R6', SPOON)] };
+
+  it('a rod the MODEL rigged and never deployed is a retie it asked for', () => {
+    const plan = build({ loadout: SIX });
+    const said = plan.warnings.filter((w) => /never goes in the water on any leg/.test(w));
+    // R5 and R6 are rigged and deployed nowhere; the four in `deploy` are.
+    expect(said.length).toBe(2);
+    expect(said.join(' ')).toContain('R5');
+    expect(said.join(' ')).toContain('R6');
+    expect(said[0]).toContain('buys nothing');
+  });
+
+  it('but a rod stranded because the APP cut its reach is the APP\'S doing, and says so', () => {
+    // A window that drops reach B entirely takes R2 and R4 with it — they were deployed there and
+    // nowhere else. Blaming him for a bait he rigged for water we removed would be backwards.
+    const plan = build({ returnTime: '11:45', loadout: SIX });
+    const stranded = plan.warnings.filter((w) => /its only water came off the day/.test(w));
+    expect(stranded.length).toBe(2);
+    expect(stranded.join(' ')).toContain('R2');
+    expect(stranded.join(' ')).toContain('R4');
+    expect(stranded[0]).toContain(B.runId);
+    expect(stranded[0]).toContain("THE APP'S DOING");
+    // And the two that were never deployed at all still get the other sentence, not this one.
+    expect(plan.warnings.filter((w) => /never goes in the water on any leg/.test(w)).length).toBe(2);
+  });
+
+  it('a staged rod is not a complaint — it is carrying whatever it was carrying', () => {
+    const staged = { rods: [...LOADOUT.rods, { id: 'R5', rig: 'snap', staged: true, lure: null }] };
+    const plan = build({ loadout: staged });
+    expect(plan.warnings.some((w) => w.includes('R5'))).toBe(false);
+  });
+
+  it('and a plan with no water in it complains about no rods at all', () => {
+    // Six rods and nothing to deploy on is one story, not seven. `assemblePlan({candidates: []})`
+    // warning about nothing is its own assertion in plan-assemble.test.js; this is the same rule.
+    const plan = build({ loadout: SIX }, []);
+    expect(plan.legs.length).toBe(0);
+    expect(plan.warnings.filter((w) => /goes in the water|came off the day/.test(w)).length).toBe(0);
   });
 });
