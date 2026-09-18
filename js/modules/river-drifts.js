@@ -299,6 +299,52 @@ export function profileIndexFor(fractions, frac) {
 }
 
 /**
+ * HOW FAR EITHER SIDE OF THE LINE `envelope_ft` MEANS, in metres.
+ *
+ * COPIED FROM THE PRODUCER, NOT CHOSEN HERE. `envelope_ft` on a fitted lake pass is documented in
+ * plan-pieces.js as "the SHALLOWEST water within 25 m either side of the line", and that 25 is
+ * `fit_trolling_runs.py --envelope-m`. A drift is never fitted, so nothing was going to hand this
+ * number over; matching the definition is what lets the two arrays sit in one field.
+ *
+ * IT IS NOT `maxOffM`. The corridor is how far off the line a piece of STRUCTURE is still his; this
+ * is how far the boat wanders while following the line. Two different questions that happen to be
+ * measured in metres -- and the app's corridor is 100 m against a wander of 25, so conflating them
+ * would quietly widen the band a bait is judged against by four times.
+ */
+export const SIDE_ENVELOPE_M = 25;
+
+/**
+ * THE SHALLOWEST CHARTED DEPTH WITHIN `SIDE_ENVELOPE_M` OF A LATERAL POSITION, off one station's
+ * cross-section.
+ *
+ * The centreline samples the section at `profile_fractions` -- nine columns, 0 to 1 across the
+ * channel -- so a column's distance from the chosen line is `|f - frac| * width`. The band is every
+ * column inside the envelope, ALWAYS INCLUDING THE LINE'S OWN, because a band that can exclude the
+ * water the boat is actually over is not a band.
+ *
+ * -1 for an uncharted station, the same convention `envelope_line_ft` uses and the same one
+ * plan-pieces.js filters on. Not 0, and not the line's own depth: "nobody sounded this" and "it is
+ * shallow here" are different claims and the second one moves a bait.
+ */
+export function shallowestBesideLine(row, fractions, frac, widthM) {
+  if (!Array.isArray(row) || !Array.isArray(fractions) || !fractions.length) return -1;
+  const w = Number(widthM);
+  let best = Infinity;
+  for (let i = 0; i < fractions.length && i < row.length; i++) {
+    const f = Number(fractions[i]);
+    if (!Number.isFinite(f)) continue;
+    // Without a width there is no metre distance to test, so only the line's own column is in band.
+    const withinBand = Number.isFinite(w) && w > 0
+      ? Math.abs(f - frac) * w <= SIDE_ENVELOPE_M
+      : Math.abs(f - frac) < 1e-9;
+    if (!withinBand) continue;
+    const d = Number(row[i]);
+    if (Number.isFinite(d) && d > 0 && d < best) best = d;
+  }
+  return best === Infinity ? -1 : Number(best.toFixed(1));
+}
+
+/**
  * THE ONE PATH THROUGH THE RAMP, CUT INTO LEGS.
  *
  * A RIVER DAY IS ONE PATH, NOT A SET OF LEGS TO CHOOSE BETWEEN. Ryan, 2026-09-17: "up one side and
@@ -415,6 +461,14 @@ export function riverDriftRuns(centrelineFc, o = {}) {
       const depths = [];
       const bearings = [];
       const areas = [];
+      // THE SAME TWO ARRAYS A FITTED LAKE PASS CARRIES, station by station. `envelope_line_ft` is the
+      // depth ON the line and `envelope_ft` the shallowest within SIDE_ENVELOPE_M either side of it;
+      // waterBand() reads both and is what gives a leg its `depthFt`, `depthMinFt`, `depthMaxFt` and
+      // `maxRunDepthFt`. A drift carried none of them, so on every river those four were null and the
+      // WHOLE BAIT-DEPTH CEILING WAS SILENTLY OFF -- his 2026-09-17 bench put a 1/2 oz spinnerbait
+      // rated to 25 ft on 60 ft of lead in 6.4 ft of water. A null is what nothing checks.
+      const lineFt = [];
+      const sideFt = [];
       let charted = 0, stations = 0;
       for (let i = 0; i < n; i++) {
         const sm = Number(stationM[i]);
@@ -440,6 +494,13 @@ export function riverDriftRuns(centrelineFc, o = {}) {
         const row = col >= 0 ? profiles[i] : null;
         const d = Array.isArray(row) ? Number(row[col]) : NaN;
         if (Number.isFinite(d) && d > 0) { depths.push(d); charted++; }
+        // ── AND THE SAME STATION AS AN ENVELOPE PAIR ─────────────────────────────────────────────
+        //
+        // -1 marks an uncharted station, which is the convention the pipeline's own envelopes use and
+        // what plan-pieces.js filters on: a missing measurement must not arrive wearing the clothes of
+        // shallow water. See the note above about the 105 stations with no charted depth at all.
+        lineFt.push(Number.isFinite(d) && d > 0 ? Number(d.toFixed(1)) : -1);
+        sideFt.push(shallowestBesideLine(row, fractions, lat.frac, w));
       }
       if (coords.length < 2) continue;
       const cum = cumulative(coords);
@@ -472,6 +533,11 @@ export function riverDriftRuns(centrelineFc, o = {}) {
         charted_stations: charted,
         stations,
         charted_frac: stations ? Number((charted / stations).toFixed(3)) : 0,
+        // The envelope, in the shape waterBand() reads. The step is the centreline's own station
+        // spacing, so nothing is resampled and nothing is interpolated.
+        envelope_step_m: Number(p.step_m) || 50,
+        envelope_line_ft: lineFt,
+        envelope_ft: sideFt,
       };
       // MEASURED OR ABSENT. `mean_depth_ft` is the name passWaterFt() treats as measured, and on a
       // drift it genuinely is -- the depth along the path travelled, sampled off the chart every

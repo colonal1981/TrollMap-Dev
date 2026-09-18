@@ -166,7 +166,13 @@ describe('the leg depth is the water under it, not one shoal and not a contour n
 
   it('agrees with Smart Plan, which calls the same function on the window it chose', () => {
     const c = live(src('js/modules/plan-candidates.js'));
-    expect(c).toMatch(/import \{ waterBand \} from '\.\/plan-pieces\.js'/);
+    // TOLERANT OF WHAT ELSE IS IN THE BRACES, and that is the fix rather than a loosening. This read
+    // `/import \{ waterBand \} from/` and went RED the day `reliefDropOf` joined the same import --
+    // `{ waterBand, reliefDropOf }` -- so a guard on the SPELLING of an import line was reporting a
+    // failure about itself while the behaviour it exists to protect was untouched. Found red at
+    // 5efbaca on 2026-09-18, four commits after the change that broke it. Same lesson START_HERE
+    // already carries: a pattern is only as wide as the SHAPE it was written for.
+    expect(c).toMatch(/import \{[^}]*\bwaterBand\b[^}]*\} from '\.\/plan-pieces\.js'/);
     expect(c).toMatch(/waterBand\(p, win\.startM, win\.startM \+ win\.lengthM\)/);
     expect(c).toMatch(/depthFt: band \? band\.line\.medianFt : p\.depth_ft/);
     // and it now sends a ceiling, which it never did -- plan-prompt.js has explained
