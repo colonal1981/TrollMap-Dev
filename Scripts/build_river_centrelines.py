@@ -583,31 +583,64 @@ def centre_pass(pts, inside, step, probe, reach):
     for i in range(n - 2, -1, -1):
         off[i] = max(off[i + 1] - step, min(off[i + 1] + step, off[i]))
 
-    out = []
+    # 4 ── and the folds the slope limit does not catch, smoothed out where they appear
+    #
+    # THE SLOPE LIMIT IS NOT QUITE ENOUGH ON A TIGHT BEND, and the Congaree says so: 48 of 2,659
+    # stations. The limit keeps the OFFSETS within a station spacing of each other, which is exactly
+    # right on a straight reach -- but two adjacent normals on a bend of radius R differ by step/R,
+    # so an offset of `o` toward the inside of that bend eats `o * step / R` of the along-track step.
+    # Once `o` approaches R the segment reverses. The Congaree's tenth-percentile radius is 281 m and
+    # its largest shift is 238 m, so this is not a corner case there, it is the corners.
+    #
+    # Repaired rather than refused: a station whose neighbours have already moved cannot simply be
+    # put back. Where a fold appears, the three offsets around it are replaced by their own mean --
+    # the one operation that provably reduces the variation that caused it -- and the check is run
+    # again. It stops when there is nothing left to fix or when a sweep stops helping, and whatever
+    # survives is COUNTED so the build record says so instead of shipping a line nobody can follow.
+    def build(offsets):
+        made = []
+        for i in range(n):
+            nv = norms[i]
+            # A MOVE SMALLER THAN ONE PROBE STEP IS NOT A MEASUREMENT. `(left - right) / 2` is
+            # quantised to half a probe, so without this the line jitters for ever and never settles.
+            if nv is None or cands[i] is None or abs(offsets[i]) < probe:
+                made.append(pts[i])
+            else:
+                made.append((pts[i][0] + nv[0] * offsets[i], pts[i][1] + nv[1] * offsets[i]))
+        return made
+
+    def folding(made):
+        bad = []
+        for i in range(1, len(made) - 1):
+            ax, ay = made[i][0] - made[i - 1][0], made[i][1] - made[i - 1][1]
+            bx, by = made[i + 1][0] - made[i][0], made[i + 1][1] - made[i][1]
+            if ax * bx + ay * by <= 0:
+                bad.append(i)
+        return bad
+
+    out = build(off)
+    bad = folding(out)
+    while bad:
+        for i in bad:
+            lo = max(0, i - 1)
+            hi = min(n - 1, i + 1)
+            mean = sum(off[lo:hi + 1]) / float(hi - lo + 1)
+            for k in range(lo, hi + 1):
+                off[k] = mean
+        out = build(off)
+        again = folding(out)
+        if len(again) >= len(bad):
+            bad = again
+            break
+        bad = again
+    folds = len(bad)
+
     moved = 0
-    folds = 0
     shifts = []
     for i in range(n):
-        nv = norms[i]
-        # A MOVE SMALLER THAN ONE PROBE STEP IS NOT A MEASUREMENT. `(left - right) / 2` is quantised
-        # to half a probe, so without this the line jitters by 2.5 m for ever and never settles.
-        if nv is None or cands[i] is None or abs(off[i]) < probe:
-            out.append(pts[i])
-            continue
-        px, py = nv
-        out.append((pts[i][0] + px * off[i], pts[i][1] + py * off[i]))
-        moved += 1
-        shifts.append(abs(off[i]))
-    # WHAT THE SLOPE LIMIT IS SUPPOSED TO MAKE IMPOSSIBLE, COUNTED ANYWAY. A segment running
-    # backwards along the one before it is the fold this whole design exists to prevent. It is not
-    # undone here -- a station whose neighbours have already moved cannot be un-moved on its own --
-    # it is COUNTED, so a river that produces one says so in the build record instead of quietly
-    # shipping a line nobody can follow. Zero on every fixture in test_river_centrelines.py.
-    for i in range(1, len(out) - 1):
-        ax, ay = out[i][0] - out[i - 1][0], out[i][1] - out[i - 1][1]
-        bx, by = out[i + 1][0] - out[i][0], out[i + 1][1] - out[i][1]
-        if ax * bx + ay * by <= 0:
-            folds += 1
+        if out[i] is not pts[i] and (out[i][0] != pts[i][0] or out[i][1] != pts[i][1]):
+            moved += 1
+            shifts.append(math.hypot(out[i][0] - pts[i][0], out[i][1] - pts[i][1]))
     return moved, stranded, folds, shifts, out
 
 
