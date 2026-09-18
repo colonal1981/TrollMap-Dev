@@ -520,14 +520,18 @@ def centre_pass(pts, inside, step, probe, reach):
       1. what each station would need, measured independently on the line as it stands;
       2. WHICH SIDE, for the stations that found water on both -- decided in order down the river,
          because that is the only thing here that is sequential;
-      3. a slope limit, forward and back, so no station ends up more than one station spacing
-         further across the channel than its neighbour.
+      3. a cap at the local bend radius, because offsetting a curve inward by more than its own
+         radius of curvature makes a cusp and not a curve;
+      4. a slope limit, forward and back, so no station ends up more than one station spacing
+         further across the channel than its neighbour;
+      5. and a repair for whatever folds anyway, counted if any survives it.
 
-    Step 3 is what keeps the line a line. A lateral change of `step` over a length of `step` is a 45
-    degree bend; past that it stops being something a boat follows, and the along-track component of
-    every segment stays positive, so the line cannot doubleback. It is not a tuning constant -- it is
-    the line's own scale, and it turns a teleport into a wedge that opens at 45 degrees and reaches
-    the same water over several stations, which is what walking down a river looks like.
+    Steps 3 and 4 are what keep the line a line, and neither is a tuning constant. A lateral change
+    of `step` over a length of `step` is a 45 degree bend; past that it stops being something a boat
+    follows, and it turns a teleport into a wedge that opens at 45 degrees and reaches the same water
+    over several stations, which is what walking down a river looks like. The radius cap is the
+    geometry: the along-track component of a step goes to zero when the inward offset reaches the
+    radius of curvature, so it is capped a station spacing short of it.
     """
     n = len(pts)
     norms = [station_normal(pts, i) for i in range(n)]
@@ -577,13 +581,41 @@ def centre_pass(pts, inside, step, probe, reach):
         off[i] = min(cands[i], key=lambda c: abs(c - prev))
         prev = off[i]
 
-    # 3 ── the slope limit, both ways, so the start is not privileged over the end
+    # 3 ── AND NO FURTHER INTO A BEND THAN THAT BEND'S OWN RADIUS
+    #
+    # This is the condition the slope limit below cannot see, and the one the Congaree's first real
+    # run failed on 48 stations. Offsetting a curve inward by more than its radius of curvature does
+    # not produce a curve -- it produces a cusp; the along-track component of the step goes to zero
+    # at `o = R` and negative past it. So an offset pointing at the centre of the bend is capped at
+    # the radius less one station spacing, which leaves the along-track component positive by the
+    # same margin the slope limit works in.
+    #
+    # THE RADIUS IS THE LOCAL ONE, between this station and its two neighbours, and not the 400 m
+    # curvature window: folding happens between adjacent segments and that is the scale to measure.
+    # It needs no new parameter for the same reason.
+    for i in range(1, n - 1):
+        ax, ay = pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]
+        bx, by = pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]
+        la, lb = math.hypot(ax, ay), math.hypot(bx, by)
+        if la == 0.0 or lb == 0.0:
+            continue
+        # Positive is a LEFT turn, and the normal points left of downstream, so an offset with the
+        # same sign as the turn is an offset toward the inside of the bend.
+        ang = math.atan2(ax * by - ay * bx, ax * bx + ay * by)
+        if abs(ang) < 1e-9 or off[i] * ang <= 0:
+            continue
+        span = (la + lb) / 2.0
+        lim = max(0.0, span / abs(ang) - span)
+        if abs(off[i]) > lim:
+            off[i] = lim if off[i] > 0 else -lim
+
+    # 4 ── the slope limit, both ways, so the start is not privileged over the end
     for i in range(1, n):
         off[i] = max(off[i - 1] - step, min(off[i - 1] + step, off[i]))
     for i in range(n - 2, -1, -1):
         off[i] = max(off[i + 1] - step, min(off[i + 1] + step, off[i]))
 
-    # 4 ── and the folds the slope limit does not catch, smoothed out where they appear
+    # 5 ── and the folds those two do not catch, smoothed out where they appear
     #
     # THE SLOPE LIMIT IS NOT QUITE ENOUGH ON A TIGHT BEND, and the Congaree says so: 48 of 2,659
     # stations. The limit keeps the OFFSETS within a station spacing of each other, which is exactly
