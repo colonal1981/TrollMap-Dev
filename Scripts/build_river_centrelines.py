@@ -677,12 +677,21 @@ def centre_pass(pts, inside, step, probe, reach):
     # before this existed: 741 folds shipped, 422 of them on lumber_river and lynches_river alone --
     # two packs whose chart covers a few kilometres of a two-hundred-kilometre river, so the centring
     # there is working on scraps and folding between them.
-    if bad:
+    # REPEATED UNTIL IT STOPS, because putting one station back on the flowline can fold it against
+    # a neighbour that is still 40 m off it. Each round only ever sets offsets to zero, so it walks
+    # one way: in the limit the whole stretch is the flowline, which is the line this function was
+    # handed and has no fold in it. lynches_river is why -- 30 m wide, a 119 m tenth-percentile bend
+    # radius and a chart covering a fraction of its 258 km, and one round of this left 98 of them.
+    while bad:
         for i in bad:
             for k in range(max(0, i - 1), min(n - 1, i + 1) + 1):
                 off[k] = 0.0
         out = build(off)
-        bad = folding(out)
+        again = folding(out)
+        if len(again) >= len(bad):
+            bad = again
+            break
+        bad = again
     folds = len(bad)
 
     moved = 0
