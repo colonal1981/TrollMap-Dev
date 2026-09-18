@@ -137,14 +137,21 @@ const DECLARED = [
    'Georgia is deliberately absent from AGENCY_INDEXES, so this is still the GA seed list.'],
 
   // ── aliases: legitimate and permanent ─────────────────────────────────────────────────────
-  ['js/data/research-ids.js', 'RESEARCH_CANONICAL_IDS', 16, 'alias',
+  ['js/data/research-ids.js', 'RESEARCH_CANONICAL_IDS', 18, 'alias',
    'storage-key aliases. Legitimate: the world disagrees about what Thurmond is called. THE '
    + 'ONE COPY as of 2026-09-05 -- Worker/research/keys.js imports it rather than restating it, '
    + 'the way Worker/research/limnology.js imports js/data/lake-keys.js. It was two, and they '
    + 'drifted, and the test below caught it: the Worker lost lake_russell_ga on 2026-09-04 and '
    + 'the client kept it, so the browser was still handing an 88-acre Habersham Co lake the '
    + 'whole profile of Richard B Russell. 12 -> 16 is that fix plus the four picker spellings '
-   + 'added with it.'],
+   + 'added with it. 16 -> 18 is the Congaree, 2026-09-17: two spellings of ONE water, because '
+   + 'the picker takes its name from the DNR ramp feed and the profile is filed under the '
+   + "registry's, and the two do not overlap. This count was not updated with them, so this "
+   + 'tripwire was red for a day -- which is the tripwire working. AND THE QUESTION IT ASKS: '
+   + 'six of these eighteen are now one shape -- a picker spelling that does not resolve to the '
+   + "registry's storage id -- and a sixth hand-written row for the seventh water is the point "
+   + 'at which researchStorageIdCandidates() should be asking the registry for the slug rather '
+   + 'than this table growing again.'],
   ['Worker/research/deterministic.js', 'LEGACY_PROFILE_KEYS', 7, 'alias',
    'profile keys written before the storage-id rules settled. Read-only compatibility.'],
   // DOCUMENT_ALIASES was here until 2026-09-01, eleven waters, and NOT ONE OF ITS KEYS COULD

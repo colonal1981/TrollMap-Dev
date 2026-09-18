@@ -1404,8 +1404,14 @@ export function buildPlanRequest(o) {
   // THE CURRENT THIS DAY IS FISHED IN, for the speed notes below. One number for the prompt, off
   // the reaches the app actually chose -- riverCurrent.medianMph is driftCurrentSummary's, and the
   // per-leg value rides on each candidate for anything that needs finer than that.
-  const riverCurrentMph = o.isRiver && o.riverCurrent && Number.isFinite(Number(o.riverCurrent.medianMph))
-    ? Number(o.riverCurrent.medianMph) : null;
+  // `isNum`/`num` FROM utils/num.js, NOT A LOCAL GUARD. Two call sites in this file were still
+  // spelling the pattern out by hand after the sweep that replaced twelve of them, and the test
+  // that forbids it -- "plan-prompt.js has no copy of the guard left in it" -- had been red since.
+  // The sweep's own note says why leaving one behind is leaving the next instance of the family
+  // behind with it: the hand-written version returned 0 for null, '' and a blank string, and a
+  // zero current reads as measured slack water rather than as nothing measured.
+  const riverCurrentMph = o.isRiver && o.riverCurrent && isNum(o.riverCurrent.medianMph)
+    ? num(o.riverCurrent.medianMph) : null;
   const snapSet = new Set(o.snapEligible || []);
   const tieOnly = (o.tackle || []).filter((n) => !snapSet.has(n));
   // WHICH OF THE BAG MAY BE TROLLED. The bag was handed over as one flat list of names and the
@@ -1444,8 +1450,8 @@ export function buildPlanRequest(o) {
     // him the GPS speed that puts THIS bait in ITS window, so the depth it runs at is the depth at
     // its own ideal through-water speed -- not at a number nobody is holding.
     const kSpeed = (LURE_KNOWLEDGE[lure.type] || {}).speed;
-    const atMph = (riverCurrentMph != null && kSpeed && Number.isFinite(Number(kSpeed.ideal)))
-      ? Number(kSpeed.ideal) : 2.0;
+    const atMph = (riverCurrentMph != null && kSpeed && isNum(kSpeed.ideal))
+      ? num(kSpeed.ideal) : 2.0;
     const w = depthWindow(lure, { speedMph: atMph, leadFt: null });
     if (w.mode === 'none') return null;                       // the CAST ONLY block says it better
 

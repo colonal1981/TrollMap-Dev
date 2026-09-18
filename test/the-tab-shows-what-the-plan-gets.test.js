@@ -71,11 +71,23 @@ describe('and the block it shows is the block the plan gets', () => {
     expect(researchIntel(null, 'Largemouth Bass', 'summer')).toBe(null);
   });
 
-  it('says out loud whether the profile is verified, because the panel prints that line', () => {
+  it('says how old the profile is, which is what replaced the verified line', () => {
+    // THE VERIFIED LINE IS GONE ON PURPOSE and this assertion outlived it. `NOT yet verified --
+    // weigh accordingly` opened every Congaree prompt and all it meant was that nobody had clicked
+    // a button in the research tab -- Ryan: "once we remove the research tab... there won't be a
+    // way to verify them or mark them verified". A plan that discounts its own research because of
+    // a missing click plans off general knowledge instead, which is the failure the block exists to
+    // prevent. What the header carries now is what the profile IS and when it was taken.
     const v = researchIntel(PROFILE, 'Largemouth Bass', 'summer', Date.parse('2026-09-04'));
-    expect(v.includes('(verified)')).toBe(true);
-    const d = researchIntel({ ...PROFILE, metadata: { status: 'draft' } },
+    expect(v.startsWith('Researched profile for this water')).toBe(true);
+    expect(/research|date|old|ago|unknown age/i.test(v.split('\n')[0])).toBe(true);
+    // And a draft reads the same, because the status was never the useful fact. ONLY THE STATUS
+    // CHANGES: spreading `metadata: { status: 'draft' }` replaces the whole block and drops
+    // `lastUpdated` with it, so the header went from "researched 3 days ago" to "of unknown age"
+    // and the comparison failed on the date rather than on the status. Two things changed at once.
+    const d = researchIntel({ ...PROFILE, metadata: { ...PROFILE.metadata, status: 'draft' } },
                             'Largemouth Bass', 'summer', Date.parse('2026-09-04'));
-    expect(d.includes('NOT yet verified')).toBe(true);
+    expect(d.includes('NOT yet verified')).toBe(false);
+    expect(d.split('\n')[0]).toBe(v.split('\n')[0]);
   });
 });

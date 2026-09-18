@@ -36,8 +36,19 @@ const CODE = PY.replace(/^\s*#.*$/gm, '').replace(/"""[\s\S]*?"""/g, '');
 
 describe('build_river_centrelines.py — the cap gates every field that is about the channel', () => {
   test('the cap is still three channel widths, measured not chosen', () => {
-    assert.match(CODE, /cap\s*=\s*round\(3\.0\s*\*\s*good_w\[len\(good_w\)\s*\/\/\s*2\],\s*1\)\s*if good_w else None/,
+    // MATCHED ON THE RULE, NOT ON THE VARIABLE'S NAME. This required the list to be called
+    // `good_w` and went red on 2026-09-18 when the cap moved to be taken off the INSIDE chain
+    // before the extension exists and the local was renamed `w0` -- same rule, same arithmetic,
+    // different spelling. A test that pins an identifier fails on a rename and says the rule
+    // changed, which is a false alarm in the most expensive place to have one.
+    //
+    // The backreference is what keeps it honest: whatever the list is called, the median is taken
+    // from the SAME list the cap is measured off, so this cannot pass on two different variables.
+    assert.match(CODE, /cap\s*=\s*round\(3\.0\s*\*\s*(\w+)\[len\(\1\)\s*\/\/\s*2\],\s*1\)\s*if \1 else None/,
       'the snap cap is no longer 3x the median channel width');
+    // And the list it measures is a SORTED one, or `[len // 2]` is not a median at all.
+    assert.match(CODE, /(\w+)\s*=\s*sorted\([^)]*\)\s*\n\s*cap\s*=\s*round\(3\.0\s*\*\s*\1\[/,
+      'the cap reads the middle element of a list nothing sorted, which is not a median');
   });
 
   test('one test decides on-river, and all three channel fields hang off it', () => {

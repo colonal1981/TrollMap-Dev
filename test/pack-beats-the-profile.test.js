@@ -11,7 +11,18 @@ import { researchIntel, registryIdentity } from '../js/modules/plan-inputs.js';
 
 const PROFILE = {
   identity: { maxDepthFt: 83, averageDepthFt: 19, bodyType: 'lake' },
-  biology: { predatorSpecies: ['Largemouth Bass'] },
+  // THE ROSTER CARRIES A FISH THAT IS NOT THE TARGET, and it has to.
+  //
+  // This fixture held `['Largemouth Bass']` alone and the target is Largemouth Bass, which made
+  // five tests in this file assert that the target appears in its own `Other predators here` row.
+  // researchIntel() deliberately stopped doing that -- "OTHER MEANS OTHER, AND IT DID NOT", on
+  // Ryan's own complaint that the Congaree's line opened `Other predators here: Largemouth Bass`
+  // on a day planned FOR largemouth -- so the row came back empty, was dropped, and five
+  // assertions failed on a change that was correct.
+  //
+  // A fixture whose only roster entry is the target cannot test a row that excludes the target.
+  // Bluegill is the fish those tests are actually about; the exclusion itself is pinned below.
+  biology: { predatorSpecies: ['Largemouth Bass', 'Bluegill'] },
   habitat: { structuralElements: { creekMouths: ['Dutchmans', 'Cedar'], points: 12 } },
   limnology: {},
 };
@@ -56,6 +67,22 @@ test('the species list still comes from the profile, which is not a pack fact', 
   const out = researchIntel(PROFILE, SPECIES, 'summer', Date.now(),
     { identity: { maxDepthFt: 110.9 } });
   assert.match(out, /Other predators here/);
+  assert.ok(line(out, 'Other predators here').includes('Bluegill'), out);
+});
+
+test('and OTHER means other -- the target is not news in its own roster', () => {
+  // The rule the five stale assertions in this file were hiding. Ryan, on the Congaree line:
+  // the label promises the fish BESIDE the target and the list led with the target itself. His
+  // presence is the premise of the plan, so pin it rather than leave it to be rediscovered.
+  const out = researchIntel(PROFILE, SPECIES, 'summer', Date.now(), null);
+  assert.doesNotMatch(line(out, 'Other predators here'), /Largemouth/i);
+  // And with nothing else in the roster the row is not printed empty. Built off PROFILE rather
+  // than off a bare biology block, because researchIntel() returns NULL for a profile with nothing
+  // in it but a roster -- which made the first version of this assertion fail on its own fixture.
+  const only = researchIntel({ ...PROFILE, biology: { predatorSpecies: [SPECIES] } },
+                             SPECIES, 'summer', Date.now(), null);
+  assert.match(only, /Max depth/, 'the fixture still has to produce a profile at all');
+  assert.doesNotMatch(only, /Other predators here/);
 });
 
 // ── THE ASSUMPTION PICK WATER'S CALL RESTS ON ────────────────────────────────────────────────
@@ -137,17 +164,22 @@ test('the registry roster unions with the profile rather than replacing it', () 
   const out = researchIntel(PROFILE, SPECIES, 'summer', Date.now(),
     { biology: { predatorSpecies: ['Striped Bass', 'Blue Catfish'] } });
   const row = line(out, 'Other predators here');
-  // Both halves survive. Largemouth is the profile's and is the fish the plan is FOR.
-  assert.ok(row.includes('Largemouth Bass'), row);
+  // Both halves survive. Bluegill is the profile's; the two catfish and bass are the registry's.
+  // Largemouth is the profile's too and is the fish the plan is FOR, so it is not in this row --
+  // see the OTHER-means-other test above.
+  assert.ok(row.includes('Bluegill'), row);
   assert.ok(row.includes('Striped Bass'), row);
   assert.ok(row.includes('Blue Catfish'), row);
+  assert.doesNotMatch(row, /Largemouth/i, row);
 });
 
 test('a fish in both is named once', () => {
+  // On a fish that SURVIVES the row, which the target does not: the registry spells it lower case
+  // and the profile spells it properly, and the union has to see one fish rather than two.
   const out = researchIntel(PROFILE, SPECIES, 'summer', Date.now(),
-    { biology: { predatorSpecies: ['largemouth bass', 'Striped Bass'] } });
+    { biology: { predatorSpecies: ['bluegill', 'Striped Bass'] } });
   const row = line(out, 'Other predators here');
-  assert.equal(row.toLowerCase().split('largemouth bass').length - 1, 1, row);
+  assert.equal(row.toLowerCase().split('bluegill').length - 1, 1, row);
 });
 
 test('a water with no profile at all still gets a roster', () => {
@@ -162,7 +194,7 @@ test('and no registry answer leaves the profile exactly as it read before', () =
   const withNothing = researchIntel(PROFILE, SPECIES, 'summer', Date.now(), null);
   const withEmpty = researchIntel(PROFILE, SPECIES, 'summer', Date.now(), { biology: {} });
   assert.equal(line(withEmpty, 'Other predators here'), line(withNothing, 'Other predators here'));
-  assert.ok(line(withNothing, 'Other predators here').includes('Largemouth Bass'));
+  assert.ok(line(withNothing, 'Other predators here').includes('Bluegill'));
 });
 
 test('stockings union the same way, on the species name inside the object', () => {
@@ -189,10 +221,12 @@ test('stockings union the same way, on the species name inside the object', () =
 // pipeline stamps it; until then registryIdentity() returns only the type, and absent is not a
 // claim.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
-test('the registry row answers Lake type without any fetch', () => {
+test('the registry row answers the water type without any fetch', () => {
+  // THE LABEL IS `Water type`. It was `Lake type` when this was written, and calling a river's row
+  // `Lake type` was the thing that got renamed -- so the assertion, not the code, was out of date.
   const out = researchIntel({}, SPECIES, 'summer', Date.now(),
     { identity: registryIdentity({ feature_type: 'river' }) });
-  assert.ok(line(out, 'Lake type').includes('river'), out);
+  assert.ok(line(out, 'Water type').includes('river'), out);
 });
 
 test('a pack measurement still beats the registry stamp', () => {
