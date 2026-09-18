@@ -683,10 +683,16 @@ def centre_pass(pts, inside, step, probe, reach):
 def centre_on_water(pts, inside, step, probe, reach, passes):
     """Put the centreline in the middle of the water, and say what it took.
 
-    THE SWEEPS STOP WHEN THEY STOP HELPING, not after a number somebody chose. Each sweep reports
-    the total distance it moved the line; the first one that does not beat the one before it is
-    discarded and the loop ends. On a synthetic meander that is 658 m, 271, 131, 57, 30, 25, 25 --
-    the tail being pure probe-quantisation jitter, which is exactly where it should stop.
+    THE SWEEPS STOP WHEN THEY STOP HELPING, not after a number somebody chose -- and "helping" is
+    measured as the thing this stage is for: how many stations are off the water. The line from the
+    best sweep is what is returned, and the loop ends when a sweep moves nothing at all, when the cap
+    is reached, or when two sweeps in a row have failed to better the best count so far.
+
+    TWO IN A ROW, AND NOT ONE, BECAUSE ONE IS A BOUNCE. The first version stopped on the first sweep
+    that moved the line no further than the one before it, and altamaha_river stopped after four with
+    its movement still falling hard -- 61,256 m, 13,276, 4,969, 2,101 -- leaving 138 stations off
+    charted water that was right there on their normals. That one river was 84% of everything still
+    misplaced across the first eighteen of the fifty-seven.
 
     THE RESAMPLE HAPPENS ONCE, AT THE END, and that is not a detail. `station_m` is `i * step`
     everywhere downstream, so the line has to come back to even spacing -- but resample() drops
@@ -694,25 +700,39 @@ def centre_on_water(pts, inside, step, probe, reach, passes):
     channel to 825 m over fifteen of them. Once is the same single truncation the flowline has always
     had.
     """
-    rep = {'passes': 0, 'moved': [], 'stranded': 0, 'folds': 0, 'shift_m': {}, 'moved_m': []}
+    rep = {'passes': 0, 'moved': [], 'stranded': 0, 'folds': 0, 'shift_m': {}, 'moved_m': [],
+           'off_by_pass': []}
     every = []
-    best = None
+    off = sum(1 for q in pts if not inside(q[0], q[1]))
+    # TWO NUMBERS, IN ORDER, BECAUSE ONE OF THEM IS BLIND. Stations off the water is what this stage
+    # is for, but a line already inside the channel and hugging one bank has none off it and still
+    # needs moving -- scored on that alone it would be declared finished before it started. So the
+    # tie is broken on how far the sweep had to move the line: less work from an already-good line is
+    # a better line, and the work falls away as the thing settles.
+    best, best_line, best_at, stall = (off, None), list(pts), 0, 0
+    rep['off_by_pass'].append(off)
     for _ in range(max(1, int(passes))):
         moved, stranded, folds, shifts, out = centre_pass(pts, inside, step, probe, reach)
-        total = round(sum(shifts), 1)
-        if best is not None and total >= best:
-            break
-        best = total
         pts = out
+        off = sum(1 for q in pts if not inside(q[0], q[1]))
         rep['passes'] += 1
         rep['moved'].append(moved)
-        rep['moved_m'].append(total)
+        rep['moved_m'].append(round(sum(shifts), 1))
+        rep['off_by_pass'].append(off)
         rep['stranded'] = stranded
         rep['folds'] = folds
         every.extend(shifts)
+        score = (off, round(sum(shifts), 1))
+        if best[1] is None or score < best:
+            best, best_line, best_at, stall = score, list(pts), rep['passes'], 0
+        else:
+            stall += 1
+            if stall >= 2:
+                break
         if moved == 0:
             break
-    pts = resample(pts, step)
+    rep['best_pass'] = best_at
+    pts = resample(best_line, step)
     if every:
         every.sort()
         rep['shift_m'] = {'p50': pct(every, .50), 'p90': pct(every, .90),
@@ -1396,9 +1416,11 @@ def main():
                          c.get('off_water_after', 0), c.get('stations_after', 0),
                          c.get('stranded', 0), c.get('off_water_left', 0),
                          sh.get('p50'), sh.get('p90'), sh.get('max')))
-                print('           %d sweeps moving %s m   %d folds'
+                print('           %d sweeps moving %s m, best at %s   off by sweep %s   %d folds'
                       % (c.get('passes', 0),
                          '/'.join(str(x) for x in (c.get('moved_m') or ['-'])),
+                         c.get('best_pass', '-'),
+                         '/'.join(str(x) for x in (c.get('off_by_pass') or ['-'])),
                          c.get('folds', 0)))
                 # SAID OUT LOUD, like the off-cap line below it. A fold is a line that runs back on
                 # itself, which the slope limit is supposed to make impossible; a river that still
