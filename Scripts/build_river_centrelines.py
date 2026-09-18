@@ -480,6 +480,7 @@ def extend_chain(points, i0, i1, mask, water, nbrs, slug, cap, step, probe, max_
             if gained + hop > budget_m:
                 return last, 'hit the %g km search window, not the river' % (budget_m / 1000.0), gained
             x, y = chain[j]
+            # ── ONLY A NEIGHBOUR NEEDS LOOKING UP, AND ONLY OUTSIDE THE OUTLINE ────────────────
             if not mask.inside(x, y):
                 own = nbrs.owner_of(x, y, skip=(slug,))
                 if own is not None and own in nbrs.rivers:
@@ -488,14 +489,33 @@ def extend_chain(points, i0, i1, mask, water, nbrs, slug, cap, step, probe, max_
                     if own not in owners:
                         owners.append(own)
                     water.add(nbrs.depth_of(own))
-                if not water.inside(x, y):
-                    return last, 'nothing charted here', gained
-                wj, _ = ray_width(chain, j, water.inside, max_m, probe)
-                if wj is None:
-                    return last, 'the channel does not resolve inside %g m' % max_m, gained
-                if cap and wj > cap:
-                    return last, ('%.0f m wide, past the %.0f m that is three channel widths'
-                                  % (wj, cap)), gained
+            # ── BUT THE RULES APPLY AT EVERY NEW STATION, IN THE BOX OR OUT OF IT ──────────────
+            #
+            # The first version skipped them wherever the registry outline said "inside", on the
+            # assumption that anything inside the box is already this river. It is not.
+            # attach_mainstem() joins the pieces 3DHP broke the mainstem into, and those pieces
+            # can LEAVE the outline and come back -- or simply be a stretch inside the same box
+            # that the chainer left out because it carries no chart.
+            #
+            # MEASURED ON THE FIRST REAL RUN: broad_river went from 33.7 km to 84.0 km, gaining
+            # 49.83 km upstream, hitting the 50 km search window rather than the end of anything,
+            # and coming out 51% charted with 829 of its 1,673 stations off the water. It had
+            # walked half a river's worth of unsounded channel because the mask said "inside" and
+            # nothing else was asked. The Congaree, which extends past its outline where the rules
+            # do run, came out 81% charted with 8 stations off.
+            #
+            # `charted` AND NOT `inside` IS THE WATER TEST. Inside the outline `inside` is true by
+            # definition, so it can never fire there -- which is how this got missed. The question
+            # a new station has to answer is whether anybody sounded it, and the outline is not a
+            # sounding.
+            if not water.charted(x, y):
+                return last, 'nothing charted here', gained
+            wj, _ = ray_width(chain, j, water.inside, max_m, probe)
+            if wj is None:
+                return last, 'the channel does not resolve inside %g m' % max_m, gained
+            if cap and wj > cap:
+                return last, ('%.0f m wide, past the %.0f m that is three channel widths'
+                              % (wj, cap)), gained
             gained += hop
             last = j
             i = j

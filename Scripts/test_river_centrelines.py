@@ -663,6 +663,21 @@ class TheLineFollowsTheRiverPastTheBox(unittest.TestCase):
         self.assertIn('search window', rep['down_stop'],
                       'a river truncated by the search must not read like a river that ended')
 
+    def test_the_rules_apply_inside_the_box_too(self):
+        # broad_river went from 33.7 km to 84.0 km on the first real run, 51% charted, 829 of its
+        # 1,673 stations off the water. The rules were skipped wherever the outline said "inside",
+        # and attach_mainstem() joins pieces of the mainstem that are inside the same box and carry
+        # no chart. Here the box runs to y 1000 but only y 0..500 is sounded.
+        m = B.Mask([[(-50.0, 0.0), (50.0, 0.0), (50.0, 1000.0), (-50.0, 1000.0)]], 10.0)
+        chain = [(0.0, float(y)) for y in range(0, 1001, 50)]
+        w = B.WaterExtent(m, FakeDepth(-50.0, 0.0, 50.0, 500.0))
+        nb = FakeNeighbours()
+        out, rep = B.extend_chain(chain, 0, 4, m, w, nb, 'the_river',
+                                  300.0, 50.0, 5.0, 3000.0, 50000.0)
+        self.assertLessEqual(max(q[1] for q in out), 550.0,
+                             'it stopped where the soundings stopped, not where the box did')
+        self.assertIn('nothing charted', rep['down_stop'])
+
     def test_with_no_extension_the_line_is_what_the_box_holds(self):
         nb = FakeNeighbours()
         out, rep = self._extend(nb, self._water())
