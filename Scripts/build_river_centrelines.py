@@ -1080,6 +1080,12 @@ def build_one(row, a, db, stamp):
         centring.update(moved_rep)
     centring['stations_after'] = len(pts)
     centring['off_water_after'] = sum(1 for q in pts if not inside(q[0], q[1]))
+    # WHAT IS STILL WRONG, AS OPPOSED TO WHAT WAS NEVER SOUNDED. A station with no charted water
+    # anywhere on its normal cannot be centred on charted water, and counting it as a miss makes a
+    # working river read like a broken one -- 110 of 2,631 on the Congaree, 92 of which are the
+    # uncharted reaches. This is the other 18, and it is the number that says whether this stage did
+    # its job.
+    centring['off_water_left'] = max(0, centring['off_water_after'] - centring.get('stranded', 0))
     rep['centring'] = centring
 
     turn, rad = curvature(pts, a.step, a.window)
@@ -1379,16 +1385,21 @@ def main():
             c = rep.get('centring') or {}
             if c:
                 sh = c.get('shift_m') or {}
-                print('           centred on the %s   stations off the water %d/%d -> %d/%d   '
-                      'shift p50/p90/max %s/%s/%s m'
+                # THE STRANDED ONES ARE NOT A FAILURE AND THE LINE SAYS SO IN THE SAME BREATH.
+                # "110 of 2,631 still off the water" reads as a bad result until you know 92 of
+                # them have no charted water anywhere on their normal -- those are the unsounded
+                # reaches, the flowline is the only answer there is for them, and the number that
+                # says whether the centring worked is the other one.
+                print('           centred on the %s   stations off the water %d/%d -> %d/%d, %d of '
+                      'them unsounded, %d left   shift p50/p90/max %s/%s/%s m'
                       % (c.get('basis'), c.get('off_water_before', 0), c.get('stations_before', 0),
                          c.get('off_water_after', 0), c.get('stations_after', 0),
+                         c.get('stranded', 0), c.get('off_water_left', 0),
                          sh.get('p50'), sh.get('p90'), sh.get('max')))
-                print('           %d sweeps moving %s m   %d stranded with no water on their '
-                      'normal   %d folds'
+                print('           %d sweeps moving %s m   %d folds'
                       % (c.get('passes', 0),
                          '/'.join(str(x) for x in (c.get('moved_m') or ['-'])),
-                         c.get('stranded', 0), c.get('folds', 0)))
+                         c.get('folds', 0)))
                 # SAID OUT LOUD, like the off-cap line below it. A fold is a line that runs back on
                 # itself, which the slope limit is supposed to make impossible; a river that still
                 # has most of its stations off the water after this has a chart and a boundary on
@@ -1400,9 +1411,10 @@ def main():
                 before, after = c.get('off_water_before', 0), c.get('off_water_after', 0)
                 if after and after >= before:
                     print('           CENTRING BOUGHT NOTHING HERE: %d of %d stations are still off '
-                          'the %s water (%d before). %d had no water on their normal at all'
+                          'the %s water (%d before), and only %d of those had water on their normal '
+                          'to be moved to'
                           % (after, c.get('stations_after', 0), c.get('basis'), before,
-                             c.get('stranded', 0)))
+                             c.get('off_water_left', 0)))
             # SAID OUT LOUD, EVERY RUN. A pack whose chart and whose boundary are on different water
             # looks exactly like a healthy one in every line above; this is the line it fails.
             if rep.get('off_cap_n'):
