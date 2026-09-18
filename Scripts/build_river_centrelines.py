@@ -255,6 +255,195 @@ def load_boundary_rings(path):
     return out
 
 
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+# WHOSE WATER IS THIS, PAST THE END OF THE OUTLINE
+#
+# Ryan, 2026-09-18, on the Congaree day: *"the centerline shouldn't stop for the congaree until it
+# reaches lake marion"*. It should not, and the reason it did is one line of this file: the chain
+# is taken from the mainstem INSIDE the pack's registry boundary. 3DHP puts the Broad, the Congaree
+# and the Santee on ONE mainstem -- `2427150`, the id the Congaree's own centreline already carries
+# -- so the line stopped at the box and not at the river, and 26.8 km of 100-175 m channel below
+# the Wateree confluence was never planned.
+#
+# SURVEYED BEFORE ANY OF IT WAS BUILT, all 57. 51 rivers have charted mainstem past their line --
+# 75 ends, 2,948 km -- and that figure is a trap: nearly all of it is reservoir, which is already
+# plannable as a lake. Probed for width against each river's own median channel, only 44.2 km is
+# still a RIVER, and 26.8 km of that is the Congaree. Next is broad_river_2 at 3.8 km, then the Dan
+# at 2.0 and pee_dee_river_2 at 1.8. 46 of the 66 ends probed have nothing at all: the line ends at
+# a dam or at the head of a pool and the water is a reservoir the moment it stops.
+#
+# So this class exists to answer two questions about a point past the outline -- is it somebody
+# else's RIVER, and is it charted by somebody -- and it is built once per run because there are
+# 3,370 boundaries and re-reading them per river is 57 times the work for one answer.
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+class Neighbours:
+    """The registry's other boundaries, indexed by bounding box, in Albers metres."""
+
+    def __init__(self, registry, chartpack, river_slugs, depth_cell, cache=None):
+        self.registry = registry
+        self.chartpack = chartpack
+        self.rivers = set(river_slugs)
+        self.depth_cell = depth_cell
+        self.boxes = {}
+        self._mask = {}
+        self._depth = {}
+        bdir = os.path.join(registry, 'boundaries')
+        loaded = None
+        if cache and os.path.exists(cache):
+            try:
+                with open(cache, encoding='utf-8') as fh:
+                    loaded = json.load(fh)
+            except Exception:
+                loaded = None
+        if isinstance(loaded, dict) and loaded.get('cell') == 'albers':
+            self.boxes = {k: tuple(v) for k, v in (loaded.get('boxes') or {}).items()}
+        if not self.boxes:
+            for fn in sorted(os.listdir(bdir)):
+                if not fn.endswith('.geojson'):
+                    continue
+                try:
+                    rings = load_boundary_rings(os.path.join(bdir, fn))
+                except Exception:
+                    continue
+                if not rings:
+                    continue
+                xs = [q[0] for r in rings for q in r]
+                ys = [q[1] for r in rings for q in r]
+                self.boxes[fn[:-8]] = (min(xs), min(ys), max(xs), max(ys))
+            if cache:
+                try:
+                    write_json(cache, {'cell': 'albers', 'built': time.strftime('%Y-%m-%d_%H%M%S'),
+                                       'boxes': {k: list(v) for k, v in self.boxes.items()}})
+                except Exception:
+                    pass
+
+    def owner_of(self, x, y, skip=()):
+        """The slug whose boundary holds this point, or None. First hit wins: registry boundaries
+        abut and a point on a seam belongs to either, which is enough for both questions asked."""
+        for slug, b in self.boxes.items():
+            if slug in skip:
+                continue
+            if not (b[0] <= x <= b[2] and b[1] <= y <= b[3]):
+                continue
+            m = self._mask.get(slug)
+            if m is None:
+                rings = load_boundary_rings(os.path.join(self.registry, 'boundaries',
+                                                         '%s.geojson' % slug))
+                m = Mask(rings, 10.0) if rings else False
+                self._mask[slug] = m
+            if m is not False and m.inside(x, y):
+                return slug
+        return None
+
+    def depth_of(self, slug):
+        """That pack's depth areas, loaded once. A pack with no soundings answers nothing rather
+        than answering zero -- the same rule DepthIndex already keeps for a missing file."""
+        d = self._depth.get(slug)
+        if d is None:
+            d = DepthIndex(os.path.join(self.chartpack, slug, 'depth_areas.geojson'),
+                           self.depth_cell)
+            self._depth[slug] = d
+        return d
+
+
+class WaterExtent:
+    """INSIDE THE OUTLINE, OR SOUNDED -- by this pack or by whoever owns the water out there.
+
+    The outline is asked first, so nothing it already answered can change. That is the property
+    that lets this run on all 57 in one commit: measured across 32,783 stations, not one shrank.
+    """
+
+    def __init__(self, mask, depth, extra=()):
+        self.mask = mask
+        self.depth = depth
+        self.extra = list(extra)
+
+    def add(self, depth):
+        if depth is not None and depth.polygons and depth not in self.extra:
+            self.extra.append(depth)
+
+    def inside(self, x, y):
+        if self.mask.inside(x, y):
+            return True
+        if self.depth.polygons and self.depth.at(x, y) is not None:
+            return True
+        for d in self.extra:
+            if d.at(x, y) is not None:
+                return True
+        return False
+
+
+def extend_chain(chain, mask, water, nbrs, slug, cap, step, probe, max_m, budget_m):
+    """Follow the mainstem past each end of the boundary-clipped chain, while it is still a river.
+
+    THREE RULES, AND NONE OF THE NUMBERS IS NEW. A station is kept when it has charted water on it,
+    when the channel there is no wider than `cap` -- three channel widths, already this file's unit
+    for "off this river" -- and when the water is not inside another RIVER pack's boundary, because
+    that water is somebody else's river day already. The first station that fails ends the line.
+
+    THE UPSTREAM CLAUSE IS WHY THE CONGAREE DOES NOT SWALLOW THE BROAD. Their mainstem is the same
+    one; upstream of the Congaree it is the Broad River, which has its own pack and its own
+    centreline, so the rule stops there. (The survey says there is no river-shaped water up there
+    anyway: 0.0 km at two, three and five channel widths.)
+
+    @returns (points, report) -- the points are the whole line, ends included, in flow order.
+    """
+    inside_idx = [i for i, q in enumerate(chain) if mask.inside(q[0], q[1])]
+    rep = {'up_m': 0.0, 'down_m': 0.0, 'up_stop': 'no chain inside the boundary',
+           'down_stop': 'no chain inside the boundary', 'owners': []}
+    if not inside_idx:
+        return chain, rep
+    i0, i1 = inside_idx[0], inside_idx[-1]
+    owners = []
+
+    def walk(start, direction):
+        """From `start`, step outward one index at a time. Returns (last index kept, why it stopped,
+        metres gained)."""
+        gained = 0.0
+        last = start
+        i = start
+        while True:
+            j = i + direction
+            if j < 0 or j >= len(chain):
+                return last, 'the mainstem ends here', gained
+            hop = math.dist(chain[i], chain[j])
+            if gained + hop > budget_m:
+                return last, 'hit the %g km search window, not the river' % (budget_m / 1000.0), gained
+            x, y = chain[j]
+            if not mask.inside(x, y):
+                own = nbrs.owner_of(x, y, skip=(slug,))
+                if own is not None and own in nbrs.rivers:
+                    return last, "%s's water, and it has its own centreline" % own, gained
+                if own is not None:
+                    if own not in owners:
+                        owners.append(own)
+                    water.add(nbrs.depth_of(own))
+                if not water.inside(x, y):
+                    return last, 'nothing charted here', gained
+                # THE RAY NEEDS A LINE TO BE PERPENDICULAR TO. widths() takes the normal from the
+                # stations either side, so a one-point list has no direction and comes back None --
+                # which read as "the channel does not resolve" and stopped every extension at the
+                # first station outside the box. Three points, and the answer is the middle one's.
+                lo_i = max(j - 1, 0)
+                w, _ = widths(chain[lo_i:j + 2], water.inside, max_m, probe)
+                wj = w[j - lo_i]
+                if wj is None:
+                    return last, 'the channel does not resolve inside %g m' % max_m, gained
+                if cap and wj > cap:
+                    return last, ('%.0f m wide, past the %.0f m that is three channel widths'
+                                  % (wj, cap)), gained
+            gained += hop
+            last = j
+            i = j
+
+    lo, rep['up_stop'], rep['up_m'] = walk(i0, -1)
+    hi, rep['down_stop'], rep['down_m'] = walk(i1, +1)
+    rep['up_m'] = round(rep['up_m'], 1)
+    rep['down_m'] = round(rep['down_m'], 1)
+    rep['owners'] = owners
+    return chain[lo:hi + 1], rep
+
+
 def first_point(geom):
     """Representative point of any geometry, in lon/lat."""
     c = geom.get('coordinates')
@@ -372,10 +561,42 @@ def bearings(pts):
     return out
 
 
-def widths(pts, mask, max_m, probe):
-    """Channel width at each station, by casting perpendicular rays until they leave the water."""
+def widths(pts, inside, max_m, probe, narrow=None):
+    """Channel width at each station, by casting perpendicular rays until they leave the water.
+
+    ── THE WATER IS NOT THE REGISTRY OUTLINE ──────────────────────────────────────────────────
+
+    This took a `Mask` and walked until the ray left the BOUNDARY, while centre_on_water() and
+    cross_sections() were already using the CHARTED DEPTH. The note at the call site said so and
+    left it -- "moving it would move every depth profile on all 57 rivers in the same commit".
+
+    It has to move now, because a centreline that follows its mainstem past the boundary has no
+    boundary out there: the mask answers False at every station and there is nothing to measure the
+    channel with. So `inside` is a predicate, and the one the caller passes is INSIDE THE OUTLINE
+    OR SOUNDED -- see WaterExtent. The outline is asked first, which is what makes it safe: nothing
+    a boundary already answered can shrink.
+
+    MEASURED BEFORE IT WAS CHANGED, all 57, 32,783 stations, with this same function: 39% of
+    stations identical, 46% grew by 25 m or less (the ray steps 5 m), 15% grew by more, and NOT ONE
+    SHRANK. Per-river median growth +10 m, worst river +25 m. Nine thinly-charted rivers --
+    catawba_river_2, chattahoochee_river_4, chattooga, chauga, johns, little_tennessee, ohoopee,
+    pigeon, satilla -- are untouched at over 80% of their stations, which is the case that kills the
+    obvious version of this change: switching to the chart INSTEAD of the outline collapses those
+    rivers to a 10 m channel and takes every depth profile with them.
+
+    ── AND `narrow`, FOR WHERE THE WATER STOPS BEING ONE CHANNEL ───────────────────────────────
+
+    At 6.2% of stations the union ray walks past three channel widths, into a sounded backwater or
+    oxbow contiguous with the river -- worst case +2,350 m on the Ogeechee. `narrow` is a second,
+    tighter predicate measured ON THE SAME RAY IN THE SAME WALK, so the caller can take its answer
+    where the wide one has stopped describing a channel. One walk, two answers, because two walks
+    is two chances for them to disagree about which ray they were on.
+
+    @returns (wide, narrow) -- `narrow` is all None when no second predicate was given.
+    """
     n = len(pts)
     out = []
+    out_narrow = []
     for i in range(n):
         a = pts[max(i - 1, 0)]
         b = pts[min(i + 1, n - 1)]
@@ -383,21 +604,35 @@ def widths(pts, mask, max_m, probe):
         h = math.hypot(dx, dy)
         if h == 0:
             out.append(None)
+            out_narrow.append(None)
             continue
         px, py = -dy / h, dx / h          # unit normal, pointing left of downstream
         total = 0.0
+        total_narrow = 0.0
         ok = True
+        ok_narrow = narrow is not None
         for sign in (1, -1):
             d = 0.0
+            dn = None
             while d < max_m:
                 d += probe
-                if not mask.inside(pts[i][0] + px * sign * d, pts[i][1] + py * sign * d):
+                x, y = pts[i][0] + px * sign * d, pts[i][1] + py * sign * d
+                if dn is None and narrow is not None and not narrow(x, y):
+                    dn = d
+                if not inside(x, y):
                     break
             else:
                 ok = False
             total += d
+            # The narrow predicate never got its own ray, so a side that never left it inside
+            # `max_m` is as unresolved as a wide one that did not.
+            if dn is None:
+                ok_narrow = False
+            else:
+                total_narrow += dn
         out.append(round(total, 1) if ok else None)
-    return out
+        out_narrow.append(round(total_narrow, 1) if ok_narrow else None)
+    return out, out_narrow
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -849,8 +1084,15 @@ class DepthIndex:
         self.polygons = 0
         if not os.path.exists(path):
             return
-        with open(path, encoding='utf-8') as fh:
-            fc = json.load(fh)
+        # A FILE THAT IS NOT A DEPTH FILE IS A PACK WITH NO SOUNDINGS, NOT A CRASH. `--no-depth`
+        # passes os.devnull, which on Windows is `nul` and does not exist -- so the guard above
+        # caught it -- and on Linux is `/dev/null`, which exists, reads empty, and takes json.load
+        # down with it. The same is true of a truncated or half-written depth_areas.geojson.
+        try:
+            with open(path, encoding='utf-8') as fh:
+                fc = json.load(fh)
+        except (ValueError, OSError):
+            return
         for feat in fc.get('features') or []:
             pr = feat.get('properties') or {}
             lo, hi = pr.get('depth_min_ft'), pr.get('depth_max_ft')
@@ -1023,7 +1265,7 @@ def pct(sorted_vals, p):
     return round(sorted_vals[min(len(sorted_vals) - 1, int(p * (len(sorted_vals) - 1)))], 1)
 
 
-def build_one(row, a, db, stamp):
+def build_one(row, a, db, stamp, nbrs=None):
     """Everything for one river. Returns (report_row, writes) where writes is path -> object."""
     slug = row['slug']
     t0 = time.time()
@@ -1131,19 +1373,50 @@ def build_one(row, a, db, stamp):
         rep['skipped'] = 'chain %.0f m is under --min-chain-m' % chain_m
         return rep, {}
 
-    pts = resample(chain, a.step)
+    # ── AND NOW PAST THE BOX, WHILE IT IS STILL A RIVER ─────────────────────────────────────────
+    #
+    # The query above is bounded by the BOUNDARY'S bbox, so the mainstem beyond it was never
+    # loaded -- which is why the line stopped there and not at the river. The second query is
+    # padded and filtered to the mainstem already chosen, so it is cheap: the Congaree's is one
+    # rtree hit on 236 segments instead of the 103,285 an unfiltered padded box returns.
+    #
+    # THE PICK IS NOT REVISITED. Which mainstem this river is was decided above, on charted metres
+    # inside the boundary, and widening the window must not be able to change that answer.
+    water = WaterExtent(mask, depth)
 
-    # ── THE CAP IS MEASURED ON THE FLOWLINE, BEFORE ANYTHING MOVES ──────────────────────────────
+    # ── THE CAP IS MEASURED ON THE RIVER INSIDE ITS OWN BOX, BEFORE ANYTHING MOVES ──────────────
     #
     # Three channel widths off the centreline is off this river. That rule used to be computed a
-    # hundred lines down, off the FINAL widths, and it is now needed twice: once to bound how far
-    # centre_on_water() may reach sideways looking for water, and once, unchanged, to gate the
-    # channel direction stamped onto a feature. One measurement, two readers -- the river's width
-    # is not changed by moving the line twenty metres, and two copies of one rule is how the two
-    # start disagreeing.
-    wid0 = widths(pts, mask, a.max_width_m, a.probe)
+    # hundred lines down, off the FINAL widths, and it is now needed three times: to bound how far
+    # centre_on_water() may reach sideways looking for water, to gate the channel direction stamped
+    # onto a feature, and -- new -- to decide where the water past the boundary has stopped being a
+    # channel. ONE measurement, three readers; two copies of one rule is how the two start
+    # disagreeing.
+    #
+    # AND IT IS TAKEN OFF THE INSIDE CHAIN, before the extension exists. A cap measured on the
+    # extended line would be partly measured on whatever the line wandered into, which is the thing
+    # the cap is there to stop.
+    wid0, _ = widths(resample(chain, a.step), water.inside, a.max_width_m, a.probe)
     w0 = sorted(w for w in wid0 if w is not None)
     cap = round(3.0 * w0[len(w0) // 2], 1) if w0 else None
+
+    if nbrs is not None and a.extend_km > 0:
+        pad = a.extend_km * 1000.0
+        far = db.execute(
+            'select shape from %s where mainstemid = ? and fid in '
+            '(select id from %s where maxx>=? and minx<=? and maxy>=? and miny<=?)' % (TABLE, RTREE),
+            (main_id, mask.minx - pad, mask.maxx + pad, mask.miny - pad, mask.maxy + pad)).fetchall()
+        lines = [line for (blob,) in far for line in gpkg_lines(blob) if len(line) >= 2]
+        rep['flowlines_in_window'] = len(lines)
+        if lines:
+            wide_chain, _, _ = chain_mainstem(lines, _charted_m if depth.polygons else None)
+            chain, ext = extend_chain(wide_chain, mask, water, nbrs, slug, cap,
+                                      a.step, a.probe, a.max_width_m, pad)
+            ext['cap_m'] = cap
+            rep['extended'] = ext
+            chain_m = sum(math.dist(chain[i], chain[i + 1]) for i in range(len(chain) - 1))
+
+    pts = resample(chain, a.step)
 
     # ── AND NOW THE LINE IS PUT WHERE ITS NAME SAYS IT IS ───────────────────────────────────────
     #
@@ -1178,7 +1451,19 @@ def build_one(row, a, db, stamp):
     # a plan reads. The span still comes from the BOUNDARY while the centring came from the CHART,
     # which is the one place those two ideas of the river still meet -- noted rather than changed,
     # because moving it would move every depth profile on all 57 rivers in the same commit.
-    wid = widths(pts, mask, a.max_width_m, a.probe)
+    # ── THE WATER, EXCEPT WHERE THE WATER STOPS BEING A CHANNEL ────────────────────────────────
+    #
+    # `water.inside` is the outline OR the soundings, and at 6.2% of stations across the 57 that
+    # ray walks past three channel widths into a sounded backwater contiguous with the river --
+    # worst case +2,350 m on the Ogeechee. Those stations keep the OUTLINE'S answer, measured on
+    # the same ray in the same walk, which inside the boundary is exactly what this file wrote
+    # before today. Past the boundary there is no outline, and a station out there wider than the
+    # cap is where extend_chain() already stopped the line.
+    wide, narrow = widths(pts, water.inside, a.max_width_m, a.probe, narrow=mask.inside)
+    wid = [n if (cap and w is not None and w > cap and n is not None) else w
+           for w, n in zip(wide, narrow)]
+    rep['width_capped_stations'] = sum(1 for w, n in zip(wide, narrow)
+                                       if cap and w is not None and w > cap and n is not None)
 
     xarea, xdeep, xchart, xprof = cross_sections(pts, wid, depth, a.probe)
     rep['depth_polygons'] = depth.polygons
@@ -1344,6 +1629,16 @@ def build_one(row, a, db, stamp):
                 # chording it is longer. `chain_km` on the build record still reports the source.
                 'length_m': round(sum(math.dist(pts[i], pts[i + 1])
                                       for i in range(len(pts) - 1)), 1),
+                # ── AND THE STATION AXIS, WHICH IS A DIFFERENT NUMBER ───────────────────────────
+                #
+                # `station_m` is i * step, so the last station is (n-1) * step -- arc length along
+                # the line the resampler was GIVEN. `length_m` is the chord sum of the line it
+                # WROTE, and the two differ by the sagitta of every step: 130,534.1 against 131,600
+                # on the Congaree, 0.8% apart. river-drifts.js bounded its reaches with `length_m`
+                # while cutting them on `station_m` and stopped 1,066 m -- 21 stations -- short of
+                # the end of the river, which on the Bates Bridge downstream arm was a third of the
+                # whole arm. A length is not an axis. Both are written, named for what they are.
+                'station_span_m': round((len(pts) - 1) * a.step, 1),
                 'stations': len(pts), 'snap_cap_m': cap,
                 'built': stamp,
                 'station_m': [round(i * a.step, 1) for i in range(len(pts))],
@@ -1393,6 +1688,13 @@ def main():
                          'moves the line no further than the one before it, and the build record '
                          'reports how many each river actually used and how far each one moved.')
     ap.add_argument('--max-width-m', type=float, default=3000.0, help='give up on a width ray past this (default 3000)')
+    # HOW FAR PAST THE OUTLINE TO LOOK, AND THE NUMBER IS THE SURVEY'S. The longest river-shaped
+    # run past any of the 57 boundaries is the Congaree's 26.8 km; the next is 3.8. 50 km is
+    # roughly twice the longest thing that exists, and a river that stops because it ran out of
+    # WINDOW rather than out of river says so on its `extended.down_stop`.
+    ap.add_argument('--extend-km', type=float, default=50.0,
+                    help='follow the mainstem this far past the registry boundary, while the water '
+                         'is still a river (default 50; 0 turns the extension off)')
     ap.add_argument('--trib-m', type=float, default=120.0, help='a tributary mouth is this close to the centreline (default 120)')
     ap.add_argument('--min-chain-m', type=float, default=1000.0, help='skip a water whose longest chain is shorter (default 1000)')
     ap.add_argument('--dry-run', action='store_true', help='measure and print. WRITES NOTHING, including the report.')
@@ -1423,11 +1725,23 @@ def main():
     print('%d river(s), step %g m, window %g m%s'
           % (len(riv), a.step, a.window, '   DRY RUN, nothing will be written' if a.dry_run else ''))
     t0 = time.time()
+    # ── BUILT ONCE, NOT PER RIVER ───────────────────────────────────────────────────────────────
+    #
+    # 3,370 registry boundaries, read for their bounding boxes so a point past this river's outline
+    # can be asked whose water it is. Per river that would be 57 times the same work for one
+    # answer; cached beside the report so a re-run pays nothing.
+    nbrs = None
+    if a.extend_km > 0:
+        nbrs = Neighbours(a.registry, a.chartpack, [r['slug'] for r in
+                                                    rivers_from_index(a.registry, None)],
+                          a.depth_cell, os.path.join(a.registry, '_boundary_bboxes.json'))
+        print('   %d registry boundaries indexed, %d of them rivers   %.1fs'
+              % (len(nbrs.boxes), len(nbrs.rivers), time.time() - t0))
     report = {'_note': 'build record for build_river_centrelines.py. One row per river.',
               'built': stamp, 'step_m': a.step, 'window_m': a.window, 'rivers': {}}
     totals = collections.Counter()
     for n, row in enumerate(riv, 1):
-        rep, writes = build_one(row, a, db, stamp)
+        rep, writes = build_one(row, a, db, stamp, nbrs)
         report['rivers'][row['slug']] = rep
         if rep.get('skipped'):
             print('  [%2d/%d] %-32s SKIPPED -- %s' % (n, len(riv), row['slug'], rep['skipped']))
@@ -1463,6 +1777,16 @@ def main():
             print('           stamped %s   tributary mouths %d   snap cap %s m   %.1fs'
                   % (', '.join('%s %d' % (k, v) for k, v in sorted(st.items())),
                      rep['tributary_mouths'], rep['snap_cap_m'], rep['seconds']))
+            # WHERE THE RIVER ENDED, AND WHY. A line that stops at the box and a line that stops
+            # at the water look identical in every other number on this page.
+            ex = rep.get('extended')
+            if ex and (ex['up_m'] or ex['down_m']):
+                print('           EXTENDED past the boundary  up %.2f km, down %.2f km  '
+                      '(cap %s m)   %s'
+                      % (ex['up_m'] / 1000.0, ex['down_m'] / 1000.0, ex.get('cap_m'),
+                         ', '.join(ex['owners']) or 'no neighbour owns it'))
+                print('             upstream stopped: %s' % ex['up_stop'])
+                print('             downstream stopped: %s' % ex['down_stop'])
             # WHERE THE LINE WAS AND WHERE IT IS NOW. The two station counts are the whole claim
             # this stage makes, and a river that does not improve says so on its own line.
             c = rep.get('centring') or {}

@@ -197,14 +197,33 @@ class MaskAndWidth(unittest.TestCase):
 
     def test_width_of_a_hundred_metre_channel(self):
         pts = [(0.0, float(y)) for y in range(-500, 501, 50)]
-        w = B.widths(pts, self.mask, 3000.0, 5.0)
+        w, _ = B.widths(pts, self.mask.inside, 3000.0, 5.0)
         mid = w[len(w) // 2]
         self.assertIsNotNone(mid)
         self.assertLess(abs(mid - 100.0), 11.0)     # two 5 m probes of slack
 
     def test_a_ray_that_never_leaves_the_water_reports_nothing(self):
         pts = [(0.0, float(y)) for y in range(-500, 501, 50)]
-        self.assertIsNone(B.widths(pts, self.mask, 20.0, 5.0)[len(pts) // 2])
+        self.assertIsNone(B.widths(pts, self.mask.inside, 20.0, 5.0)[0][len(pts) // 2])
+
+    def test_the_narrow_predicate_rides_the_same_ray(self):
+        # ONE WALK, TWO ANSWERS. `inside` is the 100 m channel; `narrow` is a 40 m one inside it.
+        # Two separate calls would each cast their own ray and could disagree about which station
+        # they were on; this is what says they cannot.
+        pts = [(0.0, float(y)) for y in range(-500, 501, 50)]
+        narrow = lambda x, y: abs(x) < 20.0 and self.mask.inside(x, y)
+        wide, nar = B.widths(pts, self.mask.inside, 3000.0, 5.0, narrow=narrow)
+        i = len(pts) // 2
+        self.assertLess(abs(wide[i] - 100.0), 11.0)
+        self.assertLess(abs(nar[i] - 40.0), 11.0)
+        self.assertLess(nar[i], wide[i], 'the tighter predicate cannot report the wider channel')
+
+    def test_no_narrow_predicate_means_no_narrow_answer(self):
+        pts = [(0.0, float(y)) for y in range(-500, 501, 50)]
+        wide, nar = B.widths(pts, self.mask.inside, 3000.0, 5.0)
+        self.assertTrue(all(v is None for v in nar),
+                        'a second answer nobody asked for is a number waiting to be believed')
+        self.assertEqual(len(nar), len(wide))
 
 
 class GeoPackageBlob(unittest.TestCase):
@@ -497,6 +516,147 @@ class Centring(unittest.TestCase):
             if q[0] > 560.0:
                 self.assertLess(abs(q[1]), self.PROBE,
                                 'station %d was moved with no water to move it to' % i)
+
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+# THE RIVER ENDS WHERE THE WATER DOES, NOT WHERE THE BOX DOES
+#
+# Ryan ran a Congaree day and said the line should not stop for the Congaree until it reaches Lake
+# Marion. It stopped because the chain is taken from the mainstem INSIDE the registry boundary, and
+# 26.8 km of 100-175 m river below the Wateree confluence was never planned.
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+class FakeDepth:
+    """A DepthIndex that answers for one rectangle. `polygons` is what the real one uses to say
+    whether it has anything to say at all."""
+
+    def __init__(self, x0, y0, x1, y1, polygons=1):
+        self.box = (x0, y0, x1, y1)
+        self.polygons = polygons
+
+    def at(self, x, y):
+        x0, y0, x1, y1 = self.box
+        return 10.0 if (x0 <= x <= x1 and y0 <= y <= y1) else None
+
+
+class FakeNeighbours:
+    def __init__(self, owners=(), rivers=(), depths=None):
+        self.rivers = set(rivers)
+        self._owners = list(owners)          # (slug, (x0, y0, x1, y1))
+        self._depths = depths or {}
+        self.asked = []
+
+    def owner_of(self, x, y, skip=()):
+        for slug, b in self._owners:
+            if slug in skip:
+                continue
+            if b[0] <= x <= b[2] and b[1] <= y <= b[3]:
+                return slug
+        return None
+
+    def depth_of(self, slug):
+        self.asked.append(slug)
+        return self._depths.get(slug)
+
+
+class WaterIsTheOutlineOrTheSoundings(unittest.TestCase):
+    def setUp(self):
+        self.ring = [(-50.0, 0.0), (50.0, 0.0), (50.0, 1000.0), (-50.0, 1000.0)]
+        self.mask = B.Mask([self.ring], 10.0)
+
+    def test_the_outline_is_water_even_where_nothing_was_sounded(self):
+        w = B.WaterExtent(self.mask, FakeDepth(0, 0, 0, 0, polygons=0))
+        self.assertTrue(w.inside(0.0, 500.0))
+        self.assertFalse(w.inside(0.0, 2000.0))
+
+    def test_soundings_past_the_outline_are_water(self):
+        w = B.WaterExtent(self.mask, FakeDepth(0, 0, 0, 0, polygons=0))
+        w.add(FakeDepth(-40.0, 1000.0, 40.0, 3000.0))
+        self.assertTrue(w.inside(0.0, 2000.0), 'charted water past the box is still water')
+        self.assertFalse(w.inside(0.0, 4000.0))
+
+    def test_nothing_the_outline_answered_can_shrink(self):
+        # THE PROPERTY THAT MADE THIS SAFE TO RUN ON ALL 57 IN ONE COMMIT. Measured on the real
+        # packs before it was written: 32,783 stations, not one narrower. The outline is asked
+        # first, so the union can only ever reach further.
+        w = B.WaterExtent(self.mask, FakeDepth(-10.0, 0.0, 10.0, 1000.0))
+        pts = [(0.0, float(y)) for y in range(100, 901, 100)]
+        boundary, _ = B.widths(pts, self.mask.inside, 3000.0, 5.0)
+        union, _ = B.widths(pts, w.inside, 3000.0, 5.0)
+        for b, u in zip(boundary, union):
+            self.assertIsNotNone(b)
+            self.assertGreaterEqual(u, b)
+
+    def test_a_pack_with_no_soundings_adds_nothing(self):
+        w = B.WaterExtent(self.mask, FakeDepth(0, 0, 0, 0, polygons=0))
+        w.add(FakeDepth(0, 0, 0, 0, polygons=0))
+        self.assertEqual(w.extra, [], 'a pack that was never sounded must not be asked')
+
+
+class TheLineFollowsTheRiverPastTheBox(unittest.TestCase):
+    """A straight north-running river. The registry boundary covers y 0..1000; the neighbour's
+    chart covers y 1000..3000 at the same 100 m width, and past y 3000 the water opens out."""
+
+    def setUp(self):
+        self.mask = B.Mask([[(-50.0, 0.0), (50.0, 0.0), (50.0, 1000.0), (-50.0, 1000.0)]], 10.0)
+        self.chain = [(0.0, float(y)) for y in range(-2000, 6001, 50)]
+        self.own = FakeDepth(0, 0, 0, 0, polygons=0)
+
+    def _water(self):
+        return B.WaterExtent(self.mask, self.own)
+
+    def test_it_follows_the_chart_past_the_boundary(self):
+        nb = FakeNeighbours(owners=[('a_lake', (-500.0, 1000.0, 500.0, 3000.0))],
+                            depths={'a_lake': FakeDepth(-50.0, 1000.0, 50.0, 3000.0)})
+        out, rep = B.extend_chain(self.chain, self.mask, self._water(), nb, 'the_river',
+                                  300.0, 50.0, 5.0, 3000.0, 50000.0)
+        ys = [q[1] for q in out]
+        self.assertGreater(max(ys), 2500.0, 'the line reached into the charted water past the box')
+        self.assertLess(max(ys), 3200.0, 'and stopped where the chart did')
+        self.assertGreater(rep['down_m'], 1800.0)
+        self.assertEqual(rep['owners'], ['a_lake'])
+        self.assertIn('nothing charted', rep['down_stop'])
+
+    def test_it_stops_where_the_channel_opens_out(self):
+        # The same chart, but 4 km wide from y 2000 on. `cap` is three channel widths of a 100 m
+        # river, so 300 m: the station at 2000 is not a channel any more and the line ends before it.
+        nb = FakeNeighbours(owners=[('a_lake', (-5000.0, 1000.0, 5000.0, 6000.0))],
+                            depths={'a_lake': FakeDepth(-500.0, 2000.0, 500.0, 6000.0)})
+        w = self._water()
+        w.add(FakeDepth(-50.0, 1000.0, 50.0, 2000.0))
+        out, rep = B.extend_chain(self.chain, self.mask, w, nb, 'the_river',
+                                  300.0, 50.0, 5.0, 3000.0, 50000.0)
+        self.assertLess(max(q[1] for q in out), 2100.0)
+        self.assertIn('three channel widths', rep['down_stop'])
+
+    def test_it_will_not_take_another_river_s_water(self):
+        # WHY THE CONGAREE DOES NOT SWALLOW THE BROAD. One mainstem, two packs; the upstream one
+        # has its own centreline, so that water is already a river day.
+        nb = FakeNeighbours(owners=[('the_other_river', (-500.0, -6000.0, 500.0, 0.0))],
+                            rivers=['the_river', 'the_other_river'],
+                            depths={'the_other_river': FakeDepth(-50.0, -6000.0, 50.0, 0.0)})
+        out, rep = B.extend_chain(self.chain, self.mask, self._water(), nb, 'the_river',
+                                  300.0, 50.0, 5.0, 3000.0, 50000.0)
+        self.assertGreaterEqual(min(q[1] for q in out), -50.0,
+                                'it did not walk up into the other river')
+        self.assertIn('own centreline', rep['up_stop'])
+        self.assertEqual(rep['up_m'], 0.0)
+
+    def test_a_line_that_ran_out_of_window_says_so(self):
+        nb = FakeNeighbours(owners=[('a_lake', (-500.0, 1000.0, 500.0, 9000.0))],
+                            depths={'a_lake': FakeDepth(-50.0, 1000.0, 50.0, 9000.0)})
+        out, rep = B.extend_chain(self.chain, self.mask, self._water(), nb, 'the_river',
+                                  300.0, 50.0, 5.0, 3000.0, 1000.0)
+        self.assertIn('search window', rep['down_stop'],
+                      'a river truncated by the search must not read like a river that ended')
+
+    def test_with_no_extension_the_line_is_what_the_box_holds(self):
+        nb = FakeNeighbours()
+        out, rep = B.extend_chain(self.chain, self.mask, self._water(), nb, 'the_river',
+                                  300.0, 50.0, 5.0, 3000.0, 50000.0)
+        ys = [q[1] for q in out]
+        self.assertGreaterEqual(min(ys), -50.0)
+        self.assertLessEqual(max(ys), 1050.0)
+        self.assertEqual((rep['up_m'], rep['down_m']), (0.0, 0.0))
 
 
 if __name__ == '__main__':
