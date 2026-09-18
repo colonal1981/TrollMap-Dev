@@ -1353,7 +1353,6 @@ export async function buildFromPicked() {
     depthBand: T.band,
     holding: T.holding || null,
     warnings: r.problems || [],
-    rationale: (r.plan.notes && (r.plan.notes.scoutNotes || r.plan.notes.sonar)) || '',
   });
   installTimeline(window, built);
   renderSmartPlanUI({

@@ -254,9 +254,39 @@ function rodView(rod, side, over, leg) {
  * @param {object} plan          from assemblePlan()
  * @param {object} [o]
  * @param {number[]} [o.depthBand] [min, max] ft the species is using, for the depth column
- * @param {string}  [o.rationale] the scout narrative
  * @returns {{timeline, routeRods, routeSpeeds, phaseRoutes, castRods, stopCandidates, rationale, cards}}
+ *
+ * ── `rationale` IS READ OFF THE PLAN NOW, NOT HANDED IN ─────────────────────────────────────────
+ *
+ * It used to be an option, and all three callers computed the identical expression --
+ * `(plan.notes && (plan.notes.scoutNotes || plan.notes.sonar)) || ''` -- which is three copies of one
+ * rule about an object this function is already holding. Worse, it took ONE of the notes the prompt
+ * asks for and the other three were dropped at that line: `structureFocus`, `adjustmentTip` and
+ * `fishfinderNarrative` were written on every plan and never reached a screen, an export or a print.
+ * `notes.adjustmentTip` is now `ifNotProducing` on each leg, where it is actionable; `structureFocus`
+ * is gone, because the narrative covers it properly; and the narrative itself is joined on here under
+ * its own heading, so it reaches everything that already reads the rationale rather than needing a
+ * new field in five places.
  */
+/**
+ * "If they are not producing, put R2 (a Squarebill) on in place of R1 -- it runs shallower."
+ *
+ * Ryan, 2026-09-17, on a plan that rigged two rods and said nothing else: *"this dashboard doesn't
+ * tell me to switch if they aren't working or even mention the other 4 rods?"* assemblePlan stamps
+ * `ifNotProducing` on the leg, already checked against the two rods in the water there; this is the
+ * sentence. The lure comes off the loadout because the rod id alone is not something anybody can act
+ * on with four rods standing behind the seat.
+ */
+function fallbackLine(leg, rodsById) {
+  const f = leg && leg.ifNotProducing;
+  if (!f || !f.rodId || !f.insteadOf) return '';
+  const r = rodsById.get(f.rodId);
+  const what = r && r.lure ? `${f.rodId} (${clean(r.lure)})` : f.rodId;
+  const why = clean(f.why);
+  return `If they are not producing: put ${what} on in place of ${f.insteadOf}`
+       + `${why ? ` \u2014 ${why}` : ''}.`;
+}
+
 export function planToTimeline(plan, o = {}) {
   const empty = { timeline: [], routeRods: {}, routeSpeeds: {}, phaseRoutes: [],
                   castRods: [], stopCandidates: [], rationale: '', cards: [] };
@@ -405,7 +435,14 @@ export function planToTimeline(plan, o = {}) {
           // assemblePlan stamps it from the almanac and the hour's own sky; lightLabel() is the
           // short form, and it is empty rather than a dash when there is no almanac.
           + (lightLabel(leg.light) ? ` · ${lightLabel(leg.light)}` : ''),
-      longDesc: clean(leg.why),
+      // ── AND WHAT TO REACH FOR IF THESE TWO ARE NOT WORKING ────────────────────────────────
+      //
+      // On the card's own sentence rather than in a field of its own, so it reaches the panel, the
+      // print, the HTML export and the phone without five readers having to learn a new name. The
+      // rod's own lure is named from the loadout, because "put R2 on" is not an instruction anybody
+      // can follow with four rods behind the seat.
+      longDesc: [clean(leg.why), fallbackLine(leg, rodsById)].filter(Boolean).join(' '),
+      ifNotProducing: leg.ifNotProducing || null,
       speedMph: leg.speedMph,
       // Carried so every reader downstream can tell a second pass from a second stretch without
       // re-deriving it from a repeated runId.
@@ -557,8 +594,18 @@ export function planToTimeline(plan, o = {}) {
                      ? '20 lb fluoro leader — tie direct' : 'swivel snap',
                    jigheadWeight: '', presentation: clean(r.why) }));
 
+  // ONE PROSE BLOCK, BOTH HALVES, EACH LABELLED. Written as two paragraphs rather than two fields
+  // because every reader of the scout report -- the panel, the print, the HTML export, the saved plan
+  // -- reads `rationale`, and a second field would have had to be added to each of them.
+  const notes = (plan.notes && typeof plan.notes === 'object') ? plan.notes : {};
+  const rationale = [
+    clean(notes.scoutNotes || notes.sonar),
+    clean(notes.fishfinderNarrative)
+      ? `WHAT THE SONAR SHOULD SHOW\n${clean(notes.fishfinderNarrative)}` : '',
+  ].filter(Boolean).join('\n\n');
+
   return { timeline, routeRods, routeSpeeds, phaseRoutes, castRods, stopCandidates,
-           rationale: clean(o.rationale), cards };
+           rationale, cards };
 }
 
 /**

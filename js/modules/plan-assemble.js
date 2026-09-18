@@ -1316,6 +1316,21 @@ export function assemblePlan(o) {
       // siblings in `legList` rather than an inner loop, and by the pass loop below for a lake.
       pass: c.pass, ofPasses: c.ofPasses,
       deploy,
+      // ── WHAT TO REACH FOR IF THESE TWO ARE NOT WORKING ─────────────────────────────────────
+      //
+      // Checked in planArgsFrom() against the pair this leg deploys, and checked AGAIN here against
+      // the pair actually in the water on THIS PASS. The two can differ: `deployBack` may put a
+      // different two rods on the run back, and a fallback that names a rod already out, or offers
+      // to replace a rod that is not out, is worse than no sentence. Absent rather than adjusted,
+      // because which rod is worth reaching for on the afternoon pass is a fishing call and not
+      // arithmetic the app is entitled to make.
+      ifNotProducing: (() => {
+        const f = c.ifNotProducing;
+        if (!f || !f.rodId || !f.insteadOf || !deploy) return undefined;
+        const outThere = deploy.port === f.insteadOf || deploy.starboard === f.insteadOf;
+        const alreadyIn = deploy.port === f.rodId || deploy.starboard === f.rodId;
+        return outThere && !alreadyIn ? f : undefined;
+      })(),
       // WHAT THIS LEG ACTUALLY FISHES, where it differs from the bag. Only the rods capBaitDepth
       // had to move, keyed by rod id: { R2: { leadFt, runsDepthFt } }. Absent when the loadout's
       // own lead clears this leg, and every reader falls back to the rod.

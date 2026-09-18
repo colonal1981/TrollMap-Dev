@@ -793,6 +793,30 @@ export function seabedHabitatBlock(s) {
  * Silent when the almanac is missing, like every other block here: a guess about first light is
  * worse than no sentence about it.
  */
+// ── WHAT HE DOES WHEN THE TWO IN THE WATER ARE NOT WORKING ───────────────────────────────────────
+//
+// Ryan, 2026-09-17: *"and this dashboard doesn't tell me to switch if they aren't working or even
+// mention the other 4 rods?"*
+//
+// The schema used to ask for one `notes.adjustmentTip` for the whole day -- "if nothing has hit in
+// thirty minutes, do this" -- and nothing in the app ever read it, so the only sentence that answered
+// him was written on every plan and discarded. One line for nine hours was the wrong grain besides:
+// what to try next belongs to THIS water at THIS hour, which is what a leg is.
+//
+// WRITTEN ONCE AND USED IN BOTH BRANCHES of the legs schema, because a river leg and a lake leg want
+// exactly the same thing here and two copies of an instruction is how the two start disagreeing.
+const FALLBACK_FIELD = `// \`ifNotProducing\` IS THE ANSWER TO "THESE TWO ARE NOT WORKING", and it is
+    // the reason the other four rods are aboard. Name a rod THIS PLAN RIGGED that is not in the water
+    // on this leg, the deployed rod it goes in place of, and why that is the next thing to try on this
+    // water at this hour -- a different depth, a different action, a different amount of noise, and
+    // say which. It is not a scheduled change: it is what he does when thirty minutes go by with
+    // nothing, and it may never happen.
+    // IT IS CHECKED AND IT IS DROPPED IF IT IS EMPTY. A rod already in the water on that leg is not a
+    // fallback, a rod this plan never rigged is carrying whatever was on it last trip and nobody
+    // knows what that is, and \`insteadOf\` must be one of the two actually out there.
+    // Leave it off a leg where neither rod behind the seat is honestly worth reaching for, and say
+    // that in \`why\` rather than naming one to fill the field.`;
+
 /**
  * ── THE DAY THE APP DREW, AND WHAT TIME OF DAY EACH PIECE OF IT IS ──────────────────────────────
  *
@@ -1908,6 +1932,7 @@ RETURN EXACTLY THIS SHAPE
   "legs": [${o.isRiver ? `
     { "runId": "copied exactly", "deploy": { "port": "R1", "starboard": "R5" },
       "deployBack": { "port": "R2", "starboard": "R6" },
+      "ifNotProducing": { "rodId": "R2", "insteadOf": "R1", "why": "one sentence" },
       "why": "one sentence on why this water, at the hours it is fished, in the light it has" }
     // EVERY LEG, IN THE ORDER GIVEN. No \`speedMph\` and no \`trollPasses\`: the app sets both on a
     // river and returning one is ignored. See rule 3.
@@ -1920,12 +1945,15 @@ RETURN EXACTLY THIS SHAPE
     // reach for \`changes\` only when no rigged rod carries what the water now wants.
     // \`deployBack\` IS OPTIONAL, AND LEAVING IT OUT IS A REAL ANSWER: the same two rods come back.
     // Say in \`why\` that you meant it, because the pass coming back may be in different light,
-    // against a current that is now behind the boat, and hours from the one going out.` : `
+    // against a current that is now behind the boat, and hours from the one going out.
+    ${FALLBACK_FIELD}` : `
     { "runId": "copied exactly", "speedMph": 2.0, "trollPasses": 1,
       "deploy": { "port": "R1", "starboard": "R5" },
+      "ifNotProducing": { "rodId": "R2", "insteadOf": "R1", "why": "one sentence" },
       "why": "one sentence on why this water, now" }
     // \`trollPasses\` is how many times you troll this stretch before moving on — down, back,
-    // down again. Omit it or say 1 for a single pass. See rule 3.`}
+    // down again. Omit it or say 1 for a single pass. See rule 3.
+    ${FALLBACK_FIELD}`}
   ],
   "stops": [${o.isRiver ? `],  // EMPTY, ALWAYS, ON A RIVER. See rule 4 — he cannot hold the boat.` : `
     { "runId": "copied exactly", "id": "that structure's \`id\`, copied exactly",
@@ -1946,11 +1974,13 @@ RETURN EXACTLY THIS SHAPE
     // puts the swap before the run out, which on a reach fished at first light is rarely the point.` : ''}
   ],
   "notes": {
-    "structureFocus": "the sonar signature to look for",
-    "adjustmentTip": "if nothing has hit in thirty minutes, do this",
     "scoutNotes": "two or three sentences of tactical overview",
     "fishfinderNarrative": "about 150 words on what the sonar should show along these legs and how to work what is rigged"
   }
+  // TWO, AND BOTH ARE READ. Nothing else belongs in \`notes\`. Two more fields used to be asked for
+  // here and the app read neither, so a sonar signature and an adjustment tip were written on every
+  // plan and binned unseen. What to do when nothing is hitting is \`ifNotProducing\` on each leg now,
+  // where it names a rod and a reason instead of being one line about nine hours.
 }`;
 
   return { system, user };
@@ -2125,7 +2155,7 @@ export function seatRods(rods, connOf) {
  * Writing the three names out again in plan-from-water.js would fix today and lose the next field
  * the same way. One list, two readers, no drift.
  */
-export const MODEL_LEG_FIELDS = ['why', 'speedMph', 'trollPasses'];
+export const MODEL_LEG_FIELDS = ['why', 'speedMph', 'trollPasses', 'ifNotProducing'];
 
 export function planArgsFrom(res, candidates, ctx = {}) {
   const problems = [];
@@ -2261,14 +2291,6 @@ export function planArgsFrom(res, candidates, ctx = {}) {
     // WHAT THE MODEL SAID ABOUT THIS PARTICULAR LEG, riding on the candidate into the assembler.
     // Built through MODEL_LEG_FIELDS rather than written out here, because there is a second
     // reader -- see plan-from-water.js, which wants these and not the ordering they come in.
-    const answer = { why: str(leg.why) };
-    if (!riverDay) {
-      answer.speedMph = num(leg.speedMph) ?? undefined;
-      answer.trollPasses = trollPasses;
-      for (const k of MODEL_LEG_FIELDS) if (!(k in answer)) answer[k] = undefined;
-    }
-    ordered.push({ ...c, ...answer });
-
     const d = leg.deploy || {};
     const port = reseat(str(d.port)), starboard = reseat(str(d.starboard));
     if (port && starboard && port !== starboard
@@ -2299,6 +2321,59 @@ export function planArgsFrom(res, candidates, ctx = {}) {
         }
       }
     }
+
+    // ── AND WHAT HE DOES WHEN THE TWO IN THE WATER ARE NOT WORKING ────────────────────────────
+    //
+    // Ryan, 2026-09-17: *"and this dashboard doesn't tell me to switch if they aren't working or even
+    // mention the other 4 rods?"* It did not, anywhere. The prompt asked for a day-level
+    // `notes.adjustmentTip` -- "if nothing has hit in thirty minutes, do this" -- and NOTHING IN THE
+    // CODEBASE EVER READ IT, so the one sentence that answered him was generated on every plan and
+    // discarded. One sentence for a nine-hour day was the wrong grain anyway: what to try next is a
+    // property of THIS water at THIS hour, which is exactly what a leg is.
+    //
+    // So it is per leg, it names a rod he has already rigged, and it is CHECKED: the rod coming in
+    // must be one this plan rigged and must not already be in the water on this leg, and the rod
+    // going out must be one of the two that is. A fallback naming a rod that is already out is not a
+    // fallback, and one naming a rod carrying nothing known is worse than no sentence -- it tells him
+    // to reach for whatever was on it last trip.
+    //
+    // NOT VALIDATED AGAINST `deployBack`. The pair on the run back may be a different two rods, and
+    // the assembler stamps this only on a pass whose pair actually holds the rod being replaced -- so
+    // on a leg where the plan already swapped the pair the line is simply absent rather than wrong.
+    let ifNotProducing;
+    const f = leg.ifNotProducing;
+    const out = deploy[c.runId] || null;
+    if (f && (str(f.rodId) || str(f.insteadOf))) {
+      const inId = reseat(str(f.rodId)), outId = reseat(str(f.insteadOf));
+      const isOut = out && (out.port === outId || out.starboard === outId);
+      const alreadyIn = out && (out.port === inId || out.starboard === inId);
+      if (!inId || !outId) {
+        problems.push(`${c.runId} says what to try if nothing produces but names `
+                    + `${JSON.stringify(f)} — that needs a rod to put on and the rod it replaces`);
+      } else if (alreadyIn) {
+        problems.push(`${c.runId} says to try ${inId} if nothing produces, and ${inId} is already in `
+                    + 'the water on that leg — dropped, because that is not a change of anything');
+      } else if (!isOut) {
+        problems.push(`${c.runId} says to swap ${outId} out if nothing produces, and ${outId} is not `
+                    + 'one of the two rods it deploys there — dropped');
+      } else if (usable(inId, `the fallback rod on ${c.runId}`)) {
+        ifNotProducing = { rodId: inId, insteadOf: outId, why: str(f.why) };
+      }
+    }
+
+    // WHAT THE MODEL SAID ABOUT THIS PARTICULAR LEG, riding on the candidate into the assembler.
+    // Built through MODEL_LEG_FIELDS rather than written out here, because there is a second
+    // reader -- see plan-from-water.js, which wants these and not the ordering they come in.
+    //
+    // BELOW THE DEPLOY BLOCK SINCE 2026-09-18, because `ifNotProducing` is checked against the two
+    // rods this leg puts in the water and there is no way to check that before they are known.
+    const answer = { why: str(leg.why), ifNotProducing };
+    if (!riverDay) {
+      answer.speedMph = num(leg.speedMph) ?? undefined;
+      answer.trollPasses = trollPasses;
+      for (const k of MODEL_LEG_FIELDS) if (!(k in answer)) answer[k] = undefined;
+    }
+    ordered.push({ ...c, ...answer });
   }
   if (!ordered.length) problems.push('the model chose no legs the app recognised');
 

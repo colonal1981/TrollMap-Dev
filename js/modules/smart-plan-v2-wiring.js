@@ -466,7 +466,6 @@ export async function runSmartPlanV2(opts = {}) {
         depthBand: depth.band,
         holding: depth.holding || null,
         warnings: r.problems || [],
-        rationale: (r.plan.notes && (r.plan.notes.scoutNotes || r.plan.notes.sonar)) || '',
       });
       renderSmartPlanUI({
         routeRods: shown.routeRods, routeSpeeds: shown.routeSpeeds,
@@ -510,7 +509,6 @@ export async function runSmartPlanV2(opts = {}) {
     depthBand: depth.band,
     holding: depth.holding || null,
     warnings: r.problems || [],
-    rationale: (r.plan.notes && (r.plan.notes.scoutNotes || r.plan.notes.sonar)) || '',
   });
   installTimeline(window, built);
 

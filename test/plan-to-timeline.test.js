@@ -39,7 +39,11 @@ const PLAN = {
 };
 
 describe('plan-to-timeline — a v2 plan in the shape the export path reads', () => {
-  const built = planToTimeline(PLAN, { depthBand: [18, 28], rationale: 'shad up on the flats' });
+  // THE SCOUT NARRATIVE IS READ OFF THE PLAN, NOT HANDED IN. It used to be `o.rationale`, and all
+  // three callers computed the same expression off `plan.notes` -- taking one of the four notes the
+  // prompt asks for and dropping the rest at that line. planToTimeline reads the object itself now.
+  const built = planToTimeline({ ...PLAN, notes: { scoutNotes: 'shad up on the flats' } },
+                               { depthBand: [18, 28] });
 
   it('emits every leg and every stop, in the order the boat meets them', () => {
     expect(built.timeline.map((e) => e.type))
