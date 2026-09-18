@@ -381,6 +381,38 @@ class WaterExtent:
     def has_chart(self):
         return bool(self.depth.polygons) or bool(self.extra)
 
+    def at(self, x, y):
+        """THE DEEPEST CHARTED BAND AT THIS POINT, from whoever charted it.
+
+        cross_sections() took the PACK'S OWN DepthIndex, and on the first real run that left the
+        Congaree's 26 km extension with no depth at all: every station past its own outline came
+        back `charted_frac 0`, every `envelope_line_ft` and `envelope_ft` -1, `mean_depth_ft`
+        absent. The geometry was right and the water was Lake Marion's, so nothing could answer
+        for it -- which made 26 km of new river unplannable, because eligibleForHolding() rejects
+        a reach with no charted depth and channelFractions() has no columns to follow.
+
+        Same shape as the centring miss one commit earlier, in the other half of the same
+        sentence: the line goes where the CHART says, and the chart is not only this pack's.
+
+        DEEPEST WINS ACROSS PACKS, on the same rule DepthIndex.at() keeps inside one pack. Where
+        two packs chart the same water -- they abut and overlap a little -- taking the deeper of
+        two soundings of one place is the answer that does not depend on which pack was asked
+        first.
+        """
+        best = None
+        if self.depth.polygons:
+            best = self.depth.at(x, y)
+        for d in self.extra:
+            v = d.at(x, y)
+            if v is not None and (best is None or v[1] > best[1]):
+                best = v
+        return best
+
+    @property
+    def rings(self):
+        """Truthy when anything can answer at(). cross_sections() guards on it."""
+        return self.depth.rings or (self.extra and True)
+
 
 def attach_mainstem(chain, segs, join_m=300.0):
     """The chain, with the rest of its mainstem joined onto both ends. THE CHAIN IS NOT TOUCHED.
@@ -1589,8 +1621,11 @@ def build_one(row, a, db, stamp, nbrs=None):
     rep['width_capped_stations'] = sum(1 for w, n in zip(wide, narrow)
                                        if cap and w is not None and w > cap and n is not None)
 
-    xarea, xdeep, xchart, xprof = cross_sections(pts, wid, depth, a.probe)
+    # THE WATER, NOT THE PACK. See WaterExtent.at(): the extension's stations are charted by the
+    # neighbour, and handing this the pack's own index left 26 km of Congaree with no depth on it.
+    xarea, xdeep, xchart, xprof = cross_sections(pts, wid, water, a.probe)
     rep['depth_polygons'] = depth.polygons
+    rep['neighbour_charts'] = len(water.extra)
 
     good_w = sorted(w for w in wid if w is not None)
     rep.update({

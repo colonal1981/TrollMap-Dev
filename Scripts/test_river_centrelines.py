@@ -526,16 +526,22 @@ class Centring(unittest.TestCase):
 # 26.8 km of 100-175 m river below the Wateree confluence was never planned.
 # ─────────────────────────────────────────────────────────────────────────────────────────────
 class FakeDepth:
-    """A DepthIndex that answers for one rectangle. `polygons` is what the real one uses to say
-    whether it has anything to say at all."""
+    """A DepthIndex that answers for one rectangle.
 
-    def __init__(self, x0, y0, x1, y1, polygons=1):
+    `at()` returns the real one's shape -- (shallow_edge_ft, midpoint_ft) -- and not a bare number,
+    because WaterExtent.at() compares the midpoints of two packs' answers and a scalar would have
+    passed every test here while failing on the first real pack.
+    """
+
+    def __init__(self, x0, y0, x1, y1, polygons=1, band=(10.0, 10.0)):
         self.box = (x0, y0, x1, y1)
         self.polygons = polygons
+        self.band = band
+        self.rings = [1] if polygons else []
 
     def at(self, x, y):
         x0, y0, x1, y1 = self.box
-        return 10.0 if (x0 <= x <= x1 and y0 <= y <= y1) else None
+        return self.band if (x0 <= x <= x1 and y0 <= y <= y1) else None
 
 
 class FakeNeighbours:
@@ -585,6 +591,25 @@ class WaterIsTheOutlineOrTheSoundings(unittest.TestCase):
         for b, u in zip(boundary, union):
             self.assertIsNotNone(b)
             self.assertGreaterEqual(u, b)
+
+    def test_the_depth_comes_from_whoever_charted_it(self):
+        # cross_sections() took the pack's own DepthIndex, and the Congaree's 26 km extension came
+        # back with charted_frac 0 and every envelope -1: the water out there is Lake Marion's.
+        # 26 km of new river that nothing could plan, because a reach with no charted depth is
+        # rejected and there are no profile columns for the lane to follow.
+        w = B.WaterExtent(self.mask, FakeDepth(-50.0, 0.0, 50.0, 1000.0))
+        self.assertEqual(w.at(0.0, 500.0), (10.0, 10.0))
+        self.assertIsNone(w.at(0.0, 2000.0), 'nobody has charted that yet')
+        w.add(FakeDepth(-50.0, 1000.0, 50.0, 3000.0))
+        self.assertEqual(w.at(0.0, 2000.0), (10.0, 10.0), "the neighbour answers for its own water")
+        self.assertTrue(w.rings, 'cross_sections() guards on this')
+
+    def test_where_two_packs_chart_one_place_the_deeper_answer_wins(self):
+        # Registry boundaries abut and overlap a little, so one point can be charted twice. Taking
+        # the deeper of the two is the answer that does not depend on which pack was asked first.
+        w = B.WaterExtent(self.mask, FakeDepth(-50.0, 0.0, 50.0, 1000.0, band=(4.0, 5.0)))
+        w.add(FakeDepth(-50.0, 0.0, 50.0, 1000.0, band=(12.0, 14.0)))
+        self.assertEqual(w.at(0.0, 500.0), (12.0, 14.0))
 
     def test_charted_is_not_the_outline(self):
         # centre_on_water() asks `charted`, not `inside`. If the outline leaked into it, the
