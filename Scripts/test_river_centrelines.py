@@ -415,6 +415,7 @@ class Centring(unittest.TestCase):
     def test_the_line_never_doubles_back_on_itself(self):
         channel, pts = self._meander()
         out, rep = self._run(pts, channel)
+        self.assertEqual(rep['folds_before'], 0, 'the fixture is not a clean line to start with')
         self.assertEqual(rep['folds'], 0, 'the build record reports a fold')
         for i in range(1, len(out) - 1):
             ax, ay = out[i][0] - out[i - 1][0], out[i][1] - out[i - 1][1]
@@ -472,6 +473,19 @@ class Centring(unittest.TestCase):
                                    % (q[0], q[1]))
 
     # ── and the unsounded case, which must not be touched ────────────────────────────────────
+    def test_a_fold_the_line_arrived_with_is_not_counted_against_this_stage(self):
+        # lumber_river's flowline carries 335 switchbacks before any of this runs, and lynches_river
+        # 112. A counter that only read the output would have reported 309 on lumber and blamed the
+        # centring for all of them -- when what it did there was take 335 down to 309.
+        inside = lambda x, y: 0.0 <= y <= 100.0 and 0.0 <= x <= 1000.0
+        pts = [(x * self.STEP, 20.0) for x in range(41)]
+        pts[20] = (pts[20][0] - 3 * self.STEP, pts[20][1])      # a switchback in the input
+        self.assertGreater(B.count_folds(pts), 0, 'the fixture has no fold in it')
+        out, rep = self._run(pts, inside)
+        self.assertGreater(rep['folds_before'], 0)
+        self.assertLessEqual(rep['folds'], rep['folds_before'],
+                             'the centring added a fold to a line that came in folded')
+
     def test_a_station_with_no_water_on_its_normal_is_left_where_it_is(self):
         # A channel that stops at x=500. Past that there is nothing to centre on, and 3DHP's line
         # is the only answer there is -- 17 of the 57 packs are mostly unsounded.

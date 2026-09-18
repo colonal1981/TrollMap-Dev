@@ -504,6 +504,24 @@ def _first_entry(inside, x, y, px, py, probe, reach):
     return out[0], out[1]
 
 
+def count_folds(pts):
+    """Stations where the line runs back along the segment before it.
+
+    READ ON THE INPUT AS WELL AS THE OUTPUT, because it is not always ours. Measured on the 57
+    centrelines as they stood on 2026-09-18, before any centring existed: lumber_river carries 335 of
+    these and lynches_river 112, in the flowline itself. Congaree and uwharrie carry none. A counter
+    that only looked at the output would have reported 309 folds on lumber and blamed this stage for
+    all of them, when what it actually did there was take 335 down to 309.
+    """
+    n = 0
+    for i in range(1, len(pts) - 1):
+        ax, ay = pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]
+        bx, by = pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]
+        if ax * bx + ay * by <= 0:
+            n += 1
+    return n
+
+
 def centre_pass(pts, inside, step, probe, reach):
     """One sweep. Returns (moved, stranded, folds, shifts) and a NEW list of stations.
 
@@ -646,9 +664,19 @@ def centre_pass(pts, inside, step, probe, reach):
         for i in range(1, len(made) - 1):
             ax, ay = made[i][0] - made[i - 1][0], made[i][1] - made[i - 1][1]
             bx, by = made[i + 1][0] - made[i][0], made[i + 1][1] - made[i][1]
-            if ax * bx + ay * by <= 0:
+            if ax * bx + ay * by <= 0 and i not in was_folded:
                 bad.append(i)
         return bad
+
+    # WHAT THE LINE CAME IN WITH IS NOT THIS SWEEP'S TO REPAIR. See count_folds(): lumber_river's
+    # flowline has 335 switchbacks in it before anything here runs, and trying to flatten them puts
+    # 335 stations back on a line that folds anyway. Only the ones this sweep MADE are repaired.
+    was_folded = set()
+    for i in range(1, n - 1):
+        ax, ay = pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]
+        bx, by = pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]
+        if ax * bx + ay * by <= 0:
+            was_folded.add(i)
 
     out = build(off)
     bad = folding(out)
@@ -724,8 +752,8 @@ def centre_on_water(pts, inside, step, probe, reach, passes):
     the sweep before it produced, and the resample happens on the side, to score the candidate and to
     be the answer: one truncation, the same single one the flowline has always had.
     """
-    rep = {'passes': 0, 'moved': [], 'stranded': 0, 'folds': 0, 'shift_m': {}, 'moved_m': [],
-           'off_by_pass': []}
+    rep = {'passes': 0, 'moved': [], 'stranded': 0, 'folds': 0, 'folds_before': count_folds(pts),
+           'shift_m': {}, 'moved_m': [], 'off_by_pass': []}
     every = []
     off = sum(1 for q in pts if not inside(q[0], q[1]))
     # TWO NUMBERS, IN ORDER, BECAUSE ONE OF THEM IS BLIND. Stations off the water is what this stage
@@ -767,6 +795,7 @@ def centre_on_water(pts, inside, step, probe, reach, passes):
     # ALREADY RESAMPLED unless no sweep ever bettered the line it came in with, in which case this is
     # the flowline and it has been resampled once already by the caller.
     pts = best_line
+    rep['folds'] = count_folds(pts)
     if every:
         every.sort()
         rep['shift_m'] = {'p50': pct(every, .50), 'p90': pct(every, .90),
@@ -1450,20 +1479,26 @@ def main():
                          c.get('off_water_after', 0), c.get('stations_after', 0),
                          c.get('stranded', 0), c.get('off_water_left', 0),
                          sh.get('p50'), sh.get('p90'), sh.get('max')))
-                print('           %d sweeps moving %s m, best at %s   off by sweep %s   %d folds'
+                print('           %d sweeps moving %s m, best at %s   off by sweep %s   folds '
+                      '%d -> %d'
                       % (c.get('passes', 0),
                          '/'.join(str(x) for x in (c.get('moved_m') or ['-'])),
                          c.get('best_pass', '-'),
                          '/'.join(str(x) for x in (c.get('off_by_pass') or ['-'])),
-                         c.get('folds', 0)))
+                         c.get('folds_before', 0), c.get('folds', 0)))
                 # SAID OUT LOUD, like the off-cap line below it. A fold is a line that runs back on
                 # itself, which the slope limit is supposed to make impossible; a river that still
                 # has most of its stations off the water after this has a chart and a boundary on
                 # different water, and no amount of centring is the answer to that.
-                if c.get('folds'):
-                    print('           THE LINE FOLDS BACK ON ITSELF at %d station(s) -- the slope '
-                          'limit in centre_pass() is supposed to make that impossible'
-                          % c['folds'])
+                if c.get('folds', 0) > c.get('folds_before', 0):
+                    print('           THE LINE FOLDS BACK ON ITSELF at %d station(s), up from %d '
+                          '-- the slope limit in centre_pass() is supposed to make that impossible'
+                          % (c['folds'], c.get('folds_before', 0)))
+                elif c.get('folds'):
+                    print('           %d station(s) still fold back on themselves, down from %d. '
+                          'Those came in with the 3DHP flowline; this stage did not make them and '
+                          'cannot place a station out of one'
+                          % (c['folds'], c.get('folds_before', 0)))
                 before, after = c.get('off_water_before', 0), c.get('off_water_after', 0)
                 if after and after >= before:
                     print('           CENTRING BOUGHT NOTHING HERE: %d of %d stations are still off '
