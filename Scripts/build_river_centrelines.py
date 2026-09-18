@@ -41,6 +41,13 @@ WHAT IT WRITES
                                          creek-mouth detector missed (104 on the Congaree against
                                          the pack's 4).
 
+                                         SINCE 2026-09-18 THAT LINE IS PUT IN THE MIDDLE OF THE
+                                         WATER rather than left where 3DHP drew it. See
+                                         centre_on_water() for why it was not, what that cost on
+                                         Ryan's own Congaree day, and the two rules that keep the
+                                         line a line while it moves. `--no-centre` restores the
+                                         old behaviour for a comparison.
+
   chartpack/<slug>/structure.geojson     each feature gains river_m, off_m, flow_deg, bend_r_m,
   chartpack/<slug>/water_features.geojson  bend_side. Nothing is removed and no feature is added, so
                                          nothing downstream goes stale.
@@ -393,6 +400,257 @@ def widths(pts, mask, max_m, probe):
     return out
 
 
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+# THE CENTRELINE WAS NEVER THE CENTRE OF THE WATER, AND NOTHING EVER MEASURED IT
+#
+# Ryan, 2026-09-18, having run a real Congaree plan from Bates Bridge and looked at the GPX:
+# "looks like they don't stay in the river... you should see a few places where the track is over
+# land". Then, when the measurement came back: *"How is the center line not the center of the
+# water"*.
+#
+# Because nothing here ever asked. This file resamples 3DHP's FLOWLINE -- a hydrography network
+# line whose job is topology, one line per stream, connected and draining downhill -- and calls the
+# result a centreline. Everything after that is built SYMMETRIC ABOUT IT: widths() walks out
+# perpendicular in both directions and returns the sum; cross_sections() lays the nine profile
+# columns from -w/2 to +w/2 about the station. So `profile_fractions` 0.5 -- "mid-channel", the
+# line the app's river drifts are drawn on -- means "wherever 3DHP put the line", and every
+# measurement that could have checked it was defined relative to it.
+#
+# WHAT IT COSTS, MEASURED. On Ryan's own day, both reaches, against his pack's charted depth areas:
+# 1,835 m of the 11,184 m he fished one way is outside the charted water -- 16.4%, and 3.7 km of a
+# 22.4 km out-and-back. The excursions are not noise: the longest single runs are 301 m, 252 m,
+# 224 m and 199 m, and every one is the line chording across the inside of a meander.
+#
+# IT IS NOT THE RESAMPLING AND IT IS NOT THE CHAINING. The raw 3DHP mainstem clipped to the same
+# corridor is 21.5% off the charted water -- worse than the 15.6% this file manages over the same
+# stretch, because chain_mainstem() already prefers the chain carrying charted metres. That
+# flowline's own vertex spacing is 16 m at the median and 88 m at worst, so there is no long chord
+# to inherit and resample() can only deviate from it by a sagitta of a metre or two. 3DHP and
+# Garmin's survey disagree about where the river is, and the one a bait can be dragged through is
+# Garmin's.
+#
+# ACROSS ALL 57 RIVERS, separating "the line left water the chart HAS within 150 m" from "nobody
+# ever sounded this stretch" -- the second is not a defect: median 3.0% of a centreline is
+# misplaced, 19 rivers at 5% or worse, 10 at 10% or worse, uwharrie_river worst at 30.2%. The
+# alarming raw figures (chauga_river 96.3% "off charted water", johns_river 90.0%) are packs with
+# almost no soundings, and their misplaced share is about 1%.
+#
+# ── AND THE NUMBER THAT FIXES IT IS ALREADY COMPUTED 2,537 TIMES A RIVER AND THROWN AWAY ────────
+#
+# widths() measures the left half and the right half SEPARATELY and returns `total`. The DIFFERENCE
+# between those two halves is exactly how far off-centre the station is. That is the whole of the
+# arithmetic below; what is new is using it to PLACE the station instead of to describe it.
+#
+# ── WHY A CENTRING PASS ALONE IS NOT ENOUGH, WHICH THE FIRST PROTOTYPE PROVED ───────────────────
+#
+# A station that is already OUTSIDE the water has its probe leave on the FIRST step in both
+# directions, so (left - right) is zero and it sits exactly where it was. Centring alone put 6 of
+# 20 off-water stations back in the water. Finding the water first and then centring put 20 of 20.
+# So a station off the water is pulled ONTO it along its own normal, and then centred from there --
+# two halves of one move, not two options.
+#
+# ── TWO RULES KEEP THE LINE A LINE ──────────────────────────────────────────────────────────────
+#
+# SIDEWAYS ONLY. A station moves along its own normal and never fore or aft. The prototype snapped
+# to the NEAREST charted point in any direction, which on a cut meander pulls neighbouring stations
+# onto opposite sides of the neck and doubles the line back on itself -- visible on two of the four
+# worst bends. Restricting the move to the normal makes that impossible by construction: the
+# along-track component of every step is unchanged.
+#
+# THE SIDE THE LAST ONE TOOK. Where a station off the water finds water on BOTH sides of its normal
+# -- the two lobes of a meander it is chording across -- it takes the one nearest the previous
+# station's offset. That is what walks the river in order instead of picking per station.
+#
+# And a station with no water on its normal inside the cap is LEFT WHERE IT IS. That is the
+# unsounded case -- 17 of the 57 packs are mostly unsounded -- and the flowline is the honest answer
+# there. The report counts them rather than hiding them.
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+
+
+def station_normal(pts, i):
+    """Unit normal at station `i`, pointing LEFT of downstream. The same one widths() casts along."""
+    a = pts[max(i - 1, 0)]
+    b = pts[min(i + 1, len(pts) - 1)]
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    h = math.hypot(dx, dy)
+    return None if h == 0 else (-dy / h, dx / h)
+
+
+def _first_exit(inside, x, y, px, py, probe, reach):
+    """From a point IN the water: metres to the first step outside, each way. (left, right)."""
+    out = []
+    for sign in (1, -1):
+        d = 0.0
+        while d < reach:
+            d += probe
+            if not inside(x + px * sign * d, y + py * sign * d):
+                break
+        out.append(d)
+    return out[0], out[1]
+
+
+def _first_entry(inside, x, y, px, py, probe, reach):
+    """From a point NOT in the water: metres to the first step inside, each way, or None."""
+    out = []
+    for sign in (1, -1):
+        d = 0.0
+        hit = None
+        while d < reach:
+            d += probe
+            if inside(x + px * sign * d, y + py * sign * d):
+                hit = d
+                break
+        out.append(hit)
+    return out[0], out[1]
+
+
+def centre_pass(pts, inside, step, probe, reach):
+    """One sweep. Returns (moved, stranded, folds, shifts) and a NEW list of stations.
+
+    ── MEASURED ALL AT ONCE, THEN SMOOTHED, THEN APPLIED ───────────────────────────────────────
+    #
+    The first version of this moved each station as it went and took the next station's normal off
+    the one it had just moved. That feeds back: a 10 m lateral step tilts the next station's idea of
+    "forward" by 22 degrees, which tilts the next, and on a synthetic meander 300 m deep it turned
+    41 stations into 337 folded back and forth across the river. Measuring every station against the
+    SAME line and applying the result afterwards has no feedback in it at all.
+
+    So there are three steps and they are deliberately separate:
+
+      1. what each station would need, measured independently on the line as it stands;
+      2. WHICH SIDE, for the stations that found water on both -- decided in order down the river,
+         because that is the only thing here that is sequential;
+      3. a slope limit, forward and back, so no station ends up more than one station spacing
+         further across the channel than its neighbour.
+
+    Step 3 is what keeps the line a line. A lateral change of `step` over a length of `step` is a 45
+    degree bend; past that it stops being something a boat follows, and the along-track component of
+    every segment stays positive, so the line cannot doubleback. It is not a tuning constant -- it is
+    the line's own scale, and it turns a teleport into a wedge that opens at 45 degrees and reaches
+    the same water over several stations, which is what walking down a river looks like.
+    """
+    n = len(pts)
+    norms = [station_normal(pts, i) for i in range(n)]
+
+    # 1 ── what each station would need, all against the same line
+    cands = []
+    stranded = 0
+    for i in range(n):
+        nv = norms[i]
+        if nv is None:
+            cands.append(None)
+            continue
+        px, py = nv
+        x, y = pts[i]
+        if inside(x, y):
+            dl, dr = _first_exit(inside, x, y, px, py, probe, reach)
+            cands.append([(dl - dr) / 2.0])
+            continue
+        el, er = _first_entry(inside, x, y, px, py, probe, reach)
+        opts = []
+        if el is not None:
+            dl, dr = _first_exit(inside, x + px * el, y + py * el, px, py, probe, reach)
+            opts.append(el + (dl - dr) / 2.0)
+        if er is not None:
+            dl, dr = _first_exit(inside, x - px * er, y - py * er, px, py, probe, reach)
+            opts.append(-er + (dl - dr) / 2.0)
+        if not opts:
+            # No water on this station's normal inside the cap. Unsounded, or a boundary and a
+            # chart on different water. The flowline is the only answer there and it stays.
+            stranded += 1
+            cands.append(None)
+            continue
+        cands.append(opts)
+
+    # 2 ── which side, walked down the river
+    #
+    # Where a station off the water found water on BOTH sides -- the two lobes of a meander it is
+    # chording across -- the NEAREST one is the wrong rule: neighbouring stations pick opposite
+    # lobes and the line folds. The side that agrees with the station before it is the right one,
+    # and it is the only decision in here that has to be made in order.
+    off = [0.0] * n
+    prev = 0.0
+    for i in range(n):
+        if not cands[i]:
+            off[i] = prev
+            continue
+        off[i] = min(cands[i], key=lambda c: abs(c - prev))
+        prev = off[i]
+
+    # 3 ── the slope limit, both ways, so the start is not privileged over the end
+    for i in range(1, n):
+        off[i] = max(off[i - 1] - step, min(off[i - 1] + step, off[i]))
+    for i in range(n - 2, -1, -1):
+        off[i] = max(off[i + 1] - step, min(off[i + 1] + step, off[i]))
+
+    out = []
+    moved = 0
+    folds = 0
+    shifts = []
+    for i in range(n):
+        nv = norms[i]
+        # A MOVE SMALLER THAN ONE PROBE STEP IS NOT A MEASUREMENT. `(left - right) / 2` is quantised
+        # to half a probe, so without this the line jitters by 2.5 m for ever and never settles.
+        if nv is None or cands[i] is None or abs(off[i]) < probe:
+            out.append(pts[i])
+            continue
+        px, py = nv
+        out.append((pts[i][0] + px * off[i], pts[i][1] + py * off[i]))
+        moved += 1
+        shifts.append(abs(off[i]))
+    # WHAT THE SLOPE LIMIT IS SUPPOSED TO MAKE IMPOSSIBLE, COUNTED ANYWAY. A segment running
+    # backwards along the one before it is the fold this whole design exists to prevent. It is not
+    # undone here -- a station whose neighbours have already moved cannot be un-moved on its own --
+    # it is COUNTED, so a river that produces one says so in the build record instead of quietly
+    # shipping a line nobody can follow. Zero on every fixture in test_river_centrelines.py.
+    for i in range(1, len(out) - 1):
+        ax, ay = out[i][0] - out[i - 1][0], out[i][1] - out[i - 1][1]
+        bx, by = out[i + 1][0] - out[i][0], out[i + 1][1] - out[i][1]
+        if ax * bx + ay * by <= 0:
+            folds += 1
+    return moved, stranded, folds, shifts, out
+
+
+def centre_on_water(pts, inside, step, probe, reach, passes):
+    """Put the centreline in the middle of the water, and say what it took.
+
+    THE SWEEPS STOP WHEN THEY STOP HELPING, not after a number somebody chose. Each sweep reports
+    the total distance it moved the line; the first one that does not beat the one before it is
+    discarded and the loop ends. On a synthetic meander that is 658 m, 271, 131, 57, 30, 25, 25 --
+    the tail being pure probe-quantisation jitter, which is exactly where it should stop.
+
+    THE RESAMPLE HAPPENS ONCE, AT THE END, and that is not a detail. `station_m` is `i * step`
+    everywhere downstream, so the line has to come back to even spacing -- but resample() drops
+    whatever is left over past the last whole step, and doing it every sweep shortened a 1,000 m test
+    channel to 825 m over fifteen of them. Once is the same single truncation the flowline has always
+    had.
+    """
+    rep = {'passes': 0, 'moved': [], 'stranded': 0, 'folds': 0, 'shift_m': {}, 'moved_m': []}
+    every = []
+    best = None
+    for _ in range(max(1, int(passes))):
+        moved, stranded, folds, shifts, out = centre_pass(pts, inside, step, probe, reach)
+        total = round(sum(shifts), 1)
+        if best is not None and total >= best:
+            break
+        best = total
+        pts = out
+        rep['passes'] += 1
+        rep['moved'].append(moved)
+        rep['moved_m'].append(total)
+        rep['stranded'] = stranded
+        rep['folds'] = folds
+        every.extend(shifts)
+        if moved == 0:
+            break
+    pts = resample(pts, step)
+    if every:
+        every.sort()
+        rep['shift_m'] = {'p50': pct(every, .50), 'p90': pct(every, .90),
+                          'max': round(every[-1], 1)}
+    return pts, rep
+
+
 def signed_offset(pts, i, x, y):
     """Metres left of downstream at station `i`. Positive is the left bank, looking downstream."""
     a = pts[max(i - 1, 0)]
@@ -717,8 +975,46 @@ def build_one(row, a, db, stamp):
         return rep, {}
 
     pts = resample(chain, a.step)
+
+    # ── THE CAP IS MEASURED ON THE FLOWLINE, BEFORE ANYTHING MOVES ──────────────────────────────
+    #
+    # Three channel widths off the centreline is off this river. That rule used to be computed a
+    # hundred lines down, off the FINAL widths, and it is now needed twice: once to bound how far
+    # centre_on_water() may reach sideways looking for water, and once, unchanged, to gate the
+    # channel direction stamped onto a feature. One measurement, two readers -- the river's width
+    # is not changed by moving the line twenty metres, and two copies of one rule is how the two
+    # start disagreeing.
+    wid0 = widths(pts, mask, a.max_width_m, a.probe)
+    w0 = sorted(w for w in wid0 if w is not None)
+    cap = round(3.0 * w0[len(w0) // 2], 1) if w0 else None
+
+    # ── AND NOW THE LINE IS PUT WHERE ITS NAME SAYS IT IS ───────────────────────────────────────
+    #
+    # See centre_on_water(). THE CHART DECIDES WHERE THE MIDDLE IS, and the boundary only where
+    # there is no chart -- a pack with soundings is a pack whose depth areas are the water a bait
+    # can be dragged through, and the registry boundary is an outline from somewhere else. Chosen
+    # once per river rather than per station, so the line cannot alternate between two different
+    # ideas of the middle halfway along itself.
+    inside = ((lambda x, y: depth.at(x, y) is not None) if depth.polygons
+              else (lambda x, y: mask.inside(x, y)))
+    centring = {'basis': 'charted' if depth.polygons else 'boundary',
+                'stations_before': len(pts),
+                'off_water_before': sum(1 for q in pts if not inside(q[0], q[1]))}
+    if not a.no_centre:
+        pts, moved_rep = centre_on_water(pts, inside, a.step, a.probe,
+                                         cap or a.max_width_m, a.centre_passes)
+        centring.update(moved_rep)
+    centring['stations_after'] = len(pts)
+    centring['off_water_after'] = sum(1 for q in pts if not inside(q[0], q[1]))
+    rep['centring'] = centring
+
     turn, rad = curvature(pts, a.step, a.window)
     brg = bearings(pts)
+    # MEASURED AGAIN ON THE LINE THAT IS WRITTEN. `wid0` above priced the cap off the flowline;
+    # every width, area and depth column below belongs to the centred line, because those are what
+    # a plan reads. The span still comes from the BOUNDARY while the centring came from the CHART,
+    # which is the one place those two ideas of the river still meet -- noted rather than changed,
+    # because moving it would move every depth profile on all 57 rivers in the same commit.
     wid = widths(pts, mask, a.max_width_m, a.probe)
 
     xarea, xdeep, xchart, xprof = cross_sections(pts, wid, depth, a.probe)
@@ -752,8 +1048,7 @@ def build_one(row, a, db, stamp):
 
     # THE SNAP CAP IS THE RIVER'S OWN WIDTH, not a number chosen here: three channel widths off the
     # centreline is off this river, and a water whose width never resolved gets no cap at all rather
-    # than an invented one.
-    cap = round(3.0 * good_w[len(good_w) // 2], 1) if good_w else None
+    # than an invented one. Computed above, before the centring, and used by both.
     rep['snap_cap_m'] = cap
 
     idxr = StationIndex(pts)
@@ -880,7 +1175,13 @@ def build_one(row, a, db, stamp):
                                                                for c in coords]},
             'properties': {
                 'slug': slug, 'mainstem_id': main_id, 'step_m': a.step, 'window_m': a.window,
-                'length_m': round(chain_m, 1), 'stations': len(pts), 'snap_cap_m': cap,
+                # THE LENGTH OF THE LINE IN THIS FILE, not of the 3DHP chain it came from. Those
+                # were always a little apart -- resample() drops the tail remainder -- and the
+                # centring makes them properly different, because following a meander instead of
+                # chording it is longer. `chain_km` on the build record still reports the source.
+                'length_m': round(sum(math.dist(pts[i], pts[i + 1])
+                                      for i in range(len(pts) - 1)), 1),
+                'stations': len(pts), 'snap_cap_m': cap,
                 'built': stamp,
                 'station_m': [round(i * a.step, 1) for i in range(len(pts))],
                 'bearing_deg': [round(b, 1) for b in brg],
@@ -919,6 +1220,15 @@ def main():
     ap.add_argument('--no-depth', action='store_true',
                     help='skip the cross-section entirely. Faster, and the centreline then carries '
                          'no area, no depth profile and no coverage.')
+    ap.add_argument('--no-centre', action='store_true',
+                    help='leave the line exactly where 3DHP drew it. This is what every centreline '
+                         'built before 2026-09-18 is, and on Ryan\'s own Congaree reaches it puts '
+                         '16.4%% of the water he fishes outside the charted river.')
+    ap.add_argument('--centre-passes', type=int, default=6,
+                    help='the most centring sweeps a river may take (default 6). A cap on '
+                         'iteration, not a tuning knob: the sweeps stop on their own as soon as one '
+                         'moves the line no further than the one before it, and the build record '
+                         'reports how many each river actually used and how far each one moved.')
     ap.add_argument('--max-width-m', type=float, default=3000.0, help='give up on a width ray past this (default 3000)')
     ap.add_argument('--trib-m', type=float, default=120.0, help='a tributary mouth is this close to the centreline (default 120)')
     ap.add_argument('--min-chain-m', type=float, default=1000.0, help='skip a water whose longest chain is shorter (default 1000)')
@@ -990,6 +1300,35 @@ def main():
             print('           stamped %s   tributary mouths %d   snap cap %s m   %.1fs'
                   % (', '.join('%s %d' % (k, v) for k, v in sorted(st.items())),
                      rep['tributary_mouths'], rep['snap_cap_m'], rep['seconds']))
+            # WHERE THE LINE WAS AND WHERE IT IS NOW. The two station counts are the whole claim
+            # this stage makes, and a river that does not improve says so on its own line.
+            c = rep.get('centring') or {}
+            if c:
+                sh = c.get('shift_m') or {}
+                print('           centred on the %s   stations off the water %d/%d -> %d/%d   '
+                      'shift p50/p90/max %s/%s/%s m'
+                      % (c.get('basis'), c.get('off_water_before', 0), c.get('stations_before', 0),
+                         c.get('off_water_after', 0), c.get('stations_after', 0),
+                         sh.get('p50'), sh.get('p90'), sh.get('max')))
+                print('           %d sweeps moving %s m   %d stranded with no water on their '
+                      'normal   %d folds'
+                      % (c.get('passes', 0),
+                         '/'.join(str(x) for x in (c.get('moved_m') or ['-'])),
+                         c.get('stranded', 0), c.get('folds', 0)))
+                # SAID OUT LOUD, like the off-cap line below it. A fold is a line that runs back on
+                # itself, which the slope limit is supposed to make impossible; a river that still
+                # has most of its stations off the water after this has a chart and a boundary on
+                # different water, and no amount of centring is the answer to that.
+                if c.get('folds'):
+                    print('           THE LINE FOLDS BACK ON ITSELF at %d station(s) -- the slope '
+                          'limit in centre_pass() is supposed to make that impossible'
+                          % c['folds'])
+                before, after = c.get('off_water_before', 0), c.get('off_water_after', 0)
+                if after and after >= before:
+                    print('           CENTRING BOUGHT NOTHING HERE: %d of %d stations are still off '
+                          'the %s water (%d before). %d had no water on their normal at all'
+                          % (after, c.get('stations_after', 0), c.get('basis'), before,
+                             c.get('stranded', 0)))
             # SAID OUT LOUD, EVERY RUN. A pack whose chart and whose boundary are on different water
             # looks exactly like a healthy one in every line above; this is the line it fails.
             if rep.get('off_cap_n'):

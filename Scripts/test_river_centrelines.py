@@ -318,5 +318,172 @@ class DepthAndSection(unittest.TestCase):
         self.assertEqual((area[1], deep[1], chart[1], prof[1]), (None, None, None, None))
 
 
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+# THE CENTRING, WHICH IS THE ONE THING IN HERE THAT MOVES THE LINE
+#
+# Ryan, 2026-09-18, on a real Congaree plan: "looks like they don't stay in the river". The line was
+# 3DHP's flowline, and nothing in this file had ever measured the middle of the water. Then the
+# question that named the defect: "How is the center line not the center of the water".
+#
+# What is tested here is not the arithmetic -- (left - right) / 2 cannot be subtly wrong -- but the
+# three things that stop the fix being worse than the defect: every station is measured against the
+# SAME line and applied afterwards, no station ends up more than one station spacing further across
+# the channel than its neighbour, and a station with a choice of sides takes the one the station
+# before it took. The first prototype had none of the three, moved each station as it went, and on
+# the fixture below turned 41 stations into 337 folded back and forth across the river.
+#
+# The water here is a predicate, not a polygon file, for the same reason the projection is
+# hand-rolled: this has to run wherever the builder runs.
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+
+
+def _band(path, half):
+    """A predicate: within `half` metres of a polyline. A channel, as a function."""
+    def d2seg(px, py, ax, ay, bx, by):
+        vx, vy = bx - ax, by - ay
+        L = vx * vx + vy * vy
+        t = 0.0 if L == 0 else max(0.0, min(1.0, ((px - ax) * vx + (py - ay) * vy) / L))
+        return math.hypot(px - (ax + vx * t), py - (ay + vy * t))
+    def inside(x, y):
+        return any(d2seg(x, y, path[i][0], path[i][1], path[i + 1][0], path[i + 1][1]) <= half
+                   for i in range(len(path) - 1))
+    return inside
+
+
+class Centring(unittest.TestCase):
+    PROBE = 5.0
+    STEP = 25.0
+    REACH = 600.0
+
+    def _run(self, pts, inside, passes=6):
+        return B.centre_on_water([tuple(q) for q in pts], inside,
+                                 self.STEP, self.PROBE, self.REACH, passes)
+
+    @staticmethod
+    def _off(pts, inside):
+        return sum(1 for q in pts if not inside(q[0], q[1]))
+
+    # ── the straight case, where the answer is known exactly ─────────────────────────────────
+    def test_a_line_hugging_one_bank_ends_up_in_the_middle(self):
+        # A channel from y=0 to y=100, so the middle is y=50. The line starts at y=20.
+        inside = lambda x, y: 0.0 <= y <= 100.0 and 0.0 <= x <= 1000.0
+        out, rep = self._run([(x * self.STEP, 20.0) for x in range(41)], inside)
+        for q in out[2:-2]:
+            self.assertLess(abs(q[1] - 50.0), self.PROBE,
+                            'station at y=%.1f is not mid-channel' % q[1])
+        self.assertGreater(rep['moved'][0], 0)
+
+    def test_a_line_already_in_the_middle_is_left_alone_and_stops_at_once(self):
+        inside = lambda x, y: 0.0 <= y <= 100.0 and 0.0 <= x <= 1000.0
+        out, rep = self._run([(x * self.STEP, 50.0) for x in range(41)], inside)
+        for q in out:
+            self.assertLess(abs(q[1] - 50.0), self.PROBE)
+        self.assertEqual(rep['moved'], [0])
+        self.assertEqual(rep['passes'], 1)
+
+    def test_it_does_not_eat_the_line_a_step_at_a_time(self):
+        # resample() drops whatever is left past the last whole step. Doing that once is the same
+        # truncation the flowline has always had; doing it every sweep took a 1,000 m test channel
+        # down to 825 m over fifteen of them, which is 175 m of river quietly deleted.
+        inside = lambda x, y: 0.0 <= y <= 100.0 and 0.0 <= x <= 1000.0
+        out, _ = self._run([(x * self.STEP, 20.0) for x in range(41)], inside, passes=15)
+        length = sum(math.dist(out[i], out[i + 1]) for i in range(len(out) - 1))
+        self.assertGreater(length, 1000.0 - self.STEP - 1.0)
+
+    # ── the case he actually hit: a flowline chording the neck of a bend ─────────────────────
+    def _meander(self):
+        """A river that loops 200 m south over 400 m of easting, and a flowline that chords it.
+
+        A SMOOTH LOOP AND NOT A VEE. The first draft of this used a 300 m triangular dip, and its
+        apex is a 143 degree corner -- which is not a river, and which fails a "no fold" and an
+        "even spacing" assertion for being sharp rather than for being wrong. A meander is a curve.
+        """
+        path = [(0.0, 0.0), (100.0, 0.0), (200.0, 0.0), (300.0, 0.0)]
+        for k in range(1, 41):
+            x = 300.0 + 400.0 * k / 40.0
+            path.append((x, -200.0 * math.sin(math.pi * (x - 300.0) / 400.0)))
+        path += [(800.0, 0.0), (900.0, 0.0), (1000.0, 0.0)]
+        return _band(path, 50.0), [(x * self.STEP, 0.0) for x in range(41)]
+
+    def test_a_chorded_bend_comes_back_into_the_water(self):
+        channel, pts = self._meander()
+        self.assertGreater(self._off(pts, channel), 0, 'the fixture does not reproduce the defect')
+        out, _ = self._run(pts, channel)
+        self.assertEqual(self._off(out, channel), 0,
+                         '%d stations are still off the water' % self._off(out, channel))
+
+    def test_the_line_never_doubles_back_on_itself(self):
+        channel, pts = self._meander()
+        out, rep = self._run(pts, channel)
+        self.assertEqual(rep['folds'], 0, 'the build record reports a fold')
+        for i in range(1, len(out) - 1):
+            ax, ay = out[i][0] - out[i - 1][0], out[i][1] - out[i - 1][1]
+            bx, by = out[i + 1][0] - out[i][0], out[i + 1][1] - out[i][1]
+            self.assertGreater(ax * bx + ay * by, 0.0,
+                               'the line reverses at station %d -- this is the fold the first '
+                               'prototype produced' % i)
+
+    def test_it_settles_instead_of_running_away(self):
+        # The sweeps stop when one moves the line no further than the one before it. More passes
+        # must therefore not change the answer -- the first version grew without bound and turned
+        # 41 stations into 16,461 when it was allowed ten rounds.
+        channel, pts = self._meander()
+        six, r6 = self._run(pts, channel, passes=6)
+        forty, r40 = self._run(pts, channel, passes=40)
+        self.assertEqual(len(six), len(forty))
+        self.assertEqual(r6['passes'], r40['passes'])
+        for a, b in zip(six, forty):
+            self.assertAlmostEqual(a[0], b[0], places=6)
+            self.assertAlmostEqual(a[1], b[1], places=6)
+        self.assertEqual(sorted(r6['moved_m'], reverse=True), r6['moved_m'],
+                         'a sweep moved the line further than the one before it: %s' % r6['moved_m'])
+
+    def test_the_stations_come_back_to_an_even_spacing(self):
+        # `station_m` is `i * step` everywhere downstream, so the chord between two stations is at
+        # most a step and short of it only by what the curvature takes.
+        channel, pts = self._meander()
+        out, _ = self._run(pts, channel)
+        for i in range(len(out) - 1):
+            d = math.dist(out[i], out[i + 1])
+            # EXACTLY a step apart along the line; the chord is shorter only by what the curvature
+            # takes, which is the same thing `station_m` has always measured.
+            self.assertLessEqual(d, self.STEP + 1e-6,
+                                 'stations %d and %d are %.1f m apart' % (i, i + 1, d))
+            self.assertGreater(d, self.STEP * 0.9,
+                               'stations %d and %d are only %.1f m apart, which is a bend too '
+                               'tight for a station spacing' % (i, i + 1, d))
+
+    # ── the side rule, which is the only sequential decision in the sweep ────────────────────
+    def test_it_stays_on_the_side_the_river_is_on_when_something_nearer_appears(self):
+        # The river loops 250 m NORTH between x=300 and x=700. A slough sits 60 m SOUTH of the
+        # flowline, but only from x=500 on. A station at x=500 finds water 200 m north and 60 m
+        # south; nearest-first would jump it into the slough and fold the line. The station before
+        # it is already well north, so it must stay north.
+        river = _band([(0.0, 0.0), (300.0, 0.0), (400.0, 250.0), (600.0, 250.0),
+                       (700.0, 0.0), (1000.0, 0.0)], 50.0)
+        slough = lambda x, y: 500.0 <= x <= 700.0 and -120.0 <= y <= -60.0
+        inside = lambda x, y: river(x, y) or slough(x, y)
+        pts = [(x * self.STEP, 0.0) for x in range(41)]
+        out, _ = self._run(pts, inside)
+        for q in out:
+            if 500.0 <= q[0] <= 700.0:
+                self.assertGreater(q[1], 0.0,
+                                   'a station at x=%.0f crossed into the slough: y=%.1f'
+                                   % (q[0], q[1]))
+
+    # ── and the unsounded case, which must not be touched ────────────────────────────────────
+    def test_a_station_with_no_water_on_its_normal_is_left_where_it_is(self):
+        # A channel that stops at x=500. Past that there is nothing to centre on, and 3DHP's line
+        # is the only answer there is -- 17 of the 57 packs are mostly unsounded.
+        inside = lambda x, y: 0.0 <= x <= 500.0 and -50.0 <= y <= 50.0
+        pts = [(x * self.STEP, 0.0) for x in range(41)]
+        out, rep = self._run(pts, inside)
+        self.assertGreater(rep['stranded'], 0, 'nothing was reported stranded')
+        for i, q in enumerate(out):
+            if q[0] > 560.0:
+                self.assertLess(abs(q[1]), self.PROBE,
+                                'station %d was moved with no water to move it to' % i)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
