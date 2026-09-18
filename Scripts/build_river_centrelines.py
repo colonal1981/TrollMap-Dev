@@ -669,6 +669,20 @@ def centre_pass(pts, inside, step, probe, reach):
         if again and len(again) >= len(bad):
             span += 1
         bad = again
+    # AND WHERE IT STILL FOLDS, THE STATION DOES NOT MOVE AT ALL.
+    #
+    # Flattening a wider and wider stretch is a repair with a limit, and past it the honest answer is
+    # the one the unsounded stations already get: leave it on the flowline. A station this could not
+    # place without folding the line is a station it does not place. Measured across all 57 rivers
+    # before this existed: 741 folds shipped, 422 of them on lumber_river and lynches_river alone --
+    # two packs whose chart covers a few kilometres of a two-hundred-kilometre river, so the centring
+    # there is working on scraps and folding between them.
+    if bad:
+        for i in bad:
+            for k in range(max(0, i - 1), min(n - 1, i + 1) + 1):
+                off[k] = 0.0
+        out = build(off)
+        bad = folding(out)
     folds = len(bad)
 
     moved = 0
