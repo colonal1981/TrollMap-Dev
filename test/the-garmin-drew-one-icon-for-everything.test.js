@@ -46,12 +46,34 @@ test('the two halves of a bend are two shapes, and the lake words keep the lake 
   assert.equal(markSymbol('point', null, 7), 'Triangle, Green');
 });
 
-test('nothing measured draws the default pin, and does not invent a colour', () => {
-  // A coloured icon is a claim about depth. `0 ft relief` is the standing lesson: a missing
-  // measurement must not arrive wearing the clothes of a real one.
-  assert.equal(markSymbol('hole', null, null), 'Waypoint');
-  assert.equal(markSymbol('hole', null, 0), 'Waypoint');
-  assert.equal(markSymbol('creek_mouth', null, undefined), 'Waypoint');
+test('nothing measured draws a flag, which claims no depth and is still one of ours', () => {
+  // THE LESSON HERE WAS RIGHT AND THE ANSWER WAS NOT, and both halves are worth keeping straight.
+  //
+  // Right: a coloured SHAPE is a claim about depth, and `0 ft relief` is the standing lesson -- a
+  // missing measurement must not arrive wearing the clothes of a real one. Borrowing one of the four
+  // band colours for "unknown" would make `Diamond, Blue` mean both "hole, 12 ft or more" and "hole,
+  // nobody sounded it".
+  //
+  // Wrong: that this leaves only the default pin. The constraint is on COLOURS and the free slot was
+  // a SHAPE. Ryan's vocabulary is "Circles, Diamonds, Flags, Pins, Squares, and Triangles in Red,
+  // Yellow, Blue, and Green"; FLAG is used by no depth-coloured mark, and his own ActiveCaptain
+  // export carries 16 `Flag, Green` and 10 `Flag, Red`, so it renders on his unit. A flag cannot be
+  // misread as a band.
+  //
+  // And `Waypoint` was actively wrong for these, not merely unhelpful: it is the icon an
+  // unclassified user pin gets, so it threw away that the mark was one of ours at the moment that
+  // matters most -- the desc reads "charted position -- compare with the sounder", and a mark the
+  // chart could not put a number on is precisely the one to stand next to the sounder. Measured on
+  // the live app 2026-09-18: 43 of a day's 123 waypoints.
+  assert.equal(markSymbol('hole', null, null), 'Flag, Blue');
+  assert.equal(markSymbol('hole', null, 0), 'Flag, Blue', 'a charted zero is not a depth');
+  assert.equal(markSymbol('creek_mouth', null, undefined), 'Flag, Blue');
+  // NO COLOURED SHAPE IS A FLAG, which is the whole reason the flag is safe. If a band ever moves
+  // onto one, "unknown" and that band become the same icon and this pair stops meaning two things.
+  for (const [ft, colour] of [[20, 'Blue'], [8, 'Green'], [4, 'Yellow'], [1, 'Red']]) {
+    assert.equal(markSymbol('hole', null, ft), `Diamond, ${colour}`);
+  }
+  // `Waypoint` survives for the one honest use of it: a kind nothing here can name.
   assert.equal(markSymbol('something_new', null, 12), 'Waypoint', 'and an unknown kind is not guessed');
 });
 

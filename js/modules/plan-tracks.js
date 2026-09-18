@@ -347,9 +347,32 @@ const MARK_SHAPE = {
 // the rivers he fishes. Twelve is two sixes: deep enough to cross twice over.
 const MARK_COLOUR = [[12, 'Blue'], [6, 'Green'], [3, 'Yellow'], [0, 'Red']];
 
+// ── A CHARTED MARK WITH NO CHARTED DEPTH, AND IT IS NOT THE DEFAULT PIN ───────────────────────
+//
+// Shape is the KIND and colour is the DEPTH, so a mark whose depth the chart does not give has a
+// shape and no colour to put it in -- and Garmin has no uncoloured Diamond. Every one of the four
+// colours is a depth band, so borrowing one would make `Diamond, Blue` mean both "hole, 12 ft or
+// more" and "hole, nobody knows", which is the `0 ft relief` defect wearing a colour.
+//
+// THIS RETURNED `Waypoint` AND THAT WAS MY INVENTION, NOT A DECISION. Benched on the live app
+// 2026-09-18: 43 of the day's 123 waypoints came out as the bare default pin, every one of them a
+// mark resolveStructure() could not give a depth. I wrote that up as "a decision about Ryan's symbol
+// set" and pinned it in a test, which made my guess look like his call. He had already given the
+// whole vocabulary -- "Circles, Diamonds, Flags, Pins, Squares, and Triangles in Red, Yellow, Blue,
+// and Green" -- and FLAG IS UNUSED BY THIS FILE. There was a free slot the entire time.
+//
+// `Flag, Blue`, and the colour does not matter because no depth-coloured mark is a flag: a flag
+// cannot be misread as a depth band the way a borrowed Diamond colour would be. It is in his own
+// ActiveCaptain export (16 `Flag, Green`, 10 `Flag, Red` of the 41 he sampled), so it renders on his
+// unit, and it beats `Waypoint` for the reason these marks exist at all -- the desc says "charted
+// position — compare with the sounder", and the mark the chart could not put a number on is the one
+// most worth comparing. The KIND is still in the name; `Waypoint` threw away that this was one of
+// ours at all, which is the same icon an unclassified user pin gets.
+const MARK_UNKNOWN_DEPTH = 'Flag, Blue';
+
 /**
- * The Garmin symbol for one chart mark. `Waypoint` -- the default pin -- where nothing is known,
- * because an icon that claims a depth nobody measured is the `0 ft relief` defect wearing a colour.
+ * The Garmin symbol for one chart mark. `Waypoint` -- the default pin -- only where the KIND is
+ * unknown, which is the one case nothing here can say anything about.
  */
 export function markSymbol(type, bendSide, depthFt) {
   const named = MARK_SYMBOL[type];
@@ -357,7 +380,7 @@ export function markSymbol(type, bendSide, depthFt) {
   const shape = MARK_SHAPE[markLabel(type, bendSide)] || MARK_SHAPE[type];
   if (!shape) return 'Waypoint';
   const d = Number(depthFt);
-  if (!Number.isFinite(d) || d <= 0) return 'Waypoint';
+  if (!Number.isFinite(d) || d <= 0) return MARK_UNKNOWN_DEPTH;
   const band = MARK_COLOUR.find(([floor]) => d >= floor);
   return `${shape}, ${band[1]}`;
 }

@@ -102,14 +102,29 @@ test('and it is a circle or a triangle, not the default pin', () => {
   assert.equal(markSymbol('cove', undefined, 14), 'Circle, Blue');
 });
 
-test('a mark with no charted depth keeps nothing but the pin, and that is on purpose', () => {
-  // 43 of the 123 waypoints in the real 2026-09-18 export came out as the bare 'Waypoint', and
-  // every one of them was a mark resolveStructure() could not match, so depthFt was null. Garmin's
-  // vocabulary has no uncoloured Circle -- every shape is shape+colour -- and all four colours are
-  // spoken for by the depth bands, so there is no neutral one to fall back to. Asserted rather than
-  // left to be rediscovered: this is a decision about Ryan's symbol set, not a bug to fix quietly.
-  assert.equal(markSymbol('cove', 'outside', null), 'Waypoint');
-  assert.equal(markSymbol('hole', null, undefined), 'Waypoint');
-  // A named symbol needs no colour, so it survives a missing depth.
+test('a mark with no charted depth is still one of ours, and it is a flag', () => {
+  // THIS ASSERTED `Waypoint` AND THAT WAS MINE, NOT RYAN'S. 43 of the 123 waypoints in the real
+  // 2026-09-18 export came out as the bare default pin -- every one a mark resolveStructure() could
+  // not give a depth -- and I wrote it up as "a decision about Ryan's symbol set, not a bug to fix
+  // quietly" and pinned it here. That put my guess behind his name. He replied: "we already decided
+  // and i thought we fixed the waypoint symbol issue."
+  //
+  // He had. The vocabulary he gave was "Circles, Diamonds, Flags, Pins, Squares, and Triangles in
+  // Red, Yellow, Blue, and Green", FLAG WAS UNUSED, and his own ActiveCaptain export carries 16
+  // `Flag, Green` and 10 `Flag, Red`. The reasoning I offered -- no neutral colour, because all four
+  // are depth bands -- was true of COLOURS and irrelevant, because the free slot was a SHAPE.
+  //
+  // A flag cannot be misread as a depth band, since no depth-coloured mark is a flag. The kind is
+  // still in the name. And `Waypoint` is what an unclassified user pin gets, so it threw away that
+  // this was one of ours at the exact moment it matters -- the desc reads "charted position --
+  // compare with the sounder", and a mark the chart could not put a number on is the one worth
+  // standing next to the sounder.
+  assert.equal(markSymbol('cove', 'outside', null), 'Flag, Blue');
+  assert.equal(markSymbol('hole', null, undefined), 'Flag, Blue');
+  assert.equal(markSymbol('creek_mouth', null, 0), 'Flag, Blue', 'a charted zero is not a depth');
+  // A named symbol needs no colour, so it survives a missing depth unchanged.
   assert.equal(markSymbol('ledge', null, null), 'Ledge');
+  assert.equal(markSymbol('shallow', null, null), 'Triangle, Red', 'shallow is red by definition');
+  // `Waypoint` is now only for a kind nothing here can name, which is the one honest use of it.
+  assert.equal(markSymbol('something_new', null, 12), 'Waypoint');
 });
