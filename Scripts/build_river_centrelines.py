@@ -365,12 +365,21 @@ class WaterExtent:
     def inside(self, x, y):
         if self.mask.inside(x, y):
             return True
+        return self.charted(x, y)
+
+    def charted(self, x, y):
+        """SOUNDED BY SOMEBODY -- this pack or whoever owns the water past its outline. The
+        outline is deliberately NOT part of this: centre_on_water() asks this question, and the
+        registry outline is not where the middle of the water is."""
         if self.depth.polygons and self.depth.at(x, y) is not None:
             return True
         for d in self.extra:
             if d.at(x, y) is not None:
                 return True
         return False
+
+    def has_chart(self):
+        return bool(self.depth.polygons) or bool(self.extra)
 
 
 def extend_chain(chain, mask, water, nbrs, slug, cap, step, probe, max_m, budget_m):
@@ -420,13 +429,7 @@ def extend_chain(chain, mask, water, nbrs, slug, cap, step, probe, max_m, budget
                     water.add(nbrs.depth_of(own))
                 if not water.inside(x, y):
                     return last, 'nothing charted here', gained
-                # THE RAY NEEDS A LINE TO BE PERPENDICULAR TO. widths() takes the normal from the
-                # stations either side, so a one-point list has no direction and comes back None --
-                # which read as "the channel does not resolve" and stopped every extension at the
-                # first station outside the box. Three points, and the answer is the middle one's.
-                lo_i = max(j - 1, 0)
-                w, _ = widths(chain[lo_i:j + 2], water.inside, max_m, probe)
-                wj = w[j - lo_i]
+                wj, _ = ray_width(chain, j, water.inside, max_m, probe)
                 if wj is None:
                     return last, 'the channel does not resolve inside %g m' % max_m, gained
                 if cap and wj > cap:
@@ -594,45 +597,58 @@ def widths(pts, inside, max_m, probe, narrow=None):
 
     @returns (wide, narrow) -- `narrow` is all None when no second predicate was given.
     """
-    n = len(pts)
     out = []
     out_narrow = []
-    for i in range(n):
-        a = pts[max(i - 1, 0)]
-        b = pts[min(i + 1, n - 1)]
-        dx, dy = b[0] - a[0], b[1] - a[1]
-        h = math.hypot(dx, dy)
-        if h == 0:
-            out.append(None)
-            out_narrow.append(None)
-            continue
-        px, py = -dy / h, dx / h          # unit normal, pointing left of downstream
-        total = 0.0
-        total_narrow = 0.0
-        ok = True
-        ok_narrow = narrow is not None
-        for sign in (1, -1):
-            d = 0.0
-            dn = None
-            while d < max_m:
-                d += probe
-                x, y = pts[i][0] + px * sign * d, pts[i][1] + py * sign * d
-                if dn is None and narrow is not None and not narrow(x, y):
-                    dn = d
-                if not inside(x, y):
-                    break
-            else:
-                ok = False
-            total += d
-            # The narrow predicate never got its own ray, so a side that never left it inside
-            # `max_m` is as unresolved as a wide one that did not.
-            if dn is None:
-                ok_narrow = False
-            else:
-                total_narrow += dn
-        out.append(round(total, 1) if ok else None)
-        out_narrow.append(round(total_narrow, 1) if ok_narrow else None)
+    for i in range(len(pts)):
+        w, nw = ray_width(pts, i, inside, max_m, probe, narrow)
+        out.append(w)
+        out_narrow.append(nw)
     return out, out_narrow
+
+
+def ray_width(pts, i, inside, max_m, probe, narrow=None):
+    """ONE STATION'S WIDTH, and the only place a width ray is cast.
+
+    Lifted out of widths() because extend_chain() needs the width at a SINGLE station and calling
+    widths() on a two- or three-point slice cast three rays to read one -- and a one-point slice has
+    no neighbours to take a normal from, so it returned None and read as "the channel does not
+    resolve", which stopped every extension at the first station outside the box.
+
+    @returns (wide, narrow) for station `i`; either is None where its ray never left the water.
+    """
+    n = len(pts)
+    a = pts[max(i - 1, 0)]
+    b = pts[min(i + 1, n - 1)]
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    h = math.hypot(dx, dy)
+    if h == 0:
+        return None, None
+    px, py = -dy / h, dx / h              # unit normal, pointing left of downstream
+    total = 0.0
+    total_narrow = 0.0
+    ok = True
+    ok_narrow = narrow is not None
+    for sign in (1, -1):
+        d = 0.0
+        dn = None
+        while d < max_m:
+            d += probe
+            x, y = pts[i][0] + px * sign * d, pts[i][1] + py * sign * d
+            if dn is None and narrow is not None and not narrow(x, y):
+                dn = d
+            if not inside(x, y):
+                break
+        else:
+            ok = False
+        total += d
+        # The narrow predicate never got its own ray, so a side that never left it inside `max_m`
+        # is as unresolved as a wide one that did not.
+        if dn is None:
+            ok_narrow = False
+        else:
+            total_narrow += dn
+    return (round(total, 1) if ok else None,
+            round(total_narrow, 1) if ok_narrow else None)
 
 
 # ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -1425,9 +1441,16 @@ def build_one(row, a, db, stamp, nbrs=None):
     # can be dragged through, and the registry boundary is an outline from somewhere else. Chosen
     # once per river rather than per station, so the line cannot alternate between two different
     # ideas of the middle halfway along itself.
-    inside = ((lambda x, y: depth.at(x, y) is not None) if depth.polygons
+    # AND THE EXTENSION'S STATIONS ARE CHARTED BY SOMEBODY ELSE. `depth` is this pack's own
+    # soundings, so on the first run of the extension every one of the Congaree's 536 new stations
+    # came back "off the water" -- 8 off before, 634 after -- and none of them was centred, which
+    # left the whole new stretch sitting on the raw 3DHP flowline: the exact defect this stage
+    # exists to fix, reintroduced at the far end. `water.charted` is the same question asked of
+    # whoever charted it. Still the CHART and not the outline: the outline is not where the middle
+    # of the water is, which is the whole finding this function was written for.
+    inside = (water.charted if water.has_chart()
               else (lambda x, y: mask.inside(x, y)))
-    centring = {'basis': 'charted' if depth.polygons else 'boundary',
+    centring = {'basis': 'charted' if water.has_chart() else 'boundary',
                 'stations_before': len(pts),
                 'off_water_before': sum(1 for q in pts if not inside(q[0], q[1]))}
     if not a.no_centre:

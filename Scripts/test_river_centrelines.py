@@ -586,6 +586,18 @@ class WaterIsTheOutlineOrTheSoundings(unittest.TestCase):
             self.assertIsNotNone(b)
             self.assertGreaterEqual(u, b)
 
+    def test_charted_is_not_the_outline(self):
+        # centre_on_water() asks `charted`, not `inside`. If the outline leaked into it, the
+        # centring would go back to putting the middle wherever the registry outline says -- which
+        # is the defect that stage was written to fix.
+        w = B.WaterExtent(self.mask, FakeDepth(0, 0, 0, 0, polygons=0))
+        self.assertTrue(w.inside(0.0, 500.0))
+        self.assertFalse(w.charted(0.0, 500.0), 'the outline is not a sounding')
+        self.assertFalse(w.has_chart())
+        w.add(FakeDepth(-40.0, 1000.0, 40.0, 3000.0))
+        self.assertTrue(w.has_chart())
+        self.assertTrue(w.charted(0.0, 2000.0), "the neighbour's soundings are soundings")
+
     def test_a_pack_with_no_soundings_adds_nothing(self):
         w = B.WaterExtent(self.mask, FakeDepth(0, 0, 0, 0, polygons=0))
         w.add(FakeDepth(0, 0, 0, 0, polygons=0))
