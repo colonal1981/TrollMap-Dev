@@ -694,11 +694,12 @@ def centre_on_water(pts, inside, step, probe, reach, passes):
     charted water that was right there on their normals. That one river was 84% of everything still
     misplaced across the first eighteen of the fifty-seven.
 
-    THE RESAMPLE HAPPENS ONCE, AT THE END, and that is not a detail. `station_m` is `i * step`
-    everywhere downstream, so the line has to come back to even spacing -- but resample() drops
-    whatever is left over past the last whole step, and doing it every sweep shortened a 1,000 m test
-    channel to 825 m over fifteen of them. Once is the same single truncation the flowline has always
-    had.
+    THE RESAMPLE IS NOT FED FORWARD, and that is not a detail. `station_m` is `i * step` everywhere
+    downstream, so the line has to come back to even spacing before it is written -- but resample()
+    drops whatever is left over past the last whole step, and feeding that back into the next sweep
+    shortened a 1,000 m test channel to 825 m over fifteen of them. So each sweep works on the line
+    the sweep before it produced, and the resample happens on the side, to score the candidate and to
+    be the answer: one truncation, the same single one the flowline has always had.
     """
     rep = {'passes': 0, 'moved': [], 'stranded': 0, 'folds': 0, 'shift_m': {}, 'moved_m': [],
            'off_by_pass': []}
@@ -714,7 +715,15 @@ def centre_on_water(pts, inside, step, probe, reach, passes):
     for _ in range(max(1, int(passes))):
         moved, stranded, folds, shifts, out = centre_pass(pts, inside, step, probe, reach)
         pts = out
-        off = sum(1 for q in pts if not inside(q[0], q[1]))
+        # SCORED ON THE LINE THAT WOULD BE SHIPPED, WHICH IS THE RESAMPLED ONE. The stations come
+        # back to an even spacing at the end, and the points the resample lays between two stations
+        # ride the chord -- so a pair of stations either side of a tight bend can both be in the
+        # water while the line between them is not. altamaha_river scored 80 stations off the water
+        # on its first sweep and shipped 114, because the count and the answer were different
+        # objects. The sweeps still run on the working line; only the score is taken on the finished
+        # one.
+        cand = resample(pts, step)
+        off = sum(1 for q in cand if not inside(q[0], q[1]))
         rep['passes'] += 1
         rep['moved'].append(moved)
         rep['moved_m'].append(round(sum(shifts), 1))
@@ -724,7 +733,7 @@ def centre_on_water(pts, inside, step, probe, reach, passes):
         every.extend(shifts)
         score = (off, round(sum(shifts), 1))
         if best[1] is None or score < best:
-            best, best_line, best_at, stall = score, list(pts), rep['passes'], 0
+            best, best_line, best_at, stall = score, cand, rep['passes'], 0
         else:
             stall += 1
             if stall >= 2:
@@ -732,7 +741,9 @@ def centre_on_water(pts, inside, step, probe, reach, passes):
         if moved == 0:
             break
     rep['best_pass'] = best_at
-    pts = resample(best_line, step)
+    # ALREADY RESAMPLED unless no sweep ever bettered the line it came in with, in which case this is
+    # the flowline and it has been resampled once already by the caller.
+    pts = best_line
     if every:
         every.sort()
         rep['shift_m'] = {'p50': pct(every, .50), 'p90': pct(every, .90),
