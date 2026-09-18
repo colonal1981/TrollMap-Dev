@@ -1296,7 +1296,17 @@ function scoreWindow(near, fromM, toM, weights, maxOffM, capPerType = SCORE_CAP_
       if (counted[n.t] <= capPerType) score += w * proximity;
     }
     // The hit is kept either way: it is still a place to stop, it just stops adding to the score.
+    // `side` TRAVELS WITH THE HIT, and it did not until 2026-09-18. kindHits() put the feature's
+    // own `bend_side` on every `near` record and plan-assemble.js read `h.side` off the pass, and
+    // this line -- the only thing between them -- did not copy it. So `markLabel(type, undefined)`
+    // returned the bare kind and the Garmin got 34 waypoints called "cove" on a river, which is
+    // the exact complaint the rename was written to answer. Benched against the live app on the
+    // real pack: 123 waypoints, not one "outside bend" among them.
+    //
+    // The unit test passed the whole time, because it called markLabel() directly. A function that
+    // is right and is never reached is indistinguishable from one that is wrong.
     hits.push({ atM: Math.round(n.s - fromM), type: n.t, offM: n.d, weight: w,
+                side: n.side,
                 n: n.n, spanM: n.spanM, scored: w > 0 && counted[n.t] <= capPerType });
   }
   return { score, hits };
