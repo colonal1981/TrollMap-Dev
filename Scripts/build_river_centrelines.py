@@ -652,18 +652,22 @@ def centre_pass(pts, inside, step, probe, reach):
 
     out = build(off)
     bad = folding(out)
-    while bad:
+    span = 1
+    while bad and span <= FOLD_SMOOTH_SPAN:
         for i in bad:
-            lo = max(0, i - 1)
-            hi = min(n - 1, i + 1)
+            lo = max(0, i - span)
+            hi = min(n - 1, i + span)
             mean = sum(off[lo:hi + 1]) / float(hi - lo + 1)
             for k in range(lo, hi + 1):
                 off[k] = mean
         out = build(off)
         again = folding(out)
-        if len(again) >= len(bad):
-            bad = again
-            break
+        # A FOLD THREE OFFSETS WIDE IS NOT ALWAYS A FOLD THREE OFFSETS CAUSED. Where flattening the
+        # station and its two neighbours does not clear it, the stretch that has to relax is longer,
+        # so the window widens. It stops at FOLD_SMOOTH_SPAN because past that it is no longer
+        # repairing a kink, it is flattening a real bend in the river.
+        if again and len(again) >= len(bad):
+            span += 1
         bad = again
     folds = len(bad)
 
@@ -745,6 +749,11 @@ def signed_offset(pts, i, x, y):
 # Bands are one foot wide, so the two differ by at most a foot.
 # ─────────────────────────────────────────────────────────────────────────────────────────────
 DEPTH_FRACTIONS = (0.0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1.0)
+
+# How many stations either side of a fold centre_pass() may flatten trying to clear it. A bound on
+# effort, not a tuning knob: five stations is 250 m at the default spacing, which is longer than the
+# Congaree is wide, and past that the thing being flattened is a bend the river actually has.
+FOLD_SMOOTH_SPAN = 5
 
 
 class DepthIndex:
