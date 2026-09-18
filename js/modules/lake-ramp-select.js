@@ -22,6 +22,7 @@ import { resolveR2Key } from '../data/lake-keys.js';
 import { waterZoneCandidates } from '../data/water-aliases.js';
 import { registryStats } from '../data/lake-registry.js';
 import { makePredicate } from '../data/water-filter.js';
+import { matchRampIndex } from '../utils/ramp-match.js';
 // The picker question moved to js/data/water-picker.js -- see the note at its top for why it is
 // not in here. Re-exported so nothing that imported these from this module had to move.
 import { STATE_ORDER, TYPE_ORDER, pickerLabel, sortForDisplay, stateOf, typeOf,
@@ -370,8 +371,46 @@ function onRampChange(selOpt) {
   if (!selOpt.value || !selOpt.dataset.coords || !state.MAP_OK) return;
   const [lat, lon] = selOpt.dataset.coords.split(',').map(Number);
   focusRamp(state.MAP, lat, lon);
-  const planRampEl = document.getElementById('planRamp');
-  if (planRampEl) planRampEl.value = selOpt.value;
+  syncPlanRamp(selOpt.value, lat, lon);
+}
+
+/**
+ * ── THE SAME LAUNCH UNDER TWO SPELLINGS, AND A `<select>` THAT BLANKS ITSELF ────────────────────
+ *
+ * This dropdown is filled from the access index -- the live DNR/WRC/WRD/TWRA feeds -- and the Plan
+ * tab's `#planRamp` is filled by `populatePlanRampDropdown()`, which on the six curated PLAN_RIVERS
+ * offers HAND-WRITTEN names instead. Assigning a feed spelling into a select that does not hold it
+ * sets its value to the empty string WITHOUT THROWING, so this used to leave the Plan tab blank on
+ * exactly those six rivers and work everywhere else.
+ *
+ * Ryan, 2026-09-17, on the bench that found it: *"i forgot that the plan tab doesn't auto populate
+ * it from the map dropdown like it does for lakes for some reason."* That was the reason.
+ *
+ * THE MATCHING RULE IS NOT HERE. `matchRampIndex()` in js/utils/ramp-match.js is the one copy of
+ * "is this the same launch" -- name first, then position within 60 m -- and three files had their own
+ * version of it before. Neither matching is NOT silently dropped: the option is added, so the Plan
+ * tab says where the boat is going in, which is the whole point of the field.
+ */
+export function syncPlanRamp(name, lat, lon) {
+  const sel = document.getElementById('planRamp');
+  if (!sel) return;
+  const opts = Array.from(sel.options).filter((o) => o.value);
+  const rows = opts.map((o) => ({ name: o.value,
+                                  lat: parseFloat(o.dataset.lat), lon: parseFloat(o.dataset.lon) }));
+  const i = matchRampIndex(rows, name, lat, lon);
+  let hit = i >= 0 ? opts[i] : null;
+  if (!hit) {
+    hit = document.createElement('option');
+    hit.value = name; hit.textContent = name;
+    if (Number.isFinite(lat)) hit.dataset.lat = lat;
+    if (Number.isFinite(lon)) hit.dataset.lon = lon;
+    sel.appendChild(hit);
+  }
+  if (sel.value === hit.value) return;
+  sel.value = hit.value;
+  // The Plan tab has listeners on this select -- the conditions strip, the clarity intel and the
+  // river gauge panel all refresh off it -- and setting `.value` in script fires nothing.
+  sel.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
 // ── Filter bar ───────────────────────────────────────────────────────────

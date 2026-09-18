@@ -2573,6 +2573,15 @@ export function populatePlanRampDropdown(waterbodyName){
     getPlanRiverRamps(curated).forEach(r=>{
       const opt=document.createElement('option');
       opt.value=r.name; opt.textContent=r.name;
+      // THE COORDS RIDE ON THE OPTION HERE TOO, for the reason spelled out on the access-index
+      // branch below -- and this branch not doing it cost a whole river plan on 2026-09-17.
+      // These six curated rivers carry HAND-WRITTEN launch names; the map's own ramp dropdown
+      // carries the live DNR feed's spellings. `onRampChange()` in lake-ramp-select.js assigned
+      // the feed's name straight into this select, no option matched it, and a `<select>` whose
+      // value is set to a string it does not hold SILENTLY BECOMES "" -- so picking a ramp on the
+      // map left the Plan tab blank on exactly these six waters and nowhere else.
+      if (Number.isFinite(r.lat)) opt.dataset.lat = r.lat;
+      if (Number.isFinite(r.lon)) opt.dataset.lon = r.lon;
       sel.appendChild(opt);
     });
     if(current) sel.value = current;

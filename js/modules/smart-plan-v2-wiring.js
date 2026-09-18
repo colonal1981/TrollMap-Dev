@@ -13,6 +13,7 @@
 
 import { state, CF_WORKER_URL } from '../core/state.js';
 import { resolveR2Key } from '../data/lake-keys.js';
+import { matchRampIndex, normRampName } from '../utils/ramp-match.js';
 import { isNum } from '../utils/num.js';
 import { getLoadedAccessIndex, registryRecordFor } from '../data/access-index.js';
 import { getSeason, seasonNote } from '../data/species-intel.js';
@@ -59,16 +60,42 @@ export function readInputs() {
   };
 }
 
-/** [lon, lat] of the chosen ramp, in the order every geometry in this app uses. */
+/**
+ * [lon, lat] of the chosen ramp, in the order every geometry in this app uses.
+ *
+ * ── AND IT NO LONGER PICKS ONE WHEN NOBODY CHOSE ─────────────────────────────────────────────────
+ *
+ * This ended `|| points[0]`, so an empty ramp field planned the day from whatever launch the merged
+ * access index happened to list first — a merge order nothing sorts by anything. On a LAKE that is a
+ * wrong starting point and the legs are still the legs. ON A RIVER IT IS THE WHOLE DAY: since
+ * 2026-09-17 the reaches are laid out walking outward from the ramp's own station on the centreline,
+ * so the launch decides which water is even offered.
+ *
+ * Found on Ryan's 2026-09-17 Congaree bench, which exported `rampName: ""` and planned anyway. It
+ * landed on Barney Jordan and was right by luck — the first access-index row for that river happens
+ * to be the launch he uses. On the Lumber the first row is WAGRAM, at river station 16,450 of a
+ * 219,600 m centreline, and every charted feature on that river sits between 211,650 and 219,600.
+ * The same silence would have planned a day 195 km from the only water Garmin ever sounded.
+ *
+ * THE OPTION HE ACTUALLY CHOSE COMES FIRST, because that is the answer and the index is a lookup.
+ * `#planRamp`'s options have carried `dataset.lat/lon` on the access-index branch since the live
+ * feeds arrived, and on the curated-river branch since the same bench — see
+ * populatePlanRampDropdown(). Reading them first also means a launch the index has never heard of
+ * still places, which is what a hand-written river ramp is.
+ */
 export function rampCoords(lakeName, rampName) {
-  const norm = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
-  const points = getLoadedAccessIndex()?.byLake?.get(lakeName) || [];
-  const x = norm(rampName);
-  const hit = points.find((p) => { const y = norm(p.name); return y && x && (x === y || x.includes(y) || y.includes(x)); })
-           || points[0];
-  if (hit && Number.isFinite(hit.lat)) return [hit.lon, hit.lat];
   const opt = document.querySelector('#planRamp option:checked');
-  if (opt?.dataset?.lat) return [parseFloat(opt.dataset.lon), parseFloat(opt.dataset.lat)];
+  const oy = parseFloat(opt && opt.dataset ? opt.dataset.lat : NaN);
+  const ox = parseFloat(opt && opt.dataset ? opt.dataset.lon : NaN);
+  if (opt && opt.value && Number.isFinite(oy) && Number.isFinite(ox)) return [ox, oy];
+  // NOTHING NAMED IS NOT A REASON TO GUESS. The caller says so out loud instead. And the matching
+  // below is matchRampIndex() -- the one copy of "is this the same launch", see js/utils/ramp-match.js
+  // -- rather than this function's own third version of it.
+  if (!normRampName(rampName)) return null;
+  const points = getLoadedAccessIndex()?.byLake?.get(lakeName) || [];
+  const i = matchRampIndex(points, rampName, null, null);
+  const hit = i >= 0 ? points[i] : null;
+  if (hit && Number.isFinite(hit.lat)) return [hit.lon, hit.lat];
   return null;
 }
 
@@ -109,7 +136,12 @@ export async function runSmartPlanV2(opts = {}) {
   const r2Key = resolveR2Key(inp.lakeName);
   const ramp = rampCoords(inp.lakeName, inp.rampName);
   if (!r2Key) return say(`No chartpack for ${inp.lakeName}`, true), null;
-  if (!ramp) return say('Could not place that ramp', true), null;
+  // TWO DIFFERENT REFUSALS, because they need two different things done about them. "Pick one" is
+  // actionable; "we cannot place the one you picked" is a data problem and naming it is the fix.
+  if (!ramp) {
+    return say(inp.rampName ? `Could not place "${inp.rampName}" on ${inp.lakeName}`
+                            : 'Select a ramp / launch first', true), null;
+  }
 
   const date = new Date(`${inp.dateStr}T12:00:00`);
   // THE WATER GETS A SAY. `season` decides the depth band, the structure weights and which
