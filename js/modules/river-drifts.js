@@ -263,7 +263,65 @@ export function centrelineTransit(centrelineFc) {
   // exported separately, because a second projector is a second answer to "where on the river is
   // this", and the two would come apart the first time either was tuned.
   transit.stationAt = riverMetreAt;
+  // ── AND THE ROUTE BETWEEN THEM, WHICH IS THE RIVER ───────────────────────────────────────────
+  //
+  // Ryan, 2026-09-18, on being shown a survey of water graphs: *"it is literally keep me in the
+  // middle of the river let me go over fish holding structure until the app turns me around and
+  // then i go back to the ramp and i am done for day... why are we making this more complicated
+  // than that"*.
+  //
+  // He is right, and the whole water-graph question was the wrong one for moving water. A lake day
+  // crosses open water between spots and needs a router to find a way round the land. A RIVER DAY
+  // DOES NOT: the boat goes up the middle, fishes, turns, and comes back, so the path between any
+  // two points on the day IS THE CENTRELINE BETWEEN THEM. Nothing has to be searched for.
+  //
+  // What it replaced: assemblePlan() asked the Worker's MAR graph for every transit pair. Measured
+  // across all 57 river packs the same day -- 8 of them can route as far as one day, the median
+  // river can route 21% of its own line, and two can route nothing at all -- so on most rivers the
+  // answer came back `422 no route`, the transit fell to a straight line between two leg ends, and
+  // the plan shipped it with `unrouted: true` and an understated amp-hour figure. This cannot fail
+  // that way: the line is the pipeline's own resampled spine and the boat is on it by construction.
+  //
+  // SLICED ON THE STATION INDEX, NOT ON A CHORD LENGTH. `station_m` is the axis the resampler laid
+  // down and the chord sum of the written line is 0.8% shorter -- the same swap that cost the
+  // Congaree its last 1,066 m of reaches, and the reason `sliceLine()` is not used here. Two
+  // stations project back to two indices and the slice between them is exact.
+  //
+  // DISTANCE IS RIVER METRES, the same number `transit(a, b)` returns, because a river has one
+  // honest transit distance and a second one would be the same field disagreeing with itself.
+  transit.route = (a, b) => {
+    const ma = riverMetreAt(a), mb = riverMetreAt(b);
+    if (ma == null || mb == null) return null;
+    let i = indexOfStation(stationM, n, ma);
+    let j = indexOfStation(stationM, n, mb);
+    if (i < 0 || j < 0) return null;
+    // A hop of nothing is not a leg. Two reaches that meet -- which on a river day is most of them,
+    // because the day is one path out and back -- have no transit between them at all, and
+    // returning a two-point line of zero length would draw a track the boat never runs.
+    if (i === j) return { distanceM: 0, coordinates: [line[i].slice(0, 2), line[i].slice(0, 2)] };
+    const up = j < i;
+    const from = up ? j : i, to = up ? i : j;
+    const coords = [];
+    for (let k = from; k <= to; k++) coords.push(line[k].slice(0, 2));
+    // DRAWN THE WAY THE BOAT GOES. The slice is always in station order; upstream it is reversed,
+    // so the track's own direction is the direction of travel and the GPX reads as a course.
+    if (up) coords.reverse();
+    return { distanceM: Math.abs(Number(stationM[to]) - Number(stationM[from])), coordinates: coords };
+  };
   return transit;
+}
+
+/** The index of the station nearest `m`, by bisection on an ascending axis. */
+function indexOfStation(stationM, n, m) {
+  if (!(n > 0)) return -1;
+  let lo = 0, hi = n - 1;
+  if (m <= Number(stationM[0])) return 0;
+  if (m >= Number(stationM[hi])) return hi;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (Number(stationM[mid]) <= m) lo = mid; else hi = mid;
+  }
+  return (m - Number(stationM[lo]) <= Number(stationM[hi]) - m) ? lo : hi;
 }
 
 /**

@@ -494,7 +494,21 @@ export async function buildSmartPlanV2(o) {
   // head, each leg's tail to the next leg's head, and the last leg's tail back to the ramp. The lookup handed to the assembler is a
   // plain map read. A pair the router could not answer returns null and the assembler falls back
   // to a straight line that MARKS ITSELF unrouted; nothing pretends a straight line was routed.
-  const transit = o.transit || await prefetchTransits(args.candidates, o.ramp, o.routeWater);
+  // ── ON A RIVER THE TRANSIT IS THE RIVER, AND NOTHING IS FETCHED ──────────────────────────────
+  //
+  // `transitM` has measured river hops along the centreline since it was written; the GEOMETRY
+  // still came from the MAR water graph, which is a lake tool. Surveyed across all 57 river packs
+  // on 2026-09-18: 8 can route as far as one day, the median river can route 21% of its own line,
+  // `broad_river` and `pee_dee_river_2` can route nothing. So on most rivers every pair came back
+  // `422 no route`, the transit fell to a straight line between two leg ends -- which can cross
+  // land and understates the amp-hours -- and the plan shipped it behind a clean status line.
+  //
+  // `centrelineTransit().route` answers from the pack's own spine instead. It cannot fail, it needs
+  // no network, and it is the same projection `transitM` and the ramp's own station already use.
+  // A river plan now makes no route request at all, where it used to make one per leg plus one home.
+  const riverRoute = (isRiver && riverTransit && riverTransit.route) || null;
+  const transit = o.transit || riverRoute
+                  || await prefetchTransits(args.candidates, o.ramp, o.routeWater);
 
   const plan = assemblePlan({
     ...args,
