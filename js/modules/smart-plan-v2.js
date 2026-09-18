@@ -17,7 +17,7 @@
  * the seams between six modules stay honest.
  */
 
-import { selectCandidates, structureIndex, forModel, orientLegs, poiSpotFeatures,
+import { selectCandidates, structureIndex, forModel, travelOrder, poiSpotFeatures,
          attractorSpotFeatures, chartedGrid, chartedHazards,
          turnaroundMiles, riverDay } from './plan-candidates.js';
 import { buildPlanRequest, parsePlanResponse, planArgsFrom } from './plan-prompt.js';
@@ -606,8 +606,11 @@ export async function prefetchTransits(candidates, launch, routeWater) {
   // it asked for: `routed.get()` missed, the transit fell back to a straight line and marked
   // itself unrouted. Both callers now read the decision from one place rather than each deriving
   // its own, which is the only way they cannot drift apart.
-  const facing = orientLegs(candidates, launch);
-  for (const [i, c] of candidates.entries()) {
+  // AND ON A RIVER THE LIST ITSELF IS DIFFERENT, not just the orientation: travelOrder() expands the
+  // day into one pass per entry, out through every reach and back through every reach. Asking for the
+  // pairs of the UNEXPANDED list would prefetch a route home from the wrong end.
+  const { legs: walked, facing } = travelOrder(candidates, launch);
+  for (const [i, c] of walked.entries()) {
     const f = facing[i] || { start: c.start, end: c.end };
     if (Array.isArray(cursor) && Array.isArray(f.start)) pairs.push([cursor, f.start]);
     // WHERE THE BOAT STANDS WHEN THE LEG IS DONE, which is not the end of its first pass once a

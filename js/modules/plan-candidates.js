@@ -417,6 +417,79 @@ export function orientLegs(candidates, launch) {
   });
 }
 
+/**
+ * ── A RIVER DAY IS ONE PATH OUT AND ONE PATH BACK, NOT A PASS-PAIR PER REACH ────────────────────
+ *
+ * Ryan, 2026-09-17, on what a river day is: *"is there anything to actually choose on a river... or
+ * should it just be that the app figures out where i should turn around and draws a route that goes
+ * up one side and back down the other?"* riverDay() answers the first half -- which reaches, which
+ * side of the launch, how far out. This answers the second, and until it existed the app was getting
+ * it expensively wrong.
+ *
+ * THE DEFECT, MEASURED ON HIS OWN CONGAREE BENCH. The reaches come out of riverDay() CONTIGUOUS --
+ * `@47800` ends exactly where `@55800` begins, 0.0 m apart -- and each carries `trollPasses: 2`,
+ * which to orientLegs() and the assembler means "fish this reach twice, back to back". A reach fished
+ * twice ends where it started. So the boat fished reach A down and up, drove 6.5 km to reach B,
+ * fished B down and up, and drove 6.5 km home:
+ *
+ *     the four orderings orientLegs can even see, launch 105 m off A's near end
+ *       A reversed, B forward     12,923 m   <- what it picked, and the cheapest of the four
+ *       A forward,  B forward     13,033 m
+ *       A reversed, B reversed    21,266 m
+ *       A forward,  B reversed    21,309 m
+ *     one continuous path, out through both and back through both
+ *                                    210 m
+ *
+ * 12,923 m against 210, 37% of a 35 km day, and 138 minutes the window did not have. Every one of
+ * those four is wrong, because the two passes of a reach on a river are SEPARATED IN TIME by the
+ * whole run out. The day is A-out, B-out, turn, B-back, A-back, and then every hop between legs is
+ * zero by construction and there is nothing left for a chain solver to solve.
+ *
+ * WHICH END IS THE ENTRY IS A FACT, NOT A SEARCH. A drift is drawn DOWNSTREAM -- 3DHP's
+ * `flowdirection` sets vertex order -- and `fromRamp.direction` says which side of the launch the
+ * reach is on. A reach downstream of the ramp is entered at its upstream end, which is `start`; a
+ * reach upstream of the ramp is entered at its downstream end, which is `end`. Verified against the
+ * bench: `fromRamp.direction: 'downstream'`, `start` 105 m from the launch, and `transitInM: 105`.
+ *
+ * ONE FUNCTION, TWO CALLERS, WHICH IS THE ONLY WAY THEY CANNOT DRIFT APART. assemblePlan() walks
+ * this and prefetchTransits() asks the router for exactly these pairs. The comment above the
+ * orientLegs() call in prefetchTransits already says what happens when those two disagree: the pair
+ * misses, the transit falls back to a straight line, and it marks itself unrouted.
+ *
+ * @param {object[]} candidates  IN THE ORDER THE APP OR THE MODEL CHOSE
+ * @param {number[]} launch      [lon, lat] of the ramp
+ * @returns {{legs: object[], facing: object[], river: boolean}} `legs` is what to walk, one entry
+ *          per PASS on a river and one per candidate on a lake; `facing[i]` is that entry's
+ *          orientation in the shape orientLegs returns.
+ */
+export function travelOrder(candidates, launch) {
+  const cands = Array.isArray(candidates) ? candidates : [];
+  // A RIVER DAY IS EVERY CANDIDATE BEING A RAMP-ANCHORED DRIFT FISHED TWICE. Anything else -- a lake,
+  // a mixed list, a river reach riverDay could not stamp, a pass count that is not two -- goes to the
+  // chain solver exactly as before. `trollPasses` other than 2 is not a river day this function knows
+  // how to lay out, and inventing an out-back-out-back shape nobody asked for is worse than solving
+  // it as a chain.
+  const river = cands.length > 0 && cands.every((c) => c && c.drift && c.fromRamp
+    && Number.isFinite(Number(c.fromRamp.m)) && Number(c.trollPasses) === 2
+    && Array.isArray(c.start) && Array.isArray(c.end));
+  if (!river) return { legs: cands, facing: orientLegs(cands, launch), river: false };
+
+  const up = (c) => c.fromRamp.direction === 'upstream';
+  const legs = [], facing = [];
+  const add = (c, outward) => {
+    // Outward is away from the launch. On a reach upstream of the ramp the entry is the drawn line's
+    // END, so the outward pass is the reversed one; downstream of the ramp it is the other way.
+    const flipped = outward ? up(c) : !up(c);
+    const start = flipped ? c.end : c.start;
+    const end = flipped ? c.start : c.end;
+    legs.push({ ...c, trollPasses: 1, pass: outward ? 1 : 2, ofPasses: 2 });
+    facing.push({ flipped, start, end, passes: 1, finish: end });
+  };
+  for (const c of cands) add(c, true);
+  for (let i = cands.length - 1; i >= 0; i--) add(cands[i], false);
+  return { legs, facing, river: true };
+}
+
 /** Cumulative distance along a LineString, so `s` from the pipeline resolves to a coordinate. */
 export function cumulative(coords) {
   const out = [0];
@@ -2433,6 +2506,40 @@ const ALWAYS_SHOW = new Set(['hazard', 'obstruction', 'pile', 'shallow', 'bridge
  * @param {object} o        {usableAh, windowMin, trollMph}
  * @returns {object[]} the day's legs in travel order, with `.day` describing how it was chosen
  */
+/**
+ * A REACH CUT TO A FRACTION OF ITSELF, FROM ITS NEAR END.
+ *
+ * Lifted out of riverDay() on 2026-09-18 because the assembler needs the same cut. riverDay chooses
+ * the reaches against 2.0 mph through the water, before a bait exists; the assembler re-fits the day
+ * once the bait -- and therefore the speed -- is known, and a reach that no longer fits whole has to
+ * be cut the same way there as here or the two disagree about what a trimmed reach is.
+ *
+ * FROM THE NEAR END, because a river day walks outward from the launch: the water given up is the
+ * water furthest out, which is what a turnaround is.
+ */
+export function trimReach(c, frac) {
+  const lengthM = c.lengthM * frac;
+  const cum = cumulative(c.coordinates || []);
+  const coords = (c.coordinates && cum.length)
+    ? sliceLine(c.coordinates, cum, 0, lengthM) : c.coordinates;
+  const scale = (v) => (Number.isFinite(Number(v)) ? Number((Number(v) * frac).toFixed(2)) : v);
+  return {
+    ...c,
+    lengthM: Math.round(lengthM),
+    coordinates: coords,
+    end: coords && coords.length ? coords[coords.length - 1] : c.end,
+    batteryAh: scale(c.batteryAh),
+    batteryAhUpstream: scale(c.batteryAhUpstream),
+    batteryAhDownstream: scale(c.batteryAhDownstream),
+    // SAID ON THE LEG, because a trimmed reach is not the reach the pack holds and anything that
+    // compares the two -- a saved plan, a re-plan, the card -- must be able to tell.
+    trimmedFrom: c.trimmedFrom ?? c.lengthM,
+    // The structure past the cut is not on this leg any more. `passes` is what the prompt and the
+    // assembler read, so it is the one that has to be told.
+    passes: (c.passes || []).filter((h) => h.atM <= lengthM),
+  };
+}
+
 export function riverDay(gated, o = {}) {
   const trollMph = o.trollMph ?? 2.0;
   const usableAh = Number(o.usableAh) > 0 ? Number(o.usableAh) : Infinity;
@@ -2447,13 +2554,32 @@ export function riverDay(gated, o = {}) {
   // OUT AND BACK OVER THE SAME WATER IS THE DAY, so every reach is costed twice: once up, once
   // down. On a river those two are not the same price, which is why both are carried. Where the
   // pack could not measure a current the two collapse to one number and this still holds.
+  // ── AND THE CLOCK IS NOT `2 x LENGTH / trollMph` EITHER ──────────────────────────────────────
+  //
+  // `trollMph` is a speed THROUGH THE WATER -- the only speed a bait responds to -- so over the ground
+  // the boat holds `trollMph - current` going up and `trollMph + current` coming back. The time is the
+  // sum of those two, and it is ALWAYS MORE than the round trip at `trollMph`, by the same convexity
+  // that killed the mean-head wind estimator: the slow half costs more than the fast half gives back.
+  //
+  //     congaree reach, 7,983 m at 0.44 mph of current
+  //       2 x 4.96 mi / 2.0            298 min      what this said
+  //       4.96/1.56 + 4.96/2.44        313 min      what it costs
+  //
+  // It is still not the whole answer, because the real speed comes from the BAIT and no bait has been
+  // chosen yet -- fitRiverDay() in plan-assemble.js re-fits the day once one has. This is the honest
+  // number available here, and being 5% short beats being 5% short in the cheap direction.
+  const minsBothWays = (lengthM, currentMph) => {
+    const cur = Number(currentMph);
+    if (!Number.isFinite(cur) || cur <= 0) return minutesFor(2 * lengthM, trollMph);
+    return minutesFor(lengthM, Math.max(0.1, trollMph - cur)) + minutesFor(lengthM, trollMph + cur);
+  };
   const costOf = (c) => {
     const up = Number(c.batteryAhUpstream);
     const down = Number(c.batteryAhDownstream);
     const ah = Number.isFinite(up) && Number.isFinite(down)
       ? up + down
       : (Number(c.batteryAh) || 0) * 2;
-    return { ah, min: minutesFor(2 * c.lengthM, trollMph) };
+    return { ah, min: minsBothWays(c.lengthM, c.currentMph) };
   };
 
   // How much fishable water each way is worth, so the richer bank of the launch goes first. This is
@@ -2476,28 +2602,6 @@ export function riverDay(gated, o = {}) {
   //
   // The turnaround is therefore a distance and not a reach boundary, which is what it always was --
   // reaches are how the path gets cut into legs, not what decides how far the boat goes.
-  const trimTo = (c, frac) => {
-    const lengthM = c.lengthM * frac;
-    const cum = cumulative(c.coordinates || []);
-    const coords = (c.coordinates && cum.length)
-      ? sliceLine(c.coordinates, cum, 0, lengthM) : c.coordinates;
-    const scale = (v) => (Number.isFinite(Number(v)) ? Number((Number(v) * frac).toFixed(2)) : v);
-    return {
-      ...c,
-      lengthM: Math.round(lengthM),
-      coordinates: coords,
-      end: coords && coords.length ? coords[coords.length - 1] : c.end,
-      batteryAh: scale(c.batteryAh),
-      batteryAhUpstream: scale(c.batteryAhUpstream),
-      batteryAhDownstream: scale(c.batteryAhDownstream),
-      // SAID ON THE LEG, because a trimmed reach is not the reach the pack holds and anything that
-      // compares the two -- a saved plan, a re-plan, the card -- must be able to tell.
-      trimmedFrom: c.lengthM,
-      // The structure past the cut is not on this leg any more. `passes` is what the prompt and the
-      // assembler read, so it is the one that has to be told.
-      passes: (c.passes || []).filter((h) => h.atM <= lengthM),
-    };
-  };
 
   const legs = [];
   let ah = 0, min = 0, fishedM = 0;
@@ -2520,7 +2624,7 @@ export function riverDay(gated, o = {}) {
                                         k.min > 0 ? minRoom / k.min : 1));
       binding = (k.ah > 0 && ahRoom / k.ah < (k.min > 0 ? minRoom / k.min : 1)) ? 'battery' : 'clock';
       if (frac >= 0.1) {
-        const t = trimTo(c, frac);
+        const t = trimReach(c, frac);
         const tk = costOf(t);
         ah += tk.ah; min += tk.min; fishedM += 2 * t.lengthM;
         legs.push({ ...t, trollPasses: 2 });

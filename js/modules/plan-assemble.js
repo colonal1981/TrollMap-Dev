@@ -24,7 +24,7 @@
  */
 
 import { ampHours, ampHoursAlong, minutesFor, metresBetween, cumulative, pointAt,
-         orientLegs } from './plan-candidates.js';
+         travelOrder, trimReach } from './plan-candidates.js';
 import { depthWindow, lightWindowFor, leadForDepth, jigheadForSwimbait,
          requiresInlineWeight, changeCostFor, presentationDelta,
          LURE_KNOWLEDGE, gpsWindowFor, sharedSpeedWindow } from '../data/lure-knowledge.js';
@@ -562,6 +562,147 @@ function deployedBaits(rods, deploy, lureByName) {
 }
 
 /**
+ * ONE PASS OVER ONE REACH, PRICED AT THE SPEED ITS BAITS WILL ACTUALLY BE TROLLED AT.
+ *
+ * Called twice and deliberately so: once by fitRiverDay() BEFORE any leg is built, to decide how many
+ * reaches the window and the battery can still afford now that the speed is known, and once per leg
+ * while they are built. Two assemblies of one measurement is the defect this project keeps finding,
+ * so there is one.
+ *
+ * `mph` is null when this is not a river pass with baits in the water — a lake leg, or a river leg
+ * with no measured current — and the caller falls back to whatever it fell back to before.
+ *
+ * @param {object}   c        the candidate, already one entry per pass (see travelOrder)
+ * @param {boolean}  flipped  the boat travels the drawn line in reverse, i.e. UPSTREAM
+ */
+function riverPassNumbers(c, flipped, deploy, rods, lureByName) {
+  const riverCur = (c.drift && Number.isFinite(Number(c.currentMph)) && Number(c.currentMph) > 0)
+    ? Number(c.currentMph) : null;
+  const baits = riverCur != null ? deployedBaits(rods, deploy, lureByName) : [];
+  const baitBand = baits.length ? sharedSpeedWindow(baits.map((b) => b.speed)) : null;
+  const upstream = !!flipped;
+  const held = baitBand ? groundSpeedFor(baitBand, riverCur, upstream) : null;
+  const coords = flipped
+    ? (c.coordinates ? c.coordinates.slice().reverse() : null)
+    : (c.coordinates || null);
+  const mph = held ? held.mph : null;
+  const min = mph != null ? minutesFor(c.lengthM, mph) : null;
+  const ah = (mph != null && riverCur != null && coords && coords.length > 1)
+    ? ampHoursAlong(coords, mph, { alongCurrentMph: upstream ? riverCur : -riverCur }).ah
+    : (mph != null ? ampHours(c.lengthM, mph) : null);
+  return { riverCur, baits, baitBand, upstream, held, coords, mph, min, ah };
+}
+
+/**
+ * ── HOW FAR OUT THE DAY CAN GO ONCE THE BAITS ARE KNOWN ─────────────────────────────────────────
+ *
+ * riverDay() decides how many reaches to take, against the battery and the window, and it has to do
+ * it BEFORE the model picks a bait -- so it prices the out-and-back at the app's 2.0 mph through the
+ * water. The moment the speed follows from the bait that stops being the cost. On his 2026-09-17
+ * Congaree bench the two reaches were budgeted at 541 minutes of a 540 minute window and came out at
+ * 630, because a Whopper Plopper's window tops out at 2.0 and its best is 1.6.
+ *
+ *     reach A, 7,983 m, 0.44 mph of current
+ *       riverDay, 2.0 mph both ways        298 min
+ *       direction-aware at 2.0             313 min
+ *       what the baits actually cost       397 min   (149 down at 2.0, 248 up at 1.2)
+ *
+ * SO THE DAY IS RE-FITTED HERE, WHERE THE SPEED IS REAL, AND WHOLE REACHES COME OFF THE FAR END.
+ * Whole ones, because half a reach is incoherent on a path that comes back over itself: fishing B
+ * out and not back leaves the boat 6.5 km from the ramp with the rods in. And from the FAR end,
+ * because that is the water the turnaround was always going to give up first.
+ *
+ * This replaces a guard that used to live in the pass loop -- "asked for N passes, stopped after
+ * N-1, pass N would end after <returnTime>". That loop does not run on a river any more, and
+ * dropping the second pass of the last reach was the wrong shape anyway: it left him at the far end.
+ *
+ * NOTHING IS DROPPED WITHOUT SAYING SO, and the sentence names the reach and what it would have cost.
+ *
+ * @returns {{legs: object[], facing: object[], dropped: string[]}}
+ */
+function fitRiverDay(legList, facing, o, rods, windowMin, transitMph) {
+  const n = legList.length / 2;
+  if (!Number.isInteger(n) || n < 1) return { legs: legList, facing, dropped: [] };
+  const usableAh0 = Number(o.usableAh) > 0 ? Number(o.usableAh) : Infinity;
+  // ── THE HOP TO THE WATER IS SPENT BEFORE A ROD GOES IN, SO IT COMES OFF THE BUDGET FIRST ────────
+  //
+  // riverDay() counts only the fishing, and this function inherited that. On his bench the reach came
+  // out at 541 minutes of a 540 minute window -- one minute, and it was the 105 m hop from Barney
+  // Jordan to the head of the first reach. Charged BOTH WAYS: the last fished pass ends at the near
+  // end of the first reach, so the same hop is the run home unless it is inside HOME_TOLERANCE_M, and
+  // reserving it when it is free is the safe direction to be wrong in.
+  const hopM = Number(legList[0] && (legList[0].transitInM ?? legList[0].fromRampM));
+  const hopMin = Number.isFinite(hopM) && hopM > 0 ? 2 * minutesFor(hopM, transitMph) : 0;
+  const hopAh = Number.isFinite(hopM) && hopM > 0 ? 2 * ampHours(hopM, transitMph) : 0;
+  const usableAh = usableAh0 - hopAh;
+  const room0 = (Number.isFinite(windowMin) && windowMin > 0 ? windowMin : Infinity) - hopMin;
+  // Each reach's own out-and-back, at the speed its own two baits will be held at.
+  const cost = [];
+  for (let i = 0; i < n; i++) {
+    const out = riverPassNumbers(legList[i], facing[i].flipped,
+                                (o.deploy && o.deploy[legList[i].runId]) || null, rods, o.lureByName);
+    const j = legList.length - 1 - i;
+    const back = riverPassNumbers(legList[j], facing[j].flipped,
+                                 (o.deploy && o.deploy[legList[j].runId]) || null, rods, o.lureByName);
+    // A reach with no priced pass is one this function cannot judge, so it is never the reason to cut.
+    const min = (out.min ?? 0) + (back.min ?? 0);
+    const ah = (out.ah ?? 0) + (back.ah ?? 0);
+    cost.push({ min, ah, priced: out.min != null && back.min != null });
+  }
+  let keep = n, dropped = [];
+  const total = (k) => cost.slice(0, k).reduce((t, x) => ({ min: t.min + x.min, ah: t.ah + x.ah }),
+                                               { min: 0, ah: 0 });
+  while (keep > 1) {
+    const t = total(keep);
+    if (t.min <= room0 && t.ah <= usableAh) break;
+    keep -= 1;
+  }
+  if (keep === n) return { legs: legList, facing, dropped: [] };
+
+  // ── AND THE FIRST REACH THAT DOES NOT FIT WHOLE IS CUT, NOT BINNED ──────────────────────────────
+  //
+  // Dropping whole reaches alone left 142 of 540 minutes unspendable on his own bench — two hours of
+  // his day handed back because one 6.5 km reach would not fit. riverDay() already solved this shape
+  // and the cut is its own: trimReach(), from the near end, because the water given up is the water
+  // furthest out. Below a tenth of a reach there is no leg worth drawing, which is riverDay's floor
+  // and is here for its reason rather than a second opinion about it.
+  const spent = total(keep);
+  const room = { min: room0 - spent.min, ah: usableAh - spent.ah };
+  let frac = 0;
+  if (keep < n && cost[keep].priced && cost[keep].min > 0) {
+    frac = Math.max(0, Math.min(Number.isFinite(room.min) ? room.min / cost[keep].min : 1,
+                                Number.isFinite(room.ah) ? room.ah / cost[keep].ah : 1));
+  }
+  const cut = frac >= 0.1 ? trimReach(legList[keep], frac) : null;
+
+  const kept = [], keptFacing = [];
+  for (let i = 0; i < keep; i++) { kept.push(legList[i]); keptFacing.push(facing[i]); }
+  if (cut) {
+    const j = legList.length - 1 - keep;
+    kept.push({ ...cut, pass: 1, ofPasses: 2 });
+    keptFacing.push({ ...facing[keep], end: cut.end, finish: cut.end });
+    // The way back over the cut water: same reach, the other way, entered where the outward pass
+    // stopped. `trimReach` cuts from the near end, so the far end of the cut IS the turnaround.
+    kept.push({ ...cut, pass: 2, ofPasses: 2 });
+    keptFacing.push({ ...facing[j], start: cut.end, end: facing[keep].start, finish: facing[keep].start });
+  }
+  for (let i = keep - 1; i >= 0; i--) {
+    const j = legList.length - 1 - i;
+    kept.push(legList[j]); keptFacing.push(facing[j]);
+  }
+  for (let i = keep; i < n; i++) {
+    const what = (i === keep && cut)
+      ? `is cut to ${Math.round(100 * frac)}% of itself — ${cut.lengthM} m of ${Math.round(legList[i].lengthM)}`
+      : 'is off the day';
+    dropped.push(`${legList[i].runId} ${what}: with the baits chosen for it, trolling it out and `
+               + `back whole costs ${Math.round(cost[i].min)} min and ${cost[i].ah.toFixed(1)} Ah, `
+               + `and the day has neither. The reaches were chosen against 2.0 mph before a bait was `
+               + `picked; this is the same day priced at the speed those baits are actually held at.`);
+  }
+  return { legs: kept, facing: keptFacing, dropped };
+}
+
+/**
  * THE GROUND SPEED TO HOLD so the baits in the water are inside their own window, one direction at
  * a time.
  *
@@ -656,6 +797,28 @@ export function assemblePlan(o) {
   const transit = o.transit || straight;
   const candidates = o.candidates || [];
 
+  // WHAT THE BOAT ACTUALLY DOES, IN ORDER — decided once, in plan-candidates.js. On a lake that is
+  // the candidates as given with orientLegs' orientation; ON A RIVER IT IS ONE PATH OUT AND ONE PATH
+  // BACK, so `legList` carries one entry per PASS and the hops between them are zero by construction.
+  // See travelOrder(). prefetchTransits() calls the same function on the same list before it asks the
+  // router for anything, so the pairs it fetched are exactly the pairs walked below. If this ever
+  // stops matching, every flipped leg silently degrades to an unrouted straight line.
+  //
+  // READ HERE, ABOVE THE ROD-USAGE MAPS, because "is this rod ever used again" has to be asked of the
+  // day the boat really does. On a river a reach appears twice, so a change before the second reach
+  // is justified by the rods coming back over the first -- and asked of the unexpanded list it read
+  // as wasted. That warning fired on his 2026-09-17 bench and was wrong.
+  const t0 = travelOrder(candidates, o.launch);
+  // AND ON A RIVER, RE-FITTED TO THE WINDOW NOW THAT THE SPEED IS KNOWN. See fitRiverDay(): the
+  // reaches were chosen against 2.0 mph before a bait existed, and the bait is what sets the speed.
+  const riverDayPath = t0.river;
+  const fitted = riverDayPath
+    ? fitRiverDay(t0.legs, t0.facing, o, (o.loadout && o.loadout.rods) || [],
+                  returnMin != null ? returnMin - launchMin : Infinity, transitMph)
+    : { legs: t0.legs, facing: t0.facing, dropped: [] };
+  const legList = fitted.legs;
+  const facing = fitted.facing;
+
   const legs = [];
   const changes = [];
   const warnings = [];
@@ -687,6 +850,12 @@ export function assemblePlan(o) {
   const lightOn = (startMin, minutes) =>
     legLightFor(o.waterState, o.weatherByHour, formatClock(startMin), minutes) || undefined;
 
+  for (const w of fitted.dropped) warnings.push(w);
+
+  // What the bait ceiling decided for each reach, so the return pass over the same water reads the
+  // answer instead of recomputing it and saying it twice. See the note at capBaitDepth's call.
+  const rodPlanByRun = new Map();
+
   const stopsByRun = new Map();
   for (const s of (o.stops || [])) {
     if (!stopsByRun.has(s.runId)) stopsByRun.set(s.runId, []);
@@ -710,20 +879,23 @@ export function assemblePlan(o) {
   // one the change happens before. Stops are read RAW here, before structure resolution -- a
   // change justified by a stop that is later refused stays, because dropping a legitimate change
   // is a worse failure than keeping a marginal one.
-  const legOrder = new Map(candidates.map((c, i) => [c.runId, i]));
+  // THE FIRST TIME THE BOAT MEETS THIS RUN, because that is where a change "before" it happens. A
+  // river reach appears twice in `legList` and a Map built by assignment would keep the return pass.
+  const legOrder = new Map();
+  legList.forEach((c, i) => { if (!legOrder.has(c.runId)) legOrder.set(c.runId, i); });
   const rodLastUsed = new Map();
   const useRod = (id, i) => {
     if (!id) return;
     if (!rodLastUsed.has(id) || rodLastUsed.get(id) < i) rodLastUsed.set(id, i);
   };
-  candidates.forEach((c, i) => {
+  legList.forEach((c, i) => {
     const d = (o.deploy && o.deploy[c.runId]) || {};
     useRod(d.port, i);
     useRod(d.starboard, i);
     for (const s of (stopsByRun.get(c.runId) || [])) for (const r of (s.rods || [])) useRod(r, i);
   });
 
-  const planned = new Set(candidates.map((c) => c.runId));
+  const planned = new Set(legList.map((c) => c.runId));
   for (const s of (o.stops || [])) {
     if (!planned.has(s.runId)) warnings.push(`dropped a stop on ${s.runId} — that run is not in the plan`);
   }
@@ -735,18 +907,17 @@ export function assemblePlan(o) {
 
   const rods = (o.loadout && o.loadout.rods) || [];
 
-  // WHICH WAY ROUND EACH PASS IS TROLLED — decided once, in plan-candidates.js, from straight-line
-  // distance only. prefetchTransits() calls the same function on the same list before it asks the
-  // router for anything, so the pairs it fetched are exactly the pairs walked below. If this ever
-  // stops matching, every flipped leg silently degrades to an unrouted straight line.
-  const facing = orientLegs(candidates, o.launch);
-
-  for (const [ci, c] of candidates.entries()) {
+  for (const [ci, c] of legList.entries()) {
+    // THE OUTWARD PASS OWNS THE STOPS AND THE LURE CHANGES. On a river a reach appears twice in this
+    // list, and repeating a stop or a retie because the boat came back over the same water would
+    // invent time and knots he never agreed to spend. Same rule the pass loop already applied when
+    // the second pass was an inner loop; it just has to be said here now that it is a sibling.
+    const firstVisit = (c.pass ?? 1) === 1;
     // A lure change happens where the boat is, before the leg starts — so it carries the current
     // cumulative distance, not a time. Cost comes from the rod's rig, not from the model's
     // opinion: a snap is seconds, a fluoro leader is a knot with wet hands. A change naming a rod
     // that is not in the loadout is a change to a seventh rod, and is refused.
-    for (const ch of (changeByRun.get(c.runId) || [])) {
+    for (const ch of (firstVisit ? (changeByRun.get(c.runId) || []) : [])) {
       const rod = rods.find((r) => r.id === ch.rodId);
       if (!rod) { warnings.push(`dropped a lure change on ${ch.rodId} — no such rod in the loadout`); continue; }
       const usedAt = rodLastUsed.has(ch.rodId) ? rodLastUsed.get(ch.rodId) : -1;
@@ -848,14 +1019,16 @@ export function assemblePlan(o) {
     // `drift` exists only on the lines river-drifts.js lays out, and `currentMph` is Q/A off the
     // centreline's charted cross-section against the live discharge. Both present is a river leg
     // carrying a measured current, which is the only case where the GPS number and the bait's number
-    // differ -- so it is the only case that takes this path. See the block above TROLL_MPH_MIN.
-    const riverCur = (c.drift && Number.isFinite(Number(c.currentMph)) && Number(c.currentMph) > 0)
-      ? Number(c.currentMph) : null;
-    const baits = riverCur != null ? deployedBaits(rods, deploy, o.lureByName) : [];
-    const baitBand = baits.length ? sharedSpeedWindow(baits.map((b) => b.speed)) : null;
+    // differ -- so it is the only case that takes this path. riverPassNumbers() is the same call
+    // fitRiverDay() made a hundred lines up to decide this leg was affordable at all.
+    const P = riverPassNumbers(c, flipped, deploy, rods, o.lureByName);
+    const { riverCur, baits, baitBand } = P;
     // TWO RODS SHARE ONE BOAT, SO A PAIR WHOSE WINDOWS DO NOT MEET COSTS ONE OF THEM. Said once per
-    // leg, naming both baits, because the fix is a bait change and that is the model's call.
-    if (baitBand && baitBand.overlap === false) {
+    // REACH, naming both baits, because the fix is a bait change and that is the model's call -- and
+    // because a river reach is fished out and back, so without `firstVisit` the same sentence arrives
+    // twice about one decision. The over-driven warning further down is NOT deduped that way, on
+    // purpose: that one is about the direction and the two directions are genuinely different news.
+    if (firstVisit && baitBand && baitBand.overlap === false) {
       const [slow, fast] = baits[0].speed.max <= baits[1].speed.max ? [baits[0], baits[1]]
                                                                     : [baits[1], baits[0]];
       warnings.push(`${c.runId} has no one speed that fishes both baits: ${fast.name} needs at `
@@ -880,9 +1053,8 @@ export function assemblePlan(o) {
     // ignored, said out loud, fallen back from.
     let legMph = trollMph;
     let legHeld = null;
-    if (baitBand) {
-      const g = groundSpeedFor(baitBand, riverCur, upstreamOn(1));
-      legMph = g.mph; legHeld = g;
+    if (P.mph != null) {
+      legMph = P.mph; legHeld = P.held;
     } else if (c.speedMph != null) {
       const want = Number(c.speedMph);
       if (want >= TROLL_MPH_MIN && want <= TROLL_MPH_MAX) legMph = want;
@@ -894,9 +1066,9 @@ export function assemblePlan(o) {
     // Drawn the way it will be RUN, and priced the same way. The GPX, the map and the phone's "what
     // is next" all read this array in order, so a flipped leg whose geometry still ran the other way
     // would draw the boat backwards along its own track -- and cost the current the wrong way round.
-    const trollCoords = flipped
-      ? (c.coordinates ? c.coordinates.slice().reverse() : [legStart, legEnd])
-      : (c.coordinates || [legStart, legEnd]);
+    const trollCoords = P.coords && P.coords.length ? P.coords
+      : (flipped ? (c.coordinates ? c.coordinates.slice().reverse() : [legStart, legEnd])
+                 : (c.coordinates || [legStart, legEnd]));
     const mins = minutesFor(c.lengthM, legMph);
     // ── THE AMPS COME FROM THE WATER SPEED AND THE CLOCK FROM THE GROUND SPEED ───────────────────
     //
@@ -906,10 +1078,11 @@ export function assemblePlan(o) {
     // current-blind cost reads the dearer direction as the cheaper. `ampHoursAlong()` walks the real
     // geometry and charges the draw at through-water speed; see its note in plan-candidates.js. No
     // wind here -- the assembler is never handed one -- and with nothing to resolve the two agree.
-    const a = riverCur != null
-      ? ampHoursAlong(trollCoords, legMph,
-                      { alongCurrentMph: upstreamOn(1) ? riverCur : -riverCur }).ah
-      : ampHours(c.lengthM, legMph);
+    const a = (P.ah != null && legMph === P.mph) ? P.ah
+      : (riverCur != null
+          ? ampHoursAlong(trollCoords, legMph,
+                          { alongCurrentMph: upstreamOn(1) ? riverCur : -riverCur }).ah
+          : ampHours(c.lengthM, legMph));
     if (legHeld && legHeld.held === false) {
       warnings.push(`${c.runId} cannot be trolled slow enough going `
                   + `${upstreamOn(1) ? 'upstream' : 'downstream'}: ${riverCur} mph of current puts `
@@ -928,7 +1101,7 @@ export function assemblePlan(o) {
     for (const h of (c.passes || [])) byId.set(h.id, h);
 
     const stops = [];
-    for (const s of (stopsByRun.get(c.runId) || [])) {
+    for (const s of (firstVisit ? (stopsByRun.get(c.runId) || []) : [])) {
       const hit = byId.get(s.structureId);
       if (!hit) {
         // The model named something it was not handed. This is the whole guard: refuse it, say so,
@@ -1011,12 +1184,25 @@ export function assemblePlan(o) {
     // may be copied onto pass 2 unchanged.
     const waterMph = riverCur != null
       ? Number((legMph + (upstreamOn(1) ? riverCur : -riverCur)).toFixed(2)) : legMph;
-    const rodPlan = capBaitDepth(rods, deploy, Number(c.maxRunDepthFt ?? c.depthFt), waterMph,
-                                 o.lureByName, c.runId, warnings, fish,
-                                 // THE LEG'S OWN ENVELOPE, so a one-shoal ceiling can be told apart
-                                 // from water that is shallow all the way along. See capBaitDepth.
-                                 { medianFt: Number(c.depthFt), minFt: Number(c.depthMinFt),
-                                   maxFt: Number(c.depthMaxFt) }, legLight);
+    // ── JUDGED ONCE PER REACH, NOT ONCE PER PASS ────────────────────────────────────────────────
+    //
+    // On a river the same water is fished out and back, and the bait's depth is identical both ways
+    // -- that is the whole point of handing this the WATER speed rather than the ground speed, a few
+    // lines up. So the answer is the same on the return pass, and computing it again produced every
+    // "put a Squarebill on no lead at all" sentence twice about one rig. Cached on the runId; a leg
+    // the boat has not met before always computes.
+    let rodPlan;
+    if (!firstVisit && rodPlanByRun.has(c.runId)) {
+      rodPlan = rodPlanByRun.get(c.runId);
+    } else {
+      rodPlan = capBaitDepth(rods, deploy, Number(c.maxRunDepthFt ?? c.depthFt), waterMph,
+                             o.lureByName, c.runId, warnings, fish,
+                             // THE LEG'S OWN ENVELOPE, so a one-shoal ceiling can be told apart
+                             // from water that is shallow all the way along. See capBaitDepth.
+                             { medianFt: Number(c.depthFt), minFt: Number(c.depthMinFt),
+                               maxFt: Number(c.depthMaxFt) }, legLight);
+      rodPlanByRun.set(c.runId, rodPlan);
+    }
 
     legs.push({
       id: `L${++li}`, type: 'troll',
@@ -1026,6 +1212,9 @@ export function assemblePlan(o) {
       // are what a lure depth is judged against. Absent on a pack with no envelope profile.
       depthFt: c.depthFt, depthMinFt: c.depthMinFt ?? null, depthMaxFt: c.depthMaxFt ?? null,
       speedMph: legMph,
+      // WHICH PASS OVER THIS WATER THIS IS. Stamped here for a river day, whose two passes are
+      // siblings in `legList` rather than an inner loop, and by the pass loop below for a lake.
+      pass: c.pass, ofPasses: c.ofPasses,
       deploy,
       // WHAT THIS LEG ACTUALLY FISHES, where it differs from the bag. Only the rods capBaitDepth
       // had to move, keyed by rod id: { R2: { leadFt, runsDepthFt } }. Absent when the loadout's
