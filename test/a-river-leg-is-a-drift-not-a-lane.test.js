@@ -475,18 +475,39 @@ test('a scour hole reaches the model as a scour hole, with its depth and its ben
   assert.match(rec.what, /225 m bend radius/, 'the radius is a measurement, not a category');
 });
 
-test('a point on the inside of a bend is the app saying "point bar"', () => {
+test('a point on the inside of a bend IS an inside bend, and is called one', () => {
   // Card-wide from one sign convention: holes 65% outside, coves 88%, creek mouths 94% -- and points
   // 65% INSIDE, which is where a point bar forms. Two feature types river physics puts on opposite
   // banks, coming out on opposite banks.
+  //
+  // Ryan, 2026-09-18: *"i am seeing waypoints that say cove... but there are no coves on a river"*.
+  // So the side is now the NAME and not a clause after it -- see markLabel(). And the clause is
+  // gone with it, because "inside bend, on the inside of the bend" is the same fact twice.
   const pt = {
     type: 'Feature', geometry: { type: 'Point', coordinates: [-81, 34] },
     properties: { kind: 'point', id: 'point_9', deep_side_ft: 11, bulge_m: 40,
                   bend_side: 'inside', bend_r_m: 600 },
   };
   const rec = [...structureIndex([pt]).grid.values()].flat()[0];
-  assert.match(rec.what, /^point/);
-  assert.match(rec.what, /on the inside of the bend/);
+  assert.match(rec.what, /^inside bend/);
+  assert.doesNotMatch(rec.what, /on the inside of the bend/, 'said once, not twice');
+  assert.match(rec.what, /600 m bend radius/, 'the measurement stays');
+  assert.equal(rec.bendSide, 'inside', 'and it is a field now, not only a sentence');
+});
+
+test('a cove on the outside of a bend is an outside bend, and one on the inside is still a cove', () => {
+  // 4,530 coves across the 57 river packs and 90% of the stamped ones are on the OUTSIDE -- the cut
+  // bank, the deepest water in the bend. The 333 stamped INSIDE keep the word, because on the inside
+  // of a bend it may well be one. The rename claims only what the pack measured.
+  const mk = (side) => ({
+    type: 'Feature', geometry: { type: 'Point', coordinates: [-81, 34] },
+    properties: { kind: 'cove', id: `cove_${side}`, deep_side_ft: 9, bulge_m: 80,
+                  bend_side: side, bend_r_m: 300 },
+  });
+  const what = (side) => [...structureIndex([mk(side)]).grid.values()].flat()[0].what;
+  assert.match(what('outside'), /^outside bend/);
+  assert.match(what('inside'), /^cove/);
+  assert.match(what('inside'), /on the inside of the bend/, 'the side still gets said');
 });
 
 test('a lake feature says nothing about bends, because it has no bend to speak of', () => {

@@ -923,7 +923,7 @@ function describeStructure(kind, p) {
     // is printed on the chart the angler is looking at. No depth — see poiSpotFeatures().
     bits.push(p.name || kind);
   } else {
-    bits.push(kind === 'point' ? 'point' : kind);
+    bits.push(markLabel(kind, p.bend_side));
     if (n(p.bulge_m, ' m bulge')) bits.push(n(p.bulge_m, ' m bulge'));
     if (n(p.deep_side_ft, ' ft on the deep side', 1)) bits.push(n(p.deep_side_ft, ' ft on the deep side', 1));
   }
@@ -946,10 +946,42 @@ function describeStructure(kind, p) {
   // is no bend threshold anywhere in this pipeline on purpose: the radius is measured and a cutoff
   // would be invented. Whoever reads it picks.
   if (p.bend_side === 'outside' || p.bend_side === 'inside') {
-    bits.push(`on the ${p.bend_side} of the bend`);
+    // NOT REPEATED WHERE THE NAME ALREADY SAYS IT. `markLabel()` turns a cove on the outside into
+    // "outside bend"; following that with "on the outside of the bend" is the same fact twice.
+    if (markLabel(kind, p.bend_side) === String(kind)) bits.push(`on the ${p.bend_side} of the bend`);
     if (n(p.bend_r_m, ' m bend radius')) bits.push(n(p.bend_r_m, ' m bend radius'));
   }
   return bits.filter(Boolean).join(', ');
+}
+
+/**
+ * WHAT TO CALL THIS THING, IN ONE PLACE, BECAUSE IT WAS BEING CALLED TWO THINGS.
+ *
+ * Ryan, 2026-09-18, looking at a real export: *"i am seeing waypoints that say cove... but there
+ * are no coves on a river"*. There are not. `points_and_coves()` in build_water_features.py is a
+ * LAKE shoreline routine -- it finds a bulge in the bank, probes the depth beyond it and back
+ * toward the chord, and calls it a point if the far side is deeper and a cove if the near side is.
+ * On a lake that is exactly right. On a river every meander is a bulge and one of the two probes
+ * always lands on the bank: on the Congaree `shallow_side_ft` is 0.0 on all 349 of them, which is
+ * dry ground. So the name was decided by which way the bank went.
+ *
+ * MEASURED ACROSS THE 57 RIVER PACKS: 4,530 coves, and 90% of the ones with a side stamped are on
+ * the OUTSIDE of the bend -- the cut bank, the scoured side, the deepest water in the bend and the
+ * best thing on the reach. The points are the mirror: 2,288 of the 3,526 stamped are INSIDE, which
+ * is where a point bar forms.
+ *
+ * SO THE RENAME IS ONLY WHERE THE PACK SAYS WHICH SIDE, and only to the thing that side means. A
+ * lake feature has no `bend_side` and keeps its own name, which is the right one there. A cove
+ * stamped INSIDE stays a cove -- 333 of them across the card -- because on the inside of a bend it
+ * may well be one.
+ *
+ * @param {string} kind      the pack's kind
+ * @param {?string} bendSide 'outside' | 'inside' | null
+ */
+export function markLabel(kind, bendSide) {
+  if (bendSide === 'outside' && kind === 'cove') return 'outside bend';
+  if (bendSide === 'inside' && kind === 'point') return 'inside bend';
+  return String(kind || 'mark').replace(/_/g, ' ');
 }
 
 /**
@@ -1049,6 +1081,11 @@ export function structureIndex(...featureLists) {
         // featureReachM() for which fields are trusted and, more to the point, which are not.
         reachM: featureReachM(kind, p),
         what: describeStructure(kind, p),
+        // WHICH SIDE OF THE BEND, CARRIED AS A FIELD AND NOT ONLY INSIDE A SENTENCE. describeStructure
+        // has said it in prose since 2026-09-16, which reaches the model and nothing else. The GPX
+        // waypoint on the Garmin is built from the mark's `type`, so a river bend arrived on the
+        // chartplotter called a `cove`. One field, and the two agree.
+        bendSide: (p.bend_side === 'outside' || p.bend_side === 'inside') ? p.bend_side : null,
       };
       const key = `${Math.floor(lon / RESOLVE_CELL)},${Math.floor(lat / RESOLVE_CELL)}`;
       if (!grid.has(key)) grid.set(key, []);
@@ -1323,7 +1360,7 @@ export function kindHits(coords, cum, index, maxOffM, kind, asType = kind) {
           // negative: a line INSIDE a hole is on it, and 0 is what that means -- a negative would
           // walk straight into scoreWindow's `1 - d/maxOffM` and score above a direct hit.
           const edge = Math.max(0, best - (r.reachM || 0));
-          if (edge <= maxOffM) out.push({ s: bestAt, t: asType, d: edge });
+          if (edge <= maxOffM) out.push({ s: bestAt, t: asType, d: edge, side: r.bendSide || undefined });
         }
       }
     }

@@ -40,7 +40,7 @@
 
 import { state } from '../core/state.js';
 import { LEG_COLORS, TRANSIT_COLOR, RETURN_COLOR } from './plan-to-timeline.js';
-import { metresBetween } from './plan-candidates.js';
+import { metresBetween, markLabel } from './plan-candidates.js';
 
 /**
  * The colour a leg draws in, on the map and on its card. One palette, one function, so a line on
@@ -284,7 +284,85 @@ function pointAtM(plan, atM) {
   const last = (legs[legs.length - 1] || {}).coordinates || [];
   if (!first.length) return null;
   return atM <= 0 ? first[0] : (last[last.length - 1] || first[0]);
+}// ─────────────────────────────────────────────────────────────────────────────────────────────
+// WHAT THE CHARTPLOTTER DRAWS, AND WHY IT WAS ALL ONE ICON
+//
+// Ryan, 2026-09-18: *"i dont remember any symbols being used on my echomap..."*. He would not:
+// every chart mark this file wrote carried `sym: 'Shallow Water'` -- a 25 ft hole and a 1 ft
+// sandbar drew the same icon, and in the day he exported it was 80 marks and one exception.
+//
+// AND `Shallow Water` IS PROBABLY NOT EVEN A SYMBOL THE UNIT HAS. His ECHOMAP UHD2 93sv wrote its
+// own GPX of 788 waypoints and used seven symbols, none of them that one, so the string was very
+// likely falling through to the default pin on every mark.
+//
+// THE NAMES BELOW ARE FROM HIS OWN HARDWARE, not from a table on the web -- the handheld symbol
+// lists Garmin publishes carry none of this. `Triangle, Red`, `Square, Red`, `Underwater Tree`,
+// `Boat Ramp`, `Flag, Green`, `Flag, Red` and `Waypoint` came out of exports he made; `Ledge`,
+// `Hump`, `Brush Pile`, `Dock`, `Fish Attractor`, `Rocks`, `Stump`, `Reef`, `Laydown` and
+// `Underwater Grass` are ones he read off the picker. The shape-comma-colour form is his unit's,
+// and the full grid -- circle, diamond, flag, pin, square, triangle in red, yellow, blue, green --
+// is his account of what the picker holds.
+//
+// A NAME THE UNIT DOES NOT KNOW COSTS NOTHING. It falls back to the default pin, which is what
+// every mark draws today, so a wrong guess here is exactly the status quo and a right one is free.
+const MARK_SYMBOL = {
+  ledge: 'Ledge',
+  hump: 'Hump',
+  pile: 'Brush Pile',
+  timber: 'Underwater Tree',
+  dock: 'Dock',
+  dock_line: 'Dock',
+  dock_cluster: 'Dock',
+  attractor: 'Fish Attractor',
+  // A HAZARD IS A ROCK OFTEN ENOUGH AND NEVER A FISH. `Rocks` is the only shape in the set that
+  // reads as "do not run into this"; where the thing is not rocks the icon is still a warning,
+  // which is the half that matters at 2 mph.
+  hazard: 'Rocks',
+  obstruction: 'Rocks',
+  // Shallow is red by definition, not by measurement, so this one does not wait for a depth.
+  shallow: 'Triangle, Red',
+};
+
+// The kinds with no symbol of their own get a shape, and the shape says WHAT while the colour
+// says HOW DEEP -- see markSymbol(). A hole is a diamond because it is the prize; the bends are
+// the two halves of one thing so they are the two roundest shapes; a creek mouth is a junction
+// and squares read as junctions.
+const MARK_SHAPE = {
+  hole: 'Diamond',
+  'outside bend': 'Circle',
+  'inside bend': 'Triangle',
+  cove: 'Circle',
+  point: 'Triangle',
+  creek_mouth: 'Square',
+};
+
+// ── DEPTH IS THE COLOUR, BECAUSE DEPTH IS WHAT HE STEERS ON ───────────────────────────────────
+//
+// The number is already in the waypoint's NAME -- `hole 25ft` -- and a name on a chartplotter is
+// read by zooming in on one mark at a time. The colour is read across the whole screen at once.
+//
+// THE BANDS ARE NOT INVENTED HERE. Six feet is TRANSIT_MIN_DEPTH_FT, the figure Ryan gave on
+// 2026-08-30 for how shallow he will cross water he is not fishing -- "i am not portaging the
+// kayak over an island" -- and three is where the charted contours stop resolving a channel on
+// the rivers he fishes. Twelve is two sixes: deep enough to cross twice over.
+const MARK_COLOUR = [[12, 'Blue'], [6, 'Green'], [3, 'Yellow'], [0, 'Red']];
+
+/**
+ * The Garmin symbol for one chart mark. `Waypoint` -- the default pin -- where nothing is known,
+ * because an icon that claims a depth nobody measured is the `0 ft relief` defect wearing a colour.
+ */
+export function markSymbol(type, bendSide, depthFt) {
+  const named = MARK_SYMBOL[type];
+  if (named) return named;
+  const shape = MARK_SHAPE[markLabel(type, bendSide)] || MARK_SHAPE[type];
+  if (!shape) return 'Waypoint';
+  const d = Number(depthFt);
+  if (!Number.isFinite(d) || d <= 0) return 'Waypoint';
+  const band = MARK_COLOUR.find(([floor]) => d >= floor);
+  return `${shape}, ${band[1]}`;
 }
+
+
 
 
 export function planWaypoints(plan, launch = null, runId = null, opts = {}) {
@@ -344,7 +422,11 @@ export function planWaypoints(plan, launch = null, runId = null, opts = {}) {
       // SHORT, AND THE LURE LAST SO TRUNCATION EATS THE LEAST USEFUL END. The 93sv clips a long
       // name, and this is read at 2 mph with wet hands: which rod, then what goes on it.
       name: `${rod} \u00b7 ${to}`.slice(0, 30),
-      lat: at[1], lon: at[0], sym: 'Fish',
+      // NOT `Fish`. His unit's own export used seven symbols and that was not one of them, so it
+      // was very likely drawing as the default pin. A blue pin is in the grid he read off the
+      // picker, and a bait change is an ACTION rather than a piece of structure -- so it gets the
+      // one shape nothing else in this file uses.
+      lat: at[1], lon: at[0], sym: 'Pin, Blue',
       lureChange: true, scoutWaypoint: true, planRunId: runId,
       changeId: c.id, atM: c.atM,
       structureType: null,
@@ -393,8 +475,8 @@ export function planWaypoints(plan, launch = null, runId = null, opts = {}) {
         // the name -- an empty field reads as "the chart does not say", a zero would not.
         const d = Number.isFinite(m.depthFt) ? ` ${Math.round(m.depthFt)}ft` : '';
         out.push({
-          name: `${String(m.type || 'mark').replace(/_/g, ' ')}${d}`,
-          lat: at[1], lon: at[0], sym: 'Shallow Water',
+          name: `${markLabel(m.type, m.side)}${d}`,
+          lat: at[1], lon: at[0], sym: markSymbol(m.type, m.side, m.depthFt),
           chartMark: true, scoutWaypoint: true, planRunId: runId,
           legId: leg.id, markId: m.id, atM: (leg.startM || 0) + (m.atM || 0),
           depth: m.depthFt ?? null,

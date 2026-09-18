@@ -1368,6 +1368,8 @@ export function assemblePlan(o) {
       // line AS DRAWN, and the boat may run it the other way.
       marks: (c.passes || []).map((h) => ({
         id: h.id, type: h.type, what: h.what, at: h.at,
+        // WHICH SIDE OF THE BEND, so the GPX waypoint can be called what it is. See markLabel().
+        side: h.side,
         atM: flipped ? Math.max(0, Math.round(legLen - h.atM)) : h.atM,
         offM: h.offM,
         // Null stays null. A waypoint labelled with a guessed depth would poison the very
