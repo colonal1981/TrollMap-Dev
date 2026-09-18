@@ -59,23 +59,28 @@ test('three positions, and picking a side actually moves the boat', () => {
   const drifts = riverDriftRuns(eastwardRiver(), { slug: 'test_river', laterals: LATERALS });
   assert.ok(drifts.length >= 3, 'at least one reach per lateral position');
   const sides = new Set(drifts.map((d) => d.properties.drift.side));
-  assert.deepEqual([...sides].sort(), ['mid_channel', 'quarter_left', 'quarter_right']);
+  assert.deepEqual([...sides].sort(), ['channel', 'quarter_left', 'quarter_right']);
 
   const first = (side) => drifts.find((d) => d.properties.drift.side === side
                                           && d.properties.reachFromM === 0);
-  const left = first('quarter_left'), mid = first('mid_channel'), right = first('quarter_right');
+  const left = first('quarter_left'), right = first('quarter_right');
+  // MEASURED AGAINST THE CENTRELINE, NOT AGAINST THE OTHER LINE. The middle used to be a lateral
+  // and both quarters were checked against it; since 2026-09-18 the middle line is the CHANNEL and
+  // its position is the chart's answer, so a quarter checked against it would be testing the
+  // fixture's depth profile instead of the offset convention.
+  const centre = eastwardRiver().features[0].geometry.coordinates[0][1];
   // Looking downstream on an eastward river, left is NORTH. If this inverts, every drift picks up
   // the structure on the wrong bank and nothing else in the file would say so.
-  assert.ok(left.geometry.coordinates[0][1] > mid.geometry.coordinates[0][1],
-            'quarter-left sits north of mid-channel on an eastward river');
-  assert.ok(right.geometry.coordinates[0][1] < mid.geometry.coordinates[0][1],
-            'quarter-right sits south of mid-channel on an eastward river');
+  assert.ok(left.geometry.coordinates[0][1] > centre,
+            'quarter-left sits north of the centreline on an eastward river');
+  assert.ok(right.geometry.coordinates[0][1] < centre,
+            'quarter-right sits south of the centreline on an eastward river');
   // A quarter of a 120 m channel is 30 m off the centre, so the two sides are 60 m apart.
   const dLat = left.geometry.coordinates[0][1] - right.geometry.coordinates[0][1];
   assert.ok(Math.abs(dLat * 111320 - 60) < 2, `sides 60 m apart, got ${(dLat * 111320).toFixed(1)}`);
 });
 
-test('the depth under the boat is the depth on the line he picked, not the deepest in the section', () => {
+test('the depth under the boat is the depth on the line he picked, and the channel picks the deep', () => {
   const drifts = riverDriftRuns(eastwardRiver(), { slug: 'test_river', laterals: LATERALS });
   const at = (side) => drifts.find((d) => d.properties.drift.side === side
                                        && d.properties.reachFromM === 0).properties.mean_depth_ft;
@@ -83,9 +88,13 @@ test('the depth under the boat is the depth on the line he picked, not the deepe
   // the whole section gives the margin at every station, which is why the profile is read at the
   // fraction actually travelled.
   assert.equal(at('quarter_left'), 13);
-  assert.equal(at('mid_channel'), 9);
   assert.equal(at('quarter_right'), 4);
   assert.ok(at('quarter_left') > at('quarter_right'), 'picking a side changes the water under him');
+  // AND THE CHANNEL LINE IS NOT A FOURTH GUESS -- it is the deepest column the chart has, which on
+  // this fixture is the left bank at 18 ft. A line down the middle of this river would read 9, and
+  // reading 9 on water that is charted at 18 is the defect Ryan found on his own Congaree tail.
+  assert.equal(at('channel'), 18);
+  assert.ok(at('channel') > at('quarter_left'), 'the channel beats the best fixed position');
 });
 
 test('an uncharted station is uncharted, not one foot deep', () => {
@@ -157,7 +166,9 @@ test('the lateral fraction maps to a real profile column', () => {
   assert.equal(profileIndexFor(fr, 0.5), 4);
   assert.equal(profileIndexFor(fr, 0.75), 6);
   assert.equal(profileIndexFor([], 0.5), -1);
-  assert.deepEqual(LATERALS.map((l) => l.frac), [0.25, 0.5, 0.75]);
+  // The two quarters are constants; the middle one is `null`, which means ask the chart at every
+  // station -- see channelFractions(). A number here would be the defect back.
+  assert.deepEqual(LATERALS.map((l) => l.frac), [0.25, null, 0.75]);
 });
 
 test('offsetPoint puts a positive offset to the right of downstream', () => {

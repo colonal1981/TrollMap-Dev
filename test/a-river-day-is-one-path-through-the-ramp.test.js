@@ -44,16 +44,20 @@ function eastwardRiver({ stations = 600, width = 120 } = {}) {
 
 // ── HOW MANY LINES, AND IT IS THE CORRIDOR THAT DECIDES ───────────────────────────────────────
 
-test('at the corridor actually in force every river is one mid-channel line', () => {
+test('at the corridor actually in force every river is one line, and it is the channel', () => {
   // All 57 rivers on the card have a median channel under 200 m. Two quarter lines on a 200 m river
   // are 100 m apart, and at a 100 m corridor their catchments overlap completely -- so they are one
   // line drawn twice. FORTY_THREE_OF_FIFTY_SEVEN measured exactly that: at a 100 m corridor one
-  // mid-channel line takes 177 of the Congaree's 189 holes and the up-one-back-the-other pair takes
-  // 180, a 1.02x gain for doubling the day's options.
+  // line down the middle takes 177 of the Congaree's 189 holes and the up-one-back-the-other pair
+  // takes 180, a 1.02x gain for doubling the day's options.
+  //
+  // THE ONE LINE IS THE CHANNEL SINCE 2026-09-18 and no longer the middle -- the middle was a
+  // position relative to nothing, and the chart can say where the deep water is. Same count, same
+  // rule, different line. See LATERALS.
   for (const w of [40, 80, 120, 145, 199]) {
     const lat = lateralsFor(w, 100);
     assert.equal(lat.length, 1, `${w} m of river is one line at a 100 m corridor`);
-    assert.equal(lat[0].key, 'mid_channel');
+    assert.equal(lat[0].key, 'channel');
   }
 });
 
@@ -65,15 +69,15 @@ test('and when the corridor comes down to his fifteen metres, the wide ones beco
   // anybody typing 80.
   assert.deepEqual(lateralsFor(145, 15).map((l) => l.key), ['quarter_left', 'quarter_right']);
   assert.deepEqual(lateralsFor(60, 15).map((l) => l.key), ['quarter_left', 'quarter_right']);
-  assert.deepEqual(lateralsFor(59, 15).map((l) => l.key), ['mid_channel']);
-  // MID-CHANNEL IS NEVER PART OF THE PAIR. The day is up one side and back the other; a third line
-  // down the middle is a second day, and this app plans one.
-  assert.ok(!lateralsFor(145, 15).some((l) => l.key === 'mid_channel'));
+  assert.deepEqual(lateralsFor(59, 15).map((l) => l.key), ['channel']);
+  // THE CHANNEL IS NEVER PART OF THE PAIR. The day is up one side and back the other; a third line
+  // is a second day, and this app plans one.
+  assert.ok(!lateralsFor(145, 15).some((l) => l.key === 'channel'));
 });
 
 test('an unmeasured width is not a wide river', () => {
-  assert.deepEqual(lateralsFor(null, 15).map((l) => l.key), ['mid_channel']);
-  assert.deepEqual(lateralsFor(145, null).map((l) => l.key), ['mid_channel']);
+  assert.deepEqual(lateralsFor(null, 15).map((l) => l.key), ['channel']);
+  assert.deepEqual(lateralsFor(145, null).map((l) => l.key), ['channel']);
   assert.equal(medianWidthM([]), null);
   assert.equal(medianWidthM([null, 0, -3]), null, 'a zero width is a missing width');
   assert.equal(medianWidthM([100, 120, 140]), 120);
@@ -255,5 +259,8 @@ test('the cast-only baits are not offered on a river, because there is nothing t
 
 test('LATERALS still describes the three positions, which is what lateralsFor picks between', () => {
   assert.deepEqual(LATERALS.map((l) => l.key),
-                   ['quarter_left', 'mid_channel', 'quarter_right']);
+                   ['quarter_left', 'channel', 'quarter_right']);
+  // The quarters are constants off a bank; the middle one is `null`, meaning ask the chart at every
+  // station. A number back in the middle slot is the lane in the middle of the river again.
+  assert.deepEqual(LATERALS.map((l) => l.frac), [0.25, null, 0.75]);
 });

@@ -29,16 +29,35 @@
 
 import { cumulative, kindHits, metresBetween } from './plan-candidates.js';
 
-// THE THREE POSITIONS ARE HIS, AND THE FRACTIONS ARE THE ONES ALREADY MEASURED.
+// THE POSITIONS ARE HIS, AND THE MIDDLE ONE IS NOT A POSITION -- IT IS A QUESTION FOR THE CHART.
 //
-// FOUR_THINGS_A_RIVER_DAY_HAS_TO_TELL_HIM_2026-09-16.md measured the Congaree at exactly these
-// offsets and found the water under the boat changes by three times the median depth depending on
-// which one he takes: quarter-left p50 3 ft, mid-channel p50 5 ft, quarter-right p50 3 ft. So
-// "pick a side or the middle" is a bait-depth decision as well as a battery one, and these are
-// not new numbers -- they are the ones the measurement was taken at.
+// Ryan, 2026-09-18, looking at a real exported day: *"the lane is on the wrong side of the river
+// for deep water."* He is right, and it is the whole reason the tail of his downstream leg looked
+// like it ran out of water.
+//
+// MEASURED ON HIS OWN CONGAREE PACK, ALL 2,633 STATIONS. The centreline is the middle of the
+// water; the channel is not in the middle. Of the 1,671 stations with any charted depth, the
+// middle column is the deepest one only 27% of the time, and at the 1,158 stations that are on a
+// curve with the deep water off centre it is on the OUTSIDE of the bend 64% of the time -- which
+// is the same fact as the bend features, 90% of which stamp `bend_side: outside`. Following the
+// middle costs a median 3 ft against the deepest water in its own cross-section on the Bates
+// Bridge downstream arm, 12 ft at worst, and 5 ft or more at 23 of its 68 stations. At the last
+// station of that arm the middle has 6 ft under it and the same section holds 12, 20 and 12.
+//
+// AND AT EIGHT OF THOSE 68 STATIONS THE MIDDLE HAS NO CHARTED DEPTH AT ALL while the section
+// holds 10-12 ft, all of it at the far side. That is what made a fully sounded 300 m of river read
+// as a hole in the chart: the probe was in the wrong place, not the survey.
+//
+// SO THE QUARTERS STAY AND THE MIDDLE GOES. A quarter line is a position relative to a BANK, which
+// is a real thing to pick on a river wide enough to have two of them. The middle was a position
+// relative to nothing, standing in for "the deep bit" -- and the pack carries a nine-column
+// cross-section every 50 m that can say where the deep bit actually is. `frac: null` means ask the
+// chart, station by station; see channelFractions().
+//
+// WHAT IT BUYS, WHOLE RIVER: median water under the boat 8.0 ft -> 10.0 ft, mean 8.6 -> 9.9.
 export const LATERALS = [
   { key: 'quarter_left', frac: 0.25, label: 'quarter-left, a rod off the left bank' },
-  { key: 'mid_channel', frac: 0.50, label: 'mid-channel' },
+  { key: 'channel', frac: null, label: 'the channel -- the deep water, bend to bend' },
   { key: 'quarter_right', frac: 0.75, label: 'quarter-right, a rod off the right bank' },
 ];
 
@@ -65,11 +84,25 @@ export const LATERALS = [
  * comes down to the 15 m he measured his own reach at, the threshold falls to 60 m of width and the
  * 14 wide rivers become two lanes, which is what the 45-vs-98 row says.
  *
- * MID-CHANNEL IS THE ONE LINE. Which single quarter is best varies per river with where its bends
- * fall -- on the Congaree quarter-right wins at 15 m and mid-channel wins at 60 and 100 -- so
- * choosing a quarter needs a measurement this app does not have per river. Mid-channel needs none,
- * carries the deepest water of the three (p50 5 ft against 3 ft either side, which is a bait-depth
- * decision), and is the measured best at the corridor actually in force.
+ * THE CHANNEL IS THE ONE LINE. Which single quarter is best varies per river with where its bends
+ * fall -- on the Congaree quarter-right wins at 15 m and the middle wins at 60 and 100 -- so
+ * choosing a quarter needs a measurement this app does not have per river. The channel needs none:
+ * it is where the chart says the deep water is, station by station, and it carries a median 10.0 ft
+ * against the middle's 8.0 on the same 2,633 stations.
+ *
+ * AND IT DOES NOT MAKE THE PAIR REDUNDANT, WHICH IS WHY THE PAIR STAYS. Measured on the Congaree's
+ * 362 holes and ledges, how many each plan passes within the corridor:
+ *
+ *     plan                              15m    25m    40m    60m   100m
+ *     one line: the middle (before)      38      84    185    278    346
+ *     one line: the channel (now)        85     171    261    307    340
+ *     up one quarter, back the other     91     214    321    345    351
+ *
+ * The channel line more than doubles the middle at a 15 m corridor and is within a hair of the pair
+ * there; at the 100 m corridor in force today all three see almost everything, so the case for the
+ * channel is the water under the boat and not the structure count. The pair still covers more at
+ * every corridor for the reason two lines always do -- it is two lines -- and that question comes
+ * back when the corridor drops to the 15 m he measured his own reach at. It is not settled here.
  *
  * @param {number} medianWidthM  the river's median charted channel width
  * @param {number} corridorM     how far off the line a feature is still his -- `maxOffM`
@@ -345,6 +378,100 @@ export function shallowestBesideLine(row, fractions, frac, widthM) {
 }
 
 /**
+ * WHERE THE DEEP WATER IS, STATION BY STATION, AS A LATERAL FRACTION.
+ *
+ * The centreline is the middle of the WATER. The channel is not in the middle: it crosses from the
+ * outside of one bend to the outside of the next, and on the Congaree the middle column is the
+ * deepest one at only 27% of charted stations. This reads the pack's own nine-column cross-section
+ * and answers the question the constant 0.5 was standing in for.
+ *
+ * THREE RULES, AND ONLY THE FIRST IS A CHOICE ABOUT FISHING.
+ *
+ * 1. The deepest charted column wins. Not "deeper than the middle by some margin" -- the chart is
+ *    contoured in whole feet and a margin would be a number nobody measured.
+ *
+ * 2. AN UNSOUNDED STATION HOLDS THE LAST KNOWN POSITION. It does not fall back to the middle. The
+ *    middle is where the eight unsounded stations on his downstream arm sent the probe, which is
+ *    how 300 m of fully charted 10-12 ft water came back as "no charted depth" -- a lane that
+ *    returns to the centre whenever the survey thins walks out of the channel exactly where it has
+ *    least reason to.
+ *
+ * 3. THE LINE MAY NOT MOVE SIDEWAYS MORE THAN `SIDE_ENVELOPE_M` BETWEEN TWO STATIONS. The limit is
+ *    the envelope's own half-width and not a smoothing taste: `envelope_ft` describes the water
+ *    within 25 m either side of the line, so a line that jumped further than that between stations
+ *    would have two consecutive bands that do not overlap, and the array would stop describing one
+ *    continuous piece of water. The raw deepest column asks for more than 25 m at 16% of the
+ *    Congaree's stations, with a median ask of 11.2 m and a worst of 161.
+ *
+ *    AND THE RAMP IS CENTRED ON THE SWING, NOT HUNG OFF THE FAR END OF IT. A plain forward limiter
+ *    starts moving at the station the chart first moves and arrives up to five stations -- 250 m --
+ *    later, which on a hard bend is the boat crossing to the outside only once the bend is over:
+ *    the defect again, wearing a smoother coat. So the limited line is the mean of the largest
+ *    slope-limited line at or below the raw one and the smallest at or above it. Both are built by
+ *    one forward and one backward pass, the mean of two lines that each obey the limit obeys it
+ *    too, and on a step it crosses the middle at the step. A backward pass over a forward-limited
+ *    array, which is what this did first, is provably a no-op -- the forward pass already leaves
+ *    every neighbouring pair inside the limit -- so it looked symmetric and did nothing.
+ *
+ * MEASURED, SO NOBODY RE-TUNES RULE 3 HOPING FOR DEPTH: at limits of 10, 15, 25 and 50 m per
+ * station the median water under the boat is 10.0 ft in every case and the mean moves 9.7 -> 10.0.
+ * The limit buys a followable line, not a deeper one.
+ *
+ * @param {Array<Array<?number>>} profiles  `depth_profile_ft`, one row per station
+ * @param {number[]} fractions              `profile_fractions`, 0..1 across the channel
+ * @param {number[]} widths                 `width_m`, one per station
+ * @param {number} [maxShiftM]              rule 3's limit; defaults to SIDE_ENVELOPE_M
+ * @returns {number[]} one fraction per station, clamped to the section
+ */
+export function channelFractions(profiles, fractions, widths, maxShiftM = SIDE_ENVELOPE_M) {
+  const fr = Array.isArray(fractions) ? fractions.map(Number) : [];
+  const w = Array.isArray(widths) ? widths : [];
+  const n = w.length;
+  if (!fr.length || !n) return new Array(Math.max(0, n)).fill(0.5);
+  const lo = Math.min(...fr), hi = Math.max(...fr);
+  // Step one: the deepest column, as METRES off the centre, carried through unsounded stations.
+  const off = new Array(n);
+  let last = 0;
+  for (let i = 0; i < n; i++) {
+    const row = Array.isArray(profiles) ? profiles[i] : null;
+    const wi = Number(w[i]);
+    if (Array.isArray(row) && Number.isFinite(wi) && wi > 0) {
+      let bestD = -Infinity, bestF = null;
+      for (let j = 0; j < fr.length && j < row.length; j++) {
+        const d = Number(row[j]);
+        if (Number.isFinite(d) && d > 0 && d > bestD) { bestD = d; bestF = fr[j]; }
+      }
+      if (bestF != null) last = (bestF - 0.5) * wi;
+    }
+    off[i] = last;
+  }
+  // Step two: the slope limit, centred -- see rule 3.
+  //   under[i] = min over j of (off[j] + L*|i-j|)  is the LARGEST limited line at or below `off`
+  //   over[i]  = max over j of (off[j] - L*|i-j|)  is the SMALLEST limited line at or above it
+  // Each is one forward and one backward pass. `under` lags a swing by exactly as much as `over`
+  // leads it, so their mean sits on the swing.
+  const L = maxShiftM;
+  const under = off.slice(), over = off.slice();
+  for (let i = 1; i < n; i++) {
+    under[i] = Math.min(under[i], under[i - 1] + L);
+    over[i] = Math.max(over[i], over[i - 1] - L);
+  }
+  for (let i = n - 2; i >= 0; i--) {
+    under[i] = Math.min(under[i], under[i + 1] + L);
+    over[i] = Math.max(over[i], over[i + 1] - L);
+  }
+  for (let i = 0; i < n; i++) off[i] = (under[i] + over[i]) / 2;
+  // Step three: back to a fraction against THIS station's width, and never outside the section.
+  // The limit is in metres and the width is not constant, so an offset carried in from a wide
+  // station can land past the bank of a narrow one.
+  return off.map((m, i) => {
+    const wi = Number(w[i]);
+    if (!Number.isFinite(wi) || wi <= 0) return 0.5;
+    return Math.max(lo, Math.min(hi, 0.5 + m / wi));
+  });
+}
+
+/**
  * THE ONE PATH THROUGH THE RAMP, CUT INTO LEGS.
  *
  * A RIVER DAY IS ONE PATH, NOT A SET OF LEGS TO CHOOSE BETWEEN. Ryan, 2026-09-17: "up one side and
@@ -395,6 +522,8 @@ export function shallowestBesideLine(row, fractions, frac, widthM) {
  *                               fall back to the whole river from station 0, which is a river with
  *                               no day on it: every caller that is planning has a ramp.
  * @param {string[]} [o.kinds]   which pack kinds to join
+ * @param {number} [o.maxShiftM] how far the channel line may move sideways between two stations;
+ *                               defaults to SIDE_ENVELOPE_M -- see channelFractions()
  * @param {object[]} [o.laterals] override the lines lateralsFor() would choose, for tests
  * @returns {object[]} GeoJSON LineString features, shaped like trolling_runs.geojson entries
  */
@@ -447,7 +576,19 @@ export function riverDriftRuns(centrelineFc, o = {}) {
   const maxOffM = o.maxOffM ?? 100;
   const kinds = o.kinds || DRIFT_JOIN_KINDS;
   const slug = p.slug || o.slug || 'river';
-  const totalM = Number(p.length_m) || stationM[n - 1] || 0;
+  // ── THE LAST 1,066 m OF THE CONGAREE WAS UNREACHABLE, AND `length_m` IS WHY ──────────────────
+  //
+  // The reaches are cut on `station_m`, which is arc length along the line the resampler was GIVEN.
+  // `length_m` is the chord sum of the line it WROTE, and the two differ by the sagitta of every
+  // 50 m step: on the Congaree 130,534.1 against a last station of 131,600, 0.8% apart. Bounding
+  // the reaches with `length_m` therefore stops them 1,066 m -- 21 stations -- short of the end of
+  // the river, and on the downstream arm from Bates Bridge that is a third of the whole arm.
+  //
+  // THE AXIS IS `station_m`, so the bound is the last station and not a length. A length and an
+  // axis measured in the same unit is exactly the swap this project keeps making; see `off_m` and
+  // the two conventions for which side is positive. `length_m` is still right for what it says --
+  // how long the written line is -- and nothing here needed it.
+  const totalM = Number(stationM[n - 1]) || Number(p.length_m) || 0;
   // ONE LINE OR TWO, DECIDED BY THE CORRIDOR AGAINST THIS RIVER'S OWN WIDTH -- see lateralsFor().
   // Overridable for tests, which is the only caller that should be naming positions by hand.
   const laterals = o.laterals || lateralsFor(medianWidthM(width), maxOffM);
@@ -455,7 +596,19 @@ export function riverDriftRuns(centrelineFc, o = {}) {
 
   const out = [];
   for (const lat of laterals) {
-    const col = profileIndexFor(fractions, lat.frac);
+    // WHERE THIS LINE SITS AT EACH STATION. A quarter line is a constant fraction of the width; the
+    // channel line asks the chart -- see LATERALS and channelFractions(). Computed once for the
+    // whole river and then read per station, because the slope limit in rule 3 is a property of the
+    // LINE and a reach that recomputed it would start each one from a standing start at its own
+    // first station.
+    // `lat.frac == null` AND NOT `Number.isFinite(Number(lat.frac))`. Number(null) is 0, which is
+    // finite, so the coercing test sent the channel line down the constant branch and pinned it to
+    // fraction 0 -- hard against the left bank for the whole river. Caught by the test that asks
+    // whether the channel is deeper than the middle; it came back equal.
+    const fixed = lat.frac == null ? null : Number(lat.frac);
+    const fracAt = Number.isFinite(fixed)
+      ? new Array(n).fill(fixed)
+      : channelFractions(profiles, fractions, width, o.maxShiftM);
     for (const [reachStart, reachEnd, fromRamp] of reaches) {
       const coords = [];
       const depths = [];
@@ -474,7 +627,9 @@ export function riverDriftRuns(centrelineFc, o = {}) {
         const sm = Number(stationM[i]);
         if (!(sm >= reachStart && sm <= reachEnd)) continue;
         const w = Number(width[i]);
-        const offM = Number.isFinite(w) ? (lat.frac - 0.5) * w : 0;
+        const frac = Number(fracAt[i]);
+        const col = profileIndexFor(fractions, frac);
+        const offM = Number.isFinite(w) ? (frac - 0.5) * w : 0;
         coords.push(offsetPoint(line[i][0], line[i][1], Number(bearing[i]) || 0, offM));
         bearings.push(Number(bearing[i]));
         stations++;
@@ -500,7 +655,7 @@ export function riverDriftRuns(centrelineFc, o = {}) {
         // what plan-pieces.js filters on: a missing measurement must not arrive wearing the clothes of
         // shallow water. See the note above about the 105 stations with no charted depth at all.
         lineFt.push(Number.isFinite(d) && d > 0 ? Number(d.toFixed(1)) : -1);
-        sideFt.push(shallowestBesideLine(row, fractions, lat.frac, w));
+        sideFt.push(shallowestBesideLine(row, fractions, frac, w));
       }
       if (coords.length < 2) continue;
       const cum = cumulative(coords);
@@ -517,7 +672,9 @@ export function riverDriftRuns(centrelineFc, o = {}) {
         // What this leg IS, in the vocabulary he used. Carried so the prompt and the card can say
         // "quarter-left, downstream, past three holes" instead of naming a contour that does not
         // exist on moving water.
-        drift: { side: lat.key, label: lat.label, frac: lat.frac },
+        // NO `frac` HERE ANY MORE. It was emitted and read by nothing, and on the channel line a
+        // single number for the whole reach would be a lie: the line's position is per station.
+        drift: { side: lat.key, label: lat.label },
         reachFromM: Math.round(reachStart),
         // WHICH HALF OF THE DAY THIS IS, IN WORDS AND NOT A SIGN. The model is told to fish upstream
         // first and had no way to tell which leg was upstream: `flow_deg` says where the water goes,

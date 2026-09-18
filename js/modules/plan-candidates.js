@@ -2213,6 +2213,10 @@ export function selectCandidates(runs, o) {
   // quarter-left, 5 ft mid-channel and 3 ft quarter-right, a three-fold difference that changes the
   // bait, the lead and the battery.
   //
+  // (That mid-channel line is gone since 2026-09-18 -- LATERALS now offers the CHANNEL in its
+  // place, which reads the chart per station and carries a median 10 ft. The measurement above is
+  // left as it was taken. Nothing here changes: `lineKey` compares whatever line a drift is on.)
+  //
   // It was the START-DISTANCE test that did it, not the corridor: three lines over one reach start
   // 30–60 m apart against a 1,200 m rule, so they never reached the geometry comparison. Both tests
   // would have fired anyway — 36 m apart is inside a 100 m corridor.

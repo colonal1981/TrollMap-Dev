@@ -1,9 +1,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { riverDriftRuns, shallowestBesideLine, SIDE_ENVELOPE_M,
-         LATERALS } from '../js/modules/river-drifts.js';
+import { riverDriftRuns, shallowestBesideLine,
+         SIDE_ENVELOPE_M } from '../js/modules/river-drifts.js';
 import { structureIndex, selectCandidates } from '../js/modules/plan-candidates.js';
 import { waterBand } from '../js/modules/plan-pieces.js';
+
+// THE POSITION IS PINNED BY HAND HERE ON PURPOSE. Every expected number in this file was computed
+// against a line down the middle of the fixture's section. LATERALS[1] used to be that line; since
+// 2026-09-18 it is the CHANNEL, whose position is the chart's answer and moves with the fixture.
+// What this file tests is the envelope arithmetic, not where the line sits, so it names the
+// position rather than borrowing one whose definition can change underneath it. Where the channel
+// line goes is tested in the-lane-was-in-the-middle-and-the-channel-was-not.test.js.
+const MID_CHANNEL = { key: 'mid_channel', frac: 0.5, label: 'mid-channel' };
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 // A DRIFT CARRIED NO ENVELOPE, SO THE BAIT-DEPTH CEILING WAS OFF ON EVERY RIVER
@@ -92,7 +100,7 @@ test('THE ENVELOPE IS 25 m AND THAT IS THE PRODUCER\'S NUMBER, NOT A CHOICE HERE
 });
 
 test('a drift now carries the envelope, one value per station, in waterBand\'s own shape', () => {
-  const [d] = riverDriftRuns(eastwardRiver(), { slug: 'test_river', laterals: [LATERALS[1]] });
+  const [d] = riverDriftRuns(eastwardRiver(), { slug: 'test_river', laterals: [MID_CHANNEL] });
   const p = d.properties;
   assert.equal(p.envelope_step_m, 50);
   assert.equal(p.envelope_line_ft.length, p.stations);
@@ -136,7 +144,7 @@ function scoredRiver() {
 
 test('AND THE FOUR FIELDS THE CEILING READS ARE NO LONGER NULL', () => {
   const { river, coords, structures } = scoredRiver();
-  const drifts = riverDriftRuns(river, { structures, slug: 'test_river', laterals: [LATERALS[1]] });
+  const drifts = riverDriftRuns(river, { structures, slug: 'test_river', laterals: [MID_CHANNEL] });
   const cands = selectCandidates(drifts, {
     ramp: coords[0], slug: 'test_river', fishDepthFt: [0, 30], holding: 'suspended',
     maxOffM: 100, maxM: 8000, structures, usableAh: 200, windowMin: 900, limit: 12,
@@ -165,7 +173,7 @@ test('BOTH arrays reach waterBand, and the side is the shallower of the two', ()
   // The side envelope is arguably the honest ceiling. That is true on every lake leg as well as every
   // river one, so moving it is its own change with its own measurement, not a rider on this one.
   const { river, structures } = scoredRiver();
-  const [d] = riverDriftRuns(river, { structures, slug: 'test_river', laterals: [LATERALS[1]] });
+  const [d] = riverDriftRuns(river, { structures, slug: 'test_river', laterals: [MID_CHANNEL] });
   const band = waterBand(d.properties, 0, 2000);
   assert.equal(band.line.medianFt, 9);
   assert.equal(band.side.medianFt, 6);
