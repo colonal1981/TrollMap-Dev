@@ -382,7 +382,66 @@ class WaterExtent:
         return bool(self.depth.polygons) or bool(self.extra)
 
 
-def extend_chain(chain, mask, water, nbrs, slug, cap, step, probe, max_m, budget_m):
+def attach_mainstem(chain, segs, join_m=300.0):
+    """The chain, with the rest of its mainstem joined onto both ends. THE CHAIN IS NOT TOUCHED.
+
+    ── THE FIRST VERSION RE-CHAINED, AND THAT CHANGED RIVERS THAT NEVER EXTENDED ─────────────────
+
+    It fed every flowline in the widened window back through chain_mainstem() and took the result.
+    The comment above it said "THE PICK IS NOT REVISITED" and the code revisited it: the MAINSTEM
+    id was not re-chosen, but the chain WITHIN that mainstem was, and scored over a wider set of
+    segments it comes out different. Measured on south_yadkin_river, which the extension never
+    touched -- extended up 0.00 km, down 0.00 km -- and whose line still went from 25.1 km to
+    96.2 km, 1,449 of its 1,899 stations off the charted water. A silent change of answer on a
+    river that was not being changed.
+
+    So this only ever PREPENDS and APPENDS. `chain` comes back inside the result at a known span,
+    and what is outside that span is what extend_chain() then walks under the three rules.
+
+    @returns (points, i0, i1) -- points[i0:i1 + 1] is `chain`, unchanged and in order.
+    """
+    # ALREADY IN THE CHAIN IS DECIDED ON THE MIDPOINT, not on the first vertex. A segment that
+    # CONTINUES from the chain starts exactly where the chain ends -- that shared vertex is the
+    # join -- so testing the first vertex threw away every real continuation.
+    seen = {(round(q[0], 1), round(q[1], 1)) for q in chain}
+    free = [sg for sg in segs
+            if (round(sg[len(sg) // 2][0], 1), round(sg[len(sg) // 2][1], 1)) not in seen]
+    out = list(chain)
+    used = set()
+
+    def take(anchor_at, end_of):
+        """Repeatedly join the nearest unused segment onto one end."""
+        while True:
+            anchor = out[anchor_at()]
+            pick, best = None, join_m
+            for i, sg in enumerate(free):
+                if i in used:
+                    continue
+                d = metres_between(sg[end_of], anchor)
+                if d < best:
+                    best, pick = d, i
+            if pick is None:
+                return
+            used.add(pick)
+            if end_of == 0:
+                out.extend(free[pick][1:])
+            else:
+                out[:0] = free[pick][:-1]
+
+    take(lambda: -1, 0)
+    added_after = len(out) - len(chain)
+    take(lambda: 0, -1)
+    i0 = len(out) - len(chain) - added_after
+    return out, i0, i0 + len(chain) - 1
+
+
+def metres_between(a, b):
+    """Plain distance in the projected metres everything here works in. Named because `math.dist`
+    at a call site reads like it might be degrees."""
+    return math.dist(a, b)
+
+
+def extend_chain(points, i0, i1, mask, water, nbrs, slug, cap, step, probe, max_m, budget_m):
     """Follow the mainstem past each end of the boundary-clipped chain, while it is still a river.
 
     THREE RULES, AND NONE OF THE NUMBERS IS NEW. A station is kept when it has charted water on it,
@@ -395,14 +454,16 @@ def extend_chain(chain, mask, water, nbrs, slug, cap, step, probe, max_m, budget
     centreline, so the rule stops there. (The survey says there is no river-shaped water up there
     anyway: 0.0 km at two, three and five channel widths.)
 
-    @returns (points, report) -- the points are the whole line, ends included, in flow order.
+    THE SPAN IS GIVEN, NOT DERIVED. `points[i0:i1 + 1]` is the chain that was chosen inside the
+    boundary; attach_mainstem() put the rest of the mainstem around it and said where it went. A
+    version of this that re-found the span with mask.inside() could move it, and moving it is how
+    a river that never extended still changed.
+
+    @returns (line, report) -- the kept points, ends included, in flow order.
     """
-    inside_idx = [i for i, q in enumerate(chain) if mask.inside(q[0], q[1])]
-    rep = {'up_m': 0.0, 'down_m': 0.0, 'up_stop': 'no chain inside the boundary',
-           'down_stop': 'no chain inside the boundary', 'owners': []}
-    if not inside_idx:
-        return chain, rep
-    i0, i1 = inside_idx[0], inside_idx[-1]
+    rep = {'up_m': 0.0, 'down_m': 0.0, 'up_stop': 'the mainstem ends here',
+           'down_stop': 'the mainstem ends here', 'owners': []}
+    chain = points
     owners = []
 
     def walk(start, direction):
@@ -1132,28 +1193,44 @@ class DepthIndex:
                 for gx in range(int(min(xs) // cell), int(max(xs) // cell) + 1):
                     for gy in range(int(min(ys) // cell), int(max(ys) // cell) + 1):
                         self.g[(gx, gy)].append(i)
+        # ── DEEPEST FIRST, SO at() CAN STOP AT THE FIRST HIT ────────────────────────────────────
+        #
+        # at() answers with the DEEPEST band covering a point, and it used to find that by testing
+        # every ring the cell offered and keeping the best. Garmin's depth areas nest -- the 10 ft
+        # band contains the 12 ft band contains the 14 -- so a point in deep water is inside
+        # several of them and every one was being ray-cast.
+        #
+        # Sorted by midpoint depth here, the FIRST ring that contains the point is already the
+        # deepest one, so the loop breaks. Same answer, and it is the same answer by construction
+        # rather than by a second comparison: a sort at build time in place of a max at query time,
+        # done once per pack instead of once per probe step.
+        #
+        # MEASURED: at() was 37.4 s of a 48.9 s wateree_river build -- 76% of the run, 968,638
+        # calls -- and it is the reason this file is CPU-bound.
+        for key in self.g:
+            self.g[key].sort(key=lambda i: -self.rings[i][2])
 
     def at(self, x, y):
-        """(shallow_edge_ft, midpoint_ft) of the DEEPEST band covering this point, or None."""
-        best = None
+        """(shallow_edge_ft, midpoint_ft) of the DEEPEST band covering this point, or None.
+
+        The candidate list is deepest-first (see __init__), so the first containing ring wins.
+        """
+        rings = self.rings
         for i in self.g.get((int(x // self.cell), int(y // self.cell)), ()):
-            pts, lo, mid, x0, x1, y0, y1 = self.rings[i]
+            pts, lo, mid, x0, x1, y0, y1 = rings[i]
             if x < x0 or x > x1 or y < y0 or y > y1:
                 continue
-            if best is not None and mid <= best[1]:
-                continue
             c = False
-            n = len(pts)
-            j = n - 1
-            for k in range(n):
+            j = len(pts) - 1
+            for k in range(len(pts)):
                 xi, yi = pts[k]
                 xj, yj = pts[j]
                 j = k
                 if (yi > y) != (yj > y) and x < (xj - xi) * (y - yi) / (yj - yi) + xi:
                     c = not c
             if c:
-                best = (lo, mid)
-        return best
+                return (lo, mid)
+        return None
 
 
 def cross_sections(pts, wid, depth, probe):
@@ -1425,8 +1502,12 @@ def build_one(row, a, db, stamp, nbrs=None):
         lines = [line for (blob,) in far for line in gpkg_lines(blob) if len(line) >= 2]
         rep['flowlines_in_window'] = len(lines)
         if lines:
-            wide_chain, _, _ = chain_mainstem(lines, _charted_m if depth.polygons else None)
-            chain, ext = extend_chain(wide_chain, mask, water, nbrs, slug, cap,
+            # ATTACHED, NOT RE-CHAINED. See attach_mainstem(): feeding the widened window back
+            # through chain_mainstem() re-picks the chain inside the boundary too, and that moved
+            # south_yadkin_river from 25.1 km to 96.2 km on a run where its extension added
+            # nothing at either end.
+            around, i0, i1 = attach_mainstem(chain, lines)
+            chain, ext = extend_chain(around, i0, i1, mask, water, nbrs, slug, cap,
                                       a.step, a.probe, a.max_width_m, pad)
             ext['cap_m'] = cap
             rep['extended'] = ext
@@ -1681,6 +1762,65 @@ def build_one(row, a, db, stamp, nbrs=None):
     return rep, writes
 
 
+# ── ONE RIVER PER PROCESS ─────────────────────────────────────────────────────────────────────
+#
+# Windows spawns rather than forks, so a worker starts empty: it opens its own read-only handle on
+# the GeoPackage and builds its own Neighbours. Both are per-process by necessity -- an sqlite3
+# connection cannot cross a process and the boundary Masks are not worth pickling -- and both are
+# built ONCE per worker, not once per river, which is what the initializer is for.
+#
+# THE PARENT IS STILL THE ONLY WRITER. Workers measure and return; the backup and the write happen
+# where they always did, in river order, so a crashed worker cannot leave a half-written pack.
+_W = {}
+
+
+def _free_gb():
+    """Free physical memory in GB, or None where this cannot be asked without a dependency. Used
+    only to PRINT what --jobs this machine has room for; nothing is decided on it."""
+    try:
+        if sys.platform == 'win32':
+            import ctypes
+
+            class _MS(ctypes.Structure):
+                _fields_ = [('dwLength', ctypes.c_ulong), ('dwMemoryLoad', ctypes.c_ulong),
+                            ('ullTotalPhys', ctypes.c_ulonglong),
+                            ('ullAvailPhys', ctypes.c_ulonglong),
+                            ('ullTotalPageFile', ctypes.c_ulonglong),
+                            ('ullAvailPageFile', ctypes.c_ulonglong),
+                            ('ullTotalVirtual', ctypes.c_ulonglong),
+                            ('ullAvailVirtual', ctypes.c_ulonglong),
+                            ('ullAvailExtendedVirtual', ctypes.c_ulonglong)]
+            m = _MS()
+            m.dwLength = ctypes.sizeof(_MS)
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m))
+            return m.ullAvailPhys / 2.0 ** 30
+        with open('/proc/meminfo', encoding='utf-8') as fh:
+            for line in fh:
+                if line.startswith('MemAvailable:'):
+                    return float(line.split()[1]) / 2.0 ** 20
+    except Exception:
+        return None
+    return None
+
+
+def _worker_init(a, river_slugs):
+    _W['a'] = a
+    _W['db'] = sqlite3.connect('file:%s?mode=ro' % a.gpkg.replace('?', '%3f'), uri=True)
+    _W['nbrs'] = (Neighbours(a.registry, a.chartpack, river_slugs, a.depth_cell,
+                             os.path.join(a.registry, '_boundary_bboxes.json'))
+                  if a.extend_km > 0 else None)
+
+
+def _worker_one(payload):
+    row, stamp = payload
+    try:
+        return row['slug'], build_one(row, _W['a'], _W['db'], stamp, _W['nbrs'])
+    except Exception as exc:                      # noqa: BLE001 -- one river must not stop the run
+        import traceback
+        return row['slug'], ({'slug': row['slug'], 'skipped': 'crashed: %s' % exc,
+                              'traceback': traceback.format_exc()}, {})
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1722,6 +1862,21 @@ def main():
     ap.add_argument('--min-chain-m', type=float, default=1000.0, help='skip a water whose longest chain is shorter (default 1000)')
     ap.add_argument('--dry-run', action='store_true', help='measure and print. WRITES NOTHING, including the report.')
     ap.add_argument('--quiet', action='store_true', help='one line per river, no per-river detail')
+    # ── ONE RIVER PER PROCESS, BECAUSE THIS IS CPU AND THE RIVERS DO NOT TOUCH ──────────────────
+    #
+    # PROFILED, not guessed: on a wateree_river build, DepthIndex.at() is 37.4 s of 48.9 -- 76% of
+    # the run, 968,638 calls -- and it is a Python point-in-polygon loop. Peak working set is
+    # 674 MB, or about 1.2 GB on a river that loads a big neighbour's chart (Lake Marion's 18,153
+    # rings are 573 MB on their own). So the wall clock is cores, not disk and not memory.
+    #
+    # Each river reads the same read-only GeoPackage and writes only its own pack, so they are
+    # independent. THE DEFAULT IS STILL ONE, because the right number depends on this machine's
+    # free memory and the startup line says what that machine has room for rather than deciding
+    # for it. The floor with any number of jobs is the longest single river -- savannah_river at
+    # 325 s -- so there is nothing to gain past about eight.
+    ap.add_argument('--jobs', type=int, default=1,
+                    help='build this many rivers at once (default 1). Each one is a process and '
+                         'peaks near 1.2 GB.')
     a = ap.parse_args()
 
     a.registry = os.path.abspath(a.registry)
@@ -1748,23 +1903,49 @@ def main():
     print('%d river(s), step %g m, window %g m%s'
           % (len(riv), a.step, a.window, '   DRY RUN, nothing will be written' if a.dry_run else ''))
     t0 = time.time()
-    # ── BUILT ONCE, NOT PER RIVER ───────────────────────────────────────────────────────────────
+    # ── BUILT ONCE PER PROCESS, NOT PER RIVER ───────────────────────────────────────────────────
     #
     # 3,370 registry boundaries, read for their bounding boxes so a point past this river's outline
     # can be asked whose water it is. Per river that would be 57 times the same work for one
-    # answer; cached beside the report so a re-run pays nothing.
+    # answer; cached beside the report so a re-run, and every extra worker, pays nothing.
+    river_slugs = [r['slug'] for r in rivers_from_index(a.registry, None)]
     nbrs = None
-    if a.extend_km > 0:
-        nbrs = Neighbours(a.registry, a.chartpack, [r['slug'] for r in
-                                                    rivers_from_index(a.registry, None)],
-                          a.depth_cell, os.path.join(a.registry, '_boundary_bboxes.json'))
+    if a.extend_km > 0 and a.jobs <= 1:
+        nbrs = Neighbours(a.registry, a.chartpack, river_slugs, a.depth_cell,
+                          os.path.join(a.registry, '_boundary_bboxes.json'))
         print('   %d registry boundaries indexed, %d of them rivers   %.1fs'
               % (len(nbrs.boxes), len(nbrs.rivers), time.time() - t0))
+    # WHAT THIS MACHINE HAS ROOM FOR, SAID RATHER THAN DECIDED. A worker peaks near 1.2 GB on a
+    # river that loads a big neighbour's chart, and the floor with any number of jobs is the
+    # longest single river, so there is nothing to gain past about eight.
+    if a.jobs <= 1 and len(riv) > 1:
+        cpus = os.cpu_count() or 1
+        free = _free_gb()
+        room = max(1, min(8, cpus, int((free - 1.0) / 1.2) if free else 8))
+        if room > 1:
+            print('   %d processor(s) here%s -- `--jobs %d` builds that many rivers at once'
+                  % (cpus, ', %.1f GB free' % free if free else '', room))
     report = {'_note': 'build record for build_river_centrelines.py. One row per river.',
               'built': stamp, 'step_m': a.step, 'window_m': a.window, 'rivers': {}}
     totals = collections.Counter()
-    for n, row in enumerate(riv, 1):
-        rep, writes = build_one(row, a, db, stamp, nbrs)
+    # ── THE RIVERS, ONE AT A TIME OR SEVERAL ────────────────────────────────────────────────────
+    #
+    # Same loop body either way: the parallel arm only changes WHERE build_one() runs, not what is
+    # done with what it returns, so the backup, the write and the report stay single-writer and
+    # stay here. chunksize 1 because the rivers are 1.8 s to 325 s apart and a static split would
+    # leave one worker holding the savannah while the rest idle.
+    if a.jobs > 1 and len(riv) > 1:
+        import multiprocessing as mp
+        ctx = mp.get_context('spawn')
+        pool = ctx.Pool(min(a.jobs, len(riv)), initializer=_worker_init, initargs=(a, river_slugs))
+        results = pool.imap_unordered(_worker_one, [(row, stamp) for row in riv], chunksize=1)
+        print('   %d worker(s)   %.1fs to start' % (min(a.jobs, len(riv)), time.time() - t0))
+    else:
+        pool = None
+        results = ((row['slug'], build_one(row, a, db, stamp, nbrs)) for row in riv)
+    by_slug = {r['slug']: r for r in riv}
+    for n, (slug_done, (rep, writes)) in enumerate(results, 1):
+        row = by_slug[slug_done]
         report['rivers'][row['slug']] = rep
         if rep.get('skipped'):
             print('  [%2d/%d] %-32s SKIPPED -- %s' % (n, len(riv), row['slug'], rep['skipped']))
@@ -1860,6 +2041,9 @@ def main():
                       'feature %s m -- no channel direction or bend radius stamped on those'
                       % (rep['off_cap_n'], sum(st.values()), 100.0 * (rep['off_cap_frac'] or 0),
                          rep['snap_cap_m'], rep['nearest_feature_m']))
+    if pool is not None:
+        pool.close()
+        pool.join()
     db.close()
 
     if not a.dry_run:

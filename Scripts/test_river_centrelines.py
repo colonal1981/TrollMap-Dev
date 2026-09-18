@@ -616,11 +616,16 @@ class TheLineFollowsTheRiverPastTheBox(unittest.TestCase):
     def _water(self):
         return B.WaterExtent(self.mask, self.own)
 
+    def _extend(self, nb, water, budget=50000.0):
+        # The span is GIVEN, the way attach_mainstem() gives it: the stations inside the outline.
+        inside = [i for i, q in enumerate(self.chain) if self.mask.inside(q[0], q[1])]
+        return B.extend_chain(self.chain, inside[0], inside[-1], self.mask, water, nb,
+                              'the_river', 300.0, 50.0, 5.0, 3000.0, budget)
+
     def test_it_follows_the_chart_past_the_boundary(self):
         nb = FakeNeighbours(owners=[('a_lake', (-500.0, 1000.0, 500.0, 3000.0))],
                             depths={'a_lake': FakeDepth(-50.0, 1000.0, 50.0, 3000.0)})
-        out, rep = B.extend_chain(self.chain, self.mask, self._water(), nb, 'the_river',
-                                  300.0, 50.0, 5.0, 3000.0, 50000.0)
+        out, rep = self._extend(nb, self._water())
         ys = [q[1] for q in out]
         self.assertGreater(max(ys), 2500.0, 'the line reached into the charted water past the box')
         self.assertLess(max(ys), 3200.0, 'and stopped where the chart did')
@@ -635,8 +640,7 @@ class TheLineFollowsTheRiverPastTheBox(unittest.TestCase):
                             depths={'a_lake': FakeDepth(-500.0, 2000.0, 500.0, 6000.0)})
         w = self._water()
         w.add(FakeDepth(-50.0, 1000.0, 50.0, 2000.0))
-        out, rep = B.extend_chain(self.chain, self.mask, w, nb, 'the_river',
-                                  300.0, 50.0, 5.0, 3000.0, 50000.0)
+        out, rep = self._extend(nb, w)
         self.assertLess(max(q[1] for q in out), 2100.0)
         self.assertIn('three channel widths', rep['down_stop'])
 
@@ -646,8 +650,7 @@ class TheLineFollowsTheRiverPastTheBox(unittest.TestCase):
         nb = FakeNeighbours(owners=[('the_other_river', (-500.0, -6000.0, 500.0, 0.0))],
                             rivers=['the_river', 'the_other_river'],
                             depths={'the_other_river': FakeDepth(-50.0, -6000.0, 50.0, 0.0)})
-        out, rep = B.extend_chain(self.chain, self.mask, self._water(), nb, 'the_river',
-                                  300.0, 50.0, 5.0, 3000.0, 50000.0)
+        out, rep = self._extend(nb, self._water())
         self.assertGreaterEqual(min(q[1] for q in out), -50.0,
                                 'it did not walk up into the other river')
         self.assertIn('own centreline', rep['up_stop'])
@@ -656,19 +659,55 @@ class TheLineFollowsTheRiverPastTheBox(unittest.TestCase):
     def test_a_line_that_ran_out_of_window_says_so(self):
         nb = FakeNeighbours(owners=[('a_lake', (-500.0, 1000.0, 500.0, 9000.0))],
                             depths={'a_lake': FakeDepth(-50.0, 1000.0, 50.0, 9000.0)})
-        out, rep = B.extend_chain(self.chain, self.mask, self._water(), nb, 'the_river',
-                                  300.0, 50.0, 5.0, 3000.0, 1000.0)
+        out, rep = self._extend(nb, self._water(), budget=1000.0)
         self.assertIn('search window', rep['down_stop'],
                       'a river truncated by the search must not read like a river that ended')
 
     def test_with_no_extension_the_line_is_what_the_box_holds(self):
         nb = FakeNeighbours()
-        out, rep = B.extend_chain(self.chain, self.mask, self._water(), nb, 'the_river',
-                                  300.0, 50.0, 5.0, 3000.0, 50000.0)
+        out, rep = self._extend(nb, self._water())
         ys = [q[1] for q in out]
         self.assertGreaterEqual(min(ys), -50.0)
         self.assertLessEqual(max(ys), 1050.0)
         self.assertEqual((rep['up_m'], rep['down_m']), (0.0, 0.0))
+
+
+class AttachingIsNotRechaining(unittest.TestCase):
+    """The chain chosen inside the boundary must come back untouched, at a known span.
+
+    The first version of the extension re-chained every flowline in the widened window and took
+    the result. south_yadkin_river's extension added nothing at either end and its line still went
+    from 25.1 km to 96.2 km, 1,449 of 1,899 stations off the charted water -- a silent change of
+    answer on a river that was not being changed.
+    """
+
+    def setUp(self):
+        self.chain = [(0.0, float(y)) for y in range(0, 1001, 50)]
+
+    def test_the_chain_comes_back_whole_and_in_order(self):
+        segs = [[(0.0, float(y)) for y in range(1000, 2001, 50)],
+                [(0.0, float(y)) for y in range(-1000, 1, 50)]]
+        out, i0, i1 = B.attach_mainstem(self.chain, segs)
+        self.assertEqual(out[i0:i1 + 1], self.chain)
+        self.assertEqual(i1 - i0 + 1, len(self.chain))
+        self.assertLess(out[0][1], 0.0, 'the upstream segment was prepended')
+        self.assertGreater(out[-1][1], 1000.0, 'the downstream one was appended')
+
+    def test_a_segment_already_in_the_chain_is_not_joined_twice(self):
+        segs = [list(self.chain)]
+        out, i0, i1 = B.attach_mainstem(self.chain, segs)
+        self.assertEqual(out, self.chain)
+        self.assertEqual((i0, i1), (0, len(self.chain) - 1))
+
+    def test_a_segment_that_does_not_meet_the_ends_is_left_alone(self):
+        segs = [[(9000.0, float(y)) for y in range(0, 501, 50)]]
+        out, i0, i1 = B.attach_mainstem(self.chain, segs)
+        self.assertEqual(out, self.chain, 'a segment 9 km away is not this river continuing')
+
+    def test_nothing_to_attach_is_the_chain(self):
+        out, i0, i1 = B.attach_mainstem(self.chain, [])
+        self.assertEqual(out, self.chain)
+        self.assertEqual((i0, i1), (0, len(self.chain) - 1))
 
 
 if __name__ == '__main__':
