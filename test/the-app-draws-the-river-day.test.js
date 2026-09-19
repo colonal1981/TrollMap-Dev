@@ -20,9 +20,15 @@ import { riverDay } from '../js/modules/plan-candidates.js';
 
 // A reach as selectCandidates leaves it: gated, scored, priced both ways, and stamped with which
 // side of the launch it is on.
+// `value` AS WELL AS `score`, BECAUSE A REAL CANDIDATE CARRIES BOTH. selectCandidates sets `score`
+// (how good this water is) and `value` (how good it is from THIS ramp -- score over the deadhead to
+// reach it, times the proximity preference), and since 2026-09-19 riverDay picks which bank of the
+// launch to fish on `value`. These fixtures model no transit, so the two are the same number here and
+// every expectation below is unchanged; a fixture carrying only one of them was letting the arm sort
+// read zero.
 const reach = (dir, m, lengthM, score, upAh, downAh) => ({
   runId: `r:drift:mid_channel@${m}`, fromRamp: { direction: dir, m },
-  lengthM, score, batteryAhUpstream: upAh, batteryAhDownstream: downAh,
+  lengthM, score, value: score, batteryAhUpstream: upAh, batteryAhDownstream: downAh,
   drift: { side: 'mid_channel', label: 'mid-channel' },
 });
 
@@ -89,6 +95,15 @@ test('the richer bank of the launch is fished first, and it is chosen on structu
   const down = [reach('downstream', 0, 4000, 900, 5, 2)];
   const legs = riverDay([...up, ...down], { usableAh: 500, windowMin: 5000, trollMph: 2 });
   assert.equal(legs[0].fromRamp.direction, 'downstream', 'the side with the water goes first');
+  // AND IT IS THE RAMP-AWARE NUMBER THAT CHOOSES. Ryan's 2026-09-19 Congaree day: the upstream arm
+  // summed 745 on `score` and 172 on `value`, the downstream arm 228 and 225, because two thirds of
+  // the upstream total was water 6.6 and 10.7 km out whose own value collapses to 17.63 and 5.82 once
+  // the deadhead is counted. On `score` the day filled the upstream arm, never crossed the launch --
+  // 37 m away -- and never offered the model the best piece of water in the river: 3.4 km of 9-22 ft
+  // nineteen metres from the ramp.
+  const byScore = [{ ...up[0], score: 900, value: 10 }, { ...down[0], score: 10, value: 900 }];
+  assert.equal(riverDay(byScore, { usableAh: 500, windowMin: 5000, trollMph: 2 })[0].fromRamp.direction,
+               'downstream', 'value decides, not score');
   assert.equal(legs[1].fromRamp.direction, 'upstream');
   // And the day says what it weighed, so a short day can be read rather than guessed at.
   assert.equal(legs.day.offered.length, 2);

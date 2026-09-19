@@ -2890,7 +2890,34 @@ export function riverDay(gated, o = {}) {
   // How much fishable water each way is worth, so the richer bank of the launch goes first. This is
   // the ONE place direction is chosen, and it is chosen on the structure the pack actually holds
   // rather than on which way the river is longer.
-  const worth = (arm) => arm.reduce((t, c) => t + (Number(c.score) || 0), 0);
+  //
+  // ON `value` AND NOT `score`, AND THE DIFFERENCE IS THE WHOLE POINT OF `value`.
+  //
+  // `score` is how good a piece of water is. `value` is how good it is FROM THIS RAMP -- score
+  // divided by what the deadhead to it costs, times the proximity preference -- and the note above
+  // it in selectCandidates says outright that the location factor "is not a cost, it is a preference
+  // about location". Choosing which bank of the launch to spend the day on is exactly a question
+  // about location, and this summed the number that ignores it.
+  //
+  // MEASURED ON RYAN'S OWN CONGAREE DAY, Bates Bridge, 2026-09-19, after the lane moved to the right
+  // bank and re-ranked the water:
+  //
+  //     upstream    @120150   score 275.8   value 148.57   8,059 m   5-22 ft   19 m from the ramp
+  //                 @112150   score 262.2   value  17.63   5,000 m   2-14 ft   6,607 m out
+  //                 @96150    score 207.1   value   5.82   4,100 m   4-12 ft  10,741 m out
+  //                 summed    score 745.1   value 172.02
+  //     downstream  @128150   score 227.8   value 224.88   3,400 m   9-22 ft   19 m from the ramp
+  //                 summed    score 227.8   value 224.88
+  //
+  // On `score` the upstream arm wins 745 to 228 and fills the whole budget, so the day never crosses
+  // the ramp and the single best piece of water in the river -- 3.4 km of 9-22 ft, nineteen metres
+  // from the launch, the highest `value` of any candidate -- is not offered to the model at all. Two
+  // thirds of that 745 is water whose own value collapses to 17.63 and 5.82 once the 6.6 km and
+  // 10.7 km of deadhead to reach it are counted.
+  //
+  // Ryan, 2026-09-19: *"if the southern route is the better route then why did it send me north
+  // first?"* Because of this line. Crossing the launch costs him 37 m.
+  const worth = (arm) => arm.reduce((t, c) => t + (Number(c.value) || 0), 0);
 
   const arms = [armOf('upstream'), armOf('downstream')];
   // UPSTREAM FIRST WHEN THEY TIE, because that is how he fishes it -- against the current while the
