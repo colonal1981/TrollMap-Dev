@@ -7,7 +7,7 @@ globalThis.document = globalThis.document || {
   createElement: () => ({ style: {}, dataset: {} }), addEventListener: noop, readyState: 'complete',
 };
 const { assemblePlan } = await import('../js/modules/plan-assemble.js');
-const { riverDay, travelOrder, forModel, metresBetween, minutesFor } =
+const { riverDay, travelOrder, forModel, metresBetween, minutesFor, riverPassFlipped } =
   await import('../js/modules/plan-candidates.js');
 const { buildPlanRequest, planArgsFrom } = await import('../js/modules/plan-prompt.js');
 const { TACKLE_INVENTORY } = await import('../js/data/tackle-inventory.js');
@@ -171,13 +171,30 @@ describe('riverDay — every pass gets a clock and a light', () => {
 describe('riverDay — the transit a ramp-anchored day does have', () => {
   it('reports the hop out and the gaps between reaches, and has no arm to cross', () => {
     const day = clock();
-    // Walked off the fixture's own numbers rather than typed: out to A's near end, the gap where B
-    // does not quite meet A, and the same gap coming back. There is NO fourth term for crossing the
-    // launch -- C is downstream and the day never goes there, which is the whole saving. The old
-    // expectation carried `+ (A.fromRamp.m + C.fromRamp.m)` for exactly that crossing.
-    const gap = Math.abs(B.fromRamp.m - (A.fromRamp.m + day[0].lengthM));
-    const expected = A.fromRamp.m + gap + gap;
+    // \u2500\u2500 WALKED OFF THE FIXTURE'S GEOMETRY, NOT OFF ITS STATION NUMBERS \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+    //
+    // This used to be `A.fromRamp.m + gap + gap` with the gap derived as
+    // `|B.fromRamp.m - (A.fromRamp.m + lengthM)|`, which adds a STATION offset to a CHORD length.
+    // They are different axes -- the lane wanders, so an 8,000 m block of the Congaree is 8,322 m
+    // of line -- and on Ryan's 2026-09-19 day that mix charged 322 m of overlap twice and told the
+    // model 644 m of a 164 m day was deadhead.
+    //
+    // A hop is the distance between two PLACES, so it is measured between them. And the first one
+    // starts at the RAMP: `A.fromRamp.m` was 49 m along the line while the launch sits about 92 m
+    // off it, so the old number priced the boat as starting in mid-river.
+    const walk = travelOrder(day, LAUNCH).legs;
+    const entryOf = (leg) => (riverPassFlipped(leg, leg.pass === 1) ? leg.end : leg.start);
+    const exitOf = (leg) => (riverPassFlipped(leg, leg.pass === 1) ? leg.start : leg.end);
+    let expected = Math.round(metresBetween(LAUNCH, entryOf(walk[0])));
+    for (let i = 1; i < walk.length; i++) {
+      expected += Math.round(metresBetween(exitOf(walk[i - 1]), entryOf(walk[i])));
+    }
     expect(day.day.transitM).toBe(expected);
+    // And the reaches themselves MEET: the fixture builds them contiguous, so every hop after the
+    // first is zero and the whole number is the run out to the water.
+    expect(expected).toBe(Math.round(metresBetween(LAUNCH, entryOf(walk[0]))));
+    // Which is more than the station offset alone, because the ramp is off the line.
+    expect(day.day.transitM > A.fromRamp.m).toBe(true);
     // And it says out loud that it declined the other side, with what that side was worth.
     const other = day.day.offered.find((o) => o.direction === 'downstream');
     expect(other.takenFirst).toBe(false);
@@ -187,9 +204,14 @@ describe('riverDay — the transit a ramp-anchored day does have', () => {
     expect(day.day.transitM / day.day.fishedM < 0.01).toBe(true);
   });
 
-  it('and a one-arm day pays only the hop off the line, both ways being the same 49 m', () => {
+  it('and a single-reach day pays only the run out from the ramp to the water', () => {
     const day = clock({}, [A]);
-    expect(day.day.transitM).toBe(A.fromRamp.m);
+    const first = travelOrder(day, LAUNCH).legs[0];
+    const entry = riverPassFlipped(first, true) ? first.end : first.start;
+    expect(day.day.transitM).toBe(Math.round(metresBetween(LAUNCH, entry)));
+    // The turn at the top of the reach costs nothing -- the boat is already there -- so one reach
+    // fished out and back is one hop, not two.
+    expect(day.day.transitM < 2 * metresBetween(LAUNCH, entry)).toBe(true);
   });
 });
 

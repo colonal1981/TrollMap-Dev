@@ -26,8 +26,14 @@
 // where to turn around stays trimReach()'s question, which is the one it exists to answer.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+import { describe, it, expect } from './expect-shim.mjs';
 import { riverDriftRuns, LATERALS } from '../js/modules/river-drifts.js';
 import { structureIndex, selectCandidates } from '../js/modules/plan-candidates.js';
+
+const here = dirname(fileURLToPath(import.meta.url));
 
 // A straight river running due east at 34.0 N. Same shape as the fixture in
 // a-river-leg-is-a-drift-not-a-lane.test.js: 9 profile columns RIGHT to LEFT, deep on the right.
@@ -181,4 +187,66 @@ test('and a reach too short to be a leg is still refused', () => {
     assert.ok(c.lengthM >= 1500, `${c.runId} is ${c.lengthM} m, under the 1,500 m floor`);
   }
   assert.ok(cands.selection.rejected.noWindow >= 0, 'the refusals are counted');
+});
+// ── AND THEN THE DAY WITH NO GAPS IN IT REPORTED 644 m OF DEADHEAD ─────────────────────────────
+//
+// Ryan ran the fix and sent the plan back. The assembler measured the hops off the real geometry
+// and got 20 m and 29 m; the budget came to 164 m of transit including the 95 m out of the ramp.
+// The PROMPT, in the same file, told the model "644 m of the whole day is transit".
+//
+// stampPassClock() walked a one-dimensional position built as `fromRamp.m ± lengthM`. Those are
+// two different measurements: `fromRamp.m` is STATION metres, the axis reachesFromRamp cut into
+// 8,000 m blocks, and `lengthM` is the CHORD of the LANE, which wanders bank to bank and comes out
+// 8,322 m for the same block. So reach @119500 appeared to end at 8,322 where @111500 began at
+// 8,000, and 322 m of overlap that is not there was charged as a hop — twice, out and back.
+//
+// Making the window the whole reach is what exposed it: before, the window fell short of the reach
+// and the subtraction happened to land on a real gap.
+//
+// The same walk also started at position zero on the station axis, so the run out of the ramp cost
+// `fromRamp.m` — 49 m along the line for a launch that sits about 92 m off it.
+describe('the hop between two legs is a distance between two places', () => {
+  const src = (f) => readFileSync(join(here, '..', f), 'utf8');
+  const cands = src('js/modules/plan-candidates.js');
+  const walk = cands.slice(cands.indexOf('function stampPassClock'),
+                           cands.indexOf('export function riverDay'));
+
+  it('no longer adds a chord length to a station offset', () => {
+    expect(/const\s+enterM\s*=/.test(walk)).toBe(false);
+    expect(/nearM\s*\+\s*lenM/.test(walk)).toBe(false);
+    expect(walk.includes('hopBetween(posPt, enterPt)')).toBe(true);
+  });
+
+  it('asks the same transit function the candidates were priced with', () => {
+    // centrelineTransit() on a river, straight line without one -- the selector's own fallback.
+    expect(walk.includes('o.transitM || metresBetween')).toBe(true);
+  });
+
+  it('starts the walk at the ramp, so the run out to the water is counted', () => {
+    expect(walk.includes('Array.isArray(o.launch) ? o.launch : null')).toBe(true);
+  });
+});
+
+describe('the model is told about the day it is actually handed', () => {
+  const prompt = readFileSync(join(here, '..', 'js/modules/plan-prompt.js'), 'utf8');
+  // The comment above the block quotes the old sentence on purpose, so what the model is SENT has
+  // to be read off the executable lines. A whole-file search would match the explanation forever.
+  const sent = prompt.split(/\r?\n/).filter((l) => !/^\s*\/\//.test(l)).join('\n');
+
+  it('stopped claiming the app took the richer side', () => {
+    // riverDay takes the UPSTREAM arm because a dead motor far downstream is a fight home, not
+    // because it scored higher. On the 2026-09-19 Congaree day it took 132.3 over 239.2.
+    expect(sent.includes('the app took the richer side')).toBe(false);
+    expect(sent.includes('this day fishes ONE of them')).toBe(true);
+  });
+
+  it('marks the arm it did not take as not fished, rather than listing it as part of the day', () => {
+    expect(sent.includes('not fished today')).toBe(true);
+    expect(sent.includes('is not yours to plan')).toBe(true);
+  });
+
+  it('still names the other arm and what it was worth, because declining is a fact', () => {
+    expect(sent.includes('worth ${a.worth}')).toBe(true);
+    expect(sent.includes('There is water on BOTH sides of the launch')).toBe(true);
+  });
 });

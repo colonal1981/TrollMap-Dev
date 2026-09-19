@@ -881,12 +881,33 @@ function drawnDayBlock(day, candidates) {
       lines.push(`- ${day.transitM} m of the whole day is transit. Every other metre has baits in `
                + 'it, which is what a river day is for.');
     }
+    // ── AND THE OTHER ARM IS NAMED AS WATER NOT TAKEN, NOT AS PART OF THE DAY ──────────────
+    //
+    // This said "the app took the richer side first" and listed both arms as though both were on
+    // the day. Neither half is true any more. riverDay() takes the UPSTREAM arm and only that arm
+    // -- "UPSTREAM, ALWAYS, AND ONE ARM. THIS IS A SAFETY RULE AND IT DOES NOT GET SCORED" -- so
+    // the richer side is frequently the one left behind. On Ryan's 2026-09-19 Congaree day this
+    // sentence claimed the richer side was taken first while handing the model 2 upstream reaches
+    // worth 132.3 and naming 2 downstream reaches worth 239.2 that are not in the leg list at all.
+    //
+    // A model told about four reaches and handed two has been given a day nobody is fishing. So
+    // the arm on the day is marked as the day, the other is marked as not fished, and the REASON
+    // is his own rather than a score -- "the app picked the better water" invites the model to
+    // second-guess it, and "he goes up so he can float home" does not.
     const arms = (day.offered || []);
-    if (arms.length > 1) {
-      lines.push(`- There is water on BOTH sides of the launch, and the app took the richer side `
-               + `first: ${arms.map((a) => `${a.reaches} reach${a.reaches === 1 ? '' : 'es'} `
-               + `${a.direction} (worth ${a.worth})${a.takenFirst ? ' ← first' : ''}`).join(', ')}. `
-               + 'A day with two arms crosses the launch in the middle of itself.');
+    const taken = arms.find((a) => a.takenFirst);
+    if (arms.length > 1 && taken) {
+      lines.push(`- There is water on BOTH sides of the launch and this day fishes ONE of them: `
+               + `${arms.map((a) => `${a.reaches} reach${a.reaches === 1 ? '' : 'es'} `
+               + `${a.direction} (worth ${a.worth})`
+               + `${a.takenFirst ? ' ← THE DAY' : ' — not fished today'}`).join(', ')}. `
+               + `The ${taken.direction} arm does not have to be the scoring winner: he goes up `
+               + 'first and floats back, because a dead motor far downstream is a fight home '
+               + 'against the current in a 12.5 ft pedal kayak. Every leg below is on that one arm, '
+               + 'and the other is named only so you know it exists and is not yours to plan.');
+    } else if (arms.length === 1) {
+      lines.push(`- The water is all on one side of the launch: ${arms[0].reaches} reach`
+               + `${arms[0].reaches === 1 ? '' : 'es'} ${arms[0].direction}.`);
     }
     lines.push('');
   }

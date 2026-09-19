@@ -492,8 +492,11 @@ export function travelOrder(candidates, launch) {
   };
   // ── ONE OUT-AND-BACK PER ARM, NOT ONE FOR THE WHOLE DAY ─────────────────────────────────────
   //
-  // riverDay() fills the richer side of the launch first and then carries on into the other side if
-  // the budget has room -- so a day can be TWO out-and-backs from the same point, not one. Ryan
+  // riverDay() used to fill the richer side of the launch first and carry on into the other side if
+  // the budget had room -- so a day could be TWO out-and-backs from the same point, not one. It now
+  // takes the UPSTREAM arm and only that arm, which is Ryan's safety rule and not a score (see
+  // riverDay), so the two-arm case no longer arises from riverDay. This still handles it, because
+  // travelOrder is also what Pick Water and a hand-ordered list go through. Ryan
   // launches at Bates Bridge, 123,600 m along a 126,843 m centreline, and that is exactly such a
   // day: 8 km of river above him and 3.2 km below.
   //
@@ -2870,20 +2873,49 @@ function stampPassClock(legs, o) {
   const trollMph = o.trollMph ?? 2.0;
   const transitMph = o.transitMph ?? 3.5;
   const byRun = new Map();
-  let posM = 0, armDir = null, mins = 0, transitM = 0, byRunSeq = 0;
+  // \u2500\u2500 THE HOP IS A DISTANCE BETWEEN TWO PLACES, NOT A SUBTRACTION ON TWO DIFFERENT AXES \u2500\u2500\u2500\u2500\u2500\u2500
+  //
+  // This walked a one-dimensional position: `fromRamp.m \u00b1 lengthM`. Those are two different
+  // measurements. `fromRamp.m` is STATION metres -- the axis the resampler laid down, and what
+  // reachesFromRamp cut the river into 8,000 m blocks of. `lengthM` is the CHORD length of the
+  // LANE, and the channel line wanders bank to bank, so an 8,000 m block of the Congaree is
+  // 8,322 m of line. Adding one to the other says reach @119500 ends at 8,322 while @111500
+  // begins at 8,000, and the 322 m of overlap that is not there gets charged as a hop.
+  //
+  // MEASURED ON RYAN'S 2026-09-19 CONGAREE DAY, two reaches, one arm, fished out and back:
+  //
+  //     hop 1  |8000 - 8322|  = 322     hop 2  |8322 - 8000| = 322     total 644 m
+  //     what the assembler measured off the real geometry: 20 m and 29 m
+  //
+  // So the prompt told the model 644 m of the day was deadhead on a day with 164 m of it, ramp
+  // hop included. The same swap this project keeps making -- see `off_m` and the two conventions
+  // for which side is positive, and `length_m` against `station_m` in river-drifts.
+  //
+  // `o.transitM` IS THE SAME FUNCTION THE CANDIDATE BUILDER PRICED WITH, which on a river is
+  // centrelineTransit() and is river miles rather than a chord across a bend. Falling back to the
+  // straight line matches what selectCandidates does without one. Either way it is a question
+  // about two POSITIONS, which is what a hop is.
+  const hopBetween = o.transitM || metresBetween;
+  // THE BOAT STARTS AT THE RAMP, AND THE RAMP IS NOT ON THE LINE. The walk begins at the launch so
+  // the first hop is the real run out to the first leg's entry -- which includes however far the
+  // ramp sits off the centreline. The old arithmetic started at position zero on the station axis
+  // and charged `fromRamp.m` for it, so a launch 92 m off the line was priced as though the boat
+  // began in the middle of the river.
+  let posPt = Array.isArray(o.launch) ? o.launch : null;
+  let mins = 0, transitM = 0, byRunSeq = 0;
   for (const leg of order) {
-    const nearM = Number(leg.fromRamp.m), lenM = Number(leg.lengthM);
-    if (!Number.isFinite(nearM) || !Number.isFinite(lenM)) return 0;
+    const lenM = Number(leg.lengthM);
+    if (!Number.isFinite(lenM)) return 0;
     const outward = leg.pass === 1;
-    const enterM = outward ? nearM : nearM + lenM;
-    const exitM = outward ? nearM + lenM : nearM;
-    const hopM = armDir && armDir !== leg.fromRamp.direction
-      ? posM + enterM
-      : Math.abs(enterM - posM);
-    if (hopM > 0) { transitM += hopM; mins += minutesFor(hopM, transitMph); }
     // Travelling the drawn line in reverse is travelling against the flow -- a drift is drawn
-    // downstream. riverPassFlipped() is the one answer to that and both callers use it.
+    // downstream. riverPassFlipped() is the one answer to that and both callers use it, and it is
+    // also which END of the drawn line the boat comes in at.
     const upstream = riverPassFlipped(leg, outward);
+    const enterPt = upstream ? leg.end : leg.start;
+    const exitPt = upstream ? leg.start : leg.end;
+    if (!Array.isArray(enterPt) || !Array.isArray(exitPt)) return 0;
+    const hopM = posPt ? Math.round(hopBetween(posPt, enterPt)) : 0;
+    if (hopM > 0) { transitM += hopM; mins += minutesFor(hopM, transitMph); }
     const cur = Number(leg.currentMph);
     const overGround = !Number.isFinite(cur) || cur <= 0
       ? trollMph
@@ -2912,8 +2944,7 @@ function stampPassClock(legs, o) {
     byRun.get(leg.runId).push(row);
     byRunSeq += 1;
     mins += passMin;
-    posM = exitM;
-    armDir = leg.fromRamp.direction;
+    posPt = exitPt;
   }
   for (const c of legs) {
     const rows = byRun.get(c.runId);
