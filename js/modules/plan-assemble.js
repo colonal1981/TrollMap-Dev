@@ -172,6 +172,46 @@ function fitInlineWeight(lure, rod, speedMph, ceilingFt, id, runId, warnings) {
  * Without a resolver this does nothing at all and says nothing, exactly like a pack with no
  * shoreline: an absent input must not become a claim.
  */
+/**
+ * WHERE ON THIS LEG THE WATER COMES UP TO `ceilingFt` OR SHALLOWER, in metres from the leg's start.
+ *
+ * "THE CHART DOES NOT SAY WHERE THE RISE IS" WAS TRUE UNTIL 2026-09-18 AND IS NOT TRUE NOW. The
+ * drift carries `envelope_ft` -- the shallowest water within SIDE_ENVELOPE_M of the line, one value
+ * per station -- and the leg carries it as `envelope` with `envelopeStepM`. Ryan read four warnings
+ * on his 2026-09-19 plan that each ended by telling him the chart could not place the shallow spot
+ * it had just measured. It can: the index IS the distance.
+ *
+ * -1 is the pipeline's uncharted marker and must not be read as shallow water; see the note on
+ * `lineFt` in river-drifts.js. Returns [] when there is no envelope, and the sentence then falls
+ * back to what it used to say, which is the honest answer for a pack without one.
+ */
+function risesAtM(envelope, stepM, ceilingFt) {
+  const step = Number(stepM);
+  if (!Array.isArray(envelope) || !Number.isFinite(step) || step <= 0
+      || !Number.isFinite(ceilingFt)) return [];
+  const out = [];
+  for (let i = 0; i < envelope.length; i++) {
+    const v = Number(envelope[i]);
+    if (Number.isFinite(v) && v > 0 && v <= ceilingFt) out.push(Math.round(i * step));
+  }
+  return out;
+}
+
+/**
+ * "3,150 m into the pass", two of them, or the first and a count.
+ *
+ * ABOUT, NOT EXACTLY. The stations are 50 m apart and the slice is aligned to the one at or before
+ * the leg's start, so the caller says "about" and this returns the station's own distance. A metre
+ * here would be precision the resampling never had.
+ */
+function riseSentence(marks) {
+  if (!marks.length) return null;
+  const m = (v) => `${v.toLocaleString('en-US')} m`;
+  if (marks.length === 1) return `${m(marks[0])} into the pass`;
+  if (marks.length === 2) return `${m(marks[0])} and ${m(marks[1])} into the pass`;
+  return `${m(marks[0])} into the pass and at ${marks.length - 1} more places on it`;
+}
+
 function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warnings, fish,
                       legDepth = null, legLight = null) {
   // RETURNS WHAT THIS LEG FISHES; IT DOES NOT CHANGE THE BAG.
@@ -444,14 +484,18 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
     if (w.mode === 'lead' && clearsMedian) {
       const env = [legDepth.minFt, legDepth.maxFt].every(Number.isFinite)
         ? `${legDepth.minFt}-${legDepth.maxFt} ft` : `${ceilingFt} ft at its shallowest`;
+      const where = riseSentence(risesAtM(legDepth && legDepth.envelope,
+                                         legDepth && legDepth.stepM, ceilingFt));
       warnings.push(`${id} on ${runId}: a ${rod.lure}`
                   + `${inlineOz ? ` behind the ${ozLabel(inlineOz)} inline weight` : ''}`
                   + `${fit ? ` on a ${ozLabel(fit.weightOz)} head` : ''} `
                   + `runs ${w.min}-${w.max} ft, and this leg is ${env} with a median of `
-                  + `${medianFt} ft. THE LEAD IS LEFT WHERE YOU SET IT — the bait clears the water `
-                  + `this pass mostly is, and there is a rise to ${ceilingFt} ft on it somewhere `
-                  + `that it will not clear. Shorten to ${shorter ?? '—'} ft over the rise if you `
-                  + `want it off the bottom there; the chart does not say where the rise is.`);
+                  + `${medianFt} ft. THE LEAD IS LEFT WHERE YOU SET IT \u2014 the bait clears the `
+                  + `water this pass mostly is, and there is a rise to ${ceilingFt} ft it will not `
+                  + (where ? `clear about ${where}. ` : `clear somewhere on it. `)
+                  + (shorter ? `Shorten to ${shorter} ft over the rise if you want it off the bottom `
+                               + `there` : `Nothing shorter clears it`)
+                  + (where ? '.' : '; the chart does not say where the rise is.'));
       forThisLeg[id] = { ...(forThisLeg[id] || {}),
                          runsDepthFt: [w.min, w.max],
                          clearsAt: shorter ?? null };
@@ -1063,6 +1107,14 @@ export function assemblePlan(o) {
     if (!legOrder.has(k)) legOrder.set(k, i);
   });
   const rodLastUsed = new Map();
+  // WHAT IS ACTUALLY TIED ON EACH ROD RIGHT NOW.
+  //
+  // Nothing tracked this. `from` on a change was written as `ch.from ?? rod.lure`, and planArgsFrom
+  // never sets `ch.from`, so it was always the BAG's lure -- which makes a second change on one rod
+  // report the wrong bait it came off, and makes a change to the bait already on the rod
+  // undetectable. Ryan's 2026-09-19 plan carried exactly that: C1 tied a 1/4oz Chatterbait onto R5,
+  // which was already wearing a 1/4oz Chatterbait, and the app's own `buys` said `differs: []`.
+  // Seeded from the bag and updated as each change is applied, in leg order.
   const useRod = (id, i) => {
     if (!id) return;
     if (!rodLastUsed.has(id) || rodLastUsed.get(id) < i) rodLastUsed.set(id, i);
@@ -1098,6 +1150,9 @@ export function assemblePlan(o) {
   }
 
   const rods = (o.loadout && o.loadout.rods) || [];
+  const rodTiedOn = new Map(rods.map((r) => [r.id, r.lure ?? null]));
+  const sameLure = (x, y) => String(x ?? '').trim().toLowerCase()
+                          === String(y ?? '').trim().toLowerCase();
 
   for (const [ci, c] of legList.entries()) {
     // THE OUTWARD PASS OWNS THE STOPS AND THE LURE CHANGES. On a river a reach appears twice in this
@@ -1135,20 +1190,41 @@ export function assemblePlan(o) {
       // change is a worse failure than keeping a marginal one. A noise-and-flash change on a
       // slow day is a real thing to do. What Ryan cannot have is a plan that does it while
       // writing prose about suspended fish.
+      // A CHANGE TO THE BAIT ALREADY ON THE ROD IS NOT A CHANGE.
+      //
+      // It is a retie of the identical lure: a job on the water that buys nothing at all, which is
+      // the same test the "never fishes again" branch above applies for the same reason. Dropped
+      // rather than warned, because there is nothing here for him to weigh -- keeping it cannot help.
+      const tiedOn = rodTiedOn.has(ch.rodId) ? rodTiedOn.get(ch.rodId) : rod.lure;
+      if (sameLure(tiedOn, ch.to)) {
+        warnings.push(`dropped a lure change on ${ch.rodId} before ${c.runId} -- it ties on the `
+                    + `${ch.to} that is already on that rod, so it is a retie of the same bait and `
+                    + 'buys nothing');
+        continue;
+      }
       const nameOf = typeof o.lureByName === 'function' ? o.lureByName : null;
-      const fromL = nameOf ? nameOf(ch.from ?? rod.lure) : null;
+      const fromL = nameOf ? nameOf(tiedOn) : null;
       const toL = nameOf ? nameOf(ch.to) : null;
       const delta = fromL && toL
         ? presentationDelta(fromL, toL, { speedMph: trollMph, leadFt: rod.leadFt })
         : null;
       if (delta && !delta.differs.filter((f) => f !== 'noise' && f !== 'flash').length) {
-        const moved = delta.differs.length ? delta.differs.join(' and ') : 'nothing at all';
         const [dl, dh] = delta.depth.to;
-        warnings.push(`the lure change on ${ch.rodId} before ${c.runId} changes ${moved}. Both `
-                    + `baits run ${dl}-${dh} ft on ${rod.leadFt} ft of lead, sit in the same part `
-                    + `of the water column, read the same to a fish and troll at the same speed — `
-                    + `so it is a change of sound, not of presentation. Keep it if that is the `
-                    + `plan and say so; it is a job on the water either way.`);
+        // THE TAIL USED TO SAY "a change of sound" WHETHER OR NOT THE SOUND CHANGED. With an empty
+        // `differs` the app has measured that nothing differs -- not depth, not profile, not noise,
+        // not flash, not speed -- and then told him it was a change of sound anyway. Two different
+        // baits that measure identical is a real thing to report; it is just not that.
+        warnings.push(`the lure change on ${ch.rodId} before ${c.runId} `
+                    + (delta.differs.length
+                        ? `changes ${delta.differs.join(' and ')} and nothing else. Both baits run `
+                          + `${dl}-${dh} ft on ${rod.leadFt} ft of lead, sit in the same part of the `
+                          + `water column and troll at the same speed \u2014 so it is a change of `
+                          + `sound, not of presentation.`
+                        : `changes nothing this app can measure: a ${tiedOn} and a ${ch.to} both run `
+                          + `${dl}-${dh} ft on ${rod.leadFt} ft of lead, take the same part of the `
+                          + `water column, make the same noise and flash, and troll at the same `
+                          + `speed.`)
+                    + ` Keep it if that is the plan and say so; it is a job on the water either way.`);
       }
 
       changes.push({
@@ -1156,9 +1232,13 @@ export function assemblePlan(o) {
         // NOT `rod.rig` ALONE. A bait tied to five feet of fluorocarbon behind a trolling
         // weight is a knot to change even though the snap is what the rod is wearing.
         cost: changeCostFor(toL ? toL.type : null, rod.rig),
-        from: ch.from ?? rod.lure ?? null, to: ch.to ?? null, why: ch.why ?? null,
+        // THE BAIT IT ACTUALLY COMES OFF, which on a second change to one rod is not the bag's.
+        from: ch.from ?? tiedOn ?? null, to: ch.to ?? null, why: ch.why ?? null,
         buys: delta ? { same: delta.same, differs: delta.differs } : null,
       });
+      // AND THE ROD IS NOW WEARING IT, so the next change on this rod knows what it comes off and a
+      // retie of the same bait two legs later is caught the same way as one at the first leg.
+      if (ch.to) rodTiedOn.set(ch.rodId, ch.to);
     }
 
     const { flipped, start: legStart, end: legEnd,
@@ -1413,13 +1493,24 @@ export function assemblePlan(o) {
     //
     // So it runs every pass, into a scratch list, and saidForRun decides what is news. Identical
     // sentences collapse; a sentence that differs because the hour or the pair differs is kept.
+    // THE LEG'S ENVELOPE IN THE DIRECTION THE BOAT RUNS IT, computed once. The leg object below used
+    // to flip this inline; capBaitDepth needs the same array to place a rise, and two flips of one
+    // array in one function is one too many.
+    const legEnvelope = c.envelope
+      ? (flipped ? c.envelope.slice().reverse() : c.envelope) : null;
     const fresh = [];
     const rodPlan = capBaitDepth(rods, deploy, Number(c.maxRunDepthFt ?? c.depthFt), waterMph,
                                  o.lureByName, c.runId, fresh, fish,
                                  // THE LEG'S OWN ENVELOPE, so a one-shoal ceiling can be told apart
                                  // from water that is shallow all the way along. See capBaitDepth.
+                                 // AND THE ENVELOPE ITSELF, so the rise can be placed rather than
+                                 // described as somewhere. Flipped here once and reused by the leg
+                                 // below: `atM` on an upstream pass is measured from the end the
+                                 // boat actually starts at, and a warning that quoted the drawn
+                                 // line's distance would be right about the wrong end of the leg.
                                  { medianFt: Number(c.depthFt), minFt: Number(c.depthMinFt),
-                                   maxFt: Number(c.depthMaxFt) }, legLight);
+                                   maxFt: Number(c.depthMaxFt),
+                                   envelope: legEnvelope, stepM: c.envelopeStepM }, legLight);
     for (const w of fresh) sayOnce(w);
 
     legs.push({
@@ -1478,7 +1569,7 @@ export function assemblePlan(o) {
       // Reversed with the geometry, because station 0 is the start of the line AS DRAWN and a
       // flipped leg meets the stations the other way round. Absent on candidates that never
       // measured one, and every reader treats absent as "not known".
-      envelope: c.envelope ? (flipped ? c.envelope.slice().reverse() : c.envelope) : undefined,
+      envelope: legEnvelope || undefined,
       envelopeStepM: c.envelopeStepM,
       stops,
       // WHAT THE LEG GOES BY, not just what the model chose to stop on.

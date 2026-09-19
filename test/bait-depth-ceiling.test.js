@@ -422,6 +422,14 @@ describe('the ceiling survives the trip through the planner, not just the assemb
     // The number that WOULD clear is computed and kept, which is the half he acts on.
     expect(Number.isFinite(got.clearsAt)).toBe(true);
     expect(depthWindow(LIPLESS, { speedMph: 2.0, leadFt: got.clearsAt }).max <= 8).toBe(true);
+    // AND IT SAYS WHERE THE RISE IS, because the chart does say. This lane's 8 ft station is index
+    // 20 of a 100 m envelope, so it is 2,000 m into the pass, and the leg now carries the array the
+    // ceiling was read from. Ryan, 2026-09-19, having read the old sentence four times on one plan:
+    // it ended by telling him the chart could not place the shallow spot it had just measured.
+    expect(said).toMatch(/about 2,000 m into the pass/);
+    expect(said).not.toMatch(/the chart does not say where the rise is/);
+    expect(leg.envelope[20]).toBe(8);
+    expect(leg.envelopeStepM).toBe(100);
   });
 
   // AND IT HAS TO REACH THE CARD, NOT JUST THE WARNINGS ARRAY.
@@ -489,6 +497,9 @@ describe('a rise on deep water is flagged, and shallow water is still corrected'
   it('and hands him the number that WOULD clear, without applying it', () => {
     const w = said(run(leg(11, 20, 25)));
     expect(w).toMatch(/Shorten to 48 ft over the rise if you want it off the bottom there/);
+    // THIS LEG FIXTURE CARRIES NO ENVELOPE, and that is the case the old sentence was written for:
+    // a pack with no per-station profile genuinely cannot place the rise, so it still says so. The
+    // planner-level test below is the one with an envelope on it.
     expect(w).toMatch(/the chart does not say where the rise is/);
   });
 

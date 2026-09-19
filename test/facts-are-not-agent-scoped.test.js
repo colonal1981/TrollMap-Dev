@@ -25,8 +25,15 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const ENGINE = readFileSync(path.join(ROOT, 'js/modules/lake-research-engine.js'), 'utf8');
-const EXTRACT = readFileSync(path.join(ROOT, 'Worker/research/extract.js'), 'utf8');
+// READ AS LF, WHATEVER THE CHECKOUT. This file slices JavaScript out of a source file by
+// searching for `\n}\n`, and Ryan's working copy is CRLF -- so on his machine the search failed,
+// the slice came back empty, and the test died building a module out of `export \nexport \n`.
+// Two of these files went red on his clone on 2026-09-19 while CI, which checks out LF, was
+// green. Normalised once at the read rather than at five different markers.
+const ENGINE = readFileSync(path.join(ROOT, 'js/modules/lake-research-engine.js'), 'utf8')
+  .replace(/\r\n/g, '\n');
+const EXTRACT = readFileSync(path.join(ROOT, 'Worker/research/extract.js'), 'utf8')
+  .replace(/\r\n/g, '\n');
 
 test('an agent analyses the LAKE document cache, not a set of its own', () => {
   // Both branches ask for the whole lake and neither narrows by agent -- resume prefers

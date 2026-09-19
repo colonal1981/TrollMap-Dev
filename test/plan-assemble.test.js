@@ -398,11 +398,43 @@ describe('plan-assemble — saying when it does not fit', () => {
 
   it('keeps a change justified by a later stop rather than by the spread', () => {
     // R6 is the cast rod -- it is never deployed, so only a stop can justify touching it.
+    //
+    // AND IT TIES ON SOMETHING IT IS NOT ALREADY WEARING. This fixture asked for a Walking Bait,
+    // which is what R6 is rigged with in LOADOUT above, so from 2026-09-19 it is dropped as a retie
+    // of the same bait -- see the test below. The change under test here is a real one.
     const plan = basePlan({
       stops: [{ runId: 'w#2', structureId: 'ledge_3', rods: ['R6'], durationMin: 15 }],
-      changes: [{ beforeRunId: 'w#2', rodId: 'R6', to: 'Walking Bait', why: 'for the stop' }],
+      changes: [{ beforeRunId: 'w#2', rodId: 'R6', to: 'Bucktail', why: 'for the stop' }],
     });
     expect(plan.changes.map((c) => c.rodId)).toEqual(['R6']);
+  });
+
+  it('drops a change that ties on the bait already on the rod, because that is a retie', () => {
+    // Ryan's 2026-09-19 Congaree plan: C1 tied a 1/4oz Chatterbait onto R5, which was already wearing
+    // a 1/4oz Chatterbait. The app kept it, priced the knot, put a waypoint on the Garmin for it, and
+    // then described it as "a change of sound, not of presentation" -- while its own `buys` field said
+    // `differs: []`. Nothing differed, including the sound.
+    const plan = basePlan({
+      stops: [{ runId: 'w#2', structureId: 'ledge_3', rods: ['R6'], durationMin: 15 }],
+      changes: [{ beforeRunId: 'w#2', rodId: 'R6', to: 'Walking Bait', why: 'a darker blade' }],
+    });
+    expect(plan.changes.length).toBe(0);
+    expect(plan.warnings.some((w) => /already on that rod/.test(w))).toBe(true);
+  });
+
+  it('and tracks what a rod is wearing, so the second change knows what it comes off', () => {
+    // `from` was `ch.from ?? rod.lure` and planArgsFrom never sets `ch.from`, so every change on a rod
+    // reported the BAG's bait as the one coming off -- wrong from the second change onward, and the
+    // reason a retie of the same bait could not be seen at all.
+    // R5 is the rod this fixture deploys on BOTH runs, so neither change is dropped for a rod that
+    // never fishes again -- which is what happens to R1, deployed on w#1 only.
+    const plan = basePlan({
+      changes: [{ beforeRunId: 'w#1', rodId: 'R5', to: 'Bucktail', why: 'first' },
+                { beforeRunId: 'w#2', rodId: 'R5', to: 'DD1 Crankbait', why: 'second' }],
+    });
+    const mine = plan.changes.filter((c) => c.rodId === 'R5');
+    expect(mine.length).toBe(2);
+    expect(mine[1].from).toBe('Bucktail');
   });
 
   // ---------------------------------------------------------------------------------------------

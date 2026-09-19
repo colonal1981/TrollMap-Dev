@@ -44,7 +44,13 @@ const FACTS = JSON.parse(readFileSync(path.join(REG, 'agency_lake_facts.json'), 
 
 // The two functions are lifted out of the shipped file rather than reimplemented, so this tests
 // the text the model will actually be sent. agents.js itself pulls in the whole Worker.
-const SRC = readFileSync(path.join(ROOT, 'Worker', 'research', 'agents.js'), 'utf8');
+// READ AS LF, WHATEVER THE CHECKOUT. This file slices JavaScript out of a source file by
+// searching for `\n}\n`, and Ryan's working copy is CRLF -- so on his machine the search failed,
+// the slice came back empty, and the test died building a module out of `export \nexport \n`.
+// Two of these files went red on his clone on 2026-09-19 while CI, which checks out LF, was
+// green. Normalised once at the read rather than at five different markers.
+const SRC = readFileSync(path.join(ROOT, 'Worker', 'research', 'agents.js'), 'utf8')
+  .replace(/\r\n/g, '\n');
 const lift = (name) => {
   const start = SRC.indexOf(`${name}(`, SRC.indexOf(`function ${name}`));
   const from = SRC.lastIndexOf('\n', SRC.lastIndexOf('function ' + name, start + name.length + 1));

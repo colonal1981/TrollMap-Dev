@@ -37,6 +37,16 @@ function walk(dir, out = []) {
   return out;
 }
 
+// READ AS LF, WHATEVER THE CHECKOUT.
+//
+// Every case in this file scans source text and strips `//` comments with `/\/\/.*$/`. In JS `.`
+// does not match `\r`, and `$` without the `m` flag only matches the very end of the string -- so on
+// a CRLF working copy that strip silently does nothing, and a token literal sitting inside a comment
+// is scanned as if it were code. Two cases here went red on Ryan's clone on 2026-09-19 over the
+// comment at plan-builder.js:3001, which explains the very bug this file guards; CI checks out LF and
+// was green. Same fix as the four other source-scanning tests: normalise at the read.
+const source = (f) => readFileSync(f, 'utf8').replace(/\r\n/g, '\n');
+
 describe('worker auth — the token has one spelling', () => {
   it('is defined once in the front end', () => {
     // A secret written out twice has already gone wrong; it just has not been noticed yet.
@@ -45,7 +55,7 @@ describe('worker auth — the token has one spelling', () => {
     const offenders = [];
     for (const f of walk(join(ROOT, 'js'))) {
       if (f.endsWith('utils/worker-auth.js')) continue;
-      for (const [i, line] of readFileSync(f, 'utf8').split('\n').entries()) {
+      for (const [i, line] of source(f).split('\n').entries()) {
         const code = line.replace(/\/\/.*$/, '').replace(/^\s*\*.*$/, '');
         if (/['"]trollmap[-\w]*\d[-\w]*['"]/.test(code) && /token/i.test(code)) {
           offenders.push(`${f.slice(ROOT.length + 1)}:${i + 1}`);
@@ -57,7 +67,7 @@ describe('worker auth — the token has one spelling', () => {
 
   it('the phantom literal is gone from executable code', () => {
     for (const f of walk(join(ROOT, 'js'))) {
-      const code = readFileSync(f, 'utf8')
+      const code = source(f)
         .split('\n').map((l) => l.replace(/\/\/.*$/, '')).filter((l) => !/^\s*\*/.test(l))
         .join('\n');
       expect(code.includes("'trollmap-sync-9a8b7c6d5e'")).toBe(false);
@@ -127,7 +137,7 @@ describe('worker auth — every mutating route is gated', () => {
     const research = walk(join(ROOT, 'Worker/research'));
     const writers = [];
     for (const f of research) {
-      const src = readFileSync(f, 'utf8');
+      const src = source(f);
       for (const m of src.matchAll(/\basync\s+function\s+(handle\w+)/g)) {
         // Bound the body at the NEXT function declaration. A fixed 4000-char window overran
         // into the following function and flagged handleSharedQuery and handleSharedStatus,
@@ -167,7 +177,7 @@ describe('worker auth — the client signs what the Worker checks', () => {
                    '/research/shared/quarantine'];
     const bare = [];
     for (const f of files) {
-      const lines = readFileSync(f, 'utf8').split('\n');
+      const lines = source(f).split('\n');
       for (const [i, ln] of lines.entries()) {
         if (!/fetch\(/.test(ln) || !gated.some((g) => ln.includes(g))) continue;
         const win = lines.slice(i, i + 8).join('\n');
@@ -185,7 +195,7 @@ describe('worker auth — the client signs what the Worker checks', () => {
     const leaks = [];
     for (const f of files) {
       if (f.endsWith('utils/worker-auth.js')) continue;   // where they are DEFINED
-      const lines = readFileSync(f, 'utf8').split('\n');
+      const lines = source(f).split('\n');
       for (const [i, ln] of lines.entries()) {
         if (!/workerHeaders\(|workerAuthOnly\(/.test(ln)) continue;
         const win = lines.slice(Math.max(0, i - 7), i + 1).join('\n');

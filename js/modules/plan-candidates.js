@@ -1943,6 +1943,32 @@ export function selectCandidates(runs, o) {
     // name of the contour it was cut from. Null on a pack fitted before envelope profiles existed,
     // and every reader below falls back to what it used to use.
     const band = waterBand(p, win.startM, win.startM + win.lengthM);
+    // AND THE ENVELOPE ITSELF, SLICED TO THIS WINDOW, because a summary cannot say WHERE.
+    //
+    // `waterBand` reduces the same two arrays to four numbers, and the leg has carried an `envelope`
+    // field since it was written with nothing ever putting one in it. So a bait-depth warning could
+    // say "there is a rise to 5 ft on it somewhere" and then "the chart does not say where the rise
+    // is" -- which stopped being true when the drift started shipping `envelope_ft`. It does say:
+    // the index is the distance. Ryan read that sentence four times on one plan, 2026-09-19.
+    //
+    // `envelope_line_ft` AND NOT `envelope_ft`, BECAUSE THE CEILING CAME OFF THE LINE. `maxRunDepthFt`
+    // is `band.line.minFt` -- the shallowest depth ON the line -- and a warning that quotes that
+    // number has to locate it in the array it came from. Tried the other way round first: read off
+    // `envelope_ft`, the shallowest within SIDE_ENVELOPE_M either side, 50 of the Congaree leg's 161
+    // stations came back at or under 5 ft, which is a true statement about the corridor and a false
+    // answer to "where is the rise the bait will not clear".
+    //
+    // ALIGNED TO THE NEAREST STATION AND NOT BETTER THAN THAT. The slice starts at the station at or
+    // before the window's start, so index 0 sits within one step -- 50 m on every river pack built so
+    // far -- of the leg's own start, and whoever reads it says "about". Pretending to the metre would
+    // be inventing precision the 50 m resampling never had.
+    const envStep = Number(p && p.envelope_step_m);
+    const envAll = p && p.envelope_line_ft;
+    const envelope = (envStep > 0 && Array.isArray(envAll))
+      ? envAll.slice(Math.max(0, Math.min(envAll.length - 1, Math.floor(win.startM / envStep))),
+                     Math.max(0, Math.min(envAll.length,
+                       Math.ceil((win.startM + win.lengthM) / envStep) + 1)))
+      : null;
 
     const inM = transitM(o.ramp, start);
     const outM = transitM(end, o.ramp);
@@ -2129,6 +2155,11 @@ export function selectCandidates(runs, o) {
       // Plan legs arrived with none, plan-assemble.js fell back to `depthFt`, and the fallback
       // was the contour's NAME, so the shallowest water on the leg was never checked at all.
       maxRunDepthFt: band ? band.line.minFt : null,
+      // THE SHALLOWEST WATER STATION BY STATION, so a warning about a rise can place it. Sliced to
+      // this window above; the assembler reverses it with the geometry on an upstream pass, the same
+      // way it reverses `marks`, and capBaitDepth turns an index into a distance.
+      envelope: envelope || undefined,
+      envelopeStepM: envelope ? envStep : undefined,
       wholeRun: win.whole,
       waterDepthFt: Number.isFinite(elig.waterFt) ? Number(elig.waterFt.toFixed(1)) : null,
       waterDepthMeasured: elig.measured,

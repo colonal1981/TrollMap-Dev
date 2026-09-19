@@ -28,7 +28,12 @@ import { dirname, join } from 'node:path';
 import { describe, it, expect } from './expect-shim.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const src = (f) => readFileSync(join(here, '..', f), 'utf8');
+// READ AS LF, WHATEVER THE CHECKOUT. This file slices JavaScript out of a source file by
+// searching for `\n}\n`, and Ryan's working copy is CRLF -- so on his machine the search failed,
+// the slice came back empty, and the test died building a module out of `export \nexport \n`.
+// Two of these files went red on his clone on 2026-09-19 while CI, which checks out LF, was
+// green. Normalised once at the read rather than at five different markers.
+const src = (f) => readFileSync(join(here, '..', f), 'utf8').replace(/\r\n/g, '\n');
 
 const { compassOf, COMPASS_16 } = await import('../js/utils/compass.js');
 const { coastalPromptBlock } = await import('../js/modules/plan-prompt.js');
