@@ -1265,6 +1265,22 @@ export function conditionsFrom(inp, ramp, sol, forecast, clarityAtRamp = null) {
  * named a `holding` position -- the field that decides WHICH WATER GETS PICKED, not just what the
  * prose says.
  *
+ * THAT TALLY IS THE OLD CLASSIFICATION AND THE SHIPPED ONE NO LONGER RETURNS IT. The rule below
+ * counts a band beside a DIFFERENT water depth as stated even with no quote -- two distinct numbers
+ * for two distinct quantities is itself the evidence -- which moves 83 of the 635 and 55 of the 261
+ * into 'stated'. What the shipped classifier returns, run over the local registry on 2026-09-19:
+ *
+ *     node F:\TrollMapPipeline\_scratch\count_depth_evidence.mjs F:\TrollMapPipeline\registry\_research_profiles
+ *
+ *        79  profiles                1,194  depth entries
+ *       324  stated       (27.1%)      191  one-number
+ *       470  no-citation               209  quote-has-no-depth
+ *       531  of the 870 unsupported still name a `holding`
+ *
+ * The two counts are two different corpora, not a disagreement: the Worker read saw 81 profiles and
+ * the local registry holds 79. Which two are missing locally is NOT established here, so quote the
+ * count with the corpus it was taken from and never the bare number.
+ *
  * THE 635 WITH NO QUOTE ARE THE SHARPEST, because the research prompt asks for exactly that:
  * "If you are reporting a value from general knowledge of the species rather than from anything in
  * front of you, set sourceQuote to null -- that is a legitimate answer and it is far more useful
