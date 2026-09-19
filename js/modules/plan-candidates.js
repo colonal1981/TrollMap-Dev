@@ -1630,6 +1630,49 @@ function bestWindow(run, opts) {
   const ceiling = Math.min(total, maxM);
   const at = (a, b) => scoreWindow(near, a, b, weights, maxOffM);
 
+  // ── A RIVER REACH IS NOT WINDOWED, BECAUSE THE BOAT CANNOT SKIP WATER ────────────────────
+  //
+  // Everything below this is a lake idea and a good one: a stitched contour run can be 50 km long,
+  // the boat picks the good stretch out of it, and the blank water at the ends is water it never
+  // touches. Dropping the quiet tail is right there.
+  //
+  // ON A RIVER THE BOAT CROSSES EVERY METRE IT GOES PAST, so a dropped tail is not water skipped,
+  // it is water RUN WITH THE RODS OUT. riverDay() in this file already states the arithmetic:
+  // "Motoring past water to reach better water is never worth it on this boat... You pay more
+  // amp-hours, fish nothing for a mile, and get less than half a mile back. So the day fishes every
+  // metre it covers." And travelOrder() states the invariant it depends on: the reaches come out
+  // CONTIGUOUS, "@47800 ends exactly where @55800 begins, 0.0 m apart", so "every hop between legs
+  // is zero by construction and there is nothing left for a chain solver to solve."
+  //
+  // BOTH WERE TRUE OF THE REACHES AND NEITHER WAS TRUE OF THE LEGS. Measured on Ryan's Congaree day
+  // of 2026-09-19, launching Bates Bridge, against the reaches riverDriftRuns actually emitted:
+  //
+  //     reach              reach is    leg was    dropped    crossed anyway?
+  //     @119500 upstream     8,322 m    3,134 m    5,188 m   no  -- the turnaround
+  //     @127500 downstream   8,351 m    6,500 m    1,851 m   YES, TWICE
+  //     @135500 downstream   8,402 m    3,750 m    4,652 m   no  -- the turnaround
+  //
+  // @127500's dropped tail is T2 and T4 on that plan: 1,826 m each, 19 min each, 4.33 Ah each --
+  // 38 of the 40 minutes the day ran over its own 540-minute window, spent motoring across water
+  // it had just decided was worth fishing on both sides of.
+  //
+  // The two drops at the turnarounds are correct and cost nothing, and no per-reach rule can tell
+  // them from the one in the middle -- that depends on what else is on the day. So the reach is the
+  // window, and WHERE TO TURN AROUND IS trimReach()'s QUESTION, which is the one it was lifted out
+  // of riverDay() to answer. The turnaround emerges from the battery and the clock, as its own
+  // comment says it should, instead of from a tail-drop that did not know the day it was in.
+  //
+  // AND `maxM` IS NOT APPLIED TWICE TO THE SAME QUANTITY. reachesFromRamp() already cut the river
+  // into maxM blocks; this maxM is the same 8,000 by default, but a reach's LANE is longer than its
+  // station span -- the channel line wanders bank to bank, so the Congaree's 8,000 m blocks come out
+  // 8,322-8,450 m of actual line. Capping again at 8,000 would leave a 350-450 m sliver unfished at
+  // every reach boundary, which is the same defect in miniature. `minM` still applies: a 400 m reach
+  // is not a leg, and that was never about skipping water.
+  if (p.drift) {
+    const win = at(0, total);
+    return { startM: 0, lengthM: total, score: win.score, hits: win.hits, whole: true };
+  }
+
   // Seed: the densest `minM` the run has. Ties go to the earlier one, which keeps the result
   // stable when a run passes nothing at all.
   let lo = 0, hi = Math.min(minM, ceiling), seed = at(lo, hi).score;
