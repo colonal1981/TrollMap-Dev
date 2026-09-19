@@ -101,10 +101,39 @@ export async function buildSmartPlanV2(o) {
     Promise.resolve(o.fetchJson(`${base}/${o.r2Key}/boundary.geojson`)).catch(() => null),
   ]);
   const runs = (runsFc && runsFc.features) || [];
-  if (!runs.length) {
-    // A real and common state: not every pack has trolling runs. Say which, and stop — a plan
-    // built without them would be the old "route by re-deriving the lake on a phone" path.
-    return { plan: null, problems: [`${o.r2Key} has no trolling runs in its chartpack`], candidates: [] };
+  // A RIVER DOES NOT NEED LANES, AND THIS REFUSED TO PLAN ONE WITHOUT THEM.
+  //
+  // `legRuns = drifts || runs` below: on moving water the candidates come from the centreline and
+  // `runs` is never read again. But this guard fired first and did not know what water it was on, so
+  // a river pack was unplannable unless it shipped a trolling_runs.geojson -- which is the very
+  // object the drift work replaced, because a fitted lane is the wrong shape on a river. The
+  // Congaree's is 87 MB of it, kept alive in R2 by this line alone.
+  //
+  // Ryan, 2026-09-19: "why would we need trolling runs for a river... i thought we decided that they
+  // are not needed for rivers". We did, on 2026-09-16, and this is the line that never heard.
+  //
+  // So the question is now the right one: is there anything to plan FROM. A centreline is enough on
+  // its own; the river branch below still refuses a river whose centreline is missing or empty, and a
+  // lake with no lanes is refused here exactly as before.
+  const centrelineReady = !!(centrelineFc && Array.isArray(centrelineFc.features)
+                             && centrelineFc.features.length);
+  // WHAT WAS WRONG WITH THE PACK ITSELF, CARRIED OUT OF EVERY EXIT.
+  //
+  // A complaint about a missing layer belongs to the pack and not to the outcome, so it must not
+  // depend on the day getting as far as a plan. Written here, where the layers land, and spread into
+  // each return below -- there are seven, and a note that only speaks from the last one is a guard
+  // that goes quiet exactly when something else has already gone wrong.
+  const packProblems = [];
+  if (centrelineReady && !boundaryFc) {
+    packProblems.push(`${o.r2Key} is a river and its chartpack carries no boundary.geojson, so the `
+                    + 'reaches cover the whole traced mainstem -- which runs past this river at both '
+                    + 'ends, into whatever water is next. Publish the boundary for this pack and the '
+                    + 'day stops where the water does.');
+  }
+  if (!runs.length && !centrelineReady) {
+    return { plan: null, candidates: [],
+             problems: [...packProblems, `${o.r2Key} has no trolling runs in its chartpack and no centreline either, `
+                      + 'so there is nothing to lay a day out on'] };
   }
 
   const poiSpots = poiSpotFeatures(poisFc);
@@ -166,12 +195,13 @@ export async function buildSmartPlanV2(o) {
   // question of a registry row and two spellings of one question is how they would come to disagree
   // about the same water. See its note in plan-inputs.js.
   const stateSaysRiver = saysRiver(o.waterState);
-  const packHasCentreline = !!(centrelineFc && Array.isArray(centrelineFc.features)
-                               && centrelineFc.features.length);
+  // The same test the guard above already made. One spelling, because two of them are how they come
+  // to disagree about one pack.
+  const packHasCentreline = centrelineReady;
   const isRiver = stateSaysRiver || packHasCentreline;
   if (isRiver && !packHasCentreline) {
     return { plan: null, candidates: [],
-             problems: [`${o.r2Key} is a river and its chartpack carries no centreline.geojson, so `
+             problems: [...packProblems, `${o.r2Key} is a river and its chartpack carries no centreline.geojson, so `
                       + 'a drift cannot be laid out — and its trolling runs are lanes, which is the '
                       + 'wrong object on moving water. Build and upload the centreline layer for '
                       + 'this pack before planning it.'] };
@@ -213,7 +243,7 @@ export async function buildSmartPlanV2(o) {
     : null;
   if (drifts && !drifts.length) {
     return { plan: null, candidates: [],
-             problems: [`${o.r2Key} has a centreline and it yielded no drift at all — no reach of `
+             problems: [...packProblems, `${o.r2Key} has a centreline and it yielded no drift at all — no reach of `
                       + 'it carried two stations and a length, so the layer is present and empty'] };
   }
   const legRuns = drifts || runs;
@@ -325,7 +355,7 @@ export async function buildSmartPlanV2(o) {
     const gap = (s.considered != null && s.accountedFor != null)
       ? s.considered - s.accountedFor : 0;
     return { plan: null, candidates: [],
-             problems: [`nothing on ${o.r2Key} is both fishable for ${lo}–${hi} ft fish `
+             problems: [...packProblems, `nothing on ${o.r2Key} is both fishable for ${lo}–${hi} ft fish `
                       + `(${s.depthRule || 'depth rule unknown'}) and reachable from this ramp `
                       + `inside the day — of ${s.considered ?? legRuns.length} `
                       + `${drifts ? 'drifts' : 'runs'}, `
@@ -458,7 +488,7 @@ export async function buildSmartPlanV2(o) {
   // `dryRun` gets a plan-shaped nothing rather than a stale plan, which is the safe way round.
   if (o.dryRun) {
     return { plan: null, candidates, request: req, response: null, exchange: null,
-             dryRun: true, problems: [] };
+             dryRun: true, problems: [...packProblems] };
   }
 
   // AN ASKER MAY RETURN THE TEXT, OR THE TEXT AND WHAT THE CALL COST.
@@ -490,7 +520,7 @@ export async function buildSmartPlanV2(o) {
       ? ` (finish_reason=${m.finishReason}${m.completionTokens ? `, ${m.completionTokens} tokens out` : ''})`
       : '';
     return { plan: null, candidates, request: req, exchange: raw.meta || null,
-             problems: [`the model's answer could not be read: ${e.message}${cut}`] };
+             problems: [...packProblems, `the model's answer could not be read: ${e.message}${cut}`] };
   }
 
   const args = planArgsFrom(res, candidates, { tackle: o.tackle, connectionOf });
@@ -556,18 +586,6 @@ export async function buildSmartPlanV2(o) {
   plan.notes = args.notes;
 
   const broken = validatePlan(plan);
-  // A RIVER WHOSE BOUNDARY DID NOT ARRIVE IS PLANNED ON ITS WHOLE TRACED LINE, AND SAYS SO.
-  //
-  // `boundary.geojson` is fetched with a .catch(() => null) like pois and the centreline, and a null
-  // there is the difference between "the reaches stop where the Congaree stops" and "the day runs
-  // 4.6 km into Lake Marion under the Congaree's name". Every silent null in this pipeline has cost
-  // something; this one says which river it could not check.
-  if (isRiver && packHasCentreline && !boundaryFc) {
-    broken.push(`${o.r2Key} is a river and its chartpack carries no boundary.geojson, so the reaches `
-              + 'cover the whole traced mainstem -- which runs past this river at both ends, into '
-              + "whatever water is next. Publish the boundary for this pack and the day stops where "
-              + 'the water does.');
-  }
   return {
     plan, candidates, request: req, response: res, exchange: raw.meta || null,
     // WHAT THE APP READ OUT OF THE ANSWER, BEFORE THE ASSEMBLER RAN. planArgsFrom() is the first
@@ -576,7 +594,7 @@ export async function buildSmartPlanV2(o) {
     // asked twice, is about the gap between them: "what the LLM gives us and what we do with it...
     // do we throw away good data". Answering it needs both readings, and only `plan` was returned.
     args,
-    problems: [...args.problems, ...plan.warnings, ...broken],
+    problems: [...packProblems, ...args.problems, ...plan.warnings, ...broken],
   };
 }
 

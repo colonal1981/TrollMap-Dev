@@ -656,3 +656,54 @@ test('and no boundary at all is the same as before it was ever fetched', () => {
                           fc.features[0].geometry.coordinates,
                           { type: 'FeatureCollection', features: [] }), null);
 });
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// A RIVER DOES NOT NEED TROLLING RUNS, AND THE PLANNER USED TO INSIST ON THEM
+//
+// Ryan, 2026-09-19: *"why would we need trolling runs for a river... i thought we decided that they
+// are not needed for rivers"*. We did, on 2026-09-16, when the drift replaced the fitted lane on
+// moving water -- `legRuns = drifts || runs`, and on a river `runs` is never read again. But the
+// guard at the top of buildSmartPlanV2 fired before anything knew what water it was on, so a river
+// pack without a trolling_runs.geojson could not be planned at all. The Congaree's is 87 MB, and
+// this line is the only thing that was keeping it alive.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+const { buildSmartPlanV2 } = await import('../js/modules/smart-plan-v2.js');
+
+const packWith = (layers) => async (p) => {
+  const f = String(p).split('/').pop();
+  return Object.prototype.hasOwnProperty.call(layers, f) ? layers[f] : null;
+};
+const PLAN_OPTS = {
+  r2Key: 'test_river', chartpackBase: '', ramp: [-81.0, 34.0], rampName: 'a ramp',
+  water: 'Test River, SC', date: '2026-09-19', launchTime: '06:00', returnTime: '15:00',
+  species: 'Largemouth Bass', usableAh: 80, windowMin: 540, conditions: {},
+  askModel: async () => JSON.stringify({ safety: { isGo: true }, loadout: { rods: [] },
+                                         legs: [], stops: [], changes: [], notes: {} }),
+};
+
+test('a river with a centreline and no trolling runs is planned, not refused', async () => {
+  const r = await buildSmartPlanV2({
+    ...PLAN_OPTS,
+    fetchJson: packWith({ 'centreline.geojson': eastwardRiver() }),
+  });
+  const said = (r.problems || []).join(' | ');
+  assert.ok(!/no trolling runs/.test(said), `still asking a river for lanes: ${said}`);
+});
+
+test('and a pack with neither is refused, saying there is nothing to lay a day on', async () => {
+  const r = await buildSmartPlanV2({ ...PLAN_OPTS, fetchJson: packWith({}) });
+  assert.equal(r.plan, null);
+  assert.ok((r.problems || []).some((x) => /no centreline either/.test(x)),
+            (r.problems || []).join(' | '));
+});
+
+test('a river whose boundary did not arrive says so rather than planning the whole mainstem', async () => {
+  // The silent null this pipeline keeps paying for. Without a boundary the reaches cover the whole
+  // traced line, which on congaree_river runs 26 km past the Wateree junction into Lake Marion.
+  const r = await buildSmartPlanV2({
+    ...PLAN_OPTS,
+    fetchJson: packWith({ 'centreline.geojson': eastwardRiver() }),
+  });
+  assert.ok((r.problems || []).some((x) => /carries no boundary\.geojson/.test(x)),
+            (r.problems || []).join(' | '));
+});
