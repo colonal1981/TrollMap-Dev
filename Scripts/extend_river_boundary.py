@@ -253,34 +253,32 @@ def print_rebuild(slug):
     over a longer clip would only make it bigger. build_water_features still runs: it writes the coves
     and points the plan reads, and it rewrites `near` on whatever runs happen to be there.
 
-    AND THE GRAPH STAYS IN, THOUGH THE RUNS COME OUT. Ryan, 2026-09-19: *"why am i running water
-    graphs on a river that can't use them? and water graphs are needed for trolling runs but we
-    aren't running trolling runs because again they aren't needed"* -- which is right about the runs
-    and is why this paragraph exists. The graph has a SECOND consumer that has nothing to do with
-    them. `POST /water/<slug>/route` (Worker/water.js:713) loads water_graph.bin and NOTHING else;
-    it is `POST /water/<slug>/plan` (line 789) that also wants trolling_runs, and that is the lake
-    path a river never takes. Every transit in a river day -- ramp to the head of the drift, arm to
-    arm, back to the ramp -- comes off /route, and validatePlan() in plan-assemble.js refuses any
-    leg flagged `unrouted`: "a straight line between two leg ends is never a valid transit". So a
-    river with a stale graph does not emit a worse plan, it emits none.
+    AND build_water_graphs.py IS NOT IN THE LIST EITHER, WHICH TOOK RYAN THREE TRIES TO GET SAID.
+    2026-09-19: *"why am i running water graphs on a river that can't use them?"*, then *"what
+    transiting is done on a river... i launch i put baits in the water and i troll until i turn
+    around and then i do it again then stop at the landing and am done for the day"*, then *"why
+    would i continue to use something that is wrong that may or may not actually be needed"*.
 
-    Stale is exactly what a boundary change makes it: build_water_graphs.py reads
-    registry/boundaries/<slug>.geojson, the file --go rewrites. And the re-run is productive rather
-    than cosmetic here, because the water this clip reaches into is meshed even though the river is
-    not -- measured 2026-09-19 on the same two tiles:
+    He was right every time and the answer was already in the tree. river-drifts.js
+    `centrelineTransit()` -- written 2026-09-18, one day before the first of those questions -- makes
+    the river transit out of the pack's own centreline, and smart-plan-v2 says it outright: *"A river
+    plan now makes no route request at all, where it used to make one per leg plus one home."*
+    NOTHING ON A RIVER READS water_graph.bin. Not the drifts (`legRuns = drifts || runs`), not the
+    transits, not the reach gates. /water/<slug>/route is the LAKE path.
 
-        lake_marion      21,603 MAR nodes    26,180 edges
-        congaree_river    1,660 MAR nodes     1,938 edges   over 157 km
+    Measured on his own 2026-09-19 Congaree day, which is what settles it: 23,101 m total, of which
+    22,876 m is trolling and 225 m is transit -- four hops of 95, 90 and 40 m, the boat turning
+    around. There is nothing on a river for a router to find.
 
-    THIS IS THE MAR BUILDER, AND THAT IS STILL THE STANDING POSITION FOR RIVERS.
-    `chartpack/<slug>/water_graph_bathy.bin`, `_c2.bin` and `_c3.bin` are the measurement behind
-    THE_LAND_TEST_IS_THE_WHOLE_BALLGAME_AND_THE_WHOLE_PROBLEM_2026-09-15.md, written under
-    --out-name so nothing ships them: upload_garmin_to_r2.py maps the layer to the exact name
-    water_graph.bin and the Worker fetches that exact key. They are not adopted ON PURPOSE -- of the
-    five rivers measured, three came out WORSE than MAR (santee 33.3 -> 20.4, edisto 16.9 -> 8.2,
-    lynches 22.0 -> 0.55). Congaree was one of the two better ones, 32.5% -> 55.19% largest
-    component, and that doc puts three ways forward in front of Ryan and picks none. Until he picks,
-    rivers ship MAR, so bathy_graph.py is NOT in this list.
+    So this step was in the list because a rebuild runbook written for lakes had it, and it survived
+    two defences of mine that this file's own siblings refute. It builds a 30 KB graph from unchanged
+    MAR files for a water that will never open it. Out.
+
+    WHICH ALSO RETIRES THE BATHY QUESTION FOR RIVERS. `water_graph_bathy.bin`, `_c2.bin` and
+    `_c3.bin` in the pack are the measurement behind
+    THE_LAND_TEST_IS_THE_WHOLE_BALLGAME_AND_THE_WHOLE_PROBLEM_2026-09-15.md, which put three ways
+    forward in front of Ryan. All three are about making a river graph route better. A river does not
+    route. That decision is a LAKE decision and it is not blocking anything here.
     """
     R = 'F:\\TrollMapPipeline'
     print('\nA BOUNDARY CHANGE INVALIDATES THE CLIP. Rebuild, in this order:\n')
@@ -295,16 +293,6 @@ def print_rebuild(slug):
     print('     --packs    %s\\chartpack `' % R)
     print('     --registry %s\\registry `' % R)
     print('     --report   %s\\registry\\_structure.json `' % R)
-    print('     --force --only-lakes %s\n' % slug)
-    print('  # THE TRANSIT ROUTER, NOT THE LANES. /water/<slug>/route reads water_graph.bin and')
-    print('  # nothing else; trolling_runs belong to /water/<slug>/plan, which a river never calls.')
-    print('  # It reads the boundary that just changed, and the Marion water this clip reaches is')
-    print('  # meshed -- 21,603 nodes against the river\'s own 1,660 over 157 km.')
-    print('  py .\\scripts\\build_water_graphs.py `')
-    print('     --tiles    %s\\Bluestacks_ActiveCaptain_TIles_21Aug26\\Tiles `' % R)
-    print('     --registry %s\\registry `' % R)
-    print('     --map      %s\\registry\\tile_lake_map.json `' % R)
-    print('     --out      %s\\chartpack `' % R)
     print('     --force --only-lakes %s\n' % slug)
     print('  py .\\scripts\\build_water_features.py `')
     print('     --packs    %s\\chartpack --force --only-lakes %s\n' % (R, slug))
