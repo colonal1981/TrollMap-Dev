@@ -1190,11 +1190,22 @@ export function resolveStructure(at, kind, withinM, index) {
 // These numbers are the citation counts, used directly. They are a measurement, not a taste, so
 // there is nothing to tune — if the ranking should change, recount it on more lakes.
 //
-// TWO KNOWN GAPS, both visible rather than papered over:
-//   - DOCKS are 10 cites across 4 species and are NOT in `near[]`. docks.geojson exists and the
-//     pipeline never joins it to the runs. Until it does, no weight here can reach them.
+// ONE KNOWN GAP, and the other one was fixed and this comment did not notice:
 //   - `hazard` stays 0. Hazard marks are things to avoid; that is not a citation ranking, it is
 //     the one place where "not a target" is the right reading.
+//
+// DOCKS ARE NOT A GAP AND HAVE NOT BEEN SINCE 2026-08-30. This paragraph used to read "docks are
+// NOT in near[] ... the pipeline never joins it to the runs. Until it does, no weight here can
+// reach them", and on 2026-09-19 I quoted it to Ryan as the current state. He corrected it:
+// *"this was left out because you said the app joins them and doing it in the pipeline would mean
+// they got added twice"*. He is right, and the join is right here in this file --
+// dockSpotFeatures() and groupDocks() below turn docks.geojson into dock / dock_line /
+// dock_cluster, smart-plan-v2.js fetches the layer and indexes it, and line ~1111 resolves
+// `layer === 'docks'` to the `dock` kind. All three weights reach them.
+//
+// A COMMENT THAT DESCRIBES A FIXED DEFECT IS WORSE THAN NO COMMENT, because it reads as a
+// measurement. The rule already in this project is "a work list is not evidence: read the FILE
+// before repeating the LINE", and I repeated the line.
 // ---------------------------------------------------------------------------------------------
 export const DEFAULT_WEIGHTS = {
   timber: 27,          // brush / wood / stumps — the most-cited thing on the lake
@@ -2919,10 +2930,35 @@ export function riverDay(gated, o = {}) {
   // first?"* Because of this line. Crossing the launch costs him 37 m.
   const worth = (arm) => arm.reduce((t, c) => t + (Number(c.value) || 0), 0);
 
-  const arms = [armOf('upstream'), armOf('downstream')];
-  // UPSTREAM FIRST WHEN THEY TIE, because that is how he fishes it -- against the current while the
-  // battery is full, home on the push -- and because the dearer direction belongs at the full end.
-  arms.sort((a, b) => worth(b) - worth(a));
+  // ── UPSTREAM, ALWAYS, AND ONE ARM. THIS IS A SAFETY RULE AND IT DOES NOT GET SCORED ─────────
+  //
+  // Ryan, 2026-09-19, asked what "the best water" even meant and then said what he actually does:
+  //
+  //   "if i wanted to fish from lowfall / packs landing and fish the river i would put in there and
+  //    go upstream and then back... if i wanted to fish the area upstream from bates i would put in
+  //    at bates and go upstream and then back... i am careful with battery usage and would always
+  //    prefer to go upstream first and float back down... if something goes wrong and i am way down
+  //    river, paddling or pedaling back would seriously suck... where as if i am way upstream and
+  //    something goes wrong i just have to float and steer"
+  //
+  // A dead motor far downstream is a fight home against the current in a 12.5 ft pedal kayak. The
+  // same failure far upstream is a float. No structure count outranks that, so `worth` no longer
+  // chooses the direction -- it is reported and nothing more.
+  //
+  // AND THE DAY IS ONE ARM. He picks the RAMP for the water he wants and fishes out and back from
+  // it; he does not spend a day crossing the launch to work both sides. Which is also why extending
+  // the clip below the confluence mattered: from Low Falls, upstream IS that new water.
+  //
+  // THIS IS NOT THE OPPOSITE OF *"if the southern route is the better route then why did it send me
+  // north first?"* -- that was the same day, and it was about the app not knowing how far south it
+  // could go, because the clip stopped at the confluence and the downstream arm came out as one
+  // 3.4 km reach. The coverage was the complaint. The direction is the rule.
+  //
+  // Downstream is used ONLY when upstream holds nothing at all -- a ramp at the head of the
+  // navigable river still has to produce a day rather than an empty one.
+  const upstream = armOf('upstream');
+  const downstream = armOf('downstream');
+  const arms = upstream.length ? [upstream] : [downstream];
 
   // ── THE LAST REACH IS CUT TO FIT, AND THAT IS MOST OF THE DAY ─────────────────────────────────
   //
@@ -2978,10 +3014,13 @@ export function riverDay(gated, o = {}) {
     binding,
     unspentMin: Number.isFinite(windowMin) ? Math.round(windowMin - min) : null,
     unspentAh: Number.isFinite(usableAh) ? Number((usableAh - ah).toFixed(2)) : null,
-    // Both arms, so a plan can say what it did NOT take and why.
-    offered: arms.map((arm, i) => ({
+    // BOTH arms, so a plan can say what it did not take and why -- `arms` is now only the one
+    // being fished, so this reads the two directions directly rather than mapping over it.
+    offered: [upstream, downstream].map((arm) => ({
       direction: arm.length ? arm[0].fromRamp.direction : null,
-      reaches: arm.length, worth: Number(worth(arm).toFixed(1)), takenFirst: i === 0,
+      reaches: arm.length,
+      worth: Number(worth(arm).toFixed(1)),
+      takenFirst: arm === arms[0],
     })).filter((x) => x.direction),
   };
   // ── AND WHEN EACH PASS OF EACH REACH IS FISHED ───────────────────────────────────────────────

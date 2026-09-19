@@ -96,7 +96,11 @@ const clock = (extra = {}, cands = [A, B, C]) => riverDay(cands, {
 describe('riverDay — every pass gets a clock and a light', () => {
   it('stamps both passes of every reach it keeps', () => {
     const day = clock();
-    expect(day.length).toBe(3);
+    // TWO, not three. A and B are upstream and C is downstream, and since 2026-09-19 a river day
+    // takes ONE arm and it is the upstream one -- a safety rule, not a score. See
+    // the-app-draws-the-river-day.test.js for Ryan's own statement of it.
+    expect(day.length).toBe(2);
+    expect(day.every((c) => c.fromRamp.direction === 'upstream')).toBe(true);
     for (const c of day) {
       expect(Array.isArray(c.passClock)).toBe(true);
       expect(c.passClock.map((p) => p.pass)).toEqual([1, 2]);
@@ -131,7 +135,9 @@ describe('riverDay — every pass gets a clock and a light', () => {
     const rows = [];
     for (const c of day) for (const p of c.passClock) rows.push({ runId: c.runId, ...p });
     rows.sort((a, b) => a.seq - b.seq);
-    expect(rows.map((r) => r.seq)).toEqual([1, 2, 3, 4, 5, 6]);
+    // Four, not six: two upstream reaches at two passes each. C is downstream and a river day does
+    // not cross the launch -- see the note on the reach count above.
+    expect(rows.map((r) => r.seq)).toEqual([1, 2, 3, 4]);
     // The one answer to what order a river day is fished in. If these two ever disagree, the table
     // in the prompt is claiming an order nobody fishes.
     const walked = travelOrder(day, LAUNCH).legs.map((c) => `${c.runId}#${c.pass}`);
@@ -163,13 +169,18 @@ describe('riverDay — every pass gets a clock and a light', () => {
 });
 
 describe('riverDay — the transit a ramp-anchored day does have', () => {
-  it('reports the hop out, the gaps between reaches and the crossing between arms', () => {
+  it('reports the hop out and the gaps between reaches, and has no arm to cross', () => {
     const day = clock();
     // Walked off the fixture's own numbers rather than typed: out to A's near end, the gap where B
-    // does not quite meet A, the same gap coming back, and the launch crossed once into the far arm.
+    // does not quite meet A, and the same gap coming back. There is NO fourth term for crossing the
+    // launch -- C is downstream and the day never goes there, which is the whole saving. The old
+    // expectation carried `+ (A.fromRamp.m + C.fromRamp.m)` for exactly that crossing.
     const gap = Math.abs(B.fromRamp.m - (A.fromRamp.m + day[0].lengthM));
-    const expected = A.fromRamp.m + gap + gap + (A.fromRamp.m + C.fromRamp.m);
+    const expected = A.fromRamp.m + gap + gap;
     expect(day.day.transitM).toBe(expected);
+    // And it says out loud that it declined the other side, with what that side was worth.
+    const other = day.day.offered.find((o) => o.direction === 'downstream');
+    expect(other.takenFirst).toBe(false);
     // Small, which is why a river day is worth drawing this way at all -- and NOT zero, which is what
     // the app reported before it was measured.
     expect(day.day.transitM > 0).toBe(true);

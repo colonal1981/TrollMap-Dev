@@ -90,25 +90,53 @@ test('EVERY LEG IS FISHED BOTH WAYS, because that is what a river day is', () =>
   assert.equal(legs.day.plannedAh, 8);
 });
 
-test('the richer bank of the launch is fished first, and it is chosen on structure', () => {
+test('UPSTREAM FIRST AND ONE ARM, whatever the structure says', () => {
+  // ── THIS TEST ASSERTED THE OPPOSITE UNTIL 2026-09-19 ────────────────────────────────────────
+  //
+  // It used to be "the richer bank of the launch is fished first, and it is chosen on structure",
+  // and it checked that `value` -- the ramp-aware number -- picked the direction. That was my
+  // change and it was measured and defensible on the numbers. Ryan then said what he does:
+  //
+  //   "i am careful with battery usage and would always prefer to go upstream first and float back
+  //    down... if something goes wrong and i am way down river, paddling or pedaling back would
+  //    seriously suck... where as if i am way upstream and something goes wrong i just have to
+  //    float and steer"
+  //
+  // A dead motor far downstream is a fight home against the current in a 12.5 ft pedal kayak; the
+  // same failure far upstream is a float. That is a safety constraint and it does not get weighed
+  // against a citation count. The old assertion is kept in words here because the numbers behind it
+  // were real -- it was the wrong question, not bad arithmetic.
   const up = [reach('upstream', 0, 4000, 10, 5, 2)];
   const down = [reach('downstream', 0, 4000, 900, 5, 2)];
   const legs = riverDay([...up, ...down], { usableAh: 500, windowMin: 5000, trollMph: 2 });
-  assert.equal(legs[0].fromRamp.direction, 'downstream', 'the side with the water goes first');
-  // AND IT IS THE RAMP-AWARE NUMBER THAT CHOOSES. Ryan's 2026-09-19 Congaree day: the upstream arm
-  // summed 745 on `score` and 172 on `value`, the downstream arm 228 and 225, because two thirds of
-  // the upstream total was water 6.6 and 10.7 km out whose own value collapses to 17.63 and 5.82 once
-  // the deadhead is counted. On `score` the day filled the upstream arm, never crossed the launch --
-  // 37 m away -- and never offered the model the best piece of water in the river: 3.4 km of 9-22 ft
-  // nineteen metres from the ramp.
-  const byScore = [{ ...up[0], score: 900, value: 10 }, { ...down[0], score: 10, value: 900 }];
-  assert.equal(riverDay(byScore, { usableAh: 500, windowMin: 5000, trollMph: 2 })[0].fromRamp.direction,
-               'downstream', 'value decides, not score');
-  assert.equal(legs[1].fromRamp.direction, 'upstream');
-  // And the day says what it weighed, so a short day can be read rather than guessed at.
+
+  // Upstream, even though downstream is worth ninety times as much.
+  assert.equal(legs[0].fromRamp.direction, 'upstream');
+  // AND ONE ARM. He picks the ramp for the water he wants; he does not spend a day crossing the
+  // launch. With a 5,000 minute window there is budget for both and it still takes only the one.
+  assert.ok(legs.every((l) => l.fromRamp.direction === 'upstream'),
+            'a river day does not cross the launch');
+
+  // The day still REPORTS both, so a short day can be read rather than guessed at -- including the
+  // worth of the arm it declined, which is the number that used to decide.
   assert.equal(legs.day.offered.length, 2);
+  const [first, second] = legs.day.offered;
+  assert.equal(first.direction, 'upstream');
+  assert.equal(first.takenFirst, true);
+  assert.equal(second.direction, 'downstream');
+  assert.equal(second.takenFirst, false);
+  assert.equal(second.worth, 900);
+});
+
+test('and downstream is taken only when upstream holds nothing at all', () => {
+  // A ramp at the head of the navigable river still has to produce a day. "Upstream always" must
+  // not mean "no day" where there is no upstream.
+  const legs = riverDay([reach('downstream', 0, 4000, 900, 5, 2)],
+                        { usableAh: 500, windowMin: 5000, trollMph: 2 });
+  assert.equal(legs.length, 1);
+  assert.equal(legs[0].fromRamp.direction, 'downstream');
+  assert.equal(legs.day.offered.length, 1);
   assert.equal(legs.day.offered[0].takenFirst, true);
-  assert.equal(legs.day.offered[0].worth, 900);
 });
 
 test('when the far bank has no budget left it is simply not in the day', () => {
