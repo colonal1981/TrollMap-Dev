@@ -7,6 +7,7 @@
 
 import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
+import { describeCatchDepth } from '../utils/catch-depth.js';
 
 window.showCatchPhoto = function showCatchPhoto(i) {
   const c = state.CATCHES[i];
@@ -22,7 +23,7 @@ window.showCatchPhoto = function showCatchPhoto(i) {
       </div>
       <img src="${c.photo}" style="max-width:100%;max-height:72vh;object-fit:contain;border-radius:8px">
       <div style="color:var(--text);font-size:13px;margin-top:12px;background:var(--panel2);padding:8px 14px;border-radius:8px;width:100%;text-align:center">
-        <b>Lure:</b> ${esc(c.lure || '—')} · <b>Depth:</b> ${esc(c.depth ? c.depth + 'ft' : '—')} · <b>Time:</b> ${esc(c.time || '—')}
+        <b>Lure:</b> ${esc(c.lure || '—')} · <b>Depth:</b> ${esc(describeCatchDepth(c).text)} · <b>Time:</b> ${esc(c.time || '—')}
         ${c.notes ? `<div style="color:var(--muted);font-size:12px;margin-top:4px">${esc(c.notes)}</div>` : ''}
       </div>
     </div>

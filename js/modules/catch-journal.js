@@ -13,6 +13,7 @@
 import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
 import { getLoadedRegistry } from '../data/lake-registry.js';
+import { describeCatchDepth, ON_CONTOUR_MI } from '../utils/catch-depth.js';
 import { loadAccessIndex, nearestLakeByAccessPoint } from '../data/access-index.js';
 import { LURE_PRESETS } from './spread-builder.js';
 import { get as dbGet, tryPut } from '../utils/db.js';
@@ -256,7 +257,10 @@ function nearestLakeAndContour(latRaw, lonRaw) {
     if (closestDepth != null && closestDist <= 1.0) {
       out.depth = String(closestDepth);
       out.contourDistanceMi = closestDist;
-      const relation = closestDist < 0.10 ? 'on' : closestDist < 0.25 ? 'near' : 'near';
+      // This used to read `< 0.25 ? 'near' : 'near'` -- both arms said the same word, so a
+      // contour a quarter mile off the fix read exactly like one 0.11 mi off it. ON_CONTOUR_MI
+      // is the line that matters: past it the number stops describing this spot.
+      const relation = closestDist < ON_CONTOUR_MI ? 'on' : closestDist < 0.25 ? 'near' : 'off';
       out.depthBand = `~${closestDepth}ft contour (${relation}, ${closestDist.toFixed(2)} mi)`;
     }
   } catch (err) {
@@ -272,7 +276,13 @@ function enrichItemFromGps(item) {
   if (!item) return item;
   const spatial = nearestLakeAndContour(item.lat, item.lon);
   if (!item.lake && spatial.lake) item.lake = spatial.lake;
-  if (!item.depth && spatial.depth) item.depth = spatial.depth;
+  // A contour 0.27 mi away is not this spot's depth, so it does not get to BE the catch's
+  // depth. The band below still records what was found and how far off it was, which is the
+  // information; `depth` is a claim, and that claim needs the fix to be on the contour.
+  if (!item.depth && spatial.depth
+      && Number.isFinite(spatial.contourDistanceMi) && spatial.contourDistanceMi <= ON_CONTOUR_MI) {
+    item.depth = spatial.depth;
+  }
   if (spatial.depthBand) {
     item.structure = { depthBand: spatial.depthBand, contourDistanceMi: spatial.contourDistanceMi };
     const note = `Depth lookup: ${spatial.depthBand}`;
@@ -554,7 +564,7 @@ function renderJournalOnly(body = document.getElementById('catchCenterBody')) {
         <span style="font-size:18px">🐟</span>
         <div style="flex:1;min-width:0">
           <div><b>${esc(c.species || 'Fish')}</b>${c.length ? ` · ${esc(c.length)}"` : ''} · ${esc(c.date || '')} ${esc(c.time || '')} · ${esc(c.lake || '')}${c.reviewFlags?.includes('lake_mismatch_on_recheck') ? ` <span style="color:#e0a030">⚠ suggested: ${esc(c.lakeRecheckSuggestion || '')}</span>` : ''}</div>
-          <div class="muted">${c.depth ? `Depth: ${esc(c.depth)}ft` : ''}${c.sourceFile ? ` · ${esc(c.sourceFile)}` : ''}${c.verification?.length ? ` · length: ${esc(c.verification.length)}` : ''}</div>
+          <div class="muted">${c.depth ? `Depth: ${esc(describeCatchDepth(c).text)}` : ''}${c.sourceFile ? ` · ${esc(c.sourceFile)}` : ''}${c.verification?.length ? ` · length: ${esc(c.verification.length)}` : ''}</div>
           ${c.notes ? `<div style="margin-top:2px">${esc(c.notes)}</div>` : ''}
         </div>
         <button data-delcatch="${i}" class="small">🗑</button>
