@@ -352,6 +352,11 @@ export function planToTimeline(plan, o = {}) {
   // leg is 6 ft ... it is the wrong bait for this pass" fired three times into a console while
   // the card drew a confident spread. The app was not blind, it was mute.
   const holding = o.holding || null;
+  // 'stated' | 'one-number' | 'no-citation' | 'quote-has-no-depth', from fishDepthEvidence().
+  // Absent means the caller did not say, and a band nobody vouched for must not read as one that
+  // was measured -- so anything other than 'stated' is treated as not stated.
+  const bandEvidence = o.fishDepthEvidence || null;
+  const bandStated = bandEvidence === 'stated';
   const legWarnings = Array.isArray(o.warnings) ? o.warnings : [];
 
   const routeRods = {};
@@ -531,6 +536,10 @@ export function planToTimeline(plan, o = {}) {
       depthFt: leg.depthFt ?? null,
       speciesBandFt: band,
       holding,
+      // The band alone cannot be read: 15-27 ft off a quote that says "15 to 27 feet down" and
+      // 0-5 ft off one with no number in it are different claims and used to render identically.
+      bandEvidence,
+      bandStated,
       // THE LIGHT AS AN OBJECT, not only as words inside `desc`. A reader that has to parse a
       // sentence to get a fact back is the shape this file already fixed once for the depth band.
       light: leg.light || null,

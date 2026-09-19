@@ -635,10 +635,28 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeed
       // still has no understanding of suspended fish."
       //
       // Both numbers, each under its own name. `speciesBandFt` was already on the entry.
-      const bandLabel = Array.isArray(entry.speciesBandFt) && entry.speciesBandFt.length === 2
-        ? `fish ${entry.speciesBandFt[0]}–${entry.speciesBandFt[1]} ft`
-          + (entry.holding && entry.holding !== 'unknown' ? ` · ${entry.holding}` : '')
-        : '';
+      //
+      // ── AND THE RANGE IS ONLY PRINTED WHEN SOMEBODY ACTUALLY STATED IT ─────────────────────
+      //
+      // Ryan, 2026-09-19: *"so i still see a thing about 0-5ft suspended on troll legs"*. This
+      // label is where. The prompt's own note had already been fixed to stop handing an inferred
+      // range back as a fish depth, and the Congaree band is 0-5 ft off a sentence with no depth
+      // in it -- yet this card read "fish 0-5 ft · suspended" in the same words it uses for a
+      // range a source gave out loud. Over a leg whose water runs 13-21 ft.
+      //
+      // The POSITION survives, because a quote can evidence "suspended" without giving a number,
+      // and it is the thing that tells him whether to fish the column or the floor. The RANGE
+      // does not. Printing it with a parenthetical would still put 0-5 ft in his eye on the
+      // water, which is the whole failure, so it is not printed at all -- the sounder over the
+      // first hole is the measurement and the label says so.
+      const bandFt = Array.isArray(entry.speciesBandFt) && entry.speciesBandFt.length === 2
+        ? entry.speciesBandFt : null;
+      const holdWord = entry.holding && entry.holding !== 'unknown' ? entry.holding : '';
+      const bandLabel = !bandFt ? ''
+        : entry.bandStated === false
+          ? (holdWord ? `fish ${holdWord} — depth not stated, read the sounder`
+                      : 'fish depth not stated — read the sounder')
+          : `fish ${bandFt[0]}–${bandFt[1]} ft` + (holdWord ? ` · ${holdWord}` : '');
       const speedLabel = entry.speedMph ? `${entry.speedMph} mph` : `${speedMph} mph`;
       const estMin = entry.stats?.estTimeMin ?? entry.stats?.timeMin;
       const statsBadge = entry.stats?.distMi != null ? `${entry.stats.distMi}mi · est ${estMin}min` : '';

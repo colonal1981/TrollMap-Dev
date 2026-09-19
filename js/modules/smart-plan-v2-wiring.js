@@ -18,7 +18,7 @@ import { isNum } from '../utils/num.js';
 import { getLoadedAccessIndex, registryRecordFor } from '../data/access-index.js';
 import { getSeason, seasonNote } from '../data/species-intel.js';
 import { depthBandFor, usableAhFrom, researchIntel, structureWeights, oxygenFloorFt,
-         describeDepthBand, conditionsFrom, fetchRegistrySpecies,
+         describeDepthBand, fishDepthEvidence, conditionsFrom, fetchRegistrySpecies,
          registryIdentity, thermoclineNormFor } from './plan-inputs.js';
 import { DEFAULT_WEIGHTS, DEFAULT_RELIEF_WEIGHTS } from './plan-candidates.js';
 import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
@@ -465,6 +465,14 @@ export async function runSmartPlanV2(opts = {}) {
       const shown = planToTimeline(r.plan, {
         depthBand: depth.band,
         holding: depth.holding || null,
+        // ── THE CARD HAS TO KNOW WHETHER THE BAND WAS MEASURED ────────────────────────────────
+        //
+        // Ryan, 2026-09-19, after the prompt's own note had been fixed to stop restating an
+        // inferred range: *"so i still see a thing about 0-5ft suspended on troll legs"*. He was
+        // reading the LEG CARD, which is the third place this claim is made and the only one he
+        // looks at on the water. It printed "fish 0-5 ft · suspended" flat, as measured fact,
+        // because the band and the holding word were passed here and the evidence was not.
+        fishDepthEvidence: fishDepthEvidence(depth),
         warnings: r.problems || [],
       });
       renderSmartPlanUI({
@@ -508,6 +516,7 @@ export async function runSmartPlanV2(opts = {}) {
   const built = planToTimeline(r.plan, {
     depthBand: depth.band,
     holding: depth.holding || null,
+    fishDepthEvidence: fishDepthEvidence(depth),   // see the note on the other call site
     warnings: r.problems || [],
   });
   installTimeline(window, built);
