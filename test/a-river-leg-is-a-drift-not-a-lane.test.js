@@ -8,7 +8,7 @@
 // ones that will fail again if a drift is ever given a lane's properties.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { riverDriftRuns, offsetPoint, profileIndexFor, LATERALS, lateralsFor, medianWidthM,
+import { riverDriftRuns, offsetPoint, profileIndexFor, LATERALS, lateralsFor, medianWidthM, waterSpanM,
          meanBearingDeg, centrelineTransit } from '../js/modules/river-drifts.js';
 import { structureIndex, DEFAULT_WEIGHTS, eligibleForHolding, markLabel,
          selectCandidates, forModel } from '../js/modules/plan-candidates.js';
@@ -560,4 +560,99 @@ test('a lake feature says nothing about bends, because it has no bend to speak o
   assert.match(rec.what, /offshore hump/);
   assert.doesNotMatch(rec.what, /bend/);
   assert.equal(rec.depthFt, 18);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// A MAINSTEM DOES NOT STOP WHERE A RIVER'S NAME DOES
+//
+// Ryan, 2026-09-19: *"why does it end when the confluence causes it to be called the santee river...
+// except for me to look at that stretch of water with garmin packs i need to select lake marion?"*
+// and then *"lets get the planner to know where the river actually is"*.
+//
+// congaree_river's traced line is 157,700 m. Its own boundary ends at station 131,500; station
+// 132,000 onward is inside lake_marion, a different water with its own pack and its own chart. The
+// drift builder offered three more 8 km reaches down there under the Congaree's name, and the
+// southern arm from Bates Bridge scored as 8 km of water when 3,350 m of it is the Congaree.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+// A rectangle around part of the test river. The fixture runs due east at 34.0 N from lon -81.0,
+// 200 stations at 50 m, so a box is a span of longitude.
+const boxAround = (lonFrom, lonTo) => ({
+  type: 'Polygon',
+  coordinates: [[[lonFrom, 33.99], [lonTo, 33.99], [lonTo, 34.01], [lonFrom, 34.01], [lonFrom, 33.99]]],
+});
+const bounds = (...boxes) => ({
+  type: 'FeatureCollection',
+  features: boxes.map((geometry) => ({ type: 'Feature', geometry, properties: {} })),
+});
+const lonAt = (i) => -81.0 + (i * 50) / (111320 * Math.cos((34 * Math.PI) / 180));
+
+test('the water span is the outermost station inside the water, at each end', () => {
+  const fc = eastwardRiver();
+  const P = fc.features[0].properties;
+  const line = fc.features[0].geometry.coordinates;
+  // Water from station 20 to station 150. Stations 0-19 and 151-199 are somebody else's.
+  const span = waterSpanM(P.station_m, line, bounds(boxAround(lonAt(19.5), lonAt(150.5))));
+  assert.equal(span.fromM, 20 * 50);
+  assert.equal(span.toM, 150 * 50);
+});
+
+test('and a hole in the polygon is not the end of the river', () => {
+  // THE MEASUREMENT THAT DECIDED THIS. A first cut walked out from the ramp and stopped at the first
+  // run of N outside stations. Across all 57 river packs with a boundary: the longest INTERIOR run of
+  // outside stations is 78 stations (tuckasegee_river, p90 26) and 74 terminal runs exist, the
+  // smallest of them ONE station. The two ranges overlap completely, so no N tells an end from a gap
+  // -- at N=80 every real end shorter than 80 stations is missed, and at N=20 tuckasegee ends 78
+  // stations early at a hole in its own polygon. Asking for the outermost inside station has no N in
+  // it, and it is also the right answer on its own terms: with the lane on the correct bank, 30 of
+  // the Congaree L1's 162 points sit outside that polygon while over 11.8 ft of charted water.
+  const fc = eastwardRiver();
+  const P = fc.features[0].properties;
+  const line = fc.features[0].geometry.coordinates;
+  const holed = bounds(boxAround(lonAt(-0.5), lonAt(60.5)), boxAround(lonAt(80.5), lonAt(150.5)));
+  const span = waterSpanM(P.station_m, line, holed);
+  assert.equal(span.fromM, 0, 'the first station is still inside');
+  assert.equal(span.toM, 150 * 50, 'and the last inside station is past the hole');
+});
+
+test('the reaches stop where the water does, and cover the whole line without a boundary', () => {
+  const fc = eastwardRiver();
+  const ramp = 1000;                                   // station 20, inside either way
+  const ends = (runs) => runs.map((d) => d.properties.reachFromM + Math.round(d.properties.length_m));
+  const whole = riverDriftRuns(fc, { slug: 'test_river', rampStationM: ramp, maxM: 2000 });
+  assert.ok(Math.max(...whole.map((d) => d.properties.reachFromM)) >= 8000,
+            'without a boundary the reaches run to the end of the line');
+
+  // Water stops at station 120 -- 6,000 m -- and the line carries on to 9,950.
+  const clipped = riverDriftRuns(fc, { slug: 'test_river', rampStationM: ramp, maxM: 2000,
+                                      boundary: bounds(boxAround(lonAt(-0.5), lonAt(120.5))) });
+  assert.ok(clipped.length, 'there is still a day to plan');
+  assert.ok(Math.max(...ends(clipped)) <= 6000 + 1,
+            `no reach past the water: ${Math.max(...ends(clipped))}`);
+  assert.ok(clipped.length < whole.length, 'and it is fewer reaches than the whole line offered');
+  // Every station on every clipped reach is inside the water, which is the point of the exercise.
+  for (const d of clipped) {
+    assert.ok(d.properties.reachFromM >= 0 && d.properties.reachFromM <= 6000,
+              `reach starts inside: ${d.properties.reachFromM}`);
+  }
+});
+
+test('a boundary that contains none of the line is no boundary at all', () => {
+  // Rather than a river with no day in it. A polygon somewhere else is a data problem, and the honest
+  // answer is the one the app gave before boundaries were read: plan the line it was handed.
+  const fc = eastwardRiver();
+  const far = bounds(boxAround(-70.0, -69.9));
+  assert.equal(waterSpanM(fc.features[0].properties.station_m,
+                          fc.features[0].geometry.coordinates, far), null);
+  const runs = riverDriftRuns(fc, { slug: 'test_river', rampStationM: 1000, maxM: 2000, boundary: far });
+  assert.ok(runs.length, 'the day survives a boundary that is somewhere else');
+});
+
+test('and no boundary at all is the same as before it was ever fetched', () => {
+  const fc = eastwardRiver();
+  assert.equal(waterSpanM(fc.features[0].properties.station_m,
+                          fc.features[0].geometry.coordinates, null), null);
+  assert.equal(waterSpanM(fc.features[0].properties.station_m,
+                          fc.features[0].geometry.coordinates,
+                          { type: 'FeatureCollection', features: [] }), null);
 });

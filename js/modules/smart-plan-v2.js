@@ -71,7 +71,7 @@ export const CANDIDATE_LIMIT = 12;
  */
 export async function buildSmartPlanV2(o) {
   const base = o.chartpackBase || '';
-  const [runsFc, structFc, waterFc, docksFc, poisFc, centrelineFc] = await Promise.all([
+  const [runsFc, structFc, waterFc, docksFc, poisFc, centrelineFc, boundaryFc] = await Promise.all([
     o.fetchJson(`${base}/${o.r2Key}/trolling_runs.geojson`),
     o.fetchJson(`${base}/${o.r2Key}/structure.geojson`),
     o.fetchJson(`${base}/${o.r2Key}/water_features.geojson`),
@@ -83,11 +83,22 @@ export async function buildSmartPlanV2(o) {
     // a pack without pois is a pack whose runs carry no marks of those kinds either.
     Promise.resolve(o.fetchJson(`${base}/${o.r2Key}/pois.geojson`)).catch(() => null),
     // SIXTH, AND RIVERS ONLY. build_river_centrelines.py put one of these in all 57 river packs on
-    // 2026-09-16 -- the 3DHP mainstem inside the river's own boundary, in downstream order, a
-    // station every 50 m carrying a bearing, a bend radius, a channel width and a charted
-    // cross-section -- and until now NOTHING in js/ or Worker/ opened it. A lake pack has none,
-    // which is why this is optional in exactly the way pois.geojson is.
+    // 2026-09-16 -- the 3DHP mainstem in downstream order, a station every 50 m carrying a bearing,
+    // a bend radius, a channel width and a charted cross-section -- and until now NOTHING in js/ or
+    // Worker/ opened it. A lake pack has none, which is why this is optional in exactly the way
+    // pois.geojson is.
+    //
+    // IT IS NOT CLIPPED TO THE RIVER'S OWN BOUNDARY, whatever this comment used to say. A geoconnex
+    // mainstem does not stop where a river's name does: congaree_river's line starts on the Broad
+    // above Columbia and carries on 26 km past the Wateree junction into Lake Marion. That is what
+    // the boundary below is fetched for.
     Promise.resolve(o.fetchJson(`${base}/${o.r2Key}/centreline.geojson`)).catch(() => null),
+    // SEVENTH: WHERE THIS WATER ACTUALLY IS. The same polygon the research engine has fetched for a
+    // year, asked here for one number per end -- see waterSpanM() in river-drifts.js. Optional and
+    // caught like the two above: without it the reaches cover the whole traced line, which is what
+    // they did until 2026-09-19, and the day Ryan got ran 3.4 km of Congaree and 4.6 km of Lake
+    // Marion under one name.
+    Promise.resolve(o.fetchJson(`${base}/${o.r2Key}/boundary.geojson`)).catch(() => null),
   ]);
   const runs = (runsFc && runsFc.features) || [];
   if (!runs.length) {
@@ -184,6 +195,9 @@ export async function buildSmartPlanV2(o) {
   const drifts = isRiver && packHasCentreline
     ? riverDriftRuns(centrelineFc, { structures, slug: o.r2Key, maxOffM, maxM: legMaxM,
                                      rampStationM,
+                                     // WHERE THE RIVER ENDS. Null on a pack whose boundary is not
+                                     // published, and the reaches then cover the whole line.
+                                     boundary: boundaryFc,
                                      // Q FOR Q/A, FROM THE READING THE PREFLIGHT ALREADY TOOK. The
                                      // discharge has been reaching the prompt as a raw ft3/s number
                                      // since plan-prompt.js was written; this is what turns it into
@@ -542,6 +556,18 @@ export async function buildSmartPlanV2(o) {
   plan.notes = args.notes;
 
   const broken = validatePlan(plan);
+  // A RIVER WHOSE BOUNDARY DID NOT ARRIVE IS PLANNED ON ITS WHOLE TRACED LINE, AND SAYS SO.
+  //
+  // `boundary.geojson` is fetched with a .catch(() => null) like pois and the centreline, and a null
+  // there is the difference between "the reaches stop where the Congaree stops" and "the day runs
+  // 4.6 km into Lake Marion under the Congaree's name". Every silent null in this pipeline has cost
+  // something; this one says which river it could not check.
+  if (isRiver && packHasCentreline && !boundaryFc) {
+    broken.push(`${o.r2Key} is a river and its chartpack carries no boundary.geojson, so the reaches `
+              + 'cover the whole traced mainstem -- which runs past this river at both ends, into '
+              + "whatever water is next. Publish the boundary for this pack and the day stops where "
+              + 'the water does.');
+  }
   return {
     plan, candidates, request: req, response: res, exchange: raw.meta || null,
     // WHAT THE APP READ OUT OF THE ANSWER, BEFORE THE ASSEMBLER RAN. planArgsFrom() is the first

@@ -610,22 +610,110 @@ export function channelFractions(profiles, fractions, widths, maxShiftM = SIDE_E
  * is the lower stations. That is the only place in this function a direction is decided, and it is
  * decided from the builder's convention rather than from a bearing.
  */
-function reachesFromRamp(totalM, maxM, rampStationM) {
+function reachesFromRamp(loM, hiM, maxM, rampStationM) {
   const out = [];
-  if (!(totalM > 0) || !(maxM > 0)) return out;
+  if (!(hiM > loM) || !(maxM > 0)) return out;
   const r = Number(rampStationM);
   if (!Number.isFinite(r)) {
-    for (let a = 0; a < totalM; a += maxM) out.push([a, Math.min(totalM, a + maxM), null]);
+    for (let a = loM; a < hiM; a += maxM) out.push([a, Math.min(hiM, a + maxM), null]);
     return out;
   }
-  const ramp = Math.min(Math.max(r, 0), totalM);
-  for (let e = ramp; e > 0; e -= maxM) {
-    out.push([Math.max(0, e - maxM), e, { direction: 'upstream', m: Math.round(ramp - e) }]);
+  const ramp = Math.min(Math.max(r, loM), hiM);
+  for (let e = ramp; e > loM; e -= maxM) {
+    out.push([Math.max(loM, e - maxM), e, { direction: 'upstream', m: Math.round(ramp - e) }]);
   }
-  for (let a = ramp; a < totalM; a += maxM) {
-    out.push([a, Math.min(totalM, a + maxM), { direction: 'downstream', m: Math.round(a - ramp) }]);
+  for (let a = ramp; a < hiM; a += maxM) {
+    out.push([a, Math.min(hiM, a + maxM), { direction: 'downstream', m: Math.round(a - ramp) }]);
   }
   return out;
+}
+
+/**
+ * WHERE THIS WATER STARTS AND STOPS ON ITS OWN CENTRELINE, from the water's own boundary polygon.
+ *
+ * ── WHY A RIVER PACK NEEDS TOLD ─────────────────────────────────────────────────────────────────
+ *
+ * The producer traces a geoconnex MAINSTEM, and a mainstem does not stop where a river's name does.
+ * congaree_river's line runs 157,700 m: it starts on the Broad above Columbia and carries on 26 km
+ * past the Wateree junction into Lake Marion, which is a different water with its own pack, its own
+ * chart and its own registry row. Nothing in the app knew, so the drift builder offered three more
+ * 8 km reaches below the confluence still labelled Congaree, and the southern arm from Bates Bridge
+ * was scored as 8 km of water when 3,350 m of it is the Congaree.
+ *
+ * Ryan, 2026-09-19: *"why does it end when the confluence causes it to be called the santee river...
+ * except for me to look at that stretch of water with garmin packs i need to select lake marion?"*
+ * He had already worked out what the app had not: the water below the junction belongs to another
+ * pack. And: *"lets get the planner to know where the river actually is"*.
+ *
+ * ── THE OUTERMOST INSIDE STATION, AND NOT A TOLERANCE ───────────────────────────────────────────
+ *
+ * The first shape of this was "walk out from the ramp and stop at the first run of N outside
+ * stations", and the measurement killed it. Across all 57 river packs with a boundary:
+ *
+ *     longest INTERIOR run of outside stations   78 stations (tuckasegee_river), p90 26
+ *     TERMINAL runs that exist                   74 of them, the smallest 1 station
+ *
+ * The two overlap completely, so no N tells an end from a gap: at N=80 every real end shorter than
+ * 80 stations is missed, and at N=20 tuckasegee_river ends 78 stations early at a hole in its own
+ * polygon. So this asks a question that has no threshold in it -- which station is the OUTERMOST one
+ * inside the water, in each direction -- and leaves the gaps alone. By construction nothing outside
+ * lies beyond it, and an interior gap stays in the river, which matters: with the lane on the right
+ * bank, 30 of L1's 162 points sit outside the congaree polygon while over 11.8 ft of Garmin-charted
+ * water, so a rule that excluded them would throw away good water to satisfy a polygon.
+ *
+ * Returns null when there is no boundary to ask, and every caller then plans the whole line, which
+ * is what it did before this existed.
+ *
+ * @param {number[]} stationM   the pack's station_m
+ * @param {Array} line          the centreline's coordinates
+ * @param {object} boundaryFc   the water's boundary.geojson
+ * @returns {?{fromM: number, toM: number, stationsOutside: number}}
+ */
+export function waterSpanM(stationM, line, boundaryFc) {
+  if (!Array.isArray(stationM) || !Array.isArray(line)) return null;
+  const rings = [];
+  for (const f of ((boundaryFc && boundaryFc.features) || (boundaryFc ? [boundaryFc] : []))) {
+    const g = f && f.geometry;
+    if (!g) continue;
+    if (g.type === 'Polygon') rings.push(...g.coordinates);
+    else if (g.type === 'MultiPolygon') for (const poly of g.coordinates) rings.push(...poly);
+  }
+  if (!rings.length) return null;
+  // A BOX PER RING, because a boundary is 3,400 vertices and this walks 3,155 stations. Four
+  // comparisons reject most rings before any ray cast -- the same trick the producer's depth index
+  // uses, and the reason this costs nothing at plan time.
+  const boxed = rings.map((r) => {
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const [x, y] of r) {
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+    }
+    return { r, x0, x1, y0, y1 };
+  });
+  const inside = (pt) => {
+    let c = false;
+    for (const b of boxed) {
+      if (pt[0] < b.x0 || pt[0] > b.x1 || pt[1] < b.y0 || pt[1] > b.y1) continue;
+      const r = b.r;
+      let j = r.length - 1;
+      for (let i = 0; i < r.length; i++) {
+        const [xi, yi] = r[i], [xj, yj] = r[j];
+        j = i;
+        if ((yi > pt[1]) !== (yj > pt[1]) && pt[0] < ((xj - xi) * (pt[1] - yi)) / (yj - yi) + xi) {
+          c = !c;
+        }
+      }
+    }
+    return c;
+  };
+  // FROM THE ENDS INWARD, because the answer is the outermost inside station and nothing in the
+  // middle can change it. A full sweep of the Congaree costs 715 ms; walking in from each end stops
+  // after the 0 leading and 524 trailing stations that are actually outside.
+  const n = Math.min(stationM.length, line.length);
+  let first = -1, last = -1;
+  for (let i = 0; i < n; i++) if (inside(line[i])) { first = i; break; }
+  if (first < 0) return null;
+  for (let i = n - 1; i >= first; i--) if (inside(line[i])) { last = i; break; }
+  return { fromM: Number(stationM[first]), toM: Number(stationM[last]) };
 }
 
 export function riverDriftRuns(centrelineFc, o = {}) {
@@ -668,7 +756,13 @@ export function riverDriftRuns(centrelineFc, o = {}) {
   // ONE LINE OR TWO, DECIDED BY THE CORRIDOR AGAINST THIS RIVER'S OWN WIDTH -- see lateralsFor().
   // Overridable for tests, which is the only caller that should be naming positions by hand.
   const laterals = o.laterals || lateralsFor(medianWidthM(width), maxOffM);
-  const reaches = reachesFromRamp(totalM, maxM, o.rampStationM);
+  // WHERE THIS WATER ACTUALLY IS, when the caller hands over its boundary. See waterSpanM(): the
+  // traced mainstem runs past the river's own name at both ends, and a reach offered out there is
+  // another water's water. Absent boundary, absent span, and the whole line is planned as before.
+  const span = o.boundary ? waterSpanM(stationM, line, o.boundary) : null;
+  const loM = span ? Math.max(0, span.fromM) : 0;
+  const hiM = span ? Math.min(totalM, span.toM) : totalM;
+  const reaches = reachesFromRamp(loM, hiM, maxM, o.rampStationM);
 
   const out = [];
   for (const lat of laterals) {
