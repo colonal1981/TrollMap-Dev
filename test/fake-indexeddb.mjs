@@ -89,9 +89,23 @@ class FakeObjectStore {
     return r;
   }
 
-  delete(key) {
+  // A KEY RANGE IS A KEY, AND THIS DOUBLE USED TO PRETEND OTHERWISE.
+  //
+  // IDBObjectStore.delete() takes a key OR an IDBKeyRange, and cacheClear() in js/utils/db.js
+  // uses the range form to drop one namespace without reading any values -- the read-the-world
+  // version of that function is what crashed the app on 2026-09-19. This double deleted by exact
+  // Map key only, so a range delete silently removed NOTHING and a test of it would have passed
+  // while proving the opposite. A double that cannot fail the way the real thing fails is worse
+  // than no double.
+  delete(keyOrRange) {
     const r = new FakeRequest();
-    this._data.delete(key);
+    if (keyOrRange instanceof FakeKeyRange) {
+      for (const k of [...this._data.keys()]) {
+        if (keyOrRange.includes(k)) this._data.delete(k);
+      }
+    } else {
+      this._data.delete(keyOrRange);
+    }
     r._succeed(undefined);
     return r;
   }
@@ -101,6 +115,24 @@ class FakeObjectStore {
     this._data.clear();
     r._succeed(undefined);
     return r;
+  }
+}
+
+// Only `bound()`, and only the inclusive form, because that is the whole of what js/utils/db.js
+// asks for. Anything else should be added when something needs it rather than guessed at now.
+class FakeKeyRange {
+  constructor(lower, upper, lowerOpen = false, upperOpen = false) {
+    this.lower = lower; this.upper = upper;
+    this.lowerOpen = lowerOpen; this.upperOpen = upperOpen;
+  }
+  includes(k) {
+    if (typeof k !== typeof this.lower) return false;
+    if (this.lowerOpen ? !(k > this.lower) : !(k >= this.lower)) return false;
+    if (this.upperOpen ? !(k < this.upper) : !(k <= this.upper)) return false;
+    return true;
+  }
+  static bound(lower, upper, lowerOpen = false, upperOpen = false) {
+    return new FakeKeyRange(lower, upper, lowerOpen, upperOpen);
   }
 }
 
@@ -174,8 +206,10 @@ export function installFakeIndexedDB(opts = {}) {
   };
 
   globalThis.indexedDB = api;
+  globalThis.IDBKeyRange = FakeKeyRange;
   if (!globalThis.window) globalThis.window = globalThis;
   globalThis.window.indexedDB = api;
+  globalThis.window.IDBKeyRange = FakeKeyRange;
   return api;
 }
 

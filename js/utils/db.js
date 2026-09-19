@@ -302,22 +302,32 @@ export async function cacheSet(ns, key, value) {
 /**
  * Drop everything in one namespace, leaving the other namespaces alone.
  *
- * Reads the keys and deletes them one at a time rather than using a cursor, because the whole
- * point of sharing a store is that clearing one caller's cache must not clear another's --
- * and `objectStore.clear()` cannot tell them apart.
+ * ── WHY THIS IS A KEY RANGE AND NOT A READ-THEN-FILTER ──────────────────────────────────────
+ *
+ * It used to call `getAll(CACHE_STORE)` and filter the rows by key prefix. `getAll` returns the
+ * VALUES, so asking which keys start with "contours::" deserialised every cached object in the
+ * shared store into memory first -- and the values in there are whole chart layers.
+ *
+ * Ryan, 2026-09-19, after the Congaree pack doubled: *"i cleared the cache using the button in
+ * the contour data tab... that crashed the app"*. That pack alone had just gone to 11.4 MB of
+ * depth areas and 5.7 MB of contours, and the button read both, plus every other water's, to
+ * compare eleven strings. It had worked for months on half the payload, which is exactly how a
+ * read-the-world implementation hides.
+ *
+ * `IDBObjectStore.delete()` takes a key range, so the whole namespace goes in one operation with
+ * no value ever leaving the store. `\uffff` is the upper bound because the keys are
+ * `<ns>::<key>` strings and nothing sorts above it. Still one namespace at a time, which is the
+ * point of sharing the store -- clearing one caller's cache must not clear another's, and
+ * `objectStore.clear()` cannot tell them apart.
  */
 export async function cacheClear(ns) {
   const prefix = `${ns}${NS_SEP}`;
-  let rows;
-  try {
-    rows = await getAll(CACHE_STORE);
-  } catch (err) {
-    reportWriteFailure(`cache clear "${ns}"`, err);
-    return false;
-  }
-  const mine = rows.filter((r) => typeof r.key === 'string' && r.key.startsWith(prefix));
-  const results = await Promise.all(mine.map((r) => tryDel(CACHE_STORE, r.key, `cache ${r.key}`)));
-  return results.every(Boolean);
+  const KR = (typeof IDBKeyRange !== 'undefined') ? IDBKeyRange : null;
+  if (!KR) { reportWriteFailure(`cache clear "${ns}"`, new Error('IDBKeyRange unavailable')); return false; }
+  // del() already opens the store, resolves off the request and rejects on its error, and tryDel
+  // already turns that into a boolean and reports the failure. There is nothing here worth a
+  // second copy of that plumbing -- the only new thing is the RANGE.
+  return tryDel(CACHE_STORE, KR.bound(prefix, `${prefix}\uffff`), `cache clear "${ns}"`);
 }
 
 /**

@@ -18,7 +18,7 @@ import { workerHeaders } from '../utils/worker-auth.js';
 import { depthColor } from '../utils/depth-palette.js';
 import { displayDepth, setDisplayTide } from './tide-engine.js';
 
-import { cacheGet, cacheSet } from '../utils/db.js';
+import { cacheGet, cacheSet, cacheClear } from '../utils/db.js';
 import { structureFor } from '../utils/structure-markers.js';
 // Canvas renderer — shared for all supplemental polygon/line layers
 const _canvasRenderer = L.canvas({ padding: 0.5 });
@@ -208,6 +208,32 @@ async function ensureData(lakeKey, layer) {
 export function getStructureGeoJSON() { return _garminData.structure || null; }
 window.getStructureGeoJSON = getStructureGeoJSON;
 export function getDepthAreaGeoJSON() { return _depthAreaGeoJSON; }
+
+// ── CLEARING THIS MODULE'S CACHE IS THIS MODULE'S JOB ───────────────────────────────────────
+//
+// The chart layers are cached in IndexedDB under CACHE_NS for CACHE_TTL -- a DAY -- and a page
+// reload does not touch IndexedDB. So after a pipeline push the app keeps drawing the previous
+// chart until the day is up. Ryan, 2026-09-19, on the freshly extended Congaree: *"hard reload
+// was done before i ran the plan... and i did another one... still do not see contours beyond
+// the confluence"*. He was right and the reload was never going to help.
+//
+// The "clear contour cache" button used to clear only the `contours` namespace, so it could not
+// have fixed the depth areas even when it worked: those are HERE, under `supplemental`. Rather
+// than have that button hand-write this namespace's name, it asks for it.
+export async function clearSupplementalCache() {
+  const ok = await cacheClear(CACHE_NS);
+  if (ok) {
+    // Drop what is already built and in memory as well, or the next paint redraws the layer
+    // this just deleted from the copy the module is still holding.
+    _depthAreaGeoJSON = null;
+    _depthAreaAll = null;
+    _depthAreaShell = null;
+    _boundaryGeoJSON = null;
+    _garminData = {};
+    _activeLakeKey = null;
+  }
+  return ok;
+}
 export function getLakeBoundaryGeoJSON() { return _boundaryGeoJSON; }
 export function bringDepthAreasToBack() {
   if (_depthAreaLayer) _depthAreaLayer.bringToBack();

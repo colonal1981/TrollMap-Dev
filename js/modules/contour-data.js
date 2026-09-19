@@ -15,6 +15,7 @@ import { isCoastalKey } from '../data/coastal-zones.js';
 import { callSafely } from '../utils/call-global.js';
 
 import { cacheGet, cacheSet, cacheClear } from '../utils/db.js';
+import { clearSupplementalCache } from './supplemental-layers.js';
 const CHAIN_DESCRIPTIONS = {
   'lake_thurmond_russell':          'Clarks Hill / Thurmond + Russell Chain',
   'lake_greenwood_secession':       'Lake Greenwood + Secession Chain',
@@ -637,16 +638,33 @@ export function buildContourDataPanel(container) {
 
   document.getElementById('cdClearCache')?.addEventListener('click', async () => {
     const btn = document.getElementById('cdClearCache');
+    const label = btn.textContent;
     btn.textContent = 'Clearing...'; btn.disabled = true;
-    // cacheClear drops only this namespace. The old code called objectStore.clear() on a
-    // database it had to itself; the shared store holds other callers' entries too, and
-    // "clear contour cache" must not take the ramp list with it.
-    const ok = await cacheClear(CACHE_NS);
-    if (ok) {
-      btn.textContent = '✅ Cache cleared';
-      setTimeout(() => { btn.textContent = '🗑 Clear contour cache (force re-fetch)'; btn.disabled = false; }, 2000);
+    // ── IT CLEARS BOTH CHART CACHES, BECAUSE THE CHART IS IN BOTH ─────────────────────────────
+    //
+    // cacheClear drops only the namespace it is given -- the shared store holds other callers'
+    // entries and "clear the chart cache" must not take the ramp list with it. But the chart a
+    // man looks at is TWO namespaces: contour lines here, and depth areas plus every other
+    // Garmin layer under `supplemental` in supplemental-layers.js, each cached for a DAY.
+    //
+    // Ryan, 2026-09-19, having pushed a freshly extended Congaree pack and reloaded twice:
+    // *"still do not see contours beyond the confluence"*. This button was the one thing that
+    // could have fixed it and it was clearing half the problem. A reload cannot help at all --
+    // IndexedDB survives it -- so this button IS the mechanism, and it has to cover the chart.
+    const mine = await cacheClear(CACHE_NS);
+    const theirs = await clearSupplementalCache();
+    if (mine && theirs) {
+      // Re-fetch what was on screen rather than leaving him with a blank map and a tick.
+      const key = state.ACTIVE_CONTOUR_KEY;
+      state.ACTIVE_CONTOUR = null;
+      state.ACTIVE_CONTOUR_KEY = null;
+      _loadingKey = null;
+      btn.textContent = '✅ Cleared — reloading chart';
+      if (key) { try { await loadContourByR2Key(key); } catch { /* the status panel says so */ } }
+      setTimeout(() => { btn.textContent = label; btn.disabled = false; }, 2000);
     } else {
-      btn.textContent = '❌ Failed'; btn.disabled = false;
+      btn.textContent = mine || theirs ? '❌ Partly failed' : '❌ Failed';
+      btn.disabled = false;
     }
   });
 
