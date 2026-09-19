@@ -64,17 +64,90 @@ describe('describeDepthBand — one number cannot be two quantities', () => {
     expect(d.note).toMatch(/are suspended here/);
   });
 
-  it('does not fire when the record never stated a water depth', () => {
+  // ── A MISSING WATER DEPTH USED TO BE READ AS PROOF, AND IT IS THE OPPOSITE ──────────────────
+  //
+  // These two asserted `fishDepthStated === true` for a record with NO water depth beside the band,
+  // because fishDepthWasStated() opened with
+  //
+  //     if (!Array.isArray(band) || !Array.isArray(water)) return true;
+  //
+  // -- the absence of the second quantity taken as evidence about the first. A function named for
+  // "was this stated" answered yes when its input said nothing at all.
+  //
+  // FOUND FROM RYAN'S OWN DAY, 2026-09-18. congaree_river, Largemouth Bass, summer:
+  //
+  //     [0, 5] ft · suspended · waterDepthFt null
+  //     "Every few minutes as I worked along the shoreline, a largemouth bass would boil at,
+  //      or take, my lure."
+  //
+  // A man on a bank getting surface boils, read as a suspended holding depth for a whole river.
+  // Ten of the fifteen warnings on that plan were rods "fishing below the fish" measured against
+  // it, while every source he checked put those fish on deep holes and channel swings -- which is
+  // where the app had already put the legs. Right about the water, wrong about the fish.
+  //
+  // MEASURED ACROSS ALL 81 STORED PROFILES, read live off the Worker, 1,293 depth entries:
+  //
+  //     337  stated             a fish depth AND a different water depth, or a quote with a number
+  //     198  one number         band == waterDepthFt, what this file was originally written for
+  //     552  no citation at all
+  //     206  a quote with no number in it
+  //
+  // 537 of the unsupported also name a `holding` position, which is the field that decides WHICH
+  // WATER gets picked rather than what the prose says.
+  //
+  // The research prompt already forbids all of it -- "A quoted range and a reported range must
+  // MATCH", and "If you are reporting a value from general knowledge of the species rather than
+  // from anything in front of you, set sourceQuote to null". The model complied honestly 552 times
+  // and the reader upgraded the honesty into a measurement.
+  it('a band with no water depth and no citation is NOT a stated fish depth', () => {
     const d = describeDepthBand(
       { band: [12, 22], holding: 'bottom', waterDepthFt: null }, 'Blue Catfish', 'fall');
+    expect(d.fishDepthStated).toBe(false);
+    expect(d.evidence).toBe('no-citation');
+    // The RANGE is what is unsupported. The holding position is a separate claim and is still said.
+    expect(d.note).toMatch(/carries NO source sentence/);
+    expect(d.note).toMatch(/on the bottom here/);
+  });
+
+  it('nor is one cited to a sentence with no number in it', () => {
+    const d = describeDepthBand(
+      { band: [0, 5], holding: 'suspended', waterDepthFt: null,
+        sourceQuote: 'Every few minutes as I worked along the shoreline, a largemouth bass '
+                   + 'would boil at, or take, my lure.' },
+      'Largemouth Bass', 'summer');
+    expect(d.fishDepthStated).toBe(false);
+    expect(d.evidence).toBe('quote-has-no-depth');
+    expect(d.note).toMatch(/a sentence with no depth in it/);
+    // The quote is quoted back, because "the research says 0-5" and "one man saw boils off a bank"
+    // are different sentences and only one of them is what happened.
+    expect(d.note).toMatch(/boil at, or take, my lure/);
+  });
+
+  it('but a quote that carries a number is evidence, even with no water depth', () => {
+    const d = describeDepthBand(
+      { band: [12, 22], holding: 'bottom', waterDepthFt: null,
+        sourceQuote: 'catfish hold in 12 to 22 feet through the fall' }, 'Blue Catfish', 'fall');
     expect(d.fishDepthStated).toBe(true);
-    expect(d.meaning).toMatch(/where the fish are/);
+    expect(d.evidence).toBe('stated');
+  });
+
+  it('the test is a digit, not a parse, and says so', () => {
+    // Deliberately crude. Checking that the quoted range AGREES with the band is language work that
+    // can be wrong in both directions; "no digit anywhere in the sentence" cannot be. A quote whose
+    // number contradicts its band still counts as stated here, and that is the honest limit of this
+    // test rather than a gap somebody should close by guessing.
+    const d = describeDepthBand(
+      { band: [40, 50], holding: 'bottom', waterDepthFt: null,
+        sourceQuote: 'taken in 5 feet of water' }, 'Blue Catfish', 'fall');
+    expect(d.evidence).toBe('stated');
   });
 
   it('survives the empty case that has always been allowed through', () => {
     // plan-water-ui called this with undefined for weeks; it must not throw.
     const d = describeDepthBand(undefined, 'Striped Bass', 'summer');
     expect(d.ft).toBe(null);
-    expect(d.fishDepthStated).toBe(true);   // nothing collapsed, because nothing was stated
+    // And it is NOT a stated fish depth. There is no record here at all, so answering yes was the
+    // same defect as the two cases above in its purest form.
+    expect(d.fishDepthStated).toBe(false);
   });
 });

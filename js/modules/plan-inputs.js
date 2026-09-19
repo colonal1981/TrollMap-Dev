@@ -1239,21 +1239,95 @@ export function conditionsFrom(inp, ramp, sol, forecast, clarityAtRamp = null) {
 }
 
 /**
- * Did the source state a FISH depth, or only one number?
+ * WHY A DEPTH BAND IS OR IS NOT A STATED FISH DEPTH, and which of three ways it failed.
  *
  * Exported because two readers need the same answer and a second copy of this test is a second
  * chance to disagree: describeDepthBand() puts it in the prompt, and assemblePlan() needs it
  * before it may say a bait is "above the fish" -- a claim that means nothing when the band it is
- * being compared against is the depth of the water.
+ * being compared against is the depth of the water, or when nobody stated a depth at all.
  *
- * A pure equality test on depthBandFor()'s return. No threshold, no language parsing.
+ * ── THE FIRST LINE USED TO RETURN TRUE ON NO EVIDENCE ─────────────────────────────────────────
+ *
+ * It read `if (!Array.isArray(band) || !Array.isArray(water)) return true;` -- so a band with NO
+ * water depth beside it was reported as a stated fish depth, on the strength of the water depth's
+ * absence. A function named for "was this stated" answered yes when its input said nothing.
+ *
+ * WHAT THAT COST, measured 2026-09-18 across all 81 stored profiles, read live off the Worker:
+ *
+ *     1,293  depth entries
+ *       198  caught by the equality test below      band == waterDepthFt, correctly flagged
+ *     1,095  reported as a STATED fish depth
+ *              635   carry NO sourceQuote at all
+ *              261   carry a quote with no number in it
+ *              199   carry a quote that actually states a number
+ *
+ * So 199 of 1,293 had evidence for the depth they asserted, and 508 of the unsupported 896 also
+ * named a `holding` position -- the field that decides WHICH WATER GETS PICKED, not just what the
+ * prose says.
+ *
+ * THE 635 WITH NO QUOTE ARE THE SHARPEST, because the research prompt asks for exactly that:
+ * "If you are reporting a value from general knowledge of the species rather than from anything in
+ * front of you, set sourceQuote to null -- that is a legitimate answer and it is far more useful
+ * than an invented citation." The model complied, honestly, 635 times. This function then read the
+ * honesty as a measurement.
+ *
+ * Found from Ryan's own day. congaree_river, Largemouth Bass, summer:
+ *
+ *     [0, 5] ft · suspended · waterDepthFt null
+ *     "Every few minutes as I worked along the shoreline, a largemouth bass would boil at,
+ *      or take, my lure."
+ *
+ * A man on a bank getting surface boils, turned into a suspended holding depth for a whole river.
+ * Ten of the fifteen warnings on that plan were rods "fishing below the fish" against that band,
+ * while every source he checked says deep holes and channel swings -- which is where the app had
+ * already put the legs. It was right about the water and wrong about the fish.
+ *
+ * THE PROMPT ALREADY FORBIDS ALL OF IT -- "A quoted range and a reported range must MATCH" -- so
+ * this is not a prompt to rewrite. It is a rule nothing enforced on the way back in.
+ *
+ * A NUMBER IN THE QUOTE IS THE WHOLE TEST, and it is deliberately that crude. Parsing the quote to
+ * check the range AGREES with the band is the next thing somebody will want, and it is language
+ * work that can be wrong in both directions; "no digit anywhere in the sentence" cannot. A quote
+ * with a number that contradicts its band is still counted as stated here, and that is the honest
+ * limit of this test rather than a gap in it.
+ *
+ * REPAIRS EVERY STORED PROFILE WITHOUT A RE-RUN, which is the same property the equality test has.
+ *
+ * @returns {'stated'|'one-number'|'no-citation'|'quote-has-no-depth'}
  */
-export function fishDepthWasStated(depth) {
+export function fishDepthEvidence(depth) {
   const band = (depth && depth.band) || null;
   const water = (depth && depth.waterDepthFt) || null;
-  if (!Array.isArray(band) || !Array.isArray(water)) return true;
-  if (band.length !== 2 || water.length !== 2) return true;
-  return !(band[0] === water[0] && band[1] === water[1]);
+  // The original test, unchanged and still first: one number stated twice is the case where the
+  // source DID give a depth and nothing here knows which quantity it was.
+  if (Array.isArray(band) && Array.isArray(water) && band.length === 2 && water.length === 2
+      && band[0] === water[0] && band[1] === water[1]) {
+    return 'one-number';
+  }
+  // ── TWO DIFFERENT NUMBERS FOR TWO DIFFERENT QUANTITIES IS ITSELF THE EVIDENCE ───────────────
+  //
+  // A record carrying a fish depth AND a water depth that differ is the shape the research prompt
+  // asks for in as many words: "'suspended at 20 ft over 35 ft of water' means preferredDepth
+  // [20,20] and waterDepthFt [35,35]. Record both when both are stated". Nobody produces two
+  // distinct numbers for two distinct quantities out of general knowledge of a species, so this
+  // counts as stated whether or not a quote came with it. Caught by
+  // the-fish-depth-and-the-bottom-were-one-number.test.js, which had exactly that fixture and no
+  // quote, and which the first version of this function failed.
+  if (Array.isArray(band) && Array.isArray(water) && band.length === 2 && water.length === 2) {
+    return 'stated';
+  }
+  // Past here there is no water depth to corroborate the band, so the quote is the only evidence.
+  const quote = depth && depth.sourceQuote;
+  if (quote == null || String(quote).trim() === '') return 'no-citation';
+  if (!/\d/.test(String(quote))) return 'quote-has-no-depth';
+  return 'stated';
+}
+
+/**
+ * Did the source state a FISH depth? The boolean the callers that only need one use.
+ */
+export function fishDepthWasStated(depth) {
+  return fishDepthEvidence(depth) === 'stated';
 }
 
 export function describeDepthBand(depth, species, season) {
@@ -1299,25 +1373,79 @@ export function describeDepthBand(depth, species, season) {
   //
   // It does not drop the band. A band is still the best thing available; it is just not allowed
   // to claim it is where the fish are when nobody said so.
-  const collapsed = !fishDepthWasStated(depth);
+  // ── THREE WAYS A BAND IS NOT A FISH DEPTH, AND THEY DO NOT MEAN THE SAME THING ─────────────
+  //
+  // This carried ONE note for all of them, and that note said "the source stated one number and did
+  // not say which it was" -- true of the equal-pair case and false of the other two. Measured across
+  // the 81 stored profiles on 2026-09-18: 198 equal pairs, 635 entries with NO citation at all, and
+  // 261 whose quote carries no number. Telling a man the source stated a number when the stored
+  // quote is `null` is a second invention on top of the first.
+  //
+  // AND NOT HAVING A FISH DEPTH IS NORMAL, NOT DEGRADED. Ryan, 2026-09-18: "which is actually ok for
+  // it not to have a depth... as long as the app still routes over the holes with a bait that is
+  // appropriate for that reach of river... the plan is a mechanism to get me onto the fish with a
+  // high probability of catching... but it can't know exactly where the fish are... if someone could
+  // invent that they would be an instant billionaire... but i have the electronics on the kayak to
+  // tell me if i need to change something".
+  //
+  // So none of these notes asks for the band to be trusted less and none of them apologises. Each
+  // says what the record actually is and what to do with the sounder instead.
+  const evidence = fishDepthEvidence(depth);
+  const collapsed = evidence !== 'stated';
+  // Hoisted, because breaking `String(x || '')` across two template literals made the backtick
+  // continuation read `(depth && depth.sourceQuote)` as a TAGGED TEMPLATE and threw
+  // "is not a function" on the first call. A line break inside an expression is not a line break.
+  const quoted = String((depth && depth.sourceQuote) || '').slice(0, 140);
+  const NOTES = {
+    'one-number':
+      `The research gives ${lo}\u2013${hi} ft for ${sp} in ${se} as BOTH the fish depth and the `
+      + `water depth, which means the source stated one number and did not say which it was. `
+      + `Treat it as the depth of WATER to look in, not as a depth to run a bait at, and say in `
+      + `the plan that the holding depth is unknown. Do not pick a lure by this number alone.`,
+    'no-citation':
+      `${lo}\u2013${hi} ft for ${sp} in ${se} carries NO source sentence, which by the research `
+      + `prompt's own instruction means it came from general knowledge of the species and not from `
+      + `anything about this water. The RANGE is not a measurement. Pick the water by its own depth `
+      + `and the structure on it, pick the bait for that water, and tell him to read the sounder `
+      + `over the first hole and change rods if the fish are deeper than the bait reaches.`,
+    'quote-has-no-depth':
+      `${lo}\u2013${hi} ft for ${sp} in ${se} is cited to "${quoted}" -- a sentence with no depth `
+      + `in it. It may be good evidence about WHERE (structure, current, cover) and it states no `
+      + `number, so the RANGE was inferred. Use what the sentence says about structure; do not run `
+      + `a bait to this band on the strength of it. The sounder over the first hole is the `
+      + `measurement.`,
+  };
+  // ── THE HOLDING CLAIM IS A SEPARATE CLAIM, AND IT SURVIVES ──────────────────────────────────
+  //
+  // The first version of this REPLACED the holding sentence with the evidence caveat, which threw
+  // away a claim the quote may well support: "hugging the bottom in the deep holes" evidences
+  // BOTTOM and states no number, so the depth is inferred and the position is not. Four tests in
+  // a-threshold-is-not-a-contour.test.js caught it -- they assert that what `holding` means is said
+  // in words to both planners, and it was no longer being said at all.
+  //
+  // `one-number` is the exception and keeps replacing: its own note tells the reader to treat the
+  // range as the depth of WATER, which the suspended/bottom sentence would directly contradict.
+  const holdingAside = ` ${note}`;
 
   return {
     ft: band,
     basis: (depth && depth.basis) || null,
     lakeSpecific: depth ? !depth.generic : false,
     meaning: collapsed
-      ? 'ONE depth, and the source did not say whether it is the fish or the bottom'
+      ? evidence === 'one-number'
+        ? 'ONE depth, and the source did not say whether it is the fish or the bottom'
+        : 'a range nobody stated -- the water and the structure are the measurements here'
       : 'where the fish are, not the depth of the water',
     // A value, not prose, because the prompt is not the only reader and prose cannot be tested.
     fishDepthStated: !collapsed,
+    // WHICH of the three, for the same reason: a reader that has to parse the note to find out is
+    // a reader that will get it wrong. assemblePlan() only needs the boolean; the card can say why.
+    evidence,
     holding,
     waterDepthFt: (depth && depth.waterDepthFt) || null,
     sourceQuote: (depth && depth.sourceQuote) || null,
     note: collapsed
-      ? `The research gives ${lo}\u2013${hi} ft for ${sp} in ${se} as BOTH the fish depth and the `
-        + `water depth, which means the source stated one number and did not say which it was. `
-        + `Treat it as the depth of WATER to look in, not as a depth to run a bait at, and say in `
-        + `the plan that the holding depth is unknown. Do not pick a lure by this number alone.`
+      ? evidence === 'one-number' ? NOTES[evidence] : NOTES[evidence] + holdingAside
       : note,
   };
 }
