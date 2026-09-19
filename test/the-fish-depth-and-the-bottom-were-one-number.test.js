@@ -151,3 +151,69 @@ describe('describeDepthBand — one number cannot be two quantities', () => {
     expect(d.fishDepthStated).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// AND THE CAVEAT MUST NOT HAND THE NUMBER BACK
+//
+// The object below is `plan.conditions.depthBand` copied out of "fishing_plan
+// (17)", the Congaree River day Ryan ran on 2026-09-19 -- the first plan built
+// AFTER the evidence work above shipped. He read it and said:
+//
+//   "it still thinks largemouth bass are suspended in 0-5ft based on that line
+//    in the research that had no depths"
+//
+// And the note proved him right. It opened by saying the range was inferred
+// from a sentence with no depth in it and not to run a bait to it, then closed
+// with `the 0-5 ft the fish are holding at is` -- the holding sentence appended
+// verbatim, naming the number as a fish depth two clauses after disowning it.
+// The model took the last clause: a 0-1 ft topwater and a 2-5 ft squarebill
+// over a leg running 9-22 ft with a median of 12.
+//
+// The position claim survives -- `suspended` may be exactly what the quote
+// evidences. The RANGE inside the sentence is the part the quote does not
+// support, so it is what comes out.
+// ---------------------------------------------------------------------------
+
+const CONGAREE_SEP_19 = {
+  band: [0, 5],
+  holding: 'suspended',
+  waterDepthFt: null,
+  basis: 'researched profile for this lake — Largemouth Bass, summer',
+  sourceQuote: 'Every few minutes as I worked along the shoreline, a largemouth bass '
+             + 'would boil at, or take, my lure.',
+};
+
+describe('the holding sentence keeps its claim and loses its number', () => {
+  it('never restates the band as a fish depth once the evidence is gone', () => {
+    const d = describeDepthBand(CONGAREE_SEP_19, 'Largemouth Bass', 'summer');
+    expect(d.evidence).toBe('quote-has-no-depth');
+    // The exact clause off the 2026-09-19 plan.
+    expect(d.note.includes('the 0–5 ft the fish are holding at')).toBe(false);
+    // No form of the range is quoted as where the fish are.
+    expect(/fish are holding at/.test(d.note)).toBe(false);
+  });
+
+  it('but still says, in words, that they are suspended and not on the bottom', () => {
+    const d = describeDepthBand(CONGAREE_SEP_19, 'Largemouth Bass', 'summer');
+    expect(/suspended here in summer/.test(d.note)).toBe(true);
+    expect(/depth of water is not the target/.test(d.note)).toBe(true);
+    expect(d.holding).toBe('suspended');
+  });
+
+  it('and does the same for a bottom fish with no number behind it', () => {
+    const d = describeDepthBand(
+      { ...CONGAREE_SEP_19, holding: 'bottom' }, 'Blue Catfish', 'summer');
+    expect(/the depth of water IS the target/.test(d.note)).toBe(true);
+    expect(d.note.includes('run through 0–5 ft of water')).toBe(false);
+  });
+
+  it('while a band the source DID state keeps the number in the sentence', () => {
+    // The range-free form is a consequence of the evidence being absent, not a new house style.
+    const d = describeDepthBand(
+      { band: [15, 27], holding: 'suspended', waterDepthFt: [30, 60],
+        sourceQuote: 'Stripers hold 15 to 27 feet down over the channel.' },
+      'Striped Bass', 'summer');
+    expect(d.evidence).toBe('stated');
+    expect(d.note.includes('the 15–27 ft the fish are holding at')).toBe(true);
+  });
+});

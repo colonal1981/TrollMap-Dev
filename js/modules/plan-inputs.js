@@ -1371,6 +1371,28 @@ export function describeDepthBand(depth, species, season) {
       + `Water was picked by matching its depth to the band, which is only right if they are on `
       + `the bottom. Treat the depths as less certain than usual.`;
 
+  // ── THE POSITION SURVIVES THE CAVEAT; THE NUMBER INSIDE IT MUST NOT ─────────────────────────
+  //
+  // Ryan, 2026-09-19, reading the Congaree plan the evidence work shipped into: *"it still thinks
+  // largemouth bass are suspended in 0-5ft based on that line in the research that had no depths"*.
+  // He was right, and the note he was reading proves it. It said the range was inferred from a
+  // sentence with no depth in it, told the reader not to run a bait to it -- and then ended
+  // `the 0–5 ft the fish are holding at is`, which hands the number straight back as a fish depth.
+  // The model obeyed the last clause: a 0–1 ft topwater and a 2–5 ft squarebill over water whose
+  // median is 12 ft.
+  //
+  // So the append below keeps the CLAIM -- suspended, bottom, both, unknown, which the quote may
+  // well support and which four tests in a-threshold-is-not-a-contour.test.js require be said in
+  // words -- and drops the RANGE, which it does not. `both` and `unknown` never named one, so only
+  // these two need a range-free form.
+  const noteNoRange = holding === 'suspended'
+    ? `${sp} are suspended here in ${se}, so depth of water is not the target — the fish are up in `
+      + `the column, and NOTHING above states how far up.`
+    : holding === 'bottom'
+    ? `${sp} are on the bottom here in ${se}, so the depth of water IS the target — but the range `
+      + `above is not a measurement of it. Pick the water by its own charted depth.`
+    : note;
+
   // ── ONE NUMBER CANNOT BE TWO QUANTITIES ────────────────────────────────────────────────────
   //
   // Ryan, 2026-09-05, on the Wateree plan that came out of exactly this: "even the guide post i
@@ -1441,7 +1463,10 @@ export function describeDepthBand(depth, species, season) {
   //
   // `one-number` is the exception and keeps replacing: its own note tells the reader to treat the
   // range as the depth of WATER, which the suspended/bottom sentence would directly contradict.
-  const holdingAside = ` ${note}`;
+  //
+  // AND THE ASIDE IS THE RANGE-FREE FORM, because every branch that reaches it has already said the
+  // range was not stated. Restating it two sentences later is the whole defect above.
+  const holdingAside = ` ${noteNoRange}`;
 
   return {
     ft: band,
