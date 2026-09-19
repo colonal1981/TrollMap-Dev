@@ -431,6 +431,53 @@ export const SIDE_ENVELOPE_M = 25;
  * plan-pieces.js filters on. Not 0, and not the line's own depth: "nobody sounded this" and "it is
  * shallow here" are different claims and the second one moves a bait.
  */
+/**
+ * A SOUNDING WITH NOTHING BESIDE IT IS THE EDGE OF THE CHART, NOT A DEPTH.
+ *
+ * Ryan, on a plan that banned every lipped bait for five miles of the Congaree: *"i want to know
+ * why the route goes anywhere near what is charted 1 ft water"*.
+ *
+ * It did not. The leg's `maxRunDepthFt: 1` -- the number that wrote four of the plan's eleven
+ * warnings and put every bill bait on `cannotUse` for 8.3 km -- came off TWO stations, 50 m apart,
+ * whose whole cross-section reads:
+ *
+ *     station 125200   [ -, -, -, -, 1, -, -, -, -]
+ *     station 125250   [ -, -, -, -, 2, -, -, -, -]
+ *
+ * One charted column out of nine, with nothing either side of it, in a river 135 m wide whose
+ * neighbouring stations read 6, 9, 11 and 13 ft. Fifty metres upstream the same section carries
+ * five samples; fifty metres downstream, three. The chart has least to say exactly where it claims
+ * the shallowest water, which is what the boundary of a surveyed area looks like from the inside.
+ *
+ * THIS IS THE RULE THE FILE ALREADY APPLIES TO NULLS, EXTENDED ONE COLUMN. Above: "A NULL HERE IS
+ * AN UNCHARTED STATION, NOT SHALLOW WATER... a missing measurement wearing the clothes of a real
+ * one." A lone sample is the same thing one step further on -- it is a measurement of where the
+ * survey stopped, not of the water under the boat.
+ *
+ * AND THERE IS NO NUMBER IN IT. The test is not "fewer than N columns", which would be a threshold
+ * nobody measured. It is whether the sample has a charted NEIGHBOUR: the envelope's whole job is
+ * the shallowest water BESIDE the line (see shallowestBesideLine and SIDE_ENVELOPE_M), and with
+ * nothing either side there is no beside. A bank reading with charted water inboard of it --
+ * `[-, -, 1, 2, 4, 9, 12, -, -]`, which is a real shoal 300 m upstream of those two -- keeps its
+ * neighbour and keeps its depth.
+ *
+ * Measured on congaree_river: 46 of 3,279 stations carry one or two samples, and the two that set
+ * the Congaree's floor are both in that set.
+ *
+ * @param {?Array} row   one station's cross-section, uncharted columns null or <= 0
+ * @param {number} col   the column the line sits at
+ * @returns {boolean}    true when this sample has no charted column either side of it
+ */
+export function isolatedSample(row, col) {
+  if (!Array.isArray(row) || !(col >= 0)) return false;
+  const has = (k) => {
+    const v = Number(row[k]);
+    return Number.isFinite(v) && v > 0;
+  };
+  if (!has(col)) return false;               // nothing to isolate
+  return !has(col - 1) && !has(col + 1);
+}
+
 export function shallowestBesideLine(row, fractions, frac, widthM) {
   if (!Array.isArray(row) || !Array.isArray(fractions) || !fractions.length) return -1;
   const w = Number(widthM);
@@ -870,7 +917,8 @@ export function riverDriftRuns(centrelineFc, o = {}) {
         // a missing measurement wearing the clothes of a real one -- so they are counted as
         // uncharted and left out of the mean.
         const row = col >= 0 ? profiles[i] : null;
-        const d = Array.isArray(row) ? Number(row[col]) : NaN;
+        const d = isolatedSample(row, col) ? NaN
+                : (Array.isArray(row) ? Number(row[col]) : NaN);
         if (Number.isFinite(d) && d > 0) { depths.push(d); charted++; }
         // ── AND THE SAME STATION AS AN ENVELOPE PAIR ─────────────────────────────────────────────
         //
