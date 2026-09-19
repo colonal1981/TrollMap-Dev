@@ -18,7 +18,7 @@ import { workerHeaders } from '../utils/worker-auth.js';
 import { depthColor } from '../utils/depth-palette.js';
 import { displayDepth, setDisplayTide } from './tide-engine.js';
 
-import { cacheGet, cacheSet, cacheClear } from '../utils/db.js';
+import { cacheGet, cacheSet, cacheClear, CACHE_NS_CHART_LAYERS } from '../utils/db.js';
 import { structureFor } from '../utils/structure-markers.js';
 // Canvas renderer — shared for all supplemental polygon/line layers
 const _canvasRenderer = L.canvas({ padding: 0.5 });
@@ -48,7 +48,7 @@ const depthAreaColor = depthColor;
 // Was its own database, `trollmap-supplemental`, with its own openDB/idbGet/idbSet. Folded
 // into the shared `cache` store: every layer here is re-fetchable from R2, so there was
 // nothing to migrate.
-const CACHE_NS  = 'supplemental';
+const CACHE_NS  = CACHE_NS_CHART_LAYERS;
 const CACHE_TTL = 24 * 60 * 60 * 1000;
 
 // Bump this whenever the SHAPE of a chartpack changes — new layers, renamed properties, a
@@ -234,6 +234,10 @@ export async function clearSupplementalCache() {
   }
   return ok;
 }
+
+// Published for the flush button in contour-data.js, which must not import this module -- see
+// the note on CACHE_NS_CHART_LAYERS in js/utils/db.js.
+if (typeof window !== 'undefined') window.clearSupplementalCache = clearSupplementalCache;
 export function getLakeBoundaryGeoJSON() { return _boundaryGeoJSON; }
 export function bringDepthAreasToBack() {
   if (_depthAreaLayer) _depthAreaLayer.bringToBack();

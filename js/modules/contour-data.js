@@ -14,8 +14,7 @@ import { displayDepth } from './tide-engine.js';
 import { isCoastalKey } from '../data/coastal-zones.js';
 import { callSafely } from '../utils/call-global.js';
 
-import { cacheGet, cacheSet, cacheClear } from '../utils/db.js';
-import { clearSupplementalCache } from './supplemental-layers.js';
+import { cacheGet, cacheSet, cacheClear, CACHE_NS_CONTOURS } from '../utils/db.js';
 const CHAIN_DESCRIPTIONS = {
   'lake_thurmond_russell':          'Clarks Hill / Thurmond + Russell Chain',
   'lake_greenwood_secession':       'Lake Greenwood + Secession Chain',
@@ -50,7 +49,7 @@ const CHAIN_DESCRIPTIONS = {
 // that were also present, near-identically, in supplemental-layers.js and ramps-loader.js.
 // Contours are always re-fetchable from R2, so folding into the shared `cache` store needed
 // no migration: the worst case is one refetch.
-const CACHE_NS  = 'contours';
+const CACHE_NS  = CACHE_NS_CONTOURS;
 const CACHE_TTL = 24 * 60 * 60 * 1000;
 
 let changeListeners = [];
@@ -652,7 +651,11 @@ export function buildContourDataPanel(container) {
     // could have fixed it and it was clearing half the problem. A reload cannot help at all --
     // IndexedDB survives it -- so this button IS the mechanism, and it has to cover the chart.
     const mine = await cacheClear(CACHE_NS);
-    const theirs = await clearSupplementalCache();
+    // Reached through the window hook rather than an import, exactly as window.toggleDepthAreas
+    // is a few lines below: a static import of that module drags its whole tree in here and CI
+    // timed out on it. Absent only if supplemental-layers never loaded, and then there is no
+    // depth-area cache in play either, so `true` is the honest answer.
+    const theirs = (await window.clearSupplementalCache?.()) ?? true;
     if (mine && theirs) {
       // Re-fetch what was on screen rather than leaving him with a blank map and a tick.
       const key = state.ACTIVE_CONTOUR_KEY;

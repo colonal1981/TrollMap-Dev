@@ -268,6 +268,20 @@ export async function tryDel(store, key, what) {
 // which is the whole reason those three modules opened their own databases in the first place.
 
 const CACHE_STORE = 'cache';
+
+// ── THE TWO NAMESPACES THE CHART LIVES IN, NAMED ONCE ───────────────────────────────────────
+//
+// contour lines are cached by contour-data.js and depth areas -- plus every other Garmin layer --
+// by supplemental-layers.js, each under its own namespace and each for a day. "Clear the chart
+// cache" means both, and the flush button lives in a third module.
+//
+// They are declared HERE rather than imported across, because contour-data.js importing
+// supplemental-layers.js for a string turned CI red: supplemental-layers pulls tide-engine,
+// ramps-loader and the rest, and contour-data already polls ten seconds for a map at load, so
+// picker-order.test.js went from passing to a 45 s timeout. db.js has no heavy deps and both
+// modules already import it.
+export const CACHE_NS_CONTOURS = 'contours';
+export const CACHE_NS_CHART_LAYERS = 'supplemental';
 const NS_SEP = '::';
 
 const cacheId = (ns, key) => `${ns}${NS_SEP}${key}`;

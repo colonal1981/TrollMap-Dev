@@ -94,15 +94,32 @@ describe('the flush button covers the whole chart, not half of it', () => {
   const cd = live(src('js/modules/contour-data.js'));
   const sl = live(src('js/modules/supplemental-layers.js'));
 
-  it('clears the contour namespace AND the supplemental one', () => {
+  it('clears the contour namespace AND the chart-layer one', () => {
     expect(/cacheClear\(CACHE_NS\)/.test(cd)).toBe(true);
-    expect(/clearSupplementalCache\(\)/.test(cd)).toBe(true);
+    expect(/window\.clearSupplementalCache\?\.\(\)/.test(cd)).toBe(true);
+    expect(/export async function clearSupplementalCache/.test(sl)).toBe(true);
+    expect(/window\.clearSupplementalCache = clearSupplementalCache/.test(sl)).toBe(true);
   });
 
-  it('and asks the module that owns that namespace rather than re-typing its name', () => {
-    // A hand-copied 'supplemental' string here is a second place to keep in step.
-    expect(cd.includes("cacheClear('supplemental')")).toBe(false);
-    expect(/export async function clearSupplementalCache/.test(sl)).toBe(true);
+  it('names neither namespace by hand — db.js owns both strings', () => {
+    const db = live(src('js/utils/db.js'));
+    expect(/export const CACHE_NS_CONTOURS = 'contours'/.test(db)).toBe(true);
+    expect(/export const CACHE_NS_CHART_LAYERS = 'supplemental'/.test(db)).toBe(true);
+    expect(/CACHE_NS\s*=\s*CACHE_NS_CONTOURS/.test(cd)).toBe(true);
+    expect(/CACHE_NS\s*=\s*CACHE_NS_CHART_LAYERS/.test(sl)).toBe(true);
+  });
+
+  // ── AND IT REACHES THAT MODULE WITHOUT IMPORTING IT, WHICH IS WHY CI WENT RED ──────────────
+  //
+  // The first cut imported clearSupplementalCache directly. supplemental-layers pulls
+  // tide-engine, ramps-loader and the rest; contour-data already polls ten seconds for a map at
+  // load; and picker-order.test.js, which reaches contour-data transitively, went from passing to
+  // a 45-second timeout. 3,865 tests passed, none failed, and the run was still red on one
+  // cancelled file.
+  it('does not import supplemental-layers — that edge timed out the suite', () => {
+    expect(/from '\.\/supplemental-layers\.js'/.test(cd)).toBe(false);
+    // The window hook is the pattern this very file already uses to reach that module.
+    expect(/window\.toggleDepthAreas\?\./.test(cd)).toBe(true);
   });
 
   it('drops the built layers too, or the next paint redraws what was just deleted', () => {
