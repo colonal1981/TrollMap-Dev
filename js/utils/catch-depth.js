@@ -37,7 +37,9 @@ export const ON_CONTOUR_MI = 0.10;
 // Permissive on the qualifier word: rows already in the journal say "on" or "near", and the
 // writer now also emits "off", so match any word rather than an enumeration that would have
 // to be revised the next time the vocabulary grows.
-const LOOKUP_RE = /Depth lookup:\s*~?\s*([\d.]+)\s*ft\s+contour\s*\(\s*([A-Za-z]+)\s*,\s*([\d.]+)\s*mi\s*\)/i;
+// The trailing `, <slug> chart` is optional: notes written before the chart was recorded do not
+// have it, and they must keep parsing or every depth already in the journal loses its distance.
+const LOOKUP_RE = /Depth lookup:\s*~?\s*([\d.]+)\s*ft\s+contour\s*\(\s*([A-Za-z]+)\s*,\s*([\d.]+)\s*mi\s*(?:,\s*([A-Za-z0-9_.-]+)\s+chart\s*)?\)/i;
 
 /**
  * Pull a depth lookup back out of a note string.
@@ -50,7 +52,7 @@ export function parseDepthLookup(notes) {
   const depthFt = parseFloat(m[1]);
   const distanceMi = parseFloat(m[3]);
   if (!Number.isFinite(depthFt) || !Number.isFinite(distanceMi)) return null;
-  return { depthFt, relation: m[2].toLowerCase(), distanceMi };
+  return { depthFt, relation: m[2].toLowerCase(), distanceMi, chart: m[4] || null };
 }
 
 /**
@@ -62,8 +64,30 @@ export function catchDepthLookupMi(c) {
   if (!c) return null;
   const stored = c.structure && c.structure.contourDistanceMi;
   if (Number.isFinite(stored)) return stored;
-  const fromNote = parseDepthLookup(c.notes) || parseDepthLookup(c.ai && c.ai.notes);
+  const fromNote = lookupOf(c);
   return fromNote ? fromNote.distanceMi : null;
+}
+
+function lookupOf(c) {
+  return parseDepthLookup(c && c.notes) || parseDepthLookup(c && c.ai && c.ai.notes);
+}
+
+/**
+ * WHICH WATER'S CHART THIS DEPTH CAME OUT OF, when the note says.
+ *
+ * Ryan, on being told a Santee River shad's depth was looked up a quarter mile away: *"santee
+ * river is charted..."*. It is, and its chart has a contour 1.6 m from that fish -- but the
+ * lookup read `state.ACTIVE_CONTOUR`, whatever pack happened to be loaded in the app, and the
+ * quarter mile was the distance to LAKE MARION's nearest contour. Measured over all five of the
+ * far lookups in his journal: every one of them matches Lake Marion's chart and not the water the
+ * fish was in. A depth off the wrong water's chart is not a depth, and until the chart was named
+ * nothing could tell which had happened.
+ */
+export function catchDepthChart(c) {
+  const stored = c && c.structure && c.structure.chart;
+  if (stored) return String(stored);
+  const fromNote = lookupOf(c);
+  return (fromNote && fromNote.chart) || null;
 }
 
 /**
@@ -89,16 +113,18 @@ export function describeCatchDepth(c) {
   const raw = c && c.depth != null ? String(c.depth).trim() : '';
   const mi = catchDepthLookupMi(c);
   const charted = isDepthCharted(c);
+  const chart = catchDepthChart(c);
+  const src = chart ? `${chart} chart` : 'charted';
 
-  if (!raw) return { text: '—', ft: null, lookupMi: mi, charted, trusted: false };
+  if (!raw) return { text: '—', ft: null, lookupMi: mi, charted, chart, trusted: false };
 
   const ft = `${raw} ft`;
-  if (!charted) return { text: ft, ft, lookupMi: null, charted: false, trusted: true };
-  if (mi == null) return { text: `${ft} (charted)`, ft, lookupMi: null, charted: true, trusted: false };
-  if (mi <= ON_CONTOUR_MI) return { text: `${ft} (charted)`, ft, lookupMi: mi, charted: true, trusted: true };
+  if (!charted) return { text: ft, ft, lookupMi: null, charted: false, chart: null, trusted: true };
+  if (mi == null) return { text: `${ft} (${src})`, ft, lookupMi: null, charted: true, chart, trusted: false };
+  if (mi <= ON_CONTOUR_MI) return { text: `${ft} (${src})`, ft, lookupMi: mi, charted: true, chart, trusted: true };
 
   return {
-    text: `— (nearest charted depth is ${raw} ft, ${mi.toFixed(2)} mi away)`,
-    ft: null, lookupMi: mi, charted: true, trusted: false
+    text: `— (nearest ${chart ? `${chart} ` : ''}charted depth is ${raw} ft, ${mi.toFixed(2)} mi away)`,
+    ft: null, lookupMi: mi, charted: true, chart, trusted: false
   };
 }

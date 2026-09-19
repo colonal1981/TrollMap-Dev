@@ -12,7 +12,7 @@
 
 import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
-import { getLoadedRegistry } from '../data/lake-registry.js';
+import { getLoadedRegistry, lakeRecordFor } from '../data/lake-registry.js';
 import { describeCatchDepth, ON_CONTOUR_MI } from '../utils/catch-depth.js';
 import { loadAccessIndex, nearestLakeByAccessPoint } from '../data/access-index.js';
 import { LURE_PRESETS } from './spread-builder.js';
@@ -176,7 +176,7 @@ async function fetchHistoricalWeatherForItem(item) {
 
 function nearestLakeAndContour(latRaw, lonRaw) {
   const lat = parseFloat(latRaw), lon = parseFloat(lonRaw);
-  const out = { lake: '', depth: '', depthBand: '', contourDistanceMi: null };
+  const out = { lake: '', depth: '', depthBand: '', contourDistanceMi: null, chart: null };
   if (!isFinite(lat) || !isFinite(lon)) return out;
 
   // Lake name: prefer the worker-backed access index (hundreds of real
@@ -217,6 +217,39 @@ function nearestLakeAndContour(latRaw, lonRaw) {
     // Worth a line anyway -- a catch with no lake is the thing Ryan notices weeks later in
     // the journal, and "nothing was thrown" is not the same as "no lake was near".
     console.warn('[catch-journal] nearest-lake lookup failed:', err);
+  }
+
+  // ── AND THE CHART HAS TO BE THIS WATER'S CHART ──────────────────────────────────────────────
+  //
+  // `state.ACTIVE_CONTOUR` is whatever pack is loaded in the app RIGHT NOW. It has nothing to do
+  // with where the catch is, and a whole journal can be imported in one sitting with one water
+  // selected -- so every fish in it gets its depth off that one chart.
+  //
+  // MEASURED ON RYAN'S OWN 157 CATCHES, after he said *"santee river is charted..."*. It is. All
+  // five of the lookups that reached past a tenth of a mile match LAKE MARION's nearest contour
+  // and not the water the fish was in:
+  //
+  //                              journal said   marion chart   the right chart
+  //     shad, Santee River        0.24 mi        0.234 mi       0.001 mi  (santee_river)
+  //     catfish, borrow pit       0.17 mi        0.001 mi       -- across a levee from Marion
+  //
+  // The shad is the proof: the Santee pack has a contour 1.6 m from that fish and the app read a
+  // chart a quarter mile away, because Lake Marion was the pack on screen.
+  //
+  // SO THE LOOKUP IS REFUSED RATHER THAN APPROXIMATED. A depth off the wrong water is not a worse
+  // depth, it is a different water's depth, and nothing downstream can tell the two apart. The
+  // catch still saves, with no depth and a flag saying why -- which is the same shape as the two
+  // failures above it.
+  //
+  // `ACTIVE_CONTOUR_KEY` is the pack slug: contour-data.js fetches `/chartpacks/${r2Key}/`. A
+  // locally imported file sets it to a FILENAME, which resolves to no registry row, and that is
+  // treated as unconfirmed -- the safe answer, not a guess at what the file was.
+  const chartSlug = String(state.ACTIVE_CONTOUR_KEY || '').split('/')[0];
+  const waterSlug = out.lake ? ((lakeRecordFor(out.lake) || {}).slug || '') : '';
+  out.chart = chartSlug || null;
+  if (!chartSlug || !waterSlug || chartSlug !== waterSlug) {
+    out.chartMismatch = { chart: chartSlug || null, water: waterSlug || null };
+    return out;
   }
 
   // Nearest loaded contour from TrollMap contour layer.
@@ -261,7 +294,10 @@ function nearestLakeAndContour(latRaw, lonRaw) {
       // contour a quarter mile off the fix read exactly like one 0.11 mi off it. ON_CONTOUR_MI
       // is the line that matters: past it the number stops describing this spot.
       const relation = closestDist < ON_CONTOUR_MI ? 'on' : closestDist < 0.25 ? 'near' : 'off';
-      out.depthBand = `~${closestDepth}ft contour (${relation}, ${closestDist.toFixed(2)} mi)`;
+      // THE CHART IS NAMED IN THE NOTE, because the note is the only field that survives
+      // exportJournalCsv() and a number whose source cannot be named is not checkable.
+      out.depthBand = `~${closestDepth}ft contour (${relation}, ${closestDist.toFixed(2)} mi`
+                    + `${out.chart ? `, ${out.chart} chart` : ''})`;
     }
   } catch (err) {
     // Same shape as the lake lookup above: the catch saves without a depth band rather than
@@ -284,12 +320,19 @@ function enrichItemFromGps(item) {
     item.depth = spatial.depth;
   }
   if (spatial.depthBand) {
-    item.structure = { depthBand: spatial.depthBand, contourDistanceMi: spatial.contourDistanceMi };
+    item.structure = { depthBand: spatial.depthBand, contourDistanceMi: spatial.contourDistanceMi,
+                       chart: spatial.chart || null };
     const note = `Depth lookup: ${spatial.depthBand}`;
     if (!String(item.ai?.notes || '').includes('Depth lookup:')) {
       item.ai.notes = [item.ai?.notes || '', note].filter(Boolean).join(' | ');
     }
     if (!item.reviewFlags.includes('depth_from_contours')) item.reviewFlags.push('depth_from_contours');
+  } else if (spatial.chartMismatch) {
+    // Distinct from depth_not_found: the chart was never asked, so this says nothing about
+    // whether the water is charted -- only that the chart on screen was a different water's.
+    if (!item.reviewFlags.includes('depth_chart_not_this_water')) {
+      item.reviewFlags.push('depth_chart_not_this_water');
+    }
   } else if (item.lat && item.lon && !item.reviewFlags.includes('depth_not_found')) {
     item.reviewFlags.push('depth_not_found');
   }

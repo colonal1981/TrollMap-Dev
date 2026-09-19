@@ -168,3 +168,74 @@ describe('the writer stopped calling a quarter mile "near"', () => {
     expect(journal.includes("reviewFlags.push('depth_from_contours')")).toBe(true);
   });
 });
+
+// ── AND THEN HE SAID THE PART THAT MOVED IT FROM "UNCHARTED" TO "THE WRONG CHART" ──────────────
+//
+// Told the Santee tailrace probably just was not charted, Ryan said: "santee river is charted...".
+// Measured against the packs on disk, nearest contour VERTEX to each of the five far lookups:
+//
+//                            journal said   lake_marion   the fish's own water
+//     shad, Santee River       0.24 mi        0.234 mi      0.001 mi  (santee_river)
+//     bowfin, borrow pit       0.20 mi        0.002 mi      0.256 mi  (santee_river)
+//     catfish, borrow pit      0.17 mi        0.001 mi      0.738 mi  (santee_river)
+//     striper                  0.12 mi        0.049 mi      5.208 mi
+//     catfish 31.5"            0.27 mi        0.275 mi     17.016 mi
+//
+// The shad settles it: its own chart has a contour 1.6 m away and the app read one a quarter mile
+// off, because nearestLakeAndContour() asks `state.ACTIVE_CONTOUR` -- whatever pack is loaded in the
+// app -- and Lake Marion was on screen. Every far lookup in the journal is Marion's chart.
+//
+// So the depth was never only imprecise; some of it is a different body of water. Refused now, and
+// the chart is named in the note either way so the question can be asked of the rest.
+describe('a depth off the wrong water is not a depth', () => {
+  const journal = src('js/modules/catch-journal.js');
+
+  it('names the chart in the note the CSV carries', () => {
+    expect(journal.includes('${out.chart ? `, ${out.chart} chart` : \'\'}')).toBe(true);
+    expect(journal.includes('chart: spatial.chart || null')).toBe(true);
+  });
+
+  it('refuses the lookup when the loaded chart is another water', () => {
+    expect(journal.includes('state.ACTIVE_CONTOUR_KEY')).toBe(true);
+    expect(journal.includes('chartSlug !== waterSlug')).toBe(true);
+    expect(journal.includes('out.chartMismatch')).toBe(true);
+    // Refused, not approximated: the early return happens BEFORE the contour scan.
+    const iGuard = journal.indexOf('chartSlug !== waterSlug');
+    const iScan = journal.indexOf('const contourData = state.ACTIVE_CONTOUR;');
+    expect(iGuard > 0 && iScan > iGuard).toBe(true);
+  });
+
+  it('flags the refusal as its own thing, not as an uncharted water', () => {
+    expect(journal.includes("reviewFlags.push('depth_chart_not_this_water')")).toBe(true);
+    expect(journal.includes("reviewFlags.push('depth_not_found')")).toBe(true);
+  });
+
+  it('resolves the water with the tolerant registry lookup, not an exact name match', () => {
+    // out.lake comes from the access index and is not always a registry displayName.
+    expect(journal.includes('lakeRecordFor(out.lake)')).toBe(true);
+  });
+
+  it('reads the chart back off the note and says which one it was', () => {
+    const d = describeCatchDepth({
+      depth: '11', notes: 'Depth lookup: ~11ft contour (near, 0.17 mi, lake_marion chart)'
+    });
+    expect(d.chart).toBe('lake_marion');
+    expect(d.trusted).toBe(false);
+    expect(d.text.includes('lake_marion')).toBe(true);
+  });
+
+  it('attributes a good depth to its chart too', () => {
+    const d = describeCatchDepth({
+      depth: '1', notes: 'Depth lookup: ~1ft contour (on, 0.00 mi, santee_river chart)'
+    });
+    expect(d.trusted).toBe(true);
+    expect(d.text).toBe('1 ft (santee_river chart)');
+  });
+
+  it('still parses every note written before the chart was recorded', () => {
+    const d = describeCatchDepth({ depth: '22', notes: 'Depth lookup: ~22ft contour (on, 0.01 mi)' });
+    expect(d.lookupMi).toBe(0.01);
+    expect(d.chart).toBe(null);
+    expect(d.text).toBe('22 ft (charted)');
+  });
+});
