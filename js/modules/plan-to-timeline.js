@@ -277,6 +277,55 @@ function rodView(rod, side, over, leg) {
  * sentence. The lure comes off the loadout because the rod id alone is not something anybody can act
  * on with four rods standing behind the seat.
  */
+/**
+ * "In the water: 6-13 ft. Sonar below 13 ft: R3 (DD22 Crankbait) runs 16-20 ft."
+ *
+ * Ryan, 2026-09-18, asking for exactly this: *"a note in the plan that says hey check your sonar if
+ * fish are deeper than x change to this bait... something like that"*. assemblePlan stamps
+ * `sonarCheck` on every troll leg -- see sonarContingency() there for where each number comes from;
+ * none of them is invented and none of them is a threshold.
+ *
+ * THE LEAD CASE COMES FIRST WHEN IT APPLIES, because letting line out is not a rod change. A rod
+ * swap offered when more lead would do it is a worse answer than none.
+ */
+function sonarLine(leg) {
+  const s = leg && leg.sonarCheck;
+  if (!s || !Array.isArray(s.pairFt) || !Number.isFinite(s.ifDeeperThanFt)) return '';
+  const ft = (a) => `${a[0]}\u2013${a[1]} ft`;
+  const first = (s.reach || [])[0];
+
+  // TWO SURFACE BAITS HAVE NO "BELOW x" TO OFFER -- every fish in the river is below 1 ft. What the
+  // sounder changes on a topwater pass is whether he is fishing the column at all, so the sentence
+  // says that instead of quoting a number that is true of everything. depthWindow() calls the mode
+  // 'surface' itself; no depth here was chosen by anybody as the line between shallow and not.
+  const bits = [s.pairSurfaceOnly ? 'Both rods are worked on top here.'
+                                  : `In the water here: ${ft(s.pairFt)}.`];
+
+  // MORE LEAD BEFORE A ROD CHANGE, when the baits already out there are the lead-controlled kind.
+  // Reeling in to swap a rod that would have gone deeper on more line is a worse answer than none.
+  if (s.pairLeadWillGoDeeper) {
+    bits.push(`If the sounder puts fish below ${s.ifDeeperThanFt} ft, more lead takes what is `
+            + `already out there deeper${first ? ', or' : '.'}`);
+  }
+
+  if (first) {
+    const rod = `${first.rodId} (${clean(first.lure)})`;
+    const runs = `runs ${ft(first.runsDepthFt)}`
+               + `${first.leadWillGoDeeper ? ' and takes more lead' : ''}`;
+    bits.push(s.pairLeadWillGoDeeper ? `${rod} ${runs}.`
+            : s.pairSurfaceOnly
+              ? `Anything the sounder shows down in the column wants ${rod}, which ${runs}.`
+              : `If the sounder puts fish below ${s.ifDeeperThanFt} ft, ${rod} ${runs}.`);
+  } else if (!s.pairLeadWillGoDeeper) {
+    bits.push(s.pairSurfaceOnly
+      ? `Nothing else in the boat fishes below the top \u2014 ${s.deepestInBoatFt} ft is the `
+        + `deepest thing you have rigged.`
+      : `If the sounder puts fish below ${s.ifDeeperThanFt} ft, nothing else in the boat reaches `
+        + `them \u2014 ${s.deepestInBoatFt} ft is the deepest thing you have rigged.`);
+  }
+  return bits.join(' ');
+}
+
 function fallbackLine(leg, rodsById) {
   const f = leg && leg.ifNotProducing;
   if (!f || !f.rodId || !f.insteadOf) return '';
@@ -441,8 +490,12 @@ export function planToTimeline(plan, o = {}) {
       // print, the HTML export and the phone without five readers having to learn a new name. The
       // rod's own lure is named from the loadout, because "put R2 on" is not an instruction anybody
       // can follow with four rods behind the seat.
-      longDesc: [clean(leg.why), fallbackLine(leg, rodsById)].filter(Boolean).join(' '),
+      longDesc: [clean(leg.why), fallbackLine(leg, rodsById), sonarLine(leg)]
+        .filter(Boolean).join(' '),
       ifNotProducing: leg.ifNotProducing || null,
+      // Carried as well as said, because the panel draws the depths and wants the numbers, not the
+      // sentence. Same rule as `ifNotProducing` beside it.
+      sonarCheck: leg.sonarCheck || null,
       speedMph: leg.speedMph,
       // Carried so every reader downstream can tell a second pass from a second stretch without
       // re-deriving it from a repeated runId.

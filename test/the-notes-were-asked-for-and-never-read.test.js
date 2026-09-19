@@ -173,10 +173,15 @@ describe('the leg carries it, and the card says it in words', () => {
     expect(card.ifNotProducing).toEqual(FALLBACK);
   });
 
-  it('and says only the why when the plan gave no fallback', () => {
+  it('and says no fallback sentence when the plan gave no fallback', () => {
     const t = planToTimeline(built({ why: 'the channel edge here' }));
     const card = t.cards.find((c) => c.icon === '🎣');
-    expect(card.longDesc).toBe('the channel edge here');
+    // Was `toBe('the channel edge here')` until 2026-09-19, when the leg gained the sonar
+    // contingency -- which is the app's own arithmetic off the loadout and is said on every troll
+    // leg, fallback or no. What this test is about is the MODEL's sentence, so it asserts that one
+    // is absent and that the why still leads.
+    expect(card.longDesc.startsWith('the channel edge here')).toBe(true);
+    expect(card.longDesc.includes('If they are not producing')).toBe(false);
     expect(card.ifNotProducing).toBe(null);
   });
 });

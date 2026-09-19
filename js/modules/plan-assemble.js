@@ -479,6 +479,124 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
   return Object.keys(forThisLeg).length ? forThisLeg : null;
 }
 
+/**
+ * WHAT THE PAIR IN THE WATER REACHES, AND WHAT IS IN THE BOAT THAT REACHES PAST IT.
+ *
+ * ── WHY THIS EXISTS AT ALL ────────────────────────────────────────────────────────────────────
+ *
+ * Ryan, 2026-09-18, on the day the app stopped claiming a fish depth it had no evidence for:
+ * *"which is actually ok for it not to have a depth... as long as the app still routes over the
+ * holes with a bait that is appropriate for that reach of river... if i go over a hole and see that
+ * the fish are much deeper than what my current bait can do i can always turn around run back the
+ * other way with a different rod... the plan is a mechanism to get me onto the fish with a high
+ * probability of catching... but it can't know exactly where the fish are... if someone could invent
+ * that they would be an instant billionaire... but i have the electronics on the kayak to tell me if
+ * i need to change something... but a note in the plan that says hey check your sonar if fish are
+ * deeper than x change to this bait... something like that"*
+ *
+ * The 93sv is the only instrument in this whole system that measures where the fish actually are.
+ * Everything upstream of it -- the chart, the profile, the research band -- is where they PROBABLY
+ * are. So the plan's job on a leg is not to be right about the depth; it is to hand him the two
+ * numbers he needs the moment the sounder disagrees with it: how deep what is behind the boat
+ * reaches, and which rod standing behind the seat reaches further.
+ *
+ * ── EVERY NUMBER IN HERE IS ALREADY OWNED ─────────────────────────────────────────────────────
+ *
+ * `x` is not a threshold anybody picked. It is the deeper end of the pair that is in the water,
+ * which capBaitDepth() has already computed for this leg at this leg's speed with this leg's lead
+ * (`rodPlan[id].runsDepthFt`), and which falls back to depthWindow() on the bag's own lead for a rod
+ * the cap never had to touch. The rods offered are the rest of HIS loadout, priced through the same
+ * depthWindow() at the same speed. Nothing here invents a number, and nothing here re-rigs a rod:
+ * a bait that planes, or that wants an inline weight it has not been given, reports a null max and
+ * is left out rather than talked up.
+ *
+ * `controlledBy` comes along because it is the difference between two answers he can act on. A
+ * lead-controlled bait goes deeper on more line, with no rod change at all; a lipped bait's bill
+ * sets its depth and no amount of line moves it. Telling him to swap rods when letting out line
+ * would do is a worse answer than saying nothing.
+ *
+ * Returns undefined when the pair in the water has no measurable depth between them, because then
+ * there is no `x` and the sentence would be about nothing.
+ *
+ * @param {Array}  rods         the loadout -- every rod in the boat, not just the two deployed
+ * @param {object} deploy       { port, starboard } rod ids for this leg
+ * @param {object|null} rodPlan capBaitDepth()'s per-leg answer, keyed by rod id
+ * @param {number} speedMph     the leg's WATER speed, the same one capBaitDepth was priced at
+ * @param {function} lureByName
+ *
+ * The water on the leg is deliberately NOT carried in here. The card already prints the leg's own
+ * depth range, and how much more lead the shallow end of a leg leaves him is the call capBaitDepth()
+ * hands to him on purpose -- "flag the rise and let me decide" -- not a number to re-answer here.
+ */
+function sonarContingency(rods, deploy, rodPlan, speedMph, lureByName) {
+  if (typeof lureByName !== 'function' || !deploy) return undefined;
+  const out = [deploy.port, deploy.starboard].filter(Boolean);
+
+  // The window a rod is fishing on THIS leg, and WHAT SETS IT.
+  //
+  // The numbers prefer capBaitDepth()'s answer, because on a deployed rod the cap may have shortened
+  // the lead for this leg's ceiling and the bag's lead is then not what is behind the boat.
+  //
+  // `mode` NEVER comes from the cap. The first cut of this read it as "did the cap write a leadFt",
+  // which is a question about whether this leg was shallow, not about what controls the bait -- so
+  // the identical rod reported lead-controlled while it sat on the bench and NOT lead-controlled the
+  // moment it was deployed, and leg 3 of Ryan's 2026-09-18 Congaree day said "nothing else in the
+  // boat reaches them" over 13 ft of water while holding two lead-controlled baits that more line
+  // would have taken straight down to the fish. What controls a bait is a property of the bait:
+  // depthWindow() answers it ('lead', 'surface', a rated bill), and it is asked every time.
+  const windowFor = (rod) => {
+    const lure = lureByName(rod.lure);
+    if (!lure) return null;
+    const planned = rodPlan && rodPlan[rod.id] ? rodPlan[rod.id] : null;
+    const leadFt = (planned && planned.leadFt) ?? rod.leadFt;
+    const w = depthWindow(planned && planned.jigheadOz
+      ? { ...lure, weightOz: planned.jigheadOz } : lure, { speedMph, leadFt });
+    const pair = planned && Array.isArray(planned.runsDepthFt)
+                 && planned.runsDepthFt.every((v) => Number.isFinite(v))
+      ? planned.runsDepthFt : (Number.isFinite(w.min) && Number.isFinite(w.max) ? [w.min, w.max]
+                                                                               : null);
+    return pair ? { min: pair[0], max: pair[1], mode: w.mode } : null;
+  };
+
+  const inWater = [];
+  for (const id of out) {
+    const rod = rods.find((r) => r.id === id);
+    const w = rod && windowFor(rod);
+    if (w) inWater.push({ rodId: id, lure: rod.lure, runsDepthFt: [w.min, w.max], mode: w.mode });
+  }
+  if (!inWater.length) return undefined;
+
+  const pairFt = [Math.min(...inWater.map((r) => r.runsDepthFt[0])),
+                  Math.max(...inWater.map((r) => r.runsDepthFt[1]))];
+  const floorFt = pairFt[1];
+
+  const bench = [];
+  for (const rod of rods) {
+    if (out.includes(rod.id)) continue;
+    const w = windowFor(rod);
+    if (!w || !(w.max > floorFt)) continue;
+    bench.push({ rodId: rod.id, lure: rod.lure, runsDepthFt: [w.min, w.max],
+                 // The one fact that decides whether he swaps a rod or just lets line out.
+                 leadWillGoDeeper: w.mode === 'lead' });
+  }
+  bench.sort((a, b) => a.runsDepthFt[1] - b.runsDepthFt[1]);
+
+  const everyMax = [...inWater, ...bench].map((r) => r.runsDepthFt[1]);
+  return {
+    pairFt,
+    // "check your sonar if fish are deeper than x" -- x, and it is the pair's own floor.
+    ifDeeperThanFt: floorFt,
+    // Can the pair itself be sent deeper on more line, before any rod comes out of the holder?
+    pairLeadWillGoDeeper: inWater.some((r) => r.mode === 'lead'),
+    // BOTH RODS WORKED ON TOP, which makes "if the sounder puts fish below 1 ft" a sentence about
+    // nothing -- they are always below 1 ft. depthWindow() calls this mode 'surface' itself, so the
+    // case is read off the bait and not off a depth anybody chose to call shallow.
+    pairSurfaceOnly: inWater.every((r) => r.mode === 'surface'),
+    reach: bench,
+    deepestInBoatFt: Math.max(...everyMax),
+  };
+}
+
 /** "06:00" → minutes since midnight. */
 export function parseClock(s) {
   const m = /^(\d{1,2}):(\d{2})/.exec(String(s || ''));
@@ -1335,6 +1453,17 @@ export function assemblePlan(o) {
       // had to move, keyed by rod id: { R2: { leadFt, runsDepthFt } }. Absent when the loadout's
       // own lead clears this leg, and every reader falls back to the rod.
       rodPlan: rodPlan || undefined,
+      // ── AND WHAT THE SOUNDER IS FOR, WHEN THE PLAN CANNOT KNOW WHERE THE FISH ARE ──────────
+      //
+      // A sibling of `ifNotProducing` above, and deliberately not the same thing. That one answers
+      // "these two baits are not getting bitten" and is the model's fishing call. This one answers
+      // "the sonar says the fish are deeper than what I am pulling", which is arithmetic off his own
+      // loadout, so the app owns it outright and states it on every troll leg whether or not
+      // anything is wrong. See sonarContingency() for where each number comes from.
+      //
+      // Priced at the WATER speed, the same one capBaitDepth() judged the pair at, so the two can
+      // never disagree about how deep the same rod is running on the same leg.
+      sonarCheck: sonarContingency(rods, deploy, rodPlan, waterMph, o.lureByName),
       batteryAh: round2(a),
       estDurationMin: Math.round(mins + stopMin), estStartTime: formatClock(clock),
       light: legLight,
