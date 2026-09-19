@@ -56,6 +56,7 @@
 
 // ONE PLACE KNOWS HOW DEEP A BAIT RUNS, and until now the prompt was not one of its readers.
 import { levelSentence } from '../utils/water-conditions.js';
+import { lakeRecordFor } from '../data/lake-registry.js';
 import { compassOf } from '../utils/compass.js';
 import { isNum, num } from '../utils/num.js';
 import { depthWindow, jigheadRangeOz, trollableBaits, describeBait, LURE_KNOWLEDGE,
@@ -559,6 +560,48 @@ Garmin chart sounded at FULL POOL, and nothing in this app has adjusted it.${off
 ${off}.` : ''}${b != null && b > 0.05 ? ` So subtract ${b.toFixed(1)} ft from every charted number
 before you trust it: a bait picked against a charted 16 ft ceiling is working ${(16 - b).toFixed(1)} ft
 of water today, and the shoreline is not where the chart draws it.` : ''}
+`;
+}
+
+// HOW MUCH OF THIS WATER WAS EVER SOUNDED, WHICH ON A RIVER IS NOT MOST OF IT.
+//
+// Ryan, after checking a stretch of his own river against the chart app: *"the wateree river is
+// pretty much unsounded for most of its entirety"*. He is right, and the app has held the number
+// per water the whole time without ever saying it out loud.
+//
+// `charted` is in the registry for all 355 waters, and split by type it is not subtle:
+//
+//                  n     median    p25      below 0.50
+//     rivers      63     0.501    0.271     31 of 63  (49%)
+//     lakes      279     0.928    0.871      3 of 279  (1%)
+//     coastal     13     0.219    0.123     13 of 13  (100%)
+//
+// LakeVu is a lake product. A reservoir is surveyed end to end; a river is sounded where somebody
+// funded a survey, and the rest is blank. wateree_river 0.364, broad_river 0.477, and Ryan's own
+// home water bates_old_river 0.278 -- 72% of the water he fishes most has no soundings at all.
+//
+// AND THE PLAN QUOTED IT ANYWAY. Every depth in this prompt, every `maxRunDepthFt`, every bait
+// banned on a leg and every warning about a rise comes out of the charted fraction, with the same
+// confidence on the Wateree at 0.36 as on Murray at 0.95. This block is the sentence that was
+// missing -- the same job poolPromptBlock does for a drawn-down reservoir, and for the same reason:
+// the model is told the size of what it cannot see rather than handed numbers that hide it.
+//
+// NOT A THRESHOLD AND NOT A REFUSAL. It prints the figure whenever the registry has one, because
+// "96% sounded" is information too, and what to do about 36% is a fishing judgement rather than
+// something this file should make on his behalf.
+function chartCoverageBlock(o) {
+  const rec = lakeRecordFor(o && o.water ? String(o.water) : '');
+  const frac = rec && isNum(rec.charted) ? num(rec.charted) : null;
+  if (frac == null || !(frac > 0)) return '';
+  const pct = Math.round(frac * 100);
+  const gap = 100 - pct;
+  return `
+HOW MUCH OF THIS WATER HAS EVER BEEN SOUNDED
+${pct}% of it. Every depth below -- the contours, the structure depths, the water under each leg,
+the shallowest rise on it and every bait judged against those -- comes out of that ${pct}%.${gap > 0 ? `
+The other ${gap}% is NOT SHALLOW WATER AND NOT SAFE WATER. It is water nobody measured, and the
+chart draws nothing there rather than drawing a depth. Where a leg runs past it, the sounder is
+the only thing that knows.` : ''}
 `;
 }
 
@@ -1934,7 +1977,7 @@ wind direction: is it a dangerous windward launch?${o.hazards && o.hazards.lengt
     + `from the research is written advice with no position at all: say the ones that bear on `
     + `today out loud, and never imply an unpositioned one is marked on the chart.`
   : ''}
-${coastalPromptBlock(o.waterState)}${riverPromptBlock(o.waterState, o)}${poolPromptBlock(o.waterState)}${conditionsPromptBlock(o.waterState)}${lightPromptBlock(o.waterState, o.weatherByHour, o.launchTime, o.returnTime, o.lightFacts, o.isRiver)}${timeBudgetBlock(o.windowMin, o.launchTime, o.returnTime, o.dayMin)}${thermoclineNormBlock(o.thermoclineNorm)}${inshoreSeasonBlock(o.inshoreSeason)}${seabedHabitatBlock(o.seabedHabitat)}
+${coastalPromptBlock(o.waterState)}${riverPromptBlock(o.waterState, o)}${poolPromptBlock(o.waterState)}${chartCoverageBlock(o)}${conditionsPromptBlock(o.waterState)}${lightPromptBlock(o.waterState, o.weatherByHour, o.launchTime, o.returnTime, o.lightFacts, o.isRiver)}${timeBudgetBlock(o.windowMin, o.launchTime, o.returnTime, o.dayMin)}${thermoclineNormBlock(o.thermoclineNorm)}${inshoreSeasonBlock(o.inshoreSeason)}${seabedHabitatBlock(o.seabedHabitat)}
 WHAT IS ALREADY KNOWN
 ${o.intel || 'NOTHING. No researched profile exists for this water, so everything else here rests '
   + 'on the chart, the gauges and general species knowledge. Say so in the plan rather than '
