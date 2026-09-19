@@ -2273,7 +2273,8 @@ export function selectCandidates(runs, o) {
       // Present only when the caller supplied a journal. Never affects `value` -- see catchSupport().
       support: o.catches
         ? catchSupport(line, o.catches,
-                       { species: o.catchSpecies, month: o.month, radiusM: o.catchRadiusM })
+                       { species: o.catchSpecies, month: o.month, radiusM: o.catchRadiusM,
+                         water: o.water })
         : null,
       // WHOLE-RUN, not windowed. build_trolling_runs.py reports ledges per run and gives no
       // positions, so these cannot be clipped to the window the way `near` can. Named so that
@@ -2595,7 +2596,26 @@ export function catchSupport(line, catches, o = {}) {
   const radiusM = o.radiusM ?? 300;
   const species = o.species ? [].concat(o.species).map((x) => String(x).toLowerCase()) : null;
   const month = o.month ?? null;              // 1-12, to weigh the same season
-  const out = { n: 0, speciesN: 0, seasonN: 0, nearestM: null, lastDate: null, lures: {} };
+  // ── A POSITION ON LAND IS NOT A POSITION ────────────────────────────────────────────────────
+  //
+  // Ryan, 2026-09-19, looking at the map after I had spent three guesses defending his phone:
+  // *"i am looking at the map and those coords for those fish are on land nowhere near the
+  // river"*. He was right. The journal's positions come from photo EXIF, and on at least two
+  // trips the camera wrote a fix kilometres from the water -- his own Garmin, the same day,
+  // put him 4 km from where the phone did, and the Garmin is the one that makes sense.
+  //
+  // The journal is MIXED, not bad: three of his Bates Old River fixes land exactly inside that
+  // boundary and he has 32 distinct positions across 46 catches there. What it has never had is
+  // anything marking which is which, so a bad fix that happens to land near a line counts as
+  // evidence about that water. That is worse than having no position at all, because it is
+  // indistinguishable from a real one.
+  //
+  // `water` is the pack's own containment test. Supplied, a catch outside the water is not
+  // support. It is COUNTED rather than dropped -- see `offWater` -- because a plan that silently
+  // ignores three of his fish is the same shape of silence this file keeps being fixed for.
+  const water = typeof o.water === 'function' ? o.water : null;
+  const out = { n: 0, speciesN: 0, seasonN: 0, nearestM: null, lastDate: null, lures: {},
+                offWater: 0 };
   if (!Array.isArray(catches) || !catches.length || !Array.isArray(line) || line.length < 2) return out;
 
   // Bounding box with a margin, so most catches are rejected without any segment maths.
@@ -2618,6 +2638,9 @@ export function catchSupport(line, catches, o = {}) {
       if (best <= 1) break;
     }
     if (best > radiusM) continue;
+
+    // Near the line but not on the water: a bad fix, and it says so instead of counting.
+    if (water && !water(lon, lat)) { out.offWater++; continue; }
 
     out.n++;
     if (out.nearestM === null || best < out.nearestM) out.nearestM = Math.round(best);
@@ -3183,6 +3206,9 @@ export function forModel(c, cap = MODEL_STRUCTURE_CAP) {
     yourHistory: c.support
       ? { catchesWithin300m: c.support.n, thisSpecies: c.support.speciesN,
           sameSeason: c.support.seasonN, lastCaught: c.support.lastDate,
+          // Said out loud rather than dropped: these are his fish, at a position that is not on
+          // this water, and the reason the count above is lower than he expects.
+          ignoredOffWater: c.support.offWater || 0,
           note: 'positions are post-fight photo locations, accurate to a few hundred metres' }
       : undefined,
   };

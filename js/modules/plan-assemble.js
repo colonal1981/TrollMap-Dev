@@ -1606,6 +1606,8 @@ export function assemblePlan(o) {
       yourHistory: c.support
         ? { catchesWithin300m: c.support.n, thisSpecies: c.support.speciesN,
             sameSeason: c.support.seasonN, lastCaught: c.support.lastDate,
+            // Counted, not dropped -- catchSupport() says why.
+            ignoredOffWater: c.support.offWater || 0,
             note: 'positions are post-fight photo locations, accurate to a few hundred metres' }
         : undefined,
     });

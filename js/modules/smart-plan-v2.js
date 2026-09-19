@@ -23,7 +23,7 @@ import { selectCandidates, structureIndex, forModel, travelOrder, poiSpotFeature
 import { buildPlanRequest, parsePlanResponse, planArgsFrom } from './plan-prompt.js';
 // A RIVER LEG IS A DRIFT, NOT A LANE. See river-drifts.js for what that means, what it measures
 // and why the trolling runs are the wrong object on moving water.
-import { riverDriftRuns, driftCurrentSummary, centrelineTransit } from './river-drifts.js';
+import { riverDriftRuns, driftCurrentSummary, centrelineTransit, waterTest } from './river-drifts.js';
 // THE PACK'S OWN FACTS. Pure, and it takes the layers fetched below -- see researchIntel() in
 // plan-inputs.js and THE_PROFILE_BECAME_A_CACHE_AND_NOBODY_MOVED_THE_READS_2026-09-01.md item 1.
 import { packDerivedFacts } from '../utils/pack-facts.js';
@@ -263,6 +263,10 @@ export async function buildSmartPlanV2(o) {
     ramp: o.ramp, slug: o.r2Key, fishDepthFt: o.fishDepthFt, holding: o.holding,
     usableAh: o.usableAh, windowMin: o.windowMin, maxOffM, maxM: legMaxM,
     structures, catches: o.catches, catchSpecies: o.species, month: o.month,
+    // THE PACK'S OWN OUTLINE, so a catch logged at a position that is not on this water cannot
+    // stand in as evidence about it. Null where the pack ships no boundary -- and then nothing is
+    // screened, because "outside" and "nothing to be outside of" are different answers.
+    water: waterTest(boundaryFc),
     // Per species, per season, per lake, from the research profile — see structureWeights().
     weights: o.weights, reliefWeights: o.reliefWeights, docks, attractors,
     // ── ON A RIVER THE HOP IS RIVER MILES, NOT A STRAIGHT LINE ────────────────────────────────

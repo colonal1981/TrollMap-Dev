@@ -669,8 +669,21 @@ function reachesFromRamp(loM, hiM, maxM, rampStationM) {
  * @param {object} boundaryFc   the water's boundary.geojson
  * @returns {?{fromM: number, toM: number, stationsOutside: number}}
  */
-export function waterSpanM(stationM, line, boundaryFc) {
-  if (!Array.isArray(stationM) || !Array.isArray(line)) return null;
+/**
+ * IS THIS POINT IN THIS WATER. One copy, because there are now two callers who need it and a
+ * third would have written a third version.
+ *
+ * A BOX PER RING, because a boundary is 3,400 vertices and waterSpanM walks 3,155 stations
+ * against it. Four comparisons reject most rings before any ray cast -- the same trick the
+ * producer's depth index uses, and the reason this costs nothing at plan time.
+ *
+ * Returns null when the water has no boundary at all, so a caller can tell "outside" from
+ * "nothing to be outside of" -- those are different answers and only one of them is a fact.
+ *
+ * @param {object} boundaryFc   the water's boundary.geojson
+ * @returns {?function(number, number): boolean}   (lon, lat) -> inside
+ */
+export function waterTest(boundaryFc) {
   const rings = [];
   for (const f of ((boundaryFc && boundaryFc.features) || (boundaryFc ? [boundaryFc] : []))) {
     const g = f && f.geometry;
@@ -679,9 +692,6 @@ export function waterSpanM(stationM, line, boundaryFc) {
     else if (g.type === 'MultiPolygon') for (const poly of g.coordinates) rings.push(...poly);
   }
   if (!rings.length) return null;
-  // A BOX PER RING, because a boundary is 3,400 vertices and this walks 3,155 stations. Four
-  // comparisons reject most rings before any ray cast -- the same trick the producer's depth index
-  // uses, and the reason this costs nothing at plan time.
   const boxed = rings.map((r) => {
     let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
     for (const [x, y] of r) {
@@ -689,22 +699,27 @@ export function waterSpanM(stationM, line, boundaryFc) {
     }
     return { r, x0, x1, y0, y1 };
   });
-  const inside = (pt) => {
+  return (lon, lat) => {
     let c = false;
     for (const b of boxed) {
-      if (pt[0] < b.x0 || pt[0] > b.x1 || pt[1] < b.y0 || pt[1] > b.y1) continue;
+      if (lon < b.x0 || lon > b.x1 || lat < b.y0 || lat > b.y1) continue;
       const r = b.r;
       let j = r.length - 1;
       for (let i = 0; i < r.length; i++) {
         const [xi, yi] = r[i], [xj, yj] = r[j];
         j = i;
-        if ((yi > pt[1]) !== (yj > pt[1]) && pt[0] < ((xj - xi) * (pt[1] - yi)) / (yj - yi) + xi) {
-          c = !c;
-        }
+        if ((yi > lat) !== (yj > lat) && lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) c = !c;
       }
     }
     return c;
   };
+}
+
+export function waterSpanM(stationM, line, boundaryFc) {
+  if (!Array.isArray(stationM) || !Array.isArray(line)) return null;
+  const test = waterTest(boundaryFc);
+  if (!test) return null;
+  const inside = (pt) => test(pt[0], pt[1]);
   // FROM THE ENDS INWARD, because the answer is the outermost inside station and nothing in the
   // middle can change it. A full sweep of the Congaree costs 715 ms; walking in from each end stops
   // after the 0 leading and 524 trailing stations that are actually outside.
