@@ -923,7 +923,7 @@ function describeStructure(kind, p) {
     // is printed on the chart the angler is looking at. No depth — see poiSpotFeatures().
     bits.push(p.name || kind);
   } else {
-    bits.push(markLabel(kind, p.bend_side));
+    bits.push(markLabel(kind, p.bend_side, p.river_m != null));
     if (n(p.bulge_m, ' m bulge')) bits.push(n(p.bulge_m, ' m bulge'));
     if (n(p.deep_side_ft, ' ft on the deep side', 1)) bits.push(n(p.deep_side_ft, ' ft on the deep side', 1));
   }
@@ -946,9 +946,16 @@ function describeStructure(kind, p) {
   // is no bend threshold anywhere in this pipeline on purpose: the radius is measured and a cutoff
   // would be invented. Whoever reads it picks.
   if (p.bend_side === 'outside' || p.bend_side === 'inside') {
-    // NOT REPEATED WHERE THE NAME ALREADY SAYS IT. `markLabel()` turns a cove on the outside into
-    // "outside bend"; following that with "on the outside of the bend" is the same fact twice.
-    if (markLabel(kind, p.bend_side) === String(kind)) bits.push(`on the ${p.bend_side} of the bend`);
+    // NOT REPEATED WHERE THE NAME ALREADY SAYS IT -- and asked of the WORDS, not of markLabel().
+    //
+    // This used to read `markLabel(kind, p.bend_side) === String(kind)`, which asks a different
+    // question: whether markLabel renames this kind at all. A `hole` does not take its name from
+    // markLabel here -- the branch above calls it "scour hole" -- so once markLabel started saying
+    // "outside bend hole" this test began suppressing a clause the prose had never carried, and the
+    // side vanished from the one string that reaches the model. Ask the bits what they already say.
+    const saidAlready = bits.some((b) => String(b).includes(`${p.bend_side} bend`)
+                                      || String(b).includes(`${p.bend_side} bank`));
+    if (!saidAlready) bits.push(`on the ${p.bend_side} of the bend`);
     if (n(p.bend_r_m, ' m bend radius')) bits.push(n(p.bend_r_m, ' m bend radius'));
   }
   return bits.filter(Boolean).join(', ');
@@ -978,10 +985,46 @@ function describeStructure(kind, p) {
  * @param {string} kind      the pack's kind
  * @param {?string} bendSide 'outside' | 'inside' | null
  */
-export function markLabel(kind, bendSide) {
-  if (bendSide === 'outside' && kind === 'cove') return 'outside bend';
-  if (bendSide === 'inside' && kind === 'point') return 'inside bend';
-  return String(kind || 'mark').replace(/_/g, ' ');
+export function markLabel(kind, bendSide, onRiver = false) {
+  const named = String(kind || 'mark').replace(/_/g, ' ');
+  // TWO OF RYAN'S RULES, AND NEITHER WORD SURVIVES ON A RIVER BANK.
+  //
+  // 2026-09-18: "i am seeing waypoints that say cove... but there are no coves on a river". So this
+  // renamed a cove on the outside of a bend to 'outside bend'. 2026-09-19, reading that on the
+  // plotter: "an outside bend shouldn't be in 1 ft of water... that should be the deepest part of
+  // the river". Both are right, and the rename had put the second word on the wrong feature.
+  //
+  // He is also right about the physics, and his own pack says so. On congaree_river:
+  //
+  //     scour holes                      189   depth_ft      min 2   median 12.1  max 25.9
+  //                                            128 of the 189 are on the OUTSIDE of a bend
+  //     coves stamped outside            159   deep_side_ft  min 1   median 3     max 10
+  //     points stamped inside            128   deep_side_ft  min 1   median 4.2   max 11
+  //
+  // The current runs fastest round the outside of a meander, scours the bed there and drops its sand
+  // on the inside as a point bar. The deep water on an outside bend is the HOLE, which is already its
+  // own mark with its own charted depth. A cove detector on that same outer bank finds the slack
+  // pocket BESIDE the scour -- 3 ft of it -- which is a real place to fish and is not the bend.
+  //
+  // So: the scour wears the bend. Anything else the pack stamped with a side is named for the BANK it
+  // is on, never for a cove and never for a bend, and the GPX writer appends its charted depth -- so
+  // "outside bank 3ft" cannot be read as deep water and "cove" never reaches a river plotter again.
+  // A lake feature has no `bend_side` and keeps its own name, which is the right one there.
+  //
+  // `onRiver` IS ASKED SEPARATELY FROM THE SIDE, because 7 of this river's features are stamped with
+  // no bend side at all -- a straight reach has no bend to be on -- and they were still coming out as
+  // "cove". A cove on a straight stretch of river is as much not-a-cove as one on a bend. Each caller
+  // passes the river fact it holds: describeStructure() has the property bag and reads `river_m`,
+  // which build_river_centrelines.py stamps on every feature it positions; the GPX writer has the
+  // leg and reads its runId, which is `<slug>:drift:<lane>@<station>` on a river and nothing like it
+  // on a lake. One question, two facts that answer it, neither of them a new field to keep in sync.
+  const side = (bendSide === 'outside' || bendSide === 'inside') ? bendSide : null;
+  if (side && (kind === 'hole' || kind === 'ledge')) return `${side} bend ${named}`;
+  if (kind === 'cove' || kind === 'point') {
+    if (side) return `${side} bank`;
+    if (onRiver) return 'bank';
+  }
+  return named;
 }
 
 /**
@@ -2147,12 +2190,33 @@ export function selectCandidates(runs, o) {
       passes: win.hits
         .sort((a, b) => a.atM - b.atM)
         .map((h, k) => {
-          const at = pointAt(line, lineCum, h.atM);
-          const s = resolveStructure(at, h.type, h.offM * 1.25 + RESOLVE_MARGIN_M, o.structures);
+          // THE PIN GOES WHERE THE THING IS, NOT WHERE THE LINE IS.
+          //
+          // `at` was the point ON the line at `atM`, and the feature's own offset -- sitting right
+          // here as `h.offM`, and used on the very next line to size the search radius -- was thrown
+          // away. Every mark therefore landed in the middle of the water the boat was on.
+          //
+          // Ryan, 2026-09-19, looking at the GPX on the plotter: "inside and outside bends that are
+          // literally right next to each other and i dont mean side by side". Measured on that
+          // export: 11 of the 46 bend pins are an inside/outside pair within 60 m and FIVE share one
+          // coordinate exactly -- a cove on the outer bank and a point on the inner bank at the same
+          // station, both collapsed onto the line between them. The depth in the name came from the
+          // same place, which is why the pairs read the same depth as each other.
+          //
+          // `resolveStructure` already returns the feature it matched, carrying the `lon`/`lat` the
+          // pack recorded. That is the charted position, which is what the waypoint's own note has
+          // claimed it was all along ("charted position -- compare with the sounder").
+          //
+          // WHEN NOTHING RESOLVES, THE LINE POINT IS STILL THE HONEST ANSWER: the scan knows a
+          // distance but not which bank, so `charted` says which of the two this is and the GPX
+          // writer stops promising a charted position for a mark that has none.
+          const onLine = pointAt(line, lineCum, h.atM);
+          const s = resolveStructure(onLine, h.type, h.offM * 1.25 + RESOLVE_MARGIN_M, o.structures);
           return {
             ...h,
             id: `${o.slug || 'run'}#${i}:p${k}`,
-            at,
+            at: s ? [s.lon, s.lat] : onLine,
+            charted: !!s,
             structureId: s ? s.id : null,
             what: s ? s.what
               : h.type === 'dock_line' ? `line of ${h.n} docks over ${h.spanM} m — run a bait down it`

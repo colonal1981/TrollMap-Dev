@@ -55,10 +55,17 @@ import { cumulative, kindHits, metresBetween } from './plan-candidates.js';
 // chart, station by station; see channelFractions().
 //
 // WHAT IT BUYS, WHOLE RIVER: median water under the boat 8.0 ft -> 10.0 ft, mean 8.6 -> 9.9.
+// THE FRACTIONS READ RIGHT-TO-LEFT, BECAUSE THAT IS HOW THE PROFILE IS STORED. cross_sections() in
+// build_river_centrelines.py records fraction 0 at the RIGHT bank looking downstream (see the note on
+// `offM` in riverDriftRuns), so the quarter off the LEFT bank is 0.75 and the quarter off the right is
+// 0.25. These were the other way round until 2026-09-19 and the names were simply wrong: the lane
+// called quarter-left read the chart a quarter off the right bank and, with the offset sign that
+// shipped beside it, was drawn on the right as well. The test that says "quarter-left sits north of
+// the centreline on an eastward river" is the one that holds this down.
 export const LATERALS = [
-  { key: 'quarter_left', frac: 0.25, label: 'quarter-left, a rod off the left bank' },
+  { key: 'quarter_left', frac: 0.75, label: 'quarter-left, a rod off the left bank' },
   { key: 'channel', frac: null, label: 'the channel -- the deep water, bend to bend' },
-  { key: 'quarter_right', frac: 0.75, label: 'quarter-right, a rod off the right bank' },
+  { key: 'quarter_right', frac: 0.25, label: 'quarter-right, a rod off the right bank' },
 ];
 
 /**
@@ -371,7 +378,14 @@ function shift(lon, lat, dxM, dyM) {
  * `bearing_deg` is the downstream bearing, degrees clockwise from north. Right of it is
  * bearing + 90; a negative `offM` therefore lands left. Left and right are named looking
  * downstream, which is the convention the builder stamped `bend_side` and `tributaries[].side`
- * with, so the three agree.
+ * with.
+ *
+ * THE PRODUCER'S OWN `off_m` IS THE OTHER SIGN, AND ITS PROFILE IS THE OTHER SIGN AGAIN.
+ * build_river_centrelines.py signed_offset() says "Positive is the left bank, looking downstream",
+ * and cross_sections() records fraction 0 at the RIGHT bank. So a producer `off_m` handed straight
+ * to this function lands on the wrong side, and so does `(frac - 0.5) * w`. This comment used to
+ * claim all three agreed; it did not check, and a river lane was drawn on the wrong bank for as
+ * long as drifts have existed. Convert at the call site and say which way you are converting.
  */
 export function offsetPoint(lon, lat, bearingDeg, offM) {
   const rad = ((bearingDeg + 90) * Math.PI) / 180;
@@ -691,7 +705,45 @@ export function riverDriftRuns(centrelineFc, o = {}) {
         const w = Number(width[i]);
         const frac = Number(fracAt[i]);
         const col = profileIndexFor(fractions, frac);
-        const offM = Number.isFinite(w) ? (frac - 0.5) * w : 0;
+        // ── FRACTION 0 IS THE RIGHT BANK, AND THIS LINE HAD IT BACKWARDS ─────────────────────────
+        //
+        // `offsetPoint` is metres to the RIGHT looking downstream, so `(frac - 0.5) * w` reads the
+        // profile as if fraction 1 were the right bank. IT IS THE LEFT. From the producer, in
+        // Scripts/build_river_centrelines.py cross_sections():
+        //
+        //     px, py = -dy / h, dx / h        # the normal, pointing LEFT of downstream
+        //     k = -half
+        //     while k <= half:
+        //         samples.append((k + half, depth.at(pts[i][0] + px * k, ...)))
+        //
+        // At k = -half the sample sits half a width to the RIGHT and is recorded at offset 0, so
+        // fraction 0 is the right bank and fraction 1 is the left. (Its own inline comment says
+        // "offset from the left bank" and is wrong; so was the note on offsetPoint() claiming the
+        // two conventions agreed. Two comments asserting agreement is how this survived.)
+        //
+        // WHAT IT COST, on Ryan's 2026-09-19 Congaree day, measured against Garmin's own depth
+        // polygons rather than against either convention:
+        //
+        //                                   as shipped        with this sign
+        //     L1  mean band under the line     8.6 ft            11.8 ft     (the card said 12)
+        //         points over <= 3 ft           16                 0
+        //         turns sharper than 60 deg      5 (max 111)        0 (max 57)
+        //     L3  mean band under the line     8.5 ft            13.3 ft     (the card said 13)
+        //         points over <= 3 ft            5                 0
+        //         turns sharper than 60 deg      2 (max 113)        0 (max 44)
+        //
+        // The card was right and the line was wrong: the depth is sampled from `col` below, which
+        // is the fraction the chart was read at, while the boat was sent to its mirror image. That
+        // is also the whole of Ryan's "sharp turns and going over land" -- where the channel crosses
+        // from one bank to the other the drawn line crossed the other way, so every crossing became
+        // a zig-zag through the bar between them.
+        //
+        // AND EVERY DEPTH NUMBER ON A RIVER LEG CAME OFF THE SAME READ. `envelope_line_ft`,
+        // `envelope_ft`, `mean_depth_ft`, `shallowest_ft`, and through waterBand() the leg's
+        // `depthFt`/`depthMinFt`/`depthMaxFt`/`maxRunDepthFt` and every bait-depth ceiling judged
+        // against them. Those were all correct for the water the chart was read at; it was the
+        // geometry that went to the other side. Nothing below this line changes.
+        const offM = Number.isFinite(w) ? (0.5 - frac) * w : 0;
         coords.push(offsetPoint(line[i][0], line[i][1], Number(bearing[i]) || 0, offM));
         bearings.push(Number(bearing[i]));
         stations++;

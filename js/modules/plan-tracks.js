@@ -327,10 +327,12 @@ const MARK_SYMBOL = {
 // says HOW DEEP -- see markSymbol(). A hole is a diamond because it is the prize; the bends are
 // the two halves of one thing so they are the two roundest shapes; a creek mouth is a junction
 // and squares read as junctions.
+// `markLabel()` no longer renames a cove or a point after a bend, so the two bend keys this table
+// carried are gone with it -- a cove was already Circle and a point already Triangle, so no shape on
+// the plotter moves. A hole named `outside bend hole` misses on the label and falls through to
+// `hole`, which is the Diamond it always was.
 const MARK_SHAPE = {
   hole: 'Diamond',
-  'outside bend': 'Circle',
-  'inside bend': 'Triangle',
   cove: 'Circle',
   point: 'Triangle',
   creek_mouth: 'Square',
@@ -377,6 +379,8 @@ const MARK_UNKNOWN_DEPTH = 'Flag, Blue';
 export function markSymbol(type, bendSide, depthFt) {
   const named = MARK_SYMBOL[type];
   if (named) return named;
+  // The shape is the KIND, so the river form of the label is not asked for here: `outside bend hole`
+  // misses and falls through to `hole`'s Diamond, which is the same shape the mark always had.
   const shape = MARK_SHAPE[markLabel(type, bendSide)] || MARK_SHAPE[type];
   if (!shape) return 'Waypoint';
   const d = Number(depthFt);
@@ -490,6 +494,30 @@ export function planWaypoints(plan, launch = null, runId = null, opts = {}) {
       for (const m of (leg.marks || [])) {
         const at = Array.isArray(m.at) && m.at.length === 2 ? m.at : null;
         if (!at || !Number.isFinite(at[0]) || !Number.isFinite(at[1])) continue;
+        // ── A BANK BULGE IS NOT A TROLL-OVER TARGET, SO IT IS NOT A WAYPOINT ──────────────────
+        //
+        // Ryan, 2026-09-19: *"which of those is something that a fishing report or guide would tell
+        // us to fish? which are targets to troll over"*. Answered out of his own researched profile
+        // for this water rather than out of an opinion. congaree_river, Largemouth Bass:
+        //
+        //     summer   structures: ["shoreline", "woody cover", "steep slopes", "deep holes"]
+        //     fall     structures: ["shoreline", "deep holes"]
+        //
+        // Deep holes and steep slopes are the pack's `hole` and `ledge`, and they are what a bait is
+        // dragged over. The bulge in the bank is neither: on the inside of a bend it is a point bar
+        // he would rather not cross, and on the outside it is slack water fish sit in beside the
+        // scour -- a thing to know, not a thing to steer onto. 46 of the 98 waypoints on his
+        // 2026-09-19 export were those bulges.
+        //
+        // THEY ARE NOT DROPPED FROM THE PLAN, only from the plotter. The mark stays on the leg, so
+        // describeStructure's "on the outside of the bend" still reaches the model and the leg's own
+        // notes can say there is slack water on the outer bank here.
+        // A DRIFT LEG IS A RIVER LEG. `runId` is `<slug>:drift:<lane>@<station>` on moving water and
+        // nothing of the kind on a lake, so this asks the leg rather than needing a new field. The
+        // side is NOT part of the test: 7 of the Congaree's bank features carry no bend side because
+        // their reach is straight, and they were still reaching the plotter as "cove".
+        const onRiver = /:drift:/.test(String(leg.runId || ''));
+        if (onRiver && (m.type === 'cove' || m.type === 'point')) continue;
         const dup = seenBefore(m.type, at[0], at[1]);
         seen.push([m.type, at[0], at[1]]);
         if (dup) continue;
@@ -498,13 +526,18 @@ export function planWaypoints(plan, launch = null, runId = null, opts = {}) {
         // the name -- an empty field reads as "the chart does not say", a zero would not.
         const d = Number.isFinite(m.depthFt) ? ` ${Math.round(m.depthFt)}ft` : '';
         out.push({
-          name: `${markLabel(m.type, m.side)}${d}`,
+          name: `${markLabel(m.type, m.side, onRiver)}${d}`,
           lat: at[1], lon: at[0], sym: markSymbol(m.type, m.side, m.depthFt),
           chartMark: true, scoutWaypoint: true, planRunId: runId,
           legId: leg.id, markId: m.id, atM: (leg.startM || 0) + (m.atM || 0),
           depth: m.depthFt ?? null,
           structureType: m.type || null,
-          tacticalNote: 'charted position — compare with the sounder',
+          // ONLY WHERE IT IS ONE. `charted` is false when no feature resolved and the pin is the
+          // point on the line at that distance, which is not a charted position and must not say it
+          // is -- the whole point of the note is that he stands it next to the sounder.
+          tacticalNote: m.charted === false
+            ? 'position along the line \u2014 the chart does not place this one'
+            : 'charted position \u2014 compare with the sounder',
         });
       }
     }

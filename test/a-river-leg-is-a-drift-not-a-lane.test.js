@@ -10,11 +10,17 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { riverDriftRuns, offsetPoint, profileIndexFor, LATERALS, lateralsFor, medianWidthM,
          meanBearingDeg, centrelineTransit } from '../js/modules/river-drifts.js';
-import { structureIndex, DEFAULT_WEIGHTS, eligibleForHolding,
+import { structureIndex, DEFAULT_WEIGHTS, eligibleForHolding, markLabel,
          selectCandidates, forModel } from '../js/modules/plan-candidates.js';
 
 // A straight river running due east at 34.0 N, 200 stations at 50 m = 10 km, 120 m wide.
-// Depth profile: 9 columns left-to-right, deep on the left bank, shallowing to the right.
+//
+// Depth profile: 9 columns RIGHT-to-LEFT, deep on the right bank, shallowing to the left, because
+// that is how the producer stores one. cross_sections() in build_river_centrelines.py sweeps from
+// `k = -half` -- which is half a width to the RIGHT, its normal pointing left -- and records that
+// first sample at offset 0. So column 0 is the right bank looking downstream and column 8 is the
+// left. This file said "left-to-right" until 2026-09-19 and every expectation below was written
+// against that, which is how a lane drawn on the wrong bank passed its own tests.
 function eastwardRiver({ stations = 200, width = 120, nullFrom = null } = {}) {
   const station_m = [], bearing_deg = [], width_m = [], depth_profile_ft = [], coords = [];
   const lon0 = -81.0, lat0 = 34.0, mPerDegLon = 111320 * Math.cos((lat0 * Math.PI) / 180);
@@ -84,17 +90,36 @@ test('the depth under the boat is the depth on the line he picked, and the chann
   const drifts = riverDriftRuns(eastwardRiver(), { slug: 'test_river', laterals: LATERALS });
   const at = (side) => drifts.find((d) => d.properties.drift.side === side
                                        && d.properties.reachFromM === 0).properties.mean_depth_ft;
-  // The section runs 18 ft on the left bank to 2 ft on the right. Asking for the minimum across
+  // The section runs 18 ft on the RIGHT bank to 2 ft on the left. Asking for the minimum across
   // the whole section gives the margin at every station, which is why the profile is read at the
   // fraction actually travelled.
-  assert.equal(at('quarter_left'), 13);
-  assert.equal(at('quarter_right'), 4);
-  assert.ok(at('quarter_left') > at('quarter_right'), 'picking a side changes the water under him');
+  assert.equal(at('quarter_right'), 13);
+  assert.equal(at('quarter_left'), 4);
+  assert.ok(at('quarter_right') > at('quarter_left'), 'picking a side changes the water under him');
   // AND THE CHANNEL LINE IS NOT A FOURTH GUESS -- it is the deepest column the chart has, which on
-  // this fixture is the left bank at 18 ft. A line down the middle of this river would read 9, and
+  // this fixture is the right bank at 18 ft. A line down the middle of this river would read 9, and
   // reading 9 on water that is charted at 18 is the defect Ryan found on his own Congaree tail.
   assert.equal(at('channel'), 18);
-  assert.ok(at('channel') > at('quarter_left'), 'the channel beats the best fixed position');
+  assert.ok(at('channel') > at('quarter_right'), 'the channel beats the best fixed position');
+
+  // ── AND IT IS DRAWN ON THE SIDE THE DEPTH CAME OFF, WHICH NOTHING EVER CHECKED ───────────────
+  //
+  // This is the assertion the file was missing, and its absence is the whole of Ryan's 2026-09-19
+  // day: the channel line reported the deepest column correctly and was drawn on the mirror of it,
+  // so the card said 12 ft over water Garmin charts at 8.6, with 16 points of one leg over 3 ft or
+  // less and turns up to 111 degrees where the lane crossed the river the wrong way.
+  //
+  // The deepest column on this fixture is column 0, the RIGHT bank, and right of an eastward river
+  // is SOUTH. A drawn line that reads 18 ft while sitting north of the centre is reading one bank
+  // and floating over the other.
+  const centreLat = eastwardRiver().features[0].geometry.coordinates[0][1];
+  const chan = drifts.find((d) => d.properties.drift.side === 'channel'
+                                && d.properties.reachFromM === 0);
+  assert.ok(chan.geometry.coordinates[0][1] < centreLat,
+            'the channel line sits south of the centre, on the bank its 18 ft came from');
+  // Half a width off the centre, because the deepest column IS the bank on this fixture.
+  const offM = (centreLat - chan.geometry.coordinates[0][1]) * 111320;
+  assert.ok(Math.abs(offM - 60) < 2, `a full half-width off the centre, got ${offM.toFixed(1)} m`);
 });
 
 test('an uncharted station is uncharted, not one foot deep', () => {
@@ -168,7 +193,10 @@ test('the lateral fraction maps to a real profile column', () => {
   assert.equal(profileIndexFor([], 0.5), -1);
   // The two quarters are constants; the middle one is `null`, which means ask the chart at every
   // station -- see channelFractions(). A number here would be the defect back.
-  assert.deepEqual(LATERALS.map((l) => l.frac), [0.25, null, 0.75]);
+  // 0.75 IS THE LEFT BANK'S QUARTER AND 0.25 IS THE RIGHT'S, because column 0 is the right bank --
+  // see the fixture note at the top of this file. These were [0.25, null, 0.75] until 2026-09-19,
+  // which named each quarter after the bank it was not on.
+  assert.deepEqual(LATERALS.map((l) => l.frac), [0.75, null, 0.25]);
 });
 
 test('offsetPoint puts a positive offset to the right of downstream', () => {
@@ -472,42 +500,53 @@ test('a scour hole reaches the model as a scour hole, with its depth and its ben
   assert.match(rec.what, /20 ft/);
   assert.match(rec.what, /12\.1 ft below the rim/);
   assert.match(rec.what, /on the outside of the bend/);
+  // AND THE PLOTTER'S NAME FOR IT CARRIES THE SIDE, because a scour hole on the outside of a bend is
+  // the one feature where the side is the reason to go there. 128 of this river's 189 holes are on
+  // the outside and they run a median of 12.1 ft, against 3 ft for the bank pockets beside them.
+  // The prose keeps its own clause: `what` is what the model reads and it never said "outside bend".
+  assert.equal(markLabel('hole', 'outside'), 'outside bend hole');
   assert.match(rec.what, /225 m bend radius/, 'the radius is a measurement, not a category');
 });
 
-test('a point on the inside of a bend IS an inside bend, and is called one', () => {
+test('a point on the inside of a bend is named for the bank it is on, with its depth', () => {
   // Card-wide from one sign convention: holes 65% outside, coves 88%, creek mouths 94% -- and points
   // 65% INSIDE, which is where a point bar forms. Two feature types river physics puts on opposite
   // banks, coming out on opposite banks.
   //
-  // Ryan, 2026-09-18: *"i am seeing waypoints that say cove... but there are no coves on a river"*.
-  // So the side is now the NAME and not a clause after it -- see markLabel(). And the clause is
-  // gone with it, because "inside bend, on the inside of the bend" is the same fact twice.
+  // Ryan, 2026-09-18: *"i am seeing waypoints that say cove... but there are no coves on a river"*,
+  // and 2026-09-19: *"an outside bend shouldn't be in 1 ft of water... that should be the deepest
+  // part of the river"*. Both hold only if neither word goes on a bank feature: a point bar is not a
+  // bend and it is not a cove, so it is named for the bank it sits on and the GPX appends the depth
+  // the chart gives it. See markLabel().
   const pt = {
     type: 'Feature', geometry: { type: 'Point', coordinates: [-81, 34] },
     properties: { kind: 'point', id: 'point_9', deep_side_ft: 11, bulge_m: 40,
                   bend_side: 'inside', bend_r_m: 600 },
   };
   const rec = [...structureIndex([pt]).grid.values()].flat()[0];
-  assert.match(rec.what, /^inside bend/);
+  assert.match(rec.what, /^inside bank/);
   assert.doesNotMatch(rec.what, /on the inside of the bend/, 'said once, not twice');
   assert.match(rec.what, /600 m bend radius/, 'the measurement stays');
   assert.equal(rec.bendSide, 'inside', 'and it is a field now, not only a sentence');
 });
 
-test('a cove on the outside of a bend is an outside bend, and one on the inside is still a cove', () => {
-  // 4,530 coves across the 57 river packs and 90% of the stamped ones are on the OUTSIDE -- the cut
-  // bank, the deepest water in the bend. The 333 stamped INSIDE keep the word, because on the inside
-  // of a bend it may well be one. The rename claims only what the pack measured.
+test('a cove is not a thing a river has, so on one it is named for its bank', () => {
+  // 4,530 coves across the 57 river packs. The detector finds a bulge in the shoreline, which on a
+  // lake IS a cove and on a river is a pocket in the bank -- 159 of the Congaree's are stamped on the
+  // outside of a bend and they carry a median of 3 ft, so they are the slack beside the scour and not
+  // the scour. Neither "cove" nor "outside bend" is true of them; the bank is.
   const mk = (side) => ({
     type: 'Feature', geometry: { type: 'Point', coordinates: [-81, 34] },
     properties: { kind: 'cove', id: `cove_${side}`, deep_side_ft: 9, bulge_m: 80,
                   bend_side: side, bend_r_m: 300 },
   });
   const what = (side) => [...structureIndex([mk(side)]).grid.values()].flat()[0].what;
-  assert.match(what('outside'), /^outside bend/);
-  assert.match(what('inside'), /^cove/);
-  assert.match(what('inside'), /on the inside of the bend/, 'the side still gets said');
+  assert.match(what('outside'), /^outside bank/);
+  assert.match(what('inside'), /^inside bank/);
+  // AND THE WORD IS GONE FROM A RIVER ALTOGETHER. Ryan, 2026-09-19: "what the hell is a cove on a
+  // river?" Nothing -- so nothing on a bend-stamped feature may say it.
+  assert.ok(!/cove/.test(what('outside')) && !/cove/.test(what('inside')),
+            'no river feature is called a cove');
 });
 
 test('a lake feature says nothing about bends, because it has no bend to speak of', () => {

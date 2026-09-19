@@ -105,10 +105,23 @@ test('nothing in the set is the string the unit never wrote', () => {
 test('the name on the waypoint is the name in the plan', () => {
   // One function, two readers. The GPX name and the model's `what` string came from two different
   // pieces of code, which is how a river bend reached the chartplotter called a cove.
-  assert.equal(markLabel('cove', 'outside'), 'outside bend');
-  assert.equal(markLabel('point', 'inside'), 'inside bend');
-  assert.equal(markLabel('cove', 'inside'), 'cove');
-  assert.equal(markLabel('point', 'outside'), 'point');
+  //
+  // THE BEND BELONGS TO THE SCOUR, NOT TO THE BANK. Ryan, 2026-09-19: "an outside bend shouldn't be
+  // in 1 ft of water... that should be the deepest part of the river", and "what the hell is a cove
+  // on a river?" On congaree_river the holes run a median of 12.1 ft with 128 of 189 on the outside,
+  // while the coves stamped outside run 3 ft -- so the hole wears the bend, a bank feature is named
+  // for its bank, and no river feature is called a cove.
+  assert.equal(markLabel('hole', 'outside'), 'outside bend hole');
+  assert.equal(markLabel('ledge', 'outside'), 'outside bend ledge');
+  assert.equal(markLabel('hole', 'inside'), 'inside bend hole');
+  assert.equal(markLabel('cove', 'outside'), 'outside bank');
+  assert.equal(markLabel('point', 'inside'), 'inside bank');
+  assert.equal(markLabel('cove', 'inside'), 'inside bank');
+  assert.equal(markLabel('point', 'outside'), 'outside bank');
+  // A LAKE STILL HAS COVES. No bend_side, no rename.
+  assert.equal(markLabel('cove', null), 'cove');
+  assert.equal(markLabel('point', null), 'point');
+  assert.equal(markLabel('hole', null), 'hole');
   assert.equal(markLabel('creek_mouth', null), 'creek mouth', 'underscores are not read at 2 mph');
   assert.equal(markLabel(undefined, null), 'mark');
 });

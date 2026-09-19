@@ -262,5 +262,10 @@ test('LATERALS still describes the three positions, which is what lateralsFor pi
                    ['quarter_left', 'channel', 'quarter_right']);
   // The quarters are constants off a bank; the middle one is `null`, meaning ask the chart at every
   // station. A number back in the middle slot is the lane in the middle of the river again.
-  assert.deepEqual(LATERALS.map((l) => l.frac), [0.25, null, 0.75]);
+  //
+  // AND THE QUARTER OFF THE LEFT BANK IS 0.75. The producer stores a section right-to-left --
+  // cross_sections() records its first sample, half a width to the RIGHT, at offset 0 -- so fraction
+  // 0 is the right bank. This read [0.25, null, 0.75] until 2026-09-19, naming each quarter after
+  // the bank it was not on.
+  assert.deepEqual(LATERALS.map((l) => l.frac), [0.75, null, 0.25]);
 });

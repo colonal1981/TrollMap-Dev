@@ -39,8 +39,13 @@ function feature(kind, i, side, depthFt) {
 
 const FEATURES = {
   type: 'FeatureCollection',
+  // A SCOUR AND A DROP BESIDE THE BANK FEATURES, because since 2026-09-19 those are the two the
+  // plotter gets. The bank bulges stay in the fixture on purpose: the chain that carries their side
+  // to the scorer is what this file is about, and they must still travel it while being kept off the
+  // GPX.
   features: [feature('cove', 10, 'outside', 14), feature('point', 20, 'inside', 8),
-             feature('cove', 30, 'outside', 4)],
+             feature('cove', 30, 'outside', 4),
+             feature('hole', 15, 'outside', 16), feature('ledge', 25, 'inside', 9)],
 };
 
 /** One run in the shape riverDriftRuns writes, with `near` built the way the pipeline builds it. */
@@ -49,6 +54,8 @@ function run() {
   const near = [
     ...kindHits(LINE, CUM, index, 150, 'cove'),
     ...kindHits(LINE, CUM, index, 150, 'point'),
+    ...kindHits(LINE, CUM, index, 150, 'hole'),
+    ...kindHits(LINE, CUM, index, 150, 'ledge'),
   ];
   assert.ok(near.length >= 3, 'the fixture has to reach kindHits at all');
   assert.ok(near.every((n) => n.side === 'outside' || n.side === 'inside'),
@@ -82,15 +89,26 @@ test('the waypoint the Garmin gets is named for the bend, not for a cove on a ri
   const [c] = selectCandidates([run()], { ramp: LINE[0], maxOffM: 150, minM: 400, maxM: 2000, stepM: 100,
                                           slug: 'congaree_river', structures: structureIndex(FEATURES.features) });
   // The leg shape planWaypoints reads, with marks mapped as plan-assemble.js maps them.
-  const plan = { legs: [{ id: 'L1', startM: 0, stops: [], marks: (c.passes || []).map((h) => ({
+  // WITH THE LEG'S runId ON IT, as plan-assemble.js stamps it. That is how the GPX writer knows this
+  // is moving water -- `<slug>:drift:<lane>@<station>` -- and a leg fixture without it was testing a
+  // lake's rules against a river's marks.
+  const plan = { legs: [{ id: 'L1', runId: c.runId, startM: 0, stops: [], marks: (c.passes || []).map((h) => ({
     id: h.id, type: h.type, at: h.at, side: h.side, atM: h.atM, offM: h.offM,
     depthFt: h.depthFt ?? null })) }] };
   const wpts = planWaypoints(plan, null, 'run1', { marks: true }).filter((w) => w.chartMark);
   assert.ok(wpts.length, 'the marks have to become waypoints');
   const names = wpts.map((w) => w.name.replace(/\s*\d+ft$/, ''));
   assert.ok(!names.includes('cove'), `a river bend reached the Garmin as "cove": ${names.join(', ')}`);
-  assert.ok(names.includes('outside bend'), `no outside bend among ${names.join(', ')}`);
-  assert.ok(names.includes('inside bend'), `no inside bend among ${names.join(', ')}`);
+  // THE BEND IS THE SCOUR. Ryan, 2026-09-19: "an outside bend shouldn't be in 1 ft of water... that
+  // should be the deepest part of the river". On his own pack the holes run a median 12.1 ft with 128
+  // of 189 on the outside, while the coves stamped outside run 3 ft.
+  assert.ok(names.includes('outside bend hole'), `no outside bend hole among ${names.join(', ')}`);
+  assert.ok(names.includes('inside bend ledge'), `no inside bend ledge among ${names.join(', ')}`);
+  // AND THE BANK BULGES ARE NOT ON THE PLOTTER AT ALL, because his own profile cites "deep holes"
+  // and "steep slopes" as what to fish and a 3 ft pocket beside the scour is not a thing to steer
+  // onto. 46 of the 98 waypoints on the 2026-09-19 export were these.
+  assert.ok(!names.some((x) => /bank/.test(x)),
+            `a bank bulge became a waypoint: ${names.join(', ')}`);
 });
 
 test('and it is a circle or a triangle, not the default pin', () => {

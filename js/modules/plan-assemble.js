@@ -1497,6 +1497,10 @@ export function assemblePlan(o) {
       // line AS DRAWN, and the boat may run it the other way.
       marks: (c.passes || []).map((h) => ({
         id: h.id, type: h.type, what: h.what, at: h.at,
+        // WHETHER `at` IS THE CHART'S POSITION OR JUST A POINT ON THE LINE. Set by the passes
+        // builder in plan-candidates.js; the GPX note reads it so a pin the chart cannot place
+        // stops claiming to be a charted position.
+        charted: h.charted,
         // WHICH SIDE OF THE BEND, so the GPX waypoint can be called what it is. See markLabel().
         side: h.side,
         atM: flipped ? Math.max(0, Math.round(legLen - h.atM)) : h.atM,
