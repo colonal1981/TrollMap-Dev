@@ -134,11 +134,15 @@ LAYERS = {
     "centreline":       "centreline.geojson",
     "areas":            "areas.geojson",
     "boundary":         "boundary.geojson",
+    # Every landing that can REACH this water, with how far it is by water rather than by
+    # straight line -- build_ramp_reach.py, rivers only so far. Opt-in like the rest of that
+    # group: a separate pass builds it and most packs do not have one yet.
+    "launches":         "launches.json",
 }
 # Not uploaded unless named explicitly with --layers. `boundary` would replace the NHD/3DHP
 # polygon the app renders as the lake outline.
 LAYERS_OPT_IN = {"boundary", "areas", "water_graph", "structure", "trolling_runs", "water_features",
-                 "centreline"}
+                 "centreline", "launches"}
 
 # ── What R2 does not need ─────────────────────────────────────────────────────────────
 #

@@ -8,7 +8,7 @@
  * (the stats bar), and the lake/river dropdown population logic.
  */
 
-import { state } from "../core/state.js";
+import { state, CF_WORKER_URL } from "../core/state.js";
 import { esc } from "../utils/escape.js";
 import { planIssues } from "./plan-issues.js";
 import { lakeDbEntryFor, lakeRecordFor } from "../data/lake-registry.js";
@@ -2560,6 +2560,57 @@ export async function populatePlanLakeDropdown(){
   setLakeOnlyFieldsVisible(!isRiverWater(sel.value));
 }
 
+// ── EVERY LANDING THAT REACHES THIS WATER, AND HOW FAR IT IS BY WATER ────────────────────
+//
+// `launches.json` in the pack, from build_ramp_reach.py: the charted water walked outward from
+// the river's own centreline, so each landing carries the distance a boat travels rather than
+// the one a crow flies. On the Congaree that is Pack's Landing at 1,801 m of water against
+// 2,367 straight -- SHORTER, because the route follows the canal along the railroad instead of
+// cutting the swamp. Ryan fishes that canal on the way in and nothing in the app could see it:
+// the ramp binding is name-first, so a landing SCDNR files under "Lake Marion" never reached
+// the Congaree however close it sat.
+//
+// ANNOTATED, NOT FILTERED, which is Ryan's call: *"If you can have these ramps be both river
+// and lake I do not see the downside"*, and then annotate over filter. So there is no cutoff
+// anywhere in here -- the list carries the distance and the choice gets made in the boat. The
+// only bound is the search window build_ramp_reach uses, and on the Congaree that window ends
+// inside a hole the data already had: nothing sits between 3,073 m and 6,044 m.
+const LAUNCH_REACH = new Map();   // r2Key -> landings[], or null while a fetch is in flight
+
+function launchReachFor(waterbodyName){
+  const key = resolveR2Key(waterbodyName);
+  if (!key) return [];
+  if (LAUNCH_REACH.has(key)) return LAUNCH_REACH.get(key) || [];
+  LAUNCH_REACH.set(key, null);        // claim it first: two calls in one tick must fetch once
+  (async () => {
+    let got = [];
+    try {
+      const r = await fetch(`${CF_WORKER_URL}/chartpacks/${encodeURIComponent(key)}/launches.json`);
+      if (r.ok) {
+        const d = await r.json();
+        if (Array.isArray(d && d.landings)) got = d.landings;
+      }
+    } catch (_) { /* a pack without one is the normal case, not an error */ }
+    LAUNCH_REACH.set(key, got);
+    // Only redraw if the user is still on this water. Filling a dropdown for a water they have
+    // already left is how a select ends up holding a value from somewhere else.
+    const lakeSel = document.getElementById('planLake');
+    if (got.length && lakeSel && lakeSel.value === waterbodyName) populatePlanRampDropdown(waterbodyName);
+  })();
+  return [];
+}
+
+function reachLabel(r){
+  const m = Number(r && r.water_m);
+  if (!Number.isFinite(m)) return r && r.name ? r.name : '(unnamed launch)';
+  const nm = r.name || '(unnamed launch)';
+  // Under a tenth of a mile is ON the water -- every ramp sits on the bank, so a number there
+  // would be measuring the walk down the concrete and not the run out to the fish.
+  if (m < 160) return nm;
+  const mi = m / 1609.34;
+  return `${nm} — ${mi < 10 ? mi.toFixed(1) : Math.round(mi)} mi by water`;
+}
+
 export function populatePlanRampDropdown(waterbodyName){
   const sel = document.getElementById('planRamp');
   if(!sel) return;
@@ -2583,6 +2634,25 @@ export function populatePlanRampDropdown(waterbodyName){
       if (Number.isFinite(r.lat)) opt.dataset.lat = r.lat;
       if (Number.isFinite(r.lon)) opt.dataset.lon = r.lon;
       sel.appendChild(opt);
+    });
+    // AND THEN THE ONES THAT REACH IT. The curated six are hand-written and stop at three or
+    // four launches apiece; the Congaree's three did not include Low Falls, 254 m of water
+    // away, because SCDNR files it under Lake Marion. Appended rather than merged into the
+    // list above so the hand-placed names stay first and keep their exact spelling -- 2026-09-17
+    // cost a whole river plan to a select being handed a name no option held.
+    const placed = getPlanRiverRamps(curated)
+      .filter(r => Number.isFinite(r.lat) && Number.isFinite(r.lon));
+    launchReachFor(waterbodyName).forEach(r=>{
+      if (!Number.isFinite(r.lat) || !Number.isFinite(r.lon)) return;
+      // Same spot as one already listed? 0.0004 deg is about 40 m: two records of one ramp
+      // from two feeds collapse, two real ramps on one lot do not.
+      if (placed.some(p => Math.abs(p.lat - r.lat) < 0.0004 && Math.abs(p.lon - r.lon) < 0.0004)) return;
+      const opt=document.createElement('option');
+      opt.value = reachLabel(r); opt.textContent = opt.value;
+      opt.dataset.lat = r.lat; opt.dataset.lon = r.lon;
+      if (Number.isFinite(r.water_m)) opt.dataset.waterM = r.water_m;
+      sel.appendChild(opt);
+      placed.push(r);          // a second feed's copy of the same landing is not a second row
     });
     if(current) sel.value = current;
     return;
