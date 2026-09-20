@@ -45,6 +45,7 @@ const MAP   = read('js', 'modules', 'lake-ramp-select.js');   // map tab dropdow
 const MAP2  = MAP;                                            // named for the assertions below
 const GEN   = read('Scripts', 'build_ramp_reach.py');         // the generator that writes the file
 const IDX   = read('js', 'data', 'access-index.js');          // the live-feed list both tabs start from
+const GEN_UP = read('Scripts', 'upload_garmin_to_r2.py');     // what the served path actually is
 const SRC = PLAN;
 
 // reachLabel() is module-private, so lift it out of the source and run the real thing rather
@@ -543,6 +544,16 @@ test('the rename happens once, where the index is built, and not at each label',
   // feed's spelling while the dropdown showed his. One call, on the built index, before the name
   // list is rebuilt -- so every reader of byLake sees the same name.
   assert.match(IDX, /import \{ primeLaunchNames, ryanName \} from '\.\/launch-reach\.js';/);
+  // THE PATH, because getting it wrong is silent. upload_garmin_to_r2.py publishes
+  // registry/_launch_name_overrides.json as _registry/launch_name_overrides.json -- the leading
+  // underscore is the FOLDER's mark on disk and is stripped on the way to R2. I shipped the disk
+  // spelling, the fetch 404'd, registry-loader did what it promises and said nothing, and the
+  // dropdown still read Calhoun Subdivision.
+  assert.match(REACH, /'\/chartpacks\/_registry\/launch_name_overrides\.json'/,
+               'the served name, not the one on the drive');
+  assert.doesNotMatch(REACH, /_registry\/_launch_name_overrides/);
+  assert.match(GEN_UP, /_registry\/\{_nm\.lstrip\('_'\)\}/,
+               'and the uploader is still the thing that strips it');
   assert.equal((IDX.match(/ryanName\(/g) || []).length, 1, 'asked in one place');
   assert.equal((IDX.match(/primeLaunchNames\(/g) || []).length, 1, 'read once');
   // lastIndexOf, not indexOf: `index.lakeNames` is sorted three times in this file and the two

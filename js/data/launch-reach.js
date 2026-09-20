@@ -275,8 +275,14 @@ function isClosed(r) {
  * a launch; the access index holds state-agency rows, and deleting one of those because an OSM node
  * ten metres away was dropped would remove a real ramp on the strength of a different record.
  */
+// THE SERVED NAME HAS NO LEADING UNDERSCORE. On the drive the file is
+// `registry/_launch_name_overrides.json` -- the underscore is that folder's mark for "not a
+// per-lake table" -- and upload_garmin_to_r2.py publishes it as `_registry/<name without the
+// underscore>.json`, the same as every other object in that prefix. I wrote the disk name here
+// and the fetch 404'd silently, which is exactly what registry-loader promises a missing object
+// will do: the app worked, the names did not arrive, and nothing said so.
 const LAUNCH_NAMES = registryLoader(
-  '/chartpacks/_registry/_launch_name_overrides.json',
+  '/chartpacks/_registry/launch_name_overrides.json',
   (b) => b && b.names && typeof b.names === 'object' && b.names,
 );
 
