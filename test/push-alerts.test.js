@@ -165,6 +165,101 @@ async function armed(env, { cues = [], hours = 4 } = {}) {
   return (await handleAlerts(r, env, u)).json();
 }
 
+// ── what the sweep costs KV ─────────────────────────────────────────────────────────────────
+//
+// Ryan: "i keep getting an email multiple times a day saying that my KV usage is over 50%".
+// The sweep opened with two unconditional KV.list calls and the cron is every five minutes:
+// 288 firings x 2 = 576 list requests a day against the Workers Free allowance of 1,000, or
+// 57.6%, spent whether or not a single device was registered. These pin the fix.
+
+function countingKv(seed = {}) {
+  const inner = kvStub(seed);
+  const n = { list: 0, get: 0, put: 0, delete: 0 };
+  return {
+    counts: n,
+    store: inner.store,
+    async get(k) { n.get += 1; return inner.get(k); },
+    async put(k, v, o) { n.put += 1; return inner.put(k, v, o); },
+    async delete(k) { n.delete += 1; return inner.delete(k); },
+    async list(a) { n.list += 1; return inner.list(a); },
+  };
+}
+
+// THE HAZARD LOOKUP IS MEMOISED PER POSITION, ACROSS TESTS, FOR THE LIFE OF THE PROCESS.
+//
+// `hazardsAt()` goes through handleHazards() in conditions.js, which caches by lat/lon in module
+// scope -- so a test that arms at a position with NO hazards stubbed poisons every later test at
+// that same position, and they fail reporting zero alerts for reasons that have nothing to do
+// with what they are testing. The first cut of the four tests below armed at the shared
+// 34.05 -81.22 and turned three unrelated green tests red. Every test that does not need the
+// shared position gets its own.
+let nextLat = 33.60;
+function ownPosition() { nextLat += 0.01; return { lat: nextLat, lon: -80.50 }; }
+
+async function armedAt(env, { cues = [], hours = 4 } = {}) {
+  await registerDevice(env);
+  const { lat, lon } = ownPosition();
+  const [r, u] = req('/alerts/watch', {
+    method: 'POST',
+    body: { lat, lon, until: new Date(Date.now() + hours * 3600e3).toISOString(), cues },
+  });
+  return (await handleAlerts(r, env, u)).json();
+}
+
+test('an hour of sweeps costs two list requests, not one hundred and forty-four', async () => {
+  const KV = countingKv();
+  const env = { KV, ...vapidEnv() };
+  stubUpstreams();
+  const before = KV.counts.list;
+  await armedAt(env);
+  for (let i = 0; i < 12; i += 1) await runAlertSweep(env);      // an hour at one per five minutes
+  const spent = KV.counts.list - before;
+  // Arming rebuilds the index once -- that is the 2. The twelve sweeps then read it and list
+  // nothing. Before this, twelve sweeps alone cost 24, and a day cost 576 against a free
+  // allowance of 1,000.
+  assert.equal(spent, 2, `an hour spent ${spent} list requests`);
+  assert.ok(spent * 24 < 100, 'a day has to stay far under the 1,000 free list requests');
+});
+
+test('a device registered mid-hour is swept on the next firing, not when a cache expires', async () => {
+  const env = { KV: countingKv(), ...vapidEnv() };
+  stubUpstreams();
+  await runAlertSweep(env);                   // builds the index while nothing exists
+  assert.equal((await runAlertSweep(env)).devices, 0);
+  await registerDevice(env);                  // must invalidate, or this device is invisible
+  assert.equal((await runAlertSweep(env)).devices, 1,
+               'a new phone has to be seen on the very next sweep, not up to an hour later');
+});
+
+test('a lost or corrupt index means GO AND LOOK, never "there is nothing"', async () => {
+  // The trap research/clients.js already fell into once: a missing key read as zero and
+  // silently disabled the budget it guarded. Here the same mistake would silently stop every
+  // weather alert, which is the one thing that reaches him with the phone asleep.
+  const env = { KV: countingKv(), ...vapidEnv() };
+  stubUpstreams();
+  await armedAt(env);
+  await runAlertSweep(env);
+  for (const bad of ['', 'not json at all', '{}', '{"devices":"nope","watches":[]}']) {
+    env.KV.store.set('sweep:index', bad);
+    const r = await runAlertSweep(env);
+    assert.equal(r.devices, 1, `a "${bad}" index must rebuild, not report an empty world`);
+    assert.equal(r.checked, 1, 'and it must still find the watch, not sweep an empty world');
+  }
+});
+
+test('the index never hides a watch from its own listing', async () => {
+  // sweep:index lives in the same namespace it describes. If its key ever started with
+  // "watch:" or "device:" it would list itself and the sweep would try to parse it as a watch.
+  const env = { KV: kvStub(), ...vapidEnv() };
+  stubUpstreams();
+  await armedAt(env);
+  await runAlertSweep(env);
+  const keys = [...env.KV.store.keys()];
+  assert.ok(keys.includes('sweep:index'), 'the index was written');
+  assert.equal(keys.filter((k) => k.startsWith('watch:')).length, 1);
+  assert.equal(keys.filter((k) => k.startsWith('device:')).length, 1);
+});
+
 test('a new hazard reaches the registered device, once', async () => {
   const env = { KV: kvStub(), ...vapidEnv() };
   const pushed = stubUpstreams({ hazards: [

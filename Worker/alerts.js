@@ -385,6 +385,8 @@ export async function handleAlerts(request, env, url) {
       pending: prev ? (JSON.parse(prev).pending || []) : [],
     };
     await env.KV.put(k, JSON.stringify(rec));
+    // A NEW PHONE IS SWEPT ON THE NEXT FIRING, NOT WHEN A CACHE EXPIRES. See sweepIndex().
+    if (!prev) await dropSweepIndex(env);
     return json({ ok: true, label: rec.label, registered: rec.created });
   }
 
@@ -392,6 +394,7 @@ export async function handleAlerts(request, env, url) {
     if (!await isAuthorized(request, env)) return json({ error: 'unauthorized' }, 401);
     const ep = url.searchParams.get('endpoint');
     if (ep) await env.KV.delete(await deviceKey(ep));
+    await dropSweepIndex(env);
     return json({ ok: true });
   }
 
@@ -449,10 +452,14 @@ export async function handleAlerts(request, env, url) {
     const k = `watch:${await shortHash(`${lat},${lon},${rec.until}`)}`;
     await env.KV.put(k, JSON.stringify(rec),
                      { expirationTtl: Math.max(120, Math.ceil((until - now) / 1000) + 900) });
+    // A WATCH CREATED ON THE WAY TO THE RAMP IS SWEPT FIVE MINUTES LATER, not up to an hour
+    // later. This is the invalidation that matters most -- see sweepIndex().
+    await dropSweepIndex(env);
 
     // A WATCH WITH NO DEVICES PROTECTS NOBODY, and the desk that created it must be told so
-    // rather than shown a tick. This return value is the only place that can say it.
-    const devices = (await env.KV.list({ prefix: 'device:' })).keys.length;
+    // rather than shown a tick. This return value is the only place that can say it. Read off
+    // the index this call just rebuilt rather than listing again.
+    const devices = (await sweepIndex(env)).devices.length;
     return json({ ok: true, watch: k, until: rec.until, cues: cues.length, devices,
                   warning: devices ? null : 'no device is registered to receive these alerts' });
   }
@@ -567,14 +574,67 @@ export async function handleAlerts(request, env, url) {
  * watch, so an eight-hour Severe Thunderstorm Watch buzzes once when it is issued rather than
  * ninety-six times, and a band change fires once rather than on every sweep until the trip ends.
  */
+const SWEEP_INDEX_KEY = 'sweep:index';
+const SWEEP_INDEX_TTL_MS = 55 * 60 * 1000;
+
+/**
+ * WHICH DEVICES AND WATCHES EXIST, WITHOUT ASKING KV TO LIST THEM EVERY FIVE MINUTES.
+ *
+ * The sweep opened with two unconditional `KV.list` calls. The cron is `*​/5 * * * *`, so that
+ * is 288 firings x 2 = 576 list requests a day against the Workers Free allowance of 1,000 --
+ * 57.6%, spent whether or not a single device is registered, and the reason Cloudflare mails
+ * Ryan a "KV usage over 50%" warning several times a day. Reads are 100,000 a day, so one
+ * cached read costs 0.3% of a quota nothing else touches.
+ *
+ * REBUILT ON CHANGE, NOT ON A TIMER. dropSweepIndex() is called wherever a device or a watch is
+ * created or removed, so a watch made on the way to the ramp is swept on the very next firing.
+ * The hourly TTL is only a backstop for a write path nobody remembered to invalidate -- 24
+ * rebuilds x 2 lists = 48 a day, under 5%.
+ *
+ * A MISSING KEY MEANS "GO AND LOOK", NEVER "THERE IS NOTHING". This is the trap the Firecrawl
+ * budget in research/clients.js already fell into once -- a missing key read as zero and
+ * silently disabled the thing it guarded. Here the absent case rebuilds by listing, which is
+ * exactly the old behaviour, so the worst a lost key can do is cost two list requests.
+ *
+ * Carried over unchanged: `KV.list` returns its first page only, and this caches that page the
+ * same way the old code used it. With a handful of devices that is the whole set; a thousand
+ * would need a cursor loop, here and before.
+ */
+async function sweepIndex(env) {
+  let idx = null;
+  try {
+    // Read as text and parse here rather than asking KV for `{ type: 'json' }`. One less thing
+    // the binding has to agree with us about, and it behaves the same against a test stub.
+    const raw = await env.KV.get(SWEEP_INDEX_KEY);
+    idx = raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : null;
+  } catch (_) { /* unparseable is the same as missing: go and look */ }
+  if (idx && Array.isArray(idx.devices) && Array.isArray(idx.watches)
+      && Date.now() - (Number(idx.at) || 0) < SWEEP_INDEX_TTL_MS) {
+    return idx;
+  }
+  const fresh = {
+    devices: (await env.KV.list({ prefix: 'device:' })).keys.map((e) => e.name),
+    watches: (await env.KV.list({ prefix: 'watch:' })).keys.map((e) => e.name),
+    at: Date.now(),
+  };
+  await env.KV.put(SWEEP_INDEX_KEY, JSON.stringify(fresh)).catch(() => {});
+  return fresh;
+}
+
+/** Membership changed, so the cached answer is wrong. The next sweep rebuilds it. */
+function dropSweepIndex(env) {
+  return env.KV.delete(SWEEP_INDEX_KEY).catch(() => {});
+}
+
 export async function runAlertSweep(env, nowMs) {
   const now = nowMs || Date.now();
   const out = { checked: 0, expired: 0, cues: 0, new_alerts: 0, pushed: 0, gone: 0, failed: 0, devices: 0 };
   if (!env || !env.KV) return out;
 
-  const devKeys = (await env.KV.list({ prefix: 'device:' })).keys;
+  const idx = await sweepIndex(env);
+  const devKeys = idx.devices.map((name) => ({ name }));
   out.devices = devKeys.length;
-  const watchKeys = (await env.KV.list({ prefix: 'watch:' })).keys;
+  const watchKeys = idx.watches.map((name) => ({ name }));
 
   // Collected per sweep rather than per watch: two watches on one day should not each pay for
   // the device list, and a device that dies mid-sweep should be retired once.
@@ -585,15 +645,20 @@ export async function runAlertSweep(env, nowMs) {
     try { devices.push({ key: e.name, rec: JSON.parse(raw) }); } catch (_) { /* skip */ }
   }
 
+  // A watch that expires or a device that dies during this sweep changes the membership the
+  // index records, so the index is dropped at the end and the next firing rebuilds it.
+  let stale = false;
   const queued = [];                                  // [{ alert }] for THIS firing
   for (const e of watchKeys) {
     const raw = await env.KV.get(e.name);
     if (!raw) continue;
     let w;
-    try { w = JSON.parse(raw); } catch (_) { await env.KV.delete(e.name); continue; }
+    try { w = JSON.parse(raw); } catch (_) { await env.KV.delete(e.name); stale = true; continue; }
     out.checked += 1;
 
-    if (Date.parse(w.until) <= now) { await env.KV.delete(e.name); out.expired += 1; continue; }
+    if (Date.parse(w.until) <= now) {
+      await env.KV.delete(e.name); out.expired += 1; stale = true; continue;
+    }
 
     let dirty = false;
     for (const c of (w.cues || [])) {
@@ -622,7 +687,10 @@ export async function runAlertSweep(env, nowMs) {
     }
   }
 
-  if (!queued.length || !devices.length) return out;
+  if (!queued.length || !devices.length) {
+    if (stale) await dropSweepIndex(env);
+    return out;
+  }
 
   // ONE PUSH PER ALERT, WITH THE ALERT IN IT.
   //
@@ -669,7 +737,8 @@ export async function runAlertSweep(env, nowMs) {
       else if (res === 'gone') { dead = true; break; }
       else out.failed += 1;
     }
-    if (dead) { await env.KV.delete(d.key); out.gone += 1; }
+    if (dead) { await env.KV.delete(d.key); out.gone += 1; stale = true; }
   }
+  if (stale) await dropSweepIndex(env);
   return out;
 }

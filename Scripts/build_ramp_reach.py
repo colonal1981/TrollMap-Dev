@@ -120,12 +120,27 @@ def access_points(registry):
                 except (TypeError, ValueError):
                     continue
                 k = (round(la, 5), round(lo, 5))
-                rec = out.setdefault(k, {'lat': la, 'lon': lo, 'name': '', 'filed': set(), 'src': set()})
+                rec = out.setdefault(k, {'lat': la, 'lon': lo, 'name': '', 'access': '',
+                                         'filed': set(), 'src': set()})
                 rec['filed'].add(slug)
                 rec['src'].add(src)
                 nm = r.get('name') or r.get('NAME') or r.get('label')
                 if nm and not rec['name']:
                     rec['name'] = nm
+                # WHO IS ALLOWED TO LAUNCH THERE, WHERE THE FEED SAYS.
+                #
+                # OSM tags `access` and osm_ramps_by_lake.json has kept it all along; it stopped
+                # at the registry and never reached the app, so the ramp list was offering
+                # `access=private` slipways with nothing to tell them apart. OSM's
+                # `leisure=slipway` covers a private dock ramp behind a house exactly as much as
+                # a public landing, which is why Lake Murray has eight of them at 0 m of water.
+                # Measured across the packs before this: 18 rows not freely public (15 private,
+                # 2 customers, 1 `no` -- named "Abandon Boat Launch"), 31 positively public,
+                # and 520 with no tag at all. So this answers for a minority and says nothing
+                # for the rest, which is the truth and is why it is carried rather than assumed.
+                ac = r.get('access')
+                if ac and not rec['access']:
+                    rec['access'] = str(ac)
     return out
 
 
@@ -336,6 +351,7 @@ def reach_for(slug, args, points):
         k = int(dm.argmin())
         straight = float(dm[k])
         got.append({'name': rec['name'] or None, 'lat': rec['lat'], 'lon': rec['lon'],
+                    'access': rec.get('access') or None,
                     'water_m': int(round(best * step)), 'straight_m': int(round(straight)),
                     # Where on the river it comes in. A lake has no stations, and saying 0
                     # would read as the top of something.
@@ -355,6 +371,11 @@ def main():
     ap.add_argument('--only', help='one slug, or a comma list. Default: every pack with a '
                                    'centreline (rivers). Name a lake explicitly and it seeds '
                                    'from its own charted water instead.')
+    ap.add_argument('--all', action='store_true',
+                    help='every water the APP OFFERS -- registry/lake_index.json -- that has a '
+                         'pack, seeding rivers from their centreline and lakes from their own '
+                         'charted water. The same gate upload_garmin_to_r2.py ships by, because '
+                         'measuring water the app never shows is work nobody reads.')
     ap.add_argument('--out', help='default registry/_ramp_reach.json')
     ap.add_argument('--go', action='store_true', help='write; without it nothing is touched')
     ap.add_argument('--jobs', type=int, default=0,
@@ -374,6 +395,18 @@ def main():
     print('access points on file: %d' % len(points))
     if a.only:
         slugs = [s.strip() for s in a.only.split(',') if s.strip()]
+    elif a.all:
+        # THE SAME GATE THE UPLOADER SHIPS BY. lake_index.json is the file the app reads, so a
+        # slug that is not in it is a pack nobody can select. A pack directory must exist too:
+        # reach_for() needs the pack's centreline or the water's boundary, and a slug with
+        # neither is reported as skipped rather than silently dropped.
+        idx = load_json(os.path.join(a.registry, 'lake_index.json'))
+        slugs = sorted(s for s in idx
+                       if os.path.isdir(os.path.join(a.chartpack, s))
+                       and (os.path.isfile(os.path.join(a.chartpack, s, 'centreline.geojson'))
+                            or os.path.isfile(os.path.join(a.registry, 'boundaries', s + '.geojson'))))
+        print('the app offers %d waters; %d of them have a pack and something to seed from'
+              % (len(idx), len(slugs)))
     else:
         import glob
         slugs = sorted(os.path.basename(os.path.dirname(p)) for p in
@@ -388,13 +421,22 @@ def main():
     jobs = max(1, min(jobs, len(slugs)))
     print('measuring %d at a time' % jobs)
 
+    done_n = [0]
+
     def report(slug, res, why):
+        done_n[0] += 1
+        # THE COUNT IS THE POINT. A 355-water run reported in the order ASKED FOR printed
+        # nothing at all for the first thirteen minutes, because the first slug alphabetically
+        # was submitted near-last under biggest-first and every other finished answer sat behind
+        # its future. Fourteen workers were pegged the whole time and there was no way to see
+        # it. Printed as they finish now, with the count, so a long run says where it is.
+        head = '%3d/%d' % (done_n[0], len(slugs))
         if res is None:
-            print('   %-30s -- %s' % (slug, why))
+            print('   %s %-30s -- %s' % (head, slug, why))
             return
         gained = [r for r in res['landings'] if slug not in r['filed']]
-        print('   %-30s %-10s %6d water cells, %3d landings reachable, %3d filed elsewhere'
-              % (slug, res['seed'], res['water_cells'], len(res['landings']), len(gained)))
+        print('   %s %-30s %-10s %6d water cells, %3d landings reachable, %3d filed elsewhere'
+              % (head, slug, res['seed'], res['water_cells'], len(res['landings']), len(gained)))
         for r in gained[:6]:
             print('        %7d m by water (%6d straight)  %-32s filed %s'
                   % (r['water_m'], r['straight_m'], (r['name'] or '(unnamed)')[:32], r['filed']))
@@ -414,9 +456,11 @@ def main():
             return os.path.getsize(p) if os.path.isfile(p) else (
                 os.path.getsize(b) if os.path.isfile(b) else 0)
         order = sorted(slugs, key=_size, reverse=True)
-        futs = {slug: ex.submit(reach_for, slug, a, points) for slug in order}
-        # Reported in the order asked for, not the order finished, so two runs read the same.
-        pairs = ((slug, futs[slug].result()) for slug in slugs)
+        futs = {ex.submit(reach_for, slug, a, points): slug for slug in order}
+        # Reported AS THEY FINISH. The record is sorted by slug where it is written, so the file
+        # two runs produce is the same whatever order the pool happened to return in.
+        from concurrent.futures import as_completed
+        pairs = ((futs[f], f.result()) for f in as_completed(futs))
     try:
         for slug, (res, why) in pairs:
             report(slug, res, why)
@@ -452,9 +496,14 @@ def main():
             return 2
     if carried:
         print('\nmerging into the existing index: %d water(s) carried forward untouched' % carried)
+    # SORTED, BECAUSE THE POOL FINISHES IN WHATEVER ORDER IT FINISHES. The console prints as
+    # answers land, which is what makes a long run readable; the file has to be the same file
+    # every time or a diff between two runs is mostly noise about ordering.
     doc = {'_note': 'build_ramp_reach.py -- water distance from a landing to a water. ADDITIVE: '
                     'nothing here removes a landing from the water it is filed under.',
-           'cell_m': round(CELL_DEG * 110540, 1), 'waters': waters, 'skipped': skips}
+           'cell_m': round(CELL_DEG * 110540, 1),
+           'waters': {k: waters[k] for k in sorted(waters)},
+           'skipped': {k: skips[k] for k in sorted(skips)}}
     # TWO WRITES, BECAUSE TWO READERS. The registry index is the build-time record, the same
     # shape every other _*.json in there has. `chartpack/<slug>/launches.json` is what the APP
     # reads: it already fetches per-water files out of the pack by name -- centreline.geojson,
