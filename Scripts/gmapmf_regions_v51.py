@@ -46,9 +46,43 @@ AREA_CLASS = {
     "6/20":  "waterbody",          # named when the record carries a lake id, else unnamed
     "11/19": "waterbody",          # 412 of 424 rings are byte-identical to plain 6/20
     "1/10":  "land_fill",          # subdivision box with the named water body as a hole
-    "13/1":  "tile_background",    # subdivision box, no holes, under everything
+    "13/1":  "tile_background",    # subdivision box, no holes, under everything: 256 rings on
+                                   # B4E0F3 dissolving to 100.0% of the tile box, water included
     "1/5":   "areas_other",
-    "1/11":  "tile_background",   # C's single background mode; B splits it into 1/10 + 13/1
+    "1/11":  "tile_background",    # NOT a background, and NOT land either. It is the exact
+                                   # complement of the survey: everywhere this tile has no
+                                   # soundings, dry or wet. Measured 2026-09-20, zoom 0:
+                                   #   C4E0F3 (Congaree)  1/11 92.1% of the tile box, depth areas
+                                   #                      7.9%, sum 100.0%, overlap 0.000%
+                                   #   C4E0F1 (Wateree)   1/11 98.4%, depth areas 1.6%, sum
+                                   #                      100.0%, overlap 0.000%
+                                   # Exact complements, so 1/11 cannot be sitting under anything.
+                                   # Garmin's own MAR auto-guidance mesh agrees: of the 0 ft
+                                   # safe-water surface, 100.00% falls inside the depth areas and
+                                   # 0.00% inside 1/11, on BOTH tiles. Contours agree too -- 0% of
+                                   # the 9 ft contour and deeper touches it; the only bleed is
+                                   # 11.9% of the 1 ft and 4.7% of the 2 ft, which is the
+                                   # shoreline drawn twice at two generalisations.
+                                   # The old note read "C's single background mode; B splits it
+                                   # into 1/10 + 13/1". B's 13/1 really is the background at
+                                   # 100.0% of the box, water included; C has no background mode.
+                                   # DO NOT SHIP THIS AS LAND. It was briefly reclassed to
+                                   # land_fill on 2026-09-20 and that was wrong. Against USGS NHD,
+                                   # the patches it claims split two ways:
+                                   #   33.76736,-80.65085 and 33.76719,-80.65320 (Ryan's 0006)
+                                   #     inside a 13.559 km2 NHD SwampMarsh -- water he paddles
+                                   #   33.779102,-80.631033   inside a 1.144 km2 SwampMarsh
+                                   #   33.766379,-80.783401   3,774 m from any NHD water -- dry
+                                   #   33.770161,-80.768648   2,597 m from any NHD water -- dry
+                                   # So 1/11 carries dry ground AND unsurveyed water in one class
+                                   # and cannot tell them apart. Painting it as land would put
+                                   # solid ground over a slough Ryan fishes, which is worse than
+                                   # the bare grey it causes today. Ryan called this: "even the
+                                   # app thinks that wedge is water... the grey is what the water
+                                   # looks like on the satellite."
+                                   # Unsounded water INSIDE the survey is a different thing again
+                                   # and stays a depth area: the 0-1 ft band is the most common
+                                   # band on both tiles (10.6% Congaree, 16.1% Wateree).
 }
 # 11/19 and un-idded 6/20 are the same features emitted twice.  Emit one.
 AREA_DUPLICATE_OF = {"11/19": "6/20"}

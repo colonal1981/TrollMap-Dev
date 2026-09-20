@@ -29,6 +29,14 @@ WHICH LETTER FEEDS WHICH LAYER -- settled in EXTRACT_PREFLIGHT.md, not re-derive
     docks          B     same region as waterbody
     hydrography    C
     shoreline      B     C emits none at all
+    land_fill      --    NOT SHIPPED, and the reason is worth keeping. C's 1/11 dissolves to the
+                         exact complement of the survey (92.1% against 7.9%, overlap 0.000%), so
+                         it looks like a land layer and was briefly shipped as one on 2026-09-20.
+                         It is not. Against USGS NHD it carries dry ground and unsurveyed water
+                         in the same class: Ryan's 0006 at 33.76719,-80.65320 sits inside a
+                         13.559 km2 NHD SwampMarsh he paddles, while the patch at
+                         33.766379,-80.783401 is 3,774 m from any water at all. Shipping it as
+                         land would draw solid ground over a slough. See gmapmf_regions_v51.
 
 Taking a layer from both letters is not "more data", it is the same survey twice: on 4E0F1 the
 two carry 3,706 km and 3,626 km of contour, matching depth for depth, with a median vertex-to-
@@ -681,6 +689,142 @@ def verts(g):
     if g['type'] == 'Point': return [c]
     if g['type'] == 'Polygon': return c[0]
     return c
+
+
+def _seg_cells(mask, x1, y1, x2, y2):
+    """Every raster cell the segment (x1,y1)-(x2,y2) passes through.
+
+    Amanatides-Woo grid traversal: integer stepping, no shapely, and it visits exactly the
+    cells the segment crosses rather than sampling and hoping.
+    """
+    c = mask.cell
+    i1, j1 = mask.cell_of(x1, y1)
+    i2, j2 = mask.cell_of(x2, y2)
+    yield (i1, j1)
+    if (i1, j1) == (i2, j2):
+        return
+    dx, dy = x2 - x1, y2 - y1
+    di = 1 if i2 > i1 else -1
+    dj = 1 if j2 > j1 else -1
+    inf = float('inf')
+    if dx:
+        tx = ((mask.w + (i1 + (1 if di > 0 else 0)) * c) - x1) / dx
+        sx = abs(c / dx)
+    else:
+        tx = sx = inf
+    if dy:
+        ty = ((mask.s + (j1 + (1 if dj > 0 else 0)) * c) - y1) / dy
+        sy = abs(c / dy)
+    else:
+        ty = sy = inf
+    i, j = i1, j1
+    for _ in range(abs(i2 - i1) + abs(j2 - j1)):
+        if tx < ty:
+            i += di
+            tx += sx
+        else:
+            j += dj
+            ty += sy
+        yield (i, j)
+
+
+def _feature_rings(g):
+    """Every coordinate ring or line in a single-part geometry. Interiors included.
+
+    `verts()` returns a polygon's OUTER ring only, which is right for the trim (the outer
+    ring bounds the feature) and wrong for asking whether a feature touches the water: a
+    band drawn round an island carries the island on an interior ring.
+    """
+    t = g.get('type')
+    c = g.get('coordinates') or []
+    if t == 'Point':
+        return [[c]]
+    if t == 'MultiPoint' or t == 'LineString':
+        return [c]
+    if t == 'MultiLineString' or t == 'Polygon':
+        return list(c)
+    if t == 'MultiPolygon':
+        return [r for pg in c for r in pg]
+    return []
+
+
+def touches_core(g, mask):
+    """Does this feature touch the water itself -- not the water plus the buffer collar?
+
+    REPLACES `any(mask.cell_of(x, y) in mask.core for x, y in verts(f))`, which is the same
+    whole-or-nothing vertex test the trim already had to give up, for the same reason.
+    A VERTEX TEST CANNOT SEE A FEATURE THAT SPANS THE WATER WITHOUT LANDING IN IT, and on a
+    river that is the ordinary shape: Garmin cuts its bands at subdivision seams, so a band
+    lying across a channel narrower than the seam spacing has its corners on both banks and
+    nothing in between.
+
+    Measured on the Congaree, 2026-09-20, against the shipped pack:
+
+        depth areas touching boundary + 250 m          4,748
+          at least one vertex inside the boundary      3,886    7,407.2 acres
+          NO vertex inside, dropped whole                862      249.8 acres
+
+    and that 249.8 acres is not shoreline slop -- the list opens with 17.55 acres of 5-6 ft,
+    8.82 of 6-7, 6.44 of 6-7, 5.86 of 4-5. Ryan found it as basemap showing through the middle
+    of the river: "a chunk of river is missing from our extraction... it happens in multiple
+    places in this pack".
+
+    The rule it is replacing is still right and is still enforced here -- a contour lying
+    250 m inland has no vertex in the water, no edge crossing it and does not enclose it, so
+    it still dies. Wateree keeps the fix that removed 1,234 depth areas sitting entirely on
+    dry ground. What changes is only that "in the water" stops meaning "has a corner there".
+
+    Three tests, cheapest first, and the later two only run for what the first rejects:
+
+      1. a vertex in a core cell -- the original test, and the one that answers for almost
+         everything;
+      2. an EDGE crossing a core cell, by grid traversal -- integer arithmetic, and this is
+         the one that recovers the 862;
+      3. enclosure, for a feature big enough to swallow the water without touching it. Only
+         features whose box contains the core's box pay for it, which is a handful per lake,
+         and it is the same failure mode `trim_geometry` already guards with a box test.
+    """
+    core = getattr(mask, 'core', None)
+    if core is None:
+        return True
+    rings = _feature_rings(g)
+    if not rings:
+        return False
+    for r in rings:
+        for x, y in r:
+            if mask.cell_of(x, y) in core:
+                return True
+    for r in rings:
+        for k in range(len(r) - 1):
+            x1, y1 = r[k]
+            x2, y2 = r[k + 1]
+            for cell in _seg_cells(mask, x1, y1, x2, y2):
+                if cell in core:
+                    return True
+    # 3. enclosure. `core` is a set of cells for a lake and a _BoxCells for a zone; both
+    #    answer `in`, only the first can be iterated, and a zone's core is its own box so
+    #    nothing can enclose it without enclosing the zone. Take one core cell and ask
+    #    whether the outer ring contains its centre.
+    try:
+        probe = next(iter(core))
+    except TypeError:
+        return False
+    xs = [p[0] for r in rings for p in r]
+    ys = [p[1] for r in rings for p in r]
+    if not xs:
+        return False
+    cx = mask.w + (probe[0] + 0.5) * mask.cell
+    cy = mask.s + (probe[1] + 0.5) * mask.cell
+    if not (min(xs) <= cx <= max(xs) and min(ys) <= cy <= max(ys)):
+        return False
+    ring = rings[0]
+    inside = False
+    for k in range(len(ring) - 1):
+        x1, y1 = ring[k]
+        x2, y2 = ring[k + 1]
+        if (y1 > cy) != (y2 > cy) and cx < x1 + (cy - y1) * (x2 - x1) / (y2 - y1):
+            inside = not inside
+    return inside
 
 
 def runs_inside(pts, hit):

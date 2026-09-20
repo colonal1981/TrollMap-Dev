@@ -38,7 +38,7 @@ from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from build_chartpack import (LakeMask, BboxMask, build_mask, read_fc, verts, SHIP, NOTE,
-                             DROP, redp, _rings, collapse_ramps,
+                             DROP, redp, _rings, collapse_ramps, touches_core,
                              clip_excluded, trim_geometry, split_multi)   # noqa: E402
 
 # Which layers decide "is this lake charted". DEPTH AREAS, not contours -- see
@@ -965,11 +965,10 @@ def _flush(slug, layers, mask, meta, a, report):
     # `mask.core`, take the finest level with anything IN the lake. Other layers -- shoreline
     # is the bank, so core membership means little there -- take the finest present.
     def _has_core(_fs):
-        for _f in _fs:
-            for _x, _y in verts(_f['geometry']):
-                if mask.cell_of(_x, _y) in mask.core:
-                    return True
-        return False
+        # Same definition of "in the lake" as the drop below, deliberately: a level whose
+        # features all span the water without a vertex in it used to read as having nothing
+        # there, and the finest level present would lose to a coarser one for no reason.
+        return any(touches_core(_f['geometry'], mask) for _f in _fs)
 
     if a.keep_zoom is not None:
         _zk = {}
@@ -1013,17 +1012,21 @@ def _flush(slug, layers, mask, meta, a, report):
         _feats = layers.get(_layer)
         if not _feats:
             continue
+        # touches_core(), NOT `any vertex in core` -- see build_chartpack.touches_core.
+        # The vertex form threw away 862 Congaree depth areas, 249.8 acres, every one of them
+        # overlapping the river: Garmin cuts its bands at subdivision seams, so a band lying
+        # across a channel narrower than the seam spacing has its corners on both banks and no
+        # vertex in the water at all. The rule itself is unchanged -- a feature that does not
+        # touch the water is still not a feature of this water -- only the test is honest now.
         _keep = []
         for _f in _feats:
-            for _x, _y in verts(_f['geometry']):
-                if mask.cell_of(_x, _y) in mask.core:
-                    _keep.append(_f)
-                    break
+            if touches_core(_f['geometry'], mask):
+                _keep.append(_f)
             else:
                 core_dropped += 1
         layers[_layer] = _keep
     if core_dropped:
-        print('   %s: dropped %d feature(s) with no vertex in the lake itself'
+        print('   %s: dropped %d feature(s) that do not touch the lake itself'
               % (slug, core_dropped))
         rec['off_lake_dropped'] = core_dropped
 
@@ -1159,12 +1162,10 @@ def _flush(slug, layers, mask, meta, a, report):
     else:
         core = {}
         for layer in ('contours', 'depth_areas'):
-            n = 0
-            for f in layers.get(layer) or []:
-                for x, y in verts(f['geometry']):
-                    if mask.cell_of(x, y) in mask.core:
-                        n += 1
-                        break
+            # touches_core() here too, so `counts_core` counts the same features the drop
+            # above kept. Two different answers to "is it in the lake" in one function is how
+            # a shipped lake reads as having no Garmin data inside it.
+            n = sum(1 for f in (layers.get(layer) or []) if touches_core(f['geometry'], mask))
             if n:
                 core[layer] = n
         rec['counts_core'] = core

@@ -94,9 +94,15 @@ try:
     eq(got[0], POND, 'and it is the right one')
 
     bac.owned_inside.__defaults__[0].clear()
-    eq(bac.owned_inside('goose_creek_reservoir', META, 'ignored'), (),
-       'A LAKE SWALLOWS NOTHING -- this is a coastal rule, and a lake inside a lake is a merge '
-       'question rather than a masking one')
+    # EMPTY, not `== ()`. This read `eq(..., ())` and went red on 2026-09-20 with
+    # `got [] want ()` -- the values agreed and the types did not. owned_inside stopped
+    # returning a bare tuple for a lake when nested_inside() was added ("A LAKE CUTS OUT WHAT
+    # SITS INSIDE IT TOO... six pairs in the registry qualify"), and it now returns the list it
+    # built. The assertion is about there being nothing in it, so say that.
+    eq(list(bac.owned_inside('goose_creek_reservoir', META, 'ignored')), [],
+       'a lake with nothing nested inside it swallows nothing -- goose_creek_reservoir is not '
+       'one of the six pairs, and a lake inside a lake that is NOT nested is a merge question '
+       'rather than a masking one')
 
     bac.owned_inside.__defaults__[0].clear()
     eq(bac.owned_inside('coast_no_such_zone', META, 'ignored'), (),
