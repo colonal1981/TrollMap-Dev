@@ -56,7 +56,7 @@ export function launchReach(waterbodyName, onReady) {
       const r = await fetch(`${CF_WORKER_URL}/chartpacks/${encodeURIComponent(key)}/launches.json`);
       if (r.ok) {
         const d = await r.json();
-        if (Array.isArray(d && d.landings)) got = d.landings;
+        if (Array.isArray(d && d.landings)) got = collapse(d.landings);
       }
     } catch (_) { /* a pack without one is the normal case, not an error */ }
     CACHE.set(key, got);
@@ -91,4 +91,33 @@ export function reachLabel(r) {
 export function samePlace(a, b) {
   return Number.isFinite(a && a.lat) && Number.isFinite(b && b.lat)
       && Math.abs(a.lat - b.lat) < 0.0004 && Math.abs(a.lon - b.lon) < 0.0004;
+}
+
+/**
+ * One row per landing, and the row KEEPS THE NAME.
+ *
+ * Both dropdowns already dropped a second feed's copy of a landing, and both did it the same
+ * way: first one wins, skip the rest. The list arrives sorted by water distance, so when an
+ * unnamed OSM record is twenty-five metres nearer by water than the named DNR record beside it,
+ * the row that survives is the one with no name. Measured across all 63 packs: 311 collapsed
+ * groups, and in 31 of them the surviving row was unnamed while a discarded one had a name --
+ * "Saluda Shoals Park", "Cannons Creek", "ELWELLS FERRY", "Pitch" at 25 m of water. Ryan reads
+ * the dropdown, and "(unnamed launch)" is not a ramp he can find.
+ *
+ * Done HERE rather than in the two callers because it is one question, and the callers each
+ * still guard against duplicating a ramp THEY already placed, which is a different one. The
+ * nearest record's distances win, because the nearest water is the true answer for that spot;
+ * only the name, and the lists of who files it and where it came from, merge upward.
+ */
+function collapse(rows) {
+  const out = [];
+  const union = (a, b) => [...new Set([...(a || []), ...(b || [])])].sort();
+  for (const r of rows) {
+    const hit = out.find((p) => samePlace(p, r));
+    if (!hit) { out.push({ ...r }); continue; }
+    if (!hit.name && r.name) hit.name = r.name;
+    hit.filed = union(hit.filed, r.filed);
+    hit.src = union(hit.src, r.src);
+  }
+  return out;
 }

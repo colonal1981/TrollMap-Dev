@@ -60,6 +60,60 @@ function loadSamePlace(){
   return new Function(`${m[0].replace('export ', '')}; return samePlace;`)();
 }
 
+function loadCollapse(){
+  const s = REACH.match(/export function samePlace\(a, b\) \{[\s\S]*?\n\}/);
+  const c = REACH.match(/\nfunction collapse\(rows\) \{[\s\S]*?\n\}/);
+  assert.ok(s && c, 'samePlace() and collapse() are still in js/data/launch-reach.js');
+  // eslint-disable-next-line no-new-func
+  return new Function(`${s[0].replace('export ', '')}\n${c[0]}\nreturn collapse;`)();
+}
+
+test('two feeds of one ramp become one row, and that row keeps the name', () => {
+  // Cannons Creek, measured on the Congaree: the OSM record is unnamed and 26 m nearer by
+  // water, so first-one-wins handed the dropdown "(unnamed launch)" for a ramp with a name.
+  const collapse = loadCollapse();
+  const out = collapse([
+    { name: null, lat: 34.2867319, lon: -81.3625683, water_m: 3424, filed: ['parr_shoals_reservoir'], src: ['osm'] },
+    { name: 'Cannons Creek', lat: 34.28687, lon: -81.36268, water_m: 3450, filed: ['parr_shoals_reservoir'], src: ['dnr'] },
+    { name: 'Cannons Creek', lat: 34.286853, lon: -81.362674, water_m: 3450, filed: ['parr_shoals_reservoir'], src: ['natl'] },
+  ]);
+  assert.equal(out.length, 1, 'three records of one ramp are one row');
+  assert.equal(out[0].name, 'Cannons Creek');
+  assert.equal(out[0].water_m, 3424, 'the NEAREST water distance survives, not the named one');
+  assert.deepEqual(out[0].src, ['dnr', 'natl', 'osm'], 'every feed that knows it is recorded');
+});
+
+test('collapse never renames a landing that already had a name', () => {
+  const collapse = loadCollapse();
+  // Low Falls: four records within 40 m, the DNR one first and named. It must stay itself.
+  const out = collapse([
+    { name: 'Low Falls', lat: 33.632389, lon: -80.543511, water_m: 254, filed: ['lake_marion'], src: ['dnr'] },
+    { name: 'Low Falls Landing', lat: 33.6323542, lon: -80.5432346, water_m: 254, filed: ['lake_marion'], src: ['osm'] },
+    { name: 'Low Falls Landing', lat: 33.6322304, lon: -80.543286, water_m: 254, filed: ['lake_marion'], src: ['osm'] },
+    { name: 'Low Falls', lat: 33.632373, lon: -80.543506, water_m: 254, filed: ['lake_marion'], src: ['natl'] },
+  ]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].name, 'Low Falls');
+});
+
+test('two real ramps on one stretch of bank stay two rows', () => {
+  // Barney Jordan and Thomas H Newman are 1.8 km apart on the Congaree and both sit at 51 m and
+  // 76 m of water. A dedupe that collapsed these would cost a launch, not a duplicate.
+  const collapse = loadCollapse();
+  const out = collapse([
+    { name: 'Barney Jordan', lat: 33.964896, lon: -81.035702, water_m: 51 },
+    { name: 'Thomas H Newman', lat: 33.949147, lon: -81.029515, water_m: 76 },
+  ]);
+  assert.equal(out.length, 2);
+});
+
+test('the loader collapses before it caches, so both dropdowns get the same rows', () => {
+  assert.match(REACH, /got\s*=\s*collapse\(d\.landings\)/,
+               'launchReach() collapses the landings it caches');
+  assert.equal((REACH.match(/\nfunction collapse\(rows\)/g) || []).length, 1,
+               'there is one collapse(), not one per caller');
+});
+
 test('a landing on the water shows no distance, because every ramp is on the bank', () => {
   const reachLabel = loadReachLabel();
   assert.equal(reachLabel({ name: 'Bates Bridge', water_m: 25 }), 'Bates Bridge');
