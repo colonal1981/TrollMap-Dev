@@ -86,6 +86,7 @@ from collections import deque
 
 CELL_DEG = 0.00025          # ~26 m of latitude; the canal at Rimini is wider than one cell
 MARGIN_DEG = 0.05           # how far outside the line to look for landings, ~5.5 km
+BLOCK_CELLS = 2_000_000     # cells per vectorised point-in-polygon call; caps peak memory
 
 
 def load_json(path):
@@ -180,27 +181,39 @@ def walk(polys, line_pts, bbox, cell=CELL_DEG):
     long river, nearly all of them over dry ground. Each polygon paints only its own box, which
     is the same work the water occupies and no more.
     """
-    from shapely.geometry import Point
-    from shapely.prepared import prep
+    import numpy as np
+    from shapely import intersects_xy
     w0, s0, e0, n0 = bbox
     nx = int((e0 - w0) / cell) + 1
     ny = int((n0 - s0) / cell) + 1
-    wet = bytearray(nx * ny)
+    wet = np.zeros(nx * ny, dtype=bool)
     for g in polys:
         gx0, gy0, gx1, gy1 = g.bounds
         i0 = max(0, int((gx0 - w0) / cell)); i1 = min(nx - 1, int((gx1 - w0) / cell) + 1)
         j0 = max(0, int((gy0 - s0) / cell)); j1 = min(ny - 1, int((gy1 - s0) / cell) + 1)
         if i1 < i0 or j1 < j0:
             continue
-        P = prep(g)
-        for j in range(j0, j1 + 1):
-            y = s0 + (j + 0.5) * cell
-            row = j * nx
-            for i in range(i0, i1 + 1):
-                if wet[row + i]:
-                    continue
-                if P.covers(Point(w0 + (i + 0.5) * cell, y)):
-                    wet[row + i] = 1
+        # ONE PREDICATE CALL PER BLOCK, NOT PER CELL. This was `prep(g).covers(Point(x, y))`
+        # once per cell, and the Python call overhead -- not the geometry -- was the whole cost:
+        # a river's polygons cover millions of cells between them. `intersects_xy` runs the SAME
+        # test in C over an array, and for a point `g.intersects(p)` and `g.covers(p)` are the
+        # same question, so the answer is identical and not merely close. Blocked by rows so a
+        # lake-sized polygon cannot materialise its whole bbox at once.
+        ii = np.arange(i0, i1 + 1)
+        xs = w0 + (ii + 0.5) * cell
+        rows = max(1, int(BLOCK_CELLS // xs.size))
+        for jb in range(j0, j1 + 1, rows):
+            je = min(j1, jb + rows - 1)
+            jj = np.arange(jb, je + 1)
+            ys = s0 + (jj + 0.5) * cell
+            hit = intersects_xy(g, np.tile(xs, jj.size), np.repeat(ys, xs.size))
+            if not hit.any():
+                continue
+            wet[(np.repeat(jj, xs.size) * nx + np.tile(ii, jj.size))[hit]] = True
+    nwet = int(wet.sum())
+    # The flood below reads one cell at a time, where bytes beats a numpy array on scalar
+    # indexing. Same bits, cheaper reads.
+    wet = wet.tobytes()
     dist = [-1] * (nx * ny)
     q = deque()
     for x, y in line_pts:
@@ -219,7 +232,7 @@ def walk(polys, line_pts, bbox, cell=CELL_DEG):
                 q.append((a, b))
     lat = (s0 + n0) / 2.0
     step = ((110540 * cell) + (111320 * math.cos(math.radians(lat)) * cell)) / 2.0
-    return dist, nx, ny, w0, s0, step, sum(wet)
+    return dist, nx, ny, w0, s0, step, nwet
 
 
 def boundary_rings(registry, slug):
@@ -290,6 +303,9 @@ def reach_for(slug, args, points):
         except Exception:
             pass                 # fall back to the ring, which is still an answer
     dist, nx, ny, w0, s0, step, nwet = walk(polys, pts, bbox)
+    import numpy as np
+    PX = np.fromiter((p[0] for p in pts), dtype=float, count=len(pts))
+    PY = np.fromiter((p[1] for p in pts), dtype=float, count=len(pts))
     got = []
     for (la, lo), rec in points.items():
         if not (bbox[0] <= lo <= bbox[2] and bbox[1] <= la <= bbox[3]):
@@ -310,10 +326,15 @@ def reach_for(slug, args, points):
                 break
         if best is None:
             continue
+        # ONE SCAN, NOT TWO, AND IN METRES. This was a `min()` over every seed point for the
+        # distance and a second `min()` over the same points for the station, and the second
+        # ranked by SQUARED DEGREES -- which stretches longitude by 1/cos(lat) and can hand back
+        # a different point than the one the distance came from. Same scan, same metric, so the
+        # station reported is the station that distance was measured to.
         cos = math.cos(math.radians(la))
-        straight = min(math.hypot((x - lo) * 111320 * cos, (y - la) * 110540) for x, y in pts)
-        k = min(range(len(pts)),
-                key=lambda t: (pts[t][0] - lo) ** 2 + (pts[t][1] - la) ** 2)
+        dm = np.hypot((PX - lo) * (111320 * cos), (PY - la) * 110540)
+        k = int(dm.argmin())
+        straight = float(dm[k])
         got.append({'name': rec['name'] or None, 'lat': rec['lat'], 'lon': rec['lon'],
                     'water_m': int(round(best * step)), 'straight_m': int(round(straight)),
                     # Where on the river it comes in. A lake has no stations, and saying 0
@@ -336,6 +357,10 @@ def main():
                                    'from its own charted water instead.')
     ap.add_argument('--out', help='default registry/_ramp_reach.json')
     ap.add_argument('--go', action='store_true', help='write; without it nothing is touched')
+    ap.add_argument('--jobs', type=int, default=0,
+                    help='waters measured at once. Default: one per core, capped at the number '
+                         'of waters. 1 runs in this process, which is what to use when a run '
+                         'misbehaves and you want the traceback where you can see it.')
     a = ap.parse_args()
 
     try:
@@ -355,14 +380,18 @@ def main():
                        glob.glob(os.path.join(a.chartpack, '*', 'centreline.geojson')))
     print('waters to measure: %d' % len(slugs))
 
-    out, skipped = {}, {}
-    for slug in slugs:
-        res, why = reach_for(slug, a, points)
+    # EVERY WATER IS ITS OWN QUESTION. reach_for() reads the registry and the extract and
+    # returns an answer; it shares nothing with the next water and writes nothing. So the only
+    # reason this ran one at a time was that it was written that way. The merge below is still
+    # one writer in one process, which is the part that has to stay serial.
+    jobs = a.jobs if a.jobs > 0 else min(len(slugs), os.cpu_count() or 1)
+    jobs = max(1, min(jobs, len(slugs)))
+    print('measuring %d at a time' % jobs)
+
+    def report(slug, res, why):
         if res is None:
-            skipped[slug] = why
             print('   %-30s -- %s' % (slug, why))
-            continue
-        out[slug] = res
+            return
         gained = [r for r in res['landings'] if slug not in r['filed']]
         print('   %-30s %-10s %6d water cells, %3d landings reachable, %3d filed elsewhere'
               % (slug, res['seed'], res['water_cells'], len(res['landings']), len(gained)))
@@ -370,10 +399,41 @@ def main():
             print('        %7d m by water (%6d straight)  %-32s filed %s'
                   % (r['water_m'], r['straight_m'], (r['name'] or '(unnamed)')[:32], r['filed']))
 
+    out, skipped = {}, {}
+    if jobs == 1:
+        pairs = ((slug, reach_for(slug, a, points)) for slug in slugs)
+    else:
+        from concurrent.futures import ProcessPoolExecutor
+        ex = ProcessPoolExecutor(max_workers=jobs)
+        # Biggest first: the tail of a pool is one straggler, and on this data the straggler is
+        # always a big water. Submitted in size order, the big ones start while there are still
+        # small ones left to fill the gaps behind them.
+        def _size(s):
+            p = os.path.join(a.chartpack, s, 'centreline.geojson')
+            b = os.path.join(a.registry, 'boundaries', s + '.geojson')
+            return os.path.getsize(p) if os.path.isfile(p) else (
+                os.path.getsize(b) if os.path.isfile(b) else 0)
+        order = sorted(slugs, key=_size, reverse=True)
+        futs = {slug: ex.submit(reach_for, slug, a, points) for slug in order}
+        # Reported in the order asked for, not the order finished, so two runs read the same.
+        pairs = ((slug, futs[slug].result()) for slug in slugs)
+    try:
+        for slug, (res, why) in pairs:
+            report(slug, res, why)
+            if res is None:
+                skipped[slug] = why
+            else:
+                out[slug] = res
+    finally:
+        if jobs != 1:
+            ex.shutdown()
+
     dest = a.out or os.path.join(a.registry, '_ramp_reach.json')
-    # MERGE, NEVER REPLACE. A run is almost always `--only` a handful of waters -- 57 rivers at
-    # two or three minutes each is hours, so it gets done in batches -- and writing the whole
-    # file from one batch would delete every water the batch did not measure. build_all_chartpacks
+    # MERGE, NEVER REPLACE. A run is often `--only` a handful of waters -- the lakes one hour,
+    # the rivers the next -- and writing the whole file from one batch would delete every water
+    # the batch did not measure. (This comment used to say 57 rivers "is hours". It was written
+    # before the raster was vectorised and before the pool, it was the number Ryan was quoted,
+    # and it was wrong: measure the run, do not trust this line.) build_all_chartpacks
     # learned this the same way and says so out loud: "merging into existing report".
     waters, skips, carried = dict(out), dict(skipped), 0
     if os.path.isfile(dest):
