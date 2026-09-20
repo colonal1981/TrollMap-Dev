@@ -5,6 +5,10 @@ water that our clipper handed it to.
     py .\scripts\extend_river_boundary.py --slug congaree_river --into lake_marion
     py .\scripts\extend_river_boundary.py --slug congaree_river --into lake_marion --go
 
+    # or, with no --into, take the river's OWN charted water back:
+    py .\scripts\extend_river_boundary.py --slug congaree_river
+    py .\scripts\extend_river_boundary.py --slug congaree_river --go
+
 WHAT THIS IS FOR
 
 Ryan, 2026-09-19: *"the congaree river pack still stops at the confluence... how do we get the river
@@ -28,6 +32,52 @@ MEASURED, on the stretch below the junction, off the pack's own cross-sections:
 It is not lake. It is more river-like than the 31 km of Congaree above it, it has no river pack of
 its own -- santee_river is the LOWER Santee, 40 to 52 km away below the dams -- and Low Falls Landing
 sits on it at station 152,900. The chart for it already exists; only our clip is missing.
+
+TWO SOURCES OF WATER, ONE CORRIDOR -- 2026-09-20
+
+`--into <neighbour>` is the case above: the river's line runs on past where its own boundary stops,
+and the rest of the channel is inside the neighbour's polygon.
+
+WITHOUT `--into`, the source is the river's OWN charted depth areas, out of the extract, and the
+span is the whole line rather than the tail. That is a different failure and it is not at a seam.
+Measured on congaree_river, 2026-09-20:
+
+    charted water within 250 m of its own centreline        7,004 acres
+      inside registry/boundaries/congaree_river.geojson     5,332  (76.1%)
+      OUTSIDE it                                            1,672  (23.9%)
+    and 1,631 of those acres are beyond the outer ring, not in its 20 island holes
+
+It is not the shallow margin. 44.5% of the 4-5 ft band is outside, 41.9% of 5-6, 38.2% of 6-7,
+28.6% of 9-10, 25.8% of 12-13. Strip the 0-1 outline Garmin draws round every piece of water and
+31.8% of the SOUNDED water is outside the line we clip to.
+
+What that costs, at 33.76212 -80.74456: the shipped pack has every band from 0-1 to 9-10 within
+28 m of that point and no 12-13. The 12-13 band -- 1,806 m2 of it, the deepest water in the
+channel -- falls in the collar outside the boundary, so the off-lake rule drops it whole and the
+app reads 1 ft over the thalweg. Ryan: *"Our problem was we were running over what we said was 1ft
+deep when it was really 10ft"*.
+
+WHOLE POLYGONS, NEVER THE CORRIDOR'S EDGE. The added piece is selected by whether its CENTROID
+falls in the corridor and is then added entire, so every new edge is Garmin's own water edge. Two
+reasons, and the first is this file's own:
+
+  * a smooth buffer edge manufactures bank features that are not there (see above);
+  * build_structure.py reads the boundary's outer ring AND its island holes as shore and runs its
+    offshore test against them, so an arc would be treated as shoreline and would mis-rule every
+    crown near it.
+
+Centroid rather than "intersects", because at a confluence the neighbour's depth areas are huge and
+touch the corridor from a kilometre off. Measured both ways on congaree_river:
+
+    intersects, whole polygons     boundary 7,783 -> 15,887 acres
+    centroid,  whole polygons      boundary 7,783 -> 10,355 acres
+
+and the second is the one that closes the holes: hole centroids inside the boundary 104 -> 136,
+16 of the 36 mid-channel holes gone, and all five spot checks in -- including Ryan's waypoint 0006
+and that 12-13 ft thalweg.
+
+THE CORRIDOR IS STILL snap_cap_m AND IS STILL NOT INVENTED HERE. A pack without one gets no
+extension, exactly as below.
 
 WHY THE OVERLAP IS FINE HERE, WHEN attach_arms.py REFUSES ONE
 
@@ -121,12 +171,78 @@ def inside_span(line, station_m, bound):
     return first, last
 
 
+def own_water(a, corridor, fwd, inv, mine):
+    """The river's own charted depth areas near its own line, as whole polygons.
+
+    Returns (keep, dropped, n_read). `keep` is in lon/lat, ready to merge with the boundary.
+
+    WHICH TILES. registry/tile_lake_map.json already says which tiles a water sits on, in B ids;
+    the depth areas are the C file of the same id. Reading the whole extract instead would be
+    78,276 polygons for four tiles' worth of answer.
+
+    WHICH POLYGONS. zoom 0 only -- Garmin ships the same water at six levels of detail and the
+    coarser ones are redraws, not extra survey (see build_all_chartpacks' note). Then: centroid
+    inside the corridor, and not already inside the boundary. Added WHOLE, so every edge of the
+    result is Garmin's water edge and not the corridor's arc.
+
+    WHY NOT CLIP TO THE CORRIDOR. Because build_structure.py reads this boundary's outer ring and
+    its island holes AS SHORE, and its offshore test would then rule against an arc that is not a
+    bank. Same reason --into intersects the neighbour's polygon rather than keeping the buffer.
+    """
+    import glob
+    import gzip
+    tmap_p = os.path.join(a.registry, 'tile_lake_map.json')
+    tiles = []
+    if os.path.isfile(tmap_p):
+        with open(tmap_p, encoding='utf-8') as fh:
+            tmap = json.load(fh)
+        tiles = (tmap.get('by_lake') or {}).get(a.slug) or []
+    if not tiles:
+        print('  %s is not in tile_lake_map.json, so there is no tile list to read' % a.slug)
+        return [], 0, 0
+    keep, dropped, n_read = [], 0, 0
+    for t in tiles:
+        cid = 'C' + t[1:] if t[:1] in 'Bb' else t
+        for ext in ('.geojson.gz', '.geojson'):
+            fp = os.path.join(a.extract, 'depth_areas', cid + ext)
+            if not os.path.isfile(fp):
+                continue
+            raw = gzip.open(fp, 'rb').read() if ext.endswith('.gz') else open(fp, 'rb').read()
+            for f in (json.loads(raw).get('features') or []):
+                pr = f.get('properties') or {}
+                if pr.get('zoom') != 0:
+                    continue
+                n_read += 1
+                try:
+                    g = shape(f['geometry'])
+                except Exception:
+                    continue
+                if g.is_empty:
+                    continue
+                if not g.is_valid:
+                    g = g.buffer(0)
+                if g.is_empty or 'Polygon' not in g.geom_type:
+                    continue
+                gm = shapely_transform(fwd, g)
+                if not corridor.covers(gm.centroid):
+                    continue
+                if mine.covers(g):
+                    dropped += 1          # already ours; nothing to add
+                    continue
+                keep.append(g)
+            break
+    return keep, dropped, n_read
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--slug', required=True, help='the river pack to extend')
-    ap.add_argument('--into', required=True, help='the neighbour water whose polygon holds the rest')
+    ap.add_argument('--into', help='the neighbour water whose polygon holds the rest. Leave it off '
+                                   "to take the river's own charted water instead")
     ap.add_argument('--registry', default='registry')
     ap.add_argument('--chartpack', default='chartpack')
+    ap.add_argument('--extract', default='extract',
+                    help='where the per-tile layers live; read only when --into is absent')
     ap.add_argument('--to-station', type=float, default=None,
                     help='stop here instead of at the end of the pack\'s own line')
     ap.add_argument('--corridor-m', type=float, default=None,
@@ -136,17 +252,19 @@ def main():
 
     bdir = os.path.join(a.registry, 'boundaries')
     mine_p = os.path.join(bdir, a.slug + '.geojson')
-    theirs_p = os.path.join(bdir, a.into + '.geojson')
+    theirs_p = os.path.join(bdir, a.into + '.geojson') if a.into else None
     cl_p = os.path.join(a.chartpack, a.slug, 'centreline.geojson')
-    for p in (mine_p, theirs_p, cl_p):
+    for p in [x for x in (mine_p, theirs_p, cl_p) if x]:
         if not os.path.isfile(p):
             print('missing: %s' % p)
             return 2
 
     with open(mine_p, encoding='utf-8') as fh:
         mine_raw = json.load(fh)
-    with open(theirs_p, encoding='utf-8') as fh:
-        theirs_raw = json.load(fh)
+    theirs_raw = None
+    if theirs_p:
+        with open(theirs_p, encoding='utf-8') as fh:
+            theirs_raw = json.load(fh)
     with open(cl_p, encoding='utf-8') as fh:
         cl = json.load(fh)
 
@@ -165,9 +283,12 @@ def main():
         return 2
 
     mine = as_multi(mine_raw)
-    theirs = as_multi(theirs_raw)
-    if mine.is_empty or theirs.is_empty:
-        print('one of the two boundaries has no polygon in it')
+    if mine.is_empty:
+        print('%s: its boundary has no polygon in it' % a.slug)
+        return 2
+    theirs = as_multi(theirs_raw) if theirs_raw is not None else None
+    if theirs is not None and theirs.is_empty:
+        print('%s: its boundary has no polygon in it' % a.into)
         return 2
 
     first, last = inside_span(line, station_m, mine)
@@ -175,17 +296,25 @@ def main():
         print('%s: none of its own centreline is inside its own boundary' % a.slug)
         return 2
     stop_m = a.to_station if a.to_station is not None else station_m[-1]
-    start_i = last
+    # WITH --into the span is the TAIL past where the boundary stops; that is the whole point of
+    # that mode. Without it the river is short of its own water all the way down, so the span is
+    # the whole line -- see TWO SOURCES OF WATER above.
+    start_i = last if a.into else 0
     stop_i = max(i for i, s in enumerate(station_m) if s <= stop_m)
     if stop_i <= start_i:
         print('%s: its boundary already reaches station %s, and %s is not past it'
               % (a.slug, station_m[last], stop_m))
         return 0
 
-    print('%s: boundary currently ends at station %s of %s'
-          % (a.slug, station_m[last], station_m[-1]))
-    print('  extending along its own line to station %s  (%.1f km of channel)'
-          % (station_m[stop_i], (station_m[stop_i] - station_m[start_i]) / 1000.0))
+    if a.into:
+        print('%s: boundary currently ends at station %s of %s'
+              % (a.slug, station_m[last], station_m[-1]))
+        print('  extending along its own line to station %s  (%.1f km of channel)'
+              % (station_m[stop_i], (station_m[stop_i] - station_m[start_i]) / 1000.0))
+    else:
+        print('%s: taking back its own charted water along the whole line, station %s to %s '
+              '(%.1f km)' % (a.slug, station_m[start_i], station_m[stop_i],
+                             (station_m[stop_i] - station_m[start_i]) / 1000.0))
     print('  corridor half-width %s m  (%s)'
           % (cap, 'given' if a.corridor_m is not None else "the pack's own snap_cap_m"))
 
@@ -193,29 +322,47 @@ def main():
     fwd, inv = flat(lat0)
     seg = LineString(line[start_i:stop_i + 1])
     corridor = shapely_transform(fwd, seg).buffer(cap, resolution=8)
-    piece = corridor.intersection(shapely_transform(fwd, theirs))
-    if piece.is_empty:
-        print('  nothing of %s lies in that corridor' % a.into)
-        return 1
-    piece = shapely_transform(inv, piece)
 
-    # Only the parts the line actually runs through. A corridor across a meander can clip a slice of
-    # some other arm of the lake on the far side of a point, and that water is not this river.
-    parts = list(piece.geoms) if piece.geom_type == 'MultiPolygon' else [piece]
-    keep = [p for p in parts if p.intersects(seg)]
-    dropped = len(parts) - len(keep)
-    if not keep:
-        print('  the corridor met %s but not along the line itself' % a.into)
-        return 1
+    if a.into:
+        piece = corridor.intersection(shapely_transform(fwd, theirs))
+        if piece.is_empty:
+            print('  nothing of %s lies in that corridor' % a.into)
+            return 1
+        piece = shapely_transform(inv, piece)
 
-    added = MultiPolygon(keep)
+        # Only the parts the line actually runs through. A corridor across a meander can clip a
+        # slice of some other arm of the lake on the far side of a point, and that water is not
+        # this river.
+        parts = list(piece.geoms) if piece.geom_type == 'MultiPolygon' else [piece]
+        keep = [p for p in parts if p.intersects(seg)]
+        dropped = len(parts) - len(keep)
+        if not keep:
+            print('  the corridor met %s but not along the line itself' % a.into)
+            return 1
+    else:
+        keep, dropped, n_read = own_water(a, corridor, fwd, inv, mine)
+        print('  read %d charted polygon(s) off the tiles this water sits on' % n_read)
+        if not keep:
+            print('  every charted polygon near the line is already inside the boundary')
+            return 0
+
+    added = MultiPolygon([g for k in keep
+                          for g in (k.geoms if k.geom_type == 'MultiPolygon' else [k])])
     print('  adding %d polygon(s), %.0f acres%s'
-          % (len(keep), added.area * (111320.0 * math.cos(math.radians(lat0)) * 110540.0)
+          % (len(added.geoms), added.area * (111320.0 * math.cos(math.radians(lat0)) * 110540.0)
              * ACRES_PER_M2,
-             ('' if not dropped else '  (%d off-line piece(s) dropped)' % dropped)))
+             ('' if not dropped else '  (%d %s)'
+              % (dropped, 'off-line piece(s) dropped' if a.into
+                 else 'already inside the boundary'))))
 
-    merged = MultiPolygon(list(mine.geoms) + keep)
+    merged = MultiPolygon(list(mine.geoms) + list(added.geoms))
     nf, nl = inside_span(line, station_m, merged)
+    # The acreage above is the polygons' OWN area, which double-counts whatever already overlapped.
+    # This is what the boundary actually becomes, and it is the number to quote.
+    m2 = 111320.0 * math.cos(math.radians(lat0)) * 110540.0
+    before = shapely_transform(fwd, mine).area * ACRES_PER_M2
+    after = shapely_transform(fwd, merged).buffer(0).area * ACRES_PER_M2
+    print('  boundary %.0f -> %.0f acres  (+%.0f net)' % (before, after, after - before))
     print('  stations inside afterwards: %s .. %s of %s'
           % (station_m[nf], station_m[nl], station_m[-1]))
 

@@ -577,7 +577,7 @@ def _bbox(pts):
     return (min(xs), min(ys), max(xs), max(ys)) if xs else None
 
 
-def clip_excluded(feats, mask):
+def clip_excluded(feats, mask, channel=None):
     """Cut the excluded water OUT of each feature, instead of keeping or dropping it whole.
 
     SELECTION CANNOT SATISFY "NONE AT ALL". The core filter keeps a feature if ANY vertex lands
@@ -603,6 +603,28 @@ def clip_excluded(feats, mask):
     and silently keeps a long segment that spans the water; a polygon is DROPPED whole. Under a
     rule that says none at all, erring toward removing water is the right direction, and the
     run says how many went that way so it is never mistaken for a clean cut.
+
+    `channel` IS THE ONE THING THIS WILL NOT CUT -- 2026-09-20. A water may not take channel that
+    another water's own centreline runs down, and without that exception the rule above does
+    exactly that. Ryan's waypoint 0006 at 33.76719 -80.65320 sits in 8-9 ft of the Congaree's main
+    channel; `bates_old_river` is nested inside congaree_river and its outline reaches across the
+    mouth, so the Congaree gave those 1.46 acres up -- and Bates does not sound them either, 8 m to
+    the nearest band in its own pack. Water that falls between two packs is in neither.
+
+    Ryan, who fishes it: *"bates didn't have its own boundary we had to cut it... but bates also
+    doesn't actually touch the congaree anymore... it did 100 years ago... but i dont think it
+    touches it now except during high water events"*. And the rule that settles what a pack owes:
+    *"if i see the congaree when selecting lake marion i don't really care... but if i select the
+    congaree i should see all of the congaree"*.
+
+    It is not only Bates. `nested_inside` finds five pairs and two of them cut the outer river's
+    own line out of its own pack:
+
+        congaree_river <- bates_old_river         41 m of centreline inside the cut
+        yadkin_river   <- south_yadkin_river   8,717 m of it
+
+    The exception is the centreline itself, not a corridor around it: a feature the line passes
+    through is channel by construction, and nothing wider needs inventing.
     """
     if not feats or not getattr(mask, 'excluded', None):
         return feats, {}
@@ -617,7 +639,10 @@ def clip_excluded(feats, mask):
         _shape = cutter = None
 
     out, stat = [], {'untouched': 0, 'trimmed': 0, 'emptied': 0,
-                     'dropped_no_shapely': 0, 'failed': 0}
+                     'dropped_no_shapely': 0, 'failed': 0, 'channel_kept': 0}
+    chan = channel
+    if chan is not None and _shape is None:
+        chan = None                     # no shapely, no intersection test; the old rule stands
     for f in feats:
         g = f.get('geometry') or {}
         pts = list(_allpts(g.get('coordinates')))
@@ -628,6 +653,14 @@ def clip_excluded(feats, mask):
             stat['untouched'] += 1
             out.append(f)
             continue
+        if chan is not None:
+            try:
+                if _shape(g).intersects(chan):
+                    stat['channel_kept'] += 1
+                    out.append(f)
+                    continue
+            except Exception:
+                pass                    # an unreadable geometry falls through to the cut below
         if cutter is not None:
             try:
                 whole = _shape(g)

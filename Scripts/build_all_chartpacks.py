@@ -1078,11 +1078,27 @@ def _flush(slug, layers, mask, meta, a, report):
     # Every layer, not just the core-only two. A dock or a structure inside the reservoir is
     # the reservoir's, and the buffer is what would otherwise reach in and take it.
     if getattr(mask, 'excluded', None):
+        # ITS OWN CHANNEL IS NOT ON OFFER. A water may not take channel that this one's own
+        # centreline runs down -- see build_chartpack.clip_excluded. The line comes from the
+        # pack this run is rebuilding, so a water with no centreline (every lake) is unchanged.
+        _chan = None
+        _clp = os.path.join(a.out, slug, 'centreline.geojson')
+        if os.path.isfile(_clp):
+            try:
+                from shapely.geometry import shape as _sh
+                from shapely.ops import unary_union as _uu
+                with open(_clp, encoding='utf-8') as _fh:
+                    _cf = json.load(_fh).get('features') or []
+                _gs = [_sh(f['geometry']) for f in _cf if f.get('geometry')]
+                _gs = [g for g in _gs if not g.is_empty]
+                _chan = _uu(_gs) if _gs else None
+            except Exception:
+                _chan = None
         _cl = {}
         for _layer, _feats in list(layers.items()):
             if not _feats:
                 continue
-            layers[_layer], _st = clip_excluded(_feats, mask)
+            layers[_layer], _st = clip_excluded(_feats, mask, _chan)
             for _k, _v in _st.items():
                 if _v:
                     _cl[_k] = _cl.get(_k, 0) + _v
@@ -1093,6 +1109,10 @@ def _flush(slug, layers, mask, meta, a, report):
                   '%d removed entirely' % (slug, _cl.get('trimmed', 0), _gone))
             rec['excluded_trimmed'] = _cl.get('trimmed', 0)
             rec['excluded_removed'] = _gone
+        if _cl.get('channel_kept'):
+            print('   %s: kept %d feature(s) its own centreline runs through, which a nested '
+                  'water would otherwise have taken' % (slug, _cl['channel_kept']))
+            rec['excluded_channel_kept'] = _cl['channel_kept']
         if _cl.get('dropped_no_shapely'):
             print('   %s: !! shapely is absent, so %d polygon(s) that straddle an excluded '
                   'water were DROPPED rather than cut. Install shapely and rebuild to keep '
