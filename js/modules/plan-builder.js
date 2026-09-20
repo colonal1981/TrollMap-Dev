@@ -20,7 +20,7 @@ import { landOnCoastalZone, focusRamp } from "../utils/viewport-cull.js";
 import { bucketWaters, STATE_ORDER, TYPE_ORDER, sortForDisplay,
          pickerLabel } from '../data/water-picker.js';
 import { resolveR2Key } from "../data/lake-keys.js";
-import { launchReach, reachLabel, samePlace } from "../data/launch-reach.js";
+import { launchReach, listingAt, reachLabel, samePlace } from "../data/launch-reach.js";
 import { advisoryRows } from "../data/fish-advisories.js";
 // The band is defined once, where the cue line that carries it is built.
 import { HAND_STEER_BAND_FT } from "./plan-tracks.js";
@@ -2607,13 +2607,29 @@ export function populatePlanRampDropdown(waterbodyName){
   // One function called from both branches, so a third branch cannot quietly be the one
   // without it. `placed` is whatever that branch already put in the list, and it is pushed to
   // as we go because a second feed's copy of one landing is not a second row.
+  // FETCHED ONCE, READ TWICE -- to APPEND the landings that reach this water, and to LABEL the
+  // rows that were already here. Both are the same question and it is asked of one list: 73 of
+  // the 211 semi-private landings across the 355 packs ALSO arrive down the live state feed, so
+  // they are already in `kept` by the time the append runs and the append skips them. A marker
+  // that rode only on the appended rows would leave Raysville Marina, Sinclair Marina and
+  // Nottely Marina reading like state ramps.
+  const reach = launchReachFor(waterbodyName);
+  // ONE LABELLER FOR EVERY OPTION IN THIS SELECT -- the hand-written six, the merged access
+  // index and the reach list. The value is untouched: `#planRamp` is restored from a saved plan
+  // by assigning that exact string back, and a `<select>` handed a value none of its options
+  // hold silently goes blank. That is the 2026-09-17 failure, and it is why the note goes on the
+  // TEXT and the value stays what it always was.
+  const optText = (value, lat, lon) => {
+    const note = listingAt(reach, Number(lat), Number(lon));
+    return note ? `${value} · ${note}` : value;
+  };
   const appendReach = (placed) => {
-    launchReachFor(waterbodyName).forEach((r) => {
+    reach.forEach((r) => {
       if (!Number.isFinite(r.lat) || !Number.isFinite(r.lon)) return;
       // Same spot as one already listed? samePlace() is the one copy of that question.
       if (placed.some((p) => samePlace(p, r))) return;
       const opt = document.createElement('option');
-      opt.value = reachLabel(r); opt.textContent = opt.value;
+      opt.value = reachLabel(r); opt.textContent = optText(opt.value, r.lat, r.lon);
       opt.dataset.lat = r.lat; opt.dataset.lon = r.lon;
       if (Number.isFinite(r.water_m)) opt.dataset.waterM = r.water_m;
       sel.appendChild(opt);
@@ -2627,7 +2643,7 @@ export function populatePlanRampDropdown(waterbodyName){
   if(curated){
     getPlanRiverRamps(curated).forEach(r=>{
       const opt=document.createElement('option');
-      opt.value=r.name; opt.textContent=r.name;
+      opt.value=r.name; opt.textContent=optText(r.name, r.lat, r.lon);
       // THE COORDS RIDE ON THE OPTION HERE TOO, for the reason spelled out on the access-index
       // branch below -- and this branch not doing it cost a whole river plan on 2026-09-17.
       // These six curated rivers carry HAND-WRITTEN launch names; the map's own ramp dropdown
@@ -2713,7 +2729,7 @@ export function populatePlanRampDropdown(waterbodyName){
 
   kept.forEach((point) => {
     const opt = document.createElement('option');
-    opt.value = point.name; opt.textContent = point.name;
+    opt.value = point.name; opt.textContent = optText(point.name, point.lat, point.lon);
     // The coords ride ON THE OPTION. The change handler used to look the name back up in
     // `lakeDbEntryFor(...).ramps`, which only works while the names in the dropdown come from
     // that same object -- the moment a launch arrives from the live DNR feed the lookup misses

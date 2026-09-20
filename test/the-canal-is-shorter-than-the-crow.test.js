@@ -42,6 +42,8 @@ const read = (...p) => fs.readFileSync(path.join(HERE, '..', ...p), 'utf8');
 const REACH = read('js', 'data', 'launch-reach.js');          // the one loader
 const PLAN  = read('js', 'modules', 'plan-builder.js');       // Plan tab dropdown
 const MAP   = read('js', 'modules', 'lake-ramp-select.js');   // map tab dropdown
+const MAP2  = MAP;                                            // named for the assertions below
+const GEN   = read('Scripts', 'build_ramp_reach.py');         // the generator that writes the file
 const SRC = PLAN;
 
 // reachLabel() is module-private, so lift it out of the source and run the real thing rather
@@ -58,6 +60,15 @@ function loadSamePlace(){
   assert.ok(m, 'samePlace() is still in js/data/launch-reach.js');
   // eslint-disable-next-line no-new-func
   return new Function(`${m[0].replace('export ', '')}; return samePlace;`)();
+}
+
+function loadListingAt(){
+  const a = REACH.match(/export function listingAt\(rows, lat, lon\) \{[\s\S]*?\n\}/);
+  const s = REACH.match(/export function samePlace\(a, b\) \{[\s\S]*?\n\}/);
+  assert.ok(a && s, 'listingAt() and samePlace() are still in js/data/launch-reach.js');
+  // eslint-disable-next-line no-new-func
+  return new Function(`${s[0].replace('export ', '')}\n${a[0].replace('export ', '')}\n`
+                      + 'return listingAt;')();
 }
 
 function loadCollapse(){
@@ -310,16 +321,48 @@ test('a long one rounds to whole miles, and an unnamed one still reads as a laun
   assert.equal(reachLabel({ name: 'Somewhere', water_m: null }), 'Somewhere');
 });
 
-test('the label is the value, which is what a select needs to hold a selection', () => {
-  // `opt.value = reachLabel(r); opt.textContent = opt.value;` -- one expression, assigned twice,
-  // so the two cannot drift. The 2026-09-17 failure was exactly a value and a text that differed.
-  assert.match(SRC, /opt\.value\s*=\s*reachLabel\(r\);\s*opt\.textContent\s*=\s*opt\.value;/,
+test('the label is the value, and the text is built FROM the value', () => {
+  // This used to read `opt.textContent = opt.value;` -- one expression assigned twice, so the two
+  // could not drift, which is the 2026-09-17 failure written as an assertion. The fee note made
+  // them differ on purpose, so the assertion moves rather than loosens: the text is DERIVED from
+  // the value, the name in the two is still the one string, and the VALUE never carries the note.
+  //
+  // Why the value has to stay clean: `#planRamp` is restored from a saved plan by assigning that
+  // exact string back, and a <select> handed a value none of its options hold SILENTLY BECOMES "".
+  // A note appended to the value would have blanked the ramp on every saved plan at a marina.
+  assert.match(SRC, /opt\.value = reachLabel\(r\); opt\.textContent = optText\(opt\.value, r\.lat, r\.lon\);/,
                'the reach option assigns its text FROM its value');
+  const label = REACH.match(/export function reachLabel\(r\) \{[\s\S]*?\n\}/);
+  assert.ok(label, 'reachLabel() is still in js/data/launch-reach.js');
+  assert.doesNotMatch(label[0], /listing/, 'the value carries the name and the run, and nothing else');
+});
+
+test('EVERY option in the ramp list goes through the one labeller, not just the appended ones', () => {
+  // 73 of the 211 semi-private landings across the 355 packs also arrive down the live state
+  // feed, so they are already in the dropdown before the reach list is appended and the append
+  // skips them. Marking only the appended rows would have left Raysville Marina, Sinclair Marina
+  // and Nottely Marina reading like state ramps. Three option-building sites on the Plan tab --
+  // the hand-written six, the merged access index, the reach list -- and all three call it.
+  const fn = PLAN.slice(PLAN.indexOf('export function populatePlanRampDropdown'));
+  const body = fn.slice(0, fn.indexOf("\ndocument.getElementById('planLake')"));
+  // The definition reads `const optText = (value, lat, lon) =>`, so it is not one of these:
+  // this counts CALLS. I expected four and wrote the definition in by mistake -- the same slip
+  // the appendReach count above already carries a comment about.
+  assert.equal((body.match(/optText\(/g) || []).length, 3,
+               'the curated six, the access index and the reach list, all through one labeller');
+  assert.match(body, /const reach = launchReachFor\(waterbodyName\);/,
+               'the list is fetched once and read by both the labeller and the append');
+  // The map tab asks the same question of the same list, through the same export.
+  assert.match(MAP2, /const note = listingAt\(reach, Number\(point\.lat\), Number\(point\.lon\)\);/);
+  assert.equal((MAP2.match(/function listingAt\(/g) || []).length, 0,
+               'the map tab imports it -- there is no second copy to drift');
 });
 
 test('the coordinates ride on the option, or the plan has no launch point', () => {
-  const block = SRC.slice(SRC.indexOf('launchReachFor(waterbodyName).forEach'));
-  assert.match(block.slice(0, 700), /opt\.dataset\.lat\s*=\s*r\.lat;\s*opt\.dataset\.lon\s*=\s*r\.lon;/);
+  // Anchored on appendReach() rather than on the fetch: the fetch moved out to the top of the
+  // function when the labeller started reading the same list, and the option is still built here.
+  const block = SRC.slice(SRC.indexOf('const appendReach ='));
+  assert.match(block.slice(0, 900), /opt\.dataset\.lat\s*=\s*r\.lat;\s*opt\.dataset\.lon\s*=\s*r\.lon;/);
 });
 
 test('a landing already listed is not offered twice, on either branch', () => {
@@ -404,4 +447,61 @@ test('samePlace collapses two feeds on one ramp and keeps two ramps a block apar
   // A landing 55 m away is a different landing: 0.0005 deg of latitude, just past the 40 m line.
   assert.equal(samePlace({ lat: 33.63235, lon: -80.54323 }, { lat: 33.63285, lon: -80.54323 }), false);
   assert.equal(samePlace({ lat: 33.63235, lon: -80.54323 }, null), false);
+});
+
+test('the county park and the campground at Taw Caw are two places, and one of them charges', () => {
+  // Ryan, reading the review deck: *"Taw Caw is not a campground? there is a park there, a boat
+  // ramp and a pier i think"*. He is right, and so is the data -- there are three records at Taw
+  // Caw and they are three places. Taw Caw Park is Clarendon County's, 155 m from Santee Cooper's
+  // Taw Caw Creek ramp; the campground and marina is 1.6 km east and is the only one of the three
+  // the national layer types Semi-Private.
+  const listingAt = loadListingAt();
+  const rows = [
+    { name: 'Taw Caw Park', lat: 33.535404, lon: -80.331685, listing: 'Public' },
+    { name: 'Taw Caw Creek', lat: 33.534139, lon: -80.331072, listing: 'Public' },
+    { name: 'Taw Caw Campground and Marina', lat: 33.529619, lon: -80.314319,
+      listing: 'Semi-Private' },
+  ];
+  assert.equal(listingAt(rows, 33.529619, -80.314319), 'semi-private');
+  assert.equal(listingAt(rows, 33.535404, -80.331685), '', 'the county park is not the campground');
+  assert.equal(listingAt(rows, 33.534139, -80.331072), '', 'nor is the ramp 155 m from it');
+  // 1,451 of the 2,965 landings are typed by nobody, and an absent answer is not a yes.
+  assert.equal(listingAt([{ lat: 33.6, lon: -80.3 }], 33.6, -80.3), '');
+  assert.equal(listingAt(rows, NaN, NaN), '');
+  assert.equal(listingAt(null, 33.529619, -80.314319), '');
+});
+
+test('a marina the state also lists is still a marina', () => {
+  // 45 of the national layer's 242 Semi-Private rows are ALSO in a state agency's water-access
+  // feed: Raysville Marina, Plum Branch Yacht Club, Soap Creek Lodge & Marina, Trade Winds
+  // Marina. A state listing a marina as public WATER ACCESS is not the state saying the launch
+  // is free, so the restrictive word survives the merge -- in BOTH arrival orders, because which
+  // record is nearer the water is an accident.
+  const collapse = loadCollapse();
+  const a = collapse([
+    { name: 'Raysville Marina', lat: 33.7, lon: -82.4, water_m: 20, src: ['dnr'], listing: 'Public' },
+    { name: 'Raysville Marina', lat: 33.70005, lon: -82.40005, water_m: 25, src: ['natl'],
+      listing: 'Semi-Private' },
+  ]);
+  assert.equal(a.length, 1);
+  assert.equal(a[0].listing, 'Semi-Private');
+  const b = collapse([
+    { name: 'Raysville Marina', lat: 33.70005, lon: -82.40005, water_m: 25, src: ['natl'],
+      listing: 'Semi-Private' },
+    { name: 'Raysville Marina', lat: 33.7, lon: -82.4, water_m: 20, src: ['dnr'], listing: 'Public' },
+  ]);
+  assert.equal(b.length, 1);
+  assert.equal(b[0].listing, 'Semi-Private');
+});
+
+test('the generator carries the word, and only the two words that mean anything', () => {
+  // The national layer types its rows "Public" (1,120) or "Semi-Private" (242). The state feeds
+  // also have a `type` and it is the string "Boat Ramp" on all 897 of their rows, which says
+  // nothing about who may launch -- so the gate names the two values rather than taking whatever
+  // a feed puts in that field.
+  assert.match(GEN, /if t in \('Public', 'Semi-Private'\)/);
+  assert.match(GEN, /t == 'Semi-Private' or not rec\['listing'\]/,
+               'the restrictive word wins a disagreement in the generator too');
+  assert.match(GEN, /'listing': rec\.get\('listing'\) or None,/,
+               'and it reaches launches.json, or none of the above matters');
 });

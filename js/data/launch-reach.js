@@ -43,7 +43,8 @@ const CACHE = new Map();
  *
  * @param {string} waterbodyName  the picker's own name for the water
  * @param {function} [onReady]    called with the landings when a fetch completes with any
- * @returns {Array} landings, each {name, lat, lon, water_m, straight_m, station_m, filed, src}
+ * @returns {Array} landings, each {name, lat, lon, water_m, straight_m, station_m, listing,
+ *                  filed, src}
  */
 export function launchReach(waterbodyName, onReady) {
   const key = resolveR2Key(waterbodyName);
@@ -82,6 +83,39 @@ export function reachLabel(r) {
 }
 
 /**
+ * THE WORD FOR A LANDING THAT SELLS YOU THE LAUNCH, or '' when nothing says.
+ *
+ * Ryan, part way through naming the unnamed ones: *"most of these are campgrounds or marinas...
+ * almost all of them are pay to play"*. The national water-access layer already knew -- it types
+ * 242 of its rows "Semi-Private" against 1,120 "Public" -- and build_ramp_reach.py now carries
+ * that word through to `listing` on the landing.
+ *
+ * ANNOTATED, NOT FILTERED, unlike isClosed() below. A fee is a judgement he makes in the boat --
+ * he launches at Blacks Camp -- and the rule in this file is his: *"Annotates reads like the
+ * better answer"*. What he cannot do is tell a county park from a campground by reading a name.
+ *
+ * TAKES THE LIST AND A POSITION rather than one row, because the two dropdowns do not label the
+ * reach rows alone. Both build their list from the live state feed first and append the reach
+ * landings that are not already in it -- and 73 of the 211 semi-private landings across the 355
+ * packs are in BOTH, so a marker that rode only on the appended rows would leave Raysville
+ * Marina, Sinclair Marina and Nottely Marina looking like state ramps. Same 40 m as samePlace(),
+ * which is the question being asked: is the row on the screen this landing.
+ *
+ * @param {Array} rows   the reach landings for this water, from launchReach()
+ * @returns {string} 'semi-private', or ''
+ */
+export function listingAt(rows, lat, lon) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return '';
+  const here = { lat, lon };
+  for (const r of rows || []) {
+    if (String((r && r.listing) || '') === 'Semi-Private' && samePlace(here, r)) {
+      return 'semi-private';
+    }
+  }
+  return '';
+}
+
+/**
  * Is this landing already in the list, by position?
  *
  * 0.0004 deg is about 40 m: two feeds' records of one ramp collapse, two real ramps on one lot
@@ -117,6 +151,10 @@ function collapse(rows) {
     const hit = out.find((p) => samePlace(p, r)) || out.find((p) => sameNamedPlace(p, r));
     if (!hit) { out.push({ ...r }); continue; }
     if (r.name && (!hit.name || nameRank(r) < nameRank(hit))) hit.name = r.name;
+    // The restrictive word survives the merge, for the reason build_ramp_reach.py spells out:
+    // one landing arriving as a state "public water access" row and a national "Semi-Private"
+    // row is a marina that the state lists, not a marina that stopped charging.
+    if (r.listing && (!hit.listing || r.listing === 'Semi-Private')) hit.listing = r.listing;
     hit.filed = union(hit.filed, r.filed);
     hit.src = union(hit.src, r.src);
   }

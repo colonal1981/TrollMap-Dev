@@ -121,7 +121,7 @@ def access_points(registry):
                     continue
                 k = (round(la, 5), round(lo, 5))
                 rec = out.setdefault(k, {'lat': la, 'lon': lo, 'name': '', 'access': '',
-                                         'filed': set(), 'src': set()})
+                                         'listing': '', 'filed': set(), 'src': set()})
                 rec['filed'].add(slug)
                 rec['src'].add(src)
                 nm = r.get('name') or r.get('NAME') or r.get('label')
@@ -141,6 +141,27 @@ def access_points(registry):
                 ac = r.get('access')
                 if ac and not rec['access']:
                     rec['access'] = str(ac)
+
+                # AND WHETHER IT IS A PLACE THAT SELLS YOU THE LAUNCH.
+                #
+                # Ryan, working through the review deck: *"most of these are campgrounds or
+                # marinas... almost all of them are pay to play"*. He was reading the truth off
+                # the names; the national water-access layer has been carrying the same fact in
+                # a field nothing ever read -- `type`, which is "Public" on 1,120 rows and
+                # "Semi-Private" on 242.
+                #
+                # SEMI-PRIVATE WINS A DISAGREEMENT, and the disagreement is common: 45 of those
+                # 242 are ALSO in a state agency's water-access feed -- Raysville Marina, Plum
+                # Branch Yacht Club, Soap Creek Lodge & Marina, Trade Winds Marina. A state
+                # listing a marina as public WATER ACCESS is not the state saying the ramp is
+                # free, so the restrictive word is the one that survives. (The SC feed's own
+                # `fee` field cannot settle it either: it is `false` on all 438 rows.)
+                #
+                # ONLY THESE TWO WORDS ARE CARRIED. The state feeds' `type` is the string "Boat
+                # Ramp" on all 897 of their rows and says nothing about who may use it.
+                t = r.get('type')
+                if t in ('Public', 'Semi-Private') and (t == 'Semi-Private' or not rec['listing']):
+                    rec['listing'] = t
 
     # A NAME GOOGLE KNEW AND NO FEED DID.
     #
@@ -416,6 +437,7 @@ def reach_for(slug, args, points):
         straight = float(dm[k])
         got.append({'name': rec['name'] or None, 'lat': rec['lat'], 'lon': rec['lon'],
                     'access': rec.get('access') or None,
+                    'listing': rec.get('listing') or None,
                     'water_m': int(round(best * step)), 'straight_m': int(round(straight)),
                     # Where on the river it comes in. A lake has no stations, and saying 0
                     # would read as the top of something.

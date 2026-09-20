@@ -23,7 +23,7 @@ import { waterZoneCandidates } from '../data/water-aliases.js';
 import { registryStats } from '../data/lake-registry.js';
 import { makePredicate } from '../data/water-filter.js';
 import { matchRampIndex } from '../utils/ramp-match.js';
-import { launchReach, reachLabel, samePlace } from '../data/launch-reach.js';
+import { launchReach, listingAt, reachLabel, samePlace } from '../data/launch-reach.js';
 // The picker question moved to js/data/water-picker.js -- see the note at its top for why it is
 // not in here. Re-exported so nothing that imported these from this module had to move.
 import { STATE_ORDER, TYPE_ORDER, pickerLabel, sortForDisplay, stateOf, typeOf,
@@ -395,7 +395,14 @@ async function onLakeChange(selLakeName) {
     accessPoints.forEach((point) => {
       const opt = document.createElement('option');
       opt.value = point.name;
-      opt.textContent = formatAccessLabel(point);
+      // THE FEE MARKER, ON THE TEXT AND NOT ON THE VALUE. Same call the Plan tab makes, off the
+      // same list, for the same reason: `onRampChange()` writes this option's VALUE into
+      // `#planRamp`, and a value that select does not hold blanks it. The note is what Ryan
+      // could not read off a name -- *"most of these are campgrounds or marinas... almost all of
+      // them are pay to play"* -- and it lands on every row here, not just the appended ones,
+      // because the live state feed lists 73 of these marinas itself.
+      const note = listingAt(reach, Number(point.lat), Number(point.lon));
+      opt.textContent = formatAccessLabel(point) + (note ? ` \u00b7 ${note}` : '');
       opt.dataset.coords = `${point.lat},${point.lon}`;
       opt.dataset.type = point.typeLabel || '';
       opt.dataset.source = point.sourcePath || '';
