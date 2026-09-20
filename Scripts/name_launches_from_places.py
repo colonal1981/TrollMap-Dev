@@ -78,16 +78,24 @@ def unnamed_points(chartpack, waters):
     return rows
 
 
+# CLOUDFLARE REFUSES `Python-urllib/3.x` WITH A 403 BEFORE THE WORKER EVER SEES THE REQUEST.
+# The same URL in a browser returns 200, which is how this was found and is why the first run of
+# this script reported "cannot reach the worker" for a Worker that was up and answering. Any
+# ordinary User-Agent is enough; this one says what it is so the log is readable.
+UA = 'TrollMapPipeline/1.0 (name_launches_from_places.py)'
+
+
 def post(url, body, token):
     req = urllib.request.Request(
         url, data=json.dumps(body).encode('utf-8'),
-        headers={'Content-Type': 'application/json', 'X-Sync-Token': token})
+        headers={'Content-Type': 'application/json', 'X-Sync-Token': token, 'User-Agent': UA})
     with urllib.request.urlopen(req, timeout=60) as r:
         return json.loads(r.read().decode('utf-8'))
 
 
 def get(url):
-    with urllib.request.urlopen(urllib.request.Request(url), timeout=30) as r:
+    req = urllib.request.Request(url, headers={'User-Agent': UA})
+    with urllib.request.urlopen(req, timeout=30) as r:
         return json.loads(r.read().decode('utf-8'))
 
 
@@ -116,12 +124,15 @@ def main():
     ap.add_argument('--go', action='store_true', help='spend; without it nothing is asked')
     a = ap.parse_args()
 
+    # THE DRY RUN NEEDS NO TOKEN, BECAUSE IT SPENDS NOTHING. Counting the points and reading
+    # the budget are both free, and a run that cannot be rehearsed without a secret is a run
+    # nobody rehearses.
     token = os.environ.get('TROLLMAP_SYNC_TOKEN')
-    if not token:
+    if a.go and not token:
         print('TROLLMAP_SYNC_TOKEN is not set in this shell.\n'
               '  set TROLLMAP_SYNC_TOKEN=<the worker token>\n'
               'It is read from the environment on purpose: it is not in this file, not in the\n'
-              'command line, and not in anything this writes.')
+              'command line, and not in anything this writes. Drop --go to rehearse without it.')
         return 2
 
     waters = [s.strip() for s in a.waters.split(',') if s.strip()]
