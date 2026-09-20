@@ -116,7 +116,7 @@ function collapse(rows) {
     if (isClosed(r)) continue;
     const hit = out.find((p) => samePlace(p, r)) || out.find((p) => sameNamedPlace(p, r));
     if (!hit) { out.push({ ...r }); continue; }
-    if (!hit.name && r.name) hit.name = r.name;
+    if (r.name && (!hit.name || nameRank(r) < nameRank(hit))) hit.name = r.name;
     hit.filed = union(hit.filed, r.filed);
     hit.src = union(hit.src, r.src);
   }
@@ -145,6 +145,40 @@ function collapse(rows) {
  * registry/_launch_name_overrides.json merges them here, rather than needing a rule about those
  * two coordinates.
  */
+/**
+ * WHOSE NAME WINS WHEN TWO NAMED ROWS TURN OUT TO BE ONE LANDING.
+ *
+ * This went wrong the moment Google filled in the blanks. On the Lower Saluda:
+ *
+ *     J. B. Barker Boat Landing   osm + places   13,418 m    <- kept, because it was nearer
+ *     Hope Ferry                  dnr            13,443 m    <- absorbed, and its name lost
+ *
+ * The two are 29 m apart, so they are one landing and merging them is right. But the row that
+ * happened to be nearer carried GOOGLE'S label for whatever sits closest to that coordinate,
+ * and the row it absorbed carried SCDNR'S NAME FOR THE LANDING ITSELF -- which is also what
+ * Ryan's own curated list calls it. First-nearest-wins silently renamed Hope Ferry.
+ *
+ * So the name is taken by provenance, not by arrival order: Ryan, then the state agency, then
+ * the national layer or OSM, and Google last. Google is last because it is not naming a landing
+ * at all -- it is naming the nearest thing it knows about to a point, which is a different
+ * question that usually has the same answer.
+ *
+ * READ OFF `src`, WHICH IS EXACT HERE RATHER THAN A GUESS. build_ramp_reach.py fills a name from
+ * the feeds first, lets Google fill only what is still BLANK, and lets Ryan's overrides
+ * overwrite anything. So a row whose src includes `places` has a Google name unless it also has
+ * `ryan`, and that is what this reads. If that ordering in access_points() ever changes, this
+ * changes with it.
+ */
+const NAME_SOURCE_ORDER = ['ryan', 'dnr', 'natl', 'osm'];
+
+function nameRank(r) {
+  const src = (r && r.src) || [];
+  if (src.includes('ryan')) return 0;
+  if (src.includes('places')) return NAME_SOURCE_ORDER.length;   // Google filled a blank
+  const i = NAME_SOURCE_ORDER.findIndex((s) => src.includes(s));
+  return i < 0 ? NAME_SOURCE_ORDER.length : i;
+}
+
 function sameNamedPlace(a, b) {
   const an = String((a && a.name) || '').trim().toLowerCase();
   const bn = String((b && b.name) || '').trim().toLowerCase();

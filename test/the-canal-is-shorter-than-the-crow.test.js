@@ -65,10 +65,68 @@ function loadCollapse(){
   const c = REACH.match(/\nfunction collapse\(rows\) \{[\s\S]*?\n\}/);
   const x = REACH.match(/\nfunction isClosed\(r\) \{[\s\S]*?\n\}/);
   const n = REACH.match(/\nfunction sameNamedPlace\(a, b\) \{[\s\S]*?\n\}/);
-  assert.ok(s && c && x && n, 'samePlace(), sameNamedPlace(), collapse() and isClosed() are there');
+  const o = REACH.match(/\nconst NAME_SOURCE_ORDER = [^\n]+\n/);
+  const k = REACH.match(/\nfunction nameRank\(r\) \{[\s\S]*?\n\}/);
+  assert.ok(s && c && x && n && o && k, 'collapse() and everything it calls are still there');
   // eslint-disable-next-line no-new-func
-  return new Function(`${s[0].replace('export ', '')}\n${c[0]}\n${x[0]}\n${n[0]}\nreturn collapse;`)();
+  return new Function(`${s[0].replace('export ', '')}\n${c[0]}\n${x[0]}\n${n[0]}${o[0]}${k[0]}\n`
+                      + 'return collapse;')();
 }
+
+test('SCDNR names the landing; Google names whatever is nearest to a point', () => {
+  // The live regression, on the Lower Saluda. These two are 29 m apart, so merging them is
+  // right -- but the nearer row carried Google's label and the one it absorbed carried SCDNR's
+  // name for the landing itself, which is also what Ryan's curated list calls it. Arrival order
+  // silently renamed Hope Ferry to J. B. Barker Boat Landing.
+  const collapse = loadCollapse();
+  const out = collapse([
+    { name: 'J. B. Barker Boat Landing', lat: 34.0459994, lon: -81.1909635,
+      water_m: 13418, src: ['osm', 'places'] },
+    { name: 'Hope Ferry', lat: 34.045998, lon: -81.191278, water_m: 13443, src: ['dnr'] },
+  ]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].name, 'Hope Ferry');
+  assert.equal(out[0].water_m, 13418, 'the nearest water distance still wins -- only the name moved');
+});
+
+test("and Ryan's own correction beats the state agency", () => {
+  const collapse = loadCollapse();
+  const out = collapse([
+    { name: 'WT Billy Tolar (US 378)', lat: 33.94721, lon: -80.62891, water_m: 25,
+      src: ['dnr', 'ryan'] },
+    { name: 'WT Billy Tolar (US 378)', lat: 33.94727, lon: -80.62756, water_m: 25,
+      src: ['osm', 'places', 'ryan'] },
+  ]);
+  // Both records are in the overrides file, so both carry the one name -- and THAT is what
+  // merges them, 120 m apart, through sameNamedPlace(). Naming the duplicate is how it is
+  // retired; there is no rule anywhere about these two coordinates.
+  assert.equal(out.length, 1, 'one ramp at hwy 378, and he said so');
+  assert.equal(out[0].name, 'WT Billy Tolar (US 378)');
+});
+
+test('an override on only ONE of a pair does not merge them, and says so by not lying', () => {
+  // The first cut of the test above named only the OSM record and expected one row. Two rows is
+  // correct: 120 m is past samePlace, and two different names are not the same landing as far as
+  // anything here can tell. A correction has to name BOTH records, which is why the overrides
+  // file carries both positions.
+  const collapse = loadCollapse();
+  const out = collapse([
+    { name: 'WT -Billy- Tolar', lat: 33.94721, lon: -80.62891, water_m: 25, src: ['dnr'] },
+    { name: 'WT Billy Tolar (US 378)', lat: 33.94727, lon: -80.62756, water_m: 25,
+      src: ['osm', 'places', 'ryan'] },
+  ]);
+  assert.equal(out.length, 2);
+});
+
+test('a Google name still fills a blank -- it is only outranked, never ignored', () => {
+  const collapse = loadCollapse();
+  const out = collapse([
+    { name: null, lat: 33.5, lon: -80.5, water_m: 10, src: ['osm'] },
+    { name: 'Poplar Creek Landing', lat: 33.50001, lon: -80.50001, water_m: 15,
+      src: ['osm', 'places'] },
+  ]);
+  assert.equal(out[0].name, 'Poplar Creek Landing');
+});
 
 test('one landing recorded three times under one name is one row', () => {
   // Cypress Gardens Boat Landing arrives as three OSM nodes spread over 24 m, and C Alex Harvin
