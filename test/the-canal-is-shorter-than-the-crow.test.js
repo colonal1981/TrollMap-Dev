@@ -107,6 +107,32 @@ test('two real ramps on one stretch of bank stay two rows', () => {
   assert.equal(out.length, 2);
 });
 
+test('the Plan tab appends the reach list on EVERY water, not just the curated six', () => {
+  // Ryan: "it did not hit the plan tab at all... i think this goes back to the 6 rivers that
+  // were hard coded way back when". He was right. The append sat inside `if(curated){...return}`,
+  // so 51 rivers and every lake reached the access-index branch below it and got none. Read out
+  // of the running app before the fix: Great Pee Dee held 32 reachable landings in the cache and
+  // showed 0; the Congaree, curated, showed 15.
+  const fn = PLAN.slice(PLAN.indexOf('export function populatePlanRampDropdown'));
+  const body = fn.slice(0, fn.indexOf('\ndocument.getElementById(\'planLake\')'));
+  assert.equal((body.match(/launchReachFor\(waterbodyName\)/g) || []).length, 1,
+               'one place asks for the reach list, not one per branch');
+  const curatedAt = body.indexOf('if(curated){');
+  const defAt = body.indexOf('const appendReach =');
+  assert.ok(defAt >= 0 && defAt < curatedAt,
+            'appendReach() is defined BEFORE the branches, so both can reach it');
+  // The definition reads `const appendReach = (placed) =>`, so it is not one of these: this
+  // counts CALLS, and there must be exactly two -- the curated branch and the access index.
+  assert.equal((body.match(/appendReach\(/g) || []).length, 2,
+               'called from both branches -- the curated one and the index one');
+  // The access-index branch is the one that was missing it, and it is the one every lake and
+  // the other 51 rivers take. Its call must come after the options it appends to.
+  const keptAt = body.indexOf('kept.forEach(');
+  const lastCall = body.lastIndexOf('appendReach(');
+  assert.ok(keptAt >= 0 && lastCall > keptAt,
+            'the access-index branch appends the reach list after its own rows');
+});
+
 test('the loader collapses before it caches, so both dropdowns get the same rows', () => {
   assert.match(REACH, /got\s*=\s*collapse\(d\.landings\)/,
                'launchReach() collapses the landings it caches');
@@ -155,14 +181,18 @@ test('the coordinates ride on the option, or the plan has no launch point', () =
   assert.match(block.slice(0, 700), /opt\.dataset\.lat\s*=\s*r\.lat;\s*opt\.dataset\.lon\s*=\s*r\.lon;/);
 });
 
-test('a landing already hand-placed is not offered twice', () => {
-  const block = SRC.slice(SRC.indexOf('const placed = getPlanRiverRamps(curated)'));
+test('a landing already listed is not offered twice, on either branch', () => {
+  const block = SRC.slice(SRC.indexOf('const appendReach ='));
   // The question is asked through samePlace() and nowhere else, so the Plan tab and the map tab
   // cannot end up disagreeing about whether two records are one landing.
-  assert.match(block.slice(0, 900), /placed\.some\(p => samePlace\(p, r\)\)/);
+  assert.match(block.slice(0, 900), /placed\.some\(\(p\) => samePlace\(p, r\)\)/);
   // and the appended one joins the list it is checked against, so a second feed's copy of the
   // SAME landing does not become a second row
   assert.match(block.slice(0, 1200), /placed\.push\(r\)/);
+  // What `placed` starts as is the branch's own rows -- the hand-written six on one side, the
+  // merged access index on the other -- so neither branch can offer a ramp it already listed.
+  assert.match(SRC, /appendReach\(getPlanRiverRamps\(curated\)/);
+  assert.match(SRC, /appendReach\(kept\.filter\(/);
 });
 
 test('the fetch is claimed before it is awaited, so one tick cannot fire two', () => {

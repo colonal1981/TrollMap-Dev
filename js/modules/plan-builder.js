@@ -2594,6 +2594,32 @@ export function populatePlanRampDropdown(waterbodyName){
   if(!sel) return;
   const current = sel.value;
   sel.innerHTML = '<option value="">— select ramp / launch —</option>';
+  // THE LANDINGS THAT REACH THIS WATER, APPENDED TO WHICHEVER LIST CAME FIRST.
+  //
+  // This used to live inside the curated branch alone, so the Plan tab offered the reach
+  // landings on six hand-written rivers and on nothing else -- 51 rivers and every lake got
+  // none, while the map tab, which appends in one place for everything, had them everywhere.
+  // Ryan saw it from the outside and named the cause: *"it did not hit the plan tab at all...
+  // i think this goes back to the 6 rivers that were hard coded way back when"*. He was right.
+  // Measured before the fix: Great Pee Dee held 32 reachable landings in the cache and showed
+  // 0 of them; Saluda showed 0; the Congaree, curated, showed 15.
+  //
+  // One function called from both branches, so a third branch cannot quietly be the one
+  // without it. `placed` is whatever that branch already put in the list, and it is pushed to
+  // as we go because a second feed's copy of one landing is not a second row.
+  const appendReach = (placed) => {
+    launchReachFor(waterbodyName).forEach((r) => {
+      if (!Number.isFinite(r.lat) || !Number.isFinite(r.lon)) return;
+      // Same spot as one already listed? samePlace() is the one copy of that question.
+      if (placed.some((p) => samePlace(p, r))) return;
+      const opt = document.createElement('option');
+      opt.value = reachLabel(r); opt.textContent = opt.value;
+      opt.dataset.lat = r.lat; opt.dataset.lon = r.lon;
+      if (Number.isFinite(r.water_m)) opt.dataset.waterM = r.water_m;
+      sel.appendChild(opt);
+      placed.push(r);
+    });
+  };
   // THE CURATED LIST, WHERE THERE IS ONE -- a different question from "is this a river". Six
   // waters carry hand-placed launches no feed lists (three on the Wateree); the other 52 river
   // rows fall through to the access index below, same as every lake.
@@ -2618,19 +2644,8 @@ export function populatePlanRampDropdown(waterbodyName){
     // away, because SCDNR files it under Lake Marion. Appended rather than merged into the
     // list above so the hand-placed names stay first and keep their exact spelling -- 2026-09-17
     // cost a whole river plan to a select being handed a name no option held.
-    const placed = getPlanRiverRamps(curated)
-      .filter(r => Number.isFinite(r.lat) && Number.isFinite(r.lon));
-    launchReachFor(waterbodyName).forEach(r=>{
-      if (!Number.isFinite(r.lat) || !Number.isFinite(r.lon)) return;
-      // Same spot as one already listed? samePlace() is the one copy of that question.
-      if (placed.some(p => samePlace(p, r))) return;
-      const opt=document.createElement('option');
-      opt.value = reachLabel(r); opt.textContent = opt.value;
-      opt.dataset.lat = r.lat; opt.dataset.lon = r.lon;
-      if (Number.isFinite(r.water_m)) opt.dataset.waterM = r.water_m;
-      sel.appendChild(opt);
-      placed.push(r);          // a second feed's copy of the same landing is not a second row
-    });
+    appendReach(getPlanRiverRamps(curated)
+      .filter(r => Number.isFinite(r.lat) && Number.isFinite(r.lon)));
     if(current) sel.value = current;
     return;
   }
@@ -2707,6 +2722,7 @@ export function populatePlanRampDropdown(waterbodyName){
     if (Number.isFinite(point.lon)) opt.dataset.lon = point.lon;
     sel.appendChild(opt);
   });
+  appendReach(kept.filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lon)));
   if(current) sel.value = current;
 }
 
