@@ -28,6 +28,7 @@
 
 import { CF_WORKER_URL } from '../core/state.js';
 import { resolveR2Key } from './lake-keys.js';
+import { registryLoader } from './registry-loader.js';
 
 // r2Key -> landings[], or null while a fetch is in flight. A water with no launches.json caches
 // [] and is never asked again, which is the normal case for most packs.
@@ -249,4 +250,58 @@ function sameNamedPlace(a, b) {
 function isClosed(r) {
   return ['private', 'customers', 'permit', 'no', 'residents']
     .includes(String((r && r.access) || '').toLowerCase());
+}
+
+/**
+ * ── RYAN'S OWN NAMES, WHERE THE LIVE FEED GOT THERE FIRST ───────────────────────────────────────
+ *
+ * `registry/_launch_name_overrides.json` is his corrections, keyed by position, and until now they
+ * only ever reached the app through `launches.json` -- the reach list. That is half the landings.
+ *
+ * The two dropdowns build their list from the LIVE state feed first (access-index.js, the Worker's
+ * /ramps and /paddle) and then append the reach landings that feed does not already carry. So an
+ * override on a landing the state also files is on the row that gets SKIPPED, and the dropdown
+ * keeps the agency's name. Measured on Lake Marion the day it was found: he had said Stumphole
+ * Landing, Pack's Landing, Taw Caw Creek Boat Ramp and Taw Caw main lake ramp, and the list still
+ * read Calhoun Subdivision, Rimini, Taw Caw Park and Taw Caw Creek -- about 20 of his corrections,
+ * every one of them on a landing he actually launches from, which is why the state has it too.
+ *
+ * SO THE RENAME HAPPENS WHERE THE INDEX IS BUILT, NOT AT EACH LABEL. access-index.js calls
+ * primeLaunchNames() once and then renames through ryanName(), so the Plan tab, the map tab, the
+ * research engine and Smart Plan all see the same name -- rather than two label sites being
+ * patched and the other readers quietly keeping the feed's spelling.
+ *
+ * NAMES ONLY, NEVER THE DROPS. A `drop: true` in that file retires an OSM slipway node that is not
+ * a launch; the access index holds state-agency rows, and deleting one of those because an OSM node
+ * ten metres away was dropped would remove a real ramp on the strength of a different record.
+ */
+const LAUNCH_NAMES = registryLoader(
+  '/chartpacks/_registry/_launch_name_overrides.json',
+  (b) => b && b.names && typeof b.names === 'object' && b.names,
+);
+
+/** Read the overrides once. Safe to call repeatedly; a failure is silence, as in registry-loader. */
+export function primeLaunchNames(worker) {
+  return LAUNCH_NAMES.prime({ worker: worker || CF_WORKER_URL });
+}
+
+/**
+ * What HE calls the landing at this position, or '' when he has not said.
+ *
+ * Same 40 m as samePlace(), because it is the same question: is the row on the screen this landing.
+ * An entry carrying `drop` and no `name` is not a rename and is passed over.
+ */
+export function ryanName(lat, lon) {
+  const names = (LAUNCH_NAMES.get() || {}).names;
+  if (!names || !Number.isFinite(lat) || !Number.isFinite(lon)) return '';
+  for (const key of Object.keys(names)) {
+    const rec = names[key];
+    if (!rec || !rec.name) continue;
+    const parts = String(key).split(',');
+    const la = Number(parts[0]);
+    const lo = Number(parts[1]);
+    if (!Number.isFinite(la) || !Number.isFinite(lo)) continue;
+    if (Math.abs(la - lat) < 0.0004 && Math.abs(lo - lon) < 0.0004) return String(rec.name);
+  }
+  return '';
 }

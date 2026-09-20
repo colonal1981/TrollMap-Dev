@@ -44,6 +44,7 @@ const PLAN  = read('js', 'modules', 'plan-builder.js');       // Plan tab dropdo
 const MAP   = read('js', 'modules', 'lake-ramp-select.js');   // map tab dropdown
 const MAP2  = MAP;                                            // named for the assertions below
 const GEN   = read('Scripts', 'build_ramp_reach.py');         // the generator that writes the file
+const IDX   = read('js', 'data', 'access-index.js');          // the live-feed list both tabs start from
 const SRC = PLAN;
 
 // reachLabel() is module-private, so lift it out of the source and run the real thing rather
@@ -69,6 +70,14 @@ function loadListingAt(){
   // eslint-disable-next-line no-new-func
   return new Function(`${s[0].replace('export ', '')}\n${a[0].replace('export ', '')}\n`
                       + 'return listingAt;')();
+}
+
+function loadRyanName(body){
+  const m = REACH.match(/export function ryanName\(lat, lon\) \{[\s\S]*?\n\}/);
+  assert.ok(m, 'ryanName() is still in js/data/launch-reach.js');
+  // eslint-disable-next-line no-new-func
+  return new Function('BODY',
+    `const LAUNCH_NAMES = { get: () => BODY }; ${m[0].replace('export ', '')}; return ryanName;`)(body);
 }
 
 function loadCollapse(){
@@ -504,4 +513,46 @@ test('the generator carries the word, and only the two words that mean anything'
                'the restrictive word wins a disagreement in the generator too');
   assert.match(GEN, /'listing': rec\.get\('listing'\) or None,/,
                'and it reaches launches.json, or none of the above matters');
+});
+
+test('his own names reach the list the live state feed built, not just the reach list', () => {
+  // The gap this closes, measured on Lake Marion: he had said Stumphole Landing, Pack's Landing,
+  // Taw Caw Creek Boat Ramp and Taw Caw main lake ramp, and the picker still read Calhoun
+  // Subdivision, Rimini, Taw Caw Park and Taw Caw Creek -- because his overrides only ever
+  // travelled in launches.json, and that is the list APPENDED to the live feed rather than the
+  // list itself. A correction on a landing SCDNR also files sat on the row both tabs skip.
+  const ryanName = loadRyanName({ names: {
+    '33.57890,-80.53166': { name: 'Stumphole Landing' },
+    '33.53540,-80.33168': { name: 'Taw Caw Creek Boat Ramp' },
+    '34.30607,-81.35785': { drop: true },      // a retired OSM node -- not a rename
+  } });
+  assert.equal(ryanName(33.5789, -80.53166), 'Stumphole Landing');
+  // SCDNR's own row for that landing is 23 m away and inside the 40 m, so it takes his name too.
+  assert.equal(ryanName(33.578893, -80.531664), 'Stumphole Landing');
+  assert.equal(ryanName(33.5354, -80.33168), 'Taw Caw Creek Boat Ramp');
+  // 155 m south is the OTHER Taw Caw ramp and must not be swept up by it.
+  assert.equal(ryanName(33.53414, -80.33107), '');
+  // A drop is not a name: the access index holds state-agency rows, and deleting one because an
+  // OSM slipway ten metres away was retired would remove a real ramp on another record's say-so.
+  assert.equal(ryanName(34.30607, -81.35785), '');
+  assert.equal(ryanName(NaN, NaN), '');
+});
+
+test('the rename happens once, where the index is built, and not at each label', () => {
+  // Two label sites patched separately would leave the research engine and Smart Plan reading the
+  // feed's spelling while the dropdown showed his. One call, on the built index, before the name
+  // list is rebuilt -- so every reader of byLake sees the same name.
+  assert.match(IDX, /import \{ primeLaunchNames, ryanName \} from '\.\/launch-reach\.js';/);
+  assert.equal((IDX.match(/ryanName\(/g) || []).length, 1, 'asked in one place');
+  assert.equal((IDX.match(/primeLaunchNames\(/g) || []).length, 1, 'read once');
+  // lastIndexOf, not indexOf: `index.lakeNames` is sorted three times in this file and the two
+  // earlier ones are the sorts the "rebuild the name list LAST" comment exists because of. I
+  // anchored on the first and the assertion failed for the right reason.
+  const at = IDX.indexOf('primeLaunchNames(getWorkerBase())');
+  const rebuild = IDX.lastIndexOf('index.lakeNames = [...index.byLake.keys()]');
+  const manual = IDX.indexOf('for (const ramp of COASTAL_MANUAL_RAMPS)');
+  assert.ok(at > 0 && rebuild > at, 'renamed before the pickable name list is rebuilt');
+  assert.ok(manual > 0 && at > manual, 'and after every merge, so nothing added later keeps a feed name');
+  // and the 40 m rule has one home
+  assert.doesNotMatch(IDX, /0\.0004/, 'access-index does not carry a second copy of the 40 m rule');
 });

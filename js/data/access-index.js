@@ -30,6 +30,7 @@ import { COASTAL_ZONES } from './coastal-zones.js';
 import { loadLakeRegistry, filterLakes, accessPointsFor, getLoadedRegistry } from './lake-registry.js';
 import { registerR2Key } from './lake-keys.js';
 import { setLiveAccessSource } from './water-filter.js';
+import { primeLaunchNames, ryanName } from './launch-reach.js';
 
 // Manual coastal ramps not in DNR ArcGIS feed — add here when a known
 // kayak/small-boat launch is missing from the official database.
@@ -691,6 +692,33 @@ async function buildAccessIndex() {
       marker: '🛶',
       meta: { note: ramp.note },
     });
+  }
+
+  // ── HIS OWN NAMES, LAST, OVER EVERY FEED ──────────────────────────────────────────────────
+  //
+  // registry/_launch_name_overrides.json reached the app only through launches.json until now, and
+  // that is the list this index is APPENDED to rather than the list it is -- so a correction on a
+  // landing the state agency also files sat on the row both dropdowns skip. Measured on Lake Marion
+  // the day it was found: he had said Stumphole Landing, Pack's Landing, Taw Caw Creek Boat Ramp
+  // and Taw Caw main lake ramp, and the picker still read Calhoun Subdivision, Rimini, Taw Caw Park
+  // and Taw Caw Creek.
+  //
+  // Renamed HERE, once, rather than at the two label sites, so the research engine and Smart Plan
+  // read the same name the dropdown shows. It runs after every merge and before the name list is
+  // rebuilt. The lookup and the 40 m it matches on live in js/data/launch-reach.js beside
+  // samePlace, because it is the same question about the same file.
+  try {
+    await primeLaunchNames(getWorkerBase());
+    let renamed = 0;
+    for (const list of index.byLake.values()) {
+      for (const item of list) {
+        const mine = ryanName(item.lat, item.lon);
+        if (mine && mine !== item.name) { item.name = mine; renamed++; }
+      }
+    }
+    if (renamed) console.info(`[access-index] applied ${renamed} of Ryan's own launch names`);
+  } catch (e) {
+    console.warn('[access-index] launch-name overrides skipped:', e?.message || e);
   }
 
   // Rebuild the name list LAST. The earlier sort ran before the registry and the manual
