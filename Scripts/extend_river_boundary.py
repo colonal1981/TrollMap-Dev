@@ -121,6 +121,7 @@ import sys
 
 from shapely.geometry import LineString, Polygon, MultiPolygon, shape, mapping
 from shapely.ops import transform as shapely_transform
+from shapely.ops import unary_union
 from shapely.geometry import Point
 
 ACRES_PER_M2 = 1.0 / 4046.8564224
@@ -355,7 +356,17 @@ def main():
               % (dropped, 'off-line piece(s) dropped' if a.into
                  else 'already inside the boundary'))))
 
-    merged = MultiPolygon(list(mine.geoms) + list(added.geoms))
+    # DISSOLVED, NOT CONCATENATED. A boundary is read by half a dozen tools and several of them
+    # take it at face value: laying the added polygons beside the old ones leaves parts that
+    # overlap, which is an INVALID MultiPolygon under OGC rules, and shapely will answer
+    # questions about it without complaining. Measured on congaree_river the first time this
+    # ran, 2026-09-20: 15,503 acres as written, 10,732 after buffer(0) -- and
+    # build_river_centrelines came back with 37.0 km of river where there are 162.9, with the
+    # snap cap falling 480 m to 405. The union's edges are still every bit as real; it is the
+    # same edges with the overlaps resolved.
+    merged = unary_union(list(mine.geoms) + list(added.geoms))
+    if merged.geom_type == 'Polygon':
+        merged = MultiPolygon([merged])
     nf, nl = inside_span(line, station_m, merged)
     # The acreage above is the polygons' OWN area, which double-counts whatever already overlapped.
     # This is what the boundary actually becomes, and it is the number to quote.
