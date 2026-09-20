@@ -141,6 +141,31 @@ def access_points(registry):
                 ac = r.get('access')
                 if ac and not rec['access']:
                     rec['access'] = str(ac)
+
+    # A NAME GOOGLE KNEW AND NO FEED DID.
+    #
+    # name_launches_from_places.py asks Google Nearby Search what is at a landing nobody named
+    # and writes the answers here. It is read LAST and only fills a blank: a name from SCDNR or
+    # OSM is a name somebody chose for that landing, and Google's label for the car park it sits
+    # in does not get to overwrite it. Only `accepted` records count -- the file also holds
+    # unaccepted SUGGESTIONS, which are for a human to read and are not names.
+    p = os.path.join(registry, '_place_names.json')
+    if os.path.isfile(p):
+        named = 0
+        for key, r in (load_json(p).get('places') or {}).items():
+            if not r.get('accepted') or not r.get('name'):
+                continue
+            try:
+                la, lo = (float(v) for v in key.split(','))
+            except ValueError:
+                continue
+            rec = out.get((round(la, 5), round(lo, 5)))
+            if rec is not None and not rec['name']:
+                rec['name'] = str(r['name'])
+                rec['src'].add('places')
+                named += 1
+        if named:
+            print('names from Google Places: %d' % named)
     return out
 
 
