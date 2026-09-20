@@ -166,6 +166,37 @@ def access_points(registry):
                 named += 1
         if named:
             print('names from Google Places: %d' % named)
+
+    # AND RYAN'S OWN CORRECTIONS, WHICH BEAT EVERY FEED.
+    #
+    # He fishes these waters and SCDNR does not. Read last and it OVERWRITES rather than filling
+    # a blank, because the cases that need it are exactly the ones where a feed is confidently
+    # wrong: *"Dam Boat dock is buckhill landing which is on the lake not the river"*.
+    #
+    # Naming two records the same thing is also how a duplicate is retired -- collapse() in
+    # js/data/launch-reach.js folds two rows sharing a name within 250 m into one, so *"1 ramp at
+    # hwy 378 on the wateree"* is answered by giving both records the one name rather than by a
+    # rule about those two coordinates.
+    p = os.path.join(registry, '_launch_name_overrides.json')
+    if os.path.isfile(p):
+        fixed = 0
+        for key, r in (load_json(p).get('names') or {}).items():
+            nm = (r or {}).get('name')
+            if not nm:
+                continue
+            try:
+                la, lo = (float(v) for v in key.split(','))
+            except ValueError:
+                continue
+            rec = out.get((round(la, 5), round(lo, 5)))
+            if rec is None:
+                print('!! override at %s matches no landing -- check the position' % key)
+                continue
+            rec['name'] = str(nm)
+            rec['src'].add('ryan')
+            fixed += 1
+        if fixed:
+            print("Ryan's own corrections applied: %d" % fixed)
     return out
 
 

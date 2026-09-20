@@ -64,10 +64,62 @@ function loadCollapse(){
   const s = REACH.match(/export function samePlace\(a, b\) \{[\s\S]*?\n\}/);
   const c = REACH.match(/\nfunction collapse\(rows\) \{[\s\S]*?\n\}/);
   const x = REACH.match(/\nfunction isClosed\(r\) \{[\s\S]*?\n\}/);
-  assert.ok(s && c && x, 'samePlace(), collapse() and isClosed() are in js/data/launch-reach.js');
+  const n = REACH.match(/\nfunction sameNamedPlace\(a, b\) \{[\s\S]*?\n\}/);
+  assert.ok(s && c && x && n, 'samePlace(), sameNamedPlace(), collapse() and isClosed() are there');
   // eslint-disable-next-line no-new-func
-  return new Function(`${s[0].replace('export ', '')}\n${c[0]}\n${x[0]}\nreturn collapse;`)();
+  return new Function(`${s[0].replace('export ', '')}\n${c[0]}\n${x[0]}\n${n[0]}\nreturn collapse;`)();
 }
+
+test('one landing recorded three times under one name is one row', () => {
+  // Cypress Gardens Boat Landing arrives as three OSM nodes spread over 24 m, and C Alex Harvin
+  // III Landing as three. samePlace collapses at 40 m; across the 355 packs there are 54 name
+  // groups spread WIDER than that, worth 66 rows that are not a second landing.
+  const collapse = loadCollapse();
+  const out = collapse([
+    { name: 'Cypress Gardens Boat Landing', lat: 33.05760, lon: -79.95788, water_m: 6 },
+    { name: 'Cypress Gardens Boat Landing', lat: 33.05766, lon: -79.95775, water_m: 16 },
+    { name: 'Cypress Gardens Boat Landing', lat: 33.05776, lon: -79.95786, water_m: 24 },
+  ]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].water_m, 6, 'and the nearest water distance is the one that survives');
+});
+
+test('the same ramp under one name 120 m apart is one row -- "1 ramp at hwy 378"', () => {
+  // Ryan: "1 ramp at hwy 378 on the wateree", where two feeds recorded two records 120 m apart.
+  // Giving both the one name in registry/_launch_name_overrides.json is what merges them; this
+  // is the half that does the merging.
+  const collapse = loadCollapse();
+  const out = collapse([
+    { name: 'WT -Billy- Tolar', lat: 33.94721, lon: -80.62891, water_m: 25 },
+    { name: 'WT -Billy- Tolar', lat: 33.94727, lon: -80.62756, water_m: 25 },
+  ]);
+  assert.equal(out.length, 1);
+});
+
+test('three ramps called "Boat Ramp" 29 km apart stay three ramps', () => {
+  // THE DISTANCE IS WHY THE NAME RULE IS SAFE. Google hands back "Boat Ramp" for ramps with no
+  // name of their own, and Richard B. Russell has three of them spread over 29 KILOMETRES.
+  // Merging on the name alone would silently delete two launches.
+  const collapse = loadCollapse();
+  const out = collapse([
+    { name: 'Boat Ramp', lat: 34.00, lon: -82.60, water_m: 25 },
+    { name: 'Boat Ramp', lat: 34.15, lon: -82.65, water_m: 25 },
+    { name: 'Boat Ramp', lat: 34.26, lon: -82.70, water_m: 25 },
+  ]);
+  assert.equal(out.length, 3);
+});
+
+test('two DIFFERENT names at the same spot are still one row, by position', () => {
+  // The position rule has to keep working: samePlace is checked first, so two feeds spelling one
+  // landing differently 10 m apart still collapse, and the name merge never gets asked.
+  const collapse = loadCollapse();
+  const out = collapse([
+    { name: 'Low Falls', lat: 33.632389, lon: -80.543511, water_m: 254 },
+    { name: 'Low Falls Landing', lat: 33.6323542, lon: -80.5432346, water_m: 254 },
+  ]);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].name, 'Low Falls');
+});
 
 test("a landing OSM says is private is not offered as a launch", () => {
   // Ryan asked the right question: "are they campgrounds that require a launch fee... are they

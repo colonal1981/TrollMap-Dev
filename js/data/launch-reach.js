@@ -114,13 +114,44 @@ function collapse(rows) {
   const union = (a, b) => [...new Set([...(a || []), ...(b || [])])].sort();
   for (const r of rows) {
     if (isClosed(r)) continue;
-    const hit = out.find((p) => samePlace(p, r));
+    const hit = out.find((p) => samePlace(p, r)) || out.find((p) => sameNamedPlace(p, r));
     if (!hit) { out.push({ ...r }); continue; }
     if (!hit.name && r.name) hit.name = r.name;
     hit.filed = union(hit.filed, r.filed);
     hit.src = union(hit.src, r.src);
   }
   return out;
+}
+
+/**
+ * Two rows carrying the SAME NAME, close enough that one landing wrote both.
+ *
+ * Position alone is not enough. Cypress Gardens Boat Landing arrives as three OSM nodes spread
+ * over 24 m, C Alex Harvin III Landing as three, Molly Creek Landing and Harry's Fish Camp and
+ * Bushy Park Boat Landing as two apiece -- some of them further apart than samePlace's 40 m, so
+ * the dropdown listed the same ramp two and three times over. Measured across the 355 packs: 54
+ * name groups spread wider than 40 m, 66 rows that are not a second landing.
+ *
+ * AND THE NAME ALONE IS NOT ENOUGH EITHER, WHICH IS WHY THERE IS STILL A DISTANCE. Google hands
+ * back "Boat Ramp" for ramps that have no name of their own, and Richard B. Russell has three of
+ * them spread over 29 KILOMETRES. Those are three different ramps that happen to share a label,
+ * and merging them would silently delete two launches. 250 m is comfortably past the widest
+ * genuine duplicate seen (a 24 m spread, or 120 m at the Wateree's Highway 378 ramp) and nowhere
+ * near the generic-name cases, which start at 142 m and run to 29 km -- so it is a gap in the
+ * data rather than a number somebody picked.
+ *
+ * This is also how a correction retires a duplicate: Ryan says *"1 ramp at hwy 378 on the
+ * wateree"* where two feeds recorded two, and giving both records the one name in
+ * registry/_launch_name_overrides.json merges them here, rather than needing a rule about those
+ * two coordinates.
+ */
+function sameNamedPlace(a, b) {
+  const an = String((a && a.name) || '').trim().toLowerCase();
+  const bn = String((b && b.name) || '').trim().toLowerCase();
+  if (!an || an !== bn) return false;
+  if (!Number.isFinite(a.lat) || !Number.isFinite(b.lat)) return false;
+  const cos = Math.cos(((a.lat + b.lat) / 2) * Math.PI / 180);
+  return Math.hypot((b.lon - a.lon) * 111320 * cos, (b.lat - a.lat) * 110540) <= 250;
 }
 
 /**
