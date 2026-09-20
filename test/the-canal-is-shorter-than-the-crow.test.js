@@ -63,10 +63,41 @@ function loadSamePlace(){
 function loadCollapse(){
   const s = REACH.match(/export function samePlace\(a, b\) \{[\s\S]*?\n\}/);
   const c = REACH.match(/\nfunction collapse\(rows\) \{[\s\S]*?\n\}/);
-  assert.ok(s && c, 'samePlace() and collapse() are still in js/data/launch-reach.js');
+  const x = REACH.match(/\nfunction isClosed\(r\) \{[\s\S]*?\n\}/);
+  assert.ok(s && c && x, 'samePlace(), collapse() and isClosed() are in js/data/launch-reach.js');
   // eslint-disable-next-line no-new-func
-  return new Function(`${s[0].replace('export ', '')}\n${c[0]}\nreturn collapse;`)();
+  return new Function(`${s[0].replace('export ', '')}\n${c[0]}\n${x[0]}\nreturn collapse;`)();
 }
+
+test("a landing OSM says is private is not offered as a launch", () => {
+  // Ryan asked the right question: "are they campgrounds that require a launch fee... are they
+  // public launches". OSM's leisure=slipway covers a dock ramp behind a house, and 198 rows
+  // across the 355 packs carry an access tag that says he may not use them -- 180 of those on
+  // Lake Murray and Charleston Harbor, unnamed, sitting at 0 m of water.
+  const collapse = loadCollapse();
+  const out = collapse([
+    { name: null, lat: 34.0196, lon: -81.43625, water_m: 0, access: 'private' },
+    { name: null, lat: 34.02, lon: -81.44365, water_m: 0, access: 'customers' },
+    { name: 'Abandon Boat Launch', lat: 35.96111, lon: -83.86583, water_m: 1504, access: 'no' },
+    { name: null, lat: 32.77923, lon: -79.95152, water_m: 0, access: 'permit' },
+    { name: 'Dreher Island', lat: 34.0900, lon: -81.3000, water_m: 25, access: 'yes' },
+  ]);
+  assert.deepEqual(out.map((r) => r.name), ['Dreher Island']);
+});
+
+test('an absent access tag is not a "no" -- silence keeps the landing', () => {
+  // 1,668 of the rows say nothing about access. The tag may only remove a landing it positively
+  // rules out, never one it has no opinion on, or the list loses most of what is on it.
+  const collapse = loadCollapse();
+  const out = collapse([
+    { name: 'Bates Bridge', lat: 33.753417, lon: -80.645129, water_m: 25 },
+    { name: 'Low Falls', lat: 33.632389, lon: -80.543511, water_m: 254, access: null },
+    { name: 'Rimini', lat: 33.659378, lon: -80.51505, water_m: 1801, access: '' },
+    { name: 'Somewhere', lat: 33.0, lon: -80.0, water_m: 50, access: 'permissive' },
+    { name: 'Elsewhere', lat: 33.1, lon: -80.1, water_m: 50, access: 'unknown' },
+  ]);
+  assert.equal(out.length, 5, 'no tag, null, empty, permissive and unknown all stay');
+});
 
 test('two feeds of one ramp become one row, and that row keeps the name', () => {
   // Cannons Creek, measured on the Congaree: the OSM record is unnamed and 26 m nearer by

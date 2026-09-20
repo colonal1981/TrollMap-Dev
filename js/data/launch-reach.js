@@ -113,6 +113,7 @@ function collapse(rows) {
   const out = [];
   const union = (a, b) => [...new Set([...(a || []), ...(b || [])])].sort();
   for (const r of rows) {
+    if (isClosed(r)) continue;
     const hit = out.find((p) => samePlace(p, r));
     if (!hit) { out.push({ ...r }); continue; }
     if (!hit.name && r.name) hit.name = r.name;
@@ -120,4 +121,29 @@ function collapse(rows) {
     hit.src = union(hit.src, r.src);
   }
   return out;
+}
+
+/**
+ * A LANDING THE FEED SAYS HE MAY NOT USE.
+ *
+ * OSM's `access` tag, carried through by build_ramp_reach.py. `leisure=slipway` covers a private
+ * dock ramp behind somebody's house exactly as much as a public landing, which is why Lake
+ * Murray and Charleston Harbor were full of unnamed ones sitting at 0 m of water. Measured
+ * across all 355 packs: 198 rows not freely public -- 180 private, 14 customers, 2 permit, 2
+ * `no`, and one of those named "Abandon Boat Launch" -- against 87 positively public and 1,668
+ * with no tag at all.
+ *
+ * FILTERED, NOT ANNOTATED, AND THAT IS A DELIBERATE EXCEPTION. The rule everywhere else in this
+ * file is Ryan's: *"Annotates reads like the better answer"*, and it holds for DISTANCE, which
+ * is his judgement to make in the boat. This is not that. "Somebody's driveway" is not a
+ * judgement about the day; a row he cannot use is a row he has to rule out every time he reads
+ * the list. He chose to drop them.
+ *
+ * AN ABSENT TAG IS NOT A NO. 1,668 rows say nothing about access and every one of them stays:
+ * the tag can only remove a landing it positively rules out, never one it simply has no opinion
+ * on. `permissive` and `unknown` stay for the same reason.
+ */
+function isClosed(r) {
+  return ['private', 'customers', 'permit', 'no', 'residents']
+    .includes(String((r && r.access) || '').toLowerCase());
 }
