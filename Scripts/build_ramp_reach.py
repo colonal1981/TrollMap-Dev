@@ -65,8 +65,17 @@ not sounded. It is already in the Congaree's OSM bucket and stays there; being a
 keeps that true. Reading USGS NHD flowlines as a second source for the CONNECTION question,
 with the chart still answering the DEPTH question, is the fix and is not done here.
 
-Rivers only so far: the walk needs a channel to start from and `centreline.geojson` is what
-provides it. A lake would seed from its own boundary instead.
+RIVERS SEED FROM THEIR LINE, LAKES FROM THEIR OWN WATER
+
+A river has a channel to start the walk from -- `centreline.geojson`, which is what a boat
+follows. A lake has no line, so it seeds from every cell of its OWN charted water: the depth
+areas inside its boundary. Both then answer the same question, which is the one that matters --
+can a boat get from this landing to this water, and how far is it.
+
+Ryan asked for the second half by name: *"the part that is missing is that the river ramps do
+not show as ramps the lakes can use"*. Bates Bridge is on the Congaree and 22.5 km of water from
+Lake Marion; whether that is a Marion launch is his call in the boat, and the number is how he
+makes it.
 """
 import argparse
 import json
@@ -119,8 +128,8 @@ def access_points(registry):
     return out
 
 
-def river_water(extract, registry, slug, bbox):
-    """Every zoom-0 depth-area polygon near this river, off the tiles it sits on.
+def water_polys(extract, registry, slug, bbox):
+    """Every zoom-0 depth-area polygon near this water, off the tiles it sits on.
 
     zoom 0 only: the coarser levels are redraws of the same water, not extra survey, and a
     generalised polygon closes the very gaps -- a canal mouth, a creek neck -- this walk is for.
@@ -213,21 +222,73 @@ def walk(polys, line_pts, bbox, cell=CELL_DEG):
     return dist, nx, ny, w0, s0, step, sum(wet)
 
 
+def boundary_rings(registry, slug):
+    """Every ring of a water's registry boundary, whatever shape the file is written in."""
+    p = os.path.join(registry, 'boundaries', slug + '.geojson')
+    if not os.path.isfile(p):
+        return []
+    gj = load_json(p)
+    feats = gj.get('features') if isinstance(gj, dict) and gj.get('features') else [gj]
+    out = []
+    for f in feats:
+        g = (f or {}).get('geometry') or f
+        if not g:
+            continue
+        if g.get('type') == 'Polygon':
+            out.append(g['coordinates'])
+        elif g.get('type') == 'MultiPolygon':
+            out.extend(g['coordinates'])
+    return out
+
+
 def reach_for(slug, args, points):
-    from shapely.geometry import LineString
     cl_p = os.path.join(args.chartpack, slug, 'centreline.geojson')
-    if not os.path.isfile(cl_p):
-        return None, 'no centreline'
-    feat = (load_json(cl_p).get('features') or [None])[0]
-    if not feat:
-        return None, 'empty centreline'
-    pts = feat['geometry']['coordinates']
-    st = (feat.get('properties') or {}).get('station_m') or []
+    pts, st, kind = [], [], None
+    if os.path.isfile(cl_p):
+        feat = (load_json(cl_p).get('features') or [None])[0]
+        if feat:
+            pts = feat['geometry']['coordinates']
+            st = (feat.get('properties') or {}).get('station_m') or []
+            kind = 'centreline'
+    if not pts:
+        # A LAKE HAS NO LINE. Its own boundary is what says where it is, and the seed is the
+        # charted water inside it -- so the walk starts from the whole lake rather than from a
+        # channel down the middle of it, and a landing's distance is to the nearest water it
+        # can actually reach.
+        rings = boundary_rings(args.registry, slug)
+        if not rings:
+            return None, 'no centreline and no boundary'
+        # boundary_rings() returns one RING LIST per polygon -- [outer, hole, hole...] -- so the
+        # flatten is two deep, not one. It was one, and min() got handed a ring.
+        pts = [tuple(q) for poly in rings for ring in poly for q in ring]
+        kind = 'boundary'
     xs = [p[0] for p in pts]; ys = [p[1] for p in pts]
     bbox = (min(xs) - MARGIN_DEG, min(ys) - MARGIN_DEG, max(xs) + MARGIN_DEG, max(ys) + MARGIN_DEG)
-    polys, nread = river_water(args.extract, args.registry, slug, bbox)
+    polys, nread = water_polys(args.extract, args.registry, slug, bbox)
     if not polys:
         return None, 'no charted water on its tiles'
+    if kind == 'boundary':
+        # Seeding on the RING alone would start the walk at the shoreline and make the middle of
+        # the lake the far end of it. Seed every water cell inside the boundary instead: on a
+        # lake, "how far to the water" is how far to the nearest part of it.
+        from shapely.geometry import Polygon as _P
+        from shapely.ops import unary_union as _uu
+        try:
+            box_polys = [_P(r[0], r[1:]) for r in boundary_rings(args.registry, slug)
+                         if r and len(r[0]) >= 4]
+            box_polys = [g if g.is_valid else g.buffer(0) for g in box_polys]
+            own = _uu([g for g in box_polys if not g.is_empty])
+            seeds = []
+            for g in polys:
+                if g.intersects(own):
+                    c = g.intersection(own)
+                    for part in (c.geoms if hasattr(c, 'geoms') else [c]):
+                        if getattr(part, 'exterior', None) is not None:
+                            seeds.extend(list(part.exterior.coords))
+            if seeds:
+                pts = seeds
+        except Exception:
+            pass                 # fall back to the ring, which is still an answer
     dist, nx, ny, w0, s0, step, nwet = walk(polys, pts, bbox)
     got = []
     for (la, lo), rec in points.items():
@@ -255,10 +316,12 @@ def reach_for(slug, args, points):
                 key=lambda t: (pts[t][0] - lo) ** 2 + (pts[t][1] - la) ** 2)
         got.append({'name': rec['name'] or None, 'lat': rec['lat'], 'lon': rec['lon'],
                     'water_m': int(round(best * step)), 'straight_m': int(round(straight)),
-                    'station_m': (st[k] if k < len(st) else None),
+                    # Where on the river it comes in. A lake has no stations, and saying 0
+                    # would read as the top of something.
+                    'station_m': (st[k] if (kind == 'centreline' and k < len(st)) else None),
                     'filed': sorted(rec['filed']), 'src': sorted(rec['src'])})
     got.sort(key=lambda r: r['water_m'])
-    return {'slug': slug, 'cell_m': round(step, 1), 'water_cells': nwet,
+    return {'slug': slug, 'cell_m': round(step, 1), 'water_cells': nwet, 'seed': kind,
             'polygons': len(polys), 'features_read': nread, 'landings': got}, None
 
 
@@ -268,8 +331,9 @@ def main():
     ap.add_argument('--registry', required=True)
     ap.add_argument('--extract', required=True)
     ap.add_argument('--chartpack', required=True)
-    ap.add_argument('--only', help='one slug, or a comma list. Default: every river with a '
-                                   'centreline in the chartpack')
+    ap.add_argument('--only', help='one slug, or a comma list. Default: every pack with a '
+                                   'centreline (rivers). Name a lake explicitly and it seeds '
+                                   'from its own charted water instead.')
     ap.add_argument('--out', help='default registry/_ramp_reach.json')
     ap.add_argument('--go', action='store_true', help='write; without it nothing is touched')
     a = ap.parse_args()
@@ -300,16 +364,37 @@ def main():
             continue
         out[slug] = res
         gained = [r for r in res['landings'] if slug not in r['filed']]
-        print('   %-30s %5d water cells, %3d landings reachable, %3d of them filed elsewhere'
-              % (slug, res['water_cells'], len(res['landings']), len(gained)))
+        print('   %-30s %-10s %6d water cells, %3d landings reachable, %3d filed elsewhere'
+              % (slug, res['seed'], res['water_cells'], len(res['landings']), len(gained)))
         for r in gained[:6]:
             print('        %7d m by water (%6d straight)  %-32s filed %s'
                   % (r['water_m'], r['straight_m'], (r['name'] or '(unnamed)')[:32], r['filed']))
 
-    doc = {'_note': 'build_ramp_reach.py -- water distance from a landing to a river channel. '
-                    'ADDITIVE: nothing here removes a landing from the water it is filed under.',
-           'cell_m': round(CELL_DEG * 110540, 1), 'waters': out, 'skipped': skipped}
     dest = a.out or os.path.join(a.registry, '_ramp_reach.json')
+    # MERGE, NEVER REPLACE. A run is almost always `--only` a handful of waters -- 57 rivers at
+    # two or three minutes each is hours, so it gets done in batches -- and writing the whole
+    # file from one batch would delete every water the batch did not measure. build_all_chartpacks
+    # learned this the same way and says so out loud: "merging into existing report".
+    waters, skips, carried = dict(out), dict(skipped), 0
+    if os.path.isfile(dest):
+        try:
+            prev = load_json(dest)
+            for slug, rec in (prev.get('waters') or {}).items():
+                if slug not in waters:
+                    waters[slug] = rec
+                    carried += 1
+            for slug, why in (prev.get('skipped') or {}).items():
+                if slug not in waters and slug not in skips:
+                    skips[slug] = why
+        except Exception as e:
+            print('!! %s is unreadable (%s) -- refusing to overwrite it with this run alone'
+                  % (dest, e))
+            return 2
+    if carried:
+        print('\nmerging into the existing index: %d water(s) carried forward untouched' % carried)
+    doc = {'_note': 'build_ramp_reach.py -- water distance from a landing to a water. ADDITIVE: '
+                    'nothing here removes a landing from the water it is filed under.',
+           'cell_m': round(CELL_DEG * 110540, 1), 'waters': waters, 'skipped': skips}
     # TWO WRITES, BECAUSE TWO READERS. The registry index is the build-time record, the same
     # shape every other _*.json in there has. `chartpack/<slug>/launches.json` is what the APP
     # reads: it already fetches per-water files out of the pack by name -- centreline.geojson,
