@@ -38,15 +38,26 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SRC = fs.readFileSync(path.join(HERE, '..', 'js', 'modules', 'plan-builder.js'), 'utf8');
+const read = (...p) => fs.readFileSync(path.join(HERE, '..', ...p), 'utf8');
+const REACH = read('js', 'data', 'launch-reach.js');          // the one loader
+const PLAN  = read('js', 'modules', 'plan-builder.js');       // Plan tab dropdown
+const MAP   = read('js', 'modules', 'lake-ramp-select.js');   // map tab dropdown
+const SRC = PLAN;
 
 // reachLabel() is module-private, so lift it out of the source and run the real thing rather
 // than a copy that can drift away from it.
 function loadReachLabel(){
-  const m = SRC.match(/function reachLabel\(r\)\{[\s\S]*?\n\}/);
-  assert.ok(m, 'reachLabel() is still in plan-builder.js');
+  const m = REACH.match(/export function reachLabel\(r\) \{[\s\S]*?\n\}/);
+  assert.ok(m, 'reachLabel() is still in js/data/launch-reach.js');
   // eslint-disable-next-line no-new-func
-  return new Function(`${m[0]}; return reachLabel;`)();
+  return new Function(`${m[0].replace('export ', '')}; return reachLabel;`)();
+}
+
+function loadSamePlace(){
+  const m = REACH.match(/export function samePlace\(a, b\) \{[\s\S]*?\n\}/);
+  assert.ok(m, 'samePlace() is still in js/data/launch-reach.js');
+  // eslint-disable-next-line no-new-func
+  return new Function(`${m[0].replace('export ', '')}; return samePlace;`)();
 }
 
 test('a landing on the water shows no distance, because every ramp is on the bank', () => {
@@ -92,32 +103,80 @@ test('the coordinates ride on the option, or the plan has no launch point', () =
 
 test('a landing already hand-placed is not offered twice', () => {
   const block = SRC.slice(SRC.indexOf('const placed = getPlanRiverRamps(curated)'));
-  // 0.0004 deg is about 40 m: two feeds' copies of one ramp collapse, two ramps on one lot do not.
-  assert.match(block.slice(0, 900), /Math\.abs\(p\.lat - r\.lat\) < 0\.0004/);
-  assert.match(block.slice(0, 900), /Math\.abs\(p\.lon - r\.lon\) < 0\.0004/);
+  // The question is asked through samePlace() and nowhere else, so the Plan tab and the map tab
+  // cannot end up disagreeing about whether two records are one landing.
+  assert.match(block.slice(0, 900), /placed\.some\(p => samePlace\(p, r\)\)/);
   // and the appended one joins the list it is checked against, so a second feed's copy of the
   // SAME landing does not become a second row
   assert.match(block.slice(0, 1200), /placed\.push\(r\)/);
 });
 
 test('the fetch is claimed before it is awaited, so one tick cannot fire two', () => {
-  const block = SRC.slice(SRC.indexOf('function launchReachFor'));
-  const head = block.slice(0, 500);
-  assert.ok(head.indexOf('LAUNCH_REACH.set(key, null)') < head.indexOf('await fetch') ||
-            head.indexOf('await fetch') === -1,
-            'the map is claimed before the request goes out');
-  assert.match(block.slice(0, 1600), /lakeSel\.value === waterbodyName/,
-               'it only redraws if the user is still on that water');
+  const block = REACH.slice(REACH.indexOf('export function launchReach'));
+  const head = block.slice(0, 600);
+  assert.ok(head.indexOf('CACHE.set(key, null)') > -1
+            && head.indexOf('CACHE.set(key, null)') < head.indexOf('await fetch'),
+            'the cache is claimed before the request goes out');
+});
+
+test('BOTH dropdowns read the one loader -- this is the thing that was missing', () => {
+  // Ryan: "Just to confirm they show on both the plan and map tabs?" They did not: the first
+  // cut put the reach list in plan-builder only, and the map tab fills its own dropdown from
+  // the access index, which is the same name-first binding the reach list exists to get past.
+  for (const [name, src] of [['plan-builder', PLAN], ['lake-ramp-select', MAP]]) {
+    assert.match(src, /from ['"]\.\.\/data\/launch-reach\.js['"]/,
+                 `${name} imports the shared loader`);
+    assert.match(src, /launchReach\(/, `${name} actually calls it`);
+  }
+  // and neither one keeps a private copy of the label or the match
+  for (const [name, src] of [['plan-builder', PLAN], ['lake-ramp-select', MAP]]) {
+    assert.doesNotMatch(src, /function reachLabel\s*\(/, `${name} has no second copy of reachLabel`);
+    assert.doesNotMatch(src, /function samePlace\s*\(/, `${name} has no second copy of samePlace`);
+  }
+});
+
+test('the map tab appends AFTER the framing and the coastal refine', () => {
+  // A landing 8 miles up the Lower Saluda is a true answer to "can you reach the Congaree from
+  // here" and a wrong one to "where is this water". refineCoastalKey() picks a zone by which
+  // holds the most access points, and the framing fits the map around them when a water has no
+  // registry box -- so the reach list must not be in `accessPoints` while either runs.
+  const iRefine = MAP.indexOf('refineCoastalKey(selLakeName');
+  const iFit    = MAP.indexOf('accessPoints.map((p) => [p.lat, p.lon])');
+  const iAppend = MAP.indexOf('accessPoints = accessPoints.concat(extra)');
+  const iFill   = MAP.indexOf('// Populate access dropdown');
+  assert.ok(iRefine > 0 && iFit > 0 && iAppend > 0 && iFill > 0, 'found all four');
+  assert.ok(iAppend > iRefine, 'appended after the coastal refine');
+  assert.ok(iAppend > iFit, 'appended after the map framing');
+  assert.ok(iAppend < iFill, 'and before the dropdown is filled');
+});
+
+test('the map tab never substitutes -- a feed row keeps its own marker and source', () => {
+  const block = MAP.slice(MAP.indexOf('if (reach.length) {'));
+  assert.match(block.slice(0, 1200), /accessPoints\.some\(\(p\) => samePlace\(p, r\)\)/,
+               'a landing the feed already carries is skipped');
+  assert.match(block.slice(0, 1200), /accessPoints\.concat\(extra\)/,
+               'and the rest are concatenated, not assigned over');
 });
 
 test('there is no distance cutoff anywhere in the app half', () => {
-  // The decision was annotate, not filter. If a threshold ever appears here it is a choice
-  // nobody made -- "arbitrary numbers are an AI problem, not a fishing problem".
-  const from = SRC.indexOf('const LAUNCH_REACH = new Map()');
-  const to = SRC.indexOf('// THE ACCESS INDEX IS FOR EVERY WATER');
-  const region = SRC.slice(from, to);
-  assert.ok(from > 0 && to > from, 'found the reach region');
-  const compares = region.match(/water_m\s*[<>]=?\s*\d+/g) || [];
-  // The one comparison allowed is the on-the-water case in reachLabel, and it is on `m`.
-  assert.deepEqual(compares, [], 'no launch is hidden by its distance');
+  // The decision was annotate, not filter. If a threshold ever appears it is a choice nobody
+  // made -- "arbitrary numbers are an AI problem, not a fishing problem".
+  for (const [name, src] of [['launch-reach', REACH], ['plan-builder', PLAN], ['lake-ramp-select', MAP]]) {
+    const compares = src.match(/water_m\s*[<>]=?\s*\d+/g) || [];
+    assert.deepEqual(compares, [], `${name} hides no launch by its distance`);
+  }
+});
+
+test('samePlace collapses two feeds on one ramp and keeps two ramps a block apart', () => {
+  const samePlace = loadSamePlace();
+  // The two Low Falls records, 13 m apart, are one landing under two spellings.
+  assert.equal(samePlace({ lat: 33.63235, lon: -80.54323 }, { lat: 33.63223, lon: -80.54329 }), true);
+  // So are Bates Bridge and the record filed under wateree_river, 10 m apart -- which is the
+  // whole reason this collapses by POSITION and not by name. The 66 m in the reach table is each
+  // one's distance to the CENTRELINE, not to the other; I wrote this assertion backwards once
+  // and the test caught it.
+  assert.equal(samePlace({ lat: 33.75342, lon: -80.64513 }, { lat: 33.75339, lon: -80.64524 }), true);
+  // A landing 55 m away is a different landing: 0.0005 deg of latitude, just past the 40 m line.
+  assert.equal(samePlace({ lat: 33.63235, lon: -80.54323 }, { lat: 33.63285, lon: -80.54323 }), false);
+  assert.equal(samePlace({ lat: 33.63235, lon: -80.54323 }, null), false);
 });

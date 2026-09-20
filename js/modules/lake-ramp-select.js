@@ -23,6 +23,7 @@ import { waterZoneCandidates } from '../data/water-aliases.js';
 import { registryStats } from '../data/lake-registry.js';
 import { makePredicate } from '../data/water-filter.js';
 import { matchRampIndex } from '../utils/ramp-match.js';
+import { launchReach, reachLabel, samePlace } from '../data/launch-reach.js';
 // The picker question moved to js/data/water-picker.js -- see the note at its top for why it is
 // not in here. Re-exported so nothing that imported these from this module had to move.
 import { STATE_ORDER, TYPE_ORDER, pickerLabel, sortForDisplay, stateOf, typeOf,
@@ -260,6 +261,14 @@ async function onLakeChange(selLakeName) {
   const idx = await loadAccessIndex();
   let accessPoints = idx.byLake.get(selLakeName) || [];
 
+  // Start the reach fetch now so it is in flight while the map frames, but do NOT put the
+  // landings in `accessPoints` yet -- see where they are appended, below the framing.
+  const reach = launchReach(selLakeName, () => {
+    // Redraw once it lands, but only if the user is still on this water.
+    const cur = document.getElementById('lakeSelect');
+    if (!cur || cur.value === selLakeName) onLakeChange(selLakeName);
+  });
+
   // Which zone, when the name spans several. Eight DNR names do: there are three North
   // Rivers, two Wando Rivers, and an Intracoastal Waterway with landings in eight zones.
   // water-aliases.js can only offer a default (the zone with the most landings), and for the
@@ -343,6 +352,41 @@ async function onLakeChange(selLakeName) {
 // Load contours for this lake
   loadContourForLake(selLakeName);
   window.loadSupplementalForLake?.(selLakeName);
+
+  // AND EVERY LANDING THAT CAN REACH THIS WATER, whatever name it is filed under.
+  //
+  // `idx.byLake` is keyed by the state feed's waterbody NAME, so a landing SCDNR files under
+  // "Lake Marion" never appears on the Congaree however close it sits. launches.json in the
+  // pack answers the other question -- can a boat get from there to this water, and how far is
+  // it -- and Pack's Landing is 1,801 m of water from the Congaree along the canal Ryan fishes
+  // on the way in, against 2,367 in a straight line.
+  //
+  // THE SAME LIST THE PLAN TAB SHOWS. Both dropdowns read js/data/launch-reach.js now. The
+  // first cut put it only on the Plan tab and Ryan had to ask: *"Just to confirm they show on
+  // both the plan and map tabs?"*
+  //
+  // APPENDED HERE AND NOT ABOVE, deliberately. Two things upstream read `accessPoints` to
+  // decide something other than what goes in the dropdown: refineCoastalKey() picks a zone by
+  // which one holds the most of them, and the framing falls back to fitting the map around
+  // them when a water has no registry box. A landing 8 miles up the Lower Saluda is a true
+  // answer to "can you reach the Congaree from here" and a wrong one to "where is this water",
+  // so it arrives after both have had their say.
+  //
+  // Appended, never substituted: an access point the feed already carries keeps its own row,
+  // its own marker and its own source. Nothing is taken off the water it is filed under
+  // either -- Marion keeps Pack's.
+  if (reach.length) {
+    const extra = [];
+    for (const r of reach) {
+      if (!Number.isFinite(r.lat) || !Number.isFinite(r.lon)) continue;
+      if (accessPoints.some((p) => samePlace(p, r))) continue;
+      if (extra.some((p) => samePlace(p, r))) continue;   // two feeds, one landing, one row
+      extra.push({ name: reachLabel(r), lat: r.lat, lon: r.lon,
+                   typeLabel: 'reaches this water', marker: '\u{1F6F6}',
+                   sourcePath: 'launches.json', sourceState: '' });
+    }
+    if (extra.length) accessPoints = accessPoints.concat(extra);
+  }
 
   // Populate access dropdown
   if (!rampSel) return;

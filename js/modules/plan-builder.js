@@ -8,7 +8,7 @@
  * (the stats bar), and the lake/river dropdown population logic.
  */
 
-import { state, CF_WORKER_URL } from "../core/state.js";
+import { state } from "../core/state.js";
 import { esc } from "../utils/escape.js";
 import { planIssues } from "./plan-issues.js";
 import { lakeDbEntryFor, lakeRecordFor } from "../data/lake-registry.js";
@@ -20,6 +20,7 @@ import { landOnCoastalZone, focusRamp } from "../utils/viewport-cull.js";
 import { bucketWaters, STATE_ORDER, TYPE_ORDER, sortForDisplay,
          pickerLabel } from '../data/water-picker.js';
 import { resolveR2Key } from "../data/lake-keys.js";
+import { launchReach, reachLabel, samePlace } from "../data/launch-reach.js";
 import { advisoryRows } from "../data/fish-advisories.js";
 // The band is defined once, where the cue line that carries it is built.
 import { HAND_STEER_BAND_FT } from "./plan-tracks.js";
@@ -2575,40 +2576,17 @@ export async function populatePlanLakeDropdown(){
 // anywhere in here -- the list carries the distance and the choice gets made in the boat. The
 // only bound is the search window build_ramp_reach uses, and on the Congaree that window ends
 // inside a hole the data already had: nothing sits between 3,073 m and 6,044 m.
-const LAUNCH_REACH = new Map();   // r2Key -> landings[], or null while a fetch is in flight
-
+// The loader, the label and the position match all live in js/data/launch-reach.js, because the
+// map tab fills its own dropdown from lake-ramp-select.js and the first cut of this put the
+// reach list in only one of the two. Ryan: *"Just to confirm they show on both the plan and map
+// tabs?"* -- they did not. One module both import cannot drift the way two copies would.
 function launchReachFor(waterbodyName){
-  const key = resolveR2Key(waterbodyName);
-  if (!key) return [];
-  if (LAUNCH_REACH.has(key)) return LAUNCH_REACH.get(key) || [];
-  LAUNCH_REACH.set(key, null);        // claim it first: two calls in one tick must fetch once
-  (async () => {
-    let got = [];
-    try {
-      const r = await fetch(`${CF_WORKER_URL}/chartpacks/${encodeURIComponent(key)}/launches.json`);
-      if (r.ok) {
-        const d = await r.json();
-        if (Array.isArray(d && d.landings)) got = d.landings;
-      }
-    } catch (_) { /* a pack without one is the normal case, not an error */ }
-    LAUNCH_REACH.set(key, got);
+  return launchReach(waterbodyName, (_got, name) => {
     // Only redraw if the user is still on this water. Filling a dropdown for a water they have
     // already left is how a select ends up holding a value from somewhere else.
     const lakeSel = document.getElementById('planLake');
-    if (got.length && lakeSel && lakeSel.value === waterbodyName) populatePlanRampDropdown(waterbodyName);
-  })();
-  return [];
-}
-
-function reachLabel(r){
-  const m = Number(r && r.water_m);
-  if (!Number.isFinite(m)) return r && r.name ? r.name : '(unnamed launch)';
-  const nm = r.name || '(unnamed launch)';
-  // Under a tenth of a mile is ON the water -- every ramp sits on the bank, so a number there
-  // would be measuring the walk down the concrete and not the run out to the fish.
-  if (m < 160) return nm;
-  const mi = m / 1609.34;
-  return `${nm} — ${mi < 10 ? mi.toFixed(1) : Math.round(mi)} mi by water`;
+    if (lakeSel && lakeSel.value === name) populatePlanRampDropdown(name);
+  });
 }
 
 export function populatePlanRampDropdown(waterbodyName){
@@ -2644,9 +2622,8 @@ export function populatePlanRampDropdown(waterbodyName){
       .filter(r => Number.isFinite(r.lat) && Number.isFinite(r.lon));
     launchReachFor(waterbodyName).forEach(r=>{
       if (!Number.isFinite(r.lat) || !Number.isFinite(r.lon)) return;
-      // Same spot as one already listed? 0.0004 deg is about 40 m: two records of one ramp
-      // from two feeds collapse, two real ramps on one lot do not.
-      if (placed.some(p => Math.abs(p.lat - r.lat) < 0.0004 && Math.abs(p.lon - r.lon) < 0.0004)) return;
+      // Same spot as one already listed? samePlace() is the one copy of that question.
+      if (placed.some(p => samePlace(p, r))) return;
       const opt=document.createElement('option');
       opt.value = reachLabel(r); opt.textContent = opt.value;
       opt.dataset.lat = r.lat; opt.dataset.lon = r.lon;
