@@ -87,17 +87,42 @@ CLOSED = ('private', 'customers', 'permit', 'no', 'residents')
 # WORD BOUNDARIES, NOT SUBSTRINGS. Bare 'boat' matched "Better Boating - Irmo", a boat DEALER,
 # and it beat "Lake Murray Marina" 27 m away because it happened to be nearer. So 'boat' only
 # counts in the phrases that mean a launch, and every other word is matched whole.
+#
+# `marine` is a PHRASE and not a word, for the same reason. "Carroll Ashmore Campbell Marine
+# Complex" is the SCDNR facility Ryan pointed at -- *"the first 4 are basically the exact same
+# location"* -- and "Weed's Marine & Outdoor", 92 m off Lake Murray, is a shop. `marine complex`
+# takes the first and leaves the second.
 LAUNCH_RE = re.compile(
-    r'\bboat\s+(ramp|landing|launch|dock|slip)|'
-    r'\b(ramps?|landings?|launch|slipway|marina|dock|ferry|camp|campground|access|put[-\s]?in)\b',
+    r'\bboat\s+(ramp|landing|launch|dock|slip)|\bmarine\s+complex\b|'
+    r'\b(ramps?|landings?|launch|slipway|marina|dock|ferry|camp|campground|access|park|'
+    r'put[-\s]?in)\b',
     re.I)
 # Read first, and it wins: these are businesses that live at the water and are not the launch.
+# `parts`, `repair` and `store` are here because widening the radius to 150 m reached "Angel's
+# Landing RV Parts Store and RV Repair" -- which is at Angel's Landing and is not it.
 NOT_A_LAUNCH_RE = re.compile(
     r'\b(rentals?|charters?|guide\s+service|tackle|trailhead|restaurant|grill|'
-    r'realty|real\s+estate|dealer|marine\s+(sales|service))\b', re.I)
+    r'parts|repair|store|realty|real\s+estate|dealer|marine\s+(sales|service))\b', re.I)
 
-# How close Google's answer has to be before it is the same place rather than a neighbour.
-ACCEPT_M = 60
+# HOW FAR AWAY GOOGLE'S ANSWER CAN BE AND STILL BE THIS LANDING.
+#
+# 60 m was too tight, and Ryan found it by reading the refusals: four records at the Carroll
+# Ashmore Campbell Marine Complex, refused at 111 m and 122 m, and *"the first 4 are basically
+# the exact same location"*. A marina or a park is pinned at its entrance or its office, and its
+# ramps are spread out behind it -- so the distance from a ramp to its own facility's pin is
+# routinely over a hundred metres.
+#
+# Everything between 61 m and 150 m, read off the refusals: William Dennis Boat Landing at 62,
+# Jack's Creek Boat Ramp at 68, Dreher Island Boat Ramp at 75, Taw Caw Park at 78/84/90/99,
+# Cannon's Creek Public Access at 94, Bushy Park Boat Landing at 95, Poplar Creek Landing at
+# 107/110, Stumphole Landing at 107, Shull Island Boat Ramp at 144. Every one of them right.
+#
+# THE NAME IS WHAT MAKES 150 m SAFE, and the same window contains the proof: "Lovely Condo
+# w/pool, balcony, and lakeside view" at 109 m, "Georgetown Coastal Adventures" at 105, "Short
+# Stay Boat Shop" at 110, "Sampit River Bridge" at 103, "Weed's Marine & Outdoor" at 92. Not one
+# of them reads like a launch, so not one of them is taken. Widening the radius without the name
+# rule would have named a boat ramp after a holiday rental.
+ACCEPT_M = 150
 
 
 def load_json(p):

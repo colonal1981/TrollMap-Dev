@@ -179,24 +179,32 @@ def access_points(registry):
     # rule about those two coordinates.
     p = os.path.join(registry, '_launch_name_overrides.json')
     if os.path.isfile(p):
-        fixed = 0
+        fixed = dropped = 0
         for key, r in (load_json(p).get('names') or {}).items():
-            nm = (r or {}).get('name')
-            if not nm:
-                continue
+            r = r or {}
             try:
                 la, lo = (float(v) for v in key.split(','))
             except ValueError:
                 continue
-            rec = out.get((round(la, 5), round(lo, 5)))
-            if rec is None:
+            k = (round(la, 5), round(lo, 5))
+            if k not in out:
                 print('!! override at %s matches no landing -- check the position' % key)
                 continue
-            rec['name'] = str(nm)
-            rec['src'].add('ryan')
+            # AND HE CAN SAY IT IS NOT A LAUNCH AT ALL. OSM tags `leisure=slipway` on things
+            # that are not one -- *"this a dirt road on parr reservoir... not a ramp"* -- and no
+            # amount of naming fixes a record that should not be there. This is the only way a
+            # landing leaves the data, and it takes a human saying so.
+            if r.get('drop'):
+                del out[k]
+                dropped += 1
+                continue
+            if not r.get('name'):
+                continue
+            out[k]['name'] = str(r['name'])
+            out[k]['src'].add('ryan')
             fixed += 1
-        if fixed:
-            print("Ryan's own corrections applied: %d" % fixed)
+        if fixed or dropped:
+            print("Ryan's own corrections applied: %d named, %d dropped" % (fixed, dropped))
     return out
 
 

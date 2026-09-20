@@ -854,6 +854,32 @@ def main():
                   f"from inflow to outflow; build them with build_duke_dam_table.py and "
                   f"bind_dams_to_waters.py")
 
+        # THE TWO LANDING-NAME FILES, WHICH EXIST NOWHERE ELSE.
+        #
+        # registry/ is not in the git repo -- 3,369 boundary files is why -- so a file written
+        # there lives on exactly one disk. For most of registry/ that is fine: it is derived and
+        # a rebuild recreates it. These two are not.
+        #
+        #   _launch_name_overrides.json is RYAN'S OWN KNOWLEDGE. "Dam Boat dock is buckhill
+        #   landing which is on the lake not the river" cannot be rebuilt from anything. If the
+        #   disk goes, it is gone, and nobody would notice until a dropdown quietly said the
+        #   wrong name again.
+        #
+        #   _place_names.json is 152 paid Google answers. Re-running costs real calls against a
+        #   5,000-a-month pool, and it also carries every SUGGESTION, which is what let the
+        #   accept rule be fixed twice for free.
+        #
+        # Shipped verbatim rather than slimmed: the whole point is that this is the copy you
+        # rebuild from, and a slimmed copy is not that.
+        for _nm, _why in (("_launch_name_overrides.json", "Ryan's own corrections"),
+                          ("_place_names.json", "Google Places answers")):
+            _p = regdir / _nm
+            if _p.exists():
+                reg_jobs.append((str(_p), f"{args.prefix}_registry/{_nm.lstrip('_')}",
+                                 "_registry", _nm.lstrip('_').replace('.json', '')))
+                print(f"names:    {_why} -> {args.prefix}_registry/{_nm.lstrip('_')} "
+                      f"({_p.stat().st_size/1024:.0f} KB)")
+
         # NORTH CAROLINA'S SPECIES. Not slimmed -- the file is already only what it needs to be,
         # a species list and a stocking list per registry slug.
         #
