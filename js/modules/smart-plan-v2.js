@@ -558,7 +558,7 @@ export async function buildSmartPlanV2(o) {
   const riverRoute = (isRiver && riverTransit && riverTransit.route) || null;
   // The ramp leg comes off the measured water route when the pack has one; every other pair
   // still comes off the centreline, which is what a river day is made of.
-  const rampRoute = await launchRouteFor(o.slug, o.ramp && o.ramp[1], o.ramp && o.ramp[0]);
+  const rampRoute = await launchRouteFor(o.r2Key, o.ramp && o.ramp[1], o.ramp && o.ramp[0]);
   const transit = o.transit
                   || rampLegRouter(o.ramp, rampRoute, riverRoute)
                   || await prefetchTransits(args.candidates, o.ramp, o.routeWater, rampRoute);

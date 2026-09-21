@@ -133,4 +133,27 @@ test('both planners reach for it', () => {
   assert.ok(/import \{ launchRouteFor \} from '\.\.\/data\/launch-reach\.js';/.test(SPV2)
          && /import \{ launchRouteFor \} from '\.\.\/data\/launch-reach\.js';/.test(PFW),
     'and both load it from the one file that knows how launches.json is shaped');
+
+  // AND THE KEY THEY ASK WITH, WHICH IS THE HALF THAT WAS WRONG.
+  //
+  // Everything above passed while the feature did nothing. smart-plan-v2 names the pack `o.r2Key`
+  // -- all sixteen of its other pack fetches use it -- and this one line asked with `o.slug`,
+  // which that options object has never had. `launchRouteFor(undefined, ...)` returns null on its
+  // first line, rampLegRouter hands back the centreline unchanged, and T1 came out a rubber band
+  // across the swamp again with nothing logged and nothing thrown.
+  //
+  // Ryan, 2026-09-21, after the canal was in the pack and the water was right: *"it looks like
+  // the transit still runs right over land... so no matter what you are going to have to make
+  // something in here know where the water is"*. Something did know. It was asked by a name that
+  // does not exist.
+  //
+  // plan-from-water calls the same value `o.slug` -- plan-water-ui passes it `slug: T.r2Key` --
+  // so the two files are RIGHT to differ, and a test that just grepped for one spelling would
+  // have to be wrong about one of them.
+  assert.ok(/launchRouteFor\(o\.r2Key,/.test(SPV2),
+    'smart-plan-v2 asks with the same pack key it fetches every other pack file with');
+  assert.ok(!/o\.slug/.test(SPV2),
+    'and smart-plan-v2 has no o.slug anywhere -- one name for the pack, per file');
+  assert.ok(/launchRouteFor\(o\.slug,/.test(PFW),
+    'plan-from-water asks with ITS name for the same value, the one plan-water-ui fills from r2Key');
 });
