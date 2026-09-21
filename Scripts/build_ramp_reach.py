@@ -409,58 +409,54 @@ def boundary_rings(registry, slug):
 _INSIDE = {}
 
 def recentre(route, polys, step=50.0, probe=5.0, reach=3000.0, passes=6):
-    """Put the traced route in the MIDDLE of the water, instead of wherever the raster put it.
+    """Make the traced route a line a boat would actually steer, and keep it in the water.
 
-    Ryan, 2026-09-21, looking at the 72 points this wrote for Pack's Landing: *"your 72 point
-    route is garbage... it just needs to follow the middle of the canal and it does not... what
-    are the purposes of these sharp turns... it is turning away from deeper water to go to shallow
-    water... this makes no sense"*.
+    Ryan, 2026-09-21: *"your 72 point route is garbage... it just needs to follow the middle of the
+    canal and it does not... what are the purposes of these sharp turns... it is turning away from
+    deeper water to go to shallow water"*.
 
-    All three are the same fact and he is right about every one of them. `trace()` walks steepest
-    descent on a BFS flood field, which is a SHORTEST PATH and nothing else. Its coordinates land
-    on the 0.00025 deg grid -- every point in that GPX is a multiple of it -- so the line is a
-    staircase of 26 m treads, and where several neighbours share a distance the tie goes to
-    whichever came first in the neighbour list. That is where the sharp turns come from: not
-    geometry, ordering. And a flood field knows how far a cell is from the channel and nothing
-    whatever about how deep it is, so at a bend the path takes the inside, which in a canal is the
-    shallow side. The distance it measures is right. The line it draws is not a line down a canal.
+    WHAT trace() GIVES AND WHY IT LOOKS LIKE THAT. Steepest descent on a BFS flood field is a
+    shortest path and nothing else. Its points land on the 0.00025 deg cell -- 26 m -- and where
+    several neighbours share a distance the tie goes to whichever came first in the neighbour list,
+    so the sharp turns are the neighbour ORDER and not the water. The flood also knows how far a
+    cell is from the channel and nothing at all about how deep it is, so at a bend it takes the
+    inside, which in a canal is the shallow side. What it measures is right. What it draws is a
+    staircase.
 
-    THE PROJECT ALREADY SOLVED THIS ONCE, for exactly the same complaint. Ryan, 2026-09-18, about
-    the river: *"How is the center line not the center of the water"*.
-    build_river_centrelines.centre_on_water() is the answer that was built then -- it sweeps each
-    station out along its own normal to the first bank either side and moves it to the midpoint,
-    with a fold repair, a slope limit and a cap at the local bend radius so the result stays
-    something a boat follows. It is asked of the CHARTED WATER, which is the same zoom-0 depth
-    areas this file already floods. Same question, same water, same answer: this calls it rather
-    than growing a second one.
+    AND THE RIVER'S OWN MACHINERY IS THE WRONG TOOL HERE, WHICH COST A RUN TO FIND OUT. The first
+    attempt put this route through centre_on_water() and smooth_on_water(), which put the Congaree's
+    centreline right. On the Pack's Landing canal it made it worse: 69 points and 3,666 m DRAWN for
+    an 1,826 m route -- the line doubling back on itself -- p90 42 deg, 39% of points reversing.
+    That machinery measures a cross-section on each station's normal, and the canal is 34 m wide
+    with stations 50 m apart, so the stations are further apart than the channel is wide and the
+    normals are meaningless. It is built for a 165 m river.
 
-    WHAT STAYS. `water_m` is untouched -- it is the flood's own measurement and it was never the
-    thing that was wrong. Only the drawn line moves, and its two ends are put back afterwards,
-    because resample() truncates the tail past the last whole step and the ends are the channel
-    and the ramp.
+    SO THE CANAL IS SIMPLIFIED, NOT SOLVED. A ditch has no interesting middle: anywhere down it is
+    down it. The staircase is already inside the water by construction, so the least line that
+    stays within the water is the answer, and Douglas-Peucker finds exactly that -- the fewest
+    vertices whose line is never further than the tolerance from the original.
 
-    Degrades to the traced route if the imports or the geometry are not there; a staircase down the
-    canal beats no line at all, which is what the app had before 2026-09-21.
+    THE TOLERANCE IS THE WATER'S, AND IT IS CHECKED RATHER THAN TRUSTED. Start at half the median
+    half-width of the water along the route, and if the simplified line leaves the charted water
+    anywhere, halve it and try again. The loop ends on a line that is measurably wet, so the
+    tolerance is not a number that has to be right -- it is a number that gets tested.
     """
     if not route or len(route) < 3:
         return route
     try:
-        from shapely.geometry import Point
+        from shapely.geometry import LineString, Point
         from shapely.ops import transform as shapely_transform
         from shapely.prepared import prep
         from shapely.strtree import STRtree
-        from build_river_centrelines import (to_albers, to_lonlat, resample,
-                                     centre_on_water, smooth_on_water)
+        from build_river_centrelines import to_albers, to_lonlat
     except Exception as exc:
-        print('    route not centred (%s)' % exc, flush=True)
+        print('    route not faired (%s)' % exc, flush=True)
         return route
     try:
-        # BUILT ONCE PER WATER, NOT ONCE PER LANDING, AND THAT IS NOT MICRO-OPTIMISATION. The first
-        # shape of this projected every depth-area polygon and rebuilt the index inside the call,
-        # so congaree_river's 35 landings paid for 35 copies of the same 3,000-polygon tree; the
-        # step went from two minutes to over ten and was killed at eight. `polys` is the same list
-        # object for every landing on a water, so its id is the key, and the memo is cleared by
-        # the list going out of scope with the water.
+        # BUILT ONCE PER WATER, NOT ONCE PER LANDING. The first shape of this projected every
+        # depth-area polygon and rebuilt the index inside the call, so congaree_river's 35 landings
+        # paid for 35 copies of the same 3,000-polygon tree and the step went from two minutes to
+        # over ten. `polys` is the same list object for every landing on a water.
         inside = _INSIDE.get(id(polys))
         if inside is None:
             gm = []
@@ -474,9 +470,6 @@ def recentre(route, polys, step=50.0, probe=5.0, reach=3000.0, passes=6):
             if not gm:
                 return route
             tree = STRtree(gm)
-            # PREPARED, because `covers` is asked millions of times -- once per 5 m probe step, per
-            # station, per sweep, per landing -- and an unprepared polygon rebuilds its own index
-            # on every one of them.
             ready = [prep(q) for q in gm]
 
             def inside(x, y, _t=tree, _r=ready):
@@ -490,33 +483,117 @@ def recentre(route, polys, step=50.0, probe=5.0, reach=3000.0, passes=6):
             _INSIDE[id(polys)] = inside
 
         xy = [to_albers(lon, lat) for lon, lat in route]
-        pts = resample(xy, step)
-        if len(pts) < 2:
+        line = LineString(xy)
+        if line.length <= 0:
             return route
-        out, _rep = centre_on_water(pts, inside, step, probe, reach, passes)
-        if not out or len(out) < 2:
-            return route
-        # AND THEN MADE INTO A LINE. Centring alone left the canal WORSE than the raster it
-        # replaced -- measured 2026-09-21 on this very route: turn per point p90 43.9 max 169.9
-        # degrees and 59% of points reversing, against a staircase's 26 m treads. A canal 34 m
-        # wide and stations 50 m apart means each midpoint estimate swings the width of the
-        # channel. smooth_on_water() is what turns the estimates into a course.
-        out, _srep = smooth_on_water(out, inside, step, probe, reach)
-        out = resample(out, step)
-        if not out or len(out) < 2:
-            return route
-        # THE TWO ENDS ARE NOT THE MIDDLE OF ANYTHING. One is the channel cell the distance was
-        # measured to and the other is the wet cell beside the ramp, and resample() drops whatever
-        # is left past the last whole step, so both have to be put back or the line stops short of
-        # the water it is there to join.
-        head, tail = xy[0], xy[-1]
-        if math.dist(out[0], head) > 1.0:
-            out = [head] + list(out)
-        if math.dist(out[-1], tail) > 1.0:
-            out = list(out) + [tail]
-        return [[round(lon, 6), round(lat, 6)] for lon, lat in (to_lonlat(x, y) for x, y in out)]
+
+        # ── FIRST PUT IT DOWN THE MIDDLE, AT THE STAIRCASE'S OWN SPACING ────────────────────
+        #
+        # Simplifying the staircase where it stands does not work and the measurement says so: a
+        # 26 m tread deviates up to half a cell from the middle, so a tolerance big enough to take
+        # the steps out is big enough to put a 34 m canal's line on the bank, and the wet test
+        # then halves it away to nothing. Run on 2026-09-21 it returned 73 points and 2,455 m for
+        # what had been 72 points and 2,412 m -- the same staircase, faired by nothing.
+        #
+        # THE FIRST PROBE WAS ALSO MEASURING THE WRONG THING. It walked out along the axes, so in
+        # a canal running north-west it found the narrow diagonal and called that the width.
+        # Sideways means perpendicular to where the boat is GOING, and the heading comes from a
+        # five-point window rather than the neighbouring points, because the neighbouring points
+        # are the tread and its normal is the tread's normal.
+        #
+        # The staircase's own 26 m spacing is already finer than the 34 m canal, so each point is
+        # simply moved to the midpoint of its own crossing -- no resampling, no stations, none of
+        # the river machinery that needs a channel wider than its station spacing.
+        def _cross(k):
+            a = xy[max(0, k - 2)]
+            b = xy[min(len(xy) - 1, k + 2)]
+            dx, dy = b[0] - a[0], b[1] - a[1]
+            h = math.hypot(dx, dy)
+            return (-dy / h, dx / h) if h else None
+
+        # THE WATER'S OWN SCALE, measured across the way the boat is going. The first probe walked
+        # the axes and found the narrow diagonal of a north-west canal and called it the width.
+        half = []
+        for k in range(0, len(xy), max(1, len(xy) // 40)):
+            x, y = xy[k]
+            nv = _cross(k)
+            if nv is None or not inside(x, y):
+                continue
+            px, py = nv
+            dl = dr = 0.0
+            while dl < 400.0 and inside(x + px * (dl + probe), y + py * (dl + probe)):
+                dl += probe
+            while dr < 400.0 and inside(x - px * (dr + probe), y - py * (dr + probe)):
+                dr += probe
+            half.append((dl + dr) / 2.0)
+        half.sort()
+        span_m = half[len(half) // 2] * 2 if half else probe
+
+        # ── FAIRED BY AVERAGING THE POINTS, NOT BY MOVING EACH ONE TO A MIDPOINT ────────────────
+        #
+        # Three attempts put each point on the middle of its own crossing -- centre_on_water() at
+        # 50 m stations, then the same idea at the staircase's own 26 m spacing. Both made the line
+        # WORSE, and for one reason: a midpoint is an independent estimate, its error is the width
+        # of the channel, and applying independent errors to points 26 m apart is how you build a
+        # saw-tooth rather than remove one. Measured on this route: 3,666 m drawn for an 1,826 m
+        # route the first way, 3,038 m the second, against a staircase's 2,455 m.
+        #
+        # A moving average has no such error. It cannot move a point further than its neighbours
+        # already are, it needs no normal and no cross-section, and in a ditch the local mean of
+        # the water's own shortest path IS down the middle of it. The window is one channel width,
+        # for the same reason it is everywhere else here: a wiggle shorter than the water is wide
+        # is not the water's shape. And every moved point is checked -- one that lands dry keeps
+        # where it was, so fairing can never beach the line.
+        step_pts = max(1, int(round(span_m / max(1.0, line.length / max(1, len(xy) - 1)) / 2.0)))
+        cur = list(xy)
+        for _ in range(8):
+            nxt = []
+            moved = 0
+            for k in range(len(cur)):
+                lo2, hi2 = max(0, k - step_pts), min(len(cur) - 1, k + step_pts)
+                m = hi2 - lo2 + 1
+                ax = sum(q[0] for q in cur[lo2:hi2 + 1]) / m
+                ay = sum(q[1] for q in cur[lo2:hi2 + 1]) / m
+                if (k == 0 or k == len(cur) - 1) or not inside(ax, ay):
+                    nxt.append(cur[k])
+                else:
+                    if math.dist((ax, ay), cur[k]) > 0.5:
+                        moved += 1
+                    nxt.append((ax, ay))
+            cur = nxt
+            if not moved:
+                break
+        if len(cur) >= 2:
+            line = LineString(cur)
+        tol = (span_m / 4.0) if span_m else probe
+        tol = max(probe, tol)
+
+        # WET IS THE TEST, not the tolerance. A sample every probe metres along the candidate, and
+        # a candidate that leaves the water is not a course however tidy it looks.
+        def wet(cand):
+            n = max(2, int(cand.length / probe))
+            for k in range(n + 1):
+                p = cand.interpolate(cand.length * k / n)
+                if not inside(p.x, p.y):
+                    return False
+            return True
+
+        # THE CENTRED LINE IS THE FLOOR, NOT THE STAIRCASE. The first shape of this returned the
+        # ORIGINAL route when no tolerance survived the wet test, which threw the centring away
+        # with the simplification -- and on the Pack's Landing canal no tolerance did survive, so
+        # the run came back 73 points and 2,455 m, byte for byte the staircase it started from,
+        # with nothing in the log to say so. A fairing that cannot simplify has still centred.
+        best = line
+        while tol >= probe:
+            cand = line.simplify(tol)
+            if len(cand.coords) >= 2 and wet(cand):
+                best = cand
+                break
+            tol /= 2.0
+        return [[round(lon, 6), round(lat, 6)]
+                for lon, lat in (to_lonlat(x, y) for x, y in best.coords)]
     except Exception as exc:
-        print('    route not centred (%s)' % exc, flush=True)
+        print('    route not faired (%s)' % exc, flush=True)
         return route
 
 def reach_for(slug, args, points):

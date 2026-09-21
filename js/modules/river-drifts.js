@@ -542,12 +542,16 @@ export function shallowestBesideLine(row, fractions, frac, widthM) {
  * @param {number} [maxShiftM]              rule 3's limit; defaults to SIDE_ENVELOPE_M
  * @returns {number[]} one fraction per station, clamped to the section
  */
-export function channelFractions(profiles, fractions, widths, maxShiftM = SIDE_ENVELOPE_M) {
+export function channelFractions(profiles, fractions, widths, maxShiftM = SIDE_ENVELOPE_M,
+                                 structures = null, stationM = null) {
   const fr = Array.isArray(fractions) ? fractions.map(Number) : [];
   const w = Array.isArray(widths) ? widths : [];
   const n = w.length;
   if (!fr.length || !n) return new Array(Math.max(0, n)).fill(0.5);
   const lo = Math.min(...fr), hi = Math.max(...fr);
+  // The station spacing, which is what a window measured in metres has to be counted in.
+  const stepM = (Array.isArray(stationM) && stationM.length > 1)
+    ? Number(stationM[1]) - Number(stationM[0]) : null;
   // Step one: the deepest column, as METRES off the centre, carried through unsounded stations.
   const off = new Array(n);
   let last = 0;
@@ -563,6 +567,96 @@ export function channelFractions(profiles, fractions, widths, maxShiftM = SIDE_E
       if (bestF != null) last = (bestF - 0.5) * wi;
     }
     off[i] = last;
+  }
+  // Step one and a quarter: THE SAME SMOOTHING THE CENTRELINE GOT, OVER THE SAME WINDOW.
+  //
+  // BEFORE THE SPOTS AND NOT AFTER, WHICH TOOK TWO RUNS TO GET RIGHT. Smoothing last averages the
+  // deliberate swings away with the noise: measured on congaree_river, spots reached within 5 m
+  // went 262 -> 104 and the median distance to a spot 8.6 -> 22.7 m. The noise is in the COLUMN
+  // line -- nine columns quantised to 21 m apiece, changing column station to station -- so that
+  // is what gets smoothed, and the spots are then put on a line that is already fair. The slope
+  // limit below is all that acts on them afterwards, which is what it is for.
+  //
+  // The slope limit bounds how FAST the line may move sideways and says nothing about how often
+  // it changes its mind. Measured on congaree_river: 26.2% of stations reverse before any of this
+  // and 34.4% after the spots are targeted -- the saw-tooth Ryan objected to on the centreline,
+  // arriving on the drawn leg instead. Scripts/build_river_centrelines.smooth_on_water() answers
+  // it there by averaging over a window of the channel's own width, on the reasoning that a wiggle
+  // shorter than the water is wide is the measurement's noise and not the water's shape. A BOAT's
+  // wiggle is the same: it cannot be shorter than the river is wide either.
+  //
+  // AND A SWING ONTO A SPOT SURVIVES IT, which is the whole reason this sits here rather than
+  // before the targets. The slope limit above already spreads a swing across several stations at
+  // 25 m each, so a real move onto a hole is wider than the window and comes through; a one-
+  // station flicker is narrower than the window and does not.
+  const sm = off.slice();
+  for (let i = 0; stepM > 0 && i < n; i++) {
+    const wi = Number(w[i]);
+    if (!(wi > 0)) continue;
+    // ONE CHANNEL WIDTH OF RIVER, counted in stations. The first cut of this divided by the slope
+    // limit instead of the station spacing and averaged 350 m of a 165 m river: the steering came
+    // right and the spots went from 262 within 5 m to 104, which is the feature undone by its own
+    // fix. The window is the width, and the width is in metres, so it is the SPACING it divides.
+    const half = Math.max(1, Math.floor(wi / stepM / 2));
+    const lo2 = Math.max(0, i - half), hi2 = Math.min(n - 1, i + half);
+    let sum = 0, cnt = 0;
+    for (let j = lo2; j <= hi2; j++) { if (Number.isFinite(off[j])) { sum += off[j]; cnt++; } }
+    if (cnt) sm[i] = sum / cnt;
+  }
+  for (let i = 0; i < n; i++) off[i] = sm[i];
+  // ── AND WHERE THERE IS A SPOT, THE SPOT IS THE TARGET ───────────────────────────────────────
+  //
+  // Ryan, 2026-09-21, reading a plan whose waypoints are holes and ledges: *"it passes near a hole
+  // but not actually over"*.
+  //
+  // That is the resolution of the loop above, exactly. The pack carries NINE profile columns --
+  // `profile_fractions` is [0, 0.125, 0.25 ... 1] -- so "the deepest column" means the deepest
+  // NINTH of the section, and at the Congaree's median 165 m width one ninth is 21 m. The line
+  // can only ever be placed at one of nine positions across the river, so a hole that does not sit
+  // on one of them is passed at up to half a column however good the rest of this is.
+  //
+  // The producer already measured the thing that fixes it. build_river_centrelines stamps
+  // `river_m` and `off_m` on every structure -- the station and the metres off the centreline --
+  // which is the same pair of numbers `off[]` is carried in here. So at a station that has a spot,
+  // the target is not the deepest ninth: it is the spot.
+  //
+  // THE HIGHEST SCORING ONE WHERE TWO SHARE A STATION, because `score` is the ranking the pack
+  // already made and picking by anything else would be a second opinion. NOTHING ELSE CHANGES:
+  // the slope limit below still decides how fast the line may swing onto it, and it was already
+  // 25 m per 50 m station -- a 27 degree lean, which is a boat turning onto a hole and not a
+  // teleport. A station with no spot is still the deepest column, which is what the rest of the
+  // river should be.
+  if (structures && structures.grid && Array.isArray(stationM) && stationM.length > 1) {
+    const span = stepM;
+    const base = Number(stationM[0]);
+    if (span > 0) {
+      const pick = new Array(n).fill(null);
+      for (const cell of structures.grid.values()) {
+        for (const r of cell) {
+          if (!DRIFT_JOIN_KINDS.includes(r.kind)) continue;
+          if (!Number.isFinite(r.riverM) || !Number.isFinite(r.offM)) continue;
+          const i = Math.round((r.riverM - base) / span);
+          if (!(i >= 0 && i < n)) continue;
+          // IN THE SECTION, OR IT IS NOT ON THIS RIVER'S LINE TO REACH. `off_m` runs to 2,577 m
+          // on congaree_river -- spots in oxbows and backwaters the centreline only passes the
+          // mouth of. Targeting those drags the line at the bank for kilometres and never gets
+          // there. The section is the river: half a width either side of the line.
+          const wi = Number(w[i]);
+          if (!(wi > 0) || Math.abs(r.offM) > wi / 2) continue;
+          // ALREADY ON IT? THEN LEAVE THE LINE ALONE. A spot has a size -- `reachM`, which the
+          // pack measures from the feature's own extent -- and a line inside that is already
+          // fishing it. Without this the line was dragged a few metres onto spots it was on
+          // top of anyway, and the STEERING is what paid: measured on congaree_river, the lane's
+          // reversals went 26.2% to 35.3% and its median lean 1.4 to 4.6 degrees, which is the
+          // saw-tooth Ryan objected to arriving by a different door. A swing that buys nothing
+          // is not a swing.
+          if (Number.isFinite(r.reachM) && r.reachM > 0
+              && Math.abs(off[i] - r.offM) <= r.reachM) continue;
+          if (!pick[i] || r.score > pick[i].score) pick[i] = r;
+        }
+      }
+      for (let i = 0; i < n; i++) if (pick[i]) off[i] = pick[i].offM;
+    }
   }
   // Step two: the slope limit, centred -- see rule 3.
   //   under[i] = min over j of (off[j] + L*|i-j|)  is the LARGEST limited line at or below `off`
@@ -840,7 +934,7 @@ export function riverDriftRuns(centrelineFc, o = {}) {
     const fixed = lat.frac == null ? null : Number(lat.frac);
     const fracAt = Number.isFinite(fixed)
       ? new Array(n).fill(fixed)
-      : channelFractions(profiles, fractions, width, o.maxShiftM);
+      : channelFractions(profiles, fractions, width, o.maxShiftM, o.structures, stationM);
     for (const [reachStart, reachEnd, fromRamp] of reaches) {
       const coords = [];
       const depths = [];
