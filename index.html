@@ -8,6 +8,16 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <link rel="stylesheet" href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" />
 <style>
+  /* WHERE GARMIN NEVER SOUNDED. The pack's `unsurveyed` layer -- Garmin's area mode 1/11 cut to
+     the lake's own boundary -- draws as a diagonal hatch so it cannot be read as a depth or as
+     land. The <pattern> is injected into the Leaflet overlay pane by supplemental-layers.js;
+     !important because a fill that silently loses to a later style pass renders as solid grey
+     over open water, which is the one thing this layer must never look like.
+     Ryan, 2026-09-20: "i do not want to cover up unsurveyed water". */
+  path.tm-notsounded {
+    fill: url(#tmNotSounded) !important;
+    fill-opacity: 1 !important;
+  }
   :root {
     --bg: #0b1623; 
     --panel: #121f2e; 

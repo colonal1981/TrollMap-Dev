@@ -241,11 +241,103 @@ if (typeof window !== 'undefined') window.clearSupplementalCache = clearSuppleme
 export function getLakeBoundaryGeoJSON() { return _boundaryGeoJSON; }
 export function bringDepthAreasToBack() {
   if (_depthAreaLayer) _depthAreaLayer.bringToBack();
+  if (_unsurveyedLayer) _unsurveyedLayer.bringToBack();
 }
 window.bringDepthAreasToBack = bringDepthAreasToBack;
 
 function getMap() { return state.MAP; }
 function mapReady() { return state.MAP_OK && !!state.MAP; }
+
+// ── WHERE GARMIN NEVER SOUNDED ───────────────────────────────────────────────────────────────
+//
+// Ryan, 2026-09-20, having worked out from ActiveCaptain why his own app looked worse than
+// Garmin's: *"i think what garmin does is put land to what they call the boundary... anything
+// that is not sounded is land"*, and *"our problem is that we use their water but not their
+// land... so our stuff looks off from AC but i do not want to cover up unsurveyed water"*.
+//
+// He is right on both counts. Garmin draws the bank in to wherever the survey stopped, so their
+// chart closes up; TrollMap clips to 3DHP's real waterbody, so the unsounded water stays open and
+// reads as a hole. On the Congaree that is 1,805 of 10,811 acres -- 16.7% of the river.
+//
+// THE FIX IS NOT TO CLOSE THE HOLE. It is to say which kind of hole it is. Until now a blank
+// patch meant two different things at once -- "Garmin has no survey here" and "the pipeline lost
+// it" -- and on the water they looked identical. The pack now carries `unsurveyed`, Garmin's own
+// area mode 1/11 cut to the lake's boundary, which is by construction water 3DHP calls water and
+// Garmin never sounded. Hatched, so it cannot be mistaken for a depth; under the bands, so it
+// never hides one; and tied to the depth-area toggle rather than given a button of its own,
+// because "how deep is it" and "is there a survey here" are one question.
+//
+// A BLANK THAT SURVIVES THE HATCH IS OURS. That is the whole point of drawing it.
+let _unsurveyedLayer  = null;
+let _unsurveyedAll    = null;
+let _unsurveyedShell  = null;
+let _unsurveyedOpts   = null;
+
+// Leaflet's canvas renderer cannot fill with a pattern, so this one layer uses the SVG renderer
+// and a <pattern> injected into the overlay pane once. Feature counts are small enough for SVG
+// -- 752 pieces on the Congaree, 3,286 on Marion, and `cull` cuts that to the viewport.
+const NOT_SOUNDED_PATTERN_ID = 'tmNotSounded';
+function _ensureNotSoundedPattern() {
+  const svg = getMap()?.getPane('overlayPane')?.querySelector('svg');
+  if (!svg || svg.querySelector('#' + NOT_SOUNDED_PATTERN_ID)) return;
+  const NS = 'http://www.w3.org/2000/svg';
+  const defs = document.createElementNS(NS, 'defs');
+  defs.innerHTML =
+      `<pattern id="${NOT_SOUNDED_PATTERN_ID}" width="8" height="8" patternUnits="userSpaceOnUse">`
+    + `<rect width="8" height="8" fill="#7d8b99" fill-opacity="0.16" />`
+    + `<path d="M 0 8 L 8 0" stroke="#7d8b99" stroke-width="1.1" stroke-opacity="0.8" />`
+    + `</pattern>`;
+  svg.insertBefore(defs, svg.firstChild);
+}
+
+async function loadUnsurveyed(lakeKey) {
+  _unsurveyedLayer = null; _unsurveyedAll = null; _unsurveyedShell = null; _unsurveyedOpts = null;
+  let gj = null;
+  try {
+    gj = await loadLayer(lakeKey, 'unsurveyed');
+  } catch (e) {
+    // A 404 is the ordinary case for any pack built before 2026-09-20, and for a water whose
+    // survey covers it completely. Silence, the same as every other optional layer.
+    return;
+  }
+  const features = (gj && gj.features) || [];
+  if (!features.length) return;
+  _unsurveyedAll = features;
+  _unsurveyedShell = { ...gj, features: [] };
+  _unsurveyedOpts = {
+    // NOT the shared canvas renderer: the hatch is an SVG pattern. `className` and not a
+    // fillColor of url(#...) because a stylesheet rule cannot be quietly overwritten by a
+    // later style pass, and a fill that silently fails reads as solid grey over open water.
+    className: 'tm-notsounded',
+    smoothFactor: 1.5,
+    style() {
+      return { fillColor: '#7d8b99', fillOpacity: 0.22, color: '#7d8b99',
+               weight: 0.6, opacity: 0.45, stroke: true };
+    },
+    onEachFeature(feat, layer) {
+      layer.bindTooltip('Not sounded — Garmin has no survey here',
+                        { sticky: true, direction: 'top', opacity: 0.85 });
+    },
+  };
+  console.log(`[supplemental] unsurveyed loaded: ${features.length} piece(s) for ${lakeKey}`);
+}
+
+function redrawUnsurveyed() {
+  if (!mapReady()) return;
+  const map = getMap();
+  if (_unsurveyedLayer) { map.removeLayer(_unsurveyedLayer); _unsurveyedLayer = null; }
+  if (!_unsurveyedAll || !_unsurveyedOpts || !_depthAreaVisible) return;
+  // Same floor as the depth areas on a coastal zone, for the same reason: a rectangle pack
+  // carries open Atlantic, and none of it is worth 26,288 paths at zoom 10.
+  if (_depthAreaCoastal && map.getZoom() < COASTAL_DEPTH_MIN_ZOOM) return;
+  _unsurveyedLayer = L.geoJSON({ ..._unsurveyedShell, features: cull(_unsurveyedAll, map) },
+                               _unsurveyedOpts);
+  _unsurveyedLayer.addTo(map);
+  _ensureNotSoundedPattern();
+  // Behind the bands and the contours, in front of the basemap. They do not overlap -- the two
+  // layers are complements, measured at 0.000% -- so this is about the basemap, not about them.
+  _unsurveyedLayer.bringToBack();
+}
 
 async function loadDepthAreas(lakeKey) {
   if (!mapReady()) return;
@@ -300,6 +392,9 @@ async function loadDepthAreas(lakeKey) {
     _depthAreaGeoJSON = gj;
     globalThis.SUPPLEMENTAL_DEPTH_GEOJSON = gj;
     window.SUPPLEMENTAL_DEPTH_GEOJSON     = gj;
+    // AWAITED, not fired off: the hatch and the bands are one reading of the chart, and a hatch
+    // that arrives a second later flashes the hole it exists to explain.
+    await loadUnsurveyed(lakeKey);
     redrawDepthAreas();
     console.log(`[supplemental] depth_areas loaded: ${features.length} features, `
               + `${bandCount} bands, stroke ${strokeW} for ${lakeKey}`);
@@ -335,11 +430,13 @@ export function redrawDepthAreas() {
 
   // Below the coastal floor, draw nothing rather than 26,288 polygons of open Atlantic.
   if (_depthAreaCoastal && map.getZoom() < COASTAL_DEPTH_MIN_ZOOM) {
+    if (_unsurveyedLayer) { map.removeLayer(_unsurveyedLayer); _unsurveyedLayer = null; }
     globalThis.SUPPLEMENTAL_DEPTH_LAYER = null;
     window.SUPPLEMENTAL_DEPTH_LAYER     = null;
     return;
   }
 
+  redrawUnsurveyed();
   const shown = cull(_depthAreaAll, map);
   _depthAreaLayer = L.geoJSON({ ..._depthAreaShell, features: shown }, _depthAreaOpts);
   if (_depthAreaVisible) {
@@ -1167,7 +1264,15 @@ function renderStructureMarkers(displayName) {
   const profile = window.getResearchedProfile?.(displayName);
   const { humps, ledges, holes, source } = structureFor(_garminData.structure,
                                                         profile?.habitat?.structuralElements);
-  if (!humps.length && !ledges.length && !(holes || []).length) return;
+  if (!humps.length && !ledges.length && !(holes || []).length) {
+    // SAY SO. A silent return here is what hid 943 features on the Congaree for a day: the
+    // console showed depth areas, pois, docks, ramps and the boundary all loading, and simply
+    // no line at all about structure, which reads as "this water has none".
+    console.log(`[supplemental] structure markers: nothing to draw for ${displayName} `
+              + `(pack layer ${_garminData.structure ? 'loaded but empty' : 'not loaded'}, `
+              + `profile ${profile ? 'present' : 'absent'})`);
+    return;
+  }
   console.log(`[supplemental] structure markers: ${humps.length} humps, ${ledges.length} ledges, `
             + `${(holes || []).length} holes for ${displayName} (from the ${source})`);
 
@@ -1241,21 +1346,40 @@ export async function loadSupplementalForLake(displayName) {
 
   await loadDepthAreas(lakeKey);
 
-  // Render hump/ledge markers from research profile.
-  // If profile not cached yet, load it silently then render markers.
-  if (window.getResearchedProfile?.(displayName)) {
-    renderStructureMarkers(displayName);
-  } else if (window.loadProfile) {
-    window.loadProfile(displayName, true).then(() => renderStructureMarkers(displayName)).catch(() => {});
-  } else {
-    // loadProfile not yet available — retry after delay
-    setTimeout(() => {
-      if (window.getResearchedProfile?.(displayName)) {
-        renderStructureMarkers(displayName);
-      } else {
-        window.loadProfile?.(displayName, true).then(() => renderStructureMarkers(displayName)).catch(() => {});
-      }
-    }, 2000);
+  // ── STRUCTURE: THE PACK IS ENOUGH, AND IT USED TO BE GATED BEHIND A PROFILE ─────────────
+  //
+  // Ryan, 2026-09-20, on the reach the Congaree took over from Lake Marion: *"there is no
+  // structure showing on the map in that section"*. The pack had it -- 943 features, 519
+  // ledges, 417 holes, 7 humps, 336 of them south of 33.70 -- uploaded and current. Nothing
+  // drew them, and NOTHING SAID SO: `[supplemental] structure markers:` never printed at all.
+  //
+  // Two faults, and they compounded.
+  //
+  // 1. THE FETCH HAPPENED AFTERWARDS. `_garminData.structure` is filled by the PREFETCH_LAYERS
+  //    Promise.all below, which is fire-and-forget and runs AFTER this point. So
+  //    renderStructureMarkers() read `undefined`, structureFor() fell back to the research
+  //    profile, and nothing re-rendered when the real layer landed a moment later. The
+  //    prefetch's own `.then(([pois, docks]) => ...)` destructures two of three results, which
+  //    is the tell: the third was fetched and never used.
+  //
+  // 2. THE PROFILE WAS A GATE, NOT A FALLBACK. The old code only reached the renderer through
+  //    `getResearchedProfile()` or `loadProfile(...).catch(() => {})`, so a water with no
+  //    research profile -- which the Congaree is -- never got there, and the empty catch made
+  //    that invisible. structureFor() has PREFERRED the pack since it was written; the call
+  //    site never caught up. Same shape as the header's own warning about fetching and
+  //    rendering being tied together: "a planner silently missing every dock and every piece
+  //    of charted structure, depending on which buttons were clicked in which order".
+  //
+  // So: get the layer, draw it, and let the profile be what it always claimed to be -- the
+  // fallback for the 43 packs that have no structure layer.
+  await ensureData(lakeKey, 'structure');
+  renderStructureMarkers(displayName);
+  if (!window.getResearchedProfile?.(displayName) && window.loadProfile) {
+    // A profile that arrives later can only ADD to this, so re-render when it does. It cannot
+    // take anything away: structureFor() reads the profile only when the pack gave nothing.
+    window.loadProfile(displayName, true)
+      .then(() => renderStructureMarkers(displayName))
+      .catch(() => {});
   }
 
   // For coastal zones: fetch current tide height and apply color adjustment.
@@ -1512,6 +1636,10 @@ window._seedOsmStructureData = (features) => { if (!_osmStructureData?.length) _
 
 window.toggleDepthAreas = function(visible) {
   _depthAreaVisible = visible;
+  // ONE TOGGLE, TWO LAYERS. "How deep is it" and "is there a survey here" are the same question
+  // asked of the same water, and a not-sounded hatch left up over hidden bands would claim the
+  // whole lake is unsounded.
+  redrawUnsurveyed();
   if (!_depthAreaLayer) return;
   if (visible) {
     _depthAreaLayer.addTo(getMap());

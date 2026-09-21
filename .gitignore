@@ -16,3 +16,8 @@ __pycache__/
 # Local quarantine. device_bash cannot delete, so files on their way out get MOVED here
 # and deleted by hand later (see claude/DELETION_TAB.md). None of it belongs in the repo.
 _to_delete/
+
+# consolidate_lake_index.py writes ship_lakes.txt and ship_tiles.txt here, because its
+# --ship-list/--tile-list defaults are relative to the working directory and it is run from
+# Scripts/. They are derived from registry/lake_index.json, which lives outside the repo.
+Scripts/outputs/

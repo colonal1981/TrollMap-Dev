@@ -29,14 +29,19 @@ WHICH LETTER FEEDS WHICH LAYER -- settled in EXTRACT_PREFLIGHT.md, not re-derive
     docks          B     same region as waterbody
     hydrography    C
     shoreline      B     C emits none at all
-    land_fill      --    NOT SHIPPED, and the reason is worth keeping. C's 1/11 dissolves to the
-                         exact complement of the survey (92.1% against 7.9%, overlap 0.000%), so
-                         it looks like a land layer and was briefly shipped as one on 2026-09-20.
-                         It is not. Against USGS NHD it carries dry ground and unsurveyed water
-                         in the same class: Ryan's 0006 at 33.76719,-80.65320 sits inside a
-                         13.559 km2 NHD SwampMarsh he paddles, while the patch at
-                         33.766379,-80.783401 is 3,774 m from any water at all. Shipping it as
-                         land would draw solid ground over a slough. See gmapmf_regions_v51.
+    land_fill      --    NOT SHIPPED. B's 1/10 is genuine land and the Leaflet basemap under
+                         TrollMap already draws it, in street or satellite, so a second copy
+                         costs R2 bytes and renders nothing new.
+    unsurveyed     C     WHERE GARMIN NEVER SOUNDED -- area mode 1/11, the exact complement of
+                         the survey (92.1% against 7.9% on C4E0F3, overlap 0.000%). It looks
+                         like a land layer and was briefly shipped as one on 2026-09-20, which
+                         was wrong: against USGS NHD it carries dry ground AND unsurveyed water
+                         in one class, Ryan's 0006 at 33.76719,-80.65320 sitting inside a
+                         13.559 km2 SwampMarsh he paddles while 33.766379,-80.783401 is 3,774 m
+                         from any water. THE 3DHP CLIP IS WHAT SEPARATES THEM, so this layer
+                         ships cut to the boundary and only cut -- see clip_to_water. Congaree
+                         1,805.2 ac of its 10,810.6 (16.7%), Marion 4,242.2 ac (5.2%).
+                         It exists so that a blank patch stops meaning two things at once.
 
 Taking a layer from both letters is not "more data", it is the same survey twice: on 4E0F1 the
 two carry 3,706 km and 3,626 km of contour, matching depth for depth, with a median vertex-to-
@@ -508,7 +513,25 @@ SHIP = {
     'waterbody':   ('B', 'waterbody.geojson'),
     'docks':       ('B', 'docks.geojson'),
     'shoreline':   ('B', 'garmin_shoreline.geojson'),
+    # WHERE GARMIN NEVER SOUNDED, cut to this lake's own water. C's area mode 1/11 is the
+    # exact complement of the survey -- see gmapmf_regions_v51.AREA_CLASS. It ships so that a
+    # blank patch in the app stops meaning two different things at once: "Garmin did not sound
+    # here" and "the pipeline lost it" looked identical on the water, and only one of them is
+    # ours to fix. Ryan, 2026-09-20: "we can try that so we can tell the difference", and
+    # "i do not want to cover up unsurveyed water" -- so it draws as an explicit not-sounded
+    # hatch, never as land and never as a depth.
+    #
+    # IT IS THE ONLY LAYER BIGGER THAN THE LAKE BY DESIGN -- 92-98% of its tile -- so it is
+    # the only one cut geometrically against the boundary rather than selected against the
+    # mask. build_all_chartpacks._flush does that cut; nothing here may ship it uncut.
+    'unsurveyed':  ('C', 'unsurveyed.geojson'),
 }
+# Layers CUT to the water's own edge instead of SELECTED against the dilated mask. It lives
+# HERE, beside SHIP, and not in the batch builder, because both builders iterate SHIP and a rule
+# that only one of them knows is the drift this repo has paid for three times -- AREA_LAYERS
+# renamed under the extractor, `_in_region` wrong in three files, `trim_geometry` fixed in this
+# file and never reaching build_all_chartpacks.py.
+CUT_TO_WATER = ('unsurveyed',)
 # 5 dp is 1.1 m. The decode is good to a few metres at best, so the 6th and 7th digits the
 # extractor writes are pure file size -- about 15% of it -- and cannot be measured.
 DP = 5
@@ -894,6 +917,133 @@ def mask_s(m): return getattr(m, 's', float('-inf'))
 def mask_n(m): return getattr(m, 'n', float('inf'))
 
 
+def load_water(path):
+    """The waterbody at `path` as ONE shapely geometry, ISLANDS AND ALL. None if unusable.
+
+    NOT `_rings()`, and that distinction cost 349 acres of the Congaree and 2,561 of Marion on
+    the first run of this layer. `_rings()` returns a polygon's OUTER ring only, which is right
+    for LakeMask -- it rasterises the envelope and the 250 m collar swallows an island anyway --
+    and wrong here: a hatch is DRAWN, so an island inside the boundary comes out shaded as
+    unsurveyed water. Marion has islands by the hundred.
+
+    So read the geometry properly and keep the holes. `buffer(0)` rather than `make_valid`,
+    because make_valid returns a GeometryCollection for a self-intersecting ring and a
+    Polygon/MultiPolygon filter throws those away silently -- 8,854 acres of band became 4,325
+    that way on 2026-09-20.
+    """
+    if not path or not os.path.exists(path):
+        return None
+    try:
+        from shapely.geometry import shape as _shape
+        from shapely.ops import unary_union as _uu
+        gj = json.load(open(path, encoding='utf-8'))
+    except Exception:
+        return None
+    geoms = ([f.get('geometry') for f in (gj.get('features') or [])]
+             if gj.get('type') == 'FeatureCollection'
+             else [gj.get('geometry') or gj])
+    out = []
+    for g in geoms:
+        if not g:
+            continue
+        try:
+            q = _shape(g)
+            if not q.is_valid:
+                q = q.buffer(0)
+            if not q.is_empty:
+                out.append(q)
+        except Exception:
+            continue
+    if not out:
+        return None
+    try:
+        u = _uu(out)
+    except Exception:
+        return None
+    return None if u.is_empty else u
+
+
+def clip_to_water(feats, water):
+    """Cut a layer to the lake's own water, geometrically. -> (features, stats).
+
+    For `unsurveyed` -- Garmin's C area mode 1/11, the exact complement of the survey, which
+    covers 92-98% of its tile. Every other layer is SELECTED against the dilated mask, because
+    every other layer is drawn at the scale of the water. This one is drawn at the scale of the
+    CARD, so selecting it either keeps a polygon that swallows three counties or drops one that
+    holds a slough, and no threshold separates those -- the same dead end trim_geometry already
+    recorded for river-chain depth bands.
+
+    THE CUT IS ALSO WHAT MAKES THE LAYER SAFE TO SHIP AT ALL. 1/11 cannot tell dry ground from
+    unsurveyed water: against USGS NHD, Ryan's waypoint 0006 sits inside a 13.6 km2 swamp he
+    paddles and another patch is 3,774 m from any water, both in the same class. 3DHP's
+    waterbody polygon is the outside witness that CAN tell them apart, and load_water() is where
+    it comes from -- the boundary WITH its islands, not the envelope the mask rasterises. What
+    survives this intersection is water by 3DHP and unsounded by Garmin, which is exactly the
+    fact the app needs to draw. The dry half is cut here and never ships.
+
+    NO SHAPELY MEANS NO LAYER. An uncut 1/11 would put a not-sounded hatch over dry land, which
+    is the `land_fill` mistake of 2026-09-20 with a different label on it. A missing layer draws
+    nothing and says nothing; a wrong one says something false. Stats carry `no_shapely` so the
+    absence is reported rather than inferred.
+    """
+    st = {'cut': 0, 'dropped': 0, 'failed': 0, 'no_shapely': 0}
+    if water is None:
+        st['no_shapely'] = len(feats or [])
+        return [], st
+    wb = water.bounds
+    try:
+        from shapely.geometry import shape as _shape
+    except Exception:
+        st['no_shapely'] = len(feats or [])
+        return [], st
+    out = []
+    for f in (feats or []):
+        g = f.get('geometry')
+        if not g:
+            continue
+        # BOUNDING BOX FIRST, for the reason trim_geometry records: without it every polygon on
+        # the tile pays for an intersection to be told it is nowhere near, and that took one
+        # rebuild from 345 s to 979 s. Four comparisons, and unlike a vertex test it cannot miss
+        # a polygon large enough to enclose the lake -- which on this layer is the ordinary case.
+        pts = [q for r in _rings(g) for q in r]
+        fb = _bbox(pts)
+        if fb and (fb[2] < wb[0] or wb[2] < fb[0] or fb[3] < wb[1] or wb[3] < fb[1]):
+            st['dropped'] += 1
+            continue
+        try:
+            left = _shape(g).buffer(0).intersection(water)
+        except Exception:
+            # Not silence: a geometry shapely refused is a different fact from water that was
+            # outside the lake, and adding the two together is how a decode bug hides.
+            st['failed'] += 1
+            continue
+        if left.is_empty:
+            st['dropped'] += 1
+            continue
+        st['cut'] += 1
+        # POLYGONS ONLY, AND VIA _singles. An intersection along a shared edge returns
+        # LineStrings and Points inside a GeometryCollection -- the Congaree's 1,805 acres came
+        # back with exactly that in it, and a GeometryCollection has no 'coordinates' to read, so
+        # asking for them is a KeyError rather than a bad polygon. _singles already walks the
+        # collection and already returns one single-part geometry per part, for the same
+        # one-feature-one-geometry reason _flush needs; all this adds is the filter. A zero-area
+        # sliver is not an area of unsurveyed water.
+        _kept = 0
+        for part in _singles(left):
+            if part.get('type') != 'Polygon':
+                continue
+            f2 = dict(f)
+            f2['geometry'] = part
+            out.append(f2)
+            _kept += 1
+        if not _kept:
+            # The intersection was real but held no area at all -- an edge touch. Count it where
+            # it belongs rather than as a cut that produced nothing.
+            st['cut'] -= 1
+            st['dropped'] += 1
+    return out, st
+
+
 def _keep_geom(mask):
     """The lake plus its buffer as ONE shapely geometry, built once and cached on the mask.
 
@@ -1224,6 +1374,10 @@ def main():
     # 3DHP polygon per lake. Clip to that, buffered by --buffer-m so shoreline structure, docks
     # and ramps just off the water still land in the pack.
     mask = None
+    # The water ITSELF, islands and all -- the mask is the envelope plus a 250 m collar and
+    # cannot be used to cut a layer that gets drawn. See load_water() and clip_to_water().
+    # None without --boundary, which is exactly right: no boundary, no unsurveyed layer.
+    water = load_water(a.boundary) if a.boundary else None
     if a.boundary:
         gj = json.load(open(a.boundary, encoding='utf-8'))
         # EVERY part -- see load_boundary() in build_all_chartpacks.py. 3DHP emits one Feature
@@ -1272,26 +1426,47 @@ def main():
             print('   %-14s %4s   no %s* files in %s/ -- wrong tile letter?'
                   % (layer, letter, letter, layer))
         feats = []; ntile = 0; n_trim = 0; n_drop = 0
-        for fp in files:
-            doc = read_fc(fp)
-            fs = doc.get('features') or []
-            if not fs: continue
-            ntile += 1
-            for f in fs:
-                # `mask` goes in so a sprawling polygon is CUT rather than dropped -- the same
-                # rule the batch builder uses. Without it this builder would quietly disagree
-                # with build_all_chartpacks about what a pack contains, which is how two copies
-                # of one rule drift.
-                ng, verdict = trim_geometry(f['geometry'], inbox, mask)
-                if verdict == 'drop':
-                    n_drop += 1
+        if layer in CUT_TO_WATER:
+            # ONE RULE, BOTH BUILDERS. This is the same call build_all_chartpacks makes, for the
+            # reason on CUT_TO_WATER: a layer bigger than the lake cannot be selected, only cut,
+            # and a builder that did not know that would ship the whole tile.
+            cst = {}
+            for fp in files:
+                fs = read_fc(fp).get('features') or []
+                if not fs:
                     continue
-                if verdict == 'trim':
-                    n_trim += 1
-                    for part in split_multi(ng):
-                        feats.append(dict(f, geometry=part))
+                ntile += 1
+                cut, st = clip_to_water(fs, water)
+                feats.extend(cut)
+                for k, v in st.items():
+                    cst[k] = cst.get(k, 0) + v
+            if cst.get('no_shapely'):
+                print('   %-14s NOT WRITTEN -- no usable boundary geometry, and an uncut 1/11 '
+                      'would hatch dry land. Give --boundary, or install shapely.' % layer)
+            elif cst:
+                print('   %-14s cut to the water: %s' % (layer, cst))
+        else:
+            for fp in files:
+                doc = read_fc(fp)
+                fs = doc.get('features') or []
+                if not fs:
                     continue
-                feats.append(f)
+                ntile += 1
+                for f in fs:
+                    # `mask` goes in so a sprawling polygon is CUT rather than dropped -- the
+                    # same rule the batch builder uses. Without it this builder would quietly
+                    # disagree with build_all_chartpacks about what a pack contains, which is
+                    # how two copies of one rule drift.
+                    ng, verdict = trim_geometry(f['geometry'], inbox, mask)
+                    if verdict == 'drop':
+                        n_drop += 1
+                        continue
+                    if verdict == 'trim':
+                        n_trim += 1
+                        for part in split_multi(ng):
+                            feats.append(dict(f, geometry=part))
+                        continue
+                    feats.append(f)
         if n_trim or n_drop:
             print('   %-14s trimmed %d feature(s) to the boundary, dropped %d that only grazed it'
                   % (layer, n_trim, n_drop))

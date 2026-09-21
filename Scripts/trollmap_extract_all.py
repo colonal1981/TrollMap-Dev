@@ -59,10 +59,10 @@ if HERE not in sys.path: sys.path.insert(0, HERE)
 # decoder started emitting `waterbody` and `docks`, this list still said `waterbodies` and
 # `shoreline_docks`, and both came out 0 on tiles that hold 2,225 and 2,292 polygons.
 LAYERS = ("contours", "shoreline", "hydrography", "roads", "boundaries", "lines_other",
-          "depth_areas", "waterbody", "docks", "land_fill", "tile_background",
+          "depth_areas", "waterbody", "docks", "land_fill", "tile_background", "unsurveyed",
           "areas", "areas_other", "pois", "labels")
 AREA_LAYERS = ("depth_areas", "waterbody", "docks", "land_fill",
-               "tile_background", "areas", "areas_other")
+               "tile_background", "unsurveyed", "areas", "areas_other")
 
 # decode_lines / decode_areas return a per-feature `layer`; roads_* collapse to one file.
 def _layer_file(name):

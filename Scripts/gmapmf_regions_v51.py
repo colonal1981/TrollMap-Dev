@@ -49,9 +49,9 @@ AREA_CLASS = {
     "13/1":  "tile_background",    # subdivision box, no holes, under everything: 256 rings on
                                    # B4E0F3 dissolving to 100.0% of the tile box, water included
     "1/5":   "areas_other",
-    "1/11":  "tile_background",    # NOT a background, and NOT land either. It is the exact
-                                   # complement of the survey: everywhere this tile has no
-                                   # soundings, dry or wet. Measured 2026-09-20, zoom 0:
+    "1/11":  "unsurveyed",         # EVERYWHERE THIS TILE HAS NO SOUNDINGS. Not a background,
+                                   # not land, not water -- the exact complement of the survey.
+                                   # Measured 2026-09-20, zoom 0:
                                    #   C4E0F3 (Congaree)  1/11 92.1% of the tile box, depth areas
                                    #                      7.9%, sum 100.0%, overlap 0.000%
                                    #   C4E0F1 (Wateree)   1/11 98.4%, depth areas 1.6%, sum
@@ -59,27 +59,42 @@ AREA_CLASS = {
                                    # Exact complements, so 1/11 cannot be sitting under anything.
                                    # Garmin's own MAR auto-guidance mesh agrees: of the 0 ft
                                    # safe-water surface, 100.00% falls inside the depth areas and
-                                   # 0.00% inside 1/11, on BOTH tiles. Contours agree too -- 0% of
-                                   # the 9 ft contour and deeper touches it; the only bleed is
-                                   # 11.9% of the 1 ft and 4.7% of the 2 ft, which is the
-                                   # shoreline drawn twice at two generalisations.
-                                   # The old note read "C's single background mode; B splits it
-                                   # into 1/10 + 13/1". B's 13/1 really is the background at
-                                   # 100.0% of the box, water included; C has no background mode.
+                                   # 0.00% inside 1/11, on BOTH tiles. Contours agree twice over
+                                   # -- 0% of the 9 ft contour and deeper touches it, and an
+                                   # eroded 1/11 contains 0 m of contour against 15,307,711 m on
+                                   # the same tile. Garmin never draws a sounding inside it
+                                   # because there is no sounding to draw.
+                                   #
+                                   # Ryan, 2026-09-20, who worked out the mechanism from
+                                   # ActiveCaptain before any of this was measured: "i think what
+                                   # garmin does is put land to what they call the boundary...
+                                   # anything that is not sounded is land". That is why AC looks
+                                   # complete and TrollMap does not: "our problem is that we use
+                                   # their water but not their land". We clip to 3DHP's real
+                                   # waterbody; Garmin draws the bank in to wherever the survey
+                                   # stopped, and the map closes up.
+                                   #
                                    # DO NOT SHIP THIS AS LAND. It was briefly reclassed to
-                                   # land_fill on 2026-09-20 and that was wrong. Against USGS NHD,
-                                   # the patches it claims split two ways:
+                                   # land_fill on 2026-09-20 and that was wrong. Against USGS NHD
+                                   # the patches it claims split two ways, and nothing inside the
+                                   # Garmin file distinguishes them:
                                    #   33.76736,-80.65085 and 33.76719,-80.65320 (Ryan's 0006)
                                    #     inside a 13.559 km2 NHD SwampMarsh -- water he paddles
                                    #   33.779102,-80.631033   inside a 1.144 km2 SwampMarsh
                                    #   33.766379,-80.783401   3,774 m from any NHD water -- dry
                                    #   33.770161,-80.768648   2,597 m from any NHD water -- dry
-                                   # So 1/11 carries dry ground AND unsurveyed water in one class
-                                   # and cannot tell them apart. Painting it as land would put
-                                   # solid ground over a slough Ryan fishes, which is worse than
-                                   # the bare grey it causes today. Ryan called this: "even the
-                                   # app thinks that wedge is water... the grey is what the water
-                                   # looks like on the satellite."
+                                   #
+                                   # THE CLIP IS WHAT RESOLVES THAT, and it is the reason this
+                                   # can ship now when it could not before. The old allow-list
+                                   # entry said 1/11 "must not be drawn as either until something
+                                   # outside the tile can" tell dry ground from unsurveyed water.
+                                   # 3DHP's waterbody polygon IS that something, the pipeline
+                                   # already applies it to every layer, and `1/11 INTERSECT
+                                   # boundary` is by construction water Garmin never sounded --
+                                   # the dry half falls outside the boundary and is cut away.
+                                   # Congaree 1,805.2 ac (16.7% of the water), Marion 4,242.2 ac
+                                   # (5.2%), 0.30 and 0.62 MB gzipped.
+                                   #
                                    # Unsounded water INSIDE the survey is a different thing again
                                    # and stays a depth area: the 0-1 ft band is the most common
                                    # band on both tiles (10.6% Congaree, 16.1% Wateree).

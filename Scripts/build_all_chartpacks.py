@@ -5,12 +5,20 @@ Personal use only, not for distribution or resale; not for navigation.
 
 PowerShell:
 
-    py .\\build_all_chartpacks.py `
+    py -u .\\build_all_chartpacks.py `
        --extract  "F:\\TrollMapPipeline\\extract" `
        --registry "F:\\TrollMapPipeline\\registry" `
        --map      "F:\\TrollMapPipeline\\registry\\tile_lake_map.json" `
        --out      "F:\\TrollMapPipeline\\chartpack" `
        --report   "F:\\TrollMapPipeline\\registry\\charted.json"
+
+`-u` IS NOT DECORATION. Python buffers stdout when it is not a terminal, so a run redirected to a
+file writes NOTHING until it exits. On 2026-09-21 that meant 30 minutes of a 0-byte log with six
+workers going and no way to tell progress from a hang. A long run has to be watchable.
+
+This builds the waters `registry/lake_index.json` offers -- 354 of 1,833 -- because that is what
+the app can load and what the uploader will ship. `--all-registry` builds the rest as well, and
+it costs about six times as much. See the gate in main().
 
 WHY TILE-MAJOR AND NOT LAKE-MAJOR
 
@@ -39,7 +47,8 @@ from collections import defaultdict
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from build_chartpack import (LakeMask, BboxMask, build_mask, read_fc, verts, SHIP, NOTE,
                              DROP, redp, _rings, collapse_ramps, touches_core,
-                             clip_excluded, trim_geometry, split_multi)   # noqa: E402
+                             clip_excluded, trim_geometry, split_multi,
+                             clip_to_water, load_water, CUT_TO_WATER)   # noqa: E402
 
 # Which layers decide "is this lake charted". DEPTH AREAS, not contours -- see
 # LakeMask.charted_fraction for why counting contour vertices reported 0.66 for a fully
@@ -62,6 +71,7 @@ LINE_LAYERS = ('contours', 'hydrography', 'shoreline')
 # water. Point layers are deliberately absent: the buffer is doing real work there,
 # because a dock or a ramp really does sit just off the bank.
 CORE_ONLY_LAYERS = ('contours', 'depth_areas')
+
 
 
 # ── Garmin ships every lake at six levels of detail ──────────────────────────
@@ -398,6 +408,47 @@ def owned_inside(slug, meta, registry, _cache={}):
     return out
 
 
+def _partition(todo, by_lake, tiles, k):
+    """Split lakes across k workers so each worker reads as few tiles as possible.
+
+    Greedy: the lakes with the most tiles go first, and each one lands on the worker whose
+    tile set grows the least. Ties go to the worker holding fewer tiles, then fewer lakes.
+
+    WHY LAKES AND NOT TILES. The build loop is tile-major on purpose -- see the module header --
+    so slicing the TILE list is the obvious parallel cut, and it cannot work here. 208 of 1,834
+    lakes sit on more than one tile, and those overlaps chain the whole card into ONE connected
+    component: measured 2026-09-20, 169 tiles, 1 component, 1,834 of 1,834 lakes inside it. No
+    cut of the tile list leaves any worker a complete lake, and a lake cannot be written until
+    its last tile has been seen.
+
+    Slicing the lakes inverts that. Each worker derives its own tile list, builds its lakes start
+    to finish, flushes its own packs and writes its own report rows; no accumulator and no pack
+    directory is ever touched by two processes. The price is that a tile serving two workers is
+    read twice, and the packing is what keeps that price low. Measured over the real map:
+
+        jobs   total tile reads   worst worker   speedup
+           2        188  (1.11x)       95           1.78x
+           4        209  (1.24x)       57           2.96x
+           6        210  (1.24x)       40           4.22x
+           8        208  (1.23x)       31           5.45x
+          12        213  (1.26x)       31           5.45x
+
+    IT PLATEAUS AT 8, AND THE REASON IS A RIVER. mississippi_river is on 15 tiles and
+    ocmulgee_river on 12, so some worker must read at least that many however large k is. Past
+    8 the extra processes cost RAM and buy nothing.
+    """
+    live = set(tiles)
+    units = sorted((({t for t in by_lake[s] if t in live}, s) for s in todo),
+                   key=lambda x: (-len(x[0]), x[1]))
+    W = [{'tiles': set(), 'lakes': []} for _ in range(max(1, k))]
+    for ts, s in units:
+        i = min(range(len(W)), key=lambda j: (len(ts - W[j]['tiles']), len(W[j]['tiles']),
+                                             len(W[j]['lakes'])))
+        W[i]['tiles'] |= ts
+        W[i]['lakes'].append(s)
+    return [w for w in W if w['lakes']]
+
+
 def load_boundary(registry, slug):
     fp = os.path.join(registry, 'boundaries', slug + '.geojson')
     if not os.path.exists(fp):
@@ -471,6 +522,17 @@ def main():
                     help='comma list, a file path, or @file of SLUGS. Rebuilds only those lakes and only the '
                          'tiles they sit on. Use after a boundary fix, when you know exactly '
                          'which lakes were wrong and a full 50-minute pass is wasted effort.')
+    ap.add_argument('--jobs', type=int, default=4,
+                    help='build in N parallel processes. Lakes are packed across workers so each '
+                         'owns whole lakes -- see _partition for the measurements. 4 IS RYAN\'S '
+                         'MACHINE, not a guess: 31.8 GB and 16 cores, and at 6 he said the run '
+                         'was "slow and a little rough on my computer", the same verdict he gave '
+                         '--jobs 12 on the extract. THE LIMIT IS RAM, NOT CORES -- one worker '
+                         'peaks at the largest single layer of one tile.')
+    ap.add_argument('--all-registry', action='store_true',
+                    help='build every registry lake, not just the ones the app serves. For an '
+                         'archive pass. See the gate below -- this is the expensive answer and '
+                         'it has to be asked for.')
     ap.add_argument('--keep-zoom', type=int, default=0,
                     help='Garmin detail level to ship: 0 is finest, 5 the crudest overview. '
                          'They are redraws of the same water, not extra coverage, and drawing '
@@ -530,6 +592,39 @@ def main():
             print('   NOT FOUND, nothing rebuilt for these: %s' % ', '.join(sorted(missing)))
     if a.limit:
         todo = set(sorted(todo, key=lambda s: -(meta[s].get('area_km2') or 0))[:a.limit])
+    # ── ONLY WHAT THE APP SERVES, UNLESS ASKED OTHERWISE ────────────────────────────────
+    #
+    # 2026-09-21. This script built all 1,833 registry lakes by default while
+    # upload_garmin_to_r2.py REFUSES anything outside registry/lake_index.json -- its own flag
+    # says "ONLY these slugs ship... this is not optional". The uploader had the gate and the
+    # builder did not, so the default here was an hour of work on 1,479 packs nothing can load.
+    #
+    # Ryan, watching it grind through them: "NOOOOOOOOOOOO dont rebuild packs we are never going
+    # to serve in the app". And on where the number came from: "773 was the number before i
+    # redrew lines to limit it... it was just getting too big and unwieldy and i was never going
+    # to fish those waters". charted.json still marks 773 shipped; the index is 354. The index is
+    # the live answer and the report is the history.
+    #
+    # So the cheap path is the default and the expensive one is asked for by name. It is also
+    # much cheaper than the lake count suggests: the served waters touch 89 of 169 tiles.
+    #
+    # --only-lakes BYPASSES THIS ON PURPOSE, which is what makes --jobs work: every child runs
+    # with an explicit slug list the parent has already gated, so the gate must not narrow it a
+    # second time.
+    if not a.all_registry and not a.only_lakes:
+        ipath = os.path.join(a.registry, 'lake_index.json')
+        if not os.path.exists(ipath):
+            # A BLOCKER, not a fallback to "build everything". Silently going wide is the
+            # failure this gate exists to prevent, and it would look like a successful run.
+            sys.exit('no lake_index.json at %s, so there is no way to know which waters the app '
+                     'serves. Run consolidate_lake_index.py, or pass --all-registry to build '
+                     'the whole registry on purpose.' % ipath)
+        served = set(json.load(open(ipath, encoding='utf-8')))
+        before = len(todo)
+        todo = {s for s in todo if s in served}
+        print('serving %d of %d registry lake(s) -- lake_index.json. Pass --all-registry to '
+              'build the %d the app does not offer.' % (len(todo), before, before - len(todo)))
+
     tiles = sorted({t for s in todo for t in by_lake[s]})
     print('%d lakes over %d tiles' % (len(todo), len(tiles)))
 
@@ -569,10 +664,96 @@ def main():
         print('--only-layers: re-cutting %s only; %d other layer(s) left untouched on disk'
               % (', '.join(want_layers), len(SHIP) - len(a.layer_set)))
 
-    masks, acc, remaining = {}, defaultdict(dict), {}
+    # ── --jobs: k COPIES OF THIS SCRIPT, EACH OWNING WHOLE LAKES ────────────────────────
+    #
+    # A SUBPROCESS AND NOT A WORKER POOL, deliberately. Pooling would mean lifting this loop
+    # out into a function that runs in two different shapes, and this repo has paid for the
+    # same rule living in two places three times over -- the AREA_LAYERS drift, the
+    # `_in_region` filter in three files, `trim_geometry` fixed in build_chartpack.py and
+    # never reaching this one. Here the serial path IS the parallel path: each child runs this
+    # same file with --only-lakes and --jobs 1, so there is exactly one implementation and it
+    # is the one the tests exercise.
+    #
+    # --limit and --only-tiles are NOT passed on. Both are already resolved into `todo` above,
+    # and a child re-applying --limit would take the top N of its own slice and quietly build
+    # a different set of lakes than the parent decided on.
+    if a.jobs and a.jobs > 1 and len(todo) > 1:
+        import subprocess, tempfile
+        parts = _partition(todo, by_lake, tiles, a.jobs)
+        print('--jobs %d: %d worker(s), %d tile-read(s) against %d serial (%.2fx work), '
+              'worst worker %d tiles'
+              % (a.jobs, len(parts), sum(len(w['tiles']) for w in parts), len(tiles),
+                 sum(len(w['tiles']) for w in parts) / max(1, len(tiles)),
+                 max(len(w['tiles']) for w in parts)))
+        tmp = tempfile.mkdtemp(prefix='chartpack_jobs_')
+        procs = []
+        for i, w in enumerate(parts):
+            lf = os.path.join(tmp, 'lakes_%02d.txt' % i)
+            with open(lf, 'w', encoding='utf-8') as fh:
+                fh.write('\n'.join(sorted(w['lakes'])) + '\n')
+            rf = os.path.join(tmp, 'report_%02d.json' % i)
+            # SEED THE CHILD'S REPORT WITH ITS OWN ROWS. --only-layers refuses to run without a
+            # prior report to carry charted/counts/mb forward from, and it is right to: a run
+            # that did not read depth_areas cannot measure them and writing the unmeasured
+            # value would set charted:0 across the index. A fresh temp file would look like
+            # "never seen before" to every child.
+            json.dump({k: v for k, v in report.items() if k in w['lakes']},
+                      open(rf, 'w', encoding='utf-8'), indent=1)
+            # -u for the same reason the usage block gives: a worker log that only appears when
+            # the worker exits cannot be watched, and these are the logs that say what happened.
+            cmd = [sys.executable, '-u', os.path.abspath(__file__),
+                   '--extract', a.extract, '--registry', a.registry, '--map', a.map,
+                   '--out', a.out, '--report', rf, '--only-lakes', lf, '--jobs', '1',
+                   '--buffer-m', str(a.buffer_m), '--states', a.states,
+                   '--min-charted', str(a.min_charted), '--keep-zoom', str(a.keep_zoom),
+                   '--max-segment-m', str(a.max_segment_m)]
+            if a.only_layers:
+                cmd += ['--only-layers', a.only_layers]
+            if a.ship_list:
+                cmd += ['--ship-list', a.ship_list]
+            if a.require_depth_area:
+                cmd += ['--require-depth-area']
+            if a.report_only:
+                cmd += ['--report-only']
+            log = open(os.path.join(tmp, 'log_%02d.txt' % i), 'w', encoding='utf-8')
+            procs.append((i, w, rf, log,
+                          subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT)))
+            print('   worker %d: %4d lake(s) over %3d tile(s) -> %s'
+                  % (i, len(w['lakes']), len(w['tiles']), os.path.basename(log.name)))
+        bad = []
+        for i, w, rf, log, pr in procs:
+            rc = pr.wait()
+            log.close()
+            # A CHILD THAT DIED IS NOT A LAKE THAT HAD NOTHING. Name it and fail the run --
+            # the alternative is a report missing 500 lakes that reads as a clean build.
+            if rc != 0:
+                bad.append((i, rc, log.name))
+                continue
+            try:
+                report.update(json.load(open(rf, encoding='utf-8')))
+            except Exception as e:
+                bad.append((i, 'unreadable report: %s' % str(e)[:60], log.name))
+        for i, w, rf, log, pr in procs:
+            with open(log.name, encoding='utf-8') as fh:
+                for line in fh:
+                    if line.strip():
+                        print('   [%d] %s' % (i, line.rstrip()))
+        json.dump(report, open(a.report, 'w', encoding='utf-8'), indent=1)
+        print('\n--jobs: merged %d worker report(s) into %s (%d lakes)'
+              % (len(procs) - len(bad), a.report, len(report)))
+        if bad:
+            for i, rc, lg in bad:
+                print('   !! worker %d FAILED (%s) -- its lakes were NOT built. Log: %s'
+                      % (i, rc, lg))
+            sys.exit('--jobs: %d worker(s) failed; the report is incomplete' % len(bad))
+        print('logs and slug lists kept in %s' % tmp)
+        return
+
+    masks, waters, acc, remaining = {}, {}, defaultdict(dict), {}
     dropped = defaultdict(int)
     trimmed = defaultdict(int)
     stolen = defaultdict(int)   # features a neighbouring lake's water held more of
+    cut_stats = defaultdict(int)   # clip_to_water: cut / dropped / failed / no_shapely
     for s in todo:
         remaining[s] = len([t for t in by_lake[s] if t in tiles])
 
@@ -613,6 +794,11 @@ def main():
                 # performs. Excluding an owned water does not delete it -- it is in its own
                 # pack, at its own resolution, with its own soundings.
                 masks[s] = build_mask(rings, deg, exclude=owned_inside(s, meta, a.registry))
+                # The water itself, with its islands, for the layers that are CUT rather than
+                # selected. `rings` above is exteriors only -- right for the raster, wrong for
+                # anything drawn: it hatched 2,561 acres of Lake Marion's islands as unsurveyed
+                # water on the first run of this layer.
+                waters[s] = load_water(os.path.join(a.registry, 'boundaries', s + '.geojson'))
             live.append(s)
 
         # ONE LAYER AT A TIME, and this is not a style choice.
@@ -729,6 +915,15 @@ def main():
             for s in live:
                 m = masks[s]
                 keep = acc[s].setdefault(layer, [])
+                if layer in CUT_TO_WATER:
+                    # Cut now, not at flush: the uncut features are tile-sized and holding them
+                    # to the end of the run is the memory this loop is shaped to avoid.
+                    _cut, _cst = clip_to_water(feats, waters.get(s))
+                    keep.extend(_cut)
+                    for _k, _v in _cst.items():
+                        if _v:
+                            cut_stats[_k] += _v
+                    continue
                 hit = lambda x, y, _m=m: (x, y) in _m
                 for fi, f in enumerate(feats):
                     ng, verdict = trim_geometry(f['geometry'], hit, m)
@@ -793,6 +988,7 @@ def main():
         for s in live:
             remaining[s] -= 1
             if remaining[s] <= 0:
+                waters.pop(s, None)
                 _flush(s, acc.pop(s, {}), masks.pop(s), meta[s], a, report)
                 flushed += 1
         if ti % 10 == 0 or ti == len(tiles):
@@ -844,6 +1040,18 @@ def main():
         # a silent removal is indistinguishable from never having built it.
         print('features handed to the lake whose water holds more of them: %s'
               % dict(stolen))
+    if cut_stats:
+        print('unsurveyed cut to the water: %s' % dict(cut_stats))
+        if cut_stats.get('no_shapely'):
+            # Not a warning to skim. The layer is ABSENT from every pack this run wrote, and an
+            # absent not-sounded layer looks exactly like a fully surveyed lake.
+            print('   !! shapely is absent, so the unsurveyed layer was NOT written for any '
+                  'lake. Every pack from this run will draw a blank where Garmin never '
+                  'sounded, which is the ambiguity the layer exists to remove. Install '
+                  'shapely and rebuild.')
+        if cut_stats.get('failed'):
+            print('   !! %d unsurveyed polygon(s) shapely refused to cut -- a geometry error, '
+                  'not water outside a lake' % cut_stats['failed'])
     json.dump(report, open(a.report, 'w', encoding='utf-8'), indent=1)
 
     # THE SUMMARY DESCRIBES THIS RUN, NOT THE FILE IT MERGED INTO.
@@ -972,6 +1180,7 @@ def _flush(slug, layers, mask, meta, a, report):
 
     if a.keep_zoom is not None:
         _zk = {}
+        _lvl_of = {}      # the level CHOSEN, whether or not anything was dropped to reach it
         _zdrop = 0
         for _layer in ZOOM_LAYERS:
             _feats = layers.get(_layer)
@@ -991,10 +1200,28 @@ def _flush(slug, layers, mask, meta, a, report):
                     _want = a.keep_zoom
             else:
                 _want = a.keep_zoom if a.keep_zoom in _by else _levels[0]
+            _lvl_of[_layer] = _want
             layers[_layer], _n = keep_zoom(_feats, _want)
             if _n:
                 _zdrop += _n
                 _zk[_layer] = _want
+
+        # UNSURVEYED FOLLOWS DEPTH_AREAS. IT DOES NOT CHOOSE ITS OWN LEVEL.
+        #
+        # 1/11 is the complement of the survey AT ONE DETAIL LEVEL, so the two only agree when
+        # they are read at the same one. A lake Garmin sounded at zoom 2 has no zoom-0 depth
+        # areas at all, and its zoom-0 1/11 therefore covers the whole lake: chosen
+        # independently, the pack would draw every acre as not-sounded directly on top of the
+        # bands it ships. That is not a tolerance to tune -- a complement needs the same
+        # operand. `_lvl_of` and not `_zk`, because a layer that had only one level present
+        # dropped nothing and so never reached `_zk`, and its level is exactly the case this
+        # has to get right.
+        if layers.get('unsurveyed'):
+            _ulvl = _lvl_of.get('depth_areas', a.keep_zoom)
+            layers['unsurveyed'], _n = keep_zoom(layers['unsurveyed'], _ulvl)
+            if _n:
+                _zdrop += _n
+                _zk['unsurveyed'] = _ulvl
         if _zdrop:
             rec['zoom_dropped'] = _zdrop
             rec['zoom_kept'] = _zk

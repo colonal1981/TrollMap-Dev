@@ -115,6 +115,11 @@ LAYERS = {
     "hydrography":      "hydrography.geojson",
     "garmin_shoreline": "garmin_shoreline.geojson",
     "pois":             "pois.geojson",
+    # WHERE GARMIN NEVER SOUNDED -- area mode 1/11 cut to the lake's own 3DHP boundary. In the
+    # DEFAULT set and not opt-in, because the app reads it on every water select alongside
+    # depth_areas: it is what stops a blank patch meaning both "no survey" and "we lost it".
+    # Built in the same pass as depth_areas, so a pack that has one has the other.
+    "unsurveyed":       "unsurveyed.geojson",
     # The MAR routing graph. BINARY, not JSON -- see the content type below and
     # build_water_graphs.py for the format. Opt-in, because it is built by a separate
     # pass and a routine pack upload should not silently expect it to exist.
