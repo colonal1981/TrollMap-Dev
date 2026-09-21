@@ -335,6 +335,57 @@ def walk(polys, line_pts, bbox, cell=CELL_DEG):
     return dist, nx, ny, w0, s0, step, nwet
 
 
+def trace(dist, nx, ny, w0, s0, cell, i, j):
+    """The route the distance already measured, walked back out of the flood field.
+
+    `walk()` floods outward from the channel and keeps a distance in CELLS per wet cell. The
+    number that reaches launches.json -- Pack's Landing, 1,801 m by water against 2,367 straight
+    -- is that distance at the landing's cell. THE PATH WAS ALWAYS THERE AND WAS THROWN AWAY.
+
+    Ryan, 2026-09-21, on a plan that had just drawn a straight line from the ramp across two
+    kilometres of swamp: *"right now it is still a transit all the way from the ramp till the
+    river"*, and *"i should be able to fish the railroad tracks from packs all the way through
+    the canal and up the river which is what i actually do"*. The app could not draw the route
+    because nothing wrote one down.
+
+    Steepest descent, which on a BFS field is exact rather than approximate: every step goes to
+    a neighbour whose distance is one less, so the walk is a shortest path by construction and
+    there is no threshold and no search. It ends on a cell the channel itself seeded, distance 0.
+
+    NOT THE MAR GRAPH, deliberately. Marion's routing graph has the canal's two ends in its main
+    component and no through-channel between them, so a shortest path from the ramp to the
+    canal's south end comes back 14,712 m around the lake against 1,801 m down the canal. The
+    flood is over the charted water at 26 m cells and does not have that hole in it.
+    """
+    out = []
+    d = dist[j * nx + i]
+    if d is None or d < 0:
+        return out
+    NB = ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1))
+    seen = set()
+    while True:
+        out.append([round(w0 + (i + 0.5) * cell, 6), round(s0 + (j + 0.5) * cell, 6)])
+        if d <= 0:
+            break
+        seen.add((i, j))
+        nxt = None
+        for di, dj in NB:
+            a, b = i + di, j + dj
+            if 0 <= a < nx and 0 <= b < ny and (a, b) not in seen:
+                v = dist[b * nx + a]
+                if v >= 0 and v == d - 1:
+                    nxt = (a, b, v)
+                    break
+        if nxt is None:
+            # A field with no downhill neighbour is a bug in the flood, not a dead end -- BFS
+            # guarantees one for every cell above zero. Stop rather than wander, and let the
+            # short route be visible as a short route.
+            break
+        i, j, d = nxt
+    out.reverse()          # channel first, landing last, the direction a boat leaves in
+    return out
+
+
 def boundary_rings(registry, slug):
     """Every ring of a water's registry boundary, whatever shape the file is written in."""
     p = os.path.join(registry, 'boundaries', slug + '.geojson')
@@ -412,6 +463,7 @@ def reach_for(slug, args, points):
             continue
         i = int((lo - w0) / CELL_DEG); j = int((la - s0) / CELL_DEG)
         best = None
+        bestij = None
         # A landing sits ON THE BANK, never in the water -- make_river_boundaries measured
         # 25 m, 10 m, 28 m on the Ocmulgee. Look outward a few cells for the water it serves,
         # and stop at the first ring that has any, so the nearest water wins.
@@ -422,6 +474,7 @@ def reach_for(slug, args, points):
                         d = dist[b * nx + a]
                         if best is None or d < best:
                             best = d
+                            bestij = (a, b)
             if best is not None:
                 break
         if best is None:
@@ -442,6 +495,11 @@ def reach_for(slug, args, points):
                     # Where on the river it comes in. A lake has no stations, and saying 0
                     # would read as the top of something.
                     'station_m': (st[k] if (kind == 'centreline' and k < len(st)) else None),
+                    # The water route the distance above was measured along, channel end first.
+                    # Without it the app can only draw a straight line, and a straight line from
+                    # Pack's Landing crosses two kilometres of swamp.
+                    'route': (trace(dist, nx, ny, w0, s0, CELL_DEG, bestij[0], bestij[1])
+                              if bestij else None),
                     'filed': sorted(rec['filed']), 'src': sorted(rec['src'])})
     got.sort(key=lambda r: r['water_m'])
     return {'slug': slug, 'cell_m': round(step, 1), 'water_cells': nwet, 'seed': kind,

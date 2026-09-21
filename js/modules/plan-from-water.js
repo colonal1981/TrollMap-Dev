@@ -39,6 +39,7 @@ import { assemblePlan } from './plan-assemble.js';
 import { buildPlanRequest, parsePlanResponse, planArgsFrom, MODEL_LEG_FIELDS }
   from './plan-prompt.js';
 import { prefetchTransits } from './smart-plan-v2.js';
+import { launchRouteFor } from '../data/launch-reach.js';
 import { searchOrder, dayCost, priceSpots, TROLL_MPH, TRANSIT_MPH } from './plan-water.js';
 
 /** The point on a line nearest a given position, and how far along the line it is. */
@@ -447,7 +448,13 @@ export async function planFromWater(o) {
   // the other end -- and a pair prefetched from the wrong end simply misses, dropping that
   // transit to an unrouted straight line. prefetchTransits() reads the pass counts through
   // orientLegs(), so it has to see them.
-  const transit = o.transit || await prefetchTransits(candidates, o.ramp, o.routeWater);
+  // AND THE LEG OFF THE RAMP, which the water graph cannot answer on a water like the Congaree:
+  // the river's graph does not reach Lake Marion and Marion's has no through-channel down the
+  // railroad canal. build_ramp_reach.py measured that route over the charted water and now
+  // writes it into the pack. See prefetchTransits().
+  const rampRoute = await launchRouteFor(o.slug, o.ramp && o.ramp[1], o.ramp && o.ramp[0]);
+  const transit = o.transit
+               || await prefetchTransits(candidates, o.ramp, o.routeWater, rampRoute);
 
   const plan = assemblePlan({
     // IN THE ORDER ALREADY DECIDED. assemblePlan documents `candidates` as "IN THE ORDER THE MODEL

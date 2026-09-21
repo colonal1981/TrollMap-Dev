@@ -105,6 +105,51 @@ export function reachLabel(r) {
  * @param {Array} rows   the reach landings for this water, from launchReach()
  * @returns {string} 'semi-private', or ''
  */
+/**
+ * The water route from this landing out to the channel, or null.
+ *
+ * `build_ramp_reach.py` floods the charted water outward from the river and writes the path it
+ * measured the distance along -- channel end first, landing last. Ryan, 2026-09-21, on a plan
+ * that drew a straight line from Pack's Landing across two kilometres of swamp: *"and yes that
+ * transit is over land... so that will need to be fixed of course"*.
+ *
+ * @param {Array} rows  the reach landings for this water, from launchReach()
+ * @returns {number[][]|null}  [[lon, lat], ...] channel first, or null when nothing measured one
+ */
+/**
+ * The same route, fetched by PACK KEY and awaited, for the planners.
+ *
+ * `launchReach()` is synchronous on purpose because two dropdowns build their options in one
+ * pass and neither can await. The planners can, and they hold a slug rather than the picker's
+ * display name -- so this is the same file, the same cache and the same collapse, reached the
+ * other way round. One loader, not two.
+ *
+ * @returns {Promise<number[][]|null>}  [[lon, lat], ...] channel first, or null
+ */
+export async function launchRouteFor(key, lat, lon) {
+  if (!key || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  let rows = CACHE.get(key);
+  if (!Array.isArray(rows)) {
+    try {
+      const r = await fetch(`${CF_WORKER_URL}/chartpacks/${encodeURIComponent(key)}/launches.json`);
+      rows = r.ok ? collapse((await r.json()).landings || []) : [];
+    } catch (_) {
+      rows = [];                      // a pack without one is the normal case, not an error
+    }
+    CACHE.set(key, rows);
+  }
+  return routeAt(rows, lat, lon);
+}
+
+export function routeAt(rows, lat, lon) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  const here = { lat, lon };
+  for (const r of rows || []) {
+    if (Array.isArray(r && r.route) && r.route.length >= 2 && samePlace(here, r)) return r.route;
+  }
+  return null;
+}
+
 export function listingAt(rows, lat, lon) {
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return '';
   const here = { lat, lon };
@@ -156,6 +201,15 @@ function collapse(rows) {
     // one landing arriving as a state "public water access" row and a national "Semi-Private"
     // row is a marina that the state lists, not a marina that stopped charging.
     if (r.listing && (!hit.listing || r.listing === 'Semi-Private')) hit.listing = r.listing;
+    // THE ROUTE COMES WITH THE SHORTEST WATER DISTANCE, not with whichever row won the name.
+    // Two feeds' records of one ramp collapse into one row here, and only the row build_ramp_
+    // reach.py actually measured carries a traced path. Losing it in the merge would put the
+    // straight line back.
+    if (Array.isArray(r.route) && r.route.length >= 2
+        && (!Array.isArray(hit.route) || Number(r.water_m) < Number(hit.water_m))) {
+      hit.route = r.route;
+      hit.water_m = r.water_m;
+    }
     hit.filed = union(hit.filed, r.filed);
     hit.src = union(hit.src, r.src);
   }

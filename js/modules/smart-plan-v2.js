@@ -19,7 +19,7 @@
 
 import { selectCandidates, structureIndex, forModel, travelOrder, poiSpotFeatures,
          attractorSpotFeatures, chartedGrid, chartedHazards,
-         turnaroundMiles, riverDay } from './plan-candidates.js';
+         turnaroundMiles, riverDay, metresBetween } from './plan-candidates.js';
 import { buildPlanRequest, parsePlanResponse, planArgsFrom } from './plan-prompt.js';
 // A RIVER LEG IS A DRIFT, NOT A LANE. See river-drifts.js for what that means, what it measures
 // and why the trolling runs are the wrong object on moving water.
@@ -32,6 +32,7 @@ import { connectionFor, snapEligibleFrom } from '../data/lure-knowledge.js';
 // ONE SPELLING OF "IS THIS A RIVER", shared with the Water tab -- see saysRiver() for why it is not
 // a string compare in two files, and why it is not `waterState.river`.
 import { saysRiver } from './plan-inputs.js';
+import { launchRouteFor } from '../data/launch-reach.js';
 
 // How many candidates the model is shown. Enough to make the ordering a real choice, few enough
 // that the prompt does not turn into a phone book. NOT a cap on what it may fish — it may use all
@@ -555,8 +556,12 @@ export async function buildSmartPlanV2(o) {
   // no network, and it is the same projection `transitM` and the ramp's own station already use.
   // A river plan now makes no route request at all, where it used to make one per leg plus one home.
   const riverRoute = (isRiver && riverTransit && riverTransit.route) || null;
-  const transit = o.transit || riverRoute
-                  || await prefetchTransits(args.candidates, o.ramp, o.routeWater);
+  // The ramp leg comes off the measured water route when the pack has one; every other pair
+  // still comes off the centreline, which is what a river day is made of.
+  const rampRoute = await launchRouteFor(o.slug, o.ramp && o.ramp[1], o.ramp && o.ramp[0]);
+  const transit = o.transit
+                  || rampLegRouter(o.ramp, rampRoute, riverRoute)
+                  || await prefetchTransits(args.candidates, o.ramp, o.routeWater, rampRoute);
 
   const plan = assemblePlan({
     ...args,
@@ -682,8 +687,58 @@ const pairKey = (a, b) => `${a[0].toFixed(6)},${a[1].toFixed(6)}>${b[0].toFixed(
  * fishable, it just has a transit nobody water-tested, and the leg, the warnings list and
  * validatePlan() all say so.
  */
-export async function prefetchTransits(candidates, launch, routeWater) {
-  if (typeof routeWater !== 'function' || !Array.isArray(candidates) || !candidates.length) return null;
+/**
+ * The leg off the ramp, over water build_ramp_reach.py actually measured.
+ *
+ * Ryan, 2026-09-21, reading his own plan's GPX: *"and yes that transit is over land... so that
+ * will need to be fixed of course"*. `T1 · transit` was four points — Pack's Landing straight to
+ * the canal's south end, 2.2 km across open lake and swamp.
+ *
+ * NEITHER OF THE TWO ROUTERS CAN ANSWER THAT PAIR. On a river the transit comes from
+ * `centrelineTransit()`, the pack's own spine, and the Congaree's spine runs down the main
+ * channel past the canal — so a ramp 1.8 km down a canal projects onto it as a straight line
+ * across the swamp. The water graph cannot help either: the river's does not reach Lake Marion,
+ * and Marion's has the canal's two ends in its main component with no through-channel between
+ * them, answering 14,712 m around the lake against 1,801 m down the canal.
+ *
+ * `build_ramp_reach.py` already knew. It floods the charted water at 26 m cells outward from the
+ * channel to measure each landing BY WATER — Pack's at 1,801 m against 2,367 straight, the
+ * number already in the pack — and now writes the path that distance was measured along, channel
+ * end first. Steepest descent on a BFS field, so a shortest path by construction, and over
+ * charted water, so it cannot cross land.
+ *
+ * Only pairs with the ramp at one end, and it defers to `base` for everything else.
+ *
+ * @param {number[]} launch        [lon, lat] of the ramp
+ * @param {number[][]} launchRoute [[lon, lat], ...] channel first, from launches.json
+ * @param {function} [base]        the router this wraps; answers every other pair
+ */
+export function rampLegRouter(launch, launchRoute, base) {
+  const ok = Array.isArray(launch) && Array.isArray(launchRoute) && launchRoute.length >= 2;
+  if (!ok) return base || null;
+  // 2e-4 deg is about 20 m, the same order as the flood's own cell -- and the ramp coordinate the
+  // planner carries is the landing, while the route's last point is the wet cell beside it.
+  const near = (a) => Array.isArray(a) && Math.abs(a[0] - launch[0]) < 2e-4
+                                       && Math.abs(a[1] - launch[1]) < 2e-4;
+  const len = (cs) => {
+    let d = 0;
+    for (let i = 1; i < cs.length; i++) d += metresBetween(cs[i - 1], cs[i]);
+    return d;
+  };
+  return (a, b) => {
+    const cs = near(a) ? launchRoute.slice().reverse()
+             : near(b) ? launchRoute.slice()
+             : null;
+    if (!cs) return base ? base(a, b) : null;
+    return { distanceM: len(cs), coordinates: cs, fromLaunchReach: true };
+  };
+}
+
+
+export async function prefetchTransits(candidates, launch, routeWater, launchRoute) {
+  const hasLaunchRoute = Array.isArray(launchRoute) && launchRoute.length >= 2;
+  if ((typeof routeWater !== 'function' && !hasLaunchRoute)
+      || !Array.isArray(candidates) || !candidates.length) return null;
   const pairs = [];
   let cursor = launch;
   // THE SAME ORIENTATION THE ASSEMBLER WILL WALK. A pass can be trolled either way and the app
@@ -711,16 +766,49 @@ export async function prefetchTransits(candidates, launch, routeWater) {
   // the one leg he cannot do without as a straight line every single time.
   if (Array.isArray(cursor) && Array.isArray(launch)) pairs.push([cursor, launch]);
   const routed = new Map();
-  await Promise.all(pairs.map(async ([a, b]) => {
-    try {
-      const r = await routeWater(a, b);
-      if (r && Array.isArray(r.coordinates) && r.coordinates.length >= 2 && Number.isFinite(r.distanceM)) {
-        routed.set(pairKey(a, b), { distanceM: r.distanceM, coordinates: r.coordinates });
+  if (typeof routeWater === 'function') {
+    await Promise.all(pairs.map(async ([a, b]) => {
+      try {
+        const r = await routeWater(a, b);
+        if (r && Array.isArray(r.coordinates) && r.coordinates.length >= 2 && Number.isFinite(r.distanceM)) {
+          routed.set(pairKey(a, b), { distanceM: r.distanceM, coordinates: r.coordinates });
+        }
+      } catch (e) {
+        console.warn('[plan-v2] transit not routed:', e.message);
       }
-    } catch (e) {
-      console.warn('[plan-v2] transit not routed:', e.message);
+    }));
+  }
+
+  // ── THE LEG OFF THE RAMP, WHEN THE GRAPH CANNOT ANSWER IT ──────────────────────────────────
+  //
+  // Ryan, 2026-09-21, reading his own plan's GPX: *"and yes that transit is over land... so that
+  // will need to be fixed of course"*. `T1 · transit` was four points — Pack's Landing straight
+  // to the canal's south end, 2.2 km across open lake and swamp.
+  //
+  // THE WATER GRAPH CANNOT FIX THAT ONE. It is Garmin's auto-guidance mesh, and the railroad
+  // canal has its two ends in it with no through-channel between them: asked for Pack's to the
+  // canal's south end, Marion's graph answers 14,712 m around the lake against 1,801 m down the
+  // canal. The river's own graph does not reach the lake at all, so `/water/<slug>/route` returns
+  // nothing and the leg falls back to the straight line that marks itself `unrouted`.
+  //
+  // `build_ramp_reach.py` already had the answer and was throwing it away. It floods the charted
+  // water at 26 m cells outward from the channel to measure how far each landing is BY WATER --
+  // Pack's at 1,801 m against 2,367 straight, the number already in the pack -- and now writes
+  // the path that distance was measured along, channel end first. That is a shortest path by
+  // construction, being steepest descent on a BFS field, and it is over charted water, so it
+  // cannot cross land.
+  //
+  // Used only for pairs with the ramp at one end, and only where the router gave nothing, so a
+  // water whose graph answers properly is untouched.
+  if (hasLaunchRoute && Array.isArray(launch)) {
+    const ramp = rampLegRouter(launch, launchRoute);
+    for (const [a, b] of pairs) {
+      const k = pairKey(a, b);
+      if (routed.has(k)) continue;
+      const r = ramp && ramp(a, b);
+      if (r) routed.set(k, r);
     }
-  }));
+  }
   if (!routed.size) return null;
   return (a, b) => routed.get(pairKey(a, b)) || null;
 }
