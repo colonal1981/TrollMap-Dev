@@ -272,17 +272,27 @@ def water_polys(extract, registry, slug, bbox, with_depth=False):
                 if g.intersects(win):
                     out.append(g)
                     if with_depth:
-                        # THE BAND'S OWN DEEP EDGE, which is the number Garmin drew the polygon
-                        # for. '9-10 ft' is 10. Nothing here invents a depth: a polygon with no
-                        # band readable is 0, which the caller treats as unknown.
+                        # THE BAND'S SHALLOW EDGE, BECAUSE THE CALLER IS ASKING ABOUT A FLOOR.
+                        # '9-10 ft' is 9, not 10. This read the deep edge, and the question it
+                        # feeds -- "may the boat be shallower than 6 ft here?" -- then got the
+                        # wrong answer for every band that straddles the number: a '5-6 ft'
+                        # polygon returned 6, passed `>= 6`, and was routed through and reported
+                        # as deep water. Measured on Pack's Landing, 2026-09-21: 12 m under the
+                        # floor by that reading against 215 m by the bands themselves, nearly all
+                        # of it the 5-6 ft flat the ramp sits on. The shallow edge is what the
+                        # polygon guarantees; the deep edge is only what it permits.
+                        #
+                        # Nothing here invents a depth: a polygon with no band readable is 0,
+                        # which the caller treats as unknown and therefore avoids.
                         m = re.match(r'\s*(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)',
                                      str((f.get('properties') or {}).get('band') or ''))
-                        deep.append(float(m.group(2)) if m else 0.0)
+                        deep.append(float(m.group(1)) if m else 0.0)
             break
     return (out, n, deep) if with_depth else (out, n)
 
 
-def walk(polys, line_pts, bbox, cell=CELL_DEG, depths=None, min_ft=0.0, shoal_cost=0.0):
+def walk(polys, line_pts, bbox, cell=CELL_DEG, depths=None, min_ft=0.0, shoal_cost=0.0,
+         verbose=True):
     """Rasterise the water, seed every cell the channel runs through, flood outward.
 
     Returns (cost, prev, deep, nx, ny, w0, s0, step_m, nwet). `cost` is in METRES of water
@@ -375,8 +385,9 @@ def walk(polys, line_pts, bbox, cell=CELL_DEG, depths=None, min_ft=0.0, shoal_co
                 if hit.any():
                     dw[(np.repeat(jj, xs.size) * nx + np.tile(ii, jj.size))[hit]] = True
         deepwet = dw.tobytes()
-        print('      %d of %d wet cells are %g ft or better' % (int(dw.sum()), nwet, min_ft),
-              flush=True)
+        if verbose:
+            print('      %d of %d wet cells are %g ft or better' % (int(dw.sum()), nwet, min_ft),
+                  flush=True)
     # The search below reads one cell at a time, where bytes beats a numpy array on scalar
     # indexing. Same bits, cheaper reads.
     wet = wet.tobytes()
@@ -425,6 +436,64 @@ def walk(polys, line_pts, bbox, cell=CELL_DEG, depths=None, min_ft=0.0, shoal_co
     return cost, prev, deepwet, nx, ny, w0, s0, step, nwet
 
 
+def refine(polys, depths, route, lo, la, cell=CELL_DEG, min_ft=0.0, shoal_cost=0.0, quarter=4):
+    """Run the same search again, down the corridor the coarse one found, at a cell the channel fits in.
+
+    THE CELL IS WIDER THAN THE CHANNEL, WHICH IS THE WHOLE PROBLEM. CELL_DEG is 0.00025 deg, about
+    25.4 m here, and the canal at Rimini is roughly 34 m across. The deep water inside it is
+    narrower than that again. At one cell per channel the search can choose the canal but it cannot
+    choose a SIDE of the canal, so it cuts the corner at the mouth and clips the flat on the way.
+
+    Ryan, 2026-09-21, looking at the line the coarse pass produced: *"the line that is populating
+    now... is not the pink line... it still steers to shallow at the start and end of the canal"*.
+    The pink line was the same objective computed at 6 m. Sampled at 5 m, launch to river: the
+    coarse route carries 325 m under 6 ft in three pieces -- 258 m leaving the ramp, 30 m at
+    station 1,100, and 25 m of 4-5 ft on the last corner before the river. At a quarter of the cell
+    only the first survives, and that one is the flat Pack's Landing is built on, which no route of
+    any length can avoid.
+
+    A QUARTER, AND THE CANAL'S WIDTH IS WHY. 25.4 m goes to 6.4 m, so a 34 m canal is five cells
+    across instead of one and the channel inside it can be resolved at all. It is not a tuning
+    knob; it is the first power of two at which the water this is routing through has an inside.
+
+    AND ONLY DOWN THE CORRIDOR, so it stays cheap. Rasterising a whole river at 6 m is eighteen
+    times the coarse pass over ground that is mostly dry. The box here is the coarse route's own
+    bounds plus four coarse cells, which for Pack's Landing is a few tens of thousands of cells --
+    the run does not measurably change length. The coarse pass stays exactly as it was and still
+    decides WHICH water; this decides where in it.
+
+    The seed is the coarse route's channel end, so the refined line arrives at the same junction
+    and the station already measured against it still means what it said.
+    """
+    if not route or len(route) < 2:
+        return route
+    fine = cell / float(quarter)
+    xs = [p[0] for p in route]; ys = [p[1] for p in route]
+    pad = cell * 4
+    bbox = (min(xs) - pad, min(ys) - pad, max(xs) + pad, max(ys) + pad)
+    cost, prev, deep, nx, ny, w0, s0, step, nwet = walk(
+        polys, [route[0]], bbox, cell=fine, depths=depths, min_ft=min_ft,
+        shoal_cost=shoal_cost, verbose=False)
+    INF = float('inf')
+    i = int((lo - w0) / fine); j = int((la - s0) / fine)
+    best, bij = None, None
+    # The same outward ring the coarse pass uses for a landing on the bank, in the same metres --
+    # seven coarse cells is 178 m, so at a quarter of the cell that is 28 rings and not 7.
+    for r in range(0, 7 * quarter + 1):
+        for a in range(i - r, i + r + 1):
+            for b in range(j - r, j + r + 1):
+                if 0 <= a < nx and 0 <= b < ny and cost[b * nx + a] < INF:
+                    d = cost[b * nx + a]
+                    if best is None or d < best:
+                        best, bij = d, (a, b)
+        if best is not None:
+            break
+    if best is None:
+        return route            # nothing reachable at this scale; the coarse line is still a route
+    out = trace(prev, nx, ny, w0, s0, fine, bij[0], bij[1])
+    return out if len(out) >= 2 else route
+
+
 def polyline_m(pts):
     """Length of a lon/lat line in metres, the same arithmetic the rest of this file uses."""
     total = 0.0
@@ -435,25 +504,32 @@ def polyline_m(pts):
     return total
 
 
-def shoal_m(pts, deep, nx, ny, w0, s0, cell):
+def shoal_m(pts, deep_polys, probe=5.0):
     """How many metres of a line are NOT in water at or past the floor.
 
-    Sampled at a quarter of a cell so a segment that clips the corner of a shallow patch is
-    counted for the part that is in it, rather than by whichever end happened to land where.
+    AGAINST THE POLYGONS, NOT THE RASTER, and that is the whole point. This used to sample the
+    coarse deep mask -- 25.4 m cells -- which for a line refined at 6.4 m reported 400 m on a
+    route that measures 215 m against the charted bands themselves. A cell is marked shallow if
+    any part of it is, so a line that correctly hugs the deep side of the channel runs through
+    coarse cells flagged for water it never enters. The answer now does not depend on the grid
+    the route happened to be found on.
     """
-    if deep is None or len(pts) < 2:
+    inside = _index(deep_polys)
+    if inside is None or len(pts) < 2:
         return 0.0
+    try:
+        from build_river_centrelines import to_albers
+    except Exception:
+        return 0.0
+    xy = [to_albers(lon, lat) for lon, lat in pts]
     bad = 0.0
-    for k in range(len(pts) - 1):
-        (x0, y0), (x1, y1) = pts[k], pts[k + 1]
-        cos = math.cos(math.radians((y0 + y1) / 2.0))
-        seg = math.hypot((x1 - x0) * 111320 * cos, (y1 - y0) * 110540)
-        n = max(1, int(seg / (cell * 111320 * cos / 4.0)) + 1)
+    for k in range(len(xy) - 1):
+        (x0, y0), (x1, y1) = xy[k], xy[k + 1]
+        seg = math.hypot(x1 - x0, y1 - y0)
+        n = max(1, int(seg / probe) + 1)
         for q in range(n):
             f = (q + 0.5) / n
-            i = int((x0 + (x1 - x0) * f - w0) / cell)
-            j = int((y0 + (y1 - y0) * f - s0) / cell)
-            if not (0 <= i < nx and 0 <= j < ny and deep[j * nx + i]):
+            if not inside(x0 + (x1 - x0) * f, y0 + (y1 - y0) * f):
                 bad += seg / n
     return bad
 
@@ -850,6 +926,8 @@ def reach_for(slug, args, points):
         # flood's cell count times the cell size, which charged 26 m for a 36 m diagonal and
         # could not be reconciled with the line the app draws. It is the length of that line.
         raw = trace(prev, nx, ny, w0, s0, CELL_DEG, bestij[0], bestij[1]) if bestij else None
+        raw = refine(polys, depths, raw, lo, la, cell=CELL_DEG, min_ft=floor_ft,
+                     shoal_cost=getattr(args, 'shoal_cost', 0.0)) if raw else None
         route = recentre(raw, polys, deep=deep_polys) if raw else None
         got.append({'name': rec['name'] or None, 'lat': rec['lat'], 'lon': rec['lon'],
                     'access': rec.get('access') or None,
@@ -868,8 +946,8 @@ def reach_for(slug, args, points):
                     # river it was always no, because Pack's Landing sits on a 5 ft flat and no
                     # route out of it can be all deep. A number says which landings are a problem
                     # and by how much; a flag said every one of them was.
-                    'shoal_m': (None if deep is None or not raw
-                                else int(round(shoal_m(raw, deep, nx, ny, w0, s0, CELL_DEG)))),
+                    'shoal_m': (None if not deep_polys or not raw
+                                else int(round(shoal_m(raw, deep_polys)))),
                     'filed': sorted(rec['filed']), 'src': sorted(rec['src'])})
     got.sort(key=lambda r: (r['water_m'] is None, r['water_m']))
     return {'slug': slug, 'cell_m': round(step, 1), 'water_cells': nwet, 'seed': kind,
