@@ -113,7 +113,8 @@ const CACHE_TTL = 24 * 60 * 60 * 1000;
 // bates_old_river and lake_marion were rebuilt and re-uploaded after the ownership rules
 // changed; a browser holding the 7 copies from an hour earlier is holding Marion with a
 // 4,488-acre hole in it. The rule in the paragraph above only works if it is obeyed.
-const CACHE_SCHEMA = 8;
+// 8 -> 9: the annex landed and the three Santee packs were rebuilt and re-uploaded again.
+const CACHE_SCHEMA = 9;
 
 // AND WHICH BUILD THAT NUMBER WAS BUMPED FOR, so the next person cannot forget the way I did.
 //

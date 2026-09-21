@@ -489,6 +489,27 @@ def load_boundary(registry, slug):
              if gj.get('type') == 'FeatureCollection'
              else [gj.get('geometry') or gj])
     r = [ring for g in geoms if g for ring in _rings(g)]
+
+    # AND THE ANNEX, if build_annex.py has written one. That file is Garmin-sounded water which
+    # TOUCHES this water and which no 3DHP polygon claims anywhere -- the canal from Pack's
+    # Landing to the Congaree is 22 acres of it, sounded on Ryan's chartplotter with 1, 2 and
+    # 10 ft contours down it, and inside nobody's outline. 00_START_HERE's governing fact is
+    # that a feature can only be assigned by clipping it against a polygon, so until this file
+    # existed that canal could not be carried by any pack however the ownership rules were
+    # written. Ryan spent a night watching four of them fail to touch it.
+    #
+    # Unioned here rather than bolted on downstream, so the mask, the core test, `charted` and
+    # the unsurveyed clip all see one outline and cannot disagree about where the water is.
+    ap_ = os.path.join(registry, 'annex', slug + '.geojson')
+    if os.path.exists(ap_):
+        try:
+            gj2 = json.load(open(ap_, encoding='utf-8'))
+            for f in (gj2.get('features') or []):
+                g = f.get('geometry')
+                if g:
+                    r.extend(_rings(g))
+        except Exception:
+            pass
     return r or None
 
 
@@ -814,7 +835,8 @@ def main():
                 # selected. `rings` above is exteriors only -- right for the raster, wrong for
                 # anything drawn: it hatched 2,561 acres of Lake Marion's islands as unsurveyed
                 # water on the first run of this layer.
-                waters[s] = load_water(os.path.join(a.registry, 'boundaries', s + '.geojson'))
+                waters[s] = load_water(os.path.join(a.registry, 'boundaries', s + '.geojson'),
+                                       os.path.join(a.registry, 'annex', s + '.geojson'))
             live.append(s)
 
         # ONE LAYER AT A TIME, and this is not a style choice.

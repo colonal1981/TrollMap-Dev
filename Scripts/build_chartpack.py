@@ -917,8 +917,12 @@ def mask_s(m): return getattr(m, 's', float('-inf'))
 def mask_n(m): return getattr(m, 'n', float('inf'))
 
 
-def load_water(path):
+def load_water(path, annex=None):
     """The waterbody at `path` as ONE shapely geometry, ISLANDS AND ALL. None if unusable.
+
+    `annex` is the matching file from build_annex.py -- Garmin-sounded water that touches this
+    water and that no 3DHP polygon claims, the canal from Pack's Landing among it. It is unioned
+    in, because for every question this geometry answers the annexed water IS part of the water.
 
     NOT `_rings()`, and that distinction cost 349 acres of the Congaree and 2,561 of Marion on
     the first run of this layer. `_rings()` returns a polygon's OUTER ring only, which is right
@@ -954,6 +958,19 @@ def load_water(path):
                 out.append(q)
         except Exception:
             continue
+    if annex and os.path.exists(annex):
+        try:
+            for f in (json.load(open(annex, encoding='utf-8')).get('features') or []):
+                g = f.get('geometry')
+                if not g:
+                    continue
+                q = _shape(g)
+                if not q.is_valid:
+                    q = q.buffer(0)
+                if not q.is_empty:
+                    out.append(q)
+        except Exception:
+            pass
     if not out:
         return None
     try:
