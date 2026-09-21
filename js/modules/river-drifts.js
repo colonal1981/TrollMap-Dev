@@ -305,7 +305,22 @@ export function centrelineTransit(centrelineFc) {
     // A hop of nothing is not a leg. Two reaches that meet -- which on a river day is most of them,
     // because the day is one path out and back -- have no transit between them at all, and
     // returning a two-point line of zero length would draw a track the boat never runs.
-    if (i === j) return { distanceM: 0, coordinates: [line[i].slice(0, 2), line[i].slice(0, 2)] };
+    // ── IT STARTS WHERE THE BOAT IS AND ENDS WHERE THE BOAT IS GOING ───────────────────────────
+    //
+    // Ryan, 2026-09-21, on the join between two legs: *"the lines literally are touching but there
+    // is a connector that runs perpendicular to both lines"*.
+    //
+    // That connector is this function answering in CENTRELINE coordinates. A drift lane is offset
+    // sideways from the spine -- that is what a lane is -- so a transit drawn from the spine
+    // leaves the lane at right angles, runs to the middle of the river and comes back. On two
+    // legs that touch it was worse than that: `i === j` returned the station point twice, and the
+    // plan drew lane end -> spine -> lane start, out and back over nothing. Every one of T2, T3
+    // and T4 in his GPX is four points and 31 m of it, which is the lane's own offset.
+    //
+    // The river metres are still the river's -- the slice and the distance are unchanged -- but
+    // the two ends of the drawn line are the two ends the boat actually has.
+    const A = a.slice(0, 2), B = b.slice(0, 2);
+    if (i === j) return { distanceM: metresBetween(A, B), coordinates: [A, B] };
     const up = j < i;
     const from = up ? j : i, to = up ? i : j;
     const coords = [];
@@ -313,6 +328,8 @@ export function centrelineTransit(centrelineFc) {
     // DRAWN THE WAY THE BOAT GOES. The slice is always in station order; upstream it is reversed,
     // so the track's own direction is the direction of travel and the GPX reads as a course.
     if (up) coords.reverse();
+    if (metresBetween(A, coords[0]) > 1) coords.unshift(A);
+    if (metresBetween(B, coords[coords.length - 1]) > 1) coords.push(B);
     return { distanceM: Math.abs(Number(stationM[to]) - Number(stationM[from])), coordinates: coords };
   };
   return transit;
@@ -626,6 +643,7 @@ export function channelFractions(profiles, fractions, widths, maxShiftM = SIDE_E
   // 25 m per 50 m station -- a 27 degree lean, which is a boat turning onto a hole and not a
   // teleport. A station with no spot is still the deepest column, which is what the rest of the
   // river should be.
+  const held = new Array(n).fill(false);
   if (structures && structures.grid && Array.isArray(stationM) && stationM.length > 1) {
     const span = stepM;
     const base = Number(stationM[0]);
@@ -655,7 +673,22 @@ export function channelFractions(profiles, fractions, widths, maxShiftM = SIDE_E
           if (!pick[i] || r.score > pick[i].score) pick[i] = r;
         }
       }
-      for (let i = 0; i < n; i++) if (pick[i]) off[i] = pick[i].offM;
+      // TWO SPOTS TOO CLOSE TOGETHER TO BOTH BE REACHED. The line may move `maxShiftM` per
+      // station, so a spot 60 m off one bank and another 60 m off the other two stations later
+      // ask for 120 m in 100 m of river. Holding both makes a hairpin no boat drives; holding
+      // the better-scored one and letting the other go is what a person does.
+      let last = -1;
+      for (let i = 0; i < n; i++) {
+        if (!pick[i]) continue;
+        if (last >= 0 && Math.abs(pick[i].offM - pick[last].offM)
+                         > Math.abs(maxShiftM) * (i - last)) {
+          if (pick[i].score > pick[last].score) { pick[last] = null; held[last] = false; }
+          else { pick[i] = null; continue; }
+        }
+        off[i] = pick[i].offM;
+        held[i] = true;
+        last = i;
+      }
     }
   }
   // Step two: the slope limit, centred -- see rule 3.
@@ -663,17 +696,43 @@ export function channelFractions(profiles, fractions, widths, maxShiftM = SIDE_E
   //   over[i]  = max over j of (off[j] - L*|i-j|)  is the SMALLEST limited line at or above it
   // Each is one forward and one backward pass. `under` lags a swing by exactly as much as `over`
   // leads it, so their mean sits on the swing.
-  const L = maxShiftM;
+  const L = Math.abs(maxShiftM);
+  // ── THE SPOTS ARE HELD AND EVERYTHING ELSE GIVES WAY ────────────────────────────────────────
+  //
+  // Ryan, 2026-09-21, looking at the drawn legs: *"the river lanes still look like they weave for
+  // no real reason they head toward things but dont go over them"*.
+  //
+  // Both halves of that were true and the second is this. The limit used to be the MEAN of the
+  // largest line at or below `off` and the smallest at or above it -- and a mean is a smoother,
+  // not a limit. Against a target that stands alone it splits the difference and stops short, so
+  // the line leaned at every spot and arrived at none of them. Measured against the DRAWN lane on
+  // congaree_river's 710 in-section spots, point to SEGMENT: median 20.1 m as shipped, 10.7 m
+  // with the targets and that mean still in the way.
+  //
+  // So a station holding a spot keeps its value and only the stations between them are rate
+  // limited, forward and back. The limit still decides how fast the line may swing -- 25 m per
+  // 50 m station, a 27 degree lean -- it just no longer decides where the swing ends up.
+  // THE LEAD AND THE LAG STAY, AND THAT IS NOT A DETAIL. A plain forward-then-backward clamp
+  // reaches the spots and arrives at every channel crossing LATE, because it only ever limits
+  // from the station behind. The two envelopes below lag a swing by exactly as much as they lead
+  // it, so their mean sits on the swing and the line has left the old bank before the chart does
+  // -- the property `a swing bigger than the limit ramps THROUGH the bend` was written for, and
+  // the test that caught the clamp when it was tried on 2026-09-21.
+  //
+  // A HELD STATION TAKES NO PART IN EITHER PASS. It is already where it is going, so it enters
+  // both envelopes at its own value and its neighbours ramp toward it from both sides.
   const under = off.slice(), over = off.slice();
   for (let i = 1; i < n; i++) {
+    if (held[i]) continue;
     under[i] = Math.min(under[i], under[i - 1] + L);
     over[i] = Math.max(over[i], over[i - 1] - L);
   }
   for (let i = n - 2; i >= 0; i--) {
+    if (held[i]) continue;
     under[i] = Math.min(under[i], under[i + 1] + L);
     over[i] = Math.max(over[i], over[i + 1] - L);
   }
-  for (let i = 0; i < n; i++) off[i] = (under[i] + over[i]) / 2;
+  for (let i = 0; i < n; i++) if (!held[i]) off[i] = (under[i] + over[i]) / 2;
   // Step three: back to a fraction against THIS station's width, and never outside the section.
   // The limit is in metres and the width is not constant, so an offset carried in from a wide
   // station can land past the bank of a narrow one.

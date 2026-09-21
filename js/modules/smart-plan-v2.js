@@ -221,8 +221,21 @@ export async function buildSmartPlanV2(o) {
   // back -- so this is what the reaches are laid out from; see riverDriftRuns(). Null only when the
   // centreline could not be projected at all, and the reaches then fall back to the whole river,
   // which is the layout that produced the 731-minute bench.
+  // THE RAMP'S OWN ROUTE DECIDES WHERE THE DAY STARTS, NOT THE RAMP. Fetched here rather than
+  // below because the reaches are laid out from this station and a station taken from the wrong
+  // point lays every one of them from the wrong place.
+  //
+  // Ryan, 2026-09-21, on a plan off Pack's Landing: *"this connection from the transit to the
+  // first leg makes 0 sense"*. T1 ran the canal to its mouth, jumped 90 m south-east to where the
+  // leg began, and L1 then doubled straight back over the same water. That spur is this line: the
+  // ramp sits 1.8 km down a canal, its own projection onto the Congaree lands downstream of where
+  // the canal actually comes out, and the reaches were anchored there. He does not arrive at his
+  // ramp's projection. He arrives at the END OF THE ROUTE HE TRAVELLED, which build_ramp_reach
+  // measured and launches.json already carries, channel end first.
+  const rampRoute = await launchRouteFor(o.r2Key, o.ramp && o.ramp[1], o.ramp && o.ramp[0]);
+  const arriveAt = (Array.isArray(rampRoute) && rampRoute.length >= 2) ? rampRoute[0] : o.ramp;
   const rampStationM = riverTransit && typeof riverTransit.stationAt === 'function'
-    ? riverTransit.stationAt(o.ramp) : null;
+    ? riverTransit.stationAt(arriveAt) : null;
   const drifts = isRiver && packHasCentreline
     ? riverDriftRuns(centrelineFc, { structures, slug: o.r2Key, maxOffM, maxM: legMaxM,
                                      rampStationM,
@@ -558,7 +571,6 @@ export async function buildSmartPlanV2(o) {
   const riverRoute = (isRiver && riverTransit && riverTransit.route) || null;
   // The ramp leg comes off the measured water route when the pack has one; every other pair
   // still comes off the centreline, which is what a river day is made of.
-  const rampRoute = await launchRouteFor(o.r2Key, o.ramp && o.ramp[1], o.ramp && o.ramp[0]);
   const transit = o.transit
                   || rampLegRouter(o.ramp, rampRoute, riverRoute)
                   || await prefetchTransits(args.candidates, o.ramp, o.routeWater, rampRoute);

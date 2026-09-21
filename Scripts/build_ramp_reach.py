@@ -81,6 +81,7 @@ import argparse
 import json
 import math
 import os
+import re
 import sys
 from collections import deque
 
@@ -229,7 +230,7 @@ def access_points(registry):
     return out
 
 
-def water_polys(extract, registry, slug, bbox):
+def water_polys(extract, registry, slug, bbox, with_depth=False):
     """Every zoom-0 depth-area polygon near this water, off the tiles it sits on.
 
     zoom 0 only: the coarser levels are redraws of the same water, not extra survey, and a
@@ -244,7 +245,7 @@ def water_polys(extract, registry, slug, bbox):
         return [], 0
     import gzip
     win = box(*bbox)
-    out, n = [], 0
+    out, n, deep = [], 0, []
     for t in tiles:
         cid = 'C' + t[1:] if t[:1] in 'Bb' else t
         for ext in ('.geojson.gz', '.geojson'):
@@ -268,11 +269,18 @@ def water_polys(extract, registry, slug, bbox):
                     continue
                 if g.intersects(win):
                     out.append(g)
+                    if with_depth:
+                        # THE BAND'S OWN DEEP EDGE, which is the number Garmin drew the polygon
+                        # for. '9-10 ft' is 10. Nothing here invents a depth: a polygon with no
+                        # band readable is 0, which the caller treats as unknown.
+                        m = re.match(r'\s*(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)',
+                                     str((f.get('properties') or {}).get('band') or ''))
+                        deep.append(float(m.group(2)) if m else 0.0)
             break
-    return out, n
+    return (out, n, deep) if with_depth else (out, n)
 
 
-def walk(polys, line_pts, bbox, cell=CELL_DEG):
+def walk(polys, line_pts, bbox, cell=CELL_DEG, depths=None, min_ft=0.0):
     """Rasterise the water, seed every cell the channel runs through, flood outward.
 
     Returns (dist, nx, ny, w0, s0, step_m). `dist` is in CELLS; multiply by step_m.
@@ -311,28 +319,79 @@ def walk(polys, line_pts, bbox, cell=CELL_DEG):
                 continue
             wet[(np.repeat(jj, xs.size) * nx + np.tile(ii, jj.size))[hit]] = True
     nwet = int(wet.sum())
+    # ── AND THE SAME WATER AGAIN, AT OR DEEPER THAN HE IS WILLING TO RUN ────────────────────
+    #
+    # Ryan, 2026-09-21, having followed the faired canal route on the chart: *"if i followed the
+    # transit exactly i would be stuck in a tree right now if i was on the water... the last chunk
+    # of the transit heads for shallow water where i know there is a stump field and laydown"*,
+    # and then the number: *"i should not have to run shallower than 6ft or so that entire run"*.
+    #
+    # The chart already knew. Sampled along that route from the ramp: 8-10 ft for the first 950 m,
+    # then 2-3, 1-2, 3-4, and the last 200 m before the river at 2-3 then 0-1 ft TWICE. A flood
+    # that counts cells has no opinion about any of it -- it took the short way across the flat
+    # because the flat is short.
+    #
+    # There is a deep way. Measured over the same window at 10 m cells: water at 6 ft or better is
+    # ONE connected piece from 22 m off the ramp all the way to the 24 ft river end, and so is 8 ft
+    # from 247 m off. So this is not a trade against distance; it is a route that was there and was
+    # never asked for.
+    #
+    # THE DEPTH IS HIS AND THE RULE IS SIMPLE: flood the deep water first and use it when it gets
+    # there. A landing that cannot reach the channel without going shallower falls back to the
+    # water it has, because a route through a foot of water beats no route at all -- and `shoal_m`
+    # on the record says which one it got.
+    deepwet = None
+    if depths is not None and min_ft > 0:
+        dw = np.zeros(nx * ny, dtype=bool)
+        for g, ft in zip(polys, depths):
+            if not ft or ft < min_ft:
+                continue
+            gx0, gy0, gx1, gy1 = g.bounds
+            i0 = max(0, int((gx0 - w0) / cell)); i1 = min(nx - 1, int((gx1 - w0) / cell) + 1)
+            j0 = max(0, int((gy0 - s0) / cell)); j1 = min(ny - 1, int((gy1 - s0) / cell) + 1)
+            if i1 < i0 or j1 < j0:
+                continue
+            ii = np.arange(i0, i1 + 1)
+            xs = w0 + (ii + 0.5) * cell
+            rows = max(1, int(BLOCK_CELLS // xs.size))
+            for jb in range(j0, j1 + 1, rows):
+                je = min(j1, jb + rows - 1)
+                jj = np.arange(jb, je + 1)
+                ys = s0 + (jj + 0.5) * cell
+                hit = intersects_xy(g, np.tile(xs, jj.size), np.repeat(ys, xs.size))
+                if hit.any():
+                    dw[(np.repeat(jj, xs.size) * nx + np.tile(ii, jj.size))[hit]] = True
+        deepwet = dw.tobytes()
+        print('      %d of %d wet cells are %g ft or better' % (int(dw.sum()), nwet, min_ft),
+              flush=True)
     # The flood below reads one cell at a time, where bytes beats a numpy array on scalar
     # indexing. Same bits, cheaper reads.
     wet = wet.tobytes()
-    dist = [-1] * (nx * ny)
-    q = deque()
-    for x, y in line_pts:
-        i = int((x - w0) / cell); j = int((y - s0) / cell)
-        if 0 <= i < nx and 0 <= j < ny and wet[j * nx + i] and dist[j * nx + i] < 0:
-            dist[j * nx + i] = 0
-            q.append((i, j))
     NB = ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1))
-    while q:
-        i, j = q.popleft()
-        d = dist[j * nx + i] + 1
-        for di, dj in NB:
-            a, b = i + di, j + dj
-            if 0 <= a < nx and 0 <= b < ny and wet[b * nx + a] and dist[b * nx + a] < 0:
-                dist[b * nx + a] = d
-                q.append((a, b))
+
+    def flood(mask):
+        dist = [-1] * (nx * ny)
+        q = deque()
+        for x, y in line_pts:
+            i = int((x - w0) / cell); j = int((y - s0) / cell)
+            if 0 <= i < nx and 0 <= j < ny and mask[j * nx + i] and dist[j * nx + i] < 0:
+                dist[j * nx + i] = 0
+                q.append((i, j))
+        while q:
+            i, j = q.popleft()
+            d = dist[j * nx + i] + 1
+            for di, dj in NB:
+                a, b = i + di, j + dj
+                if 0 <= a < nx and 0 <= b < ny and mask[b * nx + a] and dist[b * nx + a] < 0:
+                    dist[b * nx + a] = d
+                    q.append((a, b))
+        return dist
+
+    dist = flood(wet)
+    deep = flood(deepwet) if deepwet is not None else None
     lat = (s0 + n0) / 2.0
     step = ((110540 * cell) + (111320 * math.cos(math.radians(lat)) * cell)) / 2.0
-    return dist, nx, ny, w0, s0, step, nwet
+    return dist, deep, nx, ny, w0, s0, step, nwet
 
 
 def trace(dist, nx, ny, w0, s0, cell, i, j):
@@ -619,7 +678,8 @@ def reach_for(slug, args, points):
         kind = 'boundary'
     xs = [p[0] for p in pts]; ys = [p[1] for p in pts]
     bbox = (min(xs) - MARGIN_DEG, min(ys) - MARGIN_DEG, max(xs) + MARGIN_DEG, max(ys) + MARGIN_DEG)
-    polys, nread = water_polys(args.extract, args.registry, slug, bbox)
+    polys, nread, depths = water_polys(args.extract, args.registry, slug, bbox,
+                                       with_depth=True)
     if not polys:
         return None, 'no charted water on its tiles'
     if kind == 'boundary':
@@ -644,7 +704,8 @@ def reach_for(slug, args, points):
                 pts = seeds
         except Exception:
             pass                 # fall back to the ring, which is still an answer
-    dist, nx, ny, w0, s0, step, nwet = walk(polys, pts, bbox)
+    dist, deep, nx, ny, w0, s0, step, nwet = walk(polys, pts, bbox, depths=depths,
+                                                 min_ft=getattr(args, 'min_depth_ft', 0.0))
     import numpy as np
     PX = np.fromiter((p[0] for p in pts), dtype=float, count=len(pts))
     PY = np.fromiter((p[1] for p in pts), dtype=float, count=len(pts))
@@ -658,16 +719,29 @@ def reach_for(slug, args, points):
         # A landing sits ON THE BANK, never in the water -- make_river_boundaries measured
         # 25 m, 10 m, 28 m on the Ocmulgee. Look outward a few cells for the water it serves,
         # and stop at the first ring that has any, so the nearest water wins.
-        for r in range(0, 7):
-            for a in range(i - r, i + r + 1):
-                for b in range(j - r, j + r + 1):
-                    if 0 <= a < nx and 0 <= b < ny and dist[b * nx + a] >= 0:
-                        d = dist[b * nx + a]
-                        if best is None or d < best:
-                            best = d
-                            bestij = (a, b)
-            if best is not None:
-                break
+        def nearest_on(field):
+            bd, bij = None, None
+            for r in range(0, 7):
+                for a in range(i - r, i + r + 1):
+                    for b in range(j - r, j + r + 1):
+                        if 0 <= a < nx and 0 <= b < ny and field[b * nx + a] >= 0:
+                            d = field[b * nx + a]
+                            if bd is None or d < bd:
+                                bd, bij = d, (a, b)
+                if bd is not None:
+                    break
+            return bd, bij
+        # THE DEEP WATER FIRST, AND THE REST ONLY IF IT CANNOT BE REACHED. See walk(): the 6 ft
+        # flood is the water he is willing to run, and where it reaches the channel it IS the
+        # route. Where it does not, the landing keeps the route it had and says so.
+        field = dist
+        deep_ok = False
+        if deep is not None:
+            bd, bij = nearest_on(deep)
+            if bd is not None:
+                best, bestij, field, deep_ok = bd, bij, deep, True
+        if not deep_ok:
+            best, bestij = nearest_on(dist)
         if best is None:
             continue
         # ONE SCAN, NOT TWO, AND IN METRES. This was a `min()` over every seed point for the
@@ -689,9 +763,14 @@ def reach_for(slug, args, points):
                     # The water route the distance above was measured along, channel end first.
                     # Without it the app can only draw a straight line, and a straight line from
                     # Pack's Landing crosses two kilometres of swamp.
-                    'route': (recentre(trace(dist, nx, ny, w0, s0, CELL_DEG,
+                    'route': (recentre(trace(field, nx, ny, w0, s0, CELL_DEG,
                                               bestij[0], bestij[1]), polys)
                               if bestij else None),
+                    # WHICH WATER THE ROUTE IS IN. True means every metre of it is at or better
+                    # than --min-depth-ft; False means that depth could not reach this landing and
+                    # the route is the shortest water instead. The app can say so; before this
+                    # there was nothing to say.
+                    'deep_route': bool(deep_ok),
                     'filed': sorted(rec['filed']), 'src': sorted(rec['src'])})
     got.sort(key=lambda r: r['water_m'])
     return {'slug': slug, 'cell_m': round(step, 1), 'water_cells': nwet, 'seed': kind,
@@ -713,6 +792,19 @@ def main():
                          'charted water. The same gate upload_garmin_to_r2.py ships by, because '
                          'measuring water the app never shows is work nobody reads.')
     ap.add_argument('--out', help='default registry/_ramp_reach.json')
+    # DEFAULT 0 UNTIL THE COST IS RIGHT, AND THE MEASUREMENT IS WHY. Ryan's number is 6 and the
+    # deep water is there -- at both 10 m and 26 m cells, >=6 ft runs from 22 m off Pack's Landing
+    # to the canal mouth in about 910 m. What is NOT >=6 ft is the neck where the canal meets the
+    # Congaree, so a router that may not touch shallow water at all cannot get out of the canal
+    # and goes round: 6,569 m against 1,826, measured 2026-09-21. A hard floor is the wrong shape
+    # for this. The right one is lexicographic -- fewest metres below the floor first, then
+    # shortest -- which crosses the one shallow neck and takes the 1.8 km. Until that lands this
+    # stays off, because a 6.6 km detour is not what he asked for either.
+    ap.add_argument('--min-depth-ft', type=float, default=0.0,
+                    help="the shallowest water the route may run in. Ryan, 2026-09-21: \"i "
+                         'should not have to run shallower than 6ft or so that entire run". It '
+                         'is his boat and his number, not one chosen here; 0 turns the deep '
+                         'flood off and gives the shortest water, which is what this did before.')
     ap.add_argument('--go', action='store_true', help='write; without it nothing is touched')
     ap.add_argument('--jobs', type=int, default=0,
                     help='waters measured at once. Default: one per core, capped at the number '
