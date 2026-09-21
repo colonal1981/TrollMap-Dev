@@ -66,15 +66,26 @@ const ROUTE = [[-80.53297, 33.64428], [-80.52847, 33.64803], [-80.52397, 33.6515
                [-80.51947, 33.65603], [-80.51522, 33.65903]];
 
 test('the generator writes the route it already measured', () => {
-  assert.ok(/def trace\(dist, nx, ny, w0, s0, cell, i, j\)/.test(GEN),
-    'build_ramp_reach.py has trace(): the flood field walked back down');
+  assert.ok(/def trace\(prev, nx, ny, w0, s0, cell, i, j\)/.test(GEN),
+    'build_ramp_reach.py has trace(): the route read back out of the search that measured it');
   // WRAPPED IN recentre() SINCE 2026-09-21, because trace() alone draws a raster staircase:
   // Ryan, on the 72 points it wrote for Pack's Landing, *"your 72 point route is garbage... it
-  // just needs to follow the middle of the canal and it does not"*. The assertion still pins
+  // just needs to follow the middle of the canal and it does not"*. The assertions still pin
   // trace() as the source of the line -- that is what makes it a measured route and not a guess
-  // -- and now also pins the centring that turns it into a course.
-  assert.ok(/'route':\s*\(recentre\(trace\(/.test(GEN),
+  // -- and now also pin the centring that turns it into a course.
+  assert.ok(/raw = trace\(prev, nx, ny, w0, s0, CELL_DEG/.test(GEN),
+    'the line comes from trace(), not from anything that guesses');
+  assert.ok(/route = recentre\(raw, polys, deep=deep_polys\)/.test(GEN),
+    'and the fairing is handed the deep water as well as the water. A simplification can stay '
+  + 'wet and still cut the corner the routing paid metres to go round; without deep_polys it '
+  + 'would straighten the line back onto the flat.');
+  assert.ok(/'route': route,/.test(GEN),
     "and every landing record carries 'route'");
+  // AND THE DISTANCE IS THAT LINE'S OWN LENGTH. It used to be the flood's cell count times the
+  // cell size, which charged 26 m for a 36 m diagonal, so the number in the record and the line
+  // the app draws were two different measurements of the same trip.
+  assert.ok(/'water_m': int\(round\(polyline_m\(raw\)\)\) if raw else None/.test(GEN),
+    'water_m is the length of the route that was written, not a count of cells');
   assert.ok(/out\.reverse\(\)/.test(GEN),
     'the route is stored CHANNEL FIRST, landing last -- the direction a boat leaves in, and the '
   + 'order rampLegRouter reverses for the outbound leg');
