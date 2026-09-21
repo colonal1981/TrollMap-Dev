@@ -58,15 +58,27 @@ const html = (v) => String(v == null ? '' : v).replace(/[&<>]/g, (c) => (
 export function planIssues(plan, problems = []) {
   const safety = (plan && plan.safety) || {};
   const seen = new Set();
-  const list = [...((plan && plan.warnings) || []), ...(problems || [])]
+  const clean = (src) => (src || [])
     .map((w) => String(w == null ? '' : w).trim())
     .filter((w) => w && !seen.has(w) && seen.add(w) !== false);
-  return { safety, list, noGo: safety.isGo === false };
+  const list = clean([...((plan && plan.warnings) || []), ...(problems || [])]);
+  // ── AND WHAT THE APP SETTLED, WHICH IS NOT THE SAME LIST ───────────────────────────────────
+  //
+  // Ryan, 2026-09-21: *"what is all this noise... if i am going to get 11 things that are wrong
+  // on every plan we make out of here i will never read any of it"*. Of those eleven, two needed
+  // him. Four were decisions the app had already made and stated. Three were the rise sentence,
+  // already printed on the leg card it belongs to. Two were information.
+  //
+  // `list` is what needs him. `decisions` is everything else, deduped against `list` FIRST so a
+  // sentence can never appear in both — if something is genuinely a warning it stays one, and the
+  // quieter copy disappears rather than the loud one.
+  const decisions = clean((plan && plan.decisions) || []);
+  return { safety, list, decisions, noGo: safety.isGo === false };
 }
 
 
 export function planIssuesHtml(plan, problems = []) {
-  const { safety, list } = planIssues(plan, problems);
+  const { safety, list, decisions } = planIssues(plan, problems);
 
   let out = '';
   // THE MODEL CAN CALL A NO-GO AND v2 RENDERED THE DAY ANYWAY. v1 stopped for this
@@ -91,6 +103,22 @@ export function planIssuesHtml(plan, problems = []) {
         +  `<ul style="margin:0;padding-left:18px;font-size:11px;color:var(--text);line-height:1.5">`
         +  list.map((w) => `<li>${html(w)}</li>`).join('')
         +  `</ul></div>`;
+  }
+  // Folded, in the tab's own muted colours, under a heading that says what it is. It is open to
+  // anyone who wants to know what the app changed and why -- which is Ryan's own ask from
+  // 2026-09-02, "i want to know what it suggested that the app changed because of x,y,z" -- and
+  // it is not competing with the list above it for his attention at the ramp.
+  if (decisions.length) {
+    out += `<details style="border:1px solid var(--line,rgba(255,255,255,0.12));border-radius:10px;`
+        +  `padding:8px 12px;margin-bottom:12px">`
+        +  `<summary style="font-size:11px;font-weight:700;color:var(--muted);cursor:pointer;`
+        +  `text-transform:uppercase;letter-spacing:.06em">`
+        +  `${decisions.length} thing${decisions.length === 1 ? '' : 's'} the app settled `
+        +  `for you</summary>`
+        +  `<ul style="margin:8px 0 0;padding-left:18px;font-size:11px;color:var(--muted);`
+        +  `line-height:1.5">`
+        +  decisions.map((w) => `<li>${html(w)}</li>`).join('')
+        +  `</ul></details>`;
   }
   return out;
 }

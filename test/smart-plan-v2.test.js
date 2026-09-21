@@ -582,3 +582,68 @@ describe('a dry run hands back the prompt without spending a call', () => {
     expect(r.problems.length).toBe(0);
   });
 });
+
+// ── A CAST-ONLY BAIT ON A TROLLING ROD IS SENT BACK, NOT REPORTED ─────────────────────────────
+//
+// Ryan, 2026-09-21, on a plan carrying eleven warnings: "what is all this noise... if i am going
+// to get 11 things that are wrong on every plan we make out of here i will never read any of it".
+// Two of the eleven were real and both were this: a Creature Bait / Craw on R4 and a Straight Tail
+// Worm on R1, both deployed, so on two of the four fishing legs one of the two rods in the water
+// was fishing nothing. The prompt forbids it in capitals off the same `trollable` list this rule
+// reads, so the answer broke a rule the app could check and the app wrote him a sentence instead.
+describe('a bait that cannot be trolled goes back to the model', () => {
+  // The bag has to SAY what may be trolled before there is a rule to break -- see the guard.
+  const FLAGGED = INVENTORY.map((l) => ({ ...l, trollable: true }))
+    .concat([{ name: 'Creature Bait / Craw', type: 'creature', trollable: false }]);
+  const FLAGGED_TACKLE = FLAGGED.map((l) => l.name);
+  const OPTS_F = { ...OPTS, inventory: FLAGGED, tackle: FLAGGED_TACKLE };
+
+  // Puts the cast-only bait on R1 for the first `times` answers and a trollable one after that.
+  function slipping(times) {
+    let n = 0;
+    const inner = goodModel((answer) => {
+      if (n++ < times) answer.loadout.rods[0].lure = 'Creature Bait / Craw';
+      return answer;
+    });
+    const asker = async (req) => inner(req);
+    asker.count = () => n;
+    return asker;
+  }
+
+  it('asks once more, takes the corrected answer, and says nothing about it', async () => {
+    let asked = 0;
+    const inner = slipping(1);
+    const r = await buildSmartPlanV2({ ...OPTS_F,
+      askModel: async (req) => { asked++; return inner(req); } });
+    expect(asked).toBe(2);
+    // The ANSWER that was kept, not the assembled plan: this rule is about what the model named.
+    const lures = ((r.response.loadout || {}).rods || []).map((x) => x.lure);
+    expect(lures.includes('Creature Bait / Craw')).toBe(false);
+    // NOTHING AT THE TOP. A slip the app fixed is not something he has to read; that is the whole
+    // point of re-asking rather than warning.
+    expect(r.problems.some((p) => /cannot be trolled/.test(p))).toBe(false);
+    // ...but the prompt that is SAVED is the one that was actually sent, so the correction is
+    // visible in the plan JSON without inventing a field to hold it.
+    expect(/THAT ANSWER BROKE A RULE/.test(r.request.user)).toBe(true);
+  });
+
+  it('tells him only when the second answer breaks it too', async () => {
+    let asked = 0;
+    const inner = slipping(99);
+    const r = await buildSmartPlanV2({ ...OPTS_F,
+      askModel: async (req) => { asked++; return inner(req); } });
+    expect(asked).toBe(2);              // ONE re-ask, never a loop
+    const said = r.problems.filter((p) => /cannot be trolled/.test(p));
+    expect(said.length).toBe(1);
+    expect(/R1/.test(said[0])).toBe(true);
+    expect(/Creature Bait \/ Craw/.test(said[0])).toBe(true);
+  });
+
+  it('does not fire on a bag that never says what may be trolled', async () => {
+    let asked = 0;
+    const r = await buildSmartPlanV2({ ...OPTS,   // INVENTORY has no `trollable` on anything
+      askModel: async (req) => { asked++; return goodModel()(req); } });
+    expect(asked).toBe(1);
+    expect(r.problems.some((p) => /cannot be trolled/.test(p))).toBe(false);
+  });
+});

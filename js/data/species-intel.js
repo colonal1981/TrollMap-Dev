@@ -252,6 +252,8 @@ export function checkRegulations(lakeName, species, date, state = null) {
 
   {
     const warnings = [];
+    // What was checked and is not in the way. See the limits branch below.
+    const notes = [];
     // A RULE THAT EXISTS AND CANNOT BE STATED IS THE LOUDEST THING HERE, so it is said first and
     // nothing below it gets to answer instead.
     if (live && live.scope === 'withheld') {
@@ -278,7 +280,19 @@ export function checkRegulations(lakeName, species, date, state = null) {
             : `. The ${live.state || 'state'} book's closures were read and none is set on this `
               + `water`)
         : '. No closure information for this water — verify before you keep one';
-      warnings.push(`${species} on ${lakeName}: ${limits.scope === 'lake' ? 'lake-specific' : 'statewide'} `
+      // A LIMIT THAT WAS READ AND IS NOT IN THE WAY IS INFORMATION, NOT A WARNING.
+      //
+      // Ryan, 2026-09-21, on a plan with eleven items above it: *"if i am going to get 11 things
+      // that are wrong on every plan we make out of here i will never read any of it"*. One of
+      // the eleven was this sentence, on a day whose ending words were "none is in effect today"
+      // -- and the size and creel it quotes are already printed in the regulations table further
+      // down the same page.
+      //
+      // It stays a WARNING wherever there is something to do: a book that was never read, or one
+      // that addresses a stretch of the water and leaves him to check he is on it. Both of those
+      // end in an instruction, and this one does not.
+      const nothingToDo = looked && !limits.addressIsAReach;
+      (nothingToDo ? notes : warnings).push(`${species} on ${lakeName}: ${limits.scope === 'lake' ? 'lake-specific' : 'statewide'} `
         // NAME THE COLUMNS. "Any length / 10" is the book's two cells with a slash between them,
         // and 10 of what is exactly the question a creel limit answers. The words `size` and
         // `creel` are the table's own headers, not an interpretation of its numbers.
@@ -295,7 +309,7 @@ export function checkRegulations(lakeName, species, date, state = null) {
       warnings.push(`No regulation data for ${lakeName} — verify with the state before you keep one.`);
     }
     return { legal: true, reason: null, regInfo: null, limits,
-             warnings: [...bookWarnings, ...warnings], note: warnings[0] };
+             warnings: [...bookWarnings, ...warnings], notes, note: warnings[0] || notes[0] };
   }
 }
 

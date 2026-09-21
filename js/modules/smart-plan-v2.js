@@ -542,6 +542,79 @@ export async function buildSmartPlanV2(o) {
              problems: [...packProblems, `the model's answer could not be read: ${e.message}${cut}`] };
   }
 
+
+  // ── A HARD RULE IS ENFORCED, NOT REPORTED ─────────────────────────────────────────────────
+  //
+  // Ryan, 2026-09-21, on a plan whose warning list ran to eleven items: *"what is all this
+  // noise... if i am going to get 11 things that are wrong on every plan we make out of here i
+  // will never read any of it"*. Two of those eleven were real and both were this one: the answer
+  // put a Creature Bait / Craw on R4 and a Straight Tail Worm on R1, and deployed both, so on Leg
+  // 3 and Leg 4 one of the two rods in the water was fishing nothing. A quarter of the day's
+  // rod-time, reported as prose.
+  //
+  // THE PROMPT ALREADY SAYS IT, IN CAPITALS, OFF THIS EXACT LIST. `trollable` is built once above
+  // and handed to buildPlanRequest, which prints "NOT ON THE WATER TODAY ... Do not name one on a
+  // rod" from it. Reading the same variable here is the whole point: the rule the answer is
+  // checked against cannot drift away from the rule the answer was given.
+  //
+  // ONE RE-ASK, AND ONLY ONE. A slip costs a round trip to fix and a rod fishing nothing costs
+  // hours. Twice is not a slip, and that is when it becomes worth his attention -- so a break that
+  // survives the correction is the only version of this he ever reads.
+  //
+  // The corrected prompt REPLACES `req.user`, so the saved plan shows what was actually asked
+  // rather than the first draft of it. Nothing new is stored and nothing reads a field that did
+  // not exist before.
+  // AND IT IS ONLY A RULE WHERE THE BAG STATES ONE. `trollable` is the inventory's own flag, and
+  // an inventory that never sets it produces an EMPTY list -- against which every bait in the box
+  // reads as cast-only and every plan gets sent back. A bag that does not say which of it can be
+  // trolled has not been contradicted by an answer that trolls something; it has said nothing.
+  const trollSet = new Set(trollable);
+  const inBag = new Set(o.tackle || []);
+  const castOnlyRods = (r) => (trollSet.size === 0 ? [] : (((r || {}).loadout || {}).rods || [])
+    .filter((rod) => rod && rod.lure && inBag.has(rod.lure) && !trollSet.has(rod.lure))
+    .map((rod) => `${rod.id} (${rod.lure})`));
+
+  const broke = castOnlyRods(res);
+  if (broke.length) {
+    const verb = broke.length === 1 ? 'is a CAST-ONLY bait' : 'are CAST-ONLY baits';
+    const which = broke.length === 1 ? 'that rod' : 'those rods';
+    const corrected = `${req.user}\n\nTHAT ANSWER BROKE A RULE AND IS COMING BACK TO YOU.\n`
+      + `${broke.join(' and ')} ${verb}. They plane at trolling speed instead of sinking, so `
+      + `they have no running depth and no lead puts them at one — a rod carrying one is a rod `
+      + `fishing nothing. They are on the NOT ON THE WATER TODAY list above, which said not to `
+      + `name one on a rod.\n`
+      + `Return the WHOLE plan again in the same shape, with a trollable bait on ${which}. `
+      + `Everything else may stay exactly as it was.`;
+    let second = null;
+    try {
+      const answeredAgain = await o.askModel({ system: req.system, user: corrected });
+      const rawAgain = (answeredAgain && typeof answeredAgain === 'object'
+                        && typeof answeredAgain.content === 'string')
+        ? answeredAgain
+        : { content: String(answeredAgain == null ? '' : answeredAgain), meta: null };
+      second = { res: parsePlanResponse(rawAgain.content), raw: rawAgain };
+    } catch {
+      second = null;          // an unreadable second answer is not a reason to lose the first
+    }
+    // Take the second answer when it breaks the rule LESS. Equal is not better: a second answer
+    // with the same fault is the first answer's cost paid twice, and the first is the one the
+    // rest of this function has already been reasoning about.
+    if (second && castOnlyRods(second.res).length < broke.length) {
+      res = second.res;
+      raw.content = second.raw.content;
+      raw.meta = second.raw.meta;
+      req.user = corrected;
+    }
+    const still = castOnlyRods(res);
+    if (still.length) {
+      packProblems.push(`${still.join(' and ')} ${still.length === 1 ? 'is a bait' : 'are baits'} `
+        + `that cannot be trolled, and the model named ${still.length === 1 ? 'it' : 'them'} `
+        + `again after being told. ${still.length === 1 ? 'That rod is' : 'Those rods are'} `
+        + `fishing nothing — swap ${still.length === 1 ? 'it' : 'them'} on the Plan tab before `
+        + `you launch.`);
+    }
+  }
+
   const args = planArgsFrom(res, candidates, { tackle: o.tackle, connectionOf });
 
   // THE TRANSITS ARE ROUTED OVER WATER, OR THEY SAY THEY ARE NOT.

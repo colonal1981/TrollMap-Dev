@@ -213,7 +213,7 @@ function riseSentence(marks) {
 }
 
 function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warnings, fish,
-                      legDepth = null, legLight = null) {
+                      legDepth = null, legLight = null, decisions = warnings) {
   // RETURNS WHAT THIS LEG FISHES; IT DOES NOT CHANGE THE BAG.
   //
   // This used to write `rod.leadFt = shorter` straight into the loadout, and the loadout is ONE
@@ -342,7 +342,10 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
       // measured and used that standing to overrule the model. The app's number is still the one
       // to go with, because it is at least computed from the lead and the rig rather than
       // recalled; but it is computed, and on the one rig Ryan has put a number to, it is his.
-      warnings.push(`${id} on ${runId} says it runs to ${rod.runsDepthFt[1]} ft, but `
+      // SETTLED, NOT WRONG. The model quoted a depth, the app worked the real one out of lead,
+      // speed and weight, and the sentence ends "going with the app's number". There is nothing
+      // in it for him to do, and there were three of these on his 2026-09-21 plan.
+      decisions.push(`${id} on ${runId} says it runs to ${rod.runsDepthFt[1]} ft, but `
                   + `${leadFt} ft of lead at ${speedMph} mph`
                   + `${inlineOz ? ` behind the ${ozLabel(inlineOz)} inline weight` : ''}`
                   + `${fit ? ` on a ${ozLabel(fit.weightOz)} head` : ''} puts a ${rod.lure} at `
@@ -486,7 +489,10 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
         ? `${legDepth.minFt}-${legDepth.maxFt} ft` : `${ceilingFt} ft at its shallowest`;
       const where = riseSentence(risesAtM(legDepth && legDepth.envelope,
                                          legDepth && legDepth.stepM, ceilingFt));
-      warnings.push(`${id} on ${runId}: a ${rod.lure}`
+      // SAID TWICE. `bottomNote` on this very leg already carries the rise and the lead that
+      // clears it, on the card he reads while rigging for that leg -- which is the place it means
+      // something. Three more of the eleven.
+      decisions.push(`${id} on ${runId}: a ${rod.lure}`
                   + `${inlineOz ? ` behind the ${ozLabel(inlineOz)} inline weight` : ''}`
                   + `${fit ? ` on a ${ozLabel(fit.weightOz)} head` : ''} `
                   + `runs ${w.min}-${w.max} ft, and this leg is ${env} with a median of `
@@ -1025,6 +1031,20 @@ export function assemblePlan(o) {
   const legs = [];
   const changes = [];
   const warnings = [];
+  // ── WHAT THE APP SETTLED, KEPT APART FROM WHAT HE HAS TO SETTLE ────────────────────────────
+  //
+  // Ryan, 2026-09-21, handed a plan with eleven items above it: *"what is all this noise... if i
+  // am going to get 11 things that are wrong on every plan we make out of here i will never read
+  // any of it"*. Two of the eleven were things he had to act on. Four were the app reporting a
+  // decision it had already made and stated -- "going with the app's number", "dropped a lure
+  // change ... buys nothing". Three were the rise sentence, which is already printed on the leg
+  // card it belongs to. Two were plain information.
+  //
+  // Nothing here is deleted, because all of it is true and he asked for it at the time. It is
+  // SORTED: `warnings` is what needs him, `decisions` is what the app did, and the two surfaces
+  // that render a plan show them differently. A list where nine of eleven need no action is a
+  // list nobody reads, which costs the two that do.
+  const decisions = [];
   let cursor = o.launch;          // where the boat is
   // THE SPINE IS INTEGER METRES, accumulated from already-rounded leg lengths — not a float that
   // gets rounded on the way out. Round a running total and the reported starts drift a metre off
@@ -1053,7 +1073,9 @@ export function assemblePlan(o) {
   const lightOn = (startMin, minutes) =>
     legLightFor(o.waterState, o.weatherByHour, formatClock(startMin), minutes) || undefined;
 
-  for (const w of fitted.dropped) warnings.push(w);
+  // The app costed the day and cut what did not fit, and this sentence says by how much and why.
+  // That is the arithmetic reported, not a problem raised.
+  for (const w of fitted.dropped) decisions.push(w);
 
   // ── WHAT HAS ALREADY BEEN SAID ABOUT EACH REACH ─────────────────────────────────────────────
   //
@@ -1174,7 +1196,8 @@ export function assemblePlan(o) {
       if (!rod) { warnings.push(`dropped a lure change on ${ch.rodId} — no such rod in the loadout`); continue; }
       const usedAt = rodLastUsed.has(ch.rodId) ? rodLastUsed.get(ch.rodId) : -1;
       if (usedAt < (legOrder.get(passKey(c.runId, thisPass)) ?? 0)) {
-        warnings.push(`dropped a lure change on ${ch.rodId} before ${c.runId} — that rod is `
+        // Dropped, with the reason. The app did it; he does not have to.
+        decisions.push(`dropped a lure change on ${ch.rodId} before ${c.runId} — that rod is `
                     + 'never trolled or cast again after it, so the swap costs a retie and '
                     + 'buys nothing');
         continue;
@@ -1321,6 +1344,10 @@ export function assemblePlan(o) {
     const sayOnce = (w) => {
       const k = newsOf(w);
       if (!said.has(k)) { said.add(k); warnings.push(w); }
+    };
+    const sayOnceDecision = (w) => {
+      const k = newsOf(w);
+      if (!said.has(k)) { said.add(k); decisions.push(w); }
     };
     if (baitBand && baitBand.overlap === false) {
       const [slow, fast] = baits[0].speed.max <= baits[1].speed.max ? [baits[0], baits[1]]
@@ -1499,6 +1526,7 @@ export function assemblePlan(o) {
     const legEnvelope = c.envelope
       ? (flipped ? c.envelope.slice().reverse() : c.envelope) : null;
     const fresh = [];
+    const freshDecisions = [];
     const rodPlan = capBaitDepth(rods, deploy, Number(c.maxRunDepthFt ?? c.depthFt), waterMph,
                                  o.lureByName, c.runId, fresh, fish,
                                  // THE LEG'S OWN ENVELOPE, so a one-shoal ceiling can be told apart
@@ -1510,8 +1538,12 @@ export function assemblePlan(o) {
                                  // line's distance would be right about the wrong end of the leg.
                                  { medianFt: Number(c.depthFt), minFt: Number(c.depthMinFt),
                                    maxFt: Number(c.depthMaxFt),
-                                   envelope: legEnvelope, stepM: c.envelopeStepM }, legLight);
+                                   envelope: legEnvelope, stepM: c.envelopeStepM }, legLight,
+                                 freshDecisions);
     for (const w of fresh) sayOnce(w);
+    // Deduped the same way and by the same key, so a decision repeated across both passes of a
+    // reach is still said once. It simply lands in the other list.
+    for (const w of freshDecisions) sayOnceDecision(w);
 
     legs.push({
       id: `L${++li}`, type: 'troll',
@@ -1839,6 +1871,7 @@ export function assemblePlan(o) {
     },
     safety: o.safety || {},
     warnings,
+    decisions,
   };
 
   // Say when the plan does not fit, rather than presenting it as if it does.

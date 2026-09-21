@@ -116,7 +116,10 @@ describe('a bait too deep for the whole stretch is brought up', () => {
     const rod = { id: 'R1', lure: LIPLESS.name, rig: 'snap', role: 'troll', leadFt: 120,
                   runsDepthFt: [12, 14] };
     const plan = build(LEG(34), rod);
-    expect(plan.warnings.some((w) => /says it runs to 14 ft/.test(w))).toBe(true);
+    // MOVED TO `decisions` 2026-09-21: the sentence ends "going with the app's number", so it
+    // is the app reporting what it settled, not something he has to settle. Still said, still
+    // pinned, in the list that is not competing for his attention at the ramp.
+    expect(plan.decisions.some((w) => /says it runs to 14 ft/.test(w))).toBe(true);
     expect(planned(plan, 0, 'R1').runsDepthFt[1]).toBe(25);
     expect(rod.runsDepthFt).toEqual([12, 14]);   // the model's claim is left as the model's claim
   });
@@ -417,7 +420,9 @@ describe('the ceiling survives the trip through the planner, not just the assemb
     const leg = r.plan.legs.find((l) => l.type === 'troll');
     const got = (leg.rodPlan || {}).R5 || {};
     expect(got.leadFt).toBe(undefined);                       // 120 ft, as the model asked for it
-    const said = r.plan.warnings.filter((w) => /^R5 /.test(w)).join(' | ');
+    // The rise is on `decisions`: bottomNote on the leg card already says it where it means
+    // something. See plan-assemble.js.
+    const said = r.plan.decisions.filter((w) => /^R5 /.test(w)).join(' | ');
     expect(said).toMatch(/THE LEAD IS LEFT WHERE YOU SET IT/);
     // The number that WOULD clear is computed and kept, which is the half he acts on.
     expect(Number.isFinite(got.clearsAt)).toBe(true);
@@ -484,7 +489,12 @@ describe('a rise on deep water is flagged, and shallow water is still corrected'
     candidates: [c], launch: [-80.71, 34.348], loadout: { rods: [ROD] },
     deploy: { 'wateree_lake#216': { starboard: 'R6' } }, stops: [], changes: [],
     launchTime: '06:00', returnTime: '15:00', usableAh: 80, lureByName });
-  const said = (p) => (p.warnings || []).filter((w) => /^R6 /.test(w)).join(' | ');
+  const said = (p) => (p.decisions || []).filter((w) => /^R6 /.test(w)).join(' | ');
+  // A LEAD THE APP SHORTENED IS STILL A WARNING, and it is the one thing in this block that is.
+  // The split is not by which rod said it, it is by whether he has to do anything: the rise is
+  // left for him to decide about and lands in `decisions`; a lead that was CHANGED is a number
+  // on his reel that is no longer the one he set.
+  const warned = (p) => (p.warnings || []).filter((w) => /^R6 /.test(w)).join(' | ');
   const leadOn = (p) => (p.legs.find((l) => l.runId === 'wateree_lake#216') || {})
     .rodPlan?.R6?.leadFt;
 
@@ -513,7 +523,8 @@ describe('a rise on deep water is flagged, and shallow water is still corrected'
   it('water that really is shallow all along is still corrected', () => {
     const p = run(leg(11, 12, 14));
     expect(leadOn(p)).toBe(48);
-    expect(said(p)).toMatch(/too shallow for it along the whole stretch, so shortened the lead to 48 ft/);
+    expect(warned(p)).toMatch(/too shallow for it along the whole stretch, so shortened the lead to 48 ft/);
+    expect(warned(p)).not.toMatch(/LEFT WHERE YOU SET IT/);
     expect(said(p)).not.toMatch(/LEFT WHERE YOU SET IT/);
   });
 

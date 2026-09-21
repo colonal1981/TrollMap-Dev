@@ -169,7 +169,9 @@ describe('the assembler walks it, and the deadhead goes with it', () => {
 describe('fitRiverDay — the day is re-fitted once the baits set the speed', () => {
   it('a window that cannot hold both reaches cuts the far one and says so', () => {
     const plan = build();
-    const cut = plan.warnings.filter((w) => w.includes('is cut to'));
+    // `decisions` since 2026-09-21: a reach trimmed or dropped is the app's own arithmetic
+    // against the clock and the battery, reported. See plan-assemble.js.
+    const cut = plan.decisions.filter((w) => w.includes('is cut to'));
     expect(cut.length).toBe(1);
     expect(cut[0]).toContain(B.runId);
     expect(cut[0]).toContain('2.0 mph before a bait was picked');
@@ -201,13 +203,13 @@ describe('fitRiverDay — the day is re-fitted once the baits set the speed', ()
     const plan = build({ returnTime: '11:45' });
     const troll = plan.legs.filter((l) => l.type === 'troll');
     expect(troll.length).toBe(2);
-    expect(plan.warnings.some((w) => w.includes('is off the day') && w.includes(B.runId))).toBe(true);
+    expect(plan.decisions.some((w) => w.includes('is off the day') && w.includes(B.runId))).toBe(true);
   });
 
   it('a window between the two cuts rather than drops', () => {
     const plan = build({ returnTime: '12:40' });        // 400 min: 71 left over, 31% of B
     expect(plan.legs.filter((l) => l.type === 'troll').length).toBe(4);
-    expect(plan.warnings.some((w) => w.includes('is cut to 31%'))).toBe(true);
+    expect(plan.decisions.some((w) => w.includes('is cut to 31%'))).toBe(true);
   });
 
   it('the battery binds the same way the clock does', () => {
@@ -216,7 +218,7 @@ describe('fitRiverDay — the day is re-fitted once the baits set the speed', ()
     // no water is not a day. That refusal is the hard stop's job, not this function's.
     const plan = build({ returnTime: '23:00', usableAh: 25 });
     expect(plan.legs.filter((l) => l.type === 'troll').length).toBe(2);
-    expect(plan.warnings.some((w) => w.includes('is off the day') && w.includes(B.runId))).toBe(true);
+    expect(plan.decisions.some((w) => w.includes('is off the day') && w.includes(B.runId))).toBe(true);
     expect(plan.warnings.some((w) => w.includes('over budget'))).toBe(true);
     // And with room for both it takes both, so 25 was the battery talking and not a bug.
     expect(build({ returnTime: '23:00', usableAh: 200 })

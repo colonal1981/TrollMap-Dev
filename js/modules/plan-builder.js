@@ -1141,7 +1141,7 @@ ${src}`;
   let exchangeHtml = '';
   {
     const model = (p.model || {});
-    const { list, noGo, safety } = planIssues(p.plan, model.problems || []);
+    const { list, decisions, noGo, safety } = planIssues(p.plan, model.problems || []);
     if (noGo) {
       exchangeHtml += `<div class="rp-callout rp-warn" style="border-left-width:6px">`
         + `<b>🚨 NO-GO — DO NOT LAUNCH</b>`
@@ -1154,6 +1154,19 @@ ${src}`;
         + `${list.length === 1 ? '' : 's'} the plan wants to tell you</b>`
         + `<ul style="margin:6px 0 0;padding-left:18px">`
         + list.map((w) => `<li>${esc(w)}</li>`).join('')
+        + `</ul></div>`;
+    }
+    // SEPARATE, AND QUIETER. Same split as the tab: what needs him above, what the app settled
+    // here. Printed rather than folded, because this page goes to paper and a <details> on paper
+    // is a heading with nothing under it.
+    if (decisions.length) {
+      exchangeHtml += `<div class="rp-callout rp-info"><b>⚙ ${decisions.length} thing`
+        + `${decisions.length === 1 ? '' : 's'} the app settled for you</b>`
+        + `<div style="font-size:11px;color:#555;margin:4px 0 0">Decisions already made and `
+        + `already applied — here so you can see what changed and why, not because anything `
+        + `needs doing.</div>`
+        + `<ul style="margin:6px 0 0;padding-left:18px;font-size:12px">`
+        + decisions.map((w) => `<li>${esc(w)}</li>`).join('')
         + `</ul></div>`;
     }
     const answer = typeof model.response === 'string'

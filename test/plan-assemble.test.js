@@ -392,7 +392,8 @@ describe('plan-assemble — saying when it does not fit', () => {
       ],
     });
     expect(plan.changes.map((c) => c.rodId)).toEqual(['R5']);
-    expect(plan.warnings.some((w) => w.includes('R1') && w.includes('never trolled or cast')))
+    // `decisions` since 2026-09-21: the app dropped the swap and says why. Nothing to do.
+    expect(plan.decisions.some((w) => w.includes('R1') && w.includes('never trolled or cast')))
       .toBe(true);
   });
 

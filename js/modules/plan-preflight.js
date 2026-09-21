@@ -189,6 +189,9 @@ export function checkPlanLegality(lakeName, species, date, o = {}) {
     legal: r ? r.legal !== false : true,
     reason: (r && r.reason) || '',
     warnings: [...extracted, ...((r && r.warnings) || [])],
+    // Read, and not in the way. Carried separately so the caller can show it without it counting
+    // as one of the things the plan wants to tell him.
+    notes: (r && r.notes) || [],
     // The published limits, when the digest answered. A caller that shows nothing else should
     // still be able to show these.
     limits: (r && r.limits) || null,

@@ -438,6 +438,12 @@ export async function runSmartPlanV2(opts = {}) {
   if (legality.warnings && legality.warnings.length) {
     r.problems = [...legality.warnings, ...(r.problems || [])];
   }
+  // And the limits that were read and are not in the way go where the app's other settled things
+  // go -- see plan-assemble.js. They are still on the plan and still rendered; they are not one
+  // of the things it wants to tell him before he launches.
+  if (legality.notes && legality.notes.length && r.plan) {
+    r.plan.decisions = [...legality.notes, ...(r.plan.decisions || [])];
+  }
 
   if (!r.plan) {
     say(r.problems[0] || 'No plan', true);
