@@ -80,9 +80,19 @@ describe('the digest is primed before the law is read', () => {
     expect(regsCalls).toBe(1);
   });
 
+  // ── AND IT IS A NOTE, NOT A WARNING, SINCE 2026-09-21 ──────────────────────────────────────
+  //
+  // Ryan, on a plan carrying eleven items: "if i am going to get 11 things that are wrong on every
+  // plan we make out of here i will never read any of it". One of the eleven was this sentence,
+  // ending "none is in effect today", quoting a size and creel already printed in the regulations
+  // table on the same page. It says what was checked and asks nothing. The three tests below are
+  // about WHAT IT SAYS, so they read the list it is now in; `an unprimed water still warns` below
+  // reads `warnings` and pins the other half of the split -- a book that was never read ends in an
+  // instruction and stays a warning.
   it('now the plan gets the book instead of a shrug', () => {
     const r = pre.checkPlanLegality(LAKE, 'Striped Bass', new Date('2026-08-30T12:00:00'));
-    const all = (r.warnings || []).join(' ');
+    const all = (r.notes || []).join(' ');
+    expect((r.warnings || []).join(' ')).not.toMatch(/size 26-inch minimum/);
     expect(/No regulation data/.test(all)).toBe(false);
     expect(all).toMatch(/26-inch minimum/);
     expect(all).toMatch(/5 per person per day/);
@@ -93,14 +103,14 @@ describe('the digest is primed before the law is read', () => {
     // was parsed offline, 70 closures came out of it across the state, the name resolved, and
     // none is on Wateree. That is a different and much better sentence.
     const r = pre.checkPlanLegality(LAKE, 'Striped Bass', new Date('2026-08-30T12:00:00'));
-    const all = (r.warnings || []).join(' ');
+    const all = (r.notes || []).join(' ');
     expect(all).toMatch(/closures were read and none is set on this water/);
     expect(/No closure information/.test(all)).toBe(false);
   });
 
   it('names the columns, because "10" alone does not say ten of what', () => {
     const r = pre.checkPlanLegality(LAKE, 'Striped Bass', new Date('2026-08-30T12:00:00'));
-    const all = (r.warnings || []).join(' ');
+    const all = (r.notes || []).join(' ');
     expect(all).toMatch(/size 26-inch minimum/);
     expect(all).toMatch(/creel 5 per person per day/);
   });

@@ -149,10 +149,13 @@ test('the assembler fits the weight and puts it on the leg, not in a comment', (
   assert.equal(leg.rodPlan?.R6?.inlineWeightOz, 2, 'the 2 oz that is tied on');
 });
 
-test('the warning names the rig and no longer calls arithmetic a measurement', () => {
+test('the note names the rig and no longer calls arithmetic a measurement', () => {
   const p = plan([R6], { [LEG.runId]: { starboard: 'R6' } });
-  const said = (p.warnings || []).filter((w) => /R6/.test(w) && /runs to 16 ft/.test(w));
-  assert.equal(said.length, 1, `expected the claim check to fire, got ${JSON.stringify(p.warnings)}`);
+  // `decisions` since 2026-09-21. The sentence ends "going with the app's number" -- it reports a
+  // reconciliation the app has already made, and the last assertion in this test is that phrase.
+  const said = (p.decisions || []).filter((w) => /R6/.test(w) && /runs to 16 ft/.test(w));
+  assert.equal(said.length, 1,
+    `expected the claim check to fire, got ${JSON.stringify(p.decisions)}`);
   assert.match(said[0], /behind the 2oz inline weight/, 'the rig reaches the page');
   assert.doesNotMatch(said[0], /measured number/,
     'lure-knowledge says "STILL UNCALIBRATED" three times in its own header');

@@ -53,7 +53,9 @@ const build = (conditions, rodOver = {}) => {
     stops: [], changes: [], launchTime: '06:00', returnTime: '15:00', usableAh: 80,
     lureByName, conditions,
   });
-  return { plan, warnings: plan.warnings || [] };
+  // `decisions` beside `warnings` since 2026-09-21: what the app settled is kept apart from what
+  // he has to settle. See plan-assemble.js.
+  return { plan, warnings: plan.warnings || [], decisions: plan.decisions || [] };
 };
 
 const FISH_DEEP = { depthBand: { ft: [26, 36], fishDepthStated: true, holding: 'suspended' } };
@@ -96,8 +98,11 @@ describe('a rated depth came off a box, so the model may not restate it', () => 
   // go with -- it is computed from the lead, the speed and the rig rather than recalled -- and it
   // now says which of those it was computed from.
   it('flags the model narrowing a 6-12 bait to 6-10', () => {
-    const { warnings } = build(WATER_ONLY, { runsDepthFt: [6, 10] });
-    const w = warnings.find((x) => /going with the app's number/.test(x));
+    // The sentence ends "going with the app's number", so it is a decision and not a warning --
+    // that phrase IS the classification, and this test already matched on it.
+    const { decisions, warnings } = build(WATER_ONLY, { runsDepthFt: [6, 10] });
+    expect(warnings.some((x) => /going with the app's number/.test(x))).toBe(false);
+    const w = decisions.find((x) => /going with the app's number/.test(x));
     expect(!!w).toBe(true);
     expect(w).toMatch(/says it runs to 10 ft/);
     expect(w).toMatch(/worked from /);

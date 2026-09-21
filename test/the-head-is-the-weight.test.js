@@ -219,7 +219,10 @@ test('and on deep water with a rise, the head is fitted and the rise is flagged'
   assert.ok(Number.isFinite(over.jigheadOz), 'a head was still fitted');
   assert.equal(over.leadFt > 60, true, 'the lead followed the head and was not pulled back up');
   assert.ok(Number.isFinite(over.clearsAt), 'the lead that would clear the rise is handed over');
-  const said = plan.warnings.filter((w) => /^R5 /.test(w)).join(' | ');
+  // `decisions` since 2026-09-21: the rise is already printed as bottomNote on the leg card, and
+  // the sentence leaves the lead where he set it -- there is nothing in it for him to do. The head
+  // still had to be fitted first, which is what the three assertions above pin.
+  const said = plan.decisions.filter((w) => /^R5 /.test(w)).join(' | ');
   assert.match(said, /THE LEAD IS LEFT WHERE YOU SET IT/);
   assert.match(said, /on a .*oz head/);
 });
