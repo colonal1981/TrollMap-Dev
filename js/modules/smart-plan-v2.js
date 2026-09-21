@@ -21,7 +21,8 @@ import { selectCandidates, structureIndex, forModel, travelOrder, poiSpotFeature
          attractorSpotFeatures, chartedGrid, chartedHazards,
          turnaroundMiles, riverDay, metresBetween,
          pointToSegmentM } from './plan-candidates.js';
-import { buildPlanRequest, parsePlanResponse, planArgsFrom } from './plan-prompt.js';
+import { buildPlanRequest, parsePlanResponse, planArgsFrom,
+         resolveTackleName } from './plan-prompt.js';
 // A RIVER LEG IS A DRIFT, NOT A LANE. See river-drifts.js for what that means, what it measures
 // and why the trolling runs are the wrong object on moving water.
 import { riverDriftRuns, driftCurrentSummary, centrelineTransit, waterTest } from './river-drifts.js';
@@ -568,11 +569,37 @@ export async function buildSmartPlanV2(o) {
   // an inventory that never sets it produces an EMPTY list -- against which every bait in the box
   // reads as cast-only and every plan gets sent back. A bag that does not say which of it can be
   // trolled has not been contradicted by an answer that trolls something; it has said nothing.
+  // ── AND IT IS MATCHED THE WAY THE REST OF THE PLANNER MATCHES, NOT BY THE RAW STRING ────────
+  //
+  // The bag holds `Straight Tail Worm 6-7"`, and an unescaped inch mark would end the JSON string
+  // the model is asked to write -- so promptSafeTackleName() sends `Straight Tail Worm 6-7in` and
+  // the model faithfully echoes that back. This compared the echo against a Set of the bag's OWN
+  // spelling, so both `inBag.has()` and `trollSet.has()` missed, every inch-marked bait read as
+  // "not in the bag", and the re-ask never fired for one.
+  //
+  // MEASURED ON THE PLAN THAT FOUND IT, 2026-09-21, Pack's Landing: the answer put a Straight Tail
+  // Worm on R3, seatRods moved it to R2, and it went in the water as the port rod on BOTH fished-
+  // back legs -- 292 of the day's 840 minutes with one of the two rods fishing nothing. The rule
+  // had been checked and had silently passed. A fifth of the bag carries an inch mark.
+  //
+  // resolveTackleName() is the function planArgsFrom() already uses, and its `asShown` tier exists
+  // for exactly this substitution -- which is why the LATER warning out of capBaitDepth prints the
+  // canonical `6-7"` while this test was still looking at `6-7in`. Two spellings of one bait, and
+  // the guard was on the wrong one. Reporting the resolved name keeps the two messages agreeing.
+  //
+  // RESOLVING ALSO REPLACES THE `inBag` TEST rather than joining it: a name that resolves to
+  // nothing in the bag is a bait the inventory does not describe, and the bag's trollable flag has
+  // said nothing about it. That is the same abstention the empty-`trollSet` guard above makes.
   const trollSet = new Set(trollable);
-  const inBag = new Set(o.tackle || []);
+  const bagNames = o.tackle || [];
   const castOnlyRods = (r) => (trollSet.size === 0 ? [] : (((r || {}).loadout || {}).rods || [])
-    .filter((rod) => rod && rod.lure && inBag.has(rod.lure) && !trollSet.has(rod.lure))
-    .map((rod) => `${rod.id} (${rod.lure})`));
+    .map((rod) => {
+      if (!rod || !rod.lure) return null;
+      const hit = resolveTackleName(rod.lure, bagNames);
+      if (!hit || trollSet.has(hit.name)) return null;
+      return `${rod.id} (${hit.name})`;
+    })
+    .filter(Boolean));
 
   const broke = castOnlyRods(res);
   if (broke.length) {

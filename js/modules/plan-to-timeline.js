@@ -141,7 +141,10 @@ function bottomNote(rods, leg) {
     // clears the water the pass mostly is keeps the lead he set and the rise is flagged instead
     // ("flag the rise and let me decide"), so this sentence is where the decision gets made and
     // the lead that clears has to be IN it. One number, whichever bait is deepest into the rise.
-    const lifts = taps.map((r) => r.clearance.clearsAt).filter((n) => Number.isFinite(n));
+    // `> 0` AND NOT JUST FINITE, for the reason spelled out on `clearsAt` in clearanceOf(): a lead
+    // of zero is a bait in the wake, not a lead. Both ends check it because both ends print it.
+    const lifts = taps.map((r) => r.clearance.clearsAt)
+      .filter((n) => Number.isFinite(n) && n > 0);
     const lift = lifts.length ? ` Shorten to ${Math.min(...lifts)} ft if you want it up over the `
                               + `rise instead — the chart does not say where on the leg it is.` : '';
     return `Bottom is ${floorFt} ft here and the ${taps.length > 1 ? 'baits' : taps[0].lure} `
@@ -198,7 +201,20 @@ function bottomClearance(runs, leg, over) {
   // as `clearsAt`. A number the app computed and nobody reads is the failure this pipeline keeps
   // making, and the decision it was computed for is made on the water, off this card. So it rides
   // with the clearance, which is the field already saying the bait is into the bottom.
-  const clearsAt = over && Number.isFinite(Number(over.clearsAt)) ? Number(over.clearsAt) : null;
+  // AND `Number(null)` IS 0, WHICH IS FINITE. capBaitDepth writes `clearsAt: null` whenever no
+  // lead clears the rise -- a bill bait, or a lead bait whose window will not come up that far --
+  // and this read it as the number zero and printed "0 ft of lead clears it" on the card. Measured
+  // on Ryan's 2026-09-21 Pack's Landing plan: Leg 1's squarebill and Leg 4's swimbait both carried
+  // `clearsAt: 0`, and bottomNote turned it into "Shorten to 0 ft if you want it up over the rise".
+  //
+  // The prompt already says what a zero lead is, in as many words: "A lead of 0, or a token few
+  // feet, is not 'the bill decides the depth', it is a bait hanging off the rod tip in the wake."
+  // So a non-positive lead is the ABSENCE of an answer and says so, rather than being an answer of
+  // zero. It surfaced now because the rise flag fires on every bait mode since 6834c12; the
+  // coercion was always wrong.
+  const clearsRaw = over == null ? null : over.clearsAt;
+  const clearsNum = clearsRaw == null ? NaN : Number(clearsRaw);
+  const clearsAt = Number.isFinite(clearsNum) && clearsNum > 0 ? clearsNum : null;
   const lift = clearsAt ? ` — ${clearsAt} ft of lead clears it` : '';
   if (gap < 0) {
     return { gap, floorFt, taps: true, clearsAt, note: `digs into the ${floorFt} ft rise${lift}` };

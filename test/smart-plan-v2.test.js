@@ -639,6 +639,62 @@ describe('a bait that cannot be trolled goes back to the model', () => {
     expect(/Creature Bait \/ Craw/.test(said[0])).toBe(true);
   });
 
+  // ── AND THE NAME THE MODEL ECHOES IS NOT THE NAME THE BAG HOLDS ─────────────────────────────
+  //
+  // Every case above uses `Creature Bait / Craw`, which has no inch mark -- so the guard passed
+  // its own tests while missing a fifth of the bag. The bag holds `Straight Tail Worm 6-7"`; an
+  // unescaped inch mark would end the JSON string the model writes, so promptSafeTackleName()
+  // sends `Straight Tail Worm 6-7in` and the model echoes THAT. Comparing the echo against the
+  // bag's own spelling missed, and on Ryan's 2026-09-21 Pack's Landing plan the worm went in the
+  // water on both fished-back legs -- 292 of 840 minutes with a rod fishing nothing.
+  describe('when the bag name carries an inch mark', () => {
+    const INCHED = INVENTORY.map((l) => ({ ...l, trollable: true }))
+      .concat([{ name: 'Straight Tail Worm 6-7"', type: 'worm', trollable: false }]);
+    const OPTS_I = { ...OPTS, inventory: INCHED, tackle: INCHED.map((l) => l.name) };
+    // THE SPELLING THE PROMPT ASKED FOR, which is the one that comes back.
+    const asEchoed = 'Straight Tail Worm 6-7in';
+
+    it('catches it and re-asks', async () => {
+      let asked = 0, n = 0;
+      const inner = goodModel((answer) => {
+        if (n++ < 1) answer.loadout.rods[0].lure = asEchoed;
+        return answer;
+      });
+      const r = await buildSmartPlanV2({ ...OPTS_I,
+        askModel: async (req) => { asked++; return inner(req); } });
+      expect(asked).toBe(2);
+      expect(/THAT ANSWER BROKE A RULE/.test(r.request.user)).toBe(true);
+    });
+
+    it('and names it back in the bag\'s spelling, not the prompt\'s', async () => {
+      const inner = goodModel((answer) => {
+        answer.loadout.rods[0].lure = asEchoed;
+        return answer;
+      });
+      const r = await buildSmartPlanV2({ ...OPTS_I, askModel: async (req) => inner(req) });
+      const said = r.problems.filter((p) => /cannot be trolled/.test(p));
+      expect(said.length).toBe(1);
+      // The canonical name, so this message and capBaitDepth's later one agree about the bait.
+      expect(said[0].includes('Straight Tail Worm 6-7"')).toBe(true);
+      expect(said[0].includes(asEchoed)).toBe(false);
+    });
+
+    it('still says nothing about a trollable bait whose name is inch-marked', async () => {
+      let asked = 0;
+      const withInch = INVENTORY.map((l) => ({ ...l, trollable: true }))
+        .concat([{ name: '3" Lipless Crankbait', type: 'lipless', trollable: true }]);
+      const inner = goodModel((answer) => {
+        answer.loadout.rods[0].lure = '3in Lipless Crankbait';
+        return answer;
+      });
+      const r = await buildSmartPlanV2({ ...OPTS, inventory: withInch,
+        tackle: withInch.map((l) => l.name),
+        askModel: async (req) => { asked++; return inner(req); } });
+      expect(asked).toBe(1);
+      expect(r.problems.some((p) => /cannot be trolled/.test(p))).toBe(false);
+    });
+  });
+
   it('does not fire on a bag that never says what may be trolled', async () => {
     let asked = 0;
     const r = await buildSmartPlanV2({ ...OPTS,   // INVENTORY has no `trollable` on anything

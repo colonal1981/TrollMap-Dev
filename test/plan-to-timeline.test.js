@@ -282,3 +282,51 @@ describe('plan-to-timeline — the distance spine reaches the screen', () => {
     expect(c9.atM).toBe(99999);
   });
 });
+
+// ── `Number(null)` IS 0, AND 0 FT OF LEAD IS NOT A LEAD ────────────────────────────────────────
+//
+// capBaitDepth writes `clearsAt: null` whenever nothing clears the rise -- a bill bait, or a lead
+// bait whose window will not come up that far. clearanceOf() read it with
+// `Number.isFinite(Number(over.clearsAt))`, and `Number(null)` is 0, which is finite. So the card
+// printed "digs into the 2 ft rise — 0 ft of lead clears it" and bottomNote turned it into
+// "Shorten to 0 ft if you want it up over the rise instead".
+//
+// Measured on Ryan's 2026-09-21 Pack's Landing plan: Leg 1's squarebill and Leg 4's swimbait both
+// carried `clearsAt: 0`. The prompt already says what a zero lead is -- "A lead of 0, or a token
+// few feet, is not 'the bill decides the depth', it is a bait hanging off the rod tip in the wake."
+// It surfaced when the rise flag started firing on every bait mode; the coercion was always wrong.
+describe('a rise nothing clears says so, rather than saying zero', () => {
+  const legWith = (clearsAt) => ({
+    id: 'L1', type: 'troll', runId: 'w#1', startM: 0, lengthM: 2500,
+    depthFt: 17, depthMinFt: 2, speedMph: 2.0,
+    deploy: { port: 'R1', starboard: 'R5' }, batteryAh: 3.9, estDurationMin: 46,
+    estStartTime: '06:00', why: 'the rise', stops: [],
+    rodPlan: { R1: { runsDepthFt: [2, 5], clearsAt } },
+  });
+  const planWith = (clearsAt) => ({ ...PLAN, legs: [legWith(clearsAt)] });
+  const cardOf = (clearsAt) => planToTimeline(planWith(clearsAt)).timeline
+    .find((e) => e.type === 'troll' && e.legType === 'troll');
+
+  it('prints no clearing lead when none exists', () => {
+    const card = cardOf(null);
+    const rod = (card.rods || []).find((x) => x.rod === 'R1');
+    expect(rod.clearance.taps).toBe(true);        // 5 ft of bait into a 2 ft rise
+    expect(rod.clearance.clearsAt).toBe(null);
+    expect(/clears it/.test(rod.clearance.note)).toBe(false);
+    expect(rod.clearance.note).toBe('digs into the 2 ft rise');
+  });
+
+  it('and bottomNote does not offer a zero-foot lead', () => {
+    expect(/Shorten to/.test(cardOf(null).bottomNote)).toBe(false);
+    // A literal zero out of an older plan is the same non-answer and is refused the same way.
+    expect(/Shorten to/.test(cardOf(0).bottomNote)).toBe(false);
+  });
+
+  it('but a real clearing lead still reaches the card', () => {
+    const card = cardOf(48);
+    const rod = (card.rods || []).find((x) => x.rod === 'R1');
+    expect(rod.clearance.clearsAt).toBe(48);
+    expect(rod.clearance.note).toBe('digs into the 2 ft rise — 48 ft of lead clears it');
+    expect(/Shorten to 48 ft/.test(card.bottomNote)).toBe(true);
+  });
+});
