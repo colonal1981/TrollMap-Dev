@@ -185,7 +185,7 @@ function fitInlineWeight(lure, rod, speedMph, ceilingFt, id, runId, warnings) {
  * `lineFt` in river-drifts.js. Returns [] when there is no envelope, and the sentence then falls
  * back to what it used to say, which is the honest answer for a pack without one.
  */
-function risesAtM(envelope, stepM, ceilingFt) {
+export function risesAtM(envelope, stepM, ceilingFt) {
   const step = Number(stepM);
   if (!Array.isArray(envelope) || !Number.isFinite(step) || step <= 0
       || !Number.isFinite(ceilingFt)) return [];
@@ -204,7 +204,7 @@ function risesAtM(envelope, stepM, ceilingFt) {
  * the leg's start, so the caller says "about" and this returns the station's own distance. A metre
  * here would be precision the resampling never had.
  */
-function riseSentence(marks) {
+export function riseSentence(marks) {
   if (!marks.length) return null;
   const m = (v) => `${v.toLocaleString('en-US')} m`;
   if (marks.length === 1) return `${m(marks[0])} into the pass`;

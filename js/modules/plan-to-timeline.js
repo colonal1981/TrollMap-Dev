@@ -62,7 +62,7 @@
  * Pure. No DOM, no window. The caller installs the result — see smart-plan-v2-wiring.js.
  */
 
-import { planCues } from './plan-assemble.js';
+import { planCues, risesAtM, riseSentence } from './plan-assemble.js';
 import { ozLabel } from '../utils/oz.js';
 import { lightLabel } from '../utils/light-state.js';
 
@@ -145,11 +145,30 @@ function bottomNote(rods, leg) {
     // of zero is a bait in the wake, not a lead. Both ends check it because both ends print it.
     const lifts = taps.map((r) => r.clearance.clearsAt)
       .filter((n) => Number.isFinite(n) && n > 0);
-    const lift = lifts.length ? ` Shorten to ${Math.min(...lifts)} ft if you want it up over the `
-                              + `rise instead — the chart does not say where on the leg it is.` : '';
+    // ── AND THE CHART DOES SAY WHERE. IT HAS SAID SO SINCE THE DRIFT SHIPPED AN ENVELOPE ───────
+    //
+    // Ryan, 2026-09-21: *"unless you are going to give me a way in the app to know where these
+    // station numbers are it is useless to mention them to me as i have no idea where they are"*.
+    //
+    // This sentence ended "the chart does not say where on the leg it is" — hardcoded, and false.
+    // The leg carries `envelope` (`envelope_line_ft`, sliced to this window) and `envelopeStepM`,
+    // and the index IS the distance. selectCandidates() says so in as many words where it cuts the
+    // slice, and capBaitDepth's warning has located the rise off those two fields since 2026-09-19
+    // — after Ryan read the "does not say where" line four times on one plan. The card, which is
+    // the thing he reads while rigging, went on claiming ignorance of a number sitting on the leg
+    // it was handed. A value the app computed and addressed to nobody, for the sixth time.
+    //
+    // `floorFt` is the depth the clearance rows were measured against, so the stations at or under
+    // it are the rise those rows are about — the same ceiling, read out of the same array.
+    const where = riseSentence(risesAtM(leg && leg.envelope, leg && leg.envelopeStepM, floorFt));
+    const lift = lifts.length
+      ? ` Shorten to ${Math.min(...lifts)} ft if you want it up over the rise instead.` : '';
+    // "about", because the stations are 50 m apart and the slice is aligned to the one at or
+    // before the leg's start. Pretending to the metre would be precision the resampling never had.
+    const at = where ? ` It is about ${where}.` : ' The chart does not place it on the leg.';
     return `Bottom is ${floorFt} ft here and the ${taps.length > 1 ? 'baits' : taps[0].lure} `
          + `${taps.length > 1 ? 'find' : 'finds'} it — let it tap and come up, that rise is the `
-         + `spot.${lift}`;
+         + `spot.${at}${lift}`;
   }
   // NOT "this is not a leg to fish down", WHICH IS A JUDGEMENT WITH A THRESHOLD BEHIND IT.
   //

@@ -322,6 +322,33 @@ describe('a rise nothing clears says so, rather than saying zero', () => {
     expect(/Shorten to/.test(cardOf(0).bottomNote)).toBe(false);
   });
 
+  // ── AND IT SAYS WHERE, BECAUSE THE LEG IS CARRYING THE ARRAY THAT SAYS WHERE ────────────────
+  //
+  // Ryan, 2026-09-21: "unless you are going to give me a way in the app to know where these
+  // station numbers are it is useless to mention them to me as i have no idea where they are".
+  // The card's sentence ended "the chart does not say where on the leg it is" -- hardcoded, while
+  // `envelope` and `envelopeStepM` sat on the leg it was handed. The index is the distance.
+  it('locates the rise off the leg\'s own envelope', () => {
+    const leg = {
+      id: 'L1', type: 'troll', runId: 'w#1', startM: 0, lengthM: 2500,
+      depthFt: 17, depthMinFt: 2, speedMph: 2.0,
+      deploy: { port: 'R1' }, batteryAh: 3.9, estDurationMin: 46, estStartTime: '06:00',
+      why: 'the rise', stops: [],
+      // 50 m stations; the 2 ft reading is index 11, so 550 m into the pass.
+      envelope: [20, 19, 18, 17, 17, 16, 18, 19, 20, 21, 22, 2, 23, 21, 20],
+      envelopeStepM: 50,
+      rodPlan: { R1: { runsDepthFt: [2, 5], clearsAt: null } },
+    };
+    const card = planToTimeline({ ...PLAN, legs: [leg] }).timeline
+      .find((e) => e.type === 'troll' && e.legType === 'troll');
+    expect(/It is about 550 m into the pass\./.test(card.bottomNote)).toBe(true);
+    expect(/does not say where/.test(card.bottomNote)).toBe(false);
+  });
+
+  it('and says so plainly when the leg carries no envelope', () => {
+    expect(/The chart does not place it on the leg\./.test(cardOf(null).bottomNote)).toBe(true);
+  });
+
   it('but a real clearing lead still reaches the card', () => {
     const card = cardOf(48);
     const rod = (card.rods || []).find((x) => x.rod === 'R1');

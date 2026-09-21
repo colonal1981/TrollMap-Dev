@@ -3169,7 +3169,30 @@ export function forModel(c, cap = MODEL_STRUCTURE_CAP) {
     // median 29 shallowest is 25ft deepest is 32 allows me to know that the lure depth that is
     // chosen is right or wrong". The model is judging exactly that, so it gets exactly that.
     depthFt: c.depthFt,
-    depthMinFt: c.depthMinFt ?? undefined,
+    // ── AND THE SHALLOWEST IT IS TOLD ABOUT IS THE ONE THE LEG SUSTAINS ────────────────────────
+    //
+    // Ryan, 2026-09-21, on a plan that rigged a squarebill and a buzzbait for a leg whose median
+    // is 17 ft: *"if we are telling the LLM that the stretch is only 2 ft deep that is why they
+    // are putting baits that run seriously shallow on"*.
+    //
+    // He is reading the right field. `c.depthMinFt` is the shallowest single sounding, and on
+    // congaree_river:drift:channel@136300 that is 2 ft at ONE station out of 108 -- a station the
+    // pack's own depth areas put in 22 ft of water. The prompt introduces this field as "the
+    // shallowest water the leg actually crosses", and a 50 m sounding that the chart beside it
+    // contradicts is not water the leg crosses.
+    //
+    // IT WAS ALSO A CONTRADICTION, WHICH IS WORSE THAN A WRONG NUMBER. Since 6834c12 the candidate
+    // carried `depthMinFt: 2` next to `maxRunDepthFt: 13`, so the model was told in one line that
+    // the leg crosses 2 ft and in the next that the shallowest rise on it is 13 ft. Those cannot
+    // both be true, and it resolved them by rigging for the 2.
+    //
+    // Before that commit the two fields were the same expression under two names -- both
+    // `band.line.minFt` -- so sending the sustained floor here is what keeps them one quantity,
+    // not a second opinion about it. The TRUE minimum has not gone anywhere: it stays on the
+    // candidate and on the leg, where capBaitDepth flags the rise and the card locates it. What
+    // changes is that the model is no longer asked to size a bait against a sounding the app's own
+    // arithmetic has already decided not to refuse anything over.
+    depthMinFt: c.maxRunDepthFt ?? c.depthMinFt ?? undefined,
     depthMaxFt: c.depthMaxFt ?? undefined,
     maxRunDepthFt: c.maxRunDepthFt ?? undefined,
     lengthM: c.lengthM,
