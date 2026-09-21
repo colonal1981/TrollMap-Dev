@@ -27,7 +27,8 @@
 
 import { state } from '../core/state.js';
 import { COASTAL_ZONES } from './coastal-zones.js';
-import { loadLakeRegistry, filterLakes, accessPointsFor, getLoadedRegistry } from './lake-registry.js';
+import { loadLakeRegistry, filterLakes, accessPointsFor, getLoadedRegistry,
+         namesALanding } from './lake-registry.js';
 import { registerR2Key } from './lake-keys.js';
 import { setLiveAccessSource } from './water-filter.js';
 import { primeLaunchNames, ryanName } from './launch-reach.js';
@@ -335,31 +336,70 @@ export function findExistingLakeKey(index, plainName, lat, lon, maxMiles = 15, r
   return null;
 }
 
-function coordKey(lat, lon) {
-  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return '';
-  // ~35-40 ft buckets: tight enough to merge the same site from different
-  // layers without collapsing genuinely separate access points in one park.
-  return `${lat.toFixed(4)},${lon.toFixed(4)}`;
+// ── TWO ROWS ARE ONE LANDING WHEN THEY ARE IN THE SAME PLACE, OR SHARE A NAME NEAR IT ──────────
+//
+// Ryan, 2026-09-21, on Lake Marion's picker: *"the list that i am seeing for lake marion has to be
+// like 50 launches"* -- it is 29, and `Rocks Pond campground & marina` and `Taw Caw main lake ramp`
+// are each in it TWICE. Counted on his own water after his overrides land: NINETEEN names appear
+// more than once, and the widest of those groups is 59 m across.
+//
+// TWO FAULTS, AND THE FIRST HAS NO THRESHOLD IN IT. The old key rounded to four decimals and
+// compared the BUCKET, so the test was not "within 11 m" but "in the same 11 m cell" -- and a cell
+// has EDGES. Twelve of Marion's nineteen groups are a `natl` row and a `dnr` row **2 m apart**,
+// straddling one. Rounding to a grid and calling it a radius is the bug; measuring the distance is
+// what the old comment always said it meant.
+//
+// THE SECOND NEEDED A NUMBER AND THE DATA HAD ONE. Feeds place the same ramp tens of metres apart,
+// so position alone never collapses them -- but they agree on the NAME. Every same-name pair on
+// one water in the registry, with OSM's generic labels excluded (see namesALanding):
+//
+//      84 m  norris_lake        Mountain Lake Marina   [natl vs osm]     one marina
+//     169 m  hiwassee_lake      HANGING DOG            [dnr vs ncpaws]   one ramp, four feeds
+//     ------------------------------------------------------------- nothing in this band
+//     192 m  murder_creek_lake  Charlie Elliott Wildlife Center          TWO ramps, one park
+//    1614 m  richard_b_russell  Richard B. Russell State Park            TWO ramps, one park
+//
+// Everything below 169 m is one landing listed by more than one feed; everything above 192 m is a
+// PARK name worn by two real ramps. **The gate is 180 m, inside that empty band** -- the same way
+// the ramp-alias gate sits at 120 m between a 108 m correct alias and a 133 m wrong one. It is not
+// a guess about how far apart two ramps can be; it is where this measurement stops finding
+// duplicates and starts finding parks.
+//
+// AND IT IS `AND`, NOT `OR`: the name must match AND the pair must be inside 180 m. Two ramps
+// sharing a park's name a mile apart stay two rows, which is the whole reason for the band.
+const SAME_NAME_M = 180;
+const SAME_PLACE_M = 11;   // what the old four-decimal key was always trying to say
+
+function accessMetres(a, b) {
+  if (![a && a.lat, a && a.lon, b && b.lat, b && b.lon].every(Number.isFinite)) return Infinity;
+  const la = ((a.lat + b.lat) / 2) * Math.PI / 180;
+  const dx = (b.lon - a.lon) * Math.cos(la) * Math.PI / 180 * 6371000;
+  const dy = (b.lat - a.lat) * Math.PI / 180 * 6371000;
+  return Math.hypot(dx, dy);
 }
 
-function accessDedupeKey(item) {
-  // POSITION ALONE WHEN WE HAVE ONE — 2026-08-22.
-  //
-  // This used to key on `coords|name`, so two entries collapsed only when BOTH matched. The
-  // feeds do not agree on names: the same launch is "Amity Recreation Area" to the national
-  // feed and "Amity RA" to SCDNR, "Elijah Clark State Park (Campground 1)" and "Elijah Clark
-  // SP (Campground 1)", and OSM contributes slipways with no name at all. Measured across the
-  // index on 2026-08-22: 575 duplicate positions already collapsed because the names happened
-  // to match, and **156 did not** — Parksville on Thurmond was one launch listed six times,
-  // once from `natl`, once from `dnr` and four times from OSM.
-  //
-  // `coordKey` rounds to 4 decimals, about 11 m, chosen so two genuinely separate ramps in one
-  // park stay separate. Two boat ramps cannot occupy the same 11 m square, so within one cell
-  // the name is a spelling difference and nothing else.
-  const cKey = coordKey(item.lat, item.lon);
-  return cKey || normalizeNameKey(item.name);
+/** The row already in `list` that `item` is another record of, or undefined. */
+export function sameLanding(list, item) {
+  const key = normalizeNameKey(item && item.name);
+  const named = !!key && !(item && item.unnamed);
+  for (const x of (list || [])) {
+    const d = accessMetres(x, item);
+    if (d <= SAME_PLACE_M) return x;
+    if (named && !x.unnamed && d <= SAME_NAME_M && normalizeNameKey(x.name) === key) return x;
+  }
+  return undefined;
 }
 
+// THE COUNT THAT PUT POSITION AHEAD OF THE NAME, 2026-08-22, kept because it is why sameLanding()
+// tests position FIRST and only then the name. The key used to be `coords|name`, so two rows
+// collapsed only when BOTH matched -- and the feeds do not agree on names: the same launch is
+// "Amity Recreation Area" to the national feed and "Amity RA" to SCDNR. Measured that day: 575
+// duplicate positions already collapsed because the names happened to match, and **156 did not**.
+// Parksville on Thurmond was one launch listed six times, once from `natl`, once from `dnr` and
+// four times from OSM.
+//
+// What that change got wrong was not the ordering but the ARITHMETIC -- it bucketed instead of
+// measuring. See sameLanding() above.
 function formatAccessLabel(item) {
   const prefix = item.marker ? `${item.marker} ` : '';
   return `${prefix}${item.name}${item.typeLabel ? ` — ${item.typeLabel}` : ''}`;
@@ -398,28 +438,151 @@ export function rampMeta(raw) {
   return out;
 }
 
+/**
+ * ── AN UNLABELLED PIN IS NOT A LAUNCH HE CAN PICK ───────────────────────────────────────────────
+ *
+ * Ryan, 2026-09-21, looking at the Congaree's Access Points Index: seven rows reading
+ * "Unnamed access point — Slipway (OSM)", one under the other, and *"the list that i am seeing for
+ * lake marion has to be like 50 launches... and a whole bunch of them are unnamed"*. It is 29, and
+ * 33 of Marion's OSM rows carry no name at all.
+ *
+ * HE ASKED THE RIGHT QUESTION FIRST -- *"do they actually add anything?"* -- so it was measured
+ * across the whole registry before anything was written:
+ *
+ *     OSM access rows with coordinates                                  1,762
+ *       named                                                             349
+ *       unnamed                                                         1,413
+ *     named OSM rows no agency feed lists (>100 m from any)                133   <- these earn it
+ *     unnamed rows on a water that ALREADY has a named access point      1,381   <- 97.7%
+ *     unnamed rows that are the ONLY record a launch exists                 32   on 21 waters
+ *
+ * So on any water with a named ramp on it, an unnamed slipway adds a row he cannot tell from the
+ * six below it. Worse on the Congaree: of its seven, five sit OUTSIDE the river's own boundary
+ * polygon -- two on the Wateree at Camden, one on the Saluda -- and the other two are 35 m and
+ * 47 m from Thomas H Newman and Barney Jordan, which are in the list already, named.
+ *
+ * NAMED OSM ROWS ARE UNTOUCHED, and that is the point of filtering on the name rather than on the
+ * source. 133 launches reach him from OSM and nowhere else, two of them on this very river --
+ * Cedar Creek Canoe Launch and Jordan Memorial Boat Ramp.
+ *
+ * AND IT KEEPS THEM WHERE THEY ARE THE ONLY THING SAYING YOU CAN PUT A BOAT IN. 21 waters have no
+ * named access at all -- berry_shoals_pond, hunt_pond, eureka_lake, diversion_canal -- and there
+ * the unlabelled row is the whole answer to "is there a launch". Hiding it there would turn a
+ * thin answer into no answer.
+ *
+ * THIS IS THE CHEAP HALF OF A REAL DEFECT. `make_osm_ramps_by_lake.py` claims a ramp for a water
+ * by testing the boundary's BOUNDING BOX plus a margin rather than the polygon -- its own
+ * docstring says so -- and on a sinuous river that box is a 68 x 69 km rectangle holding two other
+ * rivers. 709 of the 1,413 are filed on the wrong water by that rule, which is also an access
+ * BADGE those waters have not earned. Fixing it is a producer change and a rebuild; this is a
+ * filter at the point of display, and START_HERE's own rule is not to propose the expensive fix
+ * for the cheap problem. The badge stays on the list of what is owed.
+ *
+ * @param {Map<string, object[]>} byLake  the built index, filtered IN PLACE
+ * @returns {number} how many rows were hidden
+ */
+export function hideUnnamedSlipways(byLake) {
+  let hidden = 0;
+  for (const [lake, list] of byLake) {
+    if (!Array.isArray(list) || !list.length) continue;
+    // A named row from ANY source -- agency, manual, or OSM itself.
+    if (!list.some((x) => x && !x.unnamed)) continue;
+    const keep = list.filter((x) => !(x && x.unnamed && String(x.sourcePath || '') === 'registry:osm'));
+    if (keep.length !== list.length) { hidden += list.length - keep.length; byLake.set(lake, keep); }
+  }
+  return hidden;
+}
+
+/**
+ * Fold `item` into `existing` so one dropdown row carries both records.
+ *
+ * Its own function because it happens TWICE -- once as each record arrives, and once more after
+ * Ryan's names land, when two rows that did not look alike suddenly do. Writing the merge out a
+ * second time is how the two passes drift apart.
+ */
+function mergeLanding(existing, item) {
+  // Preserve all source categories if a spot appears in more than one worker
+  // route, but keep only one dropdown entry.
+  const labels = new Set([...(existing.sourceLabels || [existing.typeLabel]), item.typeLabel].filter(Boolean));
+  existing.sourceLabels = [...labels];
+  existing.typeLabel = existing.sourceLabels.join(' / ');
+
+  // ── A NAME BEATS A PLACEHOLDER, AND ONLY THEN DOES LENGTH DECIDE ────────────────────────────
+  //
+  // This rule has said since 2026-08-22 that "an OSM slipway with no name at all must never win
+  // over a named one", and for a year it was ONE test -- keep the longer string -- which does not
+  // say that at all. `Unnamed access point` is **20 characters**. `Cherry Point` is 12.
+  //
+  // Counted over the registry on 2026-09-21: **263 landings across the card lost their real name
+  // to the placeholder this way** -- Cherry Point, Penny Creek and Steamboat in the ACE Basin,
+  // Remleys Point and Riverland Terrace at Charleston, Old Chehaw Landing and Edgar Glenn at
+  // Beaufort. Every one of them is a launch some feed named, reading `Unnamed access point` in his
+  // picker because a nameless record from another feed happened to land in the same 11 m.
+  //
+  // This is the other half of Ryan's *"i thought we fixed the unnamed ramp issue with me going
+  // through that tool and selecting an answer on each... but now i still see unnamed"* -- and it
+  // is the half his roll call could never have reached, because the name he supplied was being
+  // discarded by a string-length comparison after he supplied it.
+  //
+  // THE FLAG IS THE TEST, NOT THE SPELLING. `unnamed` is set by the producers from the record, so
+  // the comparison is "does this row name a landing", not "is this string the sentence we write
+  // when it does not". Length still decides between two rows that BOTH name one, which is what it
+  // was always for: "Amity Recreation Area" over "Amity RA".
+  const exNames = !existing.unnamed;
+  const itNames = !item.unnamed;
+  if (itNames && !exNames) existing.name = item.name;
+  else if (itNames === exNames && (item.name || '').length > (existing.name || '').length) {
+    existing.name = item.name;
+  }
+  // AND THE FLAG FOLLOWS THE NAME. Two rows collapsing to one entry is the commonest way an
+  // unnamed OSM slipway stops being unnamed -- it is the same slipway the agency filed with a
+  // name. Only an entry where BOTH sides were nameless is still nameless.
+  existing.unnamed = !exNames && !itNames;
+}
+
+/**
+ * ── HIS NAMES MAKE DUPLICATES THE FIRST PASS COULD NOT SEE ──────────────────────────────────────
+ *
+ * Ryan's picker, 2026-09-21, showed `Rocks Pond campground & marina` twice and `Taw Caw main lake
+ * ramp` twice -- *"thats what i wanted to show you lol"*. Both pairs are ONE landing, and both
+ * survived sameLanding() because when they were compared they did not share a name: the national
+ * feed called one "Rimini" and OSM called the other nothing at all. HE is the one who gave them
+ * the same name, in the roll call, and that happens after the index is built.
+ *
+ * So the same test runs again once his names are on the rows. Measured on the registry that day:
+ * 17 groups fall inside the 180 m gate only after the rename, the tightest 12 m apart -- Taw Caw
+ * Creek Boat Ramp, Pack's Landing, Murrays Ferry Bridge, Patriots Landing, Buckhill Landing.
+ *
+ * AND HIS OWN FILE IS THE EVIDENCE THE GATE HOLDS HERE. Ten names in
+ * `_launch_name_overrides.json` are on more than one position, because more than one feed files
+ * the landing -- and the WIDEST of those ten spans **59 m**. Not one of his repeated names is on
+ * two places further apart than that. He was answering for one landing each time.
+ *
+ * @param {Map<string, object[]>} byLake  filtered IN PLACE
+ * @returns {number} how many rows were folded away
+ */
+export function collapseRenamed(byLake) {
+  let folded = 0;
+  for (const [lake, list] of byLake) {
+    if (!Array.isArray(list) || list.length < 2) continue;
+    const kept = [];
+    for (const item of list) {
+      const existing = sameLanding(kept, item);
+      if (existing) { mergeLanding(existing, item); folded++; continue; }
+      kept.push(item);
+    }
+    if (kept.length !== list.length) byLake.set(lake, kept);
+  }
+  return folded;
+}
+
 function addAccessItem(index, lakeName, item) {
   if (!lakeName || !item || !Number.isFinite(item.lat) || !Number.isFinite(item.lon)) return;
 
   if (!index.byLake.has(lakeName)) index.byLake.set(lakeName, []);
   const list = index.byLake.get(lakeName);
-  const nextKey = accessDedupeKey(item);
-
-  const existing = list.find((x) => accessDedupeKey(x) === nextKey);
-  if (existing) {
-    // Preserve all source categories if a spot appears in more than one worker
-    // route, but keep only one dropdown entry.
-    const labels = new Set([...(existing.sourceLabels || [existing.typeLabel]), item.typeLabel].filter(Boolean));
-    existing.sourceLabels = [...labels];
-    existing.typeLabel = existing.sourceLabels.join(' / ');
-    // KEEP THE FULLER NAME, so the surviving entry does not depend on which feed loaded
-    // first. "Amity Recreation Area" reads better in a dropdown than "Amity RA", and an OSM
-    // slipway with no name at all must never win over a named one. Load order deciding what a
-    // thing is called is the same failure as a water resolving by which row registered its
-    // slug first.
-    if ((item.name || '').length > (existing.name || '').length) existing.name = item.name;
-    return;
-  }
+  const existing = sameLanding(list, item);
+  if (existing) { mergeLanding(existing, item); return; }
 
   list.push(item);
 }
@@ -465,6 +628,9 @@ async function buildAccessIndex() {
 
         addAccessItem(index, lakeName, {
           name,
+          // See the note on `unnamed` in lake-registry.js: a value, because two files write the
+          // placeholder and a reader must not have to match a sentence.
+          unnamed: !namesALanding(raw.name),
           lat,
           lon,
           typeLabel: source.label,
@@ -713,12 +879,42 @@ async function buildAccessIndex() {
     for (const list of index.byLake.values()) {
       for (const item of list) {
         const mine = ryanName(item.lat, item.lon);
-        if (mine && mine !== item.name) { item.name = mine; renamed++; }
+        // AND IT IS NO LONGER NAMELESS. hideUnnamedSlipways() runs after this for exactly that
+        // reason: a slipway he has named is a slipway he can pick.
+        if (mine && mine !== item.name) { item.name = mine; item.unnamed = false; renamed++; }
+        else if (mine) item.unnamed = false;
       }
     }
     if (renamed) console.info(`[access-index] applied ${renamed} of Ryan's own launch names`);
   } catch (e) {
     console.warn('[access-index] launch-name overrides skipped:', e?.message || e);
+  }
+
+  // ── AND THEN THE SAME TEST AGAIN, BECAUSE HIS NAMES CHANGED THE ANSWER ────────────────────
+  //
+  // The two rows he saw twice only look like one landing once he has named them both. See
+  // collapseRenamed().
+  try {
+    const folded = collapseRenamed(index.byLake);
+    if (folded) {
+      console.info(`[access-index] folded ${folded} duplicate row(s) that his own names revealed`);
+    }
+  } catch (e) {
+    console.warn('[access-index] post-rename collapse skipped:', e?.message || e);
+  }
+
+  // ── AND THE UNLABELLED OSM SLIPWAYS COME OUT, WHERE A NAMED ROW ALREADY ANSWERS ────────────
+  //
+  // After his names, because an override turns one of these into a launch he can pick, and before
+  // the name list is rebuilt, for the same reason the rename runs here. See hideUnnamedSlipways().
+  try {
+    const hidden = hideUnnamedSlipways(index.byLake);
+    if (hidden) {
+      console.info(`[access-index] hid ${hidden} unnamed OSM slipway(s) on waters that already `
+                 + 'name a launch');
+    }
+  } catch (e) {
+    console.warn('[access-index] unnamed-slipway filter skipped:', e?.message || e);
   }
 
   // Rebuild the name list LAST. The earlier sort ran before the registry and the manual

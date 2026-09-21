@@ -296,7 +296,7 @@ const SOURCE_META = {
   // Built offline by scripts/build_dnr_ramps_by_lake.py from the same four state ArcGIS feeds
   // the worker serves at /ramps and /paddle. These exist so the FILE knows what the live index
   // already knew -- the Python side has no worker to ask. When both are present they describe
-  // the same launches and accessDedupeKey() collapses them to one dropdown row.
+  // the same launches and sameLanding() in access-index.js collapses them to one row.
   dnr:        { label: 'Boat ramp (DNR)',     marker: '🛥️' },
   dnr_paddle: { label: 'Paddle launch (DNR)', marker: '🛶' },
   // NC WRC's fishing-areas app, written by scripts/build_nc_species_by_lake.py. ONE bucket
@@ -318,6 +318,34 @@ const SOURCE_META = {
 // classify falls back to the bucket label instead of silently dropping out of the launch count.
 const LAUNCH_WORD = /\b(ramp|slipway|launch|landing)\b/i;
 
+// ── A CATEGORY TYPED INTO THE NAME FIELD IS NOT A NAME ─────────────────────────────────────────
+//
+// Ryan's Lake Marion picker, 2026-09-21, carried a row reading `boat launch — Slipway (OSM)`. It
+// is not nameless -- `name=boat launch` is on the OSM object -- and it tells him nothing the
+// `Slipway (OSM)` label beside it does not already say.
+//
+// Counted across the registry: 28 rows, EVERY ONE of them from OSM -- `Boat Ramp` x23,
+// `boat launch` x3, `Boat Access` x2. And they are what put the far outliers in the same-name
+// measurement that set sameLanding()'s band: two `Boat Ramp` rows 707 m apart on Hartwell, two
+// 2,219 m apart on Chatuge, two `boat launch` **5 km** apart on Marion. Excluded, every remaining
+// same-name pair under 169 m is one landing listed twice.
+//
+// THE LIST IS THE CATEGORY WORDS THE LABEL ALREADY SAYS, and nothing else -- no guessing at which
+// proper nouns are weak. `Rocks Pond campground & marina` is a name; `Boat Ramp` is the thing it
+// is. A word list is the tool this project avoids, so it stays this short and this literal.
+const GENERIC_LAUNCH_NAME = new Set([
+  'boatramp', 'boatlaunch', 'boataccess', 'boatlanding', 'boataccessarea',
+  'slipway', 'ramp', 'launch', 'landing', 'publicboatramp', 'publiclanding',
+  'publicaccess', 'access', 'unnamedramp',
+]);
+
+/** Whether this string names a landing, as opposed to restating what one is. */
+export function namesALanding(raw) {
+  const t = String(raw == null ? '' : raw).trim();
+  if (!t) return false;
+  return !GENERIC_LAUNCH_NAME.has(t.toLowerCase().replace(/[^a-z0-9]+/g, ''));
+}
+
 export function accessPointsFor(rec) {
   const out = [];
   for (const [src, items] of Object.entries(rec.ramps || {})) {
@@ -325,8 +353,16 @@ export function accessPointsFor(rec) {
     for (const it of items || []) {
       const lat = Number(it.lat);
       const lon = Number(it.lon);
+      const unnamed = !namesALanding(it.name || it.wb);
       out.push({
         name: it.name || it.wb || 'Unnamed access point',
+        // ── WHETHER THE RECORD CARRIES A NAME, AS A VALUE ────────────────────────────────────
+        //
+        // The placeholder above is prose and two different files write it -- this one and
+        // access-index.js's live-feed branch -- so a reader that tests for the STRING is testing
+        // for a sentence two producers have to keep spelling the same way. The flag is what
+        // hideUnnamedSlipways() in access-index.js filters on.
+        unnamed,
         // The national CSV carries coordinates; the OSM per-lake file does not, so those
         // points fall back to the lake centroid rather than being dropped. They still tell
         // you a launch exists, which is the thing that was missing.
