@@ -137,7 +137,8 @@ test('both planners reach for it', () => {
   // AND THE KEY THEY ASK WITH, WHICH IS THE HALF THAT WAS WRONG.
   //
   // Everything above passed while the feature did nothing. smart-plan-v2 names the pack `o.r2Key`
-  // -- all sixteen of its other pack fetches use it -- and this one line asked with `o.slug`,
+  // -- counted, not guessed: 19 uses in that file, 7 of them the fetches that pull the pack's own
+  // layers off R2 -- and this one line asked with `o.slug`,
   // which that options object has never had. `launchRouteFor(undefined, ...)` returns null on its
   // first line, rampLegRouter hands back the centreline unchanged, and T1 came out a rubber band
   // across the swamp again with nothing logged and nothing thrown.
