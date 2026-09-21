@@ -1132,23 +1132,6 @@ export function structureIndex(...featureLists) {
         // waypoint on the Garmin is built from the mark's `type`, so a river bend arrived on the
         // chartplotter called a `cove`. One field, and the two agree.
         bendSide: (p.bend_side === 'outside' || p.bend_side === 'inside') ? p.bend_side : null,
-        // WHERE IT IS ON THE RIVER, AS THE PRODUCER ALREADY MEASURED IT. build_river_centrelines
-        // stamps `river_m` and `off_m` on every river structure -- the station it sits at and its
-        // metres off the centreline -- and this index threw both away, so the only thing that
-        // could be done with a spot afterwards was to find it by lon/lat again. channelFractions()
-        // needs the pair to put the LINE on the spot; see the note there. `score` rides along
-        // because two spots can share a station and the pack already ranked them.
-        riverM: Number.isFinite(Number(p.river_m)) ? Number(p.river_m) : null,
-        offM: Number.isFinite(Number(p.off_m)) ? Number(p.off_m) : null,
-        score: Number.isFinite(Number(p.score)) ? Number(p.score) : 0,
-        // THE DEEP SIDE OF IT, AND HOW FAR OVER THAT IS. Ryan, 2026-09-21: *"i want the deep side
-        // of the ledge not the shallow side... the drop off not the top of it"*. `depth_ft` on a
-        // ledge is the TOP -- median 3.9 ft across congaree_river -- and build_structure stamps
-        // the point there. `deep_ft` is the water at the bottom of the same drop and `run_ft` is
-        // the horizontal run between them, both measured off the same contours. Two fields that
-        // were already written and never carried past this index.
-        deepFt: Number.isFinite(Number(p.deep_ft)) ? Number(p.deep_ft) : null,
-        runM: Number.isFinite(Number(p.run_ft)) ? Number(p.run_ft) * 0.3048 : null,
       };
       const key = `${Math.floor(lon / RESOLVE_CELL)},${Math.floor(lat / RESOLVE_CELL)}`;
       if (!grid.has(key)) grid.set(key, []);
