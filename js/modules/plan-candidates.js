@@ -2204,7 +2204,27 @@ export function selectCandidates(runs, o) {
       // separate change; `waterDepthFt` is emitted alongside as the unambiguous one, carrying the
       // measured value where fit_trolling_runs.py stamped one. `waterDepthMeasured` says which.
       depthFt: band ? band.line.medianFt : p.depth_ft,
-      depthMinFt: band ? band.line.minFt : null,
+      // ── AND IT IS THE SUSTAINED FLOOR, BECAUSE THE APP MAY ONLY SAY ONE THING ABOUT IT ────────
+      //
+      // Ryan, 2026-09-21, shown a card reading "2-27 ft under the boat" beside a bait sized for a
+      // 13 ft floor: *"if the card tells me that the shallowest is 2 feet i am going to question
+      // the baits being assigned... the water is either 2 ft under my bait or it is not... it
+      // cannot be both"*.
+      //
+      // He is right and it settles a split this file made on purpose a few hours earlier: the
+      // refusal used the sustained floor and the card kept the shallowest single sounding, on the
+      // reasoning that a rise is still his to know about. Two numbers for one question is not a
+      // richer answer, it is the app contradicting itself on the card he rigs from -- and once it
+      // does, neither number can be trusted.
+      //
+      // SO THE WHOLE APP SPEAKS WITH ONE FLOOR: this, `maxRunDepthFt`, the model's candidate, the
+      // clearance row and the card's bottom note. A LONE SOUNDING BELOW IT IS NOT REPORTED AS THE
+      // BOTTOM, and that is not hiding a measurement -- 2,550 Congaree stations were sampled
+      // against the pack's own depth areas and 13 of them read 6 ft or more shallower than the
+      // chart under the same point, with nothing in the profile marking which 13. The app cannot
+      // tell a 50 m bar from a bad sounding, so it does not claim to. A rise across two stations
+      // is 100 m he trolls through, it survives into this number, and it is still flagged.
+      depthMinFt: band ? band.line.sustainedMinFt : null,
       depthMaxFt: band ? band.line.maxFt : null,
       // THE CEILING SMART PLAN NEVER HAD. plan-prompt.js has explained `maxRunDepthFt` to the
       // model since it was written -- "A leg reading 25-31 ft of water with maxRunDepthFt: 20 has
@@ -3169,30 +3189,11 @@ export function forModel(c, cap = MODEL_STRUCTURE_CAP) {
     // median 29 shallowest is 25ft deepest is 32 allows me to know that the lure depth that is
     // chosen is right or wrong". The model is judging exactly that, so it gets exactly that.
     depthFt: c.depthFt,
-    // ── AND THE SHALLOWEST IT IS TOLD ABOUT IS THE ONE THE LEG SUSTAINS ────────────────────────
-    //
-    // Ryan, 2026-09-21, on a plan that rigged a squarebill and a buzzbait for a leg whose median
-    // is 17 ft: *"if we are telling the LLM that the stretch is only 2 ft deep that is why they
-    // are putting baits that run seriously shallow on"*.
-    //
-    // He is reading the right field. `c.depthMinFt` is the shallowest single sounding, and on
-    // congaree_river:drift:channel@136300 that is 2 ft at ONE station out of 108 -- a station the
-    // pack's own depth areas put in 22 ft of water. The prompt introduces this field as "the
-    // shallowest water the leg actually crosses", and a 50 m sounding that the chart beside it
-    // contradicts is not water the leg crosses.
-    //
-    // IT WAS ALSO A CONTRADICTION, WHICH IS WORSE THAN A WRONG NUMBER. Since 6834c12 the candidate
-    // carried `depthMinFt: 2` next to `maxRunDepthFt: 13`, so the model was told in one line that
-    // the leg crosses 2 ft and in the next that the shallowest rise on it is 13 ft. Those cannot
-    // both be true, and it resolved them by rigging for the 2.
-    //
-    // Before that commit the two fields were the same expression under two names -- both
-    // `band.line.minFt` -- so sending the sustained floor here is what keeps them one quantity,
-    // not a second opinion about it. The TRUE minimum has not gone anywhere: it stays on the
-    // candidate and on the leg, where capBaitDepth flags the rise and the card locates it. What
-    // changes is that the model is no longer asked to size a bait against a sounding the app's own
-    // arithmetic has already decided not to refuse anything over.
-    depthMinFt: c.maxRunDepthFt ?? c.depthMinFt ?? undefined,
+    // `depthMinFt` IS ALREADY THE SUSTAINED FLOOR where it is built, so there is nothing to
+    // choose here -- see the note on it above. It used to be the shallowest single sounding, and
+    // the model was handed `depthMinFt: 2` next to `maxRunDepthFt: 13` on the same leg. Those
+    // cannot both be true and it resolved them by rigging for the 2.
+    depthMinFt: c.depthMinFt ?? undefined,
     depthMaxFt: c.depthMaxFt ?? undefined,
     maxRunDepthFt: c.maxRunDepthFt ?? undefined,
     lengthM: c.lengthM,

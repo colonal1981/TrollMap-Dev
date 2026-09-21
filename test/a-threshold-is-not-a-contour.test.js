@@ -188,8 +188,10 @@ describe('the leg depth is the water under it, not one shoal and not a contour n
     // and it now sends a ceiling, which it never did -- plan-prompt.js has explained
     // `maxRunDepthFt` to the model since it was written and only Pick Water ever supplied one.
     expect(c).toMatch(/maxRunDepthFt: band \? band\.line\.sustainedMinFt : null/);
-    // and the true minimum is still the one reported as the leg's shallowest water
-    expect(c).toMatch(/depthMinFt: band \? band\.line\.minFt : null/);
+    // AND `depthMinFt` IS THE SAME FLOOR, not the shallowest single sounding. Ryan, 2026-09-21:
+    // "the water is either 2 ft under my bait or it is not... it cannot be both". The card and the
+    // bait that gets sized against it read one number.
+    expect(c).toMatch(/depthMinFt: band \? band\.line\.sustainedMinFt : null/);
     expect(c).toMatch(/maxRunDepthFt: c\.maxRunDepthFt/);
   });
 });

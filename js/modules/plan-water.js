@@ -319,11 +319,15 @@ export function reasons(piece, o) {
   const line = piece.water && piece.water.line;
   const side = piece.water && piece.water.side;
   if (line) {
-    const oneSpot = line.medianFt - line.minFt >= 3;
-    forIt.push(`nothing may run deeper than ${line.minFt} ft here — that is the shallowest the `
+    // ONE FLOOR, THE SUSTAINED ONE. See the note on `depthMinFt` in plan-candidates.js: a lone
+    // sounding is not reported as the bottom anywhere, because this sentence and the bait that
+    // gets sized against it must not be able to disagree.
+    const floorFt = line.sustainedMinFt ?? line.minFt;
+    const oneSpot = line.medianFt - floorFt >= 3;
+    forIt.push(`nothing may run deeper than ${floorFt} ft here — that is the shallowest the `
              + `line itself gets on the ${fmtMi(piece.lengthM)}`
              + (oneSpot ? `, and it is one spot rather than the whole stretch` : '')
-             + (side && side.minFt < line.minFt
+             + (side && side.minFt < floorFt
                  ? `. Within a wander of it the bottom comes up to ${side.minFt} ft, which the `
                  + `depth cue calls before you reach it`
                  : ''));
@@ -427,7 +431,8 @@ export function reasons(piece, o) {
   // line overstates the shallowest water by a median 3.9 ft. Where the gap is big on THIS piece,
   // the edge is steep and it wants steering rather than relaxing.
   if (piece.water && piece.water.line && piece.water.side) {
-    const gap = piece.water.line.minFt - piece.water.side.minFt;
+    const gap = (piece.water.line.sustainedMinFt ?? piece.water.line.minFt)
+              - piece.water.side.minFt;
     if (gap >= 5) {
       against.push(`the chart line reads ${Math.round(gap)} ft deeper than the shallowest water `
                  + `within a wander of it — a steep edge, so this one wants steering`);

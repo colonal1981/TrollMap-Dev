@@ -142,7 +142,9 @@ function legFrom(piece, i, ramp, slug, wind) {
     // is flat. `chartedFt` -- the name of the contour the pass was cut from -- is gone: measured
     // on Wateree it reads 7 ft off the water under the boat (#289: contour 23, line 27-32).
     depthFt: line ? line.medianFt : piece.holdsFt,
-    depthMinFt: line ? line.minFt : null,
+    // The sustained floor, the same one `maxRunDepthFt` below uses -- one floor, said once. See
+    // the note on `depthMinFt` in plan-candidates.js.
+    depthMinFt: line ? (line.sustainedMinFt ?? line.minFt) : null,
     depthMaxFt: line ? line.maxFt : null,
     // THE CEILING ON HOW DEEP A BAIT MAY RUN HERE — OFF THE LINE, NOT OFF THE BANK.
     //

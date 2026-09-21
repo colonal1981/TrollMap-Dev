@@ -351,9 +351,15 @@ describe('the ceiling survives the trip through the planner, not just the assemb
   // A lane 4 km long that the fitter measured: the line runs 26-30 ft except for one 8 ft rise.
   // `envelope_ft` is the shallow side within the wander, `envelope_line_ft` the water under the
   // centreline -- waterBand() reads both and maxRunDepthFt comes off the line.
+  //
+  // THE RISE SPANS TWO STATIONS, AND THAT IS THE FIXTURE BEING CORRECTED RATHER THAN RELAXED.
+  // It was one station at k === 20, and from 2026-09-21 the app does not claim to know a 100 m
+  // bar from a bad sounding: 13 of 2,550 Congaree stations read 6 ft or more shallower than the
+  // pack's own depth areas under the same point. A shoal a boat trolls through is two stations,
+  // which here is 200 m of 8 ft water -- and that is what this block has always been about.
   const STEP = 100;
   const N = 40;
-  const lineFt = Array.from({ length: N + 1 }, (_, k) => (k === 20 ? 8 : 28));
+  const lineFt = Array.from({ length: N + 1 }, (_, k) => (k === 20 || k === 21 ? 8 : 28));
   const lane = {
     type: 'Feature',
     geometry: { type: 'LineString',
@@ -431,7 +437,9 @@ describe('the ceiling survives the trip through the planner, not just the assemb
     // 20 of a 100 m envelope, so it is 2,000 m into the pass, and the leg now carries the array the
     // ceiling was read from. Ryan, 2026-09-19, having read the old sentence four times on one plan:
     // it ended by telling him the chart could not place the shallow spot it had just measured.
-    expect(said).toMatch(/about 2,000 m into the pass/);
+    // BOTH STATIONS, because the rise is two of them -- riseSentence() names a pair rather than
+    // picking one, and a shoal the boat trolls 200 m of is exactly the case this block is about.
+    expect(said).toMatch(/about 2,000 m and 2,100 m into the pass/);
     expect(said).not.toMatch(/the chart does not say where the rise is/);
     expect(leg.envelope[20]).toBe(8);
     expect(leg.envelopeStepM).toBe(100);

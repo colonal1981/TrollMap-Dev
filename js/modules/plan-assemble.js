@@ -430,28 +430,23 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
       }
     }
 
-    // ── WHAT A BAIT IS REFUSED ON, AND WHAT IT IS ONLY TOLD ABOUT ───────────────────────────────
+    // ── ONE FLOOR, AND IT IS THE ONE THE LEG SUSTAINS ───────────────────────────────────────────
     //
-    // `ceilingFt` is `maxRunDepthFt`, and since 2026-09-21 that is the floor the leg SUSTAINS --
-    // the shallowest depth two consecutive soundings both clear. `legDepth.minFt` is still the
-    // shallowest single sounding on the leg. The two differ on 8 of the Congaree's 16 drift legs,
-    // and on congaree_river:drift:channel@138650 they differ by eleven feet: 108 stations, one of
-    // them reading 2 ft at a point the pack's own depth areas put in 22 ft of water.
+    // `ceilingFt` is `maxRunDepthFt`, and since 2026-09-21 that is the shallowest depth two
+    // consecutive soundings both clear -- and `depthMinFt` on the leg is now the SAME number.
     //
-    // THE SPLIT IS WHICH QUESTION EACH ONE ANSWERS. "Is this the wrong bait for this pass?" is
-    // about the stretch, and one 50 m sounding is not a stretch -- that question gets the sustained
-    // floor. "Is there something on this leg it will dig into?" is about a spot, and a spot is
-    // exactly what a single sounding is -- that question gets the true minimum, and its answer is
-    // a flag with a location, never a refusal. See sustainedMin() in plan-pieces.js.
+    // This function briefly carried both, refusing on the sustained floor while flagging the rise
+    // against the shallowest single sounding. Ryan killed that split the same day: *"if the card
+    // tells me that the shallowest is 2 feet i am going to question the baits being assigned...
+    // the water is either 2 ft under my bait or it is not... it cannot be both"*. Two numbers for
+    // one question is the app contradicting itself on the card he rigs from.
     //
-    // NEITHER OF THEM IS SILENCE, and that is the failure mode this arrangement exists to avoid.
-    // bait-depth-ceiling.test.js says so in as many words about the 8 ft rise: "what it must never
-    // go back to is silence". Refusing a 5 km pass over one bad sounding and saying nothing about
-    // a real rise are the same mistake pointed in opposite directions.
-    const trueMinFt = Number.isFinite(Number(legDepth && legDepth.minFt))
-                   && Number(legDepth.minFt) > 0 ? Number(legDepth.minFt) : ceilingFt;
-    // Clears the shallowest sounding on the leg. Nothing to correct and nothing to flag.
-    if (w.max <= trueMinFt) continue;
+    // SO A RISE IS A RISE ONLY WHERE TWO STATIONS AGREE IT IS. A lone sounding is not flagged and
+    // not refused on, because 13 of 2,550 Congaree stations read 6 ft or more shallower than the
+    // pack's own depth areas under the same point and nothing in the profile marks which 13 --
+    // see sustainedMin() in plan-pieces.js. A shoal across 100 m survives into `ceilingFt` and is
+    // flagged below exactly as before.
+    if (w.max <= ceilingFt) continue;
 
     // AIMING AT THE CEILING IS NOT CLEARING IT, and the first version of this did exactly that.
     //
@@ -522,11 +517,11 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
       // AGAINST THE RISE, NOT AGAINST THE STRETCH. `shorter` above walks the lead down until the
       // window clears `ceilingFt`; what he is being offered here is the lead that clears the RISE,
       // so it is worked out again against the shallower number.
-      const clearsRise = leadClearing(trueMinFt);
+      const clearsRise = leadClearing(ceilingFt);
       const env = [legDepth.minFt, legDepth.maxFt].every(Number.isFinite)
-        ? `${legDepth.minFt}-${legDepth.maxFt} ft` : `${trueMinFt} ft at its shallowest`;
+        ? `${legDepth.minFt}-${legDepth.maxFt} ft` : `${ceilingFt} ft at its shallowest`;
       const where = riseSentence(risesAtM(legDepth && legDepth.envelope,
-                                         legDepth && legDepth.stepM, trueMinFt));
+                                         legDepth && legDepth.stepM, ceilingFt));
       // SAID TWICE. `bottomNote` on this very leg already carries the rise and the lead that
       // clears it, on the card he reads while rigging for that leg -- which is the place it means
       // something. Three more of the eleven.
@@ -535,7 +530,7 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
                   + `${fit ? ` on a ${ozLabel(fit.weightOz)} head` : ''} `
                   + `runs ${w.min}-${w.max} ft, and this leg is ${env} with a median of `
                   + `${medianFt} ft. THE LEAD IS LEFT WHERE YOU SET IT \u2014 the bait clears the `
-                  + `water this pass mostly is, and there is a rise to ${trueMinFt} ft it will not `
+                  + `water this pass mostly is, and there is a rise to ${ceilingFt} ft it will not `
                   + (where ? `clear about ${where}. ` : `clear somewhere on it. `)
                   + (w.mode === 'lead'
                       ? (clearsRise
