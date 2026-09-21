@@ -89,6 +89,13 @@ def main():
                     help='lake_index.json -- only these waters may annex. Defaults beside '
                          '--registry, and it is the same gate the builder and uploader use.')
     ap.add_argument('--only-tiles', help='comma list, for a probe')
+    ap.add_argument('--only-lakes', required=True,
+                    help='comma list or @file of slugs that MAY annex. REQUIRED, and it is the '
+                         'whole lesson of 2026-09-21: see the note on NO_ANNEX. This rule fixes '
+                         'a hole somebody has SEEN -- the canal from Pack\'s Landing, 22 acres '
+                         'no polygon claimed -- and switching it on for every water card-wide '
+                         'annexed 9.4 million acres to 347 waters that nobody had reported a '
+                         'problem with. Name the waters.')
     a = ap.parse_args()
 
     def fix(g):
@@ -104,6 +111,41 @@ def main():
         sys.exit('no lake_index.json at %s -- annexing water for packs nobody serves is work '
                  'nobody asked for. Run consolidate_lake_index.py first.' % ipath)
     served = set(json.load(open(ipath, encoding='utf-8')))
+    # ── A RECTANGLE HAS NO EDGE TO EXTEND FROM ──────────────────────────────────────────────
+    #
+    # 2026-09-21, and it cost an overnight rebuild. A coastal zone is not a waterbody: it is an
+    # ENVELOPE somebody drew over land and water together, and make_coastal_boundaries.py emits
+    # it as a literal box. So "sounded water touching this, claimed by nobody" is the whole
+    # Atlantic outside the box -- it touches, therefore it is annexed:
+    #
+    #     coast_hilton_head_sc      1,378,920 ac   IN ONE PIECE
+    #     coast_ace_basin_sc        1,314,109 ac
+    #     coast_santee_delta_sc     1,302,907 ac
+    #     coast_murrells_inlet_sc   1,251,497 ac
+    #
+    # 9.4 million acres across 347 waters, and coast_hilton_head_sc's depth_areas.geojson came
+    # out of the rebuild at 275 MB. The rule is right for a lake, whose outline is a measured
+    # bank, and meaningless for a box.
+    #
+    # Zones are already the exception everywhere else in this pipeline -- owned_inside() gives
+    # them the opposite treatment for the same reason, and build_chartpack picks BboxMask for
+    # them because they are literally rectangles. They are the exception here too.
+    # AND ONLY THE WATERS NAMED. A water not on the list is left exactly as it was.
+    want = {x.strip() for x in a.only_lakes.lstrip('@').split(',') if x.strip()}
+    if len(want) == 1 and os.path.isfile(next(iter(want))):
+        want = {l.strip() for l in open(next(iter(want)), encoding='utf-8') if l.strip()}
+    missing = want - served
+    served = {s for s in served if s in want}
+    if not served:
+        sys.exit('--only-lakes matched none of the served waters. Given: %s'
+                 % ', '.join(sorted(want)[:6]))
+    print('%d water(s) may annex: %s' % (len(served), ', '.join(sorted(served))))
+    if missing:
+        print('   NOT SERVED, so not annexing: %s' % ', '.join(sorted(missing)))
+    NO_ANNEX = {s for s in served if s.startswith('coast_')}
+    if NO_ANNEX:
+        print('%d coastal zone(s) may not annex: a zone boundary is a drawn box, so everything '
+              'outside it touches it' % len(NO_ANNEX))
     tm = json.load(open(a.map, encoding='utf-8'))
     by_tile = tm['by_tile']
     tiles = sorted(by_tile)
@@ -214,7 +256,8 @@ def main():
             # the piece's own envelope and test the handful that reach it.
             ti_ = nt.query(q)
             takers = [nslugs[i] for i in ti_
-                      if nslugs[i] in served and q.distance(ngeoms[i]) <= 1e-9]
+                      if nslugs[i] in served and nslugs[i] not in NO_ANNEX
+                      and q.distance(ngeoms[i]) <= 1e-9]
             if not takers:
                 stats['unattached_pieces'] += 1
                 stats['unattached_acres'] += ac(q)
@@ -232,10 +275,27 @@ def main():
 
     os.makedirs(a.out, exist_ok=True)
     report = {}
+    refused = []
     for s, qs in sorted(annex.items()):
         u = fix(unary_union(qs))
         parts = [q for q in getattr(u, 'geoms', [u])
                  if q.geom_type == 'Polygon' and not q.is_empty]
+        # ── NO WATER MAY ANNEX MORE THAN ITSELF ─────────────────────────────────────────────
+        #
+        # Not a tuned number: 1.0 is the identity. A water that takes on more than its own area
+        # is not being EXTENDED to where the soundings end -- it is being replaced by whatever
+        # it happened to touch, and the thing on the other side is a different water. The canal
+        # is 22 acres against the Congaree's 10,810; Marion's whole share was 1,973 against
+        # 80,866, which is 2.4%.
+        #
+        # The coastal guard above already stops the case that actually happened. This catches
+        # the next one, whatever shape it arrives in, and it REFUSES rather than trimming --
+        # half of a wrong answer is still wrong, and a named refusal can be looked at.
+        own = ac(bounds[s]) if s in bounds else 0.0
+        got = sum(ac(q) for q in parts)
+        if own > 0 and got > own:
+            refused.append((s, got, own))
+            continue
         fc = {'type': 'FeatureCollection',
               'properties': {'slug': s, 'source': 'build_annex.py', 'note': NOTE},
               'features': [{'type': 'Feature',
@@ -249,7 +309,10 @@ def main():
               open(os.path.join(a.out, '_annex.json'), 'w', encoding='utf-8'), indent=1)
 
     print('\n%d water(s) annexed %.1f ac of sounded water no boundary claimed'
-          % (len(report), stats['annexed_acres']))
+          % (len(report), sum(r['acres'] for r in report.values())))
+    for s, got, own in sorted(refused, key=lambda x: -x[1]):
+        print('   !! %s REFUSED: %.0f ac of orphan against %.0f ac of its own water. A water '
+              'cannot annex more than itself -- look at what it is touching.' % (s, got, own))
     # NOT SILENCE. A piece that touches nothing we serve is water we still cannot draw, and the
     # number is the honest measure of what 3DHP and Garmin disagree about.
     print('   %.1f ac in %d piece(s) touched no served water and stays unattached'

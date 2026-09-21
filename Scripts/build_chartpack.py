@@ -1195,7 +1195,24 @@ def trim_geometry(geom, hit, mask=None):
             return (None, 'drop')
         if left.is_empty:
             return (None, 'drop')
-        return ({'type': left.geom_type, 'coordinates': _gj(left)['coordinates']}, 'trim')
+        # A GEOMETRYCOLLECTION HAS NO 'coordinates', AND THIS IS THE SECOND TIME.
+        #
+        # An intersection along a shared edge returns LineStrings and Points beside the polygon,
+        # wrapped in a GeometryCollection, and `_gj(collection)['coordinates']` is a KeyError
+        # rather than a bad polygon -- so the whole run dies, not one feature. It killed worker 2
+        # of the 2026-09-21 overnight rebuild after 81 lakes.
+        #
+        # The identical fault was found and fixed in clip_to_water() the day before, forty lines
+        # down this same file, and this function -- which does the same intersection for the same
+        # reason -- was not looked at. `_singles` already walks a collection and already returns
+        # one single-part geometry per part; all that is needed here is to take the polygons.
+        parts = [q for q in _singles(left) if q.get('type') == 'Polygon']
+        if not parts:
+            return (None, 'drop')          # an edge touch has no area and is not a feature
+        if len(parts) == 1:
+            return (parts[0], 'trim')
+        return ({'type': 'MultiPolygon',
+                 'coordinates': [q['coordinates'] for q in parts]}, 'trim')
 
     if t == 'LineString':
         kept = runs_inside(c, hit)
