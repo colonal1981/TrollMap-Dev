@@ -436,6 +436,29 @@ export function profileIndexFor(fractions, frac) {
 export const SIDE_ENVELOPE_M = 25;
 
 /**
+ * THE SHALLOWEST WATER THE LANE MAY BE PULLED TOWARD, in feet.
+ *
+ * Ryan, 2026-09-21: *"i should not have to run shallower than 6ft or so that entire run"*, and
+ * then, watching the lane lean at every mark: *"it is going towards the shallows... and running
+ * way too shallow"*.
+ *
+ * He was describing the pack's own contents. Of the 710 in-section spots on congaree_river that
+ * the lane was being pulled toward, 418 are LEDGES -- median depth 3.9 ft, p10 1.0 ft, only 16%
+ * of them at 6 ft or better -- and 6 more are humps, median 3.0 ft, none of them. A ledge IS the
+ * shallow edge of something; that is what makes it a ledge. Targeting every joined kind sent the
+ * boat at the bank 364 times.
+ *
+ * Holes are the other half and they are the half worth steering for: 286 of them, median 14.1 ft,
+ * 98% at 6 ft or better. With this floor the lane leans toward 346 spots instead of 710, and the
+ * 364 it now ignores are the ones he would have been dragged through.
+ *
+ * THEY ARE STILL FISHED AND STILL LISTED. This decides what the LINE is steered toward, not what
+ * the plan knows about: kindHits() joins every kind within `maxOffM` of the line exactly as it
+ * did, so the shallow ledges he passes are on the card and in the GPX.
+ */
+export const LANE_MIN_DEPTH_FT = 6;
+
+/**
  * THE SHALLOWEST CHARTED DEPTH WITHIN `SIDE_ENVELOPE_M` OF A LATERAL POSITION, off one station's
  * cross-section.
  *
@@ -653,6 +676,32 @@ export function channelFractions(profiles, fractions, widths, maxShiftM = SIDE_E
         for (const r of cell) {
           if (!DRIFT_JOIN_KINDS.includes(r.kind)) continue;
           if (!Number.isFinite(r.riverM) || !Number.isFinite(r.offM)) continue;
+          // ── THE DROP, NOT THE TOP ────────────────────────────────────────────────────────
+          //
+          // Ryan, 2026-09-21: *"i want the deep side of the ledge not the shallow side... the
+          // drop off not the top of it"*.
+          //
+          // build_structure stamps a ledge at its SHALLOW edge -- that is what the feature is,
+          // the lip -- so a lane steered at `off_m` is steered at the top of the bar. The same
+          // record already carries `deep_ft`, the water at the foot of that drop, and `run_ft`,
+          // the horizontal run between the two. So the target is the stamped point moved toward
+          // the channel by the drop's own run, and the depth that has to clear the floor is the
+          // DEEP one, not the lip.
+          //
+          // A hole is already stamped at its bottom and needs no shift. Everything else is not
+          // steered toward at all: humps are 6 records on this river, median 2 ft on top, and
+          // nothing that carries no depth can be judged against a depth.
+          let want = r.offM;
+          const at = (r.kind === 'ledge') ? r.deepFt : r.depthFt;
+          if (!Number.isFinite(at) || at < LANE_MIN_DEPTH_FT) continue;
+          if (r.kind === 'ledge') {
+            if (!Number.isFinite(r.runM)) continue;
+            // Toward the middle is toward deeper water in a river section, and never past it.
+            const over = Math.sign(r.offM || 1) * Math.min(Math.abs(r.offM), r.runM);
+            want -= over;
+          } else if (r.kind !== 'hole') {
+            continue;
+          }
           const i = Math.round((r.riverM - base) / span);
           if (!(i >= 0 && i < n)) continue;
           // IN THE SECTION, OR IT IS NOT ON THIS RIVER'S LINE TO REACH. `off_m` runs to 2,577 m
@@ -660,7 +709,7 @@ export function channelFractions(profiles, fractions, widths, maxShiftM = SIDE_E
           // mouth of. Targeting those drags the line at the bank for kilometres and never gets
           // there. The section is the river: half a width either side of the line.
           const wi = Number(w[i]);
-          if (!(wi > 0) || Math.abs(r.offM) > wi / 2) continue;
+          if (!(wi > 0) || Math.abs(want) > wi / 2) continue;
           // ALREADY ON IT? THEN LEAVE THE LINE ALONE. A spot has a size -- `reachM`, which the
           // pack measures from the feature's own extent -- and a line inside that is already
           // fishing it. Without this the line was dragged a few metres onto spots it was on
@@ -668,9 +717,26 @@ export function channelFractions(profiles, fractions, widths, maxShiftM = SIDE_E
           // reversals went 26.2% to 35.3% and its median lean 1.4 to 4.6 degrees, which is the
           // saw-tooth Ryan objected to arriving by a different door. A swing that buys nothing
           // is not a swing.
+          // ── AND IT NEVER TRADES DEPTH FOR A SPOT ─────────────────────────────────────────────
+          //
+          // Ryan, 2026-09-21: *"it is going towards the shallows... and running way too
+          // shallow"*, and before that, the whole of it in one line on 2026-09-18: *"it is
+          // literally keep me in the middle of the river let me go over fish holding structure"*.
+          //
+          // Middle of the river FIRST. Steering toward structure moved the lane off the deepest
+          // column, and the column is the deep water: measured on congaree_river, the depth under
+          // the lane went from 4% of stations below 6 ft to 6% just by aiming at spots, even with
+          // the drop-off fix and a 6 ft floor on the spots themselves. A floor on the TARGET is
+          // not enough, because the line has to cross whatever lies between.
+          //
+          // So the line only leans toward a spot that is AT LEAST AS DEEP as the water it is
+          // already in. A hole in the channel pulls it; a drop-off on the far side of a bar does
+          // not, however deep the drop itself is. Nothing is given up to reach anything.
+          const hereFt = Number((profiles[i] || [])[profileIndexFor(fr, 0.5 + off[i] / wi)]);
+          if (Number.isFinite(hereFt) && hereFt > 0 && at < hereFt) continue;
           if (Number.isFinite(r.reachM) && r.reachM > 0
-              && Math.abs(off[i] - r.offM) <= r.reachM) continue;
-          if (!pick[i] || r.score > pick[i].score) pick[i] = r;
+              && Math.abs(off[i] - want) <= r.reachM) continue;
+          if (!pick[i] || r.score > pick[i].score) pick[i] = { ...r, offM: want };
         }
       }
       // TWO SPOTS TOO CLOSE TOGETHER TO BOTH BE REACHED. The line may move `maxShiftM` per
@@ -712,6 +778,26 @@ export function channelFractions(profiles, fractions, widths, maxShiftM = SIDE_E
   // So a station holding a spot keeps its value and only the stations between them are rate
   // limited, forward and back. The limit still decides how fast the line may swing -- 25 m per
   // 50 m station, a 27 degree lean -- it just no longer decides where the swing ends up.
+  // ── AND THE SPOTS DO NOT GET AN EXEMPTION FROM IT. REVERTED 2026-09-21 ─────────────────────
+  //
+  // For one commit a station holding a spot kept its value and only the stations between them
+  // were limited, which did reach them -- median 20.1 m to 7.8 m against the drawn lane. Ryan saw
+  // it and was right about it: *"that made the sawteeth worse... so now it just goes back to the
+  // centerline sharp turn towards the shore then back to the centerline... this is a regression
+  // not a progression"*.
+  //
+  // Of 3,133 stations on congaree_river, 571 hold a spot. Exempting them from the limit turns
+  // each one into a SPIKE off an otherwise smooth line, because the 2,562 that do not hold one
+  // have just been smoothed to the middle -- so the line sits mid-channel, darts at a hole, and
+  // comes back. Reaching a spot and looking like a boat were traded against each other and the
+  // trade was taken the wrong way.
+  //
+  // The limit applies to everything again. A spot is a TARGET the line leans toward, which is
+  // what the mean of the two envelopes does, and it is a lane serving a whole run of water rather
+  // than a line that visits each mark. The spots alternate banks -- his own GPX names them
+  // "inside bend" and "outside bend" one after another -- and no single lane passes over both
+  // sides of a river; that is geometry, not a defect to patch out.
+  //
   // THE LEAD AND THE LAG STAY, AND THAT IS NOT A DETAIL. A plain forward-then-backward clamp
   // reaches the spots and arrives at every channel crossing LATE, because it only ever limits
   // from the station behind. The two envelopes below lag a swing by exactly as much as they lead
@@ -723,16 +809,14 @@ export function channelFractions(profiles, fractions, widths, maxShiftM = SIDE_E
   // both envelopes at its own value and its neighbours ramp toward it from both sides.
   const under = off.slice(), over = off.slice();
   for (let i = 1; i < n; i++) {
-    if (held[i]) continue;
     under[i] = Math.min(under[i], under[i - 1] + L);
     over[i] = Math.max(over[i], over[i - 1] - L);
   }
   for (let i = n - 2; i >= 0; i--) {
-    if (held[i]) continue;
     under[i] = Math.min(under[i], under[i + 1] + L);
     over[i] = Math.max(over[i], over[i + 1] - L);
   }
-  for (let i = 0; i < n; i++) if (!held[i]) off[i] = (under[i] + over[i]) / 2;
+  for (let i = 0; i < n; i++) off[i] = (under[i] + over[i]) / 2;
   // Step three: back to a fraction against THIS station's width, and never outside the section.
   // The limit is in metres and the width is not constant, so an offset carried in from a wide
   // station can land past the bank of a narrow one.
