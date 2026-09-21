@@ -59,7 +59,8 @@ const CACHE_NS  = CACHE_NS_CONTOURS;
 // existing key, so the first load after this ships refetches.
 // 1 -> 2: the three Santee packs were rebuilt and re-uploaded after it. Bump follows upload.
 // 2 -> 3: same rebuild. Bump follows upload.
-const CACHE_SCHEMA = 3;
+// 3 -> 4: same overnight rebuild of all 354 served packs.
+const CACHE_SCHEMA = 4;
 const CACHE_TTL = 24 * 60 * 60 * 1000;
 
 let changeListeners = [];

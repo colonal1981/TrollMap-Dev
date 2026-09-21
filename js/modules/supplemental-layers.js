@@ -114,7 +114,12 @@ const CACHE_TTL = 24 * 60 * 60 * 1000;
 // changed; a browser holding the 7 copies from an hour earlier is holding Marion with a
 // 4,488-acre hole in it. The rule in the paragraph above only works if it is obeyed.
 // 8 -> 9: the annex landed and the three Santee packs were rebuilt and re-uploaded again.
-const CACHE_SCHEMA = 9;
+// 9 -> 10, bumped BEFORE the overnight rebuild rather than after it, which is the one case
+// where that is right: every served pack is about to be rewritten and re-uploaded, so any
+// browser copy is stale by morning whatever happens, and a bump that lands first cannot be
+// forgotten at 5 a.m. by a session that is no longer running. A pack the run never reaches
+// simply refetches the same bytes.
+const CACHE_SCHEMA = 10;
 
 // AND WHICH BUILD THAT NUMBER WAS BUMPED FOR, so the next person cannot forget the way I did.
 //
