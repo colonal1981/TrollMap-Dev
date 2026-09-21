@@ -103,6 +103,16 @@ water and not a synthetic shoreline. That matters beyond tidiness: build_water_f
 and points by walking a shoreline, and a smooth buffer edge would manufacture bank features that are
 not there.
 
+A THIRD SOURCE: THE RAMP'S OWN ROUTE -- 2026-09-21
+
+`--from-landings` is for water no centreline ever runs down. The Pack's Landing canal joins that
+ramp to the Congaree mainstem in 1,313 m of charted water, and the congaree_river pack owned one
+20 m cell of it in 48; the centreline corridor cannot reach it because the canal is a branch off
+the line, not a stretch of it, and 3DHP has no polygon there to cut from -- see from_landings()
+for the query and the four rows it returned. The spine is instead the route build_ramp_reach.py
+already measured over Garmin's water and wrote into launches.json, and the width is three times
+the water's own inscribed radius at each vertex, capped by the pack's snap_cap_m.
+
 AFTERWARDS, THE PACK MUST BE REBUILT
 
 A boundary change invalidates the clip, exactly as attach_arms.py says. The commands are printed at
@@ -172,67 +182,240 @@ def inside_span(line, station_m, bound):
     return first, last
 
 
-def own_water(a, corridor, fwd, inv, mine):
-    """The river's own charted depth areas near its own line, as whole polygons.
+def own_water(a, corridor, fwd, inv, mine, bbox, trim=False):
+    """The charted depth areas inside `corridor`, as WHOLE polygons.
 
-    Returns (keep, dropped, n_read). `keep` is in lon/lat, ready to merge with the boundary.
+    Returns (keep, dropped, refused, n_read). `keep` is in lon/lat, ready to merge with the
+    boundary.
 
-    WHICH TILES. registry/tile_lake_map.json already says which tiles a water sits on, in B ids;
-    the depth areas are the C file of the same id. Reading the whole extract instead would be
-    78,276 polygons for four tiles' worth of answer.
+    WHICH POLYGONS. build_ramp_reach.water_polys() already answers "every zoom-0 depth area near
+    this water, off the tiles it sits on" -- the tile list out of registry/tile_lake_map.json, the
+    C file of each B id, and zoom 0 only because the coarser levels are redraws of the same water
+    rather than extra survey, and a generalised polygon closes the very gaps -- a canal mouth, a
+    creek neck -- this is for. This file carried its own copy of that loop until 2026-09-21. There
+    is one now, and it is the one the ramp routes were measured with.
 
-    WHICH POLYGONS. zoom 0 only -- Garmin ships the same water at six levels of detail and the
-    coarser ones are redraws, not extra survey (see build_all_chartpacks' note). Then: centroid
-    inside the corridor, and not already inside the boundary. Added WHOLE, so every edge of the
-    result is Garmin's water edge and not the corridor's arc.
+    Then: centroid inside the corridor, and not already inside the boundary. Added WHOLE, so every
+    edge of the result is Garmin's water edge and not the corridor's arc.
 
     WHY NOT CLIP TO THE CORRIDOR. Because build_structure.py reads this boundary's outer ring and
     its island holes AS SHORE, and its offshore test would then rule against an arc that is not a
     bank. Same reason --into intersects the neighbour's polygon rather than keeping the buffer.
+
+    `trim` KEEPS A POLYGON WHOLE ONLY IF THE CORRIDOR CONTAINS IT, and cuts it to the corridor
+    otherwise. There is no size to pick: either the piece of water fits inside the run or it is
+    something larger that the run passes through. The canal is why. Its water is not separable by
+    polygon -- the 8-9 and 9-10 ft bands that floor it are single pieces of 154 and 148 acres that
+    carry straight on out into Lake Marion -- so every whole-polygon rule tried on 2026-09-21
+    failed at one end or the other: refusing them left the canal with banks and no middle and the
+    ramp connected to nothing, selecting them by centroid never saw them at all because their
+    centroids are out in the lake, and taking them whole on a touch put 1,247 acres of Lake Marion
+    into the Congaree, which is how the annex swallowed the Atlantic on 2026-09-20.
+
+    THE TRIM'S EDGES ARE STILL GARMIN'S, EXCEPT AT THE TWO ENDS, AND THAT IS NOT LUCK. The
+    corridor's half-width is three times the inscribed radius of the water at each vertex, so its
+    flanks are by construction at least three channel-widths out -- on dry ground, not on water.
+    A cut against it therefore follows the water's own bank everywhere along the run, and the only
+    manufactured edges are the caps where the run starts and stops. The start is the ramp. The
+    stop is the vertex where three widths first exceeds the pack's cap, which is the neck where
+    the channel opens out, so the cap lands across the narrowest water there is.
     """
-    import glob
-    import gzip
-    tmap_p = os.path.join(a.registry, 'tile_lake_map.json')
-    tiles = []
-    if os.path.isfile(tmap_p):
-        with open(tmap_p, encoding='utf-8') as fh:
-            tmap = json.load(fh)
-        tiles = (tmap.get('by_lake') or {}).get(a.slug) or []
-    if not tiles:
-        print('  %s is not in tile_lake_map.json, so there is no tile list to read' % a.slug)
-        return [], 0, 0
-    keep, dropped, n_read = [], 0, 0
-    for t in tiles:
-        cid = 'C' + t[1:] if t[:1] in 'Bb' else t
-        for ext in ('.geojson.gz', '.geojson'):
-            fp = os.path.join(a.extract, 'depth_areas', cid + ext)
-            if not os.path.isfile(fp):
+    from build_ramp_reach import water_polys
+    polys, n_read = water_polys(a.extract, a.registry, a.slug, bbox)
+    keep, dropped, trimmed = [], 0, 0
+    for g in polys:
+        gm = shapely_transform(fwd, g)
+        # TWO SELECTORS, AND `trim` PICKS BETWEEN THEM. Without it this is centroid-in-corridor
+        # and whole polygons, unchanged since 2026-09-20 and measured there: at a confluence the
+        # neighbour's depth areas are huge and touch the corridor from a kilometre off, and
+        # `intersects` let them in entire. With it, touching is enough -- what comes in is then
+        # the part inside the corridor and not the kilometre behind it, and centroid would have
+        # missed the piece that matters. The canal is the case: the bands that floor it run on
+        # out into Lake Marion and their centroids are out there with them.
+        if not trim:
+            if not corridor.covers(gm.centroid):
                 continue
-            raw = gzip.open(fp, 'rb').read() if ext.endswith('.gz') else open(fp, 'rb').read()
-            for f in (json.loads(raw).get('features') or []):
-                pr = f.get('properties') or {}
-                if pr.get('zoom') != 0:
+        elif not corridor.intersects(gm):
+            continue
+        if mine.covers(g):
+            dropped += 1          # already ours; nothing to add
+            continue
+        if trim and not corridor.covers(gm):
+            # A GEOMETRYCOLLECTION HAS NO 'coordinates', AND THIS IS THE THIRD PLACE. An
+            # intersection that grazes an edge comes back with lines and points in it.
+            cut = gm.intersection(corridor)
+            parts = [q for q in getattr(cut, 'geoms', [cut]) if q.geom_type == 'Polygon']
+            if not parts:
+                continue
+            trimmed += 1
+            keep.append(shapely_transform(inv, unary_union(parts)))
+            continue
+        keep.append(g)
+    return keep, dropped, trimmed, n_read
+
+
+def from_landings(a, mine, cap):
+    """The corridor the RAMPS measure, for water a centreline never runs down.
+
+    Returns (keep, dropped, refused, lat0, fwd). `keep` is None on a refusal, [] when there is
+    nothing left to add.
+
+    WHY THIS EXISTS. Ryan, 2026-09-21: *"i should be able to fish the railroad tracks from packs
+    all the way through the canal and up the river which is what i actually do.... and i should be
+    able to do that with congaree river selected so that it is an actual river plan"*. He could
+    not, and the reason was not the annex and not the clip. Measured the same day against the
+    congaree_river pack alone: Pack's Landing's nearest water in it is 1,093 m away and is a
+    2-acre orphan joined to nothing, while the canal that actually connects the ramp to the
+    mainstem is 1,313 m of charted water of which this pack owns ONE 20 m cell in 48. Lake Marion
+    owns the other 47.
+
+    AND 3DHP CANNOT FIX IT, WHICH IS WHY THE SOURCE HAD TO CHANGE. make_river_boundaries cuts
+    these boundaries from 3DHP featuretype 1 and 2 -- River and Canal, so canals were never
+    excluded. Queried over this canal on 2026-09-21: four waterbody rows in the whole box and not
+    one of them is a Canal. Lake Marion is a single featuretype 3 polygon of 323.9250 km2 --
+    80,043 acres -- and the canal is interior to it. The one River polygon down there is 0.0500
+    km2 at the mouth, an island inside Marion's polygon with the Congaree's nearest river polygon
+    over a kilometre off, so the 50 m join tolerance was never going to reach it, and --min-km2
+    never touched it (that test is `km2 < 0.05`, and it runs on the assembled result). There is no
+    wider featuretype net that finds this canal, and --lakes would hand the Congaree all 80,043
+    acres of the lake. Garmin sounded it -- 8 to 10 ft down the middle, 25 depth-area polygons --
+    and Garmin is the only source that knows it is there.
+
+    SO THE SPINE IS A MEASURED ROUTE, NOT A LINE DRAWN HERE. build_ramp_reach.py floods the
+    charted water off the same tiles and writes the way back out of the flood field into
+    launches.json; Pack's Landing's is 72 points and 1,801 m by water against 2,367 straight. It
+    is a shortest path by construction, it is over Garmin's water at 26 m cells rather than over
+    the clip, and it is already on disk. Nothing here invents a course.
+
+    HOW WIDE, WITHOUT PICKING IT. The same rule the centreline corridor uses -- three channel
+    widths off the line is off this water -- but measured on the water the ROUTE is in instead of
+    inherited from the river. congaree_river's snap_cap_m is 495 m, three widths of the Congaree;
+    this canal is about 90 m across, and a 495 m corridor down it reaches a quarter mile into Lake
+    Marion on both banks. Measured 2026-09-21: whole-polygon selection over a corridor that wide
+    takes 762 acres against roughly 30 for the canal itself. So the half-width at each vertex is
+    three times the inscribed radius of the charted water AT that vertex -- the distance from the
+    route to its own nearest bank.
+
+    AND WHERE THREE WIDTHS IS WIDER THAN THE RIVER, THE VERTEX IS PASSED OVER RATHER THAN CLAMPED
+    TO THE CAP. Clamping is what snap_cap_m means on a centreline, where every station IS the
+    river; on a ramp route most vertices are not. The first run of this, 2026-09-21, clamped: 35
+    routes, 3,351 acres of corridor, 1,695 acres added -- almost all of it off Santee State Park,
+    Poplar Creek, Red Cypress and Stumphole, lake ramps whose routes cross kilometres of open Lake
+    Marion. Reaching the cap is the signal that the route has left any channel, and out there a
+    ramp route has nothing to say.
+
+    THE ROUTE IS ALSO READ FROM THE RAMP END AND STOPS AT THE FIRST WATER THE PACK ALREADY HAS.
+    What is missing is the link between the two; past it the pack owns the water already.
+    """
+    lp = os.path.join(a.chartpack, a.slug, 'launches.json')
+    if not os.path.isfile(lp):
+        print('%s: no %s, so there is no measured route to follow' % (a.slug, lp))
+        return None, 0, 0, 0.0, None
+    with open(lp, encoding='utf-8') as fh:
+        land = json.load(fh)
+    want = [w.strip().lower() for w in (a.landings or '').split(',') if w.strip()]
+    if not want:
+        print('%s: --from-landings needs --landings. A ramp route is a statement that HE launches '
+              'there, and nothing in the data says it: Pack\'s Landing is 1,801 m from the '
+              'Congaree and 0 m from Lake Marion, so every measure files it under the lake. Its '
+              'launches.json lists 35 landings that merely reach this water -- Saluda Shoals is '
+              '14 km of route away and belongs to saluda_river_lower_saluda -- and taking them '
+              'all adds 1,221 acres to a 30-acre problem.' % a.slug)
+        return None, 0, 0, 0.0, None
+    routes = [(r.get('name') or '?', r.get('route') or []) for r in (land.get('landings') or [])
+              if (r.get('name') or '').strip().lower() in want]
+    routes = [(n, rt) for n, rt in routes if len(rt) >= 2]
+    missing = sorted(set(want) - set(n.strip().lower() for n, _ in routes))
+    if missing:
+        print('  not in %s launches.json, or already on its water: %s'
+              % (a.slug, ', '.join(missing)))
+    if not routes:
+        print('%s: every landing in its launches.json is already on its own water' % a.slug)
+        return [], 0, 0, 0.0, None
+
+    pts = [p for _, rt in routes for p in rt]
+    lat0 = sum(p[1] for p in pts) / len(pts)
+    fwd, inv = flat(lat0)
+    mlon = 111320.0 * math.cos(math.radians(lat0))
+    bbox = (min(p[0] for p in pts) - cap / mlon, min(p[1] for p in pts) - cap / 110540.0,
+            max(p[0] for p in pts) + cap / mlon, max(p[1] for p in pts) + cap / 110540.0)
+
+    from build_ramp_reach import water_polys
+    near, _n = water_polys(a.extract, a.registry, a.slug, bbox)
+    if not near:
+        print('%s: no charted water on its tiles anywhere near those routes' % a.slug)
+        return None, 0, 0, lat0, fwd
+    water = unary_union([shapely_transform(fwd, g) for g in near])
+    bank = water.boundary
+
+    print('%s: widening %d measured ramp route(s) by the water they run in' % (a.slug, len(routes)))
+    circles, offchannel = [], 0
+    for name, rt in routes:
+        # RAMP FIRST, AND ALL THE WAY TO THE END OF THE ROUTE. trace() writes the channel end
+        # first, so the route is read backwards; its far end is a cell the CENTRELINE itself runs
+        # through, which is the mainstem by definition.
+        #
+        # This stopped at the first vertex inside the boundary for one run on 2026-09-21, on the
+        # reasoning that past it the pack has the water already. It does not: congaree_river's
+        # nearest water to Pack's Landing was a TWO-ACRE ORPHAN joined to nothing, the walk
+        # stopped on it, and the corridor ended 85 m short of the Congaree with the ramp on 227
+        # acres of canal that went nowhere. Whatever is already inside the boundary is dropped by
+        # own_water anyway, so running the whole route costs nothing and is the only way to be
+        # sure the far end is the river.
+        walk_back = list(reversed(rt))
+        halves, last_half, bridged = [], None, 0
+        for lon, lat in walk_back:
+            p = Point(*fwd(lon, lat))
+            if not water.covers(p):
+                continue
+            half = 3.0 * bank.distance(p)
+            if half > cap:
+                # THREE WIDTHS HERE IS WIDER THAN THE RIVER ITSELF, SO THIS IS NOT A CHANNEL.
+                # snap_cap_m exists because three channel widths off the line is off this water;
+                # reaching it means the route has come out into open water. Clamping to the cap
+                # out there is how the first run of this took 1,704 acres off Santee State Park,
+                # Poplar Creek and Red Cypress, lake ramps whose routes cross kilometres of Lake
+                # Marion, when the canal is 30.
+                #
+                # BUT A RUN THAT STOPS SHORT CONNECTS NOTHING, which is the whole job. The Pack's
+                # Landing canal opens out 85 m before it meets water the pack already has, and
+                # stopping at the last narrow vertex left the ramp on 201 acres of canal with an
+                # 85 m break to the Congaree -- measured 2026-09-21, and no use to anybody. So
+                # once the run has a measured width, it CARRIES THAT WIDTH across the opening
+                # until it reaches the pack's own water, and the bridge is as wide as the channel
+                # it came out of rather than as wide as the water it is crossing.
+                if last_half is None:
+                    offchannel += 1
                     continue
-                n_read += 1
-                try:
-                    g = shape(f['geometry'])
-                except Exception:
-                    continue
-                if g.is_empty:
-                    continue
-                if not g.is_valid:
-                    g = g.buffer(0)
-                if g.is_empty or 'Polygon' not in g.geom_type:
-                    continue
-                gm = shapely_transform(fwd, g)
-                if not corridor.covers(gm.centroid):
-                    continue
-                if mine.covers(g):
-                    dropped += 1          # already ours; nothing to add
-                    continue
-                keep.append(g)
-            break
-    return keep, dropped, n_read
+                half = last_half
+                bridged += 1
+            elif half <= 0:
+                continue
+            else:
+                last_half = half
+                halves.append(half)
+            circles.append(p.buffer(half, resolution=8))
+        if bridged:
+            print('  %-24s carried its %.0f m width across %d vertex(es) of open water to reach '
+                  'the pack' % (name, last_half, bridged))
+        if halves:
+            halves.sort()
+            print('  %-24s %3d of %3d pts   half-width min %.0f  med %.0f  max %.0f m'
+                  % (name, len(halves), len(rt), halves[0], halves[len(halves) // 2], halves[-1]))
+        else:
+            print('  %-24s %3d pts   nothing on this route is a channel' % (name, len(rt)))
+    if offchannel:
+        print('  %d route vertex(es) passed over: open water, not a channel' % offchannel)
+    if not circles:
+        print('%s: none of its measured routes runs on charted water' % a.slug)
+        return None, 0, 0, lat0, fwd
+
+    corridor = unary_union(circles)
+    print('  corridor %.0f acres; ceiling %s m, the pack\'s own snap_cap_m'
+          % (corridor.area * ACRES_PER_M2, cap))
+    keep, dropped, trimmed, n_read = own_water(a, corridor, fwd, inv, mine, bbox, trim=True)
+    print('  read %d charted polygon(s) off the tiles this water sits on' % n_read)
+    return keep, dropped, trimmed, lat0, fwd
 
 
 def main():
@@ -248,6 +431,14 @@ def main():
                     help='stop here instead of at the end of the pack\'s own line')
     ap.add_argument('--corridor-m', type=float, default=None,
                     help="override snap_cap_m, which is the pack's own three-channel-widths")
+    ap.add_argument('--landings', default='',
+                    help='comma-separated landing names, as launches.json spells them. '
+                         'Required with --from-landings; see from_landings() for why this '
+                         'cannot be derived.')
+    ap.add_argument('--from-landings', action='store_true',
+                    help="follow the measured ramp routes in the pack's launches.json "
+                         'instead of the centreline. For water a centreline never runs '
+                         'down -- the canal at a landing -- see from_landings().')
     ap.add_argument('--go', action='store_true', help='write; without it nothing is touched')
     a = ap.parse_args()
 
@@ -292,60 +483,76 @@ def main():
         print('%s: its boundary has no polygon in it' % a.into)
         return 2
 
-    first, last = inside_span(line, station_m, mine)
-    if last < 0:
-        print('%s: none of its own centreline is inside its own boundary' % a.slug)
-        return 2
-    stop_m = a.to_station if a.to_station is not None else station_m[-1]
-    # WITH --into the span is the TAIL past where the boundary stops; that is the whole point of
-    # that mode. Without it the river is short of its own water all the way down, so the span is
-    # the whole line -- see TWO SOURCES OF WATER above.
-    start_i = last if a.into else 0
-    stop_i = max(i for i, s in enumerate(station_m) if s <= stop_m)
-    if stop_i <= start_i:
-        print('%s: its boundary already reaches station %s, and %s is not past it'
-              % (a.slug, station_m[last], stop_m))
-        return 0
-
-    if a.into:
-        print('%s: boundary currently ends at station %s of %s'
-              % (a.slug, station_m[last], station_m[-1]))
-        print('  extending along its own line to station %s  (%.1f km of channel)'
-              % (station_m[stop_i], (station_m[stop_i] - station_m[start_i]) / 1000.0))
-    else:
-        print('%s: taking back its own charted water along the whole line, station %s to %s '
-              '(%.1f km)' % (a.slug, station_m[start_i], station_m[stop_i],
-                             (station_m[stop_i] - station_m[start_i]) / 1000.0))
-    print('  corridor half-width %s m  (%s)'
-          % (cap, 'given' if a.corridor_m is not None else "the pack's own snap_cap_m"))
-
-    lat0 = sum(p[1] for p in line[start_i:stop_i + 1]) / (stop_i - start_i + 1)
-    fwd, inv = flat(lat0)
-    seg = LineString(line[start_i:stop_i + 1])
-    corridor = shapely_transform(fwd, seg).buffer(cap, resolution=8)
-
-    if a.into:
-        piece = corridor.intersection(shapely_transform(fwd, theirs))
-        if piece.is_empty:
-            print('  nothing of %s lies in that corridor' % a.into)
-            return 1
-        piece = shapely_transform(inv, piece)
-
-        # Only the parts the line actually runs through. A corridor across a meander can clip a
-        # slice of some other arm of the lake on the far side of a point, and that water is not
-        # this river.
-        parts = list(piece.geoms) if piece.geom_type == 'MultiPolygon' else [piece]
-        keep = [p for p in parts if p.intersects(seg)]
-        dropped = len(parts) - len(keep)
+    if a.from_landings:
+        keep, dropped, trimmed, lat0, fwd = from_landings(a, mine, cap)
+        if keep is None:
+            return 2
         if not keep:
-            print('  the corridor met %s but not along the line itself' % a.into)
-            return 1
-    else:
-        keep, dropped, n_read = own_water(a, corridor, fwd, inv, mine)
-        print('  read %d charted polygon(s) off the tiles this water sits on' % n_read)
-        if not keep:
-            print('  every charted polygon near the line is already inside the boundary')
+            print('  every charted polygon along the measured routes is already inside '
+                  'the boundary')
             return 0
+    else:
+        trimmed = 0
+        first, last = inside_span(line, station_m, mine)
+        if last < 0:
+            print('%s: none of its own centreline is inside its own boundary' % a.slug)
+            return 2
+        stop_m = a.to_station if a.to_station is not None else station_m[-1]
+        # WITH --into the span is the TAIL past where the boundary stops; that is the whole point of
+        # that mode. Without it the river is short of its own water all the way down, so the span is
+        # the whole line -- see TWO SOURCES OF WATER above.
+        start_i = last if a.into else 0
+        stop_i = max(i for i, s in enumerate(station_m) if s <= stop_m)
+        if stop_i <= start_i:
+            print('%s: its boundary already reaches station %s, and %s is not past it'
+                  % (a.slug, station_m[last], stop_m))
+            return 0
+
+        if a.into:
+            print('%s: boundary currently ends at station %s of %s'
+                  % (a.slug, station_m[last], station_m[-1]))
+            print('  extending along its own line to station %s  (%.1f km of channel)'
+                  % (station_m[stop_i], (station_m[stop_i] - station_m[start_i]) / 1000.0))
+        else:
+            print('%s: taking back its own charted water along the whole line, station %s to %s '
+                  '(%.1f km)' % (a.slug, station_m[start_i], station_m[stop_i],
+                                 (station_m[stop_i] - station_m[start_i]) / 1000.0))
+        print('  corridor half-width %s m  (%s)'
+              % (cap, 'given' if a.corridor_m is not None else "the pack's own snap_cap_m"))
+
+        lat0 = sum(p[1] for p in line[start_i:stop_i + 1]) / (stop_i - start_i + 1)
+        fwd, inv = flat(lat0)
+        seg = LineString(line[start_i:stop_i + 1])
+        corridor = shapely_transform(fwd, seg).buffer(cap, resolution=8)
+
+        if a.into:
+            piece = corridor.intersection(shapely_transform(fwd, theirs))
+            if piece.is_empty:
+                print('  nothing of %s lies in that corridor' % a.into)
+                return 1
+            piece = shapely_transform(inv, piece)
+
+            # Only the parts the line actually runs through. A corridor across a meander can clip a
+            # slice of some other arm of the lake on the far side of a point, and that water is not
+            # this river.
+            parts = list(piece.geoms) if piece.geom_type == 'MultiPolygon' else [piece]
+            keep = [p for p in parts if p.intersects(seg)]
+            dropped = len(parts) - len(keep)
+            if not keep:
+                print('  the corridor met %s but not along the line itself' % a.into)
+                return 1
+        else:
+            sb = seg.bounds
+            pad_lon = cap / (111320.0 * math.cos(math.radians(lat0)))
+            pad_lat = cap / 110540.0
+            keep, dropped, trimmed, n_read = own_water(
+                a, corridor, fwd, inv, mine,
+                (sb[0] - pad_lon, sb[1] - pad_lat, sb[2] + pad_lon, sb[3] + pad_lat),
+            )
+            print('  read %d charted polygon(s) off the tiles this water sits on' % n_read)
+            if not keep:
+                print('  every charted polygon near the line is already inside the boundary')
+                return 0
 
     added = MultiPolygon([g for k in keep
                           for g in (k.geoms if k.geom_type == 'MultiPolygon' else [k])])
@@ -355,6 +562,9 @@ def main():
              ('' if not dropped else '  (%d %s)'
               % (dropped, 'off-line piece(s) dropped' if a.into
                  else 'already inside the boundary'))))
+
+    if trimmed:
+        print('  %d polygon(s) larger than the corridor were cut to it, banks kept' % trimmed)
 
     # DISSOLVED, NOT CONCATENATED. A boundary is read by half a dozen tools and several of them
     # take it at face value: laying the added polygons beside the old ones leaves parts that

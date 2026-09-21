@@ -121,7 +121,7 @@ const CACHE_TTL = 24 * 60 * 60 * 1000;
 // simply refetches the same bytes.
 // 10 -> 11: seventeen waters re-uploaded after the repair, hiwassee_lake among them -- R2 had
 // been serving a 0.4 MB pack at charted 0.1274 where the lake has 39.6 MB and 0.8286.
-const CACHE_SCHEMA = 11;
+const CACHE_SCHEMA = 12;
 
 // AND WHICH BUILD THAT NUMBER WAS BUMPED FOR, so the next person cannot forget the way I did.
 //
