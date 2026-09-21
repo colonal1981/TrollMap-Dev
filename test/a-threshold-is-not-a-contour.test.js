@@ -104,7 +104,11 @@ describe('the leg depth is the water under it, not one shoal and not a contour n
     const props = { envelope_step_m: 40,
                     envelope_line_ft: [3, 4, 6, 9, 14, 20, 21, 22, 23, 24],
                     envelope_ft: [3, 3, 5, 8, 12, 18, 19, 20, 21, 22] };
-    expect(waterBand(props, 200, 360).line).toEqual({ minFt: 20, medianFt: 22, maxFt: 24 });
+    // `sustainedMinFt` is 21 here and not 20: station 5 reads 20 with 21 beside it, so 21 is the
+    // shallowest two consecutive stations both clear. The true minimum is untouched, which is the
+    // point of carrying both -- see sustainedMin() in plan-pieces.js.
+    expect(waterBand(props, 200, 360).line)
+      .toEqual({ minFt: 20, medianFt: 22, maxFt: 24, sustainedMinFt: 21 });
     expect(waterBand(props, 0, 360).line.minFt).toBe(3);
   });
 
@@ -112,7 +116,10 @@ describe('the leg depth is the water under it, not one shoal and not a contour n
     const props = { envelope_step_m: 40,
                     envelope_line_ft: [-1, 20, 24, -1],
                     envelope_ft: [-1, 18, 22, -1] };
-    expect(waterBand(props, 0, 120).line).toEqual({ minFt: 20, medianFt: 20, maxFt: 24 });
+    // 20 and 24 are the only adjacent sounded pair, so the sustained floor is 24 -- an uncharted
+    // station neither makes water shallow nor vouches for the one beside it.
+    expect(waterBand(props, 0, 120).line)
+      .toEqual({ minFt: 20, medianFt: 20, maxFt: 24, sustainedMinFt: 24 });
   });
 
   it('says nothing at all when the pack carried no profile', () => {
@@ -152,7 +159,10 @@ describe('the leg depth is the water under it, not one shoal and not a contour n
     expect(said.includes('16 ft')).toBe(false);   // the shallow side, 25 m off the line
     expect(said.includes('12 ft')).toBe(false);   // the whole pass, including water this leg skips
     const t = live(src('js/modules/plan-from-water.js'));
-    expect(t).toMatch(/maxRunDepthFt: line \? line\.minFt : piece\.holdsFt/);
+    // The ceiling a bait is REFUSED on is the sustained floor; `depthMinFt` on the line beside it
+    // still carries the true minimum. Tolerant of the braces for the same reason the import guard
+    // below is: this pins the SHAPE, not the spelling.
+    expect(t).toMatch(/maxRunDepthFt: line \?[^:]*\bsustainedMinFt\b[^:]*: piece\.holdsFt/);
   });
 
   it('falls back to holdsFt when the pack stamped no profile', async () => {
@@ -177,7 +187,9 @@ describe('the leg depth is the water under it, not one shoal and not a contour n
     expect(c).toMatch(/depthFt: band \? band\.line\.medianFt : p\.depth_ft/);
     // and it now sends a ceiling, which it never did -- plan-prompt.js has explained
     // `maxRunDepthFt` to the model since it was written and only Pick Water ever supplied one.
-    expect(c).toMatch(/maxRunDepthFt: band \? band\.line\.minFt : null/);
+    expect(c).toMatch(/maxRunDepthFt: band \? band\.line\.sustainedMinFt : null/);
+    // and the true minimum is still the one reported as the leg's shallowest water
+    expect(c).toMatch(/depthMinFt: band \? band\.line\.minFt : null/);
     expect(c).toMatch(/maxRunDepthFt: c\.maxRunDepthFt/);
   });
 });

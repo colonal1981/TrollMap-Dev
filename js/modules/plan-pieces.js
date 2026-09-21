@@ -196,8 +196,11 @@ export function waterBand(props, fromM, toM) {
   const n = Math.min(line.length, side.length);
   const a = Math.max(0, Math.min(n - 1, Math.floor(fromM / step)));
   const b = Math.max(a, Math.min(n - 1, Math.ceil(toM / step)));
-  const l = spread(line.slice(a, b + 1)), s = spread(side.slice(a, b + 1));
-  return l && s ? { line: l, side: s } : null;
+  const lSlice = line.slice(a, b + 1);
+  const l = spread(lSlice), s = spread(side.slice(a, b + 1));
+  if (!l || !s) return null;
+  l.sustainedMinFt = sustainedMin(lSlice, l.minFt);
+  return { line: l, side: s };
 }
 
 // THE RADIUS BOTH THE RELIEF WORD AND THE DROP ARE MEASURED OVER. COPIED FROM THE PRODUCER, NOT
@@ -259,6 +262,64 @@ function spread(vals) {
   const v = vals.filter((d) => Number.isFinite(d) && d >= 0).sort((x, y) => x - y);
   if (!v.length) return null;
   return { minFt: v[0], medianFt: v[(v.length - 1) >> 1], maxFt: v[v.length - 1] };
+}
+
+/**
+ * THE SHALLOWEST WATER THE LEG ACTUALLY SUSTAINS, as opposed to its shallowest single station.
+ *
+ * MEASURED, 2026-09-21, ON THE LEG THAT PRODUCED THE WARNING. congaree_river:drift:channel@138650
+ * is 108 stations long and `minFt` is 2. Exactly ONE station reads under 6 ft -- station 141,500 --
+ * and the pack's own depth areas put 22 ft of water under the point the line is drawn at there. The
+ * rest of the leg runs 11-27 ft with a median of 17. That one 50 m sample set `maxRunDepthFt`, and
+ * capBaitDepth then refused two baits for the whole 5.4 km pass on the strength of it:
+ *
+ *     "a Swimbait 4.6" - Jighead runs to 18 ft and the shallowest water on this leg is 2 ft"
+ *     "a Nichols Lake Fork Flutter Spoon 3/4oz runs to 28 ft and the shallowest water ... is 2 ft"
+ *
+ * Both sentences are false about his water, and he is the one who has to notice: "if there are
+ * sections of these runs that are 2 ft deep we still have a major problem somewhere".
+ *
+ * THE WHOLE POPULATION, so this is not a fix aimed at one station. Every drift leg on the Congaree
+ * was sampled against `depth_areas.geojson` at the point the line is actually drawn: 2,550 stations
+ * carry both a charted depth and a profile reading, and the profile agrees with the chart to a MEAN
+ * ERROR OF 0.29 ft. Thirteen stations -- 0.5% -- read 6 ft or more shallower than the chart under
+ * the same point. Nothing in the profile marks which thirteen: their rows are ordinary river
+ * cross-sections, their `charted_frac` runs from 0.21 to 0.91, and the mirror test that would have
+ * meant the depth read and the geometry were on opposite sides came back 1,305 to 27 AGAINST. So
+ * there is no predicate that separates a wrong sounding from a right one, and pretending to find
+ * one would be this file inventing a number.
+ *
+ * TWO CONSECUTIVE STATIONS, WHICH IS NOT A THRESHOLD SOMEBODY PICKED. A rise present at one station
+ * and gone at the next is 50 m of water the boat is over for under a minute -- and on the evidence
+ * above it is as likely to be a bad sounding as a real bar. A rise present at two stations in a row
+ * is 100 m he will actually troll through. This is `isolatedSample()` in river-drifts.js -- a lone
+ * sample with nothing either side of it is not a measurement of the line -- turned ninety degrees
+ * and applied along the leg instead of across the section, and it is here for that reason rather
+ * than as a second opinion about it.
+ *
+ * WHAT IT IS NOT IS A SMOOTHING. Nothing is averaged and no reading is discarded: `minFt` still
+ * carries the true shallowest sample and `depthMinFt` still reports it, so a single-station rise is
+ * still on the card and still locatable by risesAtM(). What changes is which number a bait is
+ * REFUSED on, and that is the number Ryan asked to be about the stretch: "flag the rise and let me
+ * decide."
+ *
+ * UNCHARTED STATIONS DO NOT PAIR. -1 means nobody sounded it, so it can neither make water shallow
+ * nor vouch for the station beside it; a pair is two adjacent stations that were both sounded.
+ *
+ * @param {number[]} vals   one leg's `envelope_line_ft` slice, IN ORDER
+ * @param {number} fallback `minFt`, returned when no two adjacent stations were both sounded
+ * @returns {number} the shallowest depth two consecutive sounded stations both clear
+ */
+function sustainedMin(vals, fallback) {
+  if (!Array.isArray(vals)) return fallback;
+  let best = null;
+  for (let i = 0; i < vals.length - 1; i++) {
+    const a = Number(vals[i]), b = Number(vals[i + 1]);
+    if (!Number.isFinite(a) || a < 0 || !Number.isFinite(b) || b < 0) continue;
+    const pair = Math.max(a, b);
+    if (best === null || pair < best) best = pair;
+  }
+  return best === null ? fallback : best;
 }
 
 /**

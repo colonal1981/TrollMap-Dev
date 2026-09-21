@@ -2211,7 +2211,11 @@ export function selectCandidates(runs, o) {
       // a 20 ft shoal somewhere along it" -- and only the Pick Water path ever sent one. Smart
       // Plan legs arrived with none, plan-assemble.js fell back to `depthFt`, and the fallback
       // was the contour's NAME, so the shallowest water on the leg was never checked at all.
-      maxRunDepthFt: band ? band.line.minFt : null,
+      // AND IT IS THE SUSTAINED SHALLOWEST, NOT THE SHALLOWEST SAMPLE. `depthMinFt` above still
+      // carries the true minimum and risesAtM() can still place it; this is the number a bait is
+      // REFUSED on, and a single 50 m station is not a stretch of water to refuse a 5 km pass over.
+      // See sustainedMin() in plan-pieces.js for the 2,550-station measurement behind that.
+      maxRunDepthFt: band ? band.line.sustainedMinFt : null,
       // THE SHALLOWEST WATER STATION BY STATION, so a warning about a rise can place it. Sliced to
       // this window above; the assembler reverses it with the geometry on an upstream pass, the same
       // way it reverses `marks`, and capBaitDepth turns an index into a distance.

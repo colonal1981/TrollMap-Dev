@@ -430,7 +430,28 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
       }
     }
 
-    if (w.max <= ceilingFt) continue;
+    // ── WHAT A BAIT IS REFUSED ON, AND WHAT IT IS ONLY TOLD ABOUT ───────────────────────────────
+    //
+    // `ceilingFt` is `maxRunDepthFt`, and since 2026-09-21 that is the floor the leg SUSTAINS --
+    // the shallowest depth two consecutive soundings both clear. `legDepth.minFt` is still the
+    // shallowest single sounding on the leg. The two differ on 8 of the Congaree's 16 drift legs,
+    // and on congaree_river:drift:channel@138650 they differ by eleven feet: 108 stations, one of
+    // them reading 2 ft at a point the pack's own depth areas put in 22 ft of water.
+    //
+    // THE SPLIT IS WHICH QUESTION EACH ONE ANSWERS. "Is this the wrong bait for this pass?" is
+    // about the stretch, and one 50 m sounding is not a stretch -- that question gets the sustained
+    // floor. "Is there something on this leg it will dig into?" is about a spot, and a spot is
+    // exactly what a single sounding is -- that question gets the true minimum, and its answer is
+    // a flag with a location, never a refusal. See sustainedMin() in plan-pieces.js.
+    //
+    // NEITHER OF THEM IS SILENCE, and that is the failure mode this arrangement exists to avoid.
+    // bait-depth-ceiling.test.js says so in as many words about the 8 ft rise: "what it must never
+    // go back to is silence". Refusing a 5 km pass over one bad sounding and saying nothing about
+    // a real rise are the same mistake pointed in opposite directions.
+    const trueMinFt = Number.isFinite(Number(legDepth && legDepth.minFt))
+                   && Number(legDepth.minFt) > 0 ? Number(legDepth.minFt) : ceilingFt;
+    // Clears the shallowest sounding on the leg. Nothing to correct and nothing to flag.
+    if (w.max <= trueMinFt) continue;
 
     // AIMING AT THE CEILING IS NOT CLEARING IT, and the first version of this did exactly that.
     //
@@ -443,15 +464,22 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
     // So the target walks down until the WINDOW clears, because that is the thing that has to be
     // true. Six passes is far more than the band ever needs and bounds it against a lure whose
     // ratio makes it not converge.
-    let shorter = null;
-    for (let target = ceilingFt, i = 0; i < 6 && target > 0; i++) {
-      const lead = leadForDepth(lure, target, speedMph);
-      if (!Number.isFinite(lead) || lead <= 0) break;
-      const got = depthWindow(lure, { speedMph, leadFt: lead });
-      if (!Number.isFinite(got.max)) break;
-      if (got.max <= ceilingFt) { shorter = lead; break; }
-      target -= Math.max(1, got.max - ceilingFt);
-    }
+    // Taken as a function because it is asked twice now: once for the lead that clears the water
+    // the leg sustains (the correction below) and once for the lead that clears the rise (the flag
+    // above). Same walk, different depth.
+    const leadClearing = (clear) => {
+      if (!Number.isFinite(clear) || clear <= 0) return null;
+      for (let target = clear, i = 0; i < 6 && target > 0; i++) {
+        const lead = leadForDepth(lure, target, speedMph);
+        if (!Number.isFinite(lead) || lead <= 0) return null;
+        const got = depthWindow(lure, { speedMph, leadFt: lead });
+        if (!Number.isFinite(got.max)) return null;
+        if (got.max <= clear) return lead;
+        target -= Math.max(1, got.max - clear);
+      }
+      return null;
+    };
+    const shorter = leadClearing(ceilingFt);
 
     // Lead-controlled baits can be brought up by shortening the lead. A lipped or weighted bait
     // that dives on its own cannot, and there the honest answer is that it is the wrong bait for
@@ -483,12 +511,22 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
     // the lead that would clear so he can shorten there if he wants. A bait that does not clear the
     // median is too deep for the stretch generally, and that is still corrected as before.
     const medianFt = Number(legDepth && legDepth.medianFt);
+    // ── DOES IT SUIT THE STRETCH? TWO TIERS, BOTH THE LEG'S OWN NUMBERS ─────────────────────────
+    //
+    // It clears the floor the leg sustains, or -- for a lead-controlled bait, where the flag can
+    // hand him a lead to act on -- it clears the median. The median tier is Ryan's 2026-09-14
+    // narrowing and is unchanged; the sustained tier is what stops a lone sounding refusing a pass.
     const clearsMedian = Number.isFinite(medianFt) && medianFt > ceilingFt && w.max <= medianFt;
-    if (w.mode === 'lead' && clearsMedian) {
+    const suitsStretch = w.max <= ceilingFt || (w.mode === 'lead' && clearsMedian);
+    if (suitsStretch) {
+      // AGAINST THE RISE, NOT AGAINST THE STRETCH. `shorter` above walks the lead down until the
+      // window clears `ceilingFt`; what he is being offered here is the lead that clears the RISE,
+      // so it is worked out again against the shallower number.
+      const clearsRise = leadClearing(trueMinFt);
       const env = [legDepth.minFt, legDepth.maxFt].every(Number.isFinite)
-        ? `${legDepth.minFt}-${legDepth.maxFt} ft` : `${ceilingFt} ft at its shallowest`;
+        ? `${legDepth.minFt}-${legDepth.maxFt} ft` : `${trueMinFt} ft at its shallowest`;
       const where = riseSentence(risesAtM(legDepth && legDepth.envelope,
-                                         legDepth && legDepth.stepM, ceilingFt));
+                                         legDepth && legDepth.stepM, trueMinFt));
       // SAID TWICE. `bottomNote` on this very leg already carries the rise and the lead that
       // clears it, on the card he reads while rigging for that leg -- which is the place it means
       // something. Three more of the eleven.
@@ -497,14 +535,20 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
                   + `${fit ? ` on a ${ozLabel(fit.weightOz)} head` : ''} `
                   + `runs ${w.min}-${w.max} ft, and this leg is ${env} with a median of `
                   + `${medianFt} ft. THE LEAD IS LEFT WHERE YOU SET IT \u2014 the bait clears the `
-                  + `water this pass mostly is, and there is a rise to ${ceilingFt} ft it will not `
+                  + `water this pass mostly is, and there is a rise to ${trueMinFt} ft it will not `
                   + (where ? `clear about ${where}. ` : `clear somewhere on it. `)
-                  + (shorter ? `Shorten to ${shorter} ft over the rise if you want it off the bottom `
-                               + `there` : `Nothing shorter clears it`)
+                  + (w.mode === 'lead'
+                      ? (clearsRise
+                          ? `Shorten to ${clearsRise} ft over the rise if you want it off the bottom `
+                            + `there` : `Nothing shorter clears it`)
+                      // Lead cannot lift a bait that dives on its own, so the answer at the rise is
+                      // the boat's, not the reel's -- said plainly rather than offered as a lead.
+                      : `Its depth is ${w.controlledBy}, so lead will not lift it over the rise — `
+                        + `steer round that spot or take it out of the water for it`)
                   + (where ? '.' : '; the chart does not say where the rise is.'));
       forThisLeg[id] = { ...(forThisLeg[id] || {}),
                          runsDepthFt: [w.min, w.max],
-                         clearsAt: shorter ?? null };
+                         clearsAt: clearsRise ?? null };
       continue;
     }
     if (w.mode === 'lead' && shorter && shorter < leadFt) {

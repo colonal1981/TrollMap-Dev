@@ -168,7 +168,9 @@ function legFrom(piece, i, ramp, slug, wind) {
     // pieces the two differ, by up to 8 ft, always in the direction of condemning baits over water
     // the leg never crosses. #157 is the case: the pass touches 8 ft, the piece never comes above
     // 45. Same field, same rule, measured where the boat actually goes. See waterBand().
-    maxRunDepthFt: line ? line.minFt : piece.holdsFt,
+    // Sustained, not the shallowest sample -- the same split plan-candidates.js draws and for the
+    // same measurement; `depthMinFt` above is still the true minimum.
+    maxRunDepthFt: line ? (line.sustainedMinFt ?? line.minFt) : piece.holdsFt,
     passes,
     transitInM: ramp ? Math.round(metresBetween(ramp, a)) : 0,
     transitOutM: ramp ? Math.round(metresBetween(b, ramp)) : 0,

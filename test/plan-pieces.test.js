@@ -172,7 +172,7 @@ describe('the envelope is the piece, not the pass it was cut from', () => {
 
   it('and the band is measured on those stations too', () => {
     const p = buildPieces([shoaled()], { clearFt: 2, minM: 600 }).pieces[0];
-    expect(p.water.line).toEqual({ minFt: 42, medianFt: 42, maxFt: 42 });
+    expect(p.water.line).toEqual({ minFt: 42, medianFt: 42, maxFt: 42, sustainedMinFt: 42 });
     expect(p.water.side.minFt).toBe(40);
   });
 });
