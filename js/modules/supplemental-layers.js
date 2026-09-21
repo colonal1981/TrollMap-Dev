@@ -119,7 +119,9 @@ const CACHE_TTL = 24 * 60 * 60 * 1000;
 // browser copy is stale by morning whatever happens, and a bump that lands first cannot be
 // forgotten at 5 a.m. by a session that is no longer running. A pack the run never reaches
 // simply refetches the same bytes.
-const CACHE_SCHEMA = 10;
+// 10 -> 11: seventeen waters re-uploaded after the repair, hiwassee_lake among them -- R2 had
+// been serving a 0.4 MB pack at charted 0.1274 where the lake has 39.6 MB and 0.8286.
+const CACHE_SCHEMA = 11;
 
 // AND WHICH BUILD THAT NUMBER WAS BUMPED FOR, so the next person cannot forget the way I did.
 //

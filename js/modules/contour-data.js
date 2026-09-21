@@ -60,7 +60,8 @@ const CACHE_NS  = CACHE_NS_CONTOURS;
 // 1 -> 2: the three Santee packs were rebuilt and re-uploaded after it. Bump follows upload.
 // 2 -> 3: same rebuild. Bump follows upload.
 // 3 -> 4: same overnight rebuild of all 354 served packs.
-const CACHE_SCHEMA = 4;
+// 4 -> 5: same seventeen waters. Bump follows upload.
+const CACHE_SCHEMA = 5;
 const CACHE_TTL = 24 * 60 * 60 * 1000;
 
 let changeListeners = [];
