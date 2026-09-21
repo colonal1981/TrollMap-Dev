@@ -378,17 +378,30 @@ def owned_inside(slug, meta, registry, _cache={}):
     loaded, and they are cached because the same reservoir can fall inside two zones -- the
     Cooper is inside both coast_charleston_sc and coast_cape_romain_sc.
     """
+    # A LAKE DOES NOT SWALLOW ANYTHING, AND THAT LINE IS BACK -- 2026-09-21.
+    #
+    # It returned () here until 2026-08-23, when the measured nesting was wired in to stop Bates
+    # Old River losing 24 features to a river 83 times its size. That was the right problem and
+    # the wrong lever, and the bill came due tonight.
+    #
+    # `exclude` does two things: it subtracts from `mask.core`, so `touches_core` in _flush drops
+    # anything that only touches the excluded water, and it feeds `clip_excluded`, which cuts the
+    # rest away at write time. Applied to a freshwater pair it does not redistribute the water --
+    # IT HOLLOWS THE HOST. Lake Marion is 80,866 acres with the Congaree's 10,810 reaching down
+    # into it, so Marion excluded the old Santee channel that runs the length of the lake:
+    # 4,488 acres, blank, the whole middle of the water Ryan fishes. Ryan: "now you have made it
+    # worse by cutting the river out of lake marion... there are still great big humongous holes
+    # in the canal running from packs landing to the river." And: "this is wayyyyyyyy worse."
+    #
+    # THE CONTEST GUARD DOES THE JOB THIS WAS ADDED FOR, and without taking water off anyone:
+    # where two waters are nested, neither takes the other's cut, so Bates keeps its 24 features
+    # AND Marion keeps its channel. See the OWNED_LAYERS block in main().
+    #
+    # A COASTAL ZONE IS NOT A LAKE and keeps the exclusion below. That is Ryan's own rule,
+    # unchanged: "coastal water shouldn't have any freshwater in it at all period." A zone is an
+    # envelope over land and water drawn as a region, and it really does swallow whole lakes.
     if not slug.startswith('coast_'):
-        # A LAKE CUTS OUT WHAT SITS INSIDE IT TOO, which this used to refuse to consider. See
-        # nested_inside(): six pairs in the registry qualify and every one was already showing up
-        # as both-sides-lose in the ownership dry run.
-        out = []
-        for s in nested_inside(meta, registry).get(slug, ()):
-            if s not in _cache:
-                _cache[s] = load_boundary(registry, s)
-            if _cache[s]:
-                out.append(_cache[s])
-        return out
+        return ()
     zb = (meta.get(slug) or {}).get('bounds_wsen')
     if not (isinstance(zb, (list, tuple)) and len(zb) == 4):
         return ()
@@ -749,6 +762,9 @@ def main():
         print('logs and slug lists kept in %s' % tmp)
         return
 
+    # {host: [waters nested inside it]}, computed once. The contest below reads it so a host
+    # cannot take a feature from a water it is about to give that water back to.
+    nested = nested_inside(meta, a.registry)
     masks, waters, acc, remaining = {}, {}, defaultdict(dict), {}
     dropped = defaultdict(int)
     trimmed = defaultdict(int)
@@ -974,6 +990,42 @@ def main():
                         # existed: the zones traded 800 features each way and every one of them
                         # came out worse.
                         if s.startswith('coast_') and best_s.startswith('coast_'):
+                            continue
+                        # A HOST DOES NOT TAKE FROM THE WATER IT IS ABOUT TO HAND THE SAME
+                        # WATER BACK TO -- 2026-09-21, and this is the hole Ryan pointed at
+                        # all day.
+                        #
+                        # 33.76716,-80.65305, his waypoint 0006 bend. The raw extract has a
+                        # `10-11 ft` band sitting on that point. Neither pack shipped it:
+                        #
+                        #   the polygon           2.3 ac, 148 vertices, band 10-11 ft, C4E0F3
+                        #   congaree_river core   holds 148 of 148 vertices  -> WINS
+                        #   bates_old_river core  holds  22 of 148           -> copy deleted
+                        #   congaree_river ships  1.88 ac of it
+                        #   bates_old_river ships 0.00 ac
+                        #
+                        # The missing 0.42 acre is exactly the part inside Bates. The contest
+                        # above gave the whole feature to the river and deleted Bates' cut;
+                        # `clip_excluded` in _flush then made the river give up the water a
+                        # nested boundary owns, cutting that same piece back out of the winner.
+                        # Won, surrendered, and belonging to nobody -- and it fires wherever a
+                        # small water sits inside a big one, which on this river is every oxbow.
+                        #
+                        # BOTH DIRECTIONS, and the second one is the bigger damage. Lake
+                        # Marion is the HOST here -- 80,866 acres with the Congaree's 10,810
+                        # reaching down into it -- so the contest handed Marion's own channel to
+                        # the river and deleted Marion's copy. Ryan, looking at the lake:
+                        # *"now you have made it worse by cutting the river out of lake
+                        # marion... there are still great big humongous holes in the canal
+                        # running from packs landing to the river"*. 4,488 acres of Marion, the
+                        # old Santee channel down the middle of the lake, blank.
+                        #
+                        # So neither takes from the other. Where two waters are nested, the
+                        # water in the overlap belongs to both BY CONSTRUCTION -- the same
+                        # sentence as the zone rule above -- and the cost of both carrying it is
+                        # R2 bytes, which Ryan has already priced: *"If you can have these ramps
+                        # be both river and lake I do not see the downside."*
+                        if s in nested.get(best_s, ()) or best_s in nested.get(s, ()):
                             continue
                         lst = acc[s][layer]
                         for i in range(a0, b0):

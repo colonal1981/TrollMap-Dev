@@ -57,7 +57,8 @@ const CACHE_NS  = CACHE_NS_CONTOURS;
 // earlier with 5,854. supplemental-layers.js has carried a CACHE_SCHEMA since 2026-08-31 and
 // the note there explains why; this file never got one. Adding the prefix changes every
 // existing key, so the first load after this ships refetches.
-const CACHE_SCHEMA = 1;
+// 1 -> 2: the three Santee packs were rebuilt and re-uploaded after it. Bump follows upload.
+const CACHE_SCHEMA = 2;
 const CACHE_TTL = 24 * 60 * 60 * 1000;
 
 let changeListeners = [];

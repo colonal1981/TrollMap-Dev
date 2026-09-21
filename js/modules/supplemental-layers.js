@@ -109,7 +109,11 @@ const CACHE_TTL = 24 * 60 * 60 * 1000;
 // CHANGES WITH THE DATA, so the cache invalidates itself: a per-lake build stamp published in
 // _registry/lake_index.json, which the uploader rewrites on every run and the app already
 // fetches fresh. Until that exists, this number is the only guard and it is a weak one.
-const CACHE_SCHEMA = 7;
+// 7 -> 8, same night, and THIS TIME THE BUMP FOLLOWED THE UPLOAD. congaree_river,
+// bates_old_river and lake_marion were rebuilt and re-uploaded after the ownership rules
+// changed; a browser holding the 7 copies from an hour earlier is holding Marion with a
+// 4,488-acre hole in it. The rule in the paragraph above only works if it is obeyed.
+const CACHE_SCHEMA = 8;
 
 // AND WHICH BUILD THAT NUMBER WAS BUMPED FOR, so the next person cannot forget the way I did.
 //
