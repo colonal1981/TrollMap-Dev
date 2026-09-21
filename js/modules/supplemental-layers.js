@@ -89,7 +89,27 @@ const CACHE_TTL = 24 * 60 * 60 * 1000;
 // one place in the app that can still show yesterday's chart: the Worker settled on max-age=300
 // for exactly this reason -- "packs are rebuilt daily right now, and a stale contour set after a
 // build is worse than a re-fetch" -- and CACHE_TTL below is still a day.
-const CACHE_SCHEMA = 6;
+//
+// 6 -> 7 on 2026-09-21, AND IT IS THE SAME MISTAKE AS 4 -> 5, MADE BY THE PERSON WHO WROTE THAT
+// PARAGRAPH. All 354 served packs were rebuilt and re-uploaded -- 1,755 objects, 994 MB -- and
+// this number was not touched, so every browser kept serving the packs from before the rebuild
+// for a day. Ryan, after waiting through the whole thing: "you just rebuilt all the packs and
+// reuploaded and the holes are here... so what are we doing". His console said exactly what had
+// happened and I did not read it as the answer:
+//
+//     [contour-data] cache hit: congaree_river (5878 features)     pack on disk:  5,854
+//     [supplemental] depth_areas loaded: 5749 features             pack on disk:  5,705
+//     [supplemental] depth_areas loaded: 18151 features (marion)   pack on disk: 15,784
+//
+// Three layers, three counts, none of them the file that had just been built. A rebuild he
+// cannot see is a rebuild that did not happen.
+//
+// THE REAL FIX IS NOT A BIGGER NUMBER. A constant a human has to remember to bump after an
+// upload will be forgotten again -- that is now twice. The key has to carry something that
+// CHANGES WITH THE DATA, so the cache invalidates itself: a per-lake build stamp published in
+// _registry/lake_index.json, which the uploader rewrites on every run and the app already
+// fetches fresh. Until that exists, this number is the only guard and it is a weak one.
+const CACHE_SCHEMA = 7;
 
 // AND WHICH BUILD THAT NUMBER WAS BUMPED FOR, so the next person cannot forget the way I did.
 //

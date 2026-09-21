@@ -50,6 +50,14 @@ const CHAIN_DESCRIPTIONS = {
 // Contours are always re-fetchable from R2, so folding into the shared `cache` store needed
 // no migration: the worst case is one refetch.
 const CACHE_NS  = CACHE_NS_CONTOURS;
+// THE CONTOUR CACHE HAD NO VERSION AT ALL, which is worse than a forgotten bump -- there was
+// nothing to forget. It keyed on the r2Key alone, so a rebuilt contour set could not invalidate
+// its own cache entry by any means short of the 24-hour TTL. On 2026-09-21 that is what Ryan's
+// console showed: "cache hit: congaree_river (5878 features)" against a file rebuilt minutes
+// earlier with 5,854. supplemental-layers.js has carried a CACHE_SCHEMA since 2026-08-31 and
+// the note there explains why; this file never got one. Adding the prefix changes every
+// existing key, so the first load after this ships refetches.
+const CACHE_SCHEMA = 1;
 const CACHE_TTL = 24 * 60 * 60 * 1000;
 
 let changeListeners = [];
@@ -86,7 +94,8 @@ export async function loadContourByR2Key(r2Key) {
   updateStatusPanel('loading', r2Key);
 
   try {
-    const cached = await cacheGet(CACHE_NS, r2Key, CACHE_TTL);
+    const ckey = `v${CACHE_SCHEMA}/${r2Key}`;
+    const cached = await cacheGet(CACHE_NS, ckey, CACHE_TTL);
     if (cached?.features?.length) {
       console.log(`[contour-data] cache hit: ${r2Key} (${cached.features.length} features)`);
       state.ACTIVE_CONTOUR     = { smart: cached, raw: null };
@@ -102,7 +111,7 @@ export async function loadContourByR2Key(r2Key) {
     const gj = await fetchFromR2(r2Key);
     if (!gj?.features?.length) throw new Error('empty response');
 
-    await cacheSet(CACHE_NS, r2Key, gj);
+    await cacheSet(CACHE_NS, ckey, gj);
     state.ACTIVE_CONTOUR     = { smart: gj, raw: null };
     state.ACTIVE_CONTOUR_KEY = r2Key;
     notifyChange();
