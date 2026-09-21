@@ -405,6 +405,120 @@ def boundary_rings(registry, slug):
     return out
 
 
+# One water's charted depth areas, projected and prepared. See recentre().
+_INSIDE = {}
+
+def recentre(route, polys, step=50.0, probe=5.0, reach=3000.0, passes=6):
+    """Put the traced route in the MIDDLE of the water, instead of wherever the raster put it.
+
+    Ryan, 2026-09-21, looking at the 72 points this wrote for Pack's Landing: *"your 72 point
+    route is garbage... it just needs to follow the middle of the canal and it does not... what
+    are the purposes of these sharp turns... it is turning away from deeper water to go to shallow
+    water... this makes no sense"*.
+
+    All three are the same fact and he is right about every one of them. `trace()` walks steepest
+    descent on a BFS flood field, which is a SHORTEST PATH and nothing else. Its coordinates land
+    on the 0.00025 deg grid -- every point in that GPX is a multiple of it -- so the line is a
+    staircase of 26 m treads, and where several neighbours share a distance the tie goes to
+    whichever came first in the neighbour list. That is where the sharp turns come from: not
+    geometry, ordering. And a flood field knows how far a cell is from the channel and nothing
+    whatever about how deep it is, so at a bend the path takes the inside, which in a canal is the
+    shallow side. The distance it measures is right. The line it draws is not a line down a canal.
+
+    THE PROJECT ALREADY SOLVED THIS ONCE, for exactly the same complaint. Ryan, 2026-09-18, about
+    the river: *"How is the center line not the center of the water"*.
+    build_river_centrelines.centre_on_water() is the answer that was built then -- it sweeps each
+    station out along its own normal to the first bank either side and moves it to the midpoint,
+    with a fold repair, a slope limit and a cap at the local bend radius so the result stays
+    something a boat follows. It is asked of the CHARTED WATER, which is the same zoom-0 depth
+    areas this file already floods. Same question, same water, same answer: this calls it rather
+    than growing a second one.
+
+    WHAT STAYS. `water_m` is untouched -- it is the flood's own measurement and it was never the
+    thing that was wrong. Only the drawn line moves, and its two ends are put back afterwards,
+    because resample() truncates the tail past the last whole step and the ends are the channel
+    and the ramp.
+
+    Degrades to the traced route if the imports or the geometry are not there; a staircase down the
+    canal beats no line at all, which is what the app had before 2026-09-21.
+    """
+    if not route or len(route) < 3:
+        return route
+    try:
+        from shapely.geometry import Point
+        from shapely.ops import transform as shapely_transform
+        from shapely.prepared import prep
+        from shapely.strtree import STRtree
+        from build_river_centrelines import (to_albers, to_lonlat, resample,
+                                     centre_on_water, smooth_on_water)
+    except Exception as exc:
+        print('    route not centred (%s)' % exc, flush=True)
+        return route
+    try:
+        # BUILT ONCE PER WATER, NOT ONCE PER LANDING, AND THAT IS NOT MICRO-OPTIMISATION. The first
+        # shape of this projected every depth-area polygon and rebuilt the index inside the call,
+        # so congaree_river's 35 landings paid for 35 copies of the same 3,000-polygon tree; the
+        # step went from two minutes to over ten and was killed at eight. `polys` is the same list
+        # object for every landing on a water, so its id is the key, and the memo is cleared by
+        # the list going out of scope with the water.
+        inside = _INSIDE.get(id(polys))
+        if inside is None:
+            gm = []
+            for g in polys:
+                try:
+                    q = shapely_transform(lambda a, b: to_albers(a, b), g)
+                except Exception:
+                    continue
+                if not q.is_empty:
+                    gm.append(q)
+            if not gm:
+                return route
+            tree = STRtree(gm)
+            # PREPARED, because `covers` is asked millions of times -- once per 5 m probe step, per
+            # station, per sweep, per landing -- and an unprepared polygon rebuilds its own index
+            # on every one of them.
+            ready = [prep(q) for q in gm]
+
+            def inside(x, y, _t=tree, _r=ready):
+                p = Point(x, y)
+                for k in _t.query(p):
+                    if _r[k].covers(p):
+                        return True
+                return False
+
+            _INSIDE.clear()
+            _INSIDE[id(polys)] = inside
+
+        xy = [to_albers(lon, lat) for lon, lat in route]
+        pts = resample(xy, step)
+        if len(pts) < 2:
+            return route
+        out, _rep = centre_on_water(pts, inside, step, probe, reach, passes)
+        if not out or len(out) < 2:
+            return route
+        # AND THEN MADE INTO A LINE. Centring alone left the canal WORSE than the raster it
+        # replaced -- measured 2026-09-21 on this very route: turn per point p90 43.9 max 169.9
+        # degrees and 59% of points reversing, against a staircase's 26 m treads. A canal 34 m
+        # wide and stations 50 m apart means each midpoint estimate swings the width of the
+        # channel. smooth_on_water() is what turns the estimates into a course.
+        out, _srep = smooth_on_water(out, inside, step, probe, reach)
+        out = resample(out, step)
+        if not out or len(out) < 2:
+            return route
+        # THE TWO ENDS ARE NOT THE MIDDLE OF ANYTHING. One is the channel cell the distance was
+        # measured to and the other is the wet cell beside the ramp, and resample() drops whatever
+        # is left past the last whole step, so both have to be put back or the line stops short of
+        # the water it is there to join.
+        head, tail = xy[0], xy[-1]
+        if math.dist(out[0], head) > 1.0:
+            out = [head] + list(out)
+        if math.dist(out[-1], tail) > 1.0:
+            out = list(out) + [tail]
+        return [[round(lon, 6), round(lat, 6)] for lon, lat in (to_lonlat(x, y) for x, y in out)]
+    except Exception as exc:
+        print('    route not centred (%s)' % exc, flush=True)
+        return route
+
 def reach_for(slug, args, points):
     cl_p = os.path.join(args.chartpack, slug, 'centreline.geojson')
     pts, st, kind = [], [], None
@@ -498,7 +612,8 @@ def reach_for(slug, args, points):
                     # The water route the distance above was measured along, channel end first.
                     # Without it the app can only draw a straight line, and a straight line from
                     # Pack's Landing crosses two kilometres of swamp.
-                    'route': (trace(dist, nx, ny, w0, s0, CELL_DEG, bestij[0], bestij[1])
+                    'route': (recentre(trace(dist, nx, ny, w0, s0, CELL_DEG,
+                                              bestij[0], bestij[1]), polys)
                               if bestij else None),
                     'filed': sorted(rec['filed']), 'src': sorted(rec['src'])})
     got.sort(key=lambda r: r['water_m'])

@@ -61,7 +61,7 @@ const CACHE_NS  = CACHE_NS_CONTOURS;
 // 2 -> 3: same rebuild. Bump follows upload.
 // 3 -> 4: same overnight rebuild of all 354 served packs.
 // 4 -> 5: same seventeen waters. Bump follows upload.
-const CACHE_SCHEMA = 6;
+const CACHE_SCHEMA = 7;
 const CACHE_TTL = 24 * 60 * 60 * 1000;
 
 let changeListeners = [];

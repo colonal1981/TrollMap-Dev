@@ -68,7 +68,12 @@ const ROUTE = [[-80.53297, 33.64428], [-80.52847, 33.64803], [-80.52397, 33.6515
 test('the generator writes the route it already measured', () => {
   assert.ok(/def trace\(dist, nx, ny, w0, s0, cell, i, j\)/.test(GEN),
     'build_ramp_reach.py has trace(): the flood field walked back down');
-  assert.ok(/'route':\s*\(trace\(/.test(GEN),
+  // WRAPPED IN recentre() SINCE 2026-09-21, because trace() alone draws a raster staircase:
+  // Ryan, on the 72 points it wrote for Pack's Landing, *"your 72 point route is garbage... it
+  // just needs to follow the middle of the canal and it does not"*. The assertion still pins
+  // trace() as the source of the line -- that is what makes it a measured route and not a guess
+  // -- and now also pins the centring that turns it into a course.
+  assert.ok(/'route':\s*\(recentre\(trace\(/.test(GEN),
     "and every landing record carries 'route'");
   assert.ok(/out\.reverse\(\)/.test(GEN),
     'the route is stored CHANNEL FIRST, landing last -- the direction a boat leaves in, and the '

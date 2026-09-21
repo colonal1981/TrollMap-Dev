@@ -1095,6 +1095,126 @@ def centre_pass(pts, inside, step, probe, reach):
     return moved, stranded, folds, shifts, out
 
 
+def reversals(pts):
+    """How many stations turn one way and then the other. The saw-tooth, counted."""
+    t = []
+    for i in range(1, len(pts) - 1):
+        ax, ay = pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]
+        bx, by = pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]
+        if (ax or ay) and (bx or by):
+            t.append((math.degrees(math.atan2(by, bx))
+                      - math.degrees(math.atan2(ay, ax)) + 180) % 360 - 180)
+    return sum(1 for i in range(1, len(t)) if t[i - 1] * t[i] < 0)
+
+
+def smooth_sweep(pts, inside, step, probe, reach):
+    """Take the saw-tooth out, over a window of the channel's OWN WIDTH.
+
+    Ryan, 2026-09-21, on the ramp route and then on the river line: *"it just needs to follow the
+    middle of the canal and it does not... what are the purposes of these sharp turns"*, and then
+    *"honestly the route going up the river looks like the same thing... i just need it to look
+    more natural"*.
+
+    Measured on the shipped congaree_river centreline, 3,333 stations at 50 m:
+
+        turn per station    median 4.6   p90 16.6   p99 59.9   max 103.1 degrees
+        over 45 degrees     76 stations
+        REVERSALS           1,163 of 3,330 -- 34.9% of stations turn one way then the other
+        channel width       median 165 m
+
+    A 103 degree turn inside 50 m is not a bend in a river. centre_on_water() moves every station
+    independently to the midpoint of its own cross-section, and the banks it measures against are
+    themselves ragged, so the midpoint estimate carries that raggedness straight into the line. The
+    fold repair catches lines that cross themselves and the slope limit allows a whole station
+    spacing of lateral movement per station -- a 45 degree wedge, by design, because that is what
+    walking down a river looks like. Neither is a smoother, and nothing else in the file was.
+
+    THE WINDOW IS THE WATER'S OWN WIDTH, MEASURED HERE, NOT CHOSEN. A boat cannot make a lateral
+    wiggle shorter than the channel is wide, and neither can a river: a feature narrower than the
+    water it is in is the measurement's noise and not the water's shape. So each station averages
+    over half a channel width either side, the width being the one its own normal measures -- the
+    same ray, the same probe and the same reach centre_pass() uses to find the middle. On the
+    Congaree that is 165 m, about three stations; through a 400 m reach it widens on its own, and
+    in the Pack's Landing canal at 34 m it barely smooths at all, which is correct in all three
+    places for the same reason.
+
+    AND IT NEVER MOVES A STATION OFF THE WATER. An average across a tight bend cuts the corner,
+    and on a river that can put the cut outside the bank. A station whose smoothed position is not
+    in the water keeps the one centre_on_water() gave it: the line is allowed to stay ragged rather
+    than be made pretty on land, which is the trade this whole file exists to refuse.
+    """
+    n = len(pts)
+    if n < 3:
+        return list(pts), {'smoothed': 0, 'held': 0, 'unmeasured': 0}
+    norms = [station_normal(pts, i) for i in range(n)]
+    wid = []
+    for i in range(n):
+        nv = norms[i]
+        if nv is None or not inside(pts[i][0], pts[i][1]):
+            wid.append(None)
+            continue
+        dl, dr = _first_exit(inside, pts[i][0], pts[i][1], nv[0], nv[1], probe, reach)
+        wid.append((dl + dr) or None)
+    out, moved, held, blind = [], 0, 0, 0
+    for i in range(n):
+        w = wid[i]
+        if not w:
+            blind += 1
+            out.append(pts[i])
+            continue
+        half = max(1, int(round(w / step / 2.0)))
+        lo, hi = max(0, i - half), min(n, i + half + 1)
+        m = hi - lo
+        sx = sum(q[0] for q in pts[lo:hi]) / m
+        sy = sum(q[1] for q in pts[lo:hi]) / m
+        if inside(sx, sy):
+            if math.dist((sx, sy), pts[i]) > 0.5:
+                moved += 1
+            out.append((sx, sy))
+        else:
+            held += 1
+            out.append(pts[i])
+    return out, {'smoothed': moved, 'held': held, 'unmeasured': blind}
+
+
+def smooth_on_water(pts, inside, step, probe, reach, passes=6):
+    """Sweep until it stops helping, scored on the saw-tooth itself.
+
+    ONE SWEEP WAS NOT ENOUGH AND THE MEASUREMENT SAID SO. On congaree_river, one pass over a
+    half-width window either side took the stations turning past 45 degrees from 76 to 23 and the
+    reversals from 1,163 to 595 -- better, and still 18.4% of the line turning one way and then
+    the other, with a worst turn of 117 degrees. A moving average attenuates noise at the station
+    scale; it does not remove it, and three stations of window cannot.
+
+    Applying it again is the right answer rather than a wider window: repeated averaging IS a
+    wider window, of the shape a smoother should have, and it keeps the one rule that matters --
+    no station is ever moved off the water, so each sweep is as safe as the first.
+
+    THE STOPPING RULE IS THE ONE centre_on_water() ALREADY USES, for the same reason: sweeps stop
+    when they stop helping, not after a number somebody picked. Helping is the thing being fixed,
+    which is reversals, with off-water stations as the tie the smoother is not allowed to win by.
+    """
+    off0 = sum(1 for q in pts if not inside(q[0], q[1]))
+    best = (reversals(pts), off0)
+    best_line, rep, stall = list(pts), {'sweeps': 0, 'reversals': [best[0]], 'off_water': [off0]}, 0
+    for _ in range(max(1, int(passes))):
+        out, srep = smooth_sweep(pts, inside, step, probe, reach)
+        if not srep['smoothed']:
+            break
+        pts = out
+        rep['sweeps'] += 1
+        score = (reversals(pts), sum(1 for q in pts if not inside(q[0], q[1])))
+        rep['reversals'].append(score[0])
+        rep['off_water'].append(score[1])
+        if score < best:
+            best, best_line, stall = score, list(pts), 0
+        else:
+            stall += 1
+            if stall >= 2:
+                break
+    rep['reversals_before'], rep['reversals_after'] = rep['reversals'][0], best[0]
+    return best_line, rep
+
 def centre_on_water(pts, inside, step, probe, reach, passes):
     """Put the centreline in the middle of the water, and say what it took.
 
@@ -1590,6 +1710,12 @@ def build_one(row, a, db, stamp, nbrs=None):
         pts, moved_rep = centre_on_water(pts, inside, a.step, a.probe,
                                          cap or a.max_width_m, a.centre_passes)
         centring.update(moved_rep)
+        # AND THEN IT IS MADE INTO A LINE. See smooth_on_water(): centring puts every station in
+        # the middle of its own cross-section and nothing until now made the stations agree with
+        # each other, which is why a third of them reversed direction station to station.
+        pts, smooth_rep = smooth_on_water(pts, inside, a.step, a.probe, cap or a.max_width_m)
+        pts = resample(pts, a.step)
+        centring.update({('smooth_' + k): v for k, v in smooth_rep.items()})
     centring['stations_after'] = len(pts)
     centring['off_water_after'] = sum(1 for q in pts if not inside(q[0], q[1]))
     # WHAT IS STILL WRONG, AS OPPOSED TO WHAT WAS NEVER SOUNDED. A station with no charted water
