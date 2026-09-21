@@ -19,7 +19,8 @@
 
 import { selectCandidates, structureIndex, forModel, travelOrder, poiSpotFeatures,
          attractorSpotFeatures, chartedGrid, chartedHazards,
-         turnaroundMiles, riverDay, metresBetween } from './plan-candidates.js';
+         turnaroundMiles, riverDay, metresBetween,
+         pointToSegmentM } from './plan-candidates.js';
 import { buildPlanRequest, parsePlanResponse, planArgsFrom } from './plan-prompt.js';
 // A RIVER LEG IS A DRIFT, NOT A LANE. See river-drifts.js for what that means, what it measures
 // and why the trolling runs are the wrong object on moving water.
@@ -737,12 +738,44 @@ export function rampLegRouter(launch, launchRoute, base) {
     for (let i = 1; i < cs.length; i++) d += metresBetween(cs[i - 1], cs[i]);
     return d;
   };
+  // ── AND IT STOPS WHERE THE LEG STARTS, NOT WHERE THE FLOOD WAS SEEDED ────────────────────
+  //
+  // Ryan, 2026-09-21, on a Low Falls plan: *"everything is great except for the transit from the
+  // landing to leg 1... the connection is bad"*. Measured off that export: the transit's last two
+  // points run **132 m past** the start of leg 1 and then **43 m back** to it.
+  //
+  // Nothing is mis-routed. build_ramp_reach seeds its search on the river's CENTRELINE, so the
+  // measured route ends on the centreline; the lane starts on the deep side of the channel, which
+  // at that station is 47 m off it. Handing back the whole route therefore always overshoots by
+  // however far past the leg's start the centreline carries, and the plan then draws a connector
+  // back — the same shape as the perpendicular between two touching legs he caught on 2026-09-21.
+  //
+  // The cut is at the route's own closest approach to the leg's first point, measured to the
+  // SEGMENT and not to the vertices, so a long leg does not get judged by its ends. What is left
+  // is one line from the ramp to where the fishing starts, and the join is as short as the water
+  // allows rather than a there-and-back.
+  const joinTo = (cs, p) => {
+    if (!Array.isArray(p) || p.length < 2 || cs.length < 2) return cs;
+    let bi = 0, bd = Infinity;
+    for (let i = 0; i < cs.length - 1; i++) {
+      const d = pointToSegmentM(p, cs[i], cs[i + 1]);
+      if (d < bd) { bd = d; bi = i; }
+    }
+    const out = cs.slice(0, Math.max(1, bi + 1));
+    if (metresBetween(out[out.length - 1], p) > 1) out.push([p[0], p[1]]);
+    return out.length >= 2 ? out : cs;
+  };
   return (a, b) => {
     const cs = near(a) ? launchRoute.slice().reverse()
              : near(b) ? launchRoute.slice()
              : null;
     if (!cs) return base ? base(a, b) : null;
-    return { distanceM: len(cs), coordinates: cs, fromLaunchReach: true };
+    // Leaving, the route runs landing -> channel and `b` is where the fishing starts. Coming home
+    // it runs channel -> landing and `a` is where the fishing stopped, so the same trim is applied
+    // from the other end.
+    const out = near(a) ? joinTo(cs, b)
+                        : joinTo(cs.slice().reverse(), a).reverse();
+    return { distanceM: len(out), coordinates: out, fromLaunchReach: true };
   };
 }
 

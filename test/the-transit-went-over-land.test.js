@@ -48,6 +48,7 @@ const REACH = read('js', 'data', 'launch-reach.js');
 const SPV2  = read('js', 'modules', 'smart-plan-v2.js');
 const PFW   = read('js', 'modules', 'plan-from-water.js');
 const UP    = read('Scripts', 'upload_garmin_to_r2.py');
+const CAND  = read('js', 'modules', 'plan-candidates.js');
 
 // rampLegRouter is module-private to a file that pulls in half the app, so lift it out and run
 // the real thing rather than a copy that can drift away from it.
@@ -57,7 +58,14 @@ function loadRampLegRouter() {
   const metres = `function metresBetween(a,b){const R=6371000,t=Math.PI/180;
     const dy=(b[1]-a[1])*t, dx=(b[0]-a[0])*t*Math.cos((a[1]+b[1])/2*t);
     return Math.hypot(dx,dy)*R;}`;
-  return new Function(`${metres}\n${m[0].replace('export function', 'function')}\nreturn rampLegRouter;`)();
+  // THE REAL pointToSegmentM, LIFTED THE SAME WAY, not a second copy of it. rampLegRouter trims
+  // the transit at its closest approach to where the leg starts, and that distance is to the
+  // SEGMENT -- a copy here could quietly go back to measuring vertices, which is the mistake this
+  // repo has already made once.
+  const seg = CAND.match(/export function pointToSegmentM\(p, a, b\) \{[\s\S]*?\n\}/);
+  assert.ok(seg, 'pointToSegmentM() is still in plan-candidates.js');
+  return new Function(`${metres}\n${seg[0].replace('export function', 'function')}\n`
+    + `${m[0].replace('export function', 'function')}\nreturn rampLegRouter;`)();
 }
 
 const RAMP = [-80.51509, 33.65925];
@@ -110,17 +118,28 @@ test('the ramp leg wins, and only the ramp leg', () => {
   const base = () => ({ distanceM: 999, coordinates: [[0, 0], [1, 1]], viaBase: true });
   const r = rampLegRouter(RAMP, ROUTE, base);
 
-  const out = r(RAMP, [-80.53336, 33.64439]);
+  const START = [-80.53336, 33.64439];
+  const out = r(RAMP, START);
   assert.ok(out && !out.viaBase, 'a leg LEAVING the ramp is routed off the measured water');
   assert.deepEqual(out.coordinates[0], ROUTE[ROUTE.length - 1],
     'and it is reversed, so it starts at the landing');
   assert.ok(out.distanceM > 1500 && out.distanceM < 4000,
     'with a real distance off the traced geometry, not a straight line (got %d)' + out.distanceM);
+  // AND IT ENDS WHERE THE FISHING STARTS. The measured route ends on the CENTRELINE, because that
+  // is what build_ramp_reach seeds on; the lane starts on the deep side of the channel. Handing
+  // back the whole route ran 132 m past the start of leg 1 on Ryan's Low Falls plan and then drew
+  // a 43 m connector back to it.
+  assert.deepEqual(out.coordinates[out.coordinates.length - 1], START,
+    'the transit ends at the leg it is delivering to, not at the centreline seed');
+  assert.ok(!out.coordinates.slice(0, -1).some((c) => c[0] === ROUTE[0][0] && c[1] === ROUTE[0][1]),
+    'and the overshoot past it is gone -- the channel end is no longer on the line');
 
-  const home = r([-80.53336, 33.64439], RAMP);
+  const home = r(START, RAMP);
   assert.ok(home && !home.viaBase, 'and the leg HOME is routed too');
-  assert.deepEqual(home.coordinates[0], ROUTE[0],
-    'channel first, landing last -- the way it is stored');
+  assert.deepEqual(home.coordinates[0], START,
+    'which starts where the fishing stopped, not at the seed point 47 m off it');
+  assert.deepEqual(home.coordinates[home.coordinates.length - 1], ROUTE[ROUTE.length - 1],
+    'and still finishes at the landing');
 
   const mid = r([-80.60, 33.70], [-80.61, 33.71]);
   assert.ok(mid && mid.viaBase,
