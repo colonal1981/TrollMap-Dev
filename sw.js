@@ -14,7 +14,13 @@
 // So index.html is NETWORK-FIRST now, exactly like the JS modules, with the cache as the
 // OFFLINE fallback rather than the default answer. A shell that can only be refreshed by
 // remembering to bump a constant will eventually not be refreshed.
-const CACHE_NAME = 'trollmap-v19-2026-08-26';
+// BUMPED 2026-09-21 TO GET e10b023 INTO THE APP. The deployment went green on Pages and the
+// browser kept answering with the build before it -- `t.includes('NO CORNER SHARPER THAN THE
+// RIVER')` false after several hard resets, with the spot steering that commit DELETED still
+// present in the text. The code was right in the pushed object; only delivery was wrong.
+// Changing this string is the one lever in the repo that makes every client drop what it is
+// holding: `activate` deletes every cache whose key is not this one.
+const CACHE_NAME = 'trollmap-v20-2026-09-21';
 
 // Keep this list tight — only assets that MUST be available offline for the
 // app shell to load. Everything else (modules, data, worker API calls) is
