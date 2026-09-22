@@ -86,6 +86,31 @@ import re
 import sys
 from collections import deque
 
+# ── THE COMPONENT CAP, AND WHY IT IS NOT 40,000 ANY MORE ─────────────────────────────────────
+#
+# This was 40,000, unreachable from the command line (nothing ever set `args.max_component_polys`)
+# and it silently skipped the pool stamp on ten of the waters the app offers -- Norris, Hartwell,
+# Thurmond, Lanier, Cherokee, Murray and four coastal packs. Those are the waters with the most
+# arms and the most sub-impoundments, so it was off exactly where it earns its keep.
+#
+# MEASURED BEFORE IT WAS MOVED, 2026-09-22, timing components() alone:
+#
+#     wateree_lake       7,064 polygons     5.9 s
+#     lake_marion       22,480 polygons    12.3 s
+#     lake_murray       51,351 polygons   128.7 s      <- the most expensive of the four
+#     cherokee_lake     72,103 polygons   112.1 s      <- 1.4x the polygons, LESS time
+#
+# So a polygon COUNT does not predict the cost. Murray is smaller than Cherokee and dearer,
+# because what components() actually pays for is how many depth bands interlock, not how many
+# there are -- and a count-based cap that admits Murray while excluding Cherokee is not measuring
+# the thing it is protecting against. The worst case seen is about two minutes and roughly 3 GB
+# resident, on a run that takes hours; the largest offered water is Norris at 82,745 polygons.
+#
+# 120,000 clears every water the app offers with headroom. It stays a flag because the real
+# constraint is MEMORY, not time: `--jobs 6` means six of these at once, and lowering the cap is
+# the lever if a run ever dies rather than finishing slowly.
+MAX_COMPONENT_POLYS = 120000
+
 CELL_DEG = 0.00025          # ~26 m of latitude; the canal at Rimini is wider than one cell
 MARGIN_DEG = 0.05           # how far outside the line to look for landings, ~5.5 km
 BLOCK_CELLS = 2_000_000     # cells per vectorised point-in-polygon call; caps peak memory
@@ -1044,7 +1069,7 @@ def reach_for(slug, args, points):
     # size of the water it is actually on. Annotate, never filter -- the same rule as the reach
     # distance itself, one level down.
     comp_of, pool_ac, seed_comp = {}, {}, None
-    if len(polys) <= getattr(args, 'max_component_polys', 40000):
+    if len(polys) <= getattr(args, 'max_component_polys', MAX_COMPONENT_POLYS):
         try:
             from water_polygons import components as _components
             _comps = _components(polys)
@@ -1078,7 +1103,9 @@ def reach_for(slug, args, points):
                   % (slug, type(_exc).__name__, _exc))
             comp_of, pool_ac, seed_comp = {}, {}, None
     else:
-        # NAMED, NOT SWALLOWED.
+        # NAMED, NOT SWALLOWED. Over the cap the landings carry on_main_water null, and
+        # js/data/launch-reach.js reads null as REACHABLE -- Ryan's call, 2026-09-22 -- so a
+        # water that lands here loses the check rather than losing its launches.
         print('   .. %s has %d charted polygons, over the component cap -- no pool stamp'
               % (slug, len(polys)))
 
@@ -1212,6 +1239,15 @@ def main():
                          'dodge it -- from Pack\'s Landing that is 7,524 m round the lake against '
                          '2,438 m down the canal, to save 240 m of 5 ft water a kayak does not '
                          'care about. 0 ignores depth and gives the shortest water.')
+    ap.add_argument('--max-component-polys', type=int, default=MAX_COMPONENT_POLYS,
+                    help='skip the pool stamp on a water with more charted polygons than this. '
+                         'The stamp is what says a landing is on water it cannot leave, so a '
+                         'water over the cap keeps every landing and loses the check -- null '
+                         'reads as reachable in the app, not as blocked. Default %d, which '
+                         'clears the largest water the app offers (Norris, 82,745). See the '
+                         'timings above the constant: cost tracks how many depth bands '
+                         'interlock, not how many there are, so this is a memory guard for '
+                         '--jobs, not a time one.' % MAX_COMPONENT_POLYS)
     ap.add_argument('--go', action='store_true', help='write; without it nothing is touched')
     ap.add_argument('--jobs', type=int, default=0,
                     help='waters measured at once. Default: one per core, capped at the number '
