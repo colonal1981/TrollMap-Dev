@@ -202,6 +202,21 @@ export function readConditions(j) {
     tvaTailwaterFt: null,
     unpublished: null,
     silent: null,
+    // ── FIVE KEYS THIS TEMPLATE NEVER DECLARED ────────────────────────────────────────────
+    //
+    // Assigned further down and absent from here, so `Object.keys(readConditions(null))` -- the
+    // only enumeration of what this function produces -- could not see them. That is invisible
+    // to a reader and it was invisible to the test that now holds plan-prompt.js to full
+    // coverage of this object: a field that is not in the template cannot be reported missing
+    // from the prompt. Declared here so the enumeration is the whole truth.
+    //
+    // `hazards` is [] rather than null to match accessAlerts: every reader of it already tests
+    // Array.isArray() && length, so the empty array and the absence behave identically.
+    hazards: [],
+    hazardsAllClear: null,
+    windMeasured: null,
+    seasonalDrawdownFt: null,
+    seasonalDrawdownFrom: null,
     featureType: null,
     pending: null,
     error: null,

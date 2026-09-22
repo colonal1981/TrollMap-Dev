@@ -1345,96 +1345,533 @@ if every leg in it is right, and a day that totals far less is wrong unless it s
 }
 
 /**
- * THE NUMBERS THE CARD PRINTS AND THE PROMPT NEVER DID.
+ * ── WHAT THE GAUGES SAY TODAY, AND WHY IT IS NO LONGER A HAND-WRITTEN LIST ──────────────────
  *
- * Ryan, 2026-09-06, pasting the whole conditions card: "how much of this from conditions is
- * presented to the LLM... it doesn't look like it".
+ * Personal use only, not for distribution or resale; not for navigation.
  *
- * Counted against the Sep 6 prompt, fact by fact: FIFTEEN of the card's twenty-four reached the
- * model and NINE did not. conditions-strip.js and this file read the SAME object -- after the
- * fetchWaterState repair every one of these fields is on `ws` -- and only the card printed them.
+ * THE FIRST ROUND. Ryan, 2026-09-06, pasting the whole conditions card: "how much of this from
+ * conditions is presented to the LLM... it doesn't look like it". Counted fact by fact against
+ * that day's prompt, FIFTEEN of the card's twenty-four reached the model and NINE did not --
+ * water temperature, dissolved oxygen, moon, rain chance, barometer, releases, access closures,
+ * the flow anomaly and the guide curve. The sharpest was the first: the prompt tells the model
+ * to weigh "what the water clarity and temperature argue for" and then never gave it a
+ * temperature. Eight of the nine were added here, by hand, one `if` each.
  *
- * The nine, and why each one is not decoration:
+ * THE SECOND ROUND. plan-preflight.js:554 carries the general form of the same bug -- "This
+ * returned six keys. /conditions parses about sixty ... The third time it is the LIST that is
+ * wrong, not the length of it." fetchWaterState() was repaired there by spreading the whole
+ * parsed object, so every field readConditions() produces has been ON `ws` since 2026-09-05.
+ * This function was the remaining hand-written list, and it printed thirteen facts.
  *
- *   water temperature   85.5 F on the Sep 6 card, from the tailrace gauge. The prompt tells the
- *                       model to weigh "what the water clarity and temperature argue for" and
- *                       then never gives it the temperature. It is also the input getSeason()
- *                       uses to call September summer.
- *   dissolved oxygen    6.1 mg/L. The card carries the rule with it and this repeats it verbatim
- *                       rather than inventing a second threshold.
- *   moon               phase and illumination, already fetched from USNO.
- *   rain chance        the first forecast period's probability.
- *   barometer          one reading, and the card is careful that one reading is not a trend.
- *   releases           whether the operator is sending water. On this lake the answer is no, and
- *                       the reason -- LIP Stage 2 -- reaches the model while the fact does not.
- *   access closures    Buck Hill shut for about a year. A closed ramp is a trip that does not
- *                       happen, and the model plans launches.
- *   flow vs normal     the National Water Model anomaly. Published with no units, so only the
- *                       sign is usable, and the card says so.
+ * MEASURED 2026-09-22 against js/utils/water-conditions.js: readConditions() returns 114
+ * top-level keys. Twenty-six of them reached the conditions card and nothing else.
  *
- * Every line is silent when its field is null. Nothing is inferred from an absence.
+ * So: the same repair in the same shape. ONE TABLE, and every key readConditions() produces
+ * appears in it exactly once -- either inside a fact this block may print, or in
+ * CONDITION_ELSEWHERE naming the block that already says it. A key in neither fails a test
+ * rather than going quietly missing, and a key claimed here that the producer does not
+ * actually return fails the same test. That pair is the only part of this that stops a fourth
+ * round. See test/the-list-was-wrong-three-times.test.js.
+ *
+ * ── WHICH OF THE TWENTY-SIX IS A FISHING FACT ──────────────────────────────────────────────
+ *
+ * Ryan set the criterion, 2026-09-22: "anything that would give the LLM more information to
+ * help choose lures and build the plan... i am not sure which of these is specifically fishing
+ * relevant". Not everything measured is one of those. What earns a line, and why:
+ *
+ *   barometric trend    `pressure3h`. The one weather fact anglers act on directly, and the
+ *                       barometer line already here admits its own gap -- "one observation, so
+ *                       there is no trend in it". Falling ahead of a front is a feeding window
+ *                       and argues for a faster, louder bait; recovering behind one argues for
+ *                       slowing down and downsizing. The absolute millibars decide neither.
+ *   level trend         `trend24h`, `trend7d`. Rising water pushes fish shallow onto cover that
+ *                       was dry last week; falling water pulls them off the flats to the channel
+ *                       edge. That changes WHICH STRUCTURE the day is built on, not just the
+ *                       prose. `trendMeasures` is what says whether the number is a river stage
+ *                       or a pool elevation, and without it the figure is unreadable.
+ *   generation, as a    `tvaDischargeCfs`, `tvaTailwaterFt`. `generatingNow` reaches the model
+ *   number              already as a boolean; on a tailwater the MAGNITUDE is the difference
+ *                       between a push worth fishing and water a 12.5 ft pedal kayak cannot
+ *                       hold in. Twelve waters in water_bindings.json are TVA.
+ *   the operator's own  `tvaVsGuideFt`, `tvaGuideFt`, `usaceTargetFt`, `dukeGuide`. Where the
+ *   target             lake is SUPPOSED to be today. A lake above its guide curve is a lake the
+ *                       operator intends to pull down, which is a forecast of current, and a
+ *                       Corps lake has no single full pool to be below.
+ *   drought             `droughtLevel`, `droughtLevels`, `droughtNotice`. The rule the water
+ *                       will be run under: why the level is low and why it will stay low. On
+ *                       Wateree it is also why the release schedule reads NO RELEASE, and that
+ *                       reason reached the model while the fact behind it did not.
+ *   measured turbidity  `turbidityFnu`. The most lure-relevant number on the card, and it
+ *                       reached nothing. Clarity decides colour, flash and profile. What the
+ *                       model already sees is `clarity`, a WORD -- off the form and the rainfall
+ *                       model -- and a modelled "Clear" has sat above a measured 14.4 FNU on the
+ *                       Congaree card, which is not clear. This is the reading, USGS 63680.
+ *   seasonal swing      `seasonalDrawdownFt`. Every charted depth in the pack is sounded at full
+ *                       pool, and this is how far the operator moves this water across a year.
+ *   the flow anomaly's  `flowAnomalyOf`, `flowPeriod`, `flowYears`. The anomaly and the median
+ *   own provenance      already reach the model; these say what the anomaly is OF and over how
+ *                       many years the median was taken. Five years and thirty are not the same
+ *                       claim. Folded into the line carrying the number, not given one.
+ *   what this water     `unpublished`, `silent`. Not a lure input -- the strongest
+ *   does not measure    anti-invention input. A null clarity and an unmeasured clarity look
+ *                       identical to a model, and `silent` is the third state: a gauge that DOES
+ *                       publish the parameter and returned nothing today, named so it can be
+ *                       distrusted rather than filled in from recall.
+ *
+ * AND WHAT DOES NOT EARN A LINE, because a duplicate that disagrees is worse than a gap. The
+ * observed wind -- `windMph`, `windDirDeg`, `gustMph` -- is one instant at one station, while
+ * the trip window's wind AND ITS DIRECTION already reach the model hour by hour as
+ * `conditions.windByHour`. So only a measurement ON the water earns a line, with its distance
+ * and its age, offered beside the forecast rather than instead of it: an anemometer 0.1 km out
+ * is a fact worth weighing against a model from 54 km away, and Wateree showed neither.
+ * `floodActionFt` is the threshold behind a number riverPromptBlock() already prints as
+ * `ftBelowFloodAction`.
+ *
+ * Every entry is silent when its fields are null. Nothing is inferred from an absence.
  */
+const CONDITION_FACTS = [
+  {
+    id: 'waterTemp',
+    keys: ['waterTempF', 'waterTempFrom', 'waterTempGauge', 'waterTempSite',
+           'waterTempStation', 'waterTempUpstreamFrom', 'waterTempAgeMin'],
+    say(c) {
+      if (!isNum(c.waterTempF)) return null;
+      // WHERE IT WAS MEASURED TRAVELS WITH IT. A tailrace gauge sits below the dam and is not the
+      // lake; a borrowed upstream reading is not this water at all. The card has said so since it
+      // was written and a number that arrives without its provenance cannot be argued with.
+      const from = c.waterTempFrom === 'upstream'
+          ? ` — measured UPSTREAM, not on this water${c.waterTempGauge ? ` (${c.waterTempGauge})` : ''}`
+        : c.waterTempGauge ? ` — ${c.waterTempGauge}` : '';
+      // AND WHEN. A thermometer two days behind is not today's water and the model has no other
+      // way to know. Quiet under two hours, which is the ordinary lag on a USGS series.
+      const age = isNum(c.waterTempAgeMin) && c.waterTempAgeMin >= 120
+        ? ` · reading is ${Math.round(c.waterTempAgeMin / 60)} h old` : '';
+      return `Water temperature ${c.waterTempF} °F${from}${age}.`;
+    },
+  },
+  {
+    id: 'oxygen',
+    keys: ['oxygenMgL', 'oxygenPpm', 'oxygenGauge'],
+    say(c) {
+      const at = c.oxygenGauge ? ` (${c.oxygenGauge})` : '';
+      if (isNum(c.oxygenMgL)) {
+        return `Dissolved oxygen ${c.oxygenMgL} mg/L. Below about 4 mg/L is not holding fish.${at}`;
+      }
+      // THE SONDE'S COLUMN IS ppm. Same threshold, said in the unit that was actually measured:
+      // the two differ by about the density of seawater, which is well inside the slop of a
+      // rule of thumb, and saying so is cheaper than converting a number and pretending it came
+      // back that way. On ACE Basin and St. Helena this is the only oxygen there is.
+      if (isNum(c.oxygenPpm)) {
+        return `Dissolved oxygen ${c.oxygenPpm} ppm at the reserve sonde. Below about 4 is not `
+          + 'holding fish — the sonde reports ppm and the USGS gauges report mg/L, and at these '
+          + 'magnitudes the threshold is the same number.';
+      }
+      return null;
+    },
+  },
+  {
+    // A MEASURED TURBIDITY AND A MODELLED WORD MUST NOT SIT SIDE BY SIDE DISAGREEING — the same
+    // rule cardHtml() already enforces, for the same reason. The reading wins and the word is
+    // suppressed; where there is no reading the word is labelled as modelled and says so.
+    id: 'clarity',
+    keys: ['turbidityFnu', 'turbidityGauge', 'clarity', 'clarityIsMeasured', 'clarityNote',
+           'clarityScore'],
+    say(c) {
+      if (isNum(c.turbidityFnu)) {
+        return `Turbidity ${c.turbidityFnu} FNU — MEASURED, USGS 63680`
+          + `${c.turbidityGauge ? ` (${c.turbidityGauge})` : ''}. This is the clarity of the water, `
+          + 'measured, and it outranks any clarity word elsewhere in this request. Higher FNU is '
+          + 'dirtier water: let it set colour, flash and profile, and say in the reasoning that it '
+          + 'did.';
+      }
+      if (!c.clarity) return null;
+      return `Clarity ${c.clarity} — ${c.clarityIsMeasured
+        ? 'a measured Secchi baseline for this water, adjusted for recent rain'
+        : `MODELLED FROM RAINFALL, not measured. ${c.clarityNote
+            || 'No clarity measurements exist for this water.'} Absence of data is not clear water`}.`;
+    },
+  },
+  {
+    id: 'moon',
+    keys: ['moonPhase', 'moonIllumination'],
+    say(c) {
+      return c.moonPhase
+        ? `Moon ${c.moonPhase}${c.moonIllumination ? ` · ${c.moonIllumination} lit` : ''}.`
+        : null;
+    },
+  },
+  {
+    id: 'rain',
+    keys: ['popPct'],
+    say(c) {
+      return isNum(c.popPct) ? `Chance of rain ${c.popPct}% in the first forecast period.` : null;
+    },
+  },
+  {
+    // ── THE DIRECTION, WHICH IS THE HALF ANGLERS ACT ON ────────────────────────────────────
+    //
+    // The absolute reading has been here since 2026-09-06 with the honest caveat that one
+    // observation is not a trend. The trend was in the same response the whole time.
+    id: 'barometer',
+    keys: ['pressureMb', 'pressureFrom', 'pressure3h', 'pressureStale', 'obsStation', 'obsKmAway'],
+    say(c) {
+      const L = [];
+      const where = c.obsStation
+        ? ` — ${c.obsStation}${isNum(c.obsKmAway) ? `, ${c.obsKmAway} km from this water` : ''}`
+        : '';
+      if (isNum(c.pressureMb)) {
+        L.push(isNum(c.pressure3h)
+          ? `Barometer ${c.pressureMb} mb${where}.`
+          // NOT EVERY SOURCE CARRIES A TREND. The NWS station path publishes a single
+          // observation, and a direction invented from one reading is not a trend.
+          : `Barometer ${c.pressureMb} mb — one observation, so there is no trend in it.${where}`);
+      }
+      if (isNum(c.pressure3h)) {
+        const d = c.pressure3h;
+        const way = Math.abs(d) < 0.3 ? 'STEADY'
+          : d < 0 ? 'FALLING' : 'RISING';
+        L.push(`Barometer ${way} ${d > 0 ? '+' : d < 0 ? '−' : ''}${Math.abs(d).toFixed(1)} mb over `
+          + '3 h. This is a lure decision and not decoration: falling pressure ahead of a front is '
+          + 'a feeding window and buys a faster, louder, higher-in-the-column presentation, while '
+          + 'a barometer recovering behind a front argues for slowing down, downsizing, and '
+          + 'fishing tighter to cover. Steady is neither — say so rather than inventing a mood.');
+      } else if (c.pressureStale === true) {
+        L.push('The barometer’s last reading is too old to use, so there is no pressure and no '
+          + 'trend today. Do not reason from one, and do not treat the gap as "steady".');
+      }
+      return L.length ? L : null;
+    },
+  },
+  {
+    // ── THE ANEMOMETER ON THE WATER, BESIDE THE MODEL, NEVER INSTEAD OF IT ─────────────────
+    //
+    // The trip window's wind reaches the model hour by hour with its direction, from
+    // Open-Meteo, as `conditions.windByHour`. That is the right source for a plan and this does
+    // not replace it. What it adds is the one case the forecast cannot cover: a station standing
+    // ON this water disagreeing with a model drawn from another county.
+    id: 'measuredWind',
+    keys: ['windMeasured', 'windMph', 'windDirDeg', 'gustMph', 'windFrom', 'windStation',
+           'windAgeMin'],
+    say(c) {
+      const onWater = c.windFrom === 'ndbc' && isNum(c.windMph)
+        ? { mph: c.windMph, dirDeg: c.windDirDeg, gustMph: c.gustMph,
+            station: c.windStation, ageMin: c.windAgeMin, kmFromWater: null, stale: false }
+        : (c.windMeasured && isNum(c.windMeasured.mph) ? c.windMeasured : null);
+      if (!onWater) return null;
+      const dir = isNum(onWater.dirDeg)
+        ? ` from ${Math.round(onWater.dirDeg)}° (${compassOf(onWater.dirDeg)})` : '';
+      return `Wind MEASURED on this water: ${Math.round(onWater.mph)} mph`
+        + `${isNum(onWater.gustMph) ? ` gusting ${Math.round(onWater.gustMph)}` : ''}${dir}`
+        + ` — NDBC ${onWater.station || 'station'}`
+        + `${isNum(onWater.kmFromWater) ? `, ${onWater.kmFromWater} km out` : ''}`
+        + `${isNum(onWater.ageMin) ? `, ${onWater.ageMin} min old` : ''}`
+        + `${onWater.stale ? ', older than the station’s own reporting interval' : ''}. `
+        + 'This is one instant, not the day — the hour-by-hour wind in `conditions.windByHour` is '
+        + 'what the plan is built against. Where the two disagree, say which one you used for the '
+        + 'launch judgement and why.';
+    },
+  },
+  {
+    // ── WHICH WAY THE WATER IS GOING, WHICH IS A STRUCTURE DECISION ────────────────────────
+    id: 'levelTrend',
+    keys: ['trend24h', 'trend7d', 'trendUnits', 'trendMeasures', 'trendCoversHours'],
+    say(c) {
+      if (!isNum(c.trend24h) && !isNum(c.trend7d)) return null;
+      const u = c.trendUnits ? ` ${c.trendUnits}` : '';
+      const fmt = (d) => (!isNum(d) ? 'not enough series to say'
+        : Math.abs(d) < 0.01 ? 'no change'
+        : `${d > 0 ? '+' : '−'}${Math.abs(d).toFixed(2)}${u}`);
+      const d = isNum(c.trend24h) ? c.trend24h : c.trend7d;
+      const way = Math.abs(d) < 0.01 ? 'STEADY' : d > 0 ? 'RISING' : 'FALLING';
+      const L = [`${c.trendMeasures || 'Gauge reading'} ${way} — 24 h ${fmt(c.trend24h)}, `
+        + `7 d ${fmt(c.trend7d)}, NWPS observed series`
+        + `${isNum(c.trendCoversHours) ? ` covering ${Math.round(c.trendCoversHours / 24)} days` : ''}.`];
+      L.push('Which way it is going decides WHERE the day is fished, not just how it reads: rising '
+        + 'water pushes fish shallow onto cover that was dry a week ago and makes flooded wood and '
+        + 'bank grass the pattern, while falling water pulls them off the flats onto the channel '
+        + 'edge, the drop and the first deep structure out. Pick the legs that match the direction '
+        + 'and say that is why.');
+      return L;
+    },
+  },
+  {
+    id: 'flowAnomaly',
+    keys: ['flowAnomaly', 'flowAnomalyOf', 'flowPeriod', 'flowYears'],
+    say(c) {
+      if (!isNum(c.flowAnomaly)) return null;
+      // THE SUPPORT GOES WITH THE NUMBER. `flowAnomalyOf` names the reach the anomaly is about,
+      // and the period of record is what separates a rank worth acting on from noise.
+      const of = c.flowAnomalyOf ? ` for ${c.flowAnomalyOf}` : '';
+      const over = [c.flowPeriod ? String(c.flowPeriod) : null,
+                    isNum(c.flowYears) ? `${c.flowYears} years of record` : null]
+        .filter(Boolean).join(', ');
+      return `Flow versus normal ${c.flowAnomaly > 0 ? '+' : ''}${c.flowAnomaly}${of} — National `
+        + 'Water Model anomaly, published without units. Only the SIGN is usable'
+        + `${over ? `, and the normal it is measured against comes from ${over}` : ''}.`;
+    },
+  },
+  {
+    // GENERATION IS THE CURRENT, and a boolean does not say how much of it there is.
+    id: 'generation',
+    keys: ['tvaDischargeCfs', 'tvaTailwaterFt'],
+    say(c) {
+      if (!isNum(c.tvaDischargeCfs) && !isNum(c.tvaTailwaterFt)) return null;
+      const bits = [
+        isNum(c.tvaDischargeCfs)
+          ? `discharge ${Math.round(c.tvaDischargeCfs).toLocaleString()} ft³/s` : null,
+        isNum(c.tvaTailwaterFt) ? `tailwater ${c.tvaTailwaterFt} ft` : null,
+      ].filter(Boolean).join(' · ');
+      return `TVA at this dam: ${bits}. This is the size of the current, which `
+        + '`generating` on its own does not give: a light release is a push worth fishing and a '
+        + 'heavy one is water a 12.5 ft pedal kayak cannot hold position in. Say which this is and '
+        + 'where the boat can safely sit.';
+    },
+  },
+  {
+    // ── WHERE THE LAKE IS SUPPOSED TO BE TODAY ────────────────────────────────────────────
+    //
+    // A target is not a reading, and the label says so on the same line as the number — the same
+    // rule the card has carried since it was written.
+    id: 'operatorTarget',
+    keys: ['tvaVsGuideFt', 'tvaGuideFt', 'usaceTargetFt', 'usaceProject', 'dukeGuide',
+           'seasonalDrawdownFt', 'seasonalDrawdownFrom'],
+    say(c) {
+      const L = [];
+      if (isNum(c.tvaVsGuideFt) || isNum(c.tvaGuideFt)) {
+        L.push(`Against TVA's guide curve: ${isNum(c.tvaVsGuideFt)
+          ? `${c.tvaVsGuideFt > 0 ? '+' : c.tvaVsGuideFt < 0 ? '−' : ''}${Math.abs(c.tvaVsGuideFt).toFixed(1)} ft`
+          : 'the offset is not published'}`
+          + `${isNum(c.tvaGuideFt) ? `, guide ${c.tvaGuideFt} ft` : ''}. Above the curve is water `
+          + 'the operator intends to move, so expect generation; below it, expect the lake to be '
+          + 'held. This is the closest thing there is to a forecast of the current.');
+      }
+      if (isNum(c.usaceTargetFt)) {
+        L.push(`Corps target pool ${c.usaceTargetFt} ft — what ${c.usaceProject || 'this project'} `
+          + 'is SUPPOSED to be at today, not a reading. A Corps lake has no single full pool: the '
+          + 'target moves with the season, so judge the level against this and not against a '
+          + 'remembered number.');
+      }
+      const g = c.dukeGuide;
+      if (g && (isNum(g.vs_target_ft) || g.vs_same_date)) {
+        const v = isNum(g.vs_target_ft)
+          ? `${g.vs_target_ft > 0 ? '+' : g.vs_target_ft < 0 ? '−' : ''}${Math.abs(g.vs_target_ft).toFixed(1)} ft `
+            + `against a guide curve of ${(g.today && g.today.target) ?? '?'} on a scale where 100 is full pond`
+          : null;
+        const h = g.vs_same_date
+          // A RANK, NOT A PERCENTILE. Thirty-odd readings do not support one.
+          ? `${g.vs_same_date.band} for this week — higher than ${g.vs_same_date.higher_than} of `
+            + `${g.vs_same_date.n} readings within ${g.vs_same_date.window_days} days of this date`
+          : null;
+        L.push(`Against the operator's guide curve: ${[v, h].filter(Boolean).join('; ')}.`
+          // A RESERVOIR LEVEL IS AN OPERATING DECISION, and a rank without the caveat reads as a
+          // fact about rainfall.
+          + (g.caveat ? ` ${g.caveat}` : ''));
+      }
+      if (isNum(c.seasonalDrawdownFt) && c.seasonalDrawdownFt > 0) {
+        L.push(`This water is moved ${c.seasonalDrawdownFt} ft across a year by `
+          + `${c.seasonalDrawdownFrom || 'its operator'}. Every charted depth in the pack was `
+          + 'sounded at full pool, so on a lake with a swing this size the charted number and the '
+          + 'water under the hull are different questions in the drawdown months.');
+      }
+      return L.length ? L : null;
+    },
+  },
+  {
+    // WHY THE WATER IS WHERE IT IS. A drought level is not a reading and not a target — it is the
+    // rule the lake will be run under, and the release cut is published in the level's own comment.
+    id: 'drought',
+    keys: ['droughtLevel', 'droughtLevels', 'droughtNotice'],
+    say(c) {
+      const L = [];
+      const d = c.droughtNotice;
+      if (d) {
+        L.push(`DROUGHT: ${d.stage != null ? `Low Inflow Protocol — Stage ${d.stage}` : 'Low Inflow Protocol'}`
+          + `${d.suspends_recreation_flows
+            ? '. Recreation flow releases are SUSPENDED under this stage, which is why a schedule '
+              + 'on this water can read no release'
+            : ''}. `
+          + `${String(d.text || '').replace(/\s+/g, ' ').slice(0, 400)}`);
+      }
+      const lvl = c.droughtLevel;
+      if (lvl) {
+        L.push(`The lake has fallen to ${lvl.level}${isNum(lvl.ft) ? ` (${lvl.ft} ft)` : ''}`
+          + `${lvl.comment ? ` — ${lvl.comment}` : ''}. That is the rule the water will be run `
+          + 'under, not a reading: it says the level is low for a reason and will stay low, and it '
+          + 'is usually why generation is being held back.');
+      } else if (Array.isArray(c.droughtLevels) && c.droughtLevels.length) {
+        L.push(`The operator publishes ${c.droughtLevels.length} drought levels for this project `
+          + `(${c.droughtLevels.map((x) => `${x.level}${isNum(x.ft) ? ` ${x.ft} ft` : ''}`).join(', ')}) `
+          + 'and today’s level is above all of them — no drought rule is in force.');
+      }
+      return L.length ? L : null;
+    },
+  },
+  {
+    id: 'releases',
+    keys: ['releases', 'releasesRefused'],
+    say(c) {
+      const rel = c.releases;
+      if (!rel) {
+        return c.releasesRefused
+          ? `No release schedule was read for this water — ${c.releasesRefused}. That is a gap, `
+            + 'not a no-release day; do not build the day around current and do not rule it out.'
+          : null;
+      }
+      const items = Array.isArray(rel.items) ? rel.items : [];
+      return rel.all_no_release === true || !items.length
+        ? 'The operator has published its release schedule and every day on it reads NO RELEASE. '
+          + 'Do not build the day around current.'
+        : `The operator has published releases: ${items.slice(0, 3)
+            .map((i) => `${i.date || '?'} ${i.text || i.cfs || ''}`.trim()).join('; ')}.`;
+    },
+  },
+  {
+    id: 'accessNotices',
+    keys: ['accessAlerts', 'accessAlertsExpired'],
+    say(c) {
+      const acc = Array.isArray(c.accessAlerts) ? c.accessAlerts : [];
+      if (!acc.length) return null;
+      const L = [`ACCESS NOTICES from the operator (${acc.length}) — a closed ramp is a trip that `
+        + 'does not happen, so say it if it bears on the launch:'];
+      for (const a of acc.slice(0, 4)) {
+        L.push(`  · ${a.place || a.water || 'Access area'}: ${String(a.text || '').replace(/\s+/g, ' ').slice(0, 300)}`);
+      }
+      return L;
+    },
+  },
+  {
+    // ── THE THIRD STATE, AND THE ONLY DEFENCE AGAINST A NUMBER BEING INVENTED ──────────────
+    //
+    // A field can be empty for three reasons and until now the prompt could express one. A value
+    // means it was measured. `unpublished` means no gauge bound to this water measures the
+    // parameter at all -- a registry gap, and a permanent one. `silent` is the gap between them:
+    // a site that DOES catalogue the parameter and returned no number today, named so it can be
+    // distrusted rather than filled in from recall. The model has no other way to tell a clear
+    // lake from an unmeasured one.
+    id: 'honesty',
+    keys: ['unpublished', 'silent'],
+    say(c) {
+      const L = [];
+      const un = Array.isArray(c.unpublished) ? c.unpublished : [];
+      const si = Array.isArray(c.silent) ? c.silent : [];
+      if (un.length) {
+        L.push(`NOT MEASURED ON THIS WATER — no gauge bound to it publishes `
+          + `${un.map((p) => p.label || p.code).join(', ')}. Those are silent above because nobody `
+          + 'measures them here, not because of what they would have said. Do not supply a value '
+          + 'for any of them, and where one matters to the plan, say it was not measured.');
+      }
+      if (si.length) {
+        const named = si.map((p) => {
+          const why = p.reason === 'site_silent' ? 'whole gauge quiet' : 'no reading';
+          const at = p.usgs_site ? ` (site ${p.usgs_site}, ${why})` : ` (${why})`;
+          return `${p.label || p.code}${at}`;
+        }).join('; ');
+        L.push(`MEASURED HERE BUT NOT REPORTING TODAY — ${named}. A gauge that normally answers `
+          + 'and did not is different from one that never measured it: treat these as unknown '
+          + 'today, not as normal.');
+      }
+      return L.length ? L : null;
+    },
+  },
+];
+
+/**
+ * Every other key readConditions() returns, and what already says it.
+ *
+ * This is not a list of things that do not matter — most of it is the core of the prompt. It is
+ * the record of WHERE each one is said, so that this block does not say it twice and so that a
+ * new field cannot land in the producer and reach nothing while looking accounted for.
+ */
+const CONDITION_ELSEWHERE = {
+  // The envelope. `pending` and `error` are the reasons there is nothing, and the block returns
+  // '' on an error rather than describing a water it could not read.
+  ok: 'envelope',
+  slug: 'envelope',
+  displayName: 'the water is named in the day header',
+  featureType: 'chooses riverPromptBlock() vs poolPromptBlock()',
+  pending: 'envelope — the registry gap, surfaced by levelSentence() on the card',
+  error: 'envelope — this block returns nothing when it is set',
+  observedAt: 'provenance for the level, printed on the card',
+  // WHERE THE WATER IS TODAY. poolPromptBlock() and levelSentence().
+  levelFt: 'poolPromptBlock()',
+  fullPoolFt: 'poolPromptBlock()',
+  belowFullPoolFt: 'poolPromptBlock()',
+  levelSource: 'levelSentence(), inside poolPromptBlock()',
+  levelUrl: 'a link for the card only',
+  feedName: 'levelSentence(), inside poolPromptBlock()',
+  operatorMessage: 'poolPromptBlock()',
+  operatorMessages: 'the older notices, card only',
+  // THE FLOW IS THE DAY. riverPromptBlock().
+  flowCfs: 'riverPromptBlock()',
+  flowGauge: 'riverPromptBlock()',
+  flowGaugeKm: 'how far the flow gauge is, card only',
+  flowBand: 'riverPromptBlock() as flowVsNormal',
+  flowMedian: 'riverPromptBlock() as flowMedianCfs',
+  tidalFlowCfs: 'riverPromptBlock() — wins over flowCfs on a tidal river',
+  stageFt: 'riverPromptBlock()',
+  stageBasis: 'riverPromptBlock()',
+  stageGauge: 'provenance for the stage, card only',
+  stageGaugeKm: 'provenance for the stage, card only',
+  stageGaugeRole: 'provenance for the stage, card only',
+  floodCategory: 'riverPromptBlock()',
+  floodActionFt: 'the threshold behind ftBelowFloodAction in riverPromptBlock()',
+  stageVsActionFt: 'riverPromptBlock() as ftBelowFloodAction',
+  gaugeOutOfService: 'riverPromptBlock()',
+  generatingNow: 'riverPromptBlock() — the fact; the generation fact above is the magnitude',
+  generationNext: 'riverPromptBlock()',
+  // INSHORE, WHERE THE TIDE IS THE CURRENT. coastalPromptBlock().
+  currentKn: 'coastalPromptBlock()',
+  currentType: 'coastalPromptBlock()',
+  currentAt: 'coastalPromptBlock()',
+  currentStation: 'coastalPromptBlock()',
+  currentStationKm: 'coastalPromptBlock()',
+  currentBoundBy: 'coastalPromptBlock()',
+  currentDirDeg: 'coastalPromptBlock() — the set',
+  tideStation: 'coastalPromptBlock()',
+  nextTide: 'coastalPromptBlock() as nextEvent',
+  surgeFt: 'coastalPromptBlock() as surgeVsPredictedFt',
+  salinityPpt: 'coastalPromptBlock()',
+  salinityPsu: 'coastalPromptBlock()',
+  conductanceUsCm: 'coastalPromptBlock()',
+  saltGauge: 'coastalPromptBlock()',
+  saltGaugeKm: 'coastalPromptBlock()',
+  saltBasis: 'coastalPromptBlock()',
+  ndbc: 'the raw buoy envelope — its met fields are lifted into windMph/windDirDeg/gustMph by '
+      + 'readConditions() and said by the measuredWind fact; its ocean sonde is the coastal salt',
+  // THE FISHING DAY STARTS WHEN YOU CAN SEE TO LAUNCH. lightPromptBlock().
+  civilDawn: 'lightPromptBlock()',
+  civilDusk: 'lightPromptBlock()',
+  sunrise: 'lightPromptBlock()',
+  sunset: 'lightPromptBlock()',
+  // THE TWO SAFETY FIELDS. Printed from o.hazards in the safety section of the prompt.
+  hazards: 'the hazards block, off o.hazards',
+  hazardsAllClear: 'the hazards block, off o.hazards',
+};
+
 export function conditionsPromptBlock(ws) {
   if (!ws || ws.error) return '';
   const L = [];
-
-  if (isNum(ws.waterTempF)) {
-    // WHERE IT WAS MEASURED TRAVELS WITH IT. A tailrace gauge sits below the dam and is not the
-    // lake; a borrowed upstream reading is not this water at all. The card has said so since it
-    // was written and a number that arrives without its provenance cannot be argued with.
-    const from = ws.waterTempFrom === 'upstream'
-        ? ` — measured UPSTREAM, not on this water${ws.waterTempGauge ? ` (${ws.waterTempGauge})` : ''}`
-      : ws.waterTempGauge ? ` — ${ws.waterTempGauge}` : '';
-    L.push(`Water temperature ${ws.waterTempF} °F${from}.`);
-  }
-  if (isNum(ws.oxygenMgL)) {
-    L.push(`Dissolved oxygen ${ws.oxygenMgL} mg/L. Below about 4 mg/L is not holding fish.`);
-  } else if (isNum(ws.oxygenPpm)) {
-    // THE SONDE'S COLUMN IS ppm. Same threshold, said in the unit that was actually measured:
-    // the two differ by about the density of seawater, which is well inside the slop of a
-    // rule of thumb, and saying so is cheaper than converting a number and pretending it came
-    // back that way. On ACE Basin and St. Helena this is the only oxygen there is.
-    L.push(`Dissolved oxygen ${ws.oxygenPpm} ppm at the reserve sonde. Below about 4 is not `
-      + 'holding fish — the sonde reports ppm and the USGS gauges report mg/L, and at these '
-      + 'magnitudes the threshold is the same number.');
-  }
-  if (ws.moonPhase) {
-    L.push(`Moon ${ws.moonPhase}${ws.moonIllumination ? ` · ${ws.moonIllumination} lit` : ''}.`);
-  }
-  if (isNum(ws.popPct)) L.push(`Chance of rain ${ws.popPct}% in the first forecast period.`);
-  if (isNum(ws.pressureMb)) {
-    L.push(`Barometer ${ws.pressureMb} mb — one observation, so there is no trend in it.`);
-  }
-  if (isNum(ws.flowAnomaly)) {
-    L.push(`Flow versus normal ${ws.flowAnomaly > 0 ? '+' : ''}${ws.flowAnomaly} — National Water `
-         + `Model anomaly, published without units. Only the SIGN is usable.`);
-  }
-
-  const rel = ws.releases;
-  if (rel) {
-    const items = Array.isArray(rel.items) ? rel.items : [];
-    L.push(rel.all_no_release === true || !items.length
-      ? 'The operator has published its release schedule and every day on it reads NO RELEASE. '
-        + 'Do not build the day around current.'
-      : `The operator has published releases: ${items.slice(0, 3)
-          .map((i) => `${i.date || '?'} ${i.text || i.cfs || ''}`.trim()).join('; ')}.`);
-  }
-
-  const acc = Array.isArray(ws.accessAlerts) ? ws.accessAlerts : [];
-  if (acc.length) {
-    L.push(`ACCESS NOTICES from the operator (${acc.length}) — a closed ramp is a trip that does `
-         + `not happen, so say it if it bears on the launch:`);
-    for (const a of acc.slice(0, 4)) {
-      L.push(`  · ${a.place || a.water || 'Access area'}: ${String(a.text || '').replace(/\s+/g, ' ').slice(0, 300)}`);
+  for (const f of CONDITION_FACTS) {
+    let said = null;
+    try {
+      said = f.say(ws);
+    } catch (e) {
+      // ONE MALFORMED SUB-OBJECT MUST NOT COST THE WHOLE BLOCK. `dukeGuide`, `droughtNotice`,
+      // `releases`, `unpublished` and `windMeasured` arrive shaped by the Worker, and a shape
+      // that changed upstream is a missing line, not a plan with no conditions in it.
+      console.warn(`[prompt] conditions fact ${f.id} could not be said:`, e && e.message);
     }
+    if (!said) continue;
+    for (const line of [].concat(said)) if (line) L.push(line);
   }
-
   if (!L.length) return '';
   return `
 WHAT THE GAUGES SAY TODAY
 ${L.join('\n')}
 `;
 }
+
+export { CONDITION_FACTS, CONDITION_ELSEWHERE };
 
 /**
  * ── SPEED FOLLOWS FROM THE BAIT, AND THE GPS IS NOT THE BAIT'S NUMBER ───────────────────
