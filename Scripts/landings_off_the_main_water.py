@@ -37,42 +37,15 @@ import argparse, json, math, os, sys
 from shapely.geometry import shape, Point
 from shapely.strtree import STRtree
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# ONE COPY. components() lived here and build_ramp_reach.py needs the same answer; a second
+# implementation of "which pieces of water are one piece" is how two readers of one rule drift.
+from water_polygons import components                      # noqa: E402
+
 
 def load_json(p):
     with open(p, encoding='utf-8') as fh:
         return json.load(fh)
-
-
-def components(polys):
-    """Union-find over polygons that touch. Returns a list of index-lists, largest area first.
-
-    `intersects` and not a distance: two adjacent depth BANDS share an edge and are one body of
-    water, while two pools either side of a dike share nothing. Nesting is fine -- a deeper ring
-    inside a shallower one is contained by it, which is the same water.
-    """
-    n = len(polys)
-    parent = list(range(n))
-
-    def find(x):
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    def union(a, b):
-        ra, rb = find(a), find(b)
-        if ra != rb:
-            parent[rb] = ra
-
-    tree = STRtree(polys)
-    for i, g in enumerate(polys):
-        for j in tree.query(g):
-            if j > i and polys[j].intersects(g):
-                union(i, j)
-    groups = {}
-    for i in range(n):
-        groups.setdefault(find(i), []).append(i)
-    return sorted(groups.values(), key=lambda ix: -sum(polys[k].area for k in ix))
 
 
 def main():

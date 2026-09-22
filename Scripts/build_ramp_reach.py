@@ -831,6 +831,33 @@ def recentre(route, polys, deep=None, step=50.0, probe=5.0, reach=3000.0, passes
         print('    route not faired (%s)' % exc, flush=True)
         return route
 
+def _nearest_comp(tree, polys, comp_of, lo, la):
+    """The component id of the charted water nearest this landing, or None."""
+    if tree is None or not comp_of:
+        return None
+    from shapely.geometry import Point as _Pt
+    pt = _Pt(lo, la)
+    best = None
+    for i in tree.query(pt.buffer(0.004)):        # ~400 m, the bank plus slack
+        d = polys[i].distance(pt)
+        if best is None or d < best[0]:
+            best = (d, i)
+    return None if best is None else comp_of.get(best[1])
+
+
+def _pool_acres(tree, polys, comp_of, pool_ac, lo, la):
+    c = _nearest_comp(tree, polys, comp_of, lo, la)
+    return None if c is None else pool_ac.get(c)
+
+
+def _on_main(tree, polys, comp_of, seed_comp, lo, la):
+    """True/False/None -- None means it could not be determined, which is not False."""
+    if seed_comp is None:
+        return None
+    c = _nearest_comp(tree, polys, comp_of, lo, la)
+    return None if c is None else (c == seed_comp)
+
+
 def reach_for(slug, args, points):
     cl_p = os.path.join(args.chartpack, slug, 'centreline.geojson')
     pts, st, kind = [], [], None
@@ -888,7 +915,70 @@ def reach_for(slug, args, points):
     # back out of the water the routing just paid to stay in.
     deep_polys = ([g for g, ft in zip(polys, depths or []) if ft and ft >= floor_ft]
                   if (depths and floor_ft > 0) else None)
+    # ── WHICH PIECE OF WATER IS THIS LANDING ON ────────────────────────────────────────────
+    #
+    # `water_m` does NOT mean 'how far to the lake'. On a lake the seed is EVERY water cell
+    # inside the boundary (see the kind == 'boundary' branch above), so a landing standing on a
+    # pool that happens to sit inside that boundary is seeded from underneath and scores 0.
+    # Lake Marion's `Borrow Pit` reads water_m 0 while standing on a 208-acre pool it cannot
+    # leave; Lake Monticello's sub-impoundment ramp reads 0 for a 285-acre Recreational Lake
+    # behind a dike with a road on it. For a single-bodied lake the two sentences coincide, and
+    # nothing here was ever wrong -- it answers a narrower question than its name suggests.
+    #
+    # THE RASTER CANNOT SETTLE THIS AND A FINER ONE IS THE WRONG ANSWER. CELL_DEG is ~26 m; a
+    # flood at 25 m calls Monticello 100.0%% connected and at 6 m calls it 36.9%%. Two depth-area
+    # polygons either side of a dike share no edge at ANY resolution, so adjacency answers it
+    # exactly, once, off the polygons this function already loaded. Ryan settled the ground
+    # truth by hand: the Borrow Pit, Wyboo Swamp and the Monticello Recreational Lake are all
+    # dikes, and C. Alex Harvin III -- which comes back on the main body -- is passable.
+    #
+    # NOTHING IS FILTERED. The landing keeps its row, its water_m and its route; it gains the
+    # size of the water it is actually on. Annotate, never filter -- the same rule as the reach
+    # distance itself, one level down.
+    comp_of, pool_ac, seed_comp = {}, {}, None
+    if len(polys) <= getattr(args, 'max_component_polys', 40000):
+        try:
+            from water_polygons import components as _components
+            _comps = _components(polys)
+            _k = math.cos(math.radians((bbox[1] + bbox[3]) / 2.0)) or 1e-9
+            for _ci, _ix in enumerate(_comps):
+                pool_ac[_ci] = round(sum(polys[_i].area for _i in _ix)
+                                     * (111320.0 ** 2) * _k / 4046.86, 1)
+                for _i in _ix:
+                    comp_of[_i] = _ci
+            # THE SEED'S COMPONENT IS 'MAIN', not the largest -- on a river the seed is the
+            # centreline and the biggest polygon set in a 5.5 km bbox may be the next water over.
+            from shapely.geometry import Point as _Pt
+            from shapely.strtree import STRtree as _T
+            _tree = _T(polys)
+            _tally = {}
+            _step = max(1, len(pts) // 400)
+            for _q in pts[::_step]:
+                _pt = _Pt(_q[0], _q[1])
+                _best = None
+                for _i in _tree.query(_pt.buffer(0.002)):
+                    _d = polys[_i].distance(_pt)
+                    if _best is None or _d < _best[0]:
+                        _best = (_d, _i)
+                if _best is not None:
+                    _c = comp_of.get(_best[1])
+                    _tally[_c] = _tally.get(_c, 0) + 1
+            if _tally:
+                seed_comp = max(_tally, key=_tally.get)
+        except Exception as _exc:
+            print('   !! component stamp skipped on %s (%s: %s) -- landings will carry no pool'
+                  % (slug, type(_exc).__name__, _exc))
+            comp_of, pool_ac, seed_comp = {}, {}, None
+    else:
+        # NAMED, NOT SWALLOWED.
+        print('   .. %s has %d charted polygons, over the component cap -- no pool stamp'
+              % (slug, len(polys)))
+
     import numpy as np
+    _ctree = None
+    if comp_of:
+        from shapely.strtree import STRtree as _T2
+        _ctree = _T2(polys)
     PX = np.fromiter((p[0] for p in pts), dtype=float, count=len(pts))
     PY = np.fromiter((p[1] for p in pts), dtype=float, count=len(pts))
     got = []
@@ -948,6 +1038,12 @@ def reach_for(slug, args, points):
                     # and by how much; a flag said every one of them was.
                     'shoal_m': (None if not deep_polys or not raw
                                 else int(round(shoal_m(raw, deep_polys)))),
+                    # WHICH BODY OF WATER IT IS STANDING ON, and how big that body is. Null
+                    # when the pool could not be determined -- a water over the component cap,
+                    # or no polygon near the landing -- because unknown and 'on the main lake'
+                    # must not look the same.
+                    'pool_acres': _pool_acres(_ctree, polys, comp_of, pool_ac, lo, la),
+                    'on_main_water': _on_main(_ctree, polys, comp_of, seed_comp, lo, la),
                     'filed': sorted(rec['filed']), 'src': sorted(rec['src'])})
     got.sort(key=lambda r: (r['water_m'] is None, r['water_m']))
     return {'slug': slug, 'cell_m': round(step, 1), 'water_cells': nwet, 'seed': kind,

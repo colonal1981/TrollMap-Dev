@@ -20,6 +20,7 @@ Personal use only, not for distribution or resale; not for navigation.
 import json, math, os
 
 from shapely.geometry import shape, Point
+from shapely.strtree import STRtree
 from shapely.ops import transform as sh_transform, unary_union
 
 
@@ -103,3 +104,36 @@ class NearIndex:
                         seen.add(slug)
                         out.append(slug)
         return out
+
+
+def components(polys):
+    """Union-find over polygons that TOUCH. Index-lists, largest total area first.
+
+    `intersects` and not a distance: two adjacent depth BANDS share an edge and are one body of
+    water, while two pools either side of a dike share nothing. Nesting is fine -- a deeper ring
+    inside a shallower one is contained by it, which is the same water.
+
+    THIS IS THE RESOLUTION-FREE ANSWER TO A QUESTION A RASTER CANNOT ANSWER. A flood at 25 m said
+    Lake Monticello was 100.0%% connected and at 6 m said 36.9%%, because a dike with a road on it
+    is about one cell wide. Polygon adjacency has no cell to be narrower than.
+    """
+    n = len(polys)
+    parent = list(range(n))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    tree = STRtree(polys)
+    for i, g in enumerate(polys):
+        for j in tree.query(g):
+            if j > i and polys[j].intersects(g):
+                ra, rb = find(i), find(int(j))
+                if ra != rb:
+                    parent[rb] = ra
+    groups = {}
+    for i in range(n):
+        groups.setdefault(find(i), []).append(i)
+    return sorted(groups.values(), key=lambda ix: -sum(polys[k].area for k in ix))
