@@ -113,6 +113,17 @@ class Ramps(osmium.SimpleHandler):
                    sum(p[1] for p in pts) / len(pts))
 
 
+def _same_ramp(a, b):
+    """Whether two records of one OSM id agree. `state` is which EXTRACT it came from rather
+    than a fact about the ramp, so it is excluded from the comparison."""
+    ca, cb = a['geometry']['coordinates'], b['geometry']['coordinates']
+    if abs(ca[0] - cb[0]) > 1e-5 or abs(ca[1] - cb[1]) > 1e-5:   # about a metre
+        return False
+    pa = {k: v for k, v in a['properties'].items() if k != 'state'}
+    pb = {k: v for k, v in b['properties'].items() if k != 'state'}
+    return pa == pb
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -126,15 +137,66 @@ def main():
     if not files:
         sys.exit('no .pbf in %s' % a.pbf)
 
+    # -- ONE OSM OBJECT IS ONE RAMP, EVEN WHEN TWO EXTRACTS BOTH CONTAIN IT -----------------
+    #
+    # `Ramps.seen` dedupes inside ONE state, and until 2026-09-21 nothing deduped ACROSS them.
+    # Geofabrik's state extracts overlap at the border, so a ramp near a state line sits in two
+    # files and was emitted twice. Measured on the 20 Sep extracts: **3,592 features carrying
+    # 3,490 distinct ids -- 101 emitted twice**, 93 nodes and 8 ways, on the Savannah, Hartwell,
+    # Thurmond, Wylie and Chickamauga. The same 102 in the July extracts, so it is as old as
+    # this script.
+    #
+    # IT WAS INVISIBLE BECAUSE TWO LATER COLLAPSES BOTH HIDE IT. make_osm_ramps_by_lake.py files
+    # both copies on the same lake, and sameLanding() in access-index.js then folds two rows at
+    # an identical position into one dropdown entry. The PICKER looked right the whole time.
+    # What was wrong is the COUNT underneath it -- `ramps` in lake_index.json, which is the
+    # access badge.
+    #
+    # KEEPING THE FIRST IS SAFE BECAUSE THE COPIES ARE THE SAME OBJECT, AND THAT WAS MEASURED.
+    # All 101 pairs agree on position to under half a metre and on every tag; only `state`
+    # differs, and nothing downstream reads it -- make_osm_ramps_by_lake.py keeps name, access,
+    # tag, osm_type, osm_id, lat and lon. The worry worth having was that an extract CLIPS a way
+    # at the state line, leaving each copy a different node count and therefore a different
+    # centroid. It does not happen here: 93 of the 101 are NODES, which cannot be clipped, and
+    # the 8 ways came through whole in both files.
+    #
+    # SO THE DEDUPE SAYS SO WHEN THAT STOPS BEING TRUE. `files` is sorted, so first-wins is
+    # deterministic; a future extract that clips a way differently, or two copies that disagree
+    # about a tag, is a fact about the data and gets printed rather than quietly resolved.
     feats = []
+    by_id = {}
+    dropped = 0
+    disagreed = []
     for fp in files:
         state = re.split(r'[-_]\d', os.path.basename(fp))[0]
         h = Ramps(state)
         # locations=True builds the node cache ways need. Sparse array keeps it in RAM;
         # a state-sized extract is fine, a CONUS one is not.
         h.apply_file(fp, locations=True, idx='sparse_mem_array')
-        print('%-22s %6d ramps' % (state, len(h.out)))
-        feats.extend(h.out)
+        kept = 0
+        for f in h.out:
+            key = (f['properties']['osm_type'], f['properties']['osm_id'])
+            first = by_id.get(key)
+            if first is not None:
+                dropped += 1
+                if not _same_ramp(first, f):
+                    disagreed.append((key, first, f))
+                continue
+            by_id[key] = f
+            feats.append(f)
+            kept += 1
+        print('%-22s %6d ramps (%d already in an earlier extract)'
+              % (state, len(h.out), len(h.out) - kept))
+
+    if dropped:
+        print('\n%d duplicate OSM id(s) dropped -- one object present in two state extracts'
+              % dropped)
+    for key, first, dup in disagreed:
+        print('!! %s %s DIFFERS between extracts: %s vs %s -- kept the first. This is the case '
+              'the dedupe exists to report rather than hide; check whether a way was clipped '
+              'at the state line.'
+              % (key[0], key[1], first['geometry']['coordinates'],
+                 dup['geometry']['coordinates']))
 
     json.dump({'type': 'FeatureCollection', 'features': feats},
               open(a.out, 'w', encoding='utf-8'))

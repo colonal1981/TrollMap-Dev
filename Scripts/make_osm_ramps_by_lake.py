@@ -118,6 +118,45 @@ def load_boxes(bdir, skip=()):
     return out
 
 
+def ryan_drops(registry):
+    """The positions Ryan has said are NOT a launch, from his own roll call.
+
+    `registry/_launch_name_overrides.json` carries his answers: names for the landings he
+    recognised and `drop: true` for the ones that are not launches at all. He worked the card
+    landing by landing on 2026-09-20 and answered every one; the drops are OSM slipway nodes
+    that are a dock, a bank or somebody's driveway.
+
+    THIS IS THE RIGHT PLACE FOR THEM AND access-index.js IS NOT. ryanName() there deliberately
+    reads NAMES ONLY, because the access index also holds state-agency rows, and deleting one of
+    those because an OSM node ten metres away was dropped would remove a real ramp on the
+    strength of a different record. Every row HERE is an OSM node, so a drop is about the row it
+    is on.
+
+    UNTIL NOW NOTHING APPLIED THEM, so every run of this script put all of them back. That is
+    the whole of this change -- it is SUBTRACTIVE ONLY, on positions he named himself, and it
+    touches neither the binding rule nor any count that is not his answer.
+    """
+    fp = os.path.join(registry, '_launch_name_overrides.json')
+    if not os.path.exists(fp):
+        return []
+    names = (json.load(open(fp, encoding='utf-8')) or {}).get('names') or {}
+    out = []
+    for key, rec in names.items():
+        if not isinstance(rec, dict) or not rec.get('drop'):
+            continue
+        parts = str(key).split(',')
+        try:
+            out.append((float(parts[0]), float(parts[1])))
+        except (ValueError, IndexError):
+            continue
+    return out
+
+
+# Same 40 m as ryanName() and sameLanding() in access-index.js, because it is the same
+# question: is the row in front of me this landing. Not a new number.
+DROP_DEG = 0.0004
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -125,6 +164,8 @@ def main():
     ap.add_argument('--ramps', required=True, help='osm_ramps.geojson from osm_ramps.py')
     ap.add_argument('--margin-m', type=float, default=300.0,
                     help='how far off the water a ramp may sit. Default 300 m.')
+    ap.add_argument('--keep-drops', action='store_true',
+                    help='do NOT apply Ryan\'s "not a launch" answers. Diagnosis only.')
     ap.add_argument('--go', action='store_true', help='write. Default is a dry run.')
     a = ap.parse_args()
 
@@ -136,6 +177,10 @@ def main():
     boxes = load_boxes(bdir, skip=gone)
     print('%d registry boundaries (%d retired slug(s) skipped, so a merged-away boundary '
           'cannot outbid its keeper)' % (len(boxes), len(gone)))
+
+    drops = [] if a.keep_drops else ryan_drops(a.registry)
+    print('%d position(s) Ryan has said are NOT a launch%s'
+          % (len(drops), '   [--keep-drops: NOT APPLIED]' if a.keep_drops else ''))
 
     gj = json.load(open(a.ramps, encoding='utf-8'))
     feats = gj.get('features') or []
@@ -149,12 +194,16 @@ def main():
                 grid.setdefault((gx, gy), []).append(slug)
 
     dlat = a.margin_m / 111320.0
-    out, unclaimed = {}, 0
+    out, unclaimed, dropped = {}, 0, 0
     for f in feats:
         c = (f.get('geometry') or {}).get('coordinates') or []
         if len(c) < 2:
             continue
         lon, lat = c[0], c[1]
+        if any(abs(dla - lat) < DROP_DEG and abs(dlo - lon) < DROP_DEG
+               for dla, dlo in drops):
+            dropped += 1
+            continue
         dlon = a.margin_m / (111320.0 * max(0.1, math.cos(math.radians(lat))))
         best = None
         for slug in grid.get((math.floor(lon / GRID), math.floor(lat / GRID)), ()):
@@ -190,8 +239,8 @@ def main():
     new_recs = sum(len(v) for v in out.values())
     old_with = sum(1 for v in old.values() for r in v if isinstance(r.get('lat'), (int, float)))
 
-    print('\n%d ramps assigned to %d lakes, %d claimed by no boundary'
-          % (new_recs, len(out), unclaimed))
+    print('\n%d ramps assigned to %d lakes, %d claimed by no boundary, %d dropped on his own answer'
+          % (new_recs, len(out), unclaimed, dropped))
     print('before: %d records on %d lakes, %d had coordinates'
           % (old_recs, len(old_lakes), old_with))
     print('after : %d records on %d lakes, %d have coordinates' % (new_recs, len(out), new_recs))
