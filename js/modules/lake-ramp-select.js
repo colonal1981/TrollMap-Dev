@@ -23,7 +23,8 @@ import { waterZoneCandidates } from '../data/water-aliases.js';
 import { registryStats } from '../data/lake-registry.js';
 import { makePredicate } from '../data/water-filter.js';
 import { matchRampIndex } from '../utils/ramp-match.js';
-import { launchReach, listingAt, reachLabel, samePlace } from '../data/launch-reach.js';
+import { launchReach, listingAt, reachLabel, samePlace, offMainAt }
+         from '../data/launch-reach.js';
 // The picker question moved to js/data/water-picker.js -- see the note at its top for why it is
 // not in here. Re-exported so nothing that imported these from this module had to move.
 import { STATE_ORDER, TYPE_ORDER, pickerLabel, sortForDisplay, stateOf, typeOf,
@@ -379,6 +380,24 @@ async function onLakeChange(selLakeName) {
   // Appended, never substituted: an access point the feed already carries keeps its own row,
   // its own marker and its own source. Nothing is taken off the water it is filed under
   // either -- Marion keeps Pack's.
+  // AND THE AGENCY'S OWN ROWS GET THE SAME VERDICT. launches.json answers "can a boat get from
+  // there to this water", and collapse() already dropped the landings it cannot -- but `Debutary`
+  // reaches this dropdown through the LIVE feed, because SCDNR files it under Lake Wateree, and
+  // it sits across the Cedar Creek dam. Ryan, 2026-09-22: *"on wateree i am seeing launches that
+  // you can't physically get to from wateree... lugoff, debutary"*. Lugoff and Stumpy Pond were
+  // the reach list; Debutary was this line.
+  //
+  // AFTER the framing and the coastal-zone pick, like the reach rows themselves: a landing that
+  // is not on this water is still a true answer to "where is this water" for both of those.
+  if (reach.length) {
+    const before = accessPoints.length;
+    accessPoints = accessPoints.filter((p) => !offMainAt(selLakeName, Number(p.lat), Number(p.lon)));
+    if (accessPoints.length !== before) {
+      console.log(`[lake-ramp-select] ${before - accessPoints.length} agency row(s) dropped from `
+                + `${selLakeName}: on water it cannot leave`);
+    }
+  }
+
   if (reach.length) {
     const extra = [];
     for (const r of reach) {

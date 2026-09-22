@@ -92,7 +92,15 @@ export function rampCoords(lakeName, rampName) {
   // below is matchRampIndex() -- the one copy of "is this the same launch", see js/utils/ramp-match.js
   // -- rather than this function's own third version of it.
   if (!normRampName(rampName)) return null;
-  const points = getLoadedAccessIndex()?.byLake?.get(lakeName) || [];
+  // LAUNCHES FIRST, because /bank-pier reads through the access index from 2026-09-22 and it
+  // names things after the ramp beside them: "Lake Wateree State Park" is the ramp, "Lake
+  // Wateree State Park Bank" is a fishing platform 52 m away. Resolving a picked ramp to the
+  // bank's coordinate would put the plan's start on the wrong side of the parking lot. The
+  // fallback keeps every row in play when no launch matches, so nothing that resolved before
+  // stops resolving.
+  const all = getLoadedAccessIndex()?.byLake?.get(lakeName) || [];
+  const launches = all.filter((p) => p.launch !== false);
+  const points = matchRampIndex(launches, rampName, null, null) >= 0 ? launches : all;
   const i = matchRampIndex(points, rampName, null, null);
   const hit = i >= 0 ? points[i] : null;
   if (hit && Number.isFinite(hit.lat)) return [hit.lon, hit.lat];

@@ -156,3 +156,50 @@ test('one landing is drawn by exactly one button', () => {
   // Turning one button off hands its shared landings down to the next, so all of them redraw.
   assert.match(code(LAYER), /onHide: \(\) => redrawAll\(\)/);
 });
+
+// ── A LANDING ON WATER IT CANNOT LEAVE ─────────────────────────────────────────────────────────
+//
+// Ryan, 2026-09-22, reading the live Wateree list: "on wateree i am seeing launches that you
+// can't physically get to from wateree... lugoff, debutary". Measured off a fresh producer run
+// the same day: Lugoff water_m 379 on a 346-acre pool below the dam, Debutary 1605 and Stumpy
+// Pond 1352 on the 1,140-acre Cedar Creek pool, against 12,031 acres of Lake Wateree. He chose
+// the drop over the annotation, which makes it the SECOND deliberate exception in launch-reach.js
+// after isClosed(), and chose null (not measured) to read as reachable rather than as blocked.
+
+const REACHSRC = read('js', 'data', 'launch-reach.js');
+const PLAN = read('js', 'modules', 'plan-builder.js');
+const SPV2W = read('js', 'modules', 'smart-plan-v2-wiring.js');
+
+test('a landing on water it cannot leave is dropped, and null is not false', () => {
+  const fn = code(REACHSRC).match(/function offMainWater\([\s\S]*?\n\}/);
+  assert.ok(fn, 'offMainWater() is still in launch-reach.js');
+  // === false, never a truthy test: null means the component stamp could not run, and on the ten
+  // waters over the 40,000-polygon cap that is EVERY landing on Hartwell, Thurmond and Norris.
+  assert.match(fn[0], /on_main_water === false/);
+  assert.doesNotMatch(fn[0], /!r\.on_main_water|on_main_water\s*\?/,
+    'a falsy test would delete every landing on a lake that was never measured');
+  assert.match(code(REACHSRC), /if \(offMainWater\(r\)\)/, 'collapse() must apply it');
+});
+
+test('both of collapse\u2019s drops are counted, not silent', () => {
+  // A removal nobody can see is how a wrong rule survives. pool_acres is the reason the off-main
+  // ones went, so it is what gets printed -- which is also the only thing in the app that reads
+  // that field.
+  assert.match(code(REACHSRC), /dropped\.closed/);
+  assert.match(code(REACHSRC), /pool_acres/,
+    'pool_acres is written by the producer and has to be read by something');
+});
+
+test('the agency\u2019s own rows get the same verdict in every dropdown', () => {
+  // Lugoff and Stumpy Pond arrive through launches.json and collapse() handles them. Debutary
+  // does not -- SCDNR files it under Lake Wateree and it reaches the list through access-index.
+  assert.match(code(REACHSRC), /export function offMainAt\(/);
+  for (const [name, src] of [['lake-ramp-select', SELECT], ['plan-builder', PLAN]]) {
+    assert.match(code(src), /offMainAt\(/, `${name} must apply the off-main verdict`);
+    assert.match(code(src), /launch !== false/, `${name} must also drop bank/pier rows`);
+  }
+  // Resolving a PICKED ramp is a different question and must not be filtered to nothing -- but it
+  // must prefer a launch, or "Lake Wateree State Park" resolves to the fishing platform 52 m away.
+  assert.match(code(SPV2W), /launches\.filter|\.filter\(\(p\) => p\.launch !== false\)/);
+  assert.match(code(SPV2W), /\? launches : all/, 'it must fall back rather than resolve nothing');
+});

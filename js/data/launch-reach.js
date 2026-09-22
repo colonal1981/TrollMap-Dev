@@ -33,6 +33,11 @@ import { registryLoader } from './registry-loader.js';
 // r2Key -> landings[], or null while a fetch is in flight. A water with no launches.json caches
 // [] and is never asked again, which is the normal case for most packs.
 const CACHE = new Map();
+// water key -> the landings collapse() dropped as off-main. The reach list no longer carries them
+// and the LIVE state feed never knew about them, so this is the only place that can tell
+// lake-ramp-select.js that the agency's own "Debutary -- Boat ramp (agency)" row under Lake
+// Wateree is across the Cedar Creek dam. Same verdict, one measurement, two readers.
+const OFF_MAIN = new Map();
 
 /**
  * The landings for a water, or [] if they are not here yet.
@@ -58,7 +63,7 @@ export function launchReach(waterbodyName, onReady) {
       const r = await fetch(`${CF_WORKER_URL}/chartpacks/${encodeURIComponent(key)}/launches.json`);
       if (r.ok) {
         const d = await r.json();
-        if (Array.isArray(d && d.landings)) got = collapse(d.landings);
+        if (Array.isArray(d && d.landings)) { got = collapse(d.landings); OFF_MAIN.set(key, got.offMain || []); }
       }
     } catch (_) { /* a pack without one is the normal case, not an error */ }
     CACHE.set(key, got);
@@ -133,6 +138,7 @@ export async function launchRouteFor(key, lat, lon) {
     try {
       const r = await fetch(`${CF_WORKER_URL}/chartpacks/${encodeURIComponent(key)}/launches.json`);
       rows = r.ok ? collapse((await r.json()).landings || []) : [];
+      OFF_MAIN.set(key, (rows && rows.offMain) || []);
     } catch (_) {
       rows = [];                      // a pack without one is the normal case, not an error
     }
@@ -148,6 +154,29 @@ export function routeAt(rows, lat, lon) {
     if (Array.isArray(r && r.route) && r.route.length >= 2 && samePlace(here, r)) return r.route;
   }
   return null;
+}
+
+/**
+ * Is the row at this position on water this launch list cannot reach?
+ *
+ * Shaped like listingAt() and routeAt() -- position in, verdict out, same samePlace() 40 m --
+ * because it answers the same question those do: is the row on the screen this landing.
+ *
+ * IT EXISTS BECAUSE THE DROP IS NOT ENOUGH ON ITS OWN. collapse() takes the off-main landings out
+ * of the reach list, which removes Lugoff and Stumpy Pond from Lake Wateree. It cannot remove
+ * `Debutary`, because Debutary does not arrive through launches.json at all on that water -- an
+ * agency files it under Lake Wateree and it reaches the dropdown through access-index.js as
+ * "Boat ramp (agency)". Ryan named all three in the same breath. One verdict, two readers.
+ *
+ * @param {string} waterbodyName the picker's own name for the water
+ */
+export function offMainAt(waterbodyName, lat, lon) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return false;
+  const key = resolveR2Key(waterbodyName);
+  const rows = key && OFF_MAIN.get(key);
+  if (!rows || !rows.length) return false;
+  const here = { lat, lon };
+  return rows.some((r) => samePlace(here, r));
 }
 
 export function listingAt(rows, lat, lon) {
@@ -192,8 +221,10 @@ export function samePlace(a, b) {
 function collapse(rows) {
   const out = [];
   const union = (a, b) => [...new Set([...(a || []), ...(b || [])])].sort();
+  const dropped = { closed: 0, offMain: [] };
   for (const r of rows) {
-    if (isClosed(r)) continue;
+    if (isClosed(r)) { dropped.closed++; continue; }
+    if (offMainWater(r)) { dropped.offMain.push(r); continue; }
     const hit = out.find((p) => samePlace(p, r)) || out.find((p) => sameNamedPlace(p, r));
     if (!hit) { out.push({ ...r }); continue; }
     if (r.name && (!hit.name || nameRank(r) < nameRank(hit))) hit.name = r.name;
@@ -213,7 +244,58 @@ function collapse(rows) {
     hit.filed = union(hit.filed, r.filed);
     hit.src = union(hit.src, r.src);
   }
+  // NEITHER DROP IS SILENT. Both of these remove a landing from a list Ryan reads, and a removal
+  // nobody can see is how a wrong rule survives. `pool_acres` is the whole reason the off-main
+  // ones went, so it is the thing printed: "Lugoff (346 ac)" says which water it is stuck on.
+  out.offMain = dropped.offMain;      // non-enumerable in spirit: the list is still an array
+  if (dropped.closed || dropped.offMain.length) {
+    const why = dropped.offMain
+      .map((r) => `${r.name || '(unnamed)'}${r.pool_acres ? ` (${r.pool_acres} ac)` : ''}`)
+      .join(', ');
+    console.log(`[launch-reach] ${out.length} landings`
+      + (dropped.closed ? `, ${dropped.closed} dropped as not public` : '')
+      + (why ? `, ${dropped.offMain.length} dropped as not on this water: ${why}` : ''));
+  }
   return out;
+}
+
+/**
+ * ── A LANDING ON WATER IT CANNOT LEAVE ──────────────────────────────────────────────────────────
+ *
+ * `build_ramp_reach.py` floods the charted water outward, and on a LAKE the seed is every water
+ * cell inside the boundary -- so a pool that merely sits inside that boundary is seeded from
+ * underneath and its landings score `water_m` 0 or a short number. The distance is not wrong; it
+ * is answering a narrower question than its name suggests. A raster cannot fix it either: CELL_DEG
+ * is ~26 m and a dam or a dike is narrower than that, so at 25 m the flood calls Monticello 100%
+ * connected and at 6 m it calls it 36.9%. Two depth-area polygons either side of a dike share no
+ * edge at ANY resolution, so `on_main_water` is decided by polygon ADJACENCY, once, at build time.
+ *
+ * Measured on Lake Wateree, 2026-09-22:
+ *
+ *     Debutary      water_m 1605   on_main false   pool 1,140.4 ac   (across the Cedar Creek dam)
+ *     Stumpy Pond   water_m 1352   on_main false   pool 1,140.4 ac   (the same pool)
+ *     Lugoff        water_m  379   on_main false   pool   346.0 ac   (the tailrace below the dam)
+ *     the 12 real Wateree ramps    on_main true    pool 12,031.0 ac
+ *
+ * FILTERED, NOT ANNOTATED, and that is the second deliberate exception in this file -- the first
+ * being isClosed(). The rule everywhere else is Ryan's: *"Annotates reads like the better answer"*,
+ * and it holds for DISTANCE, which is his judgement to make in the boat. This is not that. You
+ * cannot get a boat from below the Wateree dam onto Lake Wateree at any distance, in any
+ * conditions, ever. Ryan, 2026-09-22, looking at the live list: *"on wateree i am seeing launches
+ * that you can't physically get to from wateree... lugoff, debutary"*. He chose the drop.
+ *
+ * NOTHING IS LOST. launches.json is written per water, so the same landing is `on_main_water: true`
+ * on the water it IS on -- Lugoff under wateree_river, Debutary and Stumpy Pond under
+ * cedar_creek_reservoir_2 -- and keeps its row, its distance and its route there.
+ *
+ * NULL IS REACHABLE, NOT UNREACHABLE. `on_main_water` is null when the component stamp could not
+ * run: a pack built before 2026-09-22, or one of the ten waters over build_ramp_reach.py's
+ * 40,000-polygon cap (Hartwell, Thurmond, Norris, Lanier, Cherokee, Murray and four coastal).
+ * Treating "we did not measure" as "you cannot get there" would delete most of the landings on the
+ * biggest lakes in the app over a cap that is about to be raised. Ryan's call, same day.
+ */
+function offMainWater(r) {
+  return r && r.on_main_water === false;
 }
 
 /**

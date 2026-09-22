@@ -20,7 +20,8 @@ import { landOnCoastalZone, focusRamp } from "../utils/viewport-cull.js";
 import { bucketWaters, STATE_ORDER, TYPE_ORDER, sortForDisplay,
          pickerLabel } from '../data/water-picker.js';
 import { resolveR2Key } from "../data/lake-keys.js";
-import { launchReach, listingAt, reachLabel, samePlace } from "../data/launch-reach.js";
+import { launchReach, listingAt, reachLabel, samePlace, offMainAt }
+         from "../data/launch-reach.js";
 import { advisoryRows } from "../data/fish-advisories.js";
 // The band is defined once, where the cue line that carries it is built.
 import { HAND_STEER_BAND_FT } from "./plan-tracks.js";
@@ -2700,7 +2701,17 @@ export function populatePlanRampDropdown(waterbodyName){
   let accessPoints = [];
   if (waterbodyName && window.getLoadedAccessIndex) {
     const idx = window.getLoadedAccessIndex();
-    accessPoints = idx?.byLake?.get(waterbodyName) || [];
+    // THE SAME TWO GATES THE MAP TAB'S DROPDOWN APPLIES, and they are here because this select
+    // is filled by a different function and that is exactly how the two drifted apart before.
+    //
+    //   launch !== false  -- /bank-pier reads through the access index from 2026-09-22 so the map
+    //                        can draw one pin per landing instead of three. Ryan's ruling stands:
+    //                        "a bank/pier point is not a launch".
+    //   offMainAt         -- an agency row on water this one cannot reach. SCDNR files Debutary
+    //                        under Lake Wateree and it is across the Cedar Creek dam.
+    accessPoints = (idx?.byLake?.get(waterbodyName) || [])
+      .filter((p) => p.launch !== false)
+      .filter((p) => !offMainAt(waterbodyName, Number(p.lat), Number(p.lon)));
   }
 
   if (!accessPoints.length) {

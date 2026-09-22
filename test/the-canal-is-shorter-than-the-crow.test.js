@@ -88,9 +88,14 @@ function loadCollapse(){
   const n = REACH.match(/\nfunction sameNamedPlace\(a, b\) \{[\s\S]*?\n\}/);
   const o = REACH.match(/\nconst NAME_SOURCE_ORDER = [^\n]+\n/);
   const k = REACH.match(/\nfunction nameRank\(r\) \{[\s\S]*?\n\}/);
-  assert.ok(s && c && x && n && o && k, 'collapse() and everything it calls are still there');
+  // offMainWater() joined collapse()'s callees on 2026-09-22 -- the second deliberate filter in
+  // that file, after isClosed(). Ryan: "on wateree i am seeing launches that you can't physically
+  // get to from wateree... lugoff, debutary".
+  const f = REACH.match(/\nfunction offMainWater\(r\) \{[\s\S]*?\n\}/);
+  assert.ok(s && c && x && n && o && k && f,
+            'collapse() and everything it calls are still there');
   // eslint-disable-next-line no-new-func
-  return new Function(`${s[0].replace('export ', '')}\n${c[0]}\n${x[0]}\n${n[0]}${o[0]}${k[0]}\n`
+  return new Function(`${s[0].replace('export ', '')}\n${c[0]}\n${x[0]}\n${f[0]}\n${n[0]}${o[0]}${k[0]}\n`
                       + 'return collapse;')();
 }
 
@@ -566,4 +571,33 @@ test('the rename happens once, where the index is built, and not at each label',
   assert.ok(manual > 0 && at > manual, 'and after every merge, so nothing added later keeps a feed name');
   // and the 40 m rule has one home
   assert.doesNotMatch(IDX, /0\.0004/, 'access-index does not carry a second copy of the 40 m rule');
+});
+
+// ── A LANDING ON WATER IT CANNOT LEAVE, RUN THROUGH THE REAL collapse() ────────────────────────
+//
+// Measured off a fresh build_ramp_reach.py run on Lake Wateree, 2026-09-22: Lugoff water_m 379
+// on a 346-acre pool below the dam, Debutary 1605 and Stumpy Pond 1352 on the 1,140-acre Cedar
+// Creek pool, against 12,031 acres of lake. Polygon adjacency separates all three; a 26 m raster
+// never could, because a dam is narrower than one cell.
+test('a landing off the main water is dropped, and an unmeasured one is kept', () => {
+  const collapse = loadCollapse();
+  const out = collapse([
+    { name: 'Lake Wateree State Park', lat: 34.432841, lon: -80.858374, water_m: 0,
+      on_main_water: true, pool_acres: 12031.0, src: ['dnr'] },
+    { name: 'Lugoff', lat: 34.333456, lon: -80.699733, water_m: 379,
+      on_main_water: false, pool_acres: 346.0, src: ['dnr'] },
+    { name: 'Debutary', lat: 34.539117, lon: -80.890348, water_m: 1605,
+      on_main_water: false, pool_acres: 1140.4, src: ['dnr'] },
+    // A pack built before the stamp existed, or one of the ten waters over the 40,000-polygon
+    // cap. NOT MEASURED IS NOT BLOCKED -- treating it as blocked would delete every landing on
+    // Hartwell, Thurmond, Norris, Lanier, Cherokee and Murray.
+    { name: 'Beaver Creek', lat: 34.434081, lon: -80.770029, water_m: 0, src: ['dnr'] },
+    { name: 'Clearwater Cove', lat: 34.379271, lon: -80.728814, water_m: 0,
+      on_main_water: null, pool_acres: null, src: ['dnr'] },
+  ]);
+  const names = out.map((r) => r.name).sort();
+  assert.deepEqual(names, ['Beaver Creek', 'Clearwater Cove', 'Lake Wateree State Park']);
+  // The dropped ones are kept on the side so the LIVE feed's own copy of them can be dropped
+  // too: SCDNR files Debutary under Lake Wateree and it never arrives through launches.json.
+  assert.deepEqual((out.offMain || []).map((r) => r.name).sort(), ['Debutary', 'Lugoff']);
 });
