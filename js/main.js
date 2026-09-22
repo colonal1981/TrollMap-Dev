@@ -32,9 +32,13 @@ import { DEFAULT_SPREAD } from './data/spread-defaults.js';
 import './utils/escape.js';
 import './utils/parsers.js';
 import './utils/geo.js';
-import './utils/dedupe.js';
 import './utils/rod-row.js';
-import './data/ramps-loader.js';
+// `import './utils/dedupe.js'` and `import './data/ramps-loader.js'` were here. Both files were
+// deleted on 2026-09-22 and both were bare side-effect imports of modules that have no side
+// effect to run. dedupe.js held one function, used only by the ramp layer, whose 667 m
+// name-blind rule was deleting 85 real named ramps from the map. ramps-loader.js held a second
+// copy of the /ramps feed that only that layer and the POI merge read, and both now read the
+// one access index instead.
 // `import './data/lakes.js'` was here. It was a bare side-effect import of a file whose only
 // content is `export const LAKE_DB = {...}` -- so it had no side effect to run, and once
 // ramps.js dropped its unused LAKE_DB import on 2026-08-02 nothing in the app read the file

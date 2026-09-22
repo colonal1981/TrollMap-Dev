@@ -13,7 +13,6 @@ import { esc } from '../utils/escape.js';
 import { LAKE_NAME_TO_R2_KEY, resolveR2Key } from '../data/lake-keys.js';
 import { cull } from '../utils/viewport-cull.js';
 import { distMiFromCoords as distMi } from '../utils/geo.js';
-import { TRISTATE_MASTER_RAMPS, rampsReady } from '../data/ramps-loader.js';
 import { workerHeaders } from '../utils/worker-auth.js';
 import { depthColor } from '../utils/depth-palette.js';
 import { displayDepth, setDisplayTide } from './tide-engine.js';
@@ -786,88 +785,28 @@ function hookLabelRedraw() {
   _labelHooked = true;
 }
 
-// ── Ramp sources: DNR is live, Garmin is static, and each has what the other lacks ──────────
+// ── THE DNR RAMPS ARE NOT MERGED IN HERE ANY MORE ──────────────────────────────────
 //
-// Official state DNR (SCDNR / GA DNR WRD / NC WRC, refreshed weekly through the worker) is the
-// authority on WHERE the public ramps are and WHAT they are called -- 1,288+ tri-state against
-// ActiveCaptain's 8 on Wateree. But it carries no amenities, and Garmin's business cards do:
-// 20 of 25 marinas list a `Ramp` service, plus Fuel, Restrooms, Slipway, Mechanical assistance.
-// ActiveCaptain adds phone and address.
+// mergeDnrRamps(), nameQuality() and RAMP_MERGE_M stood here from 2026-08-02 until 2026-09-22.
+// The argument for them was sound -- the DNR feed knows where the public ramps are and Garmin's
+// business cards know the amenities, so merge rather than replace -- but the implementation had
+// no filter on WHICH LAKE a feed row belonged to. It looped every state, every waterbody, every
+// ramp, and pushed anything more than 150 m from a Garmin ramp POI on the lake currently open.
 //
-// So they merge rather than replace, and the merge has to happen HERE, at runtime, not in the
-// chartpack build. The DNR feed updates on a 7-day cycle; baking it into a static pack would
-// freeze a live source and the pack would quietly drift out of date with no signal.
+// The app's own console, Lake Wateree, 2026-09-22:
 //
-// Names are chosen by SPECIFICITY, not by source rank -- the same rule the chartpack uses to
-// pick `Clearwater Cove Marina` over `Wateree Boat Ramp ( Launch Site)`. Neither source is
-// reliably better at naming; one of them just happens to have the better string each time.
-const _GENERIC_NAME_WORDS = new Set(['boat', 'ramp', 'ramps', 'launch', 'site', 'access',
-                                     'public', 'landing', 'lake', 'the', 'at', 'of', 'point',
-                                     'area', 'dock', 'pier']);
-
-function nameQuality(name, lakeWords) {
-  if (!name) return 0;
-  const words = name.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
-  const specific = words.filter(w => !_GENERIC_NAME_WORDS.has(w) && !lakeWords.has(w));
-  return (specific.length ? 1000 : 0) + specific.length * 10 + (name.includes('(') ? 0 : 1);
-}
-
-const RAMP_MERGE_M = 150;
-
-/**
- * Fold the live DNR ramp list into the POI set: upgrade names where DNR's is more specific,
- * and add the ramps Garmin and ActiveCaptain never had.
- */
-function mergeDnrRamps(lakeKey) {
-  if (!_poiGeoJSON?.features) return 0;
-  const lakeWords = new Set(String(lakeKey || '').toLowerCase().split(/[^a-z]+/).filter(Boolean));
-  const existing = _poiGeoJSON.features.filter(
-    f => ['boat_ramp', 'water_access', 'marina', 'trailer_ramp', 'generic_ramp']
-           .includes(f.properties?.poi_type));
-  let added = 0, renamed = 0;
-  for (const st of Object.keys(TRISTATE_MASTER_RAMPS || {})) {
-    for (const [waterbody, ramps] of Object.entries(TRISTATE_MASTER_RAMPS[st] || {})) {
-      for (const [rampName, coords] of Object.entries(ramps || {})) {
-        const lat = Array.isArray(coords) ? coords[0] : coords?.lat;
-        const lon = Array.isArray(coords) ? coords[1] : coords?.lon;
-        if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
-        let hit = null;
-        for (const f of existing) {
-          const c = f.geometry?.coordinates;
-          if (!c) continue;
-          if (haversineM([lon, lat], c) <= RAMP_MERGE_M) { hit = f; break; }
-        }
-        if (hit) {
-          const p = hit.properties;
-          if (nameQuality(rampName, lakeWords) > nameQuality(p.name, lakeWords)) {
-            if (p.name && p.name !== rampName) {
-              p.also_known_as = [...new Set([...(p.also_known_as || []), p.name])];
-            }
-            p.name = rampName; renamed++;
-          } else if (p.name !== rampName) {
-            p.also_known_as = [...new Set([...(p.also_known_as || []), rampName])];
-          }
-          p.source = [...new Set(String(p.source || '').split('+').filter(Boolean)
-                                 .concat(`${st} DNR`))].join('+');
-          p.dnr_verified = true;
-        } else {
-          _poiGeoJSON.features.push({
-            type: 'Feature',
-            properties: { name: rampName, poi_type: 'boat_ramp', on_water: true,
-                          source: `${st} DNR`, dnr_verified: true, waterbody },
-            geometry: { type: 'Point', coordinates: [lon, lat] },
-          });
-          added++;
-        }
-      }
-    }
-  }
-  if (added || renamed) {
-    console.log(`[supplemental] DNR ramps merged: ${added} added, ${renamed} renamed `
-              + `from the official ${Object.keys(TRISTATE_MASTER_RAMPS).join('/')} feeds`);
-  }
-  return added;
-}
+//     [supplemental] garmin context prefetched: 552 pois ... for wateree_lake
+//     [supplemental] DNR ramps merged: 2024 added, 1 renamed
+//     [supplemental] pois loaded: 2309 symbols ...
+//
+// 285 of those symbols were Garmin's. The other 2,024 were every public boat ramp in South
+// Carolina, North Carolina, Georgia and Tennessee -- 87.7% of a button marked "Garmin POI".
+// `existing` was also snapshotted before the loop, so two feed rows for one ramp could never
+// see each other.
+//
+// The merge itself now happens in js/data/access-index.js, where it is one index with one
+// dedupe, and the launch layer in modules/ramps.js draws it. This layer is Garmin's POIs again.
+// See claude/FIVE_SURFACES_FOUR_FEEDS_AND_EIGHTY_FIVE_RAMPS_DELETED_2026-09-22.md.
 
 /**
  * Mark the place-name records that are really LABELS for a classed feature.
@@ -1440,11 +1379,11 @@ export async function loadSupplementalForLake(displayName) {
   Promise.all(PREFETCH_LAYERS.map(l => ensureData(lakeKey, l))).then(([pois, docks]) => {
     if (pois) {
       _poiGeoJSON = pois;
-      // Wait for the DNR feed before labelling, so ramp names come from the authority rather
-      // than from whichever static source happened to have one.
-      rampsReady.then(() => { mergeDnrRamps(lakeKey); markFeatureLabels(_poiGeoJSON.features);
-                              hookLabelRedraw(); renderPoiLabels(); })
-                .catch(() => { markFeatureLabels(pois.features); hookLabelRedraw(); renderPoiLabels(); });
+      // No longer waits on the DNR feed: nothing here reads it. Ramp NAMES are the launch
+      // layer's business and it has the authority's spelling already.
+      markFeatureLabels(_poiGeoJSON.features);
+      hookLabelRedraw();
+      renderPoiLabels();
     }
     const n = (pois?.features?.length || 0) + (docks?.features?.length || 0);
     if (n) console.log(`[supplemental] garmin context prefetched: `

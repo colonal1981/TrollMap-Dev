@@ -97,6 +97,81 @@ def load_json(path):
         return json.load(fh)
 
 
+# Provenance order for WHOSE NAME SURVIVES a collapse. Identical to NAME_SOURCE_ORDER in
+# js/data/launch-reach.js, and for the same reason: Google is not naming a landing, it is naming
+# the nearest thing it knows about to a point. `ryan` is applied after this runs and so cannot
+# appear here yet; it is listed to keep the two files reading the same.
+_NAME_ORDER = ('ryan', 'dnr', 'natl', 'osm')
+
+
+def _name_rank(src):
+    if 'ryan' in src:
+        return -1
+    if 'places' in src:
+        return len(_NAME_ORDER)          # Google filled a blank; it never wins
+    for i, s in enumerate(_NAME_ORDER):
+        if s in src:
+            return i
+    return len(_NAME_ORDER)
+
+
+def _collapse_landings(out):
+    """One row per landing. Returns (collapsed, alias) where alias maps EVERY original 5 dp key
+    -- absorbed or not -- to the key that survived, so coordinate-keyed override files still
+    resolve. See the block in access_points() for the rule and the numbers."""
+    keys = sorted(out, key=lambda k: (_name_rank(out[k]['src']), k))   # best namer is the seed
+    kept, alias = {}, {}
+    grid = {}
+    cell = 0.004                          # ~440 m: wider than the 250 m name gate, so a 3x3
+    for k in keys:                        # neighbourhood cannot miss a pair
+        r = out[k]
+        gx, gy = int(r['lat'] // cell), int(r['lon'] // cell)
+        hit = None
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for kk in grid.get((gx + dx, gy + dy), ()):
+                    q = kept[kk]
+                    if abs(q['lat'] - r['lat']) < 0.0004 and abs(q['lon'] - r['lon']) < 0.0004:
+                        hit = kk
+                        break
+                    if (q['name'] and r['name']
+                            and q['name'].strip().lower() == r['name'].strip().lower()
+                            and _metres(q, r) <= 250.0):
+                        hit = kk
+                        break
+                if hit:
+                    break
+            if hit:
+                break
+        if hit is not None:
+            q = kept[hit]
+            q['filed'] |= r['filed']
+            q['src'] |= r['src']
+            if r['name'] and not q['name']:
+                q['name'] = r['name']
+            if r['access'] and not q['access']:
+                q['access'] = r['access']
+            # The restrictive word survives, exactly as it does within one feed above: a state
+            # listing a marina as public water access is not the state saying the ramp is free.
+            if r['listing'] and (r['listing'] == 'Semi-Private' or not q['listing']):
+                q['listing'] = r['listing']
+            alias[k] = hit
+            continue
+        kept[k] = r
+        alias[k] = k
+        grid.setdefault((gx, gy), []).append(k)
+    if len(kept) != len(out):
+        print('landings collapsed: %d rows -> %d landings (%d folded)'
+              % (len(out), len(kept), len(out) - len(kept)))
+    return kept, alias
+
+
+def _metres(a, b):
+    la = math.radians((a['lat'] + b['lat']) / 2.0)
+    return math.hypot((b['lon'] - a['lon']) * math.cos(la) * 111320.0,
+                      (b['lat'] - a['lat']) * 110540.0)
+
+
 def access_points(registry):
     """Every landing we know, from every bucket, deduped on position.
 
@@ -166,6 +241,37 @@ def access_points(registry):
                 if t in ('Public', 'Semi-Private') and (t == 'Semi-Private' or not rec['listing']):
                     rec['listing'] = t
 
+    # ── ONE LANDING, ONE ROW, BEFORE IT IS WRITTEN ──────────────────────────────────────────
+    #
+    # The 5 dp key above is 1.1 m and the feeds do not agree to 1.1 m. Measured across every
+    # launches.json on the drive on 2026-09-22, by running the READER'S OWN collapse over what
+    # the producer had already shipped: **3,501 landing rows, 2,087 distinct landings, 1,414
+    # folded -- 40.4% of every row in every pack is a duplicate the browser throws away on
+    # load.** Hartwell ships 187 rows for 86 landings. On Wateree it is 33 rows for 21, and
+    # nine of the twelve extras are one ramp arriving as a `dnr` row and a `natl` row two
+    # metres apart.
+    #
+    # THIS IS THE READER'S RULE, NOT A NEW ONE. samePlace() and sameNamedPlace() in
+    # js/data/launch-reach.js, ported with their numbers: 0.0004 deg (~40 m) by position, or
+    # 250 m when two rows carry the same name. Both numbers are argued from measurement in that
+    # file and neither is re-derived here -- a second answer to "is this the same landing" is
+    # the defect this whole change exists to remove (see
+    # claude/FIVE_SURFACES_FOUR_FEEDS_AND_EIGHTY_FIVE_RAMPS_DELETED_2026-09-22.md). collapse()
+    # stays in the app as the safety net for a stale pack; after this it should fold nothing.
+    #
+    # WHY NOT A TIGHTER POSITION RULE. There is no empty band to put one in. Every cross-feed
+    # pair under 400 m whose names disagree after stripping the generic words was measured, and
+    # they start at 0.7 m: "Gilmore Inc" vs "Gilmore Docks", "Nance's Ferry" vs "Nance Ferry",
+    # "Asheville Hwy" vs "Asheville Highway", "Hwy 25E 1" vs "Hwy 25E". Those are not two ramps
+    # 0.7 m apart -- two ramps cannot be 0.7 m apart -- they are two feeds spelling one landing
+    # differently, which is the exact case the name test cannot catch and position must.
+    #
+    # THE ALIAS MAP IS LOAD-BEARING. `_place_names.json` and `_launch_name_overrides.json` are
+    # keyed by the coordinate of the record they were written against, and collapsing changes
+    # which key survives. Every absorbed key points at its survivor so Ryan's corrections and
+    # his `drop` flags still land on the landing he was looking at when he wrote them.
+    out, alias = _collapse_landings(out)
+
     # A NAME GOOGLE KNEW AND NO FEED DID.
     #
     # name_launches_from_places.py asks Google Nearby Search what is at a landing nobody named
@@ -183,7 +289,7 @@ def access_points(registry):
                 la, lo = (float(v) for v in key.split(','))
             except ValueError:
                 continue
-            rec = out.get((round(la, 5), round(lo, 5)))
+            rec = out.get(alias.get((round(la, 5), round(lo, 5))))
             if rec is not None and not rec['name']:
                 rec['name'] = str(r['name'])
                 rec['src'].add('places')
@@ -210,8 +316,8 @@ def access_points(registry):
                 la, lo = (float(v) for v in key.split(','))
             except ValueError:
                 continue
-            k = (round(la, 5), round(lo, 5))
-            if k not in out:
+            k = alias.get((round(la, 5), round(lo, 5)))
+            if k is None:
                 print('!! override at %s matches no landing -- check the position' % key)
                 continue
             # AND HE CAN SAY IT IS NOT A LAUNCH AT ALL. OSM tags `leisure=slipway` on things
@@ -219,10 +325,12 @@ def access_points(registry):
             # amount of naming fixes a record that should not be there. This is the only way a
             # landing leaves the data, and it takes a human saying so.
             if r.get('drop'):
-                del out[k]
-                dropped += 1
+                # pop, not del: two of his drops can resolve to ONE surviving landing now that
+                # the feeds' copies of it are collapsed, and the second would have thrown.
+                if out.pop(k, None) is not None:
+                    dropped += 1
                 continue
-            if not r.get('name'):
+            if not r.get('name') or k not in out:
                 continue
             out[k]['name'] = str(r['name'])
             out[k]['src'].add('ryan')

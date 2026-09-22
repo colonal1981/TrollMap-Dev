@@ -32,6 +32,7 @@ import { loadLakeRegistry, filterLakes, accessPointsFor, getLoadedRegistry,
 import { registerR2Key } from './lake-keys.js';
 import { setLiveAccessSource } from './water-filter.js';
 import { primeLaunchNames, ryanName } from './launch-reach.js';
+import { cacheClear } from '../utils/db.js';
 
 // Manual coastal ramps not in DNR ArcGIS feed — add here when a known
 // kayak/small-boat launch is missing from the official database.
@@ -46,6 +47,16 @@ const COASTAL_MANUAL_RAMPS = [
 ];
 
 const STATES = ['SC', 'NC', 'GA', 'TN'];
+//
+// `launch: false` MEANS "DRAW IT, DO NOT OFFER IT". Ryan's ruling stands verbatim -- *"a
+// bank/pier point is not a launch and would make lakes look reachable by boat when they are
+// not"* -- and nothing below counts a bank/pier row as a launch, badges a lake with one, or puts
+// one in the launch dropdown. What changed on 2026-09-22 is only WHERE it is fetched. It used to
+// be a private feed inside gis-toggles.js with a map layer of its own and no dedupe against
+// anything, so `/ramps`' "Lake Wateree State Park" and `/bank-pier`'s "Lake Wateree State Park
+// Bank" 52 m away drew two labels on one place -- and `/ramps` and `/bank-pier` both carry
+// "Molly Creek Access Area Boat Ramp" at the IDENTICAL coordinate. Reading it through the same
+// index means sameLanding() folds it onto the landing it belongs to, once.
 const ACCESS_SOURCES = [
   { path: '/ramps', label: 'Boat ramp', marker: '🛥️' },
   // /paddle enabled 2026-08-02. Its NC field mapping was verified alongside /ramps in the
@@ -56,7 +67,9 @@ const ACCESS_SOURCES = [
   // /bank-pier stays off: Ryan's explicit call, a bank/pier point is not a launch and would
   // make lakes look reachable by boat when they are not. /attractors NC field mappings are
   // still unverified against the live ArcGIS schema.
-  // { path: '/bank-pier', label: 'Bank / pier access', marker: '🎣' },
+  { path: '/bank-pier', label: 'Bank / pier access', marker: '🎣', launch: false },
+  // /attractors NC field mappings are still unverified against the live ArcGIS schema, and an
+  // attractor is not access at all -- it stays a layer of its own in gis-toggles.js.
 ];
 
 // Registry lakes shown by default: the ones with a chartpack, i.e. with Garmin soundings.
@@ -538,6 +551,13 @@ function mergeLanding(existing, item) {
   // unnamed OSM slipway stops being unnamed -- it is the same slipway the agency filed with a
   // name. Only an entry where BOTH sides were nameless is still nameless.
   existing.unnamed = !exNames && !itNames;
+
+  // A LANDING THAT IS ALSO A BANK IS STILL A LANDING. The flag is an OR, not a vote: the
+  // /bank-pier row for Molly Creek Access Area is the same concrete as the /ramps row, and one
+  // feed calling it fishing access does not stop a boat going in. The reverse is what the flag
+  // is for -- a bank/pier point that matches nothing stays `launch: false` and is drawn without
+  // ever being offered.
+  existing.launch = !!existing.launch || !!item.launch;
 }
 
 /**
@@ -637,6 +657,8 @@ async function buildAccessIndex() {
           sourcePath: source.path,
           sourceState: stateCode,
           marker: source.marker,
+          // Can you put a boat in here. See ACCESS_SOURCES: everything except /bank-pier can.
+          launch: source.launch !== false,
           meta: rampMeta(raw),
           raw,
         });
@@ -655,6 +677,7 @@ async function buildAccessIndex() {
                   sourcePath: source.path,
                   sourceState: stateCode,
                   marker: '⛵',
+                  launch: true,
                   meta: rampMeta(raw),
                   raw,
                 });
@@ -958,17 +981,111 @@ async function buildAccessIndex() {
  */
 const RAMP_LABEL = /\bramp\b/i;
 const LAUNCH_LABEL = /\b(ramp|slipway|launch|landing)\b/i;
+const PADDLE_LABEL = /\b(paddle|canoe|kayak)\b/i;
+const BANK_LABEL = /\b(bank|pier)\b/i;
+
+/**
+ * WHAT KINDS OF ACCESS THIS ONE LANDING IS, off the label the merge already built.
+ *
+ * mergeLanding() joins every feed's label with ' / ', so one row can read
+ * `Boat ramp / Paddle launch / Bank / pier access` -- which is the truth about Molly Creek
+ * Access Area, and is why the map must draw it ONCE rather than once per feed. The three map
+ * buttons filter on this; they do not each fetch a feed any more.
+ *
+ * Read off the label for the same reason liveAccessFor() does: `sourcePath` holds only the
+ * first feed that saw the landing, and the registry's own buckets arrive through
+ * accessPointsFor() with their own wording.
+ */
+export function accessKinds(item) {
+  const label = String((item && item.typeLabel) || '');
+  const kinds = [];
+  if (RAMP_LABEL.test(label)) kinds.push('ramp');
+  if (PADDLE_LABEL.test(label)) kinds.push('paddle');
+  if (BANK_LABEL.test(label)) kinds.push('bank');
+  // A landing that launches a boat but wore none of those words -- an OSM slipway, a manual
+  // coastal kayak launch -- is still a ramp as far as the map is concerned. It has to be drawn
+  // by SOME button or it is on no layer at all.
+  if (!kinds.length) kinds.push(item && item.launch === false ? 'bank' : 'ramp');
+  return kinds;
+}
 
 export function liveAccessFor(lakeName, index = accessIndex) {
   const pts = (index && index.byLake && index.byLake.get(lakeName)) || [];
   let ramps = 0;
   let launches = 0;
+  let bank = 0;
+  let points = 0;
   for (const p of pts) {
+    // `points` IS THE BADGE'S FALLBACK NUMBER, so it has to mean the same thing the badge does.
+    // lake-ramp-select.js prints "N access pts" off it whenever `ramps` is zero, and once
+    // /bank-pier reads through this index a water with nothing but a fishing pier on it would
+    // have printed "1 access pt" -- the exact claim Ryan ruled out. A row that cannot launch a
+    // boat is counted as `bank` and nowhere else.
+    if (p && p.launch === false) { bank += 1; continue; }
+    points += 1;
     const label = String(p && p.typeLabel || '');
     if (RAMP_LABEL.test(label)) ramps += 1;
     if (LAUNCH_LABEL.test(label)) launches += 1;
   }
-  return { points: pts.length, ramps, launches };
+  return { points, ramps, launches, bank };
+}
+
+/**
+ * ── EVERY ACCESS POINT IN THE FOUR STATES, ONCE EACH, FOR THE MAP ───────────────────────────────
+ *
+ * `byLake` is deduped WITHIN a lake and nowhere else, because that is all the dropdown ever
+ * needed: it shows one water at a time. The map does not -- it draws whatever is in the viewport
+ * regardless of which lake is selected -- and a landing the feeds file under two waterbody names
+ * is two rows there. So the same test runs once more across the whole index, and the map layer
+ * gets a list it can draw straight.
+ *
+ * SAME sameLanding(), NOT A FOURTH RULE. Three separate answers to "is this the same landing" is
+ * what put 2,024 out-of-state ramps in the POI layer and deleted 85 real ones from the ramp
+ * layer; see claude/FIVE_SURFACES_FOUR_FEEDS_AND_EIGHTY_FIVE_RAMPS_DELETED_2026-09-22.md. There
+ * is one implementation and everything calls it.
+ *
+ * GRIDDED, because this is ~4,000 rows against each other and sameLanding() is a linear scan.
+ * 0.003 deg is about 333 m, comfortably wider than SAME_NAME_M, so a 3x3 neighbourhood cannot
+ * miss a pair the ungridded loop would have found.
+ *
+ * @returns {object[]} one row per landing, each carrying `filedUnder` -- every waterbody name the
+ *                     feeds gave it, which is what the popup needs to say where it thinks it is.
+ */
+const GRID_DEG = 0.003;
+let _allPoints = null;
+let _allPointsFor = null;
+
+export function allAccessPoints(index = accessIndex) {
+  if (_allPoints && _allPointsFor === index.byLake) return _allPoints;
+  const cells = new Map();
+  const out = [];
+  const cellKey = (la, lo) => `${Math.floor(la / GRID_DEG)},${Math.floor(lo / GRID_DEG)}`;
+  for (const [lakeName, list] of (index.byLake || new Map())) {
+    for (const p of (list || [])) {
+      if (!Number.isFinite(p.lat) || !Number.isFinite(p.lon)) continue;
+      const cx = Math.floor(p.lat / GRID_DEG);
+      const cy = Math.floor(p.lon / GRID_DEG);
+      let hit;
+      for (let i = -1; i <= 1 && !hit; i++) {
+        for (let j = -1; j <= 1 && !hit; j++) {
+          hit = sameLanding(cells.get(`${cx + i},${cy + j}`) || [], p);
+        }
+      }
+      if (hit) {
+        mergeLanding(hit, p);
+        if (!hit.filedUnder.includes(lakeName)) hit.filedUnder.push(lakeName);
+        continue;
+      }
+      const row = { ...p, filedUnder: [lakeName] };
+      out.push(row);
+      const k = cellKey(p.lat, p.lon);
+      if (!cells.has(k)) cells.set(k, []);
+      cells.get(k).push(row);
+    }
+  }
+  _allPoints = out;
+  _allPointsFor = index.byLake;
+  return out;
 }
 
 // Hand water-filter.js the live answer. Registered at module scope rather than after the fetch
@@ -1176,6 +1293,13 @@ window.getUniversalLakeNamesAsync = async function getUniversalLakeNamesAsync() 
 window.getLoadedAccessIndex = function getLoadedAccessIndex() {
   return accessIndex;
 };
+
+// THE OLD RAMP CACHE, EVICTED ONCE. data/ramps-loader.js kept its own 7-day copy of the /ramps
+// feed in the shared IndexedDB store under the `ramps` namespace. That module was deleted on
+// 2026-09-22 and nothing will ever read the key again, so it would sit on Ryan's device holding
+// the whole four-state feed forever. One eviction, not a migration: once it is gone cacheClear
+// on a namespace with no rows is a no-op, and this line can come out any time after.
+cacheClear('ramps').catch(() => {});
 
 // Kick off the load immediately — don't block module loading. Both
 // lake-ramp-select.js and catch-journal.js will share this same in-flight

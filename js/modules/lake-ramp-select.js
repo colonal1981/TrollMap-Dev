@@ -259,7 +259,11 @@ async function onLakeChange(selLakeName) {
   }
 
   const idx = await loadAccessIndex();
-  let accessPoints = idx.byLake.get(selLakeName) || [];
+  // LAUNCHES ONLY. /bank-pier reads through the same index from 2026-09-22 so the map can draw
+  // one pin per landing instead of three, and Ryan's ruling on it is unchanged: *"a bank/pier
+  // point is not a launch and would make lakes look reachable by boat when they are not"*. A
+  // bank row that turned out to BE a landing has `launch: true` from the merge and stays.
+  let accessPoints = (idx.byLake.get(selLakeName) || []).filter((p) => p.launch !== false);
 
   // Start the reach fetch now so it is in flight while the map frames, but do NOT put the
   // landings in `accessPoints` yet -- see where they are appended, below the framing.

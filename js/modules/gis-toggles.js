@@ -11,8 +11,12 @@ import { registerLayer, isVisible, wireAll } from '../core/layer-registry.js';
 // The layer handle and the visible flag now live in core/layer-registry.js. What stays here
 // is what is actually specific to this module: how to FETCH each dataset and how to DRAW it.
 // LAYERS below is the whole difference between the three.
-let BANK_DATA = null;
-let PADDLE_DATA = null;
+// BANK_DATA and PADDLE_DATA were here, with a /bank-pier and a /paddle layer each. Both moved
+// into js/data/access-index.js on 2026-09-22 and both are now drawn by the one launch layer in
+// modules/ramps.js. They were three feeds drawing three pins on one landing -- /ramps and
+// /bank-pier both carry "Molly Creek Access Area Boat Ramp" at the same coordinate to five
+// decimal places, and nothing here deduped against anything there. An attractor is not access
+// and stays.
 let ATTRACTOR_DATA = null;
 
 function getMap() {
@@ -151,18 +155,6 @@ async function loadLayerRows(workerPath, type) {
   return rows;
 }
 
-async function loadBankPier() {
-  if (BANK_DATA) return BANK_DATA;
-  BANK_DATA = await loadLayerRows('/bank-pier', 'Bank / pier access');
-  return BANK_DATA;
-}
-
-async function loadPaddle() {
-  if (PADDLE_DATA) return PADDLE_DATA;
-  PADDLE_DATA = await loadLayerRows('/paddle', 'Paddle launch');
-  return PADDLE_DATA;
-}
-
 async function loadHotspots() {
   if (ATTRACTOR_DATA) return ATTRACTOR_DATA;
   ATTRACTOR_DATA = await loadLayerRows('/attractors', 'Fish attractor');
@@ -194,41 +186,6 @@ window.getFishAttractors = getFishAttractors;
 // the moveend redraw -- was pasted three times. It is written once here.
 
 const LAYERS = [
-  {
-    id: 'bankPier', button: 'btnBankPier',
-    load: loadBankPier, rows: () => BANK_DATA,
-    marker: (b, lat, lon) => {
-      const type = b.type || '';
-      const isPier = String(type).toUpperCase().includes('PIER');
-      const ico = isPier ? '\u{1F3A3}' : '\u{1F332}';
-      const bgCol = isPier ? '#0e7c7b' : '#2e7d32';
-      const m = L.marker([lat, lon], {
-        icon: L.divIcon({
-          className: 'custom-gis-marker',
-          html: `<div style="background:${bgCol};color:#fff;font-size:11px;font-weight:700;padding:2px 6px;border-radius:4px;border:1px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.5);white-space:nowrap;display:inline-block;cursor:pointer">${ico} ${esc(b.name || 'Bank/Pier').split(' (')[0]}</div>`,
-          iconAnchor: [0, 8],
-        }),
-      });
-      m.bindPopup(buildPopup(b.name || 'Bank/Pier', type, lat, lon, ico, '#aed581'));
-      return m;
-    },
-  },
-  {
-    id: 'paddle', button: 'btnPaddle',
-    load: loadPaddle, rows: () => PADDLE_DATA,
-    marker: (p, lat, lon) => {
-      const type = p.type || '';
-      const m = L.marker([lat, lon], {
-        icon: L.divIcon({
-          className: 'custom-gis-marker',
-          html: `<div style="background:#ffb703;color:#000;font-size:11px;font-weight:700;padding:2px 6px;border-radius:4px;border:1px solid #b06a00;box-shadow:0 1px 4px rgba(0,0,0,.5);white-space:nowrap;display:inline-block;cursor:pointer">\u{1F6F6} ${esc(p.name || 'Paddle Launch').split(' (')[0]}</div>`,
-          iconAnchor: [0, 8],
-        }),
-      });
-      m.bindPopup(buildPopup(p.name || 'Paddle Launch', type, lat, lon, '\u{1F6F6}', '#ffb703'));
-      return m;
-    },
-  },
   {
     id: 'attractors', button: 'btnAttractors',
     load: loadHotspots, rows: () => ATTRACTOR_DATA,

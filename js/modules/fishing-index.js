@@ -2,7 +2,7 @@
 // Imports from the canonical ramp database and adds fisherman-friendly
 // groupings (e.g. "the Cooper" instead of "Tail Race Canal + Cooper River").
 
-import { TRISTATE_MASTER_RAMPS } from "../data/ramps-loader.js";
+import { getLoadedAccessIndex } from "../data/access-index.js";
 
 /**
  * trollmap_fishing_index.js — Fisherman-friendly overlay on top of SCDNR data
@@ -176,62 +176,37 @@ import { TRISTATE_MASTER_RAMPS } from "../data/ramps-loader.js";
    * 3. Public API
    * ───────────────────────────────────────────────────────────────── */
 
-  // Pull the SCDNR LAUNCHES blob from the host page's globals.
-  // In your index.html the actual variable is `TRISTATE_MASTER_RAMPS` (a
-  // top-level const at line 1163). Top-level `const` in a <script> tag is
-  // NOT automatically attached to `window` (unlike `var`), so we look in
-  // a few places and degrade gracefully if it's not exposed.
-  function getScdnrLaunches() {
-    if (typeof window === 'undefined') return null;
-    // Most likely globals (in priority order):
-    return window.TRISTATE_MASTER_RAMPS    // your actual variable name
-        || window.LAUNCHES_DB
-        || window.LAUNCHES
-        || window.SC_LAUNCHES
-        || (typeof TRISTATE_MASTER_RAMPS !== 'undefined' ? TRISTATE_MASTER_RAMPS : null)
-        || null;
-  }
-
-  // Flatten SCDNR's two-level structure: { state: { waterbody: { ramp: [lat,lon] } } }
-  // into one big map keyed by waterbody name → [{name, lat, lon}, ...]
-  function flattenLaunches(launches) {
+  /**
+   * THE LAUNCHES, OFF THE ONE ACCESS INDEX.
+   *
+   * This used to read a `TRISTATE_MASTER_RAMPS` blob through four `window.*` guesses and a
+   * `typeof` fallback, because it was written when that blob was a top-level const in
+   * index.html. data/ramps-loader.js -- the module that later held it -- was a second copy of
+   * the /ramps feed and was deleted on 2026-09-22 along with the two readers that wanted it.
+   *
+   * `scdnrKeys` below are BARE waterbody names as the DNR feed spells them ("Tail Race Canal"),
+   * and the access index keys on the display name ("Tail Race Canal, SC"), so the suffix comes
+   * off here. Launches only: a bank/pier row is in the index now and is not somewhere you put a
+   * boat in.
+   *
+   * @returns {Object<string, Array<{name:number, lat:number, lon:number}>>} waterbody -> ramps
+   */
+  function launchesByWaterbody() {
     const out = {};
-    if (!launches) return out;
-    // Could be either {state: {wb: {ramp}}} or {wb: {ramp}} — handle both
-    for (const k of Object.keys(launches)) {
-      const v = launches[k];
-      if (v && typeof v === 'object' && !Array.isArray(v)) {
-        // Is this a state container or a waterbody?
-        const firstVal = Object.values(v)[0];
-        if (firstVal && typeof firstVal === 'object' && !Array.isArray(firstVal)
-            && !Array.isArray(Object.values(firstVal)[0])) {
-          // Two-level: state → waterbody
-          for (const [wbName, ramps] of Object.entries(v)) {
-            mergeWaterbody(out, wbName, ramps);
-          }
-        } else {
-          // One-level: waterbody → ramps
-          mergeWaterbody(out, k, v);
-        }
+    const idx = getLoadedAccessIndex();
+    for (const [displayName, points] of (idx?.byLake || new Map())) {
+      const wb = String(displayName).replace(/,\s*[A-Z]{2}$/, '');
+      if (!out[wb]) out[wb] = [];
+      for (const p of (points || [])) {
+        if (p.launch === false) continue;
+        if (!isFinite(p.lat) || !isFinite(p.lon)) continue;
+        if (out[wb].some((r) => r.name === p.name)) continue;
+        out[wb].push({ name: p.name, lat: +p.lat, lon: +p.lon });
       }
     }
     return out;
   }
 
-  function mergeWaterbody(out, name, ramps) {
-    if (!out[name]) out[name] = [];
-    for (const [rampName, coords] of Object.entries(ramps)) {
-      if (!Array.isArray(coords) || coords.length < 2) continue;
-      const [lat, lon] = coords;
-      if (!isFinite(lat) || !isFinite(lon)) continue;
-      // Dedupe by name
-      if (!out[name].some(r => r.name === rampName)) {
-        out[name].push({ name: rampName, lat: +lat, lon: +lon });
-      }
-    }
-  }
-
-  // Apply SCDNR_OVERRIDES to a waterbody's ramps before returning them.
   function applyOverrides(wbName, ramps) {
     const ov = SCDNR_OVERRIDES[wbName];
     if (!ov) return ramps.map(r => ({ ...r }));
@@ -247,7 +222,7 @@ import { TRISTATE_MASTER_RAMPS } from "../data/ramps-loader.js";
 
   // Get all ramps for a given fishing system (or raw SCDNR key if no system matches).
   function getFishingRamps(systemOrKeyName) {
-    const launches = flattenLaunches(getScdnrLaunches());
+    const launches = launchesByWaterbody();
 
     // 1. Is it a fishing system?
     const sys = FISHING_SYSTEMS[systemOrKeyName];
@@ -297,8 +272,7 @@ import { TRISTATE_MASTER_RAMPS } from "../data/ramps-loader.js";
     listFishingSystems,
     getSystemNote,
     // For debugging / sanity checks:
-    _flattenLaunches: flattenLaunches,
-    _getScdnrLaunches: getScdnrLaunches,
+    _launchesByWaterbody: launchesByWaterbody,
   };
   // Convenience global
   window.getFishingRamps = getFishingRamps;
