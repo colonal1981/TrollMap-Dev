@@ -1310,11 +1310,22 @@ def main():
             rec = idx.pop(slug, None)
             if rec is None:
                 continue
+            # WHY IT IS UNFISHABLE, AND CLOSURE IS NOT THE ONLY REASON. This scanned for
+            # 'clos', 'no fishing' and 'not open', which covers the five closed waters it was
+            # written for and nothing else. lake_wallace went in on 2026-09-22 reading
+            # 'DRAINED AND EMPTY' -- its dam breached twice and SCDOT drained it -- and fell
+            # through to the generic string, so the report named the water and lost the
+            # reason. The convention in _water_notes.json is that the FIRST fact is the
+            # headline: par_pond opens 'CLOSED. Inside the DOE Savannah River Site...'. So
+            # the keyword scan still wins where it fires, and the fallback is the first fact
+            # rather than a sentence that says only that a flag was set.
             why = ''
             for f in (note.get('facts') or []):
                 if 'clos' in f.lower() or 'no fishing' in f.lower() or 'not open' in f.lower():
                     why = f
                     break
+            if not why and (note.get('facts') or []):
+                why = note['facts'][0]
             closed.append({'slug': slug, 'name': rec.get('name'), 'state': rec.get('state'),
                            'area_acres': rec.get('area_acres'),
                            'why': why or 'recorded fishable: false in _water_notes.json'})
