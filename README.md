@@ -34,7 +34,7 @@ trollmap-dev (Cloudflare Pages — auto-deploys from GitHub)
 ├── js/
 │   ├── main.js                   # Entry point (side-effect imports → boot)
 │   ├── lazy-data.js              # Optional GIS JSON loader
-│   ├── api/                      # (planned) typed worker client - see REFACTOR_AUDIT
+│   ├── api/                      # (planned) typed worker client - see the refactor docs
 │   ├── utils/                    # escape, dedupe, rod-row, db, geo (single source for dist/bearing), parsers
 │   ├── data/                     # lakes, access-index, species-intel (unified v1+v2),
 │   │                             # lake-keys (single source 101 entries → R2 key), tackle-inventory,
@@ -73,7 +73,7 @@ Frontend research modules (js/modules/)
 ├── lake-research-ui.js           # Research panel UI, renderers, editors
 └── lake-research.js              # Barrel re-export
 
-Refactor status: See REFACTOR_AUDIT.md (original) + REFACTOR_STATUS_UPDATE.md (verification) — P0 safety net (vitest 79 tests) and P1 ArcGIS dedupe done.
+Refactor status: the refactor audit and its verification pass have moved out of this repo — P0 safety net (vitest 79 tests) and P1 ArcGIS dedupe done.
 ```
 
 ---
@@ -233,3 +233,9 @@ trollmap-chartpacks (R2 bucket)
 - **Rods:** Spinning only — no lead-core, no conventional reels, no planer boards, no downriggers
 - **Rigging:** 30lb braid → swivel snap (A-rigs, spoons); 30lb braid + 3-4ft 20lb fluoro leader + loop knot (all other lures)
 - **Primary waters:** Lake Wateree (home lake), Marion, Moultrie, Murray, Monticello + 61 additional SE lakes
+
+## Where the project documents went
+
+The working documents that used to sit at this root — the audits, the coastal briefs, the refactor
+passes, the GMP notes, the agent guide — are no longer in this repo. Comments throughout the code
+still cite them by filename; they are kept elsewhere and are not public. This repo holds the app.
