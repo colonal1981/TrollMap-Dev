@@ -69,11 +69,23 @@ test('the two deleted modules are gone and nothing imports them', () => {
   }
 });
 
-test('the POI layer no longer merges the DNR feed into itself', () => {
+test('the POI layer names Garmin ramps from the agency and never adds one', () => {
   assert.doesNotMatch(code(SUPP), /\bmergeDnrRamps\b/,
-    'mergeDnrRamps() put 2,024 four-state ramps in one lake’s Garmin POI layer');
+    'mergeDnrRamps() put 2,024 four-state ramps in one lake\u2019s Garmin POI layer');
   assert.doesNotMatch(code(SUPP), /\brampsReady\b/,
-    'nothing in the POI layer waits on the ramp feed any more');
+    'nothing in the POI layer reads a ramp feed of its own any more');
+  // The rename half is legitimate and was over-deleted on 2026-09-22. Ryan: "are you sure you
+  // kept the most accurate one if you changed that?" It is back, reading the one index.
+  const fn = code(SUPP).match(/function nameDnrRamps\([\s\S]*?\n\}/);
+  assert.ok(fn, 'nameDnrRamps() is still in supplemental-layers.js');
+  assert.match(fn[0], /allAccessPoints\(\)/, 'it must read the one index, not a feed of its own');
+  assert.doesNotMatch(fn[0], /features\.push/,
+    'naming a POI must never ADD one -- that is the 2,024-ramp defect coming back');
+  assert.match(fn[0], /row\.launch === false/, 'a fishing pier does not get to name a ramp');
+  // markFeatureLabels() can only suppress a chart name that duplicates a NAMED feature, so the
+  // rename has to happen first or two labels are drawn loose beside the feature they label.
+  assert.match(code(SUPP), /nameDnrRamps\(lakeKey\)[\s\S]{0,260}markFeatureLabels\(/,
+    'the rename must run before the labels are marked');
 });
 
 test('every map launch button draws the one access index, not a feed of its own', () => {

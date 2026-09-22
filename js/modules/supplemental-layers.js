@@ -15,6 +15,7 @@ import { cull } from '../utils/viewport-cull.js';
 import { distMiFromCoords as distMi } from '../utils/geo.js';
 import { workerHeaders } from '../utils/worker-auth.js';
 import { depthColor } from '../utils/depth-palette.js';
+import { allAccessPoints, loadAccessIndex } from '../data/access-index.js';
 import { displayDepth, setDisplayTide } from './tide-engine.js';
 
 import { cacheGet, cacheSet, cacheClear, CACHE_NS_CHART_LAYERS } from '../utils/db.js';
@@ -785,28 +786,96 @@ function hookLabelRedraw() {
   _labelHooked = true;
 }
 
-// ── THE DNR RAMPS ARE NOT MERGED IN HERE ANY MORE ──────────────────────────────────
+// ── THE DNR FEED NAMES A GARMIN POI. IT NEVER ADDS ONE. ────────────────────────────
 //
-// mergeDnrRamps(), nameQuality() and RAMP_MERGE_M stood here from 2026-08-02 until 2026-09-22.
-// The argument for them was sound -- the DNR feed knows where the public ramps are and Garmin's
-// business cards know the amenities, so merge rather than replace -- but the implementation had
-// no filter on WHICH LAKE a feed row belonged to. It looped every state, every waterbody, every
-// ramp, and pushed anything more than 150 m from a Garmin ramp POI on the lake currently open.
+// mergeDnrRamps() stood here from 2026-08-02 and did TWO things. Only one of them was wrong,
+// and on 2026-09-22 I deleted both, which was an over-correction Ryan caught the same day:
+// *"the garmin land labels... they do not lineup with the POI... so are you sure you kept the
+// most accurate one if you changed that?"*
 //
-// The app's own console, Lake Wateree, 2026-09-22:
+// THE HALF THAT WAS WRONG, and is gone for good: it pushed every DNR row further than 150 m
+// from a Garmin ramp POI into this lake's layer as a NEW feature, with no filter on which lake
+// the row belonged to. The app's own console on Lake Wateree said what that cost:
 //
 //     [supplemental] garmin context prefetched: 552 pois ... for wateree_lake
 //     [supplemental] DNR ramps merged: 2024 added, 1 renamed
 //     [supplemental] pois loaded: 2309 symbols ...
 //
-// 285 of those symbols were Garmin's. The other 2,024 were every public boat ramp in South
-// Carolina, North Carolina, Georgia and Tennessee -- 87.7% of a button marked "Garmin POI".
-// `existing` was also snapshotted before the loop, so two feed rows for one ramp could never
-// see each other.
+// 285 of those symbols were Garmin's; the other 2,024 were every public ramp in four states.
+// Drawing a landing is the launch layer's job now (modules/ramps.js, off the one access index).
 //
-// The merge itself now happens in js/data/access-index.js, where it is one index with one
-// dedupe, and the launch layer in modules/ramps.js draws it. This layer is Garmin's POIs again.
-// See claude/FIVE_SURFACES_FOUR_FEEDS_AND_EIGHTY_FIVE_RAMPS_DELETED_2026-09-22.md.
+// THE HALF THAT WAS RIGHT, restored below: where the agency's record lands ON a Garmin ramp POI
+// the agency is the authority on what it is CALLED, so the POI takes the more specific name and
+// keeps the other as `also_known_as`. That is one rename on Wateree -- and the knock-on is
+// bigger than one label, because markFeatureLabels() suppresses a place-name record that
+// duplicates a NAMED classed feature within 400 m. With the rename gone the console read
+// "0 suppressed" where it had read "2", and two Garmin chart names that had been hidden behind
+// the feature they label were drawn loose beside it. That is the misalignment he was looking at.
+//
+// READS THE ONE INDEX, not a feed of its own. access-index.js is where the launch data lives
+// now; ramps-loader.js, which this used to import, is deleted.
+//
+// Names are chosen by SPECIFICITY, not by source rank -- the same rule the chartpack uses to
+// pick `Clearwater Cove Marina` over `Wateree Boat Ramp ( Launch Site)`. Neither source is
+// reliably better at naming; one of them just happens to have the better string each time.
+const _GENERIC_NAME_WORDS = new Set(['boat', 'ramp', 'ramps', 'launch', 'site', 'access',
+                                     'public', 'landing', 'lake', 'the', 'at', 'of', 'point',
+                                     'area', 'dock', 'pier']);
+
+function nameQuality(name, lakeWords) {
+  if (!name) return 0;
+  const words = name.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  const specific = words.filter(w => !_GENERIC_NAME_WORDS.has(w) && !lakeWords.has(w));
+  return (specific.length ? 1000 : 0) + specific.length * 10 + (name.includes('(') ? 0 : 1);
+}
+
+// 150 m, unchanged: it is how far an agency's coordinate for a ramp sits from Garmin's symbol
+// for the same one. It is a MATCH radius here and can no longer be an ADD radius -- the `else`
+// branch that pushed a feature when nothing matched is what is gone.
+const RAMP_MERGE_M = 150;
+
+/**
+ * Upgrade the names of the Garmin ramp POIs the agency feeds also know about.
+ *
+ * @returns {number} how many POIs took the agency's name
+ */
+function nameDnrRamps(lakeKey) {
+  if (!_poiGeoJSON?.features) return 0;
+  const lakeWords = new Set(String(lakeKey || '').toLowerCase().split(/[^a-z]+/).filter(Boolean));
+  const existing = _poiGeoJSON.features.filter(
+    f => ['boat_ramp', 'water_access', 'marina', 'trailer_ramp', 'generic_ramp']
+           .includes(f.properties?.poi_type));
+  if (!existing.length) return 0;
+  let renamed = 0, matched = 0;
+  for (const row of allAccessPoints()) {
+    if (row.launch === false) continue;      // a fishing pier does not name a ramp
+    if (!Number.isFinite(row.lat) || !Number.isFinite(row.lon)) continue;
+    let hit = null;
+    for (const f of existing) {
+      const c = f.geometry?.coordinates;
+      if (c && haversineM([row.lon, row.lat], c) <= RAMP_MERGE_M) { hit = f; break; }
+    }
+    if (!hit) continue;                      // NOT an add. It was, and that was the defect.
+    matched++;
+    const p = hit.properties;
+    if (nameQuality(row.name, lakeWords) > nameQuality(p.name, lakeWords)) {
+      if (p.name && p.name !== row.name) {
+        p.also_known_as = [...new Set([...(p.also_known_as || []), p.name])];
+      }
+      p.name = row.name; renamed++;
+    } else if (p.name !== row.name) {
+      p.also_known_as = [...new Set([...(p.also_known_as || []), row.name])];
+    }
+    p.source = [...new Set(String(p.source || '').split('+').filter(Boolean)
+                           .concat(String(row.typeLabel || 'agency')))].join('+');
+    p.dnr_verified = true;
+  }
+  if (matched) {
+    console.log(`[supplemental] agency ramp names: ${matched} Garmin POIs matched, `
+              + `${renamed} took the agency's name for ${lakeKey}`);
+  }
+  return renamed;
+}
 
 /**
  * Mark the place-name records that are really LABELS for a classed feature.
@@ -1379,11 +1448,14 @@ export async function loadSupplementalForLake(displayName) {
   Promise.all(PREFETCH_LAYERS.map(l => ensureData(lakeKey, l))).then(([pois, docks]) => {
     if (pois) {
       _poiGeoJSON = pois;
-      // No longer waits on the DNR feed: nothing here reads it. Ramp NAMES are the launch
-      // layer's business and it has the authority's spelling already.
-      markFeatureLabels(_poiGeoJSON.features);
-      hookLabelRedraw();
-      renderPoiLabels();
+      // WAITS FOR THE INDEX, because the rename decides what markFeatureLabels() can suppress.
+      // Running the marking first and the rename after leaves the two chart names that belong
+      // to a renamed feature drawn loose beside it, which is what Ryan reported on 2026-09-22.
+      // A failed index is not a reason to draw nothing: the labels go up with Garmin's names.
+      loadAccessIndex()
+        .then(() => { nameDnrRamps(lakeKey); })
+        .catch(() => {})
+        .then(() => { markFeatureLabels(_poiGeoJSON.features); hookLabelRedraw(); renderPoiLabels(); });
     }
     const n = (pois?.features?.length || 0) + (docks?.features?.length || 0);
     if (n) console.log(`[supplemental] garmin context prefetched: `
