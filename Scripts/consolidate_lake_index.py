@@ -1330,6 +1330,58 @@ def main():
                            'area_acres': rec.get('area_acres'),
                            'why': why or 'recorded fishable: false in _water_notes.json'})
 
+    # ── AND THE REGULATIONS BOOK HAS BEEN SAYING SO ALL ALONG ───────────────────────────
+    #
+    # Ryan, 2026-09-22, on being told nothing in the pipeline could know Lake Wallace was an
+    # empty basin: *"we knew this already... we pulled it from scdnr pages maybe... we had this
+    # information"*. He was right and the claim was wrong. `regulations_table.json` carries
+    # `by_water.<OUR OWN SLUG>.rules[].state_lake.closed`, and build_regulations_table.py has
+    # been resolving the book's name to the registry's -- "Lake Paul Wallace" -> lake_wallace,
+    # "Lake Edwin B. Johnson" -> lake_edwin_johnson -- for as long as that table has existed.
+    # The book even prints the reopening date. NOTHING READ IT.
+    #
+    # What that cost: lake_edwin_johnson, 147.2 acres and 88.4% charted, shipped and offered,
+    # while the book says "Closed to Boating and Fishing until July 1, 2027". It was invisible
+    # because the only closure that ever got recorded was one Ryan had seen with his own eyes.
+    #
+    # THE FLAG IS READ, NOT THE PROSE. state_lake.closed is the parser's own verdict, already
+    # resolved. A keyword scan would be wrong here and it is worth saying why: Lake Paul
+    # Wallace's own open_to_fishing reads "all other activities on the boating side are closed
+    # 1/2 hour before official sunrise", which is a time-of-day rule, not a closure. Scanning
+    # for 'closed' finds it. Reading the boolean does not.
+    #
+    # A RECURRING QUESTION ASKED BY A PROGRAM MUST BE ANSWERED INSIDE THAT PROGRAM. This is
+    # the join, and now a closure the book prints next year lands without anyone having been
+    # there.
+    if not a.keep_closed:
+        rpath = os.path.join(R, 'regulations_table.json')
+        if os.path.exists(rpath):
+            try:
+                regs = json.load(open(rpath, encoding='utf-8')) or {}
+            except (OSError, ValueError) as exc:
+                print('!! could not read regulations_table.json (%s) -- a water the BOOK says '
+                      'is closed will stay in the picker' % exc)
+                regs = {}
+            for slug, rec_w in ((regs.get('by_water') or {}).items()):
+                shut, why_r = False, ''
+                for rule in ((rec_w or {}).get('rules') or []):
+                    sl = (rule or {}).get('state_lake') or {}
+                    if sl.get('closed') is True:
+                        shut = True
+                        why_r = ('%s -- the SC regulations book: open_days %r, open_to_fishing %r'
+                                 % (sl.get('water_body') or slug, sl.get('open_days'),
+                                    sl.get('open_to_fishing')))
+                        break
+                if not shut:
+                    continue
+                if any(c['slug'] == slug for c in closed):
+                    continue        # already out on a _water_notes verdict; do not double-report
+                rec = idx.pop(slug, None)
+                if rec is None:
+                    continue
+                closed.append({'slug': slug, 'name': rec.get('name'), 'state': rec.get('state'),
+                               'area_acres': rec.get('area_acres'), 'why': why_r})
+
     # ── no pack, no row ─────────────────────────────────────────────────────────────────────
     #
     # Ryan, 2026-08-13: "the SC_dnr lakes if they do not have a chartpack they need to be
