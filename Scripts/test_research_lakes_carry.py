@@ -76,17 +76,23 @@ class CarriedKeys(unittest.TestCase):
                                         {'limnology': {'trophicStatus': None}}), set())
 
 
-class StatusOf(unittest.TestCase):
-    def test_it_reads_the_stored_status(self):
-        self.assertEqual(R.status_of({'metadata': {'status': 'verified'}}, 'stored'),
-                         ('verified', 'stored'))
+class TheBatchAssertsNoStatus(unittest.TestCase):
+    """`status_of()` stood here until 2026-09-23, when draft/verified was retired.
 
-    def test_no_profile_carries_the_reason_through(self):
-        self.assertEqual(R.status_of(None, 'no profile yet'), (None, 'no profile yet'))
+    Its three cases were the guard on A BATCH MAY NOT ASSERT A FIELD IT DID NOT COMPUTE. That rule
+    is not retired -- it is why `carry_forward` above exists -- but the field it was guarding is
+    gone, and a test that keeps asserting the shape of a deleted function is how a retirement gets
+    quietly reverted. This asserts the retirement instead.
+    """
 
-    def test_a_profile_with_no_status_says_so(self):
-        self.assertEqual(R.status_of({'metadata': {}}, 'stored'),
-                         (None, 'stored profile names no status'))
+    def test_the_helper_is_gone(self):
+        self.assertFalse(hasattr(R, 'status_of'))
+
+    def test_the_save_payload_names_no_status(self):
+        src = open(R.__file__, encoding='utf-8').read()
+        code = '\n'.join(l for l in src.split('\n') if not l.strip().startswith('#'))
+        self.assertNotIn('"status"', code)
+        self.assertNotIn("'status'", code)
 
 
 if __name__ == '__main__':
