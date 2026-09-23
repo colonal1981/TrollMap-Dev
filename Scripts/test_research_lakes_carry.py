@@ -95,6 +95,39 @@ class TheBatchAssertsNoStatus(unittest.TestCase):
         self.assertNotIn("'status'", code)
 
 
+class TheOneCallThatCanTimeOut(unittest.TestCase):
+    """The agent-llm retry, guarded on source because the call needs the Worker.
+
+    2026-09-23: Ogeechee and Savannah were both abandoned three hours into a 33-river batch on
+    `agent-llm 0: The read operation timed out`, after their documents had been discovered,
+    fetched and extracted. saved=False on both. The guard that matters is not that a retry
+    exists -- it is WHICH failures it retries. An HTTP status means the Worker replied and said
+    no; retrying that is three times the same rejection.
+    """
+
+    SRC = open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            'research_lakes.py'), encoding='utf-8').read()
+
+    def test_the_deadline_is_longer_than_the_default(self):
+        self.assertIn('AGENT_LLM_TIMEOUT = 900', self.SRC)
+        self.assertIn('timeout=AGENT_LLM_TIMEOUT', self.SRC)
+        # 300 is _req's default and is what expired.
+        self.assertIn('def _req(path, payload=None, timeout=300):', self.SRC)
+
+    def test_it_retries_transport_failures_only(self):
+        self.assertIn('if code not in (0, 502, 504):', self.SRC)
+        self.assertIn('break', self.SRC)
+
+    def test_it_stops(self):
+        self.assertIn('AGENT_LLM_TRIES = 3', self.SRC)
+        self.assertIn('range(1, AGENT_LLM_TRIES + 1)', self.SRC)
+
+    def test_every_attempt_is_reported(self):
+        # A water that succeeded on the third try is a water whose run was in trouble, and the
+        # report has to say so or the next batch looks healthier than it was.
+        self.assertIn('out.setdefault("llm_attempts", [])', self.SRC)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
 

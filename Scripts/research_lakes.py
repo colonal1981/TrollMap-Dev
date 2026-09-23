@@ -880,9 +880,44 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
              "text": str(d.get("fullText") or d.get("text") or "")[:LLM_DOC_CHARS]}
             for d in usable[:LLM_DOC_LIMIT]]
 
-        code, res, err = _req("/research/agent-llm",
-                              {"lakeName": lake, "state": state, "agent": "fisheries",
-                               "previousResults": prev})
+        # ── THE ONE CALL THAT CAN TIME OUT, AND IT USED TO END THE WATER ────────────────────
+        #
+        # 2026-09-23, three hours into the 33-river batch:
+        #
+        #     Ogeechee River, GA   agent-llm 0: The read operation timed out   10 documents
+        #     Savannah River, GA   agent-llm 0: The read operation timed out   16 documents
+        #
+        # Both abandoned with saved=False after their documents had been discovered, fetched and
+        # extracted -- the expensive part -- because `_req`'s 300 s default expired on the one
+        # call that does the model work. Cape Fear finished the same batch in 774 s total, so
+        # 300 s on this leg alone is inside the normal range, not outside it.
+        #
+        # `code == 0` IS A TRANSPORT FAILURE, NOT AN ANSWER. urllib returns 0 when nothing came
+        # back at all; an HTTP status means the Worker replied and said no, which is a different
+        # thing and must not be retried -- a 400 retried three times is three times the same
+        # rejection. 502/504 are the proxy saying the same "nothing came back", so they ride
+        # along. Everything else fails on the first reply, as before.
+        #
+        # The Worker ALREADY retries internally, per group, and reports it as `retries` -- which
+        # means the runs most likely to exceed a client deadline are precisely the ones where it
+        # is working hardest. A longer deadline is the fix; the attempts are the safety net.
+        AGENT_LLM_TIMEOUT = 900
+        AGENT_LLM_TRIES = 3
+        code = res = err = None
+        for attempt in range(1, AGENT_LLM_TRIES + 1):
+            code, res, err = _req("/research/agent-llm",
+                                  {"lakeName": lake, "state": state, "agent": "fisheries",
+                                   "previousResults": prev},
+                                  timeout=AGENT_LLM_TIMEOUT)
+            if code == 200 and res:
+                break
+            if code not in (0, 502, 504):
+                break
+            out.setdefault("llm_attempts", []).append(f"{code}: {err}")
+            if attempt < AGENT_LLM_TRIES:
+                print(f"      [{lake}] agent-llm did not answer ({err}) -- attempt "
+                      f"{attempt + 1} of {AGENT_LLM_TRIES}")
+                time.sleep(20 * attempt)
         if code != 200 or not res:
             out["error"] = f"agent-llm {code}: {err}"
             return out
