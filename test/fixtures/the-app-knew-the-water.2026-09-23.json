@@ -1,0 +1,137 @@
+{
+ "_note": "Copied from registry/lake_index.json and registry/nc_species_by_lake.json on 2026-09-23, trimmed to the fields registrySpeciesFor() reads. These are the real rows for the three river names the research batch could not resolve, plus two that it could.",
+ "lake_index": {
+  "broad_river": {
+   "slug": "broad_river",
+   "state": "NC",
+   "name": "Broad River",
+   "display_name": "Broad River (Cherokee Co, NC)",
+   "legacy_display_name": "Broad River, NC",
+   "legacy_display_names": [
+    "Broad River, NC"
+   ],
+   "feature_type": "river"
+  },
+  "broad_river_2": {
+   "slug": "broad_river_2",
+   "state": "SC",
+   "name": "Broad River (2)",
+   "display_name": "Broad River (2) (Union Co, SC)",
+   "legacy_display_name": "Broad River (2), SC",
+   "legacy_display_names": [
+    "Broad River (2), SC"
+   ],
+   "feature_type": "river"
+  },
+  "french_broad_river": {
+   "slug": "french_broad_river",
+   "state": "NC",
+   "name": "French Broad River",
+   "display_name": "French Broad River (Haywood Co, NC)",
+   "legacy_display_name": "French Broad River, NC",
+   "legacy_display_names": [
+    "French Broad River, NC"
+   ],
+   "feature_type": "river"
+  },
+  "pee_dee_river_2": {
+   "slug": "pee_dee_river_2",
+   "state": "NC",
+   "name": "Pee Dee River (2)",
+   "display_name": "Pee Dee River (2) (Stanly Co, NC)",
+   "legacy_display_name": "Pee Dee River (2), NC",
+   "legacy_display_names": [
+    "Pee Dee River (2), NC"
+   ],
+   "feature_type": "river"
+  },
+  "yadkin_river": {
+   "slug": "yadkin_river",
+   "state": "NC",
+   "name": "Yadkin River",
+   "display_name": "Yadkin River (Yadkin Co, NC)",
+   "legacy_display_name": "Yadkin River, NC",
+   "legacy_display_names": [
+    "Yadkin River, NC"
+   ],
+   "feature_type": "river"
+  },
+  "first_broad_river": {
+   "slug": "first_broad_river",
+   "state": "NC",
+   "name": "First Broad River",
+   "display_name": "First Broad River (Cleveland Co, NC)",
+   "legacy_display_name": "First Broad River, NC",
+   "legacy_display_names": [
+    "First Broad River, NC"
+   ],
+   "feature_type": "river"
+  }
+ },
+ "nc_species_by_lake": {
+  "lakes": {
+   "broad_river": {
+    "predatorSpecies": [
+     "Bluegill",
+     "Largemouth Bass",
+     "Muskellunge",
+     "North American Freshwater Catfishes",
+     "Redbreast Sunfish",
+     "Smallmouth Bass",
+     "Sunfish",
+     "White Bass"
+    ],
+    "knownStockings": [
+     "Muskellunge"
+    ]
+   },
+   "french_broad_river": {
+    "predatorSpecies": [
+     "Brook Trout",
+     "Brown Trout",
+     "Muskellunge",
+     "North American Freshwater Catfishes",
+     "Rainbow Trout",
+     "Redbreast Sunfish",
+     "Smallmouth Bass"
+    ],
+    "knownStockings": [
+     "Brook Trout",
+     "Brown Trout",
+     "Muskellunge",
+     "Rainbow Trout"
+    ]
+   },
+   "pee_dee_river_2": {
+    "predatorSpecies": [
+     "American Shad",
+     "Crappie (Unspecified)",
+     "Largemouth Bass",
+     "North American Freshwater Catfishes",
+     "Striped Bass",
+     "Sunfish",
+     "White Bass",
+     "White Perch"
+    ],
+    "knownStockings": []
+   },
+   "yadkin_river": {
+    "predatorSpecies": [
+     "Alabama Bass",
+     "Bullhead Sp.",
+     "Chain Pickerel",
+     "Flathead Catfish",
+     "Largemouth Bass",
+     "North American Freshwater Catfishes",
+     "Redbreast Sunfish",
+     "Smallmouth Bass",
+     "Spotted Bass",
+     "Striped Bass",
+     "Sunfish",
+     "White Bass"
+    ],
+    "knownStockings": []
+   }
+  }
+ }
+}

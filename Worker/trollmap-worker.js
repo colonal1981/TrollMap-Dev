@@ -1883,7 +1883,8 @@ var trollmap_worker_default = {
         const target = url.searchParams.get("species") || "";
         try {
           const [reg, food, measured] = await Promise.all([
-            registrySpeciesFor(env, name, state),
+            // The app's own binding, when it has one -- see registrySpeciesFor().
+            registrySpeciesFor(env, name, state, url.searchParams.get("slug") || ""),
             target ? speciesFoodHabits(env, target) : Promise.resolve(null),
             // THE OTHER HALF OF "what is this fish". `food` is SCDNR's paragraph; this is
             // FishBase's numbers for the same animal -- trophic level, the size it reaches, the
@@ -1895,6 +1896,10 @@ var trollmap_worker_default = {
           return new Response(JSON.stringify({
             lake: name,
             slug: reg.slug,
+            resolvedBy: reg.resolvedBy,
+            // Present only when the water reached no registry row. An empty roster beside it
+            // means "could not look", not "nothing swims here".
+            ...(reg.unresolved ? { unresolved: reg.unresolved } : {}),
             predatorSpecies: reg.predatorSpecies,
             knownStockings: reg.knownStockings,
             // What the agency says those fish EAT, off the same page and quoted from it.

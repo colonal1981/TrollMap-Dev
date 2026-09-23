@@ -904,7 +904,8 @@ export async function findWater() {
   // WHAT THE REGISTRY KNOWS SWIMS HERE. Same source and same fallback as the Smart Plan tab.
   const regRow = registryRecordFor(inp.lakeName);
   const regSpecies = await fetchRegistrySpecies(CF_WORKER_URL, inp.lakeName,
-                                                (regRow || {}).state || '', species);
+                                                (regRow || {}).state || '', species,
+                                                (regRow || {}).slug || '');
   const regId = registryIdentity(regRow);
   say('Checking the forecast…');
   const forecast = await fetchForecast(inp.lakeName, inp.dateStr,

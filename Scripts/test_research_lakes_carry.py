@@ -128,6 +128,37 @@ class TheOneCallThatCanTimeOut(unittest.TestCase):
         self.assertIn('out.setdefault("llm_attempts", [])', self.SRC)
 
 
+class OnlyAnEarnedSlugIsForwarded(unittest.TestCase):
+    """remember_slugs() is the gate between the app's two bindings and the Worker.
+
+    Measured on Ryan's machine 2026-09-23 through research_todo.mjs --resolve: the three river
+    names that came back thin were all bound by the access index, and two controls taken from the
+    Goose Creek note in access-index.js -- "Silver Lake, GA", "Goose Creek, TN" -- were bound only
+    by lakeRecordFor(), state-blind, to South Carolina lakes. Forwarding that second kind would turn
+    an honest null in the Worker into a confident wrong roster.
+    """
+
+    def setUp(self):
+        R.SLUG_BY_NAME.clear()
+
+    def test_the_access_index_binding_is_forwarded(self):
+        R.remember_slugs([{"name": "Broad River, SC", "slug": "broad_river",
+                           "bound_by": "access-index"}])
+        self.assertEqual(R.SLUG_BY_NAME.get("broad river, sc"), "broad_river")
+
+    def test_a_state_blind_binding_is_not(self):
+        R.remember_slugs([{"name": "Silver Lake, GA", "slug": "silver_lake_3",
+                           "bound_by": "lake-registry"},
+                          {"name": "Goose Creek, TN", "slug": "goose_creek_reservoir",
+                           "bound_by": "lake-registry"}])
+        self.assertEqual(R.SLUG_BY_NAME, {})
+
+    def test_a_row_with_no_slug_or_no_name_is_skipped(self):
+        R.remember_slugs([{"name": "X", "slug": None, "bound_by": "access-index"},
+                          {"name": None, "slug": "y", "bound_by": "access-index"}, None])
+        self.assertEqual(R.SLUG_BY_NAME, {})
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
 

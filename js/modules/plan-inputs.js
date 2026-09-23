@@ -532,12 +532,17 @@ export function registryIdentity(rec) {
   return Object.keys(out).length ? out : null;
 }
 
-export async function fetchRegistrySpecies(worker, lakeName, state = '', species = '') {
+export async function fetchRegistrySpecies(worker, lakeName, state = '', species = '', slug = '') {
   if (!worker || !lakeName) return null;
   try {
     const u = new URL(`${String(worker).replace(/\/+$/, '')}/species`);
     u.searchParams.set('lake', lakeName);
     if (state) u.searchParams.set('state', state);
+    // THE ROW THE APP ALREADY BOUND THIS NAME TO. Both callers hold registryRecordFor()'s answer
+    // and used to send only its `.state`, so the Worker re-resolved the name with a stricter
+    // resolver and, for "Broad River, SC" and "French Broad River, TN", found nothing -- every
+    // registry roster for those waters was skipped at plan time as well as in research.
+    if (slug) u.searchParams.set('slug', slug);
     // The target species asks a second question of the same call: what it eats, statewide, from
     // the state's own guide. See speciesFoodHabits().
     if (species) u.searchParams.set('species', species);

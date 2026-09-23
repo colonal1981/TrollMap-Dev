@@ -278,7 +278,8 @@ export async function runSmartPlanV2(opts = {}) {
   // water the registry cannot identify, which leaves the prompt exactly as it was.
   const regRow = registryRecordFor(inp.lakeName);
   const regSpecies = await fetchRegistrySpecies(CF_WORKER_URL, inp.lakeName,
-                                                (regRow || {}).state || '', species);
+                                                (regRow || {}).state || '', species,
+                                                (regRow || {}).slug || '');
   // `Lake type` off the row the browser already holds. No fetch -- see registryIdentity().
   const regId = registryIdentity(regRow);
   // THE OPERATOR'S OWN SEASONAL CURVE, off the conditions call this path already makes.

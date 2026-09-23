@@ -288,7 +288,7 @@ def gate_documents(repo, documents, lake, alt_names=None):
 
 
 def resolve_names(repo, names):
-    """{name: {state, aliases}} for names the app already chose -- its own binding, not a lookup."""
+    """{name: {slug, bound_by, state, aliases}} for names the app already chose -- its own binding."""
     src = os.path.join(repo, "Scripts", "research_todo.mjs")
     if not os.path.exists(src):
         raise SystemExit(f"!! cannot find {src} -- pass --repo pointing at the TrollMap-Dev tree")
@@ -566,12 +566,17 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
            "sources": 0, "fetch": {}, "rejected_offlake": 0, "rejected_docs": [],
            "wqp_records": 0, "limnology_gaps": [], "ramps_sent": 0,
            "chars_sent": 0, "retries": 0, "group_attempts": {}, "saved_key": None,
-           "saved_version": None, "discovered_species": [], "warnings": []}
+           "saved_version": None, "discovered_species": [], "warnings": [],
+           "registry_slug": None, "registry_resolved_by": None, "registry_unresolved": None}
 
     ramps = registry_ramps(row)
     out["ramps_sent"] = len(ramps)
-    code, det, err = _req("/research/deterministic-facts",
-                          {"lakeName": lake, "state": state, "ramps": ramps})
+    # THE ROW THE APP ALREADY BOUND THIS NAME TO, when it bound it on evidence. See SLUG_BY_NAME.
+    det_body = {"lakeName": lake, "state": state, "ramps": ramps}
+    bound = SLUG_BY_NAME.get(lake.strip().lower())
+    if bound:
+        det_body["slug"] = bound
+    code, det, err = _req("/research/deterministic-facts", det_body)
     if code != 200 or not det or not det.get("profile"):
         out["error"] = f"deterministic-facts {code}: {err or 'no profile'}"
         return out
@@ -597,6 +602,16 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
               f"{', '.join(out['carried_forward'])}")
     species = ((profile.get("biology") or {}).get("predatorSpecies")) or []
     out["confirmed"] = list(species)
+    # WHICH REGISTRY ROW THE ROSTER CAME OFF, AND WHETHER THERE WAS ONE. Before 2026-09-23 a name
+    # that reached no row produced the same empty roster as a water with no fish on file, and the
+    # run line said nothing; three rivers were researched blind that way with NC WRC's list for
+    # each sitting in R2. It is said out loud now, and it is carried into the report.
+    out["registry_slug"] = det.get("registrySlug")
+    out["registry_resolved_by"] = det.get("registryResolvedBy")
+    if det.get("registryUnresolved"):
+        out["registry_unresolved"] = det["registryUnresolved"]
+        print(f"      !! [{lake}] reaches no registry row -- every registry roster skipped. "
+              f"The species this run finds are all it will have.")
 
     # ── THE MEASURED LIMNOLOGY, WHICH THIS SCRIPT WAS SAVING OVER THE TOP OF ────────────────
     #
@@ -924,7 +939,7 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
         section = res.get("section") or {}
         out["species"] = len(section)
         out["returned"] = [k for k in section.keys() if k != "sources"]
-        out["warnings"] = list(res.get("warnings") or [])
+        out["warnings"] = list(out.get("warnings") or []) + list(res.get("warnings") or [])
         # How hard the provider made us work for it. A group that needed a second or third attempt
         # succeeded, so nothing warns -- but a run where every group is retrying is a run whose load
         # is still too high, and that is only visible if the number is carried out.
@@ -1037,6 +1052,9 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
     # before writing, so a lake that already had a profile is versioned rather than forked --
     # and version 1 means this water genuinely had nothing. That is the difference between a
     # batch that filled a gap and a batch that redid work, and it is one field.
+    if out.get("registry_unresolved"):
+        out["warnings"] = list(out.get("warnings") or []) + [
+            f"no registry row for '{out['registry_unresolved']}' -- roster came from documents only"]
     out["saved_key"] = (saved or {}).get("key") or (saved or {}).get("id")
     out["saved_version"] = ((saved or {}).get("version")
                             or ((saved or {}).get("metadata") or {}).get("version"))
@@ -1049,6 +1067,23 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
 # {lowercased display name: the registry row}, filled by load_lakes(). See
 # registry_ramps() for why the row has to reach research_one().
 ROWS_BY_NAME = {}
+
+# {lowercased app name: registry slug}, filled from research_todo.mjs's own binding. ONLY WHEN THE
+# ACCESS INDEX BOUND IT. registryRecordFor() answers a stripped name only when the feed's access
+# points sit on that row's water; lakeRecordFor() falls back state-blind, and on 2026-09-23 it
+# bound "Silver Lake, GA" and "Goose Creek, TN" to South Carolina lakes. A slug from that second
+# path would hand the Worker a confident wrong answer where it now has an honest null, so it is
+# not forwarded -- the Worker resolves the name itself and says so if it cannot.
+SLUG_BY_NAME = {}
+
+
+def remember_slugs(rows):
+    """Fill SLUG_BY_NAME from research_todo.mjs rows, trusting only the evidenced binding."""
+    for r in rows or []:
+        name, slug = (r or {}).get("name"), (r or {}).get("slug")
+        if name and slug and r.get("bound_by") == "access-index":
+            SLUG_BY_NAME[name.strip().lower()] = slug
+
 
 # The registry folder, so a saved profile can be mirrored onto the drive. Set in main() rather
 # than threaded through research_one()'s call chain, exactly like ROWS_BY_NAME above.
@@ -1204,6 +1239,7 @@ def load_lakes(args, registry):
         # -- "HYCO LAKE, NC", "Nottely Lake, GA" -- are not keys in it, and the first --todo run
         # fell back to state=SC for every Georgia, Tennessee and North Carolina water in the list.
         rows = app_todo_names(args.repo, getattr(args, "include_rivers", False))
+        remember_slugs(rows)
         if not rows:
             print("nothing to research -- every water the tab offers already has a profile")
         return [(r["name"], args.state or r.get("state") or "SC", r.get("aliases") or [r["name"]])
@@ -1374,6 +1410,7 @@ def load_lakes(args, registry):
         resolved = getattr(args, "_resolved", None)
         if resolved is None:
             resolved = resolve_names(args.repo, args.lake)
+        remember_slugs(resolved.values())
         prior_state = {k: v["state"] for k, v in resolved.items() if v.get("state")}
         prior_alias = {k: v["aliases"] for k, v in resolved.items() if v.get("aliases")}
         if getattr(args, "from_report", None):

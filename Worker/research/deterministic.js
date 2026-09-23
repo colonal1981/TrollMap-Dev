@@ -12,7 +12,10 @@ async function handleResearchDeterministicFacts(request, env) {
   try { body = await request.json(); } catch { body = {}; }
   const lakeName = String(body.lakeName || body.lake || '').trim();
   const state = String(body.state || 'SC').trim().toUpperCase();
+  // The registry row the caller already bound this name to. See registrySpeciesFor().
+  const slug = String(body.slug || '').trim();
   if (!lakeName) return new Response(JSON.stringify({ ok: false, error: 'missing lakeName' }), { status: 400, headers: JSON_HEADERS });
+  let registryInfo = null;
 
   const profile = {
     lakeName,
@@ -220,7 +223,8 @@ async function handleResearchDeterministicFacts(request, env) {
   // also already on the registry row, so the plan path gets them for free. The SC inshore floor
   // and identityGrounding() have not moved.
   try {
-    const reg = await registrySpeciesFor(env, lakeName, state);
+    const reg = await registrySpeciesFor(env, lakeName, state, slug);
+    registryInfo = { slug: reg.slug, resolvedBy: reg.resolvedBy, unresolved: reg.unresolved };
     if (reg.predatorSpecies.length) {
       profile.biology.predatorSpecies = uniqueResearchSpecies(
         [...(profile.biology.predatorSpecies || []), ...reg.predatorSpecies]);
@@ -282,8 +286,15 @@ async function handleResearchDeterministicFacts(request, env) {
   // `registryError` is present ONLY when the index could not be read, and it is the difference
   // between "this water is not coastal" and "we could not find out" -- two answers that produce
   // the same empty roster and must not read the same to a caller.
+  // `registryUnresolved` IS PRESENT ONLY WHEN NEITHER THE SLUG NOR THE NAME REACHED A ROW, and it
+  // is what research_lakes.py puts on the run line. Before it existed an unresolved water and a
+  // water with no fish in the registry were the same empty roster and the same silence.
   return new Response(JSON.stringify({ ok: true, lakeName, state, profile,
-    seededDiscoveryTargets: [], ...(indexError ? { registryError: indexError } : {}) }),
+    seededDiscoveryTargets: [],
+    registrySlug: (registryInfo && registryInfo.slug) || null,
+    registryResolvedBy: (registryInfo && registryInfo.resolvedBy) || null,
+    ...((registryInfo && registryInfo.unresolved) ? { registryUnresolved: registryInfo.unresolved } : {}),
+    ...(indexError ? { registryError: indexError } : {}) }),
     { headers: JSON_HEADERS });
 }
 
@@ -697,21 +708,51 @@ export async function speciesFoodHabits(env, speciesName) {
   return null;
 }
 
-export async function registrySpeciesFor(env, lakeName, state = '') {
+/**
+ * `boundSlug` IS THE CALLER'S OWN BINDING, AND IT WINS OVER A NAME.
+ *
+ * 2026-09-23. Three of 31 river names in the research batch -- "Broad River, SC", "PEE DEE RIVER,
+ * NC", "French Broad River, TN" -- had already been bound to the right registry row by the app's
+ * access index, which answers a stripped name only when the feed's own access points sit on that
+ * row's water. The caller then sent the NAME, and resolveRegistryRow() below, which deliberately
+ * will not strip a state suffix (a stripped name is a guess: "Goose Creek, TN" matched one record,
+ * the SC one, and borrowed it), returned null. The NC WRC file was never opened. The batch wrote
+ * 4, 1 and 2 species where it holds 8, 8 and 7, and nothing anywhere said a lookup had missed.
+ *
+ * So a caller that already knows the water passes its slug, and the name resolver is the fallback
+ * for callers that do not. A slug the index does not hold is ignored rather than trusted -- the
+ * name still gets its chance -- and a water neither can reach is reported as UNRESOLVED, which is
+ * a different answer from "the registry knows no fish here" and must not look like it.
+ */
+export async function registrySpeciesFor(env, lakeName, state = '', boundSlug = '') {
   const out = { predatorSpecies: [], knownStockings: [], primaryForage: [],
-                sources: [], evidence: [], slug: null };
+                sources: [], evidence: [], slug: null, resolvedBy: null, unresolved: null };
   const addEvidence = (field, entries) => {
     if (entries && entries.length) out.evidence.push({ field, entries });
   };
   let row = null;
+  const given = String(boundSlug || '').trim();
   try {
-    row = resolveRegistryRow(await lakeIndex(env), lakeName);
+    const index = await lakeIndex(env);
+    if (given && index[given] && typeof index[given] === 'object') {
+      row = index[given];
+      out.resolvedBy = 'slug';
+    } else {
+      if (given) console.warn(`registrySpeciesFor: slug "${given}" is not in the index; trying "${lakeName}"`);
+      row = resolveRegistryRow(index, lakeName);
+      if (row) out.resolvedBy = 'name';
+    }
   } catch (e) {
     console.warn(`registrySpeciesFor: no registry row for ${lakeName}: ${e && e.message}`);
     return out;
   }
-  out.slug = (row && row.slug) || null;
-  if (!out.slug) return out;
+  out.slug = (row && (row.slug || (out.resolvedBy === 'slug' ? given : null))) || null;
+  if (!out.slug) {
+    out.unresolved = String(lakeName || given || '');
+    console.warn(`registrySpeciesFor: "${out.unresolved}" reaches no registry row -- `
+      + 'every registry roster for it is skipped. Pass the slug the caller already bound.');
+    return out;
+  }
   const slug = out.slug;
   const st = String(state || (row && row.state) || '').toUpperCase();
 

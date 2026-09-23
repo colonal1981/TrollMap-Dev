@@ -24,7 +24,7 @@
  *
  *   node Scripts/research_todo.mjs [--rivers] [--json out.json]
  *
- * Emits JSON -- {worth, researched, todo:[{name, state, aliases}]} -- on stdout, or to --json.
+ * Emits JSON -- {worth, researched, todo:[{name, slug, state, aliases}]} -- on stdout, or to --json.
  * Never a bare list: see the note about console.info below.
  *
  * Personal use only, not for distribution or resale; not for navigation.
@@ -84,11 +84,24 @@ const describe = (name) => {
   // first returned nothing, so it can fill a null and cannot overwrite an answer.
   //
   // The NAME is never taken from here. It is the app's, and it is what the profile is filed as.
-  const rec = registryRecordFor(name) || lakeRecordFor(name);
+  const viaIndex = registryRecordFor(name);
+  const rec = viaIndex || lakeRecordFor(name);
   const docNames = rec ? documentNamesFromRecord(rec) : [];
   const suffix = /,\s*([A-Z]{2})(?:\/[A-Z]{2})*\s*$/.exec(name);
   return {
     name,
+    // THE SLUG TRAVELS WITH THE NAME, FOR THE SAME REASON THE STATE DOES. 2026-09-23: three of
+    // 31 river names -- "Broad River, SC", "PEE DEE RIVER, NC", "French Broad River, TN" -- were
+    // bound here to the right registry row and then re-resolved BY NAME inside the Worker, whose
+    // resolver will not strip a state suffix (the Goose Creek, TN rule in access-index.js: a
+    // stripped name is a guess until a second signal agrees). It returned null, the NC WRC roster
+    // for all three was never opened, and the batch wrote 4, 1 and 2 species where the file holds
+    // 8, 8 and 7. This record IS the second signal; the Worker should be handed its answer.
+    slug: (rec && rec.slug) || null,
+    // WHICH BINDING ANSWERED. registryRecordFor() only answers a stripped name when the row's own
+    // access points agree with it; lakeRecordFor() falls back state-blind, which is how "Silver
+    // Lake, GA" lands on an SC lake. A slug is only as good as the binding that produced it.
+    bound_by: viaIndex ? 'access-index' : (rec ? 'lake-registry' : null),
     state: (rec && rec.state) || (suffix && suffix[1]) || null,
     // The same list the Research tab builds, from the same function -- raw registry names are the
     // wrong answer here for the reasons written above documentNamesFromRecord().
