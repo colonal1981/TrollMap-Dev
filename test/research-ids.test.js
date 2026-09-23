@@ -12,7 +12,7 @@ import { sanitizeLakeId, researchStorageId, researchStorageIdCandidates, legacyS
 // names back out.
 //
 // Drift here does not throw. It reports a researched lake as unresearched, which sends Ryan to
-// re-run a pipeline that spends Firecrawl credits, or — worse in the other direction — hides a
+// re-run a pipeline on a water that is already done, or — worse in the other direction — hides a
 // lake from the picker that he still needs. So the Worker's own source is READ, not paraphrased.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -48,7 +48,7 @@ describe('the client mirror agrees with the Worker', () => {
   // A comparison cannot be the guard any more -- there is nothing to compare. THE GUARD IS THAT
   // THERE IS STILL ONE TABLE, which is a stronger claim than "two tables agree today" and is the
   // claim that stops a second copy reappearing. Drift here never throws: it reports a researched
-  // lake as unresearched and sends Ryan to re-run a pipeline that spends Firecrawl credits, or
+  // lake as unresearched and sends Ryan to re-run a pipeline on a water that is already done, or
   // hides a lake from the picker that he still needs.
   it('THERE IS ONE TABLE, and the Worker imports it rather than keeping its own', () => {
     expect(WORKER).toMatch(/import \{[^}]*RESEARCH_CANONICAL_IDS[^}]*\}\s*from\s*'[^']*js\/data\/research-ids\.js'/);

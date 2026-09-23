@@ -308,10 +308,11 @@ export const PRESETS = {
      *
      * `makePredicate` keeps a record it cannot resolve, on the reasoning that a failure to match
      * is indistinguishable from a water that deserves cutting. That is right for the map, where
-     * looking is free — and wrong for this one, which is a work list that spends Firecrawl
-     * credits. 424 of the 1,196 pickable names carry no registry record at all (his own console:
-     * "772 of 1196 pickable lake names carry a registry record"), so under the blanket rule every
-     * one of them passed regardless of size, and the filtered list still ran past six hundred.
+     * looking is free — and wrong for this one, which is a work list, and a batch of it is an
+     * evening of fetching and free-tier model time. 424 of the 1,196 pickable names carry no
+     * registry record at all (his own console: "772 of 1196 pickable lake names carry a registry
+     * record"), so under the blanket rule every one of them passed regardless of size, and the
+     * filtered list still ran past six hundred.
      * A water the registry cannot even identify is precisely the one with nothing written about
      * it. Nothing is hidden from the app by being absent here — see keepAlways above.
      */

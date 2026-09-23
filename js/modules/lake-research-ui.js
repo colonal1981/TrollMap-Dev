@@ -1639,9 +1639,14 @@ function initLakeResearch() {
     const effectiveOrderForModal = coastalForModal ? COASTAL_RESEARCH_ORDER : FRESHWATER_RESEARCH_ORDER;
 
     const title = mode === 'full' ? `🔬 Full Pipeline — Select Agents${coastalForModal ? ' 🌊 Coastal' : ''}` : `⚡ Resume — Select Agents${coastalForModal ? ' 🌊 Coastal' : ''}`;
+    // WHAT A RUN COSTS, SAID THE WAY THE WORKER SPENDS IT. This said "Uses Firecrawl credits"
+    // from before 2026-08-20, when the Worker's fetch and search order became TinyFish first
+    // (free), then Jina and Scrape.do, with Firecrawl last and stopped at a floor read from the
+    // account (Worker/research/download.js, clients.js). Ryan, 2026-09-23, after a 33-river batch
+    // of 691 pages: "why would it expend firecrawl credits... nothing so far has?"
     const desc = mode === 'full'
-      ? `Runs discovery, downloads, and extraction for selected agents. Uses Firecrawl credits.${coastalForModal ? ` Coastal zone detected (${currentLakeForModal}) — marine agents will run.` : ''}`
-      : `Uses existing normalized documents from R2. No downloads, no Firecrawl credits.${coastalForModal ? ` Coastal zone: ${currentLakeForModal}` : ''}`;
+      ? `Runs discovery, downloads, and extraction for selected agents. Pages are fetched free through TinyFish; Firecrawl is only a last resort when the free fetchers all fail.${coastalForModal ? ` Coastal zone detected (${currentLakeForModal}) — marine agents will run.` : ''}`
+      : `Uses existing normalized documents from R2. No searches, no downloads.${coastalForModal ? ` Coastal zone: ${currentLakeForModal}` : ''}`;
 
     document.getElementById('agentModalTitle').textContent = title;
     document.getElementById('agentModalDesc').textContent = desc;

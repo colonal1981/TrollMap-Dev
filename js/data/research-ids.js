@@ -13,8 +13,8 @@
  *
  * SO THIS IS A SECOND COPY OF A RULE, WHICH IS A COST. `test/research-ids.test.js` reads the
  * Worker's own source and asserts the two agree, because a silent drift here does not throw — it
- * quietly reports a researched lake as unresearched and sends Ryan to re-run a pipeline that
- * costs Firecrawl credits.
+ * quietly reports a researched lake as unresearched and sends Ryan to re-run a pipeline he has
+ * already paid for in time.
  *
  * Personal use only, not for distribution or resale. NOT FOR NAVIGATION.
  */
@@ -190,7 +190,7 @@ export function researchStorageIdCandidates(lakeName) {
  * this water" is answered by whether `/research/get` would find one, and that call tries the bare
  * name, the pre-county "Name, ST" name and the literal name in turn. Asking with one spelling
  * reported North Saluda and both Lake Robinsons as unresearched while their profiles sat in the
- * bucket, and sent Ryan to re-run a pipeline that spends Firecrawl credits.
+ * bucket, and sent Ryan to re-run a pipeline for waters that were already done.
  *
  * This is NOT a fuzzy match. It is the exact set of keys the Worker will look under; a name that
  * matches here is a name `/research/get` will resolve. A fuzzy match would mark a water researched
