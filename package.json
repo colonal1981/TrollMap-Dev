@@ -9,11 +9,12 @@
     "lint:keys": "node test/check-lake-keys-parity.mjs",
     "lint:tackle": "node test/check-tackle-parity.mjs",
     "lint:imports": "node test/check-imports.mjs",
-    "lint": "npm run lint:imports && npm run lint:tackle && npm run lint:keys && npm run lint:geo && npm run lint:smoke && npm run lint:audit",
+    "lint": "npm run lint:imports && npm run lint:tackle && npm run lint:keys && npm run lint:geo && npm run lint:smoke && npm run lint:audit && npm run lint:startpage",
     "check": "npm run lint && npm test",
     "lint:smoke": "node test/registry_smoke.mjs && node test/keys_smoke.mjs && node test/sync_smoke.mjs",
     "lint:geo": "node test/check-lake-geo.mjs",
     "lint:audit": "node tools/audit.mjs --check",
-    "audit": "node tools/audit.mjs"
+    "audit": "node tools/audit.mjs",
+    "lint:startpage": "python Scripts/check_start_here.py --root .. --repo TrollMap-Dev"
   }
 }
