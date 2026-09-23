@@ -32,6 +32,18 @@
 // those are right. What the list does is put the sixteen worth a human glance in front of one,
 // with the confidence and the distance the binder recorded, instead of none.
 //
+// WHAT WAS TRIED AND THROWN AWAY, so it is not rebuilt. A second check -- "this gauge shares no
+// word with the water it is filed under, but DOES match some other water the registry knows" --
+// looked like the sharper question and is unusable. Over every gauge it returns 220 rows;
+// restricted to `pool` and `tailwater`, and requiring the other water to match EVERY token of the
+// gauge's river part, still 49 -- and almost all of them correct, because a reservoir's pool gauge
+// is on the river that feeds it and that river is usually its own row. "Lake Norman <- Catawba
+// River at Lake Norman/Cowans Ford Dam, is: catawba_river" is a right answer dressed as a finding.
+// Weak tokens make it worse: "SOUTH TYGER RIVER" matches south_yadkin_river on `south`, "Little
+// Tennessee" matches little_pee_dee_river on `little`. Name tokens cannot separate "gauged on its
+// feeder" from "bound to the wrong water". The check above can, because sharing nothing with its
+// water ANYWHERE in the name is the narrow case.
+//
 // Imports the app's own tokeniser rather than restating it: waterBasinEvidence() is what
 // dukeBasinFor() matches basins with, including the stopword list that stops "river" and "creek"
 // agreeing with everything.
