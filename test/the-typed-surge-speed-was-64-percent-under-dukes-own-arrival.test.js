@@ -76,29 +76,74 @@ describe('the typed surge speed against what Duke actually published', () => {
   const arrival = Date.parse(`${ev.Arrival}-04:00`);
   const recedes = Date.parse(`${ev.Recedes}-04:00`);
 
-  it('is the same landing the typed anchor was calibrated on', () => {
+  // THE ANCHOR IS A HISTORICAL VALUE NOW, WHICH IS WHY IT IS WRITTEN HERE AND NOT READ.
+  // `RIVERS.wateree.dukeAnchorRiverMi` was 7.4 and is deleted: /river's back-computation was its
+  // only reader. The number stays in this file because it is what the arithmetic below is ABOUT,
+  // and a measurement that loses its inputs stops being checkable.
+  const ANCHOR_MI_AS_TYPED = 7.4;
+
+  it('is the landing the deleted anchor was calibrated on', () => {
     expect(ev.MileMarkerName).toBe('Highway 1/Highway 601 Landing');
-    expect(RIVERS.wateree.dukeAnchorRiverMi).toBe(7.4);
+    expect(RIVERS.wateree.dukeAnchorRiverMi).toBe(undefined);
   });
 
-  it('measures 4.1 mph where the table says 2.5', () => {
+  it('measures 4.1 mph where the table still says 2.5', () => {
     const travelH = (arrival - genStart) / 36e5;
     expect(Math.round(travelH * 60)).toBe(108);
-    const measured = RIVERS.wateree.dukeAnchorRiverMi / travelH;
-    expect(Math.round(measured * 100) / 100).toBe(4.11);
-    // The typed constant's own comment claims "arrives ~3h after generation start". It is 1.8 h.
-    expect(Math.round(RIVERS.wateree.dukeAnchorRiverMi / RIVERS.wateree.surgeSpeed_mph * 60)).toBe(178);
+    expect(Math.round((ANCHOR_MI_AS_TYPED / travelH) * 100) / 100).toBe(4.11);
+    // The typed constant's own comment claimed "arrives ~3h after generation start". It is 1.8 h.
+    // surgeSpeed_mph SURVIVES the 2026-09-23 cut because estimateSurgeAt() still reads it for
+    // minutes_from_generation_start, and deriving it needs a river-mile per MileMarkerName that
+    // the payload does not carry. Register: river-surge-speed-typed.
+    expect(RIVERS.wateree.surgeSpeed_mph).toBe(2.5);
+    expect(Math.round(ANCHOR_MI_AS_TYPED / RIVERS.wateree.surgeSpeed_mph * 60)).toBe(178);
   });
 
-  it('puts the reconstructed generation start 70 minutes early', () => {
-    // This is what /river does: arrivalEpoch - (7.4 mi / 2.5 mph), to invent a start time Duke
-    // publishes outright one endpoint over.
-    const reconstructed = arrival - (RIVERS.wateree.dukeAnchorRiverMi / RIVERS.wateree.surgeSpeed_mph) * 36e5;
+  it('would have put the reconstructed generation start 70 minutes early', () => {
+    // What /river DID until 2026-09-23: arrivalEpoch - (7.4 mi / 2.5 mph), to invent a start time
+    // Duke publishes outright one endpoint over.
+    const reconstructed = arrival - (ANCHOR_MI_AS_TYPED / RIVERS.wateree.surgeSpeed_mph) * 36e5;
     expect(Math.round((genStart - reconstructed) / 6e4)).toBe(70);
+  });
+
+  it('and /river now takes the start from the feed instead', () => {
+    const src = readFileSync(new URL('../Worker/trollmap-worker.js', import.meta.url), 'utf8');
+    expect(src.includes('anchorTravelMs')).toBe(false);
+    expect(src.includes('generationStartEpoch = next.start_epoch')).toBe(true);
+    // parseActiveRun's start_epoch IS the published window start -- the same rows this fixture
+    // exercises above.
+    expect(src.includes('parseActiveRun(await fetchDukeActiveRun()')).toBe(true);
   });
 
   it('carries a recession nothing reads — five hours for the pulse to pass', () => {
     expect((recedes - arrival) / 36e5).toBe(5);
+  });
+});
+
+describe('/river resolves its basin instead of reading a typed one', () => {
+  const src = readFileSync(new URL('../Worker/trollmap-worker.js', import.meta.url), 'utf8');
+  const data = readFileSync(new URL('../Worker/worker-data.js', import.meta.url), 'utf8');
+
+  it('no RIVERS entry carries a basin id any more', () => {
+    expect(data.includes('dukeBasinId:')).toBe(false);
+    for (const key of Object.keys(RIVERS)) {
+      expect(RIVERS[key].dukeBasinId).toBe(undefined);
+    }
+  });
+
+  it('getRiver asks dukeBasinFor with the water and its own gauge names', () => {
+    expect(src.includes('dukeBasinFor(roster, cfg.label || key, gaugeNames)')).toBe(true);
+    expect(src.includes("(cfg.gauges || []).map((g) => g && g.name)")).toBe(true);
+  });
+
+  it('every one of the six rivers now has gauge names to match on', () => {
+    // The basin match is only as good as its evidence, and the gauge names ARE the evidence --
+    // NWS names a gauge for the river it sits on. A river with no named gauge would resolve to
+    // null and silently lose its schedule, which is the failure this replaced.
+    for (const [key, cfg] of Object.entries(RIVERS)) {
+      const names = (cfg.gauges || []).map((g) => g && g.name).filter(Boolean);
+      expect(`${key}: ${names.length}`).not.toBe(`${key}: 0`);
+    }
   });
 });
 

@@ -6,12 +6,12 @@ import { CORS, JSON_HEADERS, TEXT_HEADERS, callLLM, isAuthorized, chartpackKey, 
 // Bump on every edit to this file. See ARCGIS_BUILD in core/arcgis.js.
 const WORKER_BUILD = 'worker-2026-08-07a';
 
-import { fetchDukeFlowArrivals, dukeRowForNames, LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake } from './worker-data.js';
+import { fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun, dukeRowForNames, LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake } from './worker-data.js';
 import { SPECIES_MIDLANDS_SANTEE, SPECIES_UPSTATE, SPECIES_COASTAL_SALTWATER, SPECIES_ALL_TROLLMAP, MAX_BIOLOGICAL_LENGTH, PURE_SALTWATER, PURE_FRESHWATER, getSpeciesListForGps, checkBiologicalLength, checkEcologicalReality } from './worker-species.js';
 import { handleGisRoute, flagIsYes, hasText, ARCGIS_BUILD } from './core/arcgis.js';
 import { RAMP_SOURCES } from './core/ramp-sources.js';
 import { handleWaterRoute } from './water.js';
-import { handleConditions, handleHazards } from './conditions.js';
+import { handleConditions, handleHazards, dukeBasinFor, parseActiveRun, activeRunForWater } from './conditions.js';
 import { handleCameras } from './cameras.js';
 import { handleAlerts, runAlertSweep } from './alerts.js';
 import { handleReports } from './reports.js';
@@ -210,23 +210,65 @@ async function getRiver(key, opts = {}) {
       console.warn(`[gauges] upstream lake ${cfg.damLakeKey} unavailable:`, err && err.message);
     }
   }
-  if (cfg.dukeBasinId) {
-    const sched = await fetchDukeFlowArrivals(cfg.dukeBasinId);
+  // ── THE BASIN IS RESOLVED FROM DUKE'S ROSTER, NOT TYPED ─────────────────────────────────
+  //
+  // This read `cfg.dukeBasinId`, present on 2 of the 6 RIVERS entries, so /river had a release
+  // schedule for two rivers and nothing for the rest. `dukeBasinFor()` has resolved all seven
+  // basins Duke publishes since 2026-08-17 -- from the roster plus the water's own bound gauge
+  // names, because NWS names a gauge for the river it sits on -- and `/conditions` has been
+  // using it that whole time while this path kept reading the typed field beside it.
+  //
+  // Ryan, 2026-08-17: *"this is for wateree... which is part of the catawba chain... doesn't
+  // duke have releases on their api"*. It does, and one of the two typed ids was the one that
+  // refused him.
+  const gaugeNames = (cfg.gauges || []).map((g) => g && g.name).filter(Boolean);
+  const roster = await fetchDukeRivers().catch(() => null);
+  const basin = dukeBasinFor(roster, cfg.label || key, gaugeNames);
+  if (basin) {
+    const basinRow = (roster || []).find((r) => Number(r.RiverId ?? r.riverId) === basin) || null;
+    const sched = await fetchDukeFlowArrivals(basin).catch(() => null);
     if (sched && sched.arrivals.length) {
       out.dam_schedule = {
         type: "duke_flow_arrivals",
         operator: "Duke Energy",
+        basinId: basin,
         basinName: sched.basinName,
         lastUpdated: sched.lastUpdated,
         next: sched.arrivals[0],
         upcoming: sched.arrivals.slice(0, 6),
         source: sched.source
       };
-      if (cfg.dukeAnchorRiverMi != null && sched.arrivals[0].arrivalEpoch) {
-        const anchorTravelMs = cfg.dukeAnchorRiverMi / cfg.surgeSpeed_mph * 3600 * 1e3;
-        out.dam_schedule.generationStartEpoch = sched.arrivals[0].arrivalEpoch - anchorTravelMs;
-      }
     }
+
+    // ── THE GENERATION START IS PUBLISHED. IT WAS BEING RECONSTRUCTED ─────────────────────
+    //
+    // This used to compute
+    //
+    //     generationStartEpoch = arrivals[0].arrivalEpoch - (anchorRiverMi / surgeSpeed_mph)
+    //
+    // -- a published arrival, walked backwards through a hand-typed surge speed to invent the
+    // time the dam started. Duke publishes the window outright on /rivers/active-run, and
+    // measured against Duke's own arrival on 2026-09-24 the typed 2.5 mph was 4.11 mph in fact,
+    // so the reconstruction landed SEVENTY MINUTES EARLY. On a tailwater that is the number a
+    // kayak is off the water by.
+    //
+    // A water with no active run now gets NO generationStartEpoch, and therefore no surge ETA at
+    // the user's position, rather than one derived from a number nobody measured. Arbitrary
+    // numbers are an AI problem, not a fishing problem.
+    const runs = activeRunForWater(
+      parseActiveRun(await fetchDukeActiveRun().catch(() => null)),
+      basin, cfg.label || key, gaugeNames, basinRow);
+    const next = runs.find((r) => !r.no_release && r.start_epoch != null);
+    if (next) {
+      out.dam_schedule = out.dam_schedule || {
+        type: "duke_active_run", operator: "Duke Energy", basinId: basin, basinName: basinRow && basinRow.RiverName
+      };
+      out.dam_schedule.generationStartEpoch = next.start_epoch;
+      out.dam_schedule.generationStartSource = "duke /rivers/active-run, as published";
+      out.dam_schedule.generationDam = next.dam;
+      out.dam_schedule.generationEnd = next.end || null;
+    }
+    out.dam_schedule_runs = runs.length ? runs.slice(0, 6) : undefined;
   }
   if (cfg.dominionSaluda) {
     const dom = await fetchDominionSaludaStatus();

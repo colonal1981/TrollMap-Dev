@@ -1937,8 +1937,10 @@ var RIVERS = {
     damName: "Wateree Dam",
     damLakeKey: "wateree",
     // → cross-link to LAKES.wateree pool data
-    dukeBasinId: 1,
-    // → fetchDukeFlowArrivals(1) returns the Catawba/Wateree schedule
+    // NO dukeBasinId. It was typed here and on `broad`, and on four of the six rivers it was
+    // simply absent -- so /river had a release schedule for two rivers and {error} for the rest.
+    // dukeBasinFor() resolves all seven basins Duke publishes from /rivers/get-rivers plus this
+    // water's own bound gauge names, and /conditions has used it since 2026-08-17.
     // River centerline reference points: river_mi 0 = dam, increasing downstream.
     // CORRECTED 2026-06-18 — previous version had several errors:
     //   * Dam coords were ~11 mi off (had -80.86, actual -80.7004 per damsoftheworld.com & SC Picture Project)
@@ -1949,14 +1951,19 @@ var RIVERS = {
     //   * Total length "75 mi" from SC Encyclopedia includes the Catawba portion
     //     above Lake Wateree; the free-flowing river BELOW the dam is ~48 mi
     riverLength_mi: 48,
+    // STILL TYPED, AND STILL WRONG. Duke's own 2026-09-24 schedule -- generation 17:00, arrival
+    // at Highway 1/Highway 601 Landing (7.4 river-mi) 18:48 -- measures 4.11 mph. The comment
+    // that used to sit here claimed "arrives ~3h after generation start"; it is 1.8 h.
+    //
+    // `estimateSurgeAt()` still reads this for minutes_from_generation_start, so it cannot go
+    // until the speed is derived from the arrivals themselves -- which needs a river-mile for
+    // each MileMarkerName, and the payload gives only the name. Register:
+    // river-surge-speed-typed.
+    //
+    // `dukeAnchorRiverMi`, `dukeAnchorLat` and `dukeAnchorLon` STOOD HERE and are gone: the only
+    // reader was /river's back-computation of the generation start, and Duke publishes that
+    // outright on /rivers/active-run.
     surgeSpeed_mph: 2.5,
-    // calibrated: Duke API anchor (Hwy 1/601, 7.4 mi) arrives ~3h after generation start
-    // Duke's "Highway 1/Highway 601 Landing" mile-marker corresponds to the
-    // USGS 02148000 gauge: "7.4 mi downstream from Wateree Dam, at river mile 68.8"
-    // (per USGS site metadata https://waterdata.usgs.gov/nwis/wys_rpt/?site_no=02148000)
-    dukeAnchorRiverMi: 7.4,
-    dukeAnchorLat: 34.2446,
-    dukeAnchorLon: -80.654,
     // Surge severity attenuation — piecewise model calibrated against the
     // documented paddler observation of "5 ft surge still arriving at mile 35"
     // (paddling.com Wateree trip report) and the fact that the river fans into
@@ -2096,8 +2103,8 @@ var RIVERS = {
     label: "Broad River (above Columbia, SC)",
     operator: "SCE&G / Dominion (Parr Shoals)",
     damName: "Parr Shoals Dam",
-    dukeBasinId: 10,
-    // → BroadRiver basin in Duke API (basin 10)
+    // NO dukeBasinId -- see the note on `wateree`. "BroadRiver" is one token in Duke's roster
+    // and dukeBasinFor() splits the case boundary before matching it.
     gauges: [
       {
         site: "02161000",

@@ -257,9 +257,15 @@ def main():
         for grp, rows in (('REGRESSED', regressed), ('OPEN', open_), ('FIXED', fixed)):
             for it in rows:
                 print(f"{grp:9s} {it['id']:{w}s}  {it['_why']}")
-        print(f"\n{len(open_)} open · {len(fixed)} fixed and prunable · {len(regressed)} REGRESSED")
-        if fixed and not a.prune:
-            print('Run --prune to take the fixed ones off the list.')
+        # A FIXED ITEM WITH `fixed_on` IS NOT PRUNABLE, IT IS A RATCHET. --prune keeps it, and
+        # it is the only kind of item that can fail this script -- so calling it prunable in the
+        # footer would invite somebody to delete the guard.
+        ratchets = [i for i in fixed if i.get('fixed_on')]
+        prunable = [i for i in fixed if not i.get('fixed_on')]
+        print(f"\n{len(open_)} open · {len(ratchets)} closed and guarded · "
+              f"{len(prunable)} prunable · {len(regressed)} REGRESSED")
+        if prunable and not a.prune:
+            print('Run --prune to take the unguarded fixed ones off the list.')
 
     if a.prune:
         keep = [{k: v for k, v in it.items() if not k.startswith('_')}
