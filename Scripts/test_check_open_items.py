@@ -153,5 +153,53 @@ class ThePathModeStillWorks(unittest.TestCase):
         self.assertEqual(C.run_item(it, self.root, REPO), (False, 'present'))
 
 
+class PresentTextOverSeveralFiles(unittest.TestCase):
+    """present_text grew `files` and `under: root` on 2026-09-23, for stored profiles that carry a
+    false record -- Broad River SC, Pee Dee and French Broad each kept a "no deterministic source"
+    mark after NC WRC's roster reached them."""
+
+    TEXT = '"_speciesDiscoveredBy"'
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.d = os.path.join(self.root, 'registry', '_research_profiles')
+        os.makedirs(self.d)
+
+    def put(self, name, marked):
+        body = {'biology': {'predatorSpecies': ['Smallmouth Bass']}}
+        if marked:
+            body['biology']['_speciesDiscoveredBy'] = 'fisheries agent'
+        with open(os.path.join(self.d, name), 'w', encoding='utf-8') as fh:
+            fh.write(json.dumps(body, indent=1))
+
+    def item(self, *names):
+        return {'id': 'x', 'kind': 'present_text', 'under': 'root', 'text': self.TEXT,
+                'files': ['registry/_research_profiles/' + n for n in names]}
+
+    def test_open_while_any_file_holds_it_and_it_names_which(self):
+        self.put('a.json', True)
+        self.put('b.json', False)
+        is_open, why = C.run_item(self.item('a.json', 'b.json'), self.root, REPO)
+        self.assertTrue(is_open)
+        self.assertEqual(why, 'still in 1 of 2: a.json')
+
+    def test_closed_when_every_file_has_lost_it(self):
+        self.put('a.json', False)
+        self.put('b.json', False)
+        self.assertEqual(C.run_item(self.item('a.json', 'b.json'), self.root, REPO), (False, 'gone'))
+
+    def test_a_missing_file_is_not_a_fixed_file(self):
+        # read() answers '' for a file that is not there, and '' holds no text at all.
+        self.put('a.json', False)
+        is_open, why = C.run_item(self.item('a.json', 'renamed.json'), self.root, REPO)
+        self.assertTrue(is_open)
+        self.assertIn('not on the drive: renamed.json', why)
+
+    def test_the_single_file_form_is_unchanged(self):
+        it = {'id': 'x', 'kind': 'present_text', 'file': 'Scripts/check_open_items.py',
+              'text': 'def run_item('}
+        self.assertEqual(C.run_item(it, self.root, REPO), (True, 'still present'))
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

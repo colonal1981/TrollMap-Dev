@@ -178,9 +178,28 @@ def run_item(it, root, repo):
             return False, 'the file is not on the drive'
         return (not r), (f"{len(r)} mention(s): {', '.join(r[:3])}" if r else 'on the drive, mentioned by nothing')
     if k == 'present_text':
-        p = os.path.join(repo, it['file'])
-        found = it['text'] in code_lines(read(p))
-        return found, ('still present' if found else 'gone')
+        # `files` as well as `file`, and `under: root` for the pipeline's own data -- a stored
+        # profile that says something false is an item exactly like a line of code that does, and
+        # 2026-09-23 had three rivers carrying the same false mark. Open while ANY file still holds
+        # the text; the reason names which, so the item says what is left rather than that
+        # something is.
+        base = root if it.get('under') == 'root' else repo
+        if not it.get('files'):
+            found = it['text'] in code_lines(read(os.path.join(base, it['file'])))
+            return found, ('still present' if found else 'gone')
+        # A FILE THAT IS NOT THERE HAS NOT BEEN FIXED. `read()` answers '' for a missing file, and
+        # '' does not contain the text, so without this a renamed profile would close its item.
+        names = it['files']
+        missing = [f for f in names if not os.path.exists(os.path.join(base, f))]
+        held = [f for f in names if f not in missing
+                and it['text'] in code_lines(read(os.path.join(base, f)))]
+        why = []
+        if held:
+            why.append(f"still in {len(held)} of {len(names)}: "
+                       + ', '.join(os.path.basename(f) for f in held))
+        if missing:
+            why.append('not on the drive: ' + ', '.join(os.path.basename(f) for f in missing))
+        return bool(held or missing), ('; '.join(why) if why else 'gone')
     if k == 'absent_text':
         # code_lines, or the check finds the note explaining itself -- which is exactly what the
         # first run of this file did with `calendar-v2` and its own comment.
