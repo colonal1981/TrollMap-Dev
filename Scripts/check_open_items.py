@@ -46,7 +46,9 @@ and a new kind is a sign the item is really several:
     present_text    a string that must GO: a typed constant, a gate, a dead import.
     absent_text     a string that must ARRIVE: an endpoint nothing calls yet.
     key_coverage    a per-water table that covers fewer waters than the app ships.
-    artifact_missing a generated artifact that was never produced.
+    artifact_missing a generated artifact that was never produced. One `path`, or -- with `dir`
+                    plus `for_each` -- one per water, open while any water lacks one. A coverage
+                    item is the same defect counted 56 times, not a seventh kind.
 """
 import argparse, json, os, re, subprocess, sys
 
@@ -108,6 +110,56 @@ def readers_of(repo, symbol, defined_in, with_tests=False):
     return hits
 
 
+def select_waters(root, spec):
+    """The waters a coverage item is measured over, read from a GENERATED registry file.
+
+    NEVER A LIST WRITTEN INTO THE ITEM. `file` + `at` walk to the rows, `where` filters on their
+    own fields, and `name` is the field the app would ASK with. That last one matters: a stored
+    artifact's id is derived from the name the caller passes, not from the slug it is filed under,
+    so a check that asks with the slug measures a question the app never poses.
+    """
+    with open(os.path.join(root, spec['file']), encoding='utf-8') as fh:
+        node = json.load(fh)
+    for step in (spec.get('at') or '').split('.'):
+        if step:
+            node = node[step]
+    keys = list(node) if isinstance(node, dict) else [None] * len(node)
+    rows = list(node.values()) if isinstance(node, dict) else list(node)
+    out = []
+    for key, row in zip(keys, rows):
+        row = row if isinstance(row, dict) else {}
+        if any(row.get(f) != v for f, v in (spec.get('where') or {}).items()):
+            continue
+        out.append(str(row.get(spec['name']) if spec.get('name') else key or ''))
+    return out
+
+
+def coverage_keys(repo, resolver, names):
+    """Every id an artifact for each name could be stored under, ASKED OF THE APP.
+
+    `resolver` is "path/to/module.js#exportName". The rule for turning a water's name into a
+    storage key is 200 lines of accumulated corrections in Worker/research/keys.js -- county
+    parentheticals, canonical ids, legacy spellings -- every one of them added because a lookup
+    missed a profile that existed. Restating any of that here would mean this check and the app
+    disagree about what "has one" means, and the check would be the one nobody trusts. So it
+    imports the function. One node call for the whole item.
+    """
+    mod, fn = resolver.split('#')
+    src = (
+        "const {pathToFileURL} = await import('node:url');\n"
+        "const m = await import(pathToFileURL(process.argv[1]).href);\n"
+        "const out = {};\n"
+        "for (const n of JSON.parse(process.argv[2])) out[n] = [].concat(m[%s](n));\n"
+        "process.stdout.write(JSON.stringify(out));\n" % json.dumps(fn)
+    )
+    r = subprocess.run(['node', '--input-type=module', '-e', src,
+                        os.path.abspath(os.path.join(repo, mod)), json.dumps(names)],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError((r.stderr or 'node failed').strip().split('\n')[-1])
+    return json.loads(r.stdout)
+
+
 def run_item(it, root, repo):
     k = it['kind']
     if k == 'unread_symbol':
@@ -150,8 +202,17 @@ def run_item(it, root, repo):
         total = len([x for x in read(os.path.join(root, it['against'])).split('\n') if x.strip()])
         return (len(keys) < total), f'{len(keys)} of {total}'
     if k == 'artifact_missing':
-        p = os.path.join(root, it['path'])
-        return (not os.path.exists(p)), ('absent' if not os.path.exists(p) else 'present')
+        if not it.get('for_each'):
+            p = os.path.join(root, it['path'])
+            return (not os.path.exists(p)), ('absent' if not os.path.exists(p) else 'present')
+        suffix = it.get('suffix', '.json')
+        names = select_waters(root, it['for_each'])
+        have = {f[:-len(suffix)] for f in os.listdir(os.path.join(root, it['dir']))
+                if f.endswith(suffix)}
+        cand = (coverage_keys(repo, it['resolver'], names) if it.get('resolver')
+                else {n: [n] for n in names})
+        covered = [n for n in names if any(c in have for c in (cand.get(n) or []))]
+        return (len(covered) < len(names)), f'{len(covered)} of {len(names)}'
     raise SystemExit(f"unknown kind {k!r} on {it['id']}")
 
 
