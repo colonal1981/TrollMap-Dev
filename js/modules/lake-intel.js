@@ -8,6 +8,7 @@ import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
 import { coerceList, coerceLabels } from '../utils/coerce.js';
 import { clarityForPlan, versusNormalAt } from '../utils/clarity-at-ramp.js';
+import { lakeRecordFor } from '../data/lake-registry.js';
 
 /* Lake Intel: species, forage, habitat, hazards, seasonal patterns */
 export async function syncLakeIntelData() {
@@ -296,7 +297,12 @@ export async function syncClarityIntelData(o = {}) {
     if(btn){ btn.disabled=true; btn.textContent='Modeling...'; }
     let d = o.payload || null;
     if (!d) {
-      const res = await fetch(`${worker}/lake-clarity?lake=${encodeURIComponent(label)}&date=${encodeURIComponent(date)}`);
+      // Same reason as fetchClarityAtRamp(): with no point the Worker reads the rain near
+      // Columbia for any water that has no hand-authored clarity profile.
+      const cRec = lakeRecordFor(label);
+      const cPt = cRec && Number.isFinite(Number(cRec.lat)) && Number.isFinite(Number(cRec.lon)) ? cRec : null;
+      const res = await fetch(`${worker}/lake-clarity?lake=${encodeURIComponent(label)}&date=${encodeURIComponent(date)}`
+        + (cPt ? `&lat=${Number(cPt.lat)}&lon=${Number(cPt.lon)}` : ''));
       if(!res.ok) throw new Error(`Worker HTTP ${res.status}`);
       d = await res.json();
     }

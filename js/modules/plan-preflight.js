@@ -317,8 +317,17 @@ export async function fetchClarityAtRamp(lakeName, dateStr, o = {}) {
   const rampName = String(o.rampName || '').trim();
   if (!worker || !lakeName) return null;
   try {
+    // THE POINT, BECAUSE THE RAINFALL IS THE ONLY THING IN THAT MODEL THAT IS ABOUT TODAY. Without
+    // it the Worker reads rain at a fixed spot near Columbia for any water with no hand-authored
+    // clarity profile -- a median 226 km away. `o.point` is the launch where the caller has one,
+    // which is also the point /conditions chooses its gauges with; the registry centroid otherwise.
+    const rec = lakeRecordFor(lakeName);
+    const pt = (o.point && Number.isFinite(Number(o.point.lat)) && Number.isFinite(Number(o.point.lon)))
+      ? o.point
+      : (rec && Number.isFinite(Number(rec.lat)) && Number.isFinite(Number(rec.lon)) ? rec : null);
     const url = `${worker}/lake-clarity?lake=${encodeURIComponent(lakeName)}`
-              + `&date=${encodeURIComponent(dateStr || '')}`;
+              + `&date=${encodeURIComponent(dateStr || '')}`
+              + (pt ? `&lat=${Number(pt.lat)}&lon=${Number(pt.lon)}` : '');
     const res = o.fetchJson ? await o.fetchJson(url) : await (await fetch(url)).json();
     if (!res || res.error) return null;
     const got = clarityForPlan(res, rampName);

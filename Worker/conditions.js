@@ -4977,7 +4977,11 @@ export async function handleConditions(request, env, url) {
       if (err) throw new Error(err);
       const b = all[slug];
       const nm = (b && b.display_name) || slug;
-      return getLakeClarity(nm, date, env);
+      // THE POINT, WHICH THIS ROUTE HAS HAD ALL ALONG. It is handed to tideBlock() a few lines up
+      // and returned as `point` below, and the clarity call took the display name only -- so every
+      // water without one of the six hand-authored profiles had its rainfall read at a fixed spot
+      // near Columbia, SC. Median 226 km from the water it was describing.
+      return getLakeClarity(nm, date, env, { lat, lon });
     })],
   ];
   const settled = await Promise.allSettled(jobs.map((j) => j[1]));

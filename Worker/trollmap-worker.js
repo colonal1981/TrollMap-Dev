@@ -1728,7 +1728,13 @@ var trollmap_worker_default = {
         const name = url.searchParams.get("lake") || url.searchParams.get("waterbody") || "";
         const dateParam = url.searchParams.get("date") || (new Date()).toISOString().slice(0, 10);
         if (!name) return new Response(JSON.stringify({ error: "missing lake" }), { headers: JSON_HEADERS, status: 400 });
-        const data = await getLakeClarity(name, dateParam, env);
+        // lat/lon are OPTIONAL and they decide where the rainfall is read for any water without
+        // one of the six hand-authored profiles. Without them this route behaves exactly as it did
+        // -- which is to say it describes rain near Columbia, SC. See getLakeClarity.
+        const clLat = Number(url.searchParams.get("lat"));
+        const clLon = Number(url.searchParams.get("lon"));
+        const clPoint = Number.isFinite(clLat) && Number.isFinite(clLon) ? { lat: clLat, lon: clLon } : null;
+        const data = await getLakeClarity(name, dateParam, env, clPoint);
         return new Response(JSON.stringify(data, null, 2), { headers: JSON_HEADERS });
       }
       if (path === "/lake-intel-sources") {

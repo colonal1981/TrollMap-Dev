@@ -1494,8 +1494,51 @@ async function fetchOpenMeteoRain(lat, lon, tripDate) {
  * `measured: false` is not "clear water" -- it is "nobody has looked". The response says which
  * it is, and the UI has to keep them apart. TN reservoirs are all in the second bucket.
  */
-async function getLakeClarity(lakeName, tripDate, env) {
+/**
+ * ── THE RAIN THAT DRIVES THIS MODEL WAS BEING MEASURED NEAR COLUMBIA FOR EVERY WATER BUT SIX ──
+ *
+ * Ryan, 2026-09-23, on being told the drainage run would improve the per-zone `sensitivity`
+ * constant: *"that doesn't sound right at all for clarity..."*. He was right, and the constant was
+ * the wrong thing to be looking at.
+ *
+ * `score = base + rainScore * sensitivity`. `base` is a measured Secchi or turbidity baseline off
+ * the WQP, cached in R2 and refreshed on a 30-day cron, and it moves on the scale of months.
+ * `rainScore` is the ONLY input in here that describes today -- 72 h of weighted rainfall -- and it
+ * was fetched at `profile.center`.
+ *
+ * Six lakes have a hand-authored profile with a real point on the water. Everything else fell to
+ * `defaultProfile`, whose center is the literal `[34, -81]`: a fixed spot near Columbia, SC. Every
+ * coastal zone fell to `[32.77, -79.93]`, Charleston.
+ *
+ * Measured 2026-09-23 over the 196 bound waters with a centroid and no custom profile:
+ *
+ *     more than  50 km from [34, -81]    191 of 196
+ *     more than 150 km                   156
+ *     median distance                    226 km
+ *
+ *     norris_lake        366 km      fort_loudoun_lake  346 km      tellico_lake  341 km
+ *     holston_river      336 km      clinch_river       335 km      chilhowee     323 km
+ *
+ * And his own water: Cooper River 142 km, Santee 122 km, Diversion Canal 107 km, Greenwood 100 km.
+ * The Congaree is 6 km, which is luck.
+ *
+ * So on 337 of 343 freshwater waters the only thing that made clarity move day to day was rain in
+ * another part of the state, and on the TVA lakes another part of the country. No sensitivity
+ * constant can fix a rainfall reading taken 226 km away.
+ *
+ * THE POINT WAS ALWAYS IN SCOPE AT THE CALLER. `/conditions` computes `lat`/`lon`, hands them to
+ * tideBlock() on the line above this call, and puts them in its own response as `point`. It passed
+ * the display NAME only.
+ *
+ * The six profiles keep their own centers: those were chosen per lake by someone who fishes them,
+ * and a launch-point rainfall is not an improvement on a deliberate choice. `rainPoint` goes into
+ * the payload either way, because a number that arrives without saying where it was measured is
+ * exactly what this was.
+ */
+async function getLakeClarity(lakeName, tripDate, env, point = null) {
   const key = lakeKeyFromName(lakeName);
+  const at = point && Number.isFinite(Number(point.lat)) && Number.isFinite(Number(point.lon))
+    ? [Number(point.lat), Number(point.lon)] : null;
 
   const isCoastal = (
     String(lakeName || "").toLowerCase().startsWith('coast_') ||
@@ -1512,8 +1555,11 @@ async function getLakeClarity(lakeName, tripDate, env) {
   if (isCoastal) {
     defaultProfile = {
       displayName: lakeName,
-      center: [32.77, -79.93], // Default center (Charleston area)
-      defaultNote: "Tidal flush regulates clarity. Upper/marsh creeks stain after heavy local runoff; inlets and open sounds stay clearer via ocean exchange.",
+      // The caller's own point where it gave one. Charleston only as the last resort, and the
+      // note below says which happened.
+      center: at || [32.77, -79.93],
+      defaultNote: "Tidal flush regulates clarity. Upper/marsh creeks stain after heavy local runoff; inlets and open sounds stay clearer via ocean exchange."
+        + (at ? "" : " RAINFALL IS FROM CHARLESTON, not this zone — no point was given."),
       zones: [
         { name: "Inshore Creeks / Upper Marsh", sensitivity: 1.2, base: 10, likely: "stains first from land/marsh runoff after rain", ramps: [] },
         { name: "Inlets / Outer Sound / Open Water", sensitivity: 0.7, base: 3, likely: "clearest water via ocean tidal exchange", ramps: [] }
@@ -1522,8 +1568,10 @@ async function getLakeClarity(lakeName, tripDate, env) {
   } else {
     defaultProfile = {
       displayName: lakeName,
-      center: [34, -81],
-      defaultNote: "No custom clarity model yet; generic creek/runoff model used.",
+      center: at || [34, -81],
+      defaultNote: "No custom clarity model yet; generic creek/runoff model used."
+        + (at ? "" : " RAINFALL IS FROM A FIXED POINT NEAR COLUMBIA, SC, not this water — no "
+                   + "point was given, and on most waters that is over 200 km away."),
       zones: [
         { name: "Creeks/upper arms", sensitivity: 1.2, base: 6, likely: "stain first", ramps: [] },
         { name: "Main lake/lower basin", sensitivity: 0.75, base: 2, likely: "clearest available water", ramps: [] }
@@ -1663,6 +1711,16 @@ async function getLakeClarity(lakeName, tripDate, env) {
     lake: profile.displayName || lakeName,
     key,
     tripDate,
+    // WHERE THE RAIN WAS MEASURED, AND WHETHER IT IS THIS WATER. The rainfall is the only input in
+    // this model that describes today, and until 2026-09-23 it came from a fixed point near
+    // Columbia on every water without one of the six hand-authored profiles -- a median of 226 km
+    // away over the 196 bound waters that fell to the default. A number that cannot say where it
+    // was taken is how that survived, so it says.
+    rainPoint: { lat: profile.center[0], lon: profile.center[1],
+                 isThisWater: !!(at && profile.center === at),
+                 basis: LAKE_CLARITY_PROFILES[key] ? "the lake's own hand-authored point"
+                      : at ? "the point the caller asked about"
+                      : "A FIXED FALLBACK, NOT THIS WATER — no point was given" },
     // What this water ordinarily is, and how far today sits off it. See versusNormal above.
     normally,
     versusNormal,
