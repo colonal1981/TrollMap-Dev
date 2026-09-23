@@ -20,6 +20,7 @@ import { displayDepth, setDisplayTide } from './tide-engine.js';
 
 import { cacheGet, cacheSet, cacheClear, CACHE_NS_CHART_LAYERS } from '../utils/db.js';
 import { structureFor } from '../utils/structure-markers.js';
+import { primeHistorical, historicalFor, historicalMarked, historicalNote } from '../data/historical-features.js';
 // Canvas renderer — shared for all supplemental polygon/line layers
 const _canvasRenderer = L.canvas({ padding: 0.5 });
 
@@ -777,11 +778,65 @@ function renderPoiLabels() {
   _poiLabelGroup = group.addTo(map);
 }
 
+// ── What the lake drowned: GNIS historical features, as chart text ─────────────
+//
+// Ryan, 2026-09-23, asked how they should show: *"always on"*. So they ride the chart-names
+// switch above -- on by default, no button of their own -- and come in at the same zoom as
+// Garmin's place names. A separate group and a separate pass, NOT inside renderPoiLabels():
+// that one returns early on a water with no Garmin POIs, and the history under a lake does not
+// depend on whether Garmin charted a buoy there.
+//
+// Their own look, so they read as history and never as a live feature or a hazard: italic,
+// muted amber. A crossing, shoal, island, canal, fort or town gets a small amber diamond and its
+// name; a drowned lake, swamp or creek gets its name only. Tapping the diamond says what it was
+// and that the position is USGS's, off old maps. See js/data/historical-features.js.
+const HIST_COLOR = '#e0b36a';
+let _histGroup = null;
+
+function _histLabelHtml(text, dy) {
+  return `<span style="font-size:11px;font-style:italic;font-weight:600;color:${HIST_COLOR};`
+       + `white-space:nowrap;text-shadow:0 0 3px #000,0 0 3px #000,0 0 5px #000;`
+       + `transform:translate(-50%,calc(-50% + ${dy}px));display:inline-block">${esc(text)}</span>`;
+}
+
+function renderHistoricalLabels() {
+  const map = getMap();
+  if (!map) return;
+  if (_histGroup) { map.removeLayer(_histGroup); _histGroup = null; }
+  if (!_labelsVisible || !_activeLakeKey || map.getZoom() < LABEL_MIN_ZOOM) return;
+  const list = historicalFor(_activeLakeKey);
+  if (!list.length) return;
+  const bounds = map.getBounds().pad(0.15);
+  const group = L.layerGroup();
+  for (const f of list) {
+    if (!bounds.contains([f.lat, f.lon])) continue;
+    const marked = historicalMarked(f.class);
+    if (marked) {
+      const dot = L.divIcon({
+        className: 'hist-mark',
+        html: `<span style="display:inline-block;width:8px;height:8px;border:2px solid ${HIST_COLOR};`
+            + 'background:rgba(0,0,0,.45);transform:translate(-50%,-50%) rotate(45deg)"></span>',
+        iconSize: null,
+      });
+      L.marker([f.lat, f.lon], { icon: dot, keyboard: false, zIndexOffset: 380,
+                                 title: f.name })
+        .bindPopup(`<b>${esc(f.name)}</b><br>${esc(historicalNote(f))}`)
+        .addTo(group);
+    }
+    const text = L.divIcon({ className: 'hist-lbl', html: _histLabelHtml(f.name, marked ? -14 : 0),
+                             iconSize: null });
+    L.marker([f.lat, f.lon], { icon: text, interactive: false, keyboard: false, zIndexOffset: 390 })
+      .addTo(group);
+  }
+  _histGroup = group.addTo(map);
+}
+
 function hookLabelRedraw() {
   if (_labelHooked) return;
   const map = getMap();
   if (!map) return;
   map.on('moveend zoomend', renderPoiLabels);
+  map.on('moveend zoomend', renderHistoricalLabels);
   window.addEventListener('trollmap:rampsToggled', renderPoiLabels);
   _labelHooked = true;
 }
@@ -1244,6 +1299,7 @@ function injectGarminPanel() {
     nb.textContent = `${_labelsVisible ? '◉' : '○'} Chart names`;
     nb.style.color = _labelsVisible ? 'var(--accent)' : 'var(--muted)';
     renderPoiLabels();
+    renderHistoricalLabels();
   });
 
   const ub = document.getElementById('btnGarminUnknown');
@@ -1381,6 +1437,12 @@ export async function loadSupplementalForLake(displayName) {
   layerDropAll(['fishingSpots', 'pois']);
   _poiGeoJSON = null;
   if (_poiLabelGroup)       { getMap()?.removeLayer(_poiLabelGroup);       _poiLabelGroup       = null; }
+  if (_histGroup)           { getMap()?.removeLayer(_histGroup);           _histGroup           = null; }
+  // The history under this water. One small table for every lake, read once; drawn as soon as
+  // it is in hand and redrawn with the chart names from then on. A failure is silence.
+  primeHistorical(CF_WORKER_URL)
+    .then(() => { hookLabelRedraw(); renderHistoricalLabels(); })
+    .catch(() => {});
   clearGarminLayers();
   if (_structureMarkerLayer){ getMap()?.removeLayer(_structureMarkerLayer); _structureMarkerLayer = null; }
 

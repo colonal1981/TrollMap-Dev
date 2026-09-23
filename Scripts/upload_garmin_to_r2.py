@@ -892,6 +892,20 @@ def main():
                 print(f"names:    {_why} -> {args.prefix}_registry/{_nm.lstrip('_')} "
                       f"({_p.stat().st_size/1024:.0f} KB)")
 
+        # WHAT THE LAKES DROWNED, 2026-09-23. Read by the BROWSER (js/data/historical-features.js)
+        # and drawn with the chart names, so it ships here beside the other browser-read names
+        # and NOT through PASSTHROUGH_REGISTRIES below -- that table is the Worker's, and
+        # test/registry-passthrough-parity.test.js holds every entry in it to a Worker loader.
+        _gh = regdir / "gnis_historical.json"
+        if _gh.exists():
+            reg_jobs.append((str(_gh), f"{args.prefix}_registry/gnis_historical.json",
+                             "_registry", "gnis_historical"))
+            print(f"history:  GNIS drowned fords, ferries, islands, towns -> "
+                  f"{args.prefix}_registry/gnis_historical.json ({_gh.stat().st_size/1024:.0f} KB)")
+        else:
+            print(f"!! {_gh.name} not found -- no drowned fords, ferries, islands or towns on the "
+                  f"map (538 on 64 waters, seven on Wateree); build it with build_gnis_historical.py")
+
         # NORTH CAROLINA'S SPECIES. Not slimmed -- the file is already only what it needs to be,
         # a species list and a stocking list per registry slug.
         #
