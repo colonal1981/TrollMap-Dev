@@ -47,6 +47,12 @@ function walk(dir, out = []) {
 // was green. Same fix as the four other source-scanning tests: normalise at the read.
 const source = (f) => readFileSync(f, 'utf8').replace(/\r\n/g, '\n');
 
+// AND COMPARE PATHS WITH ONE SEPARATOR. The exemption for the module that DEFINES the token was
+// `f.endsWith('utils/worker-auth.js')`, and on Windows `walk()` returns `js\utils\worker-auth.js`,
+// so the one file allowed to spell the token was reported for spelling it -- two red cases on
+// Ryan's machine, green on an LF/POSIX runner. Measured 2026-09-23.
+const isAuthModule = (f) => f.replace(/\\/g, '/').endsWith('utils/worker-auth.js');
+
 describe('worker auth — the token has one spelling', () => {
   it('is defined once in the front end', () => {
     // A secret written out twice has already gone wrong; it just has not been noticed yet.
@@ -54,7 +60,7 @@ describe('worker auth — the token has one spelling', () => {
     // every tombstone 401'd into a .catch(() => {}).
     const offenders = [];
     for (const f of walk(join(ROOT, 'js'))) {
-      if (f.endsWith('utils/worker-auth.js')) continue;
+      if (isAuthModule(f)) continue;
       for (const [i, line] of source(f).split('\n').entries()) {
         const code = line.replace(/\/\/.*$/, '').replace(/^\s*\*.*$/, '');
         if (/['"]trollmap[-\w]*\d[-\w]*['"]/.test(code) && /token/i.test(code)) {
@@ -194,7 +200,7 @@ describe('worker auth — the client signs what the Worker checks', () => {
     const files = walk(join(ROOT, 'js'));
     const leaks = [];
     for (const f of files) {
-      if (f.endsWith('utils/worker-auth.js')) continue;   // where they are DEFINED
+      if (isAuthModule(f)) continue;   // where they are DEFINED
       const lines = source(f).split('\n');
       for (const [i, ln] of lines.entries()) {
         if (!/workerHeaders\(|workerAuthOnly\(/.test(ln)) continue;

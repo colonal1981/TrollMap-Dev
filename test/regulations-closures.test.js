@@ -249,7 +249,12 @@ console.log('\n== the year end ==');
       species: 'Muskellunge', species_known: true, plan_species: ['Largemouth Bass'],
       species_basis: 'exact', source: 'NC Regulations Digest', text: 'Nov. 1 - Feb. 28 closed.' },
   ]});
-  const on = (iso) => checkRegulations('Winter Lake', 'Largemouth Bass', new Date(iso), 'NC').legal;
+  // LOCAL NOON, THE WAY THE APP BUILDS A TRIP DATE -- plan-water-ui.js and smart-plan-v2-wiring.js
+  // both say `new Date(`${inp.dateStr}T12:00:00`)`. `new Date('2026-11-01')` is midnight UTC, which
+  // on Ryan's machine (Eastern) is the evening of Oct 31, so this case read the wrong day there and
+  // failed "Nov 1 is closed" and "Mar 1 is open" while a UTC runner stayed green. The app was right;
+  // the test was asking about a different day. Measured 2026-09-23.
+  const on = (iso) => checkRegulations('Winter Lake', 'Largemouth Bass', new Date(`${iso}T12:00:00`), 'NC').legal;
   check('Nov 1, the first day, is closed', on('2026-11-01') === false);
   check('Dec 25 is closed', on('2026-12-25') === false);
   check('Jan 1, across the boundary, is still closed', on('2027-01-01') === false);
