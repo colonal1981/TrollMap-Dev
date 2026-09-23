@@ -310,13 +310,20 @@ def resolve_names(repo, names):
             return {r["name"]: r for r in json.load(f)}
 
 
-def app_todo_names(repo):
+def app_todo_names(repo, include_rivers=False):
     """
     The waters the Research tab shows under "Not researched yet" -- ASKED OF THE APP'S OWN CODE.
 
     Scripts/research_todo.mjs is populateResearchLakeDropdown() with the DOM taken out. It builds
     the access index from the live worker feeds, filters with PRESETS.research, reads
     /research/list and resolves with researchedNames -- the same modules in the same order.
+
+    IT MUST BE TOLD ABOUT RIVERS. research_todo.mjs filters with PRESETS.research, whose
+    `includeRivers` defaults to false, and this call did not forward the switch -- so
+    `--todo --include-rivers` offered ZERO rivers and said nothing about it, which is the worst
+    shape a filter can have. Caught 2026-09-23 reading the call before the 55-river batch, not
+    after it. Same family as the first --todo run: the list is right only if it is asked the same
+    question the caller was asked.
 
     Nothing here is a reimplementation, because every attempt at one was wrong. This script used
     to derive the list from lake_index.json's county-stamped display_name and 22 of 64 waters came
@@ -337,7 +344,10 @@ def app_todo_names(repo):
     # be mistaken for an answer again.
     with tempfile.TemporaryDirectory() as tmp:
         out_path = os.path.join(tmp, "todo.json")
-        proc = subprocess.run(["node", os.path.abspath(src), "--json", out_path],
+        argv = ["node", os.path.abspath(src), "--json", out_path]
+        if include_rivers:
+            argv.append("--rivers")
+        proc = subprocess.run(argv,
                               capture_output=True, text=True, encoding="utf-8",
                               cwd=os.path.abspath(repo), env=env)
         for line in (proc.stderr or "").splitlines():
@@ -1158,7 +1168,7 @@ def load_lakes(args, registry):
         # that produced the name. Nothing here is looked up again in lake_index.json: these names
         # -- "HYCO LAKE, NC", "Nottely Lake, GA" -- are not keys in it, and the first --todo run
         # fell back to state=SC for every Georgia, Tennessee and North Carolina water in the list.
-        rows = app_todo_names(args.repo)
+        rows = app_todo_names(args.repo, getattr(args, "include_rivers", False))
         if not rows:
             print("nothing to research -- every water the tab offers already has a profile")
         return [(r["name"], args.state or r.get("state") or "SC", r.get("aliases") or [r["name"]])
