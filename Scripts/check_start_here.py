@@ -199,22 +199,37 @@ def collect(root, repo):
     def const(path, pattern, cast=int):
         m = re.search(pattern, open(path, encoding='utf-8', errors='replace').read())
         return cast(m.group(1)) if m else None
-    safe('SHOAL_DM', lambda: const(R('scripts', 'build_chartpack.py'), r'SHOAL_DM\s*=\s*(\d+)'))
+    # ── READ THE SCRIPTS WHERE THEY LIVE, NOT THROUGH THE JUNCTION ────────────────────────
+    #
+    # These ten facts read `R('scripts', ...)` -- root-relative, through
+    # F:\TrollMapPipeline\scripts, which is a Windows JUNCTION to TrollMap-Dev\Scripts. In cmd
+    # that resolves and every one of them measured fine. From the Linux mount Claude reads the
+    # drive through, a junction cannot be traversed at all: every read returns
+    # `OSError: [Errno 5] Input/output error`, so ten facts came back unmeasurable and this
+    # checker reported them as moved. On 2026-09-23 that nearly got the ten paths "fixed" in the
+    # wrong direction, and Ryan asked the obvious question: *"but that script exists in the repo
+    # why can't it be ran from there instead of the link?"*
+    #
+    # It can. The junction is how the DOCUMENTED COMMANDS are invoked -- `py .\scripts\...` --
+    # and that is untouched and still works. It was never needed to READ a file the repo holds at
+    # a real path. `Q('Scripts', ...)` is that path, so these facts now measure identically from
+    # Windows and from the mount, and the checker stopped being a tool only one of us could run.
+    safe('SHOAL_DM', lambda: const(Q('Scripts', 'build_chartpack.py'), r'SHOAL_DM\s*=\s*(\d+)'))
 
     # ── files that must be PRESENT, with the behaviour they carry ─────────────────────────
     def has(path, needle):
         return needle in open(path, encoding='utf-8', errors='replace').read()
     safe('halo_in_water_graphs',
-         lambda: has(R('scripts', 'build_water_graphs.py'), 'ONE-RING HALO'))
+         lambda: has(Q('Scripts', 'build_water_graphs.py'), 'ONE-RING HALO'))
     safe('aliases_default_in_consolidate',
-         lambda: has(R('scripts', 'consolidate_lake_index.py'), "lake_aliases.json'"))
+         lambda: has(Q('Scripts', 'consolidate_lake_index.py'), "lake_aliases.json'"))
     safe('registry_default_in_uploader',
-         lambda: has(R('scripts', 'upload_garmin_to_r2.py'), 'registry: defaulting to'))
+         lambda: has(Q('Scripts', 'upload_garmin_to_r2.py'), 'registry: defaulting to'))
     safe('bindings_read_by_worker',
          lambda: has(Q('Worker', 'conditions.js'), '_registry/water_bindings.json'))
     for name in ('verify_registry_r2.py', 'fit_trolling_runs.py', 'cut_boundaries_batch.py',
                  'name_from_garmin.py', 'attach_arms.py', 'install_registry_boundary.py'):
-        safe('script_' + name, (lambda n: (lambda: os.path.exists(R('scripts', n))))(name))
+        safe('script_' + name, (lambda n: (lambda: os.path.exists(Q('Scripts', n))))(name))
     safe('coastline_json_points',
          lambda: len(_j(R('registry', 'coastline.json'))['line']))
 
