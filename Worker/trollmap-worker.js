@@ -11,7 +11,7 @@ import { SPECIES_MIDLANDS_SANTEE, SPECIES_UPSTATE, SPECIES_COASTAL_SALTWATER, SP
 import { handleGisRoute, flagIsYes, hasText, ARCGIS_BUILD } from './core/arcgis.js';
 import { RAMP_SOURCES } from './core/ramp-sources.js';
 import { handleWaterRoute } from './water.js';
-import { handleConditions, handleHazards, dukeBasinFor, parseActiveRun, activeRunForWater } from './conditions.js';
+import { handleConditions, handleHazards, dukeBasinFor, parseActiveRun, activeRunForWater, riverBindings } from './conditions.js';
 import { handleCameras } from './cameras.js';
 import { handleAlerts, runAlertSweep } from './alerts.js';
 import { handleReports } from './reports.js';
@@ -156,8 +156,56 @@ function estimateSurgeAt(river, userLat, userLon) {
     surge_severity_label: severity > 0.75 ? "full" : severity > 0.5 ? "moderate" : severity > 0.3 ? "reduced" : "minor"
   };
 }
+/**
+ * A `/river` config for a water RIVERS never heard of, built from its own binding.
+ *
+ * FIFTY OF FIFTY-SIX RIVERS GOT `{error: "unknown river"}` FROM THE ROUTE THAT MAKES THE KAYAK
+ * GO/NO-GO CALL, because RIVERS is six hand-written entries and `plan-builder.js` asks it for
+ * real. `build_water_bindings.py` already binds a pool gauge to 51 of the 56 and extra gauges to
+ * 54, each with the USGS site, the parameter codes and the NWS flood categories.
+ *
+ * WHAT IT DELIBERATELY DOES NOT INVENT:
+ *
+ *   kayakThresholds   the six typed entries carry cfs bands that differ by an order of magnitude
+ *                     between rivers -- Wateree 800/2500/5000/8000, Congaree 2000/6000/12000/
+ *                     20000. There is no way to guess those for the Lumber, and a wrong DANGER
+ *                     line on a safety call is worse than no line. Absent here, and
+ *                     `assessKayakSafety` is not called without them -- see the route.
+ *   centerline        `estimateSurgeAt` needs river-mile geometry. Every river pack ships a
+ *                     `centreline.geojson`, but the Worker does not read packs; wiring that is
+ *                     its own change. No centreline, no surge block, and the payload says why.
+ *   surgeAttenuation  calibrated on one river against one trip report. One number to keep or
+ *                     drop, not a reason to refuse fifty rivers their gauges.
+ *
+ * So this returns what the binding actually knows and nothing else. A river with a gauge and no
+ * threshold table now answers with its flow, its stage, its temperature and Duke's release
+ * schedule, where before it answered 404.
+ */
+export function riverCfgFromBinding(slug, b) {
+  const g = [];
+  const seen = new Set();
+  const push = (src, primary) => {
+    if (!src || !src.usgs_site || seen.has(src.usgs_site)) return;
+    seen.add(src.usgs_site);
+    g.push({ site: String(src.usgs_site), name: src.name || src.usgs_name || null,
+             lat: src.lat ?? null, lon: src.lon ?? null, primary,
+             lid: src.lid || null, flood: (src.flood && typeof src.flood === 'object') ? src.flood : null });
+  };
+  push(b.pool, true);
+  push(b.tailwater, false);
+  for (const x of b.gauges || []) push(x, false);
+  return {
+    label: b.display_name || slug,
+    operator: null,
+    damName: null,
+    notes: null,
+    gauges: g,
+    _fromBinding: true,
+  };
+}
+
 async function getRiver(key, opts = {}) {
-  const cfg = RIVERS[key];
+  const cfg = opts.cfg || RIVERS[key];
   if (!cfg) return { error: `unknown river: ${key}` };
   const out = {
     river: cfg.label,
@@ -304,7 +352,19 @@ async function getRiver(key, opts = {}) {
     }
   }
   const primary = out.gauges.find((g) => g.primary) || out.gauges[0];
-  if (primary) {
+  // A GO/NO-GO NEEDS THE BANDS THAT DECIDE IT. `assessKayakSafety` reads t.cfsDanger and friends
+  // off `kayakThresholds`; with none, every comparison is against `undefined`, which is false, and
+  // the function returns "Conditions appear normal — paddleable." on a river nobody measured.
+  // That is the worst possible output on this route, so the block is skipped and the payload says
+  // what is missing instead. The numbers themselves still ship: flow, stage, temperature and the
+  // release schedule are all above.
+  if (primary && !cfg.kayakThresholds) {
+    out.kayak_assessment = null;
+    out.kayak_assessment_unavailable =
+      'No kayak thresholds are bound to this river. The cfs bands that decide go/no-go differ by '
+      + 'an order of magnitude between rivers and are not derivable from the binding, so no '
+      + 'verdict is offered. The gauge readings above are measured; read them yourself.';
+  } else if (primary) {
     const assessment = assessKayakSafety(key, {
       streamflow: primary.streamflow_cfs,
       tempC: primary.water_temperature_C,
@@ -1857,22 +1917,32 @@ var trollmap_worker_default = {
       }
       if (path === "/river" || url.searchParams.has("river")) {
         const r = (url.searchParams.get("river") || "").toLowerCase();
+        // THE LIST OF RIVERS THIS ROUTE SERVES IS THE REGISTRY'S, NOT A TABLE'S. `available` used
+        // to print Object.keys(RIVERS) -- six -- which is also what the 404 offered as the
+        // alternatives, so the error told the caller the app knows six rivers. It knows 56.
+        const bound = await riverBindings(env);
+        const known = Object.keys({ ...bound, ...RIVERS }).sort();
         if (!r) {
           return new Response(JSON.stringify({
             error: "missing river",
-            available: Object.keys(RIVERS)
+            available: known
           }), { headers: JSON_HEADERS, status: 400 });
         }
-        const key = Object.keys(RIVERS).find((k) => r.includes(k) || k.includes(r));
+        // CURATED FIRST. The six carry a centreline, a surge model and kayak thresholds that the
+        // binding has no replacement for, so a name that reaches one of them must still reach it.
+        const key = Object.keys(RIVERS).find((k) => r.includes(k) || k.includes(r))
+                 || Object.keys(bound).find((k) => k === r)
+                 || Object.keys(bound).find((k) => r.includes(k) || k.includes(r));
         if (!key) {
           return new Response(JSON.stringify({
             error: `unknown river: ${r}`,
-            available: Object.keys(RIVERS)
+            available: known
           }), { headers: JSON_HEADERS, status: 404 });
         }
         const userLat = parseFloat(url.searchParams.get("lat"));
         const userLon = parseFloat(url.searchParams.get("lon"));
         const opts = isFinite(userLat) && isFinite(userLon) ? { userLat, userLon } : {};
+        if (!RIVERS[key] && bound[key]) opts.cfg = riverCfgFromBinding(key, bound[key]);
         const data = await getRiver(key, opts);
         return new Response(JSON.stringify(data, null, 2), { headers: JSON_HEADERS });
       }

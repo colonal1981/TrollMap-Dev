@@ -637,6 +637,32 @@ async function waterBindings(env, fresh) {
  * Absent bindings mean UNKNOWN, not fresh: this returns false and the caller drops a block
  * rather than asserting anything about the water.
  */
+/**
+ * Every river the registry binds, as {slug: binding}. Empty object when the bucket is unreadable.
+ *
+ * WHY /river NEEDED THIS. `RIVERS` in worker-data.js is a hand-written table of six, and
+ * `getRiver()` answered `{error: "unknown river"}` for the other fifty -- on the route that makes
+ * the kayak go/no-go call. The gauges those six type by hand are bound per water here for
+ * fifty-one of fifty-six, with the NWS site, the flood categories and the datum that go with them.
+ *
+ * READ-ONLY AND SHARED. This is the same hourly-cached object `handleConditions` uses, so asking
+ * it costs nothing a conditions call has not already paid for.
+ */
+export async function riverBindings(env) {
+  try {
+    const b = await waterBindings(env, false);
+    const out = {};
+    for (const [slug, rec] of Object.entries(b || {})) {
+      if (rec && rec.feature_type === 'river') out[slug] = rec;
+    }
+    return out;
+  } catch (err) {
+    console.warn('[river] bindings unavailable:', err && err.message);
+    return {};
+  }
+}
+
+
 export async function isTidalWater(env, slug) {
   const key = String(slug || '').trim();
   if (!key) return false;
