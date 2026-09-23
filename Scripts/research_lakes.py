@@ -310,7 +310,7 @@ def resolve_names(repo, names):
             return {r["name"]: r for r in json.load(f)}
 
 
-def app_todo_names(repo, include_rivers=False):
+def app_todo_names(repo, include_rivers=False, min_acres=None, runs_path=None):
     """
     The waters the Research tab shows under "Not researched yet" -- ASKED OF THE APP'S OWN CODE.
 
@@ -347,6 +347,14 @@ def app_todo_names(repo, include_rivers=False):
         argv = ["node", os.path.abspath(src), "--json", out_path]
         if include_rivers:
             argv.append("--rivers")
+        # --min-acres REACHES THE LIST NOW. It was parsed here and never passed, so on --todo it
+        # changed nothing and said nothing -- the same shape as the river switch above.
+        if min_acres is not None:
+            argv += ["--min-acres", str(min_acres)]
+        # The run counts that order the list, most buildable first. A missing file is not an
+        # error: the list then comes in picker order and research_todo.mjs says so.
+        if runs_path:
+            argv += ["--runs", os.path.abspath(runs_path)]
         proc = subprocess.run(argv,
                               capture_output=True, text=True, encoding="utf-8",
                               cwd=os.path.abspath(repo), env=env)
@@ -1319,7 +1327,9 @@ def load_lakes(args, registry):
         # that produced the name. Nothing here is looked up again in lake_index.json: these names
         # -- "HYCO LAKE, NC", "Nottely Lake, GA" -- are not keys in it, and the first --todo run
         # fell back to state=SC for every Georgia, Tennessee and North Carolina water in the list.
-        rows = app_todo_names(args.repo, getattr(args, "include_rivers", False))
+        rows = app_todo_names(args.repo, getattr(args, "include_rivers", False),
+                              min_acres=getattr(args, "min_acres", None),
+                              runs_path=os.path.join(args.registry, "_trolling_runs.json"))
         remember_slugs(rows)
         if not rows:
             print("nothing to research -- every water the tab offers already has a profile")
@@ -1529,9 +1539,13 @@ def load_lakes(args, registry):
         #
         #     keep: (rec, { bath, isCoastal, isRiver, acres }, cfg) => {
         #       if (isCoastal) return true;
-        #       if (isRiver && !cfg.includeRivers) return false;
+        #       if (isRiver) return Boolean(cfg.includeRivers) && bath !== 'no';
         #       return bath !== 'no' && acres >= (cfg.minAcres ?? 1000);
         #     }
+        #
+        # A RIVER IS NOT HELD TO THE ACRE FLOOR, in the preset since 2026-09-23 and so here: its
+        # acreage is a ribbon's, and the floor shut out the Sampit (1,861 buildable runs) while
+        # admitting the Nolichucky (12). See the note above the preset's keep().
         #
         # IT SAID IT MIRRORED THAT AND IT INVERTED THE FIRST LINE. `feature_type != "lake"` plus
         # `slug.startswith("coast_")` excluded the coastal zones the preset admits before it looks
@@ -1550,7 +1564,7 @@ def load_lakes(args, registry):
         if not is_coastal:
             if is_river and not args.include_rivers:
                 continue
-            if (row.get("area_acres") or 0) < args.min_acres:
+            if not is_river and (row.get("area_acres") or 0) < args.min_acres:
                 continue
         name = row.get("display_name") or row.get("name") or slug
         out.append((name, row.get("state") or "SC", alt_names.get(name.strip().lower(), [])))
@@ -1594,7 +1608,10 @@ def main():
     ap.add_argument("--state", default=None,
                     help="override the state for --lake runs; the registry supplies it otherwise")
     ap.add_argument("--min-acres", type=int, default=1000,
-                    help="matches PRESETS.research (default 1000)")
+                    help="the LAKE floor, matching PRESETS.research (default 1000). Reaches --todo "
+                         "as well since 2026-09-23. Rivers are not held to it: a river's acreage "
+                         "measures a ribbon. --todo cuts nothing else and comes most buildable "
+                         "trolling runs first, so --limit takes the top of it")
     ap.add_argument("--jobs", type=int, default=1,
                     help="parallel lakes. 1 by default, and that is the measured right answer: "
                          "--jobs multiplies the token rate the pacing exists to hold down, and "

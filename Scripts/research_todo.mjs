@@ -22,10 +22,12 @@
  * order, the same six lines. If the dropdown is right, this is right; if the dropdown changes,
  * this follows it.
  *
- *   node Scripts/research_todo.mjs [--rivers] [--json out.json]
+ *   node Scripts/research_todo.mjs [--rivers] [--min-acres N] [--runs _trolling_runs.json]
+ *                                  [--json out.json]
  *
- * Emits JSON -- {worth, researched, todo:[{name, slug, state, aliases}]} -- on stdout, or to --json.
- * Never a bare list: see the note about console.info below.
+ * Emits JSON -- {worth, researched, todo:[{name, slug, state, aliases, runs}]} -- on stdout, or
+ * to --json. Never a bare list: see the note about console.info below. With --runs the todo list
+ * comes most-buildable-runs first; see orderByRuns() in research_todo_rules.mjs.
  *
  * Personal use only, not for distribution or resale; not for navigation.
  */
@@ -46,6 +48,13 @@ const jsonAt = args.includes('--json') ? args[args.indexOf('--json') + 1] : null
 // lake_index.json. registryRecordFor() is the binding that produced those names, so it is the
 // only thing that can answer for them.
 const resolveAt = args.includes('--resolve') ? args[args.indexOf('--resolve') + 1] : null;
+// --min-acres N: the LAKE floor, forwarded from research_lakes.py's own --min-acres, which had
+// no way to reach this list before -- it passed nothing, so the flag changed the registry path
+// and silently did nothing to --todo. Absent, the preset's own minAcres stands. Rivers are not
+// judged on it at all; see PRESETS.research in js/data/water-filter.js.
+const minAcresArg = args.includes('--min-acres') ? Number(args[args.indexOf('--min-acres') + 1]) : null;
+// --runs <file>: registry/_trolling_runs.json, for the order the work list comes in.
+const runsAt = args.includes('--runs') ? args[args.indexOf('--runs') + 1] : null;
 
 // STDOUT IS NOT A CHANNEL THIS SCRIPT OWNS. access-index.js reports what it did with
 // console.info -- five lines about folded feed names, contributed registry lakes, dropped access
@@ -66,6 +75,10 @@ const { isCoastalKey } = await import('../js/data/coastal-zones.js');
 const { resolveR2Key } = await import('../js/data/lake-keys.js');
 const { makePredicate } = await import('../js/data/water-filter.js');
 const { researchedNames, researchStorageIdCandidates } = await import('../js/data/research-ids.js');
+const { stampAllows, stateFor, orderByRuns } = await import('./research_todo_rules.mjs');
+
+// Bindings the second resolver offered and describe() turned down, reported once at the end.
+const refusedBindings = [];
 
 /** What the app knows about one water: its state, and every name it answers to. */
 const describe = (name) => {
@@ -83,11 +96,20 @@ const describe = (name) => {
   // recorded: 18 of 18 waters resolve, Russell and Lanier among them. It runs only when the
   // first returned nothing, so it can fill a null and cannot overwrite an answer.
   //
+  // AND IT MAY NOT FILL IT WITH A WATER IN ANOTHER STATE. lakeRecordFor() goes state-blind when
+  // its state index has nothing, and on 2026-09-23 that bound 28 of the 127 names that reach it
+  // across a state line -- "Silver Lake, GA" and "Goose Creek, TN" to South Carolina lakes among
+  // them. The row's aliases then opened the off-lake gate to the wrong lake's documents. Such a
+  // binding is refused and the name goes on alone, which is the honest null; see stampAllows().
+  //
   // The NAME is never taken from here. It is the app's, and it is what the profile is filed as.
   const viaIndex = registryRecordFor(name);
-  const rec = viaIndex || lakeRecordFor(name);
+  const fallback = viaIndex ? null : lakeRecordFor(name);
+  if (fallback && !stampAllows(fallback, name)) {
+    refusedBindings.push(`${name} -> ${fallback.slug} (${fallback.state})`);
+  }
+  const rec = viaIndex || (fallback && stampAllows(fallback, name) ? fallback : null);
   const docNames = rec ? documentNamesFromRecord(rec) : [];
-  const suffix = /,\s*([A-Z]{2})(?:\/[A-Z]{2})*\s*$/.exec(name);
   return {
     name,
     // THE SLUG TRAVELS WITH THE NAME, FOR THE SAME REASON THE STATE DOES. 2026-09-23: three of
@@ -99,10 +121,13 @@ const describe = (name) => {
     // 8, 8 and 7. This record IS the second signal; the Worker should be handed its answer.
     slug: (rec && rec.slug) || null,
     // WHICH BINDING ANSWERED. registryRecordFor() only answers a stripped name when the row's own
-    // access points agree with it; lakeRecordFor() falls back state-blind, which is how "Silver
-    // Lake, GA" lands on an SC lake. A slug is only as good as the binding that produced it.
+    // access points agree with it; lakeRecordFor() falls back state-blind, and even with a
+    // cross-state answer refused above, what it binds is a name match and nothing more. A slug is
+    // only as good as the binding that produced it.
     bound_by: viaIndex ? 'access-index' : (rec ? 'lake-registry' : null),
-    state: (rec && rec.state) || (suffix && suffix[1]) || null,
+    // The row's state, else the name's own stamp -- which is where a refused binding's state
+    // comes from now. See stateFor() for why the stamp does not override a row that answered.
+    state: stateFor(name, rec),
     // The same list the Research tab builds, from the same function -- raw registry names are the
     // wrong answer here for the reasons written above documentNamesFromRecord().
     aliases: docNames.length ? docNames : [name],
@@ -116,12 +141,20 @@ try {
   console.error(`!! the access index failed to load: ${e.message}`);
 }
 
+/** Say which bindings were turned down, so a name that went on alone is not a mystery. */
+const reportRefused = () => {
+  if (!refusedBindings.length) return;
+  console.error(`   ${refusedBindings.length} name(s) went on with no registry row: the only row `
+              + 'their name matched is in a state the name rules out:');
+  for (const r of refusedBindings) console.error(`     ${r}`);
+};
 
 if (resolveAt) {
   const { readFileSync, writeFileSync } = await import('node:fs');
   const out = JSON.parse(readFileSync(resolveAt, 'utf8')).map(describe);
   const missing = out.filter((r) => !r.state).map((r) => r.name);
   if (missing.length) console.error(`!! no state for: ${missing.join(', ')}`);
+  reportRefused();
   writeFileSync(jsonAt || resolveAt, JSON.stringify(out, null, 2));
   console.error(`resolved ${out.length} name(s) -> ${jsonAt || resolveAt}`);
   process.exit(0);
@@ -129,7 +162,9 @@ if (resolveAt) {
 
 // ── populateResearchLakeDropdown(), lake-research-ui.js, minus the DOM ──────────────────────
 const inland = all.filter((name) => !isCoastalKey(resolveR2Key(name)));
-const keep = makePredicate('research', null, { includeRivers: withRivers });
+const keepCfg = { includeRivers: withRivers };
+if (Number.isFinite(minAcresArg)) keepCfg.minAcres = minAcresArg;
+const keep = makePredicate('research', null, keepCfg);
 const worth = inland.filter((n) => keep(registryRecordFor(n), n));
 
 // A RESEARCH POPULATION OF ZERO IS IMPOSSIBLE, so it means the index did not load rather than
@@ -190,11 +225,29 @@ console.error(`${all.length} names offered, ${worth.length} worth researching, `
 // to state=SC. Georgia and Tennessee waters were about to be researched under South Carolina
 // regulations. registryRecordFor() is the binding that produced the name in the first place and
 // it is sitting right here, so it answers both questions at the source.
-const rows = todo.map(describe);
-const unstated = rows.filter((r) => !r.state).map((r) => r.name);
+const described = todo.map(describe);
+const unstated = described.filter((r) => !r.state).map((r) => r.name);
 if (unstated.length) console.error(`!! no state for: ${unstated.join(', ')}`);
+reportRefused();
 
-const { writeFileSync } = await import('node:fs');
+// MOST BUILDABLE RUNS FIRST. The list used to come in picker order, and a batch cut short with
+// --limit researched whatever the picker happened to list first. See orderByRuns().
+const { readFileSync, writeFileSync } = await import('node:fs');
+let runsBySlug = null;
+if (runsAt) {
+  try {
+    runsBySlug = JSON.parse(readFileSync(runsAt, 'utf8')).lakes || null;
+  } catch (e) {
+    console.error(`   not ordered by trolling runs -- ${runsAt}: ${e.message}`);
+  }
+}
+const rows = runsBySlug ? orderByRuns(described, runsBySlug) : described;
+if (runsBySlug) {
+  const uncounted = rows.filter((r) => r.runs === null).length;
+  console.error(`   ordered by buildable trolling runs, most first`
+              + (uncounted ? `; ${uncounted} with no count go last` : ''));
+}
+
 const out = JSON.stringify({ generated: new Date().toISOString(),
   worth: worth.length, researched: [...done].sort(), orphans, todo: rows }, null, 2);
 if (jsonAt) { writeFileSync(jsonAt, out); console.error(`-> ${jsonAt}`); }

@@ -331,10 +331,20 @@ export const PRESETS = {
      * river's answers are flow, gauge and shoals. So rivers are off by default and behind their
      * own switch, his call. KEEP_ALWAYS still carries the Congaree, the Wateree, the Broad, the
      * Santee and the Lower Saluda through regardless, because those are waters he fishes.
+     *
+     * AND WITH THE SWITCH ON, ACREAGE STILL DECIDED WHICH RIVERS CAME THROUGH. The paragraph above
+     * says acreage cannot answer the question, and the line below it asked acreage anyway. Measured
+     * 2026-09-23 against the 55 rivers the picker binds: the floor admitted 34 and shut out 21, and
+     * it did it upside down -- the Nolichucky (3,398 ac, 12 buildable trolling runs) in, the Sampit
+     * (721 ac, 1,861 runs) out, with the Uwharrie (958), the Combahee (918), Black Mingo Creek
+     * (774), the Ashley (622) and the Diversion Canal (291) beside it. Ryan: "it should probably
+     * have to do with amount of garmin bathymetry present". So a river is judged on the soundings
+     * test every water here already passes, and the floor is the lakes' alone. research_todo.mjs
+     * orders what comes through by buildable runs; the picker lists it as it lists everything.
      */
     keep: (rec, { bath, isCoastal, isRiver, acres }, cfg) => {
       if (isCoastal) return true;
-      if (isRiver && !cfg.includeRivers) return false;
+      if (isRiver) return Boolean(cfg.includeRivers) && bath !== 'no';
       return bath !== 'no' && acres >= (cfg.minAcres ?? 1000);
     },
   },
