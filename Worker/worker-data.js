@@ -488,6 +488,14 @@ function pickNewestMessage(list) {
   return withText.slice().sort((a, b) => t(b) - t(a))[0].Text;
 }
 
+/** A number, or null. "NA", "" and anything unparseable are null and never NaN. */
+function numOrNull(v) {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  if (typeof v !== 'string' || v.trim() === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
 function normalizeDukeRow(row) {
   const actual = parseFloat(row.Actual);
   const elevMatch = String(row.Elevation || "").match(/([0-9]+(?:\.[0-9]+)?)/);
@@ -566,8 +574,17 @@ function normalizeDukeRow(row) {
     belowFullPoolFt: belowFullPoolFt != null ? Math.round(belowFullPoolFt * 100) / 100 : null,
     ft: ft != null ? Math.round(ft * 100) / 100 : null,
     fullPool,
-    target: parseFloat(row.Target),
-    min: parseFloat(row.Min),
+    // ── "NA" IS NOT A NUMBER AND NaN IS NOT null ──────────────────────────────────────────────
+    //
+    // `parseFloat("NA")` is NaN, and `NaN != null` is TRUE. Twelve lakes in the live feed send
+    // Target "NA" -- Tillery, Blewett Falls, Keowee, Bad Creek, Tuckasegee, and every lake in the
+    // "Others" basin (Harris, Hyco, Hyco Afterbay, Julian, Mayo, Robinson, Sutton) -- so any
+    // consumer that guards with `!= null` instead of Number.isFinite() took NaN as a target and
+    // arithmetic on it returns NaN all the way out. conditions.js already has numOrNull() for
+    // exactly this and uses it on the operating-range rows; this row shape never got it.
+    // Measured against Ryan's 2026-09-23 capture of /lakes/current-level.
+    target: numOrNull(row.Target),
+    min: numOrNull(row.Min),
     // NOT full pond. How high Duke actually runs it -- 100 on the Catawba lakes, 98.80 on
     // Nantahala, 96.20 on Glenville. Carried because the difference is real water.
     max: maxRaw,
@@ -576,7 +593,23 @@ function normalizeDukeRow(row) {
     // until now. 2 across Catawba-Wateree and Tuckasegee on 2026-08-15, which is why half these
     // lakes are down: recreation flow schedules suspended, irrigation limited to two days a
     // week, and ramps closing as levels fall. -1 and null both mean "no protocol in force".
-    lowInflowStage: Number.isFinite(parseInt(row.LowInputStage, 10)) ? parseInt(row.LowInputStage, 10) : null,
+    // ── -1 IS "NO DROUGHT DECLARED", NOT STAGE MINUS ONE ─────────────────────────────────────
+    //
+    // conditions.js says exactly that about the same concept arriving on a different endpoint --
+    // `/lakes/operating-range/{id}`'s droughtStage -- and maps -1 to null there. This path kept
+    // the raw -1, so one app held two encodings of "no drought": null from one Duke endpoint and
+    // -1 from the other. In Ryan's 2026-09-23 capture, four lakes send -1 (Nantahala, Tillery,
+    // Blewett Falls, Waterville), nine send null, Ninety-Nine Islands sends 0, and the Tuckasegee
+    // basin sends 3 while Catawba-Wateree sends 2.
+    //
+    // `lowInflowStageRaw` keeps what was published, because -1 and an absent field are different
+    // statements: one says the operator checked and declared nothing, the other says the feed had
+    // no opinion.
+    lowInflowStage: (() => {
+      const n = parseInt(row.LowInputStage, 10);
+      return Number.isFinite(n) && n >= 0 ? n : null;
+    })(),
+    lowInflowStageRaw: Number.isFinite(parseInt(row.LowInputStage, 10)) ? parseInt(row.LowInputStage, 10) : null,
     // THE NEWEST MESSAGE, NOT THE FIRST ONE.
     //
     // This took SpecialMessage[0]. Duke sends an array and it is not sorted newest-first: on

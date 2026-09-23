@@ -72,9 +72,23 @@ test('a message with no date is kept but ranks last', () => {
 });
 
 test('LowInputStage is carried, and -1 means no protocol', () => {
-  assert.equal(row({ Actual: '97.00', Max: '100.00', Elevation: '100.0 ft', LowInputStage: 2 }).lowInflowStage, 2);
-  assert.equal(row({ Actual: '97.00', Max: '100.00', Elevation: '100.0 ft', LowInputStage: -1 }).lowInflowStage, -1);
-  assert.equal(row({ Actual: '97.00', Max: '100.00', Elevation: '100.0 ft', LowInputStage: null }).lowInflowStage, null);
+  // THIS TEST'S NAME WAS ALREADY RIGHT AND ITS ASSERTION WAS NOT. It said "-1 means no protocol"
+  // and then asserted that -1 is what comes out, so the caller had to know the sentinel.
+  // conditions.js has said the opposite about the SAME concept on the operating-range endpoint
+  // since it was written -- "-1 is 'no drought declared', not stage minus one" -- and mapped it to
+  // null. One app, one concept, two encodings. Corrected 2026-09-23 against Ryan's live capture of
+  // /lakes/current-level, where four lakes send -1 and the Tuckasegee basin sends 3.
+  const at = (v) => row({ Actual: '97.00', Max: '100.00', Elevation: '100.0 ft', LowInputStage: v });
+  assert.equal(at(2).lowInflowStage, 2);
+  assert.equal(at(3).lowInflowStage, 3);
+  // Stage 0 is a declared stage and must survive the guard.
+  assert.equal(at(0).lowInflowStage, 0);
+  assert.equal(at(-1).lowInflowStage, null);
+  assert.equal(at(null).lowInflowStage, null);
+  // What the operator actually published stays reachable, because -1 and an absent field are
+  // different statements: one says it checked and declared nothing, the other says it had no view.
+  assert.equal(at(-1).lowInflowStageRaw, -1);
+  assert.equal(at(null).lowInflowStageRaw, null);
 });
 
 test('an unreadable Actual is null, not a guess', () => {

@@ -190,3 +190,57 @@ describe('the basin is derivable for every basin Duke publishes', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// /lakes/current-level, pasted live 2026-09-23. This one IS fully consumed --
+// the feet-vs-index scale, the newest special message, the full message array --
+// and two things in it were still wrong.
+// ---------------------------------------------------------------------------
+import { normalizeDukeRow } from '../Worker/worker-data.js';
+
+describe('the Duke level feed, against the live rows', () => {
+  const rows = fx('duke-current-level.2026-09-23.json').map(normalizeDukeRow);
+  const by = (n) => rows.find((r) => r.name === n);
+
+  it('"NA" is a null target, never NaN', () => {
+    // parseFloat("NA") is NaN and `NaN != null` is TRUE, so a consumer guarding with `!= null`
+    // took NaN as a target. Twelve lakes in the live feed send Target "NA".
+    const t = by('Lake Tillery');
+    expect(t.target).toBe(null);
+    expect(rows.every((r) => r.target === null || Number.isFinite(r.target))).toBe(true);
+    expect(by('Lake Wateree').target).toBe(97);
+  });
+
+  it('-1 is no drought declared, and is not stage minus one', () => {
+    expect(by('Lake Tillery').lowInflowStage).toBe(null);
+    expect(by('Lake Tillery').lowInflowStageRaw).toBe(-1);
+    // 0 is a real stage and must survive the guard.
+    expect(by('Ninety-Nine Islands Reservoir').lowInflowStage).toBe(0);
+  });
+
+  it('carries a stage that genuinely differs by basin', () => {
+    // Catawba-Wateree is at Stage 2 and the Tuckasegee at Stage 3 on the same day, which is why
+    // one basin's recreation releases are SUSPENDED and the other's are REDUCED.
+    expect(by('Lake Wateree').lowInflowStage).toBe(2);
+    expect(by('Tanasee Creek Lake').lowInflowStage).toBe(3);
+  });
+
+  it('takes the NEWEST special message, not the first in the array', () => {
+    // Wylie carries the May LIP notice and a September note about floodgate testing at Norman
+    // drawing it down. The September one is the reason the lake is low TODAY.
+    // pickNewestMessage() returns the TEXT, not the row -- sorted by EventDate, not array order.
+    expect(by('Lake Wylie').specialMessage).toMatch(/floodgate testing/);
+    expect(by('Lake Wylie').specialMessages.map((x) => x.eventDate))
+      .toEqual(['2026-05-01T09:10:00', '2026-09-05T10:31:00']);
+    expect(by('Lake Wylie').specialMessages.length).toBe(2);
+  });
+
+  it('reads both scales in one feed, including the awkward elevation strings', () => {
+    // Index lakes have Max 100; the "Others" basin reports true feet. And the elevation field is
+    // inconsistent in the feed itself -- Wateree's parenthesis is unclosed, Ninety-Nine Islands
+    // has no "ft" at all -- so the parser takes the leading number and nothing else.
+    expect(by('Lake Wateree').ft).toBe(222.2);
+    expect(by('Hyco Afterbay Reservoir').ft).toBe(365.04);
+    expect(by('Ninety-Nine Islands Reservoir').ft).toBe(510.9);
+  });
+});
