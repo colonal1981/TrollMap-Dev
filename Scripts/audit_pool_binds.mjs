@@ -1,4 +1,4 @@
-// audit_pool_binds.mjs -- waters whose LEVEL GAUGE is named for a different water.
+// audit_pool_binds.mjs -- bindings that disagree with the water they are filed under.
 //
 // Personal use only, not for distribution or resale; not for navigation.
 //
@@ -97,9 +97,67 @@ for (const r of rows) {
     + `${r.water.slice(0, 38).padEnd(39)}<- ${r.gauge.slice(0, 44).padEnd(45)}`
     + ` [${r.confidence}${r.km_outside != null ? ` ${r.km_outside}km` : ''}]`);
 }
+// ── SECOND CHECK: the row's STATE against the states of its own gauges ─────────────────────
+//
+// Ryan, 2026-09-23: *"there is no Broad River in Cherokee County, North Carolina... the Broad
+// River originates in the Blue Ridge Mountains of North Carolina and flows southward into
+// Cherokee County, South Carolina."* The index row reads `Broad River (Cherokee Co, NC)`,
+// `county: Cherokee`, `state: NC`. The county is South Carolina's. The picker, which offers it as
+// "Broad River, SC", was the half that was right.
+//
+// So county and state in these rows come from different places and can disagree, and nothing
+// checked. This does, WITHOUT a county database: USGS and NWPS stamp their own gauges with a
+// state, so a row whose state appears in NONE of its gauges' states is asserting a state its own
+// measurements do not support. Seven of 207:
+//
+//     chattooga_river       SC / Rabun      gauges GA x4     Rabun is Georgia
+//     chatuge_lake          GA / Towns      gauges NC x4
+//     lake_wylie            NC / York       gauges SC x2     York is South Carolina
+//     savannah_river        GA / Aiken      gauges SC x2     Aiken is South Carolina
+//     south_fork_new_river  NC / Grayson    gauges VA x1     Grayson is Virginia
+//     tugaloo_lake          SC / Rabun      gauges GA x2
+//     yonah_lake            SC / Habersham  gauges GA x3     Habersham is Georgia
+//
+// IT CANNOT CATCH A BORDER WATER, and that is worth saying because the case that started this is
+// one. `broad_river` is gauged on both sides -- Blacksburg SC and Oak Grove NC -- so its stated
+// NC is among its gauges' states and it passes. The rows this finds are the ones where every
+// measurement is in one state and the row names another; a river that genuinely runs the line
+// needs a human, which is what Ryan just did.
+function stateDisagreements(bindings, index) {
+  const out = [];
+  for (const [slug, v] of Object.entries(bindings)) {
+    const row = index[slug];
+    const stated = row && row.state;
+    if (!stated) continue;
+    const seen = new Map();
+    for (const g of [v.pool, v.tailwater, ...(v.gauges || [])]) {
+      if (!g) continue;
+      const add = (st) => { if (st) seen.set(st, (seen.get(st) || 0) + 1); };
+      add(g.state);
+      const m = /,\s*([A-Z]{2})\.?\s*$/.exec(String(g.name || '').trim());
+      if (m) add(m[1]);
+    }
+    if (!seen.size || seen.has(stated)) continue;
+    out.push({ slug, stated, county: (row && row.county) || null,
+               gauge_states: Object.fromEntries(seen), pool: (v.pool && v.pool.name) || null });
+  }
+  return out;
+}
+
+const indexFile = path.join(REG, 'lake_index.json');
+const stateRows = fs.existsSync(indexFile)
+  ? stateDisagreements(bindings, JSON.parse(fs.readFileSync(indexFile, 'utf8')))
+  : [];
+console.log(`\nrows whose state appears in none of their own gauges' states: ${stateRows.length}\n`);
+for (const r of stateRows.sort((a, b) => a.slug.localeCompare(b.slug))) {
+  console.log(`  ${r.slug.padEnd(26)} index=${r.stated}  county=${String(r.county).padEnd(12)}`
+    + ` gauges=${JSON.stringify(r.gauge_states).padEnd(14)} pool=${String(r.pool).slice(0, 40)}`);
+}
+
 if (OUT) {
   fs.writeFileSync(OUT, JSON.stringify({ generated: new Date().toISOString().slice(0, 10),
-                                         bindings_with_pool: withPool, rows }, null, 2));
+                                         bindings_with_pool: withPool, rows,
+                                         state_disagreements: stateRows }, null, 2));
   console.log(`\n-> ${OUT}`);
 }
 process.exit(0);
