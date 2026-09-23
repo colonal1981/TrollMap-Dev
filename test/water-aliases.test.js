@@ -35,7 +35,18 @@ const BOUNDARIES = path.join(path.dirname(REPO), 'lake_boundaries');
  */
 describe('water-aliases.js — every placed waterbody name resolves to a real chartpack key', () => {
   it('generated file is not stale (regenerate with Scripts/gen_water_aliases_js.py)', () => {
-    if (!fs.existsSync(path.join(BOUNDARIES, '_coastal_pointers.json'))) return; // no pipeline here
+    // ── THIS GUARD HAS BEEN SKIPPING THE TEST SINCE 2026-08-12 ──────────────────────────────
+    //
+    // `BOUNDARIES` is `<repo>/../lake_boundaries`, and gen_water_aliases_js.py's own header
+    // records what happened to it: the two sidecars "were in lake_boundaries/ until 2026-08-12;
+    // that tray is retired". The directory does not exist. So this early return fired on every
+    // run, the staleness check never executed, and the file drifted for six weeks -- eleven
+    // coastal names shipping against the wrong zone, and the bare "Intracoastal Waterway"
+    // shipping with no candidate list at all so it fell through to the fuzzy pass.
+    //
+    // A skip that cannot be distinguished from a pass is the same defect as an alias key that can
+    // never match. The guard now looks where the generator looks.
+    if (!fs.existsSync(path.join(path.dirname(REPO), 'registry', '_coastal_pointers.json'))) return;
     try {
       execFileSync('python3', ['Scripts/gen_water_aliases_js.py', '--check'],
                    { cwd: REPO, stdio: 'pipe' });

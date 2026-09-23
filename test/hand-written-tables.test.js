@@ -52,10 +52,23 @@ const DECLARED = [
   // three files imported it and audit.json was written 2026-08-14, before main.js moved to
   // conditions-strip.js -- a dependency graph is a measurement with a date on it.
   // check_start_here.py asserts the file's absence now, because a list like this comes back.
+  // THE REASON THIS ONE COULD NOT BE DERIVED EXPIRED ON 2026-09-16. The note below said the
+  // river-mile centerline "genuinely exists nowhere else", and that was true when it was
+  // written. build_river_centrelines.py then put a centreline in ALL 57 river packs -- the 3DHP
+  // mainstem in downstream order, a station every 50 m carrying a bearing, a bend radius, a
+  // channel width and a charted cross-section -- so river miles now exist for every river the
+  // app ships. The dam is in _dam_bindings.json (1,677 of them), the gauges are already bound
+  // per water in water_bindings.json, and the hand-typed `surgeSpeed_mph` has a measured
+  // replacement in the V = Q/A the app already computes off that same cross-section for
+  // riverPromptBlock's current line.
+  //
+  // What is left un-derivable is the surge ATTENUATION curve, calibrated on one river against
+  // one paddler's trip report. That is one number to keep or drop, not a reason to keep a
+  // six-river gate: getRiver() answers `{error: "unknown river"}` for the other 50 and
+  // plan-builder.js:2849 calls it for real.
   ['Worker/worker-data.js', 'RIVERS', 6, 'gate',
-   'gauges, kayak thresholds and dam bindings for 6 rivers of 90 shipped. The river-mile '
-   + 'centerline in each entry genuinely exists nowhere else, so this one cannot simply '
-   + 'resolve against the registry.'],
+   'gauges, kayak thresholds and dam bindings for 6 rivers of 90 shipped. Derivable since '
+   + '2026-09-16 -- see the note above.'],
 
   // ── foreign keys: cannot be derived, CAN be verified ──────────────────────────────────────
   ['Worker/worker-data.js', 'LAKEMONSTER_IDS', 5, 'foreign-key',
@@ -194,8 +207,33 @@ const DECLARED = [
   // WINS, so the alias could not have answered for water lake_index.json offers. Checked
   // before regenerating rather than assumed, because a stale alias that CAN answer is a
   // lake loading the wrong water and this file has that failure recorded twice already.
-  ['js/data/water-aliases.js', 'WATER_TO_R2_KEY', 130, 'alias',
-   'the biggest of them and the least worrying: 130 water names mapped to R2 keys, which '
+  // 119 SINCE 2026-09-23, DOWN ELEVEN, and the eleven are the interesting part.
+  //
+  // The staleness guard in water-aliases.test.js had been SKIPPING since 2026-08-12: it early
+  // returns unless `<repo>/../lake_boundaries/_coastal_pointers.json` exists, and
+  // gen_water_aliases_js.py's own header records that tray being retired that day with the
+  // sidecars moved to registry/. So the check never ran for six weeks and the file drifted.
+  //
+  // What it had drifted into: eleven names aliased to the WRONG coastal zone -- Ashepoo River,
+  // Big Bay Creek and Chehaw River to Beaufort or St Helena when all three are ACE Basin; six
+  // Beaufort creeks (Capers, Cowen, Haigh, Jenkins, Lucy Point, Wards) to St Helena; the Wando to
+  // Cape Romain. The registry answers every one of them correctly under `legacy_display_names`,
+  // so Pass 0 was already shadowing the bad alias in the running app and the wrong rows could
+  // never fire. Verified by registering all 2,058 registry names as access-index.js does and
+  // resolving: Ashepoo -> coast_ace_basin_sc, the six creeks -> coast_beaufort_sc, Wando ->
+  // coast_charleston_sc. Regenerating removes rows that could not answer and keeps the file
+  // honest about which names it is actually load-bearing for.
+  //
+  // It also ADDED what Pass 0 cannot give, because Pass 0 returns one slug and never a list:
+  // `Intracoastal Waterway` now has its four SC zones as candidates, where before the bare name
+  // had none and fell through to the fuzzy pass on a water that spans eight zones.
+  //
+  // `Lawsons Fork Creek` is the one row that leaves nothing behind it -- it pointed at
+  // pacolet_river, which the app does not offer, and the registry has no entry for the creek. A
+  // dead alias is worse than a missing one: missing falls through to the fuzzy pass, dead
+  // resolves confidently to a key with nothing behind it.
+  ['js/data/water-aliases.js', 'WATER_TO_R2_KEY', 119, 'alias',
+   'the biggest of them and the least worrying: 119 water names mapped to R2 keys, which '
    + 'is exactly the job an alias table should have. GENERATED -- do not hand-edit; run '
    + 'Scripts/gen_water_aliases_js.py and update the count here.'],
 
