@@ -1,0 +1,3008 @@
+{
+ "_note": "Cut from registry/lake_index.json, nc_species_by_lake.json and watershed_fish.json on 2026-09-23 for test/the-rivers-with-no-roster-get-their-watershed.test.js. Personal use only, not for distribution or resale; not for navigation.",
+ "lake_index": {
+  "nolichucky_river": {
+   "slug": "nolichucky_river",
+   "name": "Nolichucky River",
+   "state": "TN",
+   "display_name": "Nolichucky River (Yancey Co, TN)",
+   "legacy_display_name": "Nolichucky River, TN",
+   "legacy_display_names": [
+    "Nolichucky River, TN"
+   ],
+   "county": "Yancey",
+   "gnis": "slug:nolichucky_river",
+   "source": [
+    "3dhp"
+   ],
+   "area_acres": 3397.8,
+   "centroid": [
+    -82.421202,
+    36.019967
+   ],
+   "bounds_wsen": [
+    -82.849657,
+    35.778016,
+    -81.992746,
+    36.261918
+   ],
+   "access": null,
+   "access_for_me": null,
+   "access_via": null,
+   "access_units": [],
+   "proclamation": [],
+   "ramps": {
+    "natl": [
+     {
+      "lat": 36.2046170181,
+      "lon": -82.659163837,
+      "name": "Davy Crockett State Park",
+      "src": "Tennessee Wildlife Resources Agency",
+      "type": "Public",
+      "wb": "Nolichucky River"
+     },
+     {
+      "lat": 36.0863069867,
+      "lon": -82.8248038787,
+      "name": "Birds Bridge",
+      "src": "Tennessee Wildlife Resources Agency",
+      "type": "Public",
+      "wb": "Nolichucky River"
+     }
+    ],
+    "osm": [
+     {
+      "name": null,
+      "access": null,
+      "tag": "service=slipway",
+      "osm_type": "way",
+      "osm_id": 902054603,
+      "lat": 35.8559937,
+      "lon": -82.0496373
+     },
+     {
+      "name": null,
+      "access": null,
+      "tag": "leisure=slipway",
+      "osm_type": "node",
+      "osm_id": 10577712834,
+      "lat": 36.1510919,
+      "lon": -82.4161783
+     },
+     {
+      "name": null,
+      "access": null,
+      "tag": "leisure=slipway",
+      "osm_type": "way",
+      "osm_id": 1314418435,
+      "lat": 36.2050421,
+      "lon": -82.6596754
+     }
+    ],
+    "dnr": [
+     {
+      "name": "Joe Johnson Access",
+      "wb": "Nolichucky River",
+      "type": "Boat Ramp",
+      "src": "Tennessee Wildlife Resources Agency Boat Launch Sites",
+      "lat": 36.08666,
+      "lon": -82.82507,
+      "meta": {
+       "lanes": "1",
+       "dock": "No",
+       "county": "GREENE",
+       "owner": "TVA"
+      }
+     },
+     {
+      "name": "Kinser Bridge",
+      "wb": "Nolichucky River",
+      "type": "Boat Ramp",
+      "src": "Tennessee Wildlife Resources Agency Boat Launch Sites",
+      "lat": 36.15461,
+      "lon": -82.72568,
+      "meta": {
+       "lanes": "1",
+       "dock": "No",
+       "county": "GREENE",
+       "owner": "County"
+      }
+     }
+    ]
+   },
+   "ramp_sources": 3,
+   "charted": 0.4215,
+   "shipped": true,
+   "pack_mb": 1.01,
+   "feature_type": "river",
+   "usgs": {
+    "site": "03465500",
+    "params": "00010,00065,00060"
+   }
+  },
+  "clinch_river": {
+   "slug": "clinch_river",
+   "name": "Clinch River",
+   "state": "TN",
+   "display_name": "Clinch River (Scott Co, TN)",
+   "legacy_display_name": "Clinch River, TN",
+   "legacy_display_names": [
+    "Clinch River, TN"
+   ],
+   "county": "Scott",
+   "gnis": "slug:clinch_river",
+   "source": [
+    "3dhp"
+   ],
+   "area_acres": 4253.5,
+   "centroid": [
+    -82.488685,
+    36.760507
+   ],
+   "bounds_wsen": [
+    -83.459944,
+    36.385345,
+    -81.517426,
+    37.13567
+   ],
+   "access": null,
+   "access_for_me": null,
+   "access_via": null,
+   "access_units": [],
+   "proclamation": [],
+   "ramps": {
+    "natl": [
+     {
+      "lat": 36.5044370564,
+      "lon": -83.2428540291,
+      "name": "Sneedville",
+      "src": "Tennessee Wildlife Resources Agency",
+      "type": "Public",
+      "wb": "Clinch River"
+     },
+     {
+      "lat": 36.4011170263,
+      "lon": -83.4601240855,
+      "name": "Highway 25E Bridge",
+      "src": "Tennessee Wildlife Resources Agency",
+      "type": "Public",
+      "wb": "Clinch River"
+     },
+     {
+      "lat": 36.9965673011,
+      "lon": -81.9437827109,
+      "name": "Blackford Bridge",
+      "src": "Virginia Department of Wildlife Resources",
+      "type": "Public",
+      "wb": "Clinch River"
+     },
+     {
+      "lat": 36.9152103835,
+      "lon": -82.2215037412,
+      "name": "Carterton",
+      "src": "Virginia Department of Wildlife Resources",
+      "type": "Public",
+      "wb": "Clinch River"
+     },
+     {
+      "lat": 36.8310366149,
+      "lon": -82.4623448262,
+      "name": "Dungannon",
+      "src": "Virginia Department of Wildlife Resources",
+      "type": "Public",
+      "wb": "Clinch River"
+     },
+     {
+      "lat": 36.6759467083,
+      "lon": -82.7424795987,
+      "name": "Clinch Port",
+      "src": "Virginia Department of Wildlife Resources",
+      "type": "Public",
+      "wb": "Clinch River"
+     }
+    ],
+    "dnr": [
+     {
+      "name": "Highway 25E Bridge Access",
+      "wb": "Clinch River",
+      "type": "Boat Ramp",
+      "src": "Tennessee Wildlife Resources Agency Boat Launch Sites",
+      "lat": 36.40111,
+      "lon": -83.46012,
+      "meta": {
+       "lanes": "1",
+       "dock": "No",
+       "county": "CLAIBORNE",
+       "owner": "TVA"
+      }
+     },
+     {
+      "name": "Sneedville",
+      "wb": "Clinch River",
+      "type": "Boat Ramp",
+      "src": "Tennessee Wildlife Resources Agency Boat Launch Sites",
+      "lat": 36.504934,
+      "lon": -83.241142,
+      "meta": {
+       "lanes": "1",
+       "dock": "No",
+       "county": "HANCOCK",
+       "owner": "TWRA"
+      }
+     }
+    ]
+   },
+   "ramp_sources": 2,
+   "charted": 0.501,
+   "shipped": true,
+   "pack_mb": 1.74,
+   "feature_type": "river",
+   "usgs": {
+    "site": "03528000",
+    "params": "00010,00065,00060"
+   }
+  },
+  "first_broad_river": {
+   "slug": "first_broad_river",
+   "name": "First Broad River",
+   "state": "NC",
+   "display_name": "First Broad River (Cleveland Co, NC)",
+   "legacy_display_name": "First Broad River, NC",
+   "legacy_display_names": [
+    "First Broad River, NC"
+   ],
+   "county": "Cleveland",
+   "gnis": "slug:first_broad_river",
+   "source": [
+    "3dhp"
+   ],
+   "area_acres": 1726.7,
+   "centroid": [
+    -81.584993,
+    35.266348
+   ],
+   "bounds_wsen": [
+    -81.757675,
+    35.062953,
+    -81.412311,
+    35.469742
+   ],
+   "access": null,
+   "access_for_me": null,
+   "access_via": null,
+   "access_units": [],
+   "proclamation": [],
+   "ramps": {
+    "osm": [
+     {
+      "name": null,
+      "access": null,
+      "tag": "leisure=slipway",
+      "osm_type": "node",
+      "osm_id": 4365075236,
+      "lat": 35.2776994,
+      "lon": -81.4580995
+     },
+     {
+      "name": null,
+      "access": null,
+      "tag": "leisure=slipway",
+      "osm_type": "node",
+      "osm_id": 7365628897,
+      "lat": 35.3043351,
+      "lon": -81.5666474
+     }
+    ],
+    "dnr": [
+     {
+      "name": "SHELBY",
+      "wb": "FIRST BROAD RIVER",
+      "type": "Boat Ramp",
+      "src": "NC Wildlife Resources Commission Boating Access Areas",
+      "lat": 35.304397,
+      "lon": -81.566387,
+      "meta": {
+       "lanes": 1,
+       "dock": 0,
+       "county": "CLEVELAND",
+       "owner": "CITY OF SHELBY"
+      }
+     }
+    ],
+    "dnr_paddle": [
+     {
+      "name": "SHELBY",
+      "wb": "FIRST BROAD RIVER",
+      "type": "Paddle Launch",
+      "src": "https://services1.arcgis.com/YfqBAUM5nWR3yhGP/arcgis/rest/services/NCWRC_Boating_Access_Areas_view/FeatureServer/0/query",
+      "lat": 35.304397,
+      "lon": -81.566387,
+      "meta": {
+       "type": "CONCRETE LAUNCH RAMP",
+       "county": "CLEVELAND",
+       "owner": "CITY OF SHELBY"
+      }
+     }
+    ],
+    "ncpaws": [
+     {
+      "name": "DELIGHT ROAD",
+      "wb": "FIRST BROAD RIVER",
+      "type": "Paddle Launch",
+      "src": "NC WRC public fishing areas (ncpaws.org/NCWRCMaps/FishingAreas)",
+      "lat": 35.442396,
+      "lon": -81.614701,
+      "meta": {
+       "canoe": true,
+       "ramp": false,
+       "shore": false,
+       "pier": false,
+       "wheelchair": false,
+       "county": "Cleveland",
+       "owner": "CLEVELAND COUNTY",
+       "locationID": 2447,
+       "matchedBy": "name+box"
+      }
+     },
+     {
+      "name": "NC HWY 10",
+      "wb": "FIRST BROAD RIVER",
+      "type": "Paddle Launch",
+      "src": "NC WRC public fishing areas (ncpaws.org/NCWRCMaps/FishingAreas)",
+      "lat": 35.44801,
+      "lon": -81.643913,
+      "meta": {
+       "canoe": true,
+       "ramp": false,
+       "shore": false,
+       "pier": false,
+       "wheelchair": true,
+       "county": "Cleveland",
+       "owner": "CLEVELAND COUNTY",
+       "locationID": 2448,
+       "matchedBy": "name+box"
+      }
+     },
+     {
+      "name": "SHELBY",
+      "wb": "FIRST BROAD RIVER",
+      "type": "Boat Ramp / Paddle Launch",
+      "src": "NC WRC public fishing areas (ncpaws.org/NCWRCMaps/FishingAreas)",
+      "lat": 35.304397,
+      "lon": -81.566387,
+      "meta": {
+       "canoe": true,
+       "ramp": true,
+       "shore": false,
+       "pier": false,
+       "wheelchair": true,
+       "county": "Cleveland",
+       "owner": "CITY OF SHELBY",
+       "locationID": 2519,
+       "matchedBy": "name+box"
+      }
+     }
+    ]
+   },
+   "ramp_sources": 4,
+   "charted": 0.4519,
+   "shipped": true,
+   "pack_mb": 0.57,
+   "feature_type": "river",
+   "usgs": {
+    "site": "02152474",
+    "params": "00010,00065,00060"
+   }
+  },
+  "broad_river": {
+   "slug": "broad_river",
+   "name": "Broad River",
+   "state": "NC",
+   "display_name": "Broad River (Cherokee Co, NC)",
+   "legacy_display_name": "Broad River, NC",
+   "legacy_display_names": [
+    "Broad River, NC"
+   ],
+   "county": "Cherokee",
+   "gnis": "slug:broad_river",
+   "source": [
+    "3dhp"
+   ],
+   "area_acres": 4083.7,
+   "centroid": [
+    -81.730738,
+    35.168999
+   ],
+   "bounds_wsen": [
+    -82.187369,
+    34.796761,
+    -81.412311,
+    35.503665
+   ],
+   "access": null,
+   "access_for_me": null,
+   "access_via": null,
+   "access_units": [],
+   "proclamation": [],
+   "ramps": {
+    "natl": [
+     {
+      "lat": 35.0266618822,
+      "lon": -81.4895467654,
+      "name": "99 Island",
+      "src": "South Carolina Department of Natural Resources",
+      "type": "Public",
+      "wb": "Broad River"
+     },
+     {
+      "lat": 35.0409211957,
+      "lon": -81.4952395481,
+      "name": "Pick Hill",
+      "src": "South Carolina Department of Natural Resources",
+      "type": "Public",
+      "wb": "Broad River"
+     },
+     {
+      "lat": 34.8736219484,
+      "lon": -81.5313799575,
+      "name": "Highway 105 Bridge",
+      "src": "South Carolina Department of Natural Resources",
+      "type": "Public",
+      "wb": "Pacolet River"
+     }
+    ],
+    "osm": [
+     {
+      "name": null,
+      "access": null,
+      "tag": "leisure=slipway",
+      "osm_type": "node",
+      "osm_id": 4365075236,
+      "lat": 35.2776994,
+      "lon": -81.4580995
+     },
+     {
+      "name": null,
+      "access": null,
+      "tag": "leisure=slipway",
+      "osm_type": "node",
+      "osm_id": 12278913259,
+      "lat": 35.2926457,
+      "lon": -81.9914424
+     },
+     {
+      "name": null,
+      "access": null,
+      "tag": "leisure=slipway",
+      "osm_type": "node",
+      "osm_id": 463362714,
+      "lat": 34.873576,
+      "lon": -81.5314709
+     },
+     {
+      "name": "Beech Springs Landing Kayak Launch",
+      "access": null,
+      "tag": "leisure=slipway",
+      "osm_type": "node",
+      "osm_id": 9386827841,
+      "lat": 34.9210514,
+      "lon": -82.1299465
+     }
+    ],
+    "dnr": [
+     {
+      "name": "99 Island",
+      "wb": "Broad River",
+      "type": "Boat Ramp",
+      "src": "SCDNR South Carolina Public Water Access",
+      "lat": 35.026783,
+      "lon": -81.489856,
+      "meta": {
+       "lanes": 1,
+       "dock": "No",
+       "county": "Cherokee",
+       "owner": "Duke Energy",
+       "species": "Smallmouth Bass, Largemouth Bass, Spotted Bass, Redear Sunfish, Bluegill, Redbreast Sunfish, Channel Catfish, Snail Bullhead",
+       "comments": "Access to Scenic River - This may be a canoe or kayak launch only Not seeing ramp or paved parking"
+      }
+     },
+     {
+      "name": "Dalton's Landing",
+      "wb": "Broad River",
+      "type": "Boat Ramp",
+      "src": "SCDNR South Carolina Public Water Access",
+      "lat": 34.935952,
+      "lon": -81.473033,
+      "meta": {
+       "lanes": 1,
+       "dock": "No",
+       "county": "York",
+       "owner": "Worth Mountain WMA (SCDNR)",
+       "species": "Smallmouth Bass, Largemouth Bass, Spotted Bass, Redear Sunfish, Bluegill, Redbreast Sunfish, Channel Catfish, Snail Bullhead",
+       "comments": "Need more info - TEA"
+      }
+     },
+     {
+      "name": "Pick Hill Access",
+      "wb": "Broad River",
+      "type": "Boat Ramp",
+      "src": "SCDNR South Carolina Public Water Access",
+      "lat": 35.041084,
+      "lon": -81.495382,
+      "meta": {
+       "lanes": 1,
+       "dock": "No",
+       "county": "Cherokee",
+       "owner": "Duke Energy",
+       "species": "Smallmouth Bass, Largemouth Bass, Spotted Bass, Redear Sunfish, Bluegill, Redbreast Sunfish, Channel Catfish, Snail Bullhead",
+       "comments": "Limited Parking Available 10 vehicles"
+      }
+     },
+     {
+      "name": "US 221",
+      "wb": "BROAD RIVER",
+      "type": "Boat Ramp",
+      "src": "NC Wildlife Resources Commission Boating Access Areas",
+      "lat": 35.206264,
+      "lon": -81.838437,
+      "meta": {
+       "lanes": 0,
+       "dock": 0,
+       "county": "RUTHERFORD",
+       "owner": "RUTHERFORD COUNTY"
+      }
+     },
+     {
+      "name": "US 221A",
+      "wb": "BROAD RIVER",
+      "type": "Boat Ramp",
+      "src": "NC Wildlife Resources Commission Boating Access Areas",
+      "lat": 35.216784,
+      "lon": -81.778802,
+      "meta": {
+       "lanes": 0,
+       "dock": 0,
+       "county": "RUTHERFORD",
+       "owner": "RUTHERFORD COUNTY"
+      }
+     }
+    ],
+    "dnr_paddle": [
+     {
+      "name": "Bowens River Access and Parking Area",
+      "wb": "Broad River",
+      "type": "Paddle Launch",
+      "src": "https://services.arcgis.com/acgZYxoN5Oj8pDLa/arcgis/rest/services/South_Carolina_Public_Water_Access_PUBLIC_VIEW/FeatureServer/0/query",
+      "lat": 35.133734,
+      "lon": -81.590409,
+      "meta": {
+       "subtype": "Ramp",
+       "county": "Cherokee",
+       "owner": "Duke Energy",
+       "species": "Smallmouth Bass, Largemouth Bass, Spotted Bass, Redear Sunfish, Bluegill, Redbreast Sunfish, Channel Catfish, Snail Bullhead"
+      }
+     },
+     {
+      "name": "Cherokee Ford Recreation Area",
+      "wb": "Broad River",
+      "type": "Paddle Launch",
+      "src": "https://services.arcgis.com/acgZYxoN5Oj8pDLa/arcgis/rest/services/South_Carolina_Public_Water_Access_PUBLIC_VIEW/FeatureServer/0/query",
+      "lat": 35.07479,
+      "lon": -81.560912,
+      "meta": {
+       "subtype": "Bank",
+       "county": "Cherokee",
+       "owner": "Duke Energy",
+       "species": "Smallmouth Bass, Largemouth Bass, Spotted Bass, Redear Sunfish, Bluegill, Redbreast Sunfish, Channel Catfish, Snail Bullhead"
+      }
+     },
+     {
+      "name": "Lockhart Take Out above Lockhart Dam #1",
+      "wb": "Broad River",
+      "type": "Paddle Launch",
+      "src": "https://services.arcgis.com/acgZYxoN5Oj8pDLa/arcgis/rest/services/South_Carolina_Public_Water_Access_PUBLIC_VIEW/FeatureServer/0/query",
+      "lat": 34.79724,
+      "lon": -81.461451,
+      "meta": {
+       "subtype": "Ramp",
+       "county": "Union",
+       "owner": "Town of Lockhart",
+       "species": "Smallmouth Bass, Largemouth Bass, Spotted Bass, Redear Sunfish, Bluegill, Redbreast Sunfish, Channel Catfish, Snail Bullhead"
+      }
+     },
+     {
+      "name": "Ninety Nine Island Canoe Access",
+      "wb": "Broad River",
+      "type": "Paddle Launch",
+      "src": "https://services.arcgis.com/acgZYxoN5Oj8pDLa/arcgis/rest/services/South_Carolina_Public_Water_Access_PUBLIC_VIEW/FeatureServer/0/query",
+      "lat": 35.029667,
+      "lon": -81.491249,
+      "meta": {
+       "subtype": "Ramp",
+       "county": "Cherokee",
+       "owner": "Duke Energy",
+       "species": "Smallmouth Bass, Largemouth Bass, Spotted Bass, Redear Sunfish, Bluegill, Redbreast Sunfish, Channel Catfish, Snail Bullhead"
+      }
+     },
+     {
+      "name": "US 221",
+      "wb": "BROAD RIVER",
+      "type": "Paddle Launch",
+      "src": "https://services1.arcgis.com/YfqBAUM5nWR3yhGP/arcgis/rest/services/NCWRC_Boating_Access_Areas_view/FeatureServer/0/query",
+      "lat": 35.206264,
+      "lon": -81.838437,
+      "meta": {
+       "type": "ACCESS TO WATER THROUGH STEPS WITH A CANOE/KAYAK SLIDE IN THE MIDDLE. SHALLOW WATER.",
+       "county": "RUTHERFORD",
+       "owner": "RUTHERFORD COUNTY"
+      }
+     },
+     {
+      "name": "US 221A",
+      "wb": "BROAD RIVER",
+      "type": "Paddle Launch",
+      "src": "https://services1.arcgis.com/YfqBAUM5nWR3yhGP/arcgis/rest/services/NCWRC_Boating_Access_Areas_view/FeatureServer/0/query",
+      "lat": 35.216784,
+      "lon": -81.778802,
+      "meta": {
+       "type": "ACCESS TO WATER THROUGH STEPS WITH A CANOE/KAYAK SLIDE IN THE MIDDLE.",
+       "county": "RUTHERFORD",
+       "owner": "RUTHERFORD COUNTY"
+      }
+     }
+    ],
+    "ncpaws": [
+     {
+      "name": "BROAD RIVER GREENWAY",
+      "wb": "BROAD RIVER",
+      "type": "Paddle Launch",
+      "src": "NC WRC public fishing areas (ncpaws.org/NCWRCMaps/FishingAreas)",
+      "lat": 35.202,
+      "lon": -81.6639,
+      "meta": {
+       "canoe": true,
+       "ramp": false,
+       "shore": true,
+       "pier": false,
+       "wheelchair": false,
+       "county": "Cleveland",
+       "owner": "TOWN OF BOILING SPRINGS",
+       "locationID": 1973,
+       "matchedBy": "name+box"
+      }
+     },
+     {
+      "name": "COXE ROAD",
+      "wb": "BROAD RIVER",
+      "type": "Paddle Launch",
+      "src": "NC WRC public fishing areas (ncpaws.org/NCWRCMaps/FishingAreas)",
+      "lat": 35.29261,
+      "lon": -81.991412,
+      "meta": {
+       "canoe": true,
+       "ramp": false,
+       "shore": false,
+       "pier": false,
+       "wheelchair": false,
+       "county": "Rutherford",
+       "owner": "NC WRC",
+       "locationID": 2309,
+       "matchedBy": "name+box"
+      }
+     },
+     {
+      "name": "GRAY'S BRIDGE",
+      "wb": "BROAD RIVER",
+      "type": "Paddle Launch",
+      "src": "NC WRC public fishing areas (ncpaws.org/NCWRCMaps/FishingAreas)",
+      "lat": 35.328661,
+      "lon": -82.026337,
+      "meta": {
+       "canoe": true,
+       "ramp": false,
+       "shore": true,
+       "pier": false,
+       "wheelchair": false,
+       "county": "Rutherford",
+       "owner": "NC WRC",
+       "locationID": 2201,
+       "matchedBy": "name+box"
+      }
+     },
+     {
+      "name": "US HWY 221",
+      "wb": "BROAD RIVER",
+      "type": "Paddle Launch",
+      "src": "NC WRC public fishing areas (ncpaws.org/NCWRCMaps/FishingAreas)",
+      "lat": 35.206264,
+      "lon": -81.838437,
+      "meta": {
+       "canoe": true,
+       "ramp": false,
+       "shore": false,
+       "pier": false,
+       "wheelchair": true,
+       "county": "Rutherford",
+       "owner": "RUTHERFORD COUNTY",
+       "locationID": 2516,
+       "matchedBy": "name+box"
+      }
+     },
+     {
+      "name": "US HWY 221A",
+      "wb": "BROAD RIVER",
+      "type": "Paddle Launch",
+      "src": "NC WRC public fishing areas (ncpaws.org/NCWRCMaps/FishingAreas)",
+      "lat": 35.216784,
+      "lon": -81.778802,
+      "meta": {
+       "canoe": true,
+       "ramp": false,
+       "shore": false,
+       "pier": false,
+       "wheelchair": true,
+       "county": "Rutherford",
+       "owner": "RUTHERFORD COUNTY",
+       "locationID": 2517,
+       "matchedBy": "name+box"
+      }
+     }
+    ]
+   },
+   "ramp_sources": 5,
+   "charted": 0.5122,
+   "shipped": true,
+   "pack_mb": 2.04,
+   "feature_type": "river",
+   "feature_type_guessed": true,
+   "usgs": {
+    "site": "02153051",
+    "params": "00010,00062,00065"
+   }
+  },
+  "wateree_lake": {
+   "slug": "wateree_lake",
+   "name": "Wateree Lake",
+   "state": "SC",
+   "display_name": "Wateree Lake (Kershaw Co, SC)",
+   "legacy_display_name": "Wateree Lake, SC",
+   "legacy_display_names": [
+    "Wateree Lake, SC",
+    "BIg Wateree Creek - Lake Wateree",
+    "BIg Wateree Creek - Lake Wateree, SC",
+    "Lake Wateree",
+    "Lake Wateree, SC",
+    "Taylor Creek - Lake Wateree",
+    "Taylor Creek - Lake Wateree, SC",
+    "Wateree River - Lake Wateree",
+    "Wateree River - Lake Wateree, SC"
+   ],
+   "county": "Kershaw",
+   "gnis": "gnis:1227425",
+   "source": [
+    "3dhp"
+   ],
+   "area_acres": 11756.3,
+   "centroid": [
+    -80.818179,
+    34.437616
+   ],
+   "bounds_wsen": [
+    -80.937286,
+    34.333131,
+    -80.699072,
+    34.5421
+   ],
+   "access": "Open Access",
+   "access_for_me": "Open Access",
+   "access_via": null,
+   "access_units": [
+    "Catawba-Pee Dee Region - Liberty Hill",
+    "Lake Wateree State Park",
+    "Catawba River Wildlife Management Area - McDowell Tract"
+   ],
+   "proclamation": [],
+   "ramps": {
+    "natl": [
+     {
+      "lat": 34.3911629777,
+      "lon": -80.8293424893,
+      "name": "June Creek",
+      "src": "South Carolina Department of Natural Resources",
+      "type": "Public",
+      "wb": "Wateree River - Lake Wateree"
+     },
+     {
+      "lat": 34.4377119305,
+      "lon": -80.875776742,
+      "name": "Taylor Creek",
+      "src": "South Carolina Department of Natural Resources",
+      "type": "Public",
+      "wb": "Taylor Creek - Lake Wateree"
+     },
+     {
+      "lat": 34.4328597705,
+      "lon": -80.8583458747,
+      "name": "Lake Wateree State Park",
+      "src": "South Carolina Department of Natural Resources",
+      "type": "Public",
+      "wb": "Wateree River - Lake Wateree"
+     },
+     {
+      "lat": 34.4340633016,
+      "lon": -80.7700220557,
+      "name": "Beaver Creek (Wateree Marina)",
+      "src": "South Carolina Department of Natural Resources",
+      "type": "Public",
+      "wb": "Lake Wateree"
+     },
+     {
+      "lat": 34.5390194039,
+      "lon": -80.87356179,
+      "name": "Cedar Creek",
+      "src": "South Carolina Department of Natural Resources",
+      "type": "Public",
+      "wb": "Catawba River"
+     },
+     {
+      "lat": 34.3358458239,
+      "lon": -80.7072024691,
+      "name": "Buck Hill",
+      "src": "South Carolina Department of Natural Resources",
+      "type": "Public",
+      "wb": "Wateree River - Lake Wateree"
+     },
+     {
+      "lat": 34.3792530874,
+      "lon": -80.7288076296,
+      "name": "Clearwater Cove",
+      "src": "South Carolina Department of Natural Resources",
+      "type": "Public",
+      "wb": "Wateree River - Lake Wateree"
+     },
+     {
+      "lat": 34.3688362383,
+      "lon": -80.7972300795,
+      "name": "Colonel Creek",
+      "src": "South Carolina Department of Natural Resources",
+      "type": "Public",
+      "wb": "Wateree River - Lake Wateree"
+     },
+     {
+      "lat": 34.4695866016,
+      "lon": -80.9138553548,
+      "name": "Big Wateree Creek",
+      "src": "South Carolina Department of Natural Resources",
+      "type": "Public",
+      "wb": "BIg Wateree Creek - Lake Wateree"
+     },
+     {
+      "lat": 34.3828089623,
+      "lon": -80.7879868737,
+      "name": "Molly Creek Landing",
+      "src": "U.S. Geological Survey",
+      "type": "Public",
+      "wb": "Wateree River - Lake Wateree"
+     },
+     {
+      "lat": 34.3641221321,
+      "lon": -80.6992537988,
+      "name": "Lakeside Marina",
+      "src": "U.S. Geological Survey",
+      "type": "Semi-Private",
+      "wb": "Wateree River - Lake Wateree"
+     }
+    ],
+    "osm": [
+     {
+      "name": null,
+      "access": null,
+      "tag": "leisure=slipway",
+      "osm_type": "node",
+      "osm_id": 1204451061,
+      "lat": 34.3357229,
+      "lon": -80.7071286
+     },
+     {
+      "name": null,
+      "access": null,
+      "tag": "leisure=slipway",
+      "osm_type": "node",
+      "osm_id": 1216602997,
+      "lat": 34.4328897,
+      "lon": -80.8582185
+     },
+     {
+      "name": null,
+      "access": null,
+      "tag": "leisure=slipway",
+      "osm_type": "node",
+      "osm_id": 1240435319,
+      "lat": 34.4241202,
+      "lon": -80.8678914
+     },
+     {
+      "name": null,
+      "access": null,
+      "tag": "leisure=slipway",
+      "osm_type": "node",
+      "osm_id": 1447570052,
+      "lat": 34.3357627,
+      "lon": -80.7070769
+     },
+     {
+      "name": null,
+      "access": null,
+      "tag": "leisure=slipway",
+      "osm_type": "way",
+      "osm_id": 1325472156,
+      "lat": 34.3826612,
+      "lon": -80.7880365
+     },
+     {
+      "name": null,
+      "access": null,
+      "tag": "leisure=slipway",
+      "osm_type": "way",
+      "osm_id": 1325472157,
+      "lat": 34.3826557,
+      "lon": -80.7879707
+     }
+    ],
+    "dnr": [
+     {
+      "name": "Beaver Creek",
+      "wb": "Lake Wateree",
+      "type": "Boat Ramp",
+      "src": "SCDNR South Carolina Public Water Access",
+      "lat": 34.434081,
+      "lon": -80.770029,
+      "meta": {
+       "lanes": 1,
+       "dock": "No",
+       "county": "Kershaw",
+       "owner": "SCDOT",
+       "species": "Largemouth Bass, Bluegill, Redear Sunfish, Redbreast Sunfish, Warmouth, Black Crappie, Channel Catfish, Blue Catfish, White Perch, White Bass, Striped Bass"
+      }
+     },
+     {
+      "name": "Buck Hill",
+      "wb": "Lake Wateree",
+      "type": "Boat Ramp",
+      "src": "SCDNR South Carolina Public Water Access",
+      "lat": 34.335864,
+      "lon": -80.707209,
+      "meta": {
+       "lanes": 2,
+       "dock": "Yes",
+       "county": "Kershaw",
+       "owner": "Duke Energy",
+       "species": "Largemouth Bass, Bluegill, Redear Sunfish, Redbreast Sunfish, Warmouth, Black Crappie, Channel Catfish, Blue Catfish, White Perch, White Bass, Striped Bass",
+       "comments": "Limited Parking Available"
+      }
+     },
+     {
+      "name": "Clearwater Cove",
+      "wb": "Lake Wateree",
+      "type": "Boat Ramp",
+      "src": "SCDNR South Carolina Public Water Access",
+      "lat": 34.379271,
+      "lon": -80.728814,
+      "meta": {
+       "lanes": 4,
+       "dock": "Yes",
+       "county": "Kershaw",
+       "owner": "Duke Energy",
+       "species": "Largemouth Bass, Bluegill, Redear Sunfish, Redbreast Sunfish, Warmouth, Black Crappie, Channel Catfish, Blue Catfish, White Perch, White Bass, Striped Bass"
+      }
+     },
+     {
+      "name": "Colonel Creek",
+      "wb": "Lake Wateree",
+      "type": "Boat Ramp",
+      "src": "SCDNR South Carolina Public Water Access",
+      "lat": 34.368854,
+      "lon": -80.797237,
+      "meta": {
+       "lanes": 3,
+       "dock": "Yes",
+       "county": "Fairfield",
+       "owner": "Duke Energy",
+       "species": "Largemouth Bass, Bluegill, Redear Sunfish, Redbreast Sunfish, Warmouth, Black Crappie, Channel Catfish, Blue Catfish, White Perch, White Bass, Striped Bass"
+      }
+     },
+     {
+      "name": "June Creek",
+      "wb": "Lake Wateree",
+      "type": "Boat Ramp",
+      "src": "SCDNR South Carolina Public Water Access",
+      "lat": 34.391261,
+      "lon": -80.829429,
+      "meta": {
+       "lanes": 2,
+       "dock": "Yes",
+       "county": "Fairfield",
+       "owner": "Duke Energy",
+       "species": "Largemouth Bass, Bluegill, Redear Sunfish, Redbreast Sunfish, Warmouth, Black Crappie, Channel Catfish, Blue Catfish, White Perch, White Bass, Striped Bass"
+      }
+     },
+     {
+      "name": "Lake Wateree State Park",
+      "wb": "Lake Wateree",
+      "type": "Boat Ramp",
+      "src": "SCDNR South Carolina Public Water Access",
+      "lat": 34.432841,
+      "lon": -80.858374,
+      "meta": {
+       "lanes": 2,
+       "dock": "Yes",
+       "county": "Fairfield",
+       "owner": "SCPRT",
+       "species": "Largemouth Bass, Bluegill, Redear Sunfish, Redbreast Sunfish, Warmouth, Black Crappie, Channel Catfish, Blue Catfish, White Perch, White Bass, Striped Bass"
+      }
+     },
+     {
+      "name": "Molly Creek Access Area Boat Ramp",
+      "wb": "Lake Wateree",
+      "type": "Boat Ramp",
+      "src": "SCDNR South Carolina Public Water Access",
+      "lat": 34.382753,
+      "lon": -80.787994,
+      "meta": {
+       "lanes": 2,
+       "dock": "Yes",
+       "county": "Fairfield",
+       "owner": "Duke Energy",
+       "species": "Largemouth Bass, Bluegill, Redear Sunfish, Redbreast Sunfish, Warmouth, Black Crappie, Channel Catfish, Blue Catfish, White Perch, White Bass, Striped Bass"
+      }
+     },
+     {
+      "name": "Taylor Creek",
+      "wb": "Lake Wateree",
+      "type": "Boat Ramp",
+      "src": "SCDNR South Carolina Public Water Access",
+      "lat": 34.43773,
+      "lon": -80.875784,
+      "meta": {
+       "lanes": 2,
+       "dock": "Yes",
+       "county": "Fairfield",
+       "owner": "Duke Energy",
+       "species": "Largemouth Bass, Bluegill, Redear Sunfish, Redbreast Sunfish, Warmouth, Black Crappie, Channel Catfish, Blue Catfish, White Perch, White Bass, Striped Bass"
+      }
+     },
+     {
+      "name": "Wateree Creek Access Area",
+      "wb": "Lake Wateree",
+      "type": "Boat Ramp",
+      "src": "SCDNR South Carolina Public Water Access",
+      "lat": 34.469605,
+      "lon": -80.913862,
+      "meta": {
+       "lanes": 2,
+       "dock": "Yes",
+       "county": "Fairfield",
+       "owner": "Duke Energy",
+       "species": "Largemouth Bass, Bluegill, Redear Sunfish, Redbreast Sunfish, Warmouth, Black Crappie, Channel Catfish, Blue Catfish, White Perch, White Bass, Striped Bass"
+      }
+     }
+    ]
+   },
+   "ramp_sources": 3,
+   "charted": 0.972,
+   "shipped": true,
+   "pack_mb": 33.41,
+   "feature_type": "lake",
+   "usgs": {
+    "site": "02147801",
+    "params": "00010,00065,00060"
+   }
+  }
+ },
+ "nc_species_by_lake": {
+  "lakes": {
+   "broad_river": {
+    "predatorSpecies": [
+     "Bluegill",
+     "Largemouth Bass",
+     "Muskellunge",
+     "North American Freshwater Catfishes",
+     "Redbreast Sunfish",
+     "Smallmouth Bass",
+     "Sunfish",
+     "White Bass"
+    ],
+    "knownStockings": [
+     "Muskellunge"
+    ],
+    "locations": [
+     {
+      "locationID": 1973,
+      "locationName": "BROAD RIVER GREENWAY",
+      "waterbodyName": "BROAD RIVER",
+      "matchedBy": "name+box"
+     },
+     {
+      "locationID": 2309,
+      "locationName": "COXE ROAD",
+      "waterbodyName": "BROAD RIVER",
+      "matchedBy": "name+box"
+     },
+     {
+      "locationID": 2201,
+      "locationName": "GRAY'S BRIDGE",
+      "waterbodyName": "BROAD RIVER",
+      "matchedBy": "name+box"
+     },
+     {
+      "locationID": 2516,
+      "locationName": "US HWY 221",
+      "waterbodyName": "BROAD RIVER",
+      "matchedBy": "name+box"
+     },
+     {
+      "locationID": 2517,
+      "locationName": "US HWY 221A",
+      "waterbodyName": "BROAD RIVER",
+      "matchedBy": "name+box"
+     }
+    ]
+   }
+  }
+ },
+ "watershed_fish": {
+  "waters": {
+   "nolichucky_river": {
+    "kind": "river",
+    "hucs": [
+     {
+      "huc8": "06010108",
+      "name": "Nolichucky",
+      "share": 1.0
+     }
+    ],
+    "targets": [
+     {
+      "name": "Black Crappie",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "06010108"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Pomoxis nigromaculatus"
+      ]
+     },
+     {
+      "name": "Bluegill",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "06010108"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Lepomis macrochirus"
+      ]
+     },
+     {
+      "name": "Brook Trout",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "06010108"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Salvelinus fontinalis"
+      ]
+     },
+     {
+      "name": "Brown Trout",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "06010108"
+      ],
+      "in_water": 1,
+      "scientific": [
+       "Salmo trutta"
+      ]
+     },
+     {
+      "name": "Bullhead",
+      "basis": [
+       "native",
+       "introduced"
+      ],
+      "hucs": [
+       "06010108"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Ameiurus natalis",
+       "Ameiurus platycephalus"
+      ]
+     },
+     {
+      "name": "Channel Catfish",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "06010108"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Ictalurus punctatus"
+      ]
+     },
+     {
+      "name": "Flathead Catfish",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "06010108"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Pylodictis olivaris"
+      ]
+     },
+     {
+      "name": "Green Sunfish",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "06010108"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Lepomis cyanellus"
+      ]
+     },
+     {
+      "name": "Largemouth Bass",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "06010108"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Micropterus salmoides"
+      ]
+     },
+     {
+      "name": "Muskellunge",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "06010108"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Esox masquinongy"
+      ]
+     },
+     {
+      "name": "Pumpkinseed",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "06010108"
+      ],
+      "in_water": 1,
+      "scientific": [
+       "Lepomis gibbosus"
+      ]
+     },
+     {
+      "name": "Rainbow Trout",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "06010108"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Oncorhynchus mykiss"
+      ]
+     },
+     {
+      "name": "Redbreast Sunfish",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "06010108"
+      ],
+      "in_water": 3,
+      "scientific": [
+       "Lepomis auritus"
+      ]
+     },
+     {
+      "name": "Redear Sunfish (Shellcracker)",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "06010108"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Lepomis microlophus"
+      ]
+     },
+     {
+      "name": "Redeye Bass",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "06010108"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Micropterus coosae"
+      ]
+     },
+     {
+      "name": "Rock Bass",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "06010108"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Ambloplites rupestris"
+      ]
+     },
+     {
+      "name": "Smallmouth Bass",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "06010108"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Micropterus dolomieu"
+      ]
+     },
+     {
+      "name": "Spotted Bass",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "06010108"
+      ],
+      "in_water": 2,
+      "scientific": [
+       "Micropterus punctulatus"
+      ]
+     },
+     {
+      "name": "Warmouth",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "06010108"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Lepomis gulosus"
+      ]
+     },
+     {
+      "name": "White Crappie",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "06010108"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Pomoxis annularis"
+      ]
+     }
+    ],
+    "forage": [
+     {
+      "name": "Gizzard Shad",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "06010108"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Dorosoma cepedianum"
+      ]
+     }
+    ]
+   },
+   "clinch_river": {
+    "kind": "river",
+    "hucs": [
+     {
+      "huc8": "06010205",
+      "name": "Upper Clinch, Tennessee, Virginia",
+      "share": 1.0
+     }
+    ],
+    "targets": [
+     {
+      "name": "Black Crappie",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "06010205"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Pomoxis nigromaculatus"
+      ]
+     },
+     {
+      "name": "Blue Catfish",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "06010205"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Ictalurus furcatus"
+      ]
+     },
+     {
+      "name": "Bluegill",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "06010205"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Lepomis macrochirus"
+      ]
+     },
+     {
+      "name": "Brown Trout",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "06010205"
+      ],
+      "in_water": 1,
+      "scientific": [
+       "Salmo trutta"
+      ]
+     },
+     {
+      "name": "Bullhead",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "06010205"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Ameiurus natalis"
+      ]
+     },
+     {
+      "name": "Channel Catfish",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "06010205"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Ictalurus punctatus"
+      ]
+     },
+     {
+      "name": "Flathead Catfish",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "06010205"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Pylodictis olivaris"
+      ]
+     },
+     {
+      "name": "Green Sunfish",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "06010205"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Lepomis cyanellus"
+      ]
+     },
+     {
+      "name": "Largemouth Bass",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "06010205"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Micropterus salmoides"
+      ]
+     },
+     {
+      "name": "Muskellunge",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "06010205"
+      ],
+      "in_water": 2,
+      "scientific": [
+       "Esox masquinongy"
+      ]
+     },
+     {
+      "name": "Northern Pike",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "06010205"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Esox lucius"
+      ]
+     },
+     {
+      "name": "Rainbow Trout",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "06010205"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Oncorhynchus mykiss"
+      ]
+     },
+     {
+      "name": "Redbreast Sunfish",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "06010205"
+      ],
+      "in_water": 3,
+      "scientific": [
+       "Lepomis auritus"
+      ]
+     },
+     {
+      "name": "Redear Sunfish (Shellcracker)",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "06010205"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Lepomis microlophus"
+      ]
+     },
+     {
+      "name": "Rock Bass",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "06010205"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Ambloplites rupestris"
+      ]
+     },
+     {
+      "name": "Sauger",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "06010205"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Sander canadensis"
+      ]
+     },
+     {
+      "name": "Smallmouth Bass",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "06010205"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Micropterus dolomieu"
+      ]
+     },
+     {
+      "name": "Spotted Bass",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "06010205"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Micropterus punctulatus"
+      ]
+     },
+     {
+      "name": "Striped Bass",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "06010205"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Morone saxatilis"
+      ]
+     },
+     {
+      "name": "Walleye",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "06010205"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Sander vitreus"
+      ]
+     },
+     {
+      "name": "Warmouth",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "06010205"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Lepomis gulosus"
+      ]
+     },
+     {
+      "name": "White Bass / Hybrid",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "06010205"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Morone chrysops"
+      ]
+     },
+     {
+      "name": "White Crappie",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "06010205"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Pomoxis annularis"
+      ]
+     }
+    ],
+    "forage": [
+     {
+      "name": "Alewife",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "06010205"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Alosa pseudoharengus"
+      ]
+     },
+     {
+      "name": "Blueback Herring",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "06010205"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Alosa aestivalis"
+      ]
+     },
+     {
+      "name": "Gizzard Shad",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "06010205"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Dorosoma cepedianum"
+      ]
+     },
+     {
+      "name": "Threadfin Shad",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "06010205"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Dorosoma petenense"
+      ]
+     }
+    ]
+   },
+   "first_broad_river": {
+    "kind": "river",
+    "hucs": [
+     {
+      "huc8": "03050105",
+      "name": "Upper Broad",
+      "share": 1.0
+     }
+    ],
+    "targets": [
+     {
+      "name": "Black Crappie",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050105"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Pomoxis nigromaculatus"
+      ]
+     },
+     {
+      "name": "Bluegill",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050105"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Lepomis macrochirus"
+      ]
+     },
+     {
+      "name": "Brook Trout",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050105"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Salvelinus fontinalis"
+      ]
+     },
+     {
+      "name": "Brown Trout",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050105"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Salmo trutta"
+      ]
+     },
+     {
+      "name": "Bullhead",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050105"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Ameiurus nebulosus",
+       "Ameiurus platycephalus",
+       "Ameiurus brunneus"
+      ]
+     },
+     {
+      "name": "Catfish",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050105"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Ameiurus catus"
+      ]
+     },
+     {
+      "name": "Chain Pickerel",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050105"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Esox niger"
+      ]
+     },
+     {
+      "name": "Channel Catfish",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050105"
+      ],
+      "in_water": 1,
+      "scientific": [
+       "Ictalurus punctatus"
+      ]
+     },
+     {
+      "name": "Green Sunfish",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050105"
+      ],
+      "in_water": 1,
+      "scientific": [
+       "Lepomis cyanellus"
+      ]
+     },
+     {
+      "name": "Largemouth Bass",
+      "basis": [
+       "native",
+       "introduced"
+      ],
+      "hucs": [
+       "03050105"
+      ],
+      "in_water": 4,
+      "scientific": [
+       "Micropterus salmoides",
+       "Micropterus nigricans"
+      ]
+     },
+     {
+      "name": "Muskellunge",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050105"
+      ],
+      "in_water": 1,
+      "scientific": [
+       "Esox masquinongy"
+      ]
+     },
+     {
+      "name": "Pumpkinseed",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050105"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Lepomis gibbosus"
+      ]
+     },
+     {
+      "name": "Rainbow Trout",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050105"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Oncorhynchus mykiss"
+      ]
+     },
+     {
+      "name": "Redbreast Sunfish",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050105"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Lepomis auritus"
+      ]
+     },
+     {
+      "name": "Redear Sunfish (Shellcracker)",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050105"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Lepomis microlophus"
+      ]
+     },
+     {
+      "name": "Redeye Bass",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050105"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Micropterus coosae"
+      ]
+     },
+     {
+      "name": "Redfin Pickerel",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050105"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Esox americanus"
+      ]
+     },
+     {
+      "name": "Rock Bass",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050105"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Ambloplites rupestris"
+      ]
+     },
+     {
+      "name": "Smallmouth Bass",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050105"
+      ],
+      "in_water": 2,
+      "scientific": [
+       "Micropterus dolomieu"
+      ]
+     },
+     {
+      "name": "Spotted Bass",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050105"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Micropterus punctulatus"
+      ]
+     },
+     {
+      "name": "Warmouth",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050105"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Lepomis gulosus"
+      ]
+     },
+     {
+      "name": "White Bass / Hybrid",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050105"
+      ],
+      "in_water": 1,
+      "scientific": [
+       "Morone chrysops"
+      ]
+     },
+     {
+      "name": "White Crappie",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050105"
+      ],
+      "in_water": 1,
+      "scientific": [
+       "Pomoxis annularis"
+      ]
+     },
+     {
+      "name": "Yellow Perch",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050105"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Perca flavescens"
+      ]
+     }
+    ],
+    "forage": [
+     {
+      "name": "Blueback Herring",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050105"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Alosa aestivalis"
+      ]
+     },
+     {
+      "name": "Gizzard Shad",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050105"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Dorosoma cepedianum"
+      ]
+     },
+     {
+      "name": "Threadfin Shad",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050105"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Dorosoma petenense"
+      ]
+     }
+    ]
+   },
+   "broad_river": {
+    "kind": "river",
+    "hucs": [
+     {
+      "huc8": "03050105",
+      "name": "Upper Broad",
+      "share": 0.9363
+     },
+     {
+      "huc8": "03050106",
+      "name": "Lower Broad",
+      "share": 0.0637
+     }
+    ],
+    "targets": [
+     {
+      "name": "Black Crappie",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050105",
+       "03050106"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Pomoxis nigromaculatus"
+      ]
+     },
+     {
+      "name": "Bluegill",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050105",
+       "03050106"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Lepomis macrochirus"
+      ]
+     },
+     {
+      "name": "Brook Trout",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050105"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Salvelinus fontinalis"
+      ]
+     },
+     {
+      "name": "Brown Trout",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050105"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Salmo trutta"
+      ]
+     },
+     {
+      "name": "Bullhead",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050105",
+       "03050106"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Ameiurus nebulosus",
+       "Ameiurus platycephalus",
+       "Ameiurus brunneus",
+       "Ameiurus natalis"
+      ]
+     },
+     {
+      "name": "Catfish",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050105",
+       "03050106"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Ameiurus catus"
+      ]
+     },
+     {
+      "name": "Chain Pickerel",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050105",
+       "03050106"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Esox niger"
+      ]
+     },
+     {
+      "name": "Channel Catfish",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050105",
+       "03050106"
+      ],
+      "in_water": 2,
+      "scientific": [
+       "Ictalurus punctatus"
+      ]
+     },
+     {
+      "name": "Flathead Catfish",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050106"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Pylodictis olivaris"
+      ]
+     },
+     {
+      "name": "Flier",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050106"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Centrarchus macropterus"
+      ]
+     },
+     {
+      "name": "Green Sunfish",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050105",
+       "03050106"
+      ],
+      "in_water": 3,
+      "scientific": [
+       "Lepomis cyanellus"
+      ]
+     },
+     {
+      "name": "Largemouth Bass",
+      "basis": [
+       "native",
+       "introduced"
+      ],
+      "hucs": [
+       "03050105",
+       "03050106"
+      ],
+      "in_water": 8,
+      "scientific": [
+       "Micropterus salmoides",
+       "Micropterus nigricans"
+      ]
+     },
+     {
+      "name": "Muskellunge",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050105"
+      ],
+      "in_water": 1,
+      "scientific": [
+       "Esox masquinongy"
+      ]
+     },
+     {
+      "name": "Pumpkinseed",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050105",
+       "03050106"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Lepomis gibbosus"
+      ]
+     },
+     {
+      "name": "Rainbow Trout",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050105"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Oncorhynchus mykiss"
+      ]
+     },
+     {
+      "name": "Redbreast Sunfish",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050105",
+       "03050106"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Lepomis auritus"
+      ]
+     },
+     {
+      "name": "Redear Sunfish (Shellcracker)",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050105",
+       "03050106"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Lepomis microlophus"
+      ]
+     },
+     {
+      "name": "Redeye Bass",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050105"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Micropterus coosae"
+      ]
+     },
+     {
+      "name": "Redfin Pickerel",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050105",
+       "03050106"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Esox americanus"
+      ]
+     },
+     {
+      "name": "Rock Bass",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050105"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Ambloplites rupestris"
+      ]
+     },
+     {
+      "name": "Smallmouth Bass",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050105",
+       "03050106"
+      ],
+      "in_water": 4,
+      "scientific": [
+       "Micropterus dolomieu"
+      ]
+     },
+     {
+      "name": "Spotted Bass",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050105"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Micropterus punctulatus"
+      ]
+     },
+     {
+      "name": "Striped Bass",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050106"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Morone saxatilis"
+      ]
+     },
+     {
+      "name": "Warmouth",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050105",
+       "03050106"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Lepomis gulosus"
+      ]
+     },
+     {
+      "name": "White Bass / Hybrid",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050105",
+       "03050106"
+      ],
+      "in_water": 2,
+      "scientific": [
+       "Morone chrysops"
+      ]
+     },
+     {
+      "name": "White Crappie",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050105"
+      ],
+      "in_water": 2,
+      "scientific": [
+       "Pomoxis annularis"
+      ]
+     },
+     {
+      "name": "Yellow Perch",
+      "basis": [
+       "introduced",
+       "native"
+      ],
+      "hucs": [
+       "03050105",
+       "03050106"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Perca flavescens"
+      ]
+     }
+    ],
+    "forage": [
+     {
+      "name": "Blueback Herring",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050105"
+      ],
+      "in_water": 2,
+      "scientific": [
+       "Alosa aestivalis"
+      ]
+     },
+     {
+      "name": "Gizzard Shad",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050105",
+       "03050106"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Dorosoma cepedianum"
+      ]
+     },
+     {
+      "name": "Threadfin Shad",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050105",
+       "03050106"
+      ],
+      "in_water": 1,
+      "scientific": [
+       "Dorosoma petenense"
+      ]
+     }
+    ]
+   },
+   "wateree_lake": {
+    "kind": "lake",
+    "hucs": [
+     {
+      "huc8": "03050104",
+      "name": "Wateree",
+      "share": 1.0
+     },
+     {
+      "huc8": "03050103",
+      "name": "Lower Catawba",
+      "share": 0.0
+     }
+    ],
+    "targets": [
+     {
+      "name": "Black Crappie",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050104",
+       "03050103"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Pomoxis nigromaculatus"
+      ]
+     },
+     {
+      "name": "Blue Catfish",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050104"
+      ],
+      "in_water": 1,
+      "scientific": [
+       "Ictalurus furcatus"
+      ]
+     },
+     {
+      "name": "Bluegill",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050104",
+       "03050103"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Lepomis macrochirus"
+      ]
+     },
+     {
+      "name": "Bowfin",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050104"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Amia calva"
+      ]
+     },
+     {
+      "name": "Bullhead",
+      "basis": [
+       "native",
+       "introduced"
+      ],
+      "hucs": [
+       "03050104",
+       "03050103"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Ameiurus nebulosus",
+       "Ameiurus platycephalus",
+       "Ameiurus brunneus",
+       "Ameiurus natalis",
+       "Ameiurus melas"
+      ]
+     },
+     {
+      "name": "Catfish",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050104",
+       "03050103"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Ameiurus catus"
+      ]
+     },
+     {
+      "name": "Chain Pickerel",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050104",
+       "03050103"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Esox niger"
+      ]
+     },
+     {
+      "name": "Channel Catfish",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050104",
+       "03050103"
+      ],
+      "in_water": 3,
+      "scientific": [
+       "Ictalurus punctatus"
+      ]
+     },
+     {
+      "name": "Flathead Catfish",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050104"
+      ],
+      "in_water": 1,
+      "scientific": [
+       "Pylodictis olivaris"
+      ]
+     },
+     {
+      "name": "Flier",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050104"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Centrarchus macropterus"
+      ]
+     },
+     {
+      "name": "Green Sunfish",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050104",
+       "03050103"
+      ],
+      "in_water": 3,
+      "scientific": [
+       "Lepomis cyanellus"
+      ]
+     },
+     {
+      "name": "Largemouth Bass",
+      "basis": [
+       "native",
+       "introduced"
+      ],
+      "hucs": [
+       "03050104",
+       "03050103"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Micropterus salmoides",
+       "Micropterus nigricans"
+      ]
+     },
+     {
+      "name": "Pumpkinseed",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050104",
+       "03050103"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Lepomis gibbosus"
+      ]
+     },
+     {
+      "name": "Redbreast Sunfish",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050104",
+       "03050103"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Lepomis auritus"
+      ]
+     },
+     {
+      "name": "Redear Sunfish (Shellcracker)",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050104",
+       "03050103"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Lepomis microlophus"
+      ]
+     },
+     {
+      "name": "Redfin Pickerel",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050104",
+       "03050103"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Esox americanus"
+      ]
+     },
+     {
+      "name": "Spotted Sunfish",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050104"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Lepomis punctatus"
+      ]
+     },
+     {
+      "name": "Striped Bass",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050104"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Morone saxatilis"
+      ]
+     },
+     {
+      "name": "Warmouth",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050104",
+       "03050103"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Lepomis gulosus"
+      ]
+     },
+     {
+      "name": "White Bass / Hybrid",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050104",
+       "03050103"
+      ],
+      "in_water": 3,
+      "scientific": [
+       "Morone chrysops"
+      ]
+     },
+     {
+      "name": "White Crappie",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050104",
+       "03050103"
+      ],
+      "in_water": 1,
+      "scientific": [
+       "Pomoxis annularis"
+      ]
+     },
+     {
+      "name": "White Perch",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050104"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Morone americana"
+      ]
+     },
+     {
+      "name": "Yellow Perch",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050104",
+       "03050103"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Perca flavescens"
+      ]
+     }
+    ],
+    "forage": [
+     {
+      "name": "Alewife",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050104"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Alosa pseudoharengus"
+      ]
+     },
+     {
+      "name": "Blueback Herring",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050104"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Alosa aestivalis"
+      ]
+     },
+     {
+      "name": "Gizzard Shad",
+      "basis": [
+       "native"
+      ],
+      "hucs": [
+       "03050104",
+       "03050103"
+      ],
+      "in_water": 0,
+      "scientific": [
+       "Dorosoma cepedianum"
+      ]
+     },
+     {
+      "name": "Threadfin Shad",
+      "basis": [
+       "introduced"
+      ],
+      "hucs": [
+       "03050104",
+       "03050103"
+      ],
+      "in_water": 3,
+      "scientific": [
+       "Dorosoma petenense"
+      ]
+     }
+    ]
+   }
+  }
+ }
+}

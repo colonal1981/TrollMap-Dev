@@ -564,6 +564,13 @@ PASSTHROUGH_REGISTRIES = {
         "42 Georgia waters lose their consumption advisory, and 40 GA waters in the app have no "
         "species source at all -- the largest hole of the four states; build it with "
         "parse_ga_fish_advisories.py",
+    # 2026-09-23. Read by Worker/registry.js watershedFish(), the last rung of
+    # registrySpeciesFor(). Only the derived per-water lists travel; the per-watershed tables it
+    # was built from stay under registry/_watershed_fish/ (NatureServe asks that its data not be
+    # reposted).
+    "watershed_fish.json":
+        "a water with no roster in any registry file keeps an EMPTY species list -- Clinch, First "
+        "Broad, Nolichucky and Holston among them; build it with build_watershed_fish.py",
     # `nla_limnology.json` STOOD HERE AND CAME OUT ON 2026-09-05. It was added to this table on
     # 2026-09-04 and verify_registry_r2.py reported it 404 the next day -- no upload had run
     # since -- which is how it was noticed that NOTHING IN THE APP OPENS IT. The only mentions

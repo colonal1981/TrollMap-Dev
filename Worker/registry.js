@@ -873,3 +873,28 @@ export async function fishAdvisories(env, opts = {}) {
   if (failed.length === _advisoryLoaders.length) throw new Error(failed.join(' / '));
   return out;
 }
+
+export const WATERSHED_FISH_KEY = '_registry/watershed_fish.json';
+
+/**
+ * What fish each registry water sits among, by 8-digit watershed, keyed by registry slug.
+ *
+ * `build_watershed_fish.py` writes it from two outside sources, split the way the first one says
+ * to split them: NatureServe's 2010 native-fish-by-watershed table (served per watershed by
+ * fishmap.org, since NatureServe's own download links now 404) for NATIVE fish, current or
+ * historic; USGS Nonindigenous Aquatic Species for INTRODUCED ones, each with a status and a
+ * coordinate that is tested against the water's own outline.
+ *
+ * A WATERSHED IS NOT A WATER. A HUC8 takes in its headwater creeks, so this is the weakest claim
+ * in the species chain and registrySpeciesFor() reads it LAST -- only when nothing above it names a
+ * fish. Measured 2026-09-23 against the 124 waters that have a roster we already trust: the
+ * watershed lists name 618 of those 648 species (95.4%); what they miss is stocked or illegally
+ * introduced fish NAS has not recorded in that watershed (Alabama Bass on 13 NC reservoirs,
+ * hybrids, piedmont stripers). They also name about five times as many species as those rosters
+ * do, which is exactly why they are a floor under nothing and never a roster over something.
+ *
+ * Same cadence and failure mode as every loader here: the CALLER CATCHES, because a water the
+ * file does not carry must still produce a profile.
+ */
+export const watershedFish = passthroughLoader(WATERSHED_FISH_KEY, 'build_watershed_fish.py',
+  (p) => p && p.waters, '"waters" object keyed by registry slug');

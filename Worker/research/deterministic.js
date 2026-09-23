@@ -2,7 +2,7 @@
 import { JSON_HEADERS, r2Text } from '../worker-core.js';
 import { researchStorageId, resolveResearchStorageId } from './keys.js';
 import { buildEvidence, buildFactualSummary, canonicalizeResearchSpecies, getAttractorFacts, getRampSpeciesFacts, uniqueResearchSpecies, splitSpeciesText, isKnownResearchSpecies, RESEARCH_SPECIES_CANON } from './facts-util.js';
-import { lakeIndex, ncSpeciesByLake, resolveRegistryRow, identityBaseline, regulationsTable, agencyLakeFacts, fishAdvisories, speciesTraits, fishbaseTraits} from '../registry.js';
+import { lakeIndex, ncSpeciesByLake, resolveRegistryRow, identityBaseline, regulationsTable, agencyLakeFacts, fishAdvisories, speciesTraits, fishbaseTraits, watershedFish} from '../registry.js';
 import { SC_INSHORE_ROSTER, SC_INSHORE_BASIS } from './coastal-agents.js';
 import { dukeRowForNames, fetchDukeAccessAlerts, fetchDukeOperatingRange } from '../worker-data.js';
 import { parseAccessAlerts, dukeLocationIdFor, dukePoolManagement } from '../conditions.js';
@@ -963,6 +963,41 @@ export async function registrySpeciesFor(env, lakeName, state = '', boundSlug = 
     }
   } catch (e) {
     console.warn(`registrySpeciesFor ramp floor failed for ${lakeName}: ${e && e.message}`);
+  }
+
+  // ── the watershed the water sits in, and ONLY when nothing above named a fish ────────────
+  //
+  // 2026-09-23: Clinch, First Broad, Nolichucky and Holston had no roster in any registry file,
+  // and discover mode can only admit a fish an agency document in hand names -- 4, 2, 0 and
+  // never-run. This is the rung under all of the above: native fish recorded in the water's own
+  // 8-digit watershed (NatureServe 2010) and introduced fish recorded there as established or
+  // stocked (USGS NAS). See watershedFish() in Worker/registry.js for what it is and is not.
+  //
+  // A ROSTER, A FLOOR AND A WATERSHED ARE THREE DIFFERENT CLAIMS, and this one is the weakest:
+  // "recorded in the drainage", headwater creeks included. So it fills an EMPTY roster and never
+  // adds to one -- a water with even a single agency-named fish keeps exactly what the agency
+  // named. `sources[].kind: 'watershed'` and trust REFERENCE say so to every reader.
+  if (!out.predatorSpecies.length) {
+    try {
+      const w = (await watershedFish(env))[slug] || null;
+      const names = uniqueResearchSpecies(((w && w.targets) || []).map((t) => t && t.name));
+      if (names.length) {
+        out.predatorSpecies = names;
+        const hucs = ((w && w.hucs) || []).map((h) => `${h.huc8} ${h.name}`);
+        const inWater = ((w && w.targets) || []).filter((t) => t && t.in_water > 0).map((t) => t.name);
+        const label = 'Recorded in this water\'s watershed (NatureServe 2010; USGS NAS)';
+        addEvidence('predatorSpecies', [buildEvidence('reference_structured', label,
+          'registry:watershed_fish.json', null, 'watershed_species_fallback',
+          { fact: `Recorded in watershed ${hucs.join(', ')}: ${names.join(', ')}`,
+            speciesCount: names.length, hucs,
+            introducedRecordsInsideThisWater: inWater })]);
+        out.sources.push({ label, url: 'registry:watershed_fish.json', kind: 'watershed',
+                           trust: 'REFERENCE', sourceType: 'reference_structured',
+                           species: names.length });
+      }
+    } catch (e) {
+      console.warn(`registrySpeciesFor watershed rung failed for ${lakeName}: ${e && e.message}`);
+    }
   }
 
   return out;
