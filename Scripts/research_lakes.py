@@ -969,32 +969,13 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
                 bio["secondaryForage"] = forage["secondary"]
             bio["_forageEstablishedBy"] = "fisheries agent, from the documents it was already reading"
 
-    # THE STATUS THIS WATER ALREADY HAS, NEVER A FRESH "draft".
-    #
-    # Ryan, 2026-09-04: "all of these profiles used to be verified... we reran all of these and
-    # now they show draft". Measured off the mirror: 64 profiles were last written by the
-    # 2026-09-02 batch, 46 of them carry a verifiedAt proving they were verified before it, and
-    # all 46 came out draft. The 15 still verified are exactly the 15 the batch never touched.
-    #
-    # The old two lines were `meta["status"] = meta.get("status") or "draft"` on a document
-    # built fresh each run -- so the get never found anything and every save asserted "draft" on
-    # both channels. handleResearchSave's own rule is
-    # `incomingProfile.metadata?.status || body.status || (nextVersion===1?"draft":"verified")`,
-    # which means it would have KEPT the verification if the batch had simply not spoken.
-    #
-    # It does not simply stay quiet, because silence on an existing profile means "verified" to
-    # that rule, and a batch must never invent a verification either. So it reads what is stored
-    # and echoes it, and on any uncertainty it prefers draft and says so.
-    prev, why = status_of(prev_profile, prev_why)
-    meta = profile.setdefault("metadata", {})
-    if prev:
-        meta["status"] = prev
-    elif why == "no profile yet":
-        meta.pop("status", None)          # version 1: the Worker calls it a draft, correctly
-    else:
-        meta["status"] = "draft"
-        print(f"      [{lake}] could not read the stored status ({why}) -- saving as draft. "
-              f"If this lake was verified, restore_verified_stamps.py puts the stamp back.")
+    # DRAFT/VERIFIED IS RETIRED, 2026-09-23. This block used to read the stored status and echo
+    # it back, because a batch must not assert a field it did not compute -- the rule still holds,
+    # it just has nothing left to apply to here. Ryan: "that whole verify and draft thing is
+    # dumb... i never looked at them anyways." Measured the same day: 54 of the 61 profiles
+    # carrying `verified` held ZERO extracted facts, and the profile with the most facts on the
+    # drive was a draft the app was throwing away. handleResearchSave now strips the four keys
+    # from every profile it writes, so nothing here has to say anything about them.
 
     if dry_run:
         out["ok"] = True
@@ -1003,8 +984,6 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
 
     payload = {"lakeName": lake, "profile": profile,
                "requestedBy": "research_lakes.py batch"}
-    if meta.get("status"):
-        payload["status"] = meta["status"]
     code, saved, err = _req("/research/save", payload)
     if code != 200:
         out["error"] = f"save {code}: {err}"
@@ -1073,12 +1052,10 @@ def carried_keys(stored, fresh, path=""):
 def stored_profile(lake_name):
     """(profile, why). What R2 already holds for this water, or None with a reason.
 
-    ONE READ, TWO USES. The status and the document the run must not clobber come from the same
-    object, and this used to fetch it twice -- once here for the status and once after the save
-    for the mirror.
+    It used to serve two callers -- the stored status and the document the run must not clobber.
+    The status is retired; the document is still the reason this read happens before the save.
 
-    "no profile yet" is a clean 404 and means version 1. Anything else is an unknown, and the
-    caller must fall back to draft rather than let silence be read as a verification.
+    "no profile yet" is a clean 404 and means version 1.
     """
     code, data, err = _req("/research/get?lake=" + urllib.parse.quote(lake_name))
     if code == 404:
@@ -1086,14 +1063,6 @@ def stored_profile(lake_name):
     if code != 200 or not data or not data.get("ok"):
         return None, err or ("HTTP %s" % code)
     return (data.get("profile") or {}), "stored"
-
-
-def status_of(profile, why):
-    """The status a stored profile names, or None with the reason there is not one."""
-    if profile is None:
-        return None, why
-    st = (profile.get("metadata") or {}).get("status")
-    return (str(st) if st else None), ("stored profile names no status" if not st else "stored")
 
 
 def mirror_locally(lake_name):

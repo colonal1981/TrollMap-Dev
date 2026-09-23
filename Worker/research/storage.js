@@ -132,6 +132,10 @@ async function handleResearchGet(env, lakeId, version = null) {
   return new Response(JSON.stringify({ok:true, lakeId: lakeId, sanitized: safe, masterKey, profile: data, packageFiles, versions: versionList}), {headers: JSON_HEADERS});
 }
 
+// The four keys retired on 2026-09-23. Deleted from every profile as it is saved, so the last
+// profile carrying one disappears on its next write rather than needing a migration pass.
+const STRIP_ON_SAVE = ['status', 'verified', 'verifiedAt', 'approvedBy'];
+
 async function handleResearchSave(request, env) {
   let body;
   try { body = await request.json(); } catch { return new Response(JSON.stringify({ok:false, error:"invalid JSON"}), {status:400, headers:JSON_HEADERS}); }
@@ -253,8 +257,14 @@ async function handleResearchSave(request, env) {
       //                          what a "has this merge gone stale?" check has to read. Measured
       //                          2026-09-12: Lake Moultrie's master carried it and v18 did not,
       //                          because the 09-04 batch save had already dropped it once.
-      //   approvedBy             written by /research/approve (line ~390) -- WHO approved this
-      //                          profile, erased by the next batch run.
+      // RETIRED 2026-09-23: status / verified / verifiedAt / approvedBy. They recorded one thing
+      // -- that somebody clicked Approve in the research tab -- and measured against the mirror
+      // that day the flag carried no information about the profile: 54 of 61 `verified` profiles
+      // held ZERO extracted facts, while the draft with the most facts on the drive (Congaree, 62)
+      // was the one `lake-intel` threw away for not being verified. `confidence.biology.reason`
+      // is the derived answer to the question the flag pretended to answer. STRIP_ON_SAVE below
+      // takes the four keys off any profile that still carries them, so the stored data cleans
+      // itself the next time each one is written.
       //
       // Same shape as the 2026-09-04 defect this file already carries a comment about: writing a
       // default over a value someone else set is a write, not a default. The spread goes FIRST and
@@ -263,12 +273,9 @@ async function handleResearchSave(request, env) {
       ...(existingMeta || {}),
       version: `${nextVersion}.0`,
       versionNumber: nextVersion,
-      status: incomingProfile.metadata?.status || body.status || (nextVersion===1?"draft":"verified"),
       lastUpdated: now,
       createdAt: existingMeta?.createdAt || now,
       createdBy: body.requestedBy || incomingProfile.metadata?.createdBy || "Ryan",
-      verified: !!(body.verified || incomingProfile.metadata?.verified),
-      verifiedAt: body.verified ? now : (existingMeta?.verifiedAt||null),
       lakeId: safe,
       previousVersion: existingMeta?.version || null
     },
@@ -279,12 +286,10 @@ async function handleResearchSave(request, env) {
     _wqpLimnology: incomingProfile._wqpLimnology || null
   };
 
-  // Ensure metadata status logic: first save draft -> user approves to verified via approve endpoint, but allow direct verified if requested
-  if (body.approve || body.status === 'verified') {
-    master.metadata.status = 'verified';
-    master.metadata.verified = true;
-    master.metadata.verifiedAt = now;
-  }
+  // The spread above carries forward every key this save does not manage, which is what keeps
+  // limnologyRefreshedAt alive -- and would also keep the four retired keys alive forever. A
+  // client that still posts `status` or `approve` is ignored rather than honoured.
+  for (const dead of STRIP_ON_SAVE) delete master.metadata[dead];
 
   // THE SENTENCE MUST NOT OUTLIVE THE NUMBERS IT STATES.
   //
@@ -354,49 +359,6 @@ async function handleResearchSave(request, env) {
   }
 
   return new Response(JSON.stringify({ok:true, lakeId: safe, lakeName, version: nextVersion, masterKey: `lakes/${safe}.json`, status: master.metadata.status, bytes: masterJson.length}), {headers: JSON_HEADERS});
-}
-
-async function handleResearchApprove(request, env) {
-  let body;
-  try { body = await request.json(); } catch { return new Response(JSON.stringify({ok:false, error:"invalid JSON"}), {status:400, headers:JSON_HEADERS}); }
-  const lakeName = String(body.lakeName || body.lake || '').trim();
-  if (!lakeName) return new Response(JSON.stringify({ok:false, error:"missing lakeName"}), {status:400, headers:JSON_HEADERS});
-  // APPROVE WHAT THE READ WOULD SHOW, the same rule handleResearchDelete carries above.
-  // `researchStorageId` alone tries ONE spelling, and it is the county-stamped one the app
-  // passes: "Lake Wateree (Kershaw Co, SC)" sanitizes to lake_wateree_kershaw_co_sc while the
-  // profile has always been stored at lake_wateree_sc. On 2026-09-04 that made all 46 calls to
-  // restore the verified stamps 404 -- every single one -- on profiles the very next
-  // /research/get returns without complaint. The delete path was fixed for exactly this on
-  // 2026-08-2x and the approve path one function away was left resolving the old way.
-  //
-  // AN EXPLICIT `id` SKIPS THE RESOLUTION, for the same reason it does on delete: four waters
-  // carry two profiles, and stamping the wrong one of a pair is not something a second run
-  // fixes. A restore reads the id off the object it means and sends that.
-  const explicitId = String(body.id || '').trim();
-  if (explicitId && !/^[a-z0-9_]{1,80}$/.test(explicitId)) {
-    return new Response(JSON.stringify({ok:false, error:`not a storage id: ${explicitId}`}),
-      {status:400, headers:JSON_HEADERS});
-  }
-  const foundKey = explicitId ? null : await resolveResearchStorageId(lakeName,
-    (id) => env.R2_TROLLMAP_CHARTPACKS.get(`lakes/${id}.json`).catch(() => null),
-    await registryIdentityNames(env, lakeName));
-  const safe = explicitId || (foundKey ? foundKey.id : researchStorageId(lakeName));
-  const masterKey = `lakes/${safe}.json`;
-  const obj = foundKey ? foundKey.hit : await env.R2_TROLLMAP_CHARTPACKS.get(masterKey);
-  if (!obj) return new Response(JSON.stringify({ok:false, error:`no profile for ${lakeName} (${safe})`}), {status:404, headers:JSON_HEADERS});
-  const txt = await r2Text(obj);
-  let profile;
-  try { profile = JSON.parse(txt); } catch { return new Response(JSON.stringify({ok:false, error:"corrupt JSON"}), {status:500, headers:JSON_HEADERS}); }
-  profile.metadata = profile.metadata||{};
-  profile.metadata.status = "verified";
-  profile.metadata.verified = true;
-  profile.metadata.verifiedAt = new Date().toISOString();
-  profile.metadata.approvedBy = body.approvedBy || "Ryan";
-  if (body.notes) profile.notes = body.notes;
-  const newJson = JSON.stringify(profile, null, 2);
-  await env.R2_TROLLMAP_CHARTPACKS.put(masterKey, newJson, {httpMetadata:{contentType:"application/json"}, customMetadata:{version: String(profile.metadata.versionNumber||profile.metadata.version||1), status:"verified"}});
-  // also save as new version? keep same version but mark verified
-  return new Response(JSON.stringify({ok:true, lakeId: safe, lakeName, status:"verified", version: profile.metadata.version||profile.metadata.versionNumber}), {headers: JSON_HEADERS});
 }
 
 async function handleResearchDeleteNormalizedDoc(request, env) {
@@ -769,4 +731,4 @@ If no thermocline or depth information is found, return found: false and null fo
 // Tiling and ESRI image fetching happens client-side (no worker timeout issues).
 // Worker receives one base64 image + bounds, runs Gemini, returns structures.
 
-export { handleResearchList, handleResearchGet, handleResearchSave, handleResearchApprove, handleResearchDeleteNormalizedDoc, handleResearchDelete, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, handleResearchValidationPass, handleResearchThermoclineSearch };
+export { handleResearchList, handleResearchGet, handleResearchSave, handleResearchDeleteNormalizedDoc, handleResearchDelete, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, handleResearchValidationPass, handleResearchThermoclineSearch };

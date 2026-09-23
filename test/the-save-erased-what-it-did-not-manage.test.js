@@ -4,13 +4,16 @@
  * Personal use only, not for distribution or resale; not for navigation.
  *
  * `handleResearchSave` built `master.metadata` as a literal of ten keys, so every save silently
- * deleted any metadata another endpoint owns. Two do:
+ * deleted any metadata another endpoint owns. One still does:
  *
  *     metadata.limnologyRefreshedAt   Worker/research/limnology.js -- the WQP sweep. The only
  *                                     record of WHEN a profile's limnology was merged, which is
  *                                     exactly what a "has this merge gone stale?" check reads.
- *     metadata.approvedBy             Worker/research/storage.js /research/approve -- WHO approved
- *                                     this profile.
+ *
+ * `metadata.approvedBy` was the second, written by /research/approve. That route and the whole
+ * draft/verified flag were retired on 2026-09-23, which turns the carry-forward into a hazard
+ * pointed the other way: the spread would preserve the four dead keys on every profile forever.
+ * So the save now DELETES them, and the third test below is the guard on that.
  *
  * MEASURED 2026-09-12. Lake Moultrie's master carried `limnologyRefreshedAt` and its v18 snapshot
  * did not, because the 2026-09-04 batch save had already dropped it once. Same shape as the
@@ -32,9 +35,13 @@ import { readFileSync } from 'node:fs';
 
 const SRC = readFileSync(new URL('../Worker/research/storage.js', import.meta.url), 'utf8');
 
-// The ten keys the save legitimately owns and overwrites every time.
-const MANAGED = ['version', 'versionNumber', 'status', 'lastUpdated', 'createdAt',
-                 'createdBy', 'verified', 'verifiedAt', 'lakeId', 'previousVersion'];
+// The keys the save legitimately owns and overwrites every time.
+const MANAGED = ['version', 'versionNumber', 'lastUpdated', 'createdAt',
+                 'createdBy', 'lakeId', 'previousVersion'];
+
+// Retired 2026-09-23 with the draft/verified flag. The spread carries forward anything the save
+// does not name, so these have to be deleted explicitly or they never leave the stored profiles.
+const RETIRED = ['status', 'verified', 'verifiedAt', 'approvedBy'];
 
 /** The `metadata: { ... }` literal inside the master object, by brace balance. */
 function metadataLiteral(src) {
@@ -68,12 +75,41 @@ test('the spread comes BEFORE every managed key, so it cannot resurrect one', ()
   }
 });
 
-test('the two keys other endpoints own are still written by those endpoints', () => {
-  // If either of these moves into the literal above, this file's premise is gone and the guard
-  // should be deleted rather than left passing for the wrong reason.
-  assert.match(SRC, /profile\.metadata\.approvedBy\s*=/,
-    '/research/approve no longer writes approvedBy');
+test('the key another endpoint owns is still written by that endpoint', () => {
+  // If this moves into the literal above, this file's premise is gone and the guard should be
+  // deleted rather than left passing for the wrong reason.
   const limn = readFileSync(new URL('../Worker/research/limnology.js', import.meta.url), 'utf8');
   assert.match(limn, /profile\.metadata\.limnologyRefreshedAt\s*=/,
     'the sweep no longer writes limnologyRefreshedAt');
+});
+
+test('no managed key is also on the retired list', () => {
+  // A key on both would be written and then deleted on the same save, which is a contradiction
+  // somebody would eventually resolve in the wrong direction.
+  assert.deepEqual(MANAGED.filter((k) => RETIRED.includes(k)), []);
+});
+
+test('the retired keys are stripped, not just unwritten', () => {
+  const lit = metadataLiteral(SRC);
+  for (const key of RETIRED) {
+    assert.ok(lit.indexOf(`${key}:`) === -1,
+      `${key} is still written by the save -- it was retired on 2026-09-23`);
+  }
+  assert.match(SRC, /const STRIP_ON_SAVE = \[[^\]]+\]/,
+    'the save no longer declares STRIP_ON_SAVE, so the spread will preserve the dead keys forever');
+  const list = SRC.slice(SRC.indexOf('const STRIP_ON_SAVE'),
+                         SRC.indexOf('const STRIP_ON_SAVE') + 200);
+  for (const key of RETIRED) {
+    assert.ok(list.includes(`'${key}'`), `${key} is not in STRIP_ON_SAVE`);
+  }
+  assert.match(SRC, /for \(const dead of STRIP_ON_SAVE\) delete master\.metadata\[dead\]/,
+    'STRIP_ON_SAVE is declared and never applied');
+});
+
+test('the approve route is gone, not merely unreferenced', () => {
+  assert.ok(!SRC.includes('handleResearchApprove'),
+    'handleResearchApprove is still in storage.js');
+  const worker = readFileSync(new URL('../Worker/trollmap-worker.js', import.meta.url), 'utf8');
+  assert.ok(!worker.includes('/research/approve'),
+    'the worker still routes /research/approve');
 });

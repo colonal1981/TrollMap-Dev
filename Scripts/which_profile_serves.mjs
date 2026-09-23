@@ -15,7 +15,7 @@
 // waterbody in the DNR feeds through displayLakeName(rawName, stateCode) -- the feed's own
 // spelling plus ONE state. Georgia's feed calls the reservoir "Lake Richard Russell", so the
 // picker offers "Lake Richard Russell, GA", which sanitizes straight onto lake_richard_russell_ga
-// and never gets near the verified lake_russell_sc. Resolving from the registry's
+// and never gets near the richer lake_russell_sc. Resolving from the registry's
 // "Richard B Russell Lake (Abbeville Co, SC/GA)" answers a question the app never asks.
 //
 // So this enumerates the PICKER's names -- displayLakeName over registry\_dnr_ramps_<st>.json,
@@ -64,21 +64,25 @@ const files = fs.readdirSync(MIRROR).filter((f) => f.endsWith('.json') && !f.sta
 const ids = files.map((f) => f.slice(0, -5));
 const has = new Set(ids);
 
-/** {id: [species]} and {id: status}, for saying WHICH of a pair is the one worth keeping. */
-const species = {}, status = {}, updated = {}, detail = {};
+/** Per stored id, the counts that say WHICH of a pair is the one worth keeping.
+ *
+ * IT USED TO RANK ON draft/verified. That flag was retired on 2026-09-23 -- measured that day,
+ * 54 of the 61 profiles stamped `verified` carried zero extracted facts, so it was ranking on
+ * whether somebody had clicked a button in July. Sources, species and facts are what it was
+ * standing in for, and `prune_shadowed_profiles.py` now decides on the same three. */
+const species = {}, facts = {}, updated = {}, detail = {};
 for (const id of ids) {
   const p = JSON.parse(fs.readFileSync(path.join(MIRROR, `${id}.json`), 'utf8'));
   species[id] = ((p.biology || {}).predatorSpecies || []).length;
-  status[id] = (p.metadata || {}).status || '?';
+  facts[id] = p._extractedFactsCount || 0;
   updated[id] = String((p.metadata || {}).lastUpdated || '').slice(0, 10);
   detail[id] = {
     id,
     species: species[id],
-    status: status[id],
     updated: updated[id],
     version: (p.metadata || {}).versionNumber,
     sources: (p.sources || []).length,
-    facts: p._extractedFactsCount || 0,
+    facts: facts[id],
     maxDepthFt: p.maxDepthFt || (p.limnology || {}).maxDepthFt || null,
     // Species count alone does not separate a thin profile from a good one -- Lanier's two both
     // carry six -- so what backs them travels with the count.
@@ -165,7 +169,7 @@ if (grep) {
 }
 
 const line = (id, mark) => `      ${mark} ${id.padEnd(34)} ${String(species[id]).padStart(2)} species  ` +
-  `${status[id].padEnd(9)} ${String(detail[id].sources).padStart(2)} sources  updated ${updated[id]}`;
+  `${String(facts[id]).padStart(3)} facts  ${String(detail[id].sources).padStart(2)} sources  updated ${updated[id]}`;
 
 const reached = new Set();
 const serves = new Map();               // picker name -> stored id
@@ -180,7 +184,7 @@ for (const name of pickerNames) {
 // A FORK is a stored profile the picker cannot reach whose WATER it can. Measured against the
 // app's real list there are no waters offered twice -- access-index folds those -- so the shape
 // is not two entries disagreeing, it is one entry landing on the wrong half of a pair. Nottely
-// and Watauga each serve a three-source batch draft while their verified profile sits unreachable.
+// and Watauga each serve a three-source batch profile while the richer one sits unreachable.
 const rowFor = (name) => {
   const alts = identityNamesForLake(index, name) || [];
   return alts.length ? alts[0] : null;      // identityNamesForLake leads with display_name
@@ -192,7 +196,7 @@ for (const [name, id] of serves) {
 }
 // TWO NAMES FOR ONE WATER THAT REACH DIFFERENT PROFILES. The universal list holds both
 // "Lake Sidney Lanier (Hall Co, GA)" and "Lake Lanier, GA"; the research picker shows only the
-// first, and it lands on the thin draft while the verified profile is reachable ONLY by a name
+// first, and it lands on the thin copy while the richer profile is reachable ONLY by a name
 // that never appears on screen. Neither profile is an orphan, so the orphan pass below cannot
 // see it -- both conditions have to be checked or a lake falls between them.
 const forksFromNames = [];
@@ -206,8 +210,9 @@ for (const [name, id] of serves) {
 for (const [row, byId] of idsByRow) {
   if (byId.size < 2) continue;
   const ranked = [...byId.keys()].sort((a, b) =>
-    (status[b] === 'verified') - (status[a] === 'verified')
-    || (detail[b].sources || 0) - (detail[a].sources || 0));
+    (detail[b].sources || 0) - (detail[a].sources || 0)
+    || (species[b] || 0) - (species[a] || 0)
+    || (facts[b] || 0) - (facts[a] || 0));
   const [best, ...rest] = ranked;
   for (const worse of rest) {
     forksFromNames.push({

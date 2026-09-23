@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-r"""prune_shadowed_profiles.py -- delete a batch DRAFT that is hiding a hand-VERIFIED profile.
+r"""prune_shadowed_profiles.py -- delete a served profile that is hiding a richer one.
 
 Personal use only, not for distribution or resale; not for navigation.
 
@@ -17,21 +17,29 @@ stopped it at four. Nobody removed the four.
 
 Ryan, 2026-09-04, asked which half the app shows: *"the app shows the crappy profiles"*. Measured
 by running the Worker's own resolver over the mirror -- three of them, and in each the served copy
-is a three-source draft hiding a hand-verified profile:
-
-    Lake Sidney Lanier   serves 3 sources, no depth   hides 9 sources, 160 ft, verified
-    Watauga Lake         serves 4 species, 0 facts    hides 9 species, 143 facts, verified
-    Nottely Lake         serves 5 species, no depth   hides 8 species, 170 ft, verified
+is the poorer one.
 
 THE RULE, AND IT IS ONE RULE
 
-Delete a served profile ONLY when it is a DRAFT and the profile it hides is VERIFIED. Nothing else
-qualifies. Species counts do not decide it -- Lanier's two both carry six, and the difference is
-nine sources against three -- and a rule written on a count would have skipped the one water where
-the loss is a max depth rather than a fish.
+Delete a served profile ONLY when the profile it hides is RICHER ON EVERY COUNT -- sources,
+species and extracted facts -- and strictly richer on at least one. Ties keep the served copy.
 
-It never deletes a verified profile, never deletes when nothing is hidden, and never resolves a
-name: it sends the storage id, which is the same object every time it is asked for.
+THE RULE USED TO BE draft-hides-verified, and it was retired with the flag on 2026-09-23. That
+wording had survived because it read as a judgement about quality, and measured against the mirror
+it was not one: 54 of the 61 profiles stamped `verified` carried ZERO extracted facts, and the
+richest profile on the drive was a draft. What the flag was standing in for was always the three
+counts below it, which `which_profile_serves.mjs` already prints for both halves of every fork:
+
+    Lake Sidney Lanier   serves 3 sources, no depth   hides 9 sources, 160 ft
+    Watauga Lake         serves 4 species, 0 facts    hides 9 species, 143 facts
+    Nottely Lake         serves 5 species, no depth   hides 8 species, 170 ft
+
+All three still qualify on the counts alone. Requiring richer-on-every-count rather than a total
+keeps the old rule's caution: a hidden profile that wins on sources and loses on species is a
+judgement, and this script does not make judgements.
+
+It never deletes when nothing is hidden, never deletes on a tie, and never resolves a name: it
+sends the storage id, which is the same object every time it is asked for.
 
 WHAT THE DELETE TAKES. /research/delete removes lakes/<id>.json, lake_packages/<id>/* and every
 lakes/versions/<id>/vN.json. The MASTER survives on the drive in registry\_research_profiles\ --
@@ -79,18 +87,30 @@ def _post(path, payload, timeout=120):
         return 0, None, str(e)
 
 
+COUNTS = ("sources", "species", "facts")
+
+
+def _counts(p):
+    return tuple(int(p.get(k) or 0) for k in COUNTS)
+
+
+def richer(hidden, served):
+    """Hidden is at least equal on all three counts and strictly ahead on one."""
+    h, s = _counts(hidden), _counts(served)
+    return all(a >= b for a, b in zip(h, s)) and any(a > b for a, b in zip(h, s))
+
+
 def verdict(fork):
     """(delete_this_id, why) or (None, why not). The one rule, in one place."""
     served = fork.get("served_detail") or {}
-    hidden = [h for h in (fork.get("shadowed") or [])
-              if str(h.get("status") or "").lower() == "verified"]
-    if str(served.get("status") or "").lower() != "draft":
-        return None, "the served profile is %s, not a draft" % (served.get("status") or "?")
+    hidden = [h for h in (fork.get("shadowed") or []) if richer(h, served)]
     if not hidden:
-        return None, "nothing verified is hidden behind it"
-    best = max(hidden, key=lambda h: (h.get("sources") or 0, h.get("species") or 0))
-    return fork.get("served"), "a %s-source draft is hiding %s, verified, %s sources" % (
-        served.get("sources"), best["id"], best.get("sources"))
+        n = len(fork.get("shadowed") or [])
+        return None, ("nothing is hidden behind it" if not n
+                      else "the %d profile(s) behind it are not richer on every count" % n)
+    best = max(hidden, key=_counts)
+    return fork.get("served"), "served has %s/%s/%s (sources/species/facts); %s hides %s/%s/%s" % (
+        *_counts(served), best["id"], *_counts(best))
 
 
 def main(argv=None):

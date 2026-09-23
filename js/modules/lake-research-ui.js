@@ -145,9 +145,6 @@ function renderContradictionsAlert(contradictions, lakeName) {
         body: JSON.stringify({
           lakeName: _state.currentLakeName,
           profile: patched,
-          status: patched.metadata?.status || 'draft',
-          approve: patched.metadata?.status === 'verified',
-          verified: patched.metadata?.status === 'verified',
           requestedBy: 'Contradiction Resolution UI'
         })
       });
@@ -203,8 +200,8 @@ async function fetchResearchedIds() {
  *                  is why the picker still offered all 1,196 names. Size is a poor proxy for
  *                  "somebody has written about this" and the preset says so in its own comment;
  *                  it is the best available until the research pass reports back.
- *   WHICH ARE LEFT The whole point. 60 waters carry a verified profile; a picker that lists them
- *                  mixed in with everything else makes finding the 61st a memory exercise.
+ *   WHICH ARE LEFT The whole point. 78 waters carry a stored profile; a picker that lists them
+ *                  mixed in with everything else makes finding the 79th a memory exercise.
  *
  * The filter is a checkbox, not a law. `isKeepAlways()` already protects the waters he actually
  * fishes, but a picker that silently hides a lake he wants is worse than a long list — so the
@@ -328,10 +325,7 @@ async function loadProfile(lakeName, silent = false) {
     _state.currentVersions = data.versions || [];
     window.TROLLMAP_RESEARCHED_CACHE[lakeName] = _state.currentProfile;
     window.TROLLMAP_RESEARCHED_CACHE[data.sanitized] = _state.currentProfile;
-    if (_state.currentProfile?.metadata?.status === 'verified') {
-      window.TROLLMAP_RESEARCHED_CACHE[`${lakeName}_verified`] = _state.currentProfile;
-    }
-    if (!silent) log(`Loaded ${lakeName} v${_state.currentProfile?.metadata?.version} status=${_state.currentProfile?.metadata?.status}`);
+    if (!silent) log(`Loaded ${lakeName} v${_state.currentProfile?.metadata?.version}`);
     renderProfile(_state.currentProfile);
     return _state.currentProfile;
   } catch (e) {
@@ -350,8 +344,6 @@ function renderEmpty(lakeName) {
     const el = document.getElementById(id);
     if (el) el.style.display = 'none';
   }
-  const approveBtn = document.getElementById('btnApprove');
-  if (approveBtn) approveBtn.style.display = 'none';
   const deleteBtn = document.getElementById('btnDeleteResearch');
   if (deleteBtn) deleteBtn.style.display = 'none';
 }
@@ -385,7 +377,6 @@ function renderProfile(profile) {
   if (!profile) { renderEmpty(_state.currentLakeName); return; }
   const meta = document.getElementById('researchMeta');
   if (meta) meta.style.display = 'flex';
-  const status = profile.metadata?.status || 'draft';
   const statusPill = document.getElementById('researchStatusPill');
   const versionPill = document.getElementById('researchVersionPill');
   const updatedPill = document.getElementById('researchUpdatedPill');
@@ -393,16 +384,14 @@ function renderProfile(profile) {
   // Worker/research/agents.js. The element is left in index.html rather than removed in the same
   // change, because the tab is being replaced by a Smart Plan prompt viewer and cutting its markup
   // twice is two chances to cut the wrong thing.
+  // DRAFT/VERIFIED IS GONE, 2026-09-23. The pill now says what is behind the biology, which is
+  // derived on every save and is the question the flag was standing in for.
   if (statusPill) {
-    statusPill.textContent = `Status: ${status}${profile.metadata?.verified ? ' ✔' : ''}`;
-    statusPill.className = `meta-pill ${status === 'verified' ? 'verified' : 'draft'}`;
+    statusPill.textContent = profile.confidence?.biology?.reason || 'sources: unknown';
+    statusPill.className = 'meta-pill';
   }
   if (versionPill) versionPill.textContent = `Version: ${profile.metadata?.version || '?'} `;
   if (updatedPill) updatedPill.textContent = `Last Updated: ${profile.metadata?.lastUpdated?.slice(0, 10) || '?'}`;
-  const approveBtn = document.getElementById('btnApprove');
-  if (approveBtn) {
-    approveBtn.style.display = status === 'verified' ? 'none' : 'inline-flex';
-  }
   const deleteBtn = document.getElementById('btnDeleteResearch');
   if (deleteBtn) {
     deleteBtn.style.display = 'inline-flex';
@@ -1251,9 +1240,6 @@ function renderSections(profile) {
               body: JSON.stringify({
                 lakeName: _state.currentLakeName,
                 profile: fullProfile,
-                status: fullProfile?.metadata?.status || _state.currentProfile?.metadata?.status || 'draft',
-                approve: fullProfile?.metadata?.status === 'verified',
-                verified: fullProfile?.metadata?.status === 'verified',
                 notes: fullProfile?.notes || '',
                 requestedBy: `Section edit: ${agent}`
               })
@@ -1571,24 +1557,18 @@ function ensureJsonModal() {
 
 
 
-async function saveCurrentResearchProfile(status = 'draft') {
+async function saveCurrentResearchProfile() {
   const merged = _state.mergedProfile ? cloneJson(_state.mergedProfile) : (_state.currentProfile ? cloneJson(_state.currentProfile) : null);
   if (!merged || !_state.currentLakeName) throw new Error('No profile loaded');
   const notesVal = document.getElementById('researchNotes')?.value || merged.notes || '';
   merged.notes = notesVal;
   merged.metadata = merged.metadata || {};
-  merged.metadata.status = status;
-  merged.metadata.verified = status === 'verified';
-  if (status === 'verified') merged.metadata.verifiedAt = new Date().toISOString();
   const res = await fetch(`${CF_WORKER_URL}/research/save`, {
     method: 'POST',
     headers: workerHeaders(),
     body: JSON.stringify({
       lakeName: _state.currentLakeName,
       profile: merged,
-      status,
-      approve: status === 'verified',
-      verified: status === 'verified',
       notes: notesVal,
       requestedBy: 'Lake Research UI'
     })
@@ -1621,18 +1601,6 @@ function initLakeResearch() {
     }
   });
 
-  document.getElementById('btnApprove')?.addEventListener('click', async () => {
-    if (!_state.currentProfile || !_state.currentLakeName) { alert('Load a profile first'); return; }
-    if (!confirm(`Mark ${_state.currentLakeName} as verified? This will save the current in-memory profile to R2 as VERIFIED.`)) return;
-    try {
-      await saveCurrentResearchProfile('verified');
-      await loadProfile(_state.currentLakeName, true);
-      alert(`${_state.currentLakeName} saved as VERIFIED.`);
-    } catch (e) {
-      alert(`Approve failed: ${e.message}`);
-      log(`Approve failed: ${e.message}`);
-    }
-  });
 
 
 
@@ -1805,7 +1773,7 @@ function initLakeResearch() {
       }
       const saveRes = await fetch(`${CF_WORKER_URL}/research/save`, {
         method: 'POST', headers: workerHeaders(),
-        body: JSON.stringify({ lakeName: lake, profile, status: profile?.metadata?.status || 'draft', requestedBy: 'Geospatial Rerun' })
+        body: JSON.stringify({ lakeName: lake, profile, requestedBy: 'Geospatial Rerun' })
       });
       if (!saveRes.ok) throw new Error(`Save failed: ${saveRes.status}`);
       _state.currentProfile = profile;
@@ -1845,9 +1813,6 @@ function initLakeResearch() {
         + '<select id="lakeStatusFilterState" style="padding:5px 8px;border:1px solid var(--line,#333);border-radius:4px;background:var(--panel2,#252525);color:var(--text,#eee);font-size:0.85em;">'
         + '<option value="">All states</option><option value="SC">SC</option><option value="NC">NC</option><option value="GA">GA</option><option value="TN">TN</option>'
         + '</select>'
-        + '<select id="lakeStatusFilterStatus" style="padding:5px 8px;border:1px solid var(--line,#333);border-radius:4px;background:var(--panel2,#252525);color:var(--text,#eee);font-size:0.85em;">'
-        + '<option value="">All statuses</option><option value="verified">✅ Verified</option><option value="draft">🔄 Draft</option>'
-        + '</select>'
         + '<button id="lakeStatusClose" style="background:none;border:none;color:var(--text,#eee);font-size:1.2em;cursor:pointer;padding:0 4px;">✕</button>'
         + '</div>'
         + '<div id="lakeStatusBody" style="overflow-y:auto;flex:1;padding:8px 0;"><div style="text-align:center;padding:40px;color:var(--muted,#888);">⏳ Loading...</div></div>'
@@ -1861,17 +1826,14 @@ function initLakeResearch() {
       const filterFn = () => {
         const q = (document.getElementById('lakeStatusFilter')?.value || '').toLowerCase();
         const st = document.getElementById('lakeStatusFilterState')?.value || '';
-        const sv = document.getElementById('lakeStatusFilterStatus')?.value || '';
         document.querySelectorAll('.lake-status-row').forEach(row => {
           const show = (!q || (row.dataset.name || '').includes(q))
-            && (!st || row.dataset.state === st)
-            && (!sv || row.dataset.status === sv);
+            && (!st || row.dataset.state === st);
           row.style.display = show ? '' : 'none';
         });
       };
       document.getElementById('lakeStatusFilter')?.addEventListener('input', filterFn);
       document.getElementById('lakeStatusFilterState')?.addEventListener('change', filterFn);
-      document.getElementById('lakeStatusFilterStatus')?.addEventListener('change', filterFn);
     }
 
     const body = document.getElementById('lakeStatusBody');
@@ -1898,7 +1860,6 @@ function initLakeResearch() {
         profiles.push(...results);
       }
 
-      const statusIcon = function(s) { return s === 'verified' ? '✅' : s === 'draft' ? '🔄' : '❓'; };
       const stateOf = function(id) {
         if (/_sc$/.test(id) || id.includes('_sc_')) return 'SC';
         if (/_nc$/.test(id) || id.includes('_nc_')) return 'NC';
@@ -1907,33 +1868,30 @@ function initLakeResearch() {
         return '—';
       };
 
-      let verified = 0, draft = 0;
       let tableHTML = '<table style="width:100%;border-collapse:collapse;">'
         + '<thead><tr style="border-bottom:2px solid var(--line,#333);position:sticky;top:0;background:var(--panel,#1e1e1e);">'
         + '<th style="padding:8px 18px;text-align:left;font-size:0.78em;color:var(--muted);font-weight:600;">LAKE</th>'
         + '<th style="padding:8px 12px;text-align:left;font-size:0.78em;color:var(--muted);font-weight:600;">STATE</th>'
-        + '<th style="padding:8px 12px;text-align:left;font-size:0.78em;color:var(--muted);font-weight:600;">STATUS</th>'
+        + '<th style="padding:8px 12px;text-align:left;font-size:0.78em;color:var(--muted);font-weight:600;">BIOLOGY SOURCES</th>'
         + '<th style="padding:8px 18px;text-align:left;font-size:0.78em;color:var(--muted);font-weight:600;">LAST UPDATED</th>'
         + '</tr></thead><tbody>';
 
       profiles.forEach(function(p) {
         const profile = p.profile;
-        const status = (profile && profile.metadata && profile.metadata.status) || '—';
+        const sourcesBehind = (profile && profile.confidence && profile.confidence.biology
+          && profile.confidence.biology.reason) || '—';
         const lakeName = (profile && profile.lakeName) || p.id.replace(/_/g, ' ').replace(/\b\w/g, function(c) { return c.toUpperCase(); });
         const updated = (profile && profile.metadata && profile.metadata.lastUpdated)
           ? new Date(profile.metadata.lastUpdated).toLocaleDateString() : '—';
         const state = stateOf(p.id);
-        if (status === 'verified') verified++;
-        else if (status === 'draft') draft++;
         tableHTML += '<tr class="lake-status-row"'
           + ' data-name="' + lakeName.toLowerCase() + '"'
           + ' data-state="' + state + '"'
-          + ' data-status="' + status + '"'
           + ' data-lake="' + lakeName + '"'
           + ' style="cursor:pointer;border-bottom:1px solid var(--line,#333);">'
           + '<td style="padding:8px 18px;font-size:0.85em;font-weight:500;">' + lakeName + '</td>'
           + '<td style="padding:8px 12px;font-size:0.8em;color:var(--muted);">' + state + '</td>'
-          + '<td style="padding:8px 12px;font-size:0.85em;">' + statusIcon(status) + ' ' + status + '</td>'
+          + '<td style="padding:8px 12px;font-size:0.85em;">' + sourcesBehind + '</td>'
           + '<td style="padding:8px 18px;font-size:0.8em;color:var(--muted);">' + updated + '</td>'
           + '</tr>';
       });
@@ -1950,7 +1908,7 @@ function initLakeResearch() {
         row.addEventListener('mouseleave', function() { row.style.background = ''; });
       });
 
-      footer.textContent = profiles.length + ' profiles — ' + verified + ' verified, ' + draft + ' draft';
+      footer.textContent = profiles.length + ' profiles';
     } catch (e) {
       body.innerHTML = '<div style="padding:20px;color:var(--warn,#f87171);">Failed to load: ' + e.message + '</div>';
     }
@@ -1963,7 +1921,7 @@ function initLakeResearch() {
     const st = document.getElementById('notesStatus');
     try {
       if (st) { st.textContent = 'Saving…'; st.style.color = 'var(--accent)'; }
-      await saveCurrentResearchProfile(_state.currentProfile?.metadata?.status === 'verified' ? 'verified' : 'draft');
+      await saveCurrentResearchProfile();
       await loadProfile(_state.currentLakeName, true);
       if (st) { st.textContent = 'Saved ✓'; st.style.color = 'var(--accent2)'; }
     } catch (e) {
@@ -2008,9 +1966,6 @@ function initLakeResearch() {
         body: JSON.stringify({
           lakeName: _state.currentLakeName,
           profile: parsed,
-          status: parsed?.metadata?.status || _state.currentProfile?.metadata?.status || 'draft',
-          approve: parsed?.metadata?.status === 'verified',
-          verified: parsed?.metadata?.status === 'verified',
           notes: parsed?.notes || '',
           requestedBy: 'Lake Research Master JSON Editor'
         })
@@ -2039,7 +1994,7 @@ function initLakeResearch() {
       if (!importedLake) throw new Error('Imported JSON missing lakeName');
       const res = await fetch(`${CF_WORKER_URL}/research/save`, {
         method: 'POST', headers: workerHeaders(),
-        body: JSON.stringify({ lakeName: importedLake, profile: parsed, status: parsed?.metadata?.status || 'draft', notes: parsed?.notes || '', requestedBy: 'Lake Research Import' })
+        body: JSON.stringify({ lakeName: importedLake, profile: parsed, notes: parsed?.notes || '', requestedBy: 'Lake Research Import' })
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       document.getElementById('researchLakeSelect').value = importedLake;

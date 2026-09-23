@@ -905,7 +905,7 @@ async function validateExistingFacts(lakeName, callbacks = {}) {
     setProgress('Saving validated profile…', 90);
     const saveRes = await fetch(`${CF_WORKER_URL}/research/save`, {
       method: 'POST', headers: workerHeaders(),
-      body: JSON.stringify({ lakeName, profile, status: profile.metadata.status || 'draft', requestedBy: 'Validate Existing Facts' })
+      body: JSON.stringify({ lakeName, profile, requestedBy: 'Validate Existing Facts' })
     });
     if (!saveRes.ok) throw new Error(`Save HTTP ${saveRes.status}`);
     log(`✔ Existing-fact validation returned ${Object.keys(filled).length} field(s); applied ${applied}.`);
@@ -1097,7 +1097,7 @@ async function recoverSmartPlanFacts(lakeName, callbacks = {}) {
     profile.metadata.lastSmartPlanRecoveryAt = new Date().toISOString();
     profile.metadata.smartPlanRecovery = { targetedDocuments: selected.map(d => d.title), newFacts: newFacts.length, applied, finalized };
     setProgress('Saving Smart Plan recovery profile…', 92);
-    const saveRes = await fetch(`${CF_WORKER_URL}/research/save`, { method: 'POST', headers: workerHeaders(), body: JSON.stringify({ lakeName, profile, status: profile.metadata.status || 'draft', requestedBy: 'Smart Plan Targeted Recovery' }) });
+    const saveRes = await fetch(`${CF_WORKER_URL}/research/save`, { method: 'POST', headers: workerHeaders(), body: JSON.stringify({ lakeName, profile, requestedBy: 'Smart Plan Targeted Recovery' }) });
     if (!saveRes.ok) throw new Error(`Save HTTP ${saveRes.status}`);
     log(`✔ Smart Plan recovery applied ${applied}; finalized ${finalized} reviewed gap(s).`);
     setProgress('Smart Plan recovery complete.', 100);
@@ -2908,20 +2908,12 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
   };
 
   const totalFactsExtracted = agentResults.reduce((sum, r) => sum + (r.data?.factsCount || 0), 0);
-  // Preserve existing verification status — don't demote a verified profile back to draft
-  // just because an agent reran. Status only changes if explicitly set by the user.
-  const existingStatus = existingSavedProfile?.metadata?.status || 'draft';
-  const existingVerified = existingSavedProfile?.metadata?.verified || false;
-  const saveStatus = existingVerified ? 'verified' : existingStatus;
 
   log(`Saving profile (facts=${totalFactsExtracted} extracted server-side, species=${finalSpecies.length}, agents=[${agentResults.map(r=>r.agent).join(',')}])...`);
   const saveRes = await fetch(`${CF_WORKER_URL}/research/save`, {
     method: 'POST', headers: workerHeaders(),
     body: JSON.stringify({
       lakeName, profile: researchPacket,
-      status: saveStatus,
-      approve: existingVerified,
-      verified: existingVerified,
       requestedBy: 'TrollMap Evidence Engine v6'
     })
   });
@@ -2930,7 +2922,7 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
     throw new Error(`Save HTTP ${saveRes.status}: ${t}`);
   }
   const saveData = await saveRes.json();
-  log(`✔ Saved profile v${saveData.version} as draft`);
+  log(`✔ Saved profile v${saveData.version}`);
   setProgress('Pipeline completed successfully!', 100);
   log('=== EVIDENCE PIPELINE COMPLETE ===');
   return { contradictions };

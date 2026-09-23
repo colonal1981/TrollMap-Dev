@@ -105,7 +105,7 @@ describe('worker auth — headers', () => {
 });
 
 describe('worker auth — every mutating route is gated', () => {
-  const ROUTES = ['/research/save', '/research/approve', '/research/delete',
+  const ROUTES = ['/research/save', '/research/delete',
                   '/research/delete-normalized-doc', '/research/save-normalized',
                   '/research/shared/store', '/research/shared/publish',
                   '/research/shared/quarantine'];
@@ -171,7 +171,7 @@ describe('worker auth — every mutating route is gated', () => {
 describe('worker auth — the client signs what the Worker checks', () => {
   it('every client POST to a gated route sends the token', () => {
     const files = walk(join(ROOT, 'js'));
-    const gated = ['/research/save', '/research/approve', '/research/delete',
+    const gated = ['/research/save', '/research/delete',
                    '/research/delete-normalized-doc', '/research/save-normalized',
                    '/research/shared/store', '/research/shared/publish',
                    '/research/shared/quarantine'];

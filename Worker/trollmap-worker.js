@@ -18,7 +18,7 @@ import { handleReports } from './reports.js';
 import { handlePlaces } from './places.js';
 import { fetchStateRegulations, getLakeRegulations } from './research/clients.js';
 import { regulationsTable, lakeIndex, resolveRegistryRow } from './registry.js';
-import { handleResearchThermoclineSearch, handleResearchLimnologyData, refreshStaleLimnology, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, registrySpeciesFor, speciesFoodHabits, speciesMeasuredTraits, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchRegsDebug, handleResearchApprove, handleResearchDelete, handleResearchDeleteNormalizedDoc, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleResearchValidationPass, handleSharedCheck, handleSharedStore, handleSharedQuery, handleSharedPublish, handleSharedStatus, handleSharedQuarantine } from './worker-research.js';
+import { handleResearchThermoclineSearch, handleResearchLimnologyData, refreshStaleLimnology, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, registrySpeciesFor, speciesFoodHabits, speciesMeasuredTraits, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchRegsDebug, handleResearchDelete, handleResearchDeleteNormalizedDoc, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleResearchValidationPass, handleSharedCheck, handleSharedStore, handleSharedQuery, handleSharedPublish, handleSharedStatus, handleSharedQuarantine } from './worker-research.js';
 
 
 /**
@@ -28,10 +28,9 @@ import { handleResearchThermoclineSearch, handleResearchLimnologyData, refreshSt
  *
  * isAuthorized() was called at exactly three places -- /sync/*, the contour upload and the
  * chartpack upload -- and NOWHERE in research/*.js. So until 2026-08-03 anyone who knew the
- * URL could POST /research/save to overwrite a lake's entire research profile, POST
- * /research/approve to mark an unverified profile verified, or POST /research/delete to remove
- * a lake's master profile, every version of it and all its package files from R2. No token, no
- * check, next to a /sync surface that was gated.
+ * URL could POST /research/save to overwrite a lake's entire research profile, or POST
+ * /research/delete to remove a lake's master profile, every version of it and all its package
+ * files from R2. No token, no check, next to a /sync surface that was gated.
  *
  * A per-handler check is one more thing to forget the next time a route is added, and
  * forgetting is exactly what happened. One gate, one list, and the list is the thing to review.
@@ -44,7 +43,6 @@ import { handleResearchThermoclineSearch, handleResearchLimnologyData, refreshSt
  */
 const MUTATING_ROUTES = [
   "/research/save",
-  "/research/approve",
   "/research/delete",
   "/research/delete-normalized-doc",
   "/research/save-normalized",
@@ -1127,9 +1125,6 @@ var trollmap_worker_default = {
       if (path === "/research/save" && request.method === "POST") {
         return handleResearchSave(request, env);
       }
-      if (path === "/research/approve" && request.method === "POST") {
-        return handleResearchApprove(request, env);
-      }
       if (path === "/research/delete" && request.method === "POST") {
         return handleResearchDelete(request, env);
       }
@@ -2062,7 +2057,6 @@ var trollmap_worker_default = {
             "extraction uses lake-relevant 20k char chunks, not blind 100k slices, total 120k cap",
             "Gemini prompt now asks for riverSystem/archetype/surfaceArea/etc + general vs lake-specific creel/size + fallback to general regs if 0 lake facts",
             "dedupe by fact text similarity not category, contradiction detection numeric+species conflict",
-            "master profile status forced draft if <3 facts or 0 facts, prevents false verified 98%",
             "client defensive: non-JSON detection for worker 404, large PDF skip, off-lake penalize"
           ],
           lastBugLog: "Wateree run 2026-07-12 22:14 — 10 docs but 0 facts + verified 98% -> now draft + filter"
@@ -2071,7 +2065,6 @@ var trollmap_worker_default = {
           "/research/list or /lakes/list      \u2014 list all researched lake master profiles",
           "/research/get?lake=...             \u2014 get master profile + package file list + versions",
           "/research/save                     \u2014 save merged profile (master + hybrid package + version)",
-          "/research/approve                  \u2014 mark profile verified",
           "/research/package?lake=...         \u2014 list package files for lake",
           "/research/package?lake=...&file=... \u2014 get single package file",
           "/lake-research?lake=...            \u2014 enhanced lake intel with researched profile if exists",

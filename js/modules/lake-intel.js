@@ -37,7 +37,12 @@ export async function syncLakeIntelData() {
     if(!res.ok) throw new Error(`Worker HTTP ${res.status}`);
     const d = await res.json();
     const p = d.profile || {};
-    const rp = (d.hasResearchedProfile && d.researched?.status === 'verified') ? d.researched.fullProfile : null;
+    // NO STATUS GATE. Until 2026-09-23 this line read `&& d.researched?.status === 'verified'`
+    // and threw the whole profile away otherwise, so sixteen lakes researched after the tab
+    // stopped being used were told "no curated lake profile is available yet" while their
+    // research sat in R2. `verified` only ever meant somebody clicked Approve in July; 54 of the
+    // 61 profiles carrying it held zero extracted facts. A profile that exists is the profile.
+    const rp = d.hasResearchedProfile ? (d.researched?.fullProfile || null) : null;
     const lines=[];
 
     // Header
@@ -46,7 +51,11 @@ export async function syncLakeIntelData() {
       // NO CONFIDENCE ON THIS LINE. It was a percentage out of a source count that decided
       // nothing -- see Worker/research/agents.js. The version and the date are facts about the
       // profile; the score was a claim about it.
-      lines.push(`\uD83E\uDDE0 Verified Research Profile v${rp.metadata?.version||'?'} \u00B7 ${new Date(rp.metadata?.lastUpdated||Date.now()).toLocaleDateString()}`);
+      lines.push(`\uD83E\uDDE0 Research Profile v${rp.metadata?.version||'?'} \u00B7 ${new Date(rp.metadata?.lastUpdated||Date.now()).toLocaleDateString()}`);
+      // WHAT IS BEHIND THE FISH, which is what the retired flag pretended to say. Derived on
+      // every save by the biology agent, present on all 78 profiles measured 2026-09-23.
+      const bioWhy = rp.confidence?.biology?.reason;
+      if (bioWhy) lines.push(`Sources behind the biology: ${bioWhy}`);
     } else if(d.confidence && String(d.confidence).includes('generic')) {
       lines.push('VERIFY: No curated lake profile is available yet; this is a research checklist, not confirmed lake intelligence.');
     }
@@ -236,11 +245,11 @@ export async function syncLakeIntelData() {
     if(out) out.value = lines.join('\n');
     if(summary){
       summary.style.display='block';
-      const verifiedBadge = rp ? `<br><span style="color:var(--accent2);font-weight:700">\uD83E\uDDE0 Verified Research v${rp.metadata?.version||'?'}</span>` : (d.confidence&&String(d.confidence).includes('generic')?`<br><span style="color:var(--warn);font-weight:700">\u26A0 VERIFY: generic/unconfirmed profile</span>`:'');
+      const profileBadge = rp ? `<br><span style="color:var(--accent2);font-weight:700">\uD83E\uDDE0 Research v${rp.metadata?.version||'?'}</span>` : (d.confidence&&String(d.confidence).includes('generic')?`<br><span style="color:var(--warn);font-weight:700">\u26A0 VERIFY: generic/unconfirmed profile</span>`:'');
       const spList = [rp?.biology?.predatorSpecies, rp?.biology?.primaryGameFish, p.primarySportFish]
         .map(coerceList).find((l) => l.length) || [];
       const speciesDisplay = spList.join(', ') || 'Profile generated';
-      summary.innerHTML = `<b style="color:var(--accent)">\uD83E\uDDE0 ${esc(d.lake||label)}</b><br><span>${esc(speciesDisplay)}</span>${verifiedBadge}${d.latestReport?.source?`<br><span class="muted">Latest scraped report source \u2014 verify before relying: ${esc(d.latestReport.source)}</span>`:''}`;
+      summary.innerHTML = `<b style="color:var(--accent)">\uD83E\uDDE0 ${esc(d.lake||label)}</b><br><span>${esc(speciesDisplay)}</span>${profileBadge}${d.latestReport?.source?`<br><span class="muted">Latest scraped report source \u2014 verify before relying: ${esc(d.latestReport.source)}</span>`:''}`;
     }
     say('Intel ready', false);
     window.LAST_LAKE_INTEL = d;

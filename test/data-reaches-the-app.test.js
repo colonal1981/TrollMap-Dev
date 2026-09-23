@@ -285,7 +285,6 @@ describe('every route in trollmap-worker.js has a caller', () => {
     '/usgs': 'no caller. Every USGS read now goes through /conditions or the research engine.',
 
     // ── research routes with no BROWSER caller; some may be operator-curled during a run ──────
-    '/research/approve': 'no client caller — may be curled during a research run. Needs a decision.',
     '/research/dataset-hunt': 'no client caller. Needs a decision.',
     '/research/gap-analysis': 'no client caller. Needs a decision.',
     '/research/gap-search': 'no client caller. Needs a decision.',
