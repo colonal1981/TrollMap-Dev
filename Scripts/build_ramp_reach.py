@@ -1200,9 +1200,33 @@ def main():
                          'charted water. The same gate upload_garmin_to_r2.py ships by, because '
                          'measuring water the app never shows is work nobody reads.')
     ap.add_argument('--out', help='default registry/_ramp_reach.json')
-    # DEFAULT 6, WHICH IS HIS NUMBER, NOW THAT THE COST CAN CARRY IT. Ryan, 2026-09-21: *"i
-    # should not have to run shallower than 6ft or so that entire run"*. The first two attempts at
-    # this could not honour it. A hard floor cannot leave Pack's Landing at all -- the ramp sits on
+    # SIX IS THE CANAL'S NUMBER, NOT HIS BOAT'S, AND IT IS THE DEFAULT ON 354 PACKS.
+    #
+    # Ryan, 2026-09-23, reading this file's own words back: *"There is no 6ft floor. I gave you
+    # that number only for the canal between packs landing and the congaree. It kept routing me
+    # in 1-2ft when there was 6ft or deeper water right next to it."*
+    #
+    # So the line below -- "it is his boat and his number" -- was a description of ONE canal
+    # promoted to a standing preference for every water, and then attributed to him. What he
+    # described is RELATIVE: the router took 1-2 ft while 6 ft sat beside it. An absolute floor
+    # happens to fix that case and is the wrong shape for the complaint.
+    #
+    # MEASURED 2026-09-23 across all 354 packs, 2,323 landings:
+    #
+    #     shoal_m == 0, the floor never binds          1,577   68%
+    #     over 500 m under the floor                     125    5.4%
+    #     worst: Dunham Bluff, little_pee_dee_river   25,612 m
+    #
+    # At one end it does nothing; at the other the whole route is under it and `shoal_m` degrades
+    # into route length. A blackwater river that is 4 ft for twenty miles is not a routing defect.
+    # It discriminates only in the middle band, which is where the canal sits.
+    #
+    # THE VALUE IS NOT CHANGED HERE. 6.0 stays until Ryan says what his boat actually needs --
+    # a draft, which is a fact about the Slayer Propel and the NK180, not a preference. Register:
+    # ramp-reach-floor-is-one-canals. The sweep below is the reason changing it is not urgent:
+    # on the canal every value from 2 to 25 produces the identical line.
+    #
+    # The first two attempts at this could not honour it. A hard floor cannot leave Pack's Landing at all -- the ramp sits on
     # a 5 ft flat -- so it went round: 6,569 m against 1,826. Preferring a separate deep flood and
     # falling back when it does not arrive is the same failure said politely: it never arrived, so
     # every route on this river was the shortest-water one and a flag quietly said so.
@@ -1213,13 +1237,16 @@ def main():
     # Congaree through the 13 ft mouth rather than across the flat beside it. `shoal_m` on each
     # landing says what it cost, in metres, so a water where the number is bad is visible.
     ap.add_argument('--min-depth-ft', type=float, default=6.0,
-                    help="the shallowest water the route should run in. Ryan, 2026-09-21: \"i "
-                         'should not have to run shallower than 6ft or so that entire run". It '
-                         'is his boat and his number, not one chosen here. It is a cost, not a '
-                         'gate: where no route can honour it the shortest shallow crossing is '
-                         'taken and shoal_m reports it. 0 ignores depth entirely.')
-    # TEN, AND THE SWEEP IS WHY IT IS NOT A TUNED NUMBER. Measured on congaree_river, Pack's
-    # Landing to the Congaree, 2026-09-21, every value run end to end:
+                    help='the shallowest water the route should prefer. 6 came off ONE canal -- '
+                         "Pack's Landing to the Congaree, 2026-09-21 -- and is not a stated "
+                         'property of his boat; see the note above before treating it as one. It '
+                         'is a cost, not a gate: where no route can honour it the shortest '
+                         'shallow crossing is taken and shoal_m reports it. 0 ignores depth '
+                         'entirely.')
+    # TEN, AND THE SWEEP IS WHY IT IS NOT A TUNED NUMBER -- ON THIS ROUTE. Measured on
+    # congaree_river, Pack's Landing to the Congaree, 2026-09-21, every value run end to end.
+    # ONE LANDING ON ONE CANAL: the plateau is real where it was measured and has never been
+    # swept anywhere else, which is the same caveat the floor above now carries.
     #
     #     0    2,455 m    770 m under 6 ft   73 pts   -- depth ignored; this is what shipped
     #     2    2,469 m    149 m              7 pts
