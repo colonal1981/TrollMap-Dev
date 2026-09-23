@@ -613,6 +613,34 @@ var DUKE_API_BASE = "https://api.hydro-derived.duke-energy.app";
  * and it never had to be typed either — this endpoint is the index, and reading it is the same
  * move that replaced the TWRA and SCDNR seed lists with the agencies' own region pages.
  */
+/**
+ * US/EASTERN FOR A GIVEN DATE, because Duke publishes local time with no offset on it.
+ *
+ * `parseDukeRunTime` defaulted to '-04:00' and `fetchDukeFlowArrivals` appends the same literal,
+ * so from the first Sunday in November to the second Sunday in March every Duke release time,
+ * arrival and recession has been an hour late. On a two-hour release window -- Wateree publishes
+ * exactly that on 2026-09-24, 17:00 to 19:00 -- an hour is most of the fact.
+ *
+ * Computed, not tabled: ask the runtime what the offset is for that instant in America/New_York.
+ * The date is parsed once as UTC to get an instant to ask about, which is off by at most the
+ * offset itself and cannot cross a DST boundary that a same-day release would care about.
+ */
+function easternOffsetFor(y, mo, d) {
+  try {
+    const probe = new Date(Date.UTC(Number(y), Number(mo) - 1, Number(d), 17, 0, 0));
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York', timeZoneName: 'shortOffset',
+    }).formatToParts(probe);
+    const tz = (parts.find((x) => x.type === 'timeZoneName') || {}).value || '';
+    const m = /GMT([+-])(\d{1,2})(?::(\d{2}))?/.exec(tz);
+    if (!m) return '-05:00';
+    return `${m[1]}${String(m[2]).padStart(2, '0')}:${m[3] || '00'}`;
+  } catch (_) {
+    // A runtime with no tz data must not silently pick summer. EST is the standard offset.
+    return '-05:00';
+  }
+}
+
 async function fetchDukeRivers() {
   try {
     const r = await fetch(`${DUKE_API_BASE}/rivers/get-rivers`, {
@@ -757,8 +785,18 @@ async function fetchDukeFlowArrivals(basinId) {
     const now = Date.now();
     for (const dam of j?.Dams || []) {
       for (const ev of dam?.FlowArrivalRecessions || []) {
-        const arr = ev.Arrival ? new Date(ev.Arrival + (ev.Arrival.endsWith("Z") ? "" : "-04:00")) : null;
-        const rec = ev.Recedes ? new Date(ev.Recedes + (ev.Recedes.endsWith("Z") ? "" : "-04:00")) : null;
+        // US/EASTERN FOR THAT DATE, not EDT year-round. Duke publishes "2026-09-24T18:48:00"
+        // with no offset on it; appending a literal -04:00 makes every arrival and recession an
+        // hour late from November to March. easternOffsetFor() asks the runtime.
+        const stamp = (v) => {
+          if (!v) return null;
+          const str = String(v);
+          if (str.endsWith('Z')) return new Date(str);
+          const d = /^(\d{4})-(\d{2})-(\d{2})/.exec(str);
+          return new Date(str + (d ? easternOffsetFor(d[1], d[2], d[3]) : '-05:00'));
+        };
+        const arr = stamp(ev.Arrival);
+        const rec = stamp(ev.Recedes);
         if (!arr || arr.getTime() < now - 12 * 3600 * 1e3) continue;
         out.push({
           damName: ev.DamName,
@@ -2115,4 +2153,4 @@ var RIVERS = {
   }
 };
 
-export { normalizeDukeRow, dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun, fetchDukeAccessAlerts, fetchDukeOperatingRange, LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, seriesRank, rdbSeriesDescriptions, newerStamp, applyElevation, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake };
+export { easternOffsetFor, normalizeDukeRow, dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun, fetchDukeAccessAlerts, fetchDukeOperatingRange, LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, seriesRank, rdbSeriesDescriptions, newerStamp, applyElevation, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake };

@@ -66,7 +66,8 @@ import { waterChain, damTable, fullPoolTable, coastalCurrentStations } from './r
 // RIVERS and lakeKeyFromName came out with dukeBasinFor: the basin is resolved from Duke's own
 // /rivers/get-rivers roster now, so this file no longer reads the six-entry hand table at all.
 import { dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun,
-         fetchDukeAccessAlerts, fetchDukeOperatingRange, fetchUsgs, getLakeClarity }
+         fetchDukeAccessAlerts, fetchDukeOperatingRange, fetchUsgs, getLakeClarity,
+         easternOffsetFor }
   from './worker-data.js';
 import { parseCubeLevels, parseSouthernCoLevels, parseBrookfieldFacility,
          parseSanteeCooper } from './operators.js';
@@ -2167,7 +2168,7 @@ export function arrivalsForWater(sched, waterName, gaugeNames = [], basinRow = n
  * Duke publishes local time with no offset. Eastern is assumed, the same assumption
  * fetchDukeFlowArrivals already makes, and the offset travels so nothing downstream has to guess.
  */
-export function parseDukeRunTime(v, offset = '-04:00') {
+export function parseDukeRunTime(v, offset = null) {
   const raw = String(v == null ? '' : v).trim();
   if (!raw) return null;
   if (/no\s*flow\s*release/i.test(raw)) {
@@ -2180,12 +2181,14 @@ export function parseDukeRunTime(v, offset = '-04:00') {
   const m = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s+(\d{1,2}):(\d{2}):(\d{2})\s*(AM|PM)?$/i);
   if (!m) return null;
   const yr = m[3].length === 2 ? `20${m[3]}` : m[3];
+  // The caller may pin an offset; otherwise it is whatever US/Eastern was on that date.
+  const off = offset || easternOffsetFor(yr, m[1], m[2]);
   let hh = Number(m[4]);
   const ap = (m[7] || '').toUpperCase();
   if (ap === 'PM' && hh !== 12) hh += 12;
   if (ap === 'AM' && hh === 12) hh = 0;
   const iso = `${yr}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`
-            + `T${String(hh).padStart(2, '0')}:${m[5]}:${m[6]}${offset}`;
+            + `T${String(hh).padStart(2, '0')}:${m[5]}:${m[6]}${off}`;
   const t = Date.parse(iso);
   return Number.isFinite(t)
     ? { noRelease: false, date: iso.slice(0, 10), epoch: t, iso, raw }
@@ -2217,15 +2220,32 @@ export function parseActiveRun(json) {
       const units = (typeof u === 'string' && u.trim() !== '' && u.trim().toUpperCase() !== 'N/A')
         ? (Number.isFinite(Number(u)) ? Number(u) : null)
         : (typeof u === 'number' && Number.isFinite(u) ? u : null);
+      // ── A WINDOW THAT ENDS BEFORE IT STARTS IS NOT A WINDOW ─────────────────────────────
+      //
+      // Live in Ryan's 2026-09-23 capture of /rivers/active-run, in the feed itself:
+      //
+      //     Nantahala  StartDateTime 09/24/2026 07:30:00 PM
+      //                EndDateTime   09/24/2026 07:00:00 PM
+      //
+      // Parsed as published that is a release lasting minus thirty minutes. Anything that
+      // subtracts these to get a duration, or asks "is generation on now", gets nonsense from
+      // it -- and on a tailwater that answer is a safety call.
+      //
+      // The START is the half worth trusting: it is the time a paddler is given and the time
+      // the surge is fed from. So the end is dropped and SAID to be dropped, rather than the
+      // whole release being thrown away or the two being silently swapped -- which end Duke
+      // fat-fingered is not knowable from here.
+      const bad = start.epoch != null && end && end.epoch != null && end.epoch < start.epoch;
       out.push({
         dam,
         basin_id: Number.isFinite(basinId) ? basinId : null,
         no_release: !!start.noRelease,
         date: start.date,
         start: start.iso || null,
-        end: (end && end.iso) || null,
+        end: bad ? null : ((end && end.iso) || null),
         start_epoch: start.epoch,
-        end_epoch: (end && end.epoch) || null,
+        end_epoch: bad ? null : ((end && end.epoch) || null),
+        end_before_start: bad ? ((end && end.iso) || true) : undefined,
         generators: units,
       });
     }
