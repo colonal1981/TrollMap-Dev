@@ -626,33 +626,99 @@ function ringCentroid(g) {
 const RESOLVE_CELL = 0.004;          // ~440 m of longitude here; one bucket comfortably covers a pass
 const RESOLVE_MARGIN_M = 40;         // slack over the recorded offset, for the sign of `d`
 
-// ── The four kinds that had marks and no position ────────────────────────────────────────────
+// ── THE VOCABULARY IS `poi_type`, AND READING THE OTHER TWO COST 16,719 CHARTED POINTS ───────
 //
 // Measured on wateree_lake, 2026-08-13: of 11,616 `near[]` marks, 1,998 — SEVENTEEN PERCENT —
 // are of a kind that exists in neither structure.geojson nor water_features.geojson. timber 654,
-// hazard 697, shallow 398, attractor 162, pile 65, bridge 22. `timber` and `attractor` carry the
-// two highest weights in DEFAULT_WEIGHTS, 27 each, because they are the most-cited things on the
-// lake. Every one of them resolved to an estimate with a null depth, and the comment above this
-// one has said so since 08-07: "timber, attractor, bridge, pile: 0 of 48."
+// hazard 697, shallow 398, attractor 162, pile 65, bridge 22. They were never missing; they are
+// in `pois.geojson`, and the fix then was to read that file.
 //
-// They were never missing. They are in `pois.geojson`, which no planner fetched.
+// WHAT THAT FIX GOT WRONG, found 2026-09-23. This table was keyed on the POI's display `name`
+// and then its `class`, copied from build_trolling_runs.py, which was keyed the same way.
+// EVERY_POI_TYPE_ON_THE_CARD_2026-08-27 is explicit about why that cannot work: **"Use
+// `poi_type`, not `class`. `poi_type` is a clean vocabulary of 39 values... `class` is 2,278
+// distinct strings of raw Garmin text — typos (`Fish Atrractor Buoy`, `No Wake Bouy`), buoy
+// SHAPES rather than meanings, and in 205 cases an entire source disclaimer."**
 //
-// THIS TABLE IS COPIED FROM THE PRODUCER, NOT INVENTED HERE. build_trolling_runs.py's POI_KINDS
-// is what turned those points into marks in the first place, keyed the same way — `name`, then
-// `class`, then a poi_type containing 'timber'. Resolving against a DIFFERENT table than the one
-// that made the marks is how a hit gets snapped to a thing that is not what the pipeline saw.
-// If that table changes, this one changes with it.
-export const POI_KINDS = {
-  'Flooded Timber': 'timber',
-  'Shallow Area': 'shallow',
-  'Hazard, Spar/Spindle Buoy': 'hazard',
-  'Hazard Area': 'hazard',
-  'Pile': 'pile',
-  'Piles': 'pile',
-  'Fish Attractor Buoy, Spar/Spindle Buoy': 'attractor',
-  'Fish Attractor Buoy': 'attractor',
-  'Bridge': 'bridge',
+// THERE ARE TWO PRODUCERS AND THEY DID NOT AGREE, which is how this took three passes to state
+// correctly. `fit_trolling_runs.py` -- the fitter, and the thing that actually built every pack in
+// R2 -- has keyed on `poi_type` since it was written, and its own comment records the same
+// measurement: "32 obstructions and 9 of 12 piles have `name: None, class: None` and were
+// annotated onto nothing at all." So the shipped packs DO carry POI marks. Counted in them
+// 2026-09-23, wateree_lake's 2,843 runs: timber 653, hazard 687, shallow 518, obstruction 446,
+// pile 317, attractor 110. An earlier draft of this comment said none of them reached `near[]`.
+// They do.
+//
+// WHAT IS ACTUALLY WRONG IS THREE SEPARATE THINGS, each measured across the 343 app waters,
+// deduped by position:
+//
+//   1. THE FITTER'S TABLE HAS NO ENTRY FOR FOUR TARGET TYPES, and its `bridge` key is a value no
+//      POI carries -- the vocabulary spells it `submerged_bridge` -- so no pack on any water has
+//      a single bridge mark:
+//
+//        creek_bed         6,819 pts / 31 waters    name 'Creek Bed'
+//        road_bed          4,270 pts / 31 waters    name 'Road Bed'
+//        submerged_bridge  3,363 pts / 34 waters    name 'Subm Bridge'
+//        river_bed            86 pts /  5 waters    name 'River Bed'
+//        rock                 15 pts /  5 waters    name 'Rock'
+//        ────────────────────────────────────────
+//                         14,553 points, marks nowhere
+//
+//   2. THIS FILE COULD NOT RESOLVE THE MARKS THE FITTER DID WRITE. poiSpotFeatures() keyed on
+//      `name` then `class`, so `obstruction` (no name, no class) and `pile` (the same) produced no
+//      spot at all -- 1,873 and 394 points. A mark with nothing to resolve against gets a position
+//      estimate and a null depth, which is the "0 of 48" line in the resolution comment above.
+//
+//   3. `obstruction` HAD NO WEIGHT. A live kind, 1,873 charted points on 62 waters, scoring zero
+//      since the fitter was written. See DEFAULT_WEIGHTS.
+//
+// Two types escaped all three: flooded_timber and shallow_area, whose Garmin display name happens
+// to equal a key AND which the fitter also lists. `supplemental-layers.js` has been drawing all
+// seven on the map the whole time, so they were visible and unfishable.
+//
+// SO THE APP OWNS THE JOIN NOW AND THE PIPELINE DOES NOT. Ryan, 2026-09-23, asked what else
+// would drive a rebuild — "i am tired of rebuilding" — and the answer is nothing needs to. A
+// vocabulary keyed in the pipeline costs a rebuild of every pack each time it is found wrong,
+// and it has been found wrong twice. POIs are already inside every pack and the app already
+// fetches them, so they join per-run through kindHits() exactly as docks and the state attractor
+// feed do, and build_trolling_runs.py's POI join is deleted. `near[]` carries pipeline-sourced
+// marks only; POI_JOINED_KINDS below is stripped from it on read so nothing is counted twice.
+//
+// The mapping is to kinds that ALREADY have a measured weight wherever one exists — a submerged
+// bridge is a bridge, and an obstruction is a brushpile (see the obstruction note in
+// DEFAULT_WEIGHTS) — so only four of the seven need a number at all.
+export const POI_TYPE_KINDS = {
+  // TARGETS, in Ryan's own classification.
+  flooded_timber:      'timber',
+  creek_bed:           'creek_bed',
+  river_bed:           'river_bed',
+  road_bed:            'road_bed',
+  submerged_bridge:    'bridge',
+  pile:                'pile',
+  rock:                'rock',
+  // ITS OWN KIND, and the first draft of this table got that wrong. Folding `obstruction` into
+  // `attractor` looked right -- the two are the same physical brushpile, measured below -- but
+  // fit_trolling_runs.py has been writing `obstruction` marks into `near[]` all along (446 on
+  // Wateree, 1,307 on Murray), so the folded name was not in POI_JOINED_KINDS, the strip left
+  // those marks in place, and every one of them would have been counted twice. Same kind, same
+  // name, three files: this table, fit_trolling_runs.py and supplemental-layers.js.
+  obstruction:         'obstruction',
+  fish_attractor_buoy: 'attractor',
+  // BOTH, decided by the leg type, which this table does not have. Left as one kind, as before.
+  shallow_area:        'shallow',
+  // AVOID. Only the two the old name keys actually caught — 'Hazard Area' and the hazard buoy.
+  // `restricted_area`, `dam` and `caution_buoy` are routing constraints and reach the model
+  // through chartedHazards(), which reads poi_type directly; marking them here would say a
+  // swimming area is a thing to fish past.
+  hazard_area:         'hazard',
+  danger_buoy:         'hazard',
 };
+
+/** Every kind POI_TYPE_KINDS can produce. Stripped from a pipeline `near[]` before the app's own
+ *  join is merged in, so a pack built while the pipeline still joined POIs cannot double-count.
+ *  The first six are POI-only by measurement (the 2026-08-13 count above); the last four never
+ *  existed in `near[]` at all. */
+export const POI_JOINED_KINDS = new Set(Object.values(POI_TYPE_KINDS));
 
 /**
  * pois.geojson -> features shaped like the pack layers, so both consumers take them unchanged.
@@ -761,8 +827,11 @@ export function poiSpotFeatures(poisFc) {
     const p = f.properties || {};
     const g = f.geometry;
     if (!g || g.type !== 'Point' || !Array.isArray(g.coordinates)) continue;
-    let kind = POI_KINDS[p.name] || POI_KINDS[p.class];
-    if (!kind && String(p.poi_type || '').includes('timber')) kind = 'timber';
+    // ONE FIELD. The old form read `POI_KINDS[p.name] || POI_KINDS[p.class]` with a single
+    // special case -- `if (!kind && poi_type includes 'timber') kind = 'timber'` -- which is the
+    // whole shape of the defect: a fallback to the field that actually carries the vocabulary,
+    // written for exactly one of the seven types that needed it.
+    const kind = POI_TYPE_KINDS[String(p.poi_type || '')];
     if (!kind) continue;
     out.push({ type: 'Feature', geometry: g,
                properties: { kind, name: p.name || null, poi_type: p.poi_type || null } });
@@ -852,9 +921,16 @@ export function attractorSpotFeatures(dnrRows, poiSpots = [], opts = {}) {
     console.warn(`[candidates] ${where}: no charted grid given, so every state's attractors are `
       + `in play. This is what listed 5,258 of them on one lake.`);
   }
+  // BOTH NAMES GARMIN GIVES THE SAME PILE. This read `kind === 'attractor'` alone, which was
+  // right while that was the only attractor-ish kind the POI layer produced. `obstruction` now
+  // arrives as itself -- see POI_TYPE_KINDS -- and the 2026-09-23 check across eight SC waters
+  // puts those points a median of 1 to 49 m from the state's own coordinates, inside this 30 m
+  // window on five of them. Without this line the state row and the charted obstruction are two
+  // marks on one brushpile.
   const charted = [];
   for (const f of (poiSpots || [])) {
-    if ((f.properties || {}).kind === 'attractor' && f.geometry) charted.push(f.geometry.coordinates);
+    const k = (f.properties || {}).kind;
+    if ((k === 'attractor' || k === 'obstruction') && f.geometry) charted.push(f.geometry.coordinates);
   }
   const out = [];
   let offWater = 0;
@@ -921,7 +997,9 @@ function describeStructure(kind, p) {
     bits.push(kind === 'dock_line' ? 'line of docks'
       : kind === 'dock_cluster' ? 'cluster of docks' : 'dock');
   } else if (kind === 'timber' || kind === 'shallow' || kind === 'pile'
-             || kind === 'bridge' || kind === 'attractor' || kind === 'hazard') {
+             || kind === 'bridge' || kind === 'attractor' || kind === 'hazard'
+             || kind === 'creek_bed' || kind === 'river_bed' || kind === 'road_bed'
+             || kind === 'rock' || kind === 'obstruction') {
     // Garmin's own label beats the slug: "Flooded Timber" says more than "timber", and it is what
     // is printed on the chart the angler is looking at. No depth — see poiSpotFeatures().
     bits.push(p.name || kind);
@@ -1242,7 +1320,79 @@ export const DEFAULT_WEIGHTS = {
   ledge: 4,
   hump: 3,
   pile: 3,             // counted within brush/wood; scarce, so it keeps its own low weight
-  bridge: 3,
+  bridge: 3,           // and `submerged_bridge` maps here: a submerged bridge is a bridge
+  // ── FOUR KINDS THAT HAD NO NUMBER, COUNTED THE SAME WAY AS EVERY SIBLING ──────────────────
+  //
+  // These arrive from `pois.geojson` (see POI_TYPE_KINDS) and Ryan classified all four as
+  // TARGETS. None appears in the Wateree count every weight above comes from, because that count
+  // is of what a researched profile CITES and Wateree's profile does not name a roadbed.
+  //
+  // So they are counted by the same method, over more water. `_scratch/count_structure_cites.py`
+  // walks all 78 researched profiles -- 1,520 species-season `structures` entries -- and counts
+  // how many name each thing, exactly as the 104-citation Wateree count did:
+  //
+  //     creek_bed   212 cites / 32 species / 53 waters    'creek channels' 141, 'creek channel
+  //                                                       edges' 13, 'old creek channels' 4
+  //     rock        275 / 24 / 59                         'rocky points' 37, 'rocky areas' 26,
+  //                                                       riprap 29, boulders 13
+  //     river_bed   125 / 20 / 43                         'river channels' 48, 'deep river
+  //                                                       channels' 17
+  //     road_bed     27 /  8 / 18                         'old road beds' 15, 'road beds' 8
+  //
+  // PUT ON THIS TABLE'S SCALE, NOT SUBSTITUTED FOR IT. The weights above are counts out of 104;
+  // these are counts out of 1,520, and quoting one on the other's scale would be the units
+  // mistake this project keeps catching. Factor = 96/1857 = 0.0517, where 96 is the sum of the
+  // existing weights for the eleven kinds both counts cover (timber, point, creek_mouth, dock,
+  // shallow, hole, ledge, hump, cove, bridge, pile) and 1,857 is the sum of the new counts for
+  // those same eleven. Applied: 212 -> 11, 275 -> 14, 125 -> 6, 27 -> 1.
+  //
+  // THE EXISTING NUMBERS ARE NOT TOUCHED. The 78-profile count disagrees with the one-lake count
+  // about several of them -- it puts points top and timber third -- and that is a recount of the
+  // whole table, which is a separate decision and Ryan's to make. This change adds four rows.
+  //
+  // road_bed at 1 is the measurement and not a shrug: 4,270 charted roadbeds on 31 waters, and
+  // across 78 researched profiles eight species mention one. It will rarely move a window, which
+  // is what the research says should happen.
+  creek_bed: 11,
+  rock: 14,
+  river_bed: 6,
+  road_bed: 1,
+  // ── obstruction, AND THE CHECK THE DOCUMENT REFUSED TO GENERALISE WITHOUT ──────────────────
+  //
+  // `obstruction` has been a live kind in `near[]` since the fitter was written and has never had
+  // an entry here, so 446 marks on Wateree, 281 on Marion and 1,307 on Murray have scored ZERO --
+  // rescued from the cap by ALWAYS_SHOW and never able to move a window. 1,873 charted points on
+  // 62 waters, in the class Ryan called a target.
+  //
+  // EVERY_POI_TYPE_ON_THE_CARD_2026-08-27 measured them on Wateree -- a median 49 m from the
+  // SCDNR attractor coordinates, 59% within 150 m, against fish_attractor_buoy's own 39 m / 62%
+  // as the control -- and then refused to act on it: "Wateree holds 32 of the 3,546. This does not
+  // generalise on one lake, and `obstruction` should not be routed around until it is checked on a
+  // second water." That check ran 2026-09-23 over every SC water carrying both layers
+  // (_scratch/obstruction_vs_attractor.py):
+  //
+  //     water                obstruction n / median / <=150m    control (attractor buoy)
+  //     lake_marion            22 /   26 m / 59%                 none charted
+  //     lake_moultrie          33 /   27 m / 58%                 15 / 32 m / 100%
+  //     wateree_lake           32 /   49 m / 59%                  8 / 39 m /  62%
+  //     secession_lake          2 /   19 m / 100%                none charted
+  //     fishing_creek_res       5 /    1 m / 100%                none charted
+  //     issaqueena_lake         3 /    1 m / 100%                none charted
+  //     lake_rabon              3 /    1 m / 100%                none charted
+  //     star_fort_pond          1 /    1 m / 100%                none charted
+  //
+  // Eight waters, not one. On Moultrie the obstructions sit TIGHTER to the state's coordinates
+  // than the layer that admits to being attractors. On four small lakes the median is 1 m -- the
+  // same point, not a near miss. Hartwell and Murray disagree at 2 km, and the control disagrees
+  // by the same 2 km on the same two lakes, which says the DNR coordinates are what is wrong
+  // there. Cherokee came back at 210 km: a name collision between Cherokee Lake SC and the TVA
+  // Cherokee, discarded as a slug mismatch and not a finding.
+  //
+  // So it takes `attractor`'s number, which is a citation count and not a new opinion. What it
+  // does NOT take is attractor's NAME -- a Garmin obstruction and a state survey point are two
+  // claims about one pile, and collapsing them is the conflation Ryan corrected on 2026-08-06.
+  // attractorSpotFeatures() dedupes the state rows against both kinds at 30 m instead.
+  obstruction: 27,
   cove: 8,             // coves are how creek arms and flats present on this lake
   hazard: 0,           // things to steer around, not fish
 
@@ -1437,6 +1587,44 @@ export function kindHits(coords, cum, index, maxOffM, kind, asType = kind) {
 
 function dockHits(coords, cum, index, maxOffM) {
   return groupDocks(kindHits(coords, cum, index, maxOffM, 'dock'));
+}
+
+/**
+ * Every charted POI this run passes, as `near`-shaped hits — the app's half of the join that used
+ * to be the pipeline's.
+ *
+ * ONE CALL PER KIND, because kindHits() filters on one kind and that is the right shape: the
+ * index is walked per kind rather than per point, and the set is ten entries. Only the kinds
+ * actually present in the index cost anything, since a kind with no rows returns immediately.
+ */
+function poiHits(coords, cum, index, maxOffM) {
+  const out = [];
+  for (const kind of POI_JOINED_KINDS) {
+    // `dock` is not in this set and must never be: docks come from docks.geojson through
+    // dockHits(), which groups them into lines and pockets before they are scored.
+    for (const h of kindHits(coords, cum, index, maxOffM, kind)) out.push(h);
+  }
+  return out;
+}
+
+/**
+ * The run with any POI-sourced `near[]` marks removed.
+ *
+ * A pack built while build_trolling_runs.py still joined POIs carries marks of these kinds inside
+ * `near[]`. Every pack in R2 today is such a pack. The app now supplies them itself, so without
+ * this the same charted point is scored twice on the same leg — which is precisely the reason
+ * Ryan gave on 2026-09-19 for not doing docks in the pipeline: "doing it in the pipeline would
+ * mean they got added twice".
+ *
+ * THIS IS THE CONTRACT, NOT A MIGRATION SHIM. `near[]` carries pipeline-sourced marks only. It
+ * stays correct on a pack rebuilt tomorrow (nothing to strip) and on one built last month
+ * (marks stripped), so no pack ever has to be rebuilt for a change to the POI vocabulary.
+ */
+function withoutPoiMarks(run) {
+  const near = (run.properties && run.properties.near) || null;
+  if (!Array.isArray(near) || !near.length) return run;
+  const kept = near.filter((m) => !POI_JOINED_KINDS.has(m && m.t));
+  return kept.length === near.length ? run : { ...run, properties: { ...run.properties, near: kept } };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1973,8 +2161,14 @@ export function selectCandidates(runs, o) {
     // a thing can be and still be on the way is one question, and it already has one answer.
     const dnr = o.attractors
       ? kindHits(coords, cum0, o.attractors, opts.maxOffM, 'attractor') : [];
-    const joined = docks.concat(dnr);
-    const win = bestWindow(joined.length ? withNear(run, joined) : run, opts);
+    // AND THE CHARTED POIs, which the pipeline used to join and no longer does — see
+    // POI_TYPE_KINDS. `withoutPoiMarks` first, or a pack built under the old producer scores the
+    // same point twice. Both halves are conditional on the same index: a caller that passes no
+    // POIs keeps whatever its pack's `near[]` already said, which is the old behaviour exactly.
+    const poi = o.pois ? poiHits(coords, cum0, o.pois, opts.maxOffM) : [];
+    const base = o.pois ? withoutPoiMarks(run) : run;
+    const joined = docks.concat(dnr, poi);
+    const win = bestWindow(joined.length ? withNear(base, joined) : base, opts);
     if (!win) { rejected.noWindow++; continue; }
     // Relief is a property of the whole run, so it is added once rather than per hit. River
     // channel and channel edge are 12 cites across 7 species -- more species than anything else

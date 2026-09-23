@@ -751,47 +751,38 @@ def split_at_hard_corners(xy, max_turn_deg, min_leg_m):
 
 # ── what a run passes ───────────────────────────────────────────────────────────────────────
 
-# MATCHED ON `poi_type`, WHICH IS THE FIELD THAT IS ALWAYS THERE.
+# POI_TYPE_KINDS WAS HERE AND THE JOIN IT FED IS GONE. IT WAS THE MORE CORRECT OF TWO COPIES.
 #
-# `build_trolling_runs.POI_KINDS` keys on the display `name` or `class` -- 'Flooded Timber',
-# 'Pile', 'Hazard Area'. Counted on Wateree, most of these POIs carry neither: 32 obstructions
-# and 9 of 12 piles have `name: None, class: None` and were annotated onto nothing at all. They
-# sit in 6 to 23 ft, which is exactly where a deep-diving crank is.
-POI_TYPE_KINDS = {
-    'flooded_timber': 'timber',
-    'obstruction': 'obstruction',
-    'pile': 'pile',
-    'shallow_area': 'shallow',
-    'hazard_area': 'hazard',
-    'danger_buoy': 'hazard',
-    'caution_buoy': 'hazard',
-    'fish_attractor_buoy': 'attractor',
-    'bridge': 'bridge',
-}
-# Deliberately NOT annotated: `garmin_3_26` (the purple triangles -- five-byte records with no
-# type field, settled 2026-08-06 as dock markers carrying nothing), `place_name`, `height_marker`,
-# `parking`, `boat_ramp`, `marina`, `mile_marker`, `nav_buoy`, `slow_no_wake`, `restricted_area`.
-# Regulatory zones and shore furniture are real, but they are not cover and not a snag.
+# It keyed on `poi_type`, which is the field that is always there, and its own note recorded why:
+# build_trolling_runs.py keyed on the display `name` or `class`, and on Wateree "32 obstructions
+# and 9 of 12 piles have `name: None, class: None` and were annotated onto nothing at all." This
+# file was right and that one was wrong, and the project carried both for weeks.
+#
+# It was still incomplete, measured 2026-09-23 across the 343 app waters: no entry for `creek_bed`
+# (6,819 points / 31 waters), `road_bed` (4,270 / 31), `river_bed` (86 / 5) or `rock` (15 / 5), and
+# a `bridge` key against a value no POI carries -- the vocabulary spells it `submerged_bridge` --
+# so 3,363 submerged bridges became marks on no water at all. 14,553 charted points in classes
+# Ryan sorted as TARGETS, invisible to the planner while supplemental-layers.js drew every one of
+# them on the map.
+#
+# TWO COPIES OF A VOCABULARY IN THE PIPELINE IS WHY, AND A THIRD FIX HERE WOULD COST A REBUILD OF
+# EVERY PACK. Ryan, 2026-09-23: "i am tired of rebuilding." So the POIs join in the app instead,
+# per run, through kindHits() in plan-candidates.js -- the door docks.geojson and the state
+# attractor feed already use, and for the reason he gave about docks on 2026-09-19: "doing it in
+# the pipeline would mean they got added twice". POI_TYPE_KINDS in plan-candidates.js is the one
+# copy. `near[]` carries structure.geojson and water_features.geojson marks only; the app strips
+# any POI-kind mark left in an older pack's `near[]` before merging its own, so nothing has to be
+# rebuilt for this change or for the next correction to that vocabulary.
 
 
 def load_annotation_points(pack):
-    """[(lon, lat, kind, depth_ft or None)] from every layer that describes the bottom."""
-    pts = []
+    """[(lon, lat, kind, depth_ft or None)] from the layers that SOUND the bottom.
 
-    p = os.path.join(pack, 'pois.geojson')
-    if os.path.isfile(p):
-        try:
-            with open(p, 'r', encoding='utf-8') as fh:
-                for x in (json.load(fh).get('features') or []):
-                    pr = x.get('properties') or {}
-                    k = POI_TYPE_KINDS.get(pr.get('poi_type'))
-                    if not k:
-                        continue
-                    c = (x.get('geometry') or {}).get('coordinates')
-                    if c and len(c) >= 2:
-                        pts.append((c[0], c[1], k, None))
-        except Exception:
-            pass
+    pois.geojson is deliberately not among them -- see the note above POI_TYPE_KINDS' grave. What
+    a `near[]` mark now means is "the pipeline measured this here", and everything the app can
+    join for itself it joins for itself.
+    """
+    pts = []
 
     p = os.path.join(pack, 'structure.geojson')
     if os.path.isfile(p):

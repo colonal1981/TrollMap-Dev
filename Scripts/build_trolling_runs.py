@@ -446,22 +446,10 @@ class NodeIndex:
 
 # ── per-pack ────────────────────────────────────────────────────────────────────────────────
 
-# Garmin's own POI names for things a fish relates to. These are NOT the DNR attractor feed --
-# that shows where the state dropped a brushpile, 8 points on Wateree. These are charted natural
-# cover and hazards: 55 Flooded Timber, 61 Shallow Area, 45 hazard marks on the same lake. Ryan,
-# 2026-08-06: "fish attractors aren't going to show you stump fields or submerged timber, they
-# will just show where dnr has dropped a brushpile or a clump of old bridge."
-POI_KINDS = {
-    'Flooded Timber': 'timber',
-    'Shallow Area': 'shallow',
-    'Hazard, Spar/Spindle Buoy': 'hazard',
-    'Hazard Area': 'hazard',
-    'Pile': 'pile',
-    'Piles': 'pile',
-    'Fish Attractor Buoy, Spar/Spindle Buoy': 'attractor',
-    'Fish Attractor Buoy': 'attractor',
-    'Bridge': 'bridge',
-}
+# POI_KINDS WAS HERE AND IS GONE. It mapped Garmin's display names to `near[]` kinds and was
+# read by load_points() alone; both are described in that function's docstring. The app's
+# POI_TYPE_KINDS is the only copy of that vocabulary now, keyed on the field that actually carries
+# it, and leaving a second table here is how the two came to disagree in the first place.
 
 
 # ── coastal habitat, joined per run ──────────────────────────────────────────────────────────
@@ -760,26 +748,30 @@ def habitat_stats(geom, hab_grid, cell, annotate_m):
 
 
 def load_points(pack):
-    """Every feature a run can be annotated with: charted cover from the POI layer, humps and
-    ledges from the structure layer. Returns [(lon, lat, kind, depth_ft or None)]."""
+    """Every feature a run can be annotated with: humps, ledges and holes from the structure
+    layer. Returns [(lon, lat, kind, depth_ft or None)].
+
+    THE POI LAYER IS NOT READ HERE ANY MORE, and that is the whole point of this function's
+    shape. It used to resolve pois.geojson through a POI_KINDS table keyed on the POI's display
+    `name` then its `class`, with one fallback to `poi_type` written for `timber` alone. Counted
+    2026-09-23 across the 343 app waters: 16,719 charted points in seven types Ryan classified as
+    TARGETS -- creek_bed, road_bed, submerged_bridge, obstruction, pile, river_bed, rock -- could
+    not resolve to a kind, because `Subm Bridge` is not the `Bridge` key and four of the seven
+    carry no name and no class at all.
+
+    Keying a vocabulary HERE is what made that a rebuild. Every pack in R2 would have to be built
+    again to correct a table, and the table has now been found wrong twice. Ryan, 2026-09-23: "i
+    am tired of rebuilding."
+
+    So the POIs join in the app instead, per run, through kindHits() in plan-candidates.js --
+    exactly as docks.geojson and the state attractor feed already do, and for the same stated
+    reason he gave on 2026-09-19 about docks: "doing it in the pipeline would mean they got added
+    twice". `near[]` now carries pipeline-sourced marks only, the app strips any POI-kind mark it
+    finds in an older pack's `near[]` before merging its own, and no pack needs rebuilding for
+    this or for the next change to that vocabulary. POI_TYPE_KINDS in plan-candidates.js is the
+    one copy; there is deliberately no second copy in this file to drift from it.
+    """
     pts = []
-    p = os.path.join(pack, 'pois.geojson')
-    if os.path.isfile(p):
-        try:
-            with open(p, 'r', encoding='utf-8') as fh:
-                for x in (json.load(fh).get('features') or []):
-                    pr = x.get('properties') or {}
-                    k = POI_KINDS.get(pr.get('name')) or POI_KINDS.get(pr.get('class'))
-                    if not k:
-                        t = (pr.get('poi_type') or '')
-                        k = 'timber' if 'timber' in t else None
-                    if not k:
-                        continue
-                    c = (x.get('geometry') or {}).get('coordinates')
-                    if c and len(c) >= 2:
-                        pts.append((c[0], c[1], k, None))
-        except Exception:
-            pass
     p = os.path.join(pack, 'structure.geojson')
     if os.path.isfile(p):
         try:

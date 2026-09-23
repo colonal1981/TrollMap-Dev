@@ -91,9 +91,26 @@ describe('castSpots lists the charted features with no lanes at all', () => {
   });
 
   it('a kind the form cannot express is not a cast spot', () => {
-    // pois.geojson also yields hazards, shallows and bridges. Things to know about, not to cast at.
+    // pois.geojson also yields hazards and shallows. A hazard is a thing to know about and never
+    // to cast at. A shallow is the one type whose category depends on the activity -- Ryan:
+    // "avoid if in a deep area when trolling - target possibly when casting" -- and castSpots()
+    // is not told which, so it stays a near[] mark on a leg rather than a destination.
+    //
+    // BRIDGES ARE NO LONGER IN THIS LIST. This comment used to include them, and his own
+    // classification says the opposite: `pile` is "bridge pilings -- target", confirmed at 3 m
+    // against his photo, and `submerged_bridge` is "not a hazard it is a target". They became
+    // cast spots on 2026-09-23 when the app took over the POI join.
     const spots = castSpots([], { features: [pt('hazard', -80.73, 34.37), pt('shallow', -80.74, 34.38)] });
     expect(spots.length).toBe(0);
+  });
+
+  it('a bridge and a scour hole ARE cast spots, and were silently dropped for want of a name', () => {
+    // castSpots() gates on SPOT_KINDS, so a weighted kind with no entry there was discarded.
+    // `hole` carries the highest structure weight on a river -- 15, counted off congaree_river's
+    // own profile -- and could not become a cast spot on the water it was counted for.
+    const spots = castSpots([], { features: [pt('bridge', -80.73, 34.37), pt('hole', -80.74, 34.38),
+                                             pt('obstruction', -80.75, 34.39)] });
+    expect(spots.map((s) => s.type).sort()).toEqual(['bridge', 'hole', 'obstruction']);
   });
 });
 

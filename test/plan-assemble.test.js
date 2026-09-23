@@ -673,7 +673,17 @@ describe('plan-candidates — what the model is told to avoid', () => {
     ...Array.from({ length: 14 }, (_, k) => ({ s: 200 + k * 200, t: k % 2 ? 'timber' : 'point', d: 30 })),
     { s: 600, t: 'hazard', d: 25 },
     { s: 1800, t: 'hazard', d: 40 },
-    { s: 2400, t: 'obstruction', d: 55 },   // no entry in DEFAULT_WEIGHTS at all -- `?? 0`
+    // `obstruction` USED TO BE THIS TEST'S UNWEIGHTED EXAMPLE and is not one any more. It got a
+    // counted weight of 27 on 2026-09-23, after the second-water check that
+    // EVERY_POI_TYPE_ON_THE_CARD_2026-08-27 said had to happen first put it a median of 1 to 49 m
+    // from the state's own brushpile coordinates on eight SC waters. It is kept in this fixture
+    // because a weighted obstruction is exactly what must not be mistaken for a hazard.
+    { s: 2400, t: 'obstruction', d: 55 },
+    // A type with no entry in DEFAULT_WEIGHTS at all, which is the `?? 0` path this suite is
+    // about. Synthetic on purpose: after the POI vocabulary was fixed there is no real kind left
+    // that the table does not name, and a test that needs one has to say so out loud rather than
+    // borrow a kind that will grow a weight later.
+    { s: 3000, t: 'not_a_weighted_kind', d: 60 },
   ];
   const runs = [{
     type: 'Feature',
@@ -685,17 +695,29 @@ describe('plan-candidates — what the model is told to avoid', () => {
   it('keeps a zero-weight mark on the candidate instead of deleting it', () => {
     const [c] = build();
     const avoid = c.passes.filter((h) => h.weight === 0);
+    // Two deliberate zeroes and one type the table does not name.
     expect(avoid.length).toBe(3);
     // An unweighted type is lost the same way a deliberately-zeroed one is, and matters as much.
-    expect(avoid.some((h) => h.type === 'obstruction')).toBe(true);
+    expect(avoid.some((h) => h.type === 'not_a_weighted_kind')).toBe(true);
+  });
+
+  it('an obstruction is a target now, and is not counted among the things to avoid', () => {
+    const [c] = build();
+    const ob = c.passes.find((h) => h.type === 'obstruction');
+    expect(ob).toBeTruthy();
+    // 1,873 charted points on 62 waters scored zero here until the second-water check ran.
+    expect(ob.weight).toBe(27);
   });
 
   it('a hazard never uses up a slot a target would have had', () => {
     const m = forModel(build()[0]);
     // Twelve fishable, ranked and capped, plus every hazard on top of them.
     expect(m.structures.filter((s) => s.worthFishing).length).toBe(12);
-    expect(m.structures.filter((s) => !s.worthFishing).length).toBe(3);
-    expect(m.structuresShown).toBe(15);
+    // Two hazards. The unweighted synthetic kind is not in ALWAYS_SHOW, so it is capped out like
+    // any other low-scoring thing -- which is the correct behaviour and the reason ALWAYS_SHOW is
+    // a named list and not a weight test.
+    expect(m.structures.filter((s) => !s.worthFishing).length).toBe(2);
+    expect(m.structuresShown).toBe(14);
   });
 
   it('still hands them over in the order the boat meets them', () => {
@@ -709,7 +731,7 @@ describe('plan-candidates — what the model is told to avoid', () => {
     const m = forModel(build()[0]);
     // The old count agreed with the shown list about how much was hidden and was wrong about
     // both: it reported 14 things on a leg that has 17.
-    expect(m.structuresTotal).toBe(17);
+    expect(m.structuresTotal).toBe(18);
     expect(m.passes.hazard).toBe(2);
     expect(m.passes.obstruction).toBe(1);
   });
@@ -726,8 +748,14 @@ describe('plan-candidates — what the model is told to avoid', () => {
   it('does not move a single leg by knowing more about it', () => {
     // Selection walks on `score`, and a zero-weight mark adds nothing to it. So a lake full of
     // hazards returns the same water at the same lengths as before -- it just arrives labelled.
+    //
+    // THE COMPARISON KEEPS THE OBSTRUCTION. It is a weighted target since 2026-09-23 and so it
+    // genuinely does move the leg; dropping it from the control would test that a real weight has
+    // no effect, which is the opposite of what this suite is about. What is removed is exactly the
+    // two hazards and the unnamed kind -- the marks whose weight is zero.
     const withHazards = build()[0];
-    const clean = { ...runs[0], properties: { ...runs[0].properties, near: near.slice(0, 14) } };
+    const zeroless = [...near.slice(0, 14), near[16]];
+    const clean = { ...runs[0], properties: { ...runs[0].properties, near: zeroless } };
     const [without] = selectCandidates([clean], { ramp: LAUNCH, slug: 'w', usableAh: 200, windowMin: 600 });
     expect(withHazards.startM).toBe(without.startM);
     expect(withHazards.lengthM).toBe(without.lengthM);

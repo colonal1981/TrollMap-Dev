@@ -144,6 +144,11 @@ export async function buildSmartPlanV2(o) {
     (structFc && structFc.features) || [], (waterFc && waterFc.features) || [],
     (docksFc && docksFc.features) || [], poiSpots);
   const docks = structureIndex((docksFc && docksFc.features) || []);
+  // THE CHARTED POIs, FOR THE PER-RUN JOIN. `poiSpots` already feeds structureIndex above, which
+  // is RESOLUTION -- turning a `near[]` mark into a position. This is the other half: the index
+  // the selector walks to find the POIs a run passes, now that the pipeline no longer writes them
+  // into `near[]`. Same object, two jobs, one build.
+  const pois = structureIndex(poiSpots);
   // The state's own attractors, minus the ones Garmin already charted. Injected as rows rather
   // than fetched, like everything else this module reads, so the whole path still runs in a test
   // with no network.
@@ -284,7 +289,7 @@ export async function buildSmartPlanV2(o) {
     // screened, because "outside" and "nothing to be outside of" are different answers.
     water: waterTest(boundaryFc),
     // Per species, per season, per lake, from the research profile — see structureWeights().
-    weights: o.weights, reliefWeights: o.reliefWeights, docks, attractors,
+    weights: o.weights, reliefWeights: o.reliefWeights, docks, attractors, pois,
     // ── ON A RIVER THE HOP IS RIVER MILES, NOT A STRAIGHT LINE ────────────────────────────────
     //
     // The straight line is the right answer on a lake and a wrong one on moving water -- see

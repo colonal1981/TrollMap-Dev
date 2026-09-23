@@ -1064,7 +1064,10 @@ export const SPOT_KINDS = {
   // never in the pack. Calling a charted buoy a DNR brushpile is the same conflation Ryan
   // corrected on 2026-08-06, printed in the UI.
   attractor:   'charted fish attractor',
-  pile:        'brush pile',
+  // NOT 'brush pile'. Garmin's `pile` is BRIDGE PILINGS -- EVERY_POI_TYPE_ON_THE_CARD_2026-08-27
+  // records Ryan confirming it at 3 m against his own photo -- and this line has printed the wrong
+  // structure for them in the UI since it was written. A brushpile is `attractor` two lines up.
+  pile:        'bridge pilings',
   hump:        'offshore hump',
   ledge:       'ledge',
   point:       'point',
@@ -1081,6 +1084,29 @@ export const SPOT_KINDS = {
   // nothing is not a cluster -- calling it 'a cluster of 1 dock' is how a plan starts sounding
   // like it is padding". It needs a name here or it is silently dropped as an unknown kind.
   dock:        'single dock',
+  // ── KINDS castSpots() WAS DROPPING FOR WANT OF A NAME ──────────────────────────────────────
+  //
+  // castSpots() gates on `SPOT_KINDS[e.type]`, so a weighted kind with no entry here is silently
+  // discarded. `hole` is the sharpest: it carries the highest structure weight on a river (15,
+  // counted off congaree_river's own profile where `deep holes` is cited 15 times by 6 species)
+  // and could not become a cast spot on the water it was counted for.
+  //
+  // The rest arrive now that the app joins `pois.geojson` itself -- see POI_TYPE_KINDS in
+  // plan-candidates.js. Named as Garmin's chart names them, because that is what he is looking at.
+  hole:        'scour hole',
+  // Garmin's word for it, kept as Garmin's word. The 2026-09-23 check says these are brushpiles
+  // on eight SC waters, but the chart in his hand says Obstruction and the label must match it.
+  obstruction: 'charted obstruction',
+  bridge:      'bridge',
+  // NOT `shallow`. It is the one type in Ryan's classification whose category depends on what you
+  // are doing -- "avoid if in a deep area when trolling - target possibly when casting" -- and
+  // castSpots() is not told which. cast-spots-need-no-lane.test.js made that call before this
+  // change and it still holds; a shallow flat reaches him as a near[] mark on a leg, where the
+  // leg type is known, and not as a standalone destination.
+  creek_bed:   'submerged creek channel',
+  river_bed:   'submerged river channel',
+  road_bed:    'submerged roadbed',
+  rock:        'rock',
 };
 
 /**
