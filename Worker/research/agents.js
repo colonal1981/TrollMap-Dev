@@ -180,6 +180,54 @@ function missingConfirmedSpecies(confirmed, returnedKeys) {
   return (confirmed || []).filter((s2) => !returned.has(mergeKey(s2)) && !answered(s2));
 }
 
+/**
+ * WHICH PART OF A REPLY IS THE SECTION, WHEN THE MODEL NAMED IT AND LEFT IT EMPTY.
+ *
+ * The old pick took `parsed[dataKey]` only when it had keys, and otherwise fell back to the WHOLE
+ * reply. That fallback exists for a model that forgets the wrapper and puts the section at the top
+ * level. It also caught the opposite case -- a model that used the wrapper correctly and said
+ * there was nothing to put in it -- and turned that answer into a section made of field names.
+ *
+ * Measured 2026-09-23 on the river batch, Nolichucky River, TN: discover mode, five documents, no
+ * agency source naming a fish, so the model did what rule C tells it to and returned
+ * `"speciesFound": [], "trollingIntelligence": {}` beside `lakeForage`. The pick fell through to
+ * the reply, the normaliser gave every key four null seasons, and the profile was saved with
+ * three fish called lakeForage, speciesFound and trollingIntelligence. The script's
+ * empty-section guard never fired, because the section was not empty. In the app the species
+ * picker on that river offered those three names and hid all 35 real fish.
+ *
+ * A key that is PRESENT is the model's answer, empty or not. Only a reply that names neither the
+ * section nor the agent is read as an unwrapped section.
+ */
+function pickAgentSection(parsed, dataKey, agentKey) {
+  const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+  if (!isObj(parsed)) return {};
+  if (isObj(parsed[dataKey]) && Object.keys(parsed[dataKey]).length) return parsed[dataKey];
+  if (isObj(parsed[agentKey]) && Object.keys(parsed[agentKey]).length) return parsed[agentKey];
+  if (Object.prototype.hasOwnProperty.call(parsed, dataKey)
+      || Object.prototype.hasOwnProperty.call(parsed, agentKey)) return {};
+  return parsed;
+}
+
+/**
+ * The fields a fisheries reply carries BESIDE its section. None of them is ever a fish, so none
+ * of them may survive as a species key -- even from an unwrapped reply, where they sit at the
+ * same level as the species. `sources` is not here: the section keeps it, as it always has.
+ *
+ * scripts/research_lakes.py keeps its own copy of this list to clean a profile saved before this
+ * existed, and a test holds the two copies equal.
+ */
+const FISHERIES_ENVELOPE_KEYS = ['trollingIntelligence', 'speciesFound', 'lakeForage', 'note', 'notes'];
+const ENVELOPE_NOT_FISH = new Set(FISHERIES_ENVELOPE_KEYS);
+
+/** The fisheries section of a reply: pickAgentSection(), then the envelope fields removed. */
+function fisheriesSection(parsed, agentKey = 'fisheries') {
+  const picked = pickAgentSection(parsed, 'trollingIntelligence', agentKey);
+  const out = {};
+  for (const [k, v] of Object.entries(picked)) if (!ENVELOPE_NOT_FISH.has(k)) out[k] = v;
+  return out;
+}
+
 /** Mutates `section` in place: splits group-term keys onto the confirmed species they cover. */
 function redistributeGroupTerms(section, confirmed) {
   for (const [key, seasons] of Object.entries(section)) {
@@ -1623,7 +1671,9 @@ async function handleResearchAgent(request, env) {
           const rawText = extractLLMText(llmResult.data);
           const parsed = extractJsonPossibly(rawText);
           if (!parsed) { lastReason = 'non-JSON response'; continue; }
-          const section = parsed.trollingIntelligence || parsed[agentKey] || parsed || {};
+          // Same pick as the single-shot path below, and literally the same function -- see
+          // fisheriesSection() for the Nolichucky run that saved three field names as fish.
+          const section = fisheriesSection(parsed, agentKey);
           const got = Object.keys(section).filter((k) => k !== 'sources');
           if (!got.length) { lastReason = 'empty section'; continue; }
           // ── THE LAKE-LEVEL ANSWERS, WHICH THIS LINE USED TO THROW AWAY ────────────────────
@@ -1843,7 +1893,9 @@ holding: coerceHolding(entry.holding, holdingRejects),
   }
 
   const dataKey = agent.expectedKey;
-  let sectionData = (parsed[dataKey] && Object.keys(parsed[dataKey]).length > 0) ? parsed[dataKey] : (parsed[agentKey] && Object.keys(parsed[agentKey] || {}).length > 0) ? parsed[agentKey] : parsed;
+  let sectionData = agentKey === 'fisheries'
+    ? fisheriesSection(parsed, agentKey)
+    : pickAgentSection(parsed, dataKey, agentKey);
   const sources = parsed.sources || sectionData?.sources || [];
 
   // The limnology coercion block that stood here existed to repair a model returning the string
@@ -2002,4 +2054,5 @@ export {
   COASTAL_AGENTS, COASTAL_SKIPPED_AGENTS,
   isCoastalZone, coastalAgentPlan,
   splitConjunctiveName, missingConfirmedSpecies,
+  pickAgentSection, fisheriesSection, FISHERIES_ENVELOPE_KEYS,
 };

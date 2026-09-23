@@ -596,7 +596,17 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
     # 46 verified stamps, one layer down.
     prev_profile, prev_why = stored_profile(lake)
     profile = carry_forward(prev_profile or {}, det["profile"])
-    out["carried_forward"] = sorted(carried_keys(prev_profile or {}, det["profile"]))
+    # Two things carry_forward() keeps that are not true any more. See the two helpers.
+    settled = []
+    if drop_stale_discovery_mark(profile, det["profile"]):
+        settled.append("biology._speciesDiscoveredBy")
+    stripped = strip_envelope_species(profile)
+    if stripped:
+        out["stripped_non_species"] = stripped
+        print(f"      [{lake}] stored trollingIntelligence held reply fields as fish, removed: "
+              f"{', '.join(stripped)}")
+    out["carried_forward"] = sorted(carried_keys(prev_profile or {}, det["profile"])
+                                    - set(settled))
     if out["carried_forward"]:
         print(f"      [{lake}] carried forward from the stored profile: "
               f"{', '.join(out['carried_forward'])}")
@@ -988,7 +998,12 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
         # 2026-08-10: a group came back empty, a quarter of the lake's species vanished, and every
         # line on screen still said success. It is not written and it is reported.
         if not section:
-            out["error"] = "agent-llm returned an empty trollingIntelligence section"
+            # WHICH EMPTY. With a roster it is a failure. With none, it is discover mode's rule C
+            # -- no agency source in the documents names a fish -- and the model answering it
+            # correctly. Nothing is saved either way; the report says which one happened.
+            out["error"] = ("agent-llm returned an empty trollingIntelligence section" if species
+                            else "no species roster, and the documents established none -- no "
+                                 "agency source in them names a fish in this water")
             return out
 
 
@@ -1111,6 +1126,72 @@ def carry_forward(stored, fresh):
     if fresh in EMPTY:
         return stored
     return fresh
+
+
+def drop_stale_discovery_mark(profile, fresh):
+    """Remove `biology._speciesDiscoveredBy` when THIS run's deterministic pass supplied the roster.
+
+    The mark says the species list was read out of documents because no deterministic source named
+    a fish. carry_forward() keeps it like any other stored field, which is right while the roster
+    beside it is still the discovered one and wrong the moment a registry roster replaces it.
+
+    Measured 2026-09-23, the five-river rerun, Broad River SC -- one of the three rivers whose NC
+    WRC list never reached them because the name did not resolve:
+
+        [Broad River, SC] carried forward from the stored profile: ..., biology._speciesDiscoveredBy
+
+    The slug fix gave it NC WRC's roster that run, and the mark from the blind run went into the
+    save beside it, still saying there was no deterministic source for this water. Pee Dee and
+    French Broad were in the same position. Nothing reads the mark yet, which is the only reason
+    it was not visible; a mark nobody reads is still a record, and this one was false.
+
+    Returns True when it removed the mark.
+    """
+    fresh_roster = ((fresh or {}).get("biology") or {}).get("predatorSpecies") or []
+    bio = (profile or {}).get("biology")
+    if fresh_roster and isinstance(bio, dict) and "_speciesDiscoveredBy" in bio:
+        del bio["_speciesDiscoveredBy"]
+        return True
+    return False
+
+
+# The fields a fisheries reply carries BESIDE trollingIntelligence. Never a fish. The Worker owns
+# this list as FISHERIES_ENVELOPE_KEYS in Worker/research/agents.js; this copy exists only to clean
+# a profile saved before the Worker stopped writing them, and a test holds the two equal.
+AGENT_ENVELOPE_KEYS = ("trollingIntelligence", "speciesFound", "lakeForage", "note", "notes")
+
+
+def strip_envelope_species(profile):
+    """Remove reply field names that were saved as species keys in trollingIntelligence.
+
+    Nolichucky River, TN, 2026-09-23: discover mode, no agency source naming a fish, and the model
+    answered correctly with an empty list and an empty section. The Worker's section pick fell
+    back to the whole reply and the save stored three fish called lakeForage, speciesFound and
+    trollingIntelligence. The app's species picker offered those three and hid all 35 real fish.
+
+    The Worker no longer writes them (pickAgentSection). This removes them from what is already
+    stored, on any run that loads the profile -- including --limnology-only, which saves the
+    carried profile without calling the agent, and is therefore the cheap way to clean one water.
+
+    A SECTION LEFT HOLDING ONLY `sources` IS EMPTY. On Nolichucky the fallback also carried the
+    reply's top-level `sources` into the section -- the only one of the 111 stored profiles with a
+    `sources` key there -- and with the three names gone the picker still offered "sources" as a
+    fish. A list of where the intelligence came from, beside no intelligence, says nothing.
+
+    Returns the keys it removed, sorted.
+    """
+    ti = (profile or {}).get("trollingIntelligence")
+    if not isinstance(ti, dict):
+        return []
+    gone = sorted(k for k in ti if k in AGENT_ENVELOPE_KEYS)
+    if not gone:
+        return []
+    kept = {k: v for k, v in ti.items() if k not in AGENT_ENVELOPE_KEYS}
+    if set(kept) <= {"sources"}:
+        gone = sorted(gone + list(kept))
+        kept = {}
+    profile["trollingIntelligence"] = kept
+    return gone
 
 
 def carried_keys(stored, fresh, path=""):

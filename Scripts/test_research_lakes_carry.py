@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""test_research_lakes_carry.py -- the run may only change what it computed.
+r"""test_research_lakes_carry.py -- the run may only change what it computed.
 
     py .\scripts\test_research_lakes_carry.py
 
@@ -159,8 +159,86 @@ class OnlyAnEarnedSlugIsForwarded(unittest.TestCase):
         self.assertEqual(R.SLUG_BY_NAME, {})
 
 
-if __name__ == '__main__':
-    unittest.main(verbosity=2)
+class TheDiscoveryMarkFollowsTheRoster(unittest.TestCase):
+    """2026-09-23 rerun: Broad River SC, Pee Dee and French Broad got NC WRC's roster through the
+    slug, and carried the blind run's "no deterministic source for this water" mark beside it."""
+
+    MARK = 'fisheries agent, from agency documents (no deterministic source for this water)'
+
+    def test_a_registry_roster_this_run_takes_the_mark_off(self):
+        stored = {'biology': {'predatorSpecies': ['Largemouth Bass'], '_speciesDiscoveredBy': self.MARK}}
+        fresh = {'biology': {'predatorSpecies': ['Largemouth Bass', 'Redbreast Sunfish', 'Flathead Catfish']}}
+        profile = R.carry_forward(stored, fresh)
+        self.assertTrue(R.drop_stale_discovery_mark(profile, fresh))
+        self.assertNotIn('_speciesDiscoveredBy', profile['biology'])
+        self.assertEqual(len(profile['biology']['predatorSpecies']), 3)
+        # The stored document is not edited by the settle; only the one being saved.
+        self.assertIn('_speciesDiscoveredBy', stored['biology'])
+
+    def test_a_discovered_roster_still_standing_keeps_its_mark(self):
+        # Clinch: nothing deterministic this run either, so the list IS still the discovered one.
+        stored = {'biology': {'predatorSpecies': ['Brown Trout'], '_speciesDiscoveredBy': self.MARK}}
+        fresh = {'biology': {'predatorSpecies': []}}
+        profile = R.carry_forward(stored, fresh)
+        self.assertFalse(R.drop_stale_discovery_mark(profile, fresh))
+        self.assertEqual(profile['biology']['_speciesDiscoveredBy'], self.MARK)
+
+    def test_no_biology_anywhere_is_left_alone(self):
+        self.assertFalse(R.drop_stale_discovery_mark({}, {}))
+        self.assertFalse(R.drop_stale_discovery_mark({'biology': None}, {'biology': {'predatorSpecies': ['X']}}))
+
+
+class ReplyFieldsAreNotFish(unittest.TestCase):
+    """Nolichucky River TN, 2026-09-23: an empty discover answer saved as three species named
+    lakeForage, speciesFound and trollingIntelligence. The shape below is what was stored."""
+
+    NULLS = {'spring': None, 'summer': None, 'fall': None, 'winter': None}
+
+    def nolichucky(self):
+        return {'biology': {'predatorSpecies': []},
+                'trollingIntelligence': {'lakeForage': dict(self.NULLS),
+                                         'speciesFound': dict(self.NULLS),
+                                         'trollingIntelligence': dict(self.NULLS),
+                                         'sources': [{'label': 'Derived', 'trust': 'DERIVED'}]}}
+
+    def test_the_stored_nolichucky_section_comes_out_empty(self):
+        p = self.nolichucky()
+        gone = R.strip_envelope_species(p)
+        self.assertEqual(p['trollingIntelligence'], {})
+        self.assertEqual(gone, ['lakeForage', 'sources', 'speciesFound', 'trollingIntelligence'])
+
+    def test_real_fish_beside_a_stray_field_are_kept_with_their_sources(self):
+        p = {'trollingIntelligence': {'Smallmouth Bass': dict(self.NULLS), 'lakeForage': {},
+                                      'sources': []}}
+        self.assertEqual(R.strip_envelope_species(p), ['lakeForage'])
+        self.assertEqual(sorted(p['trollingIntelligence']), ['Smallmouth Bass', 'sources'])
+
+    def test_a_clean_section_is_not_touched(self):
+        # 110 of the 111 stored profiles. `sources` alone is not a reason to empty anything.
+        ti = {'Largemouth Bass': dict(self.NULLS), 'sources': []}
+        p = {'trollingIntelligence': ti}
+        self.assertEqual(R.strip_envelope_species(p), [])
+        self.assertIs(p['trollingIntelligence'], ti)
+
+    def test_no_section_is_no_work(self):
+        self.assertEqual(R.strip_envelope_species({}), [])
+        self.assertEqual(R.strip_envelope_species({'trollingIntelligence': None}), [])
+
+    def test_the_run_settles_both_before_it_reads_the_roster(self):
+        # Order matters: the carried-forward line and `species` are read right after these, so a
+        # settle that ran later would print a mark it was about to drop.
+        src = open(R.__file__, encoding='utf-8').read()
+        at_carry = src.index('profile = carry_forward(prev_profile or {}, det["profile"])')
+        at_mark = src.index('drop_stale_discovery_mark(profile, det["profile"])')
+        at_strip = src.index('strip_envelope_species(profile)')
+        at_species = src.index('species = ((profile.get("biology") or {}).get("predatorSpecies")) or []')
+        self.assertLess(at_carry, at_mark)
+        self.assertLess(at_mark, at_strip)
+        self.assertLess(at_strip, at_species)
+
+    def test_an_empty_answer_with_no_roster_is_named_for_what_it_is(self):
+        src = open(R.__file__, encoding='utf-8').read()
+        self.assertIn('no species roster, and the documents established none', src)
 
 
 class TheLimnologySelectorAsksTheDocument(unittest.TestCase):
@@ -219,3 +297,10 @@ class TheLimnologySelectorAsksTheDocument(unittest.TestCase):
 
     def test_whitespace_is_not_a_difference(self):
         self.assertEqual(self.decide("  a cast said this  ", "a cast said this"), "done")
+
+
+# THE RUNNER GOES LAST. It sat above TheLimnologySelectorAsksTheDocument from 2026-09-15 to
+# 2026-09-23, so running this file directly called unittest.main() before that class existed and
+# its cases ran only under discovery.
+if __name__ == '__main__':
+    unittest.main(verbosity=2)
