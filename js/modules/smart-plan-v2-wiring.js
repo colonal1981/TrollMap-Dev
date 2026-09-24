@@ -168,7 +168,9 @@ export async function runSmartPlanV2(opts = {}) {
   // fire-and-forget line in conditions-strip.js on a different trigger, and this call sat
   // thirty-three lines ahead of the only async water work on the path. So it ran cold every
   // time and every inland lake came back "No regulation data". One await, before the read.
-  await ensureRegulations(inp.lakeName, { worker: CF_WORKER_URL });
+  // `at`: the launch, so a water in two states is checked against the book for the bank he puts
+  // in from -- see regulationStatePlace() in plan-preflight.js.
+  await ensureRegulations(inp.lakeName, { worker: CF_WORKER_URL, at: ramp });
   // The plan render is synchronous, so the advisory table is warmed here beside the regulations
   // it prints under. It never throws -- a water with no advisory and no network look the same to
   // the caller, and both mean the section does not appear.
@@ -191,7 +193,7 @@ export async function runSmartPlanV2(opts = {}) {
   // and it is one load used by both, not a second fetch for the law.
   const researched = await loadResearchedProfile(inp.lakeName);
 
-  const legality = checkPlanLegality(inp.lakeName, species, date, { profile: researched });
+  const legality = checkPlanLegality(inp.lakeName, species, date, { profile: researched, at: ramp });
   if (!legality.legal) {
     say(`${species} not legal here today`, true);
     if (out) out.innerHTML = `<p style="color:var(--warn);font-size:12px">REGULATION BLOCK — `
@@ -358,7 +360,7 @@ export async function runSmartPlanV2(opts = {}) {
       // the state is -- regulationStateFor() is the SAME derivation the legality check used
       // twenty lines above, and two readers of "which state is this water in" is how they drift.
       // Inland waters resolve a state and then find no coastal roster, so this is null there.
-      inshoreSeason: inshoreSeasonFor(regulationStateFor(inp.lakeName), species, date),
+      inshoreSeason: inshoreSeasonFor(regulationStateFor(inp.lakeName, ramp), species, date),
       // THE ZONE, NOT THE STATE, because the ENC bottom is filed per coastal zone.
       // detectCoastalZone() is the same derivation checkPlanLegality() routes on, and it
       // returns null inland -- which is exactly when this block must not print.

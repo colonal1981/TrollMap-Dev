@@ -136,7 +136,8 @@ describe('the wiring actually hands it over', () => {
   const wiring = src('js/modules/smart-plan-v2-wiring.js');
 
   it('checkPlanLegality is given the profile', () => {
-    expect(wiring).toMatch(/checkPlanLegality\([^)]*\{\s*profile:\s*researched\s*\}/);
+    // `, at: ramp` rides beside it since 2026-09-24 -- the launch, for a water in two states.
+    expect(wiring).toMatch(/checkPlanLegality\([^)]*\{\s*profile:\s*researched\s*[,}]/);
   });
 
   it('AND THE PROFILE IS LOADED FIRST — the check cannot await for it', () => {
@@ -166,7 +167,7 @@ describe('the wiring actually hands it over', () => {
     // Smart Plan day and not a Pick Water day is worse than one that blocks neither, because now
     // there is a route to the water that does not ask.
     const pw = src('js/modules/plan-water-ui.js');
-    expect(pw).toMatch(/checkPlanLegality\([^)]*\{\s*profile:\s*researched\s*\}/);
+    expect(pw).toMatch(/checkPlanLegality\([^)]*\{\s*profile:\s*researched\s*[,}]/);
     const load = pw.indexOf('const researched = await loadResearchedProfile(');
     const check = pw.indexOf('const legality = checkPlanLegality(');
     expect(load).toBeGreaterThan(-1);

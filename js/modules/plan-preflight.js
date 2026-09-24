@@ -34,6 +34,7 @@ import { checkCoastalRegulations } from '../data/coastal-regulations.js';
 import { COASTAL_ZONES, isCoastalKey } from '../data/coastal-zones.js';
 import { resolveR2Key } from '../data/lake-keys.js';
 import { lakeDbEntryFor, lakeRecordFor } from '../data/lake-registry.js';
+import { launchStateOn, primeWaterStateParts } from '../data/water-state-parts.js';
 import { primeRegulations, regulationsPrimed, nameForms } from '../data/regulations-live.js';
 import { fetchWaterConditions } from '../utils/water-conditions.js';
 import { getTideStateForZone } from './tide-engine.js';
@@ -53,11 +54,41 @@ export function detectCoastalZone(lakeName) {
  *
  * One derivation, because checkPlanLegality() and ensureRegulations() must agree about it or the
  * cache is warmed under one key and read under another.
+ *
+ * @param {string} lakeName
+ * @param {[number, number]} [at]  the launch, [lon, lat]. Only read on a water in two states.
  */
-export function regulationStateFor(lakeName) {
+export function regulationStateFor(lakeName, at = null) {
+  return regulationStatePlace(lakeName, at).state;
+}
+
+/**
+ * WHICH STATE'S BOOK, AND HOW THAT WAS DECIDED.
+ *
+ * A water in two states is under two books, and the one that governs a morning is the one for
+ * the bank he launches from. 28 of the 352 waters we offer cross a line (label_water_states.py),
+ * and this used the registry row's one state for all of them -- which 3DHP assigns from the
+ * centroid, so a put-in in Cherokee County, SC on the Broad was checked against North Carolina's
+ * statewide limits. Now, on a water with more than one state, the launch is placed on the Census
+ * line (water-state-parts.js) and its state's book is the one read.
+ *
+ * WHEN THE LAUNCH CANNOT BE PLACED -- no position, the state lines not loaded, or a launch more
+ * than the binding distance from the water -- the row's state is used, as before, and `basis:
+ * 'row'` says so, so the caller can tell him which book was read and that it may be the wrong one.
+ *
+ * @returns {{state: string|null, states: string[], basis: 'coastal'|'single'|'launch'|'row', why: string}}
+ */
+export function regulationStatePlace(lakeName, at = null) {
   const zoneKey = detectCoastalZone(lakeName);
-  const st = zoneKey ? (COASTAL_ZONES[zoneKey] || {}).state : null;
-  return st || (lakeDbEntryFor(lakeName) || {}).state || null;
+  const zst = zoneKey ? (COASTAL_ZONES[zoneKey] || {}).state : null;
+  if (zst) return { state: zst, states: [zst], basis: 'coastal', why: '' };
+  const e = lakeDbEntryFor(lakeName) || {};
+  const rowState = e.state || null;
+  const states = Array.isArray(e.states) && e.states.length ? e.states : (rowState ? [rowState] : []);
+  if (states.length < 2) return { state: rowState || states[0] || null, states, basis: 'single', why: '' };
+  const hit = launchStateOn(e.slug, at);
+  if (hit.state) return { state: hit.state, states, basis: 'launch', why: hit.why };
+  return { state: rowState || states[0], states, basis: 'row', why: hit.why };
 }
 
 /**
@@ -79,10 +110,22 @@ export function regulationStateFor(lakeName) {
  *
  * `regulationsPrimed()` already existed for exactly this and had NO CALLERS. It does now.
  *
+ * AND ON A WATER IN TWO STATES, THE LINE FIRST. regulationStateFor() places the launch with a
+ * synchronous read of water-state-parts.js, so the file has to be in hand before the state is
+ * asked for -- the same cold-cache shape as the book itself. Fetched only for a water that
+ * crosses a line; every other water never asks for it.
+ *
+ * @param {object} [opts]
+ * @param {string} [opts.worker]
+ * @param {[number, number]} [opts.at]  the launch, [lon, lat] -- pass the same one to
+ *                                      checkPlanLegality() or the two disagree about the state
  * @returns {Promise<boolean>} true when the digest is in hand
  */
 export async function ensureRegulations(lakeName, opts = {}) {
-  const st = regulationStateFor(lakeName);
+  if (regulationStatePlace(lakeName).states.length > 1) {
+    await primeWaterStateParts({ worker: opts.worker });
+  }
+  const st = regulationStateFor(lakeName, opts.at);
   if (!st) return false;
   if (regulationsPrimed(st, lakeName)) return true;
   try {
@@ -157,6 +200,7 @@ export function profileClosures(profile, species) {
  *
  * @param {object} [o]
  * @param {object} [o.profile] the researched lake profile, if it has been loaded
+ * @param {[number, number]} [o.at] the launch, [lon, lat] -- the same one ensureRegulations() had
  * @returns {{legal: boolean, reason: string, warnings: string[], coastal: boolean}}
  */
 export function checkPlanLegality(lakeName, species, date, o = {}) {
@@ -165,7 +209,22 @@ export function checkPlanLegality(lakeName, species, date, o = {}) {
   // THE STATE IS WHAT UNLOCKS THE DIGEST. Inland it comes off the registry row, which this file
   // already reads for other reasons; on the coast the zone carries it. Without a state,
   // checkRegulations falls to its unknown branch — which now warns instead of saying nothing.
-  const inlandState = st || regulationStateFor(lakeName);
+  // On a water in two states it is the launch's -- see regulationStatePlace().
+  const place = st ? null : regulationStatePlace(lakeName, o.at);
+  const inlandState = st || (place && place.state);
+  const lineNotes = [];
+  const lineWarnings = [];
+  if (place && place.states.length > 1) {
+    const both = place.states.join(' and ');
+    if (place.basis === 'launch') {
+      lineNotes.push(`This water is in ${both}. The launch is in ${place.state}, so ${place.state}'s `
+                   + 'book is the one checked.');
+    } else {
+      lineWarnings.push(`This water is in ${both} and the launch could not be placed on either side `
+                      + `of the line (${place.why}), so ${place.state}'s book was checked. If you `
+                      + `put in on the other side, check that state's limits before you keep one.`);
+    }
+  }
   let r;
   try {
     r = st ? checkCoastalRegulations(st, species, date)
@@ -188,10 +247,12 @@ export function checkPlanLegality(lakeName, species, date, o = {}) {
   return {
     legal: r ? r.legal !== false : true,
     reason: (r && r.reason) || '',
-    warnings: [...extracted, ...((r && r.warnings) || [])],
+    warnings: [...extracted, ...((r && r.warnings) || []), ...lineWarnings],
     // Read, and not in the way. Carried separately so the caller can show it without it counting
     // as one of the things the plan wants to tell him.
-    notes: (r && r.notes) || [],
+    notes: [...lineNotes, ...((r && r.notes) || [])],
+    // Which state's book was read and why -- null on the coast, where the zone decides.
+    regulationState: place,
     // The published limits, when the digest answered. A caller that shows nothing else should
     // still be able to show these.
     limits: (r && r.limits) || null,

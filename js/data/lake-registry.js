@@ -115,6 +115,14 @@ async function fetchRegistry() {
       slug,
       name: rec.name,
       state: rec.state,
+      // EVERY STATE THE WATER IS IN, most of it first -- measured from its outline against the
+      // Census state lines (label_water_states.py) and carried onto the row by
+      // consolidate_lake_index.py. `state` stays the row's one state: it groups the picker and
+      // it is half of every research profile's id, see identityNamesForRecord(). A row the
+      // measurement has not reached yet has only `state`, and that is its list.
+      states: Array.isArray(rec.states) && rec.states.length ? rec.states.slice()
+            : String(rec.state || '').toUpperCase().split(/[^A-Z]+/).filter(Boolean),
+      stateShares: rec.state_shares && typeof rec.state_shares === 'object' ? rec.state_shares : null,
       displayName: displayName(rec),
       gnis: rec.gnis || null,
       areaAcres: Number(rec.area_acres) || 0,
@@ -545,6 +553,13 @@ function buildNormIndexes() {
       // index keeps the ordinal, because without a state "Broad River" genuinely is ambiguous
       // and largest-first has to break the tie as it always did.
       const bare = k.replace(/\b\d+\b/g, ' ').replace(/\s+/g, ' ').trim();
+      // THE ROW'S OWN STATE ONLY, NOT EVERY STATE IT WAS MEASURED IN -- and that was measured.
+      // Keying on `states` too, in one pass, changed one answer of 4,391 names asked on
+      // 2026-09-24, the wrong way: the 3,075-acre SC Catawba, 12% of it over the line, took
+      // `NC|catawba river` from the Burke County reach, the only Catawba row wholly in NC. Put
+      // in a second pass that fills only empty keys, it changed none -- every stamped name that
+      // would have used it already reaches the same water through the state-blind index. A rule
+      // that changes nothing is not added.
       for (const st of String(r.state || '').toUpperCase().split(/[^A-Z]+/).filter(Boolean)) {
         for (const key of (bare && bare !== k) ? [k, bare] : [k]) {
           const sk = `${st}|${key}`;
@@ -621,6 +636,9 @@ export function lakeDbEntryFor(query) {
     // registry/regulations_table.json was reaching the browser and stopping one field short of
     // the planner. Ryan saw it in a preflight on 2026-08-30.
     state: r.state || null,
+    // And every state it is in, so a caller that knows where the launch is can pick the right
+    // book -- see regulationStateFor() in plan-preflight.js.
+    states: r.states || (r.state ? [r.state] : []),
     center: [r.lat, r.lon, r.areaAcres > 5000 ? 11 : r.areaAcres > 500 ? 12 : 13],
     bounds: Array.isArray(b) && b.length === 4 ? [[b[1], b[0]], [b[3], b[2]]] : null,
     usgs: r.usgs || null,

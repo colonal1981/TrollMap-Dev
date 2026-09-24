@@ -198,7 +198,9 @@ describe('it reaches buildPlanRequest, which is the only test that counts', () =
   it('ONE derivation of the state, shared with the legality check', () => {
     // Two readers of "which state is this water in" is how they drift, and this path already had
     // one: regulationStateFor().
-    expect(wiring).toContain('inshoreSeasonFor(regulationStateFor(inp.lakeName)');
+    // With the launch since 2026-09-24, as the legality check has it -- a water in two states
+    // answers by which bank he puts in from, and both readers must ask the same question.
+    expect(wiring).toContain('inshoreSeasonFor(regulationStateFor(inp.lakeName, ramp)');
   });
 });
 

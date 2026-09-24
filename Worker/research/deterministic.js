@@ -757,7 +757,16 @@ export async function registrySpeciesFor(env, lakeName, state = '', boundSlug = 
   const st = String(state || (row && row.state) || '').toUpperCase();
 
   // ── North Carolina's own file, because NC publishes species nowhere else ──────────────────
-  if (st === 'NC' || !st) {
+  //
+  // THE FILE IS KEYED BY SLUG, SO THE SLUG IS THE GATE. This read `if (st === 'NC' || !st)`, and
+  // the state it tested is whatever the caller sent. A river is in more than one state, and the
+  // caller sends the state of the NAME: "Broad River, SC" and "French Broad River, TN" are both
+  // rows that NC WRC surveys, 8 and 7 species, and a caller that said SC or TN shut the only
+  // roster either has. build_nc_species_by_lake.py binds an NC WRC location to a water by name
+  // AND geometry, so a slug in this file is already a water NC WRC stood on. Measured
+  // 2026-09-24: 82 entries, every one an NC row or an NC coastal zone -- dropping the state
+  // test changes no answer that was right and restores the two that were wrong.
+  {
     try {
       const entry = (await ncSpeciesByLake(env))[slug] || null;
       if (entry && entry.predatorSpecies && entry.predatorSpecies.length) {

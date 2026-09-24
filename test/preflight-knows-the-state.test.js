@@ -68,7 +68,11 @@ describe('the preflight still reads it, or the field above is decoration', () =>
   const pre = src('js/modules/plan-preflight.js');
 
   it('derives an inland state from the registry entry', () => {
-    expect(/lakeDbEntryFor\(lakeName\)\s*\|\|\s*\{\}\)\.state/.test(pre)).toBe(true);
+    // Since 2026-09-24 through regulationStatePlace(), which reads the entry's `state` for every
+    // water and its `states` only to pick the launch's book on a water in two -- see
+    // the-broad-is-in-two-states.test.js.
+    expect(/const e = lakeDbEntryFor\(lakeName\)\s*\|\|\s*\{\};/.test(pre)).toBe(true);
+    expect(pre.includes('const rowState = e.state || null;')).toBe(true);
   });
 
   it('and hands it to checkRegulations as the fourth argument', () => {

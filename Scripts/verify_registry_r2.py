@@ -155,6 +155,11 @@ FILES = [
      "Worker/research/agents.js:speciesTraitsEntries() gives the fisheries agent the state's own "
      "spawning temperature and habitat paragraph for each fish -- 27 species, 32 rows. Without it "
      "the agent writes spawn timing from recollection, which is the reason the field was cut"),
+    # 2026-09-24. Published beside lake_index.json because the APP reads it, not the Worker.
+    ("water_state_parts.json", "water_state_parts.json", "verbatim",
+     "js/data/water-state-parts.js places a launch on a water in two states on the Census line -- "
+     "27 waters. Without it the launch's book is the registry row's state, a put-in in Cherokee "
+     "County, SC on the Broad reads North Carolina's, and the preflight says so"),
 ]
 
 # ── THE TABLE THE UPLOADER PUBLISHES FROM, READ RATHER THAN RESTATED ─────────────────────────

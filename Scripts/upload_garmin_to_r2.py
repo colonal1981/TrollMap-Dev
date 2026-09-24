@@ -821,6 +821,25 @@ def main():
             print(f"!! {wb} not found -- gauges, pool level and tide stay pending in the Worker; "
                   f"build it with build_water_bindings.py")
 
+        # water_state_parts.json -- WHICH SIDE OF A STATE LINE A LAUNCH IS ON. 2026-09-24.
+        #
+        # Read by the APP, not the Worker (js/data/water-state-parts.js, on the plan path), which
+        # is why it is here beside lake_index.json and not in PASSTHROUGH_REGISTRIES: that table
+        # is the Worker's, and test/registry-passthrough-parity.test.js holds every name in it to
+        # a Worker loader. 27 waters cross a state line; without this a launch on one is checked
+        # against the registry row's state -- a put-in in Cherokee County, SC on the Broad
+        # against North Carolina's book -- and the preflight says it could not place it.
+        wsp = regdir / "water_state_parts.json"
+        if wsp.exists():
+            reg_jobs.append((str(wsp), f"{args.prefix}_registry/water_state_parts.json",
+                             "_registry", "water_state_parts"))
+            print(f"lines:    {len((json.load(open(wsp, encoding='utf-8')) or {}).get('waters') or {}):,} "
+                  f"two-state waters -> {args.prefix}_registry/water_state_parts.json "
+                  f"({wsp.stat().st_size/1024:.0f} KB before gzip)")
+        else:
+            print(f"!! {wsp} not found -- a launch on a water in two states is checked against the "
+                  f"row's state's book; build it with label_water_states.py")
+
         # THE THIRD FILE TO LEARN THE SAME LESSON, after lake_index.json and water_bindings.json:
         # a registry file the app needs and the uploader does not ship is indistinguishable from
         # work that was never done.

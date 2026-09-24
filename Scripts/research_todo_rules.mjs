@@ -41,32 +41,51 @@ export function stampedStates(name) {
 export function stampAllows(rec, name) {
   const stamped = stampedStates(name);
   if (!rec || !stamped.length) return true;
-  const own = String(rec.state || '').toUpperCase().split(/[^A-Z]+/).filter(Boolean);
+  const own = statesOf(rec);
   return !own.length || own.some((s) => stamped.includes(s));
 }
 
 /**
- * THE ROW'S STATE WHEN A ROW ANSWERED, THE NAME'S OWN STAMP WHEN NONE DID.
+ * Every state the record's water is in: the row's own, then every state its outline was measured
+ * in (`states`, carried by consolidate_lake_index.py from label_water_states.py). A record the
+ * measurement has not reached has only its own.
+ */
+export function statesOf(rec) {
+  const out = String((rec && rec.state) || '').toUpperCase().split(/[^A-Z]+/).filter(Boolean);
+  for (const s of ((rec && rec.states) || [])) {
+    const u = String(s || '').toUpperCase();
+    if (u && !out.includes(u)) out.push(u);
+  }
+  return out;
+}
+
+/**
+ * THE NAME'S STAMP WHEN THE WATER IS IN THAT STATE, THE ROW'S OTHERWISE, THE STAMP WHEN NO ROW.
  *
  * With a cross-state binding refused by stampAllows(), a row that answers is in a state the name
  * allows or was bound by the access index on its own evidence, so this is where the 28 refused
- * names get their state from now: their own stamp, "Silver Lake, GA" -> GA, where the refused
- * row would have said SC.
+ * names get their state from: their own stamp, "Silver Lake, GA" -> GA, where the refused row
+ * would have said SC.
  *
- * THE STAMP DOES NOT OVERRIDE A ROW, AND THAT WAS MEASURED, NOT ASSUMED. Nine names the access
- * index binds carry a stamp their row does not -- Broad (SC), Thurmond (SC), Wylie (SC), Chatuge
- * (NC), Russell (GA), Tugalo (GA), Yonah (GA), French Broad (TN) and the Wright River -- and for
+ * AND A BORDER WATER IS RESEARCHED UNDER THE STATE ITS NAME SAYS. Nine names the access index
+ * binds carry a stamp their row does not -- Broad (SC), Thurmond (SC), Wylie (SC), Chatuge (NC),
+ * Russell (GA), Tugalo (GA), Yonah (GA), French Broad (TN) and the Wright River -- and for
  * "Broad River, SC" the stamp is the half that is right (Ryan: "there is no Broad River in
- * Cherokee County, North Carolina"). But the Worker opens NC WRC's species file only when the
- * state it is handed is NC (registrySpeciesFor in Worker/research/deterministic.js), and that
- * file holds 8 species for broad_river and 7 for french_broad_river. Stamp-first would have
- * researched both under the right state and without the only roster either one has. The rows
- * are the register's broad-river-sc-is-an-nc-row item, and they are fixed there or not at all.
+ * Cherokee County, North Carolina"). Until 2026-09-24 the row won anyway, because the Worker
+ * opened NC WRC's species file only when the state it was handed was NC, and that file holds
+ * 8 species for broad_river and 7 for french_broad_river. The gate now keys on the slug
+ * (registrySpeciesFor in Worker/research/deterministic.js), so the state can be the true one.
+ *
+ * "True" means the water's own outline reaches that state -- `states`, measured against the
+ * Census lines. A stamp naming a state the water never touches is still overruled by the row.
  *
  * The stamp pattern also reads "(Hall Co, GA)", which the one it replaces did not.
  */
 export function stateFor(name, rec) {
-  return (rec && rec.state) || stampedStates(name)[0] || null;
+  const stamp = stampedStates(name)[0] || null;
+  if (!rec) return stamp;
+  if (stamp && statesOf(rec).includes(stamp)) return stamp;
+  return rec.state || stamp || null;
 }
 
 /**

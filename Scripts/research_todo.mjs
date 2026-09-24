@@ -125,8 +125,8 @@ const describe = (name) => {
     // cross-state answer refused above, what it binds is a name match and nothing more. A slug is
     // only as good as the binding that produced it.
     bound_by: viaIndex ? 'access-index' : (rec ? 'lake-registry' : null),
-    // The row's state, else the name's own stamp -- which is where a refused binding's state
-    // comes from now. See stateFor() for why the stamp does not override a row that answered.
+    // The name's own stamp when the water's outline reaches that state, else the row's, else the
+    // stamp -- which is where a refused binding's state comes from. See stateFor().
     state: stateFor(name, rec),
     // The same list the Research tab builds, from the same function -- raw registry names are the
     // wrong answer here for the reasons written above documentNamesFromRecord().

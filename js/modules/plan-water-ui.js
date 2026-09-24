@@ -805,7 +805,7 @@ export async function findWater() {
   // advisory table is warmed in the same breath for the same reason it is there: the plan render
   // is synchronous and prints advisories under the regulations.
   say('Checking the regulations…');
-  await ensureRegulations(inp.lakeName, { worker: CF_WORKER_URL });
+  await ensureRegulations(inp.lakeName, { worker: CF_WORKER_URL, at: ramp });
   await primeFishAdvisories({ worker: CF_WORKER_URL });
   // AND WHAT IS CAUGHT INSHORE IN THIS STATE THIS WAVE. Same reason again: the prompt build is
   // synchronous and this is a registry fetch. ONE PROMPT, TWO PLANNERS -- Smart Plan primes it
@@ -823,7 +823,7 @@ export async function findWater() {
   say('Reading the research…');
   const researched = await loadResearchedProfile(inp.lakeName);
 
-  const legality = checkPlanLegality(inp.lakeName, species, date, { profile: researched });
+  const legality = checkPlanLegality(inp.lakeName, species, date, { profile: researched, at: ramp });
   if (!legality.legal) {
     return say(`${species} not legal here today — `
              + `${legality.reason || 'closed season or closed water'}`, true);
@@ -1018,7 +1018,7 @@ export async function findWater() {
     // `date` exist in findWater() and not in buildFromPicked(), which writes the prompt. The
     // state comes off regulationStateFor(), which is the SAME derivation the legality check above
     // used -- two readers of "which state is this water in" is how they drift.
-    inshoreSeason: inshoreSeasonFor(regulationStateFor(inp.lakeName), species, date),
+    inshoreSeason: inshoreSeasonFor(regulationStateFor(inp.lakeName, ramp), species, date),
     // THE ZONE, NOT THE STATE -- the ENC bottom is filed per coastal zone. Null inland,
     // which is exactly when the block must not print.
     seabedHabitat: seabedHabitatFor(detectCoastalZone(inp.lakeName), species),

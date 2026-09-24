@@ -103,6 +103,116 @@ def water_points(path, step):
     return pts
 
 
+def water_shape(path):
+    """The water's own outline as one shapely geometry, or None."""
+    from shapely.geometry import shape
+    from shapely.ops import unary_union
+    try:
+        d = json.load(open(path, encoding='utf-8'))
+    except Exception:
+        return None
+    gs = []
+    for f in d.get('features') or []:
+        g = f.get('geometry')
+        if g and g.get('coordinates'):
+            try:
+                s = shape(g)
+                gs.append(s if s.is_valid else s.buffer(0))
+            except Exception:
+                continue
+    return unary_union(gs) if gs else None
+
+
+def write_state_parts(path, measured, idx, polys, bdir, reach_m):
+    """`registry/water_state_parts.json`: for each water in more than one state, which state
+    each piece of the ground within reach of it is in.
+
+    WHAT IT IS FOR: WHICH STATE'S BOOK APPLIES AT THE LAUNCH. A water in two states is under two
+    books, and the one that governs a morning is the one for the bank he puts in from. The app
+    had one state per water -- the row's -- so a launch in Cherokee County, SC on the Broad was
+    checked against North Carolina's statewide limits. The launch's coordinate is in the app;
+    what it lacked was the line. This is the line, and only where a water crosses one.
+
+    WHERE A LAUNCH CAN BE, NOT THE WHOLE STATE. Cut to each water's bounding box the file was
+    1,466 KB for 27 waters, nearly all of it coastline and Blue Ridge state line nowhere near a
+    water -- the French Broad's box alone held 10,449 vertices. A launch is a point beside the
+    water, and `reach_m` is how far beside: the distance build_dnr_ramps_by_lake.py binds a ramp
+    to a water by (its --tol-m), because "is this launch on this water" is the question both
+    answer. The envelope is the water grown by twice that and then simplified by that, which by
+    Douglas-Peucker's own bound still holds every point within `reach_m` of the water; its
+    outline only decides where the file stops answering. THE STATE LINE INSIDE IT IS NOT
+    SIMPLIFIED -- the Savannah IS the GA/SC line down its whole length, so any tolerance there
+    is a distance the line may move toward a launch.
+
+    Coordinates are written to six decimals, the precision RFC 7946 (GeoJSON, section 11.2)
+    describes as about 10 cm, finer than either outline.
+
+    COASTAL ZONES ARE LEFT OUT. A `coast_` zone carries its own state in coastal-zones.js and the
+    coastal regulations route by that, not by the registry row.
+
+    A launch outside every part is the app's to report, not this file's to guess; see
+    regulationStateFor() in plan-preflight.js.
+    """
+    import math
+    from shapely import affinity
+    from shapely.geometry import mapping
+    from shapely.ops import unary_union
+
+    whole = {st: unary_union(ps) for st, ps in polys.items()}
+    # Metres to degrees of latitude: the conversion build_dnr_ramps_by_lake.py's within() uses
+    # for the same distance.
+    deg = reach_m / 111320.0
+
+    def rounded(g):
+        def walk(c):
+            if isinstance(c[0], (int, float)):
+                return [round(c[0], 6), round(c[1], 6)]
+            return [walk(x) for x in c]
+        m = mapping(g)
+        return {'type': m['type'], 'coordinates': walk(m['coordinates'])}
+
+    waters, skipped = {}, []
+    for slug, rec in sorted(measured.items()):
+        sts = rec.get('states') or []
+        if len(sts) < 2 or slug.startswith('coast_'):
+            continue
+        w = water_shape(os.path.join(bdir, slug + '.geojson'))
+        if w is None or w.is_empty:
+            skipped.append({'slug': slug, 'why': 'no boundary on disk to grow an envelope from'})
+            continue
+        # Grown in a frame where a degree of longitude is as long as a degree of latitude at the
+        # water's middle, so the envelope is `reach_m` wide east-west as well as north-south. The
+        # error is the change in cos(latitude) across the water: about 1% over a degree of
+        # latitude at 35 N, 3 m of 250.
+        y0, y1 = w.bounds[1], w.bounds[3]
+        k = math.cos(math.radians((y0 + y1) / 2.0))
+        local = affinity.scale(w, xfact=k, yfact=1.0, origin=(0, 0))
+        env = local.buffer(2 * deg).simplify(deg, preserve_topology=True)
+        env = affinity.scale(env, xfact=1.0 / k, yfact=1.0, origin=(0, 0))
+        parts = {}
+        for st in sts:
+            g = whole.get(st)
+            if g is None:
+                continue
+            cut = g.intersection(env)
+            if not cut.is_empty and cut.geom_type in ('Polygon', 'MultiPolygon'):
+                parts[st] = rounded(cut)
+        if len(parts) >= 2:
+            waters[slug] = {'states': sts, 'reach_m': reach_m, 'parts': parts}
+        else:
+            skipped.append({'slug': slug, 'why': 'fewer than two states within reach of the water'})
+    doc = {'_note': 'Personal use only, not for distribution or resale; not for navigation. '
+                    'Census state outlines, cut to the ground within reach of each water that '
+                    'crosses a state line, so the app can say which state a launch is in. '
+                    'Written by label_water_states.py; nothing hand edited.',
+           'source': 'tl_2022_us_state.shp', 'waters': waters, 'skipped': skipped}
+    json.dump(doc, open(path, 'w', encoding='utf-8'), separators=(',', ':'), ensure_ascii=False)
+    print('state lines: %d water(s) cross one, %d KB -> %s'
+          % (len(waters), os.path.getsize(path) // 1024, path))
+    for s in skipped:
+        print('  -- %-28s %s' % (s['slug'], s['why']))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -118,6 +228,11 @@ def main():
                          '-- enough to keep a real crossing and drop a boundary that wobbles a '
                          'few metres over the line, which is a survey artefact and not a state.')
     ap.add_argument('--out', default=None)
+    ap.add_argument('--launch-reach-m', type=float, default=250.0,
+                    help='how far from a water a launch may be and still be that water\'s. The '
+                         'same distance build_dnr_ramps_by_lake.py binds a ramp to a water by '
+                         '(its --tol-m default); test/the-broad-is-in-two-states pins them '
+                         'equal. Sets the envelope water_state_parts.json answers inside.')
     a = ap.parse_args()
 
     mrm = _mask_module(os.path.dirname(os.path.abspath(__file__)))
@@ -182,6 +297,8 @@ def main():
            'multi_state_or_misfiled': changed, 'no_state_found': nowhere}
     path = a.out or os.path.join(a.registry, 'water_states.json')
     json.dump(doc, open(path, 'w', encoding='utf-8'), indent=1, ensure_ascii=False)
+    parts_path = os.path.join(os.path.dirname(path), 'water_state_parts.json')
+    write_state_parts(parts_path, out, idx, polys, bdir, a.launch_reach_m)
     multi = [c for c in changed if len(c['geometry_says']) > 1]
     wrong = [c for c in changed if c['filed_as'] not in c['geometry_says']]
     print('\n%d waters measured; %d touch more than one state, %d are filed in a state their '

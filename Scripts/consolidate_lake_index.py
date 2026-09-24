@@ -218,6 +218,49 @@ def state_suffix(x):
     return x.get('state') or (sts[0] if sts else '')
 
 
+def carry_measured_states(idx, path):
+    """Every state a water is in, onto its row: `states`, most of the water first, and
+    `state_shares`, how much of it is in each.
+
+    Ryan, 2026-09-24: "is there a way for rivers that flow through multiple states to carry that
+    information?" It was already measured -- label_water_states.py tests every boundary against
+    the Census state outlines and writes registry/water_states.json -- and exactly one reader
+    took it, build_regulations_table.py. Every other reader had one state per water, the
+    row's, which 3DHP assigns from the centroid: broad_river is filed NC with its centroid in
+    Cherokee County, SC; french_broad_river NC, and the picker offers it as TN. So research ran
+    the Broad under NC, the Worker's NC WRC roster gate closed on the TN name, and a launch in
+    South Carolina was checked against North Carolina's book.
+
+    `state` IS NOT CHANGED. It groups the picker and it is half of every research profile's id
+    (identityNamesForRecord() in lake-registry.js builds `<name>, <ST>` from it), so moving it
+    would strand profiles. `states` is the addition; the readers that need every state read it.
+
+    A water the file has not measured yet -- a slug newer than the last label run -- gets no
+    `states`, and the readers fall back to `state`. Counted and printed, not guessed at.
+    """
+    if not os.path.exists(path):
+        print('\n!! %s absent -- no row carries its measured states. Run label_water_states.py.'
+              % os.path.basename(path))
+        return
+    waters = (json.load(open(path, encoding='utf-8')) or {}).get('waters') or {}
+    hit = multi = 0
+    unmeasured = []
+    for slug, rec in idx.items():
+        got = waters.get(slug) or {}
+        sts = [s for s in (got.get('states') or []) if s]
+        if not sts:
+            unmeasured.append(slug)
+            continue
+        rec['states'] = sts
+        rec['state_shares'] = {d['state']: d['share'] for d in (got.get('detail') or [])
+                               if d.get('state') in sts}
+        hit += 1
+        multi += len(sts) > 1
+    print('\nstates: %d of %d rows carry their measured states (%d in more than one); %d not '
+          'measured yet%s' % (hit, len(idx), multi, len(unmeasured),
+                              (' -- ' + ', '.join(unmeasured[:8])) if unmeasured else ''))
+
+
 _BOUNDARY_FT = re.compile(r'"feature_type"\s*:\s*"([^"]+)"')
 _BOUNDARY_FT_CACHE = {}
 
@@ -1643,6 +1686,8 @@ def main():
               % (_tot, len(idx), n_riv, _rivtot))
     else:
         print('\n!! %s not beside the registry -- no gauges promoted. Run the gauge chain.' % wbp)
+
+    carry_measured_states(idx, os.path.join(R, 'water_states.json'))
 
     json.dump(idx, open(a.out, 'w', encoding='utf-8'), indent=1)
 
