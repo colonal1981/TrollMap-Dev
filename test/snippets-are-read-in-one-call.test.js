@@ -80,3 +80,20 @@ test('combine with a single document is just that document', async () => {
   assert.equal(prompts.length, 1);
   assert.doesNotMatch(prompts[0], /\[S1\]/);
 });
+
+// Measured 2026-09-24 on 42 Lower Saluda snippets against the live Worker: 40 facts read one
+// apiece, 9 combined under a prompt that called them "this document" and told the model to
+// prioritize twenty flagged sentences out of all of them.
+test('combined: the read is told it is many texts, and nothing is flagged over the rest', async () => {
+  const CLARITY = [...S.slice(0, 3), { title: 'Saluda River clarity', url: 'https://e.example/5',
+    text: 'On the Saluda River the Secchi depth was 4.5 ft at the Millrace in July, and water clarity drops after generation.' }];
+  const prompts = stubGemini(() => ({ extracted_facts: [] }));
+  await ask(CLARITY, { combine: true });
+  assert.match(prompts[0], /THIS IS NOT ONE DOCUMENT\. It is 4 separate search-result snippets/);
+  assert.match(prompts[0], /two sources saying the same thing are two facts/);
+  assert.doesNotMatch(prompts[0], /FLAGGED PASSAGES/, 'a flagged list tells the model which snippets to read');
+  const one = stubGemini(() => ({ extracted_facts: [] }));
+  await ask([CLARITY[3]]);
+  assert.match(one[0], /FLAGGED PASSAGES/, 'a real document keeps its flags');
+  assert.doesNotMatch(one[0], /THIS IS NOT ONE DOCUMENT/);
+});

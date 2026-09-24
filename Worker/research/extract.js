@@ -95,7 +95,9 @@ async function handleResearchAnalyzeFacts(request, env) {
   const allFacts = [];
   const docResults = [];
 
-  const SYSTEM = "You are a precise fact extraction engine. Extract verified facts about the specified lake from this single document. Return ONLY valid JSON with extracted_facts array. Never hallucinate. Quote must be verbatim from the document. Confidence 0-100.";
+  const SYSTEM = combinedBlocks
+    ? "You are a precise fact extraction engine. The text you are given is many separate search-result snippets, each labelled [S1], [S2]... Extract verified facts about the specified lake from EVERY snippet, reading each one as if it were the only text you had. Return ONLY valid JSON with extracted_facts array. Never hallucinate. Quote must be verbatim from the snippet. Confidence 0-100."
+    : "You are a precise fact extraction engine. Extract verified facts about the specified lake from this single document. Return ONLY valid JSON with extracted_facts array. Never hallucinate. Quote must be verbatim from the document. Confidence 0-100.";
 
 
   // ── Keyword sentence harvester ─────────────────────────────────────────────
@@ -383,7 +385,22 @@ PRIORITY FIELDS — extract any of the following present in this document:
       ? ` OR any of these known aliases: ${_docAliases.map(a => `"${a}"`).join(', ')}`
       : '';
 
-    const _flagged = harvestKeywordSentences(doc.text || '', 20, _docAliases);
+    // A COMBINED READ IS MANY TEXTS, AND THE PROMPT HAS TO SAY SO. Measured 2026-09-24 on 42
+    // Lower Saluda search snippets sent both ways to the live Worker: read one apiece, 40 facts
+    // from 23 of them; read combined under this prompt as it stood, 9. The live run the same
+    // afternoon: 53 snippets, 5 facts, against 31 from 49 read separately that morning. The
+    // combined read merged snippets into one sentence ("excellent trout fishing in winter and
+    // spring, while striper fishing begins to heat up in mid-April") and skipped whole ones --
+    // the 26-inch keeper size, the June-October release rule, the stripers eating stocked trout,
+    // the kayak sections from Saluda Shoals to Gardendale. The prompt called the text "this
+    // document" and flagged up to 20 keyword sentences out of all of them to "prioritize", and a
+    // model told to prioritize twenty sentences in one document does exactly that. So a combined
+    // read is told what it is, is walked through it snippet by snippet, and gets no flagged block:
+    // at a few hundred characters a snippet, every sentence is already in front of it.
+    const _combinedNote = combinedBlocks
+      ? `\nTHIS IS NOT ONE DOCUMENT. It is ${combinedBlocks.length} separate search-result snippets, each starting with its label ([S1] to [S${combinedBlocks.length}]), its title and its address. Go through them in order and treat every snippet as if it were the only text you had been given: extract every fact each one states about this water. Do not merge facts from different snippets into one sentence, and do not skip a snippet because another one said something similar -- two sources saying the same thing are two facts. Put the snippet's own title in "source". A snippet that says nothing about this water gives no facts.\n`
+      : '';
+    const _flagged = combinedBlocks ? [] : harvestKeywordSentences(doc.text || '', 20, _docAliases);
     const _flaggedBlock = _flagged.length
       ? '⚑ FLAGGED PASSAGES (keyword matches — prioritize extracting facts from these):\n' +
         _flagged.map((s, i) => `[${i+1}] ${s.replace(/`/g, "'").replace(/\$/g, 'USD')}`).join('\n') + '\n\n'
@@ -391,7 +408,7 @@ PRIORITY FIELDS — extract any of the following present in this document:
     return `Extract ALL verified facts about "${lakeName}" (base name "${baseName}", state ${state}) from this document.
 
 DOCUMENT: ${doc.title}
-URL: ${doc.url || 'unknown'}
+URL: ${doc.url || 'unknown'}${_combinedNote}
 ${focusInstructions}
 
 RULES:
