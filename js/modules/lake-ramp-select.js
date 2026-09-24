@@ -23,7 +23,7 @@ import { waterZoneCandidates } from '../data/water-aliases.js';
 import { registryStats } from '../data/lake-registry.js';
 import { makePredicate } from '../data/water-filter.js';
 import { matchRampIndex } from '../utils/ramp-match.js';
-import { launchReach, listingAt, reachLabel, samePlace, offMainAt }
+import { launchReach, listingAt, shallowAt, reachLabel, samePlace, offMainAt }
          from '../data/launch-reach.js';
 // The picker question moved to js/data/water-picker.js -- see the note at its top for why it is
 // not in here. Re-exported so nothing that imported these from this module had to move.
@@ -424,8 +424,11 @@ async function onLakeChange(selLakeName) {
       // could not read off a name -- *"most of these are campgrounds or marinas... almost all of
       // them are pay to play"* -- and it lands on every row here, not just the appended ones,
       // because the live state feed lists 73 of these marinas itself.
-      const note = listingAt(reach, Number(point.lat), Number(point.lon));
-      opt.textContent = formatAccessLabel(point) + (note ? ` \u00b7 ${note}` : '');
+      // And how much of the way out is under his motor -- shallowAt(), same list, same text-only
+      // rule, so the two tabs say the same thing about the same landing.
+      const notes = [listingAt(reach, Number(point.lat), Number(point.lon)),
+                     shallowAt(reach, Number(point.lat), Number(point.lon))].filter(Boolean);
+      opt.textContent = formatAccessLabel(point) + notes.map((n) => ` \u00b7 ${n}`).join('');
       opt.dataset.coords = `${point.lat},${point.lon}`;
       opt.dataset.type = point.typeLabel || '';
       opt.dataset.source = point.sourcePath || '';

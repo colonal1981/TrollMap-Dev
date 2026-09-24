@@ -368,7 +368,9 @@ test('EVERY option in the ramp list goes through the one labeller, not just the 
   assert.match(body, /const reach = launchReachFor\(waterbodyName\);/,
                'the list is fetched once and read by both the labeller and the append');
   // The map tab asks the same question of the same list, through the same export.
-  assert.match(MAP2, /const note = listingAt\(reach, Number\(point\.lat\), Number\(point\.lon\)\);/);
+  // (Since 2026-09-24 it asks shallowAt() beside it, in one list of notes.)
+  assert.match(MAP2, /listingAt\(reach, Number\(point\.lat\), Number\(point\.lon\)\)/);
+  assert.match(MAP2, /shallowAt\(reach, Number\(point\.lat\), Number\(point\.lon\)\)/);
   assert.equal((MAP2.match(/function listingAt\(/g) || []).length, 0,
                'the map tab imports it -- there is no second copy to drift');
 });

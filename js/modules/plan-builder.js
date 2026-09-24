@@ -20,7 +20,7 @@ import { landOnCoastalZone, focusRamp } from "../utils/viewport-cull.js";
 import { bucketWaters, STATE_ORDER, TYPE_ORDER, sortForDisplay,
          pickerLabel } from '../data/water-picker.js';
 import { resolveR2Key } from "../data/lake-keys.js";
-import { launchReach, listingAt, reachLabel, samePlace, offMainAt }
+import { launchReach, listingAt, shallowAt, reachLabel, samePlace, offMainAt }
          from "../data/launch-reach.js";
 import { advisoryRows } from "../data/fish-advisories.js";
 // The band is defined once, where the cue line that carries it is built.
@@ -2633,9 +2633,12 @@ export function populatePlanRampDropdown(waterbodyName){
   // by assigning that exact string back, and a `<select>` handed a value none of its options
   // hold silently goes blank. That is the 2026-09-17 failure, and it is why the note goes on the
   // TEXT and the value stays what it always was.
+  // AND HOW MUCH OF THE WAY OUT IS UNDER HIS MOTOR, on the text for the same reason -- see
+  // shallowAt() in launch-reach.js.
   const optText = (value, lat, lon) => {
-    const note = listingAt(reach, Number(lat), Number(lon));
-    return note ? `${value} · ${note}` : value;
+    const notes = [listingAt(reach, Number(lat), Number(lon)),
+                   shallowAt(reach, Number(lat), Number(lon))].filter(Boolean);
+    return notes.length ? `${value} · ${notes.join(' · ')}` : value;
   };
   const appendReach = (placed) => {
     reach.forEach((r) => {

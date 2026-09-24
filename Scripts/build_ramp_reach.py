@@ -111,6 +111,28 @@ from collections import deque
 # the lever if a run ever dies rather than finishing slowly.
 MAX_COMPONENT_POLYS = 120000
 
+# ── HIS BOAT, IN HIS WORDS ─────────────────────────────────────────────────────────────────────
+#
+# Ryan, 2026-09-24, asked what the Slayer Propel and the NK180 Pro actually draw: *"18 inches or
+# so probably if the pedal drive is down... otherwise 6 inches or less because the nk180pro will
+# kick up"*, and the motor itself runs at about 12 inches.
+#
+# THE CHART RESOLVES ONE OF THOSE THREE, AND IT IS THE ONE THAT MATTERS ON THE WAY OUT. The depth
+# areas are whole-foot bands -- `0-1 ft` is the finest and the most common, 142,712 of the zoom-0
+# polygons in a 92-tile sample on 2026-09-24 -- and this file reads a band's SHALLOW edge. So:
+#
+#     12 in, the motor        every metre of `0-1 ft` is under it, and no metre of `1-2 ft` is.
+#                             The one draft the bands can answer exactly.
+#     18 in, the pedal drive  falls INSIDE `1-2 ft`, which the chart cannot split.
+#      6 in, the hull         falls inside `0-1 ft`, likewise.
+#
+# He transits on the motor -- at full speed, 5.5 mph flat, *"pedaling does not add anything to
+# this really"* (2026-09-24) -- so the motor's foot is what a landing's way out is measured
+# against: `under_motor_m` on every landing, shown in the app beside the distance. It is a
+# MEASUREMENT of the route, not what the route is steered by; see --min-depth-ft for why steering
+# by it was measured and turned down.
+MOTOR_DRAFT_FT = 1.0
+
 CELL_DEG = 0.00025          # ~26 m of latitude; the canal at Rimini is wider than one cell
 MARGIN_DEG = 0.05           # how far outside the line to look for landings, ~5.5 km
 BLOCK_CELLS = 2_000_000     # cells per vectorised point-in-polygon call; caps peak memory
@@ -334,7 +356,7 @@ def access_points(registry):
     # rule about those two coordinates.
     p = os.path.join(registry, '_launch_name_overrides.json')
     if os.path.isfile(p):
-        fixed = dropped = 0
+        fixed = dropped = gone = 0
         for key, r in (load_json(p).get('names') or {}).items():
             r = r or {}
             try:
@@ -343,7 +365,17 @@ def access_points(registry):
                 continue
             k = alias.get((round(la, 5), round(lo, 5)))
             if k is None:
-                print('!! override at %s matches no landing -- check the position' % key)
+                # A DROP WITH NOTHING TO DROP IS NOT A WARNING. All 36 of his drops are unnamed
+                # OSM slipway nodes, and on 2026-09-24 every one of them was already absent from
+                # the feeds this reads -- checked by distance, not by key: 33 have no landing
+                # within 250 m, and the other three are 125-225 m from a DIFFERENT, real ramp
+                # (WT Billy Tolar, the one he kept at Hwy 378). The run printed thirty-six
+                # "check the position" lines for a job already done, which is how the one that
+                # matters -- a NAME he gave that no longer lands -- would be lost among them.
+                if r.get('drop'):
+                    gone += 1
+                else:
+                    print('!! name override at %s matches no landing -- check the position' % key)
                 continue
             # AND HE CAN SAY IT IS NOT A LAUNCH AT ALL. OSM tags `leisure=slipway` on things
             # that are not one -- *"this a dirt road on parr reservoir... not a ramp"* -- and no
@@ -360,8 +392,9 @@ def access_points(registry):
             out[k]['name'] = str(r['name'])
             out[k]['src'].add('ryan')
             fixed += 1
-        if fixed or dropped:
-            print("Ryan's own corrections applied: %d named, %d dropped" % (fixed, dropped))
+        if fixed or dropped or gone:
+            print("Ryan's own corrections applied: %d named, %d dropped, %d drop(s) already gone "
+                  "from the feeds" % (fixed, dropped, gone))
     return out
 
 
@@ -1048,6 +1081,9 @@ def reach_for(slug, args, points):
     # back out of the water the routing just paid to stay in.
     deep_polys = ([g for g, ft in zip(polys, depths or []) if ft and ft >= floor_ft]
                   if (depths and floor_ft > 0) else None)
+    # And the water his motor runs in, to MEASURE each drawn route against -- see MOTOR_DRAFT_FT.
+    motor_polys = ([g for g, ft in zip(polys, depths) if ft and ft >= MOTOR_DRAFT_FT]
+                   if depths else None)
     # ── WHICH PIECE OF WATER IS THIS LANDING ON ────────────────────────────────────────────
     #
     # `water_m` does NOT mean 'how far to the lake'. On a lake the seed is EVERY water cell
@@ -1166,13 +1202,14 @@ def reach_for(slug, args, points):
                     # Without it the app can only draw a straight line, and a straight line from
                     # Pack's Landing crosses two kilometres of swamp.
                     'route': route,
-                    # HOW MUCH OF IT IS UNDER HIS FLOOR, IN METRES. This was a yes/no -- "every
-                    # metre is deep enough" or "it fell back to the shortest water" -- and on this
-                    # river it was always no, because Pack's Landing sits on a 5 ft flat and no
-                    # route out of it can be all deep. A number says which landings are a problem
-                    # and by how much; a flag said every one of them was.
-                    'shoal_m': (None if not deep_polys or not raw
-                                else int(round(shoal_m(raw, deep_polys)))),
+                    # HOW MUCH OF THE WAY OUT IS TOO SHALLOW FOR HIS MOTOR, IN METRES, measured on
+                    # the line the app DRAWS. This used to be `shoal_m`, metres under the routing
+                    # preference -- 6 ft -- which nothing read and which meant nothing on the water:
+                    # a blackwater river four feet deep reads its whole length. Under his motor's
+                    # foot is the number he can act on, and js/data/launch-reach.js shallowAt()
+                    # puts it beside the distance. Null when the pack carries no readable band.
+                    'under_motor_m': (None if not motor_polys or not route
+                                      else int(round(shoal_m(route, motor_polys)))),
                     # WHICH BODY OF WATER IT IS STANDING ON, and how big that body is. Null
                     # when the pool could not be determined -- a water over the component cap,
                     # or no polygon near the landing -- because unknown and 'on the main lake'
@@ -1200,6 +1237,42 @@ def main():
                          'charted water. The same gate upload_garmin_to_r2.py ships by, because '
                          'measuring water the app never shows is work nobody reads.')
     ap.add_argument('--out', help='default registry/_ramp_reach.json')
+    # ── 2026-09-24: HIS DRAFT ARRIVED, AND STEERING BY IT WAS WORSE FOR HIS DRAFT ─────────────
+    #
+    # The note below ended "6.0 stays until Ryan says what his boat actually needs". He said it
+    # -- the motor runs at about 12 inches, the pedal drive 18, the hull 6; see MOTOR_DRAFT_FT --
+    # and the obvious change was to route at his motor's foot instead of the canal's six. It was
+    # MEASURED before it was made, every landing on seven waters routed three ways and every route
+    # read back against the same bands, and the obvious change loses on the thing it is for:
+    #
+    #                               metres of route under 1 ft -- where his motor cannot run
+    #     water, landings           routed at 6 ft    routed at 1 ft    depth ignored
+    #     congaree  Pack's Landing          10               126              --
+    #     congaree  Low Falls                0                 8              --
+    #     wateree_river, 6                 295               984             1,193
+    #     black_river, 13                3,838             6,174             9,994
+    #     little_pee_dee_river, 19      66,624            74,057            80,995
+    #     wateree_lake, 15               1,944             1,783             2,249
+    #     edisto 10, lynches 4          81 / 0            81 / 0            82 / 0
+    #     the 67 swept, per landing     1 ft routing puts LESS under his motor on 4, MORE on 11,
+    #                                   the same on 52 -- and 10,297 m more in total
+    #
+    # WHY. Routed at one foot the search is indifferent between two feet and twenty, so it takes
+    # the shortest water that clears a foot -- and the shortest water hugs the margins, where the
+    # chart's small shallow polygons are: the bars, the stump flats, the fringe. Routed at six it
+    # keeps to the channel, and the channel is where the shallow patches are NOT. Preferring deep
+    # water is how the route keeps his motor in the water; his draft is how the result is judged.
+    # That is the relative thing he described -- *"it kept routing me in 1-2ft when there was 6ft
+    # or deeper water right next to it"* -- and the six is what does it: on every water measured
+    # but Lake Wateree it leaves less under his motor in total. Four landings of the 67 do better
+    # at a foot and eleven do worse; a rule that has to pick one steering for every landing picks
+    # the one that loses less.
+    #
+    # So the six stays, as a STEERING PREFERENCE and not as his boat, and what reaches him is the
+    # draft he gave: `under_motor_m`, the metres of the drawn route under his motor's foot. The
+    # old `shoal_m` -- metres under the six -- is no longer written; it read a blackwater river's
+    # whole length and nothing ever showed it.
+    #
     # SIX IS THE CANAL'S NUMBER, NOT HIS BOAT'S, AND IT IS THE DEFAULT ON 354 PACKS.
     #
     # Ryan, 2026-09-23, reading this file's own words back: *"There is no 6ft floor. I gave you
@@ -1221,28 +1294,26 @@ def main():
     # into route length. A blackwater river that is 4 ft for twenty miles is not a routing defect.
     # It discriminates only in the middle band, which is where the canal sits.
     #
-    # THE VALUE IS NOT CHANGED HERE. 6.0 stays until Ryan says what his boat actually needs --
-    # a draft, which is a fact about the Slayer Propel and the NK180, not a preference. Register:
-    # ramp-reach-floor-is-one-canals. The sweep below is the reason changing it is not urgent:
-    # on the canal every value from 2 to 25 produces the identical line.
+    # (2026-09-23: "6.0 stays until Ryan says what his boat actually needs". He did, and it was
+    # measured -- see the 2026-09-24 note at the top of this block for why it still stays.)
     #
-    # The first two attempts at this could not honour it. A hard floor cannot leave Pack's Landing at all -- the ramp sits on
-    # a 5 ft flat -- so it went round: 6,569 m against 1,826. Preferring a separate deep flood and
+    # The first two attempts at this could not honour it. A hard floor cannot leave Pack's
+    # Landing at all -- the ramp sits on a 5 ft flat -- so it went round: 6,569 m against 1,826. Preferring a separate deep flood and
     # falling back when it does not arrive is the same failure said politely: it never arrived, so
     # every route on this river was the shortest-water one and a flag quietly said so.
     #
     # walk() now costs shallow metres ahead of all distance, so the floor is a preference the
     # search can always satisfy as well as the water allows instead of a gate it can fail. On this
     # river that is 455 m under 6 ft down to 331 m, in one stretch instead of five, and into the
-    # Congaree through the 13 ft mouth rather than across the flat beside it. `shoal_m` on each
-    # landing says what it cost, in metres, so a water where the number is bad is visible.
+    # Congaree through the 13 ft mouth rather than across the flat beside it.
     ap.add_argument('--min-depth-ft', type=float, default=6.0,
-                    help='the shallowest water the route should prefer. 6 came off ONE canal -- '
-                         "Pack's Landing to the Congaree, 2026-09-21 -- and is not a stated "
-                         'property of his boat; see the note above before treating it as one. It '
-                         'is a cost, not a gate: where no route can honour it the shortest '
-                         'shallow crossing is taken and shoal_m reports it. 0 ignores depth '
-                         'entirely.')
+                    help='the depth the route STEERS toward where the water has it. 6 came off '
+                         "ONE canal -- Pack's Landing to the Congaree, 2026-09-21 -- and is not "
+                         'his boat: his motor runs at about 1 ft (MOTOR_DRAFT_FT), and routing at '
+                         'that foot was measured on 2026-09-24 to put MORE of the route under it, '
+                         'not less. It is a cost, not a gate: where no route can honour it the '
+                         'shortest shallow crossing is taken. under_motor_m on each landing is '
+                         'what the route leaves under his motor. 0 ignores depth entirely.')
     # TEN, AND THE SWEEP IS WHY IT IS NOT A TUNED NUMBER -- ON THIS ROUTE. Measured on
     # congaree_river, Pack's Landing to the Congaree, 2026-09-21, every value run end to end.
     # ONE LANDING ON ONE CANAL: the plateau is real where it was measured and has never been
@@ -1336,10 +1407,10 @@ def main():
         print('   %s %-30s %-10s %6d water cells, %3d landings reachable, %3d filed elsewhere'
               % (head, slug, res['seed'], res['water_cells'], len(res['landings']), len(gained)))
         for r in gained[:6]:
-            print('        %7d m by water (%6d straight, %5s m under the floor)  %-32s '
+            print('        %7d m by water (%6d straight, %5s m under his motor)  %-32s '
                   'filed %s'
                   % (r['water_m'], r['straight_m'],
-                     '-' if r['shoal_m'] is None else r['shoal_m'],
+                     '-' if r['under_motor_m'] is None else r['under_motor_m'],
                      (r['name'] or '(unnamed)')[:32], r['filed']))
 
     out, skipped = {}, {}

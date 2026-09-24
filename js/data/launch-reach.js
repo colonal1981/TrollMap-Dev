@@ -179,6 +179,43 @@ export function offMainAt(waterbodyName, lat, lon) {
   return rows.some((r) => samePlace(here, r));
 }
 
+/**
+ * HOW MUCH OF THE WAY OUT IS TOO SHALLOW TO RUN THE MOTOR, or '' when none worth saying.
+ *
+ * Ryan, 2026-09-24, on his boat: *"18 inches or so probably if the pedal drive is down...
+ * otherwise 6 inches or less because the nk180pro will kick up"*, and the motor runs at about 12
+ * inches. build_ramp_reach.py measures each landing's drawn route against the charted bands and
+ * writes `under_motor_m`: the metres of it in water the chart puts under one foot. The bands are
+ * whole feet, so "under one foot" is the `0-1 ft` band exactly -- every metre of it is shallower
+ * than the motor runs, and none of the `1-2 ft` band is.
+ *
+ * Until this, a landing whose only way out crosses a flat read exactly like one that does not:
+ * the producer had been writing a shallow-metres count since 2026-09-21 and nothing showed it.
+ *
+ * THE SAME RESOLUTION AS THE DISTANCE BESIDE IT, not a new threshold. reachLabel() prints miles
+ * to a tenth and calls anything under a tenth "on the water"; this says nothing below the same
+ * tenth, because "0.0 mi" is not a number anyone can act on. Past ten miles, whole miles.
+ *
+ * "ON THE CHART" BECAUSE THAT IS WHAT IT IS. Garmin's band on a river it never sounded can be the
+ * `0-1 ft` fill, and the Lower Saluda below Saluda Shoals reads 10 km of it. The note says what
+ * the chart says; whether the chart is right there is his to know.
+ *
+ * @param {Array} rows  the reach landings for this water, from launchReach()
+ * @returns {string} e.g. '0.3 mi under 1 ft on the chart', or ''
+ */
+export function shallowAt(rows, lat, lon) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return '';
+  const here = { lat, lon };
+  for (const r of rows || []) {
+    if (!samePlace(here, r)) continue;
+    const m = Number(r && r.under_motor_m);
+    if (!Number.isFinite(m) || m < 160) return '';
+    const mi = m / 1609.34;
+    return `${mi < 10 ? mi.toFixed(1) : Math.round(mi)} mi under 1 ft on the chart`;
+  }
+  return '';
+}
+
 export function listingAt(rows, lat, lon) {
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return '';
   const here = { lat, lon };
@@ -240,6 +277,9 @@ function collapse(rows) {
         && (!Array.isArray(hit.route) || Number(r.water_m) < Number(hit.water_m))) {
       hit.route = r.route;
       hit.water_m = r.water_m;
+      // And what that route crosses. It is a measurement OF the route, so it travels with it
+      // rather than with the name -- see shallowAt().
+      hit.under_motor_m = r.under_motor_m;
     }
     hit.filed = union(hit.filed, r.filed);
     hit.src = union(hit.src, r.src);
