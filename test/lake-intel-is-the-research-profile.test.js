@@ -19,12 +19,16 @@ import { readFileSync } from 'node:fs';
 
 const src = (rel) => readFileSync(new URL(rel, import.meta.url), 'utf8');
 
-// Every outbound fetch is answered with a page that looks like LakeMonster's, and recorded.
+// Every outbound fetch is answered with a page shaped like LakeMonster's REAL one, and recorded.
+// Fetched 2026-09-24: the body is drawn by script, so after the tags and scripts are stripped the
+// temperature survives only in the title. A stub with the number in the body is how the scrape
+// looked fine in a test while returning null for every lake live.
 const asked = [];
 globalThis.fetch = async (url) => {
   asked.push(String(url));
-  const html = '<html><title>Lake Water Temp Today: 76°F | LakeMonster</title>'
-    + '<body>Right Now Water 76° Bite 3/5 Pressure 30.1 rising Wind 5 mph NE</body></html>';
+  const html = '<html><head><title>Lake Murray Water Temp Today: 76°F | LakeMonster</title>'
+    + '<script>window.__DATA__ = {"waterTemp": 76}</script></head>'
+    + '<body><div id="root"></div></body></html>';
   return { ok: true, status: 200, text: async () => html, json: async () => ({}) };
 };
 
@@ -68,6 +72,7 @@ describe('LakeMonster is asked for its own page', () => {
       const got = await W.fetchLakeMonsterIntel(key);
       expect(asked).toEqual([url]);
       expect(got.source).toBe(url);
+      expect(got.waterTemp_F).toBe(76);
     });
   }
   it('a lake with no LakeMonster page asks nothing', async () => {

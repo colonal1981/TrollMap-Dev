@@ -1226,7 +1226,12 @@ async function fetchLakeMonsterIntel(key) {
     const r = await fetchText(url);
     if (!r.ok || !r.text) return null;
     const text = stripHtml(r.text);
-    const water = text.match(/(?:Right Now[\s\S]{0,250}?Water\s*|Water\s*)(\d{2,3})°/i) || text.match(/Water\s*(\d{2,3})°F/i);
+    // THE BODY IS DRAWN BY SCRIPT, SO THE TITLE IS WHERE THE NUMBER IS. Fetched 2026-09-24:
+    // stripHtml() leaves "Lake Murray Water Temp Today: 76°F | LakeMonster" and nothing else
+    // with a degree sign in it, so the two patterns below matched on no lake at all, before or after
+    // the page paths were fixed. They are kept for a page that renders server-side again.
+    const titleTemp = text.match(/Water Temp[^0-9]{0,20}(\d{2,3})\s*\u00B0/i);
+    const water = titleTemp || text.match(/(?:Right Now[\s\S]{0,250}?Water\s*|Water\s*)(\d{2,3})°/i) || text.match(/Water\s*(\d{2,3})°F/i);
     const acres = text.match(/([0-9,]+)\s*acres/i);
     const elev = text.match(/([0-9,]+)\s*ft\s*elev/i);
     const fishCount = text.match(/(\d+)\s*fish species/i);
