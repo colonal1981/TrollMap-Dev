@@ -375,6 +375,12 @@ def slim_chain(full):
             # USACE surveyed 15,000 at both its dams. Ship both rather than choosing.
             "routed_drainage_km2": r.get("routed_drainage_km2", r.get("drainage_km2")),
             "local_drainage_km2": r.get("local_drainage_km2", r.get("drainage_km2")),
+            # THE SURFACE, AND WHETHER NHD CALLS IT A RIVER. Worker/clarity-sensitivity.js reads
+            # drainage over surface -- how much watershed each km2 of water takes runoff from -- to
+            # give every lake its own rain sensitivity instead of the same 1.2 and 0.75 on all but
+            # six. The drainage was already published; the surface it divides by was not.
+            "nhd_area_km2": r.get("nhd_area_km2"),
+            "nhd_ftype": r.get("nhd_ftype"),
         }
     meta = full.get("_meta") if isinstance(full, dict) else None
     return {"_meta": {"source": (meta or {}).get("source", "NHDPlus HR"),
@@ -590,6 +596,14 @@ PASSTHROUGH_REGISTRIES = {
         "no measured trophic level or size ceiling for any fish, so the only thing "
         "saying what is forage and what is a target is the hand-written "
         "NON_GAME_SPECIES set in facts-util.js; build it with build_fishbase_traits.py",
+    # 2026-09-24. Read by Worker/registry.js waterEnds() -> getLakeClarity, which puts a launch in
+    # the upper or lower of a lake's two generic clarity zones by which end of the lake it is
+    # nearer. Ryan: "i just thought it was already on all waters since i had already asked for
+    # everything for one water to be on all of them".
+    "water_ends.json":
+        "a launch on a lake without hand-written clarity zones is answered with the lake-wide "
+        "mean of two zones instead of its own (271 lakes carry an outlet and a far end); build "
+        "it with build_water_ends.py --write",
 }
 
 

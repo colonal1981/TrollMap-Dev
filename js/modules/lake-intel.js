@@ -311,7 +311,8 @@ export async function syncClarityIntelData(o = {}) {
       const cRec = lakeRecordFor(label);
       const cPt = cRec && Number.isFinite(Number(cRec.lat)) && Number.isFinite(Number(cRec.lon)) ? cRec : null;
       const res = await fetch(`${worker}/lake-clarity?lake=${encodeURIComponent(label)}&date=${encodeURIComponent(date)}`
-        + (cPt ? `&lat=${Number(cPt.lat)}&lon=${Number(cPt.lon)}` : ''));
+        + (cPt ? `&lat=${Number(cPt.lat)}&lon=${Number(cPt.lon)}` : '')
+        + (cRec && cRec.slug ? `&slug=${encodeURIComponent(cRec.slug)}` : ''));
       if(!res.ok) throw new Error(`Worker HTTP ${res.status}`);
       d = await res.json();
     }
@@ -354,6 +355,9 @@ export async function syncClarityIntelData(o = {}) {
     } else if(zoneForRamp){
       lines.push(`AT YOUR RAMP (${rampNow}) — ${zoneForRamp.name}: ${zoneForRamp.clarity} `
                + `(score ${zoneForRamp.score}/100). ${zoneForRamp.likely}.`);
+      // Placed by where the launch sits on the lake rather than named in a hand-written zone:
+      // say so, with the two distances, so a launch near the middle reads as near the middle.
+      if (forPlan.by === 'position' && d.launchZone) lines.push(`Why that zone: ${d.launchZone.why}.`);
       // THE HALF THAT SAYS WHETHER TO CARE. "Stained" on Wateree is Tuesday; "stained" on a lake
       // that usually reads eight feet has just been rained on. Same word, and only the water's own
       // baseline tells them apart -- see versusNormalAt().

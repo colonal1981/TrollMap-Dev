@@ -53,6 +53,23 @@ export function zoneForRamp(zones, rampName) {
 }
 
 /**
+ * The zone the Worker placed the launch in by POSITION, or null.
+ *
+ * Ryan, 2026-09-24: "i just thought it was already on all waters since i had already asked for
+ * everything for one water to be on all of them". Only six lakes have zones that NAME their ramps.
+ * On every other lake the Worker now says which of the two generic zones the launch is in, from
+ * where it sits between the lake's outlet and its far end (`launchZone`, see getLakeClarity). The
+ * zone is looked up by name in the payload's own list, so its score, colours and normal are the
+ * ones the model computed -- nothing is recomputed here.
+ */
+export function zoneByPosition(payload) {
+  const d = payload || {};
+  const want = d.launchZone && d.launchZone.name;
+  if (!want) return null;
+  return list(d.zones).find((z) => z && z.name === want) || null;
+}
+
+/**
  * WHAT THE PLAN SHOULD BE BUILT ON: `{ select, clarity, score, source, zone, why }`.
  *
  * `source` is 'station' when the payload carries a measured reading near the launch (`atLaunch`,
@@ -79,6 +96,15 @@ export function clarityForPlan(payload, rampName) {
   if (zone && zone.select) {
     return { select: zone.select, clarity: zone.clarity ?? null, score: zone.score ?? null,
              source: 'ramp', zone, why: `${rampName} is in ${zone.name}` };
+  }
+  // NO ZONE NAMES IT, BUT THE WORKER KNOWS WHICH HALF OF THE LAKE IT IS IN. Still 'ramp': the
+  // answer is a zone of this lake chosen for this launch, and every reader of 'ramp' wants exactly
+  // that. `by` says how it was chosen, and `why` carries the two distances.
+  const placed = zoneByPosition(d);
+  if (placed && placed.select) {
+    return { select: placed.select, clarity: placed.clarity ?? null, score: placed.score ?? null,
+             source: 'ramp', by: 'position', zone: placed,
+             why: `${rampName || 'the launch'} is in ${placed.name}: ${d.launchZone.why}` };
   }
   const o = d.overall || null;
   if (o && o.select) {
@@ -126,7 +152,8 @@ export function versusNormalAt(payload, rampName) {
     return { bands: nv.bands, dirtier: !!nv.dirtier, normalClarity: d.atLaunch.normalClarity || null,
              scope: 'station', sentence: nv.sentence };
   }
-  const zone = zoneForRamp(d.zones, rampName);
+  // The zone that names the launch, else the one the Worker placed it in by position.
+  const zone = zoneForRamp(d.zones, rampName) || zoneByPosition(d);
   const now = zone ? bandIndex(zone.clarity) : null;
   const usual = zone ? bandIndex(zone.normalClarity) : null;
   if (zone && now != null && usual != null) {

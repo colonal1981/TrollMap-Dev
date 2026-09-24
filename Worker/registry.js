@@ -898,3 +898,21 @@ export const WATERSHED_FISH_KEY = '_registry/watershed_fish.json';
  */
 export const watershedFish = passthroughLoader(WATERSHED_FISH_KEY, 'build_watershed_fish.py',
   (p) => p && p.waters, '"waters" object keyed by registry slug');
+
+export const WATER_ENDS_KEY = '_registry/water_ends.json';
+
+/**
+ * Where each lake lets its water out, and the point of it farthest from there, keyed by slug.
+ *
+ * `build_water_ends.py` writes it from NHDPlus HR -- the downstream end of the lake's outlet
+ * flowline, which build_water_chain.py already identified -- and the registry outline's farthest
+ * vertex from that. getLakeClarity() puts a launch in the generic zone whose end is nearer, so a
+ * water without hand-written zones still answers for the launch rather than the lake's mean.
+ * Measured 2026-09-24 on the 30 lakes with three or more positioned Secchi stations: the far-end
+ * half reads murkier than the outlet half on 21 of the 26 where both halves have a station.
+ *
+ * Same cadence and failure mode as every loader here: the CALLER CATCHES, and a water the file
+ * does not carry answers with the lake-wide figure, as before.
+ */
+export const waterEnds = passthroughLoader(WATER_ENDS_KEY, 'build_water_ends.py',
+  (p) => p && p.waters, '"waters" object keyed by registry slug');

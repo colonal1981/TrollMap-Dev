@@ -875,9 +875,40 @@ async function wqpPull(env, body, opts = {}) {
  */
 const SECCHI_TTL_MS = 30 * 24 * 60 * 60 * 1000;   // monthly sampling; 30 days is already generous
 
+/**
+ * ── 269 WATERS WERE SHARING ONE CACHE FILE ──────────────────────────────────────────────────────
+ *
+ * The key used to be `clarity-cache/${resolveR2Key(lakeName)}.json`. resolveR2Key() is the CHART
+ * PACK lookup: its authoritative pass reads a registry map that only the browser fills, so in the
+ * Worker it falls back to the curated pack names. Measured 2026-09-24: 269 of the 352 registry
+ * display names resolve to null there, and a null in a template literal is the string "null".
+ * Every one of those waters read and wrote `clarity-cache/null.json`.
+ *
+ * Measured on the live route the same day: Lake Glenville NC, Lake Brandt NC, Quaker Creek
+ * Reservoir NC, Lake Adger NC, Tugaloo, Yonah, Fishing Creek and Cedar Creek all came back with
+ * the SAME seventeen SC DHEC stations (RL-19254, CW-231, ...). Whichever water missed first after
+ * the thirty-day TTL wrote its readings there, and the rest were told those readings were their
+ * own measured "normal".
+ *
+ * The WQP pull was never wrong: wqpPull() takes its box from resolveRegistryRow(). So the cache is
+ * now keyed by that SAME row's slug -- the key names the water whose box was fetched, and a name
+ * that resolves to no row falls back to researchStorageId(), which is never null and differs for
+ * every name. Not the research profile id either: two registry pieces can share one profile (the
+ * middle Saluda reads the Lower Saluda's research) while their boxes, and their water, differ.
+ */
+async function clarityCacheId(env, lakeName) {
+  try {
+    const row = resolveRegistryRow(await lakeIndex(env), lakeName);
+    if (row && row.slug) return row.slug;
+  } catch (e) {
+    console.warn(`[clarity] registry row unavailable for ${lakeName}: ${e.message}`);
+  }
+  return researchStorageId(lakeName);
+}
+
 async function getSecchiSummary(env, lakeName) {
   if (!lakeName || !env?.R2_TROLLMAP_CHARTPACKS) return null;
-  const key = `clarity-cache/${resolveSupplementalKeyWorker(lakeName)}.json`;
+  const key = `clarity-cache/${await clarityCacheId(env, lakeName)}.json`;
 
   try {
     const hit = await env.R2_TROLLMAP_CHARTPACKS.get(key);

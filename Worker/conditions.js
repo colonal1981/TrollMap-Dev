@@ -5106,7 +5106,9 @@ export async function handleConditions(request, env, url) {
       // and returned as `point` below, and the clarity call took the display name only -- so every
       // water without one of the six hand-authored profiles had its rainfall read at a fixed spot
       // near Columbia, SC. Median 226 km from the water it was describing.
-      return getLakeClarity(nm, date, env, { lat, lon });
+      // AND THE SLUG, which this route has too: the watershed sensitivity and the hand-profile
+      // check both key on the registry water, and a slug cannot resolve to the wrong one.
+      return getLakeClarity(nm, date, env, { lat, lon }, { slug });
     })],
   ];
   const settled = await Promise.allSettled(jobs.map((j) => j[1]));

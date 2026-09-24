@@ -3,6 +3,7 @@
 // LAKES, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS
 
 import { matchWaterName, reportTokens } from './reports.js';
+import { GENERIC_LAKE_ZONES, watershedSensitivity, zonesForSensitivity } from './clarity-sensitivity.js';
 
 var LAKES = {
   wateree: { duke: "wateree", river: "02148000", normalPool: 225.5, ahq: "lake-wateree" },
@@ -1334,9 +1335,13 @@ function lakeKeyFromName(lakeName) {
   }
   return normalized.split(" ")[0] || "";
 }
+// Each profile names the registry water it was written for (`slug`), so a name that merely
+// CONTAINS "wateree" or "marion" -- the Wateree River, a lake in Marion County -- does not get
+// this lake's zones, ramps and rain point. See getLakeClarity.
 var LAKE_CLARITY_PROFILES = {
   wateree: {
     displayName: "Lake Wateree",
+    slug: "wateree_lake",
     center: [34.41, -80.86],
     defaultNote: "Runoff usually stains upper/northern creeks first; lower/deeper main-lake water near the dam generally stays clearer longest.",
     zones: [
@@ -1350,6 +1355,7 @@ var LAKE_CLARITY_PROFILES = {
   },
   murray: {
     displayName: "Lake Murray",
+    slug: "lake_murray",
     center: [34.08, -81.35],
     defaultNote: "Upper river/creek arms stain first; dam/lower-lake herring water generally stays clearer.",
     zones: [
@@ -1361,6 +1367,7 @@ var LAKE_CLARITY_PROFILES = {
   },
   marion: {
     displayName: "Lake Marion",
+    slug: "lake_marion",
     center: [33.55, -80.3],
     defaultNote: "Large shallow stump/swamp reservoir; rain creates tannic/muddy creek water and debris risk, especially in upper/swamp sections.",
     zones: [
@@ -1372,6 +1379,7 @@ var LAKE_CLARITY_PROFILES = {
   },
   moultrie: {
     displayName: "Lake Moultrie",
+    slug: "lake_moultrie",
     center: [33.28, -80.05],
     defaultNote: "Wind-driven clarity matters as much as rain; broad open water can muddy quickly on windward banks.",
     zones: [
@@ -1382,6 +1390,7 @@ var LAKE_CLARITY_PROFILES = {
   },
   keowee: {
     displayName: "Lake Keowee",
+    slug: "lake_keowee",
     center: [34.7, -82.9],
     defaultNote: "Deep clear herring lake; runoff affects backs of creeks first while main points often stay clear.",
     zones: [
@@ -1391,6 +1400,7 @@ var LAKE_CLARITY_PROFILES = {
   },
   hartwell: {
     displayName: "Lake Hartwell",
+    slug: "hartwell_lake",
     center: [34.48, -82.85],
     defaultNote: "Huge herring reservoir; upper arms stain first, lower main lake stays clearer.",
     zones: [
@@ -1499,11 +1509,36 @@ function nearestClarityStation(stations, lat, lon) {
  */
 
 /**
+ * The registry water a clarity request is about, with the two registry files the model reads.
+ * `slug` is the caller's when it sent one the index knows, else the row the name resolves to --
+ * the same resolveRegistryRow() the WQP pull takes its box from, so the watershed, the Secchi
+ * and the hand profile below can never be three different waters. Everything is null when the
+ * bucket has no registry (the tests' stub buckets), and the model then behaves as it always did.
+ */
+async function registryWaterFor(env, lakeName, slug = null) {
+  if (!env || !env.R2_TROLLMAP_CHARTPACKS) return { slug: slug || null, chain: null, index: null };
+  const reg = await import('./registry.js');
+  const [index, chain] = await Promise.all([
+    reg.lakeIndex(env).catch(() => null),
+    reg.waterChain(env).catch(() => null),
+  ]);
+  const own = slug && (!index || index[slug]) ? slug : null;
+  const row = own ? null : (index ? reg.resolveRegistryRow(index, lakeName) : null);
+  return { slug: own || (row && row.slug) || null, chain, index };
+}
+
+/**
  * ── THE RAIN THAT DRIVES THIS MODEL WAS BEING MEASURED NEAR COLUMBIA FOR EVERY WATER BUT SIX ──
  *
  * Ryan, 2026-09-23, on being told the drainage run would improve the per-zone `sensitivity`
- * constant: *"that doesn't sound right at all for clarity..."*. He was right, and the constant was
- * the wrong thing to be looking at.
+ * constant: *"that doesn't sound right at all for clarity..."*.
+ *
+ * THIS COMMENT MISREAD HIM, and he said so the next day: *"what i said for clarity that was not
+ * right was that it was only on 6 waters... i have nothing to say about the method... i just
+ * thought it was already on all waters since i had already asked for everything for one water to
+ * be on all of them"*. The objection was to SIX, not to drainage. The rain point below was a real
+ * defect found while looking at it and stays fixed; the per-water sensitivity he did want is now
+ * read off each water's watershed -- see Worker/clarity-sensitivity.js.
  *
  * `score = base + rainScore * sensitivity`. `base` is a measured Secchi or turbidity baseline off
  * the WQP, cached in R2 and refreshed on a 30-day cron, and it moves on the scale of months.
@@ -1539,10 +1574,22 @@ function nearestClarityStation(stations, lat, lon) {
  * the payload either way, because a number that arrives without saying where it was measured is
  * exactly what this was.
  */
-async function getLakeClarity(lakeName, tripDate, env, point = null) {
+async function getLakeClarity(lakeName, tripDate, env, point = null, opts = {}) {
   const key = lakeKeyFromName(lakeName);
   const at = point && Number.isFinite(Number(point.lat)) && Number.isFinite(Number(point.lon))
     ? [Number(point.lat), Number(point.lon)] : null;
+  const water = await registryWaterFor(env, lakeName, (opts && opts.slug) || (point && point.slug) || null);
+  // ── A HAND PROFILE IS ONE LAKE'S, NOT EVERY NAME THAT CONTAINS ITS WORD ─────────────────────
+  //
+  // lakeKeyFromName() matches a fragment anywhere in the name. Measured 2026-09-24 over the
+  // registry's names: "Wateree River (Richland Co, SC)" -- a river -- got Lake Wateree's six zones,
+  // its ramps and its rain point; "Graves Lake (Marion Co, SC)" and "Russ Lake (Marion Co, SC)" got
+  // Lake Marion's from their COUNTY; and Thurmond's legacy "Murray Creek - Clarks Hill Lake" got
+  // Lake Murray's. Each profile now carries the slug of the water it was written for, and when the
+  // request resolves to a registry water, only that water gets it. With no registry to resolve
+  // against, the fragment match stands, as before.
+  const handFor = LAKE_CLARITY_PROFILES[key] || null;
+  const hand = handFor && (!water.slug || !handFor.slug || handFor.slug === water.slug) ? handFor : null;
 
   const isCoastal = (
     String(lakeName || "").toLowerCase().startsWith('coast_') ||
@@ -1570,20 +1617,45 @@ async function getLakeClarity(lakeName, tripDate, env, point = null) {
       ]
     };
   } else {
+    // ── THIS WATER'S OWN RAIN SENSITIVITY, FROM ITS OWN WATERSHED ─────────────────────────────
+    //
+    // The two generic zones used to carry the same 1.2 and 0.75 on every water. Now the level
+    // comes from the water's flush ratio in water_chain.json, ranked across every lake and placed
+    // on those same two numbers' range, and each zone keeps its share of the spread. Rivers and
+    // waters the chain did not place keep the generic rates and say why. See
+    // Worker/clarity-sensitivity.js for the method and the check against the six hand profiles.
+    const shed = watershedSensitivity(water.chain, water.slug, { index: water.index });
     defaultProfile = {
       displayName: lakeName,
       center: at || [34, -81],
-      defaultNote: "No custom clarity model yet; generic creek/runoff model used."
+      defaultNote: (shed.source === 'watershed'
+          ? `No hand-written zones for this water. Its rain response is its own: ${shed.why}.`
+          : "No custom clarity model yet; generic creek/runoff model used.")
         + (at ? "" : " RAINFALL IS FROM A FIXED POINT NEAR COLUMBIA, SC, not this water — no "
                    + "point was given, and on most waters that is over 200 km away."),
-      zones: [
-        { name: "Creeks/upper arms", sensitivity: 1.2, base: 6, likely: "stain first", ramps: [] },
-        { name: "Main lake/lower basin", sensitivity: 0.75, base: 2, likely: "clearest available water", ramps: [] }
-      ]
+      zones: shed.source === 'watershed'
+        ? zonesForSensitivity(shed.value)
+        : GENERIC_LAKE_ZONES.map((z) => ({ ...z, ramps: [] })),
+      sensitivity: shed,
     };
   }
 
-  const profile = LAKE_CLARITY_PROFILES[key] || defaultProfile;
+  const profile = hand || defaultProfile;
+  // WHAT THE RAIN IS MULTIPLIED BY HERE, AND WHERE THAT NUMBER CAME FROM. `value` is the mean of
+  // the zones actually used, which is what `overall` and `atLaunch` apply.
+  const meanSens = Math.round(profile.zones.reduce((a, z) => a + z.sensitivity, 0)
+    / Math.max(1, profile.zones.length) * 1000) / 1000;
+  const sensitivity = hand
+    ? { value: meanSens, source: 'hand-authored',
+        why: `${hand.displayName}'s ${hand.zones.length} zones were written by hand, by someone who fishes it`,
+        // Beside it, what its watershed alone would have said -- the cross-check, not the answer.
+        watershed: (() => {
+          const w = watershedSensitivity(water.chain, water.slug, { index: water.index });
+          return w.source === 'watershed' ? w : null;
+        })() }
+    : isCoastal
+      ? { value: meanSens, source: 'coastal', why: 'tidal exchange sets clarity on a coastal zone; its two zones keep their own rates' }
+      : { ...defaultProfile.sensitivity, value: meanSens };
   const [lat, lon] = profile.center;
   const rain = await fetchOpenMeteoRain(lat, lon, tripDate);
   const rainIn = rain?.weighted72_in ?? 0;
@@ -1772,12 +1844,65 @@ async function getLakeClarity(lakeName, tripDate, env, point = null) {
     };
   })() : null;
 
+  // ── WHICH OF THE TWO ZONES THE LAUNCH IS IN, ON A WATER NOBODY WROTE ZONES FOR ─────────────────
+  //
+  // Ryan, 2026-09-24: "i just thought it was already on all waters since i had already asked for
+  // everything for one water to be on all of them". The six hand profiles name the ramps in each
+  // zone, so a plan on those lakes is built on the launch's own zone. Everywhere else the two
+  // generic zones named no launch, and the plan got the lake-wide mean of both.
+  //
+  // What puts a launch in "upper arms" or "main lake / lower basin" is where it sits between the
+  // lake's OUTLET and its far end. registry/water_ends.json carries both, from NHDPlus (see
+  // Scripts/build_water_ends.py), and the launch goes to the zone whose end is nearer -- the same
+  // no-parameter rule as the nearest station. Measured 2026-09-24 on the 30 lakes with three or
+  // more positioned Secchi stations: the far-end half is murkier than the outlet half on 21 of the
+  // 26 where both halves have a station. The five that go the other way are Monticello and Keowee
+  // (pumped storage: clear water is pumped in at the top), Moultrie (fed by the Diversion Canal),
+  // Hiwassee, and Hartwell -- and three of those have hand profiles, which this never touches.
+  //
+  // Only for a launch, only without a hand profile, never on the coast; and the payload names both
+  // distances so a launch near the middle is visibly near the middle.
+  let launchZone = null;
+  if (isLaunch && !hand && !isCoastal && water.slug && zones.length === 2) {
+    try {
+      const { waterEnds } = await import('./registry.js');
+      const e = (await waterEnds(env))[water.slug];
+      if (e && Array.isArray(e.outlet) && Array.isArray(e.far)) {
+        const kmTo = (p) => {
+          const r = Math.PI / 180;
+          const h = Math.sin((p[0] - at[0]) * r / 2) ** 2
+                  + Math.cos(at[0] * r) * Math.cos(p[0] * r) * Math.sin((p[1] - at[1]) * r / 2) ** 2;
+          return Math.round(2 * 6371.0088 * Math.asin(Math.min(1, Math.sqrt(h))) * 10) / 10;
+        };
+        const outletKm = kmTo(e.outlet);
+        const farKm = kmTo(e.far);
+        const upper = farKm < outletKm;
+        // By NAME, not position in the list: the generic table says which zone is which.
+        const z = zones.find((x) => x.name === GENERIC_LAKE_ZONES[upper ? 0 : 1].name);
+        if (z) launchZone = {
+          name: z.name, outletKm, farKm,
+          why: `the launch is ${outletKm} km from where the lake lets out and ${farKm} km from `
+             + `its far end, so it is in the ${upper ? 'upper' : 'lower'} half`,
+        };
+      }
+    } catch (e) {
+      console.warn(`[clarity] water ends unavailable for ${water.slug}: ${e.message}`);
+    }
+  }
+
   return {
     lake: profile.displayName || lakeName,
     key,
+    // Which generic zone the launch is in, by where it sits between the outlet and the far end.
+    launchZone,
+    // The registry water this answer is about, so a caller can see it is the one it meant.
+    water: water.slug,
     tripDate,
     // The launch's own clarity, read at the measured station nearest it. See `atLaunch` above.
     atLaunch,
+    // WHAT RAIN IS MULTIPLIED BY ON THIS WATER, AND WHERE THAT CAME FROM: 'hand-authored' (the six),
+    // 'watershed' (its own flush ratio, ranked), 'coastal', or 'generic' with the reason.
+    sensitivity,
     // WHERE THE RAIN WAS MEASURED, AND WHETHER IT IS THIS WATER. The rainfall is the only input in
     // this model that describes today, and until 2026-09-23 it came from a fixed point near
     // Columbia on every water without one of the six hand-authored profiles -- a median of 226 km
@@ -1785,7 +1910,7 @@ async function getLakeClarity(lakeName, tripDate, env, point = null) {
     // was taken is how that survived, so it says.
     rainPoint: { lat: profile.center[0], lon: profile.center[1],
                  isThisWater: !!(at && profile.center === at),
-                 basis: LAKE_CLARITY_PROFILES[key] ? "the lake's own hand-authored point"
+                 basis: hand ? "the lake's own hand-authored point"
                       : at ? "the point the caller asked about"
                       : "A FIXED FALLBACK, NOT THIS WATER — no point was given" },
     // What this water ordinarily is, and how far today sits off it. See versusNormal above.

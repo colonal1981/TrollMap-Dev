@@ -8,6 +8,14 @@ Personal use only, not for distribution or resale; not for navigation.
 
 Writes `registry\\lake_drainage.json`.
 
+SUPERSEDED FOR SENSITIVITY, 2026-09-24. Nothing reads lake_drainage.json. The per-lake sensitivity
+this was written to derive is now computed in the Worker (Worker/clarity-sensitivity.js) from
+registry/water_chain.json, which already held each lake's outlet drainage -- checked against USACE
+to a median 0.2% -- and its NHD surface. That also avoids this script's catchment rule, the
+LARGEST flowline crossing the lake's bounding box, which on a small lake beside a big river
+reads the river. The NWM reaches half below (named arms by COMID) is still unique to this file
+and still unused.
+
 WHAT THIS REPLACES
 
 `LAKE_CLARITY_PROFILES` in `Worker/worker-data.js` hand-authors a `sensitivity` constant per

@@ -7,7 +7,13 @@ import { LAKE_CLARITY_PROFILES, lakeKeyFromName } from '../Worker/worker-data.js
 //
 // Ryan, 2026-09-23, told that running build_lake_drainage.py would improve the
 // per-zone `sensitivity` constant: "that doesn't sound right at all for
-// clarity..." He was right, and the constant was the wrong thing to look at.
+// clarity..."
+//
+// This header first read that as an objection to the drainage method. It was
+// not, and he said so on 2026-09-24: "what i said for clarity that was not
+// right was that it was only on 6 waters... i have nothing to say about the
+// method". The rain point below was a real defect found while looking and stays
+// fixed; the per-water sensitivity is test/clarity-is-on-every-water.test.js.
 //
 //     score       = base + rainScore * sensitivity
 //     normalScore = base
@@ -35,12 +41,12 @@ const src = (f) => readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
 describe('the clarity model reads rain at the water it is describing', () => {
   it('/conditions passes its own point to getLakeClarity', () => {
     const s = src('Worker/conditions.js');
-    expect(/getLakeClarity\(nm, date, env, \{ lat, lon \}\)/.test(s)).toBe(true);
+    expect(/getLakeClarity\(nm, date, env, \{ lat, lon \}, \{ slug \}\)/.test(s)).toBe(true);
   });
 
   it('/lake-clarity forwards a point when it is given one', () => {
     const s = src('Worker/trollmap-worker.js');
-    expect(/getLakeClarity\(name, dateParam, env, clPoint\)/.test(s)).toBe(true);
+    expect(/getLakeClarity\(name, dateParam, env, clPoint, \{ slug: clSlug \}\)/.test(s)).toBe(true);
   });
 
   it('both app callers of /lake-clarity send lat and lon', () => {

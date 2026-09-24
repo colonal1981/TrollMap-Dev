@@ -393,7 +393,10 @@ export async function fetchClarityAtRamp(lakeName, dateStr, o = {}) {
     const url = `${worker}/lake-clarity?lake=${encodeURIComponent(lakeName)}`
               + `&date=${encodeURIComponent(dateStr || '')}`
               + (pt ? `&lat=${Number(pt.lat)}&lon=${Number(pt.lon)}` : '')
-              + (isLaunch ? '&at=launch' : '');
+              + (isLaunch ? '&at=launch' : '')
+              // The registry water, so the Worker reads THIS water's watershed and never hands a
+              // name that merely contains "wateree" another lake's hand-written zones.
+              + (rec && rec.slug ? `&slug=${encodeURIComponent(rec.slug)}` : '');
     const res = o.fetchJson ? await o.fetchJson(url) : await (await fetch(url)).json();
     if (!res || res.error) return null;
     const got = clarityForPlan(res, rampName);

@@ -2029,7 +2029,10 @@ var trollmap_worker_default = {
         // `at=launch` says the point IS the launch, not the water's centroid -- only then is the
         // nearest measured station his water. See `atLaunch` in getLakeClarity.
         if (clPoint && url.searchParams.get("at") === "launch") clPoint.isLaunch = true;
-        const data = await getLakeClarity(name, dateParam, env, clPoint);
+        // `slug` is OPTIONAL too: the registry water, when the caller knows it. Without it the name
+        // is resolved the way the WQP pull resolves it. See registryWaterFor in worker-data.js.
+        const clSlug = url.searchParams.get("slug") || null;
+        const data = await getLakeClarity(name, dateParam, env, clPoint, { slug: clSlug });
         return new Response(JSON.stringify(data, null, 2), { headers: JSON_HEADERS });
       }
       if (path === "/lake-intel-sources") {
