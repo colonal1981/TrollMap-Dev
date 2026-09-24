@@ -12,6 +12,7 @@ import { handleGisRoute, flagIsYes, hasText, ARCGIS_BUILD } from './core/arcgis.
 import { RAMP_SOURCES } from './core/ramp-sources.js';
 import { handleWaterRoute } from './water.js';
 import { handleConditions, handleHazards, dukeBasinFor, parseActiveRun, activeRunForWater, riverBindings, riverArrivals, easternClock } from './conditions.js';
+import { riverGeometry, stationAt, stretchAround, currentBetween, currentVerdict, packSlugFor, BOAT } from './river-geometry.js';
 import { handleCameras } from './cameras.js';
 import { handleAlerts, runAlertSweep } from './alerts.js';
 import { handleReports } from './reports.js';
@@ -364,24 +365,89 @@ async function getRiver(key, opts = {}) {
     }
   }
   const primary = out.gauges.find((g) => g.primary) || out.gauges[0];
-  // A GO/NO-GO NEEDS THE BANDS THAT DECIDE IT. `assessKayakSafety` reads t.cfsDanger and friends
+
+  // ── WHERE ON THE RIVER, AND HOW FAST THE WATER IS MOVING THERE ─────────────────────────────
+  //
+  // From the river's own pack: the centreline places the user by river metre, the landings on
+  // either side bound the stretch a day from there lives on, and the charted cross-sections turn
+  // the gauge's discharge into a speed (V = Q/A, per station). See Worker/river-geometry.js.
+  const geom = (opts.env && opts.packSlug)
+    ? await riverGeometry(opts.env, opts.packSlug).catch(() => null) : null;
+  if (geom) {
+    let at = null;
+    if (opts.userLat != null && opts.userLon != null) {
+      at = stationAt(geom, opts.userLat, opts.userLon);
+      if (at && geom.snap_cap_m != null && at.off_m > geom.snap_cap_m) {
+        out.river_position_refused = `the point is ${at.off_m} m from the ${opts.packSlug} centreline, `
+          + `beyond the ${geom.snap_cap_m} m the pack builder accepts as on the river`;
+        at = null;
+      }
+    }
+    const stretch = at ? stretchAround(geom, at.station_m)
+      : { from_m: geom.m[0], to_m: geom.m[geom.n - 1],
+          from: 'the top of the charted river', to: 'the bottom of the charted river' };
+    if (at) {
+      out.river_position = { pack: opts.packSlug, station_m: at.station_m,
+                             river_mi: Math.round(at.station_m / 1609.344 * 10) / 10,
+                             off_m: at.off_m, river_length_mi: Math.round(geom.length_m / 1609.344 * 10) / 10 };
+    }
+    const cur = currentBetween(geom, stretch.from_m, stretch.to_m,
+      primary ? primary.streamflow_cfs : NaN, { tidal: !!opts.tidal });
+    out.current = { ...cur, stretch, flow_gauge: primary ? primary.name : null,
+                    pack: opts.packSlug, boat_top_mph: BOAT.topSpeedMph };
+  } else {
+    out.current = { basis: opts.packSlug ? `the ${opts.packSlug} pack has no centreline in the bucket`
+                                         : 'no river pack is bound to this river' };
+  }
+  const moving = currentVerdict(out.current);
+
+  // A GO/NO-GO NEEDS SOMETHING THAT DECIDES IT. `assessKayakSafety` reads t.cfsDanger and friends
   // off `kayakThresholds`; with none, every comparison is against `undefined`, which is false, and
   // the function returns "Conditions appear normal — paddleable." on a river nobody measured.
-  // That is the worst possible output on this route, so the block is skipped and the payload says
-  // what is missing instead. The numbers themselves still ship: flow, stage, temperature and the
-  // release schedule are all above.
-  if (primary && !cfg.kayakThresholds) {
+  // Since 2026-09-24 the other thing that can decide it is the current against the boat, which
+  // the pack answers for any river with charted sections. With neither, the block is skipped and
+  // the payload says what is missing: flow, stage, temperature and releases still ship above.
+  if (primary && !cfg.kayakThresholds && !moving) {
     out.kayak_assessment = null;
     out.kayak_assessment_unavailable =
-      'No kayak thresholds are bound to this river. The cfs bands that decide go/no-go differ by '
-      + 'an order of magnitude between rivers and are not derivable from the binding, so no '
-      + 'verdict is offered. The gauge readings above are measured; read them yourself.';
+      'No hand-set kayak bands for this river, and no current to judge the boat against: '
+      + `${out.current.basis}. The gauge readings above are measured; read them yourself.`;
   } else if (primary) {
-    const assessment = assessKayakSafety(key, {
-      streamflow: primary.streamflow_cfs,
-      tempC: primary.water_temperature_C,
-      rateOfRiseFtPerHr: primary.rate_of_rise_ft_per_hr
-    }, cfg.kayakThresholds);
+    const order = { "go": 0, "caution": 1, "no-go": 2 };
+    const assessment = cfg.kayakThresholds
+      ? assessKayakSafety(key, {
+          streamflow: primary.streamflow_cfs,
+          tempC: primary.water_temperature_C,
+          rateOfRiseFtPerHr: primary.rate_of_rise_ft_per_hr
+        }, cfg.kayakThresholds)
+      : { status: "go", reasons: [], metrics: {
+            ...(primary.streamflow_cfs != null ? { streamflow_cfs: primary.streamflow_cfs } : {}),
+            ...(primary.rate_of_rise_ft_per_hr != null
+              ? { rate_of_rise_ft_per_hr: primary.rate_of_rise_ft_per_hr } : {}) } };
+    // THE CURRENT AGAINST THE BOAT, on every river it can be measured on. On the six with hand-set
+    // bands the stricter of the two stands: measured 2026-09-24 they agree on the Congaree, the
+    // current is stricter on the Lower Saluda, and the bands are stricter on the Wateree at 8,000.
+    if (moving) {
+      if (order[moving.status] > order[assessment.status]) assessment.status = moving.status;
+      if (moving.status === "go") assessment.reasons.push(moving.reason);
+      else assessment.reasons.unshift(moving.reason);
+      assessment.metrics.current_mph = out.current.median_mph;
+      assessment.metrics.current_p90_mph = out.current.p90_mph;
+    }
+    // NWS ACTION STAGE AND ABOVE, where the gauge carries NWS categories. A backstop, not the
+    // rule: action stage sits above every hand-set danger line it could be compared with.
+    const flood = (primary && (cfg.gauges || []).find((g) => g.site === primary.site)?.flood)
+      || (opts.boundGauges || []).find((g) => String(g.usgs_site) === String(primary.site))?.flood
+      || null;
+    if (flood && Number.isFinite(flood.action) && Number.isFinite(primary.gage_height_ft)
+        && primary.gage_height_ft >= flood.action) {
+      assessment.status = "no-go";
+      assessment.reasons.unshift(`\u{1F6D1} ${primary.name} reads ${primary.gage_height_ft} ft, at or above `
+        + `the NWS action stage of ${flood.action} ft.`);
+    }
+    assessment.basis = cfg.kayakThresholds
+      ? "hand-set cfs bands for this river, and the current against the boat"
+      : "the current against the boat; this river has no hand-set bands";
     if (out.user_location?.minutes_until_surge_at_user != null) {
       const m = out.user_location.minutes_until_surge_at_user;
       const sev = out.user_location.surge_severity_factor;
@@ -1986,6 +2052,16 @@ var trollmap_worker_default = {
         const userLon = parseFloat(url.searchParams.get("lon"));
         const opts = isFinite(userLat) && isFinite(userLon) ? { userLat, userLon } : {};
         if (!RIVERS[key] && bound[key]) opts.cfg = riverCfgFromBinding(key, bound[key]);
+        // THE RIVER'S OWN PACK -- its centreline and landings -- for where the user is on it and
+        // how fast the water is moving there. See Worker/river-geometry.js.
+        opts.env = env;
+        opts.packSlug = packSlugFor(key, opts.cfg || RIVERS[key], bound);
+        opts.tidal = !!(opts.packSlug && bound[opts.packSlug]
+                        && (bound[opts.packSlug].tides || []).length);
+        opts.boundGauges = opts.packSlug && bound[opts.packSlug]
+          ? [bound[opts.packSlug].pool, bound[opts.packSlug].tailwater,
+             ...(bound[opts.packSlug].gauges || [])].filter(Boolean)
+          : [];
         const data = await getRiver(key, opts);
         return new Response(JSON.stringify(data, null, 2), { headers: JSON_HEADERS });
       }

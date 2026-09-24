@@ -116,7 +116,11 @@ describe('the six curated rivers are unchanged', () => {
 
 describe('the go/no-go is withheld rather than guessed', () => {
   it('assessKayakSafety is not reached without thresholds', () => {
-    expect(SRC.includes('if (primary && !cfg.kayakThresholds)')).toBe(true);
+    // 2026-09-24: a river with no bands can now get a verdict from the current against the boat
+    // (Worker/river-geometry.js), so the guard also asks for that -- and assessKayakSafety is still
+    // only ever called with bands in hand. The withheld answer stands where neither exists.
+    expect(SRC.includes('if (primary && !cfg.kayakThresholds && !moving)')).toBe(true);
+    expect(/const assessment = cfg\.kayakThresholds\s*\?\s*assessKayakSafety\(/.test(SRC)).toBe(true);
     expect(SRC.includes('out.kayak_assessment_unavailable')).toBe(true);
   });
 
