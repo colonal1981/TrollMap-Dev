@@ -137,7 +137,17 @@ TAILWATER_RE = re.compile(r'\b(tailrace|tailwater|below)\b', re.I)
 # pool branch on the word ABOVE.
 TAILRACE_RE = re.compile(r'\b(tailrace|tailwater)\b', re.I)
 BELOW_RE = re.compile(r'\bbelow\b', re.I)
-POOL_RE = re.compile(r'\b(above|headwater|at\s+dam|pool)\b', re.I)
+# AND `above` IS NOT DECISIVE EITHER, for the same reason `below` is not -- split out
+# 2026-09-24. "<River> above <town>" is an ordinary stage reading exactly as "<River> below
+# <town>" is, and the bare word made five of them lakes' POOL. "Black Creek (SC) above
+# Hartsville" is 0.48 km BELOW Lake Robinson's dam (Ryan filed that very instrument as the
+# tailwater on 2026-08-12, and it was published as both); "Swift Creek above McCuller's
+# Crossroads" is below Lake Wheeler's; "Pacolet River above Cowpens" took Lake Blalock's pool
+# from LAKE BLALOCK NEAR COWPENS, and "Pigeon River above Lake Logan" took Lake Logan's from its
+# reservoir-elevation site. `above` says pool only beside `dam` -- "Hiwassee River above
+# Hiwassee Dam", "Watauga River above Watauga Dam", "Lake Crabtree above Dam".
+POOL_RE = re.compile(r'\b(headwater|at\s+dam|pool)\b', re.I)
+ABOVE_RE = re.compile(r'\babove\b', re.I)
 DAM_RE = re.compile(r'\bdam\b', re.I)
 
 
@@ -525,6 +535,120 @@ def name_relation(water_names, gauge_name, weak):
         return None
     strong = sorted(shared - weak)
     return strong[0] if strong else None
+
+
+# ── the gauge that names the water, word for word ───────────────────────────────────────────
+#
+# name_relation() works in TOKENS, with the generic words and the registry's own common words
+# taken out, and that is right for telling "Hiwassee River above Hiwassee Dam" from the next dam
+# up. It is blind in exactly one place: a water whose own name is NOTHING BUT common words.
+#
+#     broad_river_2         "Broad River"            `broad` is weak -- French Broad, First Broad,
+#                                                    Broad Creek... -- so it carries nothing
+#     south_fork_new_river  "South Fork New River"   every word is in _NOISE; no token at all
+#
+# So "Broad River in NC/SC near CARLISLE" and "South Fork New River at US Hwy 221" -- the gauges
+# ON those rivers, both standing inside their polygons -- were filed as geometry-only and kept
+# out of the pool race, while a TRIBUTARY's gauge matched a strong token off the river list
+# and took it: broad_river_2 read "Enoree River near Woodruff", south_fork_new_river "Big Reed
+# Island Creek at Silverleaf Road". `pool` is the gauge every level, flow and go/no-go answer
+# comes off (see Scripts/audit_pool_binds.mjs), so both rivers were being judged on another one.
+#
+# The whole-name test settles it without touching a weak list: the part of the gauge name
+# before its first locative ("at", "near", "above"...) EQUALS the water's own name. That is not
+# a token that happens to appear -- it is the gauge saying which river it is on. "French Broad
+# River at Asheville" is not "Broad River", because the equality is of the whole phrase.
+_LOCATIVE_RE = re.compile(r'\b(?:at|near|nr|above|abv|below|blw|in|from|downstream|upstream)\b')
+
+
+def _plain_name(s):
+    s = re.sub(r'\(.*?\)', ' ', s or '')
+    s = re.sub(r',\s*[A-Za-z]{2}(?:\s*/\s*[A-Za-z]{2})*\s*$', ' ', s)
+    s = re.sub(r'[^a-z0-9 ]+', ' ', s.lower())
+    return ' '.join(s.split())
+
+
+def gauge_river_part(gauge_name):
+    """'Broad River in NC/SC near CARLISLE' -> 'broad river'. The name before its locative."""
+    p = _plain_name(gauge_name)
+    m = _LOCATIVE_RE.search(p)
+    return (p[:m.start()] if m else p).strip()
+
+
+def names_the_water(own_names, gauge_name):
+    """The gauge's river part, when it IS one of the water's own names word for word; else None."""
+    rp = gauge_river_part(gauge_name)
+    if not rp:
+        return None
+    return rp if any(n and _plain_name(n) == rp for n in own_names) else None
+
+
+# ── one instrument, one pool ────────────────────────────────────────────────────────────────
+#
+# Each water is bound on its own, so nothing stopped two waters publishing the SAME gauge as
+# their pool. Measured on the 2026-09-24 rebind, five instruments were claimed that way, and in
+# every one of them the gauge stands at a dam and reads the lake behind it (owner first):
+#
+#     CLTT1     Little Tennessee River above Chilhowee Dam      chilhowee_lake   | tellico_lake
+#     02087339  Walnut Creek (NC) above Lake Johnson Dam        lake_johnson     | lake_raleigh
+#     CRKT1     Holston River above Cherokee Dam                cherokee_lake    | holston_river
+#     02138520  Catawba River at Lake James/Linville Dam        lake_james       | catawba_river_2
+#     NOLT1     Nolichucky River at Nolichucky Dam HW           davy_crockett_lake
+#                                                               | nolichucky_river, nolichucky_river_2
+#
+# Tellico was reading Chilhowee's level, Lake Raleigh Lake Johnson's, and four RIVERS were reading
+# a reservoir's level as their stage -- the number every go/no-go on them comes off.
+#
+# WHO KEEPS IT. A lake before a river: a lake has one level and a river has many gauges, so an
+# instrument both call their pool is the reservoir's. Then, between lakes, the one whose outline
+# CONTAINS it. Containment alone was tried first and gave Lake James's dam gauge to the Catawba,
+# whose outline runs over the dam while the lake's stops 0.3 km short of it.
+#
+# The others keep it only as an ordinary gauge, filed last so it is never their primary. Nothing
+# is guessed in its place. A person's override always keeps it, and when the rule cannot pick
+# exactly one owner nothing moves and the run says so.
+_CONTAINS = ('name+geom', 'geom_only_inside')
+
+
+def _pool_owner(bindings, slugs):
+    conf = {s: bindings[s]['pool'].get('confidence') for s in slugs}
+    people = [s for s in slugs if conf[s] == 'override']
+    if people:
+        return people
+    side = sorted(s for s in slugs if bindings[s].get('feature_type') == 'lake') or sorted(slugs)
+    if len(side) == 1:
+        return side
+    return [s for s in side if conf[s] in _CONTAINS]
+
+
+def demote_shared_pools(bindings, tally):
+    holders = defaultdict(set)
+    for slug, b in bindings.items():
+        p = b.get('pool')
+        for i in ((p or {}).get('lid'), (p or {}).get('usgs_site')):
+            if i:
+                holders[i].add(slug)
+    for inst, slugs in sorted(holders.items()):
+        # One instrument can arrive under its lid AND its site number; the second pass over the
+        # same claim finds the losers already demoted and has nothing left to decide.
+        slugs = {s for s in slugs if bindings[s].get('pool')}
+        if len(slugs) < 2:
+            continue
+        owners = _pool_owner(bindings, slugs)
+        if len(owners) != 1:
+            print('   ?? pool %s is claimed by %s and no one owner can be picked -- left alone'
+                  % (inst, ', '.join(sorted(slugs))))
+            tally['shared_pool_undecided'] += 1
+            continue
+        for s in sorted(slugs - {owners[0]}):
+            b = bindings[s]
+            p = b.pop('pool')
+            p['pool_of'] = owners[0]
+            b['gauges'] = list(b.get('gauges') or []) + [p]
+            tally['shared_pool_demoted'] += 1
+            tally['bound_pool'] -= 1
+            print('   pool %s (%s) belongs to %s -- demoted on %s'
+                  % (inst, p.get('name'), owners[0], s))
 
 
 # ── geometry ────────────────────────────────────────────────────────────────────────────────
@@ -1192,6 +1316,12 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
         # So the river list stays -- it is load-bearing for Kentucky Lake and every TVA pool --
         # but a match that comes ONLY from it loses the pool race to one that names the water.
         own_names = [n for n in names if n]
+        # The name the water carries NOW, without the legacy ones. south_fork_new_river keeps
+        # "NEW RIVER" as a legacy display name, so "New River at Mouth of Wilson" and "South Fork
+        # New River at US Hwy 221" both name the water word for word -- both HG, both 0.0 km
+        # inside -- and the tie fell to iteration order, which handed the South Fork the
+        # mainstem's gauge. A gauge that names the current name beats one that names an old one.
+        current_names = [n for n in (rec.get('name'), rec.get('display_name')) if n]
         river_names = [n for n in ((lake_rivers or {}).get(slug, {}).get('rivers') or []) if n]
         names = own_names + river_names
         # The distinctive tokens of the water's OWN name, for the tie-break below.
@@ -1230,7 +1360,9 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
         pool_cands, tail_cands = [], []
         for lid, g, lon, lat in cand:
             gname = g.get('name') or ''
-            tok_own = name_relation(own_names, gname, weak)
+            # A gauge whose river part IS the water's own name is an own-name match even when
+            # every word of that name is common -- see names_the_water().
+            tok_own = name_relation(own_names, gname, weak) or names_the_water(own_names, gname)
             tok = tok_own or name_relation(river_names, gname, weak)
             # SHEF physical element, straight off the NWPS roster and never used until now.
             # `HG` is gauge height -- river stage. `HP` is POOL height. `HT` is tailwater.
@@ -1304,6 +1436,7 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
             entry['_own'] = bool(tok_own)
             entry['_pe'] = pe
             entry['_inside'] = inside
+            entry['_current'] = bool(names_the_water(current_names, gname))
             # How many times the water's own distinctive tokens appear in the gauge name.
             # "Hiwassee River above Hiwassee Dam" scores 2, "Hiwassee River above Mission Dam
             # at Brasstown" scores 1 -- which is the difference between a lake's own dam and
@@ -1328,7 +1461,8 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
             if TAILRACE_RE.search(gname) or (BELOW_RE.search(gname) and DAM_RE.search(gname)) \
                     or pe == 'HT':
                 tail_cands.append(entry)
-            elif POOL_RE.search(gname) or inside or (pe == want_pe and tok_own):
+            elif (POOL_RE.search(gname) or (ABOVE_RE.search(gname) and DAM_RE.search(gname))
+                  or inside or (pe == want_pe and tok_own)):
                 # `pe` alone is not a licence. A river-token match standing outside the polygon
                 # with the right SHEF element is a NEIGHBOUR's gauge -- it is how Tuckertown
                 # picked up High Rock's pool and `wilson_dam` picked up Lake Marion's. It has
@@ -1367,13 +1501,16 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
         # Ranked now, and the runners-up fall through to `others` where they are still readable.
         #   1. a gauge that names THE WATER beats one that only names a river running through it
         #   2. the SHEF element the water actually wants -- HP for a lake, HG for a river
-        #   3. more of the water's own tokens in the gauge name (its own dam beats the next one)
-        #   4. standing inside the polygon beats standing near it
-        #   5. then closest
+        #   3. a gauge that names the water's CURRENT name word for word beats one that names a
+        #      legacy name or only shares a token (see `current_names`)
+        #   4. more of the water's own tokens in the gauge name (its own dam beats the next one)
+        #   5. standing inside the polygon beats standing near it
+        #   6. then closest
         def _rank(e):
             pe_ = e.get('_pe') or ''
             return (0 if e.get('_own') else 1,
                     0 if pe_ == want_pe else (1 if pe_ in ('HG', 'HP') else 2),
+                    0 if e.get('_current') else 1,
                     -(e.get('_hits') or 0),
                     0 if e.get('_inside') else 1,
                     e.get('km_outside') or 0.0)
@@ -1537,7 +1674,7 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
                 _take_catalogue(hit)
                 tally['usgs_merged_into_nwps'] += 1
                 continue
-            tok = name_relation(names, gname, weak)
+            tok = name_relation(names, gname, weak) or names_the_water(own_names, gname)
             d_km, inside = _how_far(glon, glat)
             geom = 'inside' if inside else ('near' if d_km <= margin_km else None)
             if geom == 'near' and not verts:
@@ -1654,6 +1791,13 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
                     tally['override_lid_not_in_roster'] += 1
                 others = [o for o in others if (o.get('lid') or '').upper() != lid]
                 geom_only = [o for o in geom_only if (o.get('lid') or '').upper() != lid]
+                # ONE INSTRUMENT, ONE ROLE -- see the same line in the site branch below.
+                if role != 'pool' and pool and (pool.get('lid') or '').upper() == lid:
+                    pool = None
+                    tally['override_took_instrument_from_pool'] += 1
+                if role != 'tailwater' and tail and (tail.get('lid') or '').upper() == lid:
+                    tail = None
+                    tally['override_took_instrument_from_tailwater'] += 1
                 if not (cu.get('by') and cu.get('on')):
                     print('   !! override %s -> %s has no `by`/`on`. Say who decided it and when.'
                           % (slug, lid))
@@ -1690,6 +1834,21 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
             # Drop any derived entry for the same site so the curated one is not a duplicate.
             others = [o for o in others if o.get('usgs_site') != site]
             geom_only = [o for o in geom_only if o.get('usgs_site') != site]
+            # ONE INSTRUMENT, ONE ROLE. The lines above cleared `others` and `geom_only` and left
+            # the derived POOL alone, so an instrument a person filed as the tailwater could stay
+            # the pool as well: Lake Robinson published USGS 02130910, BLACK CREEK NEAR
+            # HARTSVILLE -- 0.48 km below the dam, filed `tailwater` by Ryan on 2026-08-12 -- as
+            # its pool AND its tailwater, so the card called the creek below the dam the lake
+            # level. The person's role wins; the derived slot it contradicts is emptied, not
+            # guessed at, and the tally says so.
+            if role != 'pool' and pool and site in ([pool.get('usgs_site')]
+                                                    + list(pool.get('usgs_also') or [])):
+                pool = None
+                tally['override_took_instrument_from_pool'] += 1
+            if role != 'tailwater' and tail and site in ([tail.get('usgs_site')]
+                                                         + list(tail.get('usgs_also') or [])):
+                tail = None
+                tally['override_took_instrument_from_tailwater'] += 1
             if role == 'tailwater':
                 tail = ce
             elif role == 'pool':
@@ -1811,7 +1970,7 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
         # and both live inside this function.
         def _scrub(o):
             if isinstance(o, dict):
-                for k in ('_own', '_pe', '_inside', '_hits'):
+                for k in ('_own', '_pe', '_inside', '_hits', '_current'):
                     o.pop(k, None)
                 for v in o.values():
                     _scrub(v)
@@ -1824,6 +1983,8 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
         tally['bound'] += 1
         tally['bound_pool'] += 1 if pool else 0
         tally['bound_tailwater'] += 1 if tail else 0
+
+    demote_shared_pools(bindings, tally)
 
     # THE 306 CALLS THAT READ ONE INTEGER APIECE ARE GONE. This loop used to fetch
     # `/nwps/v1/gauges/{lid}` once per bound water and take `reachId` off it -- a whole gauge

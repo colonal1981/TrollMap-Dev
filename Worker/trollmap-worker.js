@@ -79,7 +79,17 @@ function assessKayakSafety(riverKey, gaugeData, thresholds) {
   const cfs = gaugeData.streamflow;
   if (cfs != null) {
     metrics.streamflow_cfs = cfs;
-    if (cfs >= t.cfsDanger) {
+    // A NEGATIVE DISCHARGE IS WATER RUNNING UPSTREAM, NOT A LOW RIVER. The bands below are for the
+    // river's own flow, and the last branch caught everything under `cfsCalm` -- so on the Cooper,
+    // whose USGS discharge goes negative on a flooding tide, every flood read "Streamflow -<n> cfs
+    // is LOW -- expect skinny water and possible portaging over shoals". The Santee's
+    // notes say its flow can reverse too. Said as what it is, and it decides nothing: a reversed
+    // reading is the tide, and the tide is not what these bands were set against.
+    if (cfs < 0) {
+      reasons.push(`Streamflow is running UPSTREAM (${cfs} cfs) — a flooding tide or a reversal `
+        + "pushing up the river. This gauge's discharge is the tide right now, not the river's flow, "
+        + "so the cfs bands do not apply to it.");
+    } else if (cfs >= t.cfsDanger) {
       escalate("no-go");
       reasons.push(`Streamflow ${cfs} cfs is in the DANGER zone (>${t.cfsDanger} for kayak/canoe). Strong current, swimming hazardous.`);
     } else if (cfs >= t.cfsPushy) {
