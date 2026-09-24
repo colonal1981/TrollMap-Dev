@@ -1,5 +1,5 @@
 // research/agents.js — split from worker-research.js (behavior-preserving) 
-import { JSON_HEADERS, callLLM, extractLLMText } from '../worker-core.js';
+import { JSON_HEADERS, callLLM, extractLLMText, GEMINI_FREE_FLASH_MODELS } from '../worker-core.js';
 import { fetchDukeOperatingRange } from '../worker-data.js';
 import { dukePoolManagement, isTidalWater } from '../conditions.js';
 import { lakeIndex, resolveRegistryRow, agencyLakeFacts, speciesTraits,
@@ -1196,6 +1196,12 @@ async function handleResearchAgent(request, env) {
   const state = String(body.state || '').trim() || 'SC';
   const agentKey = String(body.agent || '').trim().toLowerCase();
   const previousResults = body.previousResults || body.context || {};
+  // WHICH MODELS WRITE THE TROLLING ANSWERS. `groupModels: 'flash'` tries the full Flash models on
+  // every free key before Lite (GEMINI_FREE_FLASH_MODELS in worker-core.js), for the fisheries
+  // agent only; anything else is Lite, exactly as before. research_lakes.py --group-models sends it.
+  // Ryan, 2026-09-24, on four Flash models at 20 a day on each of five keys that nothing used.
+  const groupModels = body.groupModels === 'flash' && agentKey === 'fisheries' ? 'flash' : 'lite';
+  const llmOpts = groupModels === 'flash' ? { firstModels: GEMINI_FREE_FLASH_MODELS } : {};
   if (!lakeName) return new Response(JSON.stringify({success:false, error:"missing lakeName"}), {status:400, headers:JSON_HEADERS});
   const agent = RESEARCH_AGENTS[agentKey];
   if (!agent) return new Response(JSON.stringify({success:false, error:`unknown agent ${agentKey}. Valid: ${Object.keys(RESEARCH_AGENTS).join(', ')}`}), {status:400, headers:JSON_HEADERS});
@@ -1667,10 +1673,10 @@ async function handleResearchAgent(request, env) {
           await new Promise((r) => setTimeout(r, RETRY_WAITS_MS[attempt - 1]));
         }
         try {
-          const llmResult = await callLLM(env, payload, null);
+          const llmResult = await callLLM(env, payload, null, llmOpts);
           const rawText = extractLLMText(llmResult.data);
           const parsed = extractJsonPossibly(rawText);
-          if (!parsed) { lastReason = 'non-JSON response'; continue; }
+          if (!parsed) { lastReason = `non-JSON response (${llmResult.model})`; continue; }
           // Same pick as the single-shot path below, and literally the same function -- see
           // fisheriesSection() for the Nolichucky run that saved three field names as fish.
           const section = fisheriesSection(parsed, agentKey);
@@ -1693,7 +1699,8 @@ async function handleResearchAgent(request, env) {
           // key for it to read. Nothing in the batch changes.
           collectLakeLevel(parsed);
           groupOutcomes.push({ group: groupName, species: groupSpecies, ok: true,
-                               returned: got, reason: null, attempts: attempt + 1 });
+                               returned: got, reason: null, attempts: attempt + 1,
+                               model: llmResult.model });
           return section;
         } catch (e) {
           lastReason = e.message;
@@ -1816,7 +1823,7 @@ holding: coerceHolding(entry.holding, holdingRejects),
       // the same run as an object that is present and simply had nothing to say. The batch is 64
       // waters and nobody reads 64 scrollback lines; this is the number that makes the difference
       // falsifiable in the report. Same reason `groups` and `missingSpecies` are here.
-      meta: { model: 'multi-group', provider: 'gemini-free',
+      meta: { model: 'multi-group', provider: 'gemini-free', groupModels,
               groups: groupOutcomes, failedGroups, missingSpecies,
               agencyEntries: (groundedPrev._agencyEntries || []).length,
               speciesTraitRows: (groundedPrev._traitsEntries || []).length },
@@ -1882,7 +1889,7 @@ holding: coerceHolding(entry.holding, holdingRejects),
     // identity, and regulations. Limnology used to force the Gemini route,
     // bypassing the successful default fallback/rate routing used by the other
     // agents even when they ultimately reported Flash-Lite.
-    llmResult = await callLLM(env, payload, null);
+    llmResult = await callLLM(env, payload, null, llmOpts);
   } catch (e) {
     return new Response(JSON.stringify({success:false, error:`LLM failed: ${e.message}`, agent: agentKey, lakeName}), {status: 502, headers: JSON_HEADERS});
   }

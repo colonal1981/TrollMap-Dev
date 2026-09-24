@@ -784,7 +784,8 @@ def registry_ramps(row):
     return out
 
 def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev", alt_names=None,
-                 tpm=DEFAULT_TPM, row=None, limnology_only=False, rpm=DEFAULT_RPM):
+                 tpm=DEFAULT_TPM, row=None, limnology_only=False, rpm=DEFAULT_RPM,
+                 group_models="lite"):
     """One lake, start to saved profile. Returns a result dict; never raises."""
     t0 = time.perf_counter()
     clock = PhaseClock()
@@ -1196,44 +1197,7 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
              "text": str(d.get("fullText") or d.get("text") or "")[:LLM_DOC_CHARS]}
             for d in usable[:LLM_DOC_LIMIT]]
 
-        # ── THE ONE CALL THAT CAN TIME OUT, AND IT USED TO END THE WATER ────────────────────
-        #
-        # 2026-09-23, three hours into the 33-river batch:
-        #
-        #     Ogeechee River, GA   agent-llm 0: The read operation timed out   10 documents
-        #     Savannah River, GA   agent-llm 0: The read operation timed out   16 documents
-        #
-        # Both abandoned with saved=False after their documents had been discovered, fetched and
-        # extracted -- the expensive part -- because `_req`'s 300 s default expired on the one
-        # call that does the model work. Cape Fear finished the same batch in 774 s total, so
-        # 300 s on this leg alone is inside the normal range, not outside it.
-        #
-        # `code == 0` IS A TRANSPORT FAILURE, NOT AN ANSWER. urllib returns 0 when nothing came
-        # back at all; an HTTP status means the Worker replied and said no, which is a different
-        # thing and must not be retried -- a 400 retried three times is three times the same
-        # rejection. 502/504 are the proxy saying the same "nothing came back", so they ride
-        # along. Everything else fails on the first reply, as before.
-        #
-        # The Worker ALREADY retries internally, per group, and reports it as `retries` -- which
-        # means the runs most likely to exceed a client deadline are precisely the ones where it
-        # is working hardest. A longer deadline is the fix; the attempts are the safety net.
-        AGENT_LLM_TIMEOUT = 900
-        AGENT_LLM_TRIES = 3
-        code = res = err = None
-        for attempt in range(1, AGENT_LLM_TRIES + 1):
-            code, res, err = _req("/research/agent-llm",
-                                  {"lakeName": lake, "state": state, "agent": "fisheries",
-                                   "previousResults": prev},
-                                  timeout=AGENT_LLM_TIMEOUT)
-            if code == 200 and res:
-                break
-            if code not in (0, 502, 504):
-                break
-            out.setdefault("llm_attempts", []).append(f"{code}: {err}")
-            if attempt < AGENT_LLM_TRIES:
-                print(f"      [{lake}] agent-llm did not answer ({err}) -- attempt "
-                      f"{attempt + 1} of {AGENT_LLM_TRIES}")
-                time.sleep(20 * attempt)
+        code, res, err = ask_species_groups(lake, state, prev, group_models, out)
         clock.mark("species_groups")
         if code != 200 or not res:
             out["error"] = f"agent-llm {code}: {err}"
@@ -1529,6 +1493,213 @@ def carried_keys(stored, fresh, path=""):
         elif isinstance(v, dict) and isinstance(f, dict):
             out |= carried_keys(v, f, path + k + ".")
     return out
+
+
+# ── THE ONE CALL THAT CAN TIME OUT, AND IT USED TO END THE WATER ────────────────────
+#
+# 2026-09-23, three hours into the 33-river batch:
+#
+#     Ogeechee River, GA   agent-llm 0: The read operation timed out   10 documents
+#     Savannah River, GA   agent-llm 0: The read operation timed out   16 documents
+#
+# Both abandoned with saved=False after their documents had been discovered, fetched and
+# extracted -- the expensive part -- because `_req`'s 300 s default expired on the one
+# call that does the model work. Cape Fear finished the same batch in 774 s total, so
+# 300 s on this leg alone is inside the normal range, not outside it.
+#
+# `code == 0` IS A TRANSPORT FAILURE, NOT AN ANSWER. urllib returns 0 when nothing came
+# back at all; an HTTP status means the Worker replied and said no, which is a different
+# thing and must not be retried -- a 400 retried three times is three times the same
+# rejection. 502/504 are the proxy saying the same "nothing came back", so they ride
+# along. Everything else fails on the first reply, as before.
+#
+# The Worker ALREADY retries internally, per group, and reports it as `retries` -- which
+# means the runs most likely to exceed a client deadline are precisely the ones where it
+# is working hardest. A longer deadline is the fix; the attempts are the safety net.
+AGENT_LLM_TIMEOUT = 900
+AGENT_LLM_TRIES = 3
+
+
+def ask_species_groups(lake, state, prev, group_models, out):
+    """/research/agent-llm for the fisheries groups, with the transport retries. (code, res, err).
+
+    `group_models` is "lite" (the Lite ladder, as always) or "flash" (the full Flash models on every
+    free key first, then Lite -- GEMINI_FREE_FLASH_MODELS in Worker/worker-core.js)."""
+    body = {"lakeName": lake, "state": state, "agent": "fisheries", "previousResults": prev}
+    if group_models and group_models != "lite":
+        body["groupModels"] = group_models
+    code = res = err = None
+    for attempt in range(1, AGENT_LLM_TRIES + 1):
+        code, res, err = _req("/research/agent-llm", body, timeout=AGENT_LLM_TIMEOUT)
+        if code == 200 and res:
+            break
+        if code not in (0, 502, 504):
+            break
+        out.setdefault("llm_attempts", []).append(f"{code}: {err}")
+        if attempt < AGENT_LLM_TRIES:
+            print(f"      [{lake}] agent-llm did not answer ({err}) -- attempt "
+                  f"{attempt + 1} of {AGENT_LLM_TRIES}")
+            time.sleep(20 * attempt)
+    return code, res, err
+
+
+# ── THE SPECIES GROUPS ALONE, ON WHAT THE LAST RUN ALREADY SAVED ───────────────────────────
+#
+# Ryan, 2026-09-24, on the first plan for comparing Lite with the Flash models: "so your test to
+# see if this works saves absolutely nothing, spends usage that is already limited and gains
+# nothing???" It re-ran the whole document chain on the Lite allowance to feed a comparison that
+# was then thrown away. This asks the species question again on what the last run STORED -- the
+# profile, with its facts, and the corpus it read, in the order it read it -- so the only model
+# calls are the five groups, on whichever models --group-models names. The answer is written beside
+# the stored one for reading, and it is KEPT: --save puts it on the profile now, and --apply-groups
+# puts it on later from the file, with no model call either way.
+#
+# The profile it sends carries the stored trollingIntelligence, as every run's does -- the groups
+# have always been shown the answer they are revising. So the comparison is the one the backlog
+# would make: a new model revising the old answer from the same facts and documents.
+
+def _depth(v):
+    if isinstance(v, (list, tuple)) and len(v) == 2 and all(isinstance(x, (int, float)) for x in v):
+        return f"{v[0]:g}-{v[1]:g} ft"
+    return "" if v in (None, "", []) else str(v)
+
+
+def _season_cells(season):
+    s2 = season or {}
+    where = " · ".join(x for x in (
+        _depth(s2.get("preferredDepth")), str(s2.get("holding") or ""),
+        f"over {s2['waterDepthFt']} ft" if s2.get("waterDepthFt") not in (None, "", []) else "",
+        ", ".join(s2.get("structures") or [])) if x)
+    baits = ", ".join(s2.get("recommendedPresentations") or [])
+    notes = " ".join(x for x in (str(s2.get("notes") or ""),
+                                 f'"{s2["sourceQuote"]}"' if s2.get("sourceQuote") else "") if x)
+    return {"where": where or "-", "baits": baits or "-", "notes": notes or "-"}
+
+
+def species_comparison_md(lake, stored, new, groups, group_models, stored_when):
+    """Both answers, species by species and season by season, for a person to judge."""
+    esc = lambda t: str(t).replace("|", "/").replace("\n", " ")
+    by_species = {}
+    for g in groups or []:
+        for sp in (g.get("returned") or g.get("species") or []):
+            by_species[sp] = g.get("model") or "?"
+    names = [k for k in dict.fromkeys(list((stored or {}).keys()) + list((new or {}).keys()))
+             if k != "sources"]
+    lines = [f"# Species answers: {lake}", "",
+             "Personal use only, not for distribution or resale; not for navigation.", "",
+             f"**Stored** is the answer on the profile now (saved {stored_when or 'earlier'}). "
+             f"**New** is the same question asked again with `--group-models {group_models}`, from the "
+             "same facts and documents. The model that wrote each new answer is under its name.", ""]
+    for sp in names:
+        a, b = (stored or {}).get(sp), (new or {}).get(sp)
+        lines += [f"## {sp}", "",
+                  f"New answer by: {by_species.get(sp, 'not returned')}"
+                  + ("" if a else " -- NOT IN THE STORED ANSWER") + ("" if b else " -- MISSING FROM THE NEW ANSWER"),
+                  "", "| Season | | Stored | New |", "|---|---|---|---|"]
+        for season in ("spring", "summer", "fall", "winter"):
+            ca = _season_cells((a or {}).get(season))
+            cb = _season_cells((b or {}).get(season))
+            for field in ("where", "baits", "notes"):
+                lines.append(f"| {season if field == 'where' else ''} | {field} | {esc(ca[field])} | {esc(cb[field])} |")
+        lines.append("")
+    return "\n".join(lines) + "\n"
+
+
+def _save_section(lake, profile, section, requested_by):
+    profile = dict(profile)
+    profile["trollingIntelligence"] = section
+    code, _, err = _req("/research/save", {"lakeName": lake, "profile": profile,
+                                           "requestedBy": requested_by})
+    if code != 200:
+        return f"save {code}: {err}"
+    mirror_locally(lake)
+    return None
+
+
+def species_groups_only(lake, state, group_models, save=False, report_dir="_reports"):
+    """The five groups again on the stored profile and corpus. (result, [written paths])."""
+    t0 = time.perf_counter()
+    out = {"lake": lake, "state": state, "group_models": group_models, "ok": False,
+           "error": None, "saved": False}
+    profile, why = stored_profile(lake)
+    if profile is None:
+        out["error"] = f"no stored profile ({why}) -- run the full research first"
+        return out, []
+    code, norm, err = _req(f"/research/get-normalized?lake={urllib.parse.quote(lake)}")
+    corpus = ((norm or {}).get("documents") or (norm or {}).get("docs") or []) if code == 200 else []
+    usable = [d for d in corpus if len(str(d.get("fullText") or d.get("text") or "")) >= 200]
+    if not usable:
+        out["error"] = f"no stored documents for this water (get-normalized {code}: {err})"
+        return out, []
+    # The same inputs research_one() builds: the profile as the agent's context, and the first
+    # LLM_DOC_LIMIT readable documents in the corpus's own order, cut to LLM_DOC_CHARS.
+    prev = dict(profile)
+    prev["_normalizedDocuments"] = [
+        {"title": d.get("title"), "url": d.get("url"),
+         "text": str(d.get("fullText") or d.get("text") or "")[:LLM_DOC_CHARS]}
+        for d in usable[:LLM_DOC_LIMIT]]
+    out["documents"] = len(prev["_normalizedDocuments"])
+    # NAMED, because the stored corpus is what /research/save-normalized kept, and it runs its own
+    # name-and-state filter on the way in -- so if it refused one of the documents the last run read,
+    # the twelve here are not exactly the twelve that run read. The titles say which were.
+    out["document_titles"] = [d.get("title") for d in prev["_normalizedDocuments"]]
+    out["facts"] = len(profile.get("_extractedFacts") or [])
+    code, res, err = ask_species_groups(lake, state, prev, group_models, out)
+    out["seconds"] = round(time.perf_counter() - t0, 1)
+    if code != 200 or not res:
+        out["error"] = f"agent-llm {code}: {err}"
+        return out, []
+    section = res.get("section") or {}
+    meta = res.get("meta") or {}
+    groups = meta.get("groups") or []
+    out["species"] = len([k for k in section if k != "sources"])
+    out["missing"] = list(meta.get("missingSpecies") or [])
+    out["models"] = {g.get("group"): g.get("model") for g in groups if g.get("group")}
+    out["warnings"] = list(res.get("warnings") or [])
+    if not section:
+        out["error"] = "agent-llm returned an empty trollingIntelligence section"
+        return out, []
+    stored = profile.get("trollingIntelligence") or {}
+    stored_when = str(((profile.get("metadata") or {}).get("lastUpdated") or ""))[:10]
+    sid = re.sub(r"[^a-z0-9]+", "_", lake.lower()).strip("_")
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    base = os.path.join(report_dir, f"species_groups_{group_models}_{sid}_{stamp}")
+    os.makedirs(report_dir, exist_ok=True)
+    with open(base + ".json", "w", encoding="utf-8") as f:
+        json.dump({"lake": lake, "state": state, "group_models": group_models,
+                   "generated": time.strftime("%Y-%m-%dT%H:%M:%S"), "result": out,
+                   "groups": groups, "stored_section": stored, "new_section": section},
+                  f, indent=1, ensure_ascii=False)
+    with open(base + ".md", "w", encoding="utf-8") as f:
+        f.write(species_comparison_md(lake, stored, section, groups, group_models, stored_when))
+    out["ok"] = True
+    if save:
+        why = _save_section(lake, profile, section,
+                            f"research_lakes.py --groups-only --group-models {group_models}")
+        out["saved"] = why is None
+        if why:
+            out["error"] = why
+    return out, [base + ".json", base + ".md"]
+
+
+def apply_species_groups(path):
+    """Put a --groups-only answer onto its profile, from the file. No model call.
+
+    REFUSES IF THE PROFILE HAS MOVED ON. The file records the answer it was compared against; if the
+    stored answer is no longer that one, a later run has written since, and laying an older
+    answer over it would throw that run away."""
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    lake = data["lake"]
+    profile, why = stored_profile(lake)
+    if profile is None:
+        return f"{lake}: no stored profile ({why})"
+    if (profile.get("trollingIntelligence") or {}) != (data.get("stored_section") or {}):
+        return (f"{lake}: the stored answer has changed since {os.path.basename(path)} was written "
+                f"-- not applied. Run --groups-only again.")
+    why = _save_section(lake, profile, data["new_section"],
+                        f"research_lakes.py --apply-groups {os.path.basename(path)}")
+    return why or None
 
 
 def stored_profile(lake_name):
@@ -1949,6 +2120,20 @@ def main():
                          "Seconds and no model calls instead of ~193 s and ~58k tokens. For "
                          "re-merging a profile after the limnology rule changed. Refuses a water "
                          "with no stored profile.")
+    ap.add_argument("--group-models", choices=("lite", "flash"), default="lite",
+                    help="which models write the species answers. lite (default): the Lite ladder, "
+                         "as always. flash: 3.8, 3.7, 3.6 and 3.5 Flash on every free key first -- "
+                         "20 a day each, twenty allowances -- then Lite, so nothing is lost when "
+                         "they run out")
+    ap.add_argument("--groups-only", action="store_true",
+                    help="ask only the species groups again, on the profile and documents the last "
+                         "run stored -- no discovery, no fetch, no extraction. Writes the new answer "
+                         "beside the stored one to _reports/species_groups_*.md for reading")
+    ap.add_argument("--save", action="store_true",
+                    help="with --groups-only: put the new answer on the profile as well")
+    ap.add_argument("--apply-groups", metavar="PATH",
+                    help="put a --groups-only answer on its profile from its .json file, with no "
+                         "model call. Refuses if the profile has been written since")
     ap.add_argument("--verbose", action="store_true")
     a = ap.parse_args()
     if not a.report:
@@ -1965,7 +2150,32 @@ def main():
 
     global REGISTRY_DIR
     REGISTRY_DIR = a.registry
+
+    if a.apply_groups:
+        why = apply_species_groups(a.apply_groups)
+        print(why or f"applied {os.path.basename(a.apply_groups)} -- saved and mirrored")
+        return 1 if why else 0
+
     lakes = load_lakes(a, a.registry)
+
+    if a.groups_only:
+        bad = 0
+        for name, st, _alts in (lakes[:a.limit] if a.limit else lakes):
+            r, paths = species_groups_only(name, st, a.group_models, a.save,
+                                           os.path.dirname(a.report) or "_reports")
+            models = ", ".join(f"{g} {m}" for g, m in (r.get("models") or {}).items())
+            print(f"  {'ok ' if r['ok'] else 'FAIL'} {r.get('seconds', 0):5.1f}s  {name[:44]:46s}"
+                  f"{r.get('species', 0)} species  {r.get('facts', 0)} facts  "
+                  f"{r.get('documents', 0)} docs" + (f"  saved" if r.get("saved") else "")
+                  + (f"  -- {r['error']}" if r.get("error") else ""))
+            if models:
+                print(f"        models: {models}")
+            for w in r.get("warnings") or []:
+                print(f"        warn: {w}")
+            for pth in paths:
+                print(f"        -> {pth}")
+            bad += 0 if r["ok"] else 1
+        return 1 if bad else 0
 
     if a.limit:
         lakes = lakes[:a.limit]
@@ -2017,7 +2227,8 @@ def main():
     def work(pair):
         name, st, alts = pair
         r = research_one(name, st, a.dry_run, a.verbose, a.repo, alts, a.tpm,
-                         ROWS_BY_NAME.get(name.strip().lower()), a.limnology_only, rpm=a.rpm)
+                         ROWS_BY_NAME.get(name.strip().lower()), a.limnology_only, rpm=a.rpm,
+                         group_models=a.group_models)
         done[0] += 1
         mark = "ok " if r["ok"] else "FAIL"
         secs = f'{r.get("seconds", 0):5.1f}s'

@@ -37,6 +37,27 @@ const GEMINI_FREE_MODELS = [
   "gemini-3.1-flash-lite",
 ];
 
+/**
+ * THE FULL FLASH MODELS, FOR THE ANSWERS THAT MATTER MOST -- TRIED FIRST ONLY WHEN ASKED.
+ *
+ * Ryan, 2026-09-24, off his AI Studio page: 3.5, 3.6, 3.7 and 3.8 Flash each carry 5 RPM,
+ * 250,000 TPM and 20 RPD per free key. Four models on five keys is twenty allowances, 400 calls a
+ * day, and nothing used any of them. Too few for document extraction (a water can be fifty reads);
+ * enough for the species groups, five calls a water, which write the trolling answers. Endpoints
+ * as ai.google.dev/gemini-api/docs/models lists them, 2026-09-24; 2.5 Flash left out on his call
+ * ("quite a ways behind in gemini land"), and 3 Flash is a preview.
+ *
+ * A caller passes { firstModels: GEMINI_FREE_FLASH_MODELS } and callLLM tries these on EVERY free
+ * key before any Lite model, then falls to the Lite ladder exactly as before -- so a spent Flash
+ * allowance costs a species nothing, it is answered by Lite as it always was.
+ */
+const GEMINI_FREE_FLASH_MODELS = [
+  "gemini-3.8-flash",
+  "gemini-3.7-flash",
+  "gemini-3.6-flash",
+  "gemini-3.5-flash",
+];
+
 var LLM_PROVIDERS = [
   {
     // Pay-tier Gemini — limnology agent only
@@ -245,6 +266,46 @@ let _geminiRoundRobinIdx = Math.floor(Math.random() * 1000);
 // of a research run's calls. Callers that did not ask -- the species groups among them -- keep 3.5
 // first, so the model that answers them does not change under them.
 let _geminiModelIdx = Math.floor(Math.random() * 1000);
+// Its own start for the Flash pass, so the two rotations do not move in step.
+let _geminiFlashIdx = Math.floor(Math.random() * 1000);
+
+/**
+ * One generateContent call. Throws with the model's name on anything that is not an answer.
+ *
+ * `uncapped` drops maxOutputTokens. The caps in this Worker were sized for Flash-Lite, which does
+ * not think before answering; the full Flash models do, and a thinking model spends its thinking
+ * against the same output budget -- a 5,000-token cap sized for the answer alone can end the reply
+ * before the answer starts. The model's own ceiling applies instead. Free tier, input-metered.
+ *
+ * THE TEXT IS EVERY NON-THOUGHT PART, JOINED. A thinking model can return more than one part, and
+ * reading only the first is how an answer arrives as "empty content".
+ */
+async function geminiCall(provider, key, modelId, payload, uncapped = false) {
+  const geminiPayload = provider.transformPayload(payload);
+  if (uncapped && geminiPayload.generationConfig) delete geminiPayload.generationConfig.maxOutputTokens;
+  const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${key}`;
+  const r = await fetch(geminiUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(geminiPayload)
+  });
+  let data;
+  try { data = await r.json(); } catch (_) {
+    const txt = await r.text().catch(() => "");
+    throw new Error(`gemini/${modelId}: HTTP ${r.status} non-JSON ${txt.slice(0,200)}`);
+  }
+  if (!r.ok) {
+    const msg = data.error?.message || data.error || `HTTP ${r.status}`;
+    const msgStr = typeof msg === "string" ? msg : JSON.stringify(msg).slice(0,400);
+    throw new Error(`gemini/${modelId}: ${msgStr}`);
+  }
+  // Convert Gemini response to OpenAI-compatible shape for extractLLMText
+  const parts = data.candidates?.[0]?.content?.parts || [];
+  const geminiText = parts.filter((p) => !p.thought && typeof p.text === "string").map((p) => p.text).join("");
+  if (!geminiText) throw new Error(`gemini/${modelId}: empty content`);
+  const compatData = { choices: [{ message: { content: geminiText } }] };
+  return { provider: "gemini", model: modelId, data: compatData, _geminiRaw: geminiText.slice(0, 200) };
+}
 
 function turnLadder(models, start) {
   const n = models.length;
@@ -311,6 +372,24 @@ async function callLLM(env, payload, preferredProvider = null, opts = {}) {
   const modelStart = opts && opts.spreadModels ? _geminiModelIdx++ : 0;
 
   let lastError;
+
+  // THE FIRST MODELS, ON EVERY FREE KEY, BEFORE THE LADDER. Model by model across the keys in this
+  // call's rotated order, each model's start turned per call, so twenty calls touch all twenty
+  // allowances once. Everything that refuses falls through to the loop below, unchanged.
+  if (opts && Array.isArray(opts.firstModels) && opts.firstModels.length) {
+    const freeKeys = providers.filter((p) => p.isGemini && /^gemini-free/.test(p.name) && env[p.keyEnv]);
+    for (const modelId of turnLadder(opts.firstModels, _geminiFlashIdx++)) {
+      for (const provider of freeKeys) {
+        try {
+          return await geminiCall(provider, env[provider.keyEnv], modelId, payload, true);
+        } catch (e) {
+          lastError = e;
+          console.warn(`LLM gemini/${modelId} (first) failed: ${e.message}`);
+        }
+      }
+    }
+  }
+
   for (const provider of providers) {
     const key = env[provider.keyEnv];
     if (!key) continue;
@@ -321,28 +400,7 @@ async function callLLM(env, payload, preferredProvider = null, opts = {}) {
         provider.models?.length ? provider.models : [provider.defaultModel], modelStart);
       for (const modelId of modelCandidates) {
         try {
-          const geminiPayload = provider.transformPayload(payload);
-          const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${key}`;
-          const r = await fetch(geminiUrl, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(geminiPayload)
-          });
-          let data;
-          try { data = await r.json(); } catch (_) {
-            const txt = await r.text().catch(() => "");
-            throw new Error(`gemini/${modelId}: HTTP ${r.status} non-JSON ${txt.slice(0,200)}`);
-          }
-          if (!r.ok) {
-            const msg = data.error?.message || data.error || `HTTP ${r.status}`;
-            const msgStr = typeof msg === "string" ? msg : JSON.stringify(msg).slice(0,400);
-            throw new Error(`gemini/${modelId}: ${msgStr}`);
-          }
-          // Convert Gemini response to OpenAI-compatible shape for extractLLMText
-          const geminiText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-          if (!geminiText) throw new Error(`gemini/${modelId}: empty content`);
-          const compatData = { choices: [{ message: { content: geminiText } }] };
-          return { provider: "gemini", model: modelId, data: compatData, _geminiRaw: geminiText.slice(0, 200) };
+          return await geminiCall(provider, key, modelId, payload);
         } catch (e) {
           lastError = e;
           console.warn(`LLM gemini/${modelId} failed: ${e.message}`);
@@ -574,4 +632,4 @@ async function listAllR2(bucket, prefix, keep) {
 // trollmap-worker.js -- and the copies here were not exported and not called, so this file
 // carried thirty lines that could never run while the live copy drifted independently.
 // Exported now; trollmap-worker.js imports them.
-export { CORS, JSON_HEADERS, TEXT_HEADERS, extractLLMText, callLLM, isAuthorized, chartpackKey, handleChartpackList, r2Body, r2Text, listAllR2 };
+export { CORS, JSON_HEADERS, TEXT_HEADERS, extractLLMText, callLLM, GEMINI_FREE_FLASH_MODELS, isAuthorized, chartpackKey, handleChartpackList, r2Body, r2Text, listAllR2 };
