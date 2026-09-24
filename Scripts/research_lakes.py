@@ -955,9 +955,14 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
         facts, other_facts, _, _ = sort_by_reach(repo, reach, facts=facts)
         if other_facts:
             out["facts_other_reach"] = len(other_facts)
-            out["facts_other_reach_sample"] = [
-                {"fact": x.get("fact"), "belongs_to": x.get("belongs_to"), "because": x.get("because")}
-                for x in other_facts[:10]]
+            # ALL OF THEM, NOT A SAMPLE. The first run kept ten of 46, and "nothing is dropped
+            # silently" is only true if the other 36 are somewhere a person -- or a merge into the
+            # piece they belong to -- can read them. A fact is a sentence; 46 of them are nothing.
+            out["facts_other_reach_list"] = [
+                {"fact": x.get("fact"), "quote": x.get("quote"), "source": x.get("source"),
+                 "category": x.get("category"), "belongs_to": x.get("belongs_to"),
+                 "because": x.get("because")}
+                for x in other_facts]
             print(f"      [{lake}] {len(other_facts)} fact(s) are another piece's -- "
                   + ", ".join(sorted({f"{x.get('belongs_to')}" for x in other_facts})))
         out["facts"] = len(facts)
