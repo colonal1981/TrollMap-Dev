@@ -705,18 +705,27 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
     # could NOT answer. Nothing about limnology is decided here; this hands over the block and
     # stores what comes back. Ryan, 2026-09-02: "we need the wqp to be there so as to know
     # whether limnology information is needed to be pulled from the facts."
+    # `prev` is the pull this profile was last merged with. Sent so the endpoint can withdraw a
+    # value that pull supplied and this one does not repeat -- 2026-09-24, when the pull began
+    # counting only the stations on the water and 123 of 133 profiles still held what the box
+    # gave them. See wqpWithdrawals() in js/utils/wqp-limnology.js.
     code, wqp, err = _req("/research/limnology-data",
-                          {"lakeName": lake, "base": profile.get("limnology") or {}})
+                          {"lakeName": lake, "base": profile.get("limnology") or {},
+                           "prev": profile.get("_wqpLimnology") or None})
     if code == 200 and wqp and wqp.get("merged"):
         profile["limnology"] = wqp["merged"]
         # Step 5 of the 2026-09-01 plan: the profile keeps the WQP block WITH ITS DATES. A
         # number whose sample date is 2017 and a number measured last week are different claims.
         profile["_wqpLimnology"] = {k: v for k, v in wqp.items()
-                                    if k not in ("merged", "evidence", "gaps")}
+                                    if k not in ("merged", "evidence", "gaps", "withdrawn",
+                                                 "evidenceWithdrawn")}
+        drop_withdrawn_wqp_evidence(profile, wqp.get("evidenceWithdrawn"))
         for section, fields in (wqp.get("evidence") or {}).items():
             ev = profile.setdefault("evidence", {}).setdefault(section, {})
             for field, rows in (fields or {}).items():
                 ev[field] = list(ev.get(field) or []) + list(rows or [])
+        if wqp.get("withdrawn"):
+            out["wqp_withdrawn"] = [w.get("field") for w in wqp["withdrawn"]]
         out["wqp_records"] = wqp.get("recordCount") or 0
         out["limnology_gaps"] = list(wqp.get("gaps") or [])
     else:
@@ -1222,6 +1231,34 @@ REGISTRY_DIR = ""
 
 
 EMPTY = (None, "", [], {}, ())
+
+
+WQP_EVIDENCE_URL = "worker:/research/limnology-data"   # js/utils/wqp-limnology.js, same string
+
+
+def drop_withdrawn_wqp_evidence(profile, sections):
+    """Drop the WQP rows from the evidence sections whose value the endpoint withdrew.
+
+    `evidenceWithdrawn` names sections whose WQP-supplied value this pull no longer backs and does
+    not cite again. The rows are APPENDED below, run after run, so without this a withdrawn Secchi
+    would keep a row saying the Water Quality Portal supplied it. Rows from any other source -- a
+    document cast, a person -- are left alone. Returns how many rows went.
+    """
+    lim = ((profile or {}).get("evidence") or {}).get("limnology")
+    if not isinstance(lim, dict):
+        return 0
+    gone = 0
+    for s in sections or []:
+        rows = lim.get(s)
+        if not isinstance(rows, list):
+            continue
+        keep = [r for r in rows if not (isinstance(r, dict) and r.get("sourceUrl") == WQP_EVIDENCE_URL)]
+        gone += len(rows) - len(keep)
+        if keep:
+            lim[s] = keep
+        else:
+            del lim[s]
+    return gone
 
 
 def carry_forward(stored, fresh):

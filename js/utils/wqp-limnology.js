@@ -40,6 +40,20 @@ export function buildEvidenceEntry(sourceType, sourceLabel, sourceUrl, quote, me
 
 const clone = (v) => (v == null ? v : JSON.parse(JSON.stringify(v)));
 
+// Every WQP evidence row carries this source, so a WQP row can be told from a document's.
+export const WQP_EVIDENCE_URL = 'worker:/research/limnology-data';
+
+// Carlson TSI(SD) boundaries, in feet. One set of thresholds, read by the overlay below and by
+// the withdrawal after it, which has to recognise the words the overlay wrote.
+function carlson(secchiFt) {
+  if (secchiFt < 1.6)  return { trophicStatus: 'hypereutrophic', typical: 'muddy' };
+  if (secchiFt < 6.6)  return { trophicStatus: 'eutrophic',      typical: 'stained' };
+  if (secchiFt < 13.0) return { trophicStatus: 'mesotrophic',    typical: 'clear' };
+  return { trophicStatus: 'oligotrophic', typical: 'very clear' };
+}
+
+const turbidityNote = (ntu) => `Recent WQP/SCDES surface turbidity around ${ntu} NTU.`;
+
 // WQP WINS WHERE WQP HAS AN ANSWER.
 //
 // These values were once written ONLY INTO A HOLE -- `!hasResearchValue(...)` -- so the retired
@@ -54,26 +68,39 @@ const clone = (v) => (v == null ? v : JSON.parse(JSON.stringify(v)));
 // Lakes with turbidity and no Secchi keep a null `typical` and carry the measured NTU in `note`;
 // there is no published NTU-to-adjective scale to bucket those against, and guessing one is the
 // thing this refactor is removing.
-export function applyWqpToLimnology(base = {}, wqp = null) {
+/**
+ * @param {object} base  the profile's limnology block
+ * @param {object} wqp   this pull
+ * @param {object} prev  the pull the profile was last merged with (`_wqpLimnology`), so a value
+ *                       it supplied and this pull does not repeat can be withdrawn. Omitted means
+ *                       overlay only, which is what every caller did before 2026-09-24.
+ */
+export function applyWqpToLimnology(base = {}, wqp = null, prev = null) {
   const out = clone(base) || {};
   if (!wqp?.ok) return out;
+  // Read off the block AS IT CAME IN: a withdrawal is a value the previous pull wrote and this
+  // one does not, and the overlay below only ever writes what this one does.
+  const gone = wqpWithdrawals(out, wqp, prev);
   out.surfaceWater = out.surfaceWater || {};
   if (wqp.surfaceWater) {
     Object.assign(out.surfaceWater, wqp.surfaceWater);
   }
   out.waterClarity = out.waterClarity || {};
-  if (wqp.surfaceWater?.recentTurbidityNTU != null && !out.waterClarity.note) {
-    out.waterClarity.note = `Recent WQP/SCDES surface turbidity around ${wqp.surfaceWater.recentTurbidityNTU} NTU.`;
+  // The note is WQP's own when it is the one the previous pull wrote, so a new turbidity may
+  // replace it. Anything else in that slot came from somewhere else and is left alone.
+  const prevNtu = prev?.surfaceWater?.recentTurbidityNTU;
+  const ownNote = !out.waterClarity.note
+    || (prevNtu != null && out.waterClarity.note === turbidityNote(prevNtu));
+  if (wqp.surfaceWater?.recentTurbidityNTU != null && ownNote) {
+    out.waterClarity.note = turbidityNote(wqp.surfaceWater.recentTurbidityNTU);
   }
   const secchiFt = wqp.secchi?.avgSecchiDepthFt;
   if (secchiFt != null) {
     out.waterClarity.secchiFt = secchiFt;
-    // Carlson TSI(SD) boundaries, in feet. One set of thresholds, read twice.
     if (wqp.secchi.sampleCount >= 5) {
-      if (secchiFt < 1.6)       { out.trophicStatus = 'hypereutrophic'; out.waterClarity.typical = 'muddy'; }
-      else if (secchiFt < 6.6)  { out.trophicStatus = 'eutrophic';      out.waterClarity.typical = 'stained'; }
-      else if (secchiFt < 13.0) { out.trophicStatus = 'mesotrophic';    out.waterClarity.typical = 'clear'; }
-      else                      { out.trophicStatus = 'oligotrophic';   out.waterClarity.typical = 'very clear'; }
+      const c = carlson(secchiFt);
+      out.trophicStatus = c.trophicStatus;
+      out.waterClarity.typical = c.typical;
     }
   }
   if (wqp.thermocline?.depthFt != null) {
@@ -121,7 +148,142 @@ export function applyWqpToLimnology(base = {}, wqp = null) {
       out.oxygen.note = refusal;
     }
   }
+  if (gone.length) withdrawFrom(out, gone, wqp, prev);
   return out;
+}
+
+// ── A VALUE THE PULL NO LONGER BACKS IS WITHDRAWN, NOT KEPT ─────────────────────────────────────
+//
+// The overlay above writes a value where this pull has one and never touches a field it does
+// not. That was safe while every pull read the same box. From 2026-09-24 the pull counts only the
+// stations inside the water's outline (1037c84), and a profile merged before then kept whatever the
+// box had given it: the Great Pee Dee's profile carries Secchi 4.5 ft from 229 samples in its box,
+// Lake Moultrie's among them, while live its 14 stations on the river have no Secchi at all. 123 of
+// 133 stored profiles were merged from a box pull.
+//
+// So a field is withdrawn when all three hold:
+//   - the previous pull supplied it,
+//   - the profile still holds EXACTLY that value, so it is the pull's and not a document's or a
+//     person's (the document casts only ever fill holes, so a value equal to the pull's came from it),
+//   - and this pull, tested on the water and an answer rather than a bad day, does not repeat it.
+//
+// "An answer rather than a bad day" is the rule wqpCached() already keeps: WQP answers `ok` with
+// zero records on a bad day as readily as for an unmonitored water, so an empty pull withdraws
+// nothing -- unless it is empty BECAUSE the test left every reading out, which is measured.
+// An untested pull (no outline, stations unplaced) withdraws nothing either: it is the box again.
+//
+// A withdrawn value leaves its reason in the section's note, and a stale note that explained the
+// old value goes with it -- the Congaree lesson in dropFieldsThisWaterCannotHave() below: a reason
+// beside a removed value reads as the measurement still standing.
+export function wqpWithdrawals(base = {}, wqp = null, prev = null) {
+  if (!wqp?.ok || !prev || typeof prev !== 'object') return [];
+  if (!wqp.onWater?.checked) return [];
+  if (!(wqp.recordCount > 0) && !(wqp.onWater.readingsDropped > 0)) return [];
+  const b = base || {};
+  const same = (a, c) => a != null && c != null && JSON.stringify(a) === JSON.stringify(c);
+  const gone = [];
+  const t = prev.thermocline?.depthFt;
+  if (t != null && wqp.thermocline?.depthFt == null && same(b.thermocline?.summerDepthFt, t)) {
+    gone.push({ field: 'thermocline.summerDepthFt', section: 'thermocline', was: t });
+    if (same(b.thermocline?.method, prev.thermocline.method)) {
+      gone.push({ field: 'thermocline.method', section: null, was: b.thermocline.method });
+    }
+  }
+  for (const k of ['anoxicBelowFt', 'depletionDepthFt']) {
+    const v = prev.oxygen?.[k];
+    if (v != null && wqp.oxygen?.[k] == null && same(b.oxygen?.[k], v)) {
+      gone.push({ field: `oxygen.${k}`, section: 'oxygen', was: v });
+    }
+  }
+  const s = prev.secchi?.avgSecchiDepthFt;
+  if (s != null && wqp.secchi?.avgSecchiDepthFt == null && same(b.waterClarity?.secchiFt, s)) {
+    gone.push({ field: 'waterClarity.secchiFt', section: 'waterClarity', was: s });
+    if (prev.secchi.sampleCount >= 5) {
+      const c = carlson(s);
+      if (b.waterClarity?.typical === c.typical) {
+        gone.push({ field: 'waterClarity.typical', section: null, was: c.typical });
+      }
+      if (b.trophicStatus === c.trophicStatus) {
+        gone.push({ field: 'trophicStatus', section: 'trophicStatus', was: c.trophicStatus });
+      }
+    }
+  }
+  const n = prev.surfaceWater?.recentTurbidityNTU;
+  if (n != null && wqp.surfaceWater?.recentTurbidityNTU == null
+      && b.waterClarity?.note === turbidityNote(n)) {
+    gone.push({ field: 'waterClarity.note', section: null, was: b.waterClarity.note });
+  }
+  // The surface block is written whole when a pull has one, so it is stale only when this pull
+  // has none at all -- the case where the test left every reading out.
+  if (prev.surfaceWater && !wqp.surfaceWater && b.surfaceWater) {
+    for (const [k, v] of Object.entries(prev.surfaceWater)) {
+      if (k === 'note' || v == null || (Array.isArray(v) && !v.length)) continue;
+      if (same(b.surfaceWater[k], v)) gone.push({ field: `surfaceWater.${k}`, section: 'surfaceWater', was: v });
+    }
+  }
+  return gone;
+}
+
+function withdrawalReason(wqp, prev) {
+  const on = wqp.onWater?.stationsOn || 0;
+  const when = wqp.fetchedAt ? ` ${String(wqp.fetchedAt).slice(0, 10)}` : '';
+  const from = prev?.onWater?.checked
+    ? 'the earlier value came from a Water Quality Portal pull that this one no longer supports'
+    : 'the earlier value came from a Water Quality Portal pull that read every station in this '
+      + "water's bounding box, before stations off the water were left out";
+  const now = on
+    ? `the readings at the ${on} station${on === 1 ? '' : 's'} on the water do not give it`
+    : 'no station on the water has readings';
+  return `Withdrawn${when}: ${from}; ${now}.`;
+}
+
+function withdrawFrom(out, gone, wqp, prev) {
+  const why = withdrawalReason(wqp, prev);
+  const heads = new Set();
+  for (const g of gone) {
+    const [head, leaf] = g.field.split('.');
+    if (!leaf) { out[head] = null; heads.add(head); continue; }
+    if (!out[head] || typeof out[head] !== 'object') continue;
+    out[head][leaf] = null;
+    // A stale NOTE going is not a value going: nothing was withdrawn that needs a sentence.
+    if (leaf !== 'note') heads.add(head);
+  }
+  // THIS pull's own reason survives beside the withdrawal; the previous pull's does not.
+  const refusal = wqp.surfaceOnlyNote || wqp.note || null;
+  const fresh = {
+    thermocline: out.thermocline?.summerDepthFt == null ? refusal : null,
+    oxygen: wqp.oxygen?.note
+      || (out.oxygen?.anoxicBelowFt == null && out.oxygen?.depletionDepthFt == null ? refusal : null),
+    waterClarity: wqp.surfaceWater?.recentTurbidityNTU != null
+      ? turbidityNote(wqp.surfaceWater.recentTurbidityNTU) : null,
+    surfaceWater: wqp.surfaceWater?.note || null,
+  };
+  for (const head of heads) {
+    if (head === 'trophicStatus') { out.trophicStatusNote = why; continue; }
+    out[head].note = [why, fresh[head]].filter(Boolean).join(' ');
+  }
+}
+
+/**
+ * The evidence sections to drop after a withdrawal: a section whose value was withdrawn and that
+ * this pull does not cite again. A row saying WQP supplied a value that is no longer stored is the
+ * shape of the Wateree 27 ft -- a number, or here its absence, wearing an official source.
+ */
+export function wqpEvidenceWithdrawn(gone, wqp) {
+  const cited = (buildWqpEvidence(wqp).limnology) || {};
+  return [...new Set((gone || []).map((g) => g.section).filter(Boolean))].filter((s) => !cited[s]);
+}
+
+/** Remove the WQP rows from those sections of an evidence map, in place. Other sources stay. */
+export function dropWqpEvidence(evidence, sections) {
+  const lim = evidence?.limnology;
+  if (!lim) return evidence;
+  for (const s of sections || []) {
+    if (!Array.isArray(lim[s])) continue;
+    const keep = lim[s].filter((row) => row?.sourceUrl !== WQP_EVIDENCE_URL);
+    if (keep.length) lim[s] = keep; else delete lim[s];
+  }
+  return evidence;
 }
 
 // THE CASTS WE HOLD, WRITTEN ONLY INTO WHAT WQP LEFT NULL.
@@ -261,7 +423,7 @@ export function documentFieldsApplied(before, after) {
 // survived the agent merge.
 export function buildWqpEvidence(wqp) {
   if (!wqp?.ok) return {};
-  const sourceUrl = 'worker:/research/limnology-data';
+  const sourceUrl = WQP_EVIDENCE_URL;
   const LABEL = 'Water Quality Portal / SCDES monitoring';
   const entry = buildEvidenceEntry('official_structured', LABEL, sourceUrl, null, 'structured_surface_monitoring', { lastObserved: wqp.lastObserved, recordCount: wqp.recordCount });
   const evidence = { limnology: {} };

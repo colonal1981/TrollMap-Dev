@@ -2327,7 +2327,11 @@ async function assembleAndSaveProfile(lakeName, agentResults, mode) {
     // spread cannot do that job: det.limnology is a fully-shaped skeleton whose sub-objects are
     // present and whose leaves are null, so `{...saved, ...det}` would replace a saved
     // waterClarity holding real values with a waterClarity holding four nulls.
-    limnology:            applyWqpToLimnology(mergeDeterministicSection(existingSavedProfile.limnology, det.limnology), wqp),
+    // The saved `_wqpLimnology` is the pull these values came from, so a value it supplied and
+    // this pull does not repeat is withdrawn rather than kept (wqpWithdrawals). The evidence map
+    // below is rebuilt from this pull every save, so no stale WQP row survives here.
+    limnology:            applyWqpToLimnology(mergeDeterministicSection(existingSavedProfile.limnology, det.limnology), wqp,
+                                              existingSavedProfile._wqpLimnology || null),
     summary:              cloneJson(existingSavedProfile.summary      || det.summary      || {}),
     trollingIntelligence: existingSavedProfile.trollingIntelligence   || null,
     estuary:              cloneJson(existingSavedProfile.estuary       || {}),

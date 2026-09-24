@@ -13,7 +13,8 @@ import { boundsOf } from '../../js/utils/geojson-coords.js';
 import { lakeIndex, resolveRegistryRow, identityNamesForLake, documentLimnology } from '../registry.js';
 import { researchStorageId, resolveResearchStorageId } from './keys.js';
 import { applyWqpToLimnology, buildWqpEvidence, limnologyGaps, dropFieldsThisWaterCannotHave,
-         applyDocumentsToLimnology, buildDocumentEvidence, documentFieldsApplied }
+         applyDocumentsToLimnology, buildDocumentEvidence, documentFieldsApplied,
+         wqpWithdrawals, wqpEvidenceWithdrawn, dropWqpEvidence }
   from '../../js/utils/wqp-limnology.js';
 
 function resolveSupplementalKeyWorker(lakeName) {
@@ -69,8 +70,15 @@ async function handleResearchLimnologyData(request, env, opts = {}) {
 
   const pull = await wqpCached(env, lakeName, body, opts);
   const base = body.base && typeof body.base === 'object' ? body.base : null;
-  let merged = base ? applyWqpToLimnology(base, pull) : null;
+  // `prev` is the pull this profile was last merged with (`_wqpLimnology`). With it, a value that
+  // pull supplied and this one does not repeat is withdrawn rather than kept -- see
+  // wqpWithdrawals(). `withdrawn` says which, and `evidenceWithdrawn` which sections' WQP rows the
+  // caller must drop, since it is the caller that stores the evidence.
+  const prev = body.prev && typeof body.prev === 'object' ? body.prev : null;
+  const withdrawn = base ? wqpWithdrawals(base, pull, prev) : [];
+  let merged = base ? applyWqpToLimnology(base, pull, prev) : null;
   let evidence = buildWqpEvidence(pull);
+  const evidenceWithdrawn = wqpEvidenceWithdrawn(withdrawn, pull);
 
   // AND THEN THE CASTS WE HOLD, INTO WHAT WQP LEFT NULL.
   //
@@ -119,7 +127,8 @@ async function handleResearchLimnologyData(request, env, opts = {}) {
   if (merged) dropFieldsThisWaterCannotHave(merged, waterType);
   return new Response(JSON.stringify({
     ...pull,
-    ...(merged ? { merged, evidence, gaps: limnologyGaps(merged, waterType), waterType, documents } : {}),
+    ...(merged ? { merged, evidence, gaps: limnologyGaps(merged, waterType), waterType, documents,
+                   withdrawn, evidenceWithdrawn } : {}),
   }), { headers: JSON_HEADERS });
 }
 
@@ -1267,10 +1276,22 @@ async function refreshStaleLimnology(env, opts = {}) {
           for (const [field, rows] of Object.entries(fields || {})) profile.evidence[section][field] = rows;
         }
       };
-      if (pull?.ok && pull.recordCount > 0) {
-        profile.limnology = applyWqpToLimnology(profile.limnology || {}, pull);
+      // A PULL THE ON-THE-WATER TEST EMPTIED IS MERGED TOO. WQP had readings in this water's box
+      // and none on the water: that is an answer, and it is the one case where every value the
+      // box pull wrote has to go. Merging only a pull with records left those values standing
+      // with nothing to withdraw them -- see wqpWithdrawals().
+      const emptiedByTest = pull?.ok && !(pull.recordCount > 0)
+        && pull.onWater?.checked && pull.onWater.readingsDropped > 0;
+      if (pull?.ok && (pull.recordCount > 0 || emptiedByTest)) {
+        const prevPull = profile._wqpLimnology || null;
+        const gone = wqpWithdrawals(profile.limnology || {}, pull, prevPull);
+        profile.limnology = applyWqpToLimnology(profile.limnology || {}, pull, prevPull);
         profile._wqpLimnology = pull;
         writeEvidence(buildWqpEvidence(pull));
+        if (gone.length) {
+          dropWqpEvidence(profile.evidence, wqpEvidenceWithdrawn(gone, pull));
+          state[water.id].withdrawn = gone.map((g) => g.field);
+        }
       }
 
       // THEN THE CASTS WE HOLD, INTO WHAT IS STILL NULL. WQP is this water sampled by the agency
