@@ -1665,6 +1665,7 @@ def species_groups_only(lake, state, group_models, save=False, report_dir="_repo
     stamp = time.strftime("%Y%m%d_%H%M%S")
     base = os.path.join(report_dir, f"species_groups_{group_models}_{sid}_{stamp}")
     os.makedirs(report_dir, exist_ok=True)
+    out["ok"] = True          # before the file is written, so the file says so too
     with open(base + ".json", "w", encoding="utf-8") as f:
         json.dump({"lake": lake, "state": state, "group_models": group_models,
                    "generated": time.strftime("%Y-%m-%dT%H:%M:%S"), "result": out,
@@ -1672,7 +1673,6 @@ def species_groups_only(lake, state, group_models, save=False, report_dir="_repo
                   f, indent=1, ensure_ascii=False)
     with open(base + ".md", "w", encoding="utf-8") as f:
         f.write(species_comparison_md(lake, stored, section, groups, group_models, stored_when))
-    out["ok"] = True
     if save:
         why = _save_section(lake, profile, section,
                             f"research_lakes.py --groups-only --group-models {group_models}")
