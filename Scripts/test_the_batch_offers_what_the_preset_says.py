@@ -61,8 +61,16 @@ check('includeRivers is false', re.search(r'includeRivers:\s*(\w+)', block).grou
 # The line the script inverted.
 check('COASTAL PASSES BEFORE ANYTHING ELSE',
       bool(re.search(r'if\s*\(isCoastal\)\s*return true;', block)), True)
+# THE LINE CHANGED SHAPE ON 2026-09-23 AND THIS REGEX WAS STILL LOOKING FOR THE OLD ONE. It read
+# `if (isRiver && !cfg.includeRivers) return false;` and a river then fell through to the lakes'
+# acreage floor. Ryan, on that floor admitting the Nolichucky and shutting out the Sampit: "it
+# should probably have to do with amount of garmin bathymetry present" -- so a river now returns
+# on its own line, judged on its soundings. What this guards is unchanged: switch off, river out.
+river = re.search(r'if\s*\(isRiver\)\s*return\s+([^;]+);', block)
 check('and a river is the one behind the switch',
-      bool(re.search(r'if\s*\(isRiver\s*&&\s*!cfg\.includeRivers\)\s*return false;', block)), True)
+      bool(river and river.group(1).startswith('Boolean(cfg.includeRivers)')), True)
+check('judged on its soundings, not its acreage',
+      bool(river and "bath !== 'no'" in river.group(1) and 'acres' not in river.group(1)), True)
 
 class A:
     min_acres = 1000

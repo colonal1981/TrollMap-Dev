@@ -14,11 +14,15 @@
  * So the test asserts on the WIRE: what method, what URL, what token. `fetch` and `window.DB`
  * are stubbed; everything else is the shipped module.
  */
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { installFakeIndexedDB, resetFakeIndexedDB } from './fake-indexeddb.mjs';
 
-const _here = new URL('.', import.meta.url).pathname;
-const treeRoot = process.argv[2] || _here.replace(/\/test\/$/, '/') + 'js';
+// THE REPO IS FOUND WITH fileURLToPath, NOT URL.pathname. On Windows `.pathname` is
+// "/F:/TrollMapPipeline/...", which is no path at all: registry_smoke and keys_smoke looked for
+// "/F:/.../registry/lake_index.json", did not find it, printed SKIP and exited 0 on Ryan's machine
+// -- the one machine that has the registry -- and sync_smoke imported "file:///F:/F:/..." and
+// died. Found 2026-09-24. fileURLToPath gives the real path on every platform.
+const treeRoot = process.argv[2] || fileURLToPath(new URL('../js', import.meta.url));
 
 const calls = [];
 globalThis.fetch = async (url, opts = {}) => {

@@ -3,9 +3,9 @@ r"""test_name_collisions.py -- a renamed water may not keep another water's real
 
     py .\scripts\test_name_collisions.py
 
-No network. The end-to-end half needs registry/lake_index.json and
-registry/_nc_species_unmatched.json; it SKIPS with a non-zero exit if either is absent rather
-than printing SKIP and passing forever.
+No network. The end-to-end half needs registry/lake_index.json, registry/nc_species_by_lake.json
+and registry/_nc_species_cache.json; it SKIPS with a non-zero exit if any is absent rather than
+printing SKIP and passing forever.
 
 WHAT THIS GUARDS. load_name_overrides keeps a replaced 3DHP name as a legacy name so a saved
 plan holding the old string still resolves. That is right for `dallas_lake` -> Chickamauga Lake,
@@ -94,7 +94,7 @@ C.drop_stolen_legacy_names(idx, {'a': ['Lake Lucas']})
 check('an unrenamed row is untouched', idx['b'], before)
 
 # ── end to end, against the shipped index ───────────────────────────────────────────────────
-need = ['lake_index.json', '_nc_species_unmatched.json']
+need = ['lake_index.json', 'nc_species_by_lake.json', '_nc_species_cache.json']
 absent = [f for f in need if not os.path.exists(os.path.join(REG, f))]
 if absent:
     print('\nSKIP the end-to-end half -- no %s under %s' % (', '.join(absent), REG))
@@ -104,7 +104,10 @@ if absent:
 
 B = _load('build_nc_species_by_lake')
 live = json.load(io.open(os.path.join(REG, 'lake_index.json'), encoding='utf-8'))
-un = json.load(io.open(os.path.join(REG, '_nc_species_unmatched.json'), encoding='utf-8'))
+shipped = json.load(io.open(os.path.join(REG, 'nc_species_by_lake.json'), encoding='utf-8'))['lakes']
+cache = json.load(io.open(os.path.join(REG, '_nc_species_cache.json'), encoding='utf-8'))
+_un = os.path.join(REG, '_nc_species_unmatched.json')
+un = json.load(io.open(_un, encoding='utf-8')) if os.path.exists(_un) else []
 
 print('\nthe shipped index -- what the override will do to it')
 sim = copy.deepcopy(live)
@@ -127,13 +130,25 @@ check('and afterwards it resolves to exactly one water',
 check('which is the one with the ramp on it',
       sim['back_creek_lake']['gnis'], 'gnis:1008833')
 
-print('\nNC WRC\'s LAKE LUCAS location, bound against the renamed index')
-loc = [x for x in un if x['locationName'] == 'LAKE LUCAS']
-check('the location is still in the refused file', len(loc), 1)
-if loc:
-    l = {'locationID': loc[0]['locationID'], 'locationName': loc[0]['locationName'],
-         'waterbodyName': loc[0]['waterbodyName'],
-         'latitude': loc[0]['lat'], 'longitude': loc[0]['lon']}
+print('\nNC WRC\'s LAKE LUCAS location -- refused on 2026-09-02, bound since')
+# WHERE THE LOCATION COMES FROM NOW. This half first read it out of the refused file, because that
+# is where it sat when the rename was written. build_nc_species_by_lake.py was re-run the same
+# evening (both files 2026-09-02 21:11) and the location left the refused file for back_creek_lake
+# -- so "the location is still in the refused file" was a check that the fix had NOT shipped, and
+# it went red the moment it did. The published binding is checked now, and the point the binder
+# is re-run against comes from the per-location cache it reads.
+check('it is no longer in the refused file',
+      [x.get('locationID') for x in un if x.get('locationName') == 'LAKE LUCAS'], [])
+bound = [(s_, x) for s_, r in shipped.items() for x in (r.get('locations') or [])
+         if x.get('locationName') == 'LAKE LUCAS']
+check('the published file binds it to back_creek_lake', [b[0] for b in bound], ['back_creek_lake'])
+check('by name and box', [b[1].get('matchedBy') for b in bound], ['name+box'])
+pt = cache.get(str(bound[0][1].get('locationID'))) if bound else None
+check('the binder\'s cache has its point', bool(pt and pt.get('latitude') is not None), True)
+if bound and pt:
+    l = {'locationID': bound[0][1]['locationID'], 'locationName': bound[0][1]['locationName'],
+         'waterbodyName': bound[0][1].get('waterbodyName'),
+         'latitude': pt['latitude'], 'longitude': pt['longitude']}
     nc = {s: r for s, r in sim.items() if 'NC' in str(r.get('state') or '').upper()}
     by_name, by_bare = collections.defaultdict(set), collections.defaultdict(set)
     for slug, rec in nc.items():

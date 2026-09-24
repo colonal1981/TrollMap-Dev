@@ -14,10 +14,14 @@
  * Also checks the fuzzy fallback cannot claim a lake the registry already owns.
  */
 import { readFileSync } from 'node:fs';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const _here = new URL('.', import.meta.url).pathname;
-const _repo = _here.replace(/\/test\/$/, '/');
+// THE REPO IS FOUND WITH fileURLToPath, NOT URL.pathname. On Windows `.pathname` is
+// "/F:/TrollMapPipeline/...", which is no path at all: registry_smoke and keys_smoke looked for
+// "/F:/.../registry/lake_index.json", did not find it, printed SKIP and exited 0 on Ryan's machine
+// -- the one machine that has the registry -- and sync_smoke imported "file:///F:/F:/..." and
+// died. Found 2026-09-24. fileURLToPath gives the real path on every platform.
+const _repo = fileURLToPath(new URL('..', import.meta.url));
 const [indexPath = process.env.LAKE_INDEX || _repo + '../registry/lake_index.json',
        treeRoot  = _repo + 'js'] = process.argv.slice(2);
 const SMOKE_NAME = 'keys_smoke';
