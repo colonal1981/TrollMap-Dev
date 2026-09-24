@@ -1951,19 +1951,14 @@ var RIVERS = {
     //   * Total length "75 mi" from SC Encyclopedia includes the Catawba portion
     //     above Lake Wateree; the free-flowing river BELOW the dam is ~48 mi
     riverLength_mi: 48,
-    // STILL TYPED, AND STILL WRONG. Duke's own 2026-09-24 schedule -- generation 17:00, arrival
-    // at Highway 1/Highway 601 Landing (7.4 river-mi) 18:48 -- measures 4.11 mph. The comment
-    // that used to sit here claimed "arrives ~3h after generation start"; it is 1.8 h.
+    // `surgeSpeed_mph`, a typed 2.5, STOOD HERE UNTIL 2026-09-24 and is gone. Duke's own 2026-09-24
+    // schedule -- generation 17:00, arrival at Highway 1/Highway 601 Landing 18:48 -- measures
+    // 4.1-4.2 mph, and the time at any launch is now read off Duke's timed places on the pack's
+    // centreline (surgeAt in Worker/river-geometry.js). A river with fewer than two timed places
+    // gets no ETA and says why, rather than this number.
     //
-    // `estimateSurgeAt()` still reads this for minutes_from_generation_start, so it cannot go
-    // until the speed is derived from the arrivals themselves -- which needs a river-mile for
-    // each MileMarkerName, and the payload gives only the name. Register:
-    // river-surge-speed-typed.
-    //
-    // `dukeAnchorRiverMi`, `dukeAnchorLat` and `dukeAnchorLon` STOOD HERE and are gone: the only
-    // reader was /river's back-computation of the generation start, and Duke publishes that
-    // outright on /rivers/active-run.
-    surgeSpeed_mph: 2.5,
+    // `dukeAnchorRiverMi`, `dukeAnchorLat` and `dukeAnchorLon` went the day before, for the same
+    // reason: Duke publishes the generation start outright on /rivers/active-run.
     // Surge severity attenuation — piecewise model calibrated against the
     // documented paddler observation of "5 ft surge still arriving at mile 35"
     // (paddling.com Wateree trip report) and the fact that the river fans into

@@ -2178,7 +2178,7 @@ export function releasePassingNow(arrivals, nowMs) {
 export function riverArrivals(sched, waterName, gaugeNames = [], basinRow = null, nowMs) {
   const now = Number.isFinite(nowMs) ? nowMs : Date.now();
   if (!sched || !Array.isArray(sched.arrivals) || !sched.arrivals.length) {
-    return { passing: [], upcoming: [], in_basin: 0, agrees: false };
+    return { passing: [], upcoming: [], all: [], in_basin: 0, agrees: false };
   }
   const agrees = dukeBasinAgrees(sched, waterName, gaugeNames);
   const mine = agrees ? arrivalsForWater(sched, waterName, gaugeNames, basinRow) : [];
@@ -2186,6 +2186,8 @@ export function riverArrivals(sched, waterName, gaugeNames = [], basinRow = null
     passing: releasePassingNow(mine, now),
     upcoming: nextArrivalPerMarker(mine, now)
       .filter((a) => Number.isFinite(a.arrivalEpoch) && a.arrivalEpoch > now),
+    // Every arrival on this water, uncollapsed, for timing one release against its own markers.
+    all: mine,
     in_basin: sched.arrivals.length,
     agrees,
   };

@@ -212,6 +212,74 @@ export function currentBetween(geom, fromM, toM, cfs, { tidal = false } = {}) {
   };
 }
 
+const MARKER_GENERIC = new Set(['landing', 'access', 'area', 'ramp', 'park', 'boat', 'river', 'public',
+                                'the', 'and', 'site', 'recreation', 'put', 'in']);
+function markerTokens(s) {
+  const t = String(s || '').toLowerCase().replace(/[/()&,.-]/g, ' ')
+    .replace(/\bhighway\b/g, 'hwy').replace(/\bus\b/g, 'hwy').replace(/\broad\b/g, 'rd');
+  return new Set((t.match(/[a-z]+|\d+/g) || []).filter((w) => !MARKER_GENERIC.has(w)));
+}
+
+/**
+ * WHERE ON THE RIVER A DUKE MILE MARKER IS, from the pack's own landings.
+ *
+ * Duke publishes a marker by NAME ONLY -- "Highway 1/Highway 601 Landing" -- and the pack places
+ * every landing by river metre, so the join is the name. The landing that shares the most words
+ * with the marker wins, and only if it is the only one that does and what they share is more than
+ * a road prefix: "Highway 1/Highway 601 Landing" and "Patriots Landing (Hwy 1)" share `hwy 1`;
+ * "WT Billy Tolar (US 378)" shares only `hwy` and is not a match. No match is null, and a river
+ * whose markers are towns (the Tuckasegee's Cullowhee, Dillsboro, Webster) answers null here
+ * rather than borrowing the nearest ramp.
+ */
+export function markerStation(geom, markerName) {
+  const want = markerTokens(markerName);
+  if (!geom || !want.size) return null;
+  let best = null, bestN = 0, tie = false;
+  for (const l of geom.landings || []) {
+    const shared = [...markerTokens(l.name)].filter((w) => want.has(w));
+    const distinctive = shared.filter((w) => w !== 'hwy' && w !== 'rd');
+    if (!distinctive.length) continue;
+    if (shared.length > bestN) { best = l; bestN = shared.length; tie = false; }
+    else if (shared.length === bestN) tie = true;
+  }
+  return best && !tie ? best : null;
+}
+
+/**
+ * WHEN THE SURGE REACHES A RIVER METRE, from the operator's own times -- not a typed speed.
+ *
+ * `anchors` are places Duke has put a time on for ONE release: the dam at the moment generation
+ * starts (and ends), and each marker at its published arrival (and recedes). Between two anchors
+ * the time is read off the line joining them; beyond the last, the last pair's speed is carried on
+ * and the answer says it was extrapolated. Measured on the 2026-09-24 Wateree release: dam at
+ * 17:00, Highway 1/601 at 18:48, 7.5 river miles -- 4.2 mph, where RIVERS.wateree has typed 2.5
+ * since it was written, which made every minutes-from-generation-start 64 percent too long.
+ *
+ * Needs two anchors with distinct river metres and increasing times; anything less is null.
+ */
+export function surgeAt(anchors, stationM) {
+  const a = (anchors || [])
+    .filter((x) => x && Number.isFinite(x.station_m) && Number.isFinite(x.epoch))
+    .sort((x, y) => x.station_m - y.station_m);
+  if (a.length < 2 || !Number.isFinite(stationM)) return null;
+  let i = 0;
+  while (i < a.length - 2 && stationM > a[i + 1].station_m) i += 1;
+  const p = a[i], q = a[i + 1];
+  const dm = q.station_m - p.station_m, dt = q.epoch - p.epoch;
+  if (!(dm > 0) || !(dt > 0)) return null;
+  const frac = (stationM - p.station_m) / dm;
+  const out = {
+    epoch: Math.round(p.epoch + frac * dt),
+    speed_mph: Number(((dm / 1609.344) / (dt / 3.6e6)).toFixed(2)),
+    extrapolated: stationM < a[0].station_m || stationM > a[a.length - 1].station_m,
+    between: [p.label || null, q.label || null],
+  };
+  if (Number.isFinite(p.recedes_epoch) && Number.isFinite(q.recedes_epoch)) {
+    out.recedes_epoch = Math.round(p.recedes_epoch + frac * (q.recedes_epoch - p.recedes_epoch));
+  }
+  return out;
+}
+
 /**
  * THE BOAT, IN RYAN'S OWN NUMBER. 2026-09-24: "full speed with the nk180pro flat on a lake is
  * somewhere around 5.5mph pedaling does not add anything to this really".

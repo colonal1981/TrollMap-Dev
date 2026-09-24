@@ -12,7 +12,7 @@ import { handleGisRoute, flagIsYes, hasText, ARCGIS_BUILD } from './core/arcgis.
 import { RAMP_SOURCES } from './core/ramp-sources.js';
 import { handleWaterRoute } from './water.js';
 import { handleConditions, handleHazards, dukeBasinFor, parseActiveRun, activeRunForWater, riverBindings, riverArrivals, easternClock } from './conditions.js';
-import { riverGeometry, stationAt, stretchAround, currentBetween, currentVerdict, packSlugFor, BOAT } from './river-geometry.js';
+import { riverGeometry, stationAt, stretchAround, currentBetween, currentVerdict, packSlugFor, BOAT, markerStation, surgeAt } from './river-geometry.js';
 import { handleCameras } from './cameras.js';
 import { handleAlerts, runAlertSweep } from './alerts.js';
 import { handleReports } from './reports.js';
@@ -144,15 +144,16 @@ function estimateSurgeAt(river, userLat, userLon) {
   const snap = snapToRiver(river.centerline, userLat, userLon);
   if (!snap || snap.dist > 10) return null;
   const userRiverMi = snap.wp.mi;
-  const minutesFromDam = userRiverMi / river.surgeSpeed_mph * 60;
+  // NO TIME HERE ANY MORE. This returned `userRiverMi / surgeSpeed_mph * 60` off a typed 2.5 mph;
+  // the arrival time is now read off Duke's own timed places in getRiver (see surgeAt in
+  // river-geometry.js). What stays is the severity, which the hand model is still the only source
+  // of, in the hand model's own miles.
   const severity = interpolateSeverity(river.surgeAttenuation, userRiverMi);
   return {
     nearestWaypoint: snap.wp.name,
     distance_to_waypoint_mi: Math.round(snap.dist * 10) / 10,
     river_mile_from_dam: Math.round(userRiverMi * 10) / 10,
     river_miles_remaining_to_confluence: Math.round((river.riverLength_mi - userRiverMi) * 10) / 10,
-    minutes_from_generation_start: Math.round(minutesFromDam),
-    surge_speed_mph: river.surgeSpeed_mph,
     surge_severity_factor: Math.round(severity * 100) / 100,
     surge_severity_label: severity > 0.75 ? "full" : severity > 0.5 ? "moderate" : severity > 0.3 ? "reduced" : "minor"
   };
@@ -271,6 +272,8 @@ async function getRiver(key, opts = {}) {
   // duke have releases on their api"*. It does, and one of the two typed ids was the one that
   // refused him.
   const gaugeNames = (cfg.gauges || []).map((g) => g && g.name).filter(Boolean);
+  // This water's arrivals, every one, for timing a release against its own markers further down.
+  let waterArrivals = [];
   const roster = await fetchDukeRivers().catch(() => null);
   const basin = dukeBasinFor(roster, cfg.label || key, gaugeNames);
   if (basin) {
@@ -280,6 +283,7 @@ async function getRiver(key, opts = {}) {
     // See riverArrivals() in conditions.js: `next` used to be the basin's first listing on any
     // reach, and a surge that had ARRIVED fell out of the check for the hours it was passing.
     const mine = riverArrivals(sched, cfg.label || key, gaugeNames, basinRow, Date.now());
+    waterArrivals = mine.all;
     if (mine.passing.length || mine.upcoming.length) {
       out.dam_schedule = {
         type: "duke_flow_arrivals",
@@ -328,6 +332,7 @@ async function getRiver(key, opts = {}) {
       out.dam_schedule.generationStartSource = "duke /rivers/active-run, as published";
       out.dam_schedule.generationDam = next.dam;
       out.dam_schedule.generationEnd = next.end || null;
+      out.dam_schedule.generationEndEpoch = Number.isFinite(next.end_epoch) ? next.end_epoch : null;
     }
     out.dam_schedule_runs = runs.length ? runs.slice(0, 6) : undefined;
   }
@@ -348,22 +353,6 @@ async function getRiver(key, opts = {}) {
       };
     }
   }
-  if (opts.userLat != null && opts.userLon != null) {
-    const loc = estimateSurgeAt(cfg, opts.userLat, opts.userLon);
-    if (loc) {
-      out.user_location = {
-        lat: opts.userLat,
-        lon: opts.userLon,
-        ...loc
-      };
-      if (out.dam_schedule?.generationStartEpoch != null) {
-        const surgeAtUserEpoch = out.dam_schedule.generationStartEpoch + loc.minutes_from_generation_start * 60 * 1e3;
-        out.user_location.surge_arrival_epoch = surgeAtUserEpoch;
-        out.user_location.surge_arrival_iso = new Date(surgeAtUserEpoch).toISOString();
-        out.user_location.minutes_until_surge_at_user = Math.round((surgeAtUserEpoch - Date.now()) / 6e4);
-      }
-    }
-  }
   const primary = out.gauges.find((g) => g.primary) || out.gauges[0];
 
   // ── WHERE ON THE RIVER, AND HOW FAST THE WATER IS MOVING THERE ─────────────────────────────
@@ -373,6 +362,7 @@ async function getRiver(key, opts = {}) {
   // the gauge's discharge into a speed (V = Q/A, per station). See Worker/river-geometry.js.
   const geom = (opts.env && opts.packSlug)
     ? await riverGeometry(opts.env, opts.packSlug).catch(() => null) : null;
+  let riverAt = null;
   if (geom) {
     let at = null;
     if (opts.userLat != null && opts.userLon != null) {
@@ -383,6 +373,7 @@ async function getRiver(key, opts = {}) {
         at = null;
       }
     }
+    riverAt = at;
     const stretch = at ? stretchAround(geom, at.station_m)
       : { from_m: geom.m[0], to_m: geom.m[geom.n - 1],
           from: 'the top of the charted river', to: 'the bottom of the charted river' };
@@ -399,7 +390,92 @@ async function getRiver(key, opts = {}) {
     out.current = { basis: opts.packSlug ? `the ${opts.packSlug} pack has no centreline in the bucket`
                                          : 'no river pack is bound to this river' };
   }
-  const moving = currentVerdict(out.current);
+  // A VERDICT NEEDS A PLACE. Without a launch the current is the whole river's, and on the
+  // Tuckasegee that includes the reach backed up by Fontana: a median of 0.03 mph on a mountain
+  // river at 928 ft3/s. The whole-river number still ships in `current`, labelled as such; it does
+  // not decide a go/no-go for a stretch nobody named.
+  const moving = riverAt ? currentVerdict(out.current) : null;
+  if (geom && !riverAt && !out.river_position_refused) {
+    out.current.verdict_needs = 'a launch - pass ?lat=X&lon=Y for the stretch you will be on';
+  }
+
+  // ── WHEN THE SURGE REACHES THE USER, FROM DUKE'S OWN TIMES ──────────────────────────────────
+  //
+  // This multiplied a hand-waypoint river mile by a typed 2.5 mph. Duke's 2026-09-24 Wateree
+  // release measured 4.2, the hand miles are wrong below Camden (WT Billy Tolar at 29 against the
+  // pack's 51.4), and together they put the surge at a downstream launch hours late -- the
+  // direction that puts a kayak on the water when it arrives.
+  //
+  // Now the river metre comes off the pack, and the time off the line through the places Duke
+  // itself has timed for this release: the dam when generation starts (the RIVERS entry's own mile
+  // 0, snapped to the pack), and each of this water's markers at its published arrival, placed by
+  // the pack landing it names (markerStation). Two timed places or no ETA -- and the payload says
+  // which, rather than falling back to a speed nobody measured.
+  if (opts.userLat != null && opts.userLon != null) {
+    const loc = estimateSurgeAt(cfg, opts.userLat, opts.userLon);   // hand model: severity only
+    if (loc || riverAt) {
+      out.user_location = { lat: opts.userLat, lon: opts.userLon, ...(loc || {}) };
+      const genStart = out.dam_schedule && out.dam_schedule.generationStartEpoch;
+      const anchors = [];
+      let damStation = null;
+      const damWp = (cfg.centerline || []).find((w) => w && w.mi === 0);
+      if (geom && damWp) {
+        const d = stationAt(geom, damWp.lat, damWp.lon);
+        if (d && (geom.snap_cap_m == null || d.off_m <= geom.snap_cap_m)) damStation = d.station_m;
+      }
+      if (geom && Number.isFinite(genStart)) {
+        if (damStation != null) {
+          anchors.push({ station_m: damStation, epoch: genStart,
+                         recedes_epoch: out.dam_schedule.generationEndEpoch,
+                         label: out.dam_schedule.generationDam || cfg.damName || "the dam" });
+        }
+        // THIS release at each marker: the first arrival there at or after generation starts.
+        const firstPer = new Map();
+        for (const a of waterArrivals) {
+          if (!a || !Number.isFinite(a.arrivalEpoch) || a.arrivalEpoch < genStart) continue;
+          const prev = firstPer.get(a.mileMarkerName);
+          if (!prev || a.arrivalEpoch < prev.arrivalEpoch) firstPer.set(a.mileMarkerName, a);
+        }
+        for (const a of firstPer.values()) {
+          const l = markerStation(geom, a.mileMarkerName);
+          if (l) anchors.push({ station_m: l.station_m, epoch: a.arrivalEpoch,
+                                recedes_epoch: a.recedesEpoch, label: a.mileMarkerName });
+        }
+      }
+      if (riverAt) {
+        const mi = (m) => Math.round(m / 1609.344 * 10) / 10;
+        if (damStation != null) out.user_location.river_mile_from_dam = mi(riverAt.station_m - damStation);
+        out.user_location.river_miles_remaining_to_confluence = mi(geom.length_m - riverAt.station_m);
+        const near = (geom.landings || []).reduce((b, l) =>
+          (!b || Math.abs(l.station_m - riverAt.station_m) < Math.abs(b.station_m - riverAt.station_m) ? l : b), null);
+        if (near) out.user_location.nearestWaypoint = near.name;
+        out.user_location.river_position_source = `the ${opts.packSlug} pack centreline`;
+      }
+      if (Number.isFinite(genStart)) {
+        const t = riverAt ? surgeAt(anchors, riverAt.station_m) : null;
+        if (t) {
+          out.user_location.surge_arrival_epoch = t.epoch;
+          out.user_location.surge_arrival_iso = new Date(t.epoch).toISOString();
+          out.user_location.minutes_until_surge_at_user = Math.round((t.epoch - Date.now()) / 6e4);
+          out.user_location.minutes_from_generation_start = Math.round((t.epoch - genStart) / 6e4);
+          out.user_location.surge_speed_mph = t.speed_mph;
+          out.user_location.surge_speed_basis = `measured from Duke's own times at ${t.between.join(" and ")}`
+            + (t.extrapolated ? ", carried beyond the last place Duke timed" : "");
+          if (Number.isFinite(t.recedes_epoch)) out.user_location.surge_recedes_epoch = t.recedes_epoch;
+        } else {
+          out.user_location.surge_eta_unavailable = !riverAt
+            ? "the launch could not be placed on this river's centreline"
+            : `Duke has timed ${anchors.length} place${anchors.length === 1 ? "" : "s"} on this river for `
+              + "this release that the pack can place, and an arrival time needs two";
+        }
+      }
+      if (!loc) {
+        // A bound river has no severity model. Unknown is treated as full, never as minor.
+        out.user_location.surge_severity_factor = 1;
+        out.user_location.surge_severity_label = "unknown - treated as full";
+      }
+    }
+  }
 
   // A GO/NO-GO NEEDS SOMETHING THAT DECIDES IT. `assessKayakSafety` reads t.cfsDanger and friends
   // off `kayakThresholds`; with none, every comparison is against `undefined`, which is false, and
@@ -411,7 +487,9 @@ async function getRiver(key, opts = {}) {
     out.kayak_assessment = null;
     out.kayak_assessment_unavailable =
       'No hand-set kayak bands for this river, and no current to judge the boat against: '
-      + `${out.current.basis}. The gauge readings above are measured; read them yourself.`;
+      + `${!riverAt && geom
+          ? (out.river_position_refused || 'no launch was given, so there is no stretch to judge')
+          : out.current.basis}. The gauge readings above are measured; read them yourself.`;
   } else if (primary) {
     const order = { "go": 0, "caution": 1, "no-go": 2 };
     const assessment = cfg.kayakThresholds

@@ -87,22 +87,25 @@ describe('the typed surge speed against what Duke actually published', () => {
     expect(RIVERS.wateree.dukeAnchorRiverMi).toBe(undefined);
   });
 
-  it('measures 4.1 mph where the table still says 2.5', () => {
+  // THE TYPED SPEED IS A HISTORICAL VALUE NOW TOO. `RIVERS.wateree.surgeSpeed_mph` was 2.5 and
+  // was deleted 2026-09-24, when getRiver started reading the time off Duke's own timed places on
+  // the pack's centreline (see the-surge-is-timed-by-dukes-own-clock.test.js). Kept here for the
+  // same reason as the anchor above: it is what the arithmetic below is ABOUT.
+  const SPEED_AS_TYPED = 2.5;
+
+  it('measures 4.1 mph where the table said 2.5', () => {
     const travelH = (arrival - genStart) / 36e5;
     expect(Math.round(travelH * 60)).toBe(108);
     expect(Math.round((ANCHOR_MI_AS_TYPED / travelH) * 100) / 100).toBe(4.11);
     // The typed constant's own comment claimed "arrives ~3h after generation start". It is 1.8 h.
-    // surgeSpeed_mph SURVIVES the 2026-09-23 cut because estimateSurgeAt() still reads it for
-    // minutes_from_generation_start, and deriving it needs a river-mile per MileMarkerName that
-    // the payload does not carry. Register: river-surge-speed-typed.
-    expect(RIVERS.wateree.surgeSpeed_mph).toBe(2.5);
-    expect(Math.round(ANCHOR_MI_AS_TYPED / RIVERS.wateree.surgeSpeed_mph * 60)).toBe(178);
+    expect(RIVERS.wateree.surgeSpeed_mph).toBe(undefined);
+    expect(Math.round(ANCHOR_MI_AS_TYPED / SPEED_AS_TYPED * 60)).toBe(178);
   });
 
   it('would have put the reconstructed generation start 70 minutes early', () => {
     // What /river DID until 2026-09-23: arrivalEpoch - (7.4 mi / 2.5 mph), to invent a start time
     // Duke publishes outright one endpoint over.
-    const reconstructed = arrival - (ANCHOR_MI_AS_TYPED / RIVERS.wateree.surgeSpeed_mph) * 36e5;
+    const reconstructed = arrival - (ANCHOR_MI_AS_TYPED / SPEED_AS_TYPED) * 36e5;
     expect(Math.round((genStart - reconstructed) / 6e4)).toBe(70);
   });
 

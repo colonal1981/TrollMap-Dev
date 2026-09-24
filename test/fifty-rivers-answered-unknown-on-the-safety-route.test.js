@@ -102,7 +102,9 @@ describe('the six curated rivers are unchanged', () => {
     const wateree = RIVERS.wateree;
     expect(Array.isArray(wateree.gauges)).toBe(true);
     expect(typeof wateree.kayakThresholds.cfsDanger).toBe('number');
-    expect(typeof wateree.surgeSpeed_mph).toBe('number');
+    // The surge speed WAS one of these until 2026-09-24. It is measured now, off Duke's own times
+    // on the pack's centreline, so a binding can supply it after all.
+    expect(wateree.surgeSpeed_mph).toBe(undefined);
   });
 
   it('and a name that reaches one of them still reaches it first', () => {

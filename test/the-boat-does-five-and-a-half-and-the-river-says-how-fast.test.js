@@ -128,7 +128,11 @@ describe('/river is wired to it', () => {
   });
   it('a river with no hand-set bands gets a verdict when the current can give one', () => {
     expect(w).toContain('if (primary && !cfg.kayakThresholds && !moving) {');
-    expect(w).toContain('const moving = currentVerdict(out.current);');
+  });
+  it('and only for a named stretch: the whole Tuckasegee includes Fontana\'s backwater', () => {
+    // Measured 2026-09-24: 105 of the river's 152 measurable sections are over 1,000 m2, all
+    // between 68.7 and 74.3 km, below Bryson City -- a median of 0.03 mph at 928 ft3/s.
+    expect(w).toContain('const moving = riverAt ? currentVerdict(out.current) : null;');
   });
   it('NWS action stage is a backstop', () => {
     expect(w).toContain('the NWS action stage of ${flood.action} ft.');
