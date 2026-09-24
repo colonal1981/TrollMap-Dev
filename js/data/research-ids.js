@@ -133,6 +133,39 @@ export const RESEARCH_CANONICAL_IDS = {
   // STRANDED before this row and does not after.
   'congaree_river': 'congaree_river_to_sc_601_richland_co_sc',
   'congaree_river_sc': 'congaree_river_to_sc_601_richland_co_sc',
+  // ── THE UPPER SALUDA IS ONE RIVER TO RESEARCH, 2026-09-24 ─────────────────────────────────────
+  //
+  // A DIFFERENT SHAPE FROM EVERY ROW ABOVE: not one water under two spellings but two registry
+  // waters that are one piece of research. The map splits the Saluda at its reservoirs --
+  // saluda_river above Lake Greenwood, saluda_river_2 from Greenwood to Lake Murray -- and that is
+  // right for display. Ryan, on the research: "the upper saluda all the way from before saluda
+  // lake to murray is probably ok as 1 piece... then lower saluda is a completely type of river".
+  // No document on the web says which reach it is about, so two profiles would be one corpus read
+  // twice and diverging by accident.
+  //
+  // THE TARGET IS THE ONE BOTH PICKER ENTRIES ALREADY READ. Measured with which_profile_serves.mjs:
+  // "Saluda River (Greenville Co, SC)" (saluda_river) and "Saluda River, SC" (saluda_river_2) both
+  // reach saluda_river_sc today, the first through its legacy name and the second through its raw
+  // one. What these rows stop is the WRITE forking it: research_lakes.py drives from registry
+  // names, and "Saluda River (Greenville Co, SC)" is how saluda_river_greenville_co_sc -- the
+  // second, hidden profile of the same water -- got written on 2026-09-23. saluda_river_2's own
+  // names would have been the third.
+  //
+  // COLLISION CHECKED against the picker's 876 names and the identity names the Worker tries
+  // beside each: `saluda_river_greenville_co_sc` is produced by "Saluda River (Greenville Co, SC)"
+  // alone, and the two `saluda_river_2_*` keys by no picker name at all -- they are the registry's
+  // own spellings of that row. NOT `saluda_river`: "Saluda River (Lower Saluda), SC" produces it
+  // too, and the Lower Saluda is the one reach that is a different river.
+  //
+  // AND THE TARGET MAPS TO ITSELF, the way Thurmond's does. Without it "Saluda River, SC" asks for
+  // the bare `saluda_river` FIRST -- the key the Lower Saluda shares -- and reaches saluda_river_sc
+  // only because nothing is stored under the bare one yet. A canonical row is tried before any
+  // bare key, so the self-map is what makes the upper entries ask for their own profile first.
+  // `saluda_river_sc` is produced only by those two entries (same check).
+  'saluda_river_sc': 'saluda_river_sc',
+  'saluda_river_greenville_co_sc': 'saluda_river_sc',
+  'saluda_river_2_sc': 'saluda_river_sc',
+  'saluda_river_2_newberry_co_sc': 'saluda_river_sc',
 };
 
 /** Mirror of `researchStorageId` in worker/research/keys.js. */

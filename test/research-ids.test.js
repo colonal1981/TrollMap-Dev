@@ -188,6 +188,28 @@ describe('the pre-county spelling resolves', () => {
     expect(RESEARCH_CANONICAL_IDS.congaree_river_sc).toBe('congaree_river_to_sc_601_richland_co_sc');
   });
 
+  it('the upper Saluda is one profile, and the Lower Saluda is not in it', () => {
+    // 2026-09-24. Ryan: "the upper saluda all the way from before saluda lake to murray is probably
+    // ok as 1 piece... then lower saluda is a completely type of river". Both upper picker entries
+    // already READ saluda_river_sc; these rows make every WRITE from a registry name land there too.
+    const UPPER = ['Saluda River (Greenville Co, SC)',      // saluda_river, display name
+                   'Saluda River, SC',                      // the picker's saluda_river_2
+                   'Saluda River (2) (Newberry Co, SC)',    // saluda_river_2, display name
+                   'Saluda River (2), SC'];                 // saluda_river_2, legacy name
+    for (const n of UPPER) {
+      expect(researchStorageId(n)).toBe('saluda_river_sc');
+      expect(researchStorageIdCandidates(n)[0]).toBe('saluda_river_sc');
+    }
+    const STORED = [{ id: 'saluda_river_sc' }];
+    expect(researchedNames(UPPER, STORED).size).toBe(UPPER.length);
+    // The bare key is shared with the Lower Saluda, which is why it is not a row.
+    expect(RESEARCH_CANONICAL_IDS.saluda_river).toBe(undefined);
+    const LOWER = 'Saluda River (Lower Saluda), SC';
+    expect(researchStorageId(LOWER)).toBe('saluda_river_lower_saluda_sc');
+    expect(researchStorageIdCandidates(LOWER)).not.toContain('saluda_river_sc');
+    expect(researchedNames([LOWER], STORED).size).toBe(0);
+  });
+
   it('every canonical row points at something, and never at another key', () => {
     // A row whose target is itself a key is a chain, and a chain is a rename nobody finished.
     // Written generally so a row added tomorrow has to satisfy it too.

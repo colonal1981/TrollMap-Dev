@@ -840,6 +840,25 @@ def main():
             print(f"!! {wsp} not found -- a launch on a water in two states is checked against the "
                   f"row's state's book; build it with label_water_states.py")
 
+        # river_lines.json -- EACH RIVER'S OUTLINE, THINNED FOR A ZOOMED-OUT MAP. 2026-09-24.
+        #
+        # Read by the APP (js/data/river-lines.js -> river-line-layer.js), so it goes beside
+        # lake_index.json for the same reason water_state_parts.json does. Picking a river frames
+        # its registry box, and 30 of the 57 frame at zoom 8-10, where no linework draws and a
+        # 60 m channel is inside one basemap pixel. Ryan: "sometimes you have to actually pan the
+        # map to find the river". Without this object the frame is unchanged and the river is
+        # still invisible in it.
+        rlp = regdir / "river_lines.json"
+        if rlp.exists():
+            reg_jobs.append((str(rlp), f"{args.prefix}_registry/river_lines.json",
+                             "_registry", "river_lines"))
+            print(f"rivers:   {len((json.load(open(rlp, encoding='utf-8')) or {}).get('waters') or {}):,} "
+                  f"river outlines -> {args.prefix}_registry/river_lines.json "
+                  f"({rlp.stat().st_size/1024:.0f} KB before gzip)")
+        else:
+            print(f"!! {rlp} not found -- a river picked at low zoom draws nothing; build it with "
+                  f"build_river_lines.py")
+
         # THE THIRD FILE TO LEARN THE SAME LESSON, after lake_index.json and water_bindings.json:
         # a registry file the app needs and the uploader does not ship is indistinguishable from
         # work that was never done.

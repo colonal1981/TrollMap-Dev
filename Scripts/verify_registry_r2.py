@@ -160,6 +160,11 @@ FILES = [
      "js/data/water-state-parts.js places a launch on a water in two states on the Census line -- "
      "27 waters. Without it the launch's book is the registry row's state, a put-in in Cherokee "
      "County, SC on the Broad reads North Carolina's, and the preflight says so"),
+    # 2026-09-24. Also read by the APP.
+    ("river_lines.json", "river_lines.json", "verbatim",
+     "js/modules/river-line-layer.js draws a picked river below zoom 11 off this -- 57 rivers. "
+     "Without it a river that frames at zoom 8-10 is inside one basemap pixel, and finding it "
+     "means panning"),
 ]
 
 # ── THE TABLE THE UPLOADER PUBLISHES FROM, READ RATHER THAN RESTATED ─────────────────────────

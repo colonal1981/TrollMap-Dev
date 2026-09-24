@@ -15,6 +15,7 @@
 import { state } from '../core/state.js';
 import { loadAccessIndex, registryRecordFor, liveAccessFor } from '../data/access-index.js';
 import { loadContourForLake } from './contour-data.js';
+import { showRiverLine, clearRiverLine } from './river-line-layer.js';
 import { COASTAL_ZONES, isCoastalKey } from '../data/coastal-zones.js';
 import { landOnCoastalZone, focusRamp } from '../utils/viewport-cull.js';
 import { coastalNamesByState } from '../data/coastal-zones.js';
@@ -256,6 +257,7 @@ async function onLakeChange(selLakeName) {
 
   if (!selLakeName) {
     if (rampSel) rampSel.disabled = true;
+    clearRiverLine();
     return;
   }
 
@@ -346,6 +348,18 @@ async function onLakeChange(selLakeName) {
     // all; without this the map sits wherever it was and selecting the lake looks broken.
     state.MAP.setView([rec.lat, rec.lon], 14);
   }
+
+  // AND THE RIVER, DRAWN, WHERE THE FRAME IS TOO WIDE TO SHOW IT -- 2026-09-24.
+  //
+  // The frame above is right: the registry box is the whole water, and the launches are on the
+  // whole water. Framing a river on its pack centreline instead was measured before it shipped
+  // and would have put launches off screen on 22 of the 57 -- broad_river 18 of its 23. What was
+  // wrong is that 30 of the 57 frame at zoom 8-10, where no linework draws and a 60 m channel is
+  // inside one basemap pixel. Ryan: "sometimes you have to actually pan the map to find the
+  // river". river-line-layer.js strokes the outline below CONTOUR_MIN_ZOOM and nowhere else.
+  // Not awaited: the frame and the dropdown do not wait on a 230 KB file to say where the water is.
+  if (!zoneItself && rec && rec.featureType === 'river') showRiverLine(rec.slug);
+  else clearRiverLine();
 
   // Sync planLake if not already set
   const planLakeEl = document.getElementById('planLake');

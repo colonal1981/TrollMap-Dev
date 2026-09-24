@@ -979,7 +979,13 @@ def species_in_sentence(text, smap):
     """
     t = ' %s ' % norm(text or '').lower()
     best = None
-    for phrase in sorted(smap_phrases(smap or {}), key=len, reverse=True):
+    # A TIE IS BROKEN BY THE SPELLING, NOT BY THE HASH SEED. smap_phrases() is a set, and the
+    # vocabulary carries `Largemouth Bass` and `LARGEMOUTH BASS` -- same length, same match. Sorted
+    # on length alone, which one won depended on Python's per-process string hashing: two rebuilds
+    # from the same books on 2026-09-24 wrote Georgia's PFA rows once each way. The book's words
+    # in its own case first (an all-caps phrase is a band heading's typography), then alphabetical,
+    # so the same inputs write the same file.
+    for phrase in sorted(smap_phrases(smap or {}), key=lambda p: (-len(p), p.isupper(), p)):
         p = norm(phrase).lower()
         if len(p) < 4:
             continue
@@ -3030,6 +3036,42 @@ def _reach_head(text):
     return t.strip(' .,;')
 
 
+def _reach_between(stem, bare, text, state, name_map, idx, chain):
+    """The ONE row of this river whose two ends are waters the book's own sentence names.
+
+    SC's striped bass table addresses `Saluda River (Middle Reach) All waters of Saluda River from
+    backwaters of Lake Murray at SC Hwy 395 upstream to Lake Greenwood Dam`. The bracket says
+    `Middle`, and no row we carry is called that -- the qualifier rule above found nothing and
+    the bare name took the rule to `saluda_river`, the Saluda ABOVE Greenwood, where it does not
+    apply. The reach it does describe, `saluda_river_2`, got no striper rule at all. Found
+    2026-09-24 reading the two upper-Saluda research profiles, whose only fish came off that row.
+
+    The sentence already says which reach it means: it names the lake at each end. The water
+    chain knows each row's neighbours -- saluda_river_2 comes out of lake_greenwood and runs into
+    lake_murray -- so the row is the one whose downstream water AND one of whose upstream waters
+    the sentence names. Exactly one, or nothing: two is an ambiguity to report, not a guess.
+
+    THE ROWS ARE THE SAME KIND OF WATER AS THE BARE ANSWER, AND THE ENDS ARE EVERYTHING ELSE.
+    The sentence says `Saluda River` too, so every Saluda row is `named`; and Lake Greenwood and
+    Lake Murray answer to `Saluda River (Lake ...)` in the name map, so a stem test alone makes
+    them rows. Measured on the first run: three rows qualified (saluda_river_2, lake_greenwood,
+    lake_murray) and the rule stayed where it was. A reach of a river is a river, so the rows are
+    the ones whose feature_type is the bare answer's, and an end is a named water that is not one
+    of those rows.
+    """
+    named = set(waters_named_in(text, state, idx))
+    if len(named) < 2 or not chain or not bare:
+        return None
+    kind = (idx.get(bare) or {}).get('feature_type')
+    rows = {name_map[c] for c in name_map if stem <= _bare_words(c)
+            and (idx.get(name_map[c]) or {}).get('feature_type') == kind}
+    ends = named - rows
+    keep = sorted(s for s in rows
+                  if (chain.get(s) or {}).get('downstream') in ends
+                  and set((chain.get(s) or {}).get('upstream') or []) & ends)
+    return keep[0] if len(keep) == 1 else None
+
+
 def resolve_water_body(text, state, name_map, idx, systems, chain, sysmembers,
                        county=None):
     """One book address -> {kind, waters, unresolved}. Never a guess: anything that does not
@@ -3155,6 +3197,7 @@ def resolve_water_body(text, state, name_map, idx, systems, chain, sysmembers,
         # river. So when the bracket carries words the registry can see, a water whose own name
         # contains them wins over the bare match.
         qual = re.search(r'\(([^)]+)\)', p)
+        via = 'name'
         if qual and not COUNTY.search(p):
             want = _bare_words(qual.group(1))
             stem = _bare_words(p2)
@@ -3168,6 +3211,15 @@ def resolve_water_body(text, state, name_map, idx, systems, chain, sysmembers,
                           if stem <= _bare_words(c) and (want & _bare_words(c))}
                 if len(better) == 1:
                     slug = better.pop()
+                elif not better:
+                    # NO ROW CARRIES THE BRACKET'S WORD, so the bare name is the one answer that
+                    # is known to be wrong: the bracket is there because the book means a PART of
+                    # the river. Placed by the lakes the sentence names at its two ends, or left
+                    # to the bare name only when that cannot be done -- see _reach_between().
+                    placed = _reach_between(stem, slug, t, state, name_map, idx, chain)
+                    if placed:
+                        slug = placed
+                        via = 'name+reach bounds'
         if slug and want_county:
             got = norm((idx.get(slug) or {}).get('county') or '')
             if got and got.lower() != want_county.lower():
@@ -3245,7 +3297,7 @@ def resolve_water_body(text, state, name_map, idx, systems, chain, sysmembers,
                 continue
         if slug:
             waters.append(slug)
-            kinds.add('name')
+            kinds.add(via)
         else:
             # A REACH STILL NAMES ITS RIVER. `Savannah River downstream of Clarks Hill dam` is
             # the Savannah; the clause after the river says which part. Resolving the head is

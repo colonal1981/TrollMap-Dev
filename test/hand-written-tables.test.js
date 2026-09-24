@@ -150,7 +150,7 @@ const DECLARED = [
    'Georgia is deliberately absent from AGENCY_INDEXES, so this is still the GA seed list.'],
 
   // ── aliases: legitimate and permanent ─────────────────────────────────────────────────────
-  ['js/data/research-ids.js', 'RESEARCH_CANONICAL_IDS', 18, 'alias',
+  ['js/data/research-ids.js', 'RESEARCH_CANONICAL_IDS', 22, 'alias',
    'storage-key aliases. Legitimate: the world disagrees about what Thurmond is called. THE '
    + 'ONE COPY as of 2026-09-05 -- Worker/research/keys.js imports it rather than restating it, '
    + 'the way Worker/research/limnology.js imports js/data/lake-keys.js. It was two, and they '
@@ -164,7 +164,12 @@ const DECLARED = [
    + 'six of these eighteen are now one shape -- a picker spelling that does not resolve to the '
    + "registry's storage id -- and a sixth hand-written row for the seventh water is the point "
    + 'at which researchStorageIdCandidates() should be asking the registry for the slug rather '
-   + 'than this table growing again.'],
+   + 'than this table growing again. 18 -> 22 is the upper Saluda, 2026-09-24, and it is NOT '
+   + 'that seventh water: it is a decision, not a spelling -- two registry rows (saluda_river, '
+   + 'saluda_river_2) that Ryan ruled are one piece of research, pointed at the profile both '
+   + 'picker entries already read so a batch driven from registry names cannot fork it. Asking '
+   + 'the registry for the slug would not replace these rows; it would need a registry field '
+   + 'saying which rows research together.'],
   ['Worker/research/deterministic.js', 'LEGACY_PROFILE_KEYS', 7, 'alias',
    'profile keys written before the storage-id rules settled. Read-only compatibility.'],
   // DOCUMENT_ALIASES was here until 2026-09-01, eleven waters, and NOT ONE OF ITS KEYS COULD

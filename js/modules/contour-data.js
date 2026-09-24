@@ -152,8 +152,11 @@ export async function loadContourForLake(displayName) {
 // so contours render on top of canvas depth areas automatically.
 const _canvasRenderer = L.svg({ padding: 0.5 });
 
-// Zoom threshold below which contour lines are hidden (depth areas still show)
-const CONTOUR_MIN_ZOOM = 11;
+// Zoom threshold below which contour lines are hidden (depth areas still show).
+// EXPORTED 2026-09-24 because two other things key off it: river-line-layer.js draws a river's
+// outline only BELOW it, and Scripts/build_river_lines.py reads this line to derive how thin
+// that outline can be. Change it here and both follow.
+export const CONTOUR_MIN_ZOOM = 11;
 // Coastal zones are clipped to a RECTANGLE, so their packs carry the open Atlantic out to the
 // seaward edge of the box -- 29,676 contours on Murrells Inlet against 7,512 on Wateree, a
 // large lake. Until those zones get a real inshore boundary, the linework does not begin until
