@@ -237,7 +237,7 @@ function searchableSpecies(list) {
  */
 const WATER_TYPE_SEARCH = {
   river: {
-    fisheries: (name, state, species = []) => {
+    fisheries: (name, state, species = [], places = []) => {
       // TinyFish caps `purpose` at 2000 characters. Compose it, and if a long roster pushes it
       // over, drop fish from the end until it fits -- rather than send a request the API documents
       // as invalid. `namedSpecies` reports what SURVIVED, so the query log can never name a fish
@@ -262,10 +262,20 @@ const WATER_TYPE_SEARCH = {
         // seasonal keywords that drifted to Bluegill tacos on the open web cannot drift here,
         // because the domain set is closed. Same question, a channel that holds.
         `"${name}" fishing seasonal patterns bait depth technique`,
+        // AND ONE PER PLACE ON THIS PIECE OF THE RIVER, 2026-09-24. A river split at its dams is
+        // several waters with one name, and on the web the name means whichever piece is
+        // famous: every query above, run for the upper Saluda, came back about the tailwater in
+        // Columbia. The places are the caller's -- the towns this piece's own gauges are named
+        // for (js/utils/reach-places.js) -- because the Worker has no gauge table. Run by hand,
+        // `"Saluda River" "Ware Shoals" fishing` returned the Upper Saluda River Blueway map and
+        // two catfish threads, and `"Saluda River" Chappells fishing` the Buzzard's Roost trips.
+        ...places.map((p) => `"${name}" "${p}" fishing`),
       ],
       // Index-aligned with `queries`, the way _domainTypes and _fisheries_recency already are.
       // discover.js owns which domains count as the press; this only says which query wants them.
-      pressScoped: [false, false, true],
+      // The place queries are open-web: the press set is four sites, and a catfish forum thread
+      // about the river at Pelzer is exactly what they are for.
+      pressScoped: [false, false, true, ...places.map(() => false)],
       };
     },
   },
@@ -296,15 +306,38 @@ function composeRiverPurpose(name, state, named) {
 }
 
 /**
+ * THE CALLER'S PLACES, CHECKED BEFORE THEY GO INSIDE A QUOTED PHRASE. They arrive in the request
+ * body (research_lakes.py computes them with js/utils/reach-places.js), so the Worker holds them
+ * to the same shape reach-places.js produces -- letters, spaces and a proper name's punctuation,
+ * nothing that could close the quote or smuggle in an operator -- and drops the river's own name,
+ * which would be the query above it twice. No count cap: measured 2026-09-24 over the 57 rivers
+ * the most any piece gets is 14 (the Dan), 17 searches in all, inside the 50 outbound requests a
+ * free-plan Worker invocation may make.
+ */
+function searchablePlaces(list, name) {
+  const river = String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const seen = new Set();
+  const out = [];
+  for (const raw of Array.isArray(list) ? list : []) {
+    const p = String(raw || '').replace(/\s+/g, ' ').trim();
+    const k = p.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    if (!/^[A-Za-z][A-Za-z' .&-]{2,}$/.test(p) || !k || k === river || seen.has(k)) continue;
+    seen.add(k);
+    out.push(p);
+  }
+  return out;
+}
+
+/**
  * The queries and purpose for this water type and agent, or null -- so a caller that gets null
  * falls through to the state table exactly as before and nothing else has to change.
  */
-function waterTypeSearch(waterType, agentKey, name, state, species = []) {
+function waterTypeSearch(waterType, agentKey, name, state, species = [], places = []) {
   const byAgent = WATER_TYPE_SEARCH[String(waterType || '').toLowerCase()];
   const build = byAgent && byAgent[agentKey];
   if (!build) return null;
-  const out = build(name, state, species);
+  const out = build(name, state, species, searchablePlaces(places, name));
   return (out && Array.isArray(out.queries) && out.queries.length) ? out : null;
 }
 
-export { WATER_TYPE_HINTS, waterTypeHint, WATER_TYPE_SEARCH, waterTypeSearch };
+export { WATER_TYPE_HINTS, waterTypeHint, WATER_TYPE_SEARCH, waterTypeSearch, searchablePlaces };

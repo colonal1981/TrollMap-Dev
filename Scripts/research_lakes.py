@@ -287,6 +287,62 @@ def gate_documents(repo, documents, lake, alt_names=None):
     return json.loads(proc.stdout)
 
 
+def _reach_node(repo, payload):
+    """Run Scripts/reach_places.mjs on one JSON object. None, with the reason printed, on failure:
+    a reach that cannot be computed leaves the run exactly as it was before reaches existed."""
+    src = os.path.abspath(os.path.join(repo, "Scripts", "reach_places.mjs"))
+    if not os.path.exists(src):
+        print(f"      note: no {src} -- searching and sorting by reach skipped")
+        return None
+    proc = subprocess.run(["node", src], input=json.dumps(payload), capture_output=True,
+                          text=True, encoding="utf-8")
+    if proc.returncode != 0:
+        print(f"      note: reach_places.mjs failed ({(proc.stderr or '').strip()[:200]}) -- "
+              f"searching and sorting by reach skipped")
+        return None
+    try:
+        return json.loads(proc.stdout)
+    except ValueError:
+        return None
+
+
+def reach_for(repo, registry, lake, slug):
+    """WHERE ON THE RIVER THIS WATER IS, and which other pieces of it are not this water.
+
+    Ryan, 2026-09-24, on the upper Saluda: *"How do we ensure we get facts for the correct area"*.
+    Every discovery query was `"Saluda River" ...`, and 28 of the 76 facts it produced named a
+    place on the LOWER Saluda, 10 more one of the mountain forks. js/utils/reach-places.js reads
+    the registry this script already holds -- the
+    rows that store to the same research id, the other rows of the same river, and the places each
+    one's launches and gauges are named for -- and this runs it rather than restating it, the way
+    gate_documents() runs doc-relevance.js.
+
+    Returns {group, siblings, search, own, other}. `search` goes to /research/discover as
+    `places`; `other` is what sort_by_reach() sorts documents and facts against."""
+    return _reach_node(repo, {"mode": "places", "registry": registry, "lakeName": lake,
+                              "slug": slug})
+
+
+def sort_by_reach(repo, reach, facts=None, documents=None):
+    """(kept facts, facts for another piece, kept documents, documents for another piece).
+
+    A water with no sibling rows has nothing to sort against, so everything is kept without a node
+    call. NOTHING IS DROPPED SILENTLY: what goes to another piece comes back with the piece and the
+    place that decided it, and research_one() puts both in the report."""
+    facts, documents = list(facts or []), list(documents or [])
+    if not reach or not reach.get("other") or not (facts or documents):
+        return facts, [], documents, []
+    # TITLES ONLY GO TO NODE. The document test reads nothing else, and a corpus of full texts
+    # through a pipe is megabytes to decide a dozen titles. The index brings the whole document back.
+    light = [{"title": d.get("title"), "url": d.get("url"), "_i": i} for i, d in enumerate(documents)]
+    got = _reach_node(repo, {"mode": "sort", "reach": reach, "facts": facts, "documents": light})
+    if not got:
+        return facts, [], documents, []
+    f, d = got.get("facts") or {}, got.get("documents") or {}
+    kept_docs = [documents[x["_i"]] for x in d.get("keep", light) if isinstance(x.get("_i"), int)]
+    return (f.get("keep", facts), f.get("elsewhere", []), kept_docs, d.get("elsewhere", []))
+
+
 def resolve_names(repo, names):
     """{name: {slug, bound_by, state, aliases}} for names the app already chose -- its own binding."""
     src = os.path.join(repo, "Scripts", "research_todo.mjs")
@@ -704,9 +760,21 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
             "limnology-only: discover, analyze-facts and agent-llm were skipped"]
         print(f"      [{lake}] --limnology-only: documents and the fisheries agent skipped")
     else:
-        code, disc, err = _req("/research/discover",
-                               {"lakeName": lake, "state": state, "agent": "fisheries",
-                                "names": [lake], "predatorSpecies": species})
+        # WHERE ON THE RIVER, before the first search. See reach_for(). The row is the one the app
+        # bound this name to -- SLUG_BY_NAME, else the registry row the batch drove from.
+        reach = reach_for(repo, REGISTRY_DIR, lake,
+                          bound or ((row or {}).get("slug") if isinstance(row, dict) else None))
+        if reach:
+            out["reach"] = {k: reach.get(k) for k in ("group", "siblings", "search")}
+            if reach.get("siblings") or len(reach.get("group") or []) > 1:
+                print(f"      [{lake}] reach: {', '.join(reach.get('group') or [])}"
+                      f" -- not {', '.join(reach.get('siblings') or []) or 'any other piece'};"
+                      f" searching {len(reach.get('search') or [])} place(s) on it")
+        disc_body = {"lakeName": lake, "state": state, "agent": "fisheries",
+                     "names": [lake], "predatorSpecies": species}
+        if reach and reach.get("search"):
+            disc_body["places"] = reach["search"]
+        code, disc, err = _req("/research/discover", disc_body)
         if code != 200 or not disc or not disc.get("success"):
             out["error"] = f"discover {code}: {err or (disc or {}).get('error') or 'no sources'}"
             return out
@@ -776,6 +844,17 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
             # `why` is one of no_name, named_no_state or other_state, and named_no_state is the only
             # one worth arguing with.
             out["rejected_docs"] = prepared.get("refused") or []
+            # A DOCUMENT TITLED FOR ANOTHER PIECE OF THE RIVER IS THAT PIECE'S, and it is sorted out
+            # before the corpus is stored, so the next run does not read it again. "Lower Saluda
+            # Scenic River" passes the name gate for the upper Saluda -- it says "Saluda River".
+            # Measured on the served profile: 9 of its 19 source documents are titled for another
+            # piece or a fork, and 27 of its 76 facts came out of them.
+            _, _, keep, other_docs = sort_by_reach(repo, reach, documents=keep)
+            if other_docs:
+                out["docs_other_reach"] = other_docs
+                print(f"      [{lake}] {len(other_docs)} document(s) are another piece's: "
+                      + "; ".join(f"{(x.get('title') or '')[:50]} -> {x.get('belongs_to')}"
+                                  f" ({x.get('because')})" for x in other_docs[:4]))
             # AN EMPTY CORPUS IS NOT WORTH A KEY IN R2. On 2026-09-01 three console.info lines were
             # researched as if they were lakes; the off-lake gate correctly threw out every document
             # they found, and this then wrote an empty document array to the bucket under each of
@@ -788,7 +867,10 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
                           f"-- the corpus was used but not stored")
             docs = keep
         else:
-            docs = existing
+            # The stored corpus was written before reaches were sorted, so it gets the same test.
+            _, _, docs, other_docs = sort_by_reach(repo, reach, documents=existing)
+            if other_docs:
+                out["docs_other_reach"] = other_docs
 
         usable = [d for d in docs if len(str(d.get("fullText") or d.get("text") or "")) >= 200]
         out["documents"] = len(usable)
@@ -865,6 +947,19 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
                 out["snippet_facts"] = 0
             out["chars_sent"] += sum(len(d["text"]) for d in snippet_docs)
 
+        # A FACT ABOUT ANOTHER PIECE OF THE RIVER IS THAT PIECE'S. A page about the whole Saluda
+        # names every stretch, so the document test cannot catch it and the fact test must: a
+        # fact that names a sibling's place and none of this water's goes to the report, with the
+        # piece and the place, and not into this profile. Before the count, so the count is what
+        # the profile holds.
+        facts, other_facts, _, _ = sort_by_reach(repo, reach, facts=facts)
+        if other_facts:
+            out["facts_other_reach"] = len(other_facts)
+            out["facts_other_reach_sample"] = [
+                {"fact": x.get("fact"), "belongs_to": x.get("belongs_to"), "because": x.get("because")}
+                for x in other_facts[:10]]
+            print(f"      [{lake}] {len(other_facts)} fact(s) are another piece's -- "
+                  + ", ".join(sorted({f"{x.get('belongs_to')}" for x in other_facts})))
         out["facts"] = len(facts)
         prev = dict(profile)
         prev["_extractedFacts"] = facts
@@ -889,6 +984,14 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
         # the two copies end up disagreeing.
         if facts:
             profile["_extractedFacts"] = facts
+        elif profile.get("_extractedFacts"):
+            # NOTHING NEW, SO THE CARRIED FACTS STAY -- but they were written before reaches were
+            # sorted, and carrying another piece's facts forward is how they would outlive the fix.
+            carried, other_carried, _, _ = sort_by_reach(repo, reach,
+                                                         facts=profile["_extractedFacts"])
+            if other_carried:
+                profile["_extractedFacts"] = carried
+                out["carried_facts_other_reach"] = len(other_carried)
 
         # A DERIVED NUMBER MUST NOT BE CARRIED FORWARD, OR IT OUTLIVES WHAT IT COUNTS.
         #

@@ -291,6 +291,11 @@ async function handleResearchDiscover(request, env) {
   // about the fish this water's own rules and advisories name.
   const predatorSpecies = (Array.isArray(body.predatorSpecies) ? body.predatorSpecies : [])
     .map((x) => String(x || '').trim()).filter(Boolean);
+  // WHERE ON THE RIVER, sent by the client for the same reason `names` is: the Worker has no gauge
+  // table. The towns this piece's own gauges are named for -- js/utils/reach-places.js -- so a
+  // river split at its dams searches its own stretch and not whichever stretch is famous.
+  // waterTypeSearch() checks their shape before any of them goes inside a quoted phrase.
+  const reachPlacesSent = Array.isArray(body.places) ? body.places : [];
   // THE PHRASE EVERY SEARCH IS ANCHORED ON, AND IT USED TO BE ONE NO PAGE CONTAINS.
   //
   // This was `lakeName.replace(/,\s*(SC|NC|GA|TN)...$/i, '')` -- a strip anchored to the END of
@@ -1102,7 +1107,8 @@ const AGENT_TO_TAGS = {
     // `waterTypeSearch` returns null for every water it has nothing to say about, so a lake runs
     // exactly the queries it ran yesterday. A river runs searches that name a shoal, a bend and a
     // flow, which is what its own prompt has been asking the agent to report all along.
-    const typed = waterTypeSearch(waterType, agentKey, queryLake, state, predatorSpecies);
+    const typed = waterTypeSearch(waterType, agentKey, queryLake, state, predatorSpecies,
+                                  reachPlacesSent);
     const stateQueries = AGENT_DISCOVERY_QUERIES[agentKey][state];
     if (!typed && !stateQueries) continue;
     // WHAT THE QUERY SAYS, NOT WHAT THE ROSTER SAYS. This logged `predatorSpecies.slice(0, 4)` for
