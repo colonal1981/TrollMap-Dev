@@ -2,6 +2,21 @@
 import { JSON_HEADERS, callLLM, extractLLMText } from '../worker-core.js';
 import { extractJsonPossibly } from './keys.js';
 
+/**
+ * A fact read out of a combined document goes back to the text it came from: the block whose text
+ * contains its (verbatim) quote, else the [S#] tag the model wrote in `source`, else unchanged.
+ */
+function attributeToBlock(fact, blocks) {
+  const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const q = norm(fact.quote);
+  let hit = q.length >= 12 ? blocks.find((b) => norm(b.text || b.fullText).includes(q)) : null;
+  if (!hit) {
+    const m = /\[S(\d+)\]/.exec(String(fact.source || ''));
+    hit = m ? blocks[Number(m[1]) - 1] : null;
+  }
+  return hit ? { ...fact, source: String(hit.title || fact.source || 'Unknown').slice(0, 180) } : fact;
+}
+
 async function handleResearchAnalyzeFacts(request, env) {
   let body;
   try { body = await request.json(); } catch { body = {}; }
@@ -49,6 +64,30 @@ async function handleResearchAnalyzeFacts(request, env) {
 
   if (!usableDocs.length) {
     return new Response(JSON.stringify({ success: false, error: "All documents were index/search pages" }), { status: 400, headers: JSON_HEADERS });
+  }
+
+  // ── MANY SHORT TEXTS, ONE READ: `combine` ─────────────────────────────────────────────────────
+  //
+  // research_lakes.py sends discovery's search snippets -- a few hundred characters each -- as one
+  // request, and this loop read them one model call apiece: ~45 calls in series inside that one
+  // request on the Lower Saluda, 2026-09-24, about as long as fetching and reading every real
+  // document. A call's time is the model's round trip, not the length -- 361 characters took 13 s.
+  //
+  // With `combine`, the texts are read as ONE document, each labelled [S1], [S2]... with its title
+  // and address, and every fact is given back to the text its quote came from. The quote is
+  // verbatim by this prompt's own rule, so that is a lookup, not a judgement; a fact whose quote
+  // appears in none keeps what the model said. Texts under 100 characters are left out exactly as
+  // the per-document loop below leaves them out, so combining reads what reading one by one read.
+  let combinedBlocks = null;
+  if (body.combine === true && usableDocs.length > 1) {
+    const blocks = usableDocs.filter((d) => String(d.text || d.fullText || '').length >= 100);
+    if (blocks.length > 1) {
+      combinedBlocks = blocks;
+      const text = blocks.map((d, i) => `[S${i + 1}] ${d.title || 'untitled'}${d.url ? ` — ${d.url}` : ''}\n`
+        + String(d.text || d.fullText || '')).join('\n\n');
+      usableDocs.splice(0, usableDocs.length,
+        { title: `Search result snippets (${blocks.length} sources)`, url: '', text });
+    }
   }
 
   // Per-document extraction — one LLM call per document
@@ -398,7 +437,11 @@ FISHING BEHAVIOUR IS A FIRST-CLASS FACT. Sentences from guides, fishing reports 
           { role: "user", content: prompt }
         ],
         temperature: 0.05,
-        max_tokens: 4000,
+        // A combined read carries the facts of every text in it. This run's snippets gave 31
+        // kept facts across ~45 separate reads, which at the ~100 tokens a fact takes is most of
+        // the single-document 4,000 -- so twice that, rather than a truncated reply that parses
+        // as nothing and loses them all.
+        max_tokens: combinedBlocks ? 8000 : 4000,
         response_format: { type: "json_object" }
       };
 
@@ -424,6 +467,7 @@ FISHING BEHAVIOUR IS A FIRST-CLASS FACT. Sentences from guides, fishing reports 
         quote: String(f.quote||'').trim().slice(0,400),
         category: String(f.category||'general').trim().slice(0,50)
       })).filter(f => f.fact.length > 10);
+      if (combinedBlocks) facts = facts.map((f) => attributeToBlock(f, combinedBlocks));
 
       // Quality filter: require lake mention for non-regulation facts
       const generalCats = new Set(['creelLimit_general','sizeLimit_general','regulations_general','closedSeason']);

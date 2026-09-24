@@ -38,6 +38,7 @@ Personal use only, not for distribution or resale; not for navigation.
 import argparse
 import io
 import json
+import math
 import os
 import re
 import subprocess
@@ -575,6 +576,145 @@ def pace_seconds(chars, tpm):
     return min(30.0, (chars / CHARS_PER_TOKEN) / tpm * 60.0)
 
 
+# ── EXTRACTION RAN ONE CALL AT A TIME, AND THAT WAS MOST OF THE RUN ─────────────────────────────
+#
+# Ryan, 2026-09-24, on the Lower Saluda: *"this is wayyyyyyyyyyyyy too slow... it should not take
+# 10 minutes for 1 body of water with what little we research now... it used to take 5-7 minutes
+# to run 8 agents"*. 636 s. Measured the same afternoon against that water's own stored corpus:
+# one /research/analyze-facts call takes 8.7-14.8 s whatever its size -- 361 characters took 13.4 s
+# -- because the time is the model's round trip, not the reading. The run made 40 of them strictly
+# one after another with a pacing sleep between, and the snippet call behind them was ONE request
+# carrying ~45 snippets that extract.js reads as ~45 more model calls, also one at a time. Roughly
+# 85 model calls in series is 10 minutes by itself; the species groups and everything else are the
+# small part.
+#
+# The old engine was not faster because it read less cleverly. It read 12 documents per agent with
+# two agents in flight. SOURCE_CAP and EXTRACT_DOC_LIMIT went to 0 on 2026-09-16 so nothing
+# discovered is thrown away, which is right, and the loop that reads them was never widened.
+#
+# So the calls run side by side, under the limits the pacing always existed for:
+#
+#   REQUESTS PER MINUTE. The free Gemini keys are 15 RPM each (GEMINI_FREE_MODELS in
+#   Worker/worker-core.js), Ryan has five, and callLLM() rotates across them from a random start
+#   and falls over to the next key when one says "high demand". The batch takes two keys' worth by
+#   default -- the pool keeps more than half its rate for the app and for that fall-over. --rpm
+#   changes it; 0 turns the ceiling off.
+#
+#   TOKENS PER MINUTE. --tpm, exactly as before, now counted across the calls in flight rather
+#   than slept off after each one.
+#
+# How many run at once follows from those: enough that the RPM ceiling, not the round trip, is
+# what limits the rate. At EXTRACT_CALL_SECONDS a call, `rpm * seconds / 60` in flight keeps the
+# ceiling busy and never exceeds it, because the limiter gates each START.
+DEFAULT_RPM = 30
+EXTRACT_CALL_SECONDS = 12        # measured 2026-09-24: 8.7, 11.2, 13.4, 14.8 s on four calls
+
+
+def extract_workers(rpm, n_calls):
+    if n_calls <= 1:
+        return 1
+    if rpm <= 0:
+        return min(n_calls, 8)   # no ceiling asked for; the Worker's own CPU is the next limit
+    return max(1, min(n_calls, math.ceil(rpm * EXTRACT_CALL_SECONDS / 60)))
+
+
+class CallLimiter:
+    """At most `rpm` call starts and `tpm` tokens in any rolling 60 seconds, across threads."""
+
+    def __init__(self, rpm, tpm, clock=time.monotonic, sleep=time.sleep):
+        self.rpm, self.tpm = rpm, tpm
+        self._clock, self._sleep = clock, sleep
+        self._lock = threading.Lock()
+        self._starts = []                     # (t, tokens)
+
+    def acquire(self, tokens):
+        while True:
+            with self._lock:
+                now = self._clock()
+                self._starts = [(t, k) for t, k in self._starts if now - t < 60]
+                used = sum(k for _, k in self._starts)
+                ok_rpm = self.rpm <= 0 or len(self._starts) < self.rpm
+                # A single call larger than the whole budget still goes, alone, rather than never.
+                ok_tpm = self.tpm <= 0 or not self._starts or used + tokens <= self.tpm
+                if ok_rpm and ok_tpm:
+                    self._starts.append((now, tokens))
+                    return
+                wait = 60 - (now - self._starts[0][0]) if self._starts else 1.0
+            self._sleep(max(0.2, min(wait, 5.0)))
+
+
+# "This model is currently experiencing high demand", 429s and the proxy's 502/504 are all "not
+# now" rather than "no". extract.js catches a failed model call per document and still answers 200,
+# with the reason in meta.docResults -- so a rate-limited document used to come back as zero facts
+# and look exactly like a document with nothing in it.
+_TRANSIENT = re.compile(r"high demand|rate.?limit|\brate\b|quota|\b429\b|\b50[234]\b|overloaded"
+                        r"|unavailable|timed? ?out", re.I)
+EXTRACT_RETRY_WAITS = (8, 20)            # the same backoff the Worker's species groups use
+
+
+def _extract_one(lake, state, alt_names, i, d, limiter, verbose):
+    text = str(d.get("fullText") or d.get("text") or "")[:EXTRACT_DOC_CHARS]
+    body = {
+        # baseName and docIndex are what lake-research-engine.js sends. Without baseName the
+        # Worker derives one, and the prompt then tells the model to extract only facts that
+        # mention it -- so getting it right is the difference between "Sidney Lanier" and a
+        # name no document on earth contains.
+        "lakeName": lake, "baseName": base_name(lake), "state": state,
+        # EVERY NAME THE WATER HAS, into the extractor. Its prompt says to take only facts
+        # that mention the base name, and a base name is one string: "John H. Moss" for a
+        # water the world calls Moss Lake or Kings Mountain Reservoir. Two documents, zero
+        # facts, on 2026-09-01. The registry has carried both other names all along.
+        "aliases": alt_names or [],
+        "docIndex": i, "targetFields": ["trollingIntelligence"],
+        "documents": [{"title": d.get("title"), "url": d.get("url"), "text": text}]}
+    why = None
+    for attempt in range(len(EXTRACT_RETRY_WAITS) + 1):
+        if attempt:
+            time.sleep(EXTRACT_RETRY_WAITS[attempt - 1])
+        limiter.acquire(len(text) / CHARS_PER_TOKEN)
+        code, ex, err = _req("/research/analyze-facts", body)
+        if code == 200:
+            results = ((ex or {}).get("meta") or {}).get("docResults") or []
+            failed = next((r.get("error") for r in results if r.get("error")), None)
+            if not failed or not _TRANSIENT.search(str(failed)):
+                return (ex or {}).get("extracted_facts") or [], len(text), failed
+            why = failed
+        else:
+            why = f"{code}: {err}"
+            if code not in (0, 429, 502, 503, 504):
+                break
+    if verbose:
+        print(f"      analyze-facts gave up on doc {i}: {why}")
+    return [], len(text), why
+
+
+def extract_documents(lake, state, alt_names, docs, rpm, tpm, verbose=False):
+    """Every document through /research/analyze-facts, several at once under the RPM and TPM
+    ceilings. Facts come back in DOCUMENT order, whatever order the calls finished in, so a rerun
+    reads the same list. Returns (facts, chars_sent, failures)."""
+    limiter = CallLimiter(rpm, tpm)
+    with ThreadPoolExecutor(max_workers=extract_workers(rpm, len(docs))) as ex:
+        got = list(ex.map(lambda p: _extract_one(lake, state, alt_names, p[0], p[1], limiter,
+                                                 verbose), enumerate(docs)))
+    facts = [f for fs, _, _ in got for f in fs]
+    failures = [{"doc": (docs[i].get("title") or "")[:80], "why": str(w)[:200]}
+                for i, (_, _, w) in enumerate(got) if w]
+    return facts, sum(n for _, n, _ in got), failures
+
+
+class PhaseClock:
+    """Seconds per stage of one water, so "why was that slow" has an answer on the screen."""
+
+    def __init__(self):
+        self.t = time.perf_counter()
+        self.seconds = {}
+
+    def mark(self, name):
+        now = time.perf_counter()
+        self.seconds[name] = round(self.seconds.get(name, 0) + now - self.t, 1)
+        self.t = now
+
+
 # ── THE REGISTRY'S OWN RAMPS, SENT WITH THE REQUEST ─────────────────────────────────────────
 #
 # `handleResearchDeterministicFacts` prefers `body.ramps` over its own lookup and says exactly
@@ -620,10 +760,12 @@ def registry_ramps(row):
     return out
 
 def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev", alt_names=None,
-                 tpm=DEFAULT_TPM, row=None, limnology_only=False):
+                 tpm=DEFAULT_TPM, row=None, limnology_only=False, rpm=DEFAULT_RPM):
     """One lake, start to saved profile. Returns a result dict; never raises."""
     t0 = time.perf_counter()
+    clock = PhaseClock()
     out = {"lake": lake, "state": state, "aliases": list(alt_names or []),
+           "timings": clock.seconds,
            "ok": False, "species": 0, "saved": False, "error": None,
            "confirmed": [], "asked": [], "returned": [], "missing": [], "documents": 0,
            "facts": 0,
@@ -641,6 +783,7 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
     if bound:
         det_body["slug"] = bound
     code, det, err = _req("/research/deterministic-facts", det_body)
+    clock.mark("deterministic")
     if code != 200 or not det or not det.get("profile"):
         out["error"] = f"deterministic-facts {code}: {err or 'no profile'}"
         return out
@@ -712,6 +855,7 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
     code, wqp, err = _req("/research/limnology-data",
                           {"lakeName": lake, "base": profile.get("limnology") or {},
                            "prev": profile.get("_wqpLimnology") or None})
+    clock.mark("limnology")
     if code == 200 and wqp and wqp.get("merged"):
         profile["limnology"] = wqp["merged"]
         # Step 5 of the 2026-09-01 plan: the profile keeps the WQP block WITH ITS DATES. A
@@ -784,6 +928,7 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
         if reach and reach.get("search"):
             disc_body["places"] = reach["search"]
         code, disc, err = _req("/research/discover", disc_body)
+        clock.mark("discover")
         if code != 200 or not disc or not disc.get("success"):
             out["error"] = f"discover {code}: {err or (disc or {}).get('error') or 'no sources'}"
             return out
@@ -820,6 +965,7 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
         existing = ((norm or {}).get("documents") or (norm or {}).get("docs") or []) if code == 200 else []
 
         fetched, out["fetch"] = fetch_sources(lake, sources, existing, verbose)
+        clock.mark("fetch")
 
         # The off-lake gate, then back to R2 so the next quarter's run reuses the corpus instead of
         # paying for it again. Untouched cached docs are merged back in, the way runAgent does.
@@ -883,35 +1029,24 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
 
         usable = [d for d in docs if len(str(d.get("fullText") or d.get("text") or "")) >= 200]
         out["documents"] = len(usable)
+        clock.mark("gate")
 
         # EXTRACTION IS NOT OPTIONAL, whatever an earlier reading of the template suggested. The Worker
         # turns these facts into the PARSED OBSERVATION block via parseBehaviour(), and the fisheries
         # prompt ranks that ABOVE the documents: "If a PARSED OBSERVATION covers this species and
         # season, its value is the answer -- copy it, do not adjust it."
-        facts = []
         chosen = usable if not EXTRACT_DOC_LIMIT else usable[:EXTRACT_DOC_LIMIT]
-        for i, d in enumerate(chosen):
-            text = str(d.get("fullText") or d.get("text") or "")[:EXTRACT_DOC_CHARS]
-            code, ex, err = _req("/research/analyze-facts", {
-                # baseName and docIndex are what lake-research-engine.js sends. Without baseName the
-                # Worker derives one, and the prompt then tells the model to extract only facts that
-                # mention it -- so getting it right is the difference between "Sidney Lanier" and a
-                # name no document on earth contains.
-                "lakeName": lake, "baseName": base_name(lake), "state": state,
-                # EVERY NAME THE WATER HAS, into the extractor. Its prompt says to take only facts
-                # that mention the base name, and a base name is one string: "John H. Moss" for a
-                # water the world calls Moss Lake or Kings Mountain Reservoir. Two documents, zero
-                # facts, on 2026-09-01. The registry has carried both other names all along.
-                "aliases": alt_names or [],
-                "docIndex": i, "targetFields": ["trollingIntelligence"],
-                "documents": [{"title": d.get("title"), "url": d.get("url"), "text": text}]})
-            if code == 200:
-                facts.extend((ex or {}).get("extracted_facts") or [])
-            elif verbose:
-                print(f"      analyze-facts {code}: {err}")
-            out["chars_sent"] += len(text)
-            if i + 1 < len(chosen):
-                time.sleep(pace_seconds(len(text), tpm))
+        # SEVERAL AT ONCE, UNDER THE RPM AND TPM CEILINGS. See extract_documents() -- this loop ran
+        # one call at a time and was most of a ten-minute run.
+        facts, sent, failed = extract_documents(lake, state, alt_names, chosen, rpm, tpm, verbose)
+        out["chars_sent"] += sent
+        out["extract_calls"] = len(chosen)
+        if failed:
+            # A DOCUMENT THE MODEL NEVER READ IS NOT A DOCUMENT WITH NOTHING IN IT.
+            out["extract_failed"] = failed
+            print(f"      warn [{lake}]: {len(failed)} of {len(chosen)} document(s) were not read "
+                  f"-- {failed[0]['doc'][:50]}: {failed[0]['why'][:80]}")
+        clock.mark("extract")
 
         # ── THE SNIPPETS WE ALREADY PAID FOR ────────────────────────────────────────────────
         #
@@ -931,9 +1066,12 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
         # A position, a bait, a season, a time of day. Complete facts, in text we fetched, scored,
         # logged and then dropped on the floor -- the same shape as every other defect found today.
         #
-        # ONE CALL, NOT ONE PER SOURCE. The snippets are short enough to travel together, so this
-        # costs a single request however many sources discovery returned. `docIndex` is -1 so a fact
-        # from here is distinguishable downstream from one taken out of a fetched document.
+        # ONE REQUEST WAS NOT ONE MODEL CALL. The snippets travelled together, but extract.js reads
+        # a request's documents one model call apiece -- ~45 calls, in series, inside the one request,
+        # on the Lower Saluda 2026-09-24. `combine` asks the Worker to read them as ONE text with
+        # each snippet labelled, and to give each fact back to the snippet its quote came from.
+        # `docIndex` is -1 so a fact from here is distinguishable downstream from one taken out of a
+        # fetched document.
         snippet_docs = [{"title": s2.get("title"), "url": s2.get("url"),
                          "text": str(s2.get("snippet") or "")}
                         for s2 in found if len(str(s2.get("snippet") or "")) >= 80]
@@ -942,6 +1080,7 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
                 "lakeName": lake, "baseName": base_name(lake), "state": state,
                 "aliases": alt_names or [], "docIndex": -1,
                 "targetFields": ["trollingIntelligence"],
+                "combine": True,
                 "documents": snippet_docs})
             if code == 200:
                 got = (ex or {}).get("extracted_facts") or []
@@ -955,6 +1094,7 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
                 print(f"      warn [{lake}]: analyze-facts on snippets {code}: {err}")
                 out["snippet_facts"] = 0
             out["chars_sent"] += sum(len(d["text"]) for d in snippet_docs)
+        clock.mark("snippets")
 
         # A FACT ABOUT ANOTHER PIECE OF THE RIVER IS THAT PIECE'S. A page about the whole Saluda
         # names every stretch, so the document test cannot catch it and the fact test must: a
@@ -1068,6 +1208,7 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
                 print(f"      [{lake}] agent-llm did not answer ({err}) -- attempt "
                       f"{attempt + 1} of {AGENT_LLM_TRIES}")
                 time.sleep(20 * attempt)
+        clock.mark("species_groups")
         if code != 200 or not res:
             out["error"] = f"agent-llm {code}: {err}"
             return out
@@ -1185,6 +1326,7 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
     payload = {"lakeName": lake, "profile": profile,
                "requestedBy": "research_lakes.py batch"}
     code, saved, err = _req("/research/save", payload)
+    clock.mark("save")
     if code != 200:
         out["error"] = f"save {code}: {err}"
         return out
@@ -1765,6 +1907,10 @@ def main():
     ap.add_argument("--tpm", type=int, default=DEFAULT_TPM,
                     help="input tokens per minute this script will pace extraction to "
                          f"(default {DEFAULT_TPM}; 0 disables pacing)")
+    ap.add_argument("--rpm", type=int, default=DEFAULT_RPM,
+                    help="extraction calls started per minute, across the calls run at once "
+                         f"(default {DEFAULT_RPM}: two of the five free Gemini keys' 15 RPM; "
+                         "0 disables the ceiling)")
     ap.add_argument("--dry-run", action="store_true",
                     help="run everything except /research/save")
     # A REPORT IS WRITTEN EVERY RUN, NOT ONLY WHEN ASKED. Ryan drives this box over Chrome
@@ -1812,7 +1958,8 @@ def main():
     # --jobs multiplies the token rate, which is what the pacing exists to hold down. Serial is
     # the default for that reason and not out of caution.
     print(f"estimate at 220 s/lake: {len(lakes) * 220 / max(a.jobs, 1) / 60:.0f} min"
-          f"   (extraction paced to {a.tpm:,} input tokens/min)\n")
+          f"   (extraction: up to {extract_workers(a.rpm, 99)} at once, "
+          f"{a.rpm or 'no'} calls/min, {a.tpm:,} input tokens/min)\n")
 
     t0 = time.perf_counter()
     done = [0]
@@ -1844,7 +1991,7 @@ def main():
     def work(pair):
         name, st, alts = pair
         r = research_one(name, st, a.dry_run, a.verbose, a.repo, alts, a.tpm,
-                         ROWS_BY_NAME.get(name.strip().lower()), a.limnology_only)
+                         ROWS_BY_NAME.get(name.strip().lower()), a.limnology_only, rpm=a.rpm)
         done[0] += 1
         mark = "ok " if r["ok"] else "FAIL"
         secs = f'{r.get("seconds", 0):5.1f}s'
@@ -1861,6 +2008,13 @@ def main():
             detail += "  LOST: " + ", ".join(r["missing"])
         print(f"  [{done[0]:3d}/{len(lakes)}] {mark} {secs}  {name[:42]:44s}{detail}"
               + (f"  -- {r['error']}" if r["error"] else ""))
+        # WHERE THE TIME WENT, per stage. "10 minutes for one water" had no answer on screen.
+        tm = r.get("timings") or {}
+        if tm:
+            print("        time: " + "  ".join(
+                f"{k} {v:.0f}s" + (f" ({r['extract_calls']} calls)"
+                                   if k == "extract" and r.get("extract_calls") else "")
+                for k, v in tm.items()))
         with report_lock:
             results.append(r)
             flush_report(time.perf_counter() - t0, True)
