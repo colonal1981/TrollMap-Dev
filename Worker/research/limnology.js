@@ -799,6 +799,7 @@ async function wqpPull(env, body, opts = {}) {
       secchi,
       secchiStations: stationsOut,
       recentTurbidityNTU: surfaceWater.recentTurbidityNTU,
+      recentTurbidityLastObserved: surfaceWater.recentTurbidityLastObserved,
       onWater,
       lastObserved: records.map(r => r.date).filter(Boolean).sort().slice(-1)[0] || null,
     }), { headers: JSON_HEADERS });
@@ -1053,6 +1054,8 @@ async function getSecchiSummary(env, lakeName) {
       ...(data.secchi || {}),
       stations: Array.isArray(data.secchiStations) ? data.secchiStations : [],
       recentTurbidityNTU: data.recentTurbidityNTU ?? null,
+      // Its own date: `lastObserved` below is the newest of everything pulled, not this reading's.
+      recentTurbidityLastObserved: data.recentTurbidityLastObserved ?? null,
       basis: data.secchi ? 'secchi' : 'turbidity',
       lastObserved: data.lastObserved || null,
       // Whether the readings were tested for being ON the water, and what was left out. An

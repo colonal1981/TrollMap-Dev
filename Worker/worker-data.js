@@ -1593,6 +1593,35 @@ function nearestClarityStation(stations, lat, lon) {
 }
 
 /**
+ * WHAT THE MEASURED BASELINE IS, IN WORDS -- SECCHI WHERE THERE IS ONE, TURBIDITY WHERE NOT.
+ *
+ * getSecchiSummary() answers with turbidity alone when a water has no Secchi reading: 122 of 512
+ * inland lakes (limnology.js, 2026-08-06), Lake Norman and every TVA reservoir among them, and the
+ * river pieces. The baseline score already used it. The sentences did not: they read the Secchi
+ * fields unconditionally, and on the Broad River (Cherokee Co, SC) on 2026-09-24 the card said
+ * "typically undefined ft visibility (undefined readings, undefined-undefined ft)" and the plan
+ * was handed "undefined measured secchi readings averaging undefined ft".
+ *
+ * `short` is the summary's form; the long form is the evidence behind "normally". Null when the
+ * summary carries neither, so the caller says what it says for no measurement at all.
+ */
+export function measuredEvidence(m, short = false) {
+  if (!m) return null;
+  if (m.avgSecchiDepthFt != null) {
+    return short
+      ? `typically ${m.avgSecchiDepthFt} ft visibility (${m.sampleCount} readings, ${m.minSecchiDepthFt}\u2013${m.maxSecchiDepthFt} ft)`
+      : `${m.sampleCount} measured secchi readings averaging ${m.avgSecchiDepthFt} ft (${m.minSecchiDepthFt}\u2013${m.maxSecchiDepthFt} ft)`;
+  }
+  if (m.recentTurbidityNTU != null) {
+    const on = m.recentTurbidityLastObserved ? ` on ${m.recentTurbidityLastObserved}` : '';
+    return short
+      ? `${m.recentTurbidityNTU} NTU turbidity at its latest reading${on}, no Secchi readings`
+      : `turbidity of ${m.recentTurbidityNTU} NTU at its latest reading${on} -- no Secchi readings exist for it`;
+  }
+  return null;
+}
+
+/**
  * Water clarity for a lake, measured where a measurement exists and modelled where it does not.
  *
  * WHAT CHANGED 2026-08-06
@@ -1896,10 +1925,8 @@ async function getLakeClarity(lakeName, tripDate, env, point = null, opts = {}) 
     select: overallNormal.select,
     score: Math.round(avgNormal),
     // The evidence for the word, so "normal" is never just an assertion.
-    basis: measured
-      ? `${measured.sampleCount} measured secchi readings averaging ${measured.avgSecchiDepthFt} ft`
-        + ` (${measured.minSecchiDepthFt}\u2013${measured.maxSecchiDepthFt} ft)`
-      : "this water's zone model — no clarity measurements exist for it",
+    basis: measuredEvidence(measured)
+      || "this water's zone model — no clarity measurements exist for it",
   };
   const versusNormal = {
     bands: offNormal,
@@ -2038,8 +2065,8 @@ async function getLakeClarity(lakeName, tripDate, env, point = null, opts = {}) 
     versusNormal,
     // Say which of the three this is. "Modelled" and "measured then adjusted" deserve different
     // trust, and "no measurement exists" must never render as "the water is clear".
-    confidence: measured && rain ? "good: measured secchi baseline + rainfall adjustment, verify at ramp"
-              : measured ? "medium: measured secchi baseline, no rainfall feed"
+    confidence: measured && rain ? `good: measured ${secchiFt != null ? 'secchi' : 'turbidity'} baseline + rainfall adjustment, verify at ramp`
+              : measured ? `medium: measured ${secchiFt != null ? 'secchi' : 'turbidity'} baseline, no rainfall feed`
               : rain ? "medium: forecast/rainfall model only \u2014 no clarity measurements for this water"
               : "low: no rainfall feed, generic model",
     measured: measured ? {
@@ -2049,6 +2076,7 @@ async function getLakeClarity(lakeName, tripDate, env, point = null, opts = {}) 
       sampleCount: measured.sampleCount,
       lastObserved: measured.lastObserved,
       recentTurbidityNTU: measured.recentTurbidityNTU ?? null,
+      recentTurbidityLastObserved: measured.recentTurbidityLastObserved ?? null,
       fetchedAt: measured.fetchedAt,
       // Every station on this water with its own average, so the card can show the spread the
       // lake-wide number hides.
@@ -2062,8 +2090,8 @@ async function getLakeClarity(lakeName, tripDate, env, point = null, opts = {}) 
       ? null
       : "No secchi measurements published for this water. The estimate below is a rainfall model, "
         + "not an observation \u2014 absence of data is not clear water.",
-    summary: measured
-      ? `${profile.displayName || lakeName}: typically ${measured.avgSecchiDepthFt} ft visibility (${measured.sampleCount} readings, ${measured.minSecchiDepthFt}\u2013${measured.maxSecchiDepthFt} ft). ${rain ? `${rain.weighted72_in}" weighted rain signal moves it to ` : ''}${overall.clarity} for this trip${isRiverWater ? '' : '; creek arms dirtier than the main lake'}.`
+    summary: measuredEvidence(measured, true)
+      ? `${profile.displayName || lakeName}: ${measuredEvidence(measured, true)}. ${rain ? `${rain.weighted72_in}" weighted rain signal moves it to ` : ''}${overall.clarity} for this trip${isRiverWater ? '' : '; creek arms dirtier than the main lake'}.`
       : rain ? `${profile.displayName || lakeName}: ${rain.weighted72_in}" weighted rain/runoff signal. ${overall.clarity} overall predicted${isRiverWater ? '' : '; upper/creek arms likely dirtier than lower/main lake'}.` : `${profile.displayName || lakeName}: generic clarity estimate. Verify locally.`,
     overall: { clarity: overall.clarity, select: overall.select, score: Math.round(avg), lureColors: pack.colors, tactics: pack.tactics },
     rain,
