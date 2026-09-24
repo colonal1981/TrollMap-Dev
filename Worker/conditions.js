@@ -62,7 +62,8 @@
 import { CORS, JSON_HEADERS, r2Text } from './worker-core.js';
 import { ndbcReadings } from './ndbc.js';
 import { sensorReading, sensorSourceOf } from './sensor.js';
-import { waterChain, damTable, fullPoolTable, coastalCurrentStations } from './registry.js';
+import { waterChain, damTable, fullPoolTable, coastalCurrentStations, riverClarityByFlow }
+  from './registry.js';
 // RIVERS and lakeKeyFromName came out with dukeBasinFor: the basin is resolved from Duke's own
 // /rivers/get-rivers roster now, so this file no longer reads the six-entry hand table at all.
 import { dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun,
@@ -4053,6 +4054,38 @@ export function statBand(value, st) {
   };
 }
 
+/**
+ * THIS RIVER'S OWN CLARITY AT FLOWS LIKE TODAY'S.
+ *
+ * `table` is registry/river_clarity_by_flow.json: per river, per bound gauge, its WQP turbidity and
+ * Secchi readings since 2015 grouped by the statBand() label that gauge's flow earned the day each
+ * was taken. So `label` -- the band on the card today -- looks up readings taken at flows in the same
+ * band, and `normal` is the readings taken between the 25th and 75th. Medians and counts, as built;
+ * nothing is fitted here and nothing is dropped. Measured 2026-09-24 over 34 rivers: the median
+ * reading sits at the 35th percentile of its river's turbidity in the lowest quarter of flow and the
+ * 78th in the top tenth.
+ *
+ * Null when the table has no entry for this river and gauge -- the flow line then stands alone.
+ */
+export function clarityAtFlow(table, slug, site, label) {
+  const w = table && table.waters && table.waters[slug];
+  const s = w && w.sites && site ? w.sites[site] : null;
+  if (!s || !label) return null;
+  const normal = new Set(table.normal_bands || []);
+  return {
+    band: label,
+    at_this_flow: (s.bands || {})[label] || null,
+    band_is_normal: normal.has(label),
+    normal: s.normal && Object.keys(s.normal).length ? s.normal : null,
+    readings_placed: s.readings_placed || null,
+    since: w.since || null,
+    usgs_site: site,
+    built: table.built || null,
+    source: `WQP readings at stations on this river since ${w.since || '2015'}, grouped by where `
+          + `USGS ${site} flowed on each day in its daily statistics`,
+  };
+}
+
 async function flowVsHistory(site, flow, nowMs) {
   if (!site || !Number.isFinite(flow)) return null;
   const d = new Date(nowMs);
@@ -4397,6 +4430,18 @@ async function waterBlock(b, lat, lon, env) {
   out.flow_vs_history = flowGauge
     ? await flowVsHistory(flowGauge.usgs_site, flowGauge.flow, Date.now()).catch(() => null)
     : null;
+  // AND WHAT THAT FLOW HAS MEANT FOR THIS RIVER'S WATER. Its own on-water readings, filed under
+  // the same band on the days they were taken -- see clarityAtFlow(). A table not yet built is not
+  // a failed read: the flow line stands alone, and the reason rides along.
+  if (out.flow_vs_history && out.flow_vs_history.label && b.slug) {
+    try {
+      const got = clarityAtFlow(await riverClarityByFlow(env), b.slug,
+        out.flow_vs_history.usgs_site, out.flow_vs_history.label);
+      if (got) out.flow_vs_history.clarity = got;
+    } catch (err) {
+      out.flow_vs_history.clarity_unavailable = String((err && err.message) || err);
+    }
+  }
 
   const probe = await waterProbe(b, lat, lon, seeded).catch(() => ({ temp: seeded }));
   out.water_temp = probe.temp || null;

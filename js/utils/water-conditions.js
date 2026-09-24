@@ -164,6 +164,15 @@ export function readConditions(j) {
     flowMedian: null,
     flowYears: null,
     flowPeriod: null,
+    // This river's own measured clarity at flows in today's band, and at normal flow. See
+    // clarityAtFlow() in Worker/conditions.js and flowClaritySentence() below.
+    flowClarity: null,
+    // Duke's release-calendar PDFs for this water's location, and the gauge they were tied by.
+    // Declared here, not only assigned below, for the reason the note at the foot of this template
+    // gives: a key missing from readConditions(null) is invisible to the test that holds the
+    // prompt to full coverage of this object.
+    dukeCalendars: [],
+    dukeCalendarMatchedOn: [],
     flowAnomalyOf: null,
     generatingNow: null,
     generationNext: null,
@@ -422,6 +431,7 @@ export function readConditions(j) {
     out.flowMedian = Number.isFinite(fh.median) ? fh.median : null;
     out.flowYears = Number.isFinite(fh.years) ? fh.years : null;
     out.flowPeriod = fh.period || null;
+    out.flowClarity = fh.clarity || null;
   }
 
   const riv = j.rivers || null;
@@ -555,9 +565,10 @@ export function readConditions(j) {
   out.releasesRefused = w.releases_refused || null;
   // Duke's release-calendar PDFs for this water's location, tied by a gauge Duke names. See
   // dukeCalendarFor() in Worker/conditions.js.
-  out.dukeCalendars = (w.duke_calendar && Array.isArray(w.duke_calendar.calendars))
-    ? w.duke_calendar.calendars : [];
-  out.dukeCalendarMatchedOn = (w.duke_calendar && w.duke_calendar.matched_on) || [];
+  if (w.duke_calendar && Array.isArray(w.duke_calendar.calendars)) {
+    out.dukeCalendars = w.duke_calendar.calendars;
+    out.dukeCalendarMatchedOn = w.duke_calendar.matched_on || [];
+  }
 
   // CLARITY IS A MODEL AND THE FLAG SAYS SO. `measured` non-null means a WQP Secchi or
   // turbidity baseline exists and the rainfall model adjusted it; null means the number is
@@ -827,6 +838,39 @@ export async function fetchWaterConditions(worker, rec, opts = {}) {
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+/**
+ * THE RIVER'S OWN CLARITY AT FLOWS LIKE TODAY'S, as one sentence -- for the card and for the plan,
+ * so the two cannot say it differently. Medians with their counts, never a bare number: two
+ * readings and four hundred are different claims, and the count is how he tells them apart.
+ *
+ *   "At flows in this band, readings on this river have run about 18 NTU turbidity (291 readings);
+ *    at normal flow, 9.2 NTU (447)."
+ */
+export function flowClaritySentence(fc) {
+  if (!fc) return null;
+  const say = (x) => {
+    if (!x) return null;
+    const bits = [];
+    if (x.turbidity && Number.isFinite(x.turbidity.median_ntu)) {
+      bits.push(`${x.turbidity.median_ntu} NTU turbidity (${x.turbidity.n} reading${x.turbidity.n === 1 ? '' : 's'})`);
+    }
+    if (x.secchi && Number.isFinite(x.secchi.median_ft)) {
+      bits.push(`${x.secchi.median_ft} ft Secchi (${x.secchi.n} reading${x.secchi.n === 1 ? '' : 's'})`);
+    }
+    return bits.length ? bits.join(', ') : null;
+  };
+  const here = say(fc.at_this_flow);
+  const normal = say(fc.normal);
+  if (fc.band_is_normal) {
+    return here ? `At normal flow like today's, readings on this river have run about ${here}.` : null;
+  }
+  if (!here && !normal) return null;
+  return (here
+    ? `At flows in this band, readings on this river have run about ${here}`
+    : 'No reading on this river was taken at flows in this band')
+    + (normal ? `; at normal flow, ${normal}.` : '.');
 }
 
 /** One sentence naming the number and where it came from, or why there is none. */

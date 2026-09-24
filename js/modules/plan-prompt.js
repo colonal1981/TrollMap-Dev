@@ -380,6 +380,11 @@ export function riverPromptBlock(ws, o = {}) {
       + `${r.flowVsNormal ? ` · ${r.flowVsNormal}` : ''}`
       + `${r.flowMedianCfs != null ? ` · median for the date ${Math.round(r.flowMedianCfs).toLocaleString()} ft³/s` : ''}`
       + `${r.flowGauge ? ` · ${r.flowGauge}` : ''}`);
+    // WHAT THIS FLOW HAS MEANT FOR THE WATER HERE -- the river's own on-water readings at flows in
+    // today's band, with their counts. Measured, not modelled, and said as such.
+    if (isRiver && r.flowClarity) {
+      L.push(`Clarity at this flow, from this river's own Water Quality Portal readings: ${r.flowClarity}`);
+    }
     L.push(isRiver
       ? 'Say what this flow does to the day: where the seams and eddies set up, which side of '
         + 'a bend holds fish at this water, how much of the trolling speed is the river rather '
@@ -1831,6 +1836,9 @@ const CONDITION_ELSEWHERE = {
   flowGaugeKm: 'how far the flow gauge is, card only',
   flowBand: 'riverPromptBlock() as flowVsNormal',
   flowMedian: 'riverPromptBlock() as flowMedianCfs',
+  flowClarity: 'riverPromptBlock() as flowClarity, via flowClaritySentence()',
+  dukeCalendars: 'card only -- links to Duke\'s release-calendar PDFs, which the model cannot open',
+  dukeCalendarMatchedOn: 'card only -- which gauge tied the calendars to this water',
   tidalFlowCfs: 'riverPromptBlock() — wins over flowCfs on a tidal river',
   stageFt: 'riverPromptBlock()',
   stageBasis: 'riverPromptBlock()',

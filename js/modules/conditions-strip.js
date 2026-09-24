@@ -21,7 +21,8 @@
 
 import { CF_WORKER_URL } from '../core/state.js';
 import { lakeRecordFor } from '../data/lake-registry.js';
-import { fetchWaterConditions, conditionsStrip, levelSentence } from '../utils/water-conditions.js';
+import { fetchWaterConditions, conditionsStrip, levelSentence, flowClaritySentence }
+  from '../utils/water-conditions.js';
 import { camerasForWater, camerasOnWater, nearestSite, cameraFrame, ageLabel, MAX_RAMP_KM }
   from '../utils/cameras.js';
 import { primeRegulations } from '../data/regulations-live.js';
@@ -284,7 +285,12 @@ function cardHtml(rec, c) {
       + `${c.flowPeriod ? ` (${esc(c.flowPeriod)})` : ''}`
       + `${c.flowMedian != null ? `. Median for today is ${Math.round(c.flowMedian).toLocaleString()} ft³/s` : ''}. `
       + `USGS daily statistics — a band between published set points, not an interpolated `
-      + `percentile.</span>`));
+      + `percentile.</span>`
+      // WHAT THAT FLOW HAS MEANT FOR THIS RIVER'S WATER, from its own on-water readings.
+      + (flowClaritySentence(c.flowClarity)
+        ? `<br><span class="cond-sub">${esc(flowClaritySentence(c.flowClarity))} Water Quality `
+          + `Portal readings at stations on this river since ${esc(c.flowClarity.since || '2015')}.</span>`
+        : '')));
   }
   if (c.flowAnomaly != null) {
     out.push(row('Flow vs normal', `${c.flowAnomaly > 0 ? '+' : ''}${c.flowAnomaly}`

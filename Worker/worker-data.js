@@ -3,7 +3,7 @@
 // LAKES, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS
 
 import { matchWaterName, reportTokens } from './reports.js';
-import { GENERIC_LAKE_ZONES, watershedSensitivity, zonesForSensitivity } from './clarity-sensitivity.js';
+import { GENERIC_LAKE_ZONES, GENERIC_RIVER_ZONES, watershedSensitivity, zonesForSensitivity } from './clarity-sensitivity.js';
 
 var LAKES = {
   wateree: { duke: "wateree", river: "02148000", normalPool: 225.5, ahq: "lake-wateree" },
@@ -1706,6 +1706,10 @@ async function getLakeClarity(lakeName, tripDate, env, point = null, opts = {}) 
   );
 
   let defaultProfile = null;
+  // A river piece's two generic zones are its two ends, not a lake's arms and basin.
+  const isRiverWater = !!(water.index && water.slug && water.index[water.slug]
+    && water.index[water.slug].feature_type === 'river');
+  const genericZones = isRiverWater ? GENERIC_RIVER_ZONES : GENERIC_LAKE_ZONES;
   if (isCoastal) {
     defaultProfile = {
       displayName: lakeName,
@@ -1733,12 +1737,14 @@ async function getLakeClarity(lakeName, tripDate, env, point = null, opts = {}) 
       center: at || [34, -81],
       defaultNote: (shed.source === 'watershed'
           ? `No hand-written zones for this water. Its rain response is its own: ${shed.why}.`
-          : "No custom clarity model yet; generic creek/runoff model used.")
+          : isRiverWater
+            ? "A river piece keeps the generic rain rates; its two zones are its upper and lower reaches. Where its flow sits against its normal, and its own clarity at that flow, are on the card."
+            : "No custom clarity model yet; generic creek/runoff model used.")
         + (at ? "" : " RAINFALL IS FROM A FIXED POINT NEAR COLUMBIA, SC, not this water — no "
                    + "point was given, and on most waters that is over 200 km away."),
       zones: shed.source === 'watershed'
         ? zonesForSensitivity(shed.value)
-        : GENERIC_LAKE_ZONES.map((z) => ({ ...z, ramps: [] })),
+        : genericZones.map((z) => ({ ...z, ramps: [] })),
       sensitivity: shed,
     };
   }
@@ -1992,7 +1998,7 @@ async function getLakeClarity(lakeName, tripDate, env, point = null, opts = {}) 
         const farKm = kmTo(e.far);
         const upper = farKm < outletKm;
         // By NAME, not position in the list: the generic table says which zone is which.
-        const z = zones.find((x) => x.name === GENERIC_LAKE_ZONES[upper ? 0 : 1].name);
+        const z = zones.find((x) => x.name === genericZones[upper ? 0 : 1].name);
         if (z) launchZone = {
           name: z.name, outletKm, farKm,
           why: `the launch is ${outletKm} km from where the lake lets out and ${farKm} km from `
@@ -2057,8 +2063,8 @@ async function getLakeClarity(lakeName, tripDate, env, point = null, opts = {}) 
       : "No secchi measurements published for this water. The estimate below is a rainfall model, "
         + "not an observation \u2014 absence of data is not clear water.",
     summary: measured
-      ? `${profile.displayName || lakeName}: typically ${measured.avgSecchiDepthFt} ft visibility (${measured.sampleCount} readings, ${measured.minSecchiDepthFt}\u2013${measured.maxSecchiDepthFt} ft). ${rain ? `${rain.weighted72_in}" weighted rain signal moves it to ` : ''}${overall.clarity} for this trip; creek arms dirtier than the main lake.`
-      : rain ? `${profile.displayName || lakeName}: ${rain.weighted72_in}" weighted rain/runoff signal. ${overall.clarity} overall predicted; upper/creek arms likely dirtier than lower/main lake.` : `${profile.displayName || lakeName}: generic clarity estimate. Verify locally.`,
+      ? `${profile.displayName || lakeName}: typically ${measured.avgSecchiDepthFt} ft visibility (${measured.sampleCount} readings, ${measured.minSecchiDepthFt}\u2013${measured.maxSecchiDepthFt} ft). ${rain ? `${rain.weighted72_in}" weighted rain signal moves it to ` : ''}${overall.clarity} for this trip${isRiverWater ? '' : '; creek arms dirtier than the main lake'}.`
+      : rain ? `${profile.displayName || lakeName}: ${rain.weighted72_in}" weighted rain/runoff signal. ${overall.clarity} overall predicted${isRiverWater ? '' : '; upper/creek arms likely dirtier than lower/main lake'}.` : `${profile.displayName || lakeName}: generic clarity estimate. Verify locally.`,
     overall: { clarity: overall.clarity, select: overall.select, score: Math.round(avg), lureColors: pack.colors, tactics: pack.tactics },
     rain,
     zones,

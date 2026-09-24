@@ -916,3 +916,21 @@ export const WATER_ENDS_KEY = '_registry/water_ends.json';
  */
 export const waterEnds = passthroughLoader(WATER_ENDS_KEY, 'build_water_ends.py',
   (p) => p && p.waters, '"waters" object keyed by registry slug');
+
+export const RIVER_CLARITY_BY_FLOW_KEY = '_registry/river_clarity_by_flow.json';
+
+/**
+ * Each river's own measured clarity, grouped by where its gauge's flow sat that day.
+ *
+ * `build_river_clarity_by_flow.py` files every WQP turbidity and Secchi reading since 2015 at a
+ * station inside the river's outline under the band USGS's daily statistics put that day's flow in
+ * -- the same bands statBand() prints on the card as "Flow vs history" -- and keeps the median and
+ * the count per band, per bound gauge. Ryan, 2026-09-24, approving it: the flow line gets the
+ * river's own readings beside it, not a formula.
+ *
+ * The WHOLE document, not only `waters`: `normal_bands` says which bands are "normal flow", and a
+ * second copy of that list here would be the two-lists-disagreeing pattern. The caller catches.
+ */
+export const riverClarityByFlow = passthroughLoader(RIVER_CLARITY_BY_FLOW_KEY,
+  'build_river_clarity_by_flow.py', (p) => (p && p.waters ? p : null),
+  'a document with a "waters" object keyed by registry slug');

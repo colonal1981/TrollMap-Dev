@@ -36,7 +36,7 @@ import { resolveR2Key } from '../data/lake-keys.js';
 import { lakeDbEntryFor, lakeRecordFor } from '../data/lake-registry.js';
 import { launchStateOn, primeWaterStateParts } from '../data/water-state-parts.js';
 import { primeRegulations, regulationsPrimed, nameForms } from '../data/regulations-live.js';
-import { fetchWaterConditions } from '../utils/water-conditions.js';
+import { fetchWaterConditions, flowClaritySentence } from '../utils/water-conditions.js';
 import { getTideStateForZone } from './tide-engine.js';
 import { assessZoneIntrusion } from './usgs-gauges.js';
 import { DEPTH_BANDS, normalizeCoastalSpecies, tacticalNote } from './coastal-scoring.js';
@@ -528,6 +528,8 @@ export async function fetchWaterState(lakeName, dateStr, o = {}) {
     flowIsTidallyFiltered: net ? true : null,
     flowVsNormal: c.flowBand || null,
     flowMedianCfs: c.flowMedian ?? null,
+    // The river's own measured clarity at flows in today's band -- the card's sentence, verbatim.
+    flowClarity: flowClaritySentence(c.flowClarity),
     flowGauge: c.flowGauge || null,
     stageFt: c.stageFt ?? null,
     stageBasis: c.stageBasis || null,

@@ -67,6 +67,20 @@ export const GENERIC_LAKE_ZONES = Object.freeze([
   Object.freeze({ name: "Main lake/lower basin", sensitivity: 0.75, base: 2, likely: "clearest available water" }),
 ]);
 
+/**
+ * THE SAME TWO RATES, NAMED FOR A RIVER. A river piece keeps the generic rates (see RIVERS ARE NOT
+ * RANKED above), and it was being told about "Creeks/upper arms" and "Main lake/lower basin". On a
+ * river the two zones can only mean its upstream and downstream ends, so that is what they are
+ * called. registry/water_ends.json holds lakes only, so no river launch is placed in either yet.
+ * The rates are the lake zones' own, read from them rather than typed again, and `likely` says only
+ * what the model does with them: a river's own flow against its normal, and its clarity at that
+ * flow, are on the card.
+ */
+export const GENERIC_RIVER_ZONES = Object.freeze([
+  Object.freeze({ ...GENERIC_LAKE_ZONES[0], name: "Upper reach", likely: "moves more with rain in this model" }),
+  Object.freeze({ ...GENERIC_LAKE_ZONES[1], name: "Lower reach", likely: "moves less with rain in this model" }),
+]);
+
 const round3 = (x) => Math.round(x * 1000) / 1000;
 
 /** [lowest, highest] sensitivity the generic zones span -- the range ranks are placed on. */

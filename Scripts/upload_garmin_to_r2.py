@@ -605,6 +605,10 @@ PASSTHROUGH_REGISTRIES = {
         "a launch on a lake without hand-written clarity zones is answered with the lake-wide "
         "mean of two zones instead of its own (271 lakes carry an outlet and a far end); build "
         "it with build_water_ends.py --write",
+    "river_clarity_by_flow.json":
+        "a river card's flow-vs-history line stands alone, with no word on what that flow has "
+        "meant for the river's own measured clarity; build it with "
+        "build_river_clarity_by_flow.py --registry <registry>",
 }
 
 
