@@ -954,6 +954,64 @@ export function attractorSpotFeatures(dnrRows, poiSpots = [], opts = {}) {
   return out;
 }
 
+/**
+ * THE OSM HARVEST'S BRIDGES AND PIERS, as structure the planner scores -- freshwater only.
+ *
+ * `osm-structures.geojson` has sat in R2 beside every pack since fetch_osm_structures.py ran, and
+ * the map has drawn it behind a toggle. The planner never read it, so 3,367 bridges across 371
+ * freshwater waters were invisible to the one thing that ranks a leg by what it passes -- where
+ * `bridge` already carries a measured weight (3) and `pier` its nearest measured sibling's (4).
+ *
+ * PIERS ARE MOSTLY DOCKS GARMIN ALREADY CHARTS, AND THAT WAS MEASURED BEFORE WIRING THEM. 2,580
+ * of the 3,572 freshwater OSM piers sit within 30 m of a Garmin dock -- 348 of Murray's 372, 16
+ * of Wateree's 17 -- because OSM tags a lot of private docks man_made=pier. Those are the same
+ * object and docks.geojson already scores them through dockHits(), so a pier within the same 30 m
+ * attractorSpotFeatures() uses to call two points one brushpile is dropped here. 992 remain
+ * before the on-water test below.
+ *
+ * NOT ON A COASTAL ZONE. There the ENC seabed layer already puts charted piers and bridges into
+ * `near[]` (1,094 piers and 116 bridges on Charleston alone), and OSM on top would count them
+ * twice. On the water, not beside it: the same charted grid the state attractors pass through.
+ *
+ * NO DEPTH, like a Garmin POI: a position and a name, and DEPTH_FIELD has no entry for either.
+ */
+export const OSM_SHORE_KINDS = Object.freeze({
+  ROAD_BRIDGE: 'bridge', RAIL_BRIDGE: 'bridge', FOOT_BRIDGE: 'bridge', BRIDGE: 'bridge',
+  PIER: 'pier',
+});
+
+export function osmShoreFeatures(osmFc, docksFc, opts = {}) {
+  const { dedupeM = 30, onWater = null, coastal = false } = opts;
+  if (coastal) return [];
+  const docks = [];
+  for (const f of ((docksFc && docksFc.features) || [])) {
+    const g = f && f.geometry;
+    if (!g) continue;
+    if (g.type === 'Point') docks.push(g.coordinates);
+    else if (g.type === 'Polygon' && Array.isArray(g.coordinates[0]) && g.coordinates[0].length) {
+      const ring = g.coordinates[0];
+      docks.push([ring.reduce((s, p) => s + p[0], 0) / ring.length,
+                  ring.reduce((s, p) => s + p[1], 0) / ring.length]);
+    }
+  }
+  const out = [];
+  for (const f of ((osmFc && osmFc.features) || [])) {
+    const p = (f && f.properties) || {};
+    const kind = OSM_SHORE_KINDS[String(p.structure_type || '')];
+    const g = f && f.geometry;
+    if (!kind || !g || g.type !== 'Point' || !Array.isArray(g.coordinates)) continue;
+    const [lon, lat] = g.coordinates;
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
+    if (onWater && !onWater(lon, lat)) continue;
+    if (kind === 'pier' && docks.some((d) => Math.abs(d[1] - lat) < 0.001
+                                           && metresBetween([lon, lat], d) <= dedupeM)) continue;
+    out.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [lon, lat] },
+               properties: { kind, name: p.name || null, source: 'osm',
+                             osm_id: p.osm_id || null, structure_type: p.structure_type } });
+  }
+  return out;
+}
+
 const DEPTH_FIELD = {
   hump: 'depth_ft', ledge: 'depth_ft', point: 'deep_side_ft', cove: 'deep_side_ft',
   // A SCOUR HOLE HAS A CHARTED DEPTH AND NOTHING WAS READING IT. Added 2026-09-16: `hole` was
@@ -2167,7 +2225,13 @@ export function selectCandidates(runs, o) {
     // POIs keeps whatever its pack's `near[]` already said, which is the old behaviour exactly.
     const poi = o.pois ? poiHits(coords, cum0, o.pois, opts.maxOffM) : [];
     const base = o.pois ? withoutPoiMarks(run) : run;
-    const joined = docks.concat(dnr, poi);
+    // AND THE OSM BRIDGES AND PIERS, which no pack carries in `near[]` -- see osmShoreFeatures().
+    // Joined here like the state attractors, for the same reason and at the same distance.
+    const shore = o.shore
+      ? kindHits(coords, cum0, o.shore, opts.maxOffM, 'bridge')
+          .concat(kindHits(coords, cum0, o.shore, opts.maxOffM, 'pier'))
+      : [];
+    const joined = docks.concat(dnr, poi, shore);
     const win = bestWindow(joined.length ? withNear(base, joined) : base, opts);
     if (!win) { rejected.noWindow++; continue; }
     // Relief is a property of the whole run, so it is added once rather than per hit. River

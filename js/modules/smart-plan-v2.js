@@ -18,7 +18,7 @@
  */
 
 import { selectCandidates, structureIndex, forModel, travelOrder, poiSpotFeatures,
-         attractorSpotFeatures, chartedGrid, chartedHazards,
+         attractorSpotFeatures, osmShoreFeatures, chartedGrid, chartedHazards,
          turnaroundMiles, riverDay, metresBetween,
          pointToSegmentM } from './plan-candidates.js';
 import { buildPlanRequest, parsePlanResponse, planArgsFrom,
@@ -74,7 +74,7 @@ export const CANDIDATE_LIMIT = 12;
  */
 export async function buildSmartPlanV2(o) {
   const base = o.chartpackBase || '';
-  const [runsFc, structFc, waterFc, docksFc, poisFc, centrelineFc, boundaryFc] = await Promise.all([
+  const [runsFc, structFc, waterFc, docksFc, poisFc, centrelineFc, boundaryFc, osmFc] = await Promise.all([
     o.fetchJson(`${base}/${o.r2Key}/trolling_runs.geojson`),
     o.fetchJson(`${base}/${o.r2Key}/structure.geojson`),
     o.fetchJson(`${base}/${o.r2Key}/water_features.geojson`),
@@ -102,6 +102,10 @@ export async function buildSmartPlanV2(o) {
     // they did until 2026-09-19, and the day Ryan got ran 3.4 km of Congaree and 4.6 km of Lake
     // Marion under one name.
     Promise.resolve(o.fetchJson(`${base}/${o.r2Key}/boundary.geojson`)).catch(() => null),
+    // EIGHTH: THE OSM BRIDGES AND PIERS. In R2 beside the pack since fetch_osm_structures.py ran
+    // and drawn by the map's OSM toggle; the planner never read them. Optional like the three above.
+    // See osmShoreFeatures() in plan-candidates.js for what is kept and why.
+    Promise.resolve(o.fetchJson(`${base}/${o.r2Key}/osm-structures.geojson`)).catch(() => null),
   ]);
   const runs = (runsFc && runsFc.features) || [];
   // A RIVER DOES NOT NEED LANES, AND THIS REFUSED TO PLAN ONE WITHOUT THEM.
@@ -159,6 +163,10 @@ export async function buildSmartPlanV2(o) {
                                (docksFc && docksFc.features) || []]);
   const attractors = structureIndex(attractorSpotFeatures(o.dnrAttractors, poiSpots,
                                     { onWater, where: `smart-plan ${o.r2Key}` }));
+  // THE OSM BRIDGES AND PIERS: on this water, not already a Garmin dock, not on a coastal zone
+  // whose ENC layer already carries them. See osmShoreFeatures().
+  const shore = structureIndex(osmShoreFeatures(osmFc, docksFc,
+    { onWater, coastal: String(o.r2Key || '').startsWith('coast_') }));
 
   // ── A RIVER LEG IS A DRIFT, NOT A LANE ───────────────────────────────────────────────────────
   //
@@ -289,7 +297,7 @@ export async function buildSmartPlanV2(o) {
     // screened, because "outside" and "nothing to be outside of" are different answers.
     water: waterTest(boundaryFc),
     // Per species, per season, per lake, from the research profile — see structureWeights().
-    weights: o.weights, reliefWeights: o.reliefWeights, docks, attractors, pois,
+    weights: o.weights, reliefWeights: o.reliefWeights, docks, attractors, pois, shore,
     // ── ON A RIVER THE HOP IS RIVER MILES, NOT A STRAIGHT LINE ────────────────────────────────
     //
     // The straight line is the right answer on a lake and a wrong one on moving water -- see
