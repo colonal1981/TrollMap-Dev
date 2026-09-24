@@ -210,6 +210,27 @@ describe('the pre-county spelling resolves', () => {
     expect(researchedNames([LOWER], STORED).size).toBe(0);
   });
 
+  it('the Atlanta Chattahoochee reads its own profile, and the Helen one still reads its own', () => {
+    // 2026-09-24. Both pieces answer to "Chattahoochee River, GA"; the tailwater below Buford Dam
+    // was being planned on the trout-stream research above Lake Lanier.
+    const STORED = ['chattahoochee_river_ga', 'chattahoochee_river_fulton_co_ga'];
+    const first = (n) => researchStorageIdCandidates(n).find((id) => STORED.includes(id));
+    expect(first('Chattahoochee River (Fulton Co, GA)')).toBe('chattahoochee_river_fulton_co_ga');
+    expect(first('Chattahoochee River, GA')).toBe('chattahoochee_river_ga');
+    expect(researchStorageId('Chattahoochee River (Fulton Co, GA)')).toBe('chattahoochee_river_fulton_co_ga');
+  });
+
+  it('the NC French Broad reaches the research filed under TN, and the order elsewhere is unchanged', () => {
+    for (const n of ['FRENCH BROAD RIVER, NC', 'French Broad River (Haywood Co, NC)', 'French Broad River, NC']) {
+      expect(researchStorageIdCandidates(n)[0]).toBe('french_broad_river_tn');
+      expect(researchStorageId(n)).toBe('french_broad_river_tn');
+    }
+    expect(RESEARCH_CANONICAL_IDS.french_broad_river).toBe(undefined);
+    // The Thurmond order still holds for a water with no row: legacy before its own county form.
+    const c = researchStorageIdCandidates('Lake Murray (Newberry Co, SC)');
+    expect(c.indexOf('lake_murray_sc') < c.indexOf('lake_murray_newberry_co_sc')).toBe(true);
+  });
+
   it('every canonical row points at something, and never at another key', () => {
     // A row whose target is itself a key is a chain, and a chain is a rename nobody finished.
     // Written generally so a row added tomorrow has to satisfy it too.

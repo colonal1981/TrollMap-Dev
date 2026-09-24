@@ -166,6 +166,39 @@ export const RESEARCH_CANONICAL_IDS = {
   'saluda_river_greenville_co_sc': 'saluda_river_sc',
   'saluda_river_2_sc': 'saluda_river_sc',
   'saluda_river_2_newberry_co_sc': 'saluda_river_sc',
+  // ── A WATER READS ITS OWN PROFILE BEFORE A SPELLING IT SHARES, 2026-09-24 ────────────────────
+  //
+  // THE CHATTAHOOCHEE BELOW BUFORD DAM WAS PLANNED ON THE TROUT STREAM ABOVE LAKE LANIER. Both
+  // pieces carry the legacy spelling "Chattahoochee River, GA" -- the Fulton Co row as its legacy
+  // name, the White Co piece as the name the picker shows for it -- and the candidate order tries a
+  // legacy spelling before a water's own current id, deliberately (Thurmond, 2026-08-16: an older
+  // profile under the pre-county name must beat a new draft). So "Chattahoochee River (Fulton Co,
+  // GA)", the cold tailwater through Atlanta, was served chattahoochee_river_ga -- the Helen trout
+  // water's research -- while its own 75 KB profile sat unread. which_profile_serves.mjs listed it
+  // as a FORK; with the upper Saluda settled above, it was the only one left.
+  //
+  // A SELF-MAP AND NOT A REORDER. Putting raw before legacy for every water would also fix this,
+  // and would let every future batch draft written under a county name outrank the older profile
+  // beside it -- the exact case the order exists for. A canonical row is tried before either, for
+  // this one id.
+  //
+  // COLLISION CHECKED against the picker's 876 names and the identity names the Worker tries
+  // beside each: `chattahoochee_river_fulton_co_ga` is produced by "Chattahoochee River (Fulton
+  // Co, GA)" alone. The White Co entry, "Chattahoochee River, GA", still reaches its own
+  // chattahoochee_river_ga first -- its own name's candidates are exhausted before any alias.
+  'chattahoochee_river_fulton_co_ga': 'chattahoochee_river_fulton_co_ga',
+  // THE FRENCH BROAD'S RESEARCH IS FILED UNDER TENNESSEE AND IS ABOUT NORTH CAROLINA. It was run as
+  // "French Broad River, TN", a name the picker does not offer, so the water the picker does offer
+  // -- "FRENCH BROAD RIVER, NC", the registry's french_broad_river, 94% NC by its own outline --
+  // reached nothing. Read before pointing anything at it: of the profile's 152 facts, 31 name NC
+  // places (Asheville, Hot Springs, Pisgah, NCPAWS' access list) and 5 name Tennessee ones, all a
+  // Knox/Sevier consumption advisory below Douglas Dam. It is this water's research.
+  //
+  // COLLISION CHECKED the same way: `french_broad_river_nc` and `french_broad_river_haywood_co_nc`
+  // are produced only by names of french_broad_river. NOT the bare `french_broad_river`, which the
+  // TN spelling produces too.
+  'french_broad_river_nc': 'french_broad_river_tn',
+  'french_broad_river_haywood_co_nc': 'french_broad_river_tn',
 };
 
 /** Mirror of `researchStorageId` in worker/research/keys.js. */
