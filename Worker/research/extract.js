@@ -445,7 +445,9 @@ FISHING BEHAVIOUR IS A FIRST-CLASS FACT. Sentences from guides, fishing reports 
         response_format: { type: "json_object" }
       };
 
-      const { data } = await callLLM(env, payload, null);
+      // Both free models, each on its own quota: Ryan, 2026-09-24. See _geminiModelIdx in
+      // Worker/worker-core.js; this read is most of a research run's calls.
+      const { data, model } = await callLLM(env, payload, null, { spreadModels: true });
       const text = extractLLMText(data);
       const parsed = extractJsonPossibly(text);
 
@@ -493,7 +495,7 @@ FISHING BEHAVIOUR IS A FIRST-CLASS FACT. Sentences from guides, fishing reports 
       });
 
       allFacts.push(...kept);
-      docResults.push({ doc: doc.title, facts: kept.length });
+      docResults.push({ doc: doc.title, facts: kept.length, model });
       console.log(`handleResearchAnalyzeFacts: doc [${i+1}/${usableDocs.length}] "${doc.title.slice(0,50)}" → ${kept.length} facts`);
 
     } catch (e) {

@@ -12,6 +12,7 @@ per minute stay under their ceilings, facts come back in document order, and a d
 never read is retried when the refusal was "not now" and reported when it was not.
 """
 import os
+import re
 import sys
 import threading
 import time
@@ -60,6 +61,20 @@ class Limiter(unittest.TestCase):
         lim.acquire(5000)
         self.assertEqual(c.now(), 0.0)
 
+    def test_the_default_ceiling_is_four_of_the_five_keys(self):
+        # Ryan, 2026-09-24: "requests per minute are 15 for gemini free keys and we have 5 of them"
+        self.assertEqual(R.DEFAULT_RPM, 60)
+        self.assertEqual(R.extract_workers(R.DEFAULT_RPM, 40), 12)
+
+    def test_the_key_count_is_the_workers_own_list(self):
+        # GEMINI_FREE_KEYS sizes the ceiling; callLLM's rotation list is what the calls use. A
+        # sixth key added there and not here would leave a key's worth of the pool unused.
+        src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'Worker',
+                                'worker-core.js'), encoding='utf-8').read()
+        keys = re.search(r"const freeKeys = \[([^\]]*)\]", src)
+        self.assertIsNotNone(keys, 'the rotation list moved; follow it')
+        self.assertEqual(len(re.findall(r"'gemini-free\d*'", keys.group(1))), R.GEMINI_FREE_KEYS)
+
     def test_the_pool_is_sized_from_the_ceiling(self):
         self.assertEqual(R.extract_workers(30, 40), 6, '30 starts a minute at 12 s a call')
         self.assertEqual(R.extract_workers(15, 40), 3)
@@ -88,14 +103,21 @@ class ExtractDocuments(unittest.TestCase):
             time.sleep(0.05 * (5 - i % 5))          # later documents finish first
             with lock:
                 live[0] -= 1
-            return 200, {'extracted_facts': [{'fact': f'doc {i}'}], 'meta': {'docResults': [{}]}}, None
+            model = 'gemini-3.1-flash-lite' if i % 5 == 0 else 'gemini-3.5-flash-lite'
+            return 200, {'extracted_facts': [{'fact': f'doc {i}'}],
+                         'meta': {'docResults': [{'model': model}]}}, None
         R._req = fake
         docs = [{'title': f'd{i}', 'text': 'x' * 400} for i in range(10)]
-        facts, sent, failed = R.extract_documents('L', 'SC', [], docs, rpm=0, tpm=0)
+        facts, sent, failed, models = R.extract_documents('L', 'SC', [], docs, rpm=0, tpm=0)
         self.assertGreater(peak[0], 1, 'more than one call in flight')
         self.assertEqual([f['fact'] for f in facts], [f'doc {i}' for i in range(10)])
         self.assertEqual(sent, 4000)
         self.assertEqual(failed, [])
+        self.assertEqual(models, {'gemini-3.5-flash-lite': 8, 'gemini-3.1-flash-lite': 2},
+                         'which model read each document is counted, for the time: line')
+        self.assertEqual(R.models_note({'extract_models': models}),
+                         ': gemini-3.5-flash-lite 8, gemini-3.1-flash-lite 2')
+        self.assertEqual(R.models_note({}), '', 'an older report without the count prints nothing')
 
     def test_high_demand_is_retried_and_a_real_refusal_is_reported(self):
         tries = {}
@@ -111,7 +133,7 @@ class ExtractDocuments(unittest.TestCase):
             return 200, {'extracted_facts': [{'fact': f'doc {i}'}], 'meta': {'docResults': [{}]}}, None
         R._req = fake
         docs = [{'title': f'd{i}', 'text': 'x' * 300} for i in range(3)]
-        facts, _, failed = R.extract_documents('L', 'SC', [], docs, rpm=0, tpm=0)
+        facts, _, failed, _ = R.extract_documents('L', 'SC', [], docs, rpm=0, tpm=0)
         self.assertEqual(tries[0], 2, '"high demand" is "not now", so it is asked again')
         self.assertEqual(tries[1], 1, 'non-JSON is an answer; asking again changes nothing')
         self.assertEqual([f['fact'] for f in facts], ['doc 0', 'doc 2'])
@@ -127,7 +149,7 @@ class ExtractDocuments(unittest.TestCase):
                 return (0, None, 'timed out') if tries[i] < 3 else (200, {'extracted_facts': []}, None)
             return 400, None, 'Missing lakeName'
         R._req = fake
-        _, _, failed = R.extract_documents('L', 'SC', [], [{'text': 'a' * 300}, {'text': 'b' * 300}],
+        _, _, failed, _ = R.extract_documents('L', 'SC', [], [{'text': 'a' * 300}, {'text': 'b' * 300}],
                                            rpm=0, tpm=0)
         self.assertEqual(tries, {0: 3, 1: 1})
         self.assertEqual(len(failed), 1)

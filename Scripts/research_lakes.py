@@ -594,11 +594,20 @@ def pace_seconds(chars, tpm):
 #
 # So the calls run side by side, under the limits the pacing always existed for:
 #
-#   REQUESTS PER MINUTE. The free Gemini keys are 15 RPM each (GEMINI_FREE_MODELS in
-#   Worker/worker-core.js), Ryan has five, and callLLM() rotates across them from a random start
-#   and falls over to the next key when one says "high demand". The batch takes two keys' worth by
-#   default -- the pool keeps more than half its rate for the app and for that fall-over. --rpm
-#   changes it; 0 turns the ceiling off.
+#   REQUESTS PER MINUTE. Ryan, 2026-09-24: "requests per minute are 15 for gemini free keys and
+#   we have 5 of them" -- 75 a minute across the pool, and callLLM() in Worker/worker-core.js
+#   rotates across the five from a random start and falls over to the next key when one says
+#   "high demand". The batch takes four keys' worth by default, 60, and leaves one key's 15 for
+#   the app and for the species groups that follow. --rpm changes it; 0 turns the ceiling off.
+#
+#   BOTH MODELS. Ryan, 2026-09-24: "and we could make it so it hits both models separately
+#   right" -- each free model has its own 15 RPM on every key. Extraction now asks callLLM() to
+#   spread across both (_geminiModelIdx, worker-core.js), so the same 60 lands at about 6 a
+#   minute on each model of each key instead of 12 on 3.5 alone. The ceiling is not doubled:
+#   the last batch's waters had a median of 10 documents and at most 23 (research_lakes_20260923),
+#   and 60 already runs 12 at once, so 120 would save seconds only on the few past a dozen.
+#   What the spread buys is headroom -- fewer "high demand" fallovers -- and a second 500
+#   requests a day on every key. --rpm 120 is there for a batch of big waters.
 #
 #   TOKENS PER MINUTE. --tpm, exactly as before, now counted across the calls in flight rather
 #   than slept off after each one.
@@ -606,7 +615,9 @@ def pace_seconds(chars, tpm):
 # How many run at once follows from those: enough that the RPM ceiling, not the round trip, is
 # what limits the rate. At EXTRACT_CALL_SECONDS a call, `rpm * seconds / 60` in flight keeps the
 # ceiling busy and never exceeds it, because the limiter gates each START.
-DEFAULT_RPM = 30
+GEMINI_FREE_KEYS = 5             # Ryan, 2026-09-24
+GEMINI_FREE_RPM_PER_KEY = 15     # the free tier's published rate, GEMINI_FREE_MODELS note
+DEFAULT_RPM = (GEMINI_FREE_KEYS - 1) * GEMINI_FREE_RPM_PER_KEY
 EXTRACT_CALL_SECONDS = 12        # measured 2026-09-24: 8.7, 11.2, 13.4, 14.8 s on four calls
 
 
@@ -677,7 +688,8 @@ def _extract_one(lake, state, alt_names, i, d, limiter, verbose):
             results = ((ex or {}).get("meta") or {}).get("docResults") or []
             failed = next((r.get("error") for r in results if r.get("error")), None)
             if not failed or not _TRANSIENT.search(str(failed)):
-                return (ex or {}).get("extracted_facts") or [], len(text), failed
+                model = next((r.get("model") for r in results if r.get("model")), None)
+                return (ex or {}).get("extracted_facts") or [], len(text), failed, model
             why = failed
         else:
             why = f"{code}: {err}"
@@ -685,21 +697,33 @@ def _extract_one(lake, state, alt_names, i, d, limiter, verbose):
                 break
     if verbose:
         print(f"      analyze-facts gave up on doc {i}: {why}")
-    return [], len(text), why
+    return [], len(text), why, None
 
 
 def extract_documents(lake, state, alt_names, docs, rpm, tpm, verbose=False):
     """Every document through /research/analyze-facts, several at once under the RPM and TPM
     ceilings. Facts come back in DOCUMENT order, whatever order the calls finished in, so a rerun
-    reads the same list. Returns (facts, chars_sent, failures)."""
+    reads the same list. Returns (facts, chars_sent, failures, models) -- `models` counts which
+    free Gemini model answered each read, so the spread across both is on the screen."""
     limiter = CallLimiter(rpm, tpm)
     with ThreadPoolExecutor(max_workers=extract_workers(rpm, len(docs))) as ex:
         got = list(ex.map(lambda p: _extract_one(lake, state, alt_names, p[0], p[1], limiter,
                                                  verbose), enumerate(docs)))
-    facts = [f for fs, _, _ in got for f in fs]
+    facts = [f for fs, _, _, _ in got for f in fs]
     failures = [{"doc": (docs[i].get("title") or "")[:80], "why": str(w)[:200]}
-                for i, (_, _, w) in enumerate(got) if w]
-    return facts, sum(n for _, n, _ in got), failures
+                for i, (_, _, w, _) in enumerate(got) if w]
+    models = {}
+    for *_, m in got:
+        if m:
+            models[m] = models.get(m, 0) + 1
+    return facts, sum(n for _, n, _, _ in got), failures, models
+
+
+def models_note(r):
+    """': gemini-3.5-flash-lite 21, gemini-3.1-flash-lite 19' -- which model read how many."""
+    m = r.get("extract_models") or {}
+    return (": " + ", ".join(f"{k} {v}" for k, v in sorted(m.items(), key=lambda kv: -kv[1]))
+            if m else "")
 
 
 class PhaseClock:
@@ -1038,9 +1062,11 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
         chosen = usable if not EXTRACT_DOC_LIMIT else usable[:EXTRACT_DOC_LIMIT]
         # SEVERAL AT ONCE, UNDER THE RPM AND TPM CEILINGS. See extract_documents() -- this loop ran
         # one call at a time and was most of a ten-minute run.
-        facts, sent, failed = extract_documents(lake, state, alt_names, chosen, rpm, tpm, verbose)
+        facts, sent, failed, models = extract_documents(lake, state, alt_names, chosen, rpm, tpm,
+                                                        verbose)
         out["chars_sent"] += sent
         out["extract_calls"] = len(chosen)
+        out["extract_models"] = models
         if failed:
             # A DOCUMENT THE MODEL NEVER READ IS NOT A DOCUMENT WITH NOTHING IN IT.
             out["extract_failed"] = failed
@@ -1909,8 +1935,8 @@ def main():
                          f"(default {DEFAULT_TPM}; 0 disables pacing)")
     ap.add_argument("--rpm", type=int, default=DEFAULT_RPM,
                     help="extraction calls started per minute, across the calls run at once "
-                         f"(default {DEFAULT_RPM}: two of the five free Gemini keys' 15 RPM; "
-                         "0 disables the ceiling)")
+                         f"(default {DEFAULT_RPM}: four of the five free Gemini keys at 15 RPM "
+                         "each, one left for the app; 0 disables the ceiling)")
     ap.add_argument("--dry-run", action="store_true",
                     help="run everything except /research/save")
     # A REPORT IS WRITTEN EVERY RUN, NOT ONLY WHEN ASKED. Ryan drives this box over Chrome
@@ -2012,7 +2038,7 @@ def main():
         tm = r.get("timings") or {}
         if tm:
             print("        time: " + "  ".join(
-                f"{k} {v:.0f}s" + (f" ({r['extract_calls']} calls)"
+                f"{k} {v:.0f}s" + (f" ({r['extract_calls']} calls{models_note(r)})"
                                    if k == "extract" and r.get("extract_calls") else "")
                 for k, v in tm.items()))
         with report_lock:

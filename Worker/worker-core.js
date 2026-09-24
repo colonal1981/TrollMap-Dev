@@ -228,7 +228,32 @@ function extractLLMText(data) {
 // somewhere different, and the modulo below keeps it in range however large this grows.
 let _geminiRoundRobinIdx = Math.floor(Math.random() * 1000);
 
-async function callLLM(env, payload, preferredProvider = null) {
+// BOTH MODELS, EACH ON ITS OWN QUOTA -- FOR THE CALLS THAT ASK.
+//
+// Ryan, 2026-09-24, with one key's AI Studio usage page open: "and we could make it so it hits
+// both models separately right". Gemini 3.5 Flash Lite 8/15 RPM, 43/500 RPD; Gemini 3.1 Flash
+// Lite 2/15 RPM, 0/500 RPD. The free tier meters each model on its own, so every key carries two
+// 15 RPM / 250,000 TPM / 500 RPD allowances -- and the ladder above reaches the second only when
+// the first has failed. 3.5 took the whole load while 3.1's allowance sat unused.
+//
+// A caller that passes { spreadModels: true } gets the ladder turned per call from its own random
+// start, the way the keys are: one call starts on 3.5 and falls to 3.1, the next starts on 3.1
+// and falls to 3.5. Nothing leaves the ladder, so a model that is busy or retired is still caught
+// by the other, and the day 3.1 goes the only cost is a quick refusal on the calls that start there.
+//
+// Opt-in, not the default. Document extraction asks (Worker/research/extract.js), and that is most
+// of a research run's calls. Callers that did not ask -- the species groups among them -- keep 3.5
+// first, so the model that answers them does not change under them.
+let _geminiModelIdx = Math.floor(Math.random() * 1000);
+
+function turnLadder(models, start) {
+  const n = models.length;
+  if (n < 2 || !start) return models;
+  const k = start % n;
+  return [...models.slice(k), ...models.slice(0, k)];
+}
+
+async function callLLM(env, payload, preferredProvider = null, opts = {}) {
   // If no preferred provider specified and we have multiple gemini-free keys,
   // auto-rotate across them to spread RPM load
   // THE ROTATION PICKS WHERE THE ROTATION STARTS, NOT WHERE IT ENDS -- AND IT NEVER LEAVES THE
@@ -283,6 +308,8 @@ async function callLLM(env, payload, preferredProvider = null) {
     throw new Error("No LLM provider configured. Set GROQ_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY, or CEREBRAS_API_KEY");
   }
 
+  const modelStart = opts && opts.spreadModels ? _geminiModelIdx++ : 0;
+
   let lastError;
   for (const provider of providers) {
     const key = env[provider.keyEnv];
@@ -290,7 +317,8 @@ async function callLLM(env, payload, preferredProvider = null) {
 
     // ── Gemini uses a different API (Google native REST, not OpenAI-compatible) ──
     if (provider.isGemini) {
-      const modelCandidates = provider.models?.length ? provider.models : [provider.defaultModel];
+      const modelCandidates = turnLadder(
+        provider.models?.length ? provider.models : [provider.defaultModel], modelStart);
       for (const modelId of modelCandidates) {
         try {
           const geminiPayload = provider.transformPayload(payload);
