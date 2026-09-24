@@ -223,7 +223,10 @@ function cardHtml(rec, c) {
   // A TARGET IS NOT A READING and the label says so on the same line as the number.
   if (c.usaceTargetFt != null) {
     out.push(row('Corps target', `${c.usaceTargetFt} ft`
-      + `<span class="cond-sub"> — what ${esc(c.usaceProject || 'this project')} is supposed to be at today, not a reading</span>`));
+      + `<span class="cond-sub"> — what ${esc(c.usaceProject || 'this project')} is supposed to be at today, not a reading`
+      // BOTH EDGES OF THE BAND. The Corps publishes the floor of the conservation pool beside its
+      // top, and a lake sitting near the floor is a different lake from one near the top.
+      + `${c.usaceFloorFt != null ? `. Conservation band ${c.usaceFloorFt}–${c.usaceTargetFt} ft` : ''}</span>`));
   }
 
   if (c.currentKn != null || c.currentType) {
@@ -311,6 +314,18 @@ function cardHtml(rec, c) {
     out.push(row('Vs guide curve', `${c.tvaVsGuideFt > 0 ? '+' : ''}${c.tvaVsGuideFt} ft`
       + `<span class="cond-sub"> — against today's seasonal target`
       + `${c.tvaGuideFt != null ? ` of ${c.tvaGuideFt} ft` : ''}. TVA runs a curve, not a full pool.</span>`));
+  }
+  // WHERE TVA SAYS IT WILL HOLD THE LAKE, AND THE LINE ABOVE WHICH IT MUST MOVE WATER. Both come
+  // off the same guide-curve row as the target above and were parsed and dropped until 2026-09-24.
+  if (c.tvaExpectedRangeFt || c.tvaFloodGuideFt != null) {
+    const bits3 = [];
+    if (c.tvaExpectedRangeFt) {
+      bits3.push(`expected ${c.tvaExpectedRangeFt[0]}–${c.tvaExpectedRangeFt[1]} ft`);
+    }
+    if (c.tvaFloodGuideFt != null) bits3.push(`flood guide ${c.tvaFloodGuideFt} ft`);
+    out.push(row('TVA intends', bits3.join(' · ')
+      + '<span class="cond-sub"> — the operator’s own range for today. Above the flood guide '
+      + 'TVA has to pass water, which is current below the dam.</span>'));
   }
   if (c.droughtLevels && c.droughtLevels.length) {
     const at = c.droughtLevel;
@@ -476,7 +491,10 @@ function cardHtml(rec, c) {
                : 'observed right now — NOT a forecast';
     const items = (r.items || []).slice(0, 4).map((it) => {
       if (it.cfs != null) return `${Math.round(it.cfs).toLocaleString()} ft³/s ${esc(it.into || '')}`;
-      if (it.arrival) return `${esc(it.arrival)} → ${esc(it.mileMarkerName || it.damName || '')}`;
+      // Duke's `recedes` beside its `arrival`: when the pulse has passed that marker, which for a
+      // kayak is when the water is safe again. Parsed since the arrivals were, shown from 2026-09-24.
+      if (it.arrival) return `${esc(it.arrival)} → ${esc(it.mileMarkerName || it.damName || '')}`
+        + (it.recedes ? `, passed by ${esc(String(it.recedes).slice(11, 16))}` : '');
       // A DUKE DAM SCHEDULE ROW. `no_release` is a STATED zero — Duke writes "No Flow Release"
       // into the datetime field itself — and a row that says so must render, or three days of
       // "they are not generating" reads as three days of no information.
@@ -544,6 +562,8 @@ function cardHtml(rec, c) {
     if (bits.length) out.push(row('Vs Duke guide', bits.join('<br>')));
 
     if (g.drought_stage != null) {
+      // THE LEVEL FEED'S OWN STAGE IS A THIRD WITNESS, and it is dated. See chartDatumShape.
+      const lipDisagrees = c.dukeLipStage != null && c.dukeLipStage !== g.drought_stage;
       out.push(row('Duke drought stage', `<b>Stage ${g.drought_stage}</b>`
         + `<span class="cond-sub"> — Low Inflow Protocol`
         + `${g.drought_since ? `, since ${esc(g.drought_since)}` : ''}. `
@@ -551,8 +571,19 @@ function cardHtml(rec, c) {
         + (g.stage_disagrees
           ? `<br><span class="cond-sub">Duke's own alert text says Stage `
             + `${g.stage_disagrees.from_alert_text}. One of the two is stale.</span>`
+          : '')
+        + (lipDisagrees
+          ? `<br><span class="cond-sub">Duke's level feed says Stage ${c.dukeLipStage}`
+            + `${c.dukeLipStageAsOf ? ` as of ${esc(String(c.dukeLipStageAsOf).slice(0, 10))}` : ''}.</span>`
           : '')));
     }
+  }
+  // NO GUIDE CURVE, BUT THE LEVEL ROW NAMES A STAGE. The operating-range call needs a location id
+  // from the alert feed and can come back empty; the level row is in hand for every Duke lake.
+  if ((!c.dukeGuide || c.dukeGuide.drought_stage == null) && c.dukeLipStage != null) {
+    out.push(row('Duke drought stage', `<b>Stage ${c.dukeLipStage}</b>`
+      + `<span class="cond-sub"> — Low Inflow Protocol, from Duke's level feed`
+      + `${c.dukeLipStageAsOf ? ` as of ${esc(String(c.dukeLipStageAsOf).slice(0, 10))}` : ''}.</span>`));
   }
 
   // WHY THE WATER IS WHERE IT IS, immediately under the schedule it explains. Lake Wateree reads

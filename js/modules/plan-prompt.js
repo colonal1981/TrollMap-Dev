@@ -457,8 +457,13 @@ export function riverPromptBlock(ws, o = {}) {
     ? r.generationNext : JSON.stringify(r.generationNext)}.`);
   if (r.projectedRelease) {
     const n = r.projectedRelease;
+    // `at` IS NOT WHAT DUKE SENDS. A Duke arrival carries `arrival` and `recedes`, so this line
+    // reached the model with no time on it at all -- "Projected release → Highway 1/Highway 601
+    // Landing." -- on the one fact whose whole content is a time. Both are read now.
+    const at = n.at || n.arrival;
     L.push(`Projected release → ${n.mileMarkerName || n.damName || 'downstream'}`
-      + `${n.at ? ` at ${String(n.at).slice(11, 16)}` : ''}`
+      + `${at ? ` at ${String(at).slice(11, 16)}` : ''}`
+      + `${n.recedes ? `, passed by ${String(n.recedes).slice(11, 16)}` : ''}`
       + `${n.cfs != null ? ` (${Math.round(n.cfs).toLocaleString()} ft³/s)` : ''}. `
       + 'A release is a change to the water he is sitting on, not a forecast — work it into the '
       + 'order of the day.');
@@ -1633,8 +1638,9 @@ const CONDITION_FACTS = [
     // A target is not a reading, and the label says so on the same line as the number — the same
     // rule the card has carried since it was written.
     id: 'operatorTarget',
-    keys: ['tvaVsGuideFt', 'tvaGuideFt', 'usaceTargetFt', 'usaceProject', 'dukeGuide',
-           'seasonalDrawdownFt', 'seasonalDrawdownFrom'],
+    keys: ['tvaVsGuideFt', 'tvaGuideFt', 'tvaFloodGuideFt', 'tvaExpectedRangeFt',
+           'usaceTargetFt', 'usaceProject', 'usaceFloorFt', 'dukeGuide',
+           'dukeLipStage', 'dukeLipStageAsOf', 'seasonalDrawdownFt', 'seasonalDrawdownFrom'],
     say(c) {
       const L = [];
       if (isNum(c.tvaVsGuideFt) || isNum(c.tvaGuideFt)) {
@@ -1645,11 +1651,29 @@ const CONDITION_FACTS = [
           + 'the operator intends to move, so expect generation; below it, expect the lake to be '
           + 'held. This is the closest thing there is to a forecast of the current.');
       }
+      // TVA'S OWN RANGE FOR TODAY AND ITS FLOOD LINE, off the same row as the guide above.
+      const er = Array.isArray(c.tvaExpectedRangeFt) ? c.tvaExpectedRangeFt : null;
+      if ((er && er.every(isNum)) || isNum(c.tvaFloodGuideFt)) {
+        L.push('TVA says '
+          + (er && er.every(isNum) ? `it expects to hold the lake between ${er[0]} and ${er[1]} ft today` : '')
+          + (er && er.every(isNum) && isNum(c.tvaFloodGuideFt) ? ', and ' : '')
+          + (isNum(c.tvaFloodGuideFt) ? `its flood guide is ${c.tvaFloodGuideFt} ft — above that it `
+            + 'must pass water, which is current below the dam' : '')
+          + '. The operator’s stated intent, not a reading.');
+      }
       if (isNum(c.usaceTargetFt)) {
         L.push(`Corps target pool ${c.usaceTargetFt} ft — what ${c.usaceProject || 'this project'} `
           + 'is SUPPOSED to be at today, not a reading. A Corps lake has no single full pool: the '
           + 'target moves with the season, so judge the level against this and not against a '
-          + 'remembered number.');
+          + 'remembered number.'
+          + (isNum(c.usaceFloorFt) ? ` The conservation band runs ${c.usaceFloorFt}–${c.usaceTargetFt} ft; `
+            + 'near the floor, the Corps has little conservation storage left to release.' : ''));
+      }
+      // THE LEVEL ROW'S OWN STAGE, where the guide curve carried none. See chartDatumShape.
+      if (isNum(c.dukeLipStage) && !(c.dukeGuide && isNum(c.dukeGuide.drought_stage))) {
+        L.push(`Duke has this basin in Stage ${c.dukeLipStage} of its Low Inflow Protocol`
+          + `${c.dukeLipStageAsOf ? ` (level feed, ${String(c.dukeLipStageAsOf).slice(0, 10)})` : ''}`
+          + ' — the operating floor drops with the stage and recreation releases may be cut.');
       }
       const g = c.dukeGuide;
       if (g && (isNum(g.vs_target_ft) || g.vs_same_date)) {

@@ -11,7 +11,7 @@ import { SPECIES_MIDLANDS_SANTEE, SPECIES_UPSTATE, SPECIES_COASTAL_SALTWATER, SP
 import { handleGisRoute, flagIsYes, hasText, ARCGIS_BUILD } from './core/arcgis.js';
 import { RAMP_SOURCES } from './core/ramp-sources.js';
 import { handleWaterRoute } from './water.js';
-import { handleConditions, handleHazards, dukeBasinFor, parseActiveRun, activeRunForWater, riverBindings } from './conditions.js';
+import { handleConditions, handleHazards, dukeBasinFor, parseActiveRun, activeRunForWater, riverBindings, riverArrivals, easternClock } from './conditions.js';
 import { handleCameras } from './cameras.js';
 import { handleAlerts, runAlertSweep } from './alerts.js';
 import { handleReports } from './reports.js';
@@ -275,16 +275,28 @@ async function getRiver(key, opts = {}) {
   if (basin) {
     const basinRow = (roster || []).find((r) => Number(r.RiverId ?? r.riverId) === basin) || null;
     const sched = await fetchDukeFlowArrivals(basin).catch(() => null);
-    if (sched && sched.arrivals.length) {
+    // THIS WATER'S ARRIVALS, NOT THE BASIN'S, and the ones passing now as well as the ones due.
+    // See riverArrivals() in conditions.js: `next` used to be the basin's first listing on any
+    // reach, and a surge that had ARRIVED fell out of the check for the hours it was passing.
+    const mine = riverArrivals(sched, cfg.label || key, gaugeNames, basinRow, Date.now());
+    if (mine.passing.length || mine.upcoming.length) {
       out.dam_schedule = {
         type: "duke_flow_arrivals",
         operator: "Duke Energy",
         basinId: basin,
         basinName: sched.basinName,
         lastUpdated: sched.lastUpdated,
-        next: sched.arrivals[0],
-        upcoming: sched.arrivals.slice(0, 6),
+        next: mine.upcoming[0] || null,
+        upcoming: mine.upcoming.slice(0, 6),
+        passing_now: mine.passing,
+        arrivals_in_basin: mine.in_basin,
         source: sched.source
+      };
+    } else if (sched && sched.arrivals.length) {
+      out.dam_schedule_elsewhere = {
+        arrivals_in_basin: sched.arrivals.length,
+        why: `Duke published ${sched.arrivals.length} arrival(s) on the ${sched.basinName || 'basin'} `
+           + `schedule and none of them names ${cfg.label || key} or a gauge bound to it.`
       };
     }
 
@@ -399,16 +411,42 @@ async function getRiver(key, opts = {}) {
     } else if (out.dam_schedule?.type === "duke_flow_arrivals" && out.dam_schedule.next) {
       const next = out.dam_schedule.next;
       const minutesUntil = (next.arrivalEpoch - Date.now()) / 6e4;
+      // Duke's own recession time rides on the warning: when to be off AND when it is over.
+      const passedBy = easternClock(next.recedesEpoch);
+      const until = passedBy ? ` Duke has it passed by ~${passedBy} ET.` : "";
       if (minutesUntil > 0 && minutesUntil < 120) {
         const order = { "go": 0, "caution": 1, "no-go": 2 };
         if (order[assessment.status] < 2) assessment.status = "no-go";
         assessment.reasons.unshift(
-          `\u{1F6D1} SCHEDULED DAM RELEASE arrives at ${next.mileMarkerName} in ${Math.round(minutesUntil)} min (~${new Date(next.arrivalEpoch).toLocaleTimeString("en-US", { timeZone: "America/New_York" })} ET). Severity decreases with distance from dam \u2014 pass your coordinates with ?lat=X&lon=Y for a location-specific estimate.`
+          `\u{1F6D1} SCHEDULED DAM RELEASE arrives at ${next.mileMarkerName} in ${Math.round(minutesUntil)} min (~${new Date(next.arrivalEpoch).toLocaleTimeString("en-US", { timeZone: "America/New_York" })} ET).${until} Severity decreases with distance from dam \u2014 pass your coordinates with ?lat=X&lon=Y for a location-specific estimate.`
         );
       } else if (minutesUntil > 0 && minutesUntil < 360) {
         if (assessment.status === "go") assessment.status = "caution";
         assessment.reasons.unshift(
-          `\u26A0 Dam release scheduled to arrive at ${next.mileMarkerName} at ~${new Date(next.arrivalEpoch).toLocaleTimeString("en-US", { timeZone: "America/New_York" })} ET (in ${Math.round(minutesUntil / 60 * 10) / 10}h). For location-specific timing, pass your coordinates with ?lat=X&lon=Y.`
+          `\u26A0 Dam release scheduled to arrive at ${next.mileMarkerName} at ~${new Date(next.arrivalEpoch).toLocaleTimeString("en-US", { timeZone: "America/New_York" })} ET (in ${Math.round(minutesUntil / 60 * 10) / 10}h).${until} For location-specific timing, pass your coordinates with ?lat=X&lon=Y.`
+        );
+      }
+    }
+    // A RELEASE THAT HAS ARRIVED AND NOT YET RECEDED. The branches above only look forward, so
+    // before 2026-09-24 the warning vanished at the moment the surge reached the marker and stayed
+    // gone for the hours it took to pass. Without a position it is as serious as one due within
+    // two hours -- the rule above -- because it is here; with a position, the estimate for that
+    // position already spoke, and this is the marker's fact beside it.
+    const passing = (out.dam_schedule && out.dam_schedule.passing_now) || [];
+    if (passing.length) {
+      const p = passing[0];
+      const by = easternClock(p.recedesEpoch);
+      const left = Math.max(0, Math.round((p.recedesEpoch - Date.now()) / 6e4));
+      const order = { "go": 0, "caution": 1, "no-go": 2 };
+      if (out.user_location?.minutes_until_surge_at_user == null) {
+        if (order[assessment.status] < 2) assessment.status = "no-go";
+        assessment.reasons.unshift(
+          `\u{1F6D1} A DAM RELEASE IS PASSING ${p.mileMarkerName} NOW — it arrived ~${easternClock(p.arrivalEpoch)} ET and Duke has it receded there by ~${by} ET (${left} min). Stay off until then. Pass your coordinates with ?lat=X&lon=Y for your own position.`
+        );
+      } else {
+        if (assessment.status === "go") assessment.status = "caution";
+        assessment.reasons.push(
+          `⚠ Duke has a release passing ${p.mileMarkerName} now, receded there by ~${by} ET (${left} min).`
         );
       }
     }

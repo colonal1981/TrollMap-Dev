@@ -117,6 +117,9 @@ export function readConditions(j) {
     ndbc: null,
     usaceTargetFt: null,
     usaceProject: null,
+    // The floor of the Corps' conservation band. The top is the target above; the Corps
+    // publishes both edges and only one was read. See usaceShape in Worker/conditions.js.
+    usaceFloorFt: null,
     flowCfs: null,
     flowGauge: null,
     flowGaugeKm: null,
@@ -166,6 +169,14 @@ export function readConditions(j) {
     generationNext: null,
     tvaVsGuideFt: null,
     tvaGuideFt: null,
+    // TVA's FLOOD guide, a second and higher curve: above it the operator must move water.
+    tvaFloodGuideFt: null,
+    // [low, high] -- where TVA says it expects to hold the lake. The operator's own statement of
+    // intent, which is the nearest thing to a forecast of the current this app has.
+    tvaExpectedRangeFt: null,
+    // Duke's Low Inflow Protocol stage off the level row (chartDatumShape), dated.
+    dukeLipStage: null,
+    dukeLipStageAsOf: null,
     droughtLevel: null,
     droughtLevels: null,
     salinityPpt: null,
@@ -252,6 +263,12 @@ export function readConditions(j) {
     // was running higher than 24 of 30 readings for the week: a barge, and planned maintenance.
     out.operatorMessage = cd.operator_message || null;
     out.operatorMessages = Array.isArray(cd.operator_messages) ? cd.operator_messages : [];
+    // Duke's Low Inflow Protocol stage off the level row itself -- see chartDatumShape. null is
+    // "no protocol in force", which the card does not print; undefined is "not a Duke lake".
+    if ('lip_stage' in cd) {
+      out.dukeLipStage = Number.isFinite(cd.lip_stage) ? cd.lip_stage : null;
+      out.dukeLipStageAsOf = cd.lip_stage_as_of || null;
+    }
   }
   if (w.operator) {
     if (w.operator.observed_at) out.observedAt = w.operator.observed_at;
@@ -293,6 +310,9 @@ export function readConditions(j) {
   if (w.usace && Number.isFinite(w.usace.conservation_pool_ft)) {
     out.usaceTargetFt = w.usace.conservation_pool_ft;
     out.usaceProject = w.usace.project || null;
+  }
+  if (w.usace && Number.isFinite(w.usace.bottom_of_conservation_ft)) {
+    out.usaceFloorFt = w.usace.bottom_of_conservation_ft;
   }
   // FLOW AND STAGE, for a river. The pool gauge is the lake; on a river the nearest gauge is
   // the water you are on. Flow is the number that decides a river trip and it is separate from
@@ -435,6 +455,12 @@ export function readConditions(j) {
     if (Number.isFinite(tva.tailwater_ft)) out.tvaTailwaterFt = tva.tailwater_ft;
     if (Number.isFinite(tva.vs_guide_ft)) out.tvaVsGuideFt = tva.vs_guide_ft;
     if (Number.isFinite(tva.guide_curve_ft)) out.tvaGuideFt = tva.guide_curve_ft;
+    // Parsed by tvaShape since it was written and read by nothing until 2026-09-24.
+    if (Number.isFinite(tva.flood_guide_ft)) out.tvaFloodGuideFt = tva.flood_guide_ft;
+    if (Array.isArray(tva.expected_range_ft) && tva.expected_range_ft.length === 2
+        && tva.expected_range_ft.every(Number.isFinite)) {
+      out.tvaExpectedRangeFt = [...tva.expected_range_ft];
+    }
   }
 
   // ── The Corps' drought state ────────────────────────────────────────────────────────────

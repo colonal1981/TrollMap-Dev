@@ -2833,6 +2833,12 @@ document.getElementById('planRamp')?.addEventListener('change', e=>{
   if(coords && state.MAP_OK) state.MAP.setView(coords, 15);
 });
 
+/** "11:48 PM" in Eastern time, from an epoch -- Duke's times are Eastern and so is the reader. */
+export function clockET(epochMs){
+  if(!Number.isFinite(epochMs)) return '';
+  return new Date(epochMs).toLocaleTimeString('en-US',{timeZone:'America/New_York',hour:'numeric',minute:'2-digit'});
+}
+
 window.syncPlanRiverData = async function syncPlanRiverData(){
   const sel = document.getElementById('planLake');
   const def = getPlanRiverDef(sel?.value);
@@ -2892,15 +2898,28 @@ window.syncPlanRiverData = async function syncPlanRiverData(){
     } else if(d.dam_schedule?.next?.arrivalEpoch){
       const mins=Math.round((d.dam_schedule.next.arrivalEpoch-Date.now())/60000);
       const when=new Date(d.dam_schedule.next.arrivalEpoch).toLocaleString('en-US',{timeZone:'America/New_York',weekday:'short',hour:'numeric',minute:'2-digit'});
-      surge = `${when} ET at ${d.dam_schedule.next.mileMarkerName} (${mins>0?'in ':''}${mins} min)`;
+      surge = `${when} ET at ${d.dam_schedule.next.mileMarkerName} (${mins>0?'in ':''}${mins} min)`
+            + (d.dam_schedule.next.recedesEpoch ? `, passed by ${clockET(d.dam_schedule.next.recedesEpoch)}` : '');
+    }
+    // PASSING NOW OUTRANKS WHAT IS DUE. Duke's recession time was parsed and read by nothing, so a
+    // surge that had arrived vanished from this line for the hours it was passing -- the Worker
+    // now sends `passing_now` and this says so, with when it will have passed.
+    const passingNow=(d.dam_schedule?.passing_now||[])[0];
+    if(passingNow){
+      surge = `PASSING ${passingNow.mileMarkerName} NOW — passed by ${clockET(passingNow.recedesEpoch)} ET`
+            + (surge ? `; next: ${surge}` : '');
     }
     put('planRiverSurgeEta', surge);
     const scheduleLines=[];
     if(d.dam_schedule?.type==='duke_flow_arrivals'){
       scheduleLines.push('Duke scheduled flow arrivals:');
+      (d.dam_schedule.passing_now||[]).forEach(ev=>{
+        scheduleLines.push(`• passing ${ev.mileMarkerName} now (${ev.damName}), passed by ${clockET(ev.recedesEpoch)} ET`);
+      });
       (d.dam_schedule.upcoming||[]).slice(0,6).forEach(ev=>{
         const when=new Date(ev.arrivalEpoch).toLocaleString('en-US',{timeZone:'America/New_York',weekday:'short',hour:'numeric',minute:'2-digit'});
-        scheduleLines.push(`• ${when} ET — ${ev.mileMarkerName} (${ev.damName})`);
+        scheduleLines.push(`• ${when} ET — ${ev.mileMarkerName} (${ev.damName})`
+          + (ev.recedesEpoch ? `, passed by ${clockET(ev.recedesEpoch)}` : ''));
       });
     } else if(d.dam_schedule?.type==='dominion_color_status'){
       scheduleLines.push(`Dominion Lower Saluda color status: current ${d.dam_schedule.currentColor||'n/a'}, planned ${d.dam_schedule.plannedColor||'n/a'}`);

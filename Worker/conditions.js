@@ -2142,6 +2142,63 @@ export function nextArrivalPerMarker(arrivals, nowMs) {
 }
 
 /**
+ * THE RELEASES PASSING A MARKER RIGHT NOW: arrived, and not yet receded.
+ *
+ * Duke publishes `Recedes` beside every `Arrival` -- on the 2026-09-24 Wateree release, arrival
+ * at the Highway 1/Highway 601 Landing 18:48 and recedes 23:48, five hours later -- and until
+ * 2026-09-24 nothing read it. So the go/no-go looked only FORWARD: a surge due in the next two
+ * hours made it no-go, and the moment that surge actually arrived it dropped out of the check
+ * and the verdict went back to whatever the gauge said. For five hours the river was carrying
+ * the pulse the app had just warned about, and the app had stopped mentioning it. For a kayak,
+ * recedes is when the water is safe again, and it is Duke's own number.
+ *
+ * Called on the arrivals for THIS water, never on a basin's: Morganton Greenway is on the
+ * Catawba in North Carolina, the far end of the chain from the Wateree, and its surge is not a
+ * fact about it. Sorted by when each has passed, last first, so the caller's "back down by" is
+ * the later of any overlapping pulses.
+ */
+export function releasePassingNow(arrivals, nowMs) {
+  const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+  return (arrivals || [])
+    .filter((a) => a && Number.isFinite(a.arrivalEpoch) && Number.isFinite(a.recedesEpoch)
+                 && a.arrivalEpoch <= now && now < a.recedesEpoch)
+    .sort((x, y) => y.recedesEpoch - x.recedesEpoch);
+}
+
+/**
+ * THE ARRIVALS /river MAY SPEAK ABOUT: this water's, split into passing now and still to come.
+ *
+ * /river took `arrivals[0]` of the whole basin -- whichever marker Duke listed first, on any
+ * reach -- while /conditions has filtered to the water's own markers since 2026-08-16. The same
+ * filter now serves both, so the two surfaces cannot give different answers about one river.
+ * `upcoming` keeps the next arrival per marker; `passing` is computed BEFORE that collapse,
+ * because a surge passing now is replaced by tomorrow's at the same marker the moment it is
+ * collapsed.
+ */
+export function riverArrivals(sched, waterName, gaugeNames = [], basinRow = null, nowMs) {
+  const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+  if (!sched || !Array.isArray(sched.arrivals) || !sched.arrivals.length) {
+    return { passing: [], upcoming: [], in_basin: 0, agrees: false };
+  }
+  const agrees = dukeBasinAgrees(sched, waterName, gaugeNames);
+  const mine = agrees ? arrivalsForWater(sched, waterName, gaugeNames, basinRow) : [];
+  return {
+    passing: releasePassingNow(mine, now),
+    upcoming: nextArrivalPerMarker(mine, now)
+      .filter((a) => Number.isFinite(a.arrivalEpoch) && a.arrivalEpoch > now),
+    in_basin: sched.arrivals.length,
+    agrees,
+  };
+}
+
+/** "6:48 PM" in Eastern time, for a message a person reads on the water. */
+export function easternClock(epochMs) {
+  if (!Number.isFinite(epochMs)) return null;
+  return new Date(epochMs).toLocaleTimeString('en-US',
+    { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' });
+}
+
+/**
  * The arrivals that name this water or one of its gauges.
  *
  * THE BASIN'S OWN RIVER NAME CANNOT DO THE FILTERING. Every gauge on this chain is named
@@ -4526,6 +4583,17 @@ export function chartDatumShape(b, sources = {}) {
     if (d.specialMessage) out.operator_message = d.specialMessage;
     if (Array.isArray(d.specialMessages) && d.specialMessages.length) {
       out.operator_messages = d.specialMessages;
+    }
+    // THE LOW INFLOW PROTOCOL STAGE, OFF THE SAME ROW. normalizeDukeRow has decoded it since
+    // 2026-09-23 (-1 is "none declared", not a stage) and nothing read it: the card's stage came
+    // only from /lakes/operating-range, a second call per lake that needs a location id from the
+    // alert feed first. This row is already in hand for every Duke lake that has a level, so a
+    // lake whose id cannot be found still gets its stage, and the card can say when the two
+    // disagree. `lip_stage_raw` keeps -1 apart from an absent field, as the row does.
+    if (d.lowInflowStage != null || d.lowInflowStageRaw != null) {
+      out.lip_stage = d.lowInflowStage;
+      out.lip_stage_raw = d.lowInflowStageRaw;
+      out.lip_stage_as_of = d.date || null;
     }
     return out;
   }
