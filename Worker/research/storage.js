@@ -482,7 +482,8 @@ async function handleResearchPackageFile(env, lakeId, filename) {
 }
 
 async function handleEnhancedLakeIntel(lakeName, env) {
-  // merges curated LAKE_INTEL with researched profile if exists
+  // The live context (source registry, scraped report, LakeMonster) with the researched profile
+  // beside it. The curated LAKE_INTEL half went on 2026-09-24; the research profile is the profile.
   const key = lakeKeyFromName(lakeName);
   const curated = await getLakeIntel(lakeName);
   let researched = null;

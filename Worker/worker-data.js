@@ -1,6 +1,6 @@
 
 // worker-data.js — Static lake/river data extracted from trollmap-worker.js
-// LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS
+// LAKES, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS
 
 import { matchWaterName, reportTokens } from './reports.js';
 
@@ -22,116 +22,14 @@ var LAKES = {
   hartwell: { sepa: "hartwell", pool: "02187010", normalPool: 660, ahq: "lake-hartwell" },
   russell: { sepa: "russell", pool: "02191743", normalPool: 475, ahq: "lake-russell" }
 };
-var LAKE_INTEL = {
-  wateree: {
-    displayName: "Lake Wateree",
-    primarySportFish: ["Largemouth bass", "Striped bass", "Catfish", "Crappie", "White perch"],
-    forage: ["Threadfin shad", "Gizzard shad", "Blueback herring (system-dependent)", "White perch"],
-    stocking: "Managed as a Catawba-Wateree reservoir; striper/hybrid regulations and stocking can change, verify SCDNR before harvest.",
-    spottedBass: "Spotted bass are present in the broader Catawba system but Wateree is still generally discussed as largemouth/striper/catfish water; verify local tournament reports for current spotted-bass pressure.",
-    habitat: "Classic river-run reservoir: creek arms, rocky points, docks, riprap, bridge pilings, humps, channel swings, blowdowns, brush piles, and lower-lake bait schools.",
-    bottom: "Mix of clay, rock, gravel, sand, and old river/creek-channel silt. Hard bottom around points/riprap is key for bass; deeper channel edges for stripers.",
-    hazards: "Drawdown exposes shallow shoals and long points. Wind stacks up on the main lake. Below Wateree Dam is a separate river/tailwater hazard zone with generation surges.",
-    seasonalPattern: "Spring: points/backs of creeks. Summer: main-lake humps/channel edges and low-light schooling. Fall: bait migration. Winter: deeper bait and slower presentations.",
-    tacticalNotes: ["Use electronics to follow bait before committing to a trolling pass.", "Wind-blown points and bridge funnels can concentrate bait.", "Confirm current Duke lake stage and ramp usability before dawn launches."]
-  },
-  murray: {
-    displayName: "Lake Murray",
-    primarySportFish: ["Striped bass", "Largemouth bass", "Catfish", "Crappie", "Bream"],
-    forage: ["Blueback herring", "Threadfin shad", "Gizzard shad"],
-    stocking: "Known regional striper reservoir; verify current SCDNR stocking/harvest notices and seasonal closures before targeting/keeping fish.",
-    spottedBass: "Spotted bass are not the defining fishery like Keowee/Hartwell; largemouth and stripers are the headline sport fisheries.",
-    habitat: "Deep clear lower lake near the dam, long points, humps, shoals, docks, riprap, creek arms, bridges, and offshore bait schools.",
-    bottom: "Mostly clay/sand with rock, gravel, and riprap; lower-lake clearer water and offshore structure matter heavily.",
-    hazards: "Recreational boat traffic can be intense. Wind across open lower lake gets rough for kayaks. Drawdowns expose shallow points and shoals.",
-    seasonalPattern: "Spring shoreline/points; summer early/late striper schooling and deeper bait; fall herring/shad movement; winter deep fish and birds/bait clues.",
-    tacticalNotes: ["Blueback herring behavior drives a lot of Murray striper/bass movement.", "Plan around boat traffic and wind fetch.", "Use USGS 02168500 for reservoir pool, not the downstream Saluda gauge."]
-  },
-  marion: {
-    displayName: "Lake Marion",
-    primarySportFish: ["Largemouth bass", "Striped bass", "Catfish", "Crappie", "Bream"],
-    forage: ["Threadfin shad", "Gizzard shad", "Blueback herring in parts of Santee-Cooper system", "Panfish"],
-    stocking: "Santee Cooper system management changes seasonally; striped bass rules/closures are especially important to verify.",
-    spottedBass: "Spotted bass are not the main story; largemouth, catfish, crappie, bream, and stripers dominate angler focus.",
-    habitat: "Very shallow, sprawling, stump-filled reservoir with cypress, grass, swamp edges, old river runs, standing/flooded timber, canals, flats, drops, and brush.",
-    bottom: "Mud, silt, sand, old river-channel edges, stump fields, swamp timber, and shallow flats. Hard edges/ditches can be high-value when water moves.",
-    hazards: "Major stump and standing timber hazard lake. Navigation can be dangerous outside marked channels, especially at low water or in wind/fog.",
-    seasonalPattern: "Spring shallow cover/spawning pockets; summer current/river runs and shaded timber; fall bait movement; winter deep holes/creek channels and crappie structure.",
-    tacticalNotes: ["Treat it like a navigation lake first and a fishing lake second.", "Use marked channels and idle in unfamiliar stump fields.", "Wind can make broad shallow water rough quickly."]
-  },
-  moultrie: {
-    displayName: "Lake Moultrie",
-    primarySportFish: ["Catfish", "Largemouth bass", "Striped bass", "Crappie", "Bream"],
-    forage: ["Shad", "Herring", "Panfish"],
-    stocking: "Part of Santee Cooper; verify current SCDNR/Santee Cooper striper rules and stocking notices.",
-    spottedBass: "Not generally a spotted-bass takeover lake; focus is catfish, largemouth, crappie, bream, and stripers.",
-    habitat: "Broad bowl-like lake with grass edges, canals, dikes, deep open-water areas, shell/hard spots, drops, and Santee-Cooper current influences.",
-    bottom: "Mud/sand/shell/hard spots with old inundated features and canal/dike influences.",
-    hazards: "Open-water wind fetch is serious for kayaks. Current/wind around canal/dike areas can surprise. Verify lake level and wind before crossing.",
-    seasonalPattern: "Catfish year-round on ledges/drifts; bass around grass/hard edges; crappie around brush/canals; striper patterns depend heavily on season/rules.",
-    tacticalNotes: ["Wind direction matters as much as lake level.", "Use USGS 02172000 for Moultrie pool, not downstream/tailrace gauges."]
-  },
-  keowee: {
-    displayName: "Lake Keowee",
-    primarySportFish: ["Spotted bass", "Largemouth bass", "Crappie", "Catfish"],
-    forage: ["Blueback herring", "Threadfin shad"],
-    stocking: "Clear Duke reservoir; bass fishery is strongly herring-driven. Verify SCDNR for current creel/length rules.",
-    spottedBass: "Yes \u2014 spotted bass are a dominant/major population and can outcompete largemouth in clear herring lakes. Expect offshore/herring-oriented behavior.",
-    habitat: "Deep clear water, steep points, docks, cane/brush, rock, humps, shoals, long tapering points, and blueback-oriented offshore zones.",
-    bottom: "Rock, clay, sand, gravel, steep banks, and deep clear-water structure.",
-    hazards: "Clear water demands long casts/light line. Boat traffic and steep banks. Rapid weather/wind on open water.",
-    seasonalPattern: "Spring herring spawn points; summer deep docks/brush/offshore; fall schooling; winter vertical/deep finesse.",
-    tacticalNotes: ["Think spotted bass + blueback herring first.", "Use natural colors and electronics-heavy offshore strategy."]
-  },
-  hartwell: {
-    displayName: "Lake Hartwell",
-    primarySportFish: ["Spotted bass", "Largemouth bass", "Striped bass", "Hybrid bass", "Catfish", "Crappie"],
-    forage: ["Blueback herring", "Threadfin shad", "Gizzard shad"],
-    stocking: "Large Savannah River reservoir with striper/hybrid management; verify GA/SC regulations depending where you fish.",
-    spottedBass: "Strong spotted bass population; blueback herring has shifted many bass patterns offshore and roam-oriented.",
-    habitat: "Huge clear-to-stained reservoir with timber in upper arms, docks, clay/rock points, humps, creek channels, bridges, brush, and cane piles.",
-    bottom: "Clay, rock, gravel, sand, channel silt, and timbered creek/river areas.",
-    hazards: "Big water, boat traffic, state-line regulations, standing timber in some areas, and long runs in wind.",
-    seasonalPattern: "Herring spawn in spring; offshore brush/points in summer; schooling in fall; deep timber/ditches in winter.",
-    tacticalNotes: ["Find bait first.", "Spotted bass and stripers both track herring heavily.", "Know whether you are in SC or GA for license/rules."]
-  },
-  thurmond: {
-    displayName: "Clarks Hill / J. Strom Thurmond Lake",
-    primarySportFish: ["Striped bass", "Hybrid bass", "Largemouth bass", "Crappie", "Catfish"],
-    forage: ["Blueback herring", "Threadfin shad", "Gizzard shad"],
-    stocking: "USACE/Savannah River reservoir with striper/hybrid stocking/management; verify GA/SC rules.",
-    spottedBass: "Spotted bass exist in the region but Thurmond is more commonly framed around largemouth, stripers/hybrids, crappie, and catfish than a spotted-bass takeover lake.",
-    habitat: "Large reservoir with standing timber in many arms, points, humps, bridges, creek channels, brush piles, hydrilla/grass where present, and deep lower-lake water.",
-    bottom: "Clay, rock, sand, gravel, channel silt, and extensive timbered structure.",
-    hazards: "Standing timber, long open-water runs, low-water ramp issues, and state-line regulations.",
-    seasonalPattern: "Spring points/pockets; summer deep humps/timber/thermocline; fall schooling; winter deep bait and channel structure.",
-    tacticalNotes: ["Excellent electronics lake.", "For stripers/hybrids, bait depth and oxygen/thermocline matter."]
-  },
-  russell: {
-    displayName: "Lake Russell",
-    primarySportFish: ["Spotted bass", "Largemouth bass", "Striped bass", "Crappie", "Catfish"],
-    forage: ["Blueback herring", "Threadfin shad"],
-    stocking: "USACE Savannah River lake with relatively stable pool; verify GA/SC rules and striper management notices.",
-    spottedBass: "Spotted bass are important and often strong due to clear water/herring-style patterns.",
-    habitat: "Deep clear reservoir, standing timber, steep rocky banks, points, humps, creek channels, and limited shoreline development.",
-    bottom: "Rock, clay, gravel, sand, and timbered old channels.",
-    hazards: "Standing timber and deep clear water. State-line/license considerations.",
-    seasonalPattern: "Herring/point bite in spring; deep timber/offshore in summer/winter; schooling in fall.",
-    tacticalNotes: ["Stable water means fish may relate more to bait/season than drawdown.", "Timber edges are key."]
-  },
-  jocassee: {
-    displayName: "Lake Jocassee",
-    primarySportFish: ["Trout", "Smallmouth bass", "Spotted bass", "Largemouth bass"],
-    forage: ["Blueback herring", "Threadfin shad", "Alewife/herring-type forage"],
-    stocking: "Deep cold clear reservoir with trout management; verify SCDNR trout/bass rules.",
-    spottedBass: "Spotted bass are present; deep clear-water tactics matter more than shallow power fishing much of the year.",
-    habitat: "Extremely deep, clear, steep, rocky reservoir with timber, cliffs, waterfalls, and cold-water zones.",
-    bottom: "Rock, steep clay/stone banks, deep timber, and very deep basins.",
-    hazards: "Depth drops fast. Cold water, sudden mountain weather, limited access, and long paddle distances.",
-    seasonalPattern: "Trout/cold-water patterns, deep vertical electronics work, and clear-water finesse bass tactics.",
-    tacticalNotes: ["Safety first: cold deep water and limited shoreline access.", "Electronics and downrigger/vertical presentations shine."]
-  }
-};
+// LAKE_INTEL WAS HERE UNTIL 2026-09-24 -- nine hand-written lake profiles (wateree, murray,
+// marion, moultrie, keowee, hartwell, thurmond, russell, jocassee). Ryan ruled it redundant on
+// 2026-08-15: every field lands in the research profile, and all nine have one. Measured the day it
+// went: each of the nine carries predatorSpecies (8-20), a habitat block and trollingIntelligence
+// (7-17 species), and lake-intel.js reads those first and fell back to this table only for a block
+// the profile lacked -- which none of the nine does. Its one live use was hidden: fetchLakeMonsterIntel
+// built its URL from this table's displayName, so LAKEMONSTER_IDS now carries LakeMonster's own page
+// path instead. See docs/claude WHAT_WAS_NEVER_EXPANDED_2026-08-15.md.
 async function fetchText(url, opts = {}) {
   const res = await fetch(url, {
     cf: { cacheTtl: 900, cacheEverything: true },
@@ -1304,17 +1202,26 @@ var LAKE_INTEL_SOURCE_REGISTRY = {
     ]
   }
 };
+// LAKEMONSTER'S OWN PAGE FOR EACH LAKE -- state, slug and id, the path its site resolves to. A
+// foreign key, not data: nothing in the registry can produce another site's URL.
+//
+// IT WAS A BARE ID, AND THE URL AROUND IT WAS GUESSED. fetchLakeMonsterIntel() built
+// `/lake/SC/<LAKE_INTEL displayName>-water-temperature-<id>`, so it leaned on a table ruled redundant
+// and hard-coded one state for all five. Measured 2026-09-24 by fetching each: Wateree, Murray and
+// Keowee resolved; Hartwell did not (LakeMonster files it under Georgia) and Norman did not (North
+// Carolina, and it had no LAKE_INTEL name, so it asked for "norman"). A wrong path answers 200 with a
+// generic page that the temperature regex then read as nothing. These are the pages each resolves to.
 var LAKEMONSTER_IDS = {
-  wateree: 1072,
-  murray: 1071,
-  keowee: 1068,
-  hartwell: 1029,
-  norman: 232
+  wateree: "South-Carolina/Lake-Wateree-1072",
+  murray: "South-Carolina/Lake-Murray-1071",
+  keowee: "South-Carolina/Lake-Keowee-1068",
+  hartwell: "Georgia/Lake-Hartwell-1029",
+  norman: "North-Carolina/Lake-Norman-232"
 };
 async function fetchLakeMonsterIntel(key) {
-  const id = LAKEMONSTER_IDS[key];
-  if (!id) return null;
-  const url = `https://lakemonster.com/lake/SC/${encodeURIComponent((LAKE_INTEL[key]?.displayName || key).replace(/\s+/g, "-"))}-water-temperature-${id}`;
+  const page = LAKEMONSTER_IDS[key];
+  if (!page) return null;
+  const url = `https://lakemonster.com/lake/${page}`;
   try {
     const r = await fetchText(url);
     if (!r.ok || !r.text) return null;
@@ -1948,10 +1855,11 @@ async function getLakeIntel(lakeName) {
     String(lakeName || "").toLowerCase().includes('port royal')
   );
 
+  // No curated lake profile any more -- LAKE_INTEL is gone, see the note where it was. A lake's
+  // profile is its RESEARCH profile, which handleEnhancedLakeIntel() attaches beside this and
+  // lake-intel.js reads first; what is built here is the checklist for a water with none.
   let profile;
-  if (LAKE_INTEL[key]) {
-    profile = LAKE_INTEL[key];
-  } else if (isCoastal) {
+  if (isCoastal) {
     profile = {
       displayName: lakeName || key || "Coastal Zone",
       primarySportFish: ["Red Drum (Redfish)", "Spotted Seatrout (Speckled Trout)", "Southern Flounder"],
@@ -2014,7 +1922,7 @@ async function getLakeIntel(lakeName) {
     sourceRegistry,
     sources,
     timestamp: (new Date()).toISOString(),
-    confidence: (LAKE_INTEL[key] || isCoastal) ? "curated_profile_plus_live_scrape_when_available" : "generic_unverified_profile"
+    confidence: isCoastal ? "curated_profile_plus_live_scrape_when_available" : "generic_unverified_profile"
   };
 }
 var RIVERS = {
@@ -2275,4 +2183,4 @@ var RIVERS = {
   }
 };
 
-export { easternOffsetFor, normalizeDukeRow, dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun, fetchDukeAccessAlerts, fetchDukeOperatingRange, LAKES, LAKE_INTEL, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, seriesRank, rdbSeriesDescriptions, newerStamp, applyElevation, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake };
+export { easternOffsetFor, normalizeDukeRow, dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun, fetchDukeAccessAlerts, fetchDukeOperatingRange, LAKES, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, seriesRank, rdbSeriesDescriptions, newerStamp, applyElevation, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake };

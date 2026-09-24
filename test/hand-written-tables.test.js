@@ -72,7 +72,9 @@ const DECLARED = [
 
   // ── foreign keys: cannot be derived, CAN be verified ──────────────────────────────────────
   ['Worker/worker-data.js', 'LAKEMONSTER_IDS', 5, 'foreign-key',
-   "another site's slug, used to build a URL. Nothing in the registry replaces it."],
+   "another site's page path, used as the URL. Nothing in the registry replaces it. A bare id "
+   + 'until 2026-09-24, with the rest of the URL guessed from LAKE_INTEL and one hard-coded state; '
+   + 'measured that day, 2 of the 5 guessed URLs (Hartwell, Norman) landed on a generic page.'],
   // GONE, 2026-08-25. Was CWMS_LOCATIONS, then CWMS_PROJECT: six typed rows naming the Corps
   // project behind five lakes, reachable only through `path === "/lake"` -- a route with no
   // caller anywhere in js/. Ryan, the same day: *"nothing hand written... everything
@@ -85,11 +87,14 @@ const DECLARED = [
   // usaceRelease() now reads that same derived project for the release. Nothing typed remains.
 
   // ── data: belongs in the registry or the research pipeline ────────────────────────────────
-  ['Worker/worker-data.js', 'LAKE_INTEL', 9, 'data',
-   'superseded field-for-field by the research pipeline, and all 9 have verified profiles. '
-   + 'On the deletion tab since 2026-08-15.'],
+  // LAKE_INTEL WAS HERE -- 9 lakes, 'data', on the deletion tab since 2026-08-15. GONE 2026-09-24:
+  // superseded field-for-field by the research pipeline, and each of the nine carries species, a
+  // habitat block and trollingIntelligence, which lake-intel.js reads first. Its one live use was
+  // fetchLakeMonsterIntel()'s URL, now LAKEMONSTER_IDS' own page path.
   ['Worker/worker-data.js', 'LAKE_INTEL_SOURCE_REGISTRY', 11, 'data',
-   'per-lake source lists behind LAKE_INTEL. Goes with it.'],
+   'per-lake source lists that sat behind LAKE_INTEL. It did NOT go with it on 2026-09-24: its '
+   + '`default` entry is the base source list every lake\'s briefing prints, not nine lakes\' data. '
+   + 'The ten per-lake entries are the part still to derive or drop.'],
   ['Worker/worker-data.js', 'LAKE_CLARITY_PROFILES', 6, 'data',
    'SPATIAL and not replaceable by the profile schema: per-zone clarity within one lake. '
    + 'The research profile carries one clarity value for the whole water.'],
