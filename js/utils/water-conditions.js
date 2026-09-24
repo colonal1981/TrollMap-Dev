@@ -553,6 +553,11 @@ export function readConditions(j) {
   // only the first one names a table entry that needs fixing. It reaches the card so a wrong
   // hand-typed basin id is visible rather than looking like a river Duke does not publish.
   out.releasesRefused = w.releases_refused || null;
+  // Duke's release-calendar PDFs for this water's location, tied by a gauge Duke names. See
+  // dukeCalendarFor() in Worker/conditions.js.
+  out.dukeCalendars = (w.duke_calendar && Array.isArray(w.duke_calendar.calendars))
+    ? w.duke_calendar.calendars : [];
+  out.dukeCalendarMatchedOn = (w.duke_calendar && w.duke_calendar.matched_on) || [];
 
   // CLARITY IS A MODEL AND THE FLAG SAYS SO. `measured` non-null means a WQP Secchi or
   // turbidity baseline exists and the rainfall model adjusted it; null means the number is

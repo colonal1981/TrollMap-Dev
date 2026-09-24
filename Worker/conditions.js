@@ -67,7 +67,7 @@ import { waterChain, damTable, fullPoolTable, coastalCurrentStations } from './r
 // /rivers/get-rivers roster now, so this file no longer reads the six-entry hand table at all.
 import { dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun,
          fetchDukeAccessAlerts, fetchDukeOperatingRange, fetchUsgs, getLakeClarity,
-         easternOffsetFor }
+         easternOffsetFor, fetchDukeCalendar }
   from './worker-data.js';
 import { parseCubeLevels, parseSouthernCoLevels, parseBrookfieldFacility,
          parseSanteeCooper } from './operators.js';
@@ -3155,6 +3155,37 @@ export function isBelowDam(role, name) {
   return role === 'tailwater' || /tailrace|tailwater|below\b/i.test(String(name || ''));
 }
 
+/**
+ * DUKE'S RECREATION CALENDARS FOR THIS WATER, tied by the gauges Duke itself names.
+ *
+ * /calendar-v2 publishes, per location, the release-calendar PDFs and the USGS gauges those
+ * releases are read on. A water gets a location's calendars when one of that location's gauges is
+ * bound to it -- the registry's own binding, no name matching, so a Pee Dee reach bound to the
+ * Hwy 731 gauge below Tillery gets Tillery's boating times and a Catawba lake bound to nothing Duke
+ * names gets none. Every PDF at the location is listed: Duke files them by location, not by reach,
+ * and which of them a trip needs is his call to make with the list in front of him.
+ *
+ * @param {Array} rows   parseDukeCalendar() output
+ * @param {Array} sites  the USGS site numbers bound to this water
+ */
+export function dukeCalendarFor(rows, sites) {
+  if (!Array.isArray(rows) || !rows.length) return null;
+  const mine = new Set((sites || []).map(String));
+  const matched = rows.filter((r) => r.usgsSite && mine.has(r.usgsSite));
+  if (!matched.length) return null;
+  const locs = new Set(matched.map((r) => r.locationId));
+  const calendars = rows.filter((r) => r.isPdf && locs.has(r.locationId))
+    .sort((a, b) => String(b.published || '').localeCompare(String(a.published || '')))
+    .map((r) => ({ name: r.name, url: r.url, published: r.published ? String(r.published).slice(0, 10) : null,
+                   location_id: r.locationId }));
+  return {
+    calendars,
+    location_ids: [...locs],
+    matched_on: matched.map((r) => ({ usgs_site: r.usgsSite, name: r.name })),
+    source: 'https://api.hydro-derived.duke-energy.app/calendar-v2',
+  };
+}
+
 export function usgsSitesFor(b, lat, lon) {
   const seen = new Set();
   const out = [];
@@ -4275,6 +4306,14 @@ async function waterBlock(b, lat, lon, env) {
   out.access_alerts_expired = expired.length ? expired : null;
   const drought = basinRow ? droughtNoticeFor(alertsRaw, basinRow) : null;
   out.operator_drought = drought;
+
+  // DUKE'S RELEASE CALENDARS, for a water bound to a gauge Duke names beside them. One fetch per
+  // isolate per six hours; a water Duke names no gauge on costs the comparison and nothing else.
+  // An empty answer is rejected rather than cached, so a bad minute at Duke is not six hours.
+  const calRows = await cached('duke:calendar-v2', 6 * 3600,
+    () => fetchDukeCalendar().then((v) => v || Promise.reject(new Error('no calendar'))))
+    .catch(() => null);
+  out.duke_calendar = dukeCalendarFor(calRows, usgsSitesFor(b).map((s) => s.site));
 
   // DUKE'S GUIDE CURVE, AND WHERE THIS DATE USUALLY SITS.
   //

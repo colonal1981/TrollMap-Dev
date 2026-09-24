@@ -646,6 +646,18 @@ function cardHtml(rec, c) {
       + 'them. Kept because the explanation for a level often disappears before the level does.</span>'));
   }
 
+  // DUKE'S RELEASE CALENDARS -- the schedule a paddler plans a day on, as Duke publishes it. Listed
+  // whole for the location, newest first; which one a trip needs is read off the titles.
+  if (c.dukeCalendars && c.dukeCalendars.length) {
+    const lines = c.dukeCalendars.slice(0, 8).map((k) =>
+      `<a href="${esc(k.url)}" target="_blank" rel="noopener">${esc(k.name)}</a>`
+      + (k.published ? `<span class="cond-sub"> — posted ${esc(k.published)}</span>` : '')).join('<br>');
+    const via = (c.dukeCalendarMatchedOn || []).map((g) => g.name).filter(Boolean)[0];
+    out.push(row(`Duke calendars (${c.dukeCalendars.length})`, lines
+      + `<span class="cond-sub"><br>Duke Energy recreation calendars for this release area`
+      + `${via ? `, matched on ${esc(via)}` : ''}.</span>`));
+  }
+
   if (c.releasesRefused) {
     const r = c.releasesRefused;
     out.push(row('Releases', `<span class="cond-sub">refused — ${esc(r.why || '')}</span>`));

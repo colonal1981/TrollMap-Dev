@@ -683,6 +683,60 @@ async function fetchDukeAccessAlerts() {
     return null;
   }
 }
+/**
+ * Duke's recreation calendars: /calendar-v2, the release schedules Duke publishes as PDFs.
+ *
+ * Read 2026-09-24 through Duke's own lakes site (registry/_duke_calendar_v2_2026-09-24.json): 25
+ * rows over four locations -- 1 Catawba-Wateree, 2 Nantahala/Tuckasegee, 3 Pee Dee below Tillery,
+ * 11 Pigeon below Walters. Eleven are PDFs (the Nantahala main stem and bypass, the Tuckasegee, the
+ * West Fork Tuckasegee bypass, Tillery and the Pee Dee's boating times and map, Walters, the Great
+ * Falls long bypass warning and the Catawba-Wateree Stage 2 message) and fourteen are the USGS
+ * gauges Duke names for those releases. The PDF links are plain paths under lakes.hydro-derived,
+ * not the week-long presigned links the retired /calendar handed out, so they can be linked.
+ *
+ * The body arrives wrapped -- `{statusCode, body: "<json>", headers}` -- in the capture under
+ * test/fixtures/operators/, and bare in what the browser showed; both are read.
+ */
+async function fetchDukeCalendar() {
+  try {
+    const r = await fetch(`${DUKE_API_BASE}/calendar-v2`, {
+      cf: { cacheTtl: 21600, cacheEverything: true },
+      headers: {
+        "User-Agent": "TrollMap/12 Worker",
+        "Origin": "https://lakes.hydro-derived.duke-energy.app",
+        "Referer": "https://lakes.hydro-derived.duke-energy.app/",
+        "Accept": "application/json"
+      }
+    });
+    if (!r.ok) return null;
+    return parseDukeCalendar(await r.json());
+  } catch (_) {
+    return null;
+  }
+}
+
+/** Duke's calendar payload -> [{id, locationId, name, url, isPdf, published, usgsSite}], or null. */
+function parseDukeCalendar(j) {
+  let x = j;
+  if (x && typeof x.body === 'string') {
+    try { x = JSON.parse(x.body); } catch (_) { return null; }
+  }
+  const rows = Array.isArray(x) ? x : (x && Array.isArray(x.calendar) ? x.calendar : null);
+  if (!rows) return null;
+  const out = rows.filter((r) => r && r.url && r.location_id != null).map((r) => ({
+    id: r.rec_calendar_id ?? r.id ?? null,
+    locationId: Number(r.location_id),
+    name: String(r.name || '').replace(/\.pdf$/i, '').trim(),
+    url: String(r.url),
+    isPdf: r.is_pdf === true,
+    published: r.published_dtm || r.published || null,
+    // The gauge rows are USGS monitoring-location links; the site number is the foreign key
+    // that ties a Duke location to the waters the registry bound that gauge to.
+    usgsSite: (/USGS-(\d{8,15})/.exec(String(r.url)) || [])[1] || null,
+  }));
+  return out.length ? out : null;
+}
+
 async function fetchDukeActiveRun() {
   try {
     const r = await fetch(`${DUKE_API_BASE}/rivers/active-run`, {
@@ -2376,4 +2430,4 @@ var RIVERS = {
   }
 };
 
-export { easternOffsetFor, normalizeDukeRow, dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun, fetchDukeAccessAlerts, fetchDukeOperatingRange, LAKES, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, seriesRank, rdbSeriesDescriptions, newerStamp, applyElevation, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake };
+export { easternOffsetFor, normalizeDukeRow, dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun, fetchDukeAccessAlerts, fetchDukeOperatingRange, fetchDukeCalendar, parseDukeCalendar, LAKES, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, seriesRank, rdbSeriesDescriptions, newerStamp, applyElevation, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake };
