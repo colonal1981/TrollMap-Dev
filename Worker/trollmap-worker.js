@@ -2020,9 +2020,15 @@ var trollmap_worker_default = {
         // lat/lon are OPTIONAL and they decide where the rainfall is read for any water without
         // one of the six hand-authored profiles. Without them this route behaves exactly as it did
         // -- which is to say it describes rain near Columbia, SC. See getLakeClarity.
-        const clLat = Number(url.searchParams.get("lat"));
-        const clLon = Number(url.searchParams.get("lon"));
+        // A MISSING PARAMETER IS NOT ZERO. `Number(null)` is 0, so a request with no lat/lon read
+        // its rain at 0,0 in the Gulf of Guinea instead of falling back as the line above says.
+        const clNum = (k) => { const v = url.searchParams.get(k); return v == null || v === "" ? NaN : Number(v); };
+        const clLat = clNum("lat");
+        const clLon = clNum("lon");
         const clPoint = Number.isFinite(clLat) && Number.isFinite(clLon) ? { lat: clLat, lon: clLon } : null;
+        // `at=launch` says the point IS the launch, not the water's centroid -- only then is the
+        // nearest measured station his water. See `atLaunch` in getLakeClarity.
+        if (clPoint && url.searchParams.get("at") === "launch") clPoint.isLaunch = true;
         const data = await getLakeClarity(name, dateParam, env, clPoint);
         return new Response(JSON.stringify(data, null, 2), { headers: JSON_HEADERS });
       }

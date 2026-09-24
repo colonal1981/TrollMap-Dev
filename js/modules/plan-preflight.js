@@ -383,12 +383,17 @@ export async function fetchClarityAtRamp(lakeName, dateStr, o = {}) {
     // clarity profile -- a median 226 km away. `o.point` is the launch where the caller has one,
     // which is also the point /conditions chooses its gauges with; the registry centroid otherwise.
     const rec = lakeRecordFor(lakeName);
-    const pt = (o.point && Number.isFinite(Number(o.point.lat)) && Number.isFinite(Number(o.point.lon)))
+    const isLaunch = !!(o.point && Number.isFinite(Number(o.point.lat)) && Number.isFinite(Number(o.point.lon)));
+    const pt = isLaunch
       ? o.point
       : (rec && Number.isFinite(Number(rec.lat)) && Number.isFinite(Number(rec.lon)) ? rec : null);
+    // `at=launch` only when the point IS his launch. The Worker then reads the baseline at the
+    // measured station nearest it (`atLaunch`); a centroid is not where he is fishing, and for one
+    // the lake-wide average stays.
     const url = `${worker}/lake-clarity?lake=${encodeURIComponent(lakeName)}`
               + `&date=${encodeURIComponent(dateStr || '')}`
-              + (pt ? `&lat=${Number(pt.lat)}&lon=${Number(pt.lon)}` : '');
+              + (pt ? `&lat=${Number(pt.lat)}&lon=${Number(pt.lon)}` : '')
+              + (isLaunch ? '&at=launch' : '');
     const res = o.fetchJson ? await o.fetchJson(url) : await (await fetch(url)).json();
     if (!res || res.error) return null;
     const got = clarityForPlan(res, rampName);

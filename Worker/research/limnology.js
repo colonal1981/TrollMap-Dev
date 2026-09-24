@@ -211,6 +211,54 @@ async function wqpCached(env, lakeName, body, opts, knownId = null) {
   return fresh;
 }
 
+/**
+ * The position and name of each Secchi station, from WQP's Station endpoint, joined onto the
+ * per-station summaries by MonitoringLocationIdentifier. The Result profile this file requests
+ * (resultPhysChem) carries the id and no position.
+ *
+ * Same box and the same characteristic as the Result query, so it lists the stations that query
+ * could have returned and no others. A station the Station endpoint does not list keeps its
+ * readings and gets no position, which leaves it out of the nearest-station choice. The column
+ * names are the ones Scripts/wqp_clarity_coverage.py has read from this endpoint since 2026-08-05.
+ */
+async function joinStationPositions(stations, [w, s, e, n], parseCSVLine) {
+  const url = 'https://www.waterqualitydata.us/data/Station/search?' + [
+    `bBox=${w},${s},${e},${n}`,
+    `characteristicName=${encodeURIComponent('Depth, Secchi disk depth')}`,
+    'mimeType=csv', 'zip=no', 'providers=NWIS', 'providers=STORET',
+  ].join('&');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  let text;
+  try {
+    const res = await fetch(new Request(url, { method: 'GET', signal: controller.signal,
+      headers: { 'User-Agent': 'TrollMap/1.0 (fishing intelligence platform; contact: trollmap@colonal1981.workers.dev)' } }));
+    if (!res.ok) throw new Error(`WQP Station HTTP ${res.status}`);
+    text = await res.text();
+  } finally {
+    clearTimeout(timer);
+  }
+  const lines = String(text || '').split('\n').filter(Boolean);
+  if (lines.length < 2) return stations;
+  const head = parseCSVLine(lines[0]).map((h) => h.toLowerCase());
+  const at = (name) => head.indexOf(name);
+  const iId = at('monitoringlocationidentifier');
+  const iName = at('monitoringlocationname');
+  const iLat = at('latitudemeasure');
+  const iLon = at('longitudemeasure');
+  if (iId < 0 || iLat < 0 || iLon < 0) throw new Error('WQP Station header has no id/latitude/longitude');
+  const where = new Map();
+  for (const line of lines.slice(1)) {
+    const c = parseCSVLine(line);
+    const lat = parseFloat(c[iLat]);
+    const lon = parseFloat(c[iLon]);
+    if (c[iId] && Number.isFinite(lat) && Number.isFinite(lon)) {
+      where.set(c[iId], { name: (iName >= 0 && c[iName]) || null, lat, lon });
+    }
+  }
+  return stations.map((st) => (where.has(st.id) ? { ...st, ...where.get(st.id) } : st));
+}
+
 async function wqpPull(env, body, opts = {}) {
 
   let { lakeName, bboxNorth, bboxSouth, bboxEast, bboxWest } = body;
@@ -372,6 +420,14 @@ async function wqpPull(env, body, opts = {}) {
   // up by name instead of reached by one.
   const iOrg = col('organizationformalname');
   const iProject = col('projectidentifier');
+  // WHICH STATION EACH READING CAME FROM. The resultPhysChem profile carries the station id and
+  // this loop threw it away, so the only clarity the app could offer was the lake's average. Lake
+  // Murray's stations average 1.7 ft at the top of the river arm and 9.0 ft near the dam (the
+  // full-profile pull on the drive, wqp_murray.csv); the average of the two is water nobody
+  // launches into. This profile has no position column -- see test/wqp-columns.test.js -- so the
+  // positions come from the Station endpoint, joined on this id, in stationPositions() below.
+  // Kept on Secchi rows only: that is what a per-station baseline needs.
+  const iSite = col('monitoringlocationidentifier');
 
   const records = [];
   for (let i = 1; i < lines.length; i++) {
@@ -414,7 +470,9 @@ async function wqpPull(env, body, opts = {}) {
     // `location` was captured here from a column lookup that never resolved either, and nothing
     // has ever read it. Removed rather than repaired: an unread field on every record is how the
     // next person loses ten minutes deciding whether it matters.
-    records.push({ type, value: Math.round(value * 100) / 100, unit: outUnit, depthFt, month, date, project });
+    const rec = { type, value: Math.round(value * 100) / 100, unit: outUnit, depthFt, month, date, project };
+    if (type === 'secchi') rec.site = (iSite >= 0 && cols[iSite]) || null;
+    records.push(rec);
   }
 
   if (records.length === 0) {
@@ -554,16 +612,44 @@ async function wqpPull(env, body, opts = {}) {
 
   // Secchi depth summary
   const secchiRecords = records.filter(r => r.type === 'secchi');
+  const secchiFt = (r) => {
+    // Secchi is often in meters — convert to ft
+    let v = r.value;
+    // Convert to feet — WQP uses 'm' (pCode 00078) or 'in' (pCode 00077)
+    const u = (r.unit || '').toLowerCase().trim();
+    if (u === 'm' || u === 'meters' || u === 'meter') v = v * 3.28084;
+    else if (u === 'in' || u === 'inches' || u === 'inch') v = v / 12;
+    return Math.round(v * 10) / 10;
+  };
+  const secchiUsable = (v) => v > 0 && v <= 40; // cap at 40ft — max realistic freshwater Secchi; removes bad records
+  // ONE SUMMARY PER STATION, from the same readings and the same filter as the lake-wide one below,
+  // so a station's number and the lake's number can never disagree about what counted. Returned by
+  // the secchi-only pull alone: the full pull's `secchi` block is saved into research profiles, and
+  // a per-station list has no reader there. Positions are joined in that branch.
+  const secchiStations = (() => {
+    const bySite = new Map();
+    for (const r of secchiRecords) {
+      const v = secchiFt(r);
+      if (!secchiUsable(v) || !r.site) continue;
+      let s = bySite.get(r.site);
+      if (!s) {
+        s = { id: r.site, vals: [], first: r.date, last: r.date };
+        bySite.set(r.site, s);
+      }
+      s.vals.push(v);
+      if (r.date && (!s.first || r.date < s.first)) s.first = r.date;
+      if (r.date && (!s.last || r.date > s.last)) s.last = r.date;
+    }
+    return [...bySite.values()].map((s) => ({
+      id: s.id,
+      avgSecchiDepthFt: Math.round(s.vals.reduce((a, b) => a + b, 0) / s.vals.length * 10) / 10,
+      sampleCount: s.vals.length,
+      firstObserved: s.first || null,
+      lastObserved: s.last || null,
+    }));
+  })();
   const secchi = secchiRecords.length ? (() => {
-    const vals = secchiRecords.map(r => {
-      // Secchi is often in meters — convert to ft
-      let v = r.value;
-      // Convert to feet — WQP uses 'm' (pCode 00078) or 'in' (pCode 00077)
-      const u = (r.unit || '').toLowerCase().trim();
-      if (u === 'm' || u === 'meters' || u === 'meter') v = v * 3.28084;
-      else if (u === 'in' || u === 'inches' || u === 'inch') v = v / 12;
-      return Math.round(v * 10) / 10;
-    }).filter(v => v > 0 && v <= 40); // cap at 40ft — max realistic freshwater Secchi; removes bad records
+    const vals = secchiRecords.map(secchiFt).filter(secchiUsable);
     if (!vals.length) return null;
     const avg = vals.reduce((a,b) => a+b,0) / vals.length;
     return {
@@ -609,11 +695,24 @@ async function wqpPull(env, body, opts = {}) {
 
   // Clarity only ever wants these. Return before the Firecrawl-backed thermocline search below.
   if (opts.secchiOnly) {
+    // WHERE THE STATIONS ARE, from the one WQP endpoint that says. A failed lookup leaves every
+    // station without a position, which the clarity model reads as "no local reading" -- the
+    // lake-wide figure, exactly as before -- rather than failing the whole answer.
+    let stationsOut = secchiStations;
+    if (secchiStations.length) {
+      try {
+        stationsOut = await joinStationPositions(secchiStations,
+          [bboxWest, bboxSouth, bboxEast, bboxNorth], parseCSVLine);
+      } catch (e) {
+        console.warn(`[limnology-data] station positions unavailable for ${lakeName}: ${e.message}`);
+      }
+    }
     return new Response(JSON.stringify({
       ok: true,
       lakeName,
       recordCount: records.length,
       secchi,
+      secchiStations: stationsOut,
       recentTurbidityNTU: surfaceWater.recentTurbidityNTU,
       lastObserved: records.map(r => r.date).filter(Boolean).sort().slice(-1)[0] || null,
     }), { headers: JSON_HEADERS });
@@ -784,7 +883,12 @@ async function getSecchiSummary(env, lakeName) {
     const hit = await env.R2_TROLLMAP_CHARTPACKS.get(key);
     if (hit) {
       const cached = JSON.parse(await r2Text(hit));
-      if (cached.fetchedAt && Date.now() - Date.parse(cached.fetchedAt) < SECCHI_TTL_MS) return cached;
+      // A cache written before stations were kept has no `stations` key at all -- which is not
+      // the same as a lake with no station positions, which writes `stations: []`. The first is
+      // refetched once, so the per-station baseline reaches every cached lake within a request
+      // instead of within thirty days.
+      if (cached.fetchedAt && Date.now() - Date.parse(cached.fetchedAt) < SECCHI_TTL_MS
+          && Array.isArray(cached.stations)) return cached;
       // Stale. Fall through and refetch, but keep it as the fallback if WQP is down --
       // a month-old measurement beats a guess.
       var stale = cached;
@@ -809,6 +913,7 @@ async function getSecchiSummary(env, lakeName) {
       lakeName,
       fetchedAt: new Date().toISOString(),
       ...(data.secchi || {}),
+      stations: Array.isArray(data.secchiStations) ? data.secchiStations : [],
       recentTurbidityNTU: data.recentTurbidityNTU ?? null,
       basis: data.secchi ? 'secchi' : 'turbidity',
       lastObserved: data.lastObserved || null,

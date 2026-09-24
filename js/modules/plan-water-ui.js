@@ -917,7 +917,8 @@ export async function findWater() {
   // `inp.clarity` is the Water Clarity select, which holds whatever syncClarityIntelData() last
   // wrote — on a reload with the ramp already chosen, the mean. See fetchClarityAtRamp().
   const clarityAtRamp = await fetchClarityAtRamp(inp.lakeName, inp.dateStr,
-    { worker: CF_WORKER_URL, rampName: inp.rampName });
+    { worker: CF_WORKER_URL, rampName: inp.rampName,
+      point: ramp ? { lat: ramp[1], lon: ramp[0] } : undefined });
   if (clarityAtRamp && clarityAtRamp.select) inp.clarity = clarityAtRamp.select;
   // ── AND THE BRIEFING ON THE CARD IS REGENERATED WITH THAT RAMP, BEFORE THE PLAN IS COLLECTED ──
   //

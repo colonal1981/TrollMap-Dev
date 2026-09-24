@@ -1209,7 +1209,16 @@ export function conditionsFrom(inp, ramp, sol, forecast, clarityAtRamp = null) {
   // Absent when no zone named the ramp, and then `clarity` is the mean and `clarityScope` says so,
   // because an unlabelled average is exactly what this fixes.
   if (clarityAtRamp && clarityAtRamp.select) {
-    if (clarityAtRamp.source === 'ramp') {
+    if (clarityAtRamp.source === 'station') {
+      // Measured beside the launch rather than modelled for its zone: the station and its distance
+      // go with the word, so a station across a point in another arm can be seen for what it is.
+      const st = clarityAtRamp.station || {};
+      c.clarityScope = 'at the launch, from the nearest measured water';
+      c.clarityAt = `${clarityAtRamp.rampName || 'the launch'} — ${st.name || st.id || 'station'}`
+                  + (Number.isFinite(Number(st.km)) ? `, ${st.km} km away` : '')
+                  + (Number.isFinite(Number(st.avgSecchiDepthFt))
+                    ? `, ${st.sampleCount || '?'} Secchi readings averaging ${st.avgSecchiDepthFt} ft` : '');
+    } else if (clarityAtRamp.source === 'ramp') {
       c.clarityScope = 'at the launch';
       c.clarityAt = clarityAtRamp.zoneName
         ? `${clarityAtRamp.rampName || 'the launch'} — ${clarityAtRamp.zoneName}`

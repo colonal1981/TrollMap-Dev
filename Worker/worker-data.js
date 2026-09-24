@@ -1548,6 +1548,26 @@ async function fetchOpenMeteoRain(lat, lon, tripDate) {
   }
 }
 /**
+ * The clarity station nearest a point, with its distance in km, or null. Straight line: the
+ * payload says how far and which station, so a nearest station across a point in another arm is
+ * visible rather than silently trusted. Stations without a position or a reading are skipped.
+ */
+function nearestClarityStation(stations, lat, lon) {
+  let best = null;
+  for (const s of stations || []) {
+    const sLat = Number(s && s.lat), sLon = Number(s && s.lon), ft = Number(s && s.avgSecchiDepthFt);
+    if (!Number.isFinite(sLat) || !Number.isFinite(sLon) || !Number.isFinite(ft)) continue;
+    const dLat = (sLat - lat) * Math.PI / 180;
+    const dLon = (sLon - lon) * Math.PI / 180;
+    const h = Math.sin(dLat / 2) ** 2
+            + Math.cos(lat * Math.PI / 180) * Math.cos(sLat * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+    const km = 2 * 6371.0088 * Math.asin(Math.min(1, Math.sqrt(h)));
+    if (!best || km < best.km) best = { ...s, km: Math.round(km * 10) / 10 };
+  }
+  return best;
+}
+
+/**
  * Water clarity for a lake, measured where a measurement exists and modelled where it does not.
  *
  * WHAT CHANGED 2026-08-06
@@ -1565,6 +1585,7 @@ async function fetchOpenMeteoRain(lat, lon, tripDate) {
  * `measured: false` is not "clear water" -- it is "nobody has looked". The response says which
  * it is, and the UI has to keep them apart. TN reservoirs are all in the second bucket.
  */
+
 /**
  * ── THE RAIN THAT DRIVES THIS MODEL WAS BEING MEASURED NEAR COLUMBIA FOR EVERY WATER BUT SIX ──
  *
@@ -1681,6 +1702,25 @@ async function getLakeClarity(lakeName, tripDate, env, point = null) {
   } catch (e) {
     console.warn(`[clarity] measured baseline unavailable for ${lakeName}: ${e.message}`);
   }
+  // ── THE MEASURED WATER NEAREST HIS LAUNCH, NOT THE LAKE'S AVERAGE ──────────────────────────
+  //
+  // The WQP pull keeps each Secchi station with its own average now. On Lake Murray those run from
+  // 1.7 ft at the top of the river arm to 9.0 ft near the dam, and on Hartwell from 5.3 to 16.3 ft;
+  // the lake-wide mean of either is water nobody launches into. So when the caller says the point
+  // IS the launch, the baseline is the nearest station's own reading.
+  //
+  // THE NEAREST, NOT A BLEND. A weighted blend needs a weighting and a radius, and both would be
+  // numbers picked here. The nearest station is a measurement of real water with no parameter, and
+  // the payload names it and says how far it is, so a station across a point in another arm can be
+  // seen for what it is. Only for a launch: a centroid or a map tap is not where he is fishing, and
+  // there the lake-wide average stays, unchanged.
+  //
+  // KEPT BESIDE THE ZONES, NOT MIXED INTO THEM. The zones stay exactly what they were -- the
+  // lake-wide baseline plus each zone's offset -- because their job is comparing areas of the
+  // lake against each other. The launch gets its own answer, `atLaunch`, below.
+  const isLaunch = !!(at && point && point.isLaunch);
+  const local = isLaunch && measured && Array.isArray(measured.stations)
+    ? nearestClarityStation(measured.stations, at[0], at[1]) : null;
   const secchiFt = measured?.avgSecchiDepthFt ?? null;
   const ntu = measured?.recentTurbidityNTU ?? null;
 
@@ -1690,8 +1730,9 @@ async function getLakeClarity(lakeName, tripDate, env, point = null) {
   //     1 NTU -> Clear      5 -> Slight stain      25 -> Stained      100+ -> Muddy
   // Published NTU bands, not a curve fitted to our own data. A fitted curve would look more
   // precise than it is; 166 lakes carry both measurements and can CHECK these bands instead.
+  const secchiScore = (ft) => Math.max(0, Math.min(100, 75 - (ft - 1) * (70 / 11)));
   const measuredBase =
-      secchiFt != null ? Math.max(0, Math.min(100, 75 - (secchiFt - 1) * (70 / 11)))
+      secchiFt != null ? secchiScore(secchiFt)
     : ntu != null      ? Math.max(0, Math.min(100, 35 * Math.log10(Math.max(ntu, 0.5)) + 5))
     : null;
 
@@ -1778,10 +1819,53 @@ async function getLakeClarity(lakeName, tripDate, env, point = null) {
         + `${dirtier ? "DIRTIER" : "CLEANER"} than normal, on ${rainPhrase}.`,
   };
 
+  // ── THE LAUNCH'S OWN ANSWER ────────────────────────────────────────────────────────────────
+  //
+  // The same model as every zone -- measured baseline, plus rain through a sensitivity -- with the
+  // baseline read at the station nearest the launch. The sensitivity is the mean of this water's
+  // zones, which is exactly what `overall` already applies (a mean of zone scores is the mean base
+  // plus rain times the mean sensitivity), so this adds no number the model did not already hold.
+  // Null when the point is not a launch or no station on this water carries a position; the
+  // client then falls back to the zone that names the ramp, then to the lake, as before.
+  const atLaunch = local ? (() => {
+    const sens = profile.zones.reduce((a, z) => a + z.sensitivity, 0) / Math.max(1, profile.zones.length);
+    const base = secchiScore(local.avgSecchiDepthFt);
+    const score = Math.max(0, Math.min(100, base + rainScore * sens));
+    const cls = classifyClarity(score);
+    const usual = classifyClarity(base);
+    const bands = bandIndex(cls.clarity) - bandIndex(usual.clarity);
+    const where = local.name || local.id;
+    const lp = clarityLurePack(cls.clarity);
+    return {
+      station: { id: local.id, name: local.name, lat: local.lat, lon: local.lon, km: local.km,
+                 avgSecchiDepthFt: local.avgSecchiDepthFt, sampleCount: local.sampleCount,
+                 firstObserved: local.firstObserved, lastObserved: local.lastObserved },
+      score: Math.round(score), clarity: cls.clarity, select: cls.select,
+      normalScore: Math.round(base), normalClarity: usual.clarity,
+      lureColors: lp.colors, tactics: lp.tactics,
+      why: `the nearest measured water to the launch is ${where}, ${local.km} km away: `
+         + `${local.sampleCount} Secchi reading${local.sampleCount === 1 ? "" : "s"}`
+         + `${local.firstObserved ? ` ${local.firstObserved.slice(0, 4)}–${String(local.lastObserved || "").slice(0, 4)}` : ""}`
+         + ` averaging ${local.avgSecchiDepthFt} ft`
+         + (measured && measured.avgSecchiDepthFt != null
+           ? ` (the whole lake averages ${measured.avgSecchiDepthFt} ft)` : ""),
+      versusNormal: {
+        bands, dirtier: bands > 0,
+        sentence: bands === 0
+          ? `${cls.clarity} is NORMAL near ${where}, and ${rainPhrase}.`
+          : `Near ${where} it is usually ${usual.clarity}. Today ${cls.clarity} — `
+            + `${Math.abs(bands)} band${Math.abs(bands) === 1 ? "" : "s"} `
+            + `${bands > 0 ? "DIRTIER" : "CLEANER"} than normal, on ${rainPhrase}.`,
+      },
+    };
+  })() : null;
+
   return {
     lake: profile.displayName || lakeName,
     key,
     tripDate,
+    // The launch's own clarity, read at the measured station nearest it. See `atLaunch` above.
+    atLaunch,
     // WHERE THE RAIN WAS MEASURED, AND WHETHER IT IS THIS WATER. The rainfall is the only input in
     // this model that describes today, and until 2026-09-23 it came from a fixed point near
     // Columbia on every water without one of the six hand-authored profiles -- a median of 226 km
@@ -1809,6 +1893,9 @@ async function getLakeClarity(lakeName, tripDate, env, point = null) {
       lastObserved: measured.lastObserved,
       recentTurbidityNTU: measured.recentTurbidityNTU ?? null,
       fetchedAt: measured.fetchedAt,
+      // Every station on this water with its own average, so the card can show the spread the
+      // lake-wide number hides.
+      stations: Array.isArray(measured.stations) ? measured.stations : [],
       source: "Water Quality Portal (waterqualitydata.us) \u2014 NWIS + STORET",
     } : null,
     measuredNote: measured

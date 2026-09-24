@@ -343,7 +343,15 @@ export async function syncClarityIntelData(o = {}) {
     // js/utils/clarity-at-ramp.js for why it is not inlined here any more.
     const forPlan = clarityForPlan(d, rampNow);
     const zoneForRamp = forPlan.zone;
-    if(zoneForRamp){
+    if(forPlan.source === 'station' && d.atLaunch){
+      // MEASURED NEAR THE LAUNCH. The station, its distance and its own readings, then the same
+      // how-far-off-normal sentence the zone line gives -- read at that station, not the lake.
+      lines.push(`AT YOUR LAUNCH${rampNow ? ` (${rampNow})` : ''}: ${d.atLaunch.clarity} `
+               + `(score ${d.atLaunch.score}/100) — ${d.atLaunch.why}.`);
+      const vs = versusNormalAt(d, rampNow);
+      if (vs) lines.push(vs.sentence);
+      lines.push(`Colors for that water: ${coerceList(d.atLaunch.lureColors).join(', ')}`);
+    } else if(zoneForRamp){
       lines.push(`AT YOUR RAMP (${rampNow}) — ${zoneForRamp.name}: ${zoneForRamp.clarity} `
                + `(score ${zoneForRamp.score}/100). ${zoneForRamp.likely}.`);
       // THE HALF THAT SAYS WHETHER TO CARE. "Stained" on Wateree is Tuesday; "stained" on a lake
@@ -419,7 +427,13 @@ export async function syncClarityIntelData(o = {}) {
       // which is the same unattributed number the CAUTION line and the clarity select were reading.
       // With a zone resolved it names his ramp's zone and keeps the mean beside it; without one it
       // says lake-wide, so the word "Predicted" is never standing over an unqualified average.
-      const badge = forPlan.source === 'ramp'
+      const st = forPlan.station || null;
+      const badge = forPlan.source === 'station'
+        ? `At ${esc(rampNow || 'the launch')}: <b>${esc(forPlan.clarity || 'Unknown')}</b>`
+          + `<span class="muted"> · measured at ${esc(st?.name || st?.id || 'the nearest station')}`
+          + `${st && st.km != null ? `, ${esc(st.km)} km away` : ''}`
+          + ` · lake-wide ${esc(d.overall?.clarity || '?')}</span>`
+        : forPlan.source === 'ramp'
         ? `At ${esc(rampNow)}: <b>${esc(forPlan.clarity || 'Unknown')}</b>`
           + `<span class="muted"> · lake-wide ${esc(d.overall?.clarity || '?')}</span>`
         : `Predicted (lake-wide): <b>${esc(d.overall?.clarity || 'Unknown')}</b>`;

@@ -4986,6 +4986,15 @@ async function tideBlock(b, lat, lon, date, slug, env) {
 
 function nowIso() { return new Date().toISOString(); }
 
+// A MISSING QUERY PARAMETER IS NOT ZERO. `Number(null)` is 0, which is finite and inside the
+// +-90/180 range, so both routes below answered a request with no lat/lon for the point 0,0 --
+// `/conditions` then reported every gauge ~9,000 km from its point -- and their own
+// "lat and lon are required" check could never fire. NaN fails that check, as intended.
+function queryNumber(url, key) {
+  const v = url.searchParams.get(key);
+  return v == null || String(v).trim() === '' ? NaN : Number(v);
+}
+
 /**
  * `/hazards?lat=&lon=` -- the NWS watches, warnings and advisories over one point, and nothing else.
  *
@@ -5013,8 +5022,8 @@ export async function handleHazards(request, env, url) {
     return new Response('{"error":"method not allowed"}',
       { status: 405, headers: { ...CORS, ...JSON_HEADERS } });
   }
-  const lat = Number(url.searchParams.get('lat'));
-  const lon = Number(url.searchParams.get('lon'));
+  const lat = queryNumber(url, 'lat');
+  const lon = queryNumber(url, 'lon');
   if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
     return new Response(JSON.stringify({ error: 'lat and lon are required' }),
       { status: 400, headers: { ...CORS, ...JSON_HEADERS } });
@@ -5039,8 +5048,8 @@ export async function handleConditions(request, env, url) {
     return new Response('{"error":"method not allowed"}', { status: 405, headers: { ...CORS, ...JSON_HEADERS } });
   }
   const slug = mm[1];
-  const lat = Number(url.searchParams.get('lat'));
-  const lon = Number(url.searchParams.get('lon'));
+  const lat = queryNumber(url, 'lat');
+  const lon = queryNumber(url, 'lon');
   if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
     return new Response(JSON.stringify({
       error: 'lat and lon are required',

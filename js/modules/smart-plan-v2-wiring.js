@@ -244,7 +244,8 @@ export async function runSmartPlanV2(opts = {}) {
   // Resolved from the ramp on the request instead. Null when the forecast is unreachable, and then
   // the form's value stands -- a failed fetch is not evidence that the water is clear.
   const clarityAtRamp = await fetchClarityAtRamp(inp.lakeName, inp.dateStr,
-    { worker: CF_WORKER_URL, rampName: inp.rampName });
+    { worker: CF_WORKER_URL, rampName: inp.rampName,
+      point: ramp ? { lat: ramp[1], lon: ramp[0] } : undefined });
   if (clarityAtRamp && clarityAtRamp.select) inp.clarity = clarityAtRamp.select;
   // ── AND THE BRIEFING ON THE CARD IS REGENERATED WITH THAT RAMP, BEFORE THE PLAN IS COLLECTED ──
   //

@@ -55,15 +55,26 @@ export function zoneForRamp(zones, rampName) {
 /**
  * WHAT THE PLAN SHOULD BE BUILT ON: `{ select, clarity, score, source, zone, why }`.
  *
- * `source` is 'ramp' when a zone names his launch and 'lake' when none does, and it is part of the
- * answer rather than something a caller infers — an unattributed clarity is how the mean came to be
- * read as a fact about his ramp in the first place.
+ * `source` is 'station' when the payload carries a measured reading near the launch (`atLaunch`,
+ * 2026-09-24), 'ramp' when a zone names his launch and 'lake' when neither does, and it is part of
+ * the answer rather than something a caller infers — an unattributed clarity is how the mean came
+ * to be read as a fact about his ramp in the first place.
  *
  * The mean is still the answer when no zone names the ramp. It is the only answer there is, and the
  * briefing says so out loud instead of implying the number is about here.
  */
 export function clarityForPlan(payload, rampName) {
   const d = payload || {};
+  // A MEASUREMENT NEAR THE LAUNCH BEATS A ZONE THAT NAMES IT. `atLaunch` is only in the payload
+  // when the caller said the point was the launch and a Secchi station on this water has a
+  // position; its baseline is that station's own readings, where a zone's is the lake's average
+  // plus a hand-set offset. Lake Murray's stations run 1.7 to 9.0 ft; no offset says that.
+  const near = d.atLaunch;
+  if (near && near.select) {
+    return { select: near.select, clarity: near.clarity ?? null, score: near.score ?? null,
+             source: 'station', zone: null, station: near.station || null,
+             why: near.why || 'the nearest measured water to the launch' };
+  }
   const zone = zoneForRamp(d.zones, rampName);
   if (zone && zone.select) {
     return { select: zone.select, clarity: zone.clarity ?? null, score: zone.score ?? null,
@@ -103,12 +114,18 @@ const bandIndex = (c) => {
  * `{ bands, dirtier, normalClarity, sentence }` for the water he is actually launching in, or null
  * when the payload predates this and carries no `normalClarity`.
  *
- * ZONE FIRST, LAKE SECOND, for the same reason the clarity itself is resolved that way: the lake's
- * mean is an average of water he is not fishing. Falls back to the payload's lake-wide
- * `versusNormal` only when no zone named his ramp.
+ * STATION, THEN ZONE, THEN LAKE, for the same reason the clarity itself is resolved that way: the
+ * lake's mean is an average of water he is not fishing. Falls back to the payload's lake-wide
+ * `versusNormal` only when neither a station nor a zone answers for his launch.
  */
 export function versusNormalAt(payload, rampName) {
   const d = payload || {};
+  // The station near the launch first, for the reason clarityForPlan() gives.
+  const nv = d.atLaunch && d.atLaunch.versusNormal;
+  if (nv && typeof nv.sentence === 'string') {
+    return { bands: nv.bands, dirtier: !!nv.dirtier, normalClarity: d.atLaunch.normalClarity || null,
+             scope: 'station', sentence: nv.sentence };
+  }
   const zone = zoneForRamp(d.zones, rampName);
   const now = zone ? bandIndex(zone.clarity) : null;
   const usual = zone ? bandIndex(zone.normalClarity) : null;
