@@ -4,7 +4,8 @@
 // generated generic lake_${base} keys on miss, masking missing entries and
 // causing shoreline.geojson R2 misses → bbox self-derive failed → geospatial
 // adapter / thermocline pipeline silently skipped. Fixed by importing canonical map.
-import { JSON_HEADERS, r2Text, listAllR2 } from '../worker-core.js';
+import { JSON_HEADERS, r2Text, listAllR2, chartpackKey } from '../worker-core.js';
+import { polygonsOf, splitByWater } from './on-water.js';
 import { handleResearchThermoclineSearch } from './storage.js';
 import { LAKE_NAME_TO_R2_KEY as SUPPLEMENTAL_KEY_MAP, resolveR2Key } from '../../js/data/lake-keys.js';
 
@@ -212,19 +213,21 @@ async function wqpCached(env, lakeName, body, opts, knownId = null) {
 }
 
 /**
- * The position and name of each Secchi station, from WQP's Station endpoint, joined onto the
- * per-station summaries by MonitoringLocationIdentifier. The Result profile this file requests
- * (resultPhysChem) carries the id and no position.
+ * Where each clarity station is, from WQP's Station endpoint: MonitoringLocationIdentifier ->
+ * { name, lat, lon }. The Result profile this file requests (resultPhysChem) carries the id and no
+ * position.
  *
- * Same box and the same characteristic as the Result query, so it lists the stations that query
- * could have returned and no others. A station the Station endpoint does not list keeps its
- * readings and gets no position, which leaves it out of the nearest-station choice. The column
- * names are the ones Scripts/wqp_clarity_coverage.py has read from this endpoint since 2026-08-05.
+ * Same box as the Result query, and the two clarity characteristics -- Secchi and turbidity -- so
+ * it lists the stations that query could have returned for clarity and no others. A station it
+ * does not list gets no position: it is left out of the nearest-station choice, and, once the
+ * on-the-water test runs, out of the water's readings. The column names are the ones
+ * Scripts/wqp_clarity_coverage.py has read from this endpoint since 2026-08-05.
  */
-async function joinStationPositions(stations, [w, s, e, n], parseCSVLine) {
+async function stationPlaces([w, s, e, n], parseCSVLine) {
   const url = 'https://www.waterqualitydata.us/data/Station/search?' + [
     `bBox=${w},${s},${e},${n}`,
     `characteristicName=${encodeURIComponent('Depth, Secchi disk depth')}`,
+    `characteristicName=${encodeURIComponent('Turbidity')}`,
     'mimeType=csv', 'zip=no', 'providers=NWIS', 'providers=STORET',
   ].join('&');
   const controller = new AbortController();
@@ -239,7 +242,7 @@ async function joinStationPositions(stations, [w, s, e, n], parseCSVLine) {
     clearTimeout(timer);
   }
   const lines = String(text || '').split('\n').filter(Boolean);
-  if (lines.length < 2) return stations;
+  if (lines.length < 2) return new Map();
   const head = parseCSVLine(lines[0]).map((h) => h.toLowerCase());
   const at = (name) => head.indexOf(name);
   const iId = at('monitoringlocationidentifier');
@@ -256,7 +259,43 @@ async function joinStationPositions(stations, [w, s, e, n], parseCSVLine) {
       where.set(c[iId], { name: (iName >= 0 && c[iName]) || null, lat, lon });
     }
   }
-  return stations.map((st) => (where.has(st.id) ? { ...st, ...where.get(st.id) } : st));
+  return where;
+}
+
+/** Secchi readings -> the water-wide summary. One function, so the whole-box figure and the
+ *  on-the-water figure are computed by the same rule and can differ only in which readings. */
+function summarizeSecchi(recs, secchiFt, secchiUsable) {
+  if (!recs.length) return null;
+  const vals = recs.map(secchiFt).filter(secchiUsable);
+  if (!vals.length) return null;
+  const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+  return {
+    avgSecchiDepthFt: Math.round(avg * 10) / 10,
+    minSecchiDepthFt: Math.min(...vals),
+    maxSecchiDepthFt: Math.max(...vals),
+    sampleCount: vals.length,
+    lastObserved: recs.map((r) => r.date).sort().slice(-1)[0] || null,
+  };
+}
+
+/** The most recent turbidity, averaged over that day's readings -- summarizeType()'s rule, on a
+ *  given set of records. */
+function latestTurbidity(recs) {
+  const t = recs.filter((r) => r.type === 'turbidity' && r.date && Number.isFinite(r.value));
+  if (!t.length) return null;
+  const last = t.map((r) => r.date).sort().slice(-1)[0];
+  const vals = t.filter((r) => r.date === last).map((r) => r.value);
+  return Math.round(vals.reduce((a, b) => a + b, 0) / vals.length * 100) / 100;
+}
+
+/** The registry outline of the water a name resolves to, as polygons, or null. */
+async function outlineFor(env, lakeName) {
+  const row = resolveRegistryRow(await lakeIndex(env), lakeName);
+  if (!row || !row.slug) return null;
+  const obj = await env.R2_TROLLMAP_CHARTPACKS.get(chartpackKey(row.slug, 'boundary.geojson'));
+  if (!obj) return null;
+  const polygons = polygonsOf(JSON.parse(await r2Text(obj)));
+  return polygons.length ? { slug: row.slug, polygons } : null;
 }
 
 async function wqpPull(env, body, opts = {}) {
@@ -471,7 +510,9 @@ async function wqpPull(env, body, opts = {}) {
     // has ever read it. Removed rather than repaired: an unread field on every record is how the
     // next person loses ten minutes deciding whether it matters.
     const rec = { type, value: Math.round(value * 100) / 100, unit: outUnit, depthFt, month, date, project };
-    if (type === 'secchi') rec.site = (iSite >= 0 && cols[iSite]) || null;
+    // Turbidity keeps its station too: when a water has no Secchi it is the clarity fallback, and
+    // it has to be tested for being ON the water exactly as Secchi is. See on-water.js.
+    if (type === 'secchi' || type === 'turbidity') rec.site = (iSite >= 0 && cols[iSite]) || null;
     records.push(rec);
   }
 
@@ -699,21 +740,69 @@ async function wqpPull(env, body, opts = {}) {
     // station without a position, which the clarity model reads as "no local reading" -- the
     // lake-wide figure, exactly as before -- rather than failing the whole answer.
     let stationsOut = secchiStations;
-    if (secchiStations.length) {
+    let secchiOut = secchi;
+    let turbidityOut = surfaceWater.recentTurbidityNTU;
+    let places = null;
+    const clarityRecs = records.filter((r) => (r.type === 'secchi' || r.type === 'turbidity') && r.site);
+    if (clarityRecs.length) {
       try {
-        stationsOut = await joinStationPositions(secchiStations,
-          [bboxWest, bboxSouth, bboxEast, bboxNorth], parseCSVLine);
+        places = await stationPlaces([bboxWest, bboxSouth, bboxEast, bboxNorth], parseCSVLine);
+        stationsOut = secchiStations.map((st) => (places.has(st.id) ? { ...st, ...places.get(st.id) } : st));
       } catch (e) {
         console.warn(`[limnology-data] station positions unavailable for ${lakeName}: ${e.message}`);
+      }
+    }
+    // ── ON THE WATER, NOT IN ITS BOX ──────────────────────────────────────────────────────────
+    //
+    // Everything above came from the registry BOX, and a long river's box takes in whole lakes:
+    // measured 2026-09-24, 259 of 279 river stations were more than 1 km off the river -- the Great
+    // Pee Dee was reading Lake Moultrie -- and 34 of 528 lake stations were off their lake. Each
+    // became that water's measured "normal". See on-water.js.
+    //
+    // So once the stations are placed, a reading counts only if its station is inside the water's
+    // registry outline -- Secchi AND turbidity, because turbidity is the fallback when there is no
+    // Secchi. A station with no position cannot be shown to be on the water and does not count.
+    // If the stations could not be placed or the outline could not be read, the box figures stand
+    // and `onWater.checked` says they were not tested, rather than a failed lookup reading as
+    // "nothing measured here".
+    // `retry` marks a test that failed for a passing reason (WQP's Station endpoint, an R2 read), so
+    // the clarity cache asks again next time instead of keeping the box figures for thirty days. A
+    // water with no outline at all is not going to grow one between requests.
+    let onWater = !clarityRecs.length
+      ? { checked: false, why: 'no clarity reading carries a station id' }
+      : places
+        ? { checked: false, why: 'no registry outline for this water' }
+        : { checked: false, retry: true, why: 'station positions unavailable' };
+    if (places) {
+      try {
+        const outline = await outlineFor(env, lakeName);
+        if (outline) {
+          const ids = [...new Set(clarityRecs.map((r) => r.site))];
+          const split = splitByWater(ids, places, outline.polygons);
+          const kept = clarityRecs.filter((r) => split.on.has(r.site));
+          secchiOut = summarizeSecchi(kept.filter((r) => r.type === 'secchi'), secchiFt, secchiUsable);
+          turbidityOut = latestTurbidity(kept);
+          stationsOut = stationsOut.filter((st) => split.on.has(st.id));
+          onWater = {
+            checked: true, water: outline.slug,
+            stationsOn: split.on.size, stationsOff: split.off.length, stationsUnplaced: split.unplaced.length,
+            // The ones left out, by name, so a water that loses its readings shows why.
+            off: split.off.slice(0, 12),
+          };
+        }
+      } catch (e) {
+        console.warn(`[limnology-data] on-water test failed for ${lakeName}: ${e.message}`);
+        onWater = { checked: false, retry: true, why: `outline unreadable: ${e.message}` };
       }
     }
     return new Response(JSON.stringify({
       ok: true,
       lakeName,
       recordCount: records.length,
-      secchi,
+      secchi: secchiOut,
       secchiStations: stationsOut,
-      recentTurbidityNTU: surfaceWater.recentTurbidityNTU,
+      recentTurbidityNTU: turbidityOut,
+      onWater,
       lastObserved: records.map(r => r.date).filter(Boolean).sort().slice(-1)[0] || null,
     }), { headers: JSON_HEADERS });
   }
@@ -918,11 +1007,20 @@ async function getSecchiSummary(env, lakeName) {
       // the same as a lake with no station positions, which writes `stations: []`. The first is
       // refetched once, so the per-station baseline reaches every cached lake within a request
       // instead of within thirty days.
+      //
+      // The same for `onWater`, added 2026-09-24: a cache written before the on-the-water test
+      // holds readings from the whole box -- for a river, other lakes' -- and is refetched once.
+      // An untested pull whose test failed for a passing reason (`retry`) is refetched too.
       if (cached.fetchedAt && Date.now() - Date.parse(cached.fetchedAt) < SECCHI_TTL_MS
-          && Array.isArray(cached.stations)) return cached;
-      // Stale. Fall through and refetch, but keep it as the fallback if WQP is down --
-      // a month-old measurement beats a guess.
-      var stale = cached;
+          && Array.isArray(cached.stations) && cached.onWater && !cached.onWater.retry) {
+        // A TESTED WATER WITH NOTHING ON IT is cached too, and answers null: without this every
+        // clarity request on such a water -- most rivers, now -- would re-pull WQP, up to 25 s.
+        return cached.none ? null : cached;
+      }
+      // Stale. Fall through and refetch, but keep it as the fallback if WQP is down -- a
+      // month-old measurement beats a guess. NOT one from before the on-the-water test: that one
+      // may be another water's, and a guess labelled as a guess beats that.
+      var stale = cached.onWater && cached.onWater.checked && !cached.none ? cached : null;
     }
   } catch (e) {
     console.warn(`[clarity] cache read failed for ${lakeName}: ${e.message}`);
@@ -938,6 +1036,16 @@ async function getSecchiSummary(env, lakeName) {
     // TVA reservoir. Requiring secchi threw all of those away and fell back to guessing.
     if (!data.ok || (!data.secchi && data.recentTurbidityNTU == null)) {
       console.log(`[clarity] no clarity measurements for ${lakeName} (${data.recordCount || 0} WQP records)`);
+      // The box had readings and the on-the-water test put none of them on this water: that is
+      // an ANSWER, and it is cached as one for the same thirty days.
+      if (data.ok && data.onWater && data.onWater.checked) {
+        await env.R2_TROLLMAP_CHARTPACKS.put(key, JSON.stringify({
+          lakeName, fetchedAt: new Date().toISOString(), none: true, stations: [],
+          onWater: data.onWater,
+        }), { httpMetadata: { contentType: 'application/json' } })
+          .catch(e => console.warn(`[clarity] cache write failed for ${lakeName}: ${e.message}`));
+        return null;
+      }
       return (typeof stale !== 'undefined' && stale) || null;
     }
     const out = {
@@ -948,6 +1056,9 @@ async function getSecchiSummary(env, lakeName) {
       recentTurbidityNTU: data.recentTurbidityNTU ?? null,
       basis: data.secchi ? 'secchi' : 'turbidity',
       lastObserved: data.lastObserved || null,
+      // Whether the readings were tested for being ON the water, and what was left out. An
+      // untested pull whose test failed for a passing reason carries `retry` and is refetched.
+      onWater: data.onWater || { checked: false, retry: true, why: 'the pull did not say' },
     };
     await env.R2_TROLLMAP_CHARTPACKS.put(key, JSON.stringify(out), {
       httpMetadata: { contentType: 'application/json' },

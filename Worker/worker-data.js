@@ -1470,12 +1470,48 @@ async function fetchOpenMeteoRain(lat, lon, tripDate) {
   }
 }
 /**
- * The clarity station nearest a point, with its distance in km, or null. Straight line: the
- * payload says how far and which station, so a nearest station across a point in another arm is
- * visible rather than silently trusted. Stations without a position or a reading are skipped.
+ * The clarity station a launch reads, with its distance in km, or null: the NEAREST station whose
+ * record is at least as long as this water's median station record. Straight line, and the
+ * payload says which station and how far, so one across a point in another arm is visible rather
+ * than silently trusted. Stations without a position or a reading are skipped.
+ *
+ * ── A NEARER STATION WITH A SHORT RECORD IS PASSED OVER, AND NAMED ──────────────────────────────
+ *
+ * Asked 2026-09-24 whether a launch should read the nearest station even when it has only a few
+ * readings, or a farther one with a long record, Ryan: "I dont know the answer to your
+ * question... which is more accurate?". So it was measured, leave-one-out: every station in turn
+ * plays the launch, its own average is the answer, and each rule predicts it from the OTHER
+ * stations on that water. Only stations INSIDE the water's outline count (see on-water.js) --
+ * 503 on 53 waters, after 304 in the boxes but off the water were dropped.
+ *
+ *     where the nearest station's record is shorter than the water's median and a longer one is
+ *     farther (a median 1.1 km farther), scored against launches whose own record is long
+ *     (86 launches on 30 waters):
+ *
+ *                                  median error    same clarity band
+ *       nearest, any record          1.00 ft          79.1%
+ *       nearest long record          0.55 ft          84.9%       <- this
+ *       biggest record on the water  0.85 ft          70.9%
+ *       the water's average          0.73 ft          75.6%
+ *
+ *     Head to head over all 154 such launches: the long record is closer on 85, the nearest on
+ *     56. By the nearest station's own record, over every launch: 1 reading 0.95 vs 1.85 ft,
+ *     2-3 readings 0.30 vs 1.00 ft, 4-9 readings 0.70 vs 0.80 ft; at 10 or more the nearest is
+ *     a shade better, 0.50 vs 0.60 ft, which is the price of a water whose median record is
+ *     long. Over every launch the rule is 0.60 ft against 0.70, 79.3% against 78.1%.
+ *
+ * Why the short record loses: a station with a handful of readings is usually one survey, taken in
+ * one season, and Secchi swings with the season (Murray reads 11.8 ft in spring and 3.6 ft in late
+ * summer). Its average is that season, not this water's normal. Scored against short-record
+ * launches instead, the two rules come out closer -- because short-record stations near each other
+ * share the same survey and agree with each other, not with the long run.
+ *
+ * "Long" is the water's own median record, not a count typed here: on Murray, whose 43 stations run
+ * 2 to 115 readings, that is 8; on a water surveyed lightly everywhere it is lower. The payload names
+ * the nearer station it passed over and how many readings it had, so the choice is never hidden.
  */
 function nearestClarityStation(stations, lat, lon) {
-  let best = null;
+  const usable = [];
   for (const s of stations || []) {
     const sLat = Number(s && s.lat), sLon = Number(s && s.lon), ft = Number(s && s.avgSecchiDepthFt);
     if (!Number.isFinite(sLat) || !Number.isFinite(sLon) || !Number.isFinite(ft)) continue;
@@ -1484,9 +1520,22 @@ function nearestClarityStation(stations, lat, lon) {
     const h = Math.sin(dLat / 2) ** 2
             + Math.cos(lat * Math.PI / 180) * Math.cos(sLat * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
     const km = 2 * 6371.0088 * Math.asin(Math.min(1, Math.sqrt(h)));
-    if (!best || km < best.km) best = { ...s, km: Math.round(km * 10) / 10 };
+    usable.push({ s, km, n: Number(s.sampleCount) || 0 });
   }
-  return best;
+  if (!usable.length) return null;
+  const counts = usable.map((u) => u.n).sort((a, b) => a - b);
+  const mid = counts.length >> 1;
+  const medianN = counts.length % 2 ? counts[mid] : (counts[mid - 1] + counts[mid]) / 2;
+  const byKm = (a, b) => a.km - b.km;
+  const nearest = [...usable].sort(byKm)[0];
+  const chosen = usable.filter((u) => u.n >= medianN).sort(byKm)[0] || nearest;
+  const round = (km) => Math.round(km * 10) / 10;
+  const out = { ...chosen.s, km: round(chosen.km), medianRecord: medianN };
+  if (chosen !== nearest) {
+    out.passedOver = { id: nearest.s.id, name: nearest.s.name, km: round(nearest.km),
+                       sampleCount: nearest.n };
+  }
+  return out;
 }
 
 /**
@@ -1806,7 +1855,8 @@ async function getLakeClarity(lakeName, tripDate, env, point = null, opts = {}) 
   // ── THE LAUNCH'S OWN ANSWER ────────────────────────────────────────────────────────────────
   //
   // The same model as every zone -- measured baseline, plus rain through a sensitivity -- with the
-  // baseline read at the station nearest the launch. The sensitivity is the mean of this water's
+  // baseline read at the nearest station with a full record (see nearestClarityStation for why a
+  // nearer one with a short record is passed over). The sensitivity is the mean of this water's
   // zones, which is exactly what `overall` already applies (a mean of zone scores is the mean base
   // plus rain times the mean sensitivity), so this adds no number the model did not already hold.
   // Null when the point is not a launch or no station on this water carries a position; the
@@ -1827,12 +1877,22 @@ async function getLakeClarity(lakeName, tripDate, env, point = null, opts = {}) 
       score: Math.round(score), clarity: cls.clarity, select: cls.select,
       normalScore: Math.round(base), normalClarity: usual.clarity,
       lureColors: lp.colors, tactics: lp.tactics,
-      why: `the nearest measured water to the launch is ${where}, ${local.km} km away: `
+      // A nearer station with a short record, if one was passed over -- see nearestClarityStation.
+      passedOver: local.passedOver || null,
+      why: (local.passedOver
+             ? `the nearest station with a full record is ${where}, ${local.km} km away: `
+             : `the nearest measured water to the launch is ${where}, ${local.km} km away: `)
          + `${local.sampleCount} Secchi reading${local.sampleCount === 1 ? "" : "s"}`
          + `${local.firstObserved ? ` ${local.firstObserved.slice(0, 4)}–${String(local.lastObserved || "").slice(0, 4)}` : ""}`
          + ` averaging ${local.avgSecchiDepthFt} ft`
          + (measured && measured.avgSecchiDepthFt != null
-           ? ` (the whole lake averages ${measured.avgSecchiDepthFt} ft)` : ""),
+           ? ` (the whole lake averages ${measured.avgSecchiDepthFt} ft)` : "")
+         + (local.passedOver
+           ? `; ${local.passedOver.name || local.passedOver.id}, ${local.passedOver.km} km away, was `
+             + `passed over -- ${local.passedOver.sampleCount} reading`
+             + `${local.passedOver.sampleCount === 1 ? "" : "s"}, fewer than this water's median `
+             + `station's ${local.medianRecord}, and a short record is usually one season`
+           : ""),
       versusNormal: {
         bands, dirtier: bands > 0,
         sentence: bands === 0
@@ -1933,6 +1993,9 @@ async function getLakeClarity(lakeName, tripDate, env, point = null, opts = {}) 
       // Every station on this water with its own average, so the card can show the spread the
       // lake-wide number hides.
       stations: Array.isArray(measured.stations) ? measured.stations : [],
+      // Whether these readings were tested for being ON this water rather than merely inside its
+      // box, and which stations were left out. See Worker/research/on-water.js.
+      onWater: measured.onWater || null,
       source: "Water Quality Portal (waterqualitydata.us) \u2014 NWIS + STORET",
     } : null,
     measuredNote: measured
