@@ -402,11 +402,21 @@ class TheCapsMeanWhatTheySay(unittest.TestCase):
         chosen = usable if not mod.EXTRACT_DOC_LIMIT else usable[:mod.EXTRACT_DOC_LIMIT]
         self.assertEqual(len(chosen), 27)
 
-    def test_the_agent_payload_is_still_capped_at_twelve(self):
-        """Extraction reading everything must not grow the prompt that has to reason."""
+    def test_the_agent_is_offered_every_readable_document(self):
+        """Offering more must not grow the prompt that has to reason -- agents.js still injects at
+        most eight (maxDocs) and cleanProfile() deletes _normalizedDocuments before the dump. What
+        changed on 2026-09-24 is that the eight are chosen from all of them, not from the first
+        twelve in search order: on Lake Murray that choice had left out every guide report."""
         mod = load_module()
-        self.assertEqual(mod.LLM_DOC_LIMIT, 12,
-                         'the agent payload limit moved; agents.js keeps 8 of what it is sent')
+        self.assertEqual(mod.LLM_DOC_LIMIT, 0, 'the agent is offered every readable document')
+        docs = [{'title': f'd{i}', 'url': f'u{i}', 'fullText': 'x' * 30000} for i in range(40)]
+        sent = mod.agent_documents(docs)
+        self.assertEqual(len(sent), 40)
+        self.assertTrue(all(len(d['text']) == mod.LLM_DOC_CHARS for d in sent))
+        agents = (SCRIPT.parents[1] / 'Worker' / 'research' / 'agents.js').read_text(encoding='utf-8')
+        self.assertRegex(agents, r'const maxDocs = 8;', 'the prompt still takes eight')
+        self.assertRegex(agents, r'delete out\._normalizedDocuments;',
+                         'the profile dump still leaves the documents out')
 
     def test_the_per_document_character_bound_came_down(self):
         mod = load_module()

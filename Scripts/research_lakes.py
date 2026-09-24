@@ -72,8 +72,29 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 # sending twelve gives that ranker something to choose between without growing the prompt that has
 # to reason. Twelve is wrong for extraction, which is one cheap call per document and has no reason
 # to stop at twelve when discovery found twenty-seven.
-LLM_DOC_LIMIT = 12
+#
+# NOW 0 -- EVERY READABLE DOCUMENT -- BECAUSE TWELVE WAS NOT "SOMETHING TO CHOOSE BETWEEN", IT WAS
+# THE CHOICE. Measured on Lake Murray, 2026-09-24: 46 documents stored, the first twelve in search
+# order sent, and the ranker in agents.js kept eight of those -- Omnia's generated pattern page, a
+# synthesized report page, a guide's sales page, two Reddit threads, an Omnia listing and a
+# 392-character stub, beside one real guide interview. The AHQ weekly guide reports (#34), Brad
+# Taylor's summer striper article (#33), Game & Fish's Murray section (#29) and the SCDNR outlook
+# page (#12) sat further down the list, and the same ranker, offered all 46, picks every one of
+# them. The PROMPT does not grow: agents.js still injects at most eight (`maxDocs`), and
+# `cleanProfile()` deletes `_normalizedDocuments` before the profile is dumped. What grows is the
+# request body -- about 600,000 characters on Murray, one request per water.
+# See THE_ANSWERS_WERE_IN_THE_MATERIAL_AND_THE_SPECIES_STEP_READ_THE_FIRST_TWELVE_2026-09-24.md.
+LLM_DOC_LIMIT = 0
 LLM_DOC_CHARS = 20000
+
+
+def agent_documents(usable):
+    """What the species step is offered: every readable document (LLM_DOC_LIMIT 0), in the corpus's
+    own order, each cut to LLM_DOC_CHARS. agents.js ranks them and keeps eight."""
+    chosen = usable if not LLM_DOC_LIMIT else usable[:LLM_DOC_LIMIT]
+    return [{"title": d.get("title"), "url": d.get("url"),
+             "text": str(d.get("fullText") or d.get("text") or "")[:LLM_DOC_CHARS]}
+            for d in chosen]
 
 # EXTRACTION READS EVERYTHING THAT SURVIVED THE GATE. 0 means no limit.
 #
@@ -997,6 +1018,10 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
         #
         # FRESHLY FETCHED DOCUMENTS GO FIRST, AND THEY USED TO GO LAST.
         #
+        # (Since 2026-09-24 the agent is offered every readable document -- LLM_DOC_LIMIT 0 -- so
+        # the order below no longer decides what the agent can see; it still decides the corpus's
+        # stored order and the order extraction reports in.)
+        #
         # `chosen = usable[:LLM_DOC_LIMIT]` takes twelve. With cached documents ahead of fetched
         # ones, the twelve slots went to whatever an older run happened to store and the newest
         # documents were the first thing the limit cut. Measured on the Congaree, 2026-09-16, across
@@ -1192,10 +1217,7 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
         # store via /research/save-normalized, south_holston_tn carries 137 facts and no
         # documents, and putting ten documents of full text into every profile would multiply
         # what R2 holds for a second copy of something already saved.
-        prev["_normalizedDocuments"] = [
-            {"title": d.get("title"), "url": d.get("url"),
-             "text": str(d.get("fullText") or d.get("text") or "")[:LLM_DOC_CHARS]}
-            for d in usable[:LLM_DOC_LIMIT]]
+        prev["_normalizedDocuments"] = agent_documents(usable)
 
         code, res, err = ask_species_groups(lake, state, prev, group_models, out)
         clock.mark("species_groups")
@@ -1605,6 +1627,39 @@ def species_comparison_md(lake, stored, new, groups, group_models, stored_when):
     return "\n".join(lines) + "\n"
 
 
+def print_claude_line(r):
+    cl = r.get("claude") or {}
+    if cl.get("packet_chars"):
+        toks = sum((cl.get(k) or 0) for k in ("input_tokens", "cache_creation_input_tokens",
+                                             "cache_read_input_tokens"))
+        print(f"        claude: {cl.get('model') or cl.get('model_asked')}  {cl.get('seconds')} s  "
+              f"packet {cl['packet_chars']:,} chars  {toks:,} tokens in, "
+              f"{cl.get('output_tokens') or 0:,} out  {cl.get('entries', 0)} entries kept, "
+              f"{cl.get('entries_dropped', 0)} dropped")
+
+
+def claude_checks_md(meta):
+    """What the Claude answer cost and what the checks threw out, under the comparison."""
+    pk = meta.get("packet") or {}
+    toks = [meta.get(k) or 0 for k in ("input_tokens", "cache_creation_input_tokens",
+                                       "cache_read_input_tokens")]
+    lines = ["", "## The Claude call", "",
+             f"- Model: {meta.get('model') or meta.get('model_asked')}; "
+             f"{meta.get('seconds')} s ({meta.get('api_seconds')} s in the model).",
+             f"- Packet: {meta.get('packet_chars', 0):,} characters from "
+             f"{pk.get('documents_with_text', 0)} of {pk.get('documents', 0)} documents "
+             f"({pk.get('chars_kept', 0):,} of {pk.get('chars_stored', 0):,} stored characters kept).",
+             f"- Tokens: {sum(toks):,} in, {meta.get('output_tokens') or 0:,} out. At API list price "
+             f"that would be ${meta.get('api_list_price_usd') or 0:.2f}; on the subscription it is "
+             f"usage, not money.",
+             f"- Roster from {meta.get('roster_from')}: {', '.join(meta.get('roster') or [])}.",
+             f"- Entries kept: {meta.get('entries', 0)}; dropped by the checks: "
+             f"{meta.get('entries_dropped', 0)}.", ""]
+    for p in meta.get("problems") or []:
+        lines.append(f"  - {p}")
+    return "\n".join(lines) + "\n"
+
+
 def _save_section(lake, profile, section, requested_by):
     profile = dict(profile)
     profile["trollingIntelligence"] = section
@@ -1616,8 +1671,12 @@ def _save_section(lake, profile, section, requested_by):
     return None
 
 
-def species_groups_only(lake, state, group_models, save=False, report_dir="_reports"):
-    """The five groups again on the stored profile and corpus. (result, [written paths])."""
+def species_groups_only(lake, state, group_models, save=False, report_dir="_reports",
+                        aliases=None, claude_model=None):
+    """The species answers again on the stored profile and corpus. (result, [written paths]).
+
+    `group_models` "lite" or "flash" asks the Worker's five groups; "claude" asks Claude through
+    claude_species.py, on Ryan's subscription, from the same stored profile and corpus."""
     t0 = time.perf_counter()
     out = {"lake": lake, "state": state, "group_models": group_models, "ok": False,
            "error": None, "saved": False}
@@ -1631,31 +1690,52 @@ def species_groups_only(lake, state, group_models, save=False, report_dir="_repo
     if not usable:
         out["error"] = f"no stored documents for this water (get-normalized {code}: {err})"
         return out, []
-    # The same inputs research_one() builds: the profile as the agent's context, and the first
-    # LLM_DOC_LIMIT readable documents in the corpus's own order, cut to LLM_DOC_CHARS.
-    prev = dict(profile)
-    prev["_normalizedDocuments"] = [
-        {"title": d.get("title"), "url": d.get("url"),
-         "text": str(d.get("fullText") or d.get("text") or "")[:LLM_DOC_CHARS]}
-        for d in usable[:LLM_DOC_LIMIT]]
-    out["documents"] = len(prev["_normalizedDocuments"])
-    # NAMED, because the stored corpus is what /research/save-normalized kept, and it runs its own
-    # name-and-state filter on the way in -- so if it refused one of the documents the last run read,
-    # the twelve here are not exactly the twelve that run read. The titles say which were.
-    out["document_titles"] = [d.get("title") for d in prev["_normalizedDocuments"]]
     out["facts"] = len(profile.get("_extractedFacts") or [])
-    code, res, err = ask_species_groups(lake, state, prev, group_models, out)
-    out["seconds"] = round(time.perf_counter() - t0, 1)
-    if code != 200 or not res:
-        out["error"] = f"agent-llm {code}: {err}"
-        return out, []
-    section = res.get("section") or {}
-    meta = res.get("meta") or {}
-    groups = meta.get("groups") or []
-    out["species"] = len([k for k in section if k != "sources"])
-    out["missing"] = list(meta.get("missingSpecies") or [])
-    out["models"] = {g.get("group"): g.get("model") for g in groups if g.get("group")}
-    out["warnings"] = list(res.get("warnings") or [])
+    claude_meta = None
+    if group_models == "claude":
+        # CLAUDE READS THE CORPUS ITSELF, not the Worker's eight. The stored answer is NOT shown to
+        # it: every Gemini group is handed the answer it is revising, and on Murray the models
+        # that were shown it copied it. This answer comes from the documents or it is null.
+        import claude_species                                       # noqa: E402 (lazy: CLI-only)
+        out["documents"] = len(usable)
+        section, claude_meta = claude_species.answer(
+            lake, state, profile, usable, aliases, base_name(lake),
+            model=claude_model or claude_species.DEFAULT_MODEL)
+        out["seconds"] = round(time.perf_counter() - t0, 1)
+        out["claude"] = {k: v for k, v in claude_meta.items()
+                         if k not in ("packet_docs", "raw_section")}
+        if section is None:
+            out["error"] = f"claude: {claude_meta.get('error')}"
+            return out, []
+        groups = [{"group": "all", "species": claude_meta.get("roster"), "ok": True,
+                   "returned": list(section), "reason": None, "attempts": 1,
+                   "model": claude_meta.get("model") or claude_meta.get("model_asked")}]
+        out["species"] = len(section)
+        out["missing"] = [sp for sp, ss in section.items() if not any(ss.values())]
+        out["models"] = {"all": groups[0]["model"]}
+        out["warnings"] = list(claude_meta.get("problems") or [])
+    else:
+        # The same inputs research_one() builds: the profile as the agent's context, and every
+        # readable document in the corpus's own order, cut to LLM_DOC_CHARS (agent_documents()).
+        prev = dict(profile)
+        prev["_normalizedDocuments"] = agent_documents(usable)
+        out["documents"] = len(prev["_normalizedDocuments"])
+        # NAMED, because the stored corpus is what /research/save-normalized kept, and it runs its
+        # own name-and-state filter on the way in -- so if it refused one of the documents the last
+        # run read, the ones here are not exactly the ones that run read. The titles say which were.
+        out["document_titles"] = [d.get("title") for d in prev["_normalizedDocuments"]]
+        code, res, err = ask_species_groups(lake, state, prev, group_models, out)
+        out["seconds"] = round(time.perf_counter() - t0, 1)
+        if code != 200 or not res:
+            out["error"] = f"agent-llm {code}: {err}"
+            return out, []
+        section = res.get("section") or {}
+        meta = res.get("meta") or {}
+        groups = meta.get("groups") or []
+        out["species"] = len([k for k in section if k != "sources"])
+        out["missing"] = list(meta.get("missingSpecies") or [])
+        out["models"] = {g.get("group"): g.get("model") for g in groups if g.get("group")}
+        out["warnings"] = list(res.get("warnings") or [])
     if not section:
         out["error"] = "agent-llm returned an empty trollingIntelligence section"
         return out, []
@@ -1666,13 +1746,18 @@ def species_groups_only(lake, state, group_models, save=False, report_dir="_repo
     base = os.path.join(report_dir, f"species_groups_{group_models}_{sid}_{stamp}")
     os.makedirs(report_dir, exist_ok=True)
     out["ok"] = True          # before the file is written, so the file says so too
+    kept = {"lake": lake, "state": state, "group_models": group_models,
+            "generated": time.strftime("%Y-%m-%dT%H:%M:%S"), "result": out,
+            "groups": groups, "stored_section": stored, "new_section": section}
+    if claude_meta:
+        kept["packet_docs"] = claude_meta.get("packet_docs")    # what each document gave the packet
+        kept["claude_raw_section"] = claude_meta.get("raw_section")   # before the checks
     with open(base + ".json", "w", encoding="utf-8") as f:
-        json.dump({"lake": lake, "state": state, "group_models": group_models,
-                   "generated": time.strftime("%Y-%m-%dT%H:%M:%S"), "result": out,
-                   "groups": groups, "stored_section": stored, "new_section": section},
-                  f, indent=1, ensure_ascii=False)
+        json.dump(kept, f, indent=1, ensure_ascii=False)
     with open(base + ".md", "w", encoding="utf-8") as f:
         f.write(species_comparison_md(lake, stored, section, groups, group_models, stored_when))
+        if claude_meta:
+            f.write(claude_checks_md(claude_meta))
     if save:
         why = _save_section(lake, profile, section,
                             f"research_lakes.py --groups-only --group-models {group_models}")
@@ -2120,11 +2205,18 @@ def main():
                          "Seconds and no model calls instead of ~193 s and ~58k tokens. For "
                          "re-merging a profile after the limnology rule changed. Refuses a water "
                          "with no stored profile.")
-    ap.add_argument("--group-models", choices=("lite", "flash"), default="lite",
+    ap.add_argument("--group-models", choices=("lite", "flash", "claude"), default="lite",
                     help="which models write the species answers. lite (default): the Lite ladder, "
                          "as always. flash: 3.8, 3.7, 3.6 and 3.5 Flash on every free key first -- "
                          "20 a day each, twenty allowances -- then Lite, so nothing is lost when "
-                         "they run out")
+                         "they run out. claude: Gemini does everything it does now, Lite groups "
+                         "included and saved, and then Claude (the `claude` CLI on this machine's "
+                         "subscription) writes the species answers from the stored corpus and they "
+                         "replace Lite's when every entry it keeps passes the quote checks. See "
+                         "Scripts/claude_species.py")
+    ap.add_argument("--claude-model", default=None,
+                    help="with --group-models claude: the CLI's model name or alias "
+                         "(opus, sonnet). Default: claude_species.DEFAULT_MODEL")
     ap.add_argument("--groups-only", action="store_true",
                     help="ask only the species groups again, on the profile and documents the last "
                          "run stored -- no discovery, no fetch, no extraction. Writes the new answer "
@@ -2160,9 +2252,10 @@ def main():
 
     if a.groups_only:
         bad = 0
-        for name, st, _alts in (lakes[:a.limit] if a.limit else lakes):
+        for name, st, alts in (lakes[:a.limit] if a.limit else lakes):
             r, paths = species_groups_only(name, st, a.group_models, a.save,
-                                           os.path.dirname(a.report) or "_reports")
+                                           os.path.dirname(a.report) or "_reports",
+                                           aliases=alts, claude_model=a.claude_model)
             models = ", ".join(f"{g} {m}" for g, m in (r.get("models") or {}).items())
             print(f"  {'ok ' if r['ok'] else 'FAIL'} {r.get('seconds', 0):5.1f}s  {name[:44]:46s}"
                   f"{r.get('species', 0)} species  {r.get('facts', 0)} facts  "
@@ -2170,6 +2263,7 @@ def main():
                   + (f"  -- {r['error']}" if r.get("error") else ""))
             if models:
                 print(f"        models: {models}")
+            print_claude_line(r)
             for w in r.get("warnings") or []:
                 print(f"        warn: {w}")
             for pth in paths:
@@ -2226,9 +2320,20 @@ def main():
 
     def work(pair):
         name, st, alts = pair
+        # WITH CLAUDE, GEMINI'S RUN IS UNCHANGED -- LITE GROUPS INCLUDED. Its save is the roster
+        # (the Worker's merged species names) and the fallback: if Claude is out of usage, times
+        # out, or nothing it writes passes the checks, the Lite answer is what the water keeps.
+        claude = a.group_models == "claude"
         r = research_one(name, st, a.dry_run, a.verbose, a.repo, alts, a.tpm,
                          ROWS_BY_NAME.get(name.strip().lower()), a.limnology_only, rpm=a.rpm,
-                         group_models=a.group_models)
+                         group_models="lite" if claude else a.group_models)
+        if claude and r["ok"] and r.get("saved") and not a.limnology_only:
+            cr, cpaths = species_groups_only(name, st, "claude", True,
+                                             os.path.dirname(a.report) or "_reports",
+                                             aliases=alts, claude_model=a.claude_model)
+            r["claude"] = {**(cr.get("claude") or {}), "ok": cr["ok"], "saved": cr.get("saved"),
+                           "error": cr.get("error"), "report": cpaths[1] if cpaths else None}
+            r["seconds"] = round(r.get("seconds", 0) + (cr.get("seconds") or 0), 1)
         done[0] += 1
         mark = "ok " if r["ok"] else "FAIL"
         secs = f'{r.get("seconds", 0):5.1f}s'
@@ -2252,6 +2357,12 @@ def main():
                 f"{k} {v:.0f}s" + (f" ({r['extract_calls']} calls{models_note(r)})"
                                    if k == "extract" and r.get("extract_calls") else "")
                 for k, v in tm.items()))
+        cl = r.get("claude")
+        if cl:
+            print_claude_line({"claude": cl})
+            if not (cl.get("ok") and cl.get("saved")):
+                print(f"        claude did not replace the Lite answer -- "
+                      f"{cl.get('error') or 'not saved'}")
         with report_lock:
             results.append(r)
             flush_report(time.perf_counter() - t0, True)

@@ -86,8 +86,11 @@ class GroupsOnly(unittest.TestCase):
         body = dict(stub.calls)["/research/agent-llm"]
         self.assertEqual(body["groupModels"], "flash")
         docs = body["previousResults"]["_normalizedDocuments"]
-        self.assertEqual([d["title"] for d in docs], [f"d{i}" for i in range(R.LLM_DOC_LIMIT)],
-                         "the corpus's own order, readable ones, first LLM_DOC_LIMIT")
+        # EVERY READABLE ONE, since 2026-09-24 (LLM_DOC_LIMIT 0): on Murray the first twelve in
+        # search order were the choice, and the guide reports that answer the question were below.
+        self.assertEqual(R.LLM_DOC_LIMIT, 0)
+        self.assertEqual([d["title"] for d in docs], [f"d{i}" for i in range(15)],
+                         "the corpus's own order, every readable one, the short one left out")
         self.assertEqual(len(body["previousResults"]["_extractedFacts"]), 7, "the stored facts go in")
         self.assertEqual(r["models"], {"bass": "gemini-3.8-flash", "trout": "gemini-3.5-flash-lite"})
 
