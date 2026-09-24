@@ -7,6 +7,8 @@ test_a_gauge_reads_its_own_water.py -- pins the three rules that decide whose ga
 `pool` is the gauge every level, flow and go/no-go answer comes off. Scripts/audit_pool_binds.mjs
 listed sixteen waters reading a gauge named for some other water, and the 2026-09-24 rebind
 measured what each rule below moves. Every case here is a gauge name from the NWPS/USGS rosters.
+Section 4 pins what that same rebind nearly destroyed: another binder's level feed on a water this
+one does not bind.
 
 Personal use only, not for distribution or resale. NOT FOR NAVIGATION.
 """
@@ -135,6 +137,36 @@ check('Lake Raleigh does not read Lake Johnson', 'pool' in b['lake_raleigh'], Fa
 b = {'only': water('name+near', lid='X1')}
 demote_shared_pools(b, Counter())
 check('a pool nobody else claims is untouched', b['only']['pool']['lid'], 'X1')
+
+# ── 4. a rebind keeps another binder's blocks, even on a water it does not bind ───────────
+# Lake Julian, Lake Sutton and Waterville Lake have no gauge; bind_water_levels.py gave each its
+# Duke level feed, and the 2026-09-24 rebind dropped all three whole.
+import json, tempfile                                                   # noqa: E402
+from build_water_bindings import carry_foreign                          # noqa: E402
+
+levels = {'primary': 'duke', 'sources': [{'source': 'duke', 'key': {'location_id': 46}}]}
+with tempfile.TemporaryDirectory() as reg:
+    with open(os.path.join(reg, 'water_bindings.json'), 'w', encoding='utf-8') as fh:
+        json.dump({'bindings': {
+            'lake_julian': {'slug': 'lake_julian', 'display_name': 'Lake Julian', 'levels': levels},
+            'gone_lake': {'slug': 'gone_lake', 'levels': levels},
+            'lake_murray': {'slug': 'lake_murray', 'operator': {'operator': 'x'}},
+        }}, fh)
+    index = {'lake_julian': {'display_name': 'Lake Julian (Buncombe Co, NC)', 'state': 'NC',
+                             'feature_type': 'lake'},
+             'lake_murray': {'display_name': 'Lake Murray', 'state': 'SC', 'feature_type': 'lake'}}
+    fresh = {'lake_murray': {'slug': 'lake_murray', 'pool': {'lid': 'MURS1'}}}
+    carry_foreign(fresh, reg, os.path.join(reg, 'scratch_out.json'), quiet=True, index=index)
+    check('a bound water keeps its foreign block', fresh['lake_murray'].get('operator'),
+          {'operator': 'x'})
+    check('an unbound water still in the index keeps its level feed',
+          (fresh.get('lake_julian') or {}).get('levels'), levels)
+    check("...under the index's current identity",
+          (fresh.get('lake_julian') or {}).get('display_name'), 'Lake Julian (Buncombe Co, NC)')
+    check('a water gone from the index is dropped with its block', 'gone_lake' in fresh, False)
+    fresh2 = {}
+    carry_foreign(fresh2, reg, os.path.join(reg, 'scratch_out.json'), quiet=True)
+    check('without an index nothing unbound is invented', fresh2, {})
 
 print()
 if FAILED:

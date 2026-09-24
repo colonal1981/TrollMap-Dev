@@ -2083,10 +2083,18 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
 FOREIGN_KEYS = ('operator', 'ndbc', 'levels')
 
 
-def carry_foreign(bindings, reg, out, quiet=False):
+def carry_foreign(bindings, reg, out, quiet=False, index=None):
     """Restore, per slug, any FOREIGN_KEYS block this script did not compute. Returns the count.
 
     SAY HOW MANY, AND FROM WHERE. Silence is how the operator loss went unnoticed for nine days.
+
+    AND A WATER THIS SCRIPT DOES NOT BIND AT ALL STILL KEEPS ITS BLOCK. The loop below only visits
+    slugs this run bound, so a water that exists in the file ONLY because another binder put it
+    there was dropped whole. Measured on the 2026-09-24 rebind: Lake Julian, Lake Sutton and
+    Waterville Lake have no gauge, and bind_water_levels.py had given each its Duke level feed --
+    all three came back with no entry and no level. With `index`, a slug still in the index keeps
+    its foreign blocks under the index's own identity fields. A slug gone from the index still
+    drops, for the reason given above.
     """
     prevs, seen_paths = [], set()
     for path in (os.path.join(reg, 'water_bindings.json'), out):
@@ -2113,12 +2121,30 @@ def carry_foreign(bindings, reg, out, quiet=False):
                     carried += 1
                     from_file[path] = from_file.get(path, 0) + 1
                     break                       # first source wins; the registry is first
+    kept_whole = []
+    for path, prev in (prevs if index is not None else []):
+        for slug, old_b in prev.items():
+            if slug in bindings or slug not in index or not isinstance(old_b, dict):
+                continue
+            blocks = {k: old_b[k] for k in FOREIGN_KEYS if k in old_b}
+            if not blocks:
+                continue
+            rec = index[slug] or {}
+            bindings[slug] = {'slug': slug, 'display_name': rec.get('display_name'),
+                              'state': rec.get('state'), 'feature_type': rec.get('feature_type'),
+                              **blocks}
+            carried += len(blocks)
+            from_file[path] = from_file.get(path, 0) + len(blocks)
+            kept_whole.append(slug)
     if quiet:
         return carried
     print('   carried forward %d block(s) this script does not own (%s)'
           % (carried, ', '.join(FOREIGN_KEYS)))
     for path, n in sorted(from_file.items()):
         print('       %4d from %s' % (n, path))
+    if kept_whole:
+        print('       %d water(s) this run does not bind kept for those blocks alone: %s'
+              % (len(kept_whole), ', '.join(sorted(kept_whole))))
     if not carried:
         print('   !! none found. If bind_operator_lakes.py or bind_ndbc_stations.py has ever run,'
               ' its output is missing -- re-run both, or the utility-page parsers and the buoy'
@@ -2292,7 +2318,7 @@ def main():
     # drops its block with it, which is correct -- the binding was about that water.
     # `ndbc` joined this list on 2026-08-25, the day it was created, rather than nine days
     # later after a rebind quietly ate it. That is the whole lesson of the operator block.
-    carry_foreign(bindings, reg, out)
+    carry_foreign(bindings, reg, out, index=index)
 
     with open(out, 'w', encoding='utf-8') as fh:
         json.dump({'_note': 'built by build_water_bindings.py; name AND geometry, never either '
