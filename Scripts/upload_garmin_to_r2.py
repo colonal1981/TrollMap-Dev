@@ -91,6 +91,7 @@ from pathlib import Path
 # sys.path[0]. Compression lives there because upload_to_r2_coastal.py and
 # upload_boundaries_to_r2.py write to the same bucket and must encode the same way.
 from r2_gzip import prepared
+import r2_live
 
 WRANGLER_JS = os.environ.get(
     "WRANGLER_JS",
@@ -624,6 +625,9 @@ def main():
                          "r2Body() in worker-core.js -- see the module docstring")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--force", action="store_true", help="ignore the manifest, push everything")
+    ap.add_argument("--no-live-check", action="store_true",
+                    help="trust the manifest's size/mtime alone and skip asking the bucket "
+                         "whether a 'changed' file is already there byte for byte")
     ap.add_argument("--manifest", default=None, help="default <root>/_r2_manifest.json")
     ap.add_argument("--timeout", type=int, default=900)
     ap.add_argument("--boundaries", default=None,
@@ -1247,6 +1251,52 @@ def main():
         print(f"boundaries: {len(bjobs)} to upload, {bskipped} unchanged, "
               f"{boffscope} not offered by the app, from {bdir}")
 
+    # ── WHAT THE MANIFEST CALLS CHANGED, ASKED OF THE BUCKET ─────────────────────────────────
+    #
+    # The manifest keys off each local file's size and modification time, so a rebuild that
+    # re-saves a pack with the same bytes makes it look changed. On 2026-09-24 that read as 1,628
+    # files waiting to upload; 1,569 of them were byte-for-byte what R2 already served. Ryan: "did
+    # we rebuild packs? i thought the updated packs were already uploaded..."
+    #
+    # So before anything is pushed, each candidate is asked of the bucket: md5 of the exact bytes
+    # this run would upload, sent as If-None-Match to the Worker's /chartpacks route, which answers
+    # 304 with no body when R2 already holds them (see r2_live.py). A match is skipped and its
+    # manifest entry brought up to date; anything else -- different, absent, or unanswerable --
+    # uploads exactly as before. --force skips the check along with the manifest.
+    etags = {}
+    if not args.force and not args.no_live_check and (jobs or bjobs):
+        cand = jobs + bjobs
+        t_chk = time.time()
+
+        def _check(job):
+            p, k = job[0], job[1]
+            m = r2_live.upload_bytes_md5(p, gz)
+            return job, m, r2_live.live_state(k, m)
+
+        keep, already, unasked = [], 0, 0
+        with ThreadPoolExecutor(max_workers=args.jobs) as ex:
+            for job, m, state in ex.map(_check, cand):
+                etags[job[1]] = m
+                if state == "same":
+                    st = os.stat(job[0])
+                    prev = manifest.get(job[1]) or {}
+                    manifest[job[1]] = {**prev, "size": st.st_size, "mtime": int(st.st_mtime),
+                                        "gzip": gz, "etag": m}
+                    already += 1
+                else:
+                    unasked += state is None
+                    keep.append(job)
+        bset = {j[1] for j in bjobs}
+        bjobs = [j for j in keep if j[1] in bset]
+        jobs = [j for j in keep if j[1] not in bset]
+        skipped += already
+        if already:
+            save_manifest(manifest, mpath)
+        print(f"live check: {len(cand)} the manifest called changed, {already} already live byte "
+              f"for byte (manifest updated), {len(keep)} really differ"
+              + (f", {unasked} could not be asked and will upload" if unasked else "")
+              + f"  [{(time.time() - t_chk) / 60:.1f} min]")
+
     jobs = reg_jobs + jobs + bjobs
     skipped += bskipped
     # NOT added into `offscope`. A pack dir and a boundary file skipped for the same reason are
@@ -1281,6 +1331,8 @@ def main():
                 st = os.stat(p)
                 manifest[k] = {"size": st.st_size, "mtime": int(st.st_mtime),
                                "uploaded_bytes": n, "gzip": gz}
+                if etags.get(k):
+                    manifest[k]["etag"] = etags[k]
             else:
                 fail += 1
                 failures.append((k, msg))
