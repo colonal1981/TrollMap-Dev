@@ -218,6 +218,34 @@ def state_suffix(x):
     return x.get('state') or (sts[0] if sts else '')
 
 
+def label_suffix(x, county_state):
+    """The state(s) the label pairs with the county: state_suffix(), unless the county is not in it.
+
+    The county comes from the centroid and the suffix from the row's state, two different rules,
+    and the county's own state was looked up and thrown away. So a water whose centroid falls
+    across a line from its row's state got a county that does not exist in the state beside it.
+    Measured 2026-09-24 with this file's own CountyIndex on every row, six of them:
+
+        Broad River (Cherokee Co, NC)           Cherokee is South Carolina's
+        Chattooga River (Rabun Co, SC)          Rabun is Georgia's
+        Clinch River (Scott Co, TN)             Scott is Virginia's
+        Nolichucky River (Yancey Co, TN)        Yancey is North Carolina's
+        Savannah River (Aiken Co, GA)           Aiken is South Carolina's
+        South Fork New River (Grayson Co, NC)   Grayson is Virginia's
+
+    Ryan, 2026-09-23, of the first: "there is no Broad River in Cherokee County, North Carolina".
+    The label now names the county's state. The four border lakes Ryan chose to name with both
+    states (see state_suffix) already include the county's, so they are unchanged -- this touches
+    a label only where the county and the state beside it disagree. The row's `state` is NOT
+    changed: it keys the "Name, ST" names the research profiles are filed under.
+    """
+    suffix = state_suffix(x)
+    cs = (county_state or '').strip().upper()
+    if cs and cs not in [p.strip().upper() for p in suffix.split('/')]:
+        return cs
+    return suffix
+
+
 def carry_measured_states(idx, path):
     """Every state a water is in, onto its row: `states`, most of the water first, and
     `state_shares`, how much of it is in each.
@@ -918,10 +946,10 @@ def main():
         # lake-registry.js also normalises `name` alone, so "Forest Lake, SC" would resolve
         # regardless, but only ambiguously, and this is the unambiguous route.
         old_display = x.get('display_name') or '%s, %s' % (x['name'], x['state'])
-        cty = None
+        cty = cty_state = None
         cen = x.get('centroid') or []
         if counties and len(cen) == 2:
-            cty, _cty_state = counties.lookup(cen[0], cen[1])
+            cty, cty_state = counties.lookup(cen[0], cen[1])
             if cty:
                 county_hits += 1
             else:
@@ -937,9 +965,14 @@ def main():
         # came from scdnr-state-lakes.js, user-known-lakes.js and curated_lakes.json, and unlike
         # those it grows and shrinks with the feed instead of with somebody editing a file.
         _feed = feed_names.get(s) or []
+        # The label the rule before 2026-09-24 gave, when it differs: kept as a legacy name so
+        # anything saved under it still resolves. See label_suffix().
+        _suffix = label_suffix(x, cty_state)
+        _old_rule = (display_with_county(_name, cty, state_suffix(x))
+                     if _suffix != state_suffix(x) else None)
         idx[s] = {
             'slug': s, 'name': _name, 'state': x['state'],
-            'display_name': display_with_county(_name, cty, state_suffix(x)),
+            'display_name': display_with_county(_name, cty, _suffix),
             # A LIST, because a lake can accumulate more than one former name: the "Name, ST"
             # form used before counties, and separately the curated LAKE_DB key it binds to
             # below. Overwriting one with the other would strand whichever string happens to
@@ -948,6 +981,7 @@ def main():
             'legacy_display_name': old_display,
             'legacy_display_names': (
                 [old_display]
+                + ([_old_rule] if _old_rule and _old_rule != old_display else [])
                 + ([display_with_county(x['name'], cty, state_suffix(x)), x['name']]
                    if _ov.get('name') else [])
                 + _with_state_suffix(list(_ov.get('also') or [])
