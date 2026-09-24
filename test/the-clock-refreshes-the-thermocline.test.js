@@ -92,8 +92,14 @@ const SKELETON = {
   trophicStatus: null, seasonalDrawdownFt: 2.5,
 };
 
+// A PULL AS THE WORKER WRITES ONE NOW, `onWater` included. From 2026-09-24 a cached pull with no
+// `onWater` was drawn from the whole box and is refetched rather than trusted -- so without it
+// this fixture was "expired", every test here went to the real WQP, and a live Lake Wateree pull
+// (2,144 readings) was merged in place of these numbers. See a-station-counts-only-on-its-own-water.
 const PULL = JSON.stringify({
   ok: true, recordCount: 412, lastObserved: '2024-08-14',
+  onWater: { checked: true, water: 'wateree_lake', stationsOn: 6, stationsOff: 0, stationsUnplaced: 0,
+             readingsKept: 412, readingsDropped: 0, off: [] },
   fetchedAt: iso(2 * DAY),
   thermocline: { depthFt: 24, method: 'derived_from_do_profile', evidenceCount: 61 },
   oxygen: { anoxicBelowFt: 30 },

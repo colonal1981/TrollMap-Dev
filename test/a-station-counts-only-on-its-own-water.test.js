@@ -98,6 +98,46 @@ test('that answer is cached, so the next request does not pull WQP again', async
   assert.equal(cached.onWater.checked, true);
 });
 
+// ── THE WHOLE PULL, NOT ONLY CLARITY ────────────────────────────────────────────────────────────
+// The research profile's limnology (thermocline, oxygen, surface water, Secchi) comes from the
+// same box through handleResearchLimnologyData -> wqpCached -> wqpPull.
+const { handleResearchLimnologyData } = await import('../Worker/research/limnology.js');
+const limno = async (name) => (await handleResearchLimnologyData(
+  new Request('https://w.example/research/limnology-data', { method: 'POST',
+    body: JSON.stringify({ lakeName: name }) }), env)).json();
+
+test('the research pull keeps only the stations on the water, and says which it left out', async () => {
+  const d = await limno('Box Lake (Nowhere Co, SC)');
+  assert.equal(d.onWater.checked, true);
+  assert.equal(d.recordCount, 10, 'ON-A\'s ten readings, not the pond\'s twenty');
+  assert.equal(d.secchi.avgSecchiDepthFt, 4);
+  assert.equal(d.onWater.readingsDropped, 20);
+  assert.match(d.surfaceWater.note, /inside this water's outline/);
+});
+
+test('a river whose box holds only a reservoir gets no limnology, and that is cached as the answer', async () => {
+  pulls.length = 0;
+  const d = await limno('Strip River (Nowhere Co, NC)');
+  assert.equal(d.recordCount, 0);
+  assert.equal(d.onWater.checked, true);
+  assert.match(d.note, /none at a station on the water/);
+  assert.equal(pulls.length, 1);
+  const again = await limno('Strip River (Nowhere Co, NC)');
+  assert.equal(again.recordCount, 0);
+  assert.equal(pulls.length, 1, 'the empty answer came from the cache, not a second pull');
+});
+
+test('a research cache from before the test is refetched, and never served as a stand-in', async () => {
+  const key = [...store.keys()].find((k) => k.startsWith('limnology-cache/') && k.includes('box'));
+  assert.ok(key, 'the box lake\'s pull was cached');
+  store.set(key, JSON.stringify({ ok: true, recordCount: 30, fetchedAt: new Date().toISOString(),
+    secchi: { avgSecchiDepthFt: 9.3, sampleCount: 30 } }));
+  pulls.length = 0;
+  const d = await limno('Box Lake (Nowhere Co, SC)');
+  assert.equal(pulls.length, 1);
+  assert.equal(d.secchi.avgSecchiDepthFt, 4);
+});
+
 test('a cache written before the test is refetched rather than trusted', async () => {
   store.set('clarity-cache/box_lake.json', JSON.stringify({ lakeName: 'Box Lake (Nowhere Co, SC)',
     fetchedAt: new Date().toISOString(), avgSecchiDepthFt: 9.3, sampleCount: 30, stations: [] }));
