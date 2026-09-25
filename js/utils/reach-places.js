@@ -307,59 +307,13 @@ export function sortFacts(facts, reach) {
   return { keep, elsewhere: other };
 }
 
-/** How many times `text` names `place` as a phrase. water-scope.js counts with it too. */
-export function mentions(text, place) {
-  const t = ` ${flat(text)} `;
-  const p = flat(place);
-  if (!p) return 0;
-  let n = 0;
-  for (let at = t.indexOf(` ${p} `); at !== -1; at = t.indexOf(` ${p} `, at + p.length + 1)) n += 1;
-  return n;
-}
-
-/**
- * The piece a document's BODY names more than it names this one, or null.
- *
- * A PAGE CAN BE ABOUT ANOTHER PIECE WITHOUT SAYING SO IN ITS TITLE. Mt. Yonder's "French Broad
- * River Fly Fishing Guide" -- one of the pages the French Broad, TN run was handed on 2026-09-25
- * -- is a guide service in Asheville: Rosman, Brevard, downtown Asheville, and one "Tennessee" at
- * the end. Its title names no place, so the title test keeps it, and it never writes "North
- * Carolina", so the state count in water-scope.js keeps it too.
- *
- * The body is read the way the state is: every place of each piece counted, and a document goes to
- * the piece it names MORE OFTEN than this one. A page about the whole river names every piece and
- * is sorted to none of them unless another piece is named more often -- a tie, or no place at all,
- * stays.
- */
-function busiestElsewhere(text, reach) {
-  if (!text || !reach || !reach.other) return null;
-  const count = (list) => (list || []).reduce((n, p) => n + mentions(text, p), 0);
-  const own = count(reach.own);
-  let best = null;
-  for (const [s, places] of Object.entries(reach.other)) {
-    const n = count(places);
-    if (n > own && (!best || n > best.n)) {
-      const top = places.reduce((a, p) => (mentions(text, p) > mentions(text, a) ? p : a), places[0]);
-      best = { belongs_to: s, because: top, n };
-    }
-  }
-  return best && { belongs_to: best.belongs_to, because: best.because,
-                   in: `body: ${best.n} mention(s) of that piece, ${own} of this one` };
-}
-
-/**
- * The title test first, unchanged: a title that names another piece and none of this one's is that
- * piece's document. Then, for a document that carries its text, the body test above. A document
- * with no text is judged on its title alone, as it always was.
- */
+/** The same test on a document's title. The body is not read: a long page about the whole river
+ * names every piece, and the fact sort is what takes its other pieces apart. */
 export function sortDocuments(documents, reach) {
   const keep = [];
   const other = [];
   for (const d of documents || []) {
-    const title = String((d && d.title) || '');
-    const titleNamesOwn = ((reach && reach.own) || []).some((p) => names(title, p));
-    const hit = elsewhere(title, reach)
-      || (titleNamesOwn ? null : busiestElsewhere(d && d.text, reach));
+    const hit = elsewhere(String((d && d.title) || ''), reach);
     if (hit) other.push({ title: d.title, url: d.url, ...hit });
     else keep.push(d);
   }

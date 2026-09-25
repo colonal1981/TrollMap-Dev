@@ -189,6 +189,63 @@
    ],
    "feature_type": "lake",
    "_from": "constructed 2026-09-25 from the run report; not in any repo fixture"
+  },
+  "little_tennessee_river": {
+   "slug": "little_tennessee_river",
+   "name": "Little Tennessee River",
+   "state": "NC",
+   "display_name": "Little Tennessee River (Macon Co, NC)",
+   "legacy_display_names": [
+    "Little Tennessee River, NC"
+   ],
+   "county": "Macon",
+   "feature_type": "river",
+   "_from": "constructed 2026-09-25 for a case the desktop review measured on the stored corpora"
+  },
+  "diversion_canal": {
+   "slug": "diversion_canal",
+   "name": "Diversion Canal",
+   "state": "SC",
+   "display_name": "Diversion Canal (Berkeley Co, SC)",
+   "legacy_display_names": [
+    "Diversion Canal, SC"
+   ],
+   "county": "Berkeley",
+   "feature_type": "river",
+   "_from": "constructed 2026-09-25 for a case the desktop review measured on the stored corpora"
+  },
+  "ohoopee_river": {
+   "slug": "ohoopee_river",
+   "name": "Ohoopee River",
+   "state": "GA",
+   "display_name": "Ohoopee River (Tattnall Co, GA)",
+   "legacy_display_names": [
+    "Ohoopee River, GA"
+   ],
+   "county": "Tattnall",
+   "feature_type": "river",
+   "_from": "constructed 2026-09-25 for a case the desktop review measured on the stored corpora"
+  },
+  "saluda_river": {
+   "slug": "saluda_river",
+   "name": "Saluda River",
+   "state": "SC",
+   "display_name": "Saluda River (Greenville Co, SC)",
+   "county": "Greenville",
+   "feature_type": "river",
+   "_from": "a-river-piece-searches-its-own-stretch.2026-09-24.json"
+  },
+  "b_everett_jordan_lake": {
+   "slug": "b_everett_jordan_lake",
+   "name": "B. Everett Jordan Lake",
+   "state": "NC",
+   "display_name": "B. Everett Jordan Lake (Chatham Co, NC)",
+   "legacy_display_names": [
+    "Jordan Lake, NC"
+   ],
+   "county": "Chatham",
+   "feature_type": "lake",
+   "_from": "constructed 2026-09-25 for a case the desktop review measured on the stored corpora"
   }
  },
  "documents": {
@@ -257,10 +314,67 @@
   },
   "french_broad_mt_yonder": {
    "water": "french_broad_river_2",
-   "expect": "other_piece",
+   "expect": null,
+   "miss": "an Asheville guide that names neither state beside the river; kept, and left to the Claude step",
    "title": "French Broad River Fly Fishing Guide | Mt. Yonder",
    "url": "https://mtyonder.com/pages/french-broad-river-fly-fishing",
    "text": "The French Broad is older than the bones of the mountains it runs through. Believed to be one of the most ancient rivers on the planet, and one of the few stubborn enough to flow north. It pours out of the headwaters around Rosman before swinging by Brevard, rolling right through downtown Asheville, and keeps flowing all the way into Tennessee. It's big, temperamental with the weather, wild, and full of fish.\n\n## What's swimming in it\n\nThis is smallmouth water, first and foremost. The French Broad grows a world-class population of bronzebacks that crush crayfish patterns and blow up on poppers.\n\n## How we fish it\n\nThis is a float trip down a big river, picking our section by clarity and temperature. We guide for smallmouth on the French Broad and it's typically a mix of stripped streamers, dredged crayfish, and poppers."
+  },
+  "little_t_carolina_sportsman": {
+   "water": "little_tennessee_river",
+   "expect": null,
+   "review": "own name counted as TN {TN: 8, NC: 4}",
+   "title": "Bronzebacks Fit to a ‘T’",
+   "url": "https://www.carolinasportsman.com/content/bronzebacks-fit-to-a-t/",
+   "text": "The author admires a Little Tennessee River smallmouth caught on a small crankbait while on a float between Lake Emory and Fontana Lake.\n\nReally productive lures for smallmouth bass in the Little Tennessee include crawfish imitators, small minnow plugs, shallow-running crankbaits, in-line spinners and soft-plastic grubs threaded onto leadhead jigs.\n\n## The Little Tennessee is arguably North Carolina’s best stream for smallmouth bass, and fall is a top time for a float trip.\n\nRiver smallmouth may be the feistiest of all, and North Carolina is blessed with countless rivers and streams filled with smallmouth bass, perhaps none better than the Little Tennessee River near Franklin.\n\nFrom Emory Lake to Fontana Reservoir, the Little Tennessee flows unimpeded for 26 miles.\n\nIn addition to abundant smallmouth bass, a major attraction of the Little Tennessee is the relative absence of other anglers, particularly after Labor Day.\n\n“Often, when I go down the river, I fish for a couple of days and never see another angler,” said Kevin Wright of Atlanta, who fishes the Little Tennessee 14 or 15 days a year.\n\nMany fishermen drift the Little Tennessee in a canoe.\n\n* September 2009\n* Statewide NC"
+  },
+  "little_t_onwater": {
+   "water": "little_tennessee_river",
+   "expect": null,
+   "review": "own name counted as TN {TN: 12, NC: 10}",
+   "title": "Little Tennessee River Fishing in North Carolina - Fishing Maps & Reports",
+   "url": "https://www.onwaterapp.com/us/north-carolina/water/little-tennessee-river-w1",
+   "text": "# Little Tennessee River\n\nThe Little Tennessee River is a magnificent 135-mile waterway that begins in northeastern Georgia, flows through western North Carolina, and eventually empties into the Tennessee River after creating Fontana Lake. With consistent water flows throughout the year, the Little Tennessee provides ideal conditions for both wade fishing and drift boat fishing.\n\nSee the best times to fish Little Tennessee River and check the forecast before you go.\n\n### LITTLE TENNESSEE RIVER NEAR PRENTISS, NC\n\n## North Carolina licenses and regulations\n\n### North Carolina Fishing License\n\n## Explore North Carolina waters"
+  },
+  "diversion_canal_catfish": {
+   "water": "diversion_canal",
+   "expect": null,
+   "review": "refused on a \"Northwest NC\" nav link {NC: 1}",
+   "title": "Current through Diversion Canal has kept catfish on the feed",
+   "url": "https://www.carolinasportsman.com/fishing/freshwater-fishing/head-for-the-canal-for-top-catfish-action-at-santee-cooper/",
+   "text": "The Diversion Canal between the Santee Cooper lakes has been a consistent catfish producer this summer when the bigger lakes have been off and on.\n\nThe Santee Cooper lakes have had an up-and-down season in terms of catfish this summer, but the constant flow of water rushing through the Diversion Canal connecting Lake Marion and Lake Moultrie is producing tremendous action.\n\n“It’s essential to note that the drift fishing technique for the Diversion Canal is different from the standard drift rig,” Davis said.\n\n* Northwest NC"
+  },
+  "ohoopee_gon_post": {
+   "water": "ohoopee_river",
+   "expect": null,
+   "review": "refused on a football score {TN: 1}; quoted",
+   "title": "Ohoopee River is fishing hot right now",
+   "url": "https://www.facebook.com/GeorgiaOutdoorNews/posts/-ohoopee-river-is-fishing-hot-right-nowbluegill-over-a-pound-and-bass-biting-too/1210207767817159/",
+   "text": "Ohoopee River is fishing hot right now! Bluegill over a pound and bass biting too. With the Dawgs scheduled to take on Tennessee at 3:30, get out early."
+  },
+  "congaree_fb_thread": {
+   "water": "congaree_river",
+   "expect": null,
+   "review": "refused on a commenter handle {NC: 1}; quoted",
+   "title": "Striper tips for the Saluda and Congaree",
+   "url": "https://www.facebook.com/groups/297456144101133/posts/2161570287689700/",
+   "text": "Any striper tips for the Saluda and Congaree River this time of year?\nReel NC Angler\nLive herring below the dam, then drift the Congaree River shoals on the falling water."
+  },
+  "saluda_land_listing": {
+   "water": "saluda_river",
+   "expect": null,
+   "review": "refused on inherited members {\"function Object()\": 2}",
+   "title": "18 + Acre Retreat on Saluda River w/ Cabin | Metcalf Land Company Inc",
+   "url": "https://metcalfland.com/properties/18-acre-retreat-on-saluda-river-w-cabin/",
+   "text": "Enjoy a long weekend in this welcoming cabin overlooking the 280 foot +/- wide Saluda River! This 18.14 acre wooded retreat features 1,359 feet of Saluda River frontage. The constructor of the cabin toString valueOf hasOwnProperty.\n\n145 Meares Drive, Pelzer SC 29669"
+  },
+  "jordan_aa_fishing": {
+   "water": "b_everett_jordan_lake",
+   "expect": null,
+   "review": "forced scope refused it {NC: 2, UT: 9}; the Utah mentions are the site’s state menu, rendered here as the menu lines",
+   "title": "Jordan Lake, NC | Recreation, Camping & Lake Information",
+   "url": "https://aa-fishing.com/nc/nc-fishing-lake-jordan.html",
+   "text": "# Jordan Lake, NC\n\nAKA: Lake Jordan, Jordan Reservoir\n\nThis is a 14,000-acre reservoir in the north-central part of the state.\n\nThe lake supports populations of largemouth bass, smallmouth bass, channel catfish and striped bass at Jordan Lake in North Carolina.\n\nFishing lakes in each state\nUtah\nUtah Lake\nUtah fishing\nUtah reservoirs\nUtah trout\nUtah bass\nUtah camping\nUtah boating\nUtah licenses"
   }
  },
  "searches": [

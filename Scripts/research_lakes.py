@@ -347,10 +347,6 @@ def reach_for(repo, registry, lake, slug):
                               "slug": slug})
 
 
-# doc-relevance.js's LOCAL_NAME_WINDOW: how much of a document's text the local rules read.
-BODY_WINDOW = 20000
-
-
 def sort_by_reach(repo, reach, facts=None, documents=None):
     """(kept facts, facts for another piece, kept documents, documents for another piece).
 
@@ -360,14 +356,9 @@ def sort_by_reach(repo, reach, facts=None, documents=None):
     facts, documents = list(facts or []), list(documents or [])
     if not reach or not reach.get("other") or not (facts or documents):
         return facts, [], documents, []
-    # THE TITLE AND THE FIRST 20,000 CHARACTERS GO TO NODE, not the whole corpus. The title test
-    # decides most documents; the body test in reach-places.js catches a page about another piece
-    # that never says so in its title -- the Asheville guide handed to the French Broad, TN. 20,000
-    # is LOCAL_NAME_WINDOW, what gate_documents() and extraction already read. The index brings the
-    # whole document back.
-    light = [{"title": d.get("title"), "url": d.get("url"), "_i": i,
-              "text": str(d.get("fullText") or d.get("text") or "")[:BODY_WINDOW]}
-             for i, d in enumerate(documents)]
+    # TITLES ONLY GO TO NODE. The document test reads nothing else, and a corpus of full texts
+    # through a pipe is megabytes to decide a dozen titles. The index brings the whole document back.
+    light = [{"title": d.get("title"), "url": d.get("url"), "_i": i} for i, d in enumerate(documents)]
     got = _reach_node(repo, {"mode": "sort", "reach": reach, "facts": facts, "documents": light})
     if not got:
         return facts, [], documents, []

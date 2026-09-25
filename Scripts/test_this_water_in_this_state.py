@@ -7,9 +7,9 @@ No network. Needs node on the path, like the off-lake gate it runs.
 
 The rule lives in js/utils/water-scope.js and is tested in test/this-water-in-this-state.test.js.
 What this checks is the plumbing Python owns: that gate_documents() hands the scope to the real
-gate under node, so Virginia's New River page is refused for New River, NC; that no scope leaves
-the gate as it was; that reach_places.mjs returns the scope beside the places; and that
-sort_by_reach() now sends each document's opening text with its title.
+gate under node, so Virginia's New River page is refused for New River, NC and the Little Tennessee's
+own page is not; that no scope leaves the gate as it was; that reach_places.mjs returns the scope
+beside the places; and that sort_by_reach() still sends titles only.
 
 Personal use only, not for distribution or resale; not for navigation.
 """
@@ -50,7 +50,7 @@ with tempfile.TemporaryDirectory() as reg:
 
 print('\nthe gate, run under node with the scope')
 scope = {'why': 'river', 'states': ['NC'], 'counties': ['Ashe'], 'namesakes': [],
-         'ownPlaces': ['Ashe'], 'rivalPlaces': []}
+         'ownPlaces': ['Ashe'], 'rivalPlaces': [], 'names': ['new river']}
 docs = [doc('new_river_virginia_dwr')]
 got = RL.gate_documents(REPO, docs, 'New River, NC', ['New River'], scope)
 check('Virginia DWR\'s New River is refused for New River, NC',
@@ -58,25 +58,24 @@ check('Virginia DWR\'s New River is refused for New River, NC',
 got = RL.gate_documents(REPO, docs, 'New River, NC', ['New River'])
 check('and with no scope it is kept, as it was', got.get('rejected'), 0)
 
-print('\nsort_by_reach sends each document\'s opening text')
+print('\nsort_by_reach still sends titles only')
 calls = []
 real = RL._reach_node
 RL._reach_node = lambda repo, payload: calls.append(payload) or None
-long_doc = {'title': 'French Broad River Fly Fishing Guide', 'url': 'u', 'fullText': 'x' * 30000}
 RL.sort_by_reach(REPO, {'own': ['Newport'], 'other': {'french_broad_river': ['Asheville']}},
-                 documents=[long_doc])
+                 documents=[{'title': 'French Broad River Fly Fishing Guide', 'url': 'u', 'fullText': 'x' * 500}])
 RL._reach_node = real
 sent = ((calls or [{}])[0].get('documents') or [{}])[0]
-check('the text goes, cut to the local name window', len(sent.get('text') or ''), RL.BODY_WINDOW)
-check('which is doc-relevance.js\'s LOCAL_NAME_WINDOW', RL.BODY_WINDOW, 20000)
+check('no body goes to node -- the body test was taken out', sorted(sent), ['_i', 'title', 'url'])
 
-print('\nand the body sort, through node')
-y = FX['documents']['french_broad_mt_yonder']
-reach = {'own': ['Newport'], 'other': {'french_broad_river': ['Asheville', 'Rosman']}}
-kf, of, kd, od = RL.sort_by_reach(REPO, reach, documents=[{'title': y['title'], 'url': y['url'],
-                                                             'fullText': y['text']}])
-check('the Asheville guide goes to the NC piece', [d.get('belongs_to') for d in od], ['french_broad_river'])
-check('and nothing is kept for the Tennessee piece', kd, [])
+print('\na real page the first version refused is kept, through node')
+lt = FX['documents']['little_t_carolina_sportsman']
+scope_lt = {'why': 'river', 'states': ['NC'], 'counties': ['Macon'], 'namesakes': [],
+            'ownPlaces': ['Macon'], 'rivalPlaces': [],
+            'names': ['little tennessee river', 'little tennessee']}
+got = RL.gate_documents(REPO, [{'title': lt['title'], 'url': lt['url'], 'fullText': lt['text']}],
+                        'Little Tennessee River, NC', ['Little Tennessee River'], scope_lt)
+check('the Little Tennessee page is not refused as Tennessee', got.get('rejected'), 0)
 
 print('\n%s' % ('%d check(s) FAILED: %s' % (len(FAILED), ', '.join(FAILED)) if FAILED
                 else 'all checks passed'))

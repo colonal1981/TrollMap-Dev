@@ -13,13 +13,18 @@
  * county, and the gate refuses a page that names another state (or, for a lake, the namesake's
  * county) more often than this water's own.
  *
+ * THE RULE ONLY READS SENTENCES THAT NAME THE WATER, WITH THE NAME TAKEN OUT. The desktop review of
+ * 2026-09-25 ran the first version over 758 stored documents and found it refusing real pages: the
+ * Little Tennessee's own name counted as Tennessee, a nav link or a football score outvoted a page
+ * that never names its state, and "constructor" was a state. Section 3b is those pages.
+ *
  * The fixture's documents are the pages those searches returned, fetched 2026-09-25. Its index rows
  * are copied from the repo's registry fixtures where one exists and marked `constructed` where not.
  *
  *   node --test test/this-water-in-this-state.test.js
  */
 import { afterEach, describe, it, expect, vi } from './expect-shim.mjs';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 
 const FX = JSON.parse(readFileSync(
   new URL('./fixtures/this-water-in-this-state.2026-09-25.json', import.meta.url), 'utf8'));
@@ -28,7 +33,7 @@ const src = (rel) => readFileSync(new URL(rel, import.meta.url), 'utf8');
 const S = await import('../js/utils/water-scope.js');
 const G = await import('../js/utils/doc-relevance.js');
 const R = await import('../js/utils/reach-places.js');
-const { researchStorageId, stripLakeQualifiers } = await import('../js/data/research-ids.js');
+const { stripLakeQualifiers } = await import('../js/data/research-ids.js');
 const { handleResearchDiscover } = await import('../Worker/research/discover.js');
 const { _resetIndexCache } = await import('../Worker/registry.js');
 
@@ -94,7 +99,7 @@ describe('a river always needs its place; a lake only when another row shares it
 // ── 3. the gate ──────────────────────────────────────────────────────────────────────────────
 describe('the gate refuses a page about another state\'s water', () => {
   for (const [key, d] of Object.entries(FX.documents)) {
-    if (d.expect === 'other_piece') continue;   // the reach sort's, section 4
+    if (d.review) continue;   // section 3b
     it(`${key} for ${appName(d.water)}: ${d.expect || 'kept'}`, () => {
       expect(gate(key)).toBe(d.expect);
     });
@@ -108,17 +113,22 @@ describe('the gate refuses a page about another state\'s water', () => {
     expect(FX.documents.pee_dee_scdnr.url.includes('dnr.sc.gov')).toBe(true);
     expect(gate('pee_dee_scdnr')).toBe('another_state');
   });
-  it('a page that names North Carolina 3 times and Virginia 7 is Virginia\'s, not a tie', () => {
+  it('in the sentences that name the New River, Virginia 5 times and North Carolina 3: Virginia\'s, not a tie', () => {
     const d = FX.documents.new_river_virginia_dwr;
-    const m = S.stateMentions(`${d.title} ${d.url} ${d.text}`);
-    expect(m.VA).toBe(7);
+    const m = S.stateMentions(S.nameSentences(`${d.title}\n${d.url}\n${d.text}`, scopeOf('new_river').names));
+    expect(m.VA).toBe(5);
     expect(m.NC).toBe(3);
   });
-  it('the same page is the TENNESSEE French Broad\'s: Legacy Parks names Tennessee 3 times and NC once', () => {
-    expect(gate('french_broad_legacy_parks')).toBe(null);
-    const nc = { ...FX.documents.french_broad_legacy_parks, water: 'french_broad_river' };
-    expect(G.offLakeReason(asDoc(nc), appName('french_broad_river'), [], G.LOCAL_NAME_WINDOW,
-      scopeOf('french_broad_river'))).toBe('another_state');
+  it('a page that never ties the name to a state is kept, even for the other piece: a miss, left to the Claude step', () => {
+    // Legacy Parks names "North Carolina" in a sentence that does not name the French Broad, and the
+    // Asheville guide names neither state beside it. Both pass for either piece now.
+    for (const slug of ['french_broad_river', 'french_broad_river_2']) {
+      for (const key of ['french_broad_legacy_parks', 'french_broad_mt_yonder']) {
+        const d = FX.documents[key];
+        expect(G.offLakeReason(asDoc(d), appName(slug), [], G.LOCAL_NAME_WINDOW, scopeOf(slug)), `${key} for ${slug}`)
+          .toBe(null);
+      }
+    }
   });
   it('a water in two states keeps a page that names its other state more', () => {
     const doc = { title: 'Broad River fishing below Gaffney', url: 'https://example.org/broad',
@@ -129,6 +139,48 @@ describe('the gate refuses a page about another state\'s water', () => {
   });
   it('a page that names no state at all is not "plainly" anywhere, and falls to the old rules', () => {
     expect(S.elsewhereReason('Johns River smallmouth on a fly rod', scopeOf('johns_river'))).toBe(null);
+  });
+});
+
+// ── 3b. the desktop review's false refusals ────────────────────────────────────────────────────
+describe('a real page about the right water is not refused over a word that is not about it', () => {
+  // Each of these was refused by the first version of the rule; `review` says what it counted.
+  const force = (slug) => scopeOf(slug) || { why: 'forced', states: S.statesOf(FX.index[slug]),
+    counties: [], namesakes: [], ownPlaces: [], rivalPlaces: [], names: S.namesOf(FX.index[slug]) };
+  for (const [key, d] of Object.entries(FX.documents).filter(([, x]) => x.review)) {
+    it(`${key} (${d.review}) is kept`, () => {
+      expect(G.offLakeReason(asDoc(d), appName(d.water), [FX.index[d.water].name], G.LOCAL_NAME_WINDOW,
+        force(d.water))).toBe(null);
+    });
+  }
+  it('the water\'s own name is taken out before counting: "Little Tennessee" is not Tennessee', () => {
+    const names = S.namesOf(FX.index.little_tennessee_river);
+    expect(names).toEqual(['little tennessee river', 'little tennessee']);
+    expect(S.stateMentions(S.nameSentences('The Little Tennessee River near Franklin.', names))).toEqual({});
+  });
+  it('a one-word remainder is never a name on its own: "Johns", "New", "Black" are words first', () => {
+    expect(S.namesOf(FX.index.johns_river)).toEqual(['johns river']);
+    expect(S.namesOf(FX.index.new_river)).toEqual(['new river']);
+  });
+  it('no fixture water\'s own names count as a state once taken out', () => {
+    for (const [slug, row] of Object.entries(FX.index)) {
+      const names = S.namesOf(row);
+      const text = names.map((n) => `We fished the ${n} today.`).join(' ');
+      expect(S.stateMentions(S.nameSentences(text, names)), slug).toEqual({});
+    }
+  });
+  it('and none in the real registry either, where it is beside the repo', () => {
+    const reg = new URL('../../registry/lake_index.json', import.meta.url);
+    if (!existsSync(reg)) return;   // the cloud checkout has no registry; the desktop does
+    const rows = JSON.parse(readFileSync(reg, 'utf8'));
+    for (const [slug, row] of Object.entries(rows.lakes || rows)) {
+      const names = S.namesOf(row);
+      const text = names.map((n) => `We fished the ${n} today.`).join(' ');
+      expect(S.stateMentions(S.nameSentences(text, names)), slug).toEqual({});
+    }
+  });
+  it('an inherited member is not a state', () => {
+    expect(S.stateMentions('constructor toString valueOf hasOwnProperty __proto__')).toEqual({});
   });
 });
 
@@ -161,35 +213,20 @@ describe('without a scope the gate answers exactly as it did', () => {
 });
 
 // ── 4. the other piece of the same river ─────────────────────────────────────────────────────
-describe('a page about another piece is that piece\'s even when its title does not say so', () => {
-  // Gauge names in USGS's own grammar. The Asheville and Rosman stations are on the NC French
-  // Broad; Newport is on the Tennessee one. Bindings constructed for the test.
-  const bindings = {
-    french_broad_river: { gauges: [{ name: 'FRENCH BROAD RIVER AT ASHEVILLE, NC' },
-                                   { name: 'FRENCH BROAD RIVER AT ROSMAN, NC' }] },
-    french_broad_river_2: { gauges: [{ name: 'FRENCH BROAD RIVER NEAR NEWPORT, TN' }] },
-  };
-  const reach = R.reachPlaces({ index: FX.index, bindings, lakeName: 'French Broad River (2), TN',
-    slug: 'french_broad_river_2', storageId: researchStorageId, stripQualifiers: stripLakeQualifiers });
-  const yonder = FX.documents.french_broad_mt_yonder;
-
-  it('the NC French Broad is the Tennessee piece\'s sibling, with its towns', () => {
-    expect(reach.siblings).toEqual(['french_broad_river']);
-    expect(reach.other.french_broad_river).toEqual(['Asheville', 'Rosman']);
+describe('a document is sorted to another piece of the river by its title only, as before', () => {
+  // A body test was tried and taken out. The desktop review ran it over the stored corpora: it
+  // moved 43 documents, among them a Chattahoochee report on "willow leaf" blades (the place
+  // "Leaf"), a Travelers Rest trip on the upper Saluda on one "Columbia", and a Broad River page on
+  // one "Carlisle". A page about the whole river names every piece, which is why the title test
+  // never read the body.
+  const reach = { own: ['Ware Shoals', 'Pelzer'], other: { saluda_river_lower_saluda: ['Columbia'] } };
+  it('a page on the upper river that mentions Columbia once stays', () => {
+    const d = { title: 'Saluda River Fishing Trip', url: 'https://travelersresthere.com/saluda-river-fishing-trip/',
+      text: 'We put in above Pelzer and fished down; the river reaches Columbia a long way below.' };
+    expect(R.sortDocuments([d], reach).keep.length).toBe(1);
   });
-  it('Mt. Yonder\'s Asheville guide passes the title test and the state count, and the body sends it to NC', () => {
-    expect(R.sortDocuments([{ title: yonder.title }], reach).keep.length).toBe(1);
-    expect(gate('french_broad_mt_yonder')).toBe(null);
-    const d = R.sortDocuments([{ title: yonder.title, url: yonder.url, text: yonder.text }], reach);
-    expect(d.elsewhere.map((x) => x.belongs_to)).toEqual(['french_broad_river']);
-  });
-  it('a page naming this piece in its title stays, whatever its body says about the other', () => {
-    const doc = { title: 'French Broad below Newport', text: 'From Asheville and Rosman the river runs west.' };
-    expect(R.sortDocuments([doc], reach).keep.length).toBe(1);
-  });
-  it('a body naming both pieces equally is kept', () => {
-    const doc = { title: 'French Broad River', text: 'Asheville to Newport is a long float.' };
-    expect(R.sortDocuments([doc], reach).keep.length).toBe(1);
+  it('the reach sort is back to exactly what it was', () => {
+    expect(src('../js/utils/reach-places.js').includes('busiestElsewhere')).toBe(false);
   });
 });
 

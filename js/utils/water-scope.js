@@ -43,20 +43,24 @@
  * state at all, is not "plainly about another state" and falls through to the rules below it.
  */
 import { stripLakeQualifiers } from '../data/research-ids.js';
-import { qualifiersOf, mentions } from './reach-places.js';
+import { qualifiersOf } from './reach-places.js';
 
 const flat = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
 /** The app's four states. Their codes count as mentions; no other state's does -- see below. */
-const OUR_CODES = { sc: 'SC', nc: 'NC', ga: 'GA', tn: 'TN' };
+const OUR_CODES = new Map([['sc', 'SC'], ['nc', 'NC'], ['ga', 'GA'], ['tn', 'TN']]);
 
 /**
  * Every state by its spelled-out name. Two-letter codes for the other 46 are NOT counted, for the
  * reason doc-relevance.js already gives: `in`, `or`, `me`, `de`, `ok`, `hi`, `la`, `pa`, `co` are
  * words. SC, NC, GA and TN are not, and a page about Hyco Lake says "NC" more than it says "North
  * Carolina".
+ *
+ * A MAP, NOT AN OBJECT LITERAL. `STATE_NAMES[word]` on a plain object answers for "constructor" and
+ * "toString" too -- inherited members, not states. Measured on the desktop corpora 2026-09-25: a
+ * Saluda River land listing was refused with the state `"function Object() { [native code] }": 2`.
  */
-const STATE_NAMES = {
+const STATE_NAMES = new Map(Object.entries({
   alabama: 'AL', alaska: 'AK', arizona: 'AZ', arkansas: 'AR', california: 'CA', colorado: 'CO',
   connecticut: 'CT', delaware: 'DE', florida: 'FL', georgia: 'GA', hawaii: 'HI', idaho: 'ID',
   illinois: 'IL', indiana: 'IN', iowa: 'IA', kansas: 'KS', kentucky: 'KY', louisiana: 'LA',
@@ -67,7 +71,7 @@ const STATE_NAMES = {
   pennsylvania: 'PA', 'rhode island': 'RI', 'south carolina': 'SC', 'south dakota': 'SD',
   tennessee: 'TN', texas: 'TX', utah: 'UT', vermont: 'VT', virginia: 'VA', washington: 'WA',
   'west virginia': 'WV', wisconsin: 'WI', wyoming: 'WY',
-};
+}));
 
 /**
  * A state's name followed by one of these is not the state: "Washington County" is in NC, GA and
@@ -81,9 +85,9 @@ const NOT_A_STATE_AFTER = new Set(['county', 'co', 'counties', 'parish', 'rig', 
 function stateAt(words, i) {
   const two = i + 1 < words.length ? `${words[i]} ${words[i + 1]}` : '';
   if (two === 'n c' || two === 's c') return [two[0] === 'n' ? 'NC' : 'SC', 2];
-  if (two && STATE_NAMES[two]) return [STATE_NAMES[two], 2];
-  if (STATE_NAMES[words[i]]) return [STATE_NAMES[words[i]], 1];
-  if (OUR_CODES[words[i]]) return [OUR_CODES[words[i]], 1];
+  if (two && STATE_NAMES.has(two)) return [STATE_NAMES.get(two), 2];
+  if (STATE_NAMES.has(words[i])) return [STATE_NAMES.get(words[i]), 1];
+  if (OUR_CODES.has(words[i])) return [OUR_CODES.get(words[i]), 1];
   return null;
 }
 
@@ -96,16 +100,78 @@ function stateAt(words, i) {
  */
 export function stateMentions(text) {
   const words = flat(text).split(' ').filter(Boolean);
-  const out = {};
+  const out = new Map();
   for (let i = 0; i < words.length;) {
     const hit = stateAt(words, i);
     if (!hit) { i += 1; continue; }
     const [code, n] = hit;
     const next = words[i + n];
-    if (!NOT_A_STATE_AFTER.has(next) && !stateAt(words, i + n)) out[code] = (out[code] || 0) + 1;
+    if (!NOT_A_STATE_AFTER.has(next) && !stateAt(words, i + n)) out.set(code, (out.get(code) || 0) + 1);
     i += n;
   }
-  return out;
+  return Object.fromEntries(out);
+}
+
+/** How many times `text` names `place` as a whole phrase. */
+function mentions(text, place) {
+  const t = ` ${flat(text)} `;
+  const p = flat(place);
+  if (!p) return 0;
+  let n = 0;
+  for (let at = t.indexOf(` ${p} `); at !== -1; at = t.indexOf(` ${p} `, at + p.length + 1)) n += 1;
+  return n;
+}
+
+/**
+ * The phrases that name this water in a sentence: every name the row answers to, stripped of its
+ * brackets and state, and -- where it is two words or more -- the same name without its trailing
+ * water noun. "Little Tennessee River" and "the Little Tennessee"; "Pee Dee River" and "the Great
+ * Pee Dee". A ONE-WORD remainder is not kept: "Johns", "New", "Black", "Deep" and "Dan" are words
+ * before they are rivers, the same reason doc-relevance.js asks a one-word base for a water noun.
+ */
+export function namesOf(row) {
+  const r = row || {};
+  const out = new Set();
+  for (const n of [r.display_name, r.name, r.legacy_display_name, ...(r.legacy_display_names || [])]) {
+    const full = flat(stripLakeQualifiers(n || ''));
+    if (!full) continue;
+    out.add(full);
+    const core = full.replace(/^lake /, '').replace(/ (river|lake|reservoir|creek|canal)$/, '').trim();
+    if (core.includes(' ')) out.add(core);
+  }
+  return [...out].sort((a, b) => b.length - a.length);
+}
+
+/**
+ * THE SENTENCES THAT TIE THIS NAME TO A PLACE, with the name itself taken out.
+ *
+ * Two defects the desktop review of 2026-09-25 measured on the stored corpora, and one rule for both:
+ *
+ *   THE WATER'S OWN NAME WAS COUNTED AS A STATE. Little Tennessee River lost 10 of its 19 documents,
+ *   every one about the NC river: "The Little Tennessee is arguably North Carolina's best stream for
+ *   smallmouth bass" counted {TN: 8, NC: 4}. So the water's own names are taken out before counting.
+ *
+ *   ONE STRAY MENTION BEAT ZERO. A local page often never names its own state, and a nav link
+ *   ("Northwest NC", on both Diversion Canal pages), a football score ("the Dawgs ... take on
+ *   Tennessee at 3:30", on an Ohoopee River post) or a commenter's handle ("Reel NC Angler", on a
+ *   Congaree thread) then outvoted nothing. None of those sentences names the water.
+ *
+ * So only a sentence that names the water -- or a namesake of its name, which is what "St. Johns
+ * River" is to "Johns River" -- is read, and that is where a page says which state it means: "the
+ * St Johns River (Fl) (Florida)", "the New River in southwest Virginia". The title and the URL are
+ * sentences of their own. Still no threshold: the counts are compared as before, only over these.
+ */
+export function nameSentences(text, names) {
+  const keys = (names || []).map(flat).filter(Boolean);
+  if (!keys.length) return '';
+  const out = [];
+  for (const piece of String(text || '').split(/[.!?]+(?=\s)|\n+|\s[|•·]\s/)) {
+    let t = ` ${flat(piece)} `;
+    if (!keys.some((k) => t.includes(` ${k} `))) continue;
+    for (const k of keys) t = t.split(` ${k} `).join(' xname ');
+    out.push(t.trim());
+  }
+  return out.join(' xbreak ');
 }
 
 /**
@@ -162,6 +228,7 @@ export function namesakesOf(index, slug) {
  *   namesakes    the other rows with this name
  *   ownPlaces    this row's counties and bracket words ("Greer")
  *   rivalPlaces  a LAKE's same-state namesakes' counties and bracket words, minus its own
+ *   names        the phrases that name this water in a sentence -- see namesOf()
  *
  * RIVAL PLACES ARE FOR LAKES ONLY. A lake sits in a county or two, so its county is where it is.
  * A river piece crosses several and the row carries the centroid's, so an adjacent piece's
@@ -189,31 +256,39 @@ export function waterScope(index, slug) {
       }
     }
   }
-  return { why: river ? 'river' : 'namesake', states, counties, namesakes, ownPlaces, rivalPlaces };
+  return { why: river ? 'river' : 'namesake', states, counties, namesakes, ownPlaces, rivalPlaces,
+           names: namesOf(row) };
 }
 
 /**
  * Why a document is about another place than this water's, or null.
  *
- *   another_state     some state not this water's is named more often than every one of its own
- *   namesake_place    a same-state namesake's county or bracket word outnumbers this water's own
+ *   another_state     in the sentences that name this water, some state not this water's is named
+ *                     more often than every one of its own
+ *   namesake_place    in the same sentences, a same-state namesake's county or bracket word
+ *                     outnumbers this water's own
  *
- * Both are one comparison of two counts. Equal counts, or none at all, decide nothing.
+ * Both are one comparison of two counts. Equal counts, none at all, or a page whose sentences never
+ * name the water decide nothing. A page wrongly refused here is gone for the run, while one wrongly
+ * kept is still read by the Claude step, which takes only text about THIS water -- so the rule is
+ * tuned to refuse only what a page itself ties to somewhere else.
  */
 export function elsewhereReason(text, scope) {
   if (!scope) return null;
+  const tied = nameSentences(text, scope.names);
+  if (!tied) return null;
   const ours = new Set((scope.states || []).map((s) => String(s).toUpperCase()));
   if (ours.size) {
     let mine = 0;
     let theirs = 0;
-    for (const [code, n] of Object.entries(stateMentions(text))) {
+    for (const [code, n] of Object.entries(stateMentions(tied))) {
       if (ours.has(code)) mine = Math.max(mine, n);
       else theirs = Math.max(theirs, n);
     }
     if (theirs > mine) return 'another_state';
   }
   if ((scope.rivalPlaces || []).length) {
-    const most = (list) => Math.max(0, ...list.map((p) => mentions(text, p)));
+    const most = (list) => Math.max(0, ...list.map((p) => mentions(tied, p)));
     if (most(scope.rivalPlaces) > most(scope.ownPlaces || [])) return 'namesake_place';
   }
   return null;
