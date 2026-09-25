@@ -35,6 +35,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import species_group_retry as SGR                                   # noqa: E402 (sibling)
+
 WORKER = os.environ.get("TROLLMAP_WORKER_URL",
                         "https://trollmap-worker.colonal1981.workers.dev")
 
@@ -205,7 +208,7 @@ def run_once(lake, state, skip_extract=False, verbose=False):
         phases.append(("analyze-facts", dt, f"{len(facts)} facts from {min(len(usable), LLM_DOC_LIMIT)} docs"))
         print(f"    analyze-facts         {human(dt):>8}  {len(facts)} facts")
 
-    # 5. The agent itself. One call per species group, bounded 2-at-a-time inside the Worker.
+    # 5. The agent itself. One call per species group, one at a time inside the Worker.
     prev = dict(profile)
     prev["_extractedFacts"] = facts
     prev["_normalizedDocuments"] = [
@@ -213,10 +216,25 @@ def run_once(lake, state, skip_extract=False, verbose=False):
          "text": str(d.get("fullText") or d.get("text") or "")[:LLM_DOC_CHARS]}
         for d in usable[:LLM_DOC_LIMIT]
     ]
+    t_agent = time.perf_counter()
     dt, code, out, s, r = post("/research/agent-llm",
                                {"lakeName": lake, "state": state, "agent": "fisheries",
                                 "previousResults": prev})
     sent += s; recv += r
+    # A group the Worker could not answer is asked again in a new request, as the batch does --
+    # the timing of a run includes its second requests. species_group_retry.py says why.
+    if code == 200 and out:
+        def again(groups):
+            nonlocal sent, recv
+            _, c2, o2, s2, r2 = post("/research/agent-llm",
+                                     {"lakeName": lake, "state": state, "agent": "fisheries",
+                                      "previousResults": prev, "groups": groups})
+            sent += s2; recv += r2
+            return o2 if c2 == 200 else None
+        out, reasked = SGR.ask_failed_groups_again(again, out, log=lambda m: print(f"      {m}"))
+        if reasked:
+            print(f"      re-asked in a new request: {', '.join(reasked)}")
+        dt = time.perf_counter() - t_agent      # the waits and the second requests are the run's time
     section = (out or {}).get("section") or {}
     warns = (out or {}).get("warnings") or []
     if code != 200: failures.append(f"agent-llm HTTP {code}")

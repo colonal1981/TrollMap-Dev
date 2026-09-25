@@ -307,6 +307,16 @@ async function geminiCall(provider, key, modelId, payload, uncapped = false) {
   return { provider: "gemini", model: modelId, data: compatData, _geminiRaw: geminiText.slice(0, 200) };
 }
 
+// THE PLATFORM HAS REFUSED THIS INVOCATION ANY MORE FETCHES, so no key and no model further down
+// the ladder can answer -- every one would throw the same sentence without reaching Google. Its
+// own words: "Too many subrequests by single Worker invocation." (Ryan's batch log, 2026-09-25).
+// Thrown straight out, so the caller sees the reason and not a ladder of copies of it. Workers
+// Free allows 50 external subrequests per invocation:
+// developers.cloudflare.com/workers/platform/limits/#subrequests.
+function invocationSpent(e) {
+  return /too many subrequests/i.test(String((e && e.message) || ''));
+}
+
 function turnLadder(models, start) {
   const n = models.length;
   if (n < 2 || !start) return models;
@@ -383,6 +393,7 @@ async function callLLM(env, payload, preferredProvider = null, opts = {}) {
         try {
           return await geminiCall(provider, env[provider.keyEnv], modelId, payload, true);
         } catch (e) {
+          if (invocationSpent(e)) throw e;
           lastError = e;
           console.warn(`LLM gemini/${modelId} (first) failed: ${e.message}`);
         }
@@ -402,6 +413,7 @@ async function callLLM(env, payload, preferredProvider = null, opts = {}) {
         try {
           return await geminiCall(provider, key, modelId, payload);
         } catch (e) {
+          if (invocationSpent(e)) throw e;
           lastError = e;
           console.warn(`LLM gemini/${modelId} failed: ${e.message}`);
           continue;

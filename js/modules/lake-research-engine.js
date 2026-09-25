@@ -33,6 +33,7 @@ import { lakeRecordFor, documentNamesFor } from '../data/lake-registry.js';
 import { prepareNormalizedDocuments } from '../utils/doc-relevance.js';
 import { htmlToText, isPdfBody } from '../utils/html-text.js';
 import { readBatchResults } from '../utils/fetch-batch.js';
+import { askFailedGroupsAgain } from '../utils/species-group-retry.js';
 // THE WQP RULE MOVED OUT OF THIS FILE AND NOTHING ELSE CHANGED. Only the browser loads this
 // module, so when research_lakes.py replaced the tab as the way research is RUN, these three
 // went out of reach and 64 profiles were saved with a null thermocline, anoxic depth, Secchi
@@ -1828,55 +1829,56 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
     // that keep the Worker's own selection meaningful.
     const llmDocLimit = agentKey === 'fisheries' ? 12 : 10;
     const llmDocChars = 20000;
-    const agentRes = await fetch(`${CF_WORKER_URL}/research/agent-llm`, {
+    // `groups`, when given, names the species groups to answer and no others -- the second
+    // request below, for the groups the first one could not answer.
+    const agentBody = (groups) => JSON.stringify({
+      lakeName, state: stateName,
+      agent: agentKey,
+      ...(groups ? { groups } : {}),
+      previousResults: {
+        ...previousResults,
+        _extractedFacts: uniqueFacts,
+        _normalizedDocuments: normalizedDocuments.slice(0, llmDocLimit).map(d => ({
+          title: d.title, url: d.url,
+          text: (d.fullText || d.text || '').slice(0, llmDocChars)
+        }))
+      }
+    });
+    const askAgentLlm = (groups) => fetch(`${CF_WORKER_URL}/research/agent-llm`, {
       method: 'POST',
       headers: workerHeaders(),
-      body: JSON.stringify({
-        lakeName, state: stateName,
-        agent: agentKey,
-        previousResults: {
-          ...previousResults,
-          _extractedFacts: uniqueFacts,
-          _normalizedDocuments: normalizedDocuments.slice(0, llmDocLimit).map(d => ({
-            title: d.title, url: d.url,
-            text: (d.fullText || d.text || '').slice(0, llmDocChars)
-          }))
-        }
-      })
+      body: agentBody(groups)
     });
+    const agentRes = await askAgentLlm();
 
+    let agentData;
     if (!agentRes.ok) {
       // Retry once on 502
-      if (agentRes.status === 502) {
-        log(`  ⚠️ ${def.label} LLM 502: ${await workerFailureReason(agentRes)} — retrying after 5s...`);
-        await new Promise(r => setTimeout(r, 5000));
-        const retry = await fetch(`${CF_WORKER_URL}/research/agent-llm`, {
-          method: 'POST',
-          headers: workerHeaders(),
-          body: JSON.stringify({
-            lakeName, state: stateName, agent: agentKey,
-            previousResults: {
-              ...previousResults,
-              _extractedFacts: uniqueFacts,
-              _normalizedDocuments: normalizedDocuments.slice(0, llmDocLimit).map(d => ({
-                title: d.title, url: d.url,
-                text: (d.fullText || d.text || '').slice(0, llmDocChars)
-              }))
-            }
-          })
-        });
-        if (!retry.ok) throw new Error(`Agent ${agentKey} LLM failed on retry: ${await workerFailureReason(retry)}`);
-        const retryData = await retry.json();
-        if (!retryData.success) throw new Error(retryData.error || 'Agent LLM failed');
-        log(`✔ ${def.label} agent complete (${uniqueFacts.length} facts, ${normalizedDocuments.length} docs)`);
-        if (callbacks.onComplete) await callbacks.onComplete(lakeName);
-        return { ...retryData, _extractedFacts: uniqueFacts, factsCount: uniqueFacts.length, docsUsed: normalizedDocuments.length, queryLog };
-      }
-      throw new Error(`Agent ${agentKey} LLM failed: ${await workerFailureReason(agentRes)}`);
+      if (agentRes.status !== 502) throw new Error(`Agent ${agentKey} LLM failed: ${await workerFailureReason(agentRes)}`);
+      log(`  ⚠️ ${def.label} LLM 502: ${await workerFailureReason(agentRes)} — retrying after 5s...`);
+      await new Promise(r => setTimeout(r, 5000));
+      const retry = await askAgentLlm();
+      if (!retry.ok) throw new Error(`Agent ${agentKey} LLM failed on retry: ${await workerFailureReason(retry)}`);
+      agentData = await retry.json();
+    } else {
+      agentData = await agentRes.json();
     }
-
-    const agentData = await agentRes.json();
     if (!agentData.success) throw new Error(agentData.error || 'Agent LLM failed');
+
+    // A SPECIES GROUP THE WORKER COULD NOT ANSWER IS ASKED AGAIN, IN A NEW REQUEST. Every group
+    // shares one Worker invocation and its 50 external subrequests (Workers Free); retrying inside
+    // it is how Nottely Lake lost three groups to one on 2026-09-25. js/utils/species-group-retry.js.
+    if (agentKey === 'fisheries') {
+      const { res, reasked } = await askFailedGroupsAgain(async (groups) => {
+        const r = await askAgentLlm(groups);
+        if (!r.ok) throw new Error(await workerFailureReason(r));
+        return r.json();
+      }, agentData, { log: (m) => log(`  [${agentKey}] ${m}`) });
+      agentData = res;
+      if (reasked.length) {
+        agentData.meta = { ...(agentData.meta || {}), groupsReasked: reasked };
+      }
+    }
 
     // DISCOVER MODE IS THE ONE PATH THAT CAN ADD A SPECIES, so say so in the log when it does.
     // The biology equivalent of this block reported what that agent added beyond the
