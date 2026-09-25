@@ -63,17 +63,26 @@ class Limiter(unittest.TestCase):
 
     def test_the_default_ceiling_is_four_of_the_five_keys(self):
         # Ryan, 2026-09-24: "requests per minute are 15 for gemini free keys and we have 5 of them"
-        self.assertEqual(R.DEFAULT_RPM, 60)
-        self.assertEqual(R.extract_workers(R.DEFAULT_RPM, 40), 12)
+        # -- and both Lite models, each on its own 15, halved for the drawn slots (paced_rpm).
+        self.assertEqual(R.paced_rpm("lite"), 60)
+        self.assertEqual(R.extract_workers(R.paced_rpm("lite"), 40), 12)
 
-    def test_the_key_count_is_the_workers_own_list(self):
-        # GEMINI_FREE_KEYS sizes the ceiling; callLLM's rotation list is what the calls use. A
-        # sixth key added there and not here would leave a key's worth of the pool unused.
-        src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'Worker',
-                                'worker-core.js'), encoding='utf-8').read()
-        keys = re.search(r"const GEMINI_FREE_KEYS = \[([^\]]*)\]", src)
-        self.assertIsNotNone(keys, 'the rotation list moved; follow it')
-        self.assertEqual(len(re.findall(r"[\"']gemini-free\d*[\"']", keys.group(1))), R.GEMINI_FREE_KEYS)
+    def test_flash_is_paced_to_flash_not_to_lite(self):
+        # 5 RPM a Flash model (GEMINI_FREE_LIMITS), four models: it inherited Lite's 60.
+        self.assertEqual(R.paced_rpm("flash"), 40)
+        self.assertEqual(R.paced_rpm("spare"), 40, "5 + 5 + 10 RPM")
+
+    def test_the_limits_are_the_workers_own_table(self):
+        # Read through node out of Worker/worker-core.js; there is no second copy here to drift.
+        tier = R.free_tier()
+        self.assertEqual(len(tier["keys"]), 5)
+        for m in tier["lite"] + tier["flash"] + tier["spare"]:
+            self.assertIn(m, tier["limits"])
+        self.assertEqual(tier["limits"]["gemini-3.5-flash-lite"]["rpm"], 15)
+        self.assertEqual(tier["limits"]["gemini-3.8-flash"]["rpd"], 20)
+        src = open(R.__file__, encoding="utf-8").read()
+        self.assertNotRegex(src, r"GEMINI_FREE_RPM_PER_KEY|\brpm\W+15\b",
+                            "no Lite rate typed into the script")
 
     def test_the_pool_is_sized_from_the_ceiling(self):
         self.assertEqual(R.extract_workers(30, 40), 6, '30 starts a minute at 12 s a call')

@@ -822,10 +822,58 @@ def pace_seconds(chars, tpm):
 # How many run at once follows from those: enough that the RPM ceiling, not the round trip, is
 # what limits the rate. At EXTRACT_CALL_SECONDS a call, `rpm * seconds / 60` in flight keeps the
 # ceiling busy and never exceeds it, because the limiter gates each START.
-GEMINI_FREE_KEYS = 5             # Ryan, 2026-09-24
-GEMINI_FREE_RPM_PER_KEY = 15     # the free tier's published rate, GEMINI_FREE_MODELS note
-DEFAULT_RPM = (GEMINI_FREE_KEYS - 1) * GEMINI_FREE_RPM_PER_KEY
+#
+# PACED TO THE MODELS ASKED, FROM GOOGLE'S OWN TABLE. The 60 above was Lite's -- 15 RPM, four of
+# five keys -- and `--extract-models flash` (d502e46) inherited it, against Flash's 5 RPM a model.
+# Ryan's dashboards, 2026-09-25: Flash peaks of 5 to 8 RPM against 5, and every Flash model at
+# 21-23 / 20 RPD after two waters. The limits live once, in GEMINI_FREE_LIMITS in
+# Worker/worker-core.js, beside the model lists; free_tier() reads them through node, and the
+# ceiling is
+#
+#     (sum of the asked models' RPM) x (keys - 1) / 2
+#
+# keys - 1 is the key's worth left for the app and the species groups, as argued above. The half
+# is headroom for how callLLM picks: every call DRAWS its slot (drawStart, worker-core.js), so at
+# the table's full rate some slots are handed more than their minute holds while others sit idle,
+# and every request over is a refusal counted against the day. Measured in the stubbed batch of
+# test/a-refusal-is-waited-out-not-walked.test.js, 400 reads, every refusal waited out:
+#
+#     Lite   60/min 1.00 requests per answer   90 1.00   120 1.12   150 (the table's all) 1.43
+#     Flash  40/min 1.15 (26 of 400 lost)      60 1.30 (70 lost)   80 1.58   100 1.96 (181 lost)
+#
+# Lite comes out at 60, the number it always had; Flash first at 40; spare first at 40.
 EXTRACT_CALL_SECONDS = 12        # measured 2026-09-24: 8.7, 11.2, 13.4, 14.8 s on four calls
+
+_FREE_TIER = {}
+
+
+def free_tier():
+    """GEMINI_FREE_LIMITS, the three model lists and the free keys, read out of
+    Worker/worker-core.js by node -- the Worker's own table, not a copy of it. Cached."""
+    if not _FREE_TIER:
+        src = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
+                                           "Worker", "worker-core.js"))
+        script = (
+            f"const m = await import({json.dumps('file://' + src.replace(os.sep, '/'))});"
+            "process.stdout.write(JSON.stringify({limits: m.GEMINI_FREE_LIMITS,"
+            " lite: m.GEMINI_FREE_MODELS, flash: m.GEMINI_FREE_FLASH_MODELS,"
+            " spare: m.GEMINI_FREE_SPARE_MODELS, keys: m.GEMINI_FREE_KEYS}));"
+        )
+        proc = subprocess.run(["node", "--input-type=module", "-e", script],
+                              capture_output=True, text=True, encoding="utf-8")
+        if proc.returncode != 0:
+            raise SystemExit(f"!! could not read GEMINI_FREE_LIMITS from {src} under node: "
+                             f"{(proc.stderr or '').strip()[:300]}")
+        _FREE_TIER.update(json.loads(proc.stdout))
+    return _FREE_TIER
+
+
+def paced_rpm(extract_models="lite"):
+    """The extraction ceiling for the models `--extract-models` puts first. See the note above."""
+    tier = free_tier()
+    models = tier.get(extract_models) or tier["lite"]
+    per_key = sum(tier["limits"][m]["rpm"] for m in models)
+    return per_key * (len(tier["keys"]) - 1) // 2
 
 
 def extract_workers(rpm, n_calls):
@@ -1072,9 +1120,11 @@ def registry_ramps(row):
     return out
 
 def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev", alt_names=None,
-                 tpm=DEFAULT_TPM, row=None, limnology_only=False, rpm=DEFAULT_RPM,
+                 tpm=DEFAULT_TPM, row=None, limnology_only=False, rpm=None,
                  group_models="lite"):
     """One lake, start to saved profile. Returns a result dict; never raises."""
+    if rpm is None:
+        rpm = paced_rpm(EXTRACT_MODELS)
     t0 = time.perf_counter()
     clock = PhaseClock()
     out = {"lake": lake, "state": state, "aliases": list(alt_names or []),
@@ -2602,10 +2652,11 @@ def main():
     ap.add_argument("--tpm", type=int, default=DEFAULT_TPM,
                     help="input tokens per minute this script will pace extraction to "
                          f"(default {DEFAULT_TPM}; 0 disables pacing)")
-    ap.add_argument("--rpm", type=int, default=DEFAULT_RPM,
+    ap.add_argument("--rpm", type=int, default=None,
                     help="extraction calls started per minute, across the calls run at once "
-                         f"(default {DEFAULT_RPM}: four of the five free Gemini keys at 15 RPM "
-                         "each, one left for the app; 0 disables the ceiling)")
+                         "(default: from GEMINI_FREE_LIMITS in Worker/worker-core.js for the "
+                         "models --extract-models asks -- 60 on Lite, 40 with flash or spare; "
+                         "0 disables the ceiling)")
     ap.add_argument("--dry-run", action="store_true",
                     help="run everything except /research/save")
     # A REPORT IS WRITTEN EVERY RUN, NOT ONLY WHEN ASKED. Ryan drives this box over Chrome
@@ -2633,8 +2684,9 @@ def main():
                          "first, then Lite -- 400 reads a day, a few waters, for when Lite's daily "
                          "quota is spent. spare: 3 Flash (preview), 2.5 Flash and 2.5 Flash-Lite "
                          "first -- 300 a day, for when Lite and Flash are both spent. Flash and "
-                         "spare allow 5-10 requests a minute per model per key, so pass a low "
-                         "--rpm with them: a refused request still counts against the day. With "
+                         "spare allow 5-10 requests a minute per model per key, and the default "
+                         "--rpm follows the models asked (paced_rpm): a refused request still "
+                         "counts against the day. With "
                          "--group-models claude the Gemini fallback groups use it too")
     ap.add_argument("--resume", action="store_true",
                     help="skip every water whose stored profile was last written by the Claude step "
@@ -2668,6 +2720,8 @@ def main():
 
     global REGISTRY_DIR, EXTRACT_MODELS
     REGISTRY_DIR = a.registry
+    if a.rpm is None:
+        a.rpm = paced_rpm(a.extract_models)
     EXTRACT_MODELS = a.extract_models
 
     if a.apply_groups:
