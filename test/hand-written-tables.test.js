@@ -155,7 +155,7 @@ const DECLARED = [
    'Georgia is deliberately absent from AGENCY_INDEXES, so this is still the GA seed list.'],
 
   // ── aliases: legitimate and permanent ─────────────────────────────────────────────────────
-  ['js/data/research-ids.js', 'RESEARCH_CANONICAL_IDS', 25, 'alias',
+  ['js/data/research-ids.js', 'RESEARCH_CANONICAL_IDS', 26, 'alias',
    'storage-key aliases. Legitimate: the world disagrees about what Thurmond is called. THE '
    + 'ONE COPY as of 2026-09-05 -- Worker/research/keys.js imports it rather than restating it, '
    + 'the way Worker/research/limnology.js imports js/data/lake-keys.js. It was two, and they '
@@ -177,9 +177,14 @@ const DECLARED = [
    + 'saying which rows research together. 22 -> 25, same day: the Fulton Co Chattahoochee reads '
    + 'its own profile before the legacy spelling it shares with the White Co piece (a self-map, '
    + 'so the Thurmond order is untouched everywhere else), and the NC French Broad reaches the '
-   + 'profile filed as "French Broad River, TN", which was read first and is about NC water.'],
-  ['Worker/research/deterministic.js', 'LEGACY_PROFILE_KEYS', 7, 'alias',
-   'profile keys written before the storage-id rules settled. Read-only compatibility.'],
+   + 'profile filed as "French Broad River, TN", which was read first and is about NC water. '
+   + '25 -> 26, 2026-09-25: richard_b_russell_lake, moved in from the LEGACY_PROFILE_KEYS table '
+   + 'below when it was deleted.'],
+  // LEGACY_PROFILE_KEYS, 7 rows in Worker/research/deterministic.js, was here until 2026-09-25.
+  // It was /research/get-normalized's private fallback and still carried 'lake_russell_ga' ->
+  // 'lake_russell_sc' three weeks after RESEARCH_CANONICAL_IDS dropped that row, so a batch on the
+  // 88-acre Lake Russell, GA read Richard B Russell's documents. Five rows were already shared,
+  // one moved there, and the bad one is gone.
   // DOCUMENT_ALIASES was here until 2026-09-01, eleven waters, and NOT ONE OF ITS KEYS COULD
   // MATCH. It was keyed by base name and `baseName` reaches extract.js with "Lake ", " Lake" and
   // " Reservoir" already stripped by cleanLakeBaseName(); every key still carried one of those

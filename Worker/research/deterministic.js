@@ -405,27 +405,16 @@ async function handleResearchSaveNormalized(request, env) {
 }
 
 async function handleResearchGetNormalized(env, lakeName) {
-  const LEGACY_PROFILE_KEYS = {
-    'lake_thurmond_sc':       'clarks_hill_thurmond_sc_ga',
-    'clarks_hill_lake_ga':    'clarks_hill_thurmond_sc_ga',
-    'j_strom_thurmond_lake':  'clarks_hill_thurmond_sc_ga',
-    'thurmond_lake_sc':       'clarks_hill_thurmond_sc_ga',
-    'richard_b_russell_lake': 'lake_russell_sc',
-    'lake_russell_ga':        'lake_russell_sc',
-    'lake_russell_sc_ga':     'lake_russell_sc',
-  };
-  // LEGACY_PROFILE_KEYS above is a third copy of the same alias idea -- keys.js has
-  // RESEARCH_CANONICAL_IDS and now the candidate list. Both are tried: the shared resolver
-  // first, this file's own map second, so nothing that resolved yesterday stops resolving.
+  // ONE ALIAS TABLE, THE SHARED ONE. This function carried its own seven-row LEGACY_PROFILE_KEYS,
+  // tried when the shared resolver found nothing, and one of its rows was
+  // `'lake_russell_ga': 'lake_russell_sc'` -- the row research-ids.js removed on 2026-09-05. So a
+  // research_lakes.py batch on "Lake Russell, GA", the 88-acre Habersham Co lake, read Richard B
+  // Russell's stored documents as its own. Five of the seven rows were already in
+  // RESEARCH_CANONICAL_IDS; `richard_b_russell_lake` was added there, collision-checked; and
+  // `lake_russell_ga` now resolves to itself. See test/a-lake-reads-its-own-documents.test.js.
   const found = await resolveResearchStorageId(lakeName,
     (id) => env.R2_TROLLMAP_CHARTPACKS.get(`lake_packages/${id}/normalized_documents.json`).catch(() => null));
-  let safe = found ? found.id : researchStorageId(lakeName);
-  const key = `lake_packages/${safe}/normalized_documents.json`;
-  let obj = found ? found.hit : null;
-  if (!obj && LEGACY_PROFILE_KEYS[safe]) {
-    obj = await env.R2_TROLLMAP_CHARTPACKS.get(`lake_packages/${LEGACY_PROFILE_KEYS[safe]}/normalized_documents.json`).catch(() => null);
-    if (obj) safe = LEGACY_PROFILE_KEYS[safe];
-  }
+  const obj = found ? found.hit : null;
   if (!obj) return new Response(JSON.stringify({ok:false, error:`no normalized documents for ${lakeName}`}), {status:404, headers:JSON_HEADERS});
   const text = await r2Text(obj);
   let docs;

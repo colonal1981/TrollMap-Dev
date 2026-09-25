@@ -100,6 +100,10 @@ test('the 88-acre pond does not answer to the 24,608-acre reservoir', { skip: SK
   };
   assert.deepEqual(claim('lake_russell_sc'), ['richard_b_russell_lake'],
     'lake_russell_sc must belong to Richard B Russell and to nothing else');
+  // The row moved into RESEARCH_CANONICAL_IDS on 2026-09-25 from get-normalized's deleted alias
+  // table. Checked against js/data and the frozen fixture in the cloud; this is the full index.
+  assert.deepEqual(claim('richard_b_russell_lake'), ['richard_b_russell_lake'],
+    'richard_b_russell_lake must be produced only by names of Richard B Russell');
   // And the pond reaches nothing, because it HAS nothing — it is under the research floor.
   assert.ok(!ids.researchStorageIdCandidates('Lake Russell (Habersham Co, GA)')
     .includes('lake_russell_sc'), 'the Habersham Co pond must not reach the reservoir profile');
