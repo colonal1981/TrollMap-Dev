@@ -1,0 +1,27 @@
+{
+ "scdnr-news-freshwater.html": {
+  "url": "https://www.dnr.sc.gov/news/freshwater.html",
+  "contentType": "text/html",
+  "bytes": 30518,
+  "fetched": "2026-09-25"
+ },
+ "edgefield-advertiser-scdnr-report-2012-08.html": {
+  "url": "https://www.edgefieldadvertiser.com/2012/08/scdnr-freshwater-fishing-report/",
+  "contentType": "text/html; charset=UTF-8",
+  "bytes": 53513,
+  "fetched": "2026-09-25"
+ },
+ "lakegreenwoodfishing-report-2026-09-06.html": {
+  "url": "https://www.lakegreenwoodfishing.com/lake-greenwood-fishing-report-sep-6th-2026/",
+  "contentType": "text/html; charset=UTF-8",
+  "bytes": 85489,
+  "fetched": "2026-09-25"
+ },
+ "ncwrc-inland-fishing-regulations.pdf.head": {
+  "url": "https://www.ncwildlife.gov/media/4600/download?attachment=",
+  "contentType": "application/pdf",
+  "bytes": 8192,
+  "fetched": "2026-09-25",
+  "truncatedTo": 8192
+ }
+}
