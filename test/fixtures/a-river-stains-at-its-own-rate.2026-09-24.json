@@ -1,0 +1,6497 @@
+{
+ "_note": "Each river's WQP turbidity and Secchi readings since 2015 at stations inside its registry outline, grouped by where the bound gauge's daily mean discharge sat that day in USGS's daily statistics -- the bands statBand() prints on the card. Medians and counts, nothing fitted. Personal use only, not for distribution or resale; not for navigation.",
+ "built": "2026-09-24",
+ "source": "Scripts/build_river_clarity_by_flow.py",
+ "normal_bands": [
+  "between the 25th and 50th percentile",
+  "between the 50th and 75th percentile"
+ ],
+ "waters": {
+  "alapaha_river": {
+   "stations_on": 9,
+   "readings": 311,
+   "since": "2015-01-01",
+   "sites": {
+    "02317500": {
+     "bands": {
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 5.0,
+        "n": 40
+       },
+       "secchi": {
+        "median_ft": 1.97,
+        "n": 38
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 4.9,
+        "n": 19
+       },
+       "secchi": {
+        "median_ft": 1.97,
+        "n": 16
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 5.66,
+        "n": 58
+       },
+       "secchi": {
+        "median_ft": 1.89,
+        "n": 42
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 8.09,
+        "n": 44
+       },
+       "secchi": {
+        "median_ft": 1.64,
+        "n": 52
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 4.6,
+        "n": 1
+       },
+       "secchi": {
+        "median_ft": 2.95,
+        "n": 1
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 5.25,
+       "n": 98
+      },
+      "secchi": {
+       "median_ft": 1.97,
+       "n": 80
+      }
+     },
+     "readings_placed": 311
+    }
+   }
+  },
+  "altamaha_river": {
+   "stations_on": 3,
+   "readings": 139,
+   "since": "2015-01-01",
+   "sites": {
+    "02226000": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 22.5,
+        "n": 38
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 21.35,
+        "n": 44
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 17.6,
+        "n": 19
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 22.45,
+        "n": 34
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 16.64,
+        "n": 4
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 21.8,
+       "n": 78
+      }
+     },
+     "readings_placed": 139
+    },
+    "02225000": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 22.5,
+        "n": 44
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 21.35,
+        "n": 50
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 21.5,
+        "n": 28
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 16.5,
+        "n": 15
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 23.95,
+        "n": 2
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 21.35,
+       "n": 78
+      }
+     },
+     "readings_placed": 139
+    }
+   }
+  },
+  "black_river": {
+   "stations_on": 6,
+   "readings": 479,
+   "since": "2015-01-01",
+   "sites": {
+    "02136000": {
+     "bands": {
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 3.8,
+        "n": 93
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 4.55,
+        "n": 128
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 4.7,
+        "n": 117
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 3.7,
+        "n": 122
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 3.1,
+        "n": 19
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 4.2,
+       "n": 250
+      }
+     },
+     "readings_placed": 479
+    }
+   }
+  },
+  "broad_river": {
+   "stations_on": 12,
+   "readings": 898,
+   "since": "2015-01-01",
+   "sites": {
+    "02153200": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 18.0,
+        "n": 291
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 10.0,
+        "n": 243
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 7.8,
+        "n": 204
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 6.75,
+        "n": 132
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 5.1,
+        "n": 28
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 9.2,
+       "n": 447
+      }
+     },
+     "readings_placed": 898
+    },
+    "0215329875": {
+     "bands": {
+      "above the 50th percentile": {
+       "turbidity": {
+        "median_ntu": 11.5,
+        "n": 66
+       }
+      },
+      "below the 50th percentile": {
+       "turbidity": {
+        "median_ntu": 9.0,
+        "n": 83
+       }
+      }
+     },
+     "normal": {},
+     "readings_placed": 149
+    },
+    "02151500": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 18.0,
+        "n": 290
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 8.5,
+        "n": 211
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 10.0,
+        "n": 177
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 6.55,
+        "n": 110
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 6.5,
+        "n": 110
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 9.4,
+       "n": 388
+      }
+     },
+     "readings_placed": 898
+    },
+    "02153551": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 17.0,
+        "n": 330
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 9.9,
+        "n": 237
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 7.0,
+        "n": 222
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 6.25,
+        "n": 78
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 4.9,
+        "n": 30
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 8.8,
+       "n": 459
+      }
+     },
+     "readings_placed": 897
+    },
+    "02156370": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 10.0,
+        "n": 128
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 8.4,
+        "n": 146
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 20.0,
+        "n": 114
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 5.95,
+        "n": 70
+       }
+      },
+      "below the 25th percentile": {
+       "turbidity": {
+        "median_ntu": 8.75,
+        "n": 36
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 9.15,
+       "n": 274
+      }
+     },
+     "readings_placed": 494
+    }
+   }
+  },
+  "broad_river_2": {
+   "stations_on": 13,
+   "readings": 830,
+   "since": "2015-01-01",
+   "sites": {
+    "02156500": {
+     "bands": {
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 13.0,
+        "n": 189
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 18.0,
+        "n": 151
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 45.0,
+        "n": 218
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 9.3,
+        "n": 95
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 10.0,
+        "n": 177
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 14.5,
+       "n": 340
+      }
+     },
+     "readings_placed": 830
+    },
+    "02160390": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 13.0,
+        "n": 283
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 12.0,
+        "n": 211
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 46.0,
+        "n": 224
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 7.7,
+        "n": 71
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 8.3,
+        "n": 41
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 13.0,
+       "n": 494
+      }
+     },
+     "readings_placed": 830
+    },
+    "021564493": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 16.0,
+        "n": 201
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 12.0,
+        "n": 202
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 32.0,
+        "n": 228
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 11.0,
+        "n": 143
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 8.2,
+        "n": 56
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 13.0,
+       "n": 403
+      }
+     },
+     "readings_placed": 830
+    },
+    "02160326": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 16.0,
+        "n": 256
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 12.0,
+        "n": 215
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 39.0,
+        "n": 211
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 9.4,
+        "n": 84
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 8.25,
+        "n": 64
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 14.0,
+       "n": 471
+      }
+     },
+     "readings_placed": 830
+    },
+    "02160700": {
+     "bands": {
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 9.4,
+        "n": 131
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 12.0,
+        "n": 255
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 17.0,
+        "n": 191
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 8.3,
+        "n": 72
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 70.0,
+        "n": 181
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 13.0,
+       "n": 446
+      }
+     },
+     "readings_placed": 830
+    },
+    "02157490": {
+     "bands": {
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 11.0,
+        "n": 103
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 8.2,
+        "n": 43
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 16.0,
+        "n": 89
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 36.0,
+        "n": 46
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 9.9,
+        "n": 43
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 13.0,
+       "n": 192
+      }
+     },
+     "readings_placed": 324
+    },
+    "02157510": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 18.0,
+        "n": 231
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 10.0,
+        "n": 235
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 29.0,
+        "n": 223
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 10.0,
+        "n": 74
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 9.5,
+        "n": 67
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 13.0,
+       "n": 466
+      }
+     },
+     "readings_placed": 830
+    }
+   }
+  },
+  "cape_fear_river": {
+   "stations_on": 12,
+   "readings": 599,
+   "since": "2015-01-01",
+   "sites": {
+    "02102500": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 16.0,
+        "n": 202
+       },
+       "secchi": {
+        "median_ft": 1.15,
+        "n": 4
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 6.0,
+        "n": 98
+       },
+       "secchi": {
+        "median_ft": 2.3,
+        "n": 2
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 8.7,
+        "n": 131
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 6.3,
+        "n": 121
+       },
+       "secchi": {
+        "median_ft": 2.3,
+        "n": 6
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 6.8,
+        "n": 35
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 7.45,
+       "n": 252
+      },
+      "secchi": {
+       "median_ft": 2.3,
+       "n": 6
+      }
+     },
+     "readings_placed": 599
+    },
+    "02105500": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 16.0,
+        "n": 195
+       },
+       "secchi": {
+        "median_ft": 1.15,
+        "n": 4
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 8.65,
+        "n": 160
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 6.4,
+        "n": 91
+       },
+       "secchi": {
+        "median_ft": 2.3,
+        "n": 6
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 5.5,
+        "n": 127
+       },
+       "secchi": {
+        "median_ft": 1.97,
+        "n": 2
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 6.25,
+        "n": 14
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 7.4,
+       "n": 287
+      },
+      "secchi": {
+       "median_ft": 1.97,
+       "n": 2
+      }
+     },
+     "readings_placed": 599
+    },
+    "02098206": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 15.0,
+        "n": 170
+       },
+       "secchi": {
+        "median_ft": 1.31,
+        "n": 2
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 8.7,
+        "n": 157
+       },
+       "secchi": {
+        "median_ft": 1.97,
+        "n": 6
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 6.4,
+        "n": 84
+       },
+       "secchi": {
+        "median_ft": 2.46,
+        "n": 2
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 6.5,
+        "n": 133
+       },
+       "secchi": {
+        "median_ft": 2.46,
+        "n": 2
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 7.2,
+        "n": 42
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 7.6,
+       "n": 290
+      },
+      "secchi": {
+       "median_ft": 2.13,
+       "n": 8
+      }
+     },
+     "readings_placed": 598
+    }
+   }
+  },
+  "catawba_river": {
+   "stations_on": 9,
+   "readings": 702,
+   "since": "2015-01-01",
+   "sites": {
+    "02147020": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 9.3,
+        "n": 217
+       },
+       "secchi": {
+        "median_ft": 3.94,
+        "n": 5
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 8.85,
+        "n": 188
+       },
+       "secchi": {
+        "median_ft": 1.97,
+        "n": 5
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 17.0,
+        "n": 195
+       },
+       "secchi": {
+        "median_ft": 2.62,
+        "n": 3
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 7.4,
+        "n": 67
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 5.8,
+        "n": 22
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 9.0,
+       "n": 405
+      },
+      "secchi": {
+       "median_ft": 2.95,
+       "n": 10
+      }
+     },
+     "readings_placed": 702
+    },
+    "02146000": {
+     "bands": {
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 8.35,
+        "n": 274
+       },
+       "secchi": {
+        "median_ft": 1.64,
+        "n": 5
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 17.0,
+        "n": 150
+       },
+       "secchi": {
+        "median_ft": 2.62,
+        "n": 3
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 11.0,
+        "n": 164
+       },
+       "secchi": {
+        "median_ft": 4.43,
+        "n": 4
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 7.7,
+        "n": 81
+       },
+       "secchi": {
+        "median_ft": 1.97,
+        "n": 1
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 6.05,
+        "n": 20
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 9.1,
+       "n": 438
+      },
+      "secchi": {
+       "median_ft": 3.28,
+       "n": 9
+      }
+     },
+     "readings_placed": 702
+    },
+    "02145910": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 10.0,
+        "n": 150
+       },
+       "secchi": {
+        "median_ft": 3.94,
+        "n": 5
+       }
+      },
+      "below the 25th percentile": {
+       "turbidity": {
+        "median_ntu": 7.2,
+        "n": 87
+       },
+       "secchi": {
+        "median_ft": 2.62,
+        "n": 1
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 17.0,
+        "n": 129
+       },
+       "secchi": {
+        "median_ft": 2.13,
+        "n": 2
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 8.0,
+        "n": 42
+       },
+       "secchi": {
+        "median_ft": 1.97,
+        "n": 1
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 8.4,
+        "n": 125
+       },
+       "secchi": {
+        "median_ft": 2.46,
+        "n": 2
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 9.7,
+       "n": 275
+      },
+      "secchi": {
+       "median_ft": 3.94,
+       "n": 7
+      }
+     },
+     "readings_placed": 544
+    },
+    "02147126": {
+     "bands": {
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 9.25,
+        "n": 4
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 8.6,
+        "n": 9
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 15.0,
+        "n": 11
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 10.0,
+        "n": 1
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 10.0,
+       "n": 20
+      }
+     },
+     "readings_placed": 25
+    }
+   }
+  },
+  "catawba_river_2": {
+   "stations_on": 2,
+   "readings": 88,
+   "since": "2015-01-01",
+   "sites": {
+    "02140991": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 4.5,
+        "n": 33
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 3.95,
+        "n": 22
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 2.4,
+        "n": 24
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 2.1,
+        "n": 4
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 2.6,
+        "n": 5
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 2.95,
+       "n": 46
+      }
+     },
+     "readings_placed": 88
+    },
+    "02138520": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 3.8,
+        "n": 29
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 4.4,
+        "n": 23
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 2.45,
+        "n": 16
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 2.7,
+        "n": 18
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 125.7,
+        "n": 2
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 3.2,
+       "n": 41
+      }
+     },
+     "readings_placed": 88
+    }
+   }
+  },
+  "chattahoochee_river": {
+   "stations_on": 5,
+   "readings": 551,
+   "since": "2015-01-01",
+   "sites": {
+    "02335000": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 4.6,
+        "n": 177
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 4.3,
+        "n": 205
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 3.8,
+        "n": 129
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 2.6,
+        "n": 8
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 3.37,
+        "n": 32
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 4.0,
+       "n": 334
+      }
+     },
+     "readings_placed": 551
+    },
+    "02335450": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 4.7,
+        "n": 176
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 4.3,
+        "n": 204
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 4.0,
+        "n": 98
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 3.05,
+        "n": 53
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 4.2,
+        "n": 20
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 4.28,
+       "n": 302
+      }
+     },
+     "readings_placed": 551
+    },
+    "02334430": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 4.1,
+        "n": 161
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 4.3,
+        "n": 227
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 3.9,
+        "n": 132
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 4.1,
+        "n": 7
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 8.1,
+        "n": 24
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 4.0,
+       "n": 359
+      }
+     },
+     "readings_placed": 551
+    },
+    "02334653": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 4.3,
+        "n": 195
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 4.0,
+        "n": 173
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 4.0,
+        "n": 149
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 4.1,
+        "n": 9
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 3.4,
+        "n": 25
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 4.0,
+       "n": 322
+      }
+     },
+     "readings_placed": 551
+    }
+   }
+  },
+  "chattahoochee_river_4": {
+   "stations_on": 2,
+   "readings": 133,
+   "since": "2015-01-01",
+   "sites": {
+    "02331600": {
+     "bands": {
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 4.2,
+        "n": 39
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 5.8,
+        "n": 35
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 3.87,
+        "n": 24
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 13.0,
+        "n": 27
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 4.35,
+        "n": 8
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 4.7,
+       "n": 74
+      }
+     },
+     "readings_placed": 133
+    },
+    "02331000": {
+     "bands": {
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 5.2,
+        "n": 32
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 4.84,
+        "n": 36
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 3.75,
+        "n": 17
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 3.4,
+        "n": 15
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 11.0,
+        "n": 33
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 5.05,
+       "n": 68
+      }
+     },
+     "readings_placed": 133
+    },
+    "02330450": {
+     "bands": {
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 5.2,
+        "n": 32
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 4.78,
+        "n": 39
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 3.4,
+        "n": 11
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 3.65,
+        "n": 15
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 10.5,
+        "n": 36
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 4.9,
+       "n": 71
+      }
+     },
+     "readings_placed": 133
+    }
+   }
+  },
+  "chattooga_river": {
+   "stations_on": 2,
+   "readings": 181,
+   "since": "2015-01-01",
+   "sites": {
+    "02176930": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 2.3,
+        "n": 53
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 3.2,
+        "n": 58
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 1.7,
+        "n": 34
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 1.8,
+        "n": 16
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 2.38,
+        "n": 20
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 2.0,
+       "n": 87
+      }
+     },
+     "readings_placed": 181
+    },
+    "02177000": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 2.0,
+        "n": 41
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 3.1,
+        "n": 64
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 1.8,
+        "n": 24
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 2.3,
+        "n": 33
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 1.71,
+        "n": 19
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 2.1,
+       "n": 74
+      }
+     },
+     "readings_placed": 181
+    }
+   }
+  },
+  "chestatee_river": {
+   "stations_on": 1,
+   "readings": 107,
+   "since": "2015-01-01",
+   "sites": {
+    "02333500": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 7.4,
+        "n": 31
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 4.15,
+        "n": 16
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 4.4,
+        "n": 21
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 5.7,
+        "n": 29
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 4.0,
+        "n": 10
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 4.85,
+       "n": 50
+      }
+     },
+     "readings_placed": 107
+    }
+   }
+  },
+  "clinch_river": {
+   "stations_on": 28,
+   "readings": 525,
+   "since": "2015-01-01",
+   "sites": {
+    "03528000": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 3.37,
+        "n": 134
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 3.01,
+        "n": 195
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 9.55,
+        "n": 81
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 2.05,
+        "n": 102
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 2.22,
+        "n": 13
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 3.16,
+       "n": 329
+      }
+     },
+     "readings_placed": 525
+    },
+    "03527220": {
+     "bands": {
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 2.84,
+        "n": 165
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 3.4,
+        "n": 101
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 2.6,
+        "n": 111
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 13.1,
+        "n": 71
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 2.0,
+        "n": 31
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 3.04,
+       "n": 266
+      }
+     },
+     "readings_placed": 479
+    }
+   }
+  },
+  "congaree_river": {
+   "stations_on": 13,
+   "readings": 795,
+   "since": "2015-01-01",
+   "sites": {
+    "02169500": {
+     "bands": {
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 8.7,
+        "n": 237
+       },
+       "secchi": {
+        "median_ft": 1.97,
+        "n": 22
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 13.0,
+        "n": 110
+       },
+       "secchi": {
+        "median_ft": 1.97,
+        "n": 15
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 26.0,
+        "n": 147
+       },
+       "secchi": {
+        "median_ft": 1.64,
+        "n": 18
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 6.9,
+        "n": 131
+       },
+       "secchi": {
+        "median_ft": 3.12,
+        "n": 24
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 5.9,
+        "n": 80
+       },
+       "secchi": {
+        "median_ft": 3.94,
+        "n": 11
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 10.0,
+       "n": 347
+      },
+      "secchi": {
+       "median_ft": 1.97,
+       "n": 37
+      }
+     },
+     "readings_placed": 795
+    },
+    "02161000": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 13.0,
+        "n": 177
+       },
+       "secchi": {
+        "median_ft": 2.46,
+        "n": 21
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 7.75,
+        "n": 194
+       },
+       "secchi": {
+        "median_ft": 2.62,
+        "n": 28
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 20.0,
+        "n": 189
+       },
+       "secchi": {
+        "median_ft": 1.64,
+        "n": 21
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 6.2,
+        "n": 108
+       },
+       "secchi": {
+        "median_ft": 3.28,
+        "n": 11
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 5.7,
+        "n": 37
+       },
+       "secchi": {
+        "median_ft": 3.94,
+        "n": 9
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 9.2,
+       "n": 371
+      },
+      "secchi": {
+       "median_ft": 2.46,
+       "n": 49
+      }
+     },
+     "readings_placed": 795
+    },
+    "02162035": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 12.0,
+        "n": 196
+       },
+       "secchi": {
+        "median_ft": 1.64,
+        "n": 20
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 20.0,
+        "n": 189
+       },
+       "secchi": {
+        "median_ft": 1.64,
+        "n": 22
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 7.2,
+        "n": 195
+       },
+       "secchi": {
+        "median_ft": 2.95,
+        "n": 28
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 7.2,
+        "n": 75
+       },
+       "secchi": {
+        "median_ft": 3.52,
+        "n": 8
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 5.9,
+        "n": 44
+       },
+       "secchi": {
+        "median_ft": 4.02,
+        "n": 10
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 8.8,
+       "n": 391
+      },
+      "secchi": {
+       "median_ft": 2.46,
+       "n": 48
+      }
+     },
+     "readings_placed": 787
+    }
+   }
+  },
+  "cooper_river": {
+   "stations_on": 9,
+   "readings": 297,
+   "since": "2015-01-01",
+   "sites": {
+    "02172002": {
+     "bands": {
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 4.4,
+        "n": 23
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 2.98,
+        "n": 80
+       },
+       "secchi": {
+        "median_ft": 3.94,
+        "n": 5
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 3.05,
+        "n": 86
+       },
+       "secchi": {
+        "median_ft": 3.28,
+        "n": 1
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 3.2,
+        "n": 9
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 3.07,
+        "n": 74
+       },
+       "secchi": {
+        "median_ft": 4.67,
+        "n": 12
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 3.02,
+       "n": 154
+      },
+      "secchi": {
+       "median_ft": 3.94,
+       "n": 17
+      }
+     },
+     "readings_placed": 290
+    }
+   }
+  },
+  "dan_river": {
+   "stations_on": 16,
+   "readings": 1104,
+   "since": "2015-01-01",
+   "sites": {
+    "02069000": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 11.5,
+        "n": 315
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 26.0,
+        "n": 313
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 6.47,
+        "n": 246
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 4.93,
+        "n": 158
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 4.49,
+        "n": 72
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 8.79,
+       "n": 561
+      }
+     },
+     "readings_placed": 1104
+    },
+    "02074000": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 11.0,
+        "n": 335
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 24.0,
+        "n": 291
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 6.79,
+        "n": 294
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 4.89,
+        "n": 142
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 4.5,
+        "n": 42
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 8.4,
+       "n": 629
+      }
+     },
+     "readings_placed": 1104
+    }
+   }
+  },
+  "edisto_river": {
+   "stations_on": 4,
+   "readings": 29,
+   "since": "2015-01-01",
+   "sites": {
+    "02174055": {
+     "bands": {
+      "below the 25th percentile": {
+       "turbidity": {
+        "median_ntu": 3.9,
+        "n": 4
+       }
+      }
+     },
+     "normal": {},
+     "readings_placed": 4
+    },
+    "02174000": {
+     "bands": {
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 5.4,
+        "n": 2
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 2.4,
+        "n": 2
+       }
+      }
+     },
+     "normal": {},
+     "readings_placed": 4
+    },
+    "02175000": {
+     "bands": {
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 6.1,
+        "n": 9
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 3.8,
+        "n": 6
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 3.25,
+        "n": 4
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 2.95,
+        "n": 6
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 4.05,
+        "n": 4
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 5.3,
+       "n": 13
+      }
+     },
+     "readings_placed": 29
+    }
+   }
+  },
+  "first_broad_river": {
+   "stations_on": 8,
+   "readings": 518,
+   "since": "2015-01-01",
+   "sites": {
+    "02152474": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 21.0,
+        "n": 143
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 11.0,
+        "n": 151
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 8.5,
+        "n": 131
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 6.9,
+        "n": 73
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 5.95,
+        "n": 20
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 9.75,
+       "n": 282
+      }
+     },
+     "readings_placed": 518
+    },
+    "0215329875": {
+     "bands": {
+      "above the 50th percentile": {
+       "turbidity": {
+        "median_ntu": 12.0,
+        "n": 36
+       }
+      },
+      "below the 50th percentile": {
+       "turbidity": {
+        "median_ntu": 9.0,
+        "n": 49
+       }
+      }
+     },
+     "normal": {},
+     "readings_placed": 85
+    },
+    "02151500": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 20.0,
+        "n": 173
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 11.0,
+        "n": 99
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 9.0,
+        "n": 133
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 6.6,
+        "n": 43
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 6.5,
+        "n": 70
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 9.95,
+       "n": 232
+      }
+     },
+     "readings_placed": 518
+    },
+    "02153200": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 20.0,
+        "n": 170
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 11.0,
+        "n": 137
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 8.21,
+        "n": 113
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 4.0,
+        "n": 19
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 6.8,
+        "n": 79
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 9.7,
+       "n": 250
+      }
+     },
+     "readings_placed": 518
+    }
+   }
+  },
+  "french_broad_river": {
+   "stations_on": 19,
+   "readings": 1078,
+   "since": "2015-01-01",
+   "sites": {
+    "03454500": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 5.64,
+        "n": 325
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 3.19,
+        "n": 230
+       },
+       "secchi": {
+        "median_ft": 23.52,
+        "n": 1
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 3.1,
+        "n": 262
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 3.1,
+        "n": 120
+       },
+       "secchi": {
+        "median_ft": 22.31,
+        "n": 1
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 3.2,
+        "n": 139
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 3.16,
+       "n": 492
+      },
+      "secchi": {
+       "median_ft": 23.52,
+       "n": 1
+      }
+     },
+     "readings_placed": 1078
+    },
+    "03439000": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 5.72,
+        "n": 322
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 3.5,
+        "n": 279
+       },
+       "secchi": {
+        "median_ft": 23.52,
+        "n": 1
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 2.8,
+        "n": 226
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 2.8,
+        "n": 109
+       },
+       "secchi": {
+        "median_ft": 22.31,
+        "n": 1
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 3.0,
+        "n": 140
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 3.3,
+       "n": 505
+      },
+      "secchi": {
+       "median_ft": 23.52,
+       "n": 1
+      }
+     },
+     "readings_placed": 1078
+    },
+    "03453500": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 5.85,
+        "n": 332
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 3.62,
+        "n": 260
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 2.49,
+        "n": 204
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 2.9,
+        "n": 136
+       },
+       "secchi": {
+        "median_ft": 22.91,
+        "n": 2
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 3.1,
+        "n": 144
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 3.2,
+       "n": 464
+      }
+     },
+     "readings_placed": 1078
+    },
+    "03451500": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 5.5,
+        "n": 332
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 3.2,
+        "n": 238
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 2.8,
+        "n": 213
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 3.3,
+        "n": 145
+       },
+       "secchi": {
+        "median_ft": 23.52,
+        "n": 1
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 3.06,
+        "n": 148
+       },
+       "secchi": {
+        "median_ft": 22.31,
+        "n": 1
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 3.11,
+       "n": 451
+      }
+     },
+     "readings_placed": 1078
+    },
+    "03460795": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 5.6,
+        "n": 237
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 3.0,
+        "n": 264
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 3.64,
+        "n": 362
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 3.0,
+        "n": 167
+       },
+       "secchi": {
+        "median_ft": 22.91,
+        "n": 2
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 3.25,
+        "n": 46
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 3.3,
+       "n": 626
+      }
+     },
+     "readings_placed": 1078
+    },
+    "03447687": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 3.64,
+        "n": 300
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 3.3,
+        "n": 249
+       },
+       "secchi": {
+        "median_ft": 23.52,
+        "n": 1
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 5.5,
+        "n": 300
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 3.0,
+        "n": 152
+       },
+       "secchi": {
+        "median_ft": 22.31,
+        "n": 1
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 2.91,
+        "n": 75
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 3.4,
+       "n": 549
+      },
+      "secchi": {
+       "median_ft": 23.52,
+       "n": 1
+      }
+     },
+     "readings_placed": 1078
+    },
+    "03461500": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 3.8,
+        "n": 336
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 3.2,
+        "n": 256
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 5.0,
+        "n": 261
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 2.85,
+        "n": 132
+       },
+       "secchi": {
+        "median_ft": 23.52,
+        "n": 1
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 3.2,
+        "n": 91
+       },
+       "secchi": {
+        "median_ft": 22.31,
+        "n": 1
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 3.42,
+       "n": 592
+      }
+     },
+     "readings_placed": 1078
+    },
+    "03443000": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 2.96,
+        "n": 214
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 3.5,
+        "n": 271
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 5.5,
+        "n": 305
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 2.9,
+        "n": 143
+       },
+       "secchi": {
+        "median_ft": 23.52,
+        "n": 1
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 3.1,
+        "n": 143
+       },
+       "secchi": {
+        "median_ft": 22.31,
+        "n": 1
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 3.4,
+       "n": 485
+      }
+     },
+     "readings_placed": 1078
+    },
+    "03455000": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 5.5,
+        "n": 350
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 3.1,
+        "n": 216
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 3.4,
+        "n": 267
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 3.1,
+        "n": 153
+       },
+       "secchi": {
+        "median_ft": 22.91,
+        "n": 2
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 3.1,
+        "n": 90
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 3.2,
+       "n": 483
+      }
+     },
+     "readings_placed": 1078
+    }
+   }
+  },
+  "great_pee_dee_river": {
+   "stations_on": 14,
+   "readings": 958,
+   "since": "2015-01-01",
+   "sites": {
+    "02131000": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 16.0,
+        "n": 160
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 13.0,
+        "n": 244
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 17.0,
+        "n": 254
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 7.5,
+        "n": 184
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 10.0,
+        "n": 114
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 14.0,
+       "n": 498
+      }
+     },
+     "readings_placed": 956
+    },
+    "02135200": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 16.0,
+        "n": 266
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 10.0,
+        "n": 239
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 15.0,
+        "n": 195
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 9.8,
+        "n": 140
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 10.0,
+        "n": 78
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 12.0,
+       "n": 434
+      }
+     },
+     "readings_placed": 918
+    },
+    "02130561": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 18.0,
+        "n": 269
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 9.9,
+        "n": 263
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 13.0,
+        "n": 271
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 8.5,
+        "n": 124
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 8.8,
+        "n": 31
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 11.0,
+       "n": 534
+      }
+     },
+     "readings_placed": 958
+    },
+    "02130000": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 14.0,
+        "n": 165
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 12.0,
+        "n": 222
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 17.0,
+        "n": 139
+       }
+      },
+      "below the 25th percentile": {
+       "turbidity": {
+        "median_ntu": 11.0,
+        "n": 149
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 12.0,
+       "n": 387
+      }
+     },
+     "readings_placed": 675
+    },
+    "02129000": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 21.0,
+        "n": 189
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 7.9,
+        "n": 199
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 14.0,
+        "n": 216
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 11.0,
+        "n": 288
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 11.5,
+        "n": 66
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 12.0,
+       "n": 504
+      }
+     },
+     "readings_placed": 958
+    },
+    "02131010": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 16.0,
+        "n": 219
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 9.9,
+        "n": 213
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 14.5,
+        "n": 332
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 8.2,
+        "n": 141
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 12.0,
+        "n": 53
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 13.0,
+       "n": 545
+      }
+     },
+     "readings_placed": 958
+    }
+   }
+  },
+  "little_pee_dee_river": {
+   "stations_on": 8,
+   "readings": 173,
+   "since": "2015-01-01",
+   "sites": {
+    "02135000": {
+     "bands": {
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 2.7,
+        "n": 27
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 2.9,
+        "n": 27
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 3.3,
+        "n": 27
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 3.0,
+        "n": 25
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 2.5,
+        "n": 21
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 2.7,
+       "n": 54
+      }
+     },
+     "readings_placed": 127,
+     "flow_years_unread": [
+      2017,
+      2020,
+      2022
+     ]
+    }
+   }
+  },
+  "little_tennessee_river": {
+   "stations_on": 3,
+   "readings": 103,
+   "since": "2015-01-01",
+   "sites": {
+    "03500000": {
+     "bands": {
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 3.36,
+        "n": 19
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 5.55,
+        "n": 22
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 12.0,
+        "n": 33
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 6.62,
+        "n": 12
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 3.5,
+        "n": 17
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 4.4,
+       "n": 39
+      }
+     },
+     "readings_placed": 103
+    },
+    "03501500": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 12.0,
+        "n": 1
+       }
+      },
+      "below the 25th percentile": {
+       "turbidity": {
+        "median_ntu": 5.0,
+        "n": 6
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 3.5,
+        "n": 1
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 7.65,
+        "n": 2
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 3.5,
+       "n": 3
+      }
+     },
+     "readings_placed": 10
+    }
+   }
+  },
+  "lumber_river": {
+   "stations_on": 7,
+   "readings": 539,
+   "since": "2015-01-01",
+   "sites": {
+    "02134170": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 3.2,
+        "n": 162
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 3.15,
+        "n": 170
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 2.8,
+        "n": 72
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 3.1,
+        "n": 117
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 2.5,
+        "n": 18
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 3.1,
+       "n": 279
+      }
+     },
+     "readings_placed": 539
+    },
+    "02134900": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 3.0,
+        "n": 153
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 3.2,
+        "n": 100
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 3.1,
+        "n": 83
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 2.7,
+        "n": 67
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 2.7,
+        "n": 5
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 3.07,
+       "n": 236
+      }
+     },
+     "readings_placed": 408
+    },
+    "02134500": {
+     "bands": {
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 3.1,
+        "n": 109
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 3.1,
+        "n": 134
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 2.8,
+        "n": 99
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 3.1,
+        "n": 138
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 3.7,
+        "n": 59
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 3.1,
+       "n": 243
+      }
+     },
+     "readings_placed": 539
+    },
+    "02133624": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 3.3,
+        "n": 155
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 3.2,
+        "n": 140
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 2.9,
+        "n": 85
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 3.0,
+        "n": 136
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 2.0,
+        "n": 22
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 3.1,
+       "n": 291
+      }
+     },
+     "readings_placed": 538
+    }
+   }
+  },
+  "lynches_river": {
+   "stations_on": 5,
+   "readings": 262,
+   "since": "2015-01-01",
+   "sites": {
+    "02131500": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 9.0,
+        "n": 57
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 7.4,
+        "n": 73
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 9.1,
+        "n": 52
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 5.45,
+        "n": 30
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 5.7,
+        "n": 50
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 8.1,
+       "n": 125
+      }
+     },
+     "readings_placed": 262
+    },
+    "02132000": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 8.7,
+        "n": 63
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 7.8,
+        "n": 56
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 8.7,
+        "n": 55
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 5.85,
+        "n": 50
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 5.55,
+        "n": 38
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 8.1,
+       "n": 111
+      }
+     },
+     "readings_placed": 262
+    }
+   }
+  },
+  "neuse_river": {
+   "stations_on": 10,
+   "readings": 801,
+   "since": "2015-01-01",
+   "sites": {
+    "02087183": {
+     "bands": {
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 12.0,
+        "n": 191
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 12.0,
+        "n": 169
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 19.0,
+        "n": 216
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 15.0,
+        "n": 177
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 9.65,
+        "n": 48
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 14.0,
+       "n": 346
+      }
+     },
+     "readings_placed": 801
+    },
+    "02089500": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 19.0,
+        "n": 227
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 12.0,
+        "n": 176
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 18.0,
+        "n": 263
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 8.5,
+        "n": 111
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 6.15,
+        "n": 24
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 14.0,
+       "n": 403
+      }
+     },
+     "readings_placed": 801
+    },
+    "02089000": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 18.0,
+        "n": 197
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 12.0,
+        "n": 193
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 19.0,
+        "n": 265
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 8.45,
+        "n": 130
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 7.5,
+        "n": 16
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 15.0,
+       "n": 390
+      }
+     },
+     "readings_placed": 801
+    },
+    "02087500": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 21.0,
+        "n": 250
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 11.0,
+        "n": 204
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 15.0,
+        "n": 247
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 9.55,
+        "n": 82
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 7.35,
+        "n": 18
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 13.0,
+       "n": 451
+      }
+     },
+     "readings_placed": 801
+    },
+    "02088000": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 15.0,
+        "n": 251
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 22.0,
+        "n": 244
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 11.0,
+        "n": 221
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 7.75,
+        "n": 22
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 12.0,
+        "n": 63
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 13.0,
+       "n": 472
+      }
+     },
+     "readings_placed": 801
+    },
+    "0208773375": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 23.0,
+        "n": 193
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 11.0,
+        "n": 235
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 16.0,
+        "n": 252
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 10.0,
+        "n": 99
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 10.45,
+        "n": 22
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 14.0,
+       "n": 487
+      }
+     },
+     "readings_placed": 801
+    }
+   }
+  },
+  "nolichucky_river": {
+   "stations_on": 10,
+   "readings": 271,
+   "since": "2015-01-01",
+   "sites": {
+    "03466500": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 3.29,
+        "n": 64
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 2.62,
+        "n": 77
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 2.6,
+        "n": 68
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 3.05,
+        "n": 39
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 1.9,
+        "n": 23
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 2.6,
+       "n": 145
+      }
+     },
+     "readings_placed": 271
+    },
+    "03465500": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 2.85,
+        "n": 68
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 3.2,
+        "n": 41
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 2.6,
+        "n": 39
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 2.76,
+        "n": 26
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 1.9,
+        "n": 9
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 2.9,
+       "n": 80
+      }
+     },
+     "readings_placed": 183
+    },
+    "03463300": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 2.94,
+        "n": 71
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 2.87,
+        "n": 70
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 2.15,
+        "n": 44
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 3.26,
+        "n": 58
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 1.85,
+        "n": 28
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 3.03,
+       "n": 128
+      }
+     },
+     "readings_placed": 271
+    },
+    "03466208": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 2.6,
+        "n": 73
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 2.75,
+        "n": 52
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 2.52,
+        "n": 92
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 2.23,
+        "n": 10
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 2.7,
+        "n": 44
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 2.6,
+       "n": 165
+      }
+     },
+     "readings_placed": 271
+    }
+   }
+  },
+  "nolichucky_river_2": {
+   "stations_on": 6,
+   "readings": 192,
+   "since": "2015-01-01",
+   "sites": {
+    "03466500": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 6.15,
+        "n": 53
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 8.03,
+        "n": 46
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 6.5,
+        "n": 55
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 4.35,
+        "n": 17
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 7.89,
+        "n": 21
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 6.31,
+       "n": 108
+      }
+     },
+     "readings_placed": 192
+    },
+    "03467609": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 7.69,
+        "n": 70
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 8.03,
+        "n": 32
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 5.02,
+        "n": 24
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 5.08,
+        "n": 48
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 3.88,
+        "n": 18
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 7.06,
+       "n": 118
+      }
+     },
+     "readings_placed": 192
+    }
+   }
+  },
+  "ocmulgee_river": {
+   "stations_on": 22,
+   "readings": 931,
+   "since": "2015-01-01",
+   "sites": {
+    "02215260": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 16.0,
+        "n": 240
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 12.0,
+        "n": 209
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 12.3,
+        "n": 215
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 18.0,
+        "n": 248
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 8.2,
+        "n": 19
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 14.6,
+       "n": 455
+      }
+     },
+     "readings_placed": 931
+    },
+    "02215000": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 17.0,
+        "n": 173
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 13.0,
+        "n": 233
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 19.0,
+        "n": 285
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 10.95,
+        "n": 148
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 10.65,
+        "n": 92
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 14.7,
+       "n": 406
+      }
+     },
+     "readings_placed": 931
+    },
+    "02213000": {
+     "bands": {
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 12.3,
+        "n": 181
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 10.5,
+        "n": 114
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 16.0,
+        "n": 235
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 20.0,
+        "n": 247
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 10.05,
+        "n": 154
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 14.0,
+       "n": 416
+      }
+     },
+     "readings_placed": 931
+    },
+    "02212735": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 14.0,
+        "n": 276
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 12.0,
+        "n": 206
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 18.6,
+        "n": 263
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 11.0,
+        "n": 132
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 14.45,
+        "n": 50
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 13.0,
+       "n": 482
+      }
+     },
+     "readings_placed": 927
+    },
+    "02210500": {
+     "bands": {
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 10.0,
+        "n": 155
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 13.0,
+        "n": 174
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 13.0,
+        "n": 219
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 20.0,
+        "n": 284
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 10.9,
+        "n": 99
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 13.0,
+       "n": 393
+      }
+     },
+     "readings_placed": 931
+    },
+    "02215500": {
+     "bands": {
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 13.0,
+        "n": 215
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 10.0,
+        "n": 191
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 18.1,
+        "n": 203
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 12.0,
+        "n": 101
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 16.7,
+        "n": 221
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 15.0,
+       "n": 436
+      }
+     },
+     "readings_placed": 931
+    },
+    "02211800": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 18.0,
+        "n": 288
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 12.0,
+        "n": 161
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 17.0,
+        "n": 209
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 11.0,
+        "n": 208
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 9.6,
+        "n": 65
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 13.0,
+       "n": 417
+      }
+     },
+     "readings_placed": 931
+    }
+   }
+  },
+  "oconee_river": {
+   "stations_on": 5,
+   "readings": 279,
+   "since": "2015-01-01",
+   "sites": {
+    "02223056": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 16.0,
+        "n": 74
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 10.45,
+        "n": 80
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 10.2,
+        "n": 27
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 25.75,
+        "n": 62
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 9.9,
+        "n": 12
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 13.0,
+       "n": 154
+      }
+     },
+     "readings_placed": 255
+    },
+    "02223248": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 18.0,
+        "n": 73
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 11.0,
+        "n": 92
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 30.0,
+        "n": 65
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 11.0,
+        "n": 35
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 6.35,
+        "n": 12
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 14.0,
+       "n": 165
+      }
+     },
+     "readings_placed": 277
+    },
+    "02223000": {
+     "bands": {
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 12.65,
+        "n": 96
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 23.2,
+        "n": 52
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 28.0,
+        "n": 60
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 7.75,
+        "n": 24
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 11.0,
+        "n": 47
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 15.55,
+       "n": 148
+      }
+     },
+     "readings_placed": 279
+    },
+    "02223500": {
+     "bands": {
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 12.0,
+        "n": 85
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 31.5,
+        "n": 60
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 6.25,
+        "n": 28
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 12.0,
+        "n": 54
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 19.0,
+        "n": 52
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 15.5,
+       "n": 137
+      }
+     },
+     "readings_placed": 279
+    },
+    "02224500": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 26.3,
+        "n": 67
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 9.8,
+        "n": 66
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 11.6,
+        "n": 68
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 18.5,
+        "n": 58
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 7.05,
+        "n": 20
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 14.35,
+       "n": 124
+      }
+     },
+     "readings_placed": 279
+    },
+    "02215500": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 26.3,
+        "n": 61
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 12.0,
+        "n": 69
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 19.0,
+        "n": 57
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 11.0,
+        "n": 72
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 7.75,
+        "n": 20
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 13.0,
+       "n": 129
+      }
+     },
+     "readings_placed": 279
+    },
+    "02224940": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 26.0,
+        "n": 75
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 12.0,
+        "n": 49
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 11.0,
+        "n": 73
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 16.0,
+        "n": 76
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 14.0,
+        "n": 6
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 12.0,
+       "n": 149
+      }
+     },
+     "readings_placed": 279
+    }
+   }
+  },
+  "ogeechee_river": {
+   "stations_on": 7,
+   "readings": 365,
+   "since": "2015-01-01",
+   "sites": {
+    "02201230": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 10.0,
+        "n": 81
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 7.38,
+        "n": 96
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 7.73,
+        "n": 48
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 9.09,
+        "n": 96
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 11.0,
+        "n": 44
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 7.93,
+       "n": 192
+      }
+     },
+     "readings_placed": 365
+    },
+    "02202190": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 8.8,
+        "n": 74
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 7.2,
+        "n": 95
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 9.8,
+        "n": 103
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 7.7,
+        "n": 75
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 15.4,
+        "n": 18
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 8.3,
+       "n": 198
+      }
+     },
+     "readings_placed": 365
+    },
+    "02202040": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 8.53,
+        "n": 93
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 7.7,
+        "n": 97
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 10.0,
+        "n": 81
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 7.22,
+        "n": 59
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 14.0,
+        "n": 35
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 8.09,
+       "n": 190
+      }
+     },
+     "readings_placed": 365
+    }
+   }
+  },
+  "pee_dee_river_2": {
+   "stations_on": 5,
+   "readings": 496,
+   "since": "2015-01-01",
+   "sites": {
+    "0212378405": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 15.0,
+        "n": 117
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 5.1,
+        "n": 67
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 7.9,
+        "n": 150
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 7.4,
+        "n": 137
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 5.8,
+        "n": 25
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 7.6,
+       "n": 287
+      }
+     },
+     "readings_placed": 496
+    },
+    "02126000": {
+     "bands": {
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 5.4,
+        "n": 127
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 20.0,
+        "n": 152
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 11.0,
+        "n": 119
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 4.2,
+        "n": 83
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 3.9,
+        "n": 15
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 8.4,
+       "n": 246
+      }
+     },
+     "readings_placed": 496
+    },
+    "0212433550": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 8.9,
+        "n": 131
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 11.0,
+        "n": 129
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 4.4,
+        "n": 118
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 3.8,
+        "n": 43
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 6.5,
+        "n": 7
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 7.0,
+       "n": 249
+      }
+     },
+     "readings_placed": 428
+    }
+   }
+  },
+  "pigeon_river": {
+   "stations_on": 4,
+   "readings": 330,
+   "since": "2015-01-01",
+   "sites": {
+    "03461500": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 4.47,
+        "n": 92
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 1.85,
+        "n": 66
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 1.88,
+        "n": 95
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 2.78,
+        "n": 36
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 2.4,
+        "n": 41
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 1.88,
+       "n": 161
+      }
+     },
+     "readings_placed": 330
+    },
+    "03460795": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 5.35,
+        "n": 81
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 1.85,
+        "n": 102
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 2.1,
+        "n": 71
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 1.99,
+        "n": 60
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 3.1,
+        "n": 16
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 1.98,
+       "n": 173
+      }
+     },
+     "readings_placed": 330
+    },
+    "03455000": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 3.95,
+        "n": 112
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 1.5,
+        "n": 56
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 1.87,
+        "n": 71
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 2.45,
+        "n": 52
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 3.0,
+        "n": 39
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 1.71,
+       "n": 127
+      }
+     },
+     "readings_placed": 330
+    }
+   }
+  },
+  "saluda_river": {
+   "stations_on": 5,
+   "readings": 272,
+   "since": "2015-01-01",
+   "sites": {
+    "02162500": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 16.0,
+        "n": 68
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 11.0,
+        "n": 57
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 10.0,
+        "n": 69
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 9.1,
+        "n": 37
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 7.5,
+        "n": 41
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 10.5,
+       "n": 126
+      }
+     },
+     "readings_placed": 272
+    },
+    "02163001": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 16.0,
+        "n": 81
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 11.0,
+        "n": 72
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 9.3,
+        "n": 72
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 9.5,
+        "n": 20
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 7.0,
+        "n": 27
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 10.0,
+       "n": 144
+      }
+     },
+     "readings_placed": 272
+    },
+    "02163500": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 11.0,
+        "n": 72
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 21.0,
+        "n": 63
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 9.15,
+        "n": 58
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 7.65,
+        "n": 48
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 8.3,
+        "n": 31
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 9.95,
+       "n": 130
+      }
+     },
+     "readings_placed": 272
+    },
+    "02162550": {
+     "bands": {
+      "below the 25th percentile": {
+       "turbidity": {
+        "median_ntu": 9.5,
+        "n": 29
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 13.5,
+        "n": 26
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 9.1,
+        "n": 21
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 14.0,
+        "n": 17
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 11.0,
+       "n": 38
+      }
+     },
+     "readings_placed": 93
+    }
+   }
+  },
+  "saluda_river_2": {
+   "stations_on": 5,
+   "readings": 189,
+   "since": "2015-01-01",
+   "sites": {
+    "02167000": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 10.5,
+        "n": 34
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 6.9,
+        "n": 54
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 6.0,
+        "n": 44
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 26.5,
+        "n": 36
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 5.0,
+        "n": 21
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 7.65,
+       "n": 88
+      }
+     },
+     "readings_placed": 189
+    }
+   }
+  },
+  "saluda_river_lower_saluda": {
+   "stations_on": 1,
+   "readings": 121,
+   "since": "2015-01-01",
+   "sites": {
+    "02168900": {
+     "bands": {
+      "below the 25th percentile": {
+       "turbidity": {
+        "median_ntu": 2.6,
+        "n": 11
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 2.65,
+        "n": 14
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 3.3,
+        "n": 11
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 4.75,
+        "n": 10
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 3.2,
+       "n": 25
+      }
+     },
+     "readings_placed": 46
+    },
+    "02168504": {
+     "bands": {
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 2.85,
+        "n": 58
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 2.6,
+        "n": 9
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 3.55,
+        "n": 32
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 3.9,
+        "n": 22
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 3.25,
+       "n": 90
+      }
+     },
+     "readings_placed": 121
+    },
+    "02169000": {
+     "bands": {
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 2.2,
+        "n": 13
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 3.2,
+        "n": 68
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 3.5,
+        "n": 23
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 4.2,
+        "n": 17
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 3.2,
+       "n": 91
+      }
+     },
+     "readings_placed": 121
+    }
+   }
+  },
+  "santee_river": {
+   "stations_on": 2,
+   "readings": 211,
+   "since": "2015-01-01",
+   "sites": {
+    "02171560": {
+     "bands": {
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 4.6,
+        "n": 23
+       }
+      },
+      "below the 25th percentile": {
+       "turbidity": {
+        "median_ntu": 2.77,
+        "n": 12
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 5.7,
+        "n": 17
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 8.81,
+        "n": 15
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 4.95,
+       "n": 40
+      }
+     },
+     "readings_placed": 67
+    },
+    "02171500": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 5.8,
+        "n": 124
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 5.8,
+        "n": 64
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 5.55,
+        "n": 18
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 11.0,
+        "n": 1
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 3.0,
+        "n": 1
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 5.8,
+       "n": 82
+      }
+     },
+     "readings_placed": 208
+    },
+    "02171645": {
+     "bands": {
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 5.6,
+        "n": 65
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 6.3,
+        "n": 55
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 7.0,
+        "n": 52
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 5.2,
+        "n": 26
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 5.25,
+        "n": 6
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 5.79,
+       "n": 120
+      }
+     },
+     "readings_placed": 204
+    }
+   }
+  },
+  "satilla_river": {
+   "stations_on": 3,
+   "readings": 249,
+   "since": "2015-01-01",
+   "sites": {
+    "02226362": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 5.9,
+        "n": 79
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 5.0,
+        "n": 59
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 4.9,
+        "n": 45
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 4.18,
+        "n": 12
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 7.6,
+        "n": 54
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 5.28,
+       "n": 138
+      }
+     },
+     "readings_placed": 249
+    },
+    "02226500": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 6.5,
+        "n": 77
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 5.1,
+        "n": 71
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 4.58,
+        "n": 34
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 4.29,
+        "n": 20
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 6.9,
+        "n": 47
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 5.5,
+       "n": 148
+      }
+     },
+     "readings_placed": 249
+    }
+   }
+  },
+  "savannah_river": {
+   "stations_on": 10,
+   "readings": 724,
+   "since": "2015-01-01",
+   "sites": {
+    "02197500": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 7.8,
+        "n": 157
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 10.0,
+        "n": 191
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 5.4,
+        "n": 211
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 4.7,
+        "n": 113
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 3.9,
+        "n": 52
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 6.2,
+       "n": 368
+      }
+     },
+     "readings_placed": 724
+    },
+    "02198500": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 8.9,
+        "n": 169
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 9.5,
+        "n": 180
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 4.5,
+        "n": 143
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 5.5,
+        "n": 160
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 4.8,
+        "n": 69
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 7.0,
+       "n": 329
+      }
+     },
+     "readings_placed": 721
+    },
+    "021964832": {
+     "bands": {
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 4.7,
+        "n": 49
+       }
+      },
+      "below the 25th percentile": {
+       "turbidity": {
+        "median_ntu": 2.8,
+        "n": 22
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 9.45,
+        "n": 44
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 5.2,
+        "n": 32
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 4.9,
+       "n": 81
+      }
+     },
+     "readings_placed": 147
+    },
+    "02198375": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 8.2,
+        "n": 85
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 4.2,
+        "n": 85
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 4.85,
+        "n": 106
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 2.0,
+        "n": 5
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 3.1,
+        "n": 16
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 4.6,
+       "n": 191
+      }
+     },
+     "readings_placed": 297
+    },
+    "021973269": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 9.45,
+        "n": 238
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 5.85,
+        "n": 158
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 4.95,
+        "n": 184
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 4.2,
+        "n": 79
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 2.1,
+        "n": 8
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 5.15,
+       "n": 342
+      }
+     },
+     "readings_placed": 667
+    },
+    "02197000": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 9.4,
+        "n": 182
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 9.0,
+        "n": 138
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 5.55,
+        "n": 136
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 5.2,
+        "n": 190
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 3.7,
+        "n": 78
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 7.0,
+       "n": 274
+      }
+     },
+     "readings_placed": 724
+    }
+   }
+  },
+  "south_fork_new_river": {
+   "stations_on": 23,
+   "readings": 779,
+   "since": "2015-01-01",
+   "sites": {
+    "03161000": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 11.0,
+        "n": 329
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 2.65,
+        "n": 204
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 3.52,
+        "n": 156
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 1.55,
+        "n": 23
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 2.0,
+        "n": 67
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 2.9,
+       "n": 360
+      }
+     },
+     "readings_placed": 779
+    }
+   }
+  },
+  "south_yadkin_river": {
+   "stations_on": 1,
+   "readings": 107,
+   "since": "2015-01-01",
+   "sites": {
+    "02118000": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 50.0,
+        "n": 40
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 19.5,
+        "n": 30
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 16.0,
+        "n": 20
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 7.4,
+        "n": 13
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 10.1,
+        "n": 4
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 18.0,
+       "n": 50
+      }
+     },
+     "readings_placed": 107
+    },
+    "02118500": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 45.0,
+        "n": 37
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 20.0,
+        "n": 35
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 15.0,
+        "n": 19
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 13.0,
+        "n": 12
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 10.1,
+        "n": 4
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 19.5,
+       "n": 54
+      }
+     },
+     "readings_placed": 107
+    }
+   }
+  },
+  "tuckasegee_river": {
+   "stations_on": 13,
+   "readings": 198,
+   "since": "2015-01-01",
+   "sites": {
+    "03510577": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 1.23,
+        "n": 56
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 1.37,
+        "n": 82
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 2.15,
+        "n": 42
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 1.6,
+        "n": 15
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 0.0,
+        "n": 3
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 1.59,
+       "n": 98
+      }
+     },
+     "readings_placed": 198
+    },
+    "03508050": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 1.42,
+        "n": 42
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 1.27,
+        "n": 89
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 2.01,
+        "n": 44
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 1.6,
+        "n": 3
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 1.9,
+        "n": 20
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 1.65,
+       "n": 86
+      }
+     },
+     "readings_placed": 198
+    },
+    "03513000": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 1.2,
+        "n": 113
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 1.54,
+        "n": 34
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 2.4,
+        "n": 25
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 1.9,
+        "n": 22
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 0.0,
+        "n": 3
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 2.0,
+       "n": 59
+      }
+     },
+     "readings_placed": 197,
+     "flow_years_unread": [
+      2020
+     ]
+    },
+    "03512000": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 1.04,
+        "n": 97
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 1.66,
+        "n": 46
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 1.6,
+        "n": 23
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 1.6,
+        "n": 20
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 1.85,
+        "n": 2
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 1.61,
+       "n": 69
+      }
+     },
+     "readings_placed": 188,
+     "flow_years_unread": [
+      2015
+     ]
+    }
+   }
+  },
+  "uwharrie_river": {
+   "stations_on": 3,
+   "readings": 126,
+   "since": "2015-01-01",
+   "sites": {
+    "02123500": {
+     "bands": {
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 25.0,
+        "n": 18
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 8.8,
+        "n": 17
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 5.35,
+        "n": 20
+       }
+      },
+      "below the 25th percentile": {
+       "turbidity": {
+        "median_ntu": 3.1,
+        "n": 10
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 6.0,
+       "n": 37
+      }
+     },
+     "readings_placed": 65
+    }
+   }
+  },
+  "waccamaw_river": {
+   "stations_on": 15,
+   "readings": 1877,
+   "since": "2015-01-01",
+   "sites": {
+    "02110704": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 5.5,
+        "n": 514
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 5.1,
+        "n": 475
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 5.9,
+        "n": 405
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 5.3,
+        "n": 249
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 5.66,
+        "n": 142
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 5.67,
+       "n": 919
+      }
+     },
+     "readings_placed": 1785
+    },
+    "02110550": {
+     "bands": {
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 5.8,
+        "n": 473
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 4.95,
+        "n": 428
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 5.45,
+        "n": 492
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 6.3,
+        "n": 311
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 5.51,
+        "n": 154
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 5.61,
+       "n": 965
+      }
+     },
+     "readings_placed": 1858
+    },
+    "02110500": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 5.61,
+        "n": 503
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 5.0,
+        "n": 477
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 5.6,
+        "n": 281
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 5.67,
+        "n": 433
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 6.4,
+        "n": 183
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 5.63,
+       "n": 936
+      }
+     },
+     "readings_placed": 1877
+    }
+   }
+  },
+  "wateree_river": {
+   "stations_on": 4,
+   "readings": 244,
+   "since": "2015-01-01",
+   "sites": {
+    "02148000": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 20.0,
+        "n": 45
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 18.0,
+        "n": 52
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 15.5,
+        "n": 74
+       },
+       "secchi": {
+        "median_ft": 1.64,
+        "n": 4
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 12.0,
+        "n": 56
+       },
+       "secchi": {
+        "median_ft": 1.64,
+        "n": 1
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 9.5,
+        "n": 11
+       },
+       "secchi": {
+        "median_ft": 0.98,
+        "n": 1
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 18.0,
+       "n": 119
+      },
+      "secchi": {
+       "median_ft": 1.64,
+       "n": 4
+      }
+     },
+     "readings_placed": 244
+    },
+    "02147801": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 18.0,
+        "n": 33
+       },
+       "secchi": {
+        "median_ft": 1.97,
+        "n": 3
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 18.0,
+        "n": 25
+       }
+      },
+      "below the 25th percentile": {
+       "turbidity": {
+        "median_ntu": 8.6,
+        "n": 22
+       },
+       "secchi": {
+        "median_ft": 0.98,
+        "n": 1
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 9.1,
+        "n": 28
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 12.0,
+       "n": 61
+      },
+      "secchi": {
+       "median_ft": 1.97,
+       "n": 3
+      }
+     },
+     "readings_placed": 112
+    }
+   }
+  },
+  "yadkin_river": {
+   "stations_on": 7,
+   "readings": 437,
+   "since": "2015-01-01",
+   "sites": {
+    "02116500": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 7.5,
+        "n": 114
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 5.5,
+        "n": 115
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 19.0,
+        "n": 126
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 3.7,
+        "n": 18
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 5.45,
+        "n": 64
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 6.6,
+       "n": 229
+      }
+     },
+     "readings_placed": 437
+    },
+    "02112000": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 6.95,
+        "n": 92
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 5.7,
+        "n": 137
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 14.0,
+        "n": 155
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 3.8,
+        "n": 49
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 6.5,
+        "n": 4
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 6.6,
+       "n": 229
+      }
+     },
+     "readings_placed": 437
+    },
+    "02112250": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 8.3,
+        "n": 101
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 5.5,
+        "n": 132
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 14.0,
+        "n": 145
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 4.0,
+        "n": 10
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 4.4,
+        "n": 49
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 6.9,
+       "n": 233
+      }
+     },
+     "readings_placed": 437
+    },
+    "02115360": {
+     "bands": {
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 8.25,
+        "n": 110
+       }
+      },
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 5.8,
+        "n": 119
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 16.0,
+        "n": 129
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 3.2,
+        "n": 16
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 4.6,
+        "n": 63
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 7.1,
+       "n": 229
+      }
+     },
+     "readings_placed": 437
+    },
+    "02114450": {
+     "bands": {
+      "between the 25th and 50th percentile": {
+       "turbidity": {
+        "median_ntu": 7.4,
+        "n": 123
+       }
+      },
+      "between the 10th and 25th percentile": {
+       "turbidity": {
+        "median_ntu": 5.0,
+        "n": 81
+       }
+      },
+      "between the 50th and 75th percentile": {
+       "turbidity": {
+        "median_ntu": 10.0,
+        "n": 91
+       }
+      },
+      "below the 10th percentile": {
+       "turbidity": {
+        "median_ntu": 4.1,
+        "n": 63
+       }
+      },
+      "above the 75th percentile": {
+       "turbidity": {
+        "median_ntu": 23.0,
+        "n": 79
+       }
+      }
+     },
+     "normal": {
+      "turbidity": {
+       "median_ntu": 8.35,
+       "n": 214
+      }
+     },
+     "readings_placed": 437
+    }
+   }
+  }
+ },
+ "skipped": {
+  "ashley_river": "no bound gauge with daily statistics and daily flow on a reading date",
+  "black_mingo_creek": "no bound gauge with daily statistics and daily flow on a reading date",
+  "chauga_river": "no bound gauge with daily statistics and daily flow on a reading date",
+  "chessie_creek": "no turbidity or Secchi reading at a station on the water",
+  "combahee_river": "no turbidity or Secchi reading at a station on the water",
+  "deep_river": "no turbidity or Secchi reading at a station on the water",
+  "diversion_canal": "no bound gauge with daily statistics and daily flow on a reading date",
+  "holston_river": "no bound gauge with daily statistics and daily flow on a reading date",
+  "johns_river": "no turbidity or Secchi reading at a station on the water",
+  "ohoopee_river": "no turbidity or Secchi reading at a station on the water",
+  "rediversion_canal": "no turbidity or Secchi reading at a station on the water",
+  "sampit_river": "no bound gauge with daily statistics and daily flow on a reading date"
+ }
+}
