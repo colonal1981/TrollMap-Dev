@@ -1,12 +1,14 @@
 // research/extract.js — split from worker-research.js (behavior-preserving)
 import { JSON_HEADERS, callLLM, extractLLMText } from '../worker-core.js';
 import { extractJsonPossibly } from './keys.js';
+import { textDateOf, readPage, delink } from './text-date.js';
 
 /**
  * A fact read out of a combined document goes back to the text it came from: the block whose text
  * contains its (verbatim) quote, else the [S#] tag the model wrote in `source`, else unchanged.
+ * It is dated against that block's text; a fact given back to none has no text to date it by.
  */
-function attributeToBlock(fact, blocks) {
+function attributeToBlock(fact, blocks, pages) {
   const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
   const q = norm(fact.quote);
   let hit = q.length >= 12 ? blocks.find((b) => norm(b.text || b.fullText).includes(q)) : null;
@@ -14,7 +16,9 @@ function attributeToBlock(fact, blocks) {
     const m = /\[S(\d+)\]/.exec(String(fact.source || ''));
     hit = m ? blocks[Number(m[1]) - 1] : null;
   }
-  return hit ? { ...fact, source: String(hit.title || fact.source || 'Unknown').slice(0, 180) } : fact;
+  if (!hit) return { ...fact, textDate: null, textDateFrom: null };
+  return { ...fact, source: String(hit.title || fact.source || 'Unknown').slice(0, 180),
+           ...textDateOf(fact, hit, pages.get(hit)) };
 }
 
 async function handleResearchAnalyzeFacts(request, env) {
@@ -66,9 +70,6 @@ async function handleResearchAnalyzeFacts(request, env) {
     const words = text.split(/\s+/).length;
     return urlMatches > 40 && urlMatches / words > 0.15;
   };
-  const delink = (text) => String(text || '')
-    .replace(/!?\[([^\]]*)\]\((?:[^()\s]|\([^)\s]*\))*\)/g, '$1')
-    .replace(/https?:\/\/\S+/g, ' ');
 
   const usableDocs = documents.map((d) => {
     if (!isIndexPage(d)) return d;
@@ -500,7 +501,15 @@ FISHING BEHAVIOUR IS A FIRST-CLASS FACT. Sentences from guides, fishing reports 
         quote: String(f.quote||'').trim().slice(0,400),
         category: String(f.category||'general').trim().slice(0,50)
       })).filter(f => f.fact.length > 10);
-      if (combinedBlocks) facts = facts.map((f) => attributeToBlock(f, combinedBlocks));
+      // THE DATE OF THE TEXT EACH QUOTE CAME FROM -- see research/text-date.js. A fact whose text
+      // carries no date gets null, and is kept exactly as it would have been without one.
+      if (combinedBlocks) {
+        const pages = new Map(combinedBlocks.map((b) => [b, readPage(b)]));
+        facts = facts.map((f) => attributeToBlock(f, combinedBlocks, pages));
+      } else {
+        const page = readPage(doc);
+        facts = facts.map((f) => ({ ...f, ...textDateOf(f, doc, page) }));
+      }
 
       // Quality filter: require lake mention for non-regulation facts
       const generalCats = new Set(['creelLimit_general','sizeLimit_general','regulations_general','closedSeason']);
@@ -559,6 +568,18 @@ async function handleResearchDedupeContradictions(request, env) {
   const deduplicated = [];
   const contradictions = [];
   const seenFactMap = new Map(); // normalized fact -> index in deduped
+  // A quote, its source and the date of its text are one thing: whichever quote a merged fact
+  // keeps, it keeps that quote's source and date. Before, the near-duplicate branch kept the new
+  // quote beside the old source, and a date would have stayed with a quote it no longer had.
+  const takeQuote = (existing, f) => {
+    if (!f.quote) return;
+    existing.quote = f.quote;
+    existing.source = f.source || existing.source;
+    if ('textDate' in f || 'textDate' in existing) {
+      existing.textDate = f.textDate ?? null;
+      existing.textDateFrom = f.textDateFrom ?? null;
+    }
+  };
   const categoryGroups = new Map(); // category -> array of facts
 
   for (const f of facts) {
@@ -571,25 +592,31 @@ async function handleResearchDedupeContradictions(request, env) {
       const existingIdx = seenFactMap.get(factNorm);
       const existing = deduplicated[existingIdx];
       existing.sourcesAgree = (existing.sourcesAgree||1)+1;
-      // keep higher confidence quote
+      // keep higher confidence quote -- and the date of that quote's text with it
       if ((f.confidence||0) > (existing.confidence||0)) {
         existing.confidence = f.confidence;
-        existing.quote = f.quote || existing.quote;
-        existing.source = f.source || existing.source;
+        takeQuote(existing, f);
       }
       continue;
     }
-    // Near-duplicate check: if one fact contains the other (>80% overlap) treat as same
+    // Near-duplicate check: if one fact contains the other (>80% overlap) treat as same --
+    // UNLESS THEY STATE DIFFERENT NUMBERS. The overlap is measured on the start of the sentence,
+    // and a model writes a limit the same way whatever the limit is: "The daily creel limit for
+    // striped bass on the Lower Saluda River is 5 fish" and "... is 3 fish" share their first 80%.
+    // They were folded into one fact that said two sources agreed, keeping whichever came first,
+    // so the other number -- and the contradiction step below, which never saw it -- was gone.
+    // Two facts that differ in their numbers are two facts; the contradiction step compares them.
     let isNearDup = false;
+    const numsOf = (s) => [...new Set(String(s || '').match(/\d+(?:\.\d+)?/g) || [])].sort().join(' ');
     for (let i=0;i<deduplicated.length;i++) {
       const existingNorm = normalize(deduplicated[i].fact);
-      if (factNorm.length > 20 && existingNorm.length > 20) {
+      if (factNorm.length > 20 && existingNorm.length > 20 && numsOf(f.fact) === numsOf(deduplicated[i].fact)) {
         if (factNorm.includes(existingNorm.slice(0, Math.floor(existingNorm.length*0.8))) || existingNorm.includes(factNorm.slice(0, Math.floor(factNorm.length*0.8)))) {
           const existing = deduplicated[i];
           existing.sourcesAgree = (existing.sourcesAgree||1)+1;
           if ((f.confidence||0) > (existing.confidence||0)) {
             existing.confidence = f.confidence;
-            existing.quote = f.quote || existing.quote;
+            takeQuote(existing, f);
           }
           seenFactMap.set(factNorm, i);
           isNearDup = true;
@@ -661,11 +688,13 @@ async function handleResearchDedupeContradictions(request, env) {
             pageA: prev.page,
             confidenceA: prev.confidence,
             sourceA: prev.source,
+            textDateA: prev.textDate ?? null,
             factB: f.fact,
             quoteB: f.quote,
             pageB: f.page,
             confidenceB: f.confidence,
             sourceB: f.source,
+            textDateB: f.textDate ?? null,
             reason: 'mutually exclusive numeric claim on same attribute'
           });
         }

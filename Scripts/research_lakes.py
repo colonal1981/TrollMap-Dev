@@ -706,7 +706,10 @@ def _extract_one(lake, state, alt_names, i, d, limiter, verbose):
         # facts, on 2026-09-01. The registry has carried both other names all along.
         "aliases": alt_names or [],
         "docIndex": i, "targetFields": ["trollingIntelligence"],
-        "documents": [{"title": d.get("title"), "url": d.get("url"), "text": text}]}
+        # fetchedAt is not the text's date and is never used as one: research/text-date.js reads it
+        # only to refuse the date a site prints at the top of every page it serves (its clock).
+        "documents": [{"title": d.get("title"), "url": d.get("url"), "text": text,
+                       "fetchedAt": d.get("fetchedAt")}]}
     why = None
     for attempt in range(len(EXTRACT_RETRY_WAITS) + 1):
         if attempt:
