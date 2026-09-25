@@ -23,6 +23,22 @@ export function queryPinsSite(q) {
   return /(?:^|\s)site:/i.test(String(q || ''));
 }
 
+const flatName = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+/** The name a water was sent under and every name its registry row carries, without brackets or
+ * state: "LAKE JORDAN, NC" -> lake jordan, b everett jordan lake, jordan reservoir, jordan lake. */
+export function waterNamesOf(lakeName, row) {
+  const r = row || {};
+  const all = [lakeName, r.display_name, r.name, r.legacy_display_name, ...(r.legacy_display_names || [])];
+  return [...new Set(all.filter(Boolean).map((n) => flatName(stripLakeQualifiers(n))).filter((n) => n.length >= 3))];
+}
+
+/** Does a result's title name this water by one of its names, as whole words? */
+export function titleNamesWater(title, names) {
+  const t = ` ${flatName(title)} `;
+  return (names || []).some((n) => n && t.includes(` ${n} `));
+}
+
 // Which organisation stands behind a URL. Two callers below -- Grok citations and Wikipedia
 // citations -- carried byte-identical copies of this ladder, so a domain added to one was
 // silently missing from the other.
@@ -1102,6 +1118,11 @@ const AGENT_TO_TAGS = {
   const scopeSlug = body.slug && registryIndex?.[body.slug] ? String(body.slug)
     : (waterRow ? Object.keys(registryIndex || {}).find((k) => registryIndex[k] === waterRow) : null);
   const scope = scopeSlug ? waterScope(registryIndex, scopeSlug) : null;
+  // EVERY NAME THE REGISTRY KNOWS THIS WATER BY, to ask whether a search result's title is about it:
+  // "LAKE JORDAN, NC" is also Jordan Lake, Jordan Reservoir and B. Everett Jordan Lake. Read off the
+  // row, not typed; a water with no row is asked about by the name it was sent.
+  const namingRow = (scopeSlug && registryIndex?.[scopeSlug]) || waterRow || null;
+  const rowNames = waterNamesOf(lakeName, namingRow);
   if (scope) queryLog.push(`name does not pick out one water (${scope.why}`
     + `${scope.namesakes.length ? `; also ${scope.namesakes.join(', ')}` : ''}):`
     + ` anchoring fisheries on ${scope.counties.length ? scope.counties.map((c) => `${c} County`).join(', ') : 'no county on the row'}`);
@@ -1280,6 +1301,30 @@ const AGENT_TO_TAGS = {
               rawResults = [...rawResults, ...fallbackResults.filter(r => !existingUrls.has(String(r.url||'').toLowerCase()))];
             } catch (fbErr) {
               queryLog.push(`[fisheries] recency fallback failed: ${fbErr.message}`);
+            }
+          }
+
+          // AND WHEN NOTHING THE DATED SEARCH FOUND IS ABOUT THIS WATER, THE SAME SEARCH UNDATED.
+          //
+          // LAKE JORDAN, NC, 2026-09-25: the 45-day report search came back with ten results -- an
+          // Apex pond, TikToks, a bald-eagle thread, a Maine listing -- so the fallback above, which
+          // asks only how MANY came back, never ran, and not one title named the lake. The same
+          // query with no date limit returned nine pages about Jordan Lake: Carolina Sportsman's
+          // "Lake of the Month" and its crappie report among them. A lake nobody wrote about in the
+          // last 45 days still has pages; a lake whose dated search names it keeps exactly what it
+          // had, and this search is not sent. Free, like every TinyFish search.
+          if (agentKey === 'fisheries' && recencyMinutes
+              && !rawResults.some((r) => titleNamesWater(r.title, rowNames))) {
+            try {
+              const { recency_minutes: _dated, ...undated } = tfParams;
+              const tfAny = await searchWeb(undated, env);
+              const seen = new Set(rawResults.map((r) => String(r.url || '').toLowerCase()));
+              const added = (tfAny.results || []).filter((r) => !seen.has(String(r.url || '').toLowerCase()));
+              queryLog.push(`[fisheries] no dated result's title named the water: the same search with no `
+                + `date limit added ${added.length} result(s)`);
+              rawResults = [...rawResults, ...added];
+            } catch (anyErr) {
+              queryLog.push(`[fisheries] undated retry failed: ${anyErr.message}`);
             }
           }
         } catch (tfErr) {
