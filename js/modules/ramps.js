@@ -47,8 +47,11 @@ import { attachRampCameras } from './ramp-cameras.js';
 // Highest precedence first. A landing is drawn once, by the first of these whose button is on.
 const KINDS = ['ramp', 'paddle', 'bank'];
 
+// Ryan, 2026-09-25: "the ramp text color is green on a green satellite image... i can't see them".
+// The ramp label's text was #062d00, a near-black GREEN, and over satellite tree cover it read as
+// part of the trees. Black, like the paddle label's: the box carries the colour, the text is ink.
 const STYLE = {
-  ramp:   { id: 'ramps',    button: 'btnRamps',    icon: '\u26f5', bg: '#00e5ff', fg: '#062d00', edge: '#007a8a' },
+  ramp:   { id: 'ramps',    button: 'btnRamps',    icon: '\u26f5', bg: '#00e5ff', fg: '#000000', edge: '#007a8a' },
   paddle: { id: 'paddle',   button: 'btnPaddle',   icon: '\u{1F6F6}', bg: '#ffb703', fg: '#000000', edge: '#b06a00' },
   bank:   { id: 'bankPier', button: 'btnBankPier', icon: '\u{1F3A3}', bg: '#0e7c7b', fg: '#ffffff', edge: '#ffffff' },
 };
