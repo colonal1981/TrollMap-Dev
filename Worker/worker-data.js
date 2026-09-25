@@ -2,6 +2,7 @@
 // worker-data.js — Static lake/river data extracted from trollmap-worker.js
 // LAKES, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS
 
+import { htmlToText } from '../js/utils/html-text.js';
 import { matchWaterName, reportTokens } from './reports.js';
 import { GENERIC_LAKE_ZONES, GENERIC_RIVER_ZONES, watershedSensitivity, riverFlowSensitivity,
          zonesForSensitivity } from './clarity-sensitivity.js';
@@ -1319,8 +1320,9 @@ async function fetchLakeMonsterIntel(key) {
     return null;
   }
 }
+// One line, from the one HTML-to-text function (js/utils/html-text.js), not a copy of it.
 function stripHtml(html) {
-  return String(html || "").replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
+  return htmlToText(html).replace(/\s+/g, " ").trim();
 }
 async function fetchAhqFishingReport(slug) {
   if (!slug) return null;

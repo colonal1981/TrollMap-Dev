@@ -31,6 +31,8 @@ import { workerHeaders } from '../utils/worker-auth.js';
 import { boundsOf, paddedBox } from '../utils/geojson-coords.js';
 import { lakeRecordFor, documentNamesFor } from '../data/lake-registry.js';
 import { prepareNormalizedDocuments } from '../utils/doc-relevance.js';
+import { htmlToText, isFlatText, isPdfBody } from '../utils/html-text.js';
+import { readBatchResults } from '../utils/fetch-batch.js';
 // THE WQP RULE MOVED OUT OF THIS FILE AND NOTHING ELSE CHANGED. Only the browser loads this
 // module, so when research_lakes.py replaced the tab as the way research is RUN, these three
 // went out of reach and 64 profiles were saved with a null thermocline, anoxic depth, Secchi
@@ -1452,10 +1454,12 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
         const normUrl = String(src.url || '').split('?')[0].toLowerCase();
         const existing = existingByUrl.get(normUrl);
 
-        // Cache hit — reuse if fresh
+        // Cache hit — reuse if fresh. A copy with no line break, or holding a PDF's bytes, is
+        // not reused whatever its age: the old fetch fallback made it, and fetching it again
+        // through the fixed one gives it its lines (Scripts/research_lakes.py, same rule).
         if (existing?.fetchedAt) {
           const age = now - new Date(existing.fetchedAt).getTime();
-          if (age < getDocTtl(src.url)) {
+          if (age < getDocTtl(src.url) && !isFlatText(existing.fullText || existing.text)) {
             log(`  [${agentKey}] cache hit: ${src.title?.slice(0, 60)}`);
             normalizedDocuments.push({ ...existing, agentTags: [...new Set([...(existing.agentTags || []), agentKey])] });
             continue;
@@ -1539,14 +1543,14 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
 
           if (batchRes.ok) {
             const batchData = await batchRes.json();
-            for (let j = 0; j < batch.length; j++) {
-              const src = batch[j];
-              const result = batchData.results?.[j];
+            // Paired by URL, HTML made text with its lines, a PDF sent to the PDF path:
+            // js/utils/fetch-batch.js, which says why each of those was wrong.
+            for (const { src, result, kind, text } of readBatchResults(batch, batchData.results)) {
               const normUrl = String(src.url || '').split('?')[0].toLowerCase();
 
-              if (result?.ok && result.text?.length > 200) {
+              if (kind === 'text') {
                 const doc = {
-                  title: src.title, url: src.url, fullText: result.text,
+                  title: src.title, url: src.url, fullText: text,
                   agentTags: src.agentTags || [agentKey],
                   discoveredBy: agentKey,
                   fetchedAt: new Date().toISOString(),
@@ -1561,13 +1565,14 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
                     method: 'POST', headers: workerHeaders(),
                     body: JSON.stringify({
                       canonicalUrl: src.canonicalUrl, requestedUrl: src.url,
-                      title: src.title, fullText: result.text,
+                      title: src.title, fullText: text,
                       authority: src.authority || 'unknown', fetchProvider: result.source,
                     })
                   }).catch(() => {});
                 }
-              } else if (result?.reason === 'unhandled') {
-                // Batch classified as special — move to individual queue
+              } else if (kind === 'individual') {
+                // Batch classified as special — move to individual queue (as type PDF when the
+                // server said it is one).
                 individualSources.push(src);
               } else {
                 _state.failedUrlsThisRun.add(src.url);
@@ -1591,11 +1596,15 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
           if (proxyRes.ok) {
             const xSource = proxyRes.headers?.get('X-Source') || 'unknown';
             const contentType = proxyRes.headers?.get('Content-Type') || '';
-            const isPdf = /application\/pdf/i.test(contentType)
+            // A PDF by what the server sent -- its Content-Type or its first bytes -- and a page
+            // the basic-fetch rung passed through as text/html is made text with its lines.
+            const bytes = await proxyRes.arrayBuffer();
+            const isPdf = isPdfBody(contentType, bytes)
               || (!contentType && (src.type === 'PDF' || /\.pdf(?:$|[?#])/i.test(src.url || '')));
+            const body = isPdf ? '' : new TextDecoder().decode(bytes);
             const text = isPdf
-              ? (await extractTextFromPDFBytes(await proxyRes.arrayBuffer())).fullText
-              : await proxyRes.text();
+              ? (await extractTextFromPDFBytes(bytes)).fullText
+              : /html/i.test(contentType) ? htmlToText(body) : body;
             if (text && text.length > 200) {
               const doc = {
                 title: src.title, url: src.url, fullText: text,

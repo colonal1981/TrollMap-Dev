@@ -120,6 +120,11 @@ describe('the Worker bundle can be built', () => {
     // ONE MORE ADDED 2026-09-25: fact-date.js, the words every prompt uses for a fact's date and the
     // test for two facts that disagree -- shared so plan-prompt.js and the Worker's agents print a
     // date one way, and the dedupe and the prompts mean one thing by "disagree". Pure, no imports.
+    //
+    // ONE MORE ADDED 2026-09-25: html-text.js, a fetched page as its text with its lines, and a
+    // PDF told by its Content-Type or bytes. The app and research_lakes.py convert the batch
+    // fallback's HTML with it; the Worker's stripHtml(), stripHtmlPreserveTables() and PDF checks
+    // call it rather than keep copies. Pure, no imports.
     const EXPECTED = [
       'js/data/ga-access-species.js',
       'js/data/lake-keys.js',
@@ -129,6 +134,7 @@ describe('the Worker bundle can be built', () => {
       'js/utils/coerce.js',
       'js/utils/fact-date.js',
       'js/utils/geojson-coords.js',
+      'js/utils/html-text.js',
       'js/utils/reach-places.js',
       'js/utils/water-scope.js',
       'js/utils/wqp-limnology.js',

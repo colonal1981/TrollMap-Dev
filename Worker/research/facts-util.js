@@ -1,6 +1,7 @@
 // research/facts-util.js — split from worker-research.js (behavior-preserving)
 import { callLLM, extractLLMText, r2Text } from '../worker-core.js';
 import { hasResearchValue } from '../../js/utils/coerce.js';
+import { htmlToText } from '../../js/utils/html-text.js';
 import { RAMP_SOURCES } from '../core/ramp-sources.js';
 
 function normalizeResearchName(s) {
@@ -658,19 +659,10 @@ function waterbodyMatchesLake(lakeName, waterbodyName) {
 }
 
 
+// One line, as its callers want it, from the one HTML-to-text function (js/utils/html-text.js),
+// which drops scripts and styles and decodes entities. This was its own copy with different gaps.
 function stripHtmlPreserveTables(html) {
-  return String(html || '')
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/tr>/gi, '\n')
-    .replace(/<\/p>/gi, '\n')
-    .replace(/<li>/gi, '• ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return htmlToText(html).replace(/\s+/g, ' ').trim();
 }
 
 function extractHtmlTableRows(html) {

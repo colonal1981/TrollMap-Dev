@@ -2,6 +2,7 @@
 import { JSON_HEADERS } from '../worker-core.js';
 import { checkFirecrawlBudget, recordFirecrawlUsage, scrapeDoFetch, tinyfishFetch } from './clients.js';
 import { KNOWN_BAD_NEPIS_IDS, toNepisRawTextUrl } from './dataset.js';
+import { isHtmlBody, isPdfBody, isPdfText } from '../../js/utils/html-text.js';
 
 /**
  * Is this proxy target a PDF? Pure, and exported so the rule can be tested.
@@ -578,10 +579,24 @@ async function handleResearchProxyDownloadBatch(request, env) {
       tfResults = tfData.results || [];
       tfFailed = [];
 
+      // BY URL, NOT BY POSITION. TinyFish reports a URL it could not fetch in `errors`, not as a
+      // hole in `results`, so the i-th result is not always the i-th URL's.
+      const tfByUrl = new Map();
+      for (const r of tfResults) {
+        for (const u of [r?.url, r?.final_url]) if (u && !tfByUrl.has(u)) tfByUrl.set(u, r);
+      }
       for (let i = 0; i < tinyFishBatch.length; i++) {
         const item = tinyFishBatch[i];
-        const result = tfResults[i];
+        // Position is used only when every URL came back and one of them was not found by name.
+        const result = tfByUrl.get(item.url) || (tfResults.length === tinyFishBatch.length ? tfResults[i] : null);
         const text = result?.text || result?.markdown || result?.content || '';
+        // TinyFish reads a PDF's text itself (the NCWRC regulations came back as 50,724
+        // characters of rule text, with lines, on 2026-09-25). Should it ever hand back the
+        // bytes instead, they go to the PDF path like the fallback's do below.
+        if (isPdfText(text)) {
+          specialUrls.push({ ...item, reason: 'pdf' });
+          continue;
+        }
         if (text && text.length > 200) {
           results.push({ url: item.url, text, source: 'tinyfish', ok: true, title: item.title });
         } else {
@@ -611,9 +626,31 @@ async function handleResearchProxyDownloadBatch(request, env) {
             clearTimeout(sdTimer);
           }
           if (sdRes.ok) {
-            const html = await sdRes.text();
-            const text = html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-            if (text.length > 200) return { url: item.url, text, source: 'scrapedo', ok: true, title: item.title };
+            // WHAT THE SERVER SENT decides what this is, not the URL. The NCWRC Inland Fishing
+            // Regulations live at ncwildlife.gov/media/4600/download?attachment= -- no `.pdf` --
+            // so they came down this HTML path and were stored as 212,503 characters of
+            // `%PDF-1.6 ... /Filter/FlateDecode`. A PDF goes back as not handled, and both callers
+            // hand it to their PDF path: proxy-download, then pdf.js or pypdf. The bytes are
+            // checked as bytes, before anything decodes them as UTF-8.
+            const contentType = sdRes.headers.get('Content-Type') || '';
+            const bytes = new Uint8Array(await sdRes.arrayBuffer());
+            if (isPdfBody(contentType, bytes)) {
+              return { url: item.url, text: '', source: 'unhandled', ok: false, reason: 'pdf', contentType, title: item.title };
+            }
+            const body = new TextDecoder().decode(bytes);
+            // THE PAGE GOES BACK AS HTML, AND THE CALLER MAKES IT TEXT. This line used to be
+            //     html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+            // which stored 279 of 1,677 documents as one line, most of them opening on a script,
+            // CSS or JSON-LD. Doing it properly (js/utils/html-text.js) costs about 10 ms of CPU
+            // on a 1 MB page, and this request can hold ten of them against a 10 ms budget, so the
+            // conversion runs in the app and research_lakes.py, which have no ceiling. `ok` says
+            // a page came back; the callers apply their own length test to its text.
+            if (isHtmlBody(contentType, body)) {
+              if (body.trim()) return { url: item.url, text: '', html: body, contentType, source: 'scrapedo', ok: true, title: item.title };
+            } else if (body.length > 200) {
+              // Plain text is kept as sent: its newlines are already its lines.
+              return { url: item.url, text: body, contentType, source: 'scrapedo', ok: true, title: item.title };
+            }
           }
           return { url: item.url, text: '', source: 'scrapedo', ok: false, error: `Scrape.do ${sdRes.status}`, title: item.title };
         } catch (e2) {
@@ -635,6 +672,13 @@ async function handleResearchProxyDownloadBatch(request, env) {
   for (const item of specialUrls) {
     results.push({ url: item.url, text: '', source: 'unhandled', ok: false, reason: item.reason, title: item.title });
   }
+
+  // Results carry their `url` and come back in the order the URLs were sent, so a caller that
+  // reads them by position and one that reads them by URL get the same answer. They were in the
+  // order they finished: TinyFish's, then Scrape.do's, then the special ones.
+  const rank = new Map();
+  urls.forEach((it, i) => { if (!rank.has(it.url)) rank.set(it.url, i); });
+  results.sort((a, b) => (rank.get(a.url) ?? 0) - (rank.get(b.url) ?? 0));
 
   return new Response(JSON.stringify({ ok: true, results }), { headers: JSON_HEADERS });
 }

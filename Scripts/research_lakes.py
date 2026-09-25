@@ -254,6 +254,44 @@ def is_special_url(url):
     return bool(re.search(r"nepis\.epa\.gov|ZyNET\.exe|wateratlas\.usf\.edu", str(url or ""), re.I))
 
 
+def is_flat_text(text):
+    """isFlatText() in js/utils/html-text.js: a stored text with no line break, or a PDF's bytes.
+
+    Such a copy was made by a fetch fallback that stripped every tag to a space and collapsed every
+    newline away -- 279 of 1,677 stored documents on 2026-09-25, many opening on a script, CSS or
+    JSON-LD, and the NCWRC regulations kept as `%PDF-1.6 ...`. It is fetched again whatever its age.
+    No number: the new copy has lines, so this is true of a document once.
+    """
+    t = str(text or "")
+    return "\n" not in t or re.match(r"\s*%PDF-", t[:1024]) is not None
+
+
+def html_texts(repo, pages):
+    """
+    HTML -> the text a reader sees, with its lines, by js/utils/html-text.js RUN UNDER NODE -- the
+    app's own function, as gate_documents() runs doc-relevance.js, so there is one converter and
+    not a Python copy of it. /research/proxy-download-batch sends a page's HTML from its Scrape.do
+    fallback because the conversion does not fit the Worker's 10 ms of CPU.
+    """
+    if not pages:
+        return []
+    src = os.path.abspath(os.path.join(repo, "js", "utils", "html-text.js"))
+    if not os.path.exists(src):
+        raise SystemExit(f"!! cannot find {src} -- pass --repo pointing at the TrollMap-Dev tree")
+    script = (
+        "import {readFileSync} from 'node:fs';"
+        f"const m = await import({json.dumps('file://' + src.replace(os.sep, '/'))});"
+        "const inp = JSON.parse(readFileSync(0,'utf8'));"
+        "process.stdout.write(JSON.stringify(inp.map((h) => m.htmlToText(h))));"
+    )
+    proc = subprocess.run(["node", "--input-type=module", "-e", script], input=json.dumps(pages),
+                          capture_output=True, text=True, encoding="utf-8")
+    if proc.returncode != 0:
+        raise SystemExit(f"!! html-text.js failed to run under node: "
+                         f"{(proc.stderr or '').strip()[:300]}")
+    return json.loads(proc.stdout)
+
+
 def pdf_text(data):
     """Text out of PDF bytes. The browser uses pdf.js; this box already has pypdf."""
     try:
@@ -447,12 +485,13 @@ def app_todo_names(repo, include_rivers=False, min_acres=None, runs_path=None):
     return data.get("todo") or []
 
 
-def fetch_sources(lake, sources, existing, verbose=False):
+def fetch_sources(lake, sources, existing, verbose=False, repo=None):
     """
     Sources -> normalized documents, the way runAgent does it: batch the HTML through
     /research/proxy-download-batch, take PDFs and the blocked domains one at a time.
     Returns (documents, stats).
     """
+    repo = repo or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
     by_url = {norm_url(d.get("url")): d for d in existing}
     now_ms = time.time() * 1000
     to_fetch, reused = [], []
@@ -467,7 +506,9 @@ def fetch_sources(lake, sources, existing, verbose=False):
                         str(fetched)[:19], "%Y-%m-%dT%H:%M:%S")) * 1000
                 except ValueError:
                     age = None
-            if age is not None and age < doc_ttl_ms(src.get("url")):
+            # A flat copy is fetched again whatever its age -- see is_flat_text().
+            if age is not None and age < doc_ttl_ms(src.get("url")) \
+                    and not is_flat_text(cached.get("fullText") or cached.get("text")):
                 reused.append(cached)
                 continue
         to_fetch.append(src)
@@ -490,17 +531,29 @@ def fetch_sources(lake, sources, existing, verbose=False):
             stats["failed"] += len(chunk)
             continue
         results = data.get("results") or []
+        # By URL: the batch used to return its results in the order they finished.
+        by_url = {}
+        for r in results:
+            by_url.setdefault((r or {}).get("url"), r)
+        picked = [by_url.get(s2.get("url")) or (results[j] if j < len(results) else None)
+                  for j, s2 in enumerate(chunk)]
+        # The Scrape.do fallback sends the page's HTML; it is made text here, with its lines.
+        htmls = [(r or {}).get("html") for r in picked]
+        converted = iter(html_texts(repo, [h for h in htmls if h is not None]))
         for j, s2 in enumerate(chunk):
-            r = results[j] if j < len(results) else None
-            text = (r or {}).get("text") or ""
+            r = picked[j]
+            text = next(converted) if htmls[j] is not None else ((r or {}).get("text") or "")
             if (r or {}).get("ok") and len(text) > 200:
                 docs.append({"title": s2.get("title"), "url": s2.get("url"), "fullText": text,
                              "agentTags": s2.get("agentTags") or ["fisheries"],
                              "discoveredBy": "fisheries",
                              "fetchedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
                 stats["html_ok"] += 1
-            elif (r or {}).get("reason") == "unhandled":
-                individual.append(s2)          # the batch classified it special -- take it alone
+            elif (r or {}).get("source") == "unhandled":
+                # The batch classified it special -- take it alone. It says so in `source`;
+                # `reason` says why, and this read `reason == "unhandled"`, which it never is. A PDF
+                # the server named by its Content-Type or its bytes goes as one, whatever its URL.
+                individual.append({**s2, "type": "PDF"} if r.get("reason") == "pdf" else s2)
             else:
                 stats["failed"] += 1
                 if verbose:
@@ -516,7 +569,9 @@ def fetch_sources(lake, sources, existing, verbose=False):
             if verbose:
                 print(f"      proxy-download {code} for {str(s3.get('title'))[:60]}: {err}")
             continue
-        if "application/pdf" in (ctype or "").lower() or is_pdf_url(s3.get("url"), s3.get("type")):
+        # A PDF by what the server sent -- its Content-Type or its first bytes -- not by its URL or
+        # the type asked for: asked for as a PDF, TinyFish answers with the PDF's text, as text.
+        if "application/pdf" in (ctype or "").lower() or re.match(rb"\s*%PDF-", raw[:1024]):
             text = pdf_text(raw)
             if len(text) <= 200:
                 stats["pdf_no_text"] += 1
@@ -524,6 +579,8 @@ def fetch_sources(lake, sources, existing, verbose=False):
             stats["pdf_ok"] += 1
         else:
             text = raw.decode("utf-8", "replace")
+            if "html" in (ctype or "").lower():   # the basic-fetch rung passes the page through
+                text = html_texts(repo, [text])[0]
             if len(text) <= 200:
                 stats["failed"] += 1
                 continue
@@ -1034,7 +1091,7 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
         code, norm, err = _req(f"/research/get-normalized?lake={urllib.parse.quote(lake)}")
         existing = ((norm or {}).get("documents") or (norm or {}).get("docs") or []) if code == 200 else []
 
-        fetched, out["fetch"] = fetch_sources(lake, sources, existing, verbose)
+        fetched, out["fetch"] = fetch_sources(lake, sources, existing, verbose, repo)
         clock.mark("fetch")
 
         # The off-lake gate, then back to R2 so the next quarter's run reuses the corpus instead of

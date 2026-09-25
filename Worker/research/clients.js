@@ -1,5 +1,6 @@
 // research/clients.js — split from worker-research.js (behavior-preserving)
 import { callLLM, extractLLMText } from '../worker-core.js';
+import { isPdfBody } from '../../js/utils/html-text.js';
 
 // All /research/* route handlers, RESEARCH_AGENTS, deterministic facts, dataset hunt, etc.
 
@@ -485,6 +486,15 @@ async function scrapeDoFetch(url, env, { render = false } = {}) {
 
   if (!res.ok) throw new Error(`Scrape.do HTTP ${res.status}`);
 
+  // A PDF IS A PDF BY WHAT THE SERVER SENT. This rung runs for a URL that does not look like a
+  // PDF, and ncwildlife.gov/media/4600/download?attachment= is one that does not. Its bytes are
+  // not text: throwing sends the ladder on to the basic fetch, which streams them to the caller
+  // with their Content-Type, and the caller's PDF path reads them.
+  const bytes = await res.arrayBuffer();
+  if (isPdfBody(res.headers.get('Content-Type'), bytes)) {
+    throw new Error('Scrape.do sent a PDF, not a page');
+  }
+
   // Strip HTML to plain text using HTMLRewriter
   // Remove script, style, nav, footer, ads — keep main content
   let text = '';
@@ -496,7 +506,7 @@ async function scrapeDoFetch(url, env, { render = false } = {}) {
       text(chunk) { text += chunk.text; }
     });
 
-  await rewriter.transform(res).text();
+  await rewriter.transform(new Response(bytes, { headers: res.headers })).text();
 
   // Clean up whitespace
   text = text.replace(/\s+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
