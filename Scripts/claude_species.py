@@ -43,6 +43,11 @@ import subprocess
 import tempfile
 import time
 
+# The rule for which part of a document is about this water: shared with research_lakes.py's
+# extraction window, so the two cannot drift. The underscored names stay importable from here.
+from water_sections import (_DATE_LINE, _MONTH, TOP_OF_PAGE, _is_heading, _names_water,  # noqa: F401
+                            _units, sections, title_names_water, water_terms)
+
 SEASONS = ("spring", "summer", "fall", "winter")
 ENTRY_KEYS = ("preferredDepth", "holding", "waterDepthFt", "sourceQuote", "structures", "forage",
               "recommendedPresentations", "notes")
@@ -127,51 +132,9 @@ _CUE = re.compile(
     r"spillway|flows?\b|cfs\b|releases?\b|tides?\b|tidal|slack|creek mouths?|sloughs?|oxbows?|"
     r"float(?:ing)?\b|wad(?:e|ing)\b|kayak\w*|canoe\w*|haven|plenty of|good numbers|"
     r"\d+\s*(?:-|to)\s*\d+\s*(?:pounds?|lbs?|inch\w*)", re.I)
-_MONTH = (r"(?:January|February|March|April|May|June|July|August|September|October|November|"
-          r"December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?")
-_DATE_LINE = re.compile(rf"^\W*(?:{_MONTH}\s+\d{{1,2}}(?:,?\s+\d{{4}})?|\d{{1,2}}\s+{_MONTH},?\s+\d{{4}}|"
-                        r"\d{4}-\d{2}-\d{2})\W*$", re.I)
 _DATE_ANY = re.compile(rf"(?:{_MONTH}\s+\d{{1,2}},?\s+\d{{4}}|\d{{1,2}}\s+{_MONTH},?\s+\d{{4}}|"
                        r"\b\d{4}-\d{2}-\d{2}\b|(?:Published|Updated)[:\s*]+[A-Za-z]{3,9}\.? \d{1,2},? \d{4})",
                        re.I)
-
-
-def _units(text):
-    """(start, end) of every sentence-ish piece: split after . ! ?, at blank lines, and around a
-    line that is a heading or a date on its own.
-
-    NOT AT EVERY LINE BREAK. PDF text wraps mid-sentence, and the first cut split there: the SCDNR
-    survey's "58% ... at depths of 30-\\n59 feet below the surface" became two pieces, neither
-    holding "30-59 feet", and the one sentence that says how deep Murray's summer stripers are
-    was not kept."""
-    cuts = set()
-    for m in re.finditer(r"(?<=[.!?])\s+|\n\s*\n", text):
-        cuts.add((m.start(), m.end()))
-    pos = 0
-    for line in text.split("\n"):
-        a, b = pos, pos + len(line)
-        if line.strip() and (_is_heading(line) or _DATE_LINE.match(line.strip())):
-            cuts.add((a, a))
-            cuts.add((b, b))
-        pos = b + 1
-    out, start = [], 0
-    for a, b in sorted(cuts):
-        if a < start:
-            continue
-        if text[start:a].strip():
-            out.append((start, a))
-        start = b
-    if text[start:].strip():
-        out.append((start, len(text)))
-    # Trim each piece to its text so a kept slice never starts or ends in whitespace.
-    trimmed = []
-    for a, b in out:
-        s = text[a:b]
-        a2 = a + (len(s) - len(s.lstrip()))
-        b2 = b - (len(s) - len(s.rstrip()))
-        if b2 > a2:
-            trimmed.append((a2, b2))
-    return trimmed
 
 
 def _written_as_prose(s):
@@ -187,43 +150,16 @@ def _written_as_prose(s):
     return not letters or sum(c.isupper() for c in letters) * 2 <= len(letters)
 
 
-def _is_heading(s):
-    t = s.strip()
-    return (t.startswith("#") or t.startswith("--- PAGE")
-            or (len(t) <= 90 and t.startswith("**") and t.endswith("**") and len(t) > 4))
-
-
-def _names_water(text, terms):
-    low = text.lower()
-    return any(re.search(r"\b" + re.escape(t.lower()) + r"\b", low) for t in terms if t)
-
-
-def water_terms(lake, aliases, base):
-    """The strings that mean THIS water in document text: the matching name the extractor uses,
-    and every alias the registry carries, each without its county or state stamp."""
-    out = [base]
-    for a in aliases or []:
-        b = re.sub(r"\s*\([^)]*\)\s*", " ", str(a))
-        b = re.sub(r",\s*[A-Z]{2}(/[A-Z]{2})*\s*$", "", b).strip()
-        if b and b.lower() not in {x.lower() for x in out}:
-            out.append(b)
-    return [t for t in out if len(t) >= 3]
-
-
 def doc_spans(text, fish, terms, doc_names_water):
     """The kept slices of one document, verbatim, in order. Returns [(start, end)]."""
     units = _units(text)
     if not units:
         return []
-    heads = [i for i, (a, b) in enumerate(units) if _is_heading(text[a:b])]
-    dates = [i for i, (a, b) in enumerate(units) if _DATE_LINE.match(text[a:b].strip())]
-    # A section runs from one heading or date line to the next. A document that does not name this
-    # water in its title or address keeps only the sections that name it -- a statewide report is
-    # about every lake it covers, and the Hartwell half of a two-lake article is not this water's.
-    # DATE LINES ARE SECTION BREAKS TOO: a weekly report page has one heading and twenty dated
-    # entries, and on 2026-09-25 the Clarks Hill AHQ page went whole (40,740 characters) into the
-    # Broad River's packet because one entry mentioned the Broad River arm.
-    bounds = sorted({0, len(units), *[h for h in heads if h > 0], *[d for d in dates if d > 0]})
+    # A section runs from one heading or date line to the next (water_sections.sections()). A
+    # document that does not name this water in its title or address keeps only the sections that
+    # name it -- a statewide report is about every lake it covers, and the Hartwell half of a
+    # two-lake article is not this water's.
+    heads, dates, bounds = sections(text, units)
     in_scope = [False] * len(units)
     for s, e in zip(bounds, bounds[1:]):
         ok = doc_names_water or _names_water(text[units[s][0]:units[e - 1][1]], terms)
@@ -329,7 +265,7 @@ def build_packet(lake, state, profile, documents, roster, aliases=None, base=Non
         stats["documents"] += 1
         stats["chars_stored"] += len(text)
         title, url = str(d.get("title") or ""), str(d.get("url") or "")
-        named = _names_water(title + " " + url.replace("-", " ").replace("_", " "), terms)
+        named = title_names_water(title, url, terms)
         spans = doc_spans(text, fish, terms, named)
         kept = sum(b - a for a, b in spans)
         stats["per_doc"].append({"doc": i, "title": title[:80], "stored": len(text), "kept": kept})
@@ -337,7 +273,7 @@ def build_packet(lake, state, profile, documents, roster, aliases=None, base=Non
             continue
         stats["documents_with_text"] += 1
         stats["chars_kept"] += kept
-        found = _DATE_ANY.search(text[:4000])
+        found = _DATE_ANY.search(text[:TOP_OF_PAGE])
         body = "\n[...]\n".join(text[a:b].strip() for a, b in spans)
         parts.append(f"=== DOC {i}: {title} ===\nurl: {url}\n"
                      + (f"date near the top of the page: {found.group(0)}\n" if found else "")

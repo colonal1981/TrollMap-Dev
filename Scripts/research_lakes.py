@@ -52,6 +52,9 @@ import urllib.request
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import water_sections                                         # noqa: E402
+
 WORKER = os.environ.get("TROLLMAP_WORKER_URL",
                         "https://trollmap-worker.colonal1981.workers.dev")
 
@@ -88,13 +91,32 @@ LLM_DOC_LIMIT = 0
 LLM_DOC_CHARS = 20000
 
 
-def agent_documents(usable):
+def agent_documents(usable, lake=None, alt_names=None):
     """What the species step is offered: every readable document (LLM_DOC_LIMIT 0), in the corpus's
-    own order, each cut to LLM_DOC_CHARS. agents.js ranks them and keeps eight."""
+    own order, each cut to LLM_DOC_CHARS -- the part about this water, by doc_window(), when the
+    water is named. agents.js ranks them and keeps eight."""
     chosen = usable if not LLM_DOC_LIMIT else usable[:LLM_DOC_LIMIT]
     return [{"title": d.get("title"), "url": d.get("url"),
-             "text": str(d.get("fullText") or d.get("text") or "")[:LLM_DOC_CHARS]}
+             "text": doc_window(d, lake, alt_names, LLM_DOC_CHARS)[0]}
             for d in chosen]
+
+
+def doc_window(d, lake, alt_names, limit):
+    """(text, info): which `limit` characters of document `d` a model reads for this water.
+
+    WHICH, NOT HOW MANY. A statewide job report names Parr Reservoir first at character 93,713 of
+    134,011, and the extractor takes only facts that name the water: cut to its first 20,000 it was
+    read for 20,000 characters about other waters. A document that fits, or whose own title or
+    address names the water, is cut exactly as before; one that does not is sent as its head and the
+    sections that name the water, with every date line kept so its facts date as the whole
+    document's would. The rule is water_sections.window(), shared with the Claude packet."""
+    text = str(d.get("fullText") or d.get("text") or "")
+    if not lake:
+        return text[:limit], {"windowed": False, "why": "no water named", "chars": len(text),
+                              "sent": min(len(text), limit)}
+    terms = water_sections.water_terms(lake, alt_names, base_name(lake))
+    return water_sections.window(text, d.get("title"), d.get("url"), terms, limit)
+
 
 # EXTRACTION READS EVERYTHING THAT SURVIVED THE GATE. 0 means no limit.
 #
@@ -692,8 +714,18 @@ _TRANSIENT = re.compile(r"high demand|rate.?limit|\brate\b|quota|\b429\b|\b50[23
 EXTRACT_RETRY_WAITS = (8, 20, 60)
 
 
-def _extract_one(lake, state, alt_names, i, d, limiter, verbose):
-    text = str(d.get("fullText") or d.get("text") or "")[:EXTRACT_DOC_CHARS]
+def _extract_one(lake, state, alt_names, i, d, limiter, verbose, windows=None):
+    # THE PART OF THE DOCUMENT ABOUT THIS WATER, not always its first EXTRACT_DOC_CHARS. The prompt
+    # below takes only facts that name the water, so a long document naming it only past the cut
+    # gave nothing. See doc_window().
+    text, win = doc_window(d, lake, alt_names, EXTRACT_DOC_CHARS)
+    if windows is not None:
+        windows[i] = win
+    if verbose and win.get("windowed"):
+        print(f"      window: doc {i} \"{str(d.get('title') or '')[:50]}\" -- {win['sent']:,} of "
+              f"{win['chars']:,} characters, {win['sections_sent']} of {win['sections_named']} "
+              f"section(s) naming the water; {win['named_sent']:,} characters naming it "
+              f"(first cut: {win['named_first_cut']:,})")
     body = {
         # baseName and docIndex are what lake-research-engine.js sends. Without baseName the
         # Worker derives one, and the prompt then tells the model to extract only facts that
@@ -732,15 +764,20 @@ def _extract_one(lake, state, alt_names, i, d, limiter, verbose):
     return [], len(text), why, None
 
 
-def extract_documents(lake, state, alt_names, docs, rpm, tpm, verbose=False):
+def extract_documents(lake, state, alt_names, docs, rpm, tpm, verbose=False, window_stats=None):
     """Every document through /research/analyze-facts, several at once under the RPM and TPM
     ceilings. Facts come back in DOCUMENT order, whatever order the calls finished in, so a rerun
     reads the same list. Returns (facts, chars_sent, failures, models) -- `models` counts which
-    free Gemini model answered each read, so the spread across both is on the screen."""
+    free Gemini model answered each read, so the spread across both is on the screen.
+
+    `window_stats`, when given a dict, is filled with window_summary() of what was sent."""
     limiter = CallLimiter(rpm, tpm)
+    windows = {}
     with ThreadPoolExecutor(max_workers=extract_workers(rpm, len(docs))) as ex:
         got = list(ex.map(lambda p: _extract_one(lake, state, alt_names, p[0], p[1], limiter,
-                                                 verbose), enumerate(docs)))
+                                                 verbose, windows), enumerate(docs)))
+    if window_stats is not None:
+        window_stats.update(window_summary([windows.get(i) or {} for i in range(len(docs))], docs))
     facts = [f for fs, _, _, _ in got for f in fs]
     failures = [{"doc": (docs[i].get("title") or "")[:80], "why": str(w)[:200]}
                 for i, (_, _, w, _) in enumerate(got) if w]
@@ -749,6 +786,31 @@ def extract_documents(lake, state, alt_names, docs, rpm, tpm, verbose=False):
         if m:
             models[m] = models.get(m, 0) + 1
     return facts, sum(n for _, n, _, _ in got), failures, models
+
+
+def window_summary(infos, docs):
+    """What the extraction window did on one water: how many documents were sent as a window, and
+    how many characters of what was sent lie in a section that names the water, against what the
+    first cut would have sent. Every document is still sent; only which part of it changes."""
+    win = [(i, w) for i, w in enumerate(infos) if w.get("windowed")]
+    return {"windowed": len(win),
+            "named_sent": sum(w.get("named_sent", 0) for _, w in win),
+            "named_first_cut": sum(w.get("named_first_cut", 0) for _, w in win),
+            "documents": [{"doc": i, "title": str(docs[i].get("title") or "")[:80],
+                           "chars": w.get("chars"), "sent": w.get("sent"),
+                           "sections_named": w.get("sections_named"),
+                           "sections_sent": w.get("sections_sent"),
+                           "named_sent": w.get("named_sent"),
+                           "named_first_cut": w.get("named_first_cut")} for i, w in win]}
+
+
+def window_note(r):
+    """'  window: 3 docs, 12,345 chars naming the water (first cut 0)' -- or '' if none was."""
+    w = r.get("extract_window") or {}
+    if not w.get("windowed"):
+        return ""
+    return (f"  window: {w['windowed']} doc(s), {w['named_sent']:,} chars naming the water "
+            f"(first cut {w['named_first_cut']:,})")
 
 
 def models_note(r):
@@ -1112,8 +1174,9 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
         chosen = usable if not EXTRACT_DOC_LIMIT else usable[:EXTRACT_DOC_LIMIT]
         # SEVERAL AT ONCE, UNDER THE RPM AND TPM CEILINGS. See extract_documents() -- this loop ran
         # one call at a time and was most of a ten-minute run.
+        out["extract_window"] = {}
         facts, sent, failed, models = extract_documents(lake, state, alt_names, chosen, rpm, tpm,
-                                                        verbose)
+                                                        verbose, out["extract_window"])
         out["chars_sent"] += sent
         out["extract_calls"] = len(chosen)
         out["extract_models"] = models
@@ -1245,7 +1308,7 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
         # store via /research/save-normalized, south_holston_tn carries 137 facts and no
         # documents, and putting ten documents of full text into every profile would multiply
         # what R2 holds for a second copy of something already saved.
-        prev["_normalizedDocuments"] = agent_documents(usable)
+        prev["_normalizedDocuments"] = agent_documents(usable, lake, alt_names)
 
         code, res, err = ask_species_groups(lake, state, prev, group_models, out)
         clock.mark("species_groups")
@@ -1834,7 +1897,7 @@ def species_groups_only(lake, state, group_models, save=False, report_dir="_repo
         # The same inputs research_one() builds: the profile as the agent's context, and every
         # readable document in the corpus's own order, cut to LLM_DOC_CHARS (agent_documents()).
         prev = dict(profile)
-        prev["_normalizedDocuments"] = agent_documents(usable)
+        prev["_normalizedDocuments"] = agent_documents(usable, lake, aliases)
         out["documents"] = len(prev["_normalizedDocuments"])
         # NAMED, because the stored corpus is what /research/save-normalized kept, and it runs its
         # own name-and-state filter on the way in -- so if it refused one of the documents the last
@@ -2471,7 +2534,8 @@ def main():
         detail = (f"{len(r['returned'])}/{len(r['asked']) or len(r['confirmed'])} species  "
                   f"{r['documents']} docs ({got} new, {f.get('reused', 0)} cached, "
                   f"{f.get('failed', 0)} failed)  {r['facts']} facts  ~{ktok:.0f}k tok"
-                  + (f"  {r['retries']} retries" if r.get("retries") else ""))
+                  + (f"  {r['retries']} retries" if r.get("retries") else "")
+                  + window_note(r))
         if r["missing"]:
             detail += "  LOST: " + ", ".join(r["missing"])
         print(f"  [{done[0]:3d}/{len(lakes)}] {mark} {secs}  {name[:42]:44s}{detail}"
