@@ -19,6 +19,23 @@ const ENV = { GEMINI_FREE_API_KEY: 'k1', GEMINI_FREE2_API_KEY: 'k2', GEMINI_FREE
 const PAYLOAD = { messages: [{ role: 'system', content: 's' }, { role: 'user', content: 'u' }] };
 const OK = { candidates: [{ content: { parts: [{ text: '{"extracted_facts":[]}' }] } }] };
 
+// WHERE A CALL STARTS IS DRAWN PER CALL (drawStart, worker-core.js), so these draw from a seeded
+// generator: the same draws every run, and no claim here rests on consecutive calls stepping a
+// counter. mulberry32, a standard 32-bit generator.
+function seeded(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const realRandom = Math.random;
+test.beforeEach(() => { Math.random = seeded(20260924); });
+test.afterEach(() => { Math.random = realRandom; });
+
 // `refuse(model)` -> an error message for that model, or null to answer.
 function stub(refuse = () => null) {
   const asked = [];
@@ -34,17 +51,14 @@ function stub(refuse = () => null) {
   return asked;
 }
 
-test('a call that asks for the spread starts on each model in turn', async () => {
+test('calls that ask for the spread start on both models', async () => {
   const asked = stub();
-  for (let i = 0; i < 10; i++) await callLLM(ENV, PAYLOAD, null, { spreadModels: true });
+  for (let i = 0; i < 20; i++) await callLLM(ENV, PAYLOAD, null, { spreadModels: true });
   const n = (id) => asked.filter((a) => a.model === id).length;
-  assert.equal(asked.length, 10, 'one request a call -- nothing failed, nothing fell over');
-  assert.equal(n('gemini-3.5-flash-lite'), 5);
-  assert.equal(n('gemini-3.1-flash-lite'), 5);
-  for (let i = 1; i < asked.length; i++) {
-    assert.notEqual(asked[i].model, asked[i - 1].model, 'consecutive calls alternate');
-  }
-  assert.equal(new Set(asked.map((a) => a.key)).size, 5, 'and the keys still rotate underneath');
+  assert.equal(asked.length, 20, 'one request a call -- nothing failed, nothing fell over');
+  assert.ok(n('gemini-3.5-flash-lite') >= 5, `3.5 started ${n('gemini-3.5-flash-lite')} of 20`);
+  assert.ok(n('gemini-3.1-flash-lite') >= 5, `3.1 started ${n('gemini-3.1-flash-lite')} of 20`);
+  assert.ok(new Set(asked.map((a) => a.key)).size >= 4, 'and the keys spread underneath');
 });
 
 test('a call that does not ask keeps 3.5 first', async () => {
@@ -57,10 +71,11 @@ test('a call that starts on a refused model falls to the other on the same key',
   const asked = stub((model) => (model === 'gemini-3.1-flash-lite'
     ? 'This model is currently experiencing high demand.' : null));
   const got = [];
-  for (let i = 0; i < 4; i++) got.push(await callLLM(ENV, PAYLOAD, null, { spreadModels: true }));
+  for (let i = 0; i < 8; i++) got.push(await callLLM(ENV, PAYLOAD, null, { spreadModels: true }));
   assert.ok(got.every((g) => g.model === 'gemini-3.5-flash-lite'), 'every call was answered');
   const refused = asked.filter((a) => a.model === 'gemini-3.1-flash-lite');
-  assert.equal(refused.length, 2, 'half the calls started on 3.1');
+  assert.ok(refused.length >= 1 && refused.length < 8, `${refused.length} of 8 calls started on 3.1`);
+  assert.equal(asked.length, 8 + refused.length, 'one extra request per call that started on 3.1');
   for (const r of refused) {
     const next = asked[asked.indexOf(r) + 1];
     assert.equal(next.model, 'gemini-3.5-flash-lite');

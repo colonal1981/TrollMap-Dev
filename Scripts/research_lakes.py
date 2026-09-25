@@ -809,7 +809,7 @@ def pace_seconds(chars, tpm):
 #
 #   BOTH MODELS. Ryan, 2026-09-24: "and we could make it so it hits both models separately
 #   right" -- each free model has its own 15 RPM on every key. Extraction now asks callLLM() to
-#   spread across both (_geminiModelIdx, worker-core.js), so the same 60 lands at about 6 a
+#   spread across both (drawStart, worker-core.js), so the same 60 lands at about 6 a
 #   minute on each model of each key instead of 12 on 3.5 alone. The ceiling is not doubled:
 #   the last batch's waters had a median of 10 documents and at most 23 (research_lakes_20260923),
 #   and 60 already runs 12 at once, so 120 would save seconds only on the few past a dozen.

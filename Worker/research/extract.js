@@ -481,7 +481,7 @@ FISHING BEHAVIOUR IS A FIRST-CLASS FACT. Sentences from guides, fishing reports 
         response_format: { type: "json_object" }
       };
 
-      // Both free models, each on its own quota: Ryan, 2026-09-24. See _geminiModelIdx in
+      // Both free models, each on its own quota: Ryan, 2026-09-24. See drawStart() in
       // Worker/worker-core.js; this read is most of a research run's calls.
       //
       // `extractModels: 'flash'` puts the full Flash models first, on every free key, as

@@ -220,14 +220,18 @@ function extractLLMText(data) {
   return "";
 }
 
-// Round-robin counter for gemini-free key rotation across concurrent requests
-// Incremented atomically per call so concurrent analyze-facts requests hit different keys
+// WHERE A CALL STARTS IS DRAWN BY THE CALL, NOT READ OFF THE ISOLATE.
 //
-// SEEDED RANDOMLY, BECAUSE ZERO IS NOT A NEUTRAL STARTING POINT.
-//
-// This is module state in a Worker isolate, and Cloudflare recycles isolates constantly. Every
-// analyze-facts call is its own request, so a cold isolate started this counter at 0 and picked
-// the FIRST free key -- again and again, for as long as cold starts kept happening.
+// This was three module-level counters -- the key, the Lite model, the Flash model -- each seeded
+// with Math.random() when the module loaded and stepped once per call. Module state belongs to a
+// Worker isolate, and Cloudflare starts and drops isolates as it likes; every analyze-facts and
+// agent-llm call is its own request. So where a call started depended on how many calls this
+// isolate had made and on what the seed was when the isolate was born -- and a fresh isolate
+// makes one or two calls. If the seed does not differ between isolates, every fresh one sends its
+// first call to the same key and the same model. (Workers restricts generating random values at
+// global scope -- "Disallowed operation called within global scope. Asynchronous I/O ..., setting
+// a timeout, and generating random values are not allowed within global scope." -- so what a
+// module-load seed is worth there is not something this file should be resting on.)
 //
 // Measured 2026-09-16 across Ryan's five Gemini projects after six research runs (152 requests):
 //
@@ -235,39 +239,26 @@ function extractLLMText(data) {
 //     key 2   43 / 500            key 5   12 / 500
 //     key 3   22 / 500
 //
-// An even spread would be about 30 each. That decay is not the designed fallback cascade either --
-// the cascade only fires on a failure, and key 1 peaked at 8 of 15 RPM with zero retries recorded,
-// so nothing was failing. It is the counter starting from the same place every time.
+// and 2026-09-25, on all five projects: peak RPM 17 to 26 on the Lite models against a limit of
+// 15, 5 to 8 on the Flash models against 5, while the client paced the whole pool at 60 a minute.
+// Both are the shape of calls piling onto the same slot, not of load spread over twenty.
 //
-// The cost is where the ceiling actually sits. At 39% of the load on one key, that key reaches its
-// 500 RPD when the pool has done about 1,280 requests -- half the 2,500 the five keys nominally
-// carry. And the moment it does, the failure is the one already recorded twice in
-// RESEARCH_502S_ARE_ARITHMETIC: "This model is currently experiencing high demand", each time
-// costing a whole species group off a lake.
+// So each call draws its own start with Math.random() -- inside a request, where it is allowed --
+// and turns from there: key s, s+1, ... around the ring, and the model ladder likewise. Twenty
+// isolates making one call each land where twenty draws land, whatever each isolate has done
+// before (test/a-fresh-isolate-does-not-start-on-the-first-slot.test.js).
 //
-// A random start needs no coordination and no storage: whatever isolate serves a request begins
-// somewhere different, and the modulo below keeps it in range however large this grows.
-let _geminiRoundRobinIdx = Math.floor(Math.random() * 1000);
-
-// BOTH MODELS, EACH ON ITS OWN QUOTA -- FOR THE CALLS THAT ASK.
-//
-// Ryan, 2026-09-24, with one key's AI Studio usage page open: "and we could make it so it hits
-// both models separately right". Gemini 3.5 Flash Lite 8/15 RPM, 43/500 RPD; Gemini 3.1 Flash
-// Lite 2/15 RPM, 0/500 RPD. The free tier meters each model on its own, so every key carries two
-// 15 RPM / 250,000 TPM / 500 RPD allowances -- and the ladder above reaches the second only when
-// the first has failed. 3.5 took the whole load while 3.1's allowance sat unused.
-//
-// A caller that passes { spreadModels: true } gets the ladder turned per call from its own random
-// start, the way the keys are: one call starts on 3.5 and falls to 3.1, the next starts on 3.1
-// and falls to 3.5. Nothing leaves the ladder, so a model that is busy or retired is still caught
-// by the other, and the day 3.1 goes the only cost is a quick refusal on the calls that start there.
-//
-// Opt-in, not the default. Document extraction asks (Worker/research/extract.js), and that is most
-// of a research run's calls. Callers that did not ask -- the species groups among them -- keep 3.5
-// first, so the model that answers them does not change under them.
-let _geminiModelIdx = Math.floor(Math.random() * 1000);
-// Its own start for the Flash pass, so the two rotations do not move in step.
-let _geminiFlashIdx = Math.floor(Math.random() * 1000);
+// BOTH MODELS, EACH ON ITS OWN QUOTA -- FOR THE CALLS THAT ASK. Ryan, 2026-09-24, with one key's
+// AI Studio usage page open: "and we could make it so it hits both models separately right".
+// Gemini 3.5 Flash Lite 8/15 RPM, 43/500 RPD; Gemini 3.1 Flash Lite 2/15 RPM, 0/500 RPD. The
+// free tier meters each model on its own, so a caller that passes { spreadModels: true } gets the
+// Lite ladder turned from a drawn start too. Opt-in, not the default: document extraction asks
+// (Worker/research/extract.js), and callers that did not ask -- the species groups among them --
+// keep 3.5 first, so the model that answers them does not change under them. The Flash pass
+// ({ firstModels }) always starts at a drawn model.
+function drawStart(n) {
+  return n > 1 ? Math.floor(Math.random() * n) : 0;
+}
 
 /**
  * One generateContent call. Throws with the model's name on anything that is not an answer.
@@ -393,6 +384,7 @@ async function callLLM(env, payload, preferredProvider = null, opts = {}) {
   //
   // An EXPLICIT preferredProvider still pins -- a caller that names a provider means it.
   let rotated = false;
+  let keyOrder = null;
   if (!preferredProvider) {
     const freeKeys = ['gemini-free', 'gemini-free2', 'gemini-free3', 'gemini-free4', 'gemini-free5'];
     const available = freeKeys.filter(name => {
@@ -400,27 +392,26 @@ async function callLLM(env, payload, preferredProvider = null, opts = {}) {
       return p && env[p.keyEnv];
     });
     if (available.length > 1) {
-      preferredProvider = available[_geminiRoundRobinIdx % available.length];
-      _geminiRoundRobinIdx++;
+      keyOrder = turnLadder(available, drawStart(available.length));
+      preferredProvider = keyOrder[0];
       rotated = true;
     }
   }
   const providers = !preferredProvider
     ? LLM_PROVIDERS.filter(p => env[p.keyEnv] && !p.excludeFromGeneral)
     : rotated
-      // The rotated key first, then the OTHER FREE GEMINI KEYS and nothing else. Same model
-      // family, same request shape, same limits -- a spike on one key is answered by another
-      // key rather than by a provider sized differently.
-      ? [...LLM_PROVIDERS.filter(p => p.name === preferredProvider),
-         ...LLM_PROVIDERS.filter(p => p.name !== preferredProvider
-                                   && /^gemini-free/.test(p.name) && env[p.keyEnv])]
+      // The drawn key first, then the OTHER FREE GEMINI KEYS round the ring from it, and nothing
+      // else. Same model family, same request shape, same limits -- a spike on one key is
+      // answered by another key rather than by a provider sized differently.
+      ? keyOrder.map((name) => LLM_PROVIDERS.find((p) => p.name === name))
       : LLM_PROVIDERS.filter(p => p.name === preferredProvider);
 
   if (!providers.length) {
     throw new Error("No LLM provider configured. Set GROQ_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY, or CEREBRAS_API_KEY");
   }
 
-  const modelStart = opts && opts.spreadModels ? _geminiModelIdx++ : 0;
+  const modelStart = opts && opts.spreadModels
+    ? drawStart((LLM_PROVIDERS.find((p) => p.name === 'gemini-free')?.models || []).length) : 0;
 
   const sent = [];
   try {
@@ -436,11 +427,11 @@ async function walkLadder(env, payload, providers, modelStart, opts, sent) {
   let lastError;
 
   // THE FIRST MODELS, ON EVERY FREE KEY, BEFORE THE LADDER. Model by model across the keys in this
-  // call's rotated order, each model's start turned per call, so twenty calls touch all twenty
-  // allowances once. Everything that refuses falls through to the loop below, unchanged.
+  // call's rotated order, each call starting at a drawn model, so twenty calls spread over all
+  // twenty allowances. Everything that refuses falls through to the loop below, unchanged.
   if (opts && Array.isArray(opts.firstModels) && opts.firstModels.length) {
     const freeKeys = providers.filter((p) => p.isGemini && /^gemini-free/.test(p.name) && env[p.keyEnv]);
-    for (const modelId of turnLadder(opts.firstModels, _geminiFlashIdx++)) {
+    for (const modelId of turnLadder(opts.firstModels, drawStart(opts.firstModels.length))) {
       for (const provider of freeKeys) {
         try {
           return await geminiCall(provider, env[provider.keyEnv], modelId, payload, true, sent);
