@@ -15,10 +15,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { htmlToText, isPdfBody, isFlatText, decodeEntities } from '../js/utils/html-text.js';
+import { htmlToText, isPdfBody, decodeEntities } from '../js/utils/html-text.js';
 import { readBatchResults } from '../js/utils/fetch-batch.js';
 import { handleResearchProxyDownloadBatch } from '../Worker/research/download.js';
 import { textDateOf } from '../Worker/research/text-date.js';
+import { scrapeDoFetch } from '../Worker/research/clients.js';
+import { handleSharedStore, getSharedRegistryEntry } from '../Worker/research/shared.js';
 
 const FIX = new URL('./fixtures/fetched-pages/', import.meta.url);
 // The folder is byte-exact (`* -text`); a checkout that still turned LF into CRLF is undone here.
@@ -235,16 +237,83 @@ test('the app sends an item the batch returned as a PDF to its PDF path, as type
   assert.equal(n.src.type, 'HTML');
 });
 
-test('the app\'s cache: a flat copy or a PDF\'s bytes is not reused, a copy with lines is', () => {
-  for (const f of Object.keys(PAGES)) {
-    assert.equal(isFlatText(OLD(page(f))), true, f);
-    assert.equal(isFlatText(htmlToText(page(f))), false, f);
-  }
-  assert.equal(isFlatText(page('ncwrc-inland-fishing-regulations.pdf.head')), true);
-  assert.equal(isFlatText(''), true);
+test('the app reuses a stored copy only if it says where its text came from', () => {
+  // A copy without `fetchedBy` was stored before the fix: flat, or another URL's text put under
+  // this one's by the positional pairing. It is fetched again once, whatever its age; a stamped
+  // copy is reused by TTL, one line or not. Asserted on the source: runAgent needs a window.
   const src = readFileSync(new URL('../js/modules/lake-research-engine.js', import.meta.url), 'utf8');
-  assert.match(src, /age < getDocTtl\(src\.url\) && !isFlatText\(existing\.fullText \|\| existing\.text\)/);
+  assert.match(src, /age < getDocTtl\(src\.url\) && existing\.fetchedBy\)/);
   assert.match(src, /readBatchResults\(batch, batchData\.results\)/);
+  // Every copy it stores is stamped: the batch's source, proxy-download's X-Source, or 'pdf'.
+  assert.match(src, /fetchedBy: result\.source,/);
+  assert.match(src, /fetchedBy: isPdf \? 'pdf' : xSource,/);
+  // A shared-registry record from before the fix is not reused either, in both places it is read.
+  assert.match(src, /if \(!checkData\.document\?\.fetchedBy\) continue;/);
+  assert.match(src, /indexStatus !== 'ambiguous' && checkData\.document\?\.fetchedBy\)/);
+});
+
+// ── the single-URL path's Scrape.do rung ────────────────────────────────────────────────────
+
+// HTMLRewriter is a Workers runtime API that node does not have. This stand-in only lets the
+// rung run; the text count it feeds is the runtime's and is not what is under test here.
+class FakeRewriter { on() { return this; } transform(res) { return res; } }
+
+async function viaScrapeDo(f, contentType) {
+  const realFetch = globalThis.fetch, realRewriter = globalThis.HTMLRewriter;
+  globalThis.fetch = async () => new Response(bytes(f), { headers: { 'Content-Type': contentType } });
+  globalThis.HTMLRewriter = FakeRewriter;
+  try {
+    return await scrapeDoFetch(SOURCES[f]?.url || PDF_URL, { SCRAPEDO_API_KEY: 't' });
+  } finally {
+    globalThis.fetch = realFetch; globalThis.HTMLRewriter = realRewriter;
+  }
+}
+
+test('scrapeDoFetch sends the page as sent, with its Content-Type, for the caller to make text', async () => {
+  for (const f of Object.keys(PAGES)) {
+    const got = await viaScrapeDo(f, SOURCES[f].contentType);
+    assert.equal(got.body, readFileSync(new URL(f, FIX), 'utf8'), f);
+    assert.equal(got.contentType, SOURCES[f].contentType, f);
+    // What the callers then store:
+    assert.equal(htmlToText(got.body).split('\n')[0], PAGES[f].first, f);
+  }
+});
+
+test('scrapeDoFetch refuses a PDF, so the ladder reaches the basic fetch and its bytes', async () => {
+  for (const ct of ['application/pdf', 'application/octet-stream']) {
+    await assert.rejects(viaScrapeDo('ncwrc-inland-fishing-regulations.pdf.head', ct), /PDF/);
+  }
+});
+
+// ── the shared registry ────────────────────────────────────────────────────────────────────
+
+function bucket() {
+  const store = new Map();
+  return {
+    store,
+    async get(k) { return store.has(k) ? { httpMetadata: {}, text: async () => store.get(k) } : null; },
+    async head(k) { return store.has(k) ? { key: k } : null; },
+    async put(k, v) { store.set(k, String(v)); },
+  };
+}
+
+test('the shared registry marks a pre-fix record once, when a fixed fetch stores it again', async () => {
+  const env = { R2_TROLLMAP_CHARTPACKS: bucket(), SHARED_RESEARCH_ENABLED: 'true' };
+  const url = 'https://www.lakegreenwoodfishing.com/lake-greenwood-fishing-report-sep-6th-2026/';
+  const fullText = htmlToText(page('lakegreenwoodfishing-report-2026-09-06.html'));
+  const store = (extra) => handleSharedStore(new Request('https://w/research/shared/store', {
+    method: 'POST', body: JSON.stringify({ canonicalUrl: url, title: 'Greenwood', fullText, ...extra }) }), env)
+    .then((r) => r.json());
+
+  await store({ fetchProvider: 'scrapedo' });                  // what the old app stored
+  assert.equal((await getSharedRegistryEntry(env, url)).fetchedBy, undefined);
+
+  const second = await store({ fetchProvider: 'scrapedo', fetchedBy: 'scrapedo' });
+  assert.notEqual(second.unchanged, true, 'the same text, but now it says where it came from');
+  assert.equal((await getSharedRegistryEntry(env, url)).fetchedBy, 'scrapedo');
+
+  const third = await store({ fetchProvider: 'scrapedo', fetchedBy: 'scrapedo' });
+  assert.equal(third.unchanged, true, 'marked once; after that an unchanged copy is not rewritten');
 });
 
 // ── CPU, printed so the PR can quote it ────────────────────────────────────────────────────

@@ -397,16 +397,18 @@ async function handleResearchProxyDownload(request, env) {
       try {
         // Use render=true for known JS-heavy domains, plain fetch for everything else
         const needsRender = /anglersheadquarters|majorleaguefishing|omniafishing|carolinasportsman|gameandfishmag/i.test(target);
-        const sdText = await scrapeDoFetch(target, env, { render: needsRender });
-        if (sdText && sdText.length > 200) {
+        // The page goes back AS SENT, with its Content-Type: text/html is made text with its
+        // lines by the caller (js/utils/html-text.js), as the batch fallback's is.
+        const sdPage = await scrapeDoFetch(target, env, { render: needsRender });
+        if (sdPage && sdPage.textLength > 200) {
           scrapeDoSucceeded = true;
           const headers = exposeHeaders(new Headers({
-            'Content-Type': 'text/plain; charset=utf-8',
+            'Content-Type': sdPage.contentType,
             'X-Source': 'scrapedo'
           }));
-          return new Response(sdText, { headers });
+          return new Response(sdPage.body, { headers });
         }
-        console.warn(`Scrape.do returned insufficient content (${sdText?.length || 0} chars) for ${target} — trying Firecrawl`);
+        console.warn(`Scrape.do returned insufficient content (${sdPage?.textLength || 0} chars of text) for ${target} — trying Firecrawl`);
       } catch (sdErr) {
         console.warn(`Scrape.do error for ${target}: ${sdErr.message} — trying Firecrawl`);
       }

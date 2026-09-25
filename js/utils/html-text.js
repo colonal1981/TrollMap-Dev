@@ -22,10 +22,11 @@
 // Nothing the page says is dropped: only its source code is. An entity this does not know is
 // left as written rather than guessed at.
 //
-// ONE FUNCTION, THREE READERS. The app imports this; Scripts/research_lakes.py runs it under node
-// (as it runs doc-relevance.js) rather than keep a Python copy; and the Worker's stripHtml()
-// (worker-data.js) and stripHtmlPreserveTables() (facts-util.js), which were two more copies with
-// different gaps, now call it and flatten the result, which is what their callers want.
+// ONE FUNCTION FOR WHAT IS STORED. The app imports this, and Scripts/research_lakes.py runs it
+// under node (as it runs doc-relevance.js) rather than keep a Python copy. The Worker's own
+// stripHtml() (worker-data.js) and stripHtmlPreserveTables() (facts-util.js) are left as they are:
+// their callers flatten the result to one line anyway, inside requests with other work to do, and
+// this costs more CPU for the same line. They are not storage.
 //
 // WHY THE CALLERS RUN IT AND NOT THE WORKER. The Worker has 10 ms of CPU a request on the free
 // plan, and /research/proxy-download-batch can fall back to Scrape.do for ten pages in one
@@ -33,7 +34,8 @@
 // the 85 KB Lake Greenwood page converts in about 0.4 ms, but 1 MB of the three fixture pages
 // repeated takes about 10 ms, and 1 MB of dense markup about 20 ms -- the old one-line strip
 // already took about 6 ms on the same megabyte. So the batch returns the page's HTML and the
-// caller, which has no CPU ceiling, turns it into text.
+// caller, which has no CPU ceiling, turns it into text. The single-URL proxy-download's Scrape.do
+// rung does the same: it sends the page's HTML with its Content-Type.
 
 // A tag's attributes: a quoted value may hold `>` (the Edgefield Advertiser's share link has
 // `status=... => https://...` inside its href), as a browser reads it.
@@ -128,16 +130,6 @@ export function isPdfBody(contentType, body) {
 /** A stored text that is a PDF's bytes rather than its text. */
 export function isPdfText(text) {
   return isPdfBody('', text);
-}
-
-/**
- * Is a stored document's text flat -- no line break at all -- or a PDF's bytes? Either way it was
- * made by a converter that is gone or fixed, and it is fetched again whatever its age. No number:
- * a fetched copy has lines, so this is true of a document once.
- */
-export function isFlatText(text) {
-  const t = String(text || '');
-  return !t.includes('\n') || isPdfText(t);
 }
 
 /**

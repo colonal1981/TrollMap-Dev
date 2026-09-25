@@ -57,7 +57,7 @@ class AFetchedPageKeepsItsLines(unittest.TestCase):
             for key, answer in (raw_answers or {}).items():
                 if key in path:
                     return answer
-            return 404, None, None, 'not mocked'
+            return 404, None, None, 'not mocked', ''
 
         mod._req = fake_req
         mod._raw = fake_raw
@@ -86,7 +86,7 @@ class AFetchedPageKeepsItsLines(unittest.TestCase):
         pdf = (FIX / PDF).read_bytes()
         docs, stats, calls = self.run_fetch(
             [{'url': PDF_URL, 'text': '', 'source': 'unhandled', 'ok': False, 'reason': 'pdf'}],
-            raw_answers={'proxy-download?url=': (200, pdf, 'application/pdf', None)},
+            raw_answers={'proxy-download?url=': (200, pdf, 'application/pdf', None, '')},
             sources=[{'url': PDF_URL, 'title': 'NC Inland Fishing Regulations'}])
         self.assertEqual(len(calls['raw']), 1, 'it never reached the one-at-a-time path')
         self.assertIn('&type=PDF', calls['raw'][0], 'asked for as HTML, the Worker would scrape it as a page')
@@ -98,7 +98,7 @@ class AFetchedPageKeepsItsLines(unittest.TestCase):
         text = '15A NCAC 10C .0205 PUBLIC MOUNTAIN TROUT WATERS 3\n(a) For purposes of this Rule\n' * 10
         docs, stats, _ = self.run_fetch(
             [{'url': PDF_URL, 'text': '', 'source': 'unhandled', 'ok': False, 'reason': 'pdf'}],
-            raw_answers={'proxy-download?url=': (200, text.encode(), 'text/plain; charset=utf-8', None)},
+            raw_answers={'proxy-download?url=': (200, text.encode(), 'text/plain; charset=utf-8', None, 'tinyfish')},
             sources=[{'url': PDF_URL, 'title': 'NC Inland Fishing Regulations'}])
         self.assertEqual(stats['html_ok'], 1)
         self.assertEqual(docs[0]['fullText'], text)
@@ -108,36 +108,54 @@ class AFetchedPageKeepsItsLines(unittest.TestCase):
         docs, _, calls = self.run_fetch([
             {'url': PDF_URL, 'text': '', 'source': 'unhandled', 'ok': False, 'reason': 'pdf'},
             {'url': PAGE_URL, 'text': '', 'html': html, 'source': 'scrapedo', 'ok': True},
-        ], raw_answers={'proxy-download?url=': (200, (FIX / PDF).read_bytes(), 'application/pdf', None)})
+        ], raw_answers={'proxy-download?url=': (200, (FIX / PDF).read_bytes(), 'application/pdf', None, '')})
         by_url = {d['url']: d for d in docs}
         self.assertTrue(by_url[PAGE_URL]['fullText'].startswith('Lake Greenwood Fishing Report'))
         self.assertTrue(by_url[PDF_URL]['fullText'].startswith('15A NCAC'))
 
-    def test_a_flat_stored_copy_is_fetched_again_whatever_its_age(self):
+    def test_every_stored_copy_says_where_its_text_came_from(self):
+        html = (FIX / GREENWOOD).read_text(encoding='utf-8')
+        page_doc = self.run_fetch(
+            [{'url': PAGE_URL, 'text': '', 'html': html, 'source': 'scrapedo', 'ok': True}],
+            sources=[{'url': PAGE_URL, 'title': 'Greenwood report'}])[0][0]
+        self.assertEqual(page_doc['fetchedBy'], 'scrapedo')
+        pdf_doc = self.run_fetch(
+            [{'url': PDF_URL, 'text': '', 'source': 'unhandled', 'ok': False, 'reason': 'pdf'}],
+            raw_answers={'proxy-download?url=': (200, (FIX / PDF).read_bytes(), 'application/pdf', None, 'tinyfish')},
+            sources=[{'url': PDF_URL, 'title': 'regs'}])[0][0]
+        self.assertEqual(pdf_doc['fetchedBy'], 'pdf')
+        text = 'Rule text\n' * 40
+        text_doc = self.run_fetch(
+            [{'url': PDF_URL, 'text': '', 'source': 'unhandled', 'ok': False, 'reason': 'pdf'}],
+            raw_answers={'proxy-download?url=': (200, text.encode(), 'text/plain', None, 'tinyfish')},
+            sources=[{'url': PDF_URL, 'title': 'regs'}])[0][0]
+        self.assertEqual(text_doc['fetchedBy'], 'tinyfish', "proxy-download's X-Source")
+
+    def test_a_copy_stored_before_the_fix_is_fetched_again_whatever_its_age(self):
+        """No `fetchedBy`: flat, or another URL's text. Neither can be told from the text alone."""
         html = (FIX / GREENWOOD).read_text(encoding='utf-8')
         fresh = '2099-01-01T00:00:00'   # newer than any TTL could expire
-        flat = [{'url': PAGE_URL, 'fullText': old_strip(html), 'fetchedAt': fresh},
-                {'url': PDF_URL, 'fullText': '%PDF-1.6 %�� 892 0 obj\n...', 'fetchedAt': fresh}]
+        before_fix = [
+            {'url': PAGE_URL, 'fullText': old_strip(html), 'fetchedAt': fresh},
+            # misfiled: lines, looks fine, and is a bald-eagle thread under a fishing report's URL
+            {'url': PDF_URL, 'fullText': 'r/whatsthisbird\nBald eagle over the lake?\n', 'fetchedAt': fresh},
+        ]
         _, stats, calls = self.run_fetch(
             [{'url': PAGE_URL, 'text': '', 'html': html, 'source': 'scrapedo', 'ok': True},
              {'url': PDF_URL, 'text': '', 'source': 'unhandled', 'ok': False, 'reason': 'pdf'}],
-            raw_answers={'proxy-download?url=': (200, (FIX / PDF).read_bytes(), 'application/pdf', None)},
-            existing=flat)
+            raw_answers={'proxy-download?url=': (200, (FIX / PDF).read_bytes(), 'application/pdf', None, '')},
+            existing=before_fix)
         self.assertEqual(stats['reused'], 0)
         self.assertEqual(len(calls['batch']), 1)
 
-        with_lines = [{'url': PAGE_URL, 'fullText': 'Lake Greenwood report\nStripers biting', 'fetchedAt': fresh}]
-        _, stats, calls = self.run_fetch([], existing=with_lines,
+    def test_a_stamped_copy_is_reused_by_ttl_even_if_it_is_one_line(self):
+        fresh = '2099-01-01T00:00:00'
+        stamped = [{'url': PAGE_URL, 'fullText': 'A page that really is one line.',
+                    'fetchedAt': fresh, 'fetchedBy': 'tinyfish'}]
+        _, stats, calls = self.run_fetch([], existing=stamped,
                                          sources=[{'url': PAGE_URL, 'title': 'Greenwood report'}])
         self.assertEqual(stats['reused'], 1)
         self.assertEqual(calls['batch'], [])
-
-    def test_is_flat_text_is_the_apps_rule(self):
-        mod = load_module()
-        self.assertTrue(mod.is_flat_text('one line only'))
-        self.assertTrue(mod.is_flat_text('%PDF-1.6\n%��\n892 0 obj'))
-        self.assertTrue(mod.is_flat_text(''))
-        self.assertFalse(mod.is_flat_text('a line\nanother'))
 
 
 if __name__ == '__main__':

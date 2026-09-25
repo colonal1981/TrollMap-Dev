@@ -176,17 +176,19 @@ def _req(path, payload=None, timeout=300):
 
 
 def _raw(path, timeout=300):
-    """GET returning (status, bytes, content-type, error). /research/proxy-download hands back
-    PDF bytes, not JSON -- the browser runs pdf.js on them and this runs pypdf."""
+    """GET returning (status, bytes, content-type, error, X-Source). /research/proxy-download
+    hands back PDF bytes, not JSON -- the browser runs pdf.js on them and this runs pypdf -- and
+    says in X-Source which rung of its ladder answered."""
     req = urllib.request.Request(f"{WORKER}{path}", headers=_headers(body=False), method="GET")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
-            return r.status, r.read(), r.headers.get("Content-Type", ""), None
+            return (r.status, r.read(), r.headers.get("Content-Type", ""), None,
+                    r.headers.get("X-Source", ""))
     except urllib.error.HTTPError as e:
         body = e.read()[:300].decode("utf-8", "replace").replace("\n", " ").strip()
-        return e.code, None, None, body or "empty body"
+        return e.code, None, None, body or "empty body", ""
     except Exception as e:                                    # noqa: BLE001
-        return 0, None, None, str(e)
+        return 0, None, None, str(e), ""
 
 
 # ── THE DOWNLOAD STAGE, which this script did not have and needed ───────────────────────────
@@ -252,18 +254,6 @@ def is_pdf_url(url, type_):
 
 def is_special_url(url):
     return bool(re.search(r"nepis\.epa\.gov|ZyNET\.exe|wateratlas\.usf\.edu", str(url or ""), re.I))
-
-
-def is_flat_text(text):
-    """isFlatText() in js/utils/html-text.js: a stored text with no line break, or a PDF's bytes.
-
-    Such a copy was made by a fetch fallback that stripped every tag to a space and collapsed every
-    newline away -- 279 of 1,677 stored documents on 2026-09-25, many opening on a script, CSS or
-    JSON-LD, and the NCWRC regulations kept as `%PDF-1.6 ...`. It is fetched again whatever its age.
-    No number: the new copy has lines, so this is true of a document once.
-    """
-    t = str(text or "")
-    return "\n" not in t or re.match(r"\s*%PDF-", t[:1024]) is not None
 
 
 def html_texts(repo, pages):
@@ -506,9 +496,16 @@ def fetch_sources(lake, sources, existing, verbose=False, repo=None):
                         str(fetched)[:19], "%Y-%m-%dT%H:%M:%S")) * 1000
                 except ValueError:
                     age = None
-            # A flat copy is fetched again whatever its age -- see is_flat_text().
-            if age is not None and age < doc_ttl_ms(src.get("url")) \
-                    and not is_flat_text(cached.get("fullText") or cached.get("text")):
+            # REUSED ONLY IF IT SAYS WHERE ITS TEXT CAME FROM. `fetchedBy` is stamped on every copy
+            # the fixed fetch stores: the batch result's `source`, proxy-download's X-Source, or
+            # "pdf". A copy without it was made before the fix -- by the batch's Scrape.do fallback,
+            # which kept it as one line of page source, or while the batch returned results in the
+            # order they finished and this read them by position, which stored one page's text
+            # under another's URL (9 URLs of 84 waters held another URL's text word for word, and
+            # a shifted text that landed once cannot be told from the text). So it is fetched
+            # again once, whatever its age. A stamped copy is reused by TTL even if it is one line,
+            # because then one line is what that page is. The app's cache has the same rule.
+            if age is not None and age < doc_ttl_ms(src.get("url")) and cached.get("fetchedBy"):
                 reused.append(cached)
                 continue
         to_fetch.append(src)
@@ -547,7 +544,8 @@ def fetch_sources(lake, sources, existing, verbose=False, repo=None):
                 docs.append({"title": s2.get("title"), "url": s2.get("url"), "fullText": text,
                              "agentTags": s2.get("agentTags") or ["fisheries"],
                              "discoveredBy": "fisheries",
-                             "fetchedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
+                             "fetchedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                             "fetchedBy": r.get("source") or "batch"})
                 stats["html_ok"] += 1
             elif (r or {}).get("source") == "unhandled":
                 # The batch classified it special -- take it alone. It says so in `source`;
@@ -563,7 +561,7 @@ def fetch_sources(lake, sources, existing, verbose=False, repo=None):
     for s3 in individual:
         url = f"/research/proxy-download?url={urllib.parse.quote(str(s3.get('url') or ''), safe='')}" \
               f"&type={s3.get('type') or 'HTML'}"
-        code, raw, ctype, err = _raw(url)
+        code, raw, ctype, err, x_source = _raw(url)
         if code != 200 or not raw:
             stats["failed"] += 1
             if verbose:
@@ -577,6 +575,7 @@ def fetch_sources(lake, sources, existing, verbose=False, repo=None):
                 stats["pdf_no_text"] += 1
                 continue
             stats["pdf_ok"] += 1
+            fetched_by = "pdf"
         else:
             text = raw.decode("utf-8", "replace")
             if "html" in (ctype or "").lower():   # the basic-fetch rung passes the page through
@@ -585,10 +584,12 @@ def fetch_sources(lake, sources, existing, verbose=False, repo=None):
                 stats["failed"] += 1
                 continue
             stats["html_ok"] += 1
+            fetched_by = x_source or "proxy-download"
         docs.append({"title": s3.get("title"), "url": s3.get("url"), "fullText": text,
                      "agentTags": s3.get("agentTags") or ["fisheries"],
                      "discoveredBy": "fisheries",
-                     "fetchedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())})
+                     "fetchedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                     "fetchedBy": fetched_by})
     return docs, stats
 
 

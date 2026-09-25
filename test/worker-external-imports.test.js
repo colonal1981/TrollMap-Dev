@@ -122,9 +122,9 @@ describe('the Worker bundle can be built', () => {
     // date one way, and the dedupe and the prompts mean one thing by "disagree". Pure, no imports.
     //
     // ONE MORE ADDED 2026-09-25: html-text.js, a fetched page as its text with its lines, and a
-    // PDF told by its Content-Type or bytes. The app and research_lakes.py convert the batch
-    // fallback's HTML with it; the Worker's stripHtml(), stripHtmlPreserveTables() and PDF checks
-    // call it rather than keep copies. Pure, no imports.
+    // PDF told by its Content-Type or bytes. The app and research_lakes.py convert the Scrape.do
+    // rungs' HTML with it; the Worker imports it only for its PDF and HTML checks, in download.js
+    // and clients.js. Pure, no imports.
     const EXPECTED = [
       'js/data/ga-access-species.js',
       'js/data/lake-keys.js',
