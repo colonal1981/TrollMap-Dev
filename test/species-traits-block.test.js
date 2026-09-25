@@ -17,10 +17,14 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { registryMissing, registryPath } from './registry-here.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const REG = path.join(ROOT, '..', 'registry');
-const TRAITS = JSON.parse(readFileSync(path.join(REG, 'species_traits.json'), 'utf8'));
+// Every test here reads the traits table. Without ../registry they are reported as skipped with
+// that reason, never passed.
+const SKIP = registryMissing('species_traits.json');
+const TRAITS = SKIP ? { species: {} }
+  : JSON.parse(readFileSync(registryPath('species_traits.json'), 'utf8'));
 
 // Lifted out of the shipped file rather than reimplemented, so this tests the text the model will
 // actually be sent. agents.js itself pulls in the whole Worker.
@@ -45,7 +49,7 @@ globalThis.__ST_TABLE = TRAITS.species;
 // The real canon lives in facts-util; the only fold this test needs is the page-vs-plan one.
 globalThis.__ST_CANON = (n) => String(n || '').replace(/^(Black|White)\s+Crappie$/i, 'Crappie');
 
-test("SCDNR's spawning temperature reaches the prompt, as SCDNR wrote it", async () => {
+test("SCDNR's spawning temperature reaches the prompt, as SCDNR wrote it", { skip: SKIP }, async () => {
   const entries = await mod.speciesTraitsEntries({}, 'SC');
   const block = mod.speciesTraitsBlock(entries, ['Crappie']);
   assert.ok(block.includes('approach 60 degrees Fahrenheit'),
@@ -54,7 +58,7 @@ test("SCDNR's spawning temperature reaches the prompt, as SCDNR wrote it", async
   assert.ok(/SCDNR/.test(block), 'attributed to the agency that published it');
 });
 
-test('a species group is sent only its own species accounts', async () => {
+test('a species group is sent only its own species accounts', { skip: SKIP }, async () => {
   const entries = await mod.speciesTraitsEntries({}, 'SC');
   const bass = mod.speciesTraitsBlock(entries, ['Largemouth Bass', 'Smallmouth Bass']);
   assert.ok(bass.includes('Largemouth Bass') && bass.includes('Smallmouth Bass'));
@@ -62,7 +66,7 @@ test('a species group is sent only its own species accounts', async () => {
   assert.ok(bass.length < 4000, 'and must not carry all 30 KB of the file');
 });
 
-test('the water gets its own state, and the neighbour only where its own state is silent', async () => {
+test('the water gets its own state, and the neighbour only where its own state is silent', { skip: SKIP }, async () => {
   const nc = await mod.speciesTraitsEntries({}, 'NC');
   // NCWRC covers bluegill twice -- the species PAGE and the species-profile PDF are two
   // documents saying different things -- so the rule is not "exactly one row". It is that when a
@@ -92,7 +96,7 @@ test('the water gets its own state, and the neighbour only where its own state i
   assert.ok(!scBluegill[0].text.includes('neighbouring'), 'an SC water gets SCDNR plainly');
 });
 
-test('a species none of the four guides covers gets no block, and nothing throws', async () => {
+test('a species none of the four guides covers gets no block, and nothing throws', { skip: SKIP }, async () => {
   const entries = await mod.speciesTraitsEntries({}, 'SC');
   // On the form, in the books, and in none of the four species guides. This list keeps shrinking
   // and that is the point of the file: MUSKELLUNGE stopped being an example the day TWRA's guide
@@ -105,7 +109,7 @@ test('a species none of the four guides covers gets no block, and nothing throws
   assert.equal(mod.speciesTraitsBlock([], null), '');
 });
 
-test('every species in the file produces a block in every state', async () => {
+test('every species in the file produces a block in every state', { skip: SKIP }, async () => {
   // GA DNR joined the file on 2026-09-02 and was the last of the four -- until then every Georgia
   // water was handed SCDNR's account of its fish, labelled as the neighbouring state's.
   for (const state of ['SC', 'NC', 'TN', 'GA']) {

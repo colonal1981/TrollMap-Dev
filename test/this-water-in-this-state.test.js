@@ -26,7 +26,8 @@
  *   node --test test/this-water-in-this-state.test.js
  */
 import { afterEach, describe, it, expect, vi } from './expect-shim.mjs';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
+import { registryMissing, registryPath } from './registry-here.mjs';
 
 const FX = JSON.parse(readFileSync(
   new URL('./fixtures/this-water-in-this-state.2026-09-25.json', import.meta.url), 'utf8'));
@@ -170,10 +171,10 @@ describe('a real page about the right water is not refused over a word that is n
       expect(S.stateMentions(S.nameSentences(text, names)), slug).toEqual({});
     }
   });
-  it('and none in the real registry either, where it is beside the repo', () => {
-    const reg = new URL('../../registry/lake_index.json', import.meta.url);
-    if (!existsSync(reg)) return;   // the cloud checkout has no registry; the desktop does
-    const rows = JSON.parse(readFileSync(reg, 'utf8'));
+  // The cloud checkout has no registry; the desktop does. Skipped with the reason, never passed.
+  it('and none in the real registry either, where it is beside the repo',
+    { skip: registryMissing('lake_index.json') }, () => {
+    const rows = JSON.parse(readFileSync(registryPath('lake_index.json'), 'utf8'));
     for (const [slug, row] of Object.entries(rows.lakes || rows)) {
       const names = S.namesOf(row);
       const text = names.map((n) => `We fished the ${n} today.`).join(' ');

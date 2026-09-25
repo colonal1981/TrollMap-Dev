@@ -36,11 +36,15 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { registryMissing, registryPath } from './registry-here.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const REG = path.join(ROOT, '..', 'registry');
-const INDEX = JSON.parse(readFileSync(path.join(REG, 'lake_index.json'), 'utf8'));
-const FACTS = JSON.parse(readFileSync(path.join(REG, 'agency_lake_facts.json'), 'utf8'));
+// Every test here reads both registry files. Without ../registry they are reported as skipped with
+// that reason, never passed.
+const SKIP = registryMissing('lake_index.json', 'agency_lake_facts.json');
+const INDEX = SKIP ? {} : JSON.parse(readFileSync(registryPath('lake_index.json'), 'utf8'));
+const FACTS = SKIP ? { rows: {} }
+  : JSON.parse(readFileSync(registryPath('agency_lake_facts.json'), 'utf8'));
 
 // The two functions are lifted out of the shipped file rather than reimplemented, so this tests
 // the text the model will actually be sent. agents.js itself pulls in the whole Worker.
@@ -78,7 +82,7 @@ globalThis.__AG_CANON = (n) => String(n || '').replace(/^(Black|White)\s+Crappie
 
 const RUSSELL = 'Richard B Russell Lake (Abbeville Co, SC/GA)';
 
-test('the agency page reaches the prompt, with the creeks it names', async () => {
+test('the agency page reaches the prompt, with the creeks it names', { skip: SKIP }, async () => {
   const entries = await mod.agencyGuidanceEntries({}, RUSSELL);
   const block = mod.agencyGuidanceBlock(entries, null);
   for (const creek of ['Beaverdam Creek', 'Coldwater Creek', 'Pickens Creek']) {
@@ -88,7 +92,7 @@ test('the agency page reaches the prompt, with the creeks it names', async () =>
   assert.ok(/GA DNR/.test(block), 'attributed to the agency that published it');
 });
 
-test('a species group is sent only its own species sections', async () => {
+test('a species group is sent only its own species sections', { skip: SKIP }, async () => {
   const entries = await mod.agencyGuidanceEntries({}, RUSSELL);
   const bass = mod.agencyGuidanceBlock(entries, ['Largemouth Bass', 'Spotted Bass']);
   assert.ok(bass.includes('Largemouth Bass') && bass.includes('Spotted Bass'));
@@ -98,7 +102,7 @@ test('a species group is sent only its own species sections', async () => {
     '"Black Crappie" on the page is "Crappie" in the plan vocabulary and must still match');
 });
 
-test('a water with no agency page gets no block, and nothing throws', async () => {
+test('a water with no agency page gets no block, and nothing throws', { skip: SKIP }, async () => {
   // THIS PASSED FOR TWO WEEKS ON A TYPO. It asked for 'Lake Wateree (Kershaw Co, SC)'; the registry
   // display name is 'Wateree Lake (Kershaw Co, SC)', so the resolver returned null and the empty
   // array proved a misspelling rather than the absence of a page -- and by then Wateree HAD one,
@@ -125,7 +129,7 @@ const usable = (v) => (Array.isArray(v) ? v : [v])
 const pageHasGuidance = (pages) => (pages || []).some((p) => (p.species || [])
   .some((sp) => String((sp && sp.name) || '').trim() && KEYS.some((k) => usable(sp[k]).length)));
 
-test('a block appears for exactly the waters whose page carries usable guidance', async () => {
+test('a block appears for exactly the waters whose page carries usable guidance', { skip: SKIP }, async () => {
   const missing = [];
   const spurious = [];
   let withBlock = 0;
@@ -153,7 +157,7 @@ test('a block appears for exactly the waters whose page carries usable guidance'
 // `notes`, correctly, as the quote the name came from. Reading `notes` as guidance turned one
 // published sentence into four identical per-species NOTES under a heading that tells the model
 // "this is the strongest source you have" and "where this disagrees, this wins".
-test('a sentence every species on the page shares is stated once, about the water', async () => {
+test('a sentence every species on the page shares is stated once, about the water', { skip: SKIP }, async () => {
   const entries = await mod.agencyGuidanceEntries({}, 'Wateree Lake (Kershaw Co, SC)');
   const roster = entries.filter((e) => /Popular sport fish on Lake Wateree/.test(e.text));
   assert.equal(roster.length, 1, 'the roster sentence must appear once, not once per species');
@@ -167,7 +171,7 @@ test('a sentence every species on the page shares is stated once, about the wate
 
 // A page whose species sections genuinely differ must not be hoisted -- the detector is "identical
 // on every named species", and Russell's page is the case that proves it stays per-species.
-test('and a page whose sections really are per-species is left alone', async () => {
+test('and a page whose sections really are per-species is left alone', { skip: SKIP }, async () => {
   const entries = await mod.agencyGuidanceEntries({}, RUSSELL);
   assert.ok(entries.some((e) => e.species), 'Russell has per-species sections');
   const bass = mod.agencyGuidanceBlock(entries, ['Largemouth Bass', 'Spotted Bass']);

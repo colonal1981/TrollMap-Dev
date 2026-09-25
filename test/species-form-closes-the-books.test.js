@@ -21,7 +21,8 @@
  * Personal use only, not for distribution or resale; not for navigation.
  */
 import { describe as nodeDescribe, it, expect } from './expect-shim.mjs';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
+import { registryMissing, registryPath } from './registry-here.mjs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { speciesGroupsFor } from '../js/modules/species-selector.js';
@@ -45,14 +46,15 @@ const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 //
 // IT SKIPS, IT DOES NOT PASS. A test that quietly reports success over a file it could not read is
 // verify_registry_r2.py printing that twenty objects matched over twenty it never compared.
-const MAP_PATH = path.join(ROOT, '..', 'registry', 'species_map.json');
-const HAVE_MAP = existsSync(MAP_PATH);
-const MAP = HAVE_MAP ? JSON.parse(readFileSync(MAP_PATH, 'utf8')) : { species: {} };
+const MAP_MISSING = registryMissing('species_map.json');
+const HAVE_MAP = !MAP_MISSING;
+const MAP = HAVE_MAP ? JSON.parse(readFileSync(registryPath('species_map.json'), 'utf8'))
+  : { species: {} };
 // ONE WRAPPER, NOT TWELVE OPTIONS OBJECTS. Every suite in this file reads the map, so the skip goes
 // on `describe` once and cannot be forgotten on a suite added later.
 const describe = HAVE_MAP
   ? nodeDescribe
-  : (name, fn) => nodeDescribe(name, { skip: 'registry/species_map.json is not beside the repo -- '
+  : (name, fn) => nodeDescribe(name, { skip: MAP_MISSING + ' -- '
       + 'it is a BUILD-time input, deliberately unpublished, so a runner cannot fetch it. Run this '
       + 'on the pipeline machine.' }, fn);
 const UTIL = readFileSync(path.join(ROOT, 'Worker', 'research', 'facts-util.js'), 'utf8');

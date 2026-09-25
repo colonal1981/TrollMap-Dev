@@ -21,7 +21,8 @@
  *   node --test test/the-sampit-was-out-and-the-nolichucky-was-in.test.js
  */
 import { describe, it, expect } from './expect-shim.mjs';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
+import { registryMissing, registryPath } from './registry-here.mjs';
 import { makePredicate } from '../js/data/water-filter.js';
 import { stampedStates, stampAllows, stateFor, orderByRuns } from '../Scripts/research_todo_rules.mjs';
 
@@ -174,12 +175,9 @@ describe('research_todo.mjs and research_lakes.py are wired to all of it', () =>
 });
 
 describe('the real run counts, when they are on this machine', () => {
-  const path = new URL('../../registry/_trolling_runs.json', import.meta.url);
-  const have = existsSync(path);
-  it(have ? 'the Sampit outranks the Nolichucky, and the Wateree outranks both'
-          : 'skipped: registry/_trolling_runs.json is not on this machine', () => {
-    if (!have) return;
-    const lakes = JSON.parse(readFileSync(path, 'utf8')).lakes;
+  it('the Sampit outranks the Nolichucky, and the Wateree outranks both',
+    { skip: registryMissing('_trolling_runs.json') }, () => {
+    const lakes = JSON.parse(readFileSync(registryPath('_trolling_runs.json'), 'utf8')).lakes;
     const out = orderByRuns([{ slug: 'nolichucky_river' }, { slug: 'sampit_river' },
                              { slug: 'wateree_river' }], lakes);
     expect(out.map((r) => r.slug)).toEqual(['wateree_river', 'sampit_river', 'nolichucky_river']);

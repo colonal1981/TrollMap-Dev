@@ -15,7 +15,8 @@
 // exported to fix it. discover.js already imported its sibling and used the cleaned name for
 // relevance scoring, agency names and three Grokipedia URLs -- every consumer except the search.
 import { describe, it, expect } from './expect-shim.mjs';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
+import { registryMissing, registryPath } from './registry-here.mjs';
 import { stripLakeQualifiers } from '../Worker/research/keys.js';
 import { stateFullName, STATE_NAMES } from '../Worker/research/dataset.js';
 
@@ -56,19 +57,13 @@ describe('the anchor is now a name a page could actually contain', () => {
 
 describe('THE CENSUS, against the real registry', () => {
   // Not a fixture. This reads registry/lake_index.json if it is beside the repo and asserts the
-  // count that made this worth fixing is now zero. Skipped with a loud note when the registry is
-  // not reachable, because a test that silently passes on a missing input is the shape this
-  // project has been burned by.
-  const IDX = new URL('../../registry/lake_index.json', import.meta.url);
-  const have = existsSync(IDX);
+  // count that made this worth fixing is now zero. Reported as SKIPPED, with the reason, when the
+  // registry is not reachable, because a test that silently passes on a missing input is the
+  // shape this project has been burned by.
+  const SKIP = registryMissing('lake_index.json');
 
-  it('no offered water carries a parenthetical into its search phrase', () => {
-    if (!have) {
-      console.log('    [skipped] registry/lake_index.json not beside the repo on this machine');
-      expect(true).toBe(true);
-      return;
-    }
-    const d = JSON.parse(readFileSync(IDX, 'utf8'));
+  it('no offered water carries a parenthetical into its search phrase', { skip: SKIP }, () => {
+    const d = JSON.parse(readFileSync(registryPath('lake_index.json'), 'utf8'));
     let rows = (d && d.lakes) ? d.lakes : d;
     rows = Array.isArray(rows) ? rows : Object.values(rows);
     const bad = rows
