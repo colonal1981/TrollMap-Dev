@@ -281,6 +281,40 @@ class GroupsOnlyWithClaude(unittest.TestCase):
         self.assertEqual(len(self.saved[0]["profile"]["_extractedFacts"]), 3, "nothing else moves")
 
 
+class AfterAFullRun(unittest.TestCase):
+    """Lakes part 1, 2026-09-25: a failed Claude answer writes one file, a saved one writes two,
+    and indexing the second took the whole batch down on its first water."""
+
+    def setUp(self):
+        self._g = R.species_groups_only
+
+    def tearDown(self):
+        R.species_groups_only = self._g
+
+    def test_a_failed_answer_with_one_file_does_not_raise(self):
+        R.species_groups_only = lambda *a, **k: ({"ok": False, "error": "claude: no entry survived",
+                                                  "claude": {"entries": 0}}, ["x_FAILED.json"])
+        out, secs = R.claude_after_run("Chessie Creek, SC", "SC", [], "_reports", None)
+        self.assertFalse(out["ok"])
+        self.assertEqual(out["report"], "x_FAILED.json")
+
+    def test_a_saved_answer_reports_its_md(self):
+        R.species_groups_only = lambda *a, **k: ({"ok": True, "saved": True, "seconds": 5.0,
+                                                  "claude": {"entries": 9}}, ["x.json", "x.md"])
+        out, secs = R.claude_after_run("Lake Greenwood, SC", "SC", [], "_reports", None)
+        self.assertTrue(out["saved"])
+        self.assertEqual(out["report"], "x.md")
+        self.assertEqual(secs, 5.0)
+
+    def test_anything_the_step_raises_is_caught(self):
+        def boom(*a, **k):
+            raise RuntimeError("anything")
+        R.species_groups_only = boom
+        out, _ = R.claude_after_run("X", "SC", [], "_reports", None)
+        self.assertFalse(out["ok"])
+        self.assertIn("RuntimeError", out["error"])
+
+
 class Resume(unittest.TestCase):
     """--resume skips what the Claude step already wrote, so a batch a usage limit stopped can be
     picked back up without paying again for the waters it finished."""

@@ -1633,6 +1633,27 @@ def species_comparison_md(lake, stored, new, groups, group_models, stored_when):
     return "\n".join(lines) + "\n"
 
 
+def claude_after_run(name, state, aliases, report_dir, claude_model):
+    """The Claude step after a full run saved: (summary for the report, seconds). NEVER RAISES.
+
+    2026-09-25, lakes part 1, first water: Chessie Creek's Claude answer failed, the failure wrote
+    one file (…_FAILED.json) where a success writes two, and `cpaths[1]` took the whole batch down
+    with an IndexError after the Gemini run had already saved. The Lite answer that run saved is the
+    fallback; a Claude step that cannot finish -- for any reason -- must leave it and let the batch go
+    on to the next water."""
+    t0 = time.perf_counter()
+    try:
+        cr, cpaths = species_groups_only(name, state, "claude", True, report_dir,
+                                         aliases=aliases, claude_model=claude_model)
+        report = next((p for p in cpaths if p.endswith(".md")), cpaths[-1] if cpaths else None)
+        return ({**(cr.get("claude") or {}), "ok": cr["ok"], "saved": cr.get("saved"),
+                 "error": cr.get("error"), "report": report},
+                cr.get("seconds") or round(time.perf_counter() - t0, 1))
+    except Exception as e:                                   # noqa: BLE001
+        return ({"ok": False, "saved": False, "error": f"claude step raised {type(e).__name__}: {e}",
+                 "report": None}, round(time.perf_counter() - t0, 1))
+
+
 def claude_wrote_last(profile):
     """True when the stored profile's last save came from the Claude step: a --groups-only
     --group-models claude save, a full run's Claude save (the same call), or --apply-groups of a
@@ -2375,12 +2396,10 @@ def main():
                          ROWS_BY_NAME.get(name.strip().lower()), a.limnology_only, rpm=a.rpm,
                          group_models="lite" if claude else a.group_models)
         if claude and r["ok"] and r.get("saved") and not a.limnology_only:
-            cr, cpaths = species_groups_only(name, st, "claude", True,
-                                             os.path.dirname(a.report) or "_reports",
-                                             aliases=alts, claude_model=a.claude_model)
-            r["claude"] = {**(cr.get("claude") or {}), "ok": cr["ok"], "saved": cr.get("saved"),
-                           "error": cr.get("error"), "report": cpaths[1] if cpaths else None}
-            r["seconds"] = round(r.get("seconds", 0) + (cr.get("seconds") or 0), 1)
+            r["claude"], secs = claude_after_run(name, st, alts,
+                                                 os.path.dirname(a.report) or "_reports",
+                                                 a.claude_model)
+            r["seconds"] = round(r.get("seconds", 0) + secs, 1)
         done[0] += 1
         mark = "ok " if r["ok"] else "FAIL"
         secs = f'{r.get("seconds", 0):5.1f}s'
