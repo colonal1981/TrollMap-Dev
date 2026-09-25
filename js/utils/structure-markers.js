@@ -24,7 +24,12 @@
  * carrying prose and counts — which is all a research document was ever for.
  */
 
-const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
+// An empty or all-space string is no reading: Number('') and Number(' ') are both 0, so a blank
+// property used to come out as a real depth of zero. Every other input is read as it was.
+const num = (v) => {
+  if (typeof v === 'string' && v.trim() === '') return null;
+  return Number.isFinite(Number(v)) ? Number(v) : null;
+};
 
 function pointOf(feature) {
   const g = feature && feature.geometry;

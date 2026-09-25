@@ -60,6 +60,7 @@
  * client-side JavaScript. This is the authoritative source and it is a different agency.
  */
 import { CORS, JSON_HEADERS, r2Text } from './worker-core.js';
+import { num as numOrNull } from '../js/utils/num.js';
 import { ndbcReadings } from './ndbc.js';
 import { sensorReading, sensorSourceOf } from './sensor.js';
 import { waterChain, damTable, fullPoolTable, coastalCurrentStations, riverClarityByFlow }
@@ -680,10 +681,15 @@ export async function isTidalWater(env, slug) {
 // -999 is NWPS for "no reading"; -9999 is its flood table for "no flow stage defined". Neither
 // is a number anyone should see. NaN lands here too, which is what Number(undefined) gives when
 // an optional CO-OPS field is absent.
+//
+// AND SO DOES "". CO-OPS sends a missing reading as `"v": ""` -- Charleston 8665530's August 2026
+// water temperature has three such rows, flagged "1,1,1" -- and this used to be `Number(v)`, which
+// is 0. With `date=latest` that one row is the whole answer, so the card said the water was 0 °F.
+// Absence now comes from js/utils/num.js; the no-data codes are the only thing added here.
 const NO_DATA = new Set([-999, -9999, -99999]);
 const num = (v) => {
-  const n = typeof v === 'string' ? Number(v) : v;
-  return typeof n === 'number' && Number.isFinite(n) && !NO_DATA.has(n) ? n : null;
+  const n = numOrNull(v);
+  return n !== null && NO_DATA.has(n) ? null : n;
 };
 
 function kmBetween(aLat, aLon, bLat, bLon) {
@@ -2825,14 +2831,6 @@ export function parseOperatingRange(json, nowIso = null) {
     days: rows.length,
     first_date: rows[0].date,
   };
-}
-
-/** Number, but an empty string and a null are absence rather than zero. Eighth time this week. */
-function numOrNull(v) {
-  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
-  if (typeof v !== 'string' || v.trim() === '') return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
 }
 
 /**

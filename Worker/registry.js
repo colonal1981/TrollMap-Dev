@@ -24,6 +24,7 @@
  */
 
 import { r2Text } from './worker-core.js';
+import { num } from '../js/utils/num.js';
 
 export const LAKE_INDEX_KEY = '_registry/lake_index.json';
 export const WATER_CHAIN_KEY = '_registry/water_chain.json';
@@ -536,13 +537,8 @@ export function identityBaseline(row, pool = null, poolManagement = null) {
   //
   // AND Number('   ') IS ALSO 0, which the first fix missed and the test caught on the next run.
   // So does Number([]) and Number([7]). Only a number or a non-blank string is a number here;
-  // everything else is absence.
-  const n = (v) => {
-    if (typeof v === 'number') return Number.isFinite(v) ? v : null;
-    if (typeof v !== 'string' || v.trim() === '') return null;
-    const x = Number(v);
-    return Number.isFinite(x) ? x : null;
-  };
+  // everything else is absence. That rule is js/utils/num.js, imported rather than written out.
+  const n = num;
   const out = {
     source: 'TrollMap registry — registry/lake_index.json, built by consolidate_lake_index.py',
     slug: row.slug || null,
