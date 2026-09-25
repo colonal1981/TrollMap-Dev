@@ -16,7 +16,10 @@ import { handleResearchAnalyzeFacts, handleResearchDedupeContradictions } from '
 import { patternFactsFrom } from '../js/modules/plan-prompt.js';
 import { readPage } from '../Worker/research/text-date.js';
 
-const page = (f) => readFileSync(new URL(`./fixtures/text-date/${f}`, import.meta.url), 'utf8');
+// A Windows checkout (core.autocrlf) turns the fixtures' line ends into CRLF; the pages came with LF,
+// and the date-line rule reads lines, so the fixture is read back the way it was fetched.
+const page = (f) => readFileSync(new URL(`./fixtures/text-date/${f}`, import.meta.url), 'utf8')
+  .replace(/\r\n/g, '\n');
 
 const AHQ = {
   title: 'AHQ INSIDER Lake Wateree (SC) 2026 Week 9 Fishing Report – Updated February 25',
