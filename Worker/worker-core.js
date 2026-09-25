@@ -79,6 +79,55 @@ function firstModelsFor(name) {
   return null;
 }
 
+// ── THE FREE GEMINI KEYS: EVERY ONE THE WORKER HOLDS, NOT A LIST OF FIVE ────────────────────────
+//
+// Ryan, 2026-09-25, after adding projects six to nine as GEMINI_FREE6_API_KEY ... GEMINI_FREE9_API_KEY
+// (Google caps a person at ten): the five entries that stood in LLM_PROVIDERS were one entry copied
+// five times, and callLLM named them a second time, so a sixth key needed a sixth copy and a sixth
+// name and the new four sat unread. Now the keys are GEMINI_FREE_API_KEY, then GEMINI_FREE2_API_KEY,
+// GEMINI_FREE3_API_KEY ... for as long as the next one exists -- read by name rather than by listing
+// the environment, so nothing about how a binding is enumerated can hide one. Adding a project is
+// adding its secret.
+const geminiRequest = (p) => ({
+  systemInstruction: { parts: [{ text: p.messages.find(m => m.role === 'system')?.content || '' }] },
+  contents: [{ parts: [{ text: p.messages.find(m => m.role === 'user')?.content || '' }] }],
+  generationConfig: {
+    temperature: p.temperature || 0.15,
+    maxOutputTokens: p.max_tokens || 1500,
+    responseMimeType: p.response_format?.type === 'json_object' ? 'application/json' : undefined,
+  }
+});
+
+function geminiFreeProvider(suffix) {
+  return {
+    // Free-tier Gemini: each key is its own project, with its own limits per model.
+    name: `gemini-free${suffix}`,
+    baseUrl: null,
+    keyEnv: `GEMINI_FREE${suffix}_API_KEY`,
+    defaultModel: "gemini-3.5-flash-lite",
+    models: GEMINI_FREE_MODELS,
+    headers: (key) => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
+    isGemini: true,
+    transformPayload: geminiRequest,
+  };
+}
+
+/** The free Gemini providers `env` holds a key for, in order: GEMINI_FREE_API_KEY, then 2, 3, ... */
+function geminiFreeProviders(env) {
+  const out = [];
+  for (let n = 1; ; n++) {
+    const p = geminiFreeProvider(n === 1 ? '' : String(n));
+    if (!env || !env[p.keyEnv]) return out;
+    out.push(p);
+  }
+}
+
+/** Every provider a request can use: the pay-tier Gemini, each free key, then the others. */
+function providersFor(env) {
+  return [...LLM_PROVIDERS.filter((p) => p.isGemini), ...geminiFreeProviders(env),
+          ...LLM_PROVIDERS.filter((p) => !p.isGemini)];
+}
+
 var LLM_PROVIDERS = [
   {
     // Pay-tier Gemini — limnology agent only
@@ -102,82 +151,6 @@ models: [
         maxOutputTokens: p.max_tokens || 1500,
         responseMimeType: p.response_format?.type === 'json_object' ? 'application/json' : undefined,
       }
-    }),
-  },
-  {
-    // Free-tier Gemini — general agents primary (500 RPD, 250K TPM)
-    name: "gemini-free",
-    baseUrl: null,
-    keyEnv: "GEMINI_FREE_API_KEY",
-    defaultModel: "gemini-3.5-flash-lite",
-    models: GEMINI_FREE_MODELS,
-    headers: (key) => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
-    isGemini: true,
-    transformPayload: (p) => ({
-      systemInstruction: { parts: [{ text: p.messages.find(m => m.role === 'system')?.content || '' }] },
-      contents: [{ parts: [{ text: p.messages.find(m => m.role === 'user')?.content || '' }] }],
-      generationConfig: {
-        temperature: p.temperature || 0.15,
-        maxOutputTokens: p.max_tokens || 1500,
-        responseMimeType: p.response_format?.type === 'json_object' ? 'application/json' : undefined,
-      }
-    }),
-  },
-  {
-    // Free-tier Gemini — fallback when first free key hits rate limits
-    name: "gemini-free2",
-    baseUrl: null,
-    keyEnv: "GEMINI_FREE2_API_KEY",
-    defaultModel: "gemini-3.5-flash-lite",
-    models: GEMINI_FREE_MODELS,
-    headers: (key) => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
-    isGemini: true,
-    transformPayload: (p) => ({
-      systemInstruction: { parts: [{ text: p.messages.find(m => m.role === 'system')?.content || '' }] },
-      contents: [{ parts: [{ text: p.messages.find(m => m.role === 'user')?.content || '' }] }],
-      generationConfig: { temperature: p.temperature || 0.15, maxOutputTokens: p.max_tokens || 1500, responseMimeType: p.response_format?.type === 'json_object' ? 'application/json' : undefined }
-    }),
-  },
-  {
-    name: "gemini-free3",
-    baseUrl: null,
-    keyEnv: "GEMINI_FREE3_API_KEY",
-    defaultModel: "gemini-3.5-flash-lite",
-    models: GEMINI_FREE_MODELS,
-    headers: (key) => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
-    isGemini: true,
-    transformPayload: (p) => ({
-      systemInstruction: { parts: [{ text: p.messages.find(m => m.role === 'system')?.content || '' }] },
-      contents: [{ parts: [{ text: p.messages.find(m => m.role === 'user')?.content || '' }] }],
-      generationConfig: { temperature: p.temperature || 0.15, maxOutputTokens: p.max_tokens || 1500, responseMimeType: p.response_format?.type === 'json_object' ? 'application/json' : undefined }
-    }),
-  },
-  {
-    name: "gemini-free4",
-    baseUrl: null,
-    keyEnv: "GEMINI_FREE4_API_KEY",
-    defaultModel: "gemini-3.5-flash-lite",
-    models: GEMINI_FREE_MODELS,
-    headers: (key) => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
-    isGemini: true,
-    transformPayload: (p) => ({
-      systemInstruction: { parts: [{ text: p.messages.find(m => m.role === 'system')?.content || '' }] },
-      contents: [{ parts: [{ text: p.messages.find(m => m.role === 'user')?.content || '' }] }],
-      generationConfig: { temperature: p.temperature || 0.15, maxOutputTokens: p.max_tokens || 1500, responseMimeType: p.response_format?.type === 'json_object' ? 'application/json' : undefined }
-    }),
-  },
-  {
-    name: "gemini-free5",
-    baseUrl: null,
-    keyEnv: "GEMINI_FREE5_API_KEY",
-    defaultModel: "gemini-3.5-flash-lite",
-    models: GEMINI_FREE_MODELS,
-    headers: (key) => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
-    isGemini: true,
-    transformPayload: (p) => ({
-      systemInstruction: { parts: [{ text: p.messages.find(m => m.role === 'system')?.content || '' }] },
-      contents: [{ parts: [{ text: p.messages.find(m => m.role === 'user')?.content || '' }] }],
-      generationConfig: { temperature: p.temperature || 0.15, maxOutputTokens: p.max_tokens || 1500, responseMimeType: p.response_format?.type === 'json_object' ? 'application/json' : undefined }
     }),
   },
   {
@@ -372,13 +345,10 @@ async function callLLM(env, payload, preferredProvider = null, opts = {}) {
   // keys, which share one shape of request.
   //
   // An EXPLICIT preferredProvider still pins -- a caller that names a provider means it.
+  const PROVIDERS = providersFor(env);
   let rotated = false;
   if (!preferredProvider) {
-    const freeKeys = ['gemini-free', 'gemini-free2', 'gemini-free3', 'gemini-free4', 'gemini-free5'];
-    const available = freeKeys.filter(name => {
-      const p = LLM_PROVIDERS.find(p => p.name === name);
-      return p && env[p.keyEnv];
-    });
+    const available = PROVIDERS.filter((p) => /^gemini-free/.test(p.name)).map((p) => p.name);
     if (available.length > 1) {
       preferredProvider = available[_geminiRoundRobinIdx % available.length];
       _geminiRoundRobinIdx++;
@@ -386,15 +356,15 @@ async function callLLM(env, payload, preferredProvider = null, opts = {}) {
     }
   }
   const providers = !preferredProvider
-    ? LLM_PROVIDERS.filter(p => env[p.keyEnv] && !p.excludeFromGeneral)
+    ? PROVIDERS.filter(p => env[p.keyEnv] && !p.excludeFromGeneral)
     : rotated
       // The rotated key first, then the OTHER FREE GEMINI KEYS and nothing else. Same model
       // family, same request shape, same limits -- a spike on one key is answered by another
       // key rather than by a provider sized differently.
-      ? [...LLM_PROVIDERS.filter(p => p.name === preferredProvider),
-         ...LLM_PROVIDERS.filter(p => p.name !== preferredProvider
+      ? [...PROVIDERS.filter(p => p.name === preferredProvider),
+         ...PROVIDERS.filter(p => p.name !== preferredProvider
                                    && /^gemini-free/.test(p.name) && env[p.keyEnv])]
-      : LLM_PROVIDERS.filter(p => p.name === preferredProvider);
+      : PROVIDERS.filter(p => p.name === preferredProvider);
 
   if (!providers.length) {
     throw new Error("No LLM provider configured. Set GROQ_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY, or CEREBRAS_API_KEY");
