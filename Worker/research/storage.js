@@ -6,6 +6,7 @@ import { extractJsonPossibly, researchStorageId, resolveResearchStorageId, strip
 import { stateFullName } from './dataset.js';
 import { lakeIndex, identityNamesForLake, resolveRegistryRow } from '../registry.js';
 import { buildFactualSummary } from './facts-util.js';
+import { writtenOf } from '../../js/utils/fact-date.js';
 
 async function handleResearchList(env) {
   const prefix = "lakes/";
@@ -526,7 +527,7 @@ async function handleResearchValidationPass(request, env) {
   // The client sends extractedFacts (array); retain facts for backward compatibility.
   const rawFacts = body.extractedFacts || body.facts || [];
   const facts = Array.isArray(rawFacts)
-    ? rawFacts.map(f => `[${f.category || 'fact'}] ${f.fact || f.quote || ''}`).filter(Boolean).join('\n')
+    ? rawFacts.map(f => `[${f.category || 'fact'}] ${f.fact || f.quote || ''}${writtenOf(f, rawFacts)}`).filter(Boolean).join('\n')
     : String(rawFacts || '').trim();
 
   if (!lakeName || !nullFields.length || !facts) {

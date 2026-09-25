@@ -2,6 +2,7 @@
 import { JSON_HEADERS, callLLM, extractLLMText } from '../worker-core.js';
 import { extractJsonPossibly } from './keys.js';
 import { textDateOf, readPage, delink } from './text-date.js';
+import { factsDisagree, writtenOf } from '../../js/utils/fact-date.js';
 
 /**
  * A fact read out of a combined document goes back to the text it came from: the block whose text
@@ -636,68 +637,28 @@ async function handleResearchDedupeContradictions(request, env) {
       'maintainer','watershed','coordinates','country','location']);
     if (WQP_NOISE_CATS.has(cat)) continue; // skip WQP metadata facts entirely
 
-    const IMPORTANT_CATEGORIES = new Set(['identity', 'surfacearea', 'maxdepth', 'averagedepth', 'elevation', 'regulations', 'creellimit_lakespecific', 'sizelimit_lakespecific', 'creellimit', 'sizelimit']);
-
-    if (!IMPORTANT_CATEGORIES.has(cat) && !cat.includes('identity') && !cat.includes('regulation')) {
-      // skip biology/forage/limnology/habitat/navigation entirely — they produce false positives
-    } else {
-      for (const prev of group) {
-        const prevText = String(prev.fact).toLowerCase();
-        const currText = String(f.fact).toLowerCase();
-
-        // Only look for direct numeric conflicts on the exact same attribute
-        // e.g. "13,710 acres" vs "13,025 acres" for surface area, or two different creel limits
-        let numberConflict = false;
-        const numsPrev = prevText.match(/\d+(?:\.\d+)?/g) || [];
-        const numsCurr = currText.match(/\d+(?:\.\d+)?/g) || [];
-
-        if (numsPrev.length && numsCurr.length) {
-          const nPrev = parseFloat(numsPrev[0]);
-          const nCurr = parseFloat(numsCurr[0]);
-          if (isFinite(nPrev) && isFinite(nCurr) && nPrev !== nCurr) {
-            // Require the facts to be talking about the exact same measurable attribute
-            // (surface area, max depth, creel limit, size limit, elevation, etc.)
-            const sameAttr = /acre|surface|depth|elevation|pool|creel|limit|size/i.test(prevText) &&
-                             /acre|surface|depth|elevation|pool|creel|limit|size/i.test(currText);
-            const relDiff = Math.abs(nPrev - nCurr) / Math.max(1, Math.min(nPrev, nCurr));
-            // Don't flag as contradiction if facts mention different species
-            const speciesNames = /largemouth|striped|hybrid|crappie|catfish|bream|walleye|pickerel|perch|bass|bluegill|redear|muskellunge|muskie/i;
-            const prevSpecies = (prevText.match(speciesNames) || [])[0] || '';
-            const currSpecies = (currText.match(speciesNames) || [])[0] || '';
-            const differentSpecies = prevSpecies && currSpecies && prevSpecies.toLowerCase() !== currSpecies.toLowerCase();
-            // Don't flag seasonal rules as contradictions (Oct-May vs Jun-Sep etc)
-            const seasonPattern = /jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|\d+\s*-\s*(may|sept|oct)|spring|summer|fall|winter|seasonal/i;
-            const bothSeasonal = seasonPattern.test(prevText) && seasonPattern.test(currText);
-            // Skip if both facts contain the same set of numbers — different phrasing of same fact
-            const allNumsPrev = new Set((prevText.match(/\d+(?:\.\d+)?/g) || []).map(Number));
-            const allNumsCurr = new Set((currText.match(/\d+(?:\.\d+)?/g) || []).map(Number));
-            const sameNumbers = [...allNumsPrev].every(n => allNumsCurr.has(n)) && [...allNumsCurr].every(n => allNumsPrev.has(n));
-            // 15% threshold filters rounding noise (48k vs 51k acres = 6.25%) while
-            // catching real conflicts (13k vs 51k acres = 292%)
-            if (sameAttr && relDiff > 0.15 && !differentSpecies && !bothSeasonal && !sameNumbers) {
-              numberConflict = true;
-            }
-          }
-        }
-
-        if (numberConflict) {
-          contradictions.push({
-            field: f.category,
-            factA: prev.fact,
-            quoteA: prev.quote,
-            pageA: prev.page,
-            confidenceA: prev.confidence,
-            sourceA: prev.source,
-            textDateA: prev.textDate ?? null,
-            factB: f.fact,
-            quoteB: f.quote,
-            pageB: f.page,
-            confidenceB: f.confidence,
-            sourceB: f.source,
-            textDateB: f.textDate ?? null,
-            reason: 'mutually exclusive numeric claim on same attribute'
-          });
-        }
+    // The test itself is factsDisagree() in js/utils/fact-date.js, shared with the prompts that
+    // print both sides and say which is newer: identity (acreage, depth, elevation) and
+    // regulations (creel/size limits) only; biology/forage facts are almost always complementary.
+    for (const prev of group) {
+      const numberConflict = factsDisagree(prev, f);
+      if (numberConflict) {
+        contradictions.push({
+          field: f.category,
+          factA: prev.fact,
+          quoteA: prev.quote,
+          pageA: prev.page,
+          confidenceA: prev.confidence,
+          sourceA: prev.source,
+          textDateA: prev.textDate ?? null,
+          factB: f.fact,
+          quoteB: f.quote,
+          pageB: f.page,
+          confidenceB: f.confidence,
+          sourceB: f.source,
+          textDateB: f.textDate ?? null,
+          reason: 'mutually exclusive numeric claim on same attribute'
+        });
       }
     }
     // Add to deduped
@@ -760,7 +721,7 @@ async function handleResearchMapFacts(request, env) {
     return new Response(JSON.stringify({ success: true, profile: emptyProfile, provider: 'none', model: 'none', pass, factsUsed: 0, note: 'No facts or gap texts provided — all fields null' }), { headers: JSON_HEADERS });
   }
 
-  const factsText = facts.map(f => `[${f.category}] ${f.fact} (Source: ${f.source}, Confidence: ${f.confidence}%)`).join('\n');
+  const factsText = facts.map(f => `[${f.category}] ${f.fact}${writtenOf(f, facts)} (Source: ${f.source}, Confidence: ${f.confidence}%)`).join('\n');
   const gapTextsSection = gapTexts.length ? `\n\nADDITIONAL TARGETED SEARCH RESULTS (extract any relevant facts for the null fields):\n${gapTexts.map(g => `[Searching for: ${g.field}]\n${g.text}`).join('\n\n---\n\n').slice(0, 4000)}` : '';
 
   const prompt = `You are a data mapping agent. You have a list of verified facts and potentially some raw research excerpts (gap texts) for ${lakeName}.

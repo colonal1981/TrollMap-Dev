@@ -21,6 +21,7 @@ import {
   isCoastalZone, coastalAgentPlan,
 } from './coastal-agents.js';
 import { coerceNum } from '../../js/utils/coerce.js';
+import { writtenOf } from '../../js/utils/fact-date.js';
 
 /**
  * Fit an agent prompt inside a character budget by dropping facts, MEASURING AFTER EACH CUT.
@@ -256,7 +257,17 @@ function cleanProfile(prev) {
   delete out._documentContext;
   delete out._documentContextNote;
   delete out._normalizedDocuments;
-  if (Array.isArray(out._extractedFacts)) out._extractedFacts = out._extractedFacts.slice(0, 80);
+  if (Array.isArray(out._extractedFacts)) {
+    // The date goes into the dump in the words every other fact line uses -- `written` -- in place
+    // of the bare field, whose "--10-02" says nothing to a reader who has not seen text-date.js.
+    const facts = out._extractedFacts.slice(0, 80);
+    out._extractedFacts = facts.map((f) => {
+      const w = writtenOf(f, facts);
+      if (!w) return f;
+      const { textDate, ...rest } = f;
+      return { ...rest, written: w.trim().slice(1, -1) };
+    });
+  }
   return out;
 }
 
@@ -332,12 +343,13 @@ var RESEARCH_AGENTS = {
         return null;
       })() : null);
 
-      const identityFacts = facts.filter(f => {
+      const identityShown = facts.filter(f => {
         if (!/identity|surface|depth|dam|year|owner|river|archetype|impound|county|pool|drawdown|elevation|normal/i.test(f.category)) return false;
         // Exclude poolLevel facts that are just fluctuation ranges — not pool elevations
         if (f.category === 'poolLevel' && !/elevation|ngvd|navd|feet above|ft msl|\d{3}\s*f/i.test(f.fact)) return false;
         return true;
-      }).map(f => `• [${f.category}] ${f.fact} (source: ${f.source}, confidence ${f.confidence}%)\n  Quote: "${f.quote}"`).join('\n\n');
+      });
+      const identityFacts = identityShown.map(f => `• [${f.category}] ${f.fact}${writtenOf(f, identityShown)} (source: ${f.source}, confidence ${f.confidence}%)\n  Quote: "${f.quote}"`).join('\n\n');
 
       const ownerText = (facts.find(f => f.category === 'reservoirOwner')?.fact || '').toLowerCase();
       const isDuke = /duke/i.test(ownerText);
@@ -489,9 +501,10 @@ JSON only.`;
       const rampList = Array.isArray(existingNav.ramps) ? existingNav.ramps : [];
       const rampSample = rampList.slice(0, 8).map(r => r?.name).filter(Boolean).join(', ');
       const facts = prev?._extractedFacts || [];
-      const navFacts = facts.filter(f =>
+      const navShown = facts.filter(f =>
         /ramp|hazard|shoal|navigation|timber|dam|bridge|tailwater|surge|idle|access/i.test(f.category + ' ' + f.fact)
-      ).map(f => `• ${f.fact} (source: ${f.source})`).join('\n');
+      );
+      const navFacts = navShown.map(f => `• ${f.fact}${writtenOf(f, navShown)} (source: ${f.source})`).join('\n');
 
       return `Navigation data for ${lakeName}.
 
@@ -528,7 +541,7 @@ JSON only.`;
       const facts = (prev?._extractedFacts || [])
         .filter(f => /regulation|creel|limit|season|closed|gear|size.*limit|possession|sizeLimit|creelLimit/i.test(f.category + ' ' + f.fact))
         .slice(0, 30);
-      const factsBlock = facts.map(f => `• [${f.category}] ${f.fact} (source: ${f.source})`).join('\n');
+      const factsBlock = facts.map(f => `• [${f.category}] ${f.fact}${writtenOf(f, facts)} (source: ${f.source})`).join('\n');
       const regsContent = prev?._regsSource?.content
         ? prev._regsSource.content.slice(0, 30000)
         : 'Not available';
