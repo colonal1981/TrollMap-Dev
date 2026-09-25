@@ -105,3 +105,19 @@ test('/research/agent-llm returns the record for every group, answered or not', 
     assert.deepEqual(body.meta.llm, { sent: 3, answered: 1 });
   } finally { g.restore(); }
 });
+
+test('the routes say how many free keys the Worker holds, which only its secrets know', async () => {
+  // Projects six to nine were added as GEMINI_FREE6_API_KEY ... GEMINI_FREE9_API_KEY (2026-09-25);
+  // Scripts/research_lakes.py paces extraction from this count, not from a number in the source.
+  const nine = { ...KEYS, GEMINI_FREE6_API_KEY: 'k6', GEMINI_FREE7_API_KEY: 'k7',
+                 GEMINI_FREE8_API_KEY: 'k8', GEMINI_FREE9_API_KEY: 'k9' };
+  const g = gemini(0, { extracted_facts: [] });
+  try {
+    const res = await handleResearchAnalyzeFacts(new Request('https://w.example/x', {
+      method: 'POST', body: JSON.stringify({ lakeName: 'Lake Murray, SC', baseName: 'Murray', state: 'SC',
+        docIndex: 0, documents: [{ title: 'Lake Murray report', url: 'https://a.example/1',
+          text: 'Striped bass on Lake Murray hold on the main lake points at 30 to 40 feet in late summer, '
+            + 'following the herring schools that stay near the thermocline.' }] }) }), nine);
+    assert.equal((await res.json()).meta.freeKeys, 9);
+  } finally { g.restore(); }
+});

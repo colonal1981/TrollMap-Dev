@@ -82,8 +82,11 @@ function firstModelsFor(name) {
 /**
  * GOOGLE'S FREE-TIER LIMITS, PER MODEL -- ONE TABLE, BESIDE THE MODEL LISTS IT DESCRIBES.
  *
- * Off Ryan's AI Studio dashboards, 2026-09-25, the same on all five free projects (TrollmapFree to
- * Trollmapfree5). Google meters each model on its own, per project: "Rate limits are applied per
+ * Off Ryan's AI Studio dashboards, 2026-09-25: the same on all five free projects he had then
+ * (TrollmapFree to Trollmapfree5), and projects six to nine, added that evening, are on the same free
+ * tier. How many there are is not written here or anywhere in the source -- only the Worker's
+ * secrets know, and geminiFreeProviders(env) counts them; the research routes report the count as
+ * meta.freeKeys, which is where Scripts/research_lakes.py takes it from. Google meters each model on its own, per project: "Rate limits are applied per
  * project, not per API key ... Requests per day (RPD) quotas reset at midnight Pacific time"
  * (ai.google.dev/gemini-api/docs/rate-limits, read 2026-09-25). TPM is 250,000 on both Lite and
  * Flash, from the same pages (the notes on GEMINI_FREE_MODELS and GEMINI_FREE_FLASH_MODELS), and
@@ -106,8 +109,54 @@ const GEMINI_FREE_LIMITS = {
   "gemini-2.5-flash-lite": { rpm: 10, rpd: 20,  tpm: null },
 };
 
-// The five free projects' keys, in LLM_PROVIDERS order. callLLM rotates across the ones set.
-const GEMINI_FREE_KEYS = ["gemini-free", "gemini-free2", "gemini-free3", "gemini-free4", "gemini-free5"];
+// ── THE FREE GEMINI KEYS: EVERY ONE THE WORKER HOLDS, NOT A LIST OF FIVE ────────────────────────
+//
+// Ryan, 2026-09-25, after adding projects six to nine as GEMINI_FREE6_API_KEY ... GEMINI_FREE9_API_KEY
+// (Google caps a person at ten): the five entries that stood in LLM_PROVIDERS were one entry copied
+// five times, and callLLM named them a second time, so a sixth key needed a sixth copy and a sixth
+// name and the new four sat unread. Now the keys are GEMINI_FREE_API_KEY, then GEMINI_FREE2_API_KEY,
+// GEMINI_FREE3_API_KEY ... for as long as the next one exists -- read by name rather than by listing
+// the environment, so nothing about how a binding is enumerated can hide one. Adding a project is
+// adding its secret.
+const geminiRequest = (p) => ({
+  systemInstruction: { parts: [{ text: p.messages.find(m => m.role === 'system')?.content || '' }] },
+  contents: [{ parts: [{ text: p.messages.find(m => m.role === 'user')?.content || '' }] }],
+  generationConfig: {
+    temperature: p.temperature || 0.15,
+    maxOutputTokens: p.max_tokens || 1500,
+    responseMimeType: p.response_format?.type === 'json_object' ? 'application/json' : undefined,
+  }
+});
+
+function geminiFreeProvider(suffix) {
+  return {
+    // Free-tier Gemini: each key is its own project, with its own limits per model.
+    name: `gemini-free${suffix}`,
+    baseUrl: null,
+    keyEnv: `GEMINI_FREE${suffix}_API_KEY`,
+    defaultModel: "gemini-3.5-flash-lite",
+    models: GEMINI_FREE_MODELS,
+    headers: (key) => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
+    isGemini: true,
+    transformPayload: geminiRequest,
+  };
+}
+
+/** The free Gemini providers `env` holds a key for, in order: GEMINI_FREE_API_KEY, then 2, 3, ... */
+function geminiFreeProviders(env) {
+  const out = [];
+  for (let n = 1; ; n++) {
+    const p = geminiFreeProvider(n === 1 ? '' : String(n));
+    if (!env || !env[p.keyEnv]) return out;
+    out.push(p);
+  }
+}
+
+/** Every provider a request can use: the pay-tier Gemini, each free key, then the others. */
+function providersFor(env) {
+  return [...LLM_PROVIDERS.filter((p) => p.isGemini), ...geminiFreeProviders(env),
+          ...LLM_PROVIDERS.filter((p) => !p.isGemini)];
+}
 
 var LLM_PROVIDERS = [
   {
@@ -132,82 +181,6 @@ models: [
         maxOutputTokens: p.max_tokens || 1500,
         responseMimeType: p.response_format?.type === 'json_object' ? 'application/json' : undefined,
       }
-    }),
-  },
-  {
-    // Free-tier Gemini — general agents primary (500 RPD, 250K TPM)
-    name: "gemini-free",
-    baseUrl: null,
-    keyEnv: "GEMINI_FREE_API_KEY",
-    defaultModel: "gemini-3.5-flash-lite",
-    models: GEMINI_FREE_MODELS,
-    headers: (key) => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
-    isGemini: true,
-    transformPayload: (p) => ({
-      systemInstruction: { parts: [{ text: p.messages.find(m => m.role === 'system')?.content || '' }] },
-      contents: [{ parts: [{ text: p.messages.find(m => m.role === 'user')?.content || '' }] }],
-      generationConfig: {
-        temperature: p.temperature || 0.15,
-        maxOutputTokens: p.max_tokens || 1500,
-        responseMimeType: p.response_format?.type === 'json_object' ? 'application/json' : undefined,
-      }
-    }),
-  },
-  {
-    // Free-tier Gemini — fallback when first free key hits rate limits
-    name: "gemini-free2",
-    baseUrl: null,
-    keyEnv: "GEMINI_FREE2_API_KEY",
-    defaultModel: "gemini-3.5-flash-lite",
-    models: GEMINI_FREE_MODELS,
-    headers: (key) => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
-    isGemini: true,
-    transformPayload: (p) => ({
-      systemInstruction: { parts: [{ text: p.messages.find(m => m.role === 'system')?.content || '' }] },
-      contents: [{ parts: [{ text: p.messages.find(m => m.role === 'user')?.content || '' }] }],
-      generationConfig: { temperature: p.temperature || 0.15, maxOutputTokens: p.max_tokens || 1500, responseMimeType: p.response_format?.type === 'json_object' ? 'application/json' : undefined }
-    }),
-  },
-  {
-    name: "gemini-free3",
-    baseUrl: null,
-    keyEnv: "GEMINI_FREE3_API_KEY",
-    defaultModel: "gemini-3.5-flash-lite",
-    models: GEMINI_FREE_MODELS,
-    headers: (key) => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
-    isGemini: true,
-    transformPayload: (p) => ({
-      systemInstruction: { parts: [{ text: p.messages.find(m => m.role === 'system')?.content || '' }] },
-      contents: [{ parts: [{ text: p.messages.find(m => m.role === 'user')?.content || '' }] }],
-      generationConfig: { temperature: p.temperature || 0.15, maxOutputTokens: p.max_tokens || 1500, responseMimeType: p.response_format?.type === 'json_object' ? 'application/json' : undefined }
-    }),
-  },
-  {
-    name: "gemini-free4",
-    baseUrl: null,
-    keyEnv: "GEMINI_FREE4_API_KEY",
-    defaultModel: "gemini-3.5-flash-lite",
-    models: GEMINI_FREE_MODELS,
-    headers: (key) => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
-    isGemini: true,
-    transformPayload: (p) => ({
-      systemInstruction: { parts: [{ text: p.messages.find(m => m.role === 'system')?.content || '' }] },
-      contents: [{ parts: [{ text: p.messages.find(m => m.role === 'user')?.content || '' }] }],
-      generationConfig: { temperature: p.temperature || 0.15, maxOutputTokens: p.max_tokens || 1500, responseMimeType: p.response_format?.type === 'json_object' ? 'application/json' : undefined }
-    }),
-  },
-  {
-    name: "gemini-free5",
-    baseUrl: null,
-    keyEnv: "GEMINI_FREE5_API_KEY",
-    defaultModel: "gemini-3.5-flash-lite",
-    models: GEMINI_FREE_MODELS,
-    headers: (key) => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
-    isGemini: true,
-    transformPayload: (p) => ({
-      systemInstruction: { parts: [{ text: p.messages.find(m => m.role === 'system')?.content || '' }] },
-      contents: [{ parts: [{ text: p.messages.find(m => m.role === 'user')?.content || '' }] }],
-      generationConfig: { temperature: p.temperature || 0.15, maxOutputTokens: p.max_tokens || 1500, responseMimeType: p.response_format?.type === 'json_object' ? 'application/json' : undefined }
     }),
   },
   {
@@ -294,10 +267,12 @@ function extractLLMText(data) {
 // 15, 5 to 8 on the Flash models against 5, while the client paced the whole pool at 60 a minute.
 // Both are the shape of calls piling onto the same slot, not of load spread over twenty.
 //
-// So each call draws its own start with Math.random() -- inside a request, where it is allowed --
-// and turns from there: key s, s+1, ... around the ring, and the model ladder likewise. Twenty
-// isolates making one call each land where twenty draws land, whatever each isolate has done
-// before (test/a-fresh-isolate-does-not-start-on-the-first-slot.test.js).
+// So where an isolate starts is drawn with Math.random() INSIDE its first request, where it is
+// allowed and differs from isolate to isolate, and every later call in that isolate steps one on
+// from it: key s, s+1, ... around the ring, and the model ladder likewise. Twenty isolates making
+// one call each land where twenty draws land (test/a-fresh-isolate-does-not-start-on-the-first-slot
+// .test.js), and one isolate making nine calls on nine keys asks each key once
+// (test/every-free-key-is-used.test.js) -- a fresh draw per call would leave keys unasked.
 //
 // BOTH MODELS, EACH ON ITS OWN QUOTA -- FOR THE CALLS THAT ASK. Ryan, 2026-09-24, with one key's
 // AI Studio usage page open: "and we could make it so it hits both models separately right".
@@ -307,8 +282,11 @@ function extractLLMText(data) {
 // (Worker/research/extract.js), and callers that did not ask -- the species groups among them --
 // keep 3.5 first, so the model that answers them does not change under them. The Flash pass
 // ({ firstModels }) always starts at a drawn model.
-function drawStart(n) {
-  return n > 1 ? Math.floor(Math.random() * n) : 0;
+const _drawn = {};   // lane ("key", "lite", "first") -> { offset, calls }; offset drawn in a request
+function drawStart(n, lane) {
+  if (n < 2) return 0;
+  const d = _drawn[lane] || (_drawn[lane] = { offset: Math.floor(Math.random() * 1e9), calls: 0 });
+  return (d.offset + d.calls++) % n;
 }
 
 /**
@@ -494,34 +472,32 @@ async function callLLM(env, payload, preferredProvider = null, opts = {}) {
   // keys, which share one shape of request.
   //
   // An EXPLICIT preferredProvider still pins -- a caller that names a provider means it.
+  const PROVIDERS = providersFor(env);
   let rotated = false;
   let keyOrder = null;
   if (!preferredProvider) {
-    const available = GEMINI_FREE_KEYS.filter(name => {
-      const p = LLM_PROVIDERS.find(p => p.name === name);
-      return p && env[p.keyEnv];
-    });
+    const available = PROVIDERS.filter((p) => /^gemini-free/.test(p.name)).map((p) => p.name);
     if (available.length > 1) {
-      keyOrder = turnLadder(available, drawStart(available.length));
+      keyOrder = turnLadder(available, drawStart(available.length, 'key'));
       preferredProvider = keyOrder[0];
       rotated = true;
     }
   }
   const providers = !preferredProvider
-    ? LLM_PROVIDERS.filter(p => env[p.keyEnv] && !p.excludeFromGeneral)
+    ? PROVIDERS.filter(p => env[p.keyEnv] && !p.excludeFromGeneral)
     : rotated
       // The drawn key first, then the OTHER FREE GEMINI KEYS round the ring from it, and nothing
       // else. Same model family, same request shape, same limits -- a spike on one key is
       // answered by another key rather than by a provider sized differently.
-      ? keyOrder.map((name) => LLM_PROVIDERS.find((p) => p.name === name))
-      : LLM_PROVIDERS.filter(p => p.name === preferredProvider);
+      ? keyOrder.map((name) => PROVIDERS.find((p) => p.name === name))
+      : PROVIDERS.filter(p => p.name === preferredProvider);
 
   if (!providers.length) {
     throw new Error("No LLM provider configured. Set GROQ_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY, or CEREBRAS_API_KEY");
   }
 
   const modelStart = opts && opts.spreadModels
-    ? drawStart((LLM_PROVIDERS.find((p) => p.name === 'gemini-free')?.models || []).length) : 0;
+    ? drawStart(GEMINI_FREE_MODELS.length, 'lite') : 0;
 
   const sent = [];
   try {
@@ -543,7 +519,7 @@ async function walkLadder(env, payload, providers, modelStart, opts, sent) {
   // twenty allowances. Everything that refuses falls through to the loop below, unchanged.
   if (opts && Array.isArray(opts.firstModels) && opts.firstModels.length) {
     const freeKeys = providers.filter((p) => p.isGemini && /^gemini-free/.test(p.name) && env[p.keyEnv]);
-    for (const modelId of turnLadder(opts.firstModels, drawStart(opts.firstModels.length))) {
+    for (const modelId of turnLadder(opts.firstModels, drawStart(opts.firstModels.length, 'first'))) {
       for (const provider of freeKeys) {
         if (busy.has(modelId) || spentToday(provider, modelId)) continue;
         try {
@@ -846,5 +822,5 @@ async function listAllR2(bucket, prefix, keep) {
 // carried thirty lines that could never run while the live copy drifted independently.
 // Exported now; trollmap-worker.js imports them.
 export { CORS, JSON_HEADERS, TEXT_HEADERS, extractLLMText, callLLM, countRequests, rateRefusal, forgetSpentSlots,
-  GEMINI_FREE_MODELS, GEMINI_FREE_FLASH_MODELS, GEMINI_FREE_SPARE_MODELS, GEMINI_FREE_LIMITS, GEMINI_FREE_KEYS,
-  firstModelsFor, isAuthorized, chartpackKey, handleChartpackList, r2Body, r2Text, listAllR2 };
+  GEMINI_FREE_MODELS, GEMINI_FREE_FLASH_MODELS, GEMINI_FREE_SPARE_MODELS, GEMINI_FREE_LIMITS,
+  geminiFreeProviders, firstModelsFor, isAuthorized, chartpackKey, handleChartpackList, r2Body, r2Text, listAllR2 };

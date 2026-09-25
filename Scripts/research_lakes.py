@@ -841,15 +841,20 @@ def pace_seconds(chars, tpm):
 #     Lite   60/min 1.00 requests per answer   90 1.00   120 1.12   150 (the table's all) 1.43
 #     Flash  40/min 1.15 (26 of 400 lost)      60 1.30 (70 lost)   80 1.58   100 1.96 (181 lost)
 #
-# Lite comes out at 60, the number it always had; Flash first at 40; spare first at 40.
+# How many keys there are is not in the source: the Worker reads GEMINI_FREE_API_KEY, then 2, 3, ...
+# for as long as the next secret exists (geminiFreeProviders), and says how many in meta.freeKeys on
+# every /research/analyze-facts and /research/agent-llm response. So the first read of a run goes
+# alone, and its answer sets the pace for the rest (extract_documents). On five keys Lite comes out
+# at 60, the number it always had, and Flash first or spare first at 40; on nine, 120 and 80 -- the
+# same load per slot, since the slots grew with the keys.
 EXTRACT_CALL_SECONDS = 12        # measured 2026-09-24: 8.7, 11.2, 13.4, 14.8 s on four calls
 
 _FREE_TIER = {}
 
 
 def free_tier():
-    """GEMINI_FREE_LIMITS, the three model lists and the free keys, read out of
-    Worker/worker-core.js by node -- the Worker's own table, not a copy of it. Cached."""
+    """GEMINI_FREE_LIMITS and the three model lists, read out of Worker/worker-core.js by node --
+    the Worker's own table, not a copy of it. Cached. The key count is not here: free_keys()."""
     if not _FREE_TIER:
         src = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
                                            "Worker", "worker-core.js"))
@@ -857,7 +862,7 @@ def free_tier():
             f"const m = await import({json.dumps('file://' + src.replace(os.sep, '/'))});"
             "process.stdout.write(JSON.stringify({limits: m.GEMINI_FREE_LIMITS,"
             " lite: m.GEMINI_FREE_MODELS, flash: m.GEMINI_FREE_FLASH_MODELS,"
-            " spare: m.GEMINI_FREE_SPARE_MODELS, keys: m.GEMINI_FREE_KEYS}));"
+            " spare: m.GEMINI_FREE_SPARE_MODELS}));"
         )
         proc = subprocess.run(["node", "--input-type=module", "-e", script],
                               capture_output=True, text=True, encoding="utf-8")
@@ -868,12 +873,33 @@ def free_tier():
     return _FREE_TIER
 
 
-def paced_rpm(extract_models="lite"):
-    """The extraction ceiling for the models `--extract-models` puts first. See the note above."""
+_FREE_KEYS = {"n": None}
+_FREE_KEYS_LOCK = threading.Lock()
+
+
+def learn_free_keys(res):
+    """Keep the Worker's own count of its free Gemini keys, from any response that carries it."""
+    n = (((res or {}).get("meta") or {}).get("freeKeys")) if isinstance(res, dict) else None
+    if isinstance(n, int) and n > 0:
+        with _FREE_KEYS_LOCK:
+            _FREE_KEYS["n"] = n
+
+
+def free_keys():
+    """How many free Gemini keys the Worker said it holds, or None before it has said."""
+    return _FREE_KEYS["n"]
+
+
+def paced_rpm(extract_models="lite", keys=None):
+    """The extraction ceiling for the models `--extract-models` puts first, on `keys` free keys
+    (the Worker's count when not given). None while the count is unknown. See the note above."""
+    keys = keys if keys is not None else free_keys()
+    if not keys:
+        return None
     tier = free_tier()
     models = tier.get(extract_models) or tier["lite"]
     per_key = sum(tier["limits"][m]["rpm"] for m in models)
-    return per_key * (len(tier["keys"]) - 1) // 2
+    return per_key * max(keys - 1, 1) // 2
 
 
 def extract_workers(rpm, n_calls):
@@ -947,6 +973,7 @@ def read_with_waits(body, limiter=None, tokens=0, tally=None):
         if limiter is not None:
             limiter.acquire(tokens)
         code, ex, err = _req("/research/analyze-facts", body)
+        learn_free_keys(ex if code == 200 else last_error_body())
         if tally is not None:
             tally.add(ex if code == 200 else last_error_body())
         if code == 200:
@@ -1013,11 +1040,29 @@ def extract_documents(lake, state, alt_names, docs, rpm, tpm, verbose=False, win
 
     `window_stats`, when given a dict, is filled with window_summary() of what was sent; `tally`,
     an LLMTally, counts every request the Worker sent for these reads."""
-    limiter = CallLimiter(rpm, tpm)
     windows = {}
-    with ThreadPoolExecutor(max_workers=extract_workers(rpm, len(docs))) as ex:
-        got = list(ex.map(lambda p: _extract_one(lake, state, alt_names, p[0], p[1], limiter,
-                                                 verbose, windows, tally), enumerate(docs)))
+    got = []
+    pending = list(enumerate(docs))
+    if rpm is None:
+        # PACED FROM THE WORKER'S KEY COUNT, which only the Worker knows (meta.freeKeys). Until it
+        # has said, one read goes alone; its answer sets the pace for the rest. A Worker that
+        # never says gets its reads one at a time, not a guessed number of keys.
+        if free_keys() is None and pending:
+            i, d = pending.pop(0)
+            got.append(_extract_one(lake, state, alt_names, i, d, CallLimiter(0, tpm), verbose,
+                                    windows, tally))
+            print(f"      extraction paced to the Worker's {free_keys() or 'unreported number of'} "
+                  f"free key(s): {paced_rpm(EXTRACT_MODELS) or 'one read at a time'}"
+                  + (" calls/min" if paced_rpm(EXTRACT_MODELS) else ""))
+        rpm = paced_rpm(EXTRACT_MODELS)
+        workers = extract_workers(rpm, len(pending)) if rpm else 1
+        rpm = rpm or 0
+    else:
+        workers = extract_workers(rpm, len(pending))
+    limiter = CallLimiter(rpm, tpm)
+    with ThreadPoolExecutor(max_workers=max(workers, 1)) as ex:
+        got += list(ex.map(lambda p: _extract_one(lake, state, alt_names, p[0], p[1], limiter,
+                                                  verbose, windows, tally), pending))
     if window_stats is not None:
         window_stats.update(window_summary([windows.get(i) or {} for i in range(len(docs))], docs))
     facts = [f for fs, _, _, _ in got for f in fs]
@@ -1123,8 +1168,6 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
                  tpm=DEFAULT_TPM, row=None, limnology_only=False, rpm=None,
                  group_models="lite"):
     """One lake, start to saved profile. Returns a result dict; never raises."""
-    if rpm is None:
-        rpm = paced_rpm(EXTRACT_MODELS)
     t0 = time.perf_counter()
     clock = PhaseClock()
     out = {"lake": lake, "state": state, "aliases": list(alt_names or []),
@@ -1891,6 +1934,7 @@ def _ask_agent_llm(lake, body, out, tally=None):
     code = res = err = None
     for attempt in range(1, AGENT_LLM_TRIES + 1):
         code, res, err = _req("/research/agent-llm", body, timeout=AGENT_LLM_TIMEOUT)
+        learn_free_keys(res if code == 200 else last_error_body())
         if tally is not None:
             tally.add(res if code == 200 else last_error_body())
         if code == 200 and res:
@@ -2655,7 +2699,8 @@ def main():
     ap.add_argument("--rpm", type=int, default=None,
                     help="extraction calls started per minute, across the calls run at once "
                          "(default: from GEMINI_FREE_LIMITS in Worker/worker-core.js for the "
-                         "models --extract-models asks -- 60 on Lite, 40 with flash or spare; "
+                         "models --extract-models asks, on as many free keys as the Worker "
+                         "reports -- 60 on Lite with five keys, 40 with flash or spare; "
                          "0 disables the ceiling)")
     ap.add_argument("--dry-run", action="store_true",
                     help="run everything except /research/save")
@@ -2720,8 +2765,7 @@ def main():
 
     global REGISTRY_DIR, EXTRACT_MODELS
     REGISTRY_DIR = a.registry
-    if a.rpm is None:
-        a.rpm = paced_rpm(a.extract_models)
+
     EXTRACT_MODELS = a.extract_models
 
     if a.apply_groups:
@@ -2776,8 +2820,10 @@ def main():
     # --jobs multiplies the token rate, which is what the pacing exists to hold down. Serial is
     # the default for that reason and not out of caution.
     print(f"estimate at 220 s/lake: {len(lakes) * 220 / max(a.jobs, 1) / 60:.0f} min"
-          f"   (extraction: up to {extract_workers(a.rpm, 99)} at once, "
-          f"{a.rpm or 'no'} calls/min, {a.tpm:,} input tokens/min)\n")
+          + (f"   (extraction: up to {extract_workers(a.rpm, 99)} at once, "
+             f"{a.rpm or 'no'} calls/min, {a.tpm:,} input tokens/min)\n" if a.rpm is not None else
+             f"   (extraction paced to the Worker's free keys once it reports them -- "
+             f"{a.extract_models}; {a.tpm:,} input tokens/min)\n"))
 
     t0 = time.perf_counter()
     done = [0]

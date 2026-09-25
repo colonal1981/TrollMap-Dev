@@ -108,5 +108,62 @@ class Extraction(unittest.TestCase):
         self.assertEqual(out["llm"]["answered"], 0)
 
 
+class TheKeyCountComesFromTheWorker(unittest.TestCase):
+    """Only the Worker's secrets know how many free keys there are (geminiFreeProviders). It says
+    so in meta.freeKeys; the first read of a run goes alone, and its answer sets the pace."""
+
+    def setUp(self):
+        self._req, self._sleep, self._n = R._req, time.sleep, R._FREE_KEYS["n"]
+        R._FREE_KEYS["n"] = None
+        time.sleep = lambda s: None
+
+    def tearDown(self):
+        R._req, time.sleep = self._req, self._sleep
+        R._FREE_KEYS["n"] = self._n
+
+    def test_the_first_read_goes_alone_and_its_answer_sets_the_pace(self):
+        lock = threading.Lock()
+        state = {"in_flight": 0, "peak": 0, "calls": 0, "first_alone": None}
+
+        def fake(path, body):
+            with lock:
+                state["calls"] += 1
+                first = state["calls"] == 1
+                state["in_flight"] += 1
+                state["peak"] = max(state["peak"], state["in_flight"])
+            self._sleep(0.02)
+            with lock:
+                if first:
+                    state["first_alone"] = state["in_flight"] == 1
+                state["in_flight"] -= 1
+            return 200, {"extracted_facts": [], "meta": {"docResults": [{"facts": 0}],
+                                                         "llmRequests": [], "freeKeys": 9}}, None
+
+        R._req = fake
+        R.extract_documents("L", "SC", [], [{"text": "a" * 300}] * 6, rpm=None, tpm=0)
+        self.assertTrue(state["first_alone"])
+        self.assertEqual(R.free_keys(), 9)
+        self.assertEqual(R.paced_rpm("lite"), 120, "nine keys: eight paced at 15 x 2 / 2")
+        self.assertGreater(state["peak"], 1, "the rest run side by side once the count is known")
+
+    def test_a_worker_that_never_says_is_read_one_at_a_time(self):
+        state = {"in_flight": 0, "peak": 0}
+        lock = threading.Lock()
+
+        def fake(path, body):
+            with lock:
+                state["in_flight"] += 1
+                state["peak"] = max(state["peak"], state["in_flight"])
+            self._sleep(0.01)
+            with lock:
+                state["in_flight"] -= 1
+            return 200, {"extracted_facts": [], "meta": {"docResults": [{"facts": 0}]}}, None
+
+        R._req = fake
+        R.extract_documents("L", "SC", [], [{"text": "a" * 300}] * 4, rpm=None, tpm=0)
+        self.assertIsNone(R.free_keys())
+        self.assertEqual(state["peak"], 1, "no guessed key count")
+
+
 if __name__ == "__main__":
     unittest.main()

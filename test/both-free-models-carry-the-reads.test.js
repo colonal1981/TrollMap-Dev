@@ -19,9 +19,8 @@ const ENV = { GEMINI_FREE_API_KEY: 'k1', GEMINI_FREE2_API_KEY: 'k2', GEMINI_FREE
 const PAYLOAD = { messages: [{ role: 'system', content: 's' }, { role: 'user', content: 'u' }] };
 const OK = { candidates: [{ content: { parts: [{ text: '{"extracted_facts":[]}' }] } }] };
 
-// WHERE A CALL STARTS IS DRAWN PER CALL (drawStart, worker-core.js), so these draw from a seeded
-// generator: the same draws every run, and no claim here rests on consecutive calls stepping a
-// counter. mulberry32, a standard 32-bit generator.
+// WHERE AN ISOLATE STARTS IS DRAWN IN ITS FIRST REQUEST (drawStart, worker-core.js), so these draw
+// from a seeded generator: the same draws every run. mulberry32, a standard 32-bit generator.
 function seeded(seed) {
   let a = seed >>> 0;
   return () => {

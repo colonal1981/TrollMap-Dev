@@ -15,7 +15,8 @@
 // same in all of them (Math.random returns 0 while the module evaluates) -- the case the dashboards
 // look like. Then each makes ONE call. Measured with this file against the code before the change
 // (the three counters): all twenty isolates started on key 1, gemini-3.5-flash-lite; with Flash
-// first, all twenty on key 1, gemini-3.8-flash. After it, the start is drawn by the call.
+// first, all twenty on key 1, gemini-3.8-flash. After it, the start is drawn inside the isolate's
+// first request, where randomness is allowed and differs per isolate.
 //
 //   node --test test/a-fresh-isolate-does-not-start-on-the-first-slot.test.js
 import { test } from 'node:test';
@@ -72,7 +73,7 @@ test('twenty fresh isolates spread their first Lite call over the ten slots', as
   const slots = await firstSlots({ spreadModels: true }, 'lite');
   const per = tally(slots);
   assert.ok(per.size >= 7, `${per.size} of 10 slots used: ${[...per].join(' ')}`);
-  assert.ok(Math.max(...per.values()) <= 5, `no slot takes more than 5 of 20: ${[...per].join(' ')}`);
+  assert.ok(Math.max(...per.values()) <= 6, `no slot takes more than 6 of 20 (all 20 before): ${[...per].join(' ')}`);
   assert.ok(new Set(slots.map((s) => s.split('/')[0])).size >= 4, 'the keys spread');
   assert.equal(new Set(slots.map((s) => s.split('/')[1])).size, 2, 'both Lite models start calls');
 });

@@ -1,5 +1,5 @@
 // research/agents.js — split from worker-research.js (behavior-preserving) 
-import { JSON_HEADERS, callLLM, countRequests, extractLLMText, firstModelsFor } from '../worker-core.js';
+import { JSON_HEADERS, callLLM, countRequests, extractLLMText, firstModelsFor, geminiFreeProviders } from '../worker-core.js';
 import { fetchDukeOperatingRange } from '../worker-data.js';
 import { dukePoolManagement, isTidalWater } from '../conditions.js';
 import { lakeIndex, resolveRegistryRow, agencyLakeFacts, speciesTraits,
@@ -1891,7 +1891,7 @@ holding: coerceHolding(entry.holding, holdingRejects),
               askedGroups: groupEntries.map(([g]) => g),
               agencyEntries: (groundedPrev._agencyEntries || []).length,
               speciesTraitRows: (groundedPrev._traitsEntries || []).length,
-              llm: countRequests(llmRequests), llmRequests },
+              llm: countRequests(llmRequests), llmRequests, freeKeys: geminiFreeProviders(env).length },
       // Surfaced where the client's log will show it. A run that lost a quarter of the lake's
       // species must not print a tick and nothing else.
       warnings: [
@@ -1963,14 +1963,14 @@ holding: coerceHolding(entry.holding, holdingRejects),
     // The requests a failed call spent are still requests: the batch counts them from here.
     const llmRequests = (e && e.requests) || [];
     return new Response(JSON.stringify({success:false, error:`LLM failed: ${e.message}`, agent: agentKey, lakeName,
-      meta: { llm: countRequests(llmRequests), llmRequests }}), {status: 502, headers: JSON_HEADERS});
+      meta: { llm: countRequests(llmRequests), llmRequests, freeKeys: geminiFreeProviders(env).length }}), {status: 502, headers: JSON_HEADERS});
   }
   const llmRequests = llmResult.requests || [];
   const rawText = extractLLMText(llmResult.data);
   const parsed = extractJsonPossibly(rawText);
   if (!parsed) {
     return new Response(JSON.stringify({success:false, error:"Agent returned non-JSON", raw: rawText.slice(0, 800), agent: agentKey,
-      meta: { llm: countRequests(llmRequests), llmRequests }}), {status: 502, headers: JSON_HEADERS});
+      meta: { llm: countRequests(llmRequests), llmRequests, freeKeys: geminiFreeProviders(env).length }}), {status: 502, headers: JSON_HEADERS});
   }
 
   const dataKey = agent.expectedKey;
@@ -2122,6 +2122,7 @@ holding: coerceHolding(entry.holding, holdingRejects),
       timestamp: new Date().toISOString(),
       llm: countRequests(llmRequests),
       llmRequests,
+      freeKeys: geminiFreeProviders(env).length,
     },
     raw: rawText.slice(0, 2000)
   }), {headers: JSON_HEADERS});

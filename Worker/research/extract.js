@@ -1,5 +1,5 @@
 // research/extract.js — split from worker-research.js (behavior-preserving)
-import { JSON_HEADERS, callLLM, countRequests, extractLLMText, firstModelsFor } from '../worker-core.js';
+import { JSON_HEADERS, callLLM, countRequests, extractLLMText, firstModelsFor, geminiFreeProviders } from '../worker-core.js';
 import { extractJsonPossibly } from './keys.js';
 import { textDateOf, readPage, delink } from './text-date.js';
 import { factsDisagree, writtenOf } from '../../js/utils/fact-date.js';
@@ -582,6 +582,9 @@ FISHING BEHAVIOUR IS A FIRST-CLASS FACT. Sentences from guides, fishing reports 
       totalFacts: allFacts.length,
       llm: countRequests(llmRequests),
       llmRequests,
+      // How many free Gemini keys this Worker holds -- only its secrets know (geminiFreeProviders).
+      // Scripts/research_lakes.py paces extraction from it.
+      freeKeys: geminiFreeProviders(env).length,
     }
   }), { headers: JSON_HEADERS });
 }
