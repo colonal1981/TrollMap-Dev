@@ -246,6 +246,54 @@
    "county": "Chatham",
    "feature_type": "lake",
    "_from": "constructed 2026-09-25 for a case the desktop review measured on the stored corpora"
+  },
+  "deep_river": {
+   "slug": "deep_river",
+   "name": "Deep River",
+   "state": "NC",
+   "display_name": "Deep River (Chatham Co, NC)",
+   "legacy_display_names": [
+    "Deep River, NC"
+   ],
+   "county": "Chatham",
+   "feature_type": "river",
+   "_from": "constructed 2026-09-25 for a case the desktop re-measure of eee0d06 found"
+  },
+  "holston_river": {
+   "slug": "holston_river",
+   "name": "Holston River",
+   "state": "TN",
+   "display_name": "Holston River (Sullivan Co, TN)",
+   "legacy_display_names": [
+    "Holston River, TN"
+   ],
+   "county": "Sullivan",
+   "feature_type": "river",
+   "_from": "constructed 2026-09-25 for a case the desktop re-measure of eee0d06 found"
+  },
+  "catawba_river": {
+   "slug": "catawba_river",
+   "name": "Catawba River",
+   "state": "NC",
+   "display_name": "Catawba River (Burke Co, NC)",
+   "legacy_display_names": [
+    "Catawba River, NC"
+   ],
+   "county": "Burke",
+   "feature_type": "river",
+   "_from": "constructed 2026-09-25 for a case the desktop re-measure of eee0d06 found"
+  },
+  "tuckasegee_river": {
+   "slug": "tuckasegee_river",
+   "name": "Tuckasegee River",
+   "state": "NC",
+   "display_name": "Tuckasegee River (Jackson Co, NC)",
+   "legacy_display_names": [
+    "Tuckasegee River, NC"
+   ],
+   "county": "Jackson",
+   "feature_type": "river",
+   "_from": "constructed 2026-09-25 for a case the desktop re-measure of eee0d06 found"
   }
  },
  "documents": {
@@ -375,6 +423,46 @@
    "title": "Jordan Lake, NC | Recreation, Camping & Lake Information",
    "url": "https://aa-fishing.com/nc/nc-fishing-lake-jordan.html",
    "text": "# Jordan Lake, NC\n\nAKA: Lake Jordan, Jordan Reservoir\n\nThis is a 14,000-acre reservoir in the north-central part of the state.\n\nThe lake supports populations of largemouth bass, smallmouth bass, channel catfish and striped bass at Jordan Lake in North Carolina.\n\nFishing lakes in each state\nUtah\nUtah Lake\nUtah fishing\nUtah reservoirs\nUtah trout\nUtah bass\nUtah camping\nUtah boating\nUtah licenses"
+  },
+  "congaree_noaa_gauge": {
+   "water": "congaree_river",
+   "expect": null,
+   "review": "title, URL and body ran into one sentence {AK: 2}; quoted",
+   "title": "Congaree River at Columbia - Water NOAA",
+   "url": "https://water.noaa.gov/gauges/cols1",
+   "text": "Update(8/6): National Water Model derived flood maps in Alaska have been restored. Alaska river forecast points are back online."
+  },
+  "deep_river_access_sites": {
+   "water": "deep_river",
+   "expect": null,
+   "review": "Virginia belongs to the New River in the same sentence; quoted",
+   "title": "River Access Sites",
+   "url": "https://www.hawriverkeeper.org/river-access-sites",
+   "text": "We have spent years fishing on the New River in Virginia, but Deep River Fly Fishing orchestrated a day on the Deep River that we will not forget."
+  },
+  "holston_twin_trout": {
+   "water": "holston_river",
+   "expect": null,
+   "review": "North Carolina belongs to the Watauga; quoted",
+   "title": "Twin Trout Streams of East Tennessee",
+   "url": "https://example.org/twin-trout-streams",
+   "text": "The Watauga River, which originates in North Carolina, flows for 78 miles before joining the South Fork Holston River near Kingsport."
+  },
+  "catawba_river_stalkers": {
+   "water": "catawba_river",
+   "expect": null,
+   "review": "South Carolina belongs to Lake Wylie; quoted",
+   "title": "River stalkers: tailrace stripers",
+   "url": "https://example.org/river-stalkers",
+   "text": "Guides read the Catawba River in relation to Lake Norman, above Mountain Island and below Lake Wylie in South Carolina."
+  },
+  "tuckasegee_enterprising": {
+   "water": "tuckasegee_river",
+   "expect": null,
+   "review": "Georgia, Kentucky and Tennessee belong to the other rivers listed; quoted",
+   "title": "Enterprising Waters",
+   "url": "https://example.org/enterprising-waters",
+   "text": "Our guides fish the delayed harvest section on the Tuckasegee River at Dillsboro and the Chattahoochee River in Georgia, the Cumberland River in Kentucky and South Holston in Tennessee."
   }
  },
  "searches": [

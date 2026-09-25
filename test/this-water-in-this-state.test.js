@@ -16,7 +16,9 @@
  * THE RULE ONLY READS SENTENCES THAT NAME THE WATER, WITH THE NAME TAKEN OUT. The desktop review of
  * 2026-09-25 ran the first version over 758 stored documents and found it refusing real pages: the
  * Little Tennessee's own name counted as Tennessee, a nav link or a football score outvoted a page
- * that never names its state, and "constructor" was a state. Section 3b is those pages.
+ * that never names its state, and "constructor" was a state. Its re-measure of eee0d06 then found a
+ * state given to the wrong water ("the New River in Virginia" on a Deep River page). So a state
+ * counts only when the page gives it to THIS water. Section 3b is those pages.
  *
  * The fixture's documents are the pages those searches returned, fetched 2026-09-25. Its index rows
  * are copied from the repo's registry fixtures where one exists and marked `constructed` where not.
@@ -113,11 +115,10 @@ describe('the gate refuses a page about another state\'s water', () => {
     expect(FX.documents.pee_dee_scdnr.url.includes('dnr.sc.gov')).toBe(true);
     expect(gate('pee_dee_scdnr')).toBe('another_state');
   });
-  it('in the sentences that name the New River, Virginia 5 times and North Carolina 3: Virginia\'s, not a tie', () => {
+  it('Virginia DWR gives the New River Virginia 5 times and North Carolina 3: Virginia\'s, not a tie', () => {
     const d = FX.documents.new_river_virginia_dwr;
-    const m = S.stateMentions(S.nameSentences(`${d.title}\n${d.url}\n${d.text}`, scopeOf('new_river').names));
-    expect(m.VA).toBe(5);
-    expect(m.NC).toBe(3);
+    expect(S.statesTiedToWater(`${d.title}\n${d.url}\n${d.text}`, scopeOf('new_river').names))
+      .toEqual({ VA: 5, NC: 3 });
   });
   it('a page that never ties the name to a state is kept, even for the other piece: a miss, left to the Claude step', () => {
     // Legacy Parks names "North Carolina" in a sentence that does not name the French Broad, and the
@@ -178,6 +179,23 @@ describe('a real page about the right water is not refused over a word that is n
       const text = names.map((n) => `We fished the ${n} today.`).join(' ');
       expect(S.stateMentions(S.nameSentences(text, names)), slug).toEqual({});
     }
+  });
+  it('a state goes to the water named before it, not to every water in the sentence', () => {
+    expect(S.statesTiedToWater('fishing on the New River in Virginia, but Deep River Fly Fishing took us out on the Deep River',
+      ['deep river'])).toEqual({});
+    expect(S.statesTiedToWater('The Deep River in North Carolina', ['deep river'])).toEqual({ NC: 1 });
+  });
+  it('a possessive goes forward: "Florida\'s St. Johns River" is Florida\'s', () => {
+    expect(S.statesTiedToWater("Florida's St. Johns River is running high", ['johns river'])).toEqual({ FL: 1 });
+    expect(S.statesTiedToWater("The Little Tennessee is North Carolina's best stream",
+      S.namesOf(FX.index.little_tennessee_river))).toEqual({ NC: 1 });
+  });
+  it('"St." does not end a sentence, and a state before a water word is that water', () => {
+    expect(S.statesTiedToWater('Florida St. Johns River', ['johns river'])).toEqual({ FL: 1 });
+    expect(S.statesTiedToWater('The New River empties into the great Mississippi River.', ['new river'])).toEqual({});
+  });
+  it('the title, the URL and the body are separate sentences on the gate\'s path', () => {
+    expect(gate('congaree_noaa_gauge', true)).toBe(null);
   });
   it('an inherited member is not a state', () => {
     expect(S.stateMentions('constructor toString valueOf hasOwnProperty __proto__')).toEqual({});

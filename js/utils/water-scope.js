@@ -79,7 +79,9 @@ const STATE_NAMES = new Map(Object.entries({
  * other-state check in doc-relevance.js never read the body.
  */
 const NOT_A_STATE_AFTER = new Set(['county', 'co', 'counties', 'parish', 'rig', 'rigs', 'rigged',
-  'street', 'st', 'avenue', 'ave', 'road', 'rd']);
+  'street', 'avenue', 'ave', 'road', 'rd']);
+// "st" is not on it: "Florida St. Johns" and a URL's "florida/st-johns-river" are Saint far more
+// often, on a fishing page, than they are a street.
 
 /** The state term that starts at word `i`, as [code, words used], or null. Two words first. */
 function stateAt(words, i) {
@@ -165,13 +167,84 @@ export function nameSentences(text, names) {
   const keys = (names || []).map(flat).filter(Boolean);
   if (!keys.length) return '';
   const out = [];
-  for (const piece of String(text || '').split(/[.!?]+(?=\s)|\n+|\s[|•·]\s/)) {
+  for (const piece of splitSentences(text)) {
     let t = ` ${flat(piece)} `;
     if (!keys.some((k) => t.includes(` ${k} `))) continue;
     for (const k of keys) t = t.split(` ${k} `).join(' xname ');
     out.push(t.trim());
   }
   return out.join(' xbreak ');
+}
+
+/**
+ * Sentences: a stop followed by space, a line break, or a " | " separator. NOT after a one- or
+ * two-letter capitalised abbreviation -- "St. Johns", "Mt. Airy", "N.C.", "H. B. Robinson" -- or
+ * "Florida's St." and "Johns River" land in different sentences and the tie between them is lost.
+ */
+const splitSentences = (text) => String(text || '')
+  .split(/(?<!\b[A-Z][a-z]?)[.!?]+(?=\s)|\n+|\s[|•·]\s/);
+
+/**
+ * The words that make a capitalised phrase the name of a water: "the New River", "Lake Wylie",
+ * "South Fork Holston River". Read off the page's own capitals, so no list of waters is needed.
+ */
+const WATER_WORDS = new Set(['river', 'lake', 'reservoir', 'creek', 'fork', 'canal', 'dam',
+  'tailrace', 'tailwater']);
+
+/**
+ * THE STATES A PAGE GIVES TO THIS WATER, as {code: count} -- not every state in a sentence that names it.
+ *
+ * The desktop re-measure of eee0d06 on 726 stored documents: of the 24 refusals left, four were real
+ * pages refused over a state that belongs to ANOTHER water in the same sentence:
+ *
+ *   Deep River    "...fishing on the New River in Virginia, but Deep River Fly Fishing..."
+ *   Holston       "The Watauga River, which originates in North Carolina, flows ... South Fork Holston River"
+ *   Catawba, NC   "...the Catawba River in relation to Lake Norman, ... and below Lake Wylie in South Carolina."
+ *   Tuckasegee    "...on the Tuckasegee River at Dillsboro and the Chattahoochee River in Georgia, ..."
+ *
+ * So each state goes to one water: the nearest water named BEFORE it ("the New River in Virginia"),
+ * or, where none is, the next one ("Florida ... St. Johns River"). A possessive goes forward first --
+ * "Florida's St. Johns" is Florida's -- and back where nothing follows ("the Little Tennessee is North
+ * Carolina's best stream"). Only the states that land on this water are counted.
+ */
+export function statesTiedToWater(text, names) {
+  const keys = (names || []).map((n) => flat(n).split(' ')).filter((k) => k.length && k[0]);
+  const out = new Map();
+  if (!keys.length) return {};
+  keys.sort((a, b) => b.length - a.length);
+  for (const piece of splitSentences(text)) {
+    const raw = piece.replace(/[’‘]/g, "'").split(/[^A-Za-z0-9]+/).filter(Boolean);
+    const toks = [];
+    for (let i = 0; i < raw.length;) {
+      const k = keys.find((key) => key.every((w, j) => (raw[i + j] || '').toLowerCase() === w));
+      if (k) { toks.push({ w: 'xname', water: 'own' }); i += k.length; continue; }
+      const w = raw[i].toLowerCase();
+      toks.push({ w, water: /^[A-Z]/.test(raw[i]) && WATER_WORDS.has(w) ? 'other' : null });
+      i += 1;
+    }
+    if (!toks.some((t) => t.water === 'own')) continue;
+    const words = toks.map((t) => t.w);
+    const at = (from, step) => {
+      for (let j = from; j >= 0 && j < toks.length; j += step) if (toks[j].water) return toks[j].water;
+      return null;
+    };
+    for (let i = 0; i < words.length;) {
+      const hit = stateAt(words, i);
+      if (!hit) { i += 1; continue; }
+      const [code, n] = hit;
+      const next = words[i + n];
+      // "the Mississippi River", "the Tennessee River": a state's name before a capitalised water
+      // word is that water's name, not the state.
+      const namesAWater = toks[i + n] && toks[i + n].water === 'other';
+      if (!namesAWater && !NOT_A_STATE_AFTER.has(next) && !stateAt(words, i + n)) {
+        const possessive = next === 's';
+        const owner = possessive ? (at(i + n, 1) || at(i - 1, -1)) : (at(i - 1, -1) || at(i + n, 1));
+        if (owner === 'own') out.set(code, (out.get(code) || 0) + 1);
+      }
+      i += n;
+    }
+  }
+  return Object.fromEntries(out);
 }
 
 /**
@@ -263,8 +336,8 @@ export function waterScope(index, slug) {
 /**
  * Why a document is about another place than this water's, or null.
  *
- *   another_state     in the sentences that name this water, some state not this water's is named
- *                     more often than every one of its own
+ *   another_state     in the sentences that name this water, some state not this water's is given
+ *                     to it more often than every one of its own -- see statesTiedToWater()
  *   namesake_place    in the same sentences, a same-state namesake's county or bracket word
  *                     outnumbers this water's own
  *
@@ -281,7 +354,7 @@ export function elsewhereReason(text, scope) {
   if (ours.size) {
     let mine = 0;
     let theirs = 0;
-    for (const [code, n] of Object.entries(stateMentions(tied))) {
+    for (const [code, n] of Object.entries(statesTiedToWater(text, scope.names))) {
       if (ours.has(code)) mine = Math.max(mine, n);
       else theirs = Math.max(theirs, n);
     }

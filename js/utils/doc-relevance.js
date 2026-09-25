@@ -201,7 +201,10 @@ export function offLakeReason(doc, lakeName, altNames = [], nameWindowChars = WO
   // the Asheville French Broad is an agency page and still not about the French Broad in Tennessee.
   // No scope, which is every caller but research_lakes.py, and this line does nothing.
   if (scope) {
-    const text = `${doc?.title || ''} ${doc?.url || ''} ${String(doc?.fullText || doc?.text || '').slice(0, nameWindowChars)}`;
+    // NEWLINES, NOT SPACES: the title and the URL are sentences of their own. Joined with spaces
+    // they ran into the body's first sentence, and the Congaree's NOAA gauge page was refused on
+    // "Congaree River at Columbia - Water NOAA https://water.noaa.gov/... flood maps in Alaska".
+    const text = `${doc?.title || ''}\n${doc?.url || ''}\n${String(doc?.fullText || doc?.text || '').slice(0, nameWindowChars)}`;
     const elsewhere = elsewhereReason(text, scope);
     if (elsewhere) return elsewhere;
   }
