@@ -3,7 +3,8 @@
 // LAKES, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS
 
 import { matchWaterName, reportTokens } from './reports.js';
-import { GENERIC_LAKE_ZONES, GENERIC_RIVER_ZONES, watershedSensitivity, zonesForSensitivity } from './clarity-sensitivity.js';
+import { GENERIC_LAKE_ZONES, GENERIC_RIVER_ZONES, watershedSensitivity, riverFlowSensitivity,
+         zonesForSensitivity } from './clarity-sensitivity.js';
 
 var LAKES = {
   wateree: { duke: "wateree", river: "02148000", normalPool: 225.5, ahq: "lake-wateree" },
@@ -1641,14 +1642,15 @@ export function measuredEvidence(m, short = false) {
  */
 
 /**
- * The registry water a clarity request is about, with the two registry files the model reads.
+ * The registry water a clarity request is about, with the registry files the model reads (the
+ * river clarity-by-flow table only for a river).
  * `slug` is the caller's when it sent one the index knows, else the row the name resolves to --
  * the same resolveRegistryRow() the WQP pull takes its box from, so the watershed, the Secchi
  * and the hand profile below can never be three different waters. Everything is null when the
  * bucket has no registry (the tests' stub buckets), and the model then behaves as it always did.
  */
 async function registryWaterFor(env, lakeName, slug = null) {
-  if (!env || !env.R2_TROLLMAP_CHARTPACKS) return { slug: slug || null, chain: null, index: null };
+  if (!env || !env.R2_TROLLMAP_CHARTPACKS) return { slug: slug || null, chain: null, index: null, flowTable: null };
   const reg = await import('./registry.js');
   const [index, chain] = await Promise.all([
     reg.lakeIndex(env).catch(() => null),
@@ -1656,7 +1658,12 @@ async function registryWaterFor(env, lakeName, slug = null) {
   ]);
   const own = slug && (!index || index[slug]) ? slug : null;
   const row = own ? null : (index ? reg.resolveRegistryRow(index, lakeName) : null);
-  return { slug: own || (row && row.slug) || null, chain, index };
+  const found = own || (row && row.slug) || null;
+  // A river's rain rate is read off its own readings at high flow, so the table is fetched only
+  // when the water is a river. The loader keeps it an hour per isolate, like the chain.
+  const flowTable = found && index && index[found] && index[found].feature_type === 'river'
+    ? await reg.riverClarityByFlow(env).catch(() => null) : null;
+  return { slug: found, chain, index, flowTable };
 }
 
 /**
@@ -1753,26 +1760,33 @@ async function getLakeClarity(lakeName, tripDate, env, point = null, opts = {}) 
       ]
     };
   } else {
-    // ── THIS WATER'S OWN RAIN SENSITIVITY, FROM ITS OWN WATERSHED ─────────────────────────────
+    // ── THIS WATER'S OWN RAIN SENSITIVITY, FROM ITS OWN WATERSHED OR ITS OWN READINGS ─────────
     //
-    // The two generic zones used to carry the same 1.2 and 0.75 on every water. Now the level
-    // comes from the water's flush ratio in water_chain.json, ranked across every lake and placed
-    // on those same two numbers' range, and each zone keeps its share of the spread. Rivers and
-    // waters the chain did not place keep the generic rates and say why. See
-    // Worker/clarity-sensitivity.js for the method and the check against the six hand profiles.
-    const shed = watershedSensitivity(water.chain, water.slug, { index: water.index });
+    // The two generic zones used to carry the same 1.2 and 0.75 on every water. Now a lake's
+    // level comes from its flush ratio in water_chain.json, ranked across every lake, and a
+    // river's from how much murkier its own readings run above normal flow than at it
+    // (river_clarity_by_flow.json), ranked across every river. Both are placed on those same two
+    // numbers' range, and each zone keeps its share of the spread. A water neither ranking placed
+    // keeps the generic rates and says why. See Worker/clarity-sensitivity.js for the method.
+    const shed = isRiverWater
+      ? riverFlowSensitivity(water.flowTable, water.slug)
+      : watershedSensitivity(water.chain, water.slug, { index: water.index });
+    const own = shed.source === 'watershed' || shed.source === 'river-flow';
     defaultProfile = {
       displayName: lakeName,
       center: at || [34, -81],
-      defaultNote: (shed.source === 'watershed'
-          ? `No hand-written zones for this water. Its rain response is its own: ${shed.why}.`
-          : isRiverWater
-            ? "A river piece keeps the generic rain rates; its two zones are its upper and lower reaches. Where its flow sits against its normal, and its own clarity at that flow, are on the card."
+      defaultNote: (isRiverWater
+          ? `A river's two zones are its upper and lower reaches. ${own
+              ? `Its rain response is its own: ${shed.why}.`
+              : `It keeps the generic rain rates: ${shed.why}.`} Where its flow sits against its `
+            + 'normal, and its own clarity at that flow, are on the card.'
+          : own
+            ? `No hand-written zones for this water. Its rain response is its own: ${shed.why}.`
             : "No custom clarity model yet; generic creek/runoff model used.")
         + (at ? "" : " RAINFALL IS FROM A FIXED POINT NEAR COLUMBIA, SC, not this water — no "
                    + "point was given, and on most waters that is over 200 km away."),
-      zones: shed.source === 'watershed'
-        ? zonesForSensitivity(shed.value)
+      zones: own
+        ? zonesForSensitivity(shed.value, genericZones)
         : genericZones.map((z) => ({ ...z, ramps: [] })),
       sensitivity: shed,
     };
@@ -2048,7 +2062,8 @@ async function getLakeClarity(lakeName, tripDate, env, point = null, opts = {}) 
     // The launch's own clarity, read at the measured station nearest it. See `atLaunch` above.
     atLaunch,
     // WHAT RAIN IS MULTIPLIED BY ON THIS WATER, AND WHERE THAT CAME FROM: 'hand-authored' (the six),
-    // 'watershed' (its own flush ratio, ranked), 'coastal', or 'generic' with the reason.
+    // 'watershed' (a lake's own flush ratio, ranked), 'river-flow' (a river's own readings above
+    // normal flow against at it, ranked), 'coastal', or 'generic' with the reason.
     sensitivity,
     // WHERE THE RAIN WAS MEASURED, AND WHETHER IT IS THIS WATER. The rainfall is the only input in
     // this model that describes today, and until 2026-09-23 it came from a fixed point near
