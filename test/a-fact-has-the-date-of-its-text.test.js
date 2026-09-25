@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { handleResearchAnalyzeFacts, handleResearchDedupeContradictions } from '../Worker/research/extract.js';
 import { patternFactsFrom } from '../js/modules/plan-prompt.js';
+import { readPage } from '../Worker/research/text-date.js';
 
 const page = (f) => readFileSync(new URL(`./fixtures/text-date/${f}`, import.meta.url), 'utf8');
 
@@ -103,11 +104,47 @@ test("Carolina Sportsman: the site's clock at the top is not the article's date,
   assert.equal(f.textDateFrom, null);
 });
 
-test('Carolina Sportsman: past the clock, the first date near the top is the page date, and it says so', async () => {
+test('Carolina Sportsman: past the clock, a date inside a sentence is an event, not the page date', async () => {
   stubGemini(() => ({ extracted_facts: [fact('Colton Joyner caught some slabs', 'predatorSpecies')] }));
   const [f] = (await ask([CS_JOYNER])).extracted_facts;
-  assert.equal(f.textDate, '2024-04-03');
-  assert.equal(f.textDateFrom, 'page date near the top: "April 3, 2024"');
+  // "Colton Joyner caught some slabs on April 3, 2024 while crappie fishing at Lake Wateree." is
+  // the day of the trip the page reports. Here it is also near enough the page's date to pass for
+  // it, and the rule refuses it anyway: the next page's sentence date was 1952.
+  assert.equal(f.textDate, null);
+});
+
+// ── WHAT COUNTS AS THE PAGE'S DATE NEAR THE TOP ─────────────────────────────────────────────
+//
+// The desktop session's measurement on the stored documents of Wateree, Murray, Greenwood and
+// Marion, 2026-09-25: 166 of 371 facts dated "near the top" took their date out of a sentence.
+// These lines are theirs, as stored.
+const nearTop = (line, extra = {}) => readPage({ title: 'Untitled', text: `Home\n${line}\nBody text.`, ...extra }).page;
+
+test('a date inside running prose near the top is not the page date', () => {
+  for (const line of [
+    'The lake reached a managed maximum of 442.02 feet recorded on March 5, 1952, during early operation.',
+    'On Feb. 17, 1942, Santee Cooper first generated electricity at the Jefferies Hydroelectric Station.',
+    // Carolina Sportsman's clock with the navigation flattened into its line, from a copy whose
+    // fetchedAt (2026-07-21) is a week after the clock: the fetch-day check could never catch it.
+    '[Give a Gift Subscription](https://x) July 14, 2026 Search for: [Home](https://y)',
+  ]) assert.equal(nearTop(line, { fetchedAt: '2026-07-21T12:00:00Z' }), null, line);
+});
+
+test('a date written as a stamp is the page date', () => {
+  for (const [line, date] of [
+    ['Wednesday, Jul 08 2026', '2026-07-08'],
+    ['- by Jay - 25 February, 2026', '2026-02-25'],
+    ['By Brian Cope on March 3, 2020', '2020-03-03'],
+    ['Posted on March 3, 2020', '2020-03-03'],
+    ['Last Updated: August 5, 2026', '2026-08-05'],
+    ['## New size limits and dates in place for Santee striped bass May 7, 2018', '2018-05-07'],
+  ]) {
+    const p = nearTop(line);
+    assert.ok(p, line);
+    assert.equal(`${p.date.y}-${String(p.date.m).padStart(2, '0')}-${String(p.date.d).padStart(2, '0')}`, date, line);
+  }
+  assert.equal(nearTop('A fish recorded by the state on March 5, 1952, at the dam.'), null,
+    '"by the state" is no byline: a byline is a name');
 });
 
 test('SCDNR description page: no date anywhere, so null -- and every fact is still there', async () => {

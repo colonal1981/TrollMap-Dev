@@ -12,9 +12,10 @@
 //      "January 22, 2026", "2025-03-14"). This is Scripts/claude_species.py's rule for the
 //      packet (`_DATE_LINE`, and "date lines are section breaks too"), ported, not re-invented:
 //      a weekly report's entries are dated only by the line above them.
-//   2. The page's own date: a full date in its title, else the first date in the top 4,000
-//      characters of its text (claude_species.py's `_DATE_ANY` over the same span), else a year
-//      in its title.
+//   2. The page's own date: a full date in its title, else the first date STAMPED on the page in
+//      the top 4,000 characters of its text (claude_species.py's `_DATE_ANY` over the same span),
+//      else a year in its title. A stamp is a date written as the page's date -- see isStamp() --
+//      and not one inside a sentence, which is an event the page describes.
 //   3. null. `fetchedAt` is when we read the page, not when it was written, and is never a date.
 //
 // `textDateFrom` says which of these answered and quotes what it read, so the date can be checked
@@ -25,6 +26,41 @@ const MONTH = String.raw`(?:January|February|March|April|May|June|July|August|Se
 const DATE_LINE = new RegExp(String.raw`^\W*(?:${MONTH}\s+\d{1,2}(?:,?\s+\d{4})?|\d{1,2}\s+${MONTH},?\s+\d{4}|\d{4}-\d{2}-\d{2})\W*$`, 'i');
 const DATE_ANY = new RegExp(String.raw`(?:${MONTH}\s+\d{1,2},?\s+\d{4}|\d{1,2}\s+${MONTH},?\s+\d{4}|\b\d{4}-\d{2}-\d{2}\b|(?:Published|Updated)[:\s*]+[A-Za-z]{3,9}\.? \d{1,2},? \d{4})`, 'gi');
 const TOP_OF_PAGE = 4000;   // claude_species.py's `text[:4000]`: one span for both readers of it
+
+const WEEKDAY = String.raw`(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|Mon|Tue|Tues|Wed|Thu|Thur|Thurs|Fri|Sat|Sun)\.?`;
+// A byline: "by" and a name, every word of it capitalised ("by Jay", "By Brian Cope").
+const BYLINE = String.raw`by\s+[A-Z][\w.'’-]*(?:\s+[A-Z][\w.'’-]*)*`;
+const LABEL = /\b(?:Published|Updated|Posted)(?:\s+on)?[\s:*|·,–—-]*$/i;
+// Case-sensitive, or "recorded by the state on March 5, 1952" would read as a byline.
+const BYLINE_LABEL = new RegExp(String.raw`\b[Bb]${BYLINE.slice(1)}(?:\s+on)?[\s:*|·,–—-]*$`);
+const ONLY = new RegExp(String.raw`^[\W_]*(?:${WEEKDAY}[\W_]*)?(?:${BYLINE}[\W_]*)?$`);
+
+/**
+ * Is the DATE_ANY match `m` written as the page's date, or inside a sentence?
+ *
+ * Measured by the desktop session on 1,145 stored facts of Wateree, Murray, Greenwood and Marion
+ * (2026-09-25): 166 of 371 facts dated "near the top" took a date out of running prose -- 14
+ * Grokipedia facts dated 1952-03-05 from "a managed maximum of 442.02 feet recorded on March 5,
+ * 1952", six Santee Cooper facts dated 1942 from "On Feb. 17, 1942, Santee Cooper first
+ * generated electricity", a bibliography entry, a survey night, and Carolina Sportsman's clock
+ * flattened into a navigation line ("...Gift Subscription July 14, 2026 Search for: Home...").
+ *
+ * A stamp is a date whose line holds nothing else but a weekday and a byline ("Wednesday, Jul 08
+ * 2026", "- by Jay - 25 February, 2026"); a date labelled Published, Updated, Posted or by a
+ * byline; or the date that ends a heading ("## New size limits ... May 7, 2018"), the page's own
+ * dated heading. Nothing counts characters: the rule reads what is written around the date.
+ */
+function isStamp(text, m) {
+  const start = text.lastIndexOf('\n', m.index - 1) + 1;
+  const endNl = text.indexOf('\n', m.index + m[0].length);
+  const line = text.slice(start, endNl < 0 ? text.length : endNl);
+  const before = text.slice(start, m.index);
+  const after = text.slice(m.index + m[0].length, endNl < 0 ? text.length : endNl);
+  if (/^(?:Published|Updated)/i.test(m[0])) return true;          // DATE_ANY's own labelled form
+  if (ONLY.test(before + ' ' + after)) return true;
+  if (LABEL.test(before) || BYLINE_LABEL.test(before)) return true;
+  return /^\s*#/.test(line) && /^[\W_]*$/.test(after);
+}
 
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 const pad = (n) => String(n).padStart(2, '0');
@@ -106,11 +142,15 @@ function readPage(doc) {
   const text = delink(doc.text || doc.fullText || '');
   const title = String(doc.title || '');
 
-  // THE SITE'S CLOCK is the page's FIRST date, near the top, falling on a fetch day -- and nothing
-  // else: a report's own entries and its title are never taken for it, even when one was written
-  // the day the page was read.
+  // THE SITE'S CLOCK is the page's FIRST stamped date, near the top, falling on a fetch day -- and
+  // nothing else: a report's own entries and its title are never taken for it, even when one was
+  // written the day the page was read. A clock flattened into a line of navigation is no stamp
+  // and never reaches this; a clock on its own line from a page served out of a cache on another
+  // day passes it, which nothing on the page can tell apart from a real date.
   const clock = fetchDays(doc.fetchedAt);
-  const first = [...text.slice(0, TOP_OF_PAGE).matchAll(DATE_ANY)][0];
+  const top = text.slice(0, TOP_OF_PAGE);
+  const stamps = [...top.matchAll(DATE_ANY)].filter((m) => isStamp(text, m));
+  const first = stamps[0];
   const firstDate = first && parseDate(first[0]);
   const clockAt = firstDate && firstDate.y && clock.has(iso(firstDate)) ? first.index : -1;
 
@@ -138,7 +178,7 @@ function readPage(doc) {
     page = { date: { ...titleMd, y: titleYear }, from: `page date in the title: "${title}"` };
   }
   if (!page) {
-    for (const m of text.slice(0, TOP_OF_PAGE).matchAll(DATE_ANY)) {
+    for (const m of stamps) {
       const p = parseDate(m[0]);
       if (p && p.y && m.index !== clockAt) { page = { date: p, from: `page date near the top: "${m[0].trim()}"` }; break; }
     }
