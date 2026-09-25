@@ -191,8 +191,20 @@ def _headers(body=True):
     return h
 
 
+# The JSON body of the last HTTP error _req saw, per thread. A 502 from /research/agent-llm still
+# carries `meta.llmRequests` -- the requests the failed call spent -- and _req hands a caller only
+# the first 300 characters of an error body. last_error_body() is how LLMTally reads the rest.
+_REQ_ERROR = threading.local()
+
+
+def last_error_body():
+    """The parsed JSON body of this thread's last HTTP error from _req, or None."""
+    return getattr(_REQ_ERROR, "body", None)
+
+
 def _req(path, payload=None, timeout=300):
     """POST when payload is given, GET otherwise. Returns (status, parsed, error_text)."""
+    _REQ_ERROR.body = None
     url = f"{WORKER}{path}"
     data = json.dumps(payload).encode("utf-8") if payload is not None else None
     req = urllib.request.Request(url, data=data, headers=_headers(data is not None),
@@ -205,10 +217,88 @@ def _req(path, payload=None, timeout=300):
             except json.JSONDecodeError:
                 return r.status, None, f"non-JSON body ({len(raw)} bytes)"
     except urllib.error.HTTPError as e:
-        body = e.read()[:300].decode("utf-8", "replace").replace("\n", " ").strip()
+        raw = e.read()
+        try:
+            _REQ_ERROR.body = json.loads(raw)
+        except (ValueError, UnicodeDecodeError):
+            pass
+        body = raw[:300].decode("utf-8", "replace").replace("\n", " ").strip()
         return e.code, None, body or "empty body"
     except Exception as e:                                    # noqa: BLE001
         return 0, None, str(e)
+
+
+# ── REQUESTS SENT PER ANSWER ─────────────────────────────────────────────────────────────────
+#
+# Ryan's five AI Studio dashboards, 2026-09-25: both Lite models at 503 / 500 RPD and every Flash
+# model at 21-23 / 20, on all five projects -- about 5,030 Lite requests and 450 Flash, ~5,500 in
+# all. The day's two run logs (research_20260925_130135.log, research_20260925_163204.log) got back
+# 679 extraction answers, 31 snippet reads and about 5 group answers per water on 31 waters -- ~900,
+# perhaps 1,050 with the morning's runs. About four requests in five counted against the day and
+# produced nothing, and nothing on this screen could show it.
+#
+# /research/analyze-facts and /research/agent-llm now return every request the Worker's callLLM
+# sent (meta.llmRequests: key, model, HTTP status, answered). This sums them per water and per run.
+# A response that carried no record -- the Worker call itself failed or timed out -- is counted as
+# `unmeasured`: it may have spent requests nobody can see, so it is printed rather than guessed.
+class LLMTally:
+    """Requests sent and answers got, across threads, written through to `out["llm"]`."""
+
+    def __init__(self, out=None):
+        self._lock = threading.Lock()
+        self._out = out
+        self.sent = self.answered = self.unmeasured = 0
+        self.http = Counter()
+        self._publish()
+
+    def add(self, res):
+        """One Worker response (parsed JSON, or None when there was none)."""
+        reqs = ((res or {}).get("meta") or {}).get("llmRequests") if isinstance(res, dict) else None
+        with self._lock:
+            if not isinstance(reqs, list):
+                self.unmeasured += 1
+            else:
+                for r in reqs:
+                    self.sent += 1
+                    if (r or {}).get("answered"):
+                        self.answered += 1
+                    else:
+                        self.http[str((r or {}).get("http"))] += 1
+            self._publish()
+
+    def summary(self):
+        return {"sent": self.sent, "answered": self.answered,
+                "per_answer": round(self.sent / self.answered, 2) if self.answered else None,
+                "refused_by_http": dict(self.http), "unmeasured": self.unmeasured}
+
+    def _publish(self):
+        if self._out is not None:
+            self._out["llm"] = self.summary()
+
+
+def llm_note(r):
+    """'  llm: 52 sent / 41 answered (1.27 per answer)' -- or '' when nothing was asked."""
+    m = r.get("llm") or {}
+    if not m.get("sent") and not m.get("unmeasured"):
+        return ""
+    per = f"{m['per_answer']:.2f} per answer" if m.get("per_answer") else "no answers"
+    return (f"  llm: {m.get('sent', 0)} sent / {m.get('answered', 0)} answered ({per})"
+            + (f", {m['unmeasured']} response(s) unmeasured" if m.get("unmeasured") else ""))
+
+
+def run_llm_line(results):
+    """The run's requests sent per answer, summed over every water, with what the refusals were."""
+    sent = sum((r.get("llm") or {}).get("sent", 0) for r in results)
+    answered = sum((r.get("llm") or {}).get("answered", 0) for r in results)
+    unmeasured = sum((r.get("llm") or {}).get("unmeasured", 0) for r in results)
+    status = Counter()
+    for r in results:
+        status.update((r.get("llm") or {}).get("refused_by_http") or {})
+    per = f"{sent / answered:.2f} per answer" if answered else "no answers"
+    return (f"llm requests: {sent} sent / {answered} answered ({per})"
+            + (f"; not answered by HTTP status: "
+               + ", ".join(f"{k} x{v}" for k, v in status.most_common()) if status else "")
+            + (f"; {unmeasured} response(s) unmeasured" if unmeasured else ""))
 
 
 def _raw(path, timeout=300):
@@ -719,7 +809,7 @@ def pace_seconds(chars, tpm):
 #
 #   BOTH MODELS. Ryan, 2026-09-24: "and we could make it so it hits both models separately
 #   right" -- each free model has its own 15 RPM on every key. Extraction now asks callLLM() to
-#   spread across both (_geminiModelIdx, worker-core.js), so the same 60 lands at about 6 a
+#   spread across both (drawStart, worker-core.js), so the same 60 lands at about 6 a
 #   minute on each model of each key instead of 12 on 3.5 alone. The ceiling is not doubled:
 #   the last batch's waters had a median of 10 documents and at most 23 (research_lakes_20260923),
 #   and 60 already runs 12 at once, so 120 would save seconds only on the few past a dozen.
@@ -732,10 +822,84 @@ def pace_seconds(chars, tpm):
 # How many run at once follows from those: enough that the RPM ceiling, not the round trip, is
 # what limits the rate. At EXTRACT_CALL_SECONDS a call, `rpm * seconds / 60` in flight keeps the
 # ceiling busy and never exceeds it, because the limiter gates each START.
-GEMINI_FREE_KEYS = 5             # Ryan, 2026-09-24
-GEMINI_FREE_RPM_PER_KEY = 15     # the free tier's published rate, GEMINI_FREE_MODELS note
-DEFAULT_RPM = (GEMINI_FREE_KEYS - 1) * GEMINI_FREE_RPM_PER_KEY
+#
+# PACED TO THE MODELS ASKED, FROM GOOGLE'S OWN TABLE. The 60 above was Lite's -- 15 RPM, four of
+# five keys -- and `--extract-models flash` (d502e46) inherited it, against Flash's 5 RPM a model.
+# Ryan's dashboards, 2026-09-25: Flash peaks of 5 to 8 RPM against 5, and every Flash model at
+# 21-23 / 20 RPD after two waters. The limits live once, in GEMINI_FREE_LIMITS in
+# Worker/worker-core.js, beside the model lists; free_tier() reads them through node, and the
+# ceiling is
+#
+#     (sum of the asked models' RPM) x (keys - 1) / 2
+#
+# keys - 1 is the key's worth left for the app and the species groups, as argued above. The half
+# is headroom for how callLLM picks: every call DRAWS its slot (drawStart, worker-core.js), so at
+# the table's full rate some slots are handed more than their minute holds while others sit idle,
+# and every request over is a refusal counted against the day. Measured in the stubbed batch of
+# test/a-refusal-is-waited-out-not-walked.test.js, 400 reads, every refusal waited out:
+#
+#     Lite   60/min 1.00 requests per answer   90 1.00   120 1.12   150 (the table's all) 1.43
+#     Flash  40/min 1.15 (26 of 400 lost)      60 1.30 (70 lost)   80 1.58   100 1.96 (181 lost)
+#
+# How many keys there are is not in the source: the Worker reads GEMINI_FREE_API_KEY, then 2, 3, ...
+# for as long as the next secret exists (geminiFreeProviders), and says how many in meta.freeKeys on
+# every /research/analyze-facts and /research/agent-llm response. So the first read of a run goes
+# alone, and its answer sets the pace for the rest (extract_documents). On five keys Lite comes out
+# at 60, the number it always had, and Flash first or spare first at 40; on nine, 120 and 80 -- the
+# same load per slot, since the slots grew with the keys.
 EXTRACT_CALL_SECONDS = 12        # measured 2026-09-24: 8.7, 11.2, 13.4, 14.8 s on four calls
+
+_FREE_TIER = {}
+
+
+def free_tier():
+    """GEMINI_FREE_LIMITS and the three model lists, read out of Worker/worker-core.js by node --
+    the Worker's own table, not a copy of it. Cached. The key count is not here: free_keys()."""
+    if not _FREE_TIER:
+        src = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
+                                           "Worker", "worker-core.js"))
+        script = (
+            f"const m = await import({json.dumps('file://' + src.replace(os.sep, '/'))});"
+            "process.stdout.write(JSON.stringify({limits: m.GEMINI_FREE_LIMITS,"
+            " lite: m.GEMINI_FREE_MODELS, flash: m.GEMINI_FREE_FLASH_MODELS,"
+            " spare: m.GEMINI_FREE_SPARE_MODELS}));"
+        )
+        proc = subprocess.run(["node", "--input-type=module", "-e", script],
+                              capture_output=True, text=True, encoding="utf-8")
+        if proc.returncode != 0:
+            raise SystemExit(f"!! could not read GEMINI_FREE_LIMITS from {src} under node: "
+                             f"{(proc.stderr or '').strip()[:300]}")
+        _FREE_TIER.update(json.loads(proc.stdout))
+    return _FREE_TIER
+
+
+_FREE_KEYS = {"n": None}
+_FREE_KEYS_LOCK = threading.Lock()
+
+
+def learn_free_keys(res):
+    """Keep the Worker's own count of its free Gemini keys, from any response that carries it."""
+    n = (((res or {}).get("meta") or {}).get("freeKeys")) if isinstance(res, dict) else None
+    if isinstance(n, int) and n > 0:
+        with _FREE_KEYS_LOCK:
+            _FREE_KEYS["n"] = n
+
+
+def free_keys():
+    """How many free Gemini keys the Worker said it holds, or None before it has said."""
+    return _FREE_KEYS["n"]
+
+
+def paced_rpm(extract_models="lite", keys=None):
+    """The extraction ceiling for the models `--extract-models` puts first, on `keys` free keys
+    (the Worker's count when not given). None while the count is unknown. See the note above."""
+    keys = keys if keys is not None else free_keys()
+    if not keys:
+        return None
+    tier = free_tier()
+    models = tier.get(extract_models) or tier["lite"]
+    per_key = sum(tier["limits"][m]["rpm"] for m in models)
+    return per_key * max(keys - 1, 1) // 2
 
 
 def extract_workers(rpm, n_calls):
@@ -786,7 +950,48 @@ _TRANSIENT = re.compile(r"high demand|rate.?limit|\brate\b|quota|\b429\b|\b50[23
 EXTRACT_RETRY_WAITS = (8, 20, 60)
 
 
-def _extract_one(lake, state, alt_names, i, d, limiter, verbose, windows=None):
+def retry_after_seconds(doc_results):
+    """Google's own delay for a refused read, in seconds, or 0: the longest retryAfterMs among
+    the documents that failed. See stopOnRefusal() in Worker/worker-core.js -- with
+    `waitOnRefusal` the Worker hands a per-minute or "high demand" refusal straight back, with
+    "Please retry in 35.4s" as retryAfterMs, instead of walking every other key and model. The
+    waits above still stand; this only makes one longer when Google asked for longer."""
+    ms = [r.get("retryAfterMs") or 0 for r in doc_results or [] if isinstance(r, dict) and r.get("error")]
+    return max(ms, default=0) / 1000.0
+
+
+def read_with_waits(body, limiter=None, tokens=0, tally=None):
+    """One /research/analyze-facts read, asked again after each of EXTRACT_RETRY_WAITS -- or after
+    Google's own delay when it asked for longer -- while the refusal is "not now". Returns
+    (code, response, error_text, why) -- `why` is the last refusal, or None when it answered."""
+    why = None
+    google_wait = 0.0
+    code = ex = err = None
+    for attempt in range(len(EXTRACT_RETRY_WAITS) + 1):
+        if attempt:
+            time.sleep(max(EXTRACT_RETRY_WAITS[attempt - 1], google_wait))
+        if limiter is not None:
+            limiter.acquire(tokens)
+        code, ex, err = _req("/research/analyze-facts", body)
+        learn_free_keys(ex if code == 200 else last_error_body())
+        if tally is not None:
+            tally.add(ex if code == 200 else last_error_body())
+        if code == 200:
+            results = ((ex or {}).get("meta") or {}).get("docResults") or []
+            failed = next((r.get("error") for r in results if r.get("error")), None)
+            if not failed or not _TRANSIENT.search(str(failed)):
+                return code, ex, err, failed
+            why = failed
+            google_wait = retry_after_seconds(results)
+        else:
+            why = f"{code}: {err}"
+            google_wait = 0.0
+            if code not in (0, 429, 502, 503, 504):
+                break
+    return code, ex, err, why
+
+
+def _extract_one(lake, state, alt_names, i, d, limiter, verbose, windows=None, tally=None):
     # THE PART OF THE DOCUMENT ABOUT THIS WATER, not always its first EXTRACT_DOC_CHARS. The prompt
     # below takes only facts that name the water, so a long document naming it only past the cut
     # gave nothing. See doc_window().
@@ -810,44 +1015,54 @@ def _extract_one(lake, state, alt_names, i, d, limiter, verbose, windows=None):
         # facts, on 2026-09-01. The registry has carried both other names all along.
         "aliases": alt_names or [],
         "docIndex": i, "targetFields": ["trollingIntelligence"], **extract_model_field(),
+        # A rate refusal comes back to be waited out here, not walked across every other slot.
+        "waitOnRefusal": True,
         # fetchedAt is not the text's date and is never used as one: research/text-date.js reads it
         # only to refuse the date a site prints at the top of every page it serves (its clock).
         "documents": [{"title": d.get("title"), "url": d.get("url"), "text": text,
                        "fetchedAt": d.get("fetchedAt")}]}
-    why = None
-    for attempt in range(len(EXTRACT_RETRY_WAITS) + 1):
-        if attempt:
-            time.sleep(EXTRACT_RETRY_WAITS[attempt - 1])
-        limiter.acquire(len(text) / CHARS_PER_TOKEN)
-        code, ex, err = _req("/research/analyze-facts", body)
-        if code == 200:
-            results = ((ex or {}).get("meta") or {}).get("docResults") or []
-            failed = next((r.get("error") for r in results if r.get("error")), None)
-            if not failed or not _TRANSIENT.search(str(failed)):
-                model = next((r.get("model") for r in results if r.get("model")), None)
-                return (ex or {}).get("extracted_facts") or [], len(text), failed, model
-            why = failed
-        else:
-            why = f"{code}: {err}"
-            if code not in (0, 429, 502, 503, 504):
-                break
+    code, ex, _, why = read_with_waits(body, limiter, len(text) / CHARS_PER_TOKEN, tally)
+    if code == 200 and (not why or not _TRANSIENT.search(str(why))):
+        results = ((ex or {}).get("meta") or {}).get("docResults") or []
+        model = next((r.get("model") for r in results if r.get("model")), None)
+        return (ex or {}).get("extracted_facts") or [], len(text), why, model
     if verbose:
         print(f"      analyze-facts gave up on doc {i}: {why}")
     return [], len(text), why, None
 
 
-def extract_documents(lake, state, alt_names, docs, rpm, tpm, verbose=False, window_stats=None):
+def extract_documents(lake, state, alt_names, docs, rpm, tpm, verbose=False, window_stats=None,
+                      tally=None):
     """Every document through /research/analyze-facts, several at once under the RPM and TPM
     ceilings. Facts come back in DOCUMENT order, whatever order the calls finished in, so a rerun
     reads the same list. Returns (facts, chars_sent, failures, models) -- `models` counts which
     free Gemini model answered each read, so the spread across both is on the screen.
 
-    `window_stats`, when given a dict, is filled with window_summary() of what was sent."""
-    limiter = CallLimiter(rpm, tpm)
+    `window_stats`, when given a dict, is filled with window_summary() of what was sent; `tally`,
+    an LLMTally, counts every request the Worker sent for these reads."""
     windows = {}
-    with ThreadPoolExecutor(max_workers=extract_workers(rpm, len(docs))) as ex:
-        got = list(ex.map(lambda p: _extract_one(lake, state, alt_names, p[0], p[1], limiter,
-                                                 verbose, windows), enumerate(docs)))
+    got = []
+    pending = list(enumerate(docs))
+    if rpm is None:
+        # PACED FROM THE WORKER'S KEY COUNT, which only the Worker knows (meta.freeKeys). Until it
+        # has said, one read goes alone; its answer sets the pace for the rest. A Worker that
+        # never says gets its reads one at a time, not a guessed number of keys.
+        if free_keys() is None and pending:
+            i, d = pending.pop(0)
+            got.append(_extract_one(lake, state, alt_names, i, d, CallLimiter(0, tpm), verbose,
+                                    windows, tally))
+            print(f"      extraction paced to the Worker's {free_keys() or 'unreported number of'} "
+                  f"free key(s): {paced_rpm(EXTRACT_MODELS) or 'one read at a time'}"
+                  + (" calls/min" if paced_rpm(EXTRACT_MODELS) else ""))
+        rpm = paced_rpm(EXTRACT_MODELS)
+        workers = extract_workers(rpm, len(pending)) if rpm else 1
+        rpm = rpm or 0
+    else:
+        workers = extract_workers(rpm, len(pending))
+    limiter = CallLimiter(rpm, tpm)
+    with ThreadPoolExecutor(max_workers=max(workers, 1)) as ex:
+        got += list(ex.map(lambda p: _extract_one(lake, state, alt_names, p[0], p[1], limiter,
+                                                  verbose, windows, tally), pending))
     if window_stats is not None:
         window_stats.update(window_summary([windows.get(i) or {} for i in range(len(docs))], docs))
     facts = [f for fs, _, _, _ in got for f in fs]
@@ -950,7 +1165,7 @@ def registry_ramps(row):
     return out
 
 def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev", alt_names=None,
-                 tpm=DEFAULT_TPM, row=None, limnology_only=False, rpm=DEFAULT_RPM,
+                 tpm=DEFAULT_TPM, row=None, limnology_only=False, rpm=None,
                  group_models="lite"):
     """One lake, start to saved profile. Returns a result dict; never raises."""
     t0 = time.perf_counter()
@@ -967,6 +1182,7 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
            "saved_version": None, "discovered_species": [], "warnings": [],
            "registry_slug": None, "registry_resolved_by": None, "registry_unresolved": None}
 
+    tally = LLMTally(out)
     ramps = registry_ramps(row)
     out["ramps_sent"] = len(ramps)
     # THE ROW THE APP ALREADY BOUND THIS NAME TO, when it bound it on evidence. See SLUG_BY_NAME.
@@ -1249,7 +1465,7 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
         # one call at a time and was most of a ten-minute run.
         out["extract_window"] = {}
         facts, sent, failed, models = extract_documents(lake, state, alt_names, chosen, rpm, tpm,
-                                                        verbose, out["extract_window"])
+                                                        verbose, out["extract_window"], tally)
         out["chars_sent"] += sent
         out["extract_calls"] = len(chosen)
         out["extract_models"] = models
@@ -1292,12 +1508,16 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
                          "publishedDate": s2.get("publishedDate") or ""}
                         for s2 in found if len(str(s2.get("snippet") or "")) >= 80]
         if snippet_docs:
-            code, ex, err = _req("/research/analyze-facts", {
+            # WAITED OUT LIKE ANY OTHER READ. It was asked once, and a refusal lost every snippet
+            # fact on the water; it is one request, so a wait is cheap and a walk was not.
+            code, ex, err, why = read_with_waits({
                 "lakeName": lake, "baseName": base_name(lake), "state": state,
                 "aliases": alt_names or [], "docIndex": -1,
                 "targetFields": ["trollingIntelligence"],
-                "combine": True, **extract_model_field(),
-                "documents": snippet_docs})
+                "combine": True, **extract_model_field(), "waitOnRefusal": True,
+                "documents": snippet_docs}, tally=tally)
+            if code == 200 and why:
+                print(f"      warn [{lake}]: analyze-facts on snippets was not read: {str(why)[:120]}")
             if code == 200:
                 got = (ex or {}).get("extracted_facts") or []
                 facts.extend(got)
@@ -1383,7 +1603,7 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
         # what R2 holds for a second copy of something already saved.
         prev["_normalizedDocuments"] = agent_documents(usable, lake, alt_names)
 
-        code, res, err = ask_species_groups(lake, state, prev, group_models, out)
+        code, res, err = ask_species_groups(lake, state, prev, group_models, out, tally)
         clock.mark("species_groups")
         if code != 200 or not res:
             out["error"] = f"agent-llm {code}: {err}"
@@ -1709,11 +1929,14 @@ AGENT_LLM_TIMEOUT = 900
 AGENT_LLM_TRIES = 3
 
 
-def _ask_agent_llm(lake, body, out):
+def _ask_agent_llm(lake, body, out, tally=None):
     """One /research/agent-llm request, with the transport retries. (code, res, err)."""
     code = res = err = None
     for attempt in range(1, AGENT_LLM_TRIES + 1):
         code, res, err = _req("/research/agent-llm", body, timeout=AGENT_LLM_TIMEOUT)
+        learn_free_keys(res if code == 200 else last_error_body())
+        if tally is not None:
+            tally.add(res if code == 200 else last_error_body())
         if code == 200 and res:
             break
         if code not in (0, 502, 504):
@@ -1726,7 +1949,7 @@ def _ask_agent_llm(lake, body, out):
     return code, res, err
 
 
-def ask_species_groups(lake, state, prev, group_models, out):
+def ask_species_groups(lake, state, prev, group_models, out, tally=None):
     """/research/agent-llm for the fisheries groups, with the transport retries. (code, res, err).
 
     `group_models` is "lite" (the Lite ladder, as always) or "flash" (the full Flash models on every
@@ -1739,12 +1962,12 @@ def ask_species_groups(lake, state, prev, group_models, out):
     body = {"lakeName": lake, "state": state, "agent": "fisheries", "previousResults": prev}
     if group_models and group_models != "lite":
         body["groupModels"] = group_models
-    code, res, err = _ask_agent_llm(lake, body, out)
+    code, res, err = _ask_agent_llm(lake, body, out, tally)
     if code != 200 or not res:
         return code, res, err
 
     def again(groups):
-        c, r, e = _ask_agent_llm(lake, dict(body, groups=groups), out)
+        c, r, e = _ask_agent_llm(lake, dict(body, groups=groups), out, tally)
         if c != 200 or not r:
             print(f"      [{lake}] the new request for {', '.join(groups)} failed ({c}: {e})")
             return None
@@ -1942,6 +2165,7 @@ def species_groups_only(lake, state, group_models, save=False, report_dir="_repo
     t0 = time.perf_counter()
     out = {"lake": lake, "state": state, "group_models": group_models, "ok": False,
            "error": None, "saved": False}
+    tally = LLMTally(out)
     profile, why = stored_profile(lake)
     if profile is None:
         out["error"] = f"no stored profile ({why}) -- run the full research first"
@@ -2003,7 +2227,7 @@ def species_groups_only(lake, state, group_models, save=False, report_dir="_repo
         # own name-and-state filter on the way in -- so if it refused one of the documents the last
         # run read, the ones here are not exactly the ones that run read. The titles say which were.
         out["document_titles"] = [d.get("title") for d in prev["_normalizedDocuments"]]
-        code, res, err = ask_species_groups(lake, state, prev, group_models, out)
+        code, res, err = ask_species_groups(lake, state, prev, group_models, out, tally)
         out["seconds"] = round(time.perf_counter() - t0, 1)
         if code != 200 or not res:
             out["error"] = f"agent-llm {code}: {err}"
@@ -2472,10 +2696,12 @@ def main():
     ap.add_argument("--tpm", type=int, default=DEFAULT_TPM,
                     help="input tokens per minute this script will pace extraction to "
                          f"(default {DEFAULT_TPM}; 0 disables pacing)")
-    ap.add_argument("--rpm", type=int, default=DEFAULT_RPM,
+    ap.add_argument("--rpm", type=int, default=None,
                     help="extraction calls started per minute, across the calls run at once "
-                         f"(default {DEFAULT_RPM}: four of the five free Gemini keys at 15 RPM "
-                         "each, one left for the app; 0 disables the ceiling)")
+                         "(default: from GEMINI_FREE_LIMITS in Worker/worker-core.js for the "
+                         "models --extract-models asks, on as many free keys as the Worker "
+                         "reports -- 60 on Lite with five keys, 40 with flash or spare; "
+                         "0 disables the ceiling)")
     ap.add_argument("--dry-run", action="store_true",
                     help="run everything except /research/save")
     # A REPORT IS WRITTEN EVERY RUN, NOT ONLY WHEN ASKED. Ryan drives this box over Chrome
@@ -2503,8 +2729,9 @@ def main():
                          "first, then Lite -- 400 reads a day, a few waters, for when Lite's daily "
                          "quota is spent. spare: 3 Flash (preview), 2.5 Flash and 2.5 Flash-Lite "
                          "first -- 300 a day, for when Lite and Flash are both spent. Flash and "
-                         "spare allow 5-10 requests a minute per model per key, so pass a low "
-                         "--rpm with them: a refused request still counts against the day. With "
+                         "spare allow 5-10 requests a minute per model per key, and the default "
+                         "--rpm follows the models asked (paced_rpm): a refused request still "
+                         "counts against the day. With "
                          "--group-models claude the Gemini fallback groups use it too")
     ap.add_argument("--resume", action="store_true",
                     help="skip every water whose stored profile was last written by the Claude step "
@@ -2538,6 +2765,7 @@ def main():
 
     global REGISTRY_DIR, EXTRACT_MODELS
     REGISTRY_DIR = a.registry
+
     EXTRACT_MODELS = a.extract_models
 
     if a.apply_groups:
@@ -2553,6 +2781,7 @@ def main():
 
     if a.groups_only:
         bad = 0
+        done_groups = []
         for name, st, alts in (lakes[:a.limit] if a.limit else lakes):
             r, paths = species_groups_only(name, st, a.group_models, a.save,
                                            os.path.dirname(a.report) or "_reports",
@@ -2561,7 +2790,7 @@ def main():
             print(f"  {'ok ' if r['ok'] else 'FAIL'} {r.get('seconds', 0):5.1f}s  {name[:44]:46s}"
                   f"{r.get('species', 0)} species  {r.get('facts', 0)} facts  "
                   f"{r.get('documents', 0)} docs" + (f"  saved" if r.get("saved") else "")
-                  + (f"  -- {r['error']}" if r.get("error") else ""))
+                  + llm_note(r) + (f"  -- {r['error']}" if r.get("error") else ""))
             if models:
                 print(f"        models: {models}")
             print_claude_line(r)
@@ -2570,6 +2799,8 @@ def main():
             for pth in paths:
                 print(f"        -> {pth}")
             bad += 0 if r["ok"] else 1
+            done_groups.append(r)
+        print(run_llm_line(done_groups))
         return 1 if bad else 0
 
     if a.limit:
@@ -2589,8 +2820,10 @@ def main():
     # --jobs multiplies the token rate, which is what the pacing exists to hold down. Serial is
     # the default for that reason and not out of caution.
     print(f"estimate at 220 s/lake: {len(lakes) * 220 / max(a.jobs, 1) / 60:.0f} min"
-          f"   (extraction: up to {extract_workers(a.rpm, 99)} at once, "
-          f"{a.rpm or 'no'} calls/min, {a.tpm:,} input tokens/min)\n")
+          + (f"   (extraction: up to {extract_workers(a.rpm, 99)} at once, "
+             f"{a.rpm or 'no'} calls/min, {a.tpm:,} input tokens/min)\n" if a.rpm is not None else
+             f"   (extraction paced to the Worker's free keys once it reports them -- "
+             f"{a.extract_models}; {a.tpm:,} input tokens/min)\n"))
 
     t0 = time.perf_counter()
     done = [0]
@@ -2650,7 +2883,7 @@ def main():
                   f"{f.get('failed', 0)} failed)  {r['facts']} facts  ~{ktok:.0f}k tok"
                   + (f"  re-asked: {', '.join(r['groups_reasked'])}"
                      if r.get("groups_reasked") else "")
-                  + window_note(r))
+                  + window_note(r) + llm_note(r))
         if r["missing"]:
             detail += "  LOST: " + ", ".join(r["missing"])
         print(f"  [{done[0]:3d}/{len(lakes)}] {mark} {secs}  {name[:42]:44s}{detail}"
@@ -2689,6 +2922,7 @@ def main():
         print(f"per lake: median {per[len(per) // 2]:.0f}s  min {per[0]:.0f}s  max {per[-1]:.0f}s")
     for r in bad:
         print(f"  FAILED {r['lake']}: {r['error']}")
+    print(run_llm_line(results))
 
     lost = [r for r in ok if r["missing"]]
     if lost:

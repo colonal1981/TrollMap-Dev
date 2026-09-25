@@ -79,6 +79,85 @@ function firstModelsFor(name) {
   return null;
 }
 
+/**
+ * GOOGLE'S FREE-TIER LIMITS, PER MODEL -- ONE TABLE, BESIDE THE MODEL LISTS IT DESCRIBES.
+ *
+ * Off Ryan's AI Studio dashboards, 2026-09-25: the same on all five free projects he had then
+ * (TrollmapFree to Trollmapfree5), and projects six to nine, added that evening, are on the same free
+ * tier. How many there are is not written here or anywhere in the source -- only the Worker's
+ * secrets know, and geminiFreeProviders(env) counts them; the research routes report the count as
+ * meta.freeKeys, which is where Scripts/research_lakes.py takes it from. Google meters each model on its own, per project: "Rate limits are applied per
+ * project, not per API key ... Requests per day (RPD) quotas reset at midnight Pacific time"
+ * (ai.google.dev/gemini-api/docs/rate-limits, read 2026-09-25). TPM is 250,000 on both Lite and
+ * Flash, from the same pages (the notes on GEMINI_FREE_MODELS and GEMINI_FREE_FLASH_MODELS), and
+ * on 3 Flash and 2.5 Flash ("5 rpm 250k tpm and 20 rpd", the note on GEMINI_FREE_SPARE_MODELS).
+ * 2.5 Flash-Lite's TPM was not given, so it is null rather than a guess.
+ *
+ * Read by rateRefusal() below, to tell a per-minute refusal from a per-day one when Google's error
+ * names only its limit, and by Scripts/research_lakes.py, through node, to pace a run to the
+ * models it asks for. Change a limit here and both follow.
+ */
+const GEMINI_FREE_LIMITS = {
+  "gemini-3.5-flash-lite": { rpm: 15, rpd: 500, tpm: 250000 },
+  "gemini-3.1-flash-lite": { rpm: 15, rpd: 500, tpm: 250000 },
+  "gemini-3.8-flash":      { rpm: 5,  rpd: 20,  tpm: 250000 },
+  "gemini-3.7-flash":      { rpm: 5,  rpd: 20,  tpm: 250000 },
+  "gemini-3.6-flash":      { rpm: 5,  rpd: 20,  tpm: 250000 },
+  "gemini-3.5-flash":      { rpm: 5,  rpd: 20,  tpm: 250000 },
+  "gemini-3-flash-preview": { rpm: 5, rpd: 20,  tpm: 250000 },
+  "gemini-2.5-flash":      { rpm: 5,  rpd: 20,  tpm: 250000 },
+  "gemini-2.5-flash-lite": { rpm: 10, rpd: 20,  tpm: null },
+};
+
+// ── THE FREE GEMINI KEYS: EVERY ONE THE WORKER HOLDS, NOT A LIST OF FIVE ────────────────────────
+//
+// Ryan, 2026-09-25, after adding projects six to nine as GEMINI_FREE6_API_KEY ... GEMINI_FREE9_API_KEY
+// (Google caps a person at ten): the five entries that stood in LLM_PROVIDERS were one entry copied
+// five times, and callLLM named them a second time, so a sixth key needed a sixth copy and a sixth
+// name and the new four sat unread. Now the keys are GEMINI_FREE_API_KEY, then GEMINI_FREE2_API_KEY,
+// GEMINI_FREE3_API_KEY ... for as long as the next one exists -- read by name rather than by listing
+// the environment, so nothing about how a binding is enumerated can hide one. Adding a project is
+// adding its secret.
+const geminiRequest = (p) => ({
+  systemInstruction: { parts: [{ text: p.messages.find(m => m.role === 'system')?.content || '' }] },
+  contents: [{ parts: [{ text: p.messages.find(m => m.role === 'user')?.content || '' }] }],
+  generationConfig: {
+    temperature: p.temperature || 0.15,
+    maxOutputTokens: p.max_tokens || 1500,
+    responseMimeType: p.response_format?.type === 'json_object' ? 'application/json' : undefined,
+  }
+});
+
+function geminiFreeProvider(suffix) {
+  return {
+    // Free-tier Gemini: each key is its own project, with its own limits per model.
+    name: `gemini-free${suffix}`,
+    baseUrl: null,
+    keyEnv: `GEMINI_FREE${suffix}_API_KEY`,
+    defaultModel: "gemini-3.5-flash-lite",
+    models: GEMINI_FREE_MODELS,
+    headers: (key) => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
+    isGemini: true,
+    transformPayload: geminiRequest,
+  };
+}
+
+/** The free Gemini providers `env` holds a key for, in order: GEMINI_FREE_API_KEY, then 2, 3, ... */
+function geminiFreeProviders(env) {
+  const out = [];
+  for (let n = 1; ; n++) {
+    const p = geminiFreeProvider(n === 1 ? '' : String(n));
+    if (!env || !env[p.keyEnv]) return out;
+    out.push(p);
+  }
+}
+
+/** Every provider a request can use: the pay-tier Gemini, each free key, then the others. */
+function providersFor(env) {
+  return [...LLM_PROVIDERS.filter((p) => p.isGemini), ...geminiFreeProviders(env),
+          ...LLM_PROVIDERS.filter((p) => !p.isGemini)];
+}
+
 var LLM_PROVIDERS = [
   {
     // Pay-tier Gemini — limnology agent only
@@ -102,82 +181,6 @@ models: [
         maxOutputTokens: p.max_tokens || 1500,
         responseMimeType: p.response_format?.type === 'json_object' ? 'application/json' : undefined,
       }
-    }),
-  },
-  {
-    // Free-tier Gemini — general agents primary (500 RPD, 250K TPM)
-    name: "gemini-free",
-    baseUrl: null,
-    keyEnv: "GEMINI_FREE_API_KEY",
-    defaultModel: "gemini-3.5-flash-lite",
-    models: GEMINI_FREE_MODELS,
-    headers: (key) => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
-    isGemini: true,
-    transformPayload: (p) => ({
-      systemInstruction: { parts: [{ text: p.messages.find(m => m.role === 'system')?.content || '' }] },
-      contents: [{ parts: [{ text: p.messages.find(m => m.role === 'user')?.content || '' }] }],
-      generationConfig: {
-        temperature: p.temperature || 0.15,
-        maxOutputTokens: p.max_tokens || 1500,
-        responseMimeType: p.response_format?.type === 'json_object' ? 'application/json' : undefined,
-      }
-    }),
-  },
-  {
-    // Free-tier Gemini — fallback when first free key hits rate limits
-    name: "gemini-free2",
-    baseUrl: null,
-    keyEnv: "GEMINI_FREE2_API_KEY",
-    defaultModel: "gemini-3.5-flash-lite",
-    models: GEMINI_FREE_MODELS,
-    headers: (key) => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
-    isGemini: true,
-    transformPayload: (p) => ({
-      systemInstruction: { parts: [{ text: p.messages.find(m => m.role === 'system')?.content || '' }] },
-      contents: [{ parts: [{ text: p.messages.find(m => m.role === 'user')?.content || '' }] }],
-      generationConfig: { temperature: p.temperature || 0.15, maxOutputTokens: p.max_tokens || 1500, responseMimeType: p.response_format?.type === 'json_object' ? 'application/json' : undefined }
-    }),
-  },
-  {
-    name: "gemini-free3",
-    baseUrl: null,
-    keyEnv: "GEMINI_FREE3_API_KEY",
-    defaultModel: "gemini-3.5-flash-lite",
-    models: GEMINI_FREE_MODELS,
-    headers: (key) => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
-    isGemini: true,
-    transformPayload: (p) => ({
-      systemInstruction: { parts: [{ text: p.messages.find(m => m.role === 'system')?.content || '' }] },
-      contents: [{ parts: [{ text: p.messages.find(m => m.role === 'user')?.content || '' }] }],
-      generationConfig: { temperature: p.temperature || 0.15, maxOutputTokens: p.max_tokens || 1500, responseMimeType: p.response_format?.type === 'json_object' ? 'application/json' : undefined }
-    }),
-  },
-  {
-    name: "gemini-free4",
-    baseUrl: null,
-    keyEnv: "GEMINI_FREE4_API_KEY",
-    defaultModel: "gemini-3.5-flash-lite",
-    models: GEMINI_FREE_MODELS,
-    headers: (key) => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
-    isGemini: true,
-    transformPayload: (p) => ({
-      systemInstruction: { parts: [{ text: p.messages.find(m => m.role === 'system')?.content || '' }] },
-      contents: [{ parts: [{ text: p.messages.find(m => m.role === 'user')?.content || '' }] }],
-      generationConfig: { temperature: p.temperature || 0.15, maxOutputTokens: p.max_tokens || 1500, responseMimeType: p.response_format?.type === 'json_object' ? 'application/json' : undefined }
-    }),
-  },
-  {
-    name: "gemini-free5",
-    baseUrl: null,
-    keyEnv: "GEMINI_FREE5_API_KEY",
-    defaultModel: "gemini-3.5-flash-lite",
-    models: GEMINI_FREE_MODELS,
-    headers: (key) => ({ "x-goog-api-key": key, "Content-Type": "application/json" }),
-    isGemini: true,
-    transformPayload: (p) => ({
-      systemInstruction: { parts: [{ text: p.messages.find(m => m.role === 'system')?.content || '' }] },
-      contents: [{ parts: [{ text: p.messages.find(m => m.role === 'user')?.content || '' }] }],
-      generationConfig: { temperature: p.temperature || 0.15, maxOutputTokens: p.max_tokens || 1500, responseMimeType: p.response_format?.type === 'json_object' ? 'application/json' : undefined }
     }),
   },
   {
@@ -241,14 +244,18 @@ function extractLLMText(data) {
   return "";
 }
 
-// Round-robin counter for gemini-free key rotation across concurrent requests
-// Incremented atomically per call so concurrent analyze-facts requests hit different keys
+// WHERE A CALL STARTS IS DRAWN BY THE CALL, NOT READ OFF THE ISOLATE.
 //
-// SEEDED RANDOMLY, BECAUSE ZERO IS NOT A NEUTRAL STARTING POINT.
-//
-// This is module state in a Worker isolate, and Cloudflare recycles isolates constantly. Every
-// analyze-facts call is its own request, so a cold isolate started this counter at 0 and picked
-// the FIRST free key -- again and again, for as long as cold starts kept happening.
+// This was three module-level counters -- the key, the Lite model, the Flash model -- each seeded
+// with Math.random() when the module loaded and stepped once per call. Module state belongs to a
+// Worker isolate, and Cloudflare starts and drops isolates as it likes; every analyze-facts and
+// agent-llm call is its own request. So where a call started depended on how many calls this
+// isolate had made and on what the seed was when the isolate was born -- and a fresh isolate
+// makes one or two calls. If the seed does not differ between isolates, every fresh one sends its
+// first call to the same key and the same model. (Workers restricts generating random values at
+// global scope -- "Disallowed operation called within global scope. Asynchronous I/O ..., setting
+// a timeout, and generating random values are not allowed within global scope." -- so what a
+// module-load seed is worth there is not something this file should be resting on.)
 //
 // Measured 2026-09-16 across Ryan's five Gemini projects after six research runs (152 requests):
 //
@@ -256,39 +263,31 @@ function extractLLMText(data) {
 //     key 2   43 / 500            key 5   12 / 500
 //     key 3   22 / 500
 //
-// An even spread would be about 30 each. That decay is not the designed fallback cascade either --
-// the cascade only fires on a failure, and key 1 peaked at 8 of 15 RPM with zero retries recorded,
-// so nothing was failing. It is the counter starting from the same place every time.
+// and 2026-09-25, on all five projects: peak RPM 17 to 26 on the Lite models against a limit of
+// 15, 5 to 8 on the Flash models against 5, while the client paced the whole pool at 60 a minute.
+// Both are the shape of calls piling onto the same slot, not of load spread over twenty.
 //
-// The cost is where the ceiling actually sits. At 39% of the load on one key, that key reaches its
-// 500 RPD when the pool has done about 1,280 requests -- half the 2,500 the five keys nominally
-// carry. And the moment it does, the failure is the one already recorded twice in
-// RESEARCH_502S_ARE_ARITHMETIC: "This model is currently experiencing high demand", each time
-// costing a whole species group off a lake.
+// So where an isolate starts is drawn with Math.random() INSIDE its first request, where it is
+// allowed and differs from isolate to isolate, and every later call in that isolate steps one on
+// from it: key s, s+1, ... around the ring, and the model ladder likewise. Twenty isolates making
+// one call each land where twenty draws land (test/a-fresh-isolate-does-not-start-on-the-first-slot
+// .test.js), and one isolate making nine calls on nine keys asks each key once
+// (test/every-free-key-is-used.test.js) -- a fresh draw per call would leave keys unasked.
 //
-// A random start needs no coordination and no storage: whatever isolate serves a request begins
-// somewhere different, and the modulo below keeps it in range however large this grows.
-let _geminiRoundRobinIdx = Math.floor(Math.random() * 1000);
-
-// BOTH MODELS, EACH ON ITS OWN QUOTA -- FOR THE CALLS THAT ASK.
-//
-// Ryan, 2026-09-24, with one key's AI Studio usage page open: "and we could make it so it hits
-// both models separately right". Gemini 3.5 Flash Lite 8/15 RPM, 43/500 RPD; Gemini 3.1 Flash
-// Lite 2/15 RPM, 0/500 RPD. The free tier meters each model on its own, so every key carries two
-// 15 RPM / 250,000 TPM / 500 RPD allowances -- and the ladder above reaches the second only when
-// the first has failed. 3.5 took the whole load while 3.1's allowance sat unused.
-//
-// A caller that passes { spreadModels: true } gets the ladder turned per call from its own random
-// start, the way the keys are: one call starts on 3.5 and falls to 3.1, the next starts on 3.1
-// and falls to 3.5. Nothing leaves the ladder, so a model that is busy or retired is still caught
-// by the other, and the day 3.1 goes the only cost is a quick refusal on the calls that start there.
-//
-// Opt-in, not the default. Document extraction asks (Worker/research/extract.js), and that is most
-// of a research run's calls. Callers that did not ask -- the species groups among them -- keep 3.5
-// first, so the model that answers them does not change under them.
-let _geminiModelIdx = Math.floor(Math.random() * 1000);
-// Its own start for the Flash pass, so the two rotations do not move in step.
-let _geminiFlashIdx = Math.floor(Math.random() * 1000);
+// BOTH MODELS, EACH ON ITS OWN QUOTA -- FOR THE CALLS THAT ASK. Ryan, 2026-09-24, with one key's
+// AI Studio usage page open: "and we could make it so it hits both models separately right".
+// Gemini 3.5 Flash Lite 8/15 RPM, 43/500 RPD; Gemini 3.1 Flash Lite 2/15 RPM, 0/500 RPD. The
+// free tier meters each model on its own, so a caller that passes { spreadModels: true } gets the
+// Lite ladder turned from a drawn start too. Opt-in, not the default: document extraction asks
+// (Worker/research/extract.js), and callers that did not ask -- the species groups among them --
+// keep 3.5 first, so the model that answers them does not change under them. The Flash pass
+// ({ firstModels }) always starts at a drawn model.
+const _drawn = {};   // lane ("key", "lite", "first") -> { offset, calls }; offset drawn in a request
+function drawStart(n, lane) {
+  if (n < 2) return 0;
+  const d = _drawn[lane] || (_drawn[lane] = { offset: Math.floor(Math.random() * 1e9), calls: 0 });
+  return (d.offset + d.calls++) % n;
+}
 
 /**
  * One generateContent call. Throws with the model's name on anything that is not an answer.
@@ -301,15 +300,26 @@ let _geminiFlashIdx = Math.floor(Math.random() * 1000);
  * THE TEXT IS EVERY NON-THOUGHT PART, JOINED. A thinking model can return more than one part, and
  * reading only the first is how an answer arrives as "empty content".
  */
-async function geminiCall(provider, key, modelId, payload, uncapped = false) {
+async function geminiCall(provider, key, modelId, payload, uncapped = false, sent = null) {
   const geminiPayload = provider.transformPayload(payload);
   if (uncapped && geminiPayload.generationConfig) delete geminiPayload.generationConfig.maxOutputTokens;
   const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${key}`;
-  const r = await fetch(geminiUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(geminiPayload)
-  });
+  // One entry per request that left this Worker, whatever came back. See sentRecord().
+  const rec = sent ? sentRecord(sent, provider, modelId) : {};
+  let r;
+  try {
+    r = await fetch(geminiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(geminiPayload)
+    });
+  } catch (e) {
+    // The platform's "too many subrequests" never left the Worker, so it is not a request Google
+    // counted. Anything else thrown by fetch may have reached it; status 0 says we cannot tell.
+    if (sent && invocationSpent(e)) sent.pop();
+    throw e;
+  }
+  rec.http = r.status;
   let data;
   try { data = await r.json(); } catch (_) {
     const txt = await r.text().catch(() => "");
@@ -318,14 +328,48 @@ async function geminiCall(provider, key, modelId, payload, uncapped = false) {
   if (!r.ok) {
     const msg = data.error?.message || data.error || `HTTP ${r.status}`;
     const msgStr = typeof msg === "string" ? msg : JSON.stringify(msg).slice(0,400);
-    throw new Error(`gemini/${modelId}: ${msgStr}`);
+    const err = new Error(`gemini/${modelId}: ${msgStr}`);
+    err.http = r.status;
+    err.refusal = rateRefusal(r.status, data, modelId);
+    if (err.refusal) Object.assign(err.refusal, { key: rec.key, model: modelId });
+    throw err;
   }
   // Convert Gemini response to OpenAI-compatible shape for extractLLMText
   const parts = data.candidates?.[0]?.content?.parts || [];
   const geminiText = parts.filter((p) => !p.thought && typeof p.text === "string").map((p) => p.text).join("");
   if (!geminiText) throw new Error(`gemini/${modelId}: empty content`);
+  rec.answered = true;
   const compatData = { choices: [{ message: { content: geminiText } }] };
   return { provider: "gemini", model: modelId, data: compatData, _geminiRaw: geminiText.slice(0, 200) };
+}
+
+/**
+ * EVERY REQUEST callLLM SENDS, WRITTEN DOWN -- BECAUSE GOOGLE COUNTS THEM ALL.
+ *
+ * Ryan's five AI Studio dashboards, 2026-09-25: both Lite models at 503 / 500 RPD and every Flash
+ * model at 21-23 / 20 on all five projects -- about 5,500 requests counted. The two batch logs of
+ * that day (research_20260925_130135.log, research_20260925_163204.log) got back about 900
+ * answers, perhaps 1,050 with the morning's runs. Four requests in five counted against the day
+ * and produced nothing, and nothing on the batch's screen could show it: a call that walked ten
+ * refusals before an answer printed as one answer.
+ *
+ * So each request that leaves the Worker is one entry here -- the free key's number (1-5, as the
+ * dashboards are TrollmapFree to Trollmapfree5) or the provider's name, the model, `http` -- the
+ * HTTP status, 0 when fetch threw -- and whether it answered. callLLM hands the list back on its result as
+ * `requests`, and on the error it throws as `err.requests`; the research handlers return it in
+ * `meta.llmRequests`, and Scripts/research_lakes.py prints requests sent per answer.
+ */
+function sentRecord(sent, provider, model) {
+  const m = /^gemini-free(\d*)$/.exec(provider.name);
+  const rec = { key: m ? Number(m[1] || 1) : provider.name, model, http: 0, answered: false };
+  sent.push(rec);
+  return rec;
+}
+
+/** { sent, answered } over one or more request lists. */
+function countRequests(requests) {
+  const list = Array.isArray(requests) ? requests : [];
+  return { sent: list.length, answered: list.filter((r) => r && r.answered).length };
 }
 
 // THE PLATFORM HAS REFUSED THIS INVOCATION ANY MORE FETCHES, so no key and no model further down
@@ -337,6 +381,62 @@ async function geminiCall(provider, key, modelId, payload, uncapped = false) {
 function invocationSpent(e) {
   return /too many subrequests/i.test(String((e && e.message) || ''));
 }
+
+/**
+ * A RATE REFUSAL, READ FROM GOOGLE'S OWN ERROR -- AND WHICH KIND IT IS.
+ *
+ *   "minute"  429 on a per-minute quota (requests or tokens). The slot is free again inside a
+ *             minute, and Google says when: "Please retry in 35.4s" in the message, the same as
+ *             `retryDelay` in its RetryInfo detail.
+ *   "demand"  503 "This model is currently experiencing high demand ... Please try again later."
+ *   "day"     429 on a per-day quota ("limit: 500, model: gemini-3.1-flash-lite"). The slot is
+ *             spent until midnight Pacific; no wait inside a run brings it back.
+ *
+ * Which quota was hit is named by Google in the error's QuotaFailure detail
+ * (`quotaId: "GenerateRequestsPerDayPerProjectPerModel-FreeTier"`, "...PerMinute..."). When the
+ * detail is missing, the message's "limit: N, model: M" is compared with M's row in
+ * GEMINI_FREE_LIMITS. A 429 that says neither is taken as per-minute: waiting on it costs no
+ * request, and walking on it costs one per slot. null for anything that is not a rate refusal.
+ */
+function rateRefusal(status, data, modelId) {
+  const err = (data && data.error) || {};
+  const msg = typeof err.message === "string" ? err.message : "";
+  const details = Array.isArray(err.details) ? err.details : [];
+  const retryInfo = details.find((d) => /RetryInfo$/.test(String(d && d["@type"])));
+  const delay = retryInfo && /^([\d.]+)s$/.exec(String(retryInfo.retryDelay || ""));
+  const said = /retry in ([\d.]+)\s*(ms|s)\b/i.exec(msg);
+  const retryAfterMs = delay ? Math.round(Number(delay[1]) * 1000)
+    : said ? Math.round(Number(said[1]) * (said[2].toLowerCase() === "ms" ? 1 : 1000)) : null;
+  if (status === 503 || err.status === "UNAVAILABLE") {
+    return /high demand|overloaded|try again later/i.test(msg) ? { kind: "demand", retryAfterMs } : null;
+  }
+  if (status !== 429 && err.status !== "RESOURCE_EXHAUSTED") return null;
+  const quotaIds = details.flatMap((d) => (Array.isArray(d && d.violations) ? d.violations : []))
+    .map((v) => String(v.quotaId || ""));
+  if (quotaIds.some((q) => /PerDay/i.test(q))) return { kind: "day", retryAfterMs };
+  if (quotaIds.some((q) => /PerMinute/i.test(q))) return { kind: "minute", retryAfterMs };
+  const lim = /limit:\s*(\d+),\s*model:\s*([\w.-]+)/i.exec(msg);
+  const row = lim && (GEMINI_FREE_LIMITS[lim[2]] || GEMINI_FREE_LIMITS[modelId]);
+  if (row && Number(lim[1]) === row.rpd && row.rpd !== row.rpm) return { kind: "day", retryAfterMs };
+  return { kind: "minute", retryAfterMs };
+}
+
+// SLOTS THAT HAVE SAID THEIR DAY IS SPENT, until midnight Pacific -- when Google resets RPD. A
+// per-day refusal is final for the day, and asking that slot again is one more counted request
+// for one more refusal. Module state, so it lasts as long as the isolate does and no longer; it
+// only ever saves requests, since a slot is left out only after Google itself said it was spent.
+const _spentToday = new Map();   // "gemini-free3|gemini-3.5-flash-lite" -> "2026-09-25" (Pacific)
+function pacificDay() {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles" }).format(new Date());
+}
+function spentToday(provider, modelId) {
+  return _spentToday.get(`${provider.name}|${modelId}`) === pacificDay();
+}
+function markSpent(provider, modelId) {
+  _spentToday.set(`${provider.name}|${modelId}`, pacificDay());
+}
+/** Tests only: a fresh day for every slot. */
+function forgetSpentSlots() { _spentToday.clear(); }
 
 function turnLadder(models, start) {
   const n = models.length;
@@ -372,51 +472,63 @@ async function callLLM(env, payload, preferredProvider = null, opts = {}) {
   // keys, which share one shape of request.
   //
   // An EXPLICIT preferredProvider still pins -- a caller that names a provider means it.
+  const PROVIDERS = providersFor(env);
   let rotated = false;
+  let keyOrder = null;
   if (!preferredProvider) {
-    const freeKeys = ['gemini-free', 'gemini-free2', 'gemini-free3', 'gemini-free4', 'gemini-free5'];
-    const available = freeKeys.filter(name => {
-      const p = LLM_PROVIDERS.find(p => p.name === name);
-      return p && env[p.keyEnv];
-    });
+    const available = PROVIDERS.filter((p) => /^gemini-free/.test(p.name)).map((p) => p.name);
     if (available.length > 1) {
-      preferredProvider = available[_geminiRoundRobinIdx % available.length];
-      _geminiRoundRobinIdx++;
+      keyOrder = turnLadder(available, drawStart(available.length, 'key'));
+      preferredProvider = keyOrder[0];
       rotated = true;
     }
   }
   const providers = !preferredProvider
-    ? LLM_PROVIDERS.filter(p => env[p.keyEnv] && !p.excludeFromGeneral)
+    ? PROVIDERS.filter(p => env[p.keyEnv] && !p.excludeFromGeneral)
     : rotated
-      // The rotated key first, then the OTHER FREE GEMINI KEYS and nothing else. Same model
-      // family, same request shape, same limits -- a spike on one key is answered by another
-      // key rather than by a provider sized differently.
-      ? [...LLM_PROVIDERS.filter(p => p.name === preferredProvider),
-         ...LLM_PROVIDERS.filter(p => p.name !== preferredProvider
-                                   && /^gemini-free/.test(p.name) && env[p.keyEnv])]
-      : LLM_PROVIDERS.filter(p => p.name === preferredProvider);
+      // The drawn key first, then the OTHER FREE GEMINI KEYS round the ring from it, and nothing
+      // else. Same model family, same request shape, same limits -- a spike on one key is
+      // answered by another key rather than by a provider sized differently.
+      ? keyOrder.map((name) => PROVIDERS.find((p) => p.name === name))
+      : PROVIDERS.filter(p => p.name === preferredProvider);
 
   if (!providers.length) {
     throw new Error("No LLM provider configured. Set GROQ_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY, or CEREBRAS_API_KEY");
   }
 
-  const modelStart = opts && opts.spreadModels ? _geminiModelIdx++ : 0;
+  const modelStart = opts && opts.spreadModels
+    ? drawStart(GEMINI_FREE_MODELS.length, 'lite') : 0;
 
+  const sent = [];
+  try {
+    const got = await walkLadder(env, payload, providers, modelStart, opts, sent);
+    return { ...got, requests: sent };
+  } catch (e) {
+    if (e && typeof e === "object") e.requests = sent;
+    throw e;
+  }
+}
+
+async function walkLadder(env, payload, providers, modelStart, opts, sent) {
   let lastError;
+  // Models that said "high demand" during THIS call; see stopOnRefusal().
+  const busy = new Set();
 
   // THE FIRST MODELS, ON EVERY FREE KEY, BEFORE THE LADDER. Model by model across the keys in this
-  // call's rotated order, each model's start turned per call, so twenty calls touch all twenty
-  // allowances once. Everything that refuses falls through to the loop below, unchanged.
+  // call's rotated order, each call starting at a drawn model, so twenty calls spread over all
+  // twenty allowances. Everything that refuses falls through to the loop below, unchanged.
   if (opts && Array.isArray(opts.firstModels) && opts.firstModels.length) {
     const freeKeys = providers.filter((p) => p.isGemini && /^gemini-free/.test(p.name) && env[p.keyEnv]);
-    for (const modelId of turnLadder(opts.firstModels, _geminiFlashIdx++)) {
+    for (const modelId of turnLadder(opts.firstModels, drawStart(opts.firstModels.length, 'first'))) {
       for (const provider of freeKeys) {
+        if (busy.has(modelId) || spentToday(provider, modelId)) continue;
         try {
-          return await geminiCall(provider, env[provider.keyEnv], modelId, payload, true);
+          return await geminiCall(provider, env[provider.keyEnv], modelId, payload, true, sent);
         } catch (e) {
           if (invocationSpent(e)) throw e;
           lastError = e;
           console.warn(`LLM gemini/${modelId} (first) failed: ${e.message}`);
+          if (stopOnRefusal(e, provider, modelId, opts, busy)) throw e;
         }
       }
     }
@@ -431,12 +543,14 @@ async function callLLM(env, payload, preferredProvider = null, opts = {}) {
       const modelCandidates = turnLadder(
         provider.models?.length ? provider.models : [provider.defaultModel], modelStart);
       for (const modelId of modelCandidates) {
+        if (busy.has(modelId) || spentToday(provider, modelId)) continue;
         try {
-          return await geminiCall(provider, key, modelId, payload);
+          return await geminiCall(provider, key, modelId, payload, false, sent);
         } catch (e) {
           if (invocationSpent(e)) throw e;
           lastError = e;
           console.warn(`LLM gemini/${modelId} failed: ${e.message}`);
+          if (stopOnRefusal(e, provider, modelId, opts, busy)) throw e;
           continue;
         }
       }
@@ -450,18 +564,20 @@ async function callLLM(env, payload, preferredProvider = null, opts = {}) {
         const body = provider.transformPayload(providerPayload);
         // Retry on 429 for all providers — 2 retries with 2s/4s backoff
         const maxAttempts = 3;
-        let r;
+        let r, rec;
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
           if (attempt > 1) {
             const delay = attempt === 2 ? 2000 : 4000;
             console.warn(`${provider.name}/${modelId} rate limited (429) — retry ${attempt}/${maxAttempts} after ${delay}ms`);
             await new Promise(res => setTimeout(res, delay));
           }
+          rec = sentRecord(sent, provider, modelId);
           r = await fetch(provider.baseUrl, {
             method: "POST",
             headers: provider.headers(key),
             body: JSON.stringify(body)
           });
+          rec.http = r.status;
           if (r.status !== 429) break;
         }
         let data;
@@ -493,6 +609,7 @@ async function callLLM(env, payload, preferredProvider = null, opts = {}) {
           }
         }
 
+        rec.answered = true;
         return { provider: provider.name, model: modelId, data };
       } catch (e) {
         lastError = e;
@@ -503,7 +620,46 @@ async function callLLM(env, payload, preferredProvider = null, opts = {}) {
       }
     }
   }
+  if (!lastError && !sent.length && providers.some((p) => p.isGemini)) {
+    // Nothing was asked: every slot this call could reach has already said its day is spent.
+    const e = new Error("gemini: every free key and model this call could ask has said its day "
+                      + "is spent (per-day limit); none is asked again before midnight Pacific");
+    e.refusal = { kind: "day", retryAfterMs: null };
+    throw e;
+  }
   throw lastError || new Error("All LLM providers/models failed");
+}
+
+/**
+ * WHAT A RATE REFUSAL DOES TO THE WALK.
+ *
+ * Ryan's dashboards, 2026-09-25: ~5,500 requests counted for ~900 answers. A refused request
+ * counts against the day like any other, and callLLM answered every refusal by asking the next
+ * slot at once -- on a busy minute one call walked all ten Lite slots, and with Flash first thirty.
+ *
+ *   "day"     The slot is spent until midnight Pacific. It is marked (markSpent) so no later call
+ *             in this isolate asks it again, and the walk goes on: another slot may not be spent.
+ *   "demand"  "This model is currently experiencing high demand" -- Google names the MODEL, not
+ *             the key. The model is left out for the rest of this call, on every key, and the walk
+ *             goes on to the next model: on the same key, a different allowance. Measured in
+ *             test/a-refusal-is-waited-out-not-walked.test.js before this rule was written: a spell
+ *             of demand on 3.5 Flash Lite cost 1.24 requests an answer when the walk moved on to
+ *             3.1, and 1.39 -- with four reads lost -- when the call stopped and the caller waited,
+ *             because half the retries drew 3.5 again inside the same spell. When every model the
+ *             call could ask is busy, the walk ends and the caller waits, as for "minute".
+ *   "minute"  The slot's minute is full, and Google says when it is free: "Please retry in 35.4s".
+ *             For a caller that passed { waitOnRateRefusal: true } the walk ends here, and the
+ *             error goes back with `refusal: { kind, retryAfterMs, key, model }` for the caller to
+ *             wait out -- which costs no requests. Measured in the same test: 300 reads sent at
+ *             twice what the ten Lite slots take cost 11.28 requests an answer walking, 2.01
+ *             waiting. A caller that did not ask walks as before; the app's own reads have no wait
+ *             of their own to fall back on.
+ */
+function stopOnRefusal(e, provider, modelId, opts, busy) {
+  const kind = e && e.refusal && e.refusal.kind;
+  if (kind === "day") { markSpent(provider, modelId); return false; }
+  if (kind === "demand") { busy.add(modelId); return false; }
+  return !!(kind === "minute" && opts && opts.waitOnRateRefusal);
 }
 async function isAuthorized(request, env) {
   const want = env && env.SYNC_TOKEN || typeof SYNC_TOKEN !== "undefined" && SYNC_TOKEN || null;
@@ -665,4 +821,6 @@ async function listAllR2(bucket, prefix, keep) {
 // trollmap-worker.js -- and the copies here were not exported and not called, so this file
 // carried thirty lines that could never run while the live copy drifted independently.
 // Exported now; trollmap-worker.js imports them.
-export { CORS, JSON_HEADERS, TEXT_HEADERS, extractLLMText, callLLM, GEMINI_FREE_FLASH_MODELS, GEMINI_FREE_SPARE_MODELS, firstModelsFor, isAuthorized, chartpackKey, handleChartpackList, r2Body, r2Text, listAllR2 };
+export { CORS, JSON_HEADERS, TEXT_HEADERS, extractLLMText, callLLM, countRequests, rateRefusal, forgetSpentSlots,
+  GEMINI_FREE_MODELS, GEMINI_FREE_FLASH_MODELS, GEMINI_FREE_SPARE_MODELS, GEMINI_FREE_LIMITS,
+  geminiFreeProviders, firstModelsFor, isAuthorized, chartpackKey, handleChartpackList, r2Body, r2Text, listAllR2 };

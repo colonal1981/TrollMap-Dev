@@ -18,6 +18,19 @@
 // is answered by seconds" (the note above runGroup in Worker/research/agents.js).
 export const GROUP_RETRY_WAITS_MS = [8000, 20000];
 
+/**
+ * The longest delay Google asked for across the groups `res` did not answer, in ms, or 0. A group
+ * refused per minute or for "high demand" ends its pass after one request (stopOnRefusal,
+ * Worker/worker-core.js) and reports Google's "Please retry in 35.4s" as retryAfterMs; asking
+ * again before it is up is a request spent on a refusal. Scripts/species_group_retry.py has the
+ * same rule.
+ */
+export function retryAfterMs(res) {
+  const groups = res?.meta?.groups;
+  if (!Array.isArray(groups)) return 0;
+  return Math.max(0, ...groups.filter((g) => g && g.ok === false).map((g) => Number(g.retryAfterMs) || 0));
+}
+
 /** The groups a response says it did not answer: failed, or never asked. */
 export function groupsToAskAgain(res) {
   const groups = res?.meta?.groups;
@@ -97,9 +110,11 @@ export async function askFailedGroupsAgain(ask, first, {
 } = {}) {
   let res = first;
   const reasked = new Set();
-  for (const wait of waits) {
+  for (const argued of waits) {
     const redo = groupsToAskAgain(res);
     if (!redo.length) break;
+    // The wait argued for above, or Google's own delay when it asked for longer.
+    const wait = Math.max(argued, retryAfterMs(res));
     log(`species group(s) ${redo.join(', ')} not answered -- asking again in a new request after ${wait / 1000}s`);
     await sleep(wait);
     redo.forEach((g) => reasked.add(g));

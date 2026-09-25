@@ -1,5 +1,5 @@
 // research/agents.js — split from worker-research.js (behavior-preserving) 
-import { JSON_HEADERS, callLLM, extractLLMText, firstModelsFor } from '../worker-core.js';
+import { JSON_HEADERS, callLLM, countRequests, extractLLMText, firstModelsFor, geminiFreeProviders } from '../worker-core.js';
 import { fetchDukeOperatingRange } from '../worker-data.js';
 import { dukePoolManagement, isTidalWater } from '../conditions.js';
 import { lakeIndex, resolveRegistryRow, agencyLakeFacts, speciesTraits,
@@ -1610,6 +1610,8 @@ async function handleResearchAgent(request, env) {
     // is ever going to look. So the outcome of every group is collected and returned, and the
     // response carries which confirmed species did not survive the round trip.
     const groupOutcomes = [];
+    // Every request callLLM sent for these groups, answered or not (sentRecord, worker-core.js).
+    const llmRequests = [];
     // ONE ANSWER PER LAKE, GATHERED ACROSS THE GROUPS. Every group is shown the same
     // documents and asked the same lake-level questions, so the answers agree or the first
     // one that is non-empty stands. A union rather than a last-writer-wins, because a group
@@ -1706,6 +1708,7 @@ async function handleResearchAgent(request, env) {
       // Scripts/species_group_retry.py and js/utils/species-group-retry.js are the two callers'
       // halves, and both merge the second answer into the first.
       let lastReason = null;
+      let refusal = null;
       if (spentBy) {
         // THE ALLOWANCE IS GONE, SO THIS GROUP IS NOT ASKED -- AND IS NOT CALLED FAILED. Every
         // fetch from here on would throw the platform's own sentence without reaching a model,
@@ -1716,7 +1719,11 @@ async function handleResearchAgent(request, env) {
         return {};
       }
       try {
-        const llmResult = await callLLM(env, payload, null, llmOpts);
+        // A per-minute or "high demand" refusal ends this group's pass instead of walking every
+        // other slot: both callers ask a failed group again in a new request after a wait, and
+        // the wait is what the refusal asked for (stopOnRefusal, worker-core.js).
+        const llmResult = await callLLM(env, payload, null, { ...llmOpts, waitOnRateRefusal: true });
+        llmRequests.push(...(llmResult.requests || []));
         const rawText = extractLLMText(llmResult.data);
         const parsed = extractJsonPossibly(rawText);
         if (!parsed) {
@@ -1753,11 +1760,14 @@ async function handleResearchAgent(request, env) {
         }
       } catch (e) {
         lastReason = e.message;
+        refusal = (e && e.refusal) || null;
+        llmRequests.push(...((e && e.requests) || []));
         if (SUBREQUESTS_SPENT.test(String(lastReason || ''))) spentBy = lastReason;
       }
       console.warn(`fisheries group ${groupName} failed: ${lastReason}`);
       groupOutcomes.push({ group: groupName, species: groupSpecies, ok: false, asked: true,
-                           reason: lastReason, attempts: 1 });
+                           reason: lastReason, attempts: 1,
+                           ...(refusal ? { refusal: refusal.kind, retryAfterMs: refusal.retryAfterMs } : {}) });
       return {};
     };
 
@@ -1880,7 +1890,8 @@ holding: coerceHolding(entry.holding, holdingRejects),
               groups: groupOutcomes, failedGroups, notAskedGroups, missingSpecies,
               askedGroups: groupEntries.map(([g]) => g),
               agencyEntries: (groundedPrev._agencyEntries || []).length,
-              speciesTraitRows: (groundedPrev._traitsEntries || []).length },
+              speciesTraitRows: (groundedPrev._traitsEntries || []).length,
+              llm: countRequests(llmRequests), llmRequests, freeKeys: geminiFreeProviders(env).length },
       // Surfaced where the client's log will show it. A run that lost a quarter of the lake's
       // species must not print a tick and nothing else.
       warnings: [
@@ -1949,12 +1960,17 @@ holding: coerceHolding(entry.holding, holdingRejects),
     // agents even when they ultimately reported Flash-Lite.
     llmResult = await callLLM(env, payload, null, llmOpts);
   } catch (e) {
-    return new Response(JSON.stringify({success:false, error:`LLM failed: ${e.message}`, agent: agentKey, lakeName}), {status: 502, headers: JSON_HEADERS});
+    // The requests a failed call spent are still requests: the batch counts them from here.
+    const llmRequests = (e && e.requests) || [];
+    return new Response(JSON.stringify({success:false, error:`LLM failed: ${e.message}`, agent: agentKey, lakeName,
+      meta: { llm: countRequests(llmRequests), llmRequests, freeKeys: geminiFreeProviders(env).length }}), {status: 502, headers: JSON_HEADERS});
   }
+  const llmRequests = llmResult.requests || [];
   const rawText = extractLLMText(llmResult.data);
   const parsed = extractJsonPossibly(rawText);
   if (!parsed) {
-    return new Response(JSON.stringify({success:false, error:"Agent returned non-JSON", raw: rawText.slice(0, 800), agent: agentKey}), {status: 502, headers: JSON_HEADERS});
+    return new Response(JSON.stringify({success:false, error:"Agent returned non-JSON", raw: rawText.slice(0, 800), agent: agentKey,
+      meta: { llm: countRequests(llmRequests), llmRequests, freeKeys: geminiFreeProviders(env).length }}), {status: 502, headers: JSON_HEADERS});
   }
 
   const dataKey = agent.expectedKey;
@@ -2103,7 +2119,10 @@ holding: coerceHolding(entry.holding, holdingRejects),
       provider: llmResult.provider,
       model: llmResult.model,
       durationMs: Date.now() - start,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      llm: countRequests(llmRequests),
+      llmRequests,
+      freeKeys: geminiFreeProviders(env).length,
     },
     raw: rawText.slice(0, 2000)
   }), {headers: JSON_HEADERS});

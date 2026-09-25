@@ -1,5 +1,5 @@
 // research/extract.js — split from worker-research.js (behavior-preserving)
-import { JSON_HEADERS, callLLM, extractLLMText, firstModelsFor } from '../worker-core.js';
+import { JSON_HEADERS, callLLM, countRequests, extractLLMText, firstModelsFor, geminiFreeProviders } from '../worker-core.js';
 import { extractJsonPossibly } from './keys.js';
 import { textDateOf, readPage, delink } from './text-date.js';
 import { factsDisagree, writtenOf } from '../../js/utils/fact-date.js';
@@ -110,6 +110,9 @@ async function handleResearchAnalyzeFacts(request, env) {
   // This ensures every document gets fully read instead of competing for context budget
   const allFacts = [];
   const docResults = [];
+  // Every request callLLM sent for this request's documents, answered or not -- see sentRecord()
+  // in worker-core.js. Returned in meta.llmRequests so the batch can print requests per answer.
+  const llmRequests = [];
 
   const SYSTEM = combinedBlocks
     ? "You are a precise fact extraction engine. The text you are given is many separate search-result snippets, each labelled [S1], [S2]... Extract verified facts about the specified lake from EVERY snippet, reading each one as if it were the only text you had. Return ONLY valid JSON with extracted_facts array. Never hallucinate. Quote must be verbatim from the snippet. Confidence 0-100."
@@ -478,7 +481,7 @@ FISHING BEHAVIOUR IS A FIRST-CLASS FACT. Sentences from guides, fishing reports 
         response_format: { type: "json_object" }
       };
 
-      // Both free models, each on its own quota: Ryan, 2026-09-24. See _geminiModelIdx in
+      // Both free models, each on its own quota: Ryan, 2026-09-24. See drawStart() in
       // Worker/worker-core.js; this read is most of a research run's calls.
       //
       // `extractModels: 'flash'` puts the full Flash models first, on every free key, as
@@ -488,11 +491,19 @@ FISHING BEHAVIOUR IS A FIRST-CLASS FACT. Sentences from guides, fishing reports 
       // allowances -- 20 a day per model per key, 400 in all -- were untouched. Lite is still the
       // default: 400 a day is a few waters of reading, not a batch.
       // `'spare'` puts GEMINI_FREE_SPARE_MODELS first instead: firstModelsFor() in worker-core.js.
+      //
+      // `waitOnRefusal: true` is the batch saying it waits out a rate refusal itself
+      // (EXTRACT_RETRY_WAITS in Scripts/research_lakes.py): a per-minute refusal then comes back
+      // in docResults with Google's retry delay instead of being walked across every other key
+      // and model, each step a request counted against the day. See stopOnRefusal() in
+      // worker-core.js. The app's reads do not ask, and walk as before.
       const first = firstModelsFor(body.extractModels);
-      const { data, model } = await callLLM(env, payload, null, {
+      const { data, model, requests } = await callLLM(env, payload, null, {
         spreadModels: true,
+        waitOnRateRefusal: body.waitOnRefusal === true,
         ...(first ? { firstModels: first } : {}),
       });
+      llmRequests.push(...(requests || []));
       const text = extractLLMText(data);
       const parsed = extractJsonPossibly(text);
 
@@ -553,7 +564,10 @@ FISHING BEHAVIOUR IS A FIRST-CLASS FACT. Sentences from guides, fishing reports 
 
     } catch (e) {
       console.warn(`handleResearchAnalyzeFacts: doc [${i+1}] failed: ${e.message}`);
-      docResults.push({ doc: doc.title, facts: 0, error: e.message });
+      llmRequests.push(...((e && e.requests) || []));
+      docResults.push({ doc: doc.title, facts: 0, error: e.message,
+                        ...(e && e.refusal ? { refusal: e.refusal.kind,
+                                               retryAfterMs: e.refusal.retryAfterMs } : {}) });
     }
   }
 
@@ -565,7 +579,12 @@ FISHING BEHAVIOUR IS A FIRST-CLASS FACT. Sentences from guides, fishing reports 
       filteredIndexPages: 0,               // none are refused now; see delinkedPages
       delinkedPages: delinkedCount,
       docResults,
-      totalFacts: allFacts.length
+      totalFacts: allFacts.length,
+      llm: countRequests(llmRequests),
+      llmRequests,
+      // How many free Gemini keys this Worker holds -- only its secrets know (geminiFreeProviders).
+      // Scripts/research_lakes.py paces extraction from it.
+      freeKeys: geminiFreeProviders(env).length,
     }
   }), { headers: JSON_HEADERS });
 }
