@@ -150,6 +150,19 @@ EXTRACT_DOC_LIMIT = 0
 # reading seven times more than the agent does was the two-numbers-disagreeing pattern again.
 EXTRACT_DOC_CHARS = 20000
 
+# WHICH GEMINI MODELS READ THE DOCUMENTS: "lite" (the default, both Lite models spread across the
+# keys) or "flash" (the full Flash models first on every free key, then Lite) -- `extractModels` on
+# /research/analyze-facts, set by --extract-models. For the day Lite is spent: the batch of
+# 2026-09-25 ran both Lite models out on all five keys with five waters left, and the Flash
+# allowances (20 a day per model per key, 400 in all) had not been touched. With --group-models
+# claude the same choice goes to the Gemini fallback groups, which ran out on the same quota.
+EXTRACT_MODELS = "lite"
+
+
+def extract_model_field():
+    """The request field for EXTRACT_MODELS, or nothing when it is the Worker's own default."""
+    return {"extractModels": EXTRACT_MODELS} if EXTRACT_MODELS != "lite" else {}
+
 # PACE BY TOKENS, NOT BY A FIXED SLEEP.
 #
 # Ryan, 2026-09-01, on two runs that each lost a species group to "This model is currently
@@ -795,7 +808,7 @@ def _extract_one(lake, state, alt_names, i, d, limiter, verbose, windows=None):
         # water the world calls Moss Lake or Kings Mountain Reservoir. Two documents, zero
         # facts, on 2026-09-01. The registry has carried both other names all along.
         "aliases": alt_names or [],
-        "docIndex": i, "targetFields": ["trollingIntelligence"],
+        "docIndex": i, "targetFields": ["trollingIntelligence"], **extract_model_field(),
         # fetchedAt is not the text's date and is never used as one: research/text-date.js reads it
         # only to refuse the date a site prints at the top of every page it serves (its clock).
         "documents": [{"title": d.get("title"), "url": d.get("url"), "text": text,
@@ -1281,7 +1294,7 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
                 "lakeName": lake, "baseName": base_name(lake), "state": state,
                 "aliases": alt_names or [], "docIndex": -1,
                 "targetFields": ["trollingIntelligence"],
-                "combine": True,
+                "combine": True, **extract_model_field(),
                 "documents": snippet_docs})
             if code == 200:
                 got = (ex or {}).get("extracted_facts") or []
@@ -2455,6 +2468,12 @@ def main():
                          "subscription) writes the species answers from the stored corpus and they "
                          "replace Lite's when every entry it keeps passes the quote checks. See "
                          "Scripts/claude_species.py")
+    ap.add_argument("--extract-models", choices=("lite", "flash"), default="lite",
+                    help="which Gemini models read the documents. lite (default): both Lite models "
+                         "across the keys. flash: 3.8, 3.7, 3.6 and 3.5 Flash on every free key "
+                         "first, then Lite -- 400 reads a day, a few waters, for when Lite's daily "
+                         "quota is spent. With --group-models claude the Gemini fallback groups use "
+                         "it too")
     ap.add_argument("--resume", action="store_true",
                     help="skip every water whose stored profile was last written by the Claude step "
                          "(metadata.createdBy names it). For picking a Claude batch back up after a "
@@ -2485,8 +2504,9 @@ def main():
         print("     export TROLLMAP_SYNC_TOKEN='<value>'      # bash")
         return 2
 
-    global REGISTRY_DIR
+    global REGISTRY_DIR, EXTRACT_MODELS
     REGISTRY_DIR = a.registry
+    EXTRACT_MODELS = a.extract_models
 
     if a.apply_groups:
         why = apply_species_groups(a.apply_groups)
@@ -2573,9 +2593,13 @@ def main():
         # (the Worker's merged species names) and the fallback: if Claude is out of usage, times
         # out, or nothing it writes passes the checks, the Lite answer is what the water keeps.
         claude = a.group_models == "claude"
+        # With Claude, the Gemini fallback groups ask what extraction asks (--extract-models):
+        # when Lite's day is spent it is spent for the groups too, and a water whose groups come
+        # back empty is not saved, so Claude never runs on it -- Douglas, Ft. Loudoun and Norris,
+        # 2026-09-25.
         r = research_one(name, st, a.dry_run, a.verbose, a.repo, alts, a.tpm,
                          ROWS_BY_NAME.get(name.strip().lower()), a.limnology_only, rpm=a.rpm,
-                         group_models="lite" if claude else a.group_models)
+                         group_models=a.extract_models if claude else a.group_models)
         if claude and r["ok"] and r.get("saved") and not a.limnology_only:
             r["claude"], secs = claude_after_run(name, st, alts,
                                                  os.path.dirname(a.report) or "_reports",

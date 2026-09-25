@@ -1,5 +1,5 @@
 // research/extract.js — split from worker-research.js (behavior-preserving)
-import { JSON_HEADERS, callLLM, extractLLMText } from '../worker-core.js';
+import { JSON_HEADERS, callLLM, extractLLMText, GEMINI_FREE_FLASH_MODELS } from '../worker-core.js';
 import { extractJsonPossibly } from './keys.js';
 import { textDateOf, readPage, delink } from './text-date.js';
 import { factsDisagree, writtenOf } from '../../js/utils/fact-date.js';
@@ -480,7 +480,17 @@ FISHING BEHAVIOUR IS A FIRST-CLASS FACT. Sentences from guides, fishing reports 
 
       // Both free models, each on its own quota: Ryan, 2026-09-24. See _geminiModelIdx in
       // Worker/worker-core.js; this read is most of a research run's calls.
-      const { data, model } = await callLLM(env, payload, null, { spreadModels: true });
+      //
+      // `extractModels: 'flash'` puts the full Flash models first, on every free key, as
+      // `groupModels: 'flash'` does for the species groups (GEMINI_FREE_FLASH_MODELS). For the day
+      // Lite is spent: Ryan's batch of 2026-09-25 ran both Lite models out on all five keys
+      // ("limit: 500, model: gemini-3.1-flash-lite") with five waters left, while the Flash
+      // allowances -- 20 a day per model per key, 400 in all -- were untouched. Lite is still the
+      // default: 400 a day is a few waters of reading, not a batch.
+      const { data, model } = await callLLM(env, payload, null, {
+        spreadModels: true,
+        ...(body.extractModels === 'flash' ? { firstModels: GEMINI_FREE_FLASH_MODELS } : {}),
+      });
       const text = extractLLMText(data);
       const parsed = extractJsonPossibly(text);
 
