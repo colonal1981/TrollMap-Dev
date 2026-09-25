@@ -26,6 +26,18 @@ import time
 GROUP_RETRY_WAITS = (8, 20)
 
 
+def retry_after_seconds(res):
+    """The longest delay Google asked for across the groups `res` did not answer, in seconds, or 0.
+
+    A group refused per minute or for "high demand" ends its pass after one request
+    (stopOnRefusal, Worker/worker-core.js) and reports Google's own delay -- "Please retry in
+    35.4s" -- as retryAfterMs. Asking again before it is up is a request spent on a refusal."""
+    groups = ((res or {}).get("meta") or {}).get("groups") or []
+    ms = [g.get("retryAfterMs") or 0 for g in groups
+          if isinstance(g, dict) and g.get("ok") is False]
+    return max(ms, default=0) / 1000.0
+
+
 def groups_to_ask_again(res):
     """The groups a response says it did not answer: failed, or never asked."""
     groups = ((res or {}).get("meta") or {}).get("groups") or []
@@ -101,8 +113,10 @@ def ask_failed_groups_again(ask, first, waits=GROUP_RETRY_WAITS, sleep=None, log
         redo = groups_to_ask_again(res)
         if not redo:
             break
+        # The wait argued for above, or Google's own delay when it asked for longer.
+        wait = max(wait, retry_after_seconds(res))
         log(f"species group(s) {', '.join(redo)} not answered -- asking again in a new request "
-            f"after {wait}s")
+            f"after {wait:g}s")
         (sleep or time.sleep)(wait)
         reasked += [g for g in redo if g not in reasked]
         res = merge_group_answers(res, ask(redo))

@@ -71,9 +71,9 @@ class Limiter(unittest.TestCase):
         # sixth key added there and not here would leave a key's worth of the pool unused.
         src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'Worker',
                                 'worker-core.js'), encoding='utf-8').read()
-        keys = re.search(r"const freeKeys = \[([^\]]*)\]", src)
+        keys = re.search(r"const GEMINI_FREE_KEYS = \[([^\]]*)\]", src)
         self.assertIsNotNone(keys, 'the rotation list moved; follow it')
-        self.assertEqual(len(re.findall(r"'gemini-free\d*'", keys.group(1))), R.GEMINI_FREE_KEYS)
+        self.assertEqual(len(re.findall(r"[\"']gemini-free\d*[\"']", keys.group(1))), R.GEMINI_FREE_KEYS)
 
     def test_the_pool_is_sized_from_the_ceiling(self):
         self.assertEqual(R.extract_workers(30, 40), 6, '30 starts a minute at 12 s a call')

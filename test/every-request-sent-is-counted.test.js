@@ -27,15 +27,19 @@ const json = (body, status = 200) => new Response(JSON.stringify(body),
   { status, headers: { 'content-type': 'application/json' } });
 const answer = (obj) => json({ candidates: [{ content: { parts: [{ text: JSON.stringify(obj) }] } }] });
 
-/** Gemini refuses the first `refuse` requests with "high demand", then answers `obj`. */
-function gemini(refuse, obj) {
+// A failure that is not a rate refusal, so callLLM walks on from it to every other slot.
+const BROKEN = { status: 500, body: { error: { code: 500, status: 'INTERNAL', message: 'An internal error has occurred.' } } };
+const BUSY = { status: 503, body: { error: { code: 503, message: DEMAND, status: 'UNAVAILABLE' } } };
+
+/** Gemini fails the first `refuse` requests with `how`, then answers `obj`. */
+function gemini(refuse, obj, how = BROKEN) {
   const real = globalThis.fetch;
   const seen = [];
   globalThis.fetch = async (url) => {
     const u = String(url);
     if (!u.includes('generativelanguage')) return json({});
     seen.push({ key: /key=([^&]+)/.exec(u)[1], model: /models\/([^:]+):/.exec(u)[1] });
-    if (seen.length <= refuse) return json({ error: { code: 503, message: DEMAND, status: 'UNAVAILABLE' } }, 503);
+    if (seen.length <= refuse) return json(how.body, how.status);
     return answer(typeof obj === 'function' ? obj() : obj);
   };
   return { seen, restore: () => { globalThis.fetch = real; } };
@@ -47,7 +51,7 @@ test('callLLM returns one entry per request it sent, and the one that answered',
     const r = await callLLM({ ...KEYS }, { messages: [{ role: 'user', content: 'x' }] });
     assert.equal(r.requests.length, g.seen.length, 'every request that left is in the record');
     assert.equal(r.requests.length, 4);
-    assert.deepEqual(r.requests.map((q) => q.http), [503, 503, 503, 200]);
+    assert.deepEqual(r.requests.map((q) => q.http), [500, 500, 500, 200]);
     assert.deepEqual(r.requests.map((q) => q.answered), [false, false, false, true]);
     for (const [i, q] of r.requests.entries()) {
       assert.equal(`k${q.key}`, g.seen[i].key, 'the key is the free key\'s number, 1-5');
@@ -63,7 +67,7 @@ test('a call that never answered still says what it spent', async () => {
     await assert.rejects(callLLM({ ...KEYS }, { messages: [{ role: 'user', content: 'x' }] }), (e) => {
       assert.equal(e.requests.length, g.seen.length);
       assert.ok(e.requests.length > 0);
-      assert.ok(e.requests.every((q) => q.http === 503 && q.answered === false));
+      assert.ok(e.requests.every((q) => q.http === 500 && q.answered === false));
       return true;
     });
   } finally { g.restore(); }
@@ -87,8 +91,9 @@ test('/research/analyze-facts returns the record in meta', async () => {
 test('/research/agent-llm returns the record for every group, answered or not', async () => {
   const season = { preferredDepth: [8, 20], holding: 'suspended', structures: [], forage: [],
                    recommendedPresentations: [], notes: '' };
-  // The first group walks every slot and is refused; the rest answer first time.
-  const g = gemini(10, () => ({ trollingIntelligence: { 'Channel Catfish': { summer: season } } }));
+  // The first group is refused "high demand" on both Lite models -- one request each, and its
+  // pass ends -- and the next group answers.
+  const g = gemini(2, () => ({ trollingIntelligence: { 'Channel Catfish': { summer: season } } }), BUSY);
   try {
     const res = await handleResearchAgent(new Request('https://x/research/agent-llm', {
       method: 'POST', body: JSON.stringify({ lakeName: 'Nottely Lake', state: 'GA', agent: 'fisheries',
@@ -96,7 +101,7 @@ test('/research/agent-llm returns the record for every group, answered or not', 
         previousResults: { biology: { predatorSpecies: ['Largemouth Bass', 'Crappie', 'Channel Catfish',
           'Bluegill', 'Rainbow Trout'], primaryForage: [], secondaryForage: [] } } }) }), { ...KEYS });
     const body = await res.json();
-    assert.equal(body.meta.llmRequests.length, g.seen.length, 'the refused group\'s ten are in it too');
-    assert.deepEqual(body.meta.llm, { sent: 11, answered: 1 });
+    assert.equal(body.meta.llmRequests.length, g.seen.length, 'the refused group\'s request is in it too');
+    assert.deepEqual(body.meta.llm, { sent: 3, answered: 1 });
   } finally { g.restore(); }
 });

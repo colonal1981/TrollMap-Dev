@@ -58,6 +58,34 @@ const GEMINI_FREE_FLASH_MODELS = [
   "gemini-3.5-flash",
 ];
 
+/**
+ * GOOGLE'S FREE-TIER LIMITS, PER MODEL -- ONE TABLE, BESIDE THE MODEL LISTS IT DESCRIBES.
+ *
+ * Off Ryan's AI Studio dashboards, 2026-09-25, the same on all five free projects (TrollmapFree to
+ * Trollmapfree5). Google meters each model on its own, per project: "Rate limits are applied per
+ * project, not per API key ... Requests per day (RPD) quotas reset at midnight Pacific time"
+ * (ai.google.dev/gemini-api/docs/rate-limits, read 2026-09-25). TPM is 250,000 on both Lite and
+ * Flash, from the same pages (the notes on GEMINI_FREE_MODELS and GEMINI_FREE_FLASH_MODELS).
+ *
+ * Not in the ladders, so not here: 2.5 Flash Lite (10 RPM, 20 RPD), 2.5 Flash and 3 Flash (5 RPM,
+ * 20 RPD each) -- unused.
+ *
+ * Read by rateRefusal() below, to tell a per-minute refusal from a per-day one when Google's error
+ * names only its limit, and by Scripts/research_lakes.py, through node, to pace a run to the
+ * models it asks for. Change a limit here and both follow.
+ */
+const GEMINI_FREE_LIMITS = {
+  "gemini-3.5-flash-lite": { rpm: 15, rpd: 500, tpm: 250000 },
+  "gemini-3.1-flash-lite": { rpm: 15, rpd: 500, tpm: 250000 },
+  "gemini-3.8-flash":      { rpm: 5,  rpd: 20,  tpm: 250000 },
+  "gemini-3.7-flash":      { rpm: 5,  rpd: 20,  tpm: 250000 },
+  "gemini-3.6-flash":      { rpm: 5,  rpd: 20,  tpm: 250000 },
+  "gemini-3.5-flash":      { rpm: 5,  rpd: 20,  tpm: 250000 },
+};
+
+// The five free projects' keys, in LLM_PROVIDERS order. callLLM rotates across the ones set.
+const GEMINI_FREE_KEYS = ["gemini-free", "gemini-free2", "gemini-free3", "gemini-free4", "gemini-free5"];
+
 var LLM_PROVIDERS = [
   {
     // Pay-tier Gemini — limnology agent only
@@ -299,7 +327,11 @@ async function geminiCall(provider, key, modelId, payload, uncapped = false, sen
   if (!r.ok) {
     const msg = data.error?.message || data.error || `HTTP ${r.status}`;
     const msgStr = typeof msg === "string" ? msg : JSON.stringify(msg).slice(0,400);
-    throw new Error(`gemini/${modelId}: ${msgStr}`);
+    const err = new Error(`gemini/${modelId}: ${msgStr}`);
+    err.http = r.status;
+    err.refusal = rateRefusal(r.status, data, modelId);
+    if (err.refusal) Object.assign(err.refusal, { key: rec.key, model: modelId });
+    throw err;
   }
   // Convert Gemini response to OpenAI-compatible shape for extractLLMText
   const parts = data.candidates?.[0]?.content?.parts || [];
@@ -349,6 +381,62 @@ function invocationSpent(e) {
   return /too many subrequests/i.test(String((e && e.message) || ''));
 }
 
+/**
+ * A RATE REFUSAL, READ FROM GOOGLE'S OWN ERROR -- AND WHICH KIND IT IS.
+ *
+ *   "minute"  429 on a per-minute quota (requests or tokens). The slot is free again inside a
+ *             minute, and Google says when: "Please retry in 35.4s" in the message, the same as
+ *             `retryDelay` in its RetryInfo detail.
+ *   "demand"  503 "This model is currently experiencing high demand ... Please try again later."
+ *   "day"     429 on a per-day quota ("limit: 500, model: gemini-3.1-flash-lite"). The slot is
+ *             spent until midnight Pacific; no wait inside a run brings it back.
+ *
+ * Which quota was hit is named by Google in the error's QuotaFailure detail
+ * (`quotaId: "GenerateRequestsPerDayPerProjectPerModel-FreeTier"`, "...PerMinute..."). When the
+ * detail is missing, the message's "limit: N, model: M" is compared with M's row in
+ * GEMINI_FREE_LIMITS. A 429 that says neither is taken as per-minute: waiting on it costs no
+ * request, and walking on it costs one per slot. null for anything that is not a rate refusal.
+ */
+function rateRefusal(status, data, modelId) {
+  const err = (data && data.error) || {};
+  const msg = typeof err.message === "string" ? err.message : "";
+  const details = Array.isArray(err.details) ? err.details : [];
+  const retryInfo = details.find((d) => /RetryInfo$/.test(String(d && d["@type"])));
+  const delay = retryInfo && /^([\d.]+)s$/.exec(String(retryInfo.retryDelay || ""));
+  const said = /retry in ([\d.]+)\s*(ms|s)\b/i.exec(msg);
+  const retryAfterMs = delay ? Math.round(Number(delay[1]) * 1000)
+    : said ? Math.round(Number(said[1]) * (said[2].toLowerCase() === "ms" ? 1 : 1000)) : null;
+  if (status === 503 || err.status === "UNAVAILABLE") {
+    return /high demand|overloaded|try again later/i.test(msg) ? { kind: "demand", retryAfterMs } : null;
+  }
+  if (status !== 429 && err.status !== "RESOURCE_EXHAUSTED") return null;
+  const quotaIds = details.flatMap((d) => (Array.isArray(d && d.violations) ? d.violations : []))
+    .map((v) => String(v.quotaId || ""));
+  if (quotaIds.some((q) => /PerDay/i.test(q))) return { kind: "day", retryAfterMs };
+  if (quotaIds.some((q) => /PerMinute/i.test(q))) return { kind: "minute", retryAfterMs };
+  const lim = /limit:\s*(\d+),\s*model:\s*([\w.-]+)/i.exec(msg);
+  const row = lim && (GEMINI_FREE_LIMITS[lim[2]] || GEMINI_FREE_LIMITS[modelId]);
+  if (row && Number(lim[1]) === row.rpd && row.rpd !== row.rpm) return { kind: "day", retryAfterMs };
+  return { kind: "minute", retryAfterMs };
+}
+
+// SLOTS THAT HAVE SAID THEIR DAY IS SPENT, until midnight Pacific -- when Google resets RPD. A
+// per-day refusal is final for the day, and asking that slot again is one more counted request
+// for one more refusal. Module state, so it lasts as long as the isolate does and no longer; it
+// only ever saves requests, since a slot is left out only after Google itself said it was spent.
+const _spentToday = new Map();   // "gemini-free3|gemini-3.5-flash-lite" -> "2026-09-25" (Pacific)
+function pacificDay() {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles" }).format(new Date());
+}
+function spentToday(provider, modelId) {
+  return _spentToday.get(`${provider.name}|${modelId}`) === pacificDay();
+}
+function markSpent(provider, modelId) {
+  _spentToday.set(`${provider.name}|${modelId}`, pacificDay());
+}
+/** Tests only: a fresh day for every slot. */
+function forgetSpentSlots() { _spentToday.clear(); }
+
 function turnLadder(models, start) {
   const n = models.length;
   if (n < 2 || !start) return models;
@@ -386,8 +474,7 @@ async function callLLM(env, payload, preferredProvider = null, opts = {}) {
   let rotated = false;
   let keyOrder = null;
   if (!preferredProvider) {
-    const freeKeys = ['gemini-free', 'gemini-free2', 'gemini-free3', 'gemini-free4', 'gemini-free5'];
-    const available = freeKeys.filter(name => {
+    const available = GEMINI_FREE_KEYS.filter(name => {
       const p = LLM_PROVIDERS.find(p => p.name === name);
       return p && env[p.keyEnv];
     });
@@ -425,6 +512,8 @@ async function callLLM(env, payload, preferredProvider = null, opts = {}) {
 
 async function walkLadder(env, payload, providers, modelStart, opts, sent) {
   let lastError;
+  // Models that said "high demand" during THIS call; see stopOnRefusal().
+  const busy = new Set();
 
   // THE FIRST MODELS, ON EVERY FREE KEY, BEFORE THE LADDER. Model by model across the keys in this
   // call's rotated order, each call starting at a drawn model, so twenty calls spread over all
@@ -433,12 +522,14 @@ async function walkLadder(env, payload, providers, modelStart, opts, sent) {
     const freeKeys = providers.filter((p) => p.isGemini && /^gemini-free/.test(p.name) && env[p.keyEnv]);
     for (const modelId of turnLadder(opts.firstModels, drawStart(opts.firstModels.length))) {
       for (const provider of freeKeys) {
+        if (busy.has(modelId) || spentToday(provider, modelId)) continue;
         try {
           return await geminiCall(provider, env[provider.keyEnv], modelId, payload, true, sent);
         } catch (e) {
           if (invocationSpent(e)) throw e;
           lastError = e;
           console.warn(`LLM gemini/${modelId} (first) failed: ${e.message}`);
+          if (stopOnRefusal(e, provider, modelId, opts, busy)) throw e;
         }
       }
     }
@@ -453,12 +544,14 @@ async function walkLadder(env, payload, providers, modelStart, opts, sent) {
       const modelCandidates = turnLadder(
         provider.models?.length ? provider.models : [provider.defaultModel], modelStart);
       for (const modelId of modelCandidates) {
+        if (busy.has(modelId) || spentToday(provider, modelId)) continue;
         try {
           return await geminiCall(provider, key, modelId, payload, false, sent);
         } catch (e) {
           if (invocationSpent(e)) throw e;
           lastError = e;
           console.warn(`LLM gemini/${modelId} failed: ${e.message}`);
+          if (stopOnRefusal(e, provider, modelId, opts, busy)) throw e;
           continue;
         }
       }
@@ -528,7 +621,46 @@ async function walkLadder(env, payload, providers, modelStart, opts, sent) {
       }
     }
   }
+  if (!lastError && !sent.length && providers.some((p) => p.isGemini)) {
+    // Nothing was asked: every slot this call could reach has already said its day is spent.
+    const e = new Error("gemini: every free key and model this call could ask has said its day "
+                      + "is spent (per-day limit); none is asked again before midnight Pacific");
+    e.refusal = { kind: "day", retryAfterMs: null };
+    throw e;
+  }
   throw lastError || new Error("All LLM providers/models failed");
+}
+
+/**
+ * WHAT A RATE REFUSAL DOES TO THE WALK.
+ *
+ * Ryan's dashboards, 2026-09-25: ~5,500 requests counted for ~900 answers. A refused request
+ * counts against the day like any other, and callLLM answered every refusal by asking the next
+ * slot at once -- on a busy minute one call walked all ten Lite slots, and with Flash first thirty.
+ *
+ *   "day"     The slot is spent until midnight Pacific. It is marked (markSpent) so no later call
+ *             in this isolate asks it again, and the walk goes on: another slot may not be spent.
+ *   "demand"  "This model is currently experiencing high demand" -- Google names the MODEL, not
+ *             the key. The model is left out for the rest of this call, on every key, and the walk
+ *             goes on to the next model: on the same key, a different allowance. Measured in
+ *             test/a-refusal-is-waited-out-not-walked.test.js before this rule was written: a spell
+ *             of demand on 3.5 Flash Lite cost 1.24 requests an answer when the walk moved on to
+ *             3.1, and 1.39 -- with four reads lost -- when the call stopped and the caller waited,
+ *             because half the retries drew 3.5 again inside the same spell. When every model the
+ *             call could ask is busy, the walk ends and the caller waits, as for "minute".
+ *   "minute"  The slot's minute is full, and Google says when it is free: "Please retry in 35.4s".
+ *             For a caller that passed { waitOnRateRefusal: true } the walk ends here, and the
+ *             error goes back with `refusal: { kind, retryAfterMs, key, model }` for the caller to
+ *             wait out -- which costs no requests. Measured in the same test: 300 reads sent at
+ *             twice what the ten Lite slots take cost 11.28 requests an answer walking, 2.01
+ *             waiting. A caller that did not ask walks as before; the app's own reads have no wait
+ *             of their own to fall back on.
+ */
+function stopOnRefusal(e, provider, modelId, opts, busy) {
+  const kind = e && e.refusal && e.refusal.kind;
+  if (kind === "day") { markSpent(provider, modelId); return false; }
+  if (kind === "demand") { busy.add(modelId); return false; }
+  return !!(kind === "minute" && opts && opts.waitOnRateRefusal);
 }
 async function isAuthorized(request, env) {
   const want = env && env.SYNC_TOKEN || typeof SYNC_TOKEN !== "undefined" && SYNC_TOKEN || null;
@@ -690,4 +822,5 @@ async function listAllR2(bucket, prefix, keep) {
 // trollmap-worker.js -- and the copies here were not exported and not called, so this file
 // carried thirty lines that could never run while the live copy drifted independently.
 // Exported now; trollmap-worker.js imports them.
-export { CORS, JSON_HEADERS, TEXT_HEADERS, extractLLMText, callLLM, countRequests, GEMINI_FREE_FLASH_MODELS, isAuthorized, chartpackKey, handleChartpackList, r2Body, r2Text, listAllR2 };
+export { CORS, JSON_HEADERS, TEXT_HEADERS, extractLLMText, callLLM, countRequests, rateRefusal, forgetSpentSlots,
+  GEMINI_FREE_MODELS, GEMINI_FREE_FLASH_MODELS, GEMINI_FREE_LIMITS, GEMINI_FREE_KEYS, isAuthorized, chartpackKey, handleChartpackList, r2Body, r2Text, listAllR2 };

@@ -1706,6 +1706,7 @@ async function handleResearchAgent(request, env) {
       // Scripts/species_group_retry.py and js/utils/species-group-retry.js are the two callers'
       // halves, and both merge the second answer into the first.
       let lastReason = null;
+      let refusal = null;
       if (spentBy) {
         // THE ALLOWANCE IS GONE, SO THIS GROUP IS NOT ASKED -- AND IS NOT CALLED FAILED. Every
         // fetch from here on would throw the platform's own sentence without reaching a model,
@@ -1716,7 +1717,10 @@ async function handleResearchAgent(request, env) {
         return {};
       }
       try {
-        const llmResult = await callLLM(env, payload, null, llmOpts);
+        // A per-minute or "high demand" refusal ends this group's pass instead of walking every
+        // other slot: both callers ask a failed group again in a new request after a wait, and
+        // the wait is what the refusal asked for (stopOnRefusal, worker-core.js).
+        const llmResult = await callLLM(env, payload, null, { ...llmOpts, waitOnRateRefusal: true });
         llmRequests.push(...(llmResult.requests || []));
         const rawText = extractLLMText(llmResult.data);
         const parsed = extractJsonPossibly(rawText);
@@ -1754,12 +1758,14 @@ async function handleResearchAgent(request, env) {
         }
       } catch (e) {
         lastReason = e.message;
+        refusal = (e && e.refusal) || null;
         llmRequests.push(...((e && e.requests) || []));
         if (SUBREQUESTS_SPENT.test(String(lastReason || ''))) spentBy = lastReason;
       }
       console.warn(`fisheries group ${groupName} failed: ${lastReason}`);
       groupOutcomes.push({ group: groupName, species: groupSpecies, ok: false, asked: true,
-                           reason: lastReason, attempts: 1 });
+                           reason: lastReason, attempts: 1,
+                           ...(refusal ? { refusal: refusal.kind, retryAfterMs: refusal.retryAfterMs } : {}) });
       return {};
     };
 

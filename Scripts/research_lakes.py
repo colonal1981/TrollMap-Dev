@@ -876,6 +876,46 @@ _TRANSIENT = re.compile(r"high demand|rate.?limit|\brate\b|quota|\b429\b|\b50[23
 EXTRACT_RETRY_WAITS = (8, 20, 60)
 
 
+def retry_after_seconds(doc_results):
+    """Google's own delay for a refused read, in seconds, or 0: the longest retryAfterMs among
+    the documents that failed. See stopOnRefusal() in Worker/worker-core.js -- with
+    `waitOnRefusal` the Worker hands a per-minute or "high demand" refusal straight back, with
+    "Please retry in 35.4s" as retryAfterMs, instead of walking every other key and model. The
+    waits above still stand; this only makes one longer when Google asked for longer."""
+    ms = [r.get("retryAfterMs") or 0 for r in doc_results or [] if isinstance(r, dict) and r.get("error")]
+    return max(ms, default=0) / 1000.0
+
+
+def read_with_waits(body, limiter=None, tokens=0, tally=None):
+    """One /research/analyze-facts read, asked again after each of EXTRACT_RETRY_WAITS -- or after
+    Google's own delay when it asked for longer -- while the refusal is "not now". Returns
+    (code, response, error_text, why) -- `why` is the last refusal, or None when it answered."""
+    why = None
+    google_wait = 0.0
+    code = ex = err = None
+    for attempt in range(len(EXTRACT_RETRY_WAITS) + 1):
+        if attempt:
+            time.sleep(max(EXTRACT_RETRY_WAITS[attempt - 1], google_wait))
+        if limiter is not None:
+            limiter.acquire(tokens)
+        code, ex, err = _req("/research/analyze-facts", body)
+        if tally is not None:
+            tally.add(ex if code == 200 else last_error_body())
+        if code == 200:
+            results = ((ex or {}).get("meta") or {}).get("docResults") or []
+            failed = next((r.get("error") for r in results if r.get("error")), None)
+            if not failed or not _TRANSIENT.search(str(failed)):
+                return code, ex, err, failed
+            why = failed
+            google_wait = retry_after_seconds(results)
+        else:
+            why = f"{code}: {err}"
+            google_wait = 0.0
+            if code not in (0, 429, 502, 503, 504):
+                break
+    return code, ex, err, why
+
+
 def _extract_one(lake, state, alt_names, i, d, limiter, verbose, windows=None, tally=None):
     # THE PART OF THE DOCUMENT ABOUT THIS WATER, not always its first EXTRACT_DOC_CHARS. The prompt
     # below takes only facts that name the water, so a long document naming it only past the cut
@@ -900,29 +940,17 @@ def _extract_one(lake, state, alt_names, i, d, limiter, verbose, windows=None, t
         # facts, on 2026-09-01. The registry has carried both other names all along.
         "aliases": alt_names or [],
         "docIndex": i, "targetFields": ["trollingIntelligence"], **extract_model_field(),
+        # A rate refusal comes back to be waited out here, not walked across every other slot.
+        "waitOnRefusal": True,
         # fetchedAt is not the text's date and is never used as one: research/text-date.js reads it
         # only to refuse the date a site prints at the top of every page it serves (its clock).
         "documents": [{"title": d.get("title"), "url": d.get("url"), "text": text,
                        "fetchedAt": d.get("fetchedAt")}]}
-    why = None
-    for attempt in range(len(EXTRACT_RETRY_WAITS) + 1):
-        if attempt:
-            time.sleep(EXTRACT_RETRY_WAITS[attempt - 1])
-        limiter.acquire(len(text) / CHARS_PER_TOKEN)
-        code, ex, err = _req("/research/analyze-facts", body)
-        if tally is not None:
-            tally.add(ex if code == 200 else last_error_body())
-        if code == 200:
-            results = ((ex or {}).get("meta") or {}).get("docResults") or []
-            failed = next((r.get("error") for r in results if r.get("error")), None)
-            if not failed or not _TRANSIENT.search(str(failed)):
-                model = next((r.get("model") for r in results if r.get("model")), None)
-                return (ex or {}).get("extracted_facts") or [], len(text), failed, model
-            why = failed
-        else:
-            why = f"{code}: {err}"
-            if code not in (0, 429, 502, 503, 504):
-                break
+    code, ex, _, why = read_with_waits(body, limiter, len(text) / CHARS_PER_TOKEN, tally)
+    if code == 200 and (not why or not _TRANSIENT.search(str(why))):
+        results = ((ex or {}).get("meta") or {}).get("docResults") or []
+        model = next((r.get("model") for r in results if r.get("model")), None)
+        return (ex or {}).get("extracted_facts") or [], len(text), why, model
     if verbose:
         print(f"      analyze-facts gave up on doc {i}: {why}")
     return [], len(text), why, None
@@ -1387,13 +1415,16 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
                          "publishedDate": s2.get("publishedDate") or ""}
                         for s2 in found if len(str(s2.get("snippet") or "")) >= 80]
         if snippet_docs:
-            code, ex, err = _req("/research/analyze-facts", {
+            # WAITED OUT LIKE ANY OTHER READ. It was asked once, and a refusal lost every snippet
+            # fact on the water; it is one request, so a wait is cheap and a walk was not.
+            code, ex, err, why = read_with_waits({
                 "lakeName": lake, "baseName": base_name(lake), "state": state,
                 "aliases": alt_names or [], "docIndex": -1,
                 "targetFields": ["trollingIntelligence"],
-                "combine": True, **extract_model_field(),
-                "documents": snippet_docs})
-            tally.add(ex if code == 200 else last_error_body())
+                "combine": True, **extract_model_field(), "waitOnRefusal": True,
+                "documents": snippet_docs}, tally=tally)
+            if code == 200 and why:
+                print(f"      warn [{lake}]: analyze-facts on snippets was not read: {str(why)[:120]}")
             if code == 200:
                 got = (ex or {}).get("extracted_facts") or []
                 facts.extend(got)

@@ -38,12 +38,23 @@ const KEYS = { GEMINI_FREE_API_KEY: 'k1', GEMINI_FREE2_API_KEY: 'k2', GEMINI_FRE
 const season = { preferredDepth: [8, 20], holding: 'suspended', structures: [], forage: [],
                  recommendedPresentations: [], notes: '' };
 
+// NOT A RATE REFUSAL, SO IT IS STILL WALKED. Since the rate-refusal change (stopOnRefusal in
+// Worker/worker-core.js) a "high demand" 503 ends a group's pass after ONE request and the caller
+// waits; a failure Google does not describe as a rate or demand refusal still walks every slot,
+// and that walk is what can spend the invocation's 50 subrequests.
+const BROKEN = { status: 500, body: { error: { code: 500, status: 'INTERNAL',
+  message: 'An internal error has occurred. Please retry or report in https://developers.generativeai.google/guide/troubleshooting' } } };
+const DEMAND = { status: 503, body: { error: { code: 503, status: 'UNAVAILABLE', message:
+  'This model is currently experiencing high demand. Spikes in demand are usually temporary. '
+  + 'Please try again later.' } } };
+
 /**
  * One Worker invocation's fetch. Counts every call, throws the platform's error past the free
- * plan's allowance, and answers Gemini with `demand(n)` -- true means "high demand" for call n.
- * An answer names the roster species the group's prompt names, and nothing else.
+ * plan's allowance, and answers Gemini with `demand(n)` -- true means call n is refused with
+ * `refusal` ("high demand" unless given). An answer names the roster species the group's prompt
+ * names, and nothing else.
  */
-function invocation(demand) {
+function invocation(demand, refusal = DEMAND) {
   const real = globalThis.fetch;
   const seen = { calls: 0 };
   globalThis.fetch = async (url, init = {}) => {
@@ -53,9 +64,8 @@ function invocation(demand) {
       return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
     }
     if (demand(seen.calls)) {
-      return new Response(JSON.stringify({ error: { message:
-        'This model is currently experiencing high demand. Spikes in demand are usually temporary. '
-        + 'Please try again later.' } }), { status: 503, headers: { 'content-type': 'application/json' } });
+      return new Response(JSON.stringify(refusal.body),
+        { status: refusal.status, headers: { 'content-type': 'application/json' } });
     }
     const prompt = JSON.parse(init.body).contents[0].parts[0].text;
     // The prompt's own list: "CONFIRMED SPECIES (ONLY these — do not add others):" then one line.
@@ -71,8 +81,8 @@ function invocation(demand) {
   return { seen, restore: () => { globalThis.fetch = real; } };
 }
 
-async function ask({ groupModels, groups, demand }) {
-  const inv = invocation(demand);
+async function ask({ groupModels, groups, demand, refusal }) {
+  const inv = invocation(demand, refusal);
   try {
     const res = await handleResearchAgent(new Request('https://x/research/agent-llm', {
       method: 'POST',
@@ -89,14 +99,24 @@ async function ask({ groupModels, groups, demand }) {
 const byGroup = (body) => Object.fromEntries(body.meta.groups.map((g) => [g.group, g]));
 
 describe('the arithmetic, counted by the stub rather than argued', () => {
-  test('one group on a "high demand" minute is one request per free key per model, once', async () => {
-    // Lite: 5 keys x 2 models = 10 per group, and the Worker no longer repeats it inside the request.
+  test('one group on a "high demand" minute is one request per MODEL, and the caller waits', async () => {
+    // It was one request per free key per model -- 10 on Lite, 5 x 4 Flash + 10 Lite = 30 with
+    // Flash first -- every one of them counted against the day and sent into the same minute.
+    // Google names the model that is in demand, so each model is asked once and left out on the
+    // other keys (stopOnRefusal, worker-core.js): 2 on Lite, 4 + 2 with Flash first.
     const { body, calls } = await ask({ groups: ['bass'], demand: () => true });
-    assert.equal(calls, 5 * 2);
+    assert.equal(calls, 2);
     assert.equal(byGroup(body).bass.ok, false);
     assert.equal(byGroup(body).bass.attempts, 1);
-    // Flash first: 5 keys x 4 Flash models, then the Lite ladder -- 30.
+    assert.equal(byGroup(body).bass.refusal, 'demand');
     const flash = await ask({ groupModels: 'flash', groups: ['bass'], demand: () => true });
+    assert.equal(flash.calls, 4 + 2);
+  });
+
+  test('a failure that is not a rate refusal is still walked: one request per key per model', async () => {
+    const { calls } = await ask({ groups: ['bass'], demand: () => true, refusal: BROKEN });
+    assert.equal(calls, 5 * 2);
+    const flash = await ask({ groupModels: 'flash', groups: ['bass'], demand: () => true, refusal: BROKEN });
     assert.equal(flash.calls, 5 * 4 + 5 * 2);
   });
 
@@ -110,8 +130,9 @@ describe('the arithmetic, counted by the stub rather than argued', () => {
 });
 
 describe('a group that spends the allowance does not take the next one with it', () => {
-  // Flash on a bad minute: bass walks all 30, crappie walks 20 more and hits the platform's wall.
-  const spend = () => ask({ groupModels: 'flash', demand: () => true });
+  // Flash on a bad minute of errors that are walked: bass walks all 30, crappie walks 20 more and
+  // hits the platform's wall.
+  const spend = () => ask({ groupModels: 'flash', demand: () => true, refusal: BROKEN });
 
   test('the groups after it come back NOT ASKED, not failed with the platform error', async () => {
     const { body, calls } = await spend();

@@ -490,8 +490,15 @@ FISHING BEHAVIOUR IS A FIRST-CLASS FACT. Sentences from guides, fishing reports 
       // ("limit: 500, model: gemini-3.1-flash-lite") with five waters left, while the Flash
       // allowances -- 20 a day per model per key, 400 in all -- were untouched. Lite is still the
       // default: 400 a day is a few waters of reading, not a batch.
+      //
+      // `waitOnRefusal: true` is the batch saying it waits out a rate refusal itself
+      // (EXTRACT_RETRY_WAITS in Scripts/research_lakes.py): a per-minute or "high demand" refusal
+      // then comes back in docResults with Google's retry delay instead of being walked across
+      // every other key and model, each step a request counted against the day. See
+      // stopOnRefusal() in worker-core.js. The app's reads do not ask, and walk as before.
       const { data, model, requests } = await callLLM(env, payload, null, {
         spreadModels: true,
+        waitOnRateRefusal: body.waitOnRefusal === true,
         ...(body.extractModels === 'flash' ? { firstModels: GEMINI_FREE_FLASH_MODELS } : {}),
       });
       llmRequests.push(...(requests || []));
@@ -556,7 +563,9 @@ FISHING BEHAVIOUR IS A FIRST-CLASS FACT. Sentences from guides, fishing reports 
     } catch (e) {
       console.warn(`handleResearchAnalyzeFacts: doc [${i+1}] failed: ${e.message}`);
       llmRequests.push(...((e && e.requests) || []));
-      docResults.push({ doc: doc.title, facts: 0, error: e.message });
+      docResults.push({ doc: doc.title, facts: 0, error: e.message,
+                        ...(e && e.refusal ? { refusal: e.refusal.kind,
+                                               retryAfterMs: e.refusal.retryAfterMs } : {}) });
     }
   }
 
