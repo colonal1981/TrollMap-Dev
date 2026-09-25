@@ -92,6 +92,14 @@ class ExtractDocuments(unittest.TestCase):
         R._req = self._req
         R.EXTRACT_RETRY_WAITS = R.EXTRACT_RETRY_WAITS_SAVED
 
+    def test_the_last_wait_outlasts_a_per_minute_refusal(self):
+        """Marion, 2026-09-24: two documents were refused on RPM and both retries (8 s, 20 s) fell
+        inside the same minute. The last wait must be the minute itself."""
+        self.assertGreaterEqual(R.EXTRACT_RETRY_WAITS_SAVED[-1], 60)
+        self.assertTrue(R._TRANSIENT.search('gemini/gemini-3.1-flash-lite: You exceeded your current '
+                                            'quota, please check your plan and billing details'),
+                        'the quota refusal is retried, not reported as a document with nothing in it')
+
     def test_calls_overlap_and_facts_come_back_in_document_order(self):
         live, peak, lock = [0], [0], threading.Lock()
 

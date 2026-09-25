@@ -681,7 +681,13 @@ class CallLimiter:
 # and look exactly like a document with nothing in it.
 _TRANSIENT = re.compile(r"high demand|rate.?limit|\brate\b|quota|\b429\b|\b50[234]\b|overloaded"
                         r"|unavailable|timed? ?out", re.I)
-EXTRACT_RETRY_WAITS = (8, 20)            # the same backoff the Worker's species groups use
+# A THIRD WAIT OF A FULL MINUTE, BECAUSE THE REFUSAL THAT GOT THROUGH WAS PER MINUTE. Lake Marion,
+# 2026-09-24: two of 64 documents came back "You exceeded your current quota" on
+# gemini-3.1-flash-lite, and Ryan's console showed only RPM had been hit, not the daily count.
+# 8 s and 20 s are both inside the minute the refusal is counted over, so both retries could land
+# in the same window. 60 s is the window's own length: by then the minute has rolled over. It
+# costs nothing on the documents that were never refused.
+EXTRACT_RETRY_WAITS = (8, 20, 60)
 
 
 def _extract_one(lake, state, alt_names, i, d, limiter, verbose):
