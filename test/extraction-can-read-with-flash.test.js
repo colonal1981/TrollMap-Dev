@@ -13,7 +13,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { handleResearchAnalyzeFacts } from '../Worker/research/extract.js';
-import { GEMINI_FREE_FLASH_MODELS } from '../Worker/worker-core.js';
+import { GEMINI_FREE_FLASH_MODELS, GEMINI_FREE_SPARE_MODELS } from '../Worker/worker-core.js';
 
 const DOC = { title: 'Lake Murray striper report', url: 'https://a.example/1',
   text: 'Striped bass on Lake Murray hold on the main lake points at 30 to 40 feet in late summer, '
@@ -39,6 +39,16 @@ test('extractModels: flash asks a full Flash model first', async () => {
   await ask({ extractModels: 'flash' });
   assert.ok(models.length >= 1);
   assert.ok(GEMINI_FREE_FLASH_MODELS.includes(models[0]), `first call asked ${models[0]}`);
+});
+
+test("extractModels: spare asks one of the models nothing else uses first", async () => {
+  // The same evening both Lite models and all four Flash models were spent on all five keys; 3
+  // Flash, 2.5 Flash and 2.5 Flash-Lite were untouched (Ryan's AI Studio pages, 2026-09-25).
+  const models = stubGemini();
+  await ask({ extractModels: 'spare' });
+  assert.ok(models.length >= 1);
+  assert.ok(GEMINI_FREE_SPARE_MODELS.includes(models[0]), `first call asked ${models[0]}`);
+  assert.ok(!GEMINI_FREE_FLASH_MODELS.includes(models[0]));
 });
 
 test('without it the read asks a Lite model, as it always has', async () => {

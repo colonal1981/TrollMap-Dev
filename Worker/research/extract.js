@@ -1,5 +1,5 @@
 // research/extract.js — split from worker-research.js (behavior-preserving)
-import { JSON_HEADERS, callLLM, extractLLMText, GEMINI_FREE_FLASH_MODELS } from '../worker-core.js';
+import { JSON_HEADERS, callLLM, extractLLMText, firstModelsFor } from '../worker-core.js';
 import { extractJsonPossibly } from './keys.js';
 import { textDateOf, readPage, delink } from './text-date.js';
 import { factsDisagree, writtenOf } from '../../js/utils/fact-date.js';
@@ -487,9 +487,11 @@ FISHING BEHAVIOUR IS A FIRST-CLASS FACT. Sentences from guides, fishing reports 
       // ("limit: 500, model: gemini-3.1-flash-lite") with five waters left, while the Flash
       // allowances -- 20 a day per model per key, 400 in all -- were untouched. Lite is still the
       // default: 400 a day is a few waters of reading, not a batch.
+      // `'spare'` puts GEMINI_FREE_SPARE_MODELS first instead: firstModelsFor() in worker-core.js.
+      const first = firstModelsFor(body.extractModels);
       const { data, model } = await callLLM(env, payload, null, {
         spreadModels: true,
-        ...(body.extractModels === 'flash' ? { firstModels: GEMINI_FREE_FLASH_MODELS } : {}),
+        ...(first ? { firstModels: first } : {}),
       });
       const text = extractLLMText(data);
       const parsed = extractJsonPossibly(text);

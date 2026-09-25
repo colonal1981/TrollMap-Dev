@@ -1,5 +1,5 @@
 // research/agents.js — split from worker-research.js (behavior-preserving) 
-import { JSON_HEADERS, callLLM, extractLLMText, GEMINI_FREE_FLASH_MODELS } from '../worker-core.js';
+import { JSON_HEADERS, callLLM, extractLLMText, firstModelsFor } from '../worker-core.js';
 import { fetchDukeOperatingRange } from '../worker-data.js';
 import { dukePoolManagement, isTidalWater } from '../conditions.js';
 import { lakeIndex, resolveRegistryRow, agencyLakeFacts, speciesTraits,
@@ -1219,8 +1219,10 @@ async function handleResearchAgent(request, env) {
   // every free key before Lite (GEMINI_FREE_FLASH_MODELS in worker-core.js), for the fisheries
   // agent only; anything else is Lite, exactly as before. research_lakes.py --group-models sends it.
   // Ryan, 2026-09-24, on four Flash models at 20 a day on each of five keys that nothing used.
-  const groupModels = body.groupModels === 'flash' && agentKey === 'fisheries' ? 'flash' : 'lite';
-  const llmOpts = groupModels === 'flash' ? { firstModels: GEMINI_FREE_FLASH_MODELS } : {};
+  // `'spare'` does the same with the models nothing else asks for (GEMINI_FREE_SPARE_MODELS), for the
+  // day Lite and Flash are both spent -- firstModelsFor() in worker-core.js names both lists.
+  const groupModels = agentKey === 'fisheries' && firstModelsFor(body.groupModels) ? body.groupModels : 'lite';
+  const llmOpts = groupModels !== 'lite' ? { firstModels: firstModelsFor(groupModels) } : {};
   if (!lakeName) return new Response(JSON.stringify({success:false, error:"missing lakeName"}), {status:400, headers:JSON_HEADERS});
   const agent = RESEARCH_AGENTS[agentKey];
   if (!agent) return new Response(JSON.stringify({success:false, error:`unknown agent ${agentKey}. Valid: ${Object.keys(RESEARCH_AGENTS).join(', ')}`}), {status:400, headers:JSON_HEADERS});

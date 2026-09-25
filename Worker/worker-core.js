@@ -58,6 +58,27 @@ const GEMINI_FREE_FLASH_MODELS = [
   "gemini-3.5-flash",
 ];
 
+/**
+ * THE SPARE MODELS: what is left on the day Lite and Flash are both spent. Ryan, 2026-09-25, with
+ * all five projects at 503/500 on both Lite models and 21-23/20 on every Flash model and four
+ * waters of a batch still to read: "we have flash 2.5 and flash 3 still left 5 rpm 250k tpm and
+ * 20 rpd" -- and 2.5 Flash-Lite, 10 RPM and 20 RPD. Three models on five keys, 300 calls a day.
+ * Model codes as ai.google.dev/gemini-api/docs/models lists them. Asked for by name only
+ * (`extractModels` / `groupModels: 'spare'`); nothing reaches them by default.
+ */
+const GEMINI_FREE_SPARE_MODELS = [
+  "gemini-3-flash-preview",
+  "gemini-2.5-flash",
+  "gemini-2.5-flash-lite",
+];
+
+/** The `firstModels` a request's `extractModels` / `groupModels` name, or null for Lite as always. */
+function firstModelsFor(name) {
+  if (name === 'flash') return GEMINI_FREE_FLASH_MODELS;
+  if (name === 'spare') return GEMINI_FREE_SPARE_MODELS;
+  return null;
+}
+
 var LLM_PROVIDERS = [
   {
     // Pay-tier Gemini — limnology agent only
@@ -644,4 +665,4 @@ async function listAllR2(bucket, prefix, keep) {
 // trollmap-worker.js -- and the copies here were not exported and not called, so this file
 // carried thirty lines that could never run while the live copy drifted independently.
 // Exported now; trollmap-worker.js imports them.
-export { CORS, JSON_HEADERS, TEXT_HEADERS, extractLLMText, callLLM, GEMINI_FREE_FLASH_MODELS, isAuthorized, chartpackKey, handleChartpackList, r2Body, r2Text, listAllR2 };
+export { CORS, JSON_HEADERS, TEXT_HEADERS, extractLLMText, callLLM, GEMINI_FREE_FLASH_MODELS, GEMINI_FREE_SPARE_MODELS, firstModelsFor, isAuthorized, chartpackKey, handleChartpackList, r2Body, r2Text, listAllR2 };
