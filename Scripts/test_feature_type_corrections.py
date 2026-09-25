@@ -106,15 +106,28 @@ class TheShippedIndex(unittest.TestCase):
         self.assertLessEqual(len(guessed), 8,
                              'new name-guessed rows that nobody has checked: %s' % guessed)
 
-    def test_the_counts_the_pickers_are_built_on(self):
-        # Ryan's map picker read 284 lakes, 58 rivers, 13 coastal before this correction. Bates
-        # moves one across, and every picker groups off this field.
+    # WHAT THE PICKERS NEED, NOT HOW MANY THERE WERE ON ONE DAY. This was a test of four typed
+    # counts -- 355 rows, 285 lakes, 57 rivers, 13 coastal, true on 2026-09-16 -- and it failed the
+    # first time the registry lost a water on purpose: three lakes had left the index by
+    # 2026-09-25, and the counts said 352 != 355 about a registry with nothing wrong in it. What
+    # Bates moved is held by test_bates_ships_as_a_lake and the eight-guesses test above. What a
+    # count could never say is the thing the pickers depend on, which is these two.
+
+    def test_every_row_has_a_type_a_picker_groups_by(self):
+        # Every picker groups off this field: a row with any other value, or none, is a water no
+        # picker lists.
         from collections import Counter
         c = Counter(r.get('feature_type') for r in self.rows.values())
-        self.assertEqual(sum(c.values()), 355)
-        self.assertEqual(c['coastal'], 13)
-        self.assertEqual(c['lake'], 285)
-        self.assertEqual(c['river'], 57)
+        self.assertEqual(set(c) - {'lake', 'river', 'coastal'}, set(), dict(c))
+
+    def test_the_coastal_rows_are_the_catalog(self):
+        # Which coastal zones ship is Ryan's decision, kept in coastal_catalog.py (the NC zones cut
+        # 2026-09-03: "i do not want it back in"). So the index is checked against the catalog,
+        # not against a number copied out of it.
+        sys.path.insert(0, HERE)
+        import coastal_catalog
+        coastal = {s for s, r in self.rows.items() if r.get('feature_type') == 'coastal'}
+        self.assertEqual(coastal, set(coastal_catalog.COASTAL_CATALOG))
 
 
 if __name__ == '__main__':

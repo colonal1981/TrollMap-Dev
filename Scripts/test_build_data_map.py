@@ -116,7 +116,10 @@ class TheRuntimeWriters(unittest.TestCase):
     def test_it_recognises_a_profile_field_assignment(self):
         m = M.ASSIGN.search('    profile.biology.predatorSpecies = uniqueResearchSpecies(')
         self.assertIsNotNone(m)
-        self.assertEqual('%s.%s' % (m.group(1), m.group(2)), 'biology.predatorSpecies')
+        # The field the way runtime_writers() builds it: since 57961ed the second group is the
+        # whole tail, `.predatorSpecies` with its dot, so joining the groups with another dot said
+        # "biology..predatorSpecies" about a regex that was right.
+        self.assertEqual(m.group(1) + m.group(2), 'biology.predatorSpecies')
 
     def test_it_ignores_a_read(self):
         self.assertIsNone(M.ASSIGN.search('const x = profile.biology.predatorSpecies || [];'))
