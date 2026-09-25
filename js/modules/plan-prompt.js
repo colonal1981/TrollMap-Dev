@@ -2573,6 +2573,46 @@ function stripTrailingCommas(src) {
   return { text: out, fixes };
 }
 
+/**
+ * Put the 0 in front of a number the model began with its decimal point, and count them.
+ *
+ * Ryan, 2026-09-25, building a Wateree plan the night before he fished it: "the model's answer
+ * could not be read: Unexpected token '.', ..."ationMin":.15, "... is not valid JSON". JSON
+ * requires a digit before the point; `.15` has exactly one reading, 0.15, and `-.15` exactly one,
+ * -0.15. Same standing as the trailing comma above: a typo in the notation, not a wrong answer.
+ *
+ * STRING-AWARE for the same reason. A `.` counts only outside a string literal, only where a value
+ * starts (after `:`, `[`, `,`, or a `-` that itself starts a value), and only before a digit, so
+ * "reel .5 turns" inside a `why` is never touched.
+ */
+function zeroBeforeLeadingPoint(src) {
+  let out = '', inStr = false, esc = false, fixes = 0;
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (inStr) {
+      out += ch;
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') { inStr = true; out += ch; continue; }
+    if (ch === '.' && /[0-9]/.test(src[i + 1] || '')) {
+      let k = out.length - 1;
+      while (k >= 0 && /\s/.test(out[k])) k--;
+      let prev = out[k];
+      if (prev === '-') {
+        let m = k - 1;
+        while (m >= 0 && /\s/.test(out[m])) m--;
+        prev = /[:\[,]/.test(out[m] || '') ? '-' : null;
+      }
+      if (prev === ':' || prev === '[' || prev === ',' || prev === '-') { out += '0'; fixes++; }
+    }
+    out += ch;
+  }
+  return { text: out, fixes };
+}
+
 /** The 120 characters either side of where JSON.parse gave up, when it says where. */
 function around(src, err) {
   const at = /at position (\d+)/.exec(String(err && err.message) || '');
@@ -2601,13 +2641,18 @@ export function parsePlanResponse(text) {
     // It is said out loud rather than fixed in silence. `_appRepairs` rides on the parsed object,
     // reaches `problems` through planArgsFrom() and lands in the saved plan's `model.response`,
     // so an answer that keeps arriving malformed is visible rather than absorbed.
-    const { text: fixed, fixes } = stripTrailingCommas(body);
-    if (fixes) {
+    const { text: noCommas, fixes } = stripTrailingCommas(body);
+    const { text: fixed, fixes: zeros } = zeroBeforeLeadingPoint(noCommas);
+    if (fixes || zeros) {
       try {
         const out = JSON.parse(fixed);
         if (out && typeof out === 'object') {
-          out._appRepairs = [`the model's answer was not valid JSON — ${fixes} trailing `
-            + `comma${fixes === 1 ? '' : 's'} before a ] or }, removed by the app`];
+          out._appRepairs = [
+            ...(fixes ? [`the model's answer was not valid JSON — ${fixes} trailing `
+              + `comma${fixes === 1 ? '' : 's'} before a ] or }, removed by the app`] : []),
+            ...(zeros ? [`the model's answer was not valid JSON — ${zeros} number`
+              + `${zeros === 1 ? '' : 's'} written from the decimal point (.15), given the 0 by the app`] : []),
+          ];
         }
         return out;
       } catch { /* not the only thing wrong with it; report the original failure */ }

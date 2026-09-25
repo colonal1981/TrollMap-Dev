@@ -269,6 +269,36 @@ describe('plan-prompt — reading the answer', () => {
     expect(out._appRepairs).toBe(undefined);
   });
 
+  // -------------------------------------------------------------------------------------------
+  // A NUMBER WRITTEN FROM ITS DECIMAL POINT IS THE SAME KIND OF TYPO
+  //
+  // Ryan, 2026-09-25, a Wateree plan the night before he fished it: "the model's answer could not
+  // be read: Unexpected token '.', ..."ationMin":.15, "... is not valid JSON". `.15` has one
+  // reading, 0.15, and `-.15` one, -0.15.
+  // -------------------------------------------------------------------------------------------
+  it('gives a number written from its decimal point its 0, and says so', () => {
+    const out = parsePlanResponse(
+      '{ "legs": [ { "runId": "w#1", "durationMin": .15, "offset": -.5, "list": [.25, 1.5] } ] }');
+    expect(out.legs[0].durationMin).toBe(0.15);
+    expect(out.legs[0].offset).toBe(-0.5);
+    expect(out.legs[0].list[0]).toBe(0.25);
+    expect(out.legs[0].list[1]).toBe(1.5);
+    expect(out._appRepairs.length).toBe(1);
+    expect(out._appRepairs[0]).toMatch(/3 numbers written from the decimal point/);
+  });
+
+  it('repairs both typos in one answer and names each', () => {
+    const out = parsePlanResponse('{ "legs": [ { "durationMin": .15 }, ], }');
+    expect(out.legs[0].durationMin).toBe(0.15);
+    expect(out._appRepairs.length).toBe(2);
+  });
+
+  it('never touches a point inside the model\'s own prose', () => {
+    const out = parsePlanResponse('{ "legs": [{ "why": "reel .5 turns, then :.25 more", "n": 1 }] }');
+    expect(out.legs[0].why).toBe('reel .5 turns, then :.25 more');
+    expect(out._appRepairs).toBe(undefined);
+  });
+
   it('still fails loudly on an answer that is broken some other way', () => {
     let msg = '';
     try { parsePlanResponse('{ "legs": [ {"a": } ] }'); } catch (e) { msg = e.message; }
