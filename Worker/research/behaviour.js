@@ -27,6 +27,8 @@
  * SmartPlan eventually says the fish are at 20 ft, this is what lets it say why.
  */
 
+import { writtenOf } from '../../js/utils/fact-date.js';
+
 // ── the vocabulary ──────────────────────────────────────────────────────────────────────────
 //
 // HOW THE FISH ARE FISHED, NOT WHERE THEY ARE. An earlier cut of this included `flats` and
@@ -144,7 +146,10 @@ export function parseBehaviour(facts) {
 
     const base = { speciesHint, seasonHint,
                    quote: String(f.quote || f.fact || '').slice(0, 300),
-                   source: String(f.source || '').slice(0, 120) };
+                   source: String(f.source || '').slice(0, 120),
+                   // The date of the text the quote came from travels with the quote: a January
+                   // report's depth read in July is a January depth.
+                   textDate: f.textDate ?? null };
 
     if (holding) out.push({ kind: 'holding', value: holding, evidence: b || s, ...base });
     for (const d of depths(text)) {
@@ -158,7 +163,7 @@ export function parseBehaviour(facts) {
   // in the prompt reads as corroboration and it is not.
   const seen = new Set();
   return out.filter((o) => {
-    const k = `${o.kind}|${JSON.stringify(o.value)}|${o.speciesHint}|${o.seasonHint}|${o.quote.slice(0, 60)}`;
+    const k = `${o.kind}|${JSON.stringify(o.value)}|${o.speciesHint}|${o.seasonHint}|${o.quote.slice(0, 60)}|${o.textDate}`;
     if (seen.has(k)) return false;
     seen.add(k);
     return true;
@@ -181,7 +186,7 @@ export function behaviourBlock(observations, cap = 60) {
     const val = Array.isArray(o.value) ? `${o.value[0]}-${o.value[1]} ft` : String(o.value);
     const who = o.speciesHint || 'species not stated';
     const when = o.seasonHint || 'season not stated';
-    return `[${i + 1}] ${o.kind} = ${val} · ${who} · ${when} · "${o.quote}" (${o.source})`;
+    return `[${i + 1}] ${o.kind} = ${val} · ${who} · ${when} · "${o.quote}"${writtenOf(o)} (${o.source})`;
   });
   const dropped = obs.length - shown.length;
   return `\n\nPARSED OBSERVATIONS — these are the VALUES. Do not invent alternatives to them.\n`

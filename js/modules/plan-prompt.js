@@ -70,6 +70,7 @@ import { FISHING_STYLE } from '../data/fishing-style-profile.js';
 // RELIEF_RADIUS_M for why the app holds the number at all instead of reading it off the pack.
 import { RELIEF_RADIUS_M } from './plan-candidates.js';
 import { lightSummary, lightPhrasesIn, lightLabel } from '../utils/light-state.js';
+import { writtenOf } from '../utils/fact-date.js';
 
 // Six rods. This never changes; it is the boat, not a setting.
 export const ROD_IDS = ['R1', 'R2', 'R3', 'R4', 'R5', 'R6'];
@@ -1214,14 +1215,14 @@ function factText(f) {
 /**
  * The fact with its source in brackets, because a fact without its source is not one -- and the
  * date of the text it came from when that text has one (research/text-date.js), because a January
- * report read in July is not about July. "--MM-DD" is a month and day on a page that wrote no year.
+ * report read in July is not about July. The words are writtenOf()'s (utils/fact-date.js), which
+ * every Worker prompt that prints a fact uses too; `shown` is the facts printed beside this one,
+ * so a pair that disagrees says which of the two was written later.
  */
-function factLine(f, text) {
+function factLine(f, text, shown) {
   const src = typeof f.source === 'string' && f.source.trim() ? f.source.trim()
             : (typeof f.url === 'string' ? f.url.trim() : '');
-  const d = typeof f.textDate === 'string' && f.textDate ? f.textDate : '';
-  const when = !d ? '' : d.startsWith('--') ? ` (written ${d.slice(2)}, year not stated)` : ` (written ${d})`;
-  return `${text}${when}${src ? ` [${src}]` : ' [source not recorded with the fact]'}`;
+  return `${text}${writtenOf(f, shown)}${src ? ` [${src}]` : ' [source not recorded with the fact]'}`;
 }
 
 function factsOf(researched) {
@@ -1252,11 +1253,13 @@ export function lightFactsFrom(researched) {
     if (!text) continue;
     if (!lightPhrasesIn(text).length) continue;
     if (FACT_SPOKEN_ELSEWHERE.has(f.category)) continue;
-    picked.push(factLine(f, text));
+    picked.push([f, text]);
     if (picked.length >= 8) break;
   }
-  if (all.length && picked.length >= 8) picked.push('(first 8 of the light-tagged facts)');
-  return picked;
+  const shown = picked.map(([f]) => f);
+  const lines = picked.map(([f, text]) => factLine(f, text, shown));
+  if (all.length && lines.length >= 8) lines.push('(first 8 of the light-tagged facts)');
+  return lines;
 }
 
 /**
@@ -1273,11 +1276,13 @@ export function patternFactsFrom(researched) {
     if (!text) continue;
     if (!FACT_FISHING_PATTERN.has(f && f.category)) continue;
     if (lightPhrasesIn(text).length) continue;   // it went to the light block
-    picked.push(factLine(f, text));
+    picked.push([f, text]);
     if (picked.length >= 8) break;
   }
-  if (all.length && picked.length >= 8) picked.push('(first 8 of them)');
-  return picked;
+  const shown = picked.map(([f]) => f);
+  const lines = picked.map(([f, text]) => factLine(f, text, shown));
+  if (all.length && lines.length >= 8) lines.push('(first 8 of them)');
+  return lines;
 }
 
 /**

@@ -17,6 +17,8 @@
  * and the review UI in lake-research-ui.js pick them up unchanged.
  */
 
+import { writtenOf } from '../../js/utils/fact-date.js';
+
 const COASTAL_AGENTS = {
   estuary: {
     label: "Estuary Identity",
@@ -36,7 +38,7 @@ const COASTAL_AGENTS = {
           .test(f.category + ' ' + f.fact)
       );
       const factsBlock = relevant.map(f =>
-        `• [${f.category}] ${f.fact} (source: ${f.source}, confidence ${f.confidence}%)`
+        `• [${f.category}] ${f.fact}${writtenOf(f, relevant)} (source: ${f.source}, confidence ${f.confidence}%)`
       ).join('\n');
       const zoneMeta = prev?._zoneMeta
         ? `\nTROLLMAP ZONE BASELINE (authoritative for geometry):\n${JSON.stringify(prev._zoneMeta)}`
@@ -98,7 +100,7 @@ JSON only.`;
           .test(f.category + ' ' + f.fact)
       );
       const factsBlock = relevant.map(f =>
-        `• [${f.category}] ${f.fact} (source: ${f.source}, confidence ${f.confidence}%)`
+        `• [${f.category}] ${f.fact}${writtenOf(f, relevant)} (source: ${f.source}, confidence ${f.confidence}%)`
       ).join('\n');
       const gauges = prev?._zoneMeta?.usgsRivers?.length
         ? `\nUSGS gauges feeding this system: ${prev._zoneMeta.usgsRivers.join(', ')}. ` +

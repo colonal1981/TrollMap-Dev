@@ -1148,8 +1148,12 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
         # each snippet labelled, and to give each fact back to the snippet its quote came from.
         # `docIndex` is -1 so a fact from here is distinguishable downstream from one taken out of a
         # fetched document.
+        # `publishedDate` is the search provider's date for the result (discover.js), sent so a
+        # snippet fact with no date in its own text is dated by it -- and labelled as the
+        # provider's date, not the page's (Worker/research/text-date.js).
         snippet_docs = [{"title": s2.get("title"), "url": s2.get("url"),
-                         "text": str(s2.get("snippet") or "")}
+                         "text": str(s2.get("snippet") or ""),
+                         "publishedDate": s2.get("publishedDate") or ""}
                         for s2 in found if len(str(s2.get("snippet") or "")) >= 80]
         if snippet_docs:
             code, ex, err = _req("/research/analyze-facts", {

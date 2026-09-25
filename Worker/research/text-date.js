@@ -16,7 +16,13 @@
 //      the top 4,000 characters of its text (claude_species.py's `_DATE_ANY` over the same span),
 //      else a year in its title. A stamp is a date written as the page's date -- see isStamp() --
 //      and not one inside a sentence, which is an event the page describes.
-//   3. null. `fetchedAt` is when we read the page, not when it was written, and is never a date.
+//   3. A SEARCH SNIPPET's provider date. A snippet is ~400 characters of a result, sent without
+//      its page (research_lakes.py's snippet pass). Where its own text gives no date, the date
+//      the search provider sent with the result -- discover.js's `publishedDate`, from
+//      `r.date || r.published_date` -- is used, and `textDateFrom` says it is the provider's, not
+//      the page's. A provider's relative date ("5 months ago") is not one: when the search ran was
+//      not kept with the snippet, so it is null and `textDateFrom` quotes what was sent.
+//   4. null. `fetchedAt` is when we read the page, not when it was written, and is never a date.
 //
 // `textDateFrom` says which of these answered and quotes what it read, so the date can be checked
 // against the page by anyone reading the fact.
@@ -261,6 +267,27 @@ function pageDate(pg) {
  * Pass the same `page` object for every fact of one document; it is filled in on first use.
  */
 function textDateOf(fact, doc, page = null) {
+  const own = textDateOfText(fact, doc, page);
+  if (own.textDate || own.textDateFrom) return own;
+  return providerDate(doc);
+}
+
+/**
+ * The search provider's date for a result, as sent. Only a document that carries `publishedDate`
+ * has one, and in this tree that is a search snippet: a fetched page has its own text to read.
+ */
+function providerDate(doc) {
+  const said = String((doc && doc.publishedDate) || '').trim();
+  if (!said) return { textDate: null, textDateFrom: null };
+  const p = parseDate(said);
+  if (!p) {
+    return { textDate: null,
+             textDateFrom: `search provider's date for the result: "${said}", which is not a date: when the search ran was not kept with the snippet` };
+  }
+  return { textDate: iso(p), textDateFrom: `search provider's date for the result, not the page's: "${said}"` };
+}
+
+function textDateOfText(fact, doc, page) {
   const pg = page || readPage(doc || {});
   const q = norm(fact && fact.quote);
   let offset = -1;

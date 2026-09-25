@@ -116,6 +116,10 @@ describe('the Worker bundle can be built', () => {
     // TWO MORE ADDED 2026-09-25, in the same commit that made them Worker files: discover.js
     // imports water-scope.js, the rule that searches a shared-name water in its own county, and
     // water-scope.js imports qualifiersOf() from reach-places.js. Both are pure.
+    //
+    // ONE MORE ADDED 2026-09-25: fact-date.js, the words every prompt uses for a fact's date and the
+    // test for two facts that disagree -- shared so plan-prompt.js and the Worker's agents print a
+    // date one way, and the dedupe and the prompts mean one thing by "disagree". Pure, no imports.
     const EXPECTED = [
       'js/data/ga-access-species.js',
       'js/data/lake-keys.js',
@@ -123,6 +127,7 @@ describe('the Worker bundle can be built', () => {
       'js/data/research-ids.js',
       'js/data/water-aliases.js',
       'js/utils/coerce.js',
+      'js/utils/fact-date.js',
       'js/utils/geojson-coords.js',
       'js/utils/reach-places.js',
       'js/utils/water-scope.js',

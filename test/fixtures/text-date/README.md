@@ -12,3 +12,9 @@ and unchanged.
 - carolina-sportsman-joyner-wateree-crappie.md — https://www.carolinasportsman.com/fishing/freshwater-fishing/crappie/colton-joyners-lake-wateree-crappie-trip/
 - dnr-wateree-description.md — https://www.dnr.sc.gov/lakes/wateree/description.html (no date anywhere)
 - dnr-news-2018-santee-striper.md — https://www.dnr.sc.gov/news/2018/may/may7_striperlimit.html
+- carolina-sportsman-lower-saluda-trout-2007.md — https://www.carolinasportsman.com/content/sub-tropical-trout/
+  (fetched 2026-09-25; the Lower Saluda's striper rule in 2007, "five striped bass" and 21 inches. Its
+  only date in the text is the issue, "August 2007", with no day; its metadata says 2007-07-16)
+- search-wateree-crappie.json — four rows of a TinyFish web search run 2026-09-25, verbatim, three
+  of them with the provider's `date` ("Sep 6, 2026", "5 months ago", "Jan 21, 2013") and one without.
+  The snippets are what research_lakes.py sends as snippet documents.
