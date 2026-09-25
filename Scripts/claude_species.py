@@ -174,6 +174,19 @@ def _units(text):
     return trimmed
 
 
+def _written_as_prose(s):
+    """A passage in capitals is a table or a list, not a sentence about fish doing something.
+
+    Lake Wateree's packet carried 77,903 characters of South Carolina's CWA 303(d) list
+    (2026-09-25): rows like "CEDAR CREEK RESERVOIR 0.15 MILES SOUTHWEST OF THE DEBUTARY BOAT
+    LANDING PHOSPHORUS, TOTAL", which pass the fish-and-cue test on a CREEK, a POINT or a DOCK
+    and a FISH TISSUE somewhere in the row. Whether a unit is mostly capitals is decided by its own
+    letters, more than half, with nothing tuned: a report, an article and a survey are written in
+    sentence case, and a heading in capitals is still kept as the heading above what is kept."""
+    letters = [c for c in s if c.isalpha()]
+    return not letters or sum(c.isupper() for c in letters) * 2 <= len(letters)
+
+
 def _is_heading(s):
     t = s.strip()
     return (t.startswith("#") or t.startswith("--- PAGE")
@@ -219,8 +232,10 @@ def doc_spans(text, fish, terms, doc_names_water):
     keep = set()
     for i, (a, b) in enumerate(units):
         s = text[a:b]
-        if in_scope[i] and fish.search(s) and _CUE.search(s):
-            keep.update(j for j in (i - 1, i, i + 1) if 0 <= j < len(units) and in_scope[j])
+        if in_scope[i] and fish.search(s) and _CUE.search(s) and _written_as_prose(s):
+            # A neighbour in capitals is a table row, not context; the heading above comes next.
+            keep.update(j for j in (i - 1, i, i + 1) if 0 <= j < len(units) and in_scope[j]
+                        and (j == i or _written_as_prose(text[units[j][0]:units[j][1]])))
             # The nearest heading and the nearest date line above a kept sentence travel with it:
             # "October 30" over a guide's paragraph is the only place that paragraph's date is.
             for marks in (heads, dates):
@@ -695,6 +710,24 @@ def check_discovered(found, roster, documents):
     return added, evidence, problems
 
 
+def one_name_per_fish(names):
+    """(names, [(dropped, kept)]). Spellings of ONE name -- 'Black Crappies' beside 'Black
+    Crappie' on Lake Monticello, 2026-09-25 -- are asked once, under the shortest spelling, in the
+    order the names first appear. Different fish and group keys are left alone: 'Crappie' beside
+    'Black Crappie' is rule 5's business, not a spelling."""
+    best, order = {}, []
+    for n in names:
+        k = _fish_key(n)
+        if k not in best:
+            order.append(k)
+            best[k] = n
+        elif len(n) < len(best[k]):
+            best[k] = n
+    kept = [best[k] for k in order]
+    folded = [(n, best[_fish_key(n)]) for n in names if n not in kept]
+    return kept, folded
+
+
 def roster_for(profile):
     """The species to answer: the keys the last run's section carries -- the Worker has already
     merged names for one fish into them (Black and White Crappie into Crappie) -- else the
@@ -702,7 +735,11 @@ def roster_for(profile):
     ti = profile.get("trollingIntelligence") or {}
     keys = [k for k in ti if k != "sources"]
     if keys:
-        return keys, "the stored section's species"
+        one, folded = one_name_per_fish(keys)
+        why = "the stored section's species"
+        if folded:
+            why += " (" + "; ".join(f"{a} folded into {b}" for a, b in folded) + ")"
+        return one, why
     bio = profile.get("biology") or {}
     return list(bio.get("predatorSpecies") or []), "biology.predatorSpecies"
 

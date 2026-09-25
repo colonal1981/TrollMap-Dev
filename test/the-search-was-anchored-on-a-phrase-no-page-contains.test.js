@@ -119,6 +119,7 @@ describe('discover.js wiring -- TRIPWIRES ON A NAME, not checks on behaviour', (
 
   it('adds the state once, where the query is issued', () => {
     expect(src.includes('stateFullName(state)')).toBe(true);
-    expect(src.includes('/\\bsite:/i.test(base)')).toBe(true);
+    // A `site:` pin skips it; a `-site:` exclusion does not (a-site-exclusion-is-not-a-site-pin).
+    expect(src.includes('queryPinsSite(base)')).toBe(true);
   });
 });

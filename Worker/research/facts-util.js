@@ -264,10 +264,32 @@ const RESEARCH_SPECIES_CANON = {
   'bullhead catfish': 'Bullhead'
 };
 
+/**
+ * A PLURAL OF A NAME THE MAP KNOWS IS THAT NAME. Lake Monticello's roster carried "Black Crappie",
+ * "Black Crappies" and "White Crappies" side by side (2026-09-25): an agency page writes the
+ * plural, the map has only the singular, and titleCaseWords() turned "black crappies" into a
+ * species of its own -- which the species answers then answered twice. Only the last word is made
+ * singular, and only when the singular IS in the map, so nothing is invented: "catfishes" ->
+ * "catfish", "crappies" -> "crappie", "basses" -> "bass"; a name the map does not know is left as
+ * it was. Own keys only: `RESEARCH_SPECIES_CANON["constructor"]` is Object, not a fish.
+ */
+function singularLastWord(n) {
+  const words = n.split(' ');
+  const w = words[words.length - 1];
+  let one = w;
+  if (w.length > 4 && w.endsWith('es') && /(sh|ch|x|ss)$/.test(w.slice(0, -2))) one = w.slice(0, -2);
+  else if (w.length > 3 && w.endsWith('s') && !w.endsWith('ss')) one = w.slice(0, -1);
+  words[words.length - 1] = one;
+  return words.join(' ');
+}
+
 function canonicalizeResearchSpecies(raw) {
   const n = normalizeResearchName(raw).replace(/\*/g, '').trim();
   if (!n) return null;
-  return RESEARCH_SPECIES_CANON[n] || titleCaseWords(n);
+  if (Object.hasOwn(RESEARCH_SPECIES_CANON, n)) return RESEARCH_SPECIES_CANON[n];
+  const one = singularLastWord(n);
+  if (one !== n && Object.hasOwn(RESEARCH_SPECIES_CANON, one)) return RESEARCH_SPECIES_CANON[one];
+  return titleCaseWords(n);
 }
 
 // Species that must never appear in predatorSpecies regardless of doc content

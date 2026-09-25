@@ -13,6 +13,16 @@ import { lakeIndex, resolveRegistryRow } from '../registry.js';
 import { waterTypeSearch } from './water-type-hints.js';
 import { waterScope, countyQueries } from '../../js/utils/water-scope.js';
 
+/**
+ * Does this query pin itself to a site, so the state is not appended? A `site:` operator does;
+ * a `-site:` EXCLUSION does not. The check was `/\bsite:/`, and `\b` sits between "-" and "s", so
+ * every lake fisheries query -- `"<lake>" fishing report -site:facebook.com ...` -- counted as
+ * pinned and went out without its state (found by the cloud review of PR #64, 2026-09-25).
+ */
+export function queryPinsSite(q) {
+  return /(?:^|\s)site:/i.test(String(q || ''));
+}
+
 // Which organisation stands behind a URL. Two callers below -- Grok citations and Wikipedia
 // citations -- carried byte-identical copies of this ladder, so a domain added to one was
 // silently missing from the other.
@@ -1190,7 +1200,7 @@ const AGENT_TO_TAGS = {
       // rule this comment block already states, whatever the homepages turn out to be caused by.
       const base = queries[qIndex];
       // A quoted county is a harder pin than a loose state, by the same argument as `site:`.
-      const statePinned = /\bsite:/i.test(base) || !!typed?.pressScoped?.[qIndex]
+      const statePinned = queryPinsSite(base) || !!typed?.pressScoped?.[qIndex]
         || countyAnchored.includes(base);
       const q = statePinned ? base : `${base} ${stateFullName(state)}`;
       const domainTypes = AGENT_DISCOVERY_QUERIES._domainTypes?.[agentKey];

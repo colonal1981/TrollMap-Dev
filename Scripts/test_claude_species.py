@@ -105,6 +105,16 @@ class Packet(unittest.TestCase):
         packet, _ = self.build()
         self.assertNotIn("STORED-ANSWER-MARKER", packet)
 
+    def test_a_table_in_capitals_is_not_a_fish_passage(self):
+        # Lake Wateree's packet carried 77,903 characters of the state's 303(d) list.
+        text = ("CEDAR CREEK RESERVOIR 0.15 MILES SOUTHWEST OF THE BOAT LANDING FISH TISSUE "
+                "MERCURY SCRL-09094 REEDER POINT BR AT SC 48.\n\n"
+                "Crappie are holding on brush piles in 12-15 feet of water on Cedar Creek.")
+        spans = C.doc_spans(text, C.fish_pattern(["Black Crappie"]), ["Cedar Creek"], True)
+        kept = " ".join(text[a:b] for a, b in spans)
+        self.assertIn("brush piles in 12-15 feet", kept)
+        self.assertNotIn("SCRL-09094", kept)
+
     def test_channel_alone_is_not_a_fish_word(self):
         fish = C.fish_pattern(["Channel Catfish", "Blue Catfish"])
         self.assertIsNone(fish.search("The river channel is 40 feet deep below the dam."))
@@ -172,6 +182,16 @@ class Checks(unittest.TestCase):
         roster, why = C.roster_for(PROFILE)
         self.assertEqual(roster, ROSTER)                 # not "Black Crappie" from the raw list
         self.assertIn("stored section", why)
+
+    def test_spellings_of_one_name_are_asked_once(self):
+        # Lake Monticello's stored section, 2026-09-25.
+        prof = {"trollingIntelligence": {k: {} for k in (
+            "Largemouth Bass", "Black Crappies", "White Crappies", "Blue Catfish", "Black Crappie",
+            "Crappie")}}
+        roster, why = C.roster_for(prof)
+        self.assertEqual(roster, ["Largemouth Bass", "Black Crappie", "White Crappies",
+                                  "Blue Catfish", "Crappie"])
+        self.assertIn("Black Crappies folded into Black Crappie", why)
 
     def test_the_schema_requires_every_roster_species(self):
         s = C.schema_for(ROSTER)
