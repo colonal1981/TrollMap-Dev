@@ -1211,11 +1211,17 @@ function factText(f) {
   return typeof f.quote === 'string' ? f.quote.trim() : '';
 }
 
-/** The fact with its source in brackets, because a fact without its source is not one. */
+/**
+ * The fact with its source in brackets, because a fact without its source is not one -- and the
+ * date of the text it came from when that text has one (research/text-date.js), because a January
+ * report read in July is not about July. "--MM-DD" is a month and day on a page that wrote no year.
+ */
 function factLine(f, text) {
   const src = typeof f.source === 'string' && f.source.trim() ? f.source.trim()
             : (typeof f.url === 'string' ? f.url.trim() : '');
-  return `${text}${src ? ` [${src}]` : ' [source not recorded with the fact]'}`;
+  const d = typeof f.textDate === 'string' && f.textDate ? f.textDate : '';
+  const when = !d ? '' : d.startsWith('--') ? ` (written ${d.slice(2)}, year not stated)` : ` (written ${d})`;
+  return `${text}${when}${src ? ` [${src}]` : ' [source not recorded with the fact]'}`;
 }
 
 function factsOf(researched) {

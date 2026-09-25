@@ -1686,7 +1686,9 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
         const ANALYZE_BATCH = 1;
         const analyzeDocs = normalizedDocuments.slice(0, 12).map(d => ({
           title: d.title, url: d.url || '',
-          text: (d.fullText || '').slice(0, 150000)
+          text: (d.fullText || '').slice(0, 150000),
+          // Never a date: research/text-date.js reads it only to refuse the site's own clock.
+          fetchedAt: d.fetchedAt || undefined,
         }));
         const batches = [];
         for (let i = 0; i < analyzeDocs.length; i += ANALYZE_BATCH) batches.push(analyzeDocs.slice(i, i + ANALYZE_BATCH));
