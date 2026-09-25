@@ -52,6 +52,8 @@ import urllib.request
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 
+import species_group_retry as SGR                                   # noqa: E402 (sibling)
+
 WORKER = os.environ.get("TROLLMAP_WORKER_URL",
                         "https://trollmap-worker.colonal1981.workers.dev")
 
@@ -828,7 +830,8 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
            "facts": 0,
            "sources": 0, "fetch": {}, "rejected_offlake": 0, "rejected_docs": [],
            "wqp_records": 0, "limnology_gaps": [], "ramps_sent": 0,
-           "chars_sent": 0, "retries": 0, "group_attempts": {}, "saved_key": None,
+           "chars_sent": 0, "retries": 0, "group_attempts": {}, "groups_reasked": [],
+           "saved_key": None,
            "saved_version": None, "discovered_species": [], "warnings": [],
            "registry_slug": None, "registry_resolved_by": None, "registry_unresolved": None}
 
@@ -1263,6 +1266,8 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
         groups = meta.get("groups") or []
         out["group_attempts"] = {g.get("group"): g.get("attempts", 1) for g in groups if g.get("group")}
         out["retries"] = sum(max(0, (g.get("attempts") or 1) - 1) for g in groups)
+        # The groups still unanswered after the second requests: their species are LOST below.
+        out["missing_groups"] = [g.get("group") for g in groups if g.get("ok") is False]
         # WHICH DETERMINISTIC BLOCKS WERE IN PLAY. This script never names agency_lake_facts.json or
         # species_traits.json and should not -- it is a driver, and the Worker does the reading inside
         # /research/agent-llm. But both of those reads are against R2, and both callers swallow a
@@ -1563,21 +1568,16 @@ def carried_keys(stored, fresh, path=""):
 # rejection. 502/504 are the proxy saying the same "nothing came back", so they ride
 # along. Everything else fails on the first reply, as before.
 #
-# The Worker ALREADY retries internally, per group, and reports it as `retries` -- which
-# means the runs most likely to exceed a client deadline are precisely the ones where it
-# is working hardest. A longer deadline is the fix; the attempts are the safety net.
+# The Worker used to retry internally, per group, which made the runs most likely to exceed
+# a client deadline precisely the ones where it was working hardest. A longer deadline was
+# the fix; the attempts are the safety net. That retry has since moved out here, one new
+# request per wait (species_group_retry.py), so a request now carries one pass per group.
 AGENT_LLM_TIMEOUT = 900
 AGENT_LLM_TRIES = 3
 
 
-def ask_species_groups(lake, state, prev, group_models, out):
-    """/research/agent-llm for the fisheries groups, with the transport retries. (code, res, err).
-
-    `group_models` is "lite" (the Lite ladder, as always) or "flash" (the full Flash models on every
-    free key first, then Lite -- GEMINI_FREE_FLASH_MODELS in Worker/worker-core.js)."""
-    body = {"lakeName": lake, "state": state, "agent": "fisheries", "previousResults": prev}
-    if group_models and group_models != "lite":
-        body["groupModels"] = group_models
+def _ask_agent_llm(lake, body, out):
+    """One /research/agent-llm request, with the transport retries. (code, res, err)."""
     code = res = err = None
     for attempt in range(1, AGENT_LLM_TRIES + 1):
         code, res, err = _req("/research/agent-llm", body, timeout=AGENT_LLM_TIMEOUT)
@@ -1590,6 +1590,36 @@ def ask_species_groups(lake, state, prev, group_models, out):
             print(f"      [{lake}] agent-llm did not answer ({err}) -- attempt "
                   f"{attempt + 1} of {AGENT_LLM_TRIES}")
             time.sleep(20 * attempt)
+    return code, res, err
+
+
+def ask_species_groups(lake, state, prev, group_models, out):
+    """/research/agent-llm for the fisheries groups, with the transport retries. (code, res, err).
+
+    `group_models` is "lite" (the Lite ladder, as always) or "flash" (the full Flash models on every
+    free key first, then Lite -- GEMINI_FREE_FLASH_MODELS in Worker/worker-core.js).
+
+    A GROUP THE WORKER COULD NOT ANSWER IS ASKED AGAIN IN A NEW REQUEST, after 8 s and then 20 s,
+    and its answer merged into the first -- see species_group_retry.py for why the retry left the
+    Worker (one invocation, 50 subrequests, Nottely Lake). `out["groups_reasked"]` names every group
+    that needed a second request; the run's report counts them."""
+    body = {"lakeName": lake, "state": state, "agent": "fisheries", "previousResults": prev}
+    if group_models and group_models != "lite":
+        body["groupModels"] = group_models
+    code, res, err = _ask_agent_llm(lake, body, out)
+    if code != 200 or not res:
+        return code, res, err
+
+    def again(groups):
+        c, r, e = _ask_agent_llm(lake, dict(body, groups=groups), out)
+        if c != 200 or not r:
+            print(f"      [{lake}] the new request for {', '.join(groups)} failed ({c}: {e})")
+            return None
+        return r
+
+    res, reasked = SGR.ask_failed_groups_again(
+        again, res, log=lambda m: print(f"      [{lake}] {m}"))
+    out["groups_reasked"] = reasked
     return code, res, err
 
 
@@ -2471,7 +2501,8 @@ def main():
         detail = (f"{len(r['returned'])}/{len(r['asked']) or len(r['confirmed'])} species  "
                   f"{r['documents']} docs ({got} new, {f.get('reused', 0)} cached, "
                   f"{f.get('failed', 0)} failed)  {r['facts']} facts  ~{ktok:.0f}k tok"
-                  + (f"  {r['retries']} retries" if r.get("retries") else ""))
+                  + (f"  re-asked: {', '.join(r['groups_reasked'])}"
+                     if r.get("groups_reasked") else ""))
         if r["missing"]:
             detail += "  LOST: " + ", ".join(r["missing"])
         print(f"  [{done[0]:3d}/{len(lakes)}] {mark} {secs}  {name[:42]:44s}{detail}"
@@ -2559,15 +2590,22 @@ def main():
               + ", ".join(f"{n} missing {g.split('.')[-1]}" for g, n in every.most_common())
               + ".\nThese are the limnology fields a document is the only source for.")
 
-    retried = [r for r in ok if r.get("retries")]
-    if retried:
-        total = sum(r["retries"] for r in retried)
-        print(f"\n{total} group retr{'y' if total == 1 else 'ies'} across {len(retried)} water(s) "
-              f"-- the provider pushed back and the backoff caught it. Rising numbers here mean "
-              f"the per-lake load is still too high:")
-        for r in retried:
-            hard = {g: n for g, n in (r.get("group_attempts") or {}).items() if n > 1}
-            print(f"  {r['lake']}: " + ", ".join(f"{g} x{n}" for g, n in hard.items()))
+    # HOW MANY GROUPS NEEDED A SECOND REQUEST. A group the first request could not answer --
+    # refused by the provider, or never asked because the request's subrequests were spent -- is
+    # asked again in a new one (species_group_retry.py). One that came back then is not LOST and
+    # prints nothing above, so this is the only place the pressure shows. Rising numbers here mean
+    # the per-lake load is still too high.
+    reasked = [r for r in ok if r.get("groups_reasked")]
+    if reasked:
+        total = sum(len(r["groups_reasked"]) for r in reasked)
+        print(f"\n{total} species group{'' if total == 1 else 's'} needed a second request across "
+              f"{len(reasked)} water(s):")
+        for r in reasked:
+            tries = r.get("group_attempts") or {}
+            print(f"  {r['lake']}: " + ", ".join(
+                f"{g} (asked {tries.get(g, '?')}x)"
+                + (" LOST" if g in (r.get("missing_groups") or []) else "")
+                for g in r["groups_reasked"]))
 
     gated = [r for r in ok if r.get("rejected_docs")]
     if gated:

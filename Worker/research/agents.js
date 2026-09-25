@@ -1202,6 +1202,12 @@ function speciesTraitsBlock(entries, species) {
     + shown.map((e) => e.text).join('\n');
 }
 
+// THE PLATFORM'S OWN WORDS when an invocation has made more subrequests than its plan allows:
+// "Too many subrequests by single Worker invocation." in Ryan's batch log of 2026-09-25, and
+// "Error: Too many subrequests." in developers.cloudflare.com/workflows/reference/limits/.
+// Matched on the words both share, not on a count kept here.
+const SUBREQUESTS_SPENT = /too many subrequests/i;
+
 async function handleResearchAgent(request, env) {
   let body;
   try { body = await request.json(); } catch { return new Response(JSON.stringify({success:false, error:"invalid JSON body"}), {status:400, headers:JSON_HEADERS}); }
@@ -1567,7 +1573,13 @@ async function handleResearchAgent(request, env) {
     const unmatched = deduped.filter(s => !assigned.has(s));
     if (unmatched.length) grouped['other'] = [...(grouped['other'] || []), ...unmatched];
 
-    const groupEntries = Object.entries(grouped).filter(([, sp]) => sp.length > 0);
+    // ONLY THE GROUPS THE CALLER NAMED, when it names any. This is the second request: the
+    // groups the first one reported failed or not asked, and nothing it already answered. The
+    // grouping above runs in full first so a group's name means the same species in both requests.
+    const askOnly = Array.isArray(body.groups) && body.groups.length
+      ? new Set(body.groups.map((g) => String(g).trim().toLowerCase())) : null;
+    const groupEntries = Object.entries(grouped)
+      .filter(([g, sp]) => sp.length > 0 && (!askOnly || askOnly.has(g)));
     console.log(`fisheries agent: ${allSpecies.length} species split into ${groupEntries.length} groups: ${groupEntries.map(([g,sp]) => `${g}(${sp.length})`).join(', ')}`);
 
     // Build a per-group prompt using the same userTemplate but with a filtered species list
@@ -1648,6 +1660,9 @@ async function handleResearchAgent(request, env) {
     // waiting on anything. Measured cost of the change: roughly 10-20 s on a lake that already
     // takes 50-100 s.
     const GROUP_CONCURRENCY = 1;
+    // Set by the first group whose call is refused by the platform for having made too many
+    // subrequests; every group after it in this request is reported as not asked.
+    let spentBy = null;
     const runGroup = async ([groupName, groupSpecies]) => {
       const userPrompt = buildGroupPrompt(groupSpecies);
       const payload = {
@@ -1659,69 +1674,88 @@ async function handleResearchAgent(request, env) {
         max_tokens: 5000,
         response_format: { type: "json_object" }
       };
-      // WHEN THE PROVIDER SAYS "TRY AGAIN LATER", TRY AGAIN LATER.
+      // WHEN THE PROVIDER SAYS "TRY AGAIN LATER", TRY AGAIN LATER -- IN A NEW REQUEST.
       //
       // "This model is currently experiencing high demand. Spikes in demand are usually
-      // temporary. Please try again later." -- that sentence has now cost four species groups
-      // across three runs of the batch, and it is an instruction. A group is one call and the
-      // whole lake's answer for those species; giving up on the first refusal throws away work
-      // the run has already paid for in downloads and extraction.
+      // temporary. Please try again later." -- that sentence cost four species groups across
+      // three runs of the batch, and it is an instruction. The answer was a backoff of 8 s and
+      // 20 s, and those waits stand. What moved is WHERE they are spent.
       //
-      // Serialising the groups and pacing the extraction (see GROUP_CONCURRENCY above) cut the
-      // load a long way -- Lake Sidney Lanier (Hall Co, GA) went from two species of five to
-      // five of five, and its facts from one to twenty-two -- but Lake Townsend (Guilford Co,
-      // NC) still lost its catfish group on the third call of the lake. The remaining pressure
-      // is that every group re-sends the whole document set: eight documents at 20,000
-      // characters is roughly 40,000 input tokens PER GROUP, so three groups spend 120,000
-      // tokens on the same eight documents.
+      // They were spent here, inside this request, and every group of the lake shares this one
+      // request. Ryan's lake batch, 2026-09-25, `--group-models claude`, 30 waters:
       //
-      // Backoff, not immediacy. Waiting is the entire point of the retry -- a spike measured in
-      // seconds is answered by seconds. Two extra attempts at 8 s and 20 s, and the wall time is
-      // spent only on a lake that would otherwise have come back short.
-      const RETRY_WAITS_MS = [8000, 20000];
+      //     warn [Nottely Lake, GA]: fisheries group "catfish" returned nothing (Too many
+      //          subrequests by single Worker invocation. ...)
+      //     ... "panfish" ... "other" ... the same
+      //     [ 22/30] ok  484.8s  Nottely Lake, GA  5/10 species ... 7 retries
+      //              LOST: Channel Catfish, Flathead Catfish, Bluegill, Redbreast Sunfish, Catfish
+      //
+      // Counted from the code. Workers Free allows 50 external subrequests per invocation
+      // (developers.cloudflare.com/workers/platform/limits/#subrequests, read 2026-09-25; R2 reads
+      // count against a separate 1,000 for Cloudflare services). One attempt of one group is one
+      // callLLM, and on a "high demand" minute callLLM makes a request per free key per model:
+      // 5 keys x 2 Lite models = 10, and with `groupModels: 'flash'` 5 x 4 Flash first = 30 more.
+      // Three attempts per group made one group 30 requests on Lite and 90 on Flash -- so two bad
+      // groups on Lite, or one on Flash, spent the request's whole allowance, and every group after
+      // it failed on its first fetch having never been asked.
+      //
+      // So this makes ONE pass per group and says what happened; the caller asks the groups that
+      // failed again, in a new request, which has a fresh allowance -- after the same 8 s and 20 s.
+      // Scripts/species_group_retry.py and js/utils/species-group-retry.js are the two callers'
+      // halves, and both merge the second answer into the first.
       let lastReason = null;
-      for (let attempt = 0; attempt <= RETRY_WAITS_MS.length; attempt++) {
-        if (attempt > 0) {
-          console.warn(`fisheries group ${groupName}: retry ${attempt} after ${RETRY_WAITS_MS[attempt - 1]}ms (${lastReason})`);
-          await new Promise((r) => setTimeout(r, RETRY_WAITS_MS[attempt - 1]));
-        }
-        try {
-          const llmResult = await callLLM(env, payload, null, llmOpts);
-          const rawText = extractLLMText(llmResult.data);
-          const parsed = extractJsonPossibly(rawText);
-          if (!parsed) { lastReason = `non-JSON response (${llmResult.model})`; continue; }
+      if (spentBy) {
+        // THE ALLOWANCE IS GONE, SO THIS GROUP IS NOT ASKED -- AND IS NOT CALLED FAILED. Every
+        // fetch from here on would throw the platform's own sentence without reaching a model,
+        // and reporting that as this group's answer is how Nottely lost three groups to one.
+        groupOutcomes.push({ group: groupName, species: groupSpecies, ok: false, asked: false,
+                             reason: `not asked: this request's subrequests were spent (${spentBy})`,
+                             attempts: 0 });
+        return {};
+      }
+      try {
+        const llmResult = await callLLM(env, payload, null, llmOpts);
+        const rawText = extractLLMText(llmResult.data);
+        const parsed = extractJsonPossibly(rawText);
+        if (!parsed) {
+          lastReason = `non-JSON response (${llmResult.model})`;
+        } else {
           // Same pick as the single-shot path below, and literally the same function -- see
           // fisheriesSection() for the Nolichucky run that saved three field names as fish.
           const section = fisheriesSection(parsed, agentKey);
           const got = Object.keys(section).filter((k) => k !== 'sources');
-          if (!got.length) { lastReason = 'empty section'; continue; }
-          // ── THE LAKE-LEVEL ANSWERS, WHICH THIS LINE USED TO THROW AWAY ────────────────────
-          //
-          // `lakeForage` and `speciesFound` are SIBLINGS of trollingIntelligence in the model's
-          // JSON, and the line above keeps only the intelligence. The prompt asks for both --
-          // "THIS LAKE'S FORAGE IS NOT RECORDED. ESTABLISH IT FROM THE DOCUMENTS FIRST... return
-          // it in lakeForage" -- and on the group path the answer was parsed and dropped.
-          //
-          // Ryan, 2026-09-12: "that shouldn't be empty on wateree unless there is still a bug
-          // with the research". It is. Wateree carries 11 predator species, so it groups, so it
-          // takes this path. Measured across the 77 stored profiles: 60 have no forage at all.
-          //
-          // Collected here and returned below, because scripts/research_lakes.py ALREADY reads
-          // `res.data.lakeForage` and `res.data.speciesFound` and writes them into
-          // biology.primaryForage -- and the group path's response has never carried a `data`
-          // key for it to read. Nothing in the batch changes.
-          collectLakeLevel(parsed);
-          groupOutcomes.push({ group: groupName, species: groupSpecies, ok: true,
-                               returned: got, reason: null, attempts: attempt + 1,
-                               model: llmResult.model });
-          return section;
-        } catch (e) {
-          lastReason = e.message;
+          if (!got.length) {
+            lastReason = 'empty section';
+          } else {
+            // ── THE LAKE-LEVEL ANSWERS, WHICH THIS LINE USED TO THROW AWAY ──────────────────
+            //
+            // `lakeForage` and `speciesFound` are SIBLINGS of trollingIntelligence in the model's
+            // JSON, and the line above keeps only the intelligence. The prompt asks for both --
+            // "THIS LAKE'S FORAGE IS NOT RECORDED. ESTABLISH IT FROM THE DOCUMENTS FIRST... return
+            // it in lakeForage" -- and on the group path the answer was parsed and dropped.
+            //
+            // Ryan, 2026-09-12: "that shouldn't be empty on wateree unless there is still a bug
+            // with the research". It is. Wateree carries 11 predator species, so it groups, so it
+            // takes this path. Measured across the 77 stored profiles: 60 have no forage at all.
+            //
+            // Collected here and returned below, because scripts/research_lakes.py ALREADY reads
+            // `res.data.lakeForage` and `res.data.speciesFound` and writes them into
+            // biology.primaryForage -- and the group path's response has never carried a `data`
+            // key for it to read. Nothing in the batch changes.
+            collectLakeLevel(parsed);
+            groupOutcomes.push({ group: groupName, species: groupSpecies, ok: true, asked: true,
+                                 returned: got, reason: null, attempts: 1,
+                                 model: llmResult.model });
+            return section;
+          }
         }
+      } catch (e) {
+        lastReason = e.message;
+        if (SUBREQUESTS_SPENT.test(String(lastReason || ''))) spentBy = lastReason;
       }
-      console.warn(`fisheries group ${groupName} failed after ${RETRY_WAITS_MS.length + 1} attempts: ${lastReason}`);
-      groupOutcomes.push({ group: groupName, species: groupSpecies, ok: false,
-                           reason: lastReason, attempts: RETRY_WAITS_MS.length + 1 });
+      console.warn(`fisheries group ${groupName} failed: ${lastReason}`);
+      groupOutcomes.push({ group: groupName, species: groupSpecies, ok: false, asked: true,
+                           reason: lastReason, attempts: 1 });
       return {};
     };
 
@@ -1808,8 +1842,12 @@ holding: coerceHolding(entry.holding, holdingRejects),
     // THE RULE IS missingConfirmedSpecies() AND IT LIVES AT MODULE SCOPE, with the two cases it
     // has to survive written above it. A warning that fires when nothing is wrong is how it stops
     // being read, and this one is the only reason three real defects have been caught this week.
-    const missingSpecies = missingConfirmedSpecies(deduped, Object.keys(normalizedMerged));
-    const failedGroups = groupOutcomes.filter((g) => !g.ok);
+    // Against the species this request asked about. A second request names only the groups the
+    // first one lost, and the rest of the roster is not missing from it -- it was never its to answer.
+    const askedSpecies = askOnly ? groupEntries.flatMap(([, sp]) => sp) : deduped;
+    const missingSpecies = missingConfirmedSpecies(askedSpecies, Object.keys(normalizedMerged));
+    const failedGroups = groupOutcomes.filter((g) => !g.ok && g.asked);
+    const notAskedGroups = groupOutcomes.filter((g) => !g.ok && !g.asked);
     if (missingSpecies.length) {
       console.warn(`[research:fisheries] ${missingSpecies.length} confirmed species missing from `
                  + `the result: ${missingSpecies.join(', ')}`);
@@ -1837,7 +1875,8 @@ holding: coerceHolding(entry.holding, holdingRejects),
       // waters and nobody reads 64 scrollback lines; this is the number that makes the difference
       // falsifiable in the report. Same reason `groups` and `missingSpecies` are here.
       meta: { model: 'multi-group', provider: 'gemini-free', groupModels,
-              groups: groupOutcomes, failedGroups, missingSpecies,
+              groups: groupOutcomes, failedGroups, notAskedGroups, missingSpecies,
+              askedGroups: groupEntries.map(([g]) => g),
               agencyEntries: (groundedPrev._agencyEntries || []).length,
               speciesTraitRows: (groundedPrev._traitsEntries || []).length },
       // Surfaced where the client's log will show it. A run that lost a quarter of the lake's
@@ -1848,7 +1887,11 @@ holding: coerceHolding(entry.holding, holdingRejects),
              + `${[...new Set(holdingRejects)].slice(0, 6).join(', ')}`] : []),
         ...failedGroups.map((g) => `fisheries group "${g.group}" returned nothing (${g.reason}) — `
                                  + `${g.species.join(', ')} have no trolling intelligence from this run`),
-        ...(missingSpecies.length && !failedGroups.length
+        // Same opening words as the line above, so a caller that answers the group in a new
+        // request can drop either line by the group's name.
+        ...notAskedGroups.map((g) => `fisheries group "${g.group}" was not asked — this request's `
+                                   + `subrequests were spent before it; ask it in a new request`),
+        ...(missingSpecies.length && !failedGroups.length && !notAskedGroups.length
             ? [`fisheries: ${missingSpecies.length} confirmed species missing from the result — `
              + `${missingSpecies.join(', ')}`] : []),
       ],
