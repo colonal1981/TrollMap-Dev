@@ -28,6 +28,9 @@ HOW.
   3. check_section(): every entry must quote the stored corpus verbatim and every depth number
      must appear in its own quote. An entry that fails is dropped to null and named in the report
      -- the same checks the Murray comparison ran on both answers.
+  4. check_discovered(): a fish a first-hand report on this water shows being caught, and the
+     roster does not have, may be added -- with a verbatim quote that names it and at least one
+     season entry that passes step 3. research_lakes.py adds it to the roster and marks it.
 
 Nothing here writes to the profile. research_lakes.species_groups_only() writes the report beside
 the stored answer and saves only on --save, as it does for the Gemini models.
@@ -350,6 +353,16 @@ A species with nothing in the packet gets four nulls. Never invent one to fill i
 Also return "coverage": two or three sentences saying which documents in the packet are about this
 water, what they cover, and why the species or seasons you left null are null.
 
+SPECIES NOT ON THE LIST. SPECIES TO ANSWER comes from agency lists and can miss fish people catch
+here. If a first-hand account ON THIS WATER (a dated fishing or guide report, a tournament result,
+an angler's own post, an agency survey of this water) shows a game fish being caught or targeted
+here that is not on the list, add it to "discoveredSpecies": its common name, an "evidenceQuote"
+copied exactly from that account that names the fish, and its four seasons under every rule below.
+Do not add a fish from a presence list, a regulation or stocking table, a statewide page or another
+water. Do not add forage fish. Do not add a fish that is on the list under another name (stripers
+when Striped Bass is listed) or that a group key on the list already covers (Black Crappie when
+Crappie is listed). Return an empty list when there is none.
+
 SEASONS ARE THE APP'S CALENDAR: spring Mar 20-Jun 20, summer Jun 21-Sep 21, fall Sep 22-Dec 20,
 winter Dec 21-Mar 19. A dated report belongs to the season its date falls in. Many pages are a
 series of dated entries; the date line above a passage is its date. When a report says the pattern
@@ -431,10 +444,15 @@ def schema_for(roster):
                              "notes": {"type": ["string", "null"]}}}
     species = {"type": "object", "additionalProperties": False, "required": list(SEASONS),
                "properties": {s: {"$ref": "#/$defs/season"} for s in SEASONS}}
+    found = {"type": "object", "additionalProperties": False,
+             "required": ["species", "evidenceQuote", *SEASONS],
+             "properties": {"species": {"type": "string"}, "evidenceQuote": {"type": "string"},
+                            **{s: {"$ref": "#/$defs/season"} for s in SEASONS}}}
     return {"type": "object", "additionalProperties": False,
-            "required": ["trollingIntelligence", "coverage"],
+            "required": ["trollingIntelligence", "coverage", "discoveredSpecies"],
             "$defs": {"season": season, "species": species},
             "properties": {"coverage": {"type": "string"},
+                           "discoveredSpecies": {"type": "array", "items": found},
                            "trollingIntelligence": {
                 "type": "object", "additionalProperties": False, "required": list(roster),
                 "properties": {sp: {"$ref": "#/$defs/species"} for sp in roster}}}}
@@ -502,6 +520,8 @@ def ask_claude(packet, roster, model=DEFAULT_MODEL, timeout=CLAUDE_TIMEOUT, run=
     section = got.get("trollingIntelligence") if isinstance(got, dict) else None
     if isinstance(got, dict) and got.get("coverage"):
         meta["coverage"] = str(got["coverage"])[:2000]
+    if isinstance(got, dict) and isinstance(got.get("discoveredSpecies"), list):
+        meta["discovered_raw"] = got["discoveredSpecies"]
     if not isinstance(section, dict):
         meta["error"] = "claude's answer has no trollingIntelligence"
         return None, meta
@@ -566,6 +586,115 @@ def check_section(section, roster, documents):
     return clean, problems
 
 
+# ── SPECIES THE REPORTS SHOW AND THE LIST DOES NOT ─────────────────────────────────────────────
+#
+# Ryan, 2026-09-25, approving it: Lake Greenwood and Lake Blalock came back from lakes part 1 with
+# one species each, because their stored roster was ['Largemouth Bass'] -- while the AHQ weekly
+# reports in Greenwood's own corpus are about crappie, hybrids and catfish. The roster comes from
+# agency lists; a first-hand report on the water that shows a fish being caught is evidence too.
+# So Claude may add a species, and it is kept only on the same terms as every other answer: a
+# verbatim quote from the stored corpus that names the fish, and at least one season entry that
+# passes the checks. What it adds is marked on the profile (research_lakes._save_section).
+
+_GENERIC_NAME_WORDS = {"bass", "fish", "lake", "river", "common", "north", "south", "eastern",
+                       "western", "northern", "southern"}
+
+
+def _singular(w):
+    """'crappies' -> 'crappie', 'catfishes' -> 'catfish', 'basses' -> 'bass'; 'bass' stays."""
+    if len(w) > 4 and w.endswith("es") and w[:-2].endswith(("sh", "ch", "x", "ss")):
+        return w[:-2]
+    if len(w) > 3 and w.endswith("s") and not w.endswith("ss"):
+        return w[:-1]
+    return w
+
+
+def _fish_key(name):
+    """'Black Crappies' -> 'black crappie': lower case, one space, each word singular."""
+    return " ".join(_singular(w) for w in re.findall(r"[a-z]+", str(name or "").lower()))
+
+
+def _roster_keys(roster):
+    """{key: roster name} for every name and every part of a name ('Redear Sunfish (Shellcracker)'
+    answers to both)."""
+    keys = {}
+    for r in roster or []:
+        for part in [r, *re.split(r"[/()]", r)]:
+            k = _fish_key(part)
+            if k:
+                keys.setdefault(k, r)
+    return keys
+
+
+def same_fish_on_roster(name, roster):
+    """The roster name this fish already is, or None. The same words, or a one-word group key on
+    the roster that the name ends in -- rule 5 of RULES, 'Crappie' covers 'Black Crappie'."""
+    n = _fish_key(name)
+    if not n:
+        return None
+    keys = _roster_keys(roster)
+    if n in keys:
+        return keys[n]
+    last = n.split()[-1]
+    return next((r for k, r in keys.items() if " " not in k and k == last), None)
+
+
+def names_the_fish(quote, name):
+    """Does the quote name this fish? A word of its name that is not a generic one ('bass',
+    'fish'), matched on its first five letters so 'stripers' answers to Striped and 'hybrids' to
+    Hybrid. A name made only of generic words must appear whole."""
+    q = norm(quote)
+    words = [w for w in re.findall(r"[a-z]+", str(name or "").lower()) if len(w) >= 4]
+    own = [w for w in words if w not in _GENERIC_NAME_WORDS]
+    if not own:
+        return bool(_fish_key(name)) and _fish_key(name) in _fish_key(q)
+    return any(re.search(rf"\b{re.escape(w[:5])}", q) for w in own)
+
+
+def check_discovered(found, roster, documents):
+    """(added {name: four seasons}, evidence {name: {quote, title, url}}, problems).
+
+    Each discovered species must name a fish the roster does not already have, carry an
+    evidenceQuote that is verbatim in the stored corpus and names that fish, and keep at least one
+    season entry through entry_problem(). Anything else is named in `problems` and not added."""
+    docs = list(documents or [])
+    corpus_norm = [norm(d.get("fullText") or d.get("text") or "") for d in docs]
+    added, evidence, problems = {}, {}, []
+    for f in found or []:
+        if not isinstance(f, dict):
+            continue
+        name = re.sub(r"\s+", " ", str(f.get("species") or "")).strip()
+        if not name:
+            continue
+        dup = same_fish_on_roster(name, roster) or same_fish_on_roster(name, list(added))
+        if dup:
+            problems.append(f"{name}: already answered as {dup} -- not added")
+            continue
+        q = norm(f.get("evidenceQuote"))
+        where = next((i for i, t in enumerate(corpus_norm) if q and q in t), None)
+        if where is None:
+            problems.append(f"{name}: the evidence quote is not in any stored document -- not added")
+            continue
+        if not names_the_fish(f.get("evidenceQuote"), name):
+            problems.append(f"{name}: the evidence quote does not name the fish -- not added")
+            continue
+        seasons = {}
+        for se in SEASONS:
+            e = f.get(se)
+            why = entry_problem(e, corpus_norm) if e is not None else None
+            if e is not None and why:
+                problems.append(f"{name} {se}: {why} -- dropped")
+            seasons[se] = {k: e[k] for k in ENTRY_KEYS} if e is not None and not why else None
+        if not any(seasons.values()):
+            problems.append(f"{name}: no season entry passed the checks -- not added")
+            continue
+        added[name] = seasons
+        d = docs[where]
+        evidence[name] = {"quote": str(f.get("evidenceQuote")), "title": d.get("title"),
+                          "url": d.get("url")}
+    return added, evidence, problems
+
+
 def roster_for(profile):
     """The species to answer: the keys the last run's section carries -- the Worker has already
     merged names for one fish into them (Black and White Crappie into Crappie) -- else the
@@ -598,6 +727,11 @@ def answer(lake, state, profile, documents, aliases=None, base=None, model=DEFAU
     # check argued with -- a rule that throws things away must show what it threw.
     meta["raw_section"] = section
     clean, problems = check_section(section, roster, documents)
+    # AND THE FISH THE REPORTS SHOW THAT THE LIST DID NOT, on the same checks. See check_discovered.
+    added, evidence, more = check_discovered(meta.get("discovered_raw"), roster, documents)
+    clean.update(added)
+    problems = problems + more
+    meta["added_species"] = evidence
     meta["problems"] = problems
     meta["entries"] = sum(1 for sp in clean.values() for e in sp.values() if e)
     meta["entries_dropped"] = sum(1 for p in problems if p.endswith("-- dropped"))

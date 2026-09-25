@@ -342,5 +342,117 @@ class Resume(unittest.TestCase):
         self.assertEqual([s[0] for s in skipped], ["A"])
 
 
+# ── SPECIES THE REPORTS SHOW AND THE LIST DOES NOT ──────────────────────────────────────────────
+# Lakes part 1, 2026-09-25: Lake Greenwood and Lake Blalock came back with one species each, because
+# their roster was ['Largemouth Bass'], while Greenwood's own AHQ reports are about crappie, hybrids
+# and catfish. Ryan approved letting the step add a fish a first-hand report shows being caught.
+
+PERCH_Q = ("White perch are schooling on the humps and anglers are catching them on small spoons "
+           "in 20-30 feet of water.")
+REPORT = {"title": "AHQ INSIDER Lake Murray (SC) Week 12", "url": "https://a.example/ahq12",
+          "fullText": "October 9\n\n" + PERCH_Q + " Stripers are still up the river.\n" + "x " * 120}
+PERCH = {"species": "White Perch", "evidenceQuote": PERCH_Q, "spring": None,
+         "summer": None, "fall": entry(PERCH_Q, None, [20, 30], "bottom"), "winter": None}
+
+
+class SpeciesFromReports(unittest.TestCase):
+    DOCS2 = DOCS + [REPORT]
+
+    def test_a_fish_the_reports_show_is_added_with_its_quote(self):
+        added, ev, problems = C.check_discovered([PERCH], ROSTER, self.DOCS2)
+        self.assertEqual(list(added), ["White Perch"])
+        self.assertEqual(added["White Perch"]["fall"]["waterDepthFt"], [20, 30])
+        self.assertEqual(ev["White Perch"]["url"], "https://a.example/ahq12")
+        self.assertEqual(problems, [])
+
+    def test_a_fish_already_on_the_roster_is_not_added_again(self):
+        for name, on in (("Black Crappie", "Crappie"), ("Striped Bass", "Striped Bass"),
+                         ("Channel Catfishes", "Channel Catfish")):
+            added, _, problems = C.check_discovered([{**PERCH, "species": name}], ROSTER, self.DOCS2)
+            self.assertEqual(added, {}, name)
+            self.assertIn(f"already answered as {on}", problems[0])
+        # A group on the roster covers its members; a hybrid is not the species it is crossed from.
+        self.assertIsNone(C.same_fish_on_roster("Hybrid Striped Bass", ["Striped Bass"]))
+        self.assertEqual(C.same_fish_on_roster("Shellcracker", ["Redear Sunfish (Shellcracker)"]),
+                         "Redear Sunfish (Shellcracker)")
+
+    def test_the_evidence_is_verbatim_and_names_the_fish(self):
+        off = {**PERCH, "evidenceQuote": "White perch are everywhere this fall."}
+        added, _, problems = C.check_discovered([off], ROSTER, self.DOCS2)
+        self.assertEqual(added, {})
+        self.assertIn("not in any stored document", problems[0])
+        # Verbatim, but about the stripers: it does not show a white perch being caught.
+        other = {**PERCH, "evidenceQuote": "Stripers are still up the river."}
+        added, _, problems = C.check_discovered([other], ROSTER, self.DOCS2)
+        self.assertEqual(added, {})
+        self.assertIn("does not name the fish", problems[0])
+        self.assertTrue(C.names_the_fish("stripers on the points", "Striped Bass"))
+        self.assertTrue(C.names_the_fish("the hybrids are busting shad", "Hybrid Striped Bass"))
+        self.assertFalse(C.names_the_fish("bass on the points", "White Perch"))
+
+    def test_a_fish_with_no_season_that_passes_is_not_added(self):
+        bad = {**PERCH, "fall": entry(PERCH_Q, [5, 10], None)}      # 5 and 10 are not in the quote
+        added, _, problems = C.check_discovered([bad], ROSTER, self.DOCS2)
+        self.assertEqual(added, {})
+        self.assertTrue(any("-- dropped" in p for p in problems))
+        self.assertTrue(any("no season entry passed" in p for p in problems))
+
+    def test_the_schema_asks_for_them(self):
+        s = C.schema_for(ROSTER)
+        self.assertIn("discoveredSpecies", s["required"])
+        item = s["properties"]["discoveredSpecies"]["items"]
+        self.assertEqual(item["required"], ["species", "evidenceQuote", *C.SEASONS])
+        self.assertIn("SPECIES NOT ON THE LIST", C.RULES)
+
+
+class SpeciesFromReportsSaved(unittest.TestCase):
+    def setUp(self):
+        self._req, self.reg, self._ask = R._req, R.REGISTRY_DIR, C.ask_claude
+        R.REGISTRY_DIR = None
+        self._td = tempfile.TemporaryDirectory()
+        self.saved = []
+
+        def req(path, payload=None, timeout=300):
+            if path.startswith("/research/get?"):
+                return 200, {"ok": True, "profile": json.loads(json.dumps(PROFILE))}, None
+            if path.startswith("/research/get-normalized"):
+                return 200, {"documents": DOCS + [REPORT]}, None
+            if path == "/research/save":
+                self.saved.append(payload)
+                return 200, {"ok": True}, None
+            return 404, None, "unexpected " + path
+        R._req = req
+        C.ask_claude = lambda packet, roster, model=None, timeout=None, run=None: (
+            json.loads(json.dumps(GOOD)), {"model": "claude-sonnet-5", "seconds": 1.0,
+                                           "discovered_raw": [PERCH]})
+
+    def tearDown(self):
+        R._req, R.REGISTRY_DIR, C.ask_claude = self._req, self.reg, self._ask
+        self._td.cleanup()
+
+    def test_saving_adds_it_to_the_roster_and_marks_it(self):
+        r, paths = R.species_groups_only("Lake Murray, SC", "SC", "claude", save=True,
+                                         report_dir=self._td.name)
+        self.assertTrue(r["saved"], r)
+        self.assertEqual(r["added_species"], ["White Perch"])
+        p = self.saved[0]["profile"]
+        self.assertEqual(list(p["trollingIntelligence"]), ROSTER + ["White Perch"])
+        self.assertEqual(p["biology"]["predatorSpecies"], ROSTER + ["Black Crappie", "White Perch"])
+        mark = p["biology"]["_speciesFromReports"]["White Perch"]
+        self.assertEqual(mark["quote"], PERCH_Q)
+        self.assertIn("--group-models claude", mark["by"])
+        self.assertNotIn("_speciesDiscoveredBy", p["biology"])
+        with open(paths[1], encoding="utf-8") as f:
+            self.assertIn("Species added from first-hand reports", f.read())
+        with open(paths[0], encoding="utf-8") as f:
+            self.assertIn("White Perch", json.load(f)["added_species"])
+
+    def test_a_mark_for_a_species_no_longer_answered_is_taken_off(self):
+        prof = json.loads(json.dumps(PROFILE))
+        prof["biology"]["_speciesFromReports"] = {"Bowfin": {"quote": "q"}, "Crappie": {"quote": "q"}}
+        self.assertIsNone(R._save_section("Lake Murray, SC", prof, GOOD, "test"))
+        self.assertEqual(list(self.saved[0]["profile"]["biology"]["_speciesFromReports"]), ["Crappie"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1695,7 +1695,9 @@ def print_claude_line(r):
         print(f"        claude: {cl.get('model') or cl.get('model_asked')}  {cl.get('seconds')} s  "
               f"packet {cl['packet_chars']:,} chars  {toks:,} tokens in, "
               f"{cl.get('output_tokens') or 0:,} out  {cl.get('entries', 0)} entries kept, "
-              f"{cl.get('entries_dropped', 0)} dropped")
+              f"{cl.get('entries_dropped', 0)} dropped"
+              + (f"  added from reports: {', '.join(cl['added_species'])}"
+                 if cl.get("added_species") else ""))
 
 
 def claude_checks_md(meta):
@@ -1717,12 +1719,42 @@ def claude_checks_md(meta):
              f"{meta.get('entries_dropped', 0)}.", ""]
     for p in meta.get("problems") or []:
         lines.append(f"  - {p}")
+    added = meta.get("added_species") or {}
+    if added:
+        lines += ["", "### Species added from first-hand reports", "",
+                  "Not on the roster. Each is added because this quote, from this document, shows it "
+                  "caught or targeted on this water; saving adds it to the roster and marks it in "
+                  "biology._speciesFromReports.", ""]
+        for n, e in added.items():
+            lines.append(f"- **{n}**: \"{e.get('quote')}\" ({e.get('title') or e.get('url')})")
     return "\n".join(lines) + "\n"
 
 
-def _save_section(lake, profile, section, requested_by):
+def _save_section(lake, profile, section, requested_by, added=None):
+    """Save `section` as the profile's trollingIntelligence, nothing else moved -- except the
+    species the Claude step ADDED from first-hand reports (`added`, {name: {quote, title, url}}):
+    those join biology.predatorSpecies, so the roster and the answer agree, and each is marked in
+    biology._speciesFromReports with the quote that earned it and the call that added it. Not
+    `_speciesDiscoveredBy`: that mark says the WHOLE roster came from documents, and
+    drop_stale_discovery_mark() removes it when a registry roster arrives. A mark for a species the
+    saved section no longer carries is taken off."""
     profile = dict(profile)
     profile["trollingIntelligence"] = section
+    bio = profile.get("biology")
+    if added or (isinstance(bio, dict) and bio.get("_speciesFromReports")):
+        bio = dict(bio or {})
+        roster = list(bio.get("predatorSpecies") or [])
+        have = {str(x).lower() for x in roster}
+        roster += [n for n in (added or {}) if n.lower() not in have]
+        bio["predatorSpecies"] = roster
+        marks = {**(bio.get("_speciesFromReports") or {}),
+                 **{n: {**e, "by": requested_by} for n, e in (added or {}).items()}}
+        marks = {n: m for n, m in marks.items() if n in section}
+        if marks:
+            bio["_speciesFromReports"] = marks
+        else:
+            bio.pop("_speciesFromReports", None)
+        profile["biology"] = bio
     code, _, err = _req("/research/save", {"lakeName": lake, "profile": profile,
                                            "requestedBy": requested_by})
     if code != 200:
@@ -1763,7 +1795,7 @@ def species_groups_only(lake, state, group_models, save=False, report_dir="_repo
             model=claude_model or claude_species.DEFAULT_MODEL)
         out["seconds"] = round(time.perf_counter() - t0, 1)
         out["claude"] = {k: v for k, v in claude_meta.items()
-                         if k not in ("packet_docs", "raw_section")}
+                         if k not in ("packet_docs", "raw_section", "discovered_raw")}
         if section is None:
             out["error"] = f"claude: {claude_meta.get('error')}"
             # A FAILED ANSWER IS WRITTEN DOWN TOO. The first river batch, 2026-09-25, came back "no
@@ -1778,6 +1810,7 @@ def species_groups_only(lake, state, group_models, save=False, report_dir="_repo
                     json.dump({"lake": lake, "state": state, "result": out,
                                "coverage": claude_meta.get("coverage"),
                                "claude_raw_section": claude_meta.get("raw_section"),
+                               "claude_discovered_raw": claude_meta.get("discovered_raw"),
                                "packet_docs": claude_meta.get("packet_docs")},
                               f, indent=1, ensure_ascii=False)
                 return out, [fail]
@@ -1786,6 +1819,7 @@ def species_groups_only(lake, state, group_models, save=False, report_dir="_repo
                    "returned": list(section), "reason": None, "attempts": 1,
                    "model": claude_meta.get("model") or claude_meta.get("model_asked")}]
         out["species"] = len(section)
+        out["added_species"] = list(claude_meta.get("added_species") or {})
         out["missing"] = [sp for sp, ss in section.items() if not any(ss.values())]
         out["models"] = {"all": groups[0]["model"]}
         out["warnings"] = list(claude_meta.get("problems") or [])
@@ -1824,9 +1858,12 @@ def species_groups_only(lake, state, group_models, save=False, report_dir="_repo
     kept = {"lake": lake, "state": state, "group_models": group_models,
             "generated": time.strftime("%Y-%m-%dT%H:%M:%S"), "result": out,
             "groups": groups, "stored_section": stored, "new_section": section}
+    added = (claude_meta or {}).get("added_species") or None
     if claude_meta:
         kept["packet_docs"] = claude_meta.get("packet_docs")    # what each document gave the packet
         kept["claude_raw_section"] = claude_meta.get("raw_section")   # before the checks
+        kept["claude_discovered_raw"] = claude_meta.get("discovered_raw")
+        kept["added_species"] = added          # --apply-groups adds and marks them from here
     with open(base + ".json", "w", encoding="utf-8") as f:
         json.dump(kept, f, indent=1, ensure_ascii=False)
     with open(base + ".md", "w", encoding="utf-8") as f:
@@ -1835,7 +1872,7 @@ def species_groups_only(lake, state, group_models, save=False, report_dir="_repo
             f.write(claude_checks_md(claude_meta))
     if save:
         why = _save_section(lake, profile, section,
-                            f"research_lakes.py --groups-only --group-models {group_models}")
+                            f"research_lakes.py --groups-only --group-models {group_models}", added)
         out["saved"] = why is None
         if why:
             out["error"] = why
@@ -1858,7 +1895,8 @@ def apply_species_groups(path):
         return (f"{lake}: the stored answer has changed since {os.path.basename(path)} was written "
                 f"-- not applied. Run --groups-only again.")
     why = _save_section(lake, profile, data["new_section"],
-                        f"research_lakes.py --apply-groups {os.path.basename(path)}")
+                        f"research_lakes.py --apply-groups {os.path.basename(path)}",
+                        data.get("added_species"))
     return why or None
 
 
