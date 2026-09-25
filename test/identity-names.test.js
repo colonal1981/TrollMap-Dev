@@ -14,11 +14,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import path from 'node:path';
+import { registryMissing, registryPath } from './registry-here.mjs';
 
-const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const INDEX = JSON.parse(readFileSync(path.join(ROOT, '..', 'registry', 'lake_index.json'), 'utf8'));
+// Every test here reads the real index through the loaded registry. Without ../registry they are
+// reported as skipped with that reason, never passed.
+const SKIP = registryMissing('lake_index.json');
+const INDEX = SKIP ? {} : JSON.parse(readFileSync(registryPath('lake_index.json'), 'utf8'));
 
 globalThis.window = globalThis;
 globalThis.window.TROLLMAP_WORKER_URL = 'https://identity-names.test.invalid';
@@ -27,11 +28,11 @@ globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => INDEX
 const client = await import('../js/data/lake-registry.js');
 const worker = await import('../Worker/registry.js');
 const ids = await import('../js/data/research-ids.js');
-await client.loadLakeRegistry();
+if (!SKIP) await client.loadLakeRegistry();
 
 const fold = (list) => list.map((s) => s.toLowerCase()).sort();
 
-test('the two copies of the identity-name rule return the same names for every water', () => {
+test('the two copies of the identity-name rule return the same names for every water', { skip: SKIP }, () => {
   const drift = [];
   for (const rec of client.getLoadedRegistry().list) {
     const a = fold(client.identityNamesForRecord(rec));
@@ -45,7 +46,7 @@ test('the two copies of the identity-name rule return the same names for every w
     + 'one will be invisible to the other');
 });
 
-test('widening the names adds no claim on a water that is not deliberate', () => {
+test('widening the names adds no claim on a water that is not deliberate', { skip: SKIP }, () => {
   // The question is not whether two waters can ever produce one id -- the display name alone
   // already does that for eight, `lake_robinson` and `broad_river` among them, and those are the
   // reason researchStorageIdCandidates has never been the whole answer. The question is whether
@@ -81,7 +82,7 @@ test('widening the names adds no claim on a water that is not deliberate', () =>
   assert.deepEqual(added, ['lake_lanier', 'lake_russell']);
 });
 
-test('the 88-acre pond does not answer to the 24,608-acre reservoir', () => {
+test('the 88-acre pond does not answer to the 24,608-acre reservoir', { skip: SKIP }, () => {
   // THE CLAIM THE REMOVED ROW BROKE, asserted directly instead of as a count. A canonical map
   // keyed on a name collides when two waters share the name, and "Lake Russell" is shared:
   // Richard B Russell on the Savannah and an 88-acre Forest Service lake in Habersham County.
@@ -107,7 +108,7 @@ test('the 88-acre pond does not answer to the 24,608-acre reservoir', () => {
     "the 'lake_russell_ga' row is back in RESEARCH_CANONICAL_IDS");
 });
 
-test('the registry ordinal that separates two rivers is never stripped', () => {
+test('the registry ordinal that separates two rivers is never stripped', { skip: SKIP }, () => {
   // `(2)`, `(3)`, `(4)` are consolidate_lake_index.py's handwriting when two rows collide and the
   // only thing telling four Saluda Rivers apart -- the same reason legacyStorageName's regex wants
   // `Co` as a word. A first cut stripped every parenthetical and gave "Nolichucky River (Unicoi
@@ -124,7 +125,7 @@ test('the registry ordinal that separates two rivers is never stripped', () => {
   assert.ok(b.some((n) => /\(2\)/.test(n)), 'the ordinal must survive into at least one name');
 });
 
-test('a name that already carries a state does not get a second one', () => {
+test('a name that already carries a state does not get a second one', { skip: SKIP }, () => {
   // "Nolichucky River, TN" plus ", TN" is `nolichucky_river_tn_tn`, an id nothing has ever been
   // filed under.
   for (const rec of client.getLoadedRegistry().list) {
@@ -135,7 +136,7 @@ test('a name that already carries a state does not get a second one', () => {
   }
 });
 
-test('the four waters that had two profiles can now see the older one', () => {
+test('the four waters that had two profiles can now see the older one', { skip: SKIP }, () => {
   const want = {
     richard_b_russell_lake: 'lake_russell_sc',
     lake_sidney_lanier: 'lake_lanier_ga',
@@ -150,7 +151,7 @@ test('the four waters that had two profiles can now see the older one', () => {
   }
 });
 
-test('a county-stamped profile id stays reachable', () => {
+test('a county-stamped profile id stays reachable', { skip: SKIP }, () => {
   // Nine of the eighty objects in the bucket are filed under a county-stamped name. An earlier
   // cut of this rule stripped the stamp the way the document-name rule does and made all nine
   // invisible, which is the opposite of the job.
