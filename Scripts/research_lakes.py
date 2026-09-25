@@ -2627,12 +2627,15 @@ def main():
                          "subscription) writes the species answers from the stored corpus and they "
                          "replace Lite's when every entry it keeps passes the quote checks. See "
                          "Scripts/claude_species.py")
-    ap.add_argument("--extract-models", choices=("lite", "flash"), default="lite",
+    ap.add_argument("--extract-models", choices=("lite", "flash", "spare"), default="lite",
                     help="which Gemini models read the documents. lite (default): both Lite models "
                          "across the keys. flash: 3.8, 3.7, 3.6 and 3.5 Flash on every free key "
                          "first, then Lite -- 400 reads a day, a few waters, for when Lite's daily "
-                         "quota is spent. With --group-models claude the Gemini fallback groups use "
-                         "it too")
+                         "quota is spent. spare: 3 Flash (preview), 2.5 Flash and 2.5 Flash-Lite "
+                         "first -- 300 a day, for when Lite and Flash are both spent. Flash and "
+                         "spare allow 5-10 requests a minute per model per key, so pass a low "
+                         "--rpm with them: a refused request still counts against the day. With "
+                         "--group-models claude the Gemini fallback groups use it too")
     ap.add_argument("--resume", action="store_true",
                     help="skip every water whose stored profile was last written by the Claude step "
                          "(metadata.createdBy names it). For picking a Claude batch back up after a "

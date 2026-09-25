@@ -1,5 +1,5 @@
 // research/extract.js — split from worker-research.js (behavior-preserving)
-import { JSON_HEADERS, callLLM, countRequests, extractLLMText, GEMINI_FREE_FLASH_MODELS } from '../worker-core.js';
+import { JSON_HEADERS, callLLM, countRequests, extractLLMText, firstModelsFor } from '../worker-core.js';
 import { extractJsonPossibly } from './keys.js';
 import { textDateOf, readPage, delink } from './text-date.js';
 import { factsDisagree, writtenOf } from '../../js/utils/fact-date.js';
@@ -490,16 +490,18 @@ FISHING BEHAVIOUR IS A FIRST-CLASS FACT. Sentences from guides, fishing reports 
       // ("limit: 500, model: gemini-3.1-flash-lite") with five waters left, while the Flash
       // allowances -- 20 a day per model per key, 400 in all -- were untouched. Lite is still the
       // default: 400 a day is a few waters of reading, not a batch.
+      // `'spare'` puts GEMINI_FREE_SPARE_MODELS first instead: firstModelsFor() in worker-core.js.
       //
       // `waitOnRefusal: true` is the batch saying it waits out a rate refusal itself
-      // (EXTRACT_RETRY_WAITS in Scripts/research_lakes.py): a per-minute or "high demand" refusal
-      // then comes back in docResults with Google's retry delay instead of being walked across
-      // every other key and model, each step a request counted against the day. See
-      // stopOnRefusal() in worker-core.js. The app's reads do not ask, and walk as before.
+      // (EXTRACT_RETRY_WAITS in Scripts/research_lakes.py): a per-minute refusal then comes back
+      // in docResults with Google's retry delay instead of being walked across every other key
+      // and model, each step a request counted against the day. See stopOnRefusal() in
+      // worker-core.js. The app's reads do not ask, and walk as before.
+      const first = firstModelsFor(body.extractModels);
       const { data, model, requests } = await callLLM(env, payload, null, {
         spreadModels: true,
         waitOnRateRefusal: body.waitOnRefusal === true,
-        ...(body.extractModels === 'flash' ? { firstModels: GEMINI_FREE_FLASH_MODELS } : {}),
+        ...(first ? { firstModels: first } : {}),
       });
       llmRequests.push(...(requests || []));
       const text = extractLLMText(data);

@@ -27,7 +27,8 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { handleResearchAnalyzeFacts } from '../Worker/research/extract.js';
-import { GEMINI_FREE_LIMITS, GEMINI_FREE_MODELS, GEMINI_FREE_FLASH_MODELS, rateRefusal, forgetSpentSlots }
+import { GEMINI_FREE_LIMITS, GEMINI_FREE_MODELS, GEMINI_FREE_FLASH_MODELS, GEMINI_FREE_SPARE_MODELS,
+  rateRefusal, forgetSpentSlots }
   from '../Worker/worker-core.js';
 
 const ENV = { GEMINI_FREE_API_KEY: 'k1', GEMINI_FREE2_API_KEY: 'k2', GEMINI_FREE3_API_KEY: 'k3',
@@ -231,7 +232,7 @@ describe('requests sent per answer, walking against waiting', () => {
 });
 
 test('every model the ladders ask has its row in the table', () => {
-  for (const m of [...GEMINI_FREE_MODELS, ...GEMINI_FREE_FLASH_MODELS]) {
+  for (const m of [...GEMINI_FREE_MODELS, ...GEMINI_FREE_FLASH_MODELS, ...GEMINI_FREE_SPARE_MODELS]) {
     assert.ok(GEMINI_FREE_LIMITS[m], `${m} has no limits row`);
   }
 });

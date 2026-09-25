@@ -59,16 +59,36 @@ const GEMINI_FREE_FLASH_MODELS = [
 ];
 
 /**
+ * THE SPARE MODELS: what is left on the day Lite and Flash are both spent. Ryan, 2026-09-25, with
+ * all five projects at 503/500 on both Lite models and 21-23/20 on every Flash model and four
+ * waters of a batch still to read: "we have flash 2.5 and flash 3 still left 5 rpm 250k tpm and
+ * 20 rpd" -- and 2.5 Flash-Lite, 10 RPM and 20 RPD. Three models on five keys, 300 calls a day.
+ * Model codes as ai.google.dev/gemini-api/docs/models lists them. Asked for by name only
+ * (`extractModels` / `groupModels: 'spare'`); nothing reaches them by default.
+ */
+const GEMINI_FREE_SPARE_MODELS = [
+  "gemini-3-flash-preview",
+  "gemini-2.5-flash",
+  "gemini-2.5-flash-lite",
+];
+
+/** The `firstModels` a request's `extractModels` / `groupModels` name, or null for Lite as always. */
+function firstModelsFor(name) {
+  if (name === 'flash') return GEMINI_FREE_FLASH_MODELS;
+  if (name === 'spare') return GEMINI_FREE_SPARE_MODELS;
+  return null;
+}
+
+/**
  * GOOGLE'S FREE-TIER LIMITS, PER MODEL -- ONE TABLE, BESIDE THE MODEL LISTS IT DESCRIBES.
  *
  * Off Ryan's AI Studio dashboards, 2026-09-25, the same on all five free projects (TrollmapFree to
  * Trollmapfree5). Google meters each model on its own, per project: "Rate limits are applied per
  * project, not per API key ... Requests per day (RPD) quotas reset at midnight Pacific time"
  * (ai.google.dev/gemini-api/docs/rate-limits, read 2026-09-25). TPM is 250,000 on both Lite and
- * Flash, from the same pages (the notes on GEMINI_FREE_MODELS and GEMINI_FREE_FLASH_MODELS).
- *
- * Not in the ladders, so not here: 2.5 Flash Lite (10 RPM, 20 RPD), 2.5 Flash and 3 Flash (5 RPM,
- * 20 RPD each) -- unused.
+ * Flash, from the same pages (the notes on GEMINI_FREE_MODELS and GEMINI_FREE_FLASH_MODELS), and
+ * on 3 Flash and 2.5 Flash ("5 rpm 250k tpm and 20 rpd", the note on GEMINI_FREE_SPARE_MODELS).
+ * 2.5 Flash-Lite's TPM was not given, so it is null rather than a guess.
  *
  * Read by rateRefusal() below, to tell a per-minute refusal from a per-day one when Google's error
  * names only its limit, and by Scripts/research_lakes.py, through node, to pace a run to the
@@ -81,6 +101,9 @@ const GEMINI_FREE_LIMITS = {
   "gemini-3.7-flash":      { rpm: 5,  rpd: 20,  tpm: 250000 },
   "gemini-3.6-flash":      { rpm: 5,  rpd: 20,  tpm: 250000 },
   "gemini-3.5-flash":      { rpm: 5,  rpd: 20,  tpm: 250000 },
+  "gemini-3-flash-preview": { rpm: 5, rpd: 20,  tpm: 250000 },
+  "gemini-2.5-flash":      { rpm: 5,  rpd: 20,  tpm: 250000 },
+  "gemini-2.5-flash-lite": { rpm: 10, rpd: 20,  tpm: null },
 };
 
 // The five free projects' keys, in LLM_PROVIDERS order. callLLM rotates across the ones set.
@@ -823,4 +846,5 @@ async function listAllR2(bucket, prefix, keep) {
 // carried thirty lines that could never run while the live copy drifted independently.
 // Exported now; trollmap-worker.js imports them.
 export { CORS, JSON_HEADERS, TEXT_HEADERS, extractLLMText, callLLM, countRequests, rateRefusal, forgetSpentSlots,
-  GEMINI_FREE_MODELS, GEMINI_FREE_FLASH_MODELS, GEMINI_FREE_LIMITS, GEMINI_FREE_KEYS, isAuthorized, chartpackKey, handleChartpackList, r2Body, r2Text, listAllR2 };
+  GEMINI_FREE_MODELS, GEMINI_FREE_FLASH_MODELS, GEMINI_FREE_SPARE_MODELS, GEMINI_FREE_LIMITS, GEMINI_FREE_KEYS,
+  firstModelsFor, isAuthorized, chartpackKey, handleChartpackList, r2Body, r2Text, listAllR2 };
