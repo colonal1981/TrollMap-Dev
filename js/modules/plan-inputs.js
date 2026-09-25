@@ -46,7 +46,19 @@ export function depthBandFor(species, lakeName, season, waterTempF, researched) 
   // plan. Normalise here rather than trusting six call sites to agree.
   const seasonKey = String(season || '').toLowerCase();
   const fromResearch = researchedBand(researched, species, seasonKey);
-  if (fromResearch) return clampToOxygen(fromResearch, researched);
+  if (fromResearch && fromResearch.band) return clampToOxygen(fromResearch, researched);
+  // THE RESEARCH ANSWERED THE SEASON WITHOUT A FISH DEPTH (see researchedBand). The fish range
+  // below comes from the table; how they hold, over what water and on whose word come from the
+  // research, and `fishDepthFrom: 'table'` says so to fishDepthEvidence(). Absent research, the
+  // three stay null exactly as before.
+  const partial = fromResearch && !fromResearch.band ? fromResearch : null;
+  const researchedFields = partial
+    ? { holding: partial.holding, waterDepthFt: partial.waterDepthFt, sourceQuote: partial.sourceQuote,
+        fishDepthFrom: 'table' }
+    : { holding: null, waterDepthFt: null, sourceQuote: null };
+  const researchNote = partial
+    ? `; holding${partial.waterDepthFt ? ' and water depth' : ''} from the researched profile`
+    : '';
 
   // ---------------------------------------------------------------------------------------
   // THE PICKER AND THE TABLE DO NOT USE THE SAME NAMES, AND NOBODY NOTICED.
@@ -116,13 +128,14 @@ export function depthBandFor(species, lakeName, season, waterTempF, researched) 
     return clampToOxygen({
       band,
       basis: `built-in table, ${owns.map((x) => x.lakeKey).join(' / ')}`
-           + `${owns.length > 1 ? ` — ${named} combined` : ''}`,
+           + `${owns.length > 1 ? ` — ${named} combined` : ''}${researchNote}`,
       generic: !lakeSpecific, source: 'table',
       // THE TABLE HAS NO ANSWER FOR THIS AND MUST NOT PRETEND TO. SPECIES_BEHAVIOR_V2 predates
       // the fish-depth/water-depth split entirely; its `preferredDepth` numbers were written
       // without anyone deciding which quantity they were. Stated as null rather than omitted so
-      // the consumer sees an explicit "not known" instead of an absent key it might read as false.
-      holding: null, waterDepthFt: null, sourceQuote: null,
+      // the consumer sees an explicit "not known" instead of an absent key it might read as false
+      // -- unless the research answered them for this season, in which case its answer is used.
+      ...researchedFields,
     }, researched);
   }
 
@@ -151,10 +164,11 @@ export function depthBandFor(species, lakeName, season, waterTempF, researched) 
   return clampToOxygen({
     band: [Math.min(...across.map((x) => x[0])), Math.max(...across.map((x) => x[1]))],
     basis: `${s} across the ${across.length} lakes in the built-in table — `
-         + `${lakeName} has no researched profile and is not one of them`,
+         + `${lakeName} ${partial ? 'has no researched fish depth' : 'has no researched profile'} `
+         + `and is not one of them${researchNote}`,
     generic: true,
     source: 'table-union',
-    holding: null, waterDepthFt: null, sourceQuote: null,
+    ...researchedFields,
   }, researched);
 }
 
@@ -247,9 +261,42 @@ export function researchedBand(profile, species, seasonKey) {
 
   const node = (ti[hit] && ti[hit][seasonKey]) || null;
   const band = node && node.preferredDepth;
-  if (!Array.isArray(band) || band.length !== 2) return null;
-  const [a, b] = band.map(Number);
-  if (!Number.isFinite(a) || !Number.isFinite(b) || b <= a) return null;
+  const pair = Array.isArray(band) && band.length === 2 ? band.map(Number) : null;
+  const [a, b] = pair || [NaN, NaN];
+  // ── A SEASON WITH NO FISH DEPTH IS STILL A SEASON THE RESEARCH ANSWERED ─────────────────────
+  //
+  // Ryan, 2026-09-25, the Wateree plan the night before he fished it: legs three miles from
+  // Clearwater Cove, a 9 ft dock line and a DD1 over 10 ft of water, for stripers. The profile's
+  // fall entry was sourced -- "he is just letting the wind push the boat around on lower lake flats
+  // which he knows hold fish in 19-22 feet of water" -- and says `holding: suspended` with
+  // `waterDepthFt: [19, 22]`. It states the depth of the WATER and, honestly, no depth for the
+  // fish, so `preferredDepth` is null. This function returned null on that, and the whole entry
+  // went with it: the plan fell to the built-in table with holding unknown, matched the water to
+  // the fish band as though stripers were on the bottom, and every deep run near the ramp failed
+  // a 10-19.7 ft water test.
+  //
+  // It is the whitelist bug the note below describes, one level up: not a field dropped, the
+  // season dropped for lacking one field. So a season that states holding or a water depth comes
+  // back WITHOUT a band -- depthBandFor() takes the fish range from the table and these from here,
+  // and says which came from where.
+  if (!pair || !Number.isFinite(a) || !Number.isFinite(b) || b <= a) {
+    if (!node) return null;
+    const holding = normaliseHolding(node.holding);
+    const waterDepthFt = pairOrNull(node.waterDepthFt);
+    if (!holding && !waterDepthFt) return null;
+    return {
+      band: null,
+      basis: `researched profile for this lake — ${hit}, ${seasonKey} (holding and water depth; `
+           + `no fish depth stated)`,
+      source: 'research',
+      holding,
+      waterDepthFt,
+      sourceQuote: typeof node.sourceQuote === 'string' && node.sourceQuote.trim()
+        ? node.sourceQuote.trim() : null,
+      species: hit,
+      season: seasonKey,
+    };
+  }
 
   return {
     band: [a, b],
@@ -1116,7 +1163,13 @@ export function researchIntel(profile, species, season, now = Date.now(), packFa
       // guesses were `preferredStructure` and `preferredPresentation`, which matched nothing, so
       // the richest part of the profile silently produced an empty line. The alternates are kept
       // because older profiles may predate the current agent, but the real names come first.
-      out.push(`Researched for ${key}, ${s}: ${band.band[0]}-${band.band[1]} ft`);
+      // A season the research answered without a fish depth (see researchedBand) prints what it
+      // DID state -- how they hold and over what water -- rather than a range it does not have.
+      out.push(band.band
+        ? `Researched for ${key}, ${s}: ${band.band[0]}-${band.band[1]} ft`
+        : `Researched for ${key}, ${s}: ${band.holding || 'holding not stated'}`
+          + (band.waterDepthFt ? `, over ${band.waterDepthFt[0]}-${band.waterDepthFt[1]} ft of water` : '')
+          + ' (no fish depth stated)');
       put('  structures', node.structures || node.preferredStructure || node.structure);
       put('  forage here, this season', node.forage);
       put('  presentations', node.recommendedPresentations || node.preferredPresentation || node.presentation);
@@ -1323,11 +1376,15 @@ export function conditionsFrom(inp, ramp, sol, forecast, clarityAtRamp = null) {
  *
  * REPAIRS EVERY STORED PROFILE WITHOUT A RE-RUN, which is the same property the equality test has.
  *
- * @returns {'stated'|'one-number'|'no-citation'|'quote-has-no-depth'}
+ * @returns {'stated'|'one-number'|'no-citation'|'quote-has-no-depth'|'water-only'}
  */
 export function fishDepthEvidence(depth) {
   const band = (depth && depth.band) || null;
   const water = (depth && depth.waterDepthFt) || null;
+  // THE FISH RANGE IS THE TABLE'S AND THE RESEARCH STATED THE WATER. Checked first, because the
+  // two tests below would read a table band beside a researched water depth as "two numbers for
+  // two quantities" and call the table's range a stated fish depth. See researchedBand().
+  if (depth && depth.fishDepthFrom === 'table') return 'water-only';
   // The original test, unchanged and still first: one number stated twice is the case where the
   // source DID give a depth and nothing here knows which quantity it was.
   if (Array.isArray(band) && Array.isArray(water) && band.length === 2 && water.length === 2
@@ -1460,6 +1517,13 @@ export function describeDepthBand(depth, species, season) {
       + `anything about this water. The RANGE is not a measurement. Pick the water by its own depth `
       + `and the structure on it, pick the bait for that water, and tell him to read the sounder `
       + `over the first hole and change rods if the fish are deeper than the bait reaches.`,
+    'water-only':
+      `${lo}\u2013${hi} ft for ${sp} in ${se} is the built-in table's range for the species, not `
+      + `anything stated about this water. What the research on this water DOES state is the depth `
+      + `of the WATER they are found over`
+      + `${depth && depth.waterDepthFt ? ` -- ${depth.waterDepthFt[0]}\u2013${depth.waterDepthFt[1]} ft` : ''}`
+      + `${quoted ? ` -- "${quoted}"` : ''}. Look for them over that water, let the sounder say how `
+      + `far up they are, and do not run a bait to the table's range on the strength of it.`,
     'quote-has-no-depth':
       `${lo}\u2013${hi} ft for ${sp} in ${se} is cited to "${quoted}" -- a sentence with no depth `
       + `in it. It may be good evidence about WHERE (structure, current, cover) and it states no `
@@ -1489,7 +1553,9 @@ export function describeDepthBand(depth, species, season) {
     meaning: collapsed
       ? evidence === 'one-number'
         ? 'ONE depth, and the source did not say whether it is the fish or the bottom'
-        : 'a range nobody stated -- the water and the structure are the measurements here'
+        : evidence === 'water-only'
+          ? "the table's range for the species -- the research on this water states the water depth, not the fish depth"
+          : 'a range nobody stated -- the water and the structure are the measurements here'
       : 'where the fish are, not the depth of the water',
     // A value, not prose, because the prompt is not the only reader and prose cannot be tested.
     fishDepthStated: !collapsed,
