@@ -1,5 +1,5 @@
 // research/extract.js — split from worker-research.js (behavior-preserving)
-import { JSON_HEADERS, callLLM, extractLLMText, GEMINI_FREE_FLASH_MODELS } from '../worker-core.js';
+import { JSON_HEADERS, callLLM, countRequests, extractLLMText, GEMINI_FREE_FLASH_MODELS } from '../worker-core.js';
 import { extractJsonPossibly } from './keys.js';
 import { textDateOf, readPage, delink } from './text-date.js';
 import { factsDisagree, writtenOf } from '../../js/utils/fact-date.js';
@@ -110,6 +110,9 @@ async function handleResearchAnalyzeFacts(request, env) {
   // This ensures every document gets fully read instead of competing for context budget
   const allFacts = [];
   const docResults = [];
+  // Every request callLLM sent for this request's documents, answered or not -- see sentRecord()
+  // in worker-core.js. Returned in meta.llmRequests so the batch can print requests per answer.
+  const llmRequests = [];
 
   const SYSTEM = combinedBlocks
     ? "You are a precise fact extraction engine. The text you are given is many separate search-result snippets, each labelled [S1], [S2]... Extract verified facts about the specified lake from EVERY snippet, reading each one as if it were the only text you had. Return ONLY valid JSON with extracted_facts array. Never hallucinate. Quote must be verbatim from the snippet. Confidence 0-100."
@@ -487,10 +490,11 @@ FISHING BEHAVIOUR IS A FIRST-CLASS FACT. Sentences from guides, fishing reports 
       // ("limit: 500, model: gemini-3.1-flash-lite") with five waters left, while the Flash
       // allowances -- 20 a day per model per key, 400 in all -- were untouched. Lite is still the
       // default: 400 a day is a few waters of reading, not a batch.
-      const { data, model } = await callLLM(env, payload, null, {
+      const { data, model, requests } = await callLLM(env, payload, null, {
         spreadModels: true,
         ...(body.extractModels === 'flash' ? { firstModels: GEMINI_FREE_FLASH_MODELS } : {}),
       });
+      llmRequests.push(...(requests || []));
       const text = extractLLMText(data);
       const parsed = extractJsonPossibly(text);
 
@@ -551,6 +555,7 @@ FISHING BEHAVIOUR IS A FIRST-CLASS FACT. Sentences from guides, fishing reports 
 
     } catch (e) {
       console.warn(`handleResearchAnalyzeFacts: doc [${i+1}] failed: ${e.message}`);
+      llmRequests.push(...((e && e.requests) || []));
       docResults.push({ doc: doc.title, facts: 0, error: e.message });
     }
   }
@@ -563,7 +568,9 @@ FISHING BEHAVIOUR IS A FIRST-CLASS FACT. Sentences from guides, fishing reports 
       filteredIndexPages: 0,               // none are refused now; see delinkedPages
       delinkedPages: delinkedCount,
       docResults,
-      totalFacts: allFacts.length
+      totalFacts: allFacts.length,
+      llm: countRequests(llmRequests),
+      llmRequests,
     }
   }), { headers: JSON_HEADERS });
 }

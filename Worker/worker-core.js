@@ -280,15 +280,26 @@ let _geminiFlashIdx = Math.floor(Math.random() * 1000);
  * THE TEXT IS EVERY NON-THOUGHT PART, JOINED. A thinking model can return more than one part, and
  * reading only the first is how an answer arrives as "empty content".
  */
-async function geminiCall(provider, key, modelId, payload, uncapped = false) {
+async function geminiCall(provider, key, modelId, payload, uncapped = false, sent = null) {
   const geminiPayload = provider.transformPayload(payload);
   if (uncapped && geminiPayload.generationConfig) delete geminiPayload.generationConfig.maxOutputTokens;
   const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${key}`;
-  const r = await fetch(geminiUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(geminiPayload)
-  });
+  // One entry per request that left this Worker, whatever came back. See sentRecord().
+  const rec = sent ? sentRecord(sent, provider, modelId) : {};
+  let r;
+  try {
+    r = await fetch(geminiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(geminiPayload)
+    });
+  } catch (e) {
+    // The platform's "too many subrequests" never left the Worker, so it is not a request Google
+    // counted. Anything else thrown by fetch may have reached it; status 0 says we cannot tell.
+    if (sent && invocationSpent(e)) sent.pop();
+    throw e;
+  }
+  rec.http = r.status;
   let data;
   try { data = await r.json(); } catch (_) {
     const txt = await r.text().catch(() => "");
@@ -303,8 +314,38 @@ async function geminiCall(provider, key, modelId, payload, uncapped = false) {
   const parts = data.candidates?.[0]?.content?.parts || [];
   const geminiText = parts.filter((p) => !p.thought && typeof p.text === "string").map((p) => p.text).join("");
   if (!geminiText) throw new Error(`gemini/${modelId}: empty content`);
+  rec.answered = true;
   const compatData = { choices: [{ message: { content: geminiText } }] };
   return { provider: "gemini", model: modelId, data: compatData, _geminiRaw: geminiText.slice(0, 200) };
+}
+
+/**
+ * EVERY REQUEST callLLM SENDS, WRITTEN DOWN -- BECAUSE GOOGLE COUNTS THEM ALL.
+ *
+ * Ryan's five AI Studio dashboards, 2026-09-25: both Lite models at 503 / 500 RPD and every Flash
+ * model at 21-23 / 20 on all five projects -- about 5,500 requests counted. The two batch logs of
+ * that day (research_20260925_130135.log, research_20260925_163204.log) got back about 900
+ * answers, perhaps 1,050 with the morning's runs. Four requests in five counted against the day
+ * and produced nothing, and nothing on the batch's screen could show it: a call that walked ten
+ * refusals before an answer printed as one answer.
+ *
+ * So each request that leaves the Worker is one entry here -- the free key's number (1-5, as the
+ * dashboards are TrollmapFree to Trollmapfree5) or the provider's name, the model, `http` -- the
+ * HTTP status, 0 when fetch threw -- and whether it answered. callLLM hands the list back on its result as
+ * `requests`, and on the error it throws as `err.requests`; the research handlers return it in
+ * `meta.llmRequests`, and Scripts/research_lakes.py prints requests sent per answer.
+ */
+function sentRecord(sent, provider, model) {
+  const m = /^gemini-free(\d*)$/.exec(provider.name);
+  const rec = { key: m ? Number(m[1] || 1) : provider.name, model, http: 0, answered: false };
+  sent.push(rec);
+  return rec;
+}
+
+/** { sent, answered } over one or more request lists. */
+function countRequests(requests) {
+  const list = Array.isArray(requests) ? requests : [];
+  return { sent: list.length, answered: list.filter((r) => r && r.answered).length };
 }
 
 // THE PLATFORM HAS REFUSED THIS INVOCATION ANY MORE FETCHES, so no key and no model further down
@@ -381,6 +422,17 @@ async function callLLM(env, payload, preferredProvider = null, opts = {}) {
 
   const modelStart = opts && opts.spreadModels ? _geminiModelIdx++ : 0;
 
+  const sent = [];
+  try {
+    const got = await walkLadder(env, payload, providers, modelStart, opts, sent);
+    return { ...got, requests: sent };
+  } catch (e) {
+    if (e && typeof e === "object") e.requests = sent;
+    throw e;
+  }
+}
+
+async function walkLadder(env, payload, providers, modelStart, opts, sent) {
   let lastError;
 
   // THE FIRST MODELS, ON EVERY FREE KEY, BEFORE THE LADDER. Model by model across the keys in this
@@ -391,7 +443,7 @@ async function callLLM(env, payload, preferredProvider = null, opts = {}) {
     for (const modelId of turnLadder(opts.firstModels, _geminiFlashIdx++)) {
       for (const provider of freeKeys) {
         try {
-          return await geminiCall(provider, env[provider.keyEnv], modelId, payload, true);
+          return await geminiCall(provider, env[provider.keyEnv], modelId, payload, true, sent);
         } catch (e) {
           if (invocationSpent(e)) throw e;
           lastError = e;
@@ -411,7 +463,7 @@ async function callLLM(env, payload, preferredProvider = null, opts = {}) {
         provider.models?.length ? provider.models : [provider.defaultModel], modelStart);
       for (const modelId of modelCandidates) {
         try {
-          return await geminiCall(provider, key, modelId, payload);
+          return await geminiCall(provider, key, modelId, payload, false, sent);
         } catch (e) {
           if (invocationSpent(e)) throw e;
           lastError = e;
@@ -429,18 +481,20 @@ async function callLLM(env, payload, preferredProvider = null, opts = {}) {
         const body = provider.transformPayload(providerPayload);
         // Retry on 429 for all providers — 2 retries with 2s/4s backoff
         const maxAttempts = 3;
-        let r;
+        let r, rec;
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
           if (attempt > 1) {
             const delay = attempt === 2 ? 2000 : 4000;
             console.warn(`${provider.name}/${modelId} rate limited (429) — retry ${attempt}/${maxAttempts} after ${delay}ms`);
             await new Promise(res => setTimeout(res, delay));
           }
+          rec = sentRecord(sent, provider, modelId);
           r = await fetch(provider.baseUrl, {
             method: "POST",
             headers: provider.headers(key),
             body: JSON.stringify(body)
           });
+          rec.http = r.status;
           if (r.status !== 429) break;
         }
         let data;
@@ -472,6 +526,7 @@ async function callLLM(env, payload, preferredProvider = null, opts = {}) {
           }
         }
 
+        rec.answered = true;
         return { provider: provider.name, model: modelId, data };
       } catch (e) {
         lastError = e;
@@ -644,4 +699,4 @@ async function listAllR2(bucket, prefix, keep) {
 // trollmap-worker.js -- and the copies here were not exported and not called, so this file
 // carried thirty lines that could never run while the live copy drifted independently.
 // Exported now; trollmap-worker.js imports them.
-export { CORS, JSON_HEADERS, TEXT_HEADERS, extractLLMText, callLLM, GEMINI_FREE_FLASH_MODELS, isAuthorized, chartpackKey, handleChartpackList, r2Body, r2Text, listAllR2 };
+export { CORS, JSON_HEADERS, TEXT_HEADERS, extractLLMText, callLLM, countRequests, GEMINI_FREE_FLASH_MODELS, isAuthorized, chartpackKey, handleChartpackList, r2Body, r2Text, listAllR2 };

@@ -191,8 +191,20 @@ def _headers(body=True):
     return h
 
 
+# The JSON body of the last HTTP error _req saw, per thread. A 502 from /research/agent-llm still
+# carries `meta.llmRequests` -- the requests the failed call spent -- and _req hands a caller only
+# the first 300 characters of an error body. last_error_body() is how LLMTally reads the rest.
+_REQ_ERROR = threading.local()
+
+
+def last_error_body():
+    """The parsed JSON body of this thread's last HTTP error from _req, or None."""
+    return getattr(_REQ_ERROR, "body", None)
+
+
 def _req(path, payload=None, timeout=300):
     """POST when payload is given, GET otherwise. Returns (status, parsed, error_text)."""
+    _REQ_ERROR.body = None
     url = f"{WORKER}{path}"
     data = json.dumps(payload).encode("utf-8") if payload is not None else None
     req = urllib.request.Request(url, data=data, headers=_headers(data is not None),
@@ -205,10 +217,88 @@ def _req(path, payload=None, timeout=300):
             except json.JSONDecodeError:
                 return r.status, None, f"non-JSON body ({len(raw)} bytes)"
     except urllib.error.HTTPError as e:
-        body = e.read()[:300].decode("utf-8", "replace").replace("\n", " ").strip()
+        raw = e.read()
+        try:
+            _REQ_ERROR.body = json.loads(raw)
+        except (ValueError, UnicodeDecodeError):
+            pass
+        body = raw[:300].decode("utf-8", "replace").replace("\n", " ").strip()
         return e.code, None, body or "empty body"
     except Exception as e:                                    # noqa: BLE001
         return 0, None, str(e)
+
+
+# ── REQUESTS SENT PER ANSWER ─────────────────────────────────────────────────────────────────
+#
+# Ryan's five AI Studio dashboards, 2026-09-25: both Lite models at 503 / 500 RPD and every Flash
+# model at 21-23 / 20, on all five projects -- about 5,030 Lite requests and 450 Flash, ~5,500 in
+# all. The day's two run logs (research_20260925_130135.log, research_20260925_163204.log) got back
+# 679 extraction answers, 31 snippet reads and about 5 group answers per water on 31 waters -- ~900,
+# perhaps 1,050 with the morning's runs. About four requests in five counted against the day and
+# produced nothing, and nothing on this screen could show it.
+#
+# /research/analyze-facts and /research/agent-llm now return every request the Worker's callLLM
+# sent (meta.llmRequests: key, model, HTTP status, answered). This sums them per water and per run.
+# A response that carried no record -- the Worker call itself failed or timed out -- is counted as
+# `unmeasured`: it may have spent requests nobody can see, so it is printed rather than guessed.
+class LLMTally:
+    """Requests sent and answers got, across threads, written through to `out["llm"]`."""
+
+    def __init__(self, out=None):
+        self._lock = threading.Lock()
+        self._out = out
+        self.sent = self.answered = self.unmeasured = 0
+        self.http = Counter()
+        self._publish()
+
+    def add(self, res):
+        """One Worker response (parsed JSON, or None when there was none)."""
+        reqs = ((res or {}).get("meta") or {}).get("llmRequests") if isinstance(res, dict) else None
+        with self._lock:
+            if not isinstance(reqs, list):
+                self.unmeasured += 1
+            else:
+                for r in reqs:
+                    self.sent += 1
+                    if (r or {}).get("answered"):
+                        self.answered += 1
+                    else:
+                        self.http[str((r or {}).get("http"))] += 1
+            self._publish()
+
+    def summary(self):
+        return {"sent": self.sent, "answered": self.answered,
+                "per_answer": round(self.sent / self.answered, 2) if self.answered else None,
+                "refused_by_http": dict(self.http), "unmeasured": self.unmeasured}
+
+    def _publish(self):
+        if self._out is not None:
+            self._out["llm"] = self.summary()
+
+
+def llm_note(r):
+    """'  llm: 52 sent / 41 answered (1.27 per answer)' -- or '' when nothing was asked."""
+    m = r.get("llm") or {}
+    if not m.get("sent") and not m.get("unmeasured"):
+        return ""
+    per = f"{m['per_answer']:.2f} per answer" if m.get("per_answer") else "no answers"
+    return (f"  llm: {m.get('sent', 0)} sent / {m.get('answered', 0)} answered ({per})"
+            + (f", {m['unmeasured']} response(s) unmeasured" if m.get("unmeasured") else ""))
+
+
+def run_llm_line(results):
+    """The run's requests sent per answer, summed over every water, with what the refusals were."""
+    sent = sum((r.get("llm") or {}).get("sent", 0) for r in results)
+    answered = sum((r.get("llm") or {}).get("answered", 0) for r in results)
+    unmeasured = sum((r.get("llm") or {}).get("unmeasured", 0) for r in results)
+    status = Counter()
+    for r in results:
+        status.update((r.get("llm") or {}).get("refused_by_http") or {})
+    per = f"{sent / answered:.2f} per answer" if answered else "no answers"
+    return (f"llm requests: {sent} sent / {answered} answered ({per})"
+            + (f"; not answered by HTTP status: "
+               + ", ".join(f"{k} x{v}" for k, v in status.most_common()) if status else "")
+            + (f"; {unmeasured} response(s) unmeasured" if unmeasured else ""))
 
 
 def _raw(path, timeout=300):
@@ -786,7 +876,7 @@ _TRANSIENT = re.compile(r"high demand|rate.?limit|\brate\b|quota|\b429\b|\b50[23
 EXTRACT_RETRY_WAITS = (8, 20, 60)
 
 
-def _extract_one(lake, state, alt_names, i, d, limiter, verbose, windows=None):
+def _extract_one(lake, state, alt_names, i, d, limiter, verbose, windows=None, tally=None):
     # THE PART OF THE DOCUMENT ABOUT THIS WATER, not always its first EXTRACT_DOC_CHARS. The prompt
     # below takes only facts that name the water, so a long document naming it only past the cut
     # gave nothing. See doc_window().
@@ -820,6 +910,8 @@ def _extract_one(lake, state, alt_names, i, d, limiter, verbose, windows=None):
             time.sleep(EXTRACT_RETRY_WAITS[attempt - 1])
         limiter.acquire(len(text) / CHARS_PER_TOKEN)
         code, ex, err = _req("/research/analyze-facts", body)
+        if tally is not None:
+            tally.add(ex if code == 200 else last_error_body())
         if code == 200:
             results = ((ex or {}).get("meta") or {}).get("docResults") or []
             failed = next((r.get("error") for r in results if r.get("error")), None)
@@ -836,18 +928,20 @@ def _extract_one(lake, state, alt_names, i, d, limiter, verbose, windows=None):
     return [], len(text), why, None
 
 
-def extract_documents(lake, state, alt_names, docs, rpm, tpm, verbose=False, window_stats=None):
+def extract_documents(lake, state, alt_names, docs, rpm, tpm, verbose=False, window_stats=None,
+                      tally=None):
     """Every document through /research/analyze-facts, several at once under the RPM and TPM
     ceilings. Facts come back in DOCUMENT order, whatever order the calls finished in, so a rerun
     reads the same list. Returns (facts, chars_sent, failures, models) -- `models` counts which
     free Gemini model answered each read, so the spread across both is on the screen.
 
-    `window_stats`, when given a dict, is filled with window_summary() of what was sent."""
+    `window_stats`, when given a dict, is filled with window_summary() of what was sent; `tally`,
+    an LLMTally, counts every request the Worker sent for these reads."""
     limiter = CallLimiter(rpm, tpm)
     windows = {}
     with ThreadPoolExecutor(max_workers=extract_workers(rpm, len(docs))) as ex:
         got = list(ex.map(lambda p: _extract_one(lake, state, alt_names, p[0], p[1], limiter,
-                                                 verbose, windows), enumerate(docs)))
+                                                 verbose, windows, tally), enumerate(docs)))
     if window_stats is not None:
         window_stats.update(window_summary([windows.get(i) or {} for i in range(len(docs))], docs))
     facts = [f for fs, _, _, _ in got for f in fs]
@@ -967,6 +1061,7 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
            "saved_version": None, "discovered_species": [], "warnings": [],
            "registry_slug": None, "registry_resolved_by": None, "registry_unresolved": None}
 
+    tally = LLMTally(out)
     ramps = registry_ramps(row)
     out["ramps_sent"] = len(ramps)
     # THE ROW THE APP ALREADY BOUND THIS NAME TO, when it bound it on evidence. See SLUG_BY_NAME.
@@ -1249,7 +1344,7 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
         # one call at a time and was most of a ten-minute run.
         out["extract_window"] = {}
         facts, sent, failed, models = extract_documents(lake, state, alt_names, chosen, rpm, tpm,
-                                                        verbose, out["extract_window"])
+                                                        verbose, out["extract_window"], tally)
         out["chars_sent"] += sent
         out["extract_calls"] = len(chosen)
         out["extract_models"] = models
@@ -1298,6 +1393,7 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
                 "targetFields": ["trollingIntelligence"],
                 "combine": True, **extract_model_field(),
                 "documents": snippet_docs})
+            tally.add(ex if code == 200 else last_error_body())
             if code == 200:
                 got = (ex or {}).get("extracted_facts") or []
                 facts.extend(got)
@@ -1383,7 +1479,7 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
         # what R2 holds for a second copy of something already saved.
         prev["_normalizedDocuments"] = agent_documents(usable, lake, alt_names)
 
-        code, res, err = ask_species_groups(lake, state, prev, group_models, out)
+        code, res, err = ask_species_groups(lake, state, prev, group_models, out, tally)
         clock.mark("species_groups")
         if code != 200 or not res:
             out["error"] = f"agent-llm {code}: {err}"
@@ -1709,11 +1805,13 @@ AGENT_LLM_TIMEOUT = 900
 AGENT_LLM_TRIES = 3
 
 
-def _ask_agent_llm(lake, body, out):
+def _ask_agent_llm(lake, body, out, tally=None):
     """One /research/agent-llm request, with the transport retries. (code, res, err)."""
     code = res = err = None
     for attempt in range(1, AGENT_LLM_TRIES + 1):
         code, res, err = _req("/research/agent-llm", body, timeout=AGENT_LLM_TIMEOUT)
+        if tally is not None:
+            tally.add(res if code == 200 else last_error_body())
         if code == 200 and res:
             break
         if code not in (0, 502, 504):
@@ -1726,7 +1824,7 @@ def _ask_agent_llm(lake, body, out):
     return code, res, err
 
 
-def ask_species_groups(lake, state, prev, group_models, out):
+def ask_species_groups(lake, state, prev, group_models, out, tally=None):
     """/research/agent-llm for the fisheries groups, with the transport retries. (code, res, err).
 
     `group_models` is "lite" (the Lite ladder, as always) or "flash" (the full Flash models on every
@@ -1739,12 +1837,12 @@ def ask_species_groups(lake, state, prev, group_models, out):
     body = {"lakeName": lake, "state": state, "agent": "fisheries", "previousResults": prev}
     if group_models and group_models != "lite":
         body["groupModels"] = group_models
-    code, res, err = _ask_agent_llm(lake, body, out)
+    code, res, err = _ask_agent_llm(lake, body, out, tally)
     if code != 200 or not res:
         return code, res, err
 
     def again(groups):
-        c, r, e = _ask_agent_llm(lake, dict(body, groups=groups), out)
+        c, r, e = _ask_agent_llm(lake, dict(body, groups=groups), out, tally)
         if c != 200 or not r:
             print(f"      [{lake}] the new request for {', '.join(groups)} failed ({c}: {e})")
             return None
@@ -1942,6 +2040,7 @@ def species_groups_only(lake, state, group_models, save=False, report_dir="_repo
     t0 = time.perf_counter()
     out = {"lake": lake, "state": state, "group_models": group_models, "ok": False,
            "error": None, "saved": False}
+    tally = LLMTally(out)
     profile, why = stored_profile(lake)
     if profile is None:
         out["error"] = f"no stored profile ({why}) -- run the full research first"
@@ -2003,7 +2102,7 @@ def species_groups_only(lake, state, group_models, save=False, report_dir="_repo
         # own name-and-state filter on the way in -- so if it refused one of the documents the last
         # run read, the ones here are not exactly the ones that run read. The titles say which were.
         out["document_titles"] = [d.get("title") for d in prev["_normalizedDocuments"]]
-        code, res, err = ask_species_groups(lake, state, prev, group_models, out)
+        code, res, err = ask_species_groups(lake, state, prev, group_models, out, tally)
         out["seconds"] = round(time.perf_counter() - t0, 1)
         if code != 200 or not res:
             out["error"] = f"agent-llm {code}: {err}"
@@ -2550,6 +2649,7 @@ def main():
 
     if a.groups_only:
         bad = 0
+        done_groups = []
         for name, st, alts in (lakes[:a.limit] if a.limit else lakes):
             r, paths = species_groups_only(name, st, a.group_models, a.save,
                                            os.path.dirname(a.report) or "_reports",
@@ -2558,7 +2658,7 @@ def main():
             print(f"  {'ok ' if r['ok'] else 'FAIL'} {r.get('seconds', 0):5.1f}s  {name[:44]:46s}"
                   f"{r.get('species', 0)} species  {r.get('facts', 0)} facts  "
                   f"{r.get('documents', 0)} docs" + (f"  saved" if r.get("saved") else "")
-                  + (f"  -- {r['error']}" if r.get("error") else ""))
+                  + llm_note(r) + (f"  -- {r['error']}" if r.get("error") else ""))
             if models:
                 print(f"        models: {models}")
             print_claude_line(r)
@@ -2567,6 +2667,8 @@ def main():
             for pth in paths:
                 print(f"        -> {pth}")
             bad += 0 if r["ok"] else 1
+            done_groups.append(r)
+        print(run_llm_line(done_groups))
         return 1 if bad else 0
 
     if a.limit:
@@ -2647,7 +2749,7 @@ def main():
                   f"{f.get('failed', 0)} failed)  {r['facts']} facts  ~{ktok:.0f}k tok"
                   + (f"  re-asked: {', '.join(r['groups_reasked'])}"
                      if r.get("groups_reasked") else "")
-                  + window_note(r))
+                  + window_note(r) + llm_note(r))
         if r["missing"]:
             detail += "  LOST: " + ", ".join(r["missing"])
         print(f"  [{done[0]:3d}/{len(lakes)}] {mark} {secs}  {name[:42]:44s}{detail}"
@@ -2686,6 +2788,7 @@ def main():
         print(f"per lake: median {per[len(per) // 2]:.0f}s  min {per[0]:.0f}s  max {per[-1]:.0f}s")
     for r in bad:
         print(f"  FAILED {r['lake']}: {r['error']}")
+    print(run_llm_line(results))
 
     lost = [r for r in ok if r["missing"]]
     if lost:
