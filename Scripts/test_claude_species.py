@@ -251,5 +251,32 @@ class GroupsOnlyWithClaude(unittest.TestCase):
         self.assertEqual(len(self.saved[0]["profile"]["_extractedFacts"]), 3, "nothing else moves")
 
 
+class Resume(unittest.TestCase):
+    """--resume skips what the Claude step already wrote, so a batch a usage limit stopped can be
+    picked back up without paying again for the waters it finished."""
+
+    def test_the_three_ways_claude_saves_are_recognised_and_nothing_else(self):
+        by = lambda s: {"metadata": {"createdBy": s}}
+        self.assertTrue(R.claude_wrote_last(by("research_lakes.py --groups-only --group-models claude")))
+        self.assertTrue(R.claude_wrote_last(
+            by("research_lakes.py --apply-groups species_groups_claude_lake_murray_sc_1.json")))
+        self.assertFalse(R.claude_wrote_last(by("research_lakes.py batch")))
+        self.assertFalse(R.claude_wrote_last(
+            by("research_lakes.py --apply-groups species_groups_lite_lake_murray_sc_1.json")))
+        self.assertFalse(R.claude_wrote_last({}))
+
+    def test_skip_keeps_order_and_keeps_a_water_it_could_not_read(self):
+        stored = {"A": {"metadata": {"createdBy": "research_lakes.py --groups-only --group-models claude"}},
+                  "B": {"metadata": {"createdBy": "research_lakes.py batch"}}}
+        old = R.stored_profile
+        R.stored_profile = lambda n: (stored.get(n), "stored" if n in stored else "HTTP 500")
+        try:
+            todo, skipped = R.skip_claude_done([("A", "SC", []), ("B", "SC", []), ("C", "SC", [])])
+        finally:
+            R.stored_profile = old
+        self.assertEqual([t[0] for t in todo], ["B", "C"])
+        self.assertEqual([s[0] for s in skipped], ["A"])
+
+
 if __name__ == "__main__":
     unittest.main()

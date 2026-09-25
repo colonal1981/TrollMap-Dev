@@ -1627,6 +1627,24 @@ def species_comparison_md(lake, stored, new, groups, group_models, stored_when):
     return "\n".join(lines) + "\n"
 
 
+def claude_wrote_last(profile):
+    """True when the stored profile's last save came from the Claude step: a --groups-only
+    --group-models claude save, a full run's Claude save (the same call), or --apply-groups of a
+    species_groups_claude_* file. metadata.createdBy carries the last requestedBy -- measured on
+    Wateree, 2026-09-25: "research_lakes.py --groups-only --group-models claude"."""
+    by = str(((profile or {}).get("metadata") or {}).get("createdBy") or "")
+    return "--group-models claude" in by or "species_groups_claude_" in by
+
+
+def skip_claude_done(lakes):
+    """(still to do, skipped). One /research/get per water; a read that fails keeps the water."""
+    todo, skipped = [], []
+    for item in lakes:
+        profile, _ = stored_profile(item[0])
+        (skipped if profile and claude_wrote_last(profile) else todo).append(item)
+    return todo, skipped
+
+
 def print_claude_line(r):
     cl = r.get("claude") or {}
     if cl.get("packet_chars"):
@@ -2214,6 +2232,10 @@ def main():
                          "subscription) writes the species answers from the stored corpus and they "
                          "replace Lite's when every entry it keeps passes the quote checks. See "
                          "Scripts/claude_species.py")
+    ap.add_argument("--resume", action="store_true",
+                    help="skip every water whose stored profile was last written by the Claude step "
+                         "(metadata.createdBy names it). For picking a Claude batch back up after a "
+                         "usage limit stopped it, without paying again for the waters it finished")
     ap.add_argument("--claude-model", default=None,
                     help="with --group-models claude: the CLI's model name or alias "
                          "(opus, sonnet). Default: claude_species.DEFAULT_MODEL")
@@ -2249,6 +2271,10 @@ def main():
         return 1 if why else 0
 
     lakes = load_lakes(a, a.registry)
+    if a.resume:
+        lakes, skipped = skip_claude_done(lakes)
+        print(f"--resume: {len(skipped)} water(s) already answered by Claude, skipped; "
+              f"{len(lakes)} to go")
 
     if a.groups_only:
         bad = 0
