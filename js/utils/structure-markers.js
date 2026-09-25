@@ -24,12 +24,10 @@
  * carrying prose and counts — which is all a research document was ever for.
  */
 
-// An empty or all-space string is no reading: Number('') and Number(' ') are both 0, so a blank
-// property used to come out as a real depth of zero. Every other input is read as it was.
-const num = (v) => {
-  if (typeof v === 'string' && v.trim() === '') return null;
-  return Number.isFinite(Number(v)) ? Number(v) : null;
-};
+// A property that is null, '' or all spaces is no reading. The local copy here was
+// `Number.isFinite(Number(v))`, and Number(null) is 0, so a hump with no recorded depth came out
+// 0 ft deep. build_structure.py writes a number or null into every field read below.
+import { num } from './num.js';
 
 function pointOf(feature) {
   const g = feature && feature.geometry;

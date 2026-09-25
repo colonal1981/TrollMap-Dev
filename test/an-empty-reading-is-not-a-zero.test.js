@@ -11,12 +11,13 @@
  *
  * Each copy is reached through a function it feeds, not by reading its source, so this holds for
  * whatever the copy becomes. The table is the full before/after for the inputs the fix was asked
- * about; the only rows that changed are '' and ' ' in conditions.js and structure-markers.js.
+ * about. The rows that changed are '' and ' ' in conditions.js and structure-markers.js, and null
+ * in structure-markers.js, whose num() is now js/utils/num.js: a hump with no recorded depth was 0 ft.
  *
  *   input       conditions  structure-markers  worker-data  registry  num.js
  *   ''          0 -> null   0 -> null          null         null      null
  *   ' '         0 -> null   0 -> null          null         null      null
- *   null        null        0  (unchanged)     null         null      null
+ *   null        null        0 -> null          null         null      null
  *   undefined   null        null               null         null      null
  *   NaN         null        null               null         null      null
  *   '12.1'      12.1        12.1               12.1         12.1      12.1
@@ -56,7 +57,7 @@ const ROWS = [
   //  input       conditions structure workerData registry num
   ['',            null,      null,     null,      null,    null],
   [' ',           null,      null,     null,      null,    null],
-  [null,          null,      0,        null,      null,    null],
+  [null,          null,      null,     null,      null,    null],
   [undefined,     null,      null,     null,      null,    null],
   [NaN,           null,      null,     null,      null,    null],
   ['12.1',        12.1,      12.1,     12.1,      12.1,    12.1],
