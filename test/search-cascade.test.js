@@ -309,7 +309,7 @@ describe('the fetch ladder puts the free rung above the paid ones', () => {
     // above the ladder — indexOf() on it compared the wrong two positions and failed a correct
     // ordering. Counting the right thing applies to tests as much as to pipelines.
     const jina = dl.indexOf('const jina = await jinaRead(');
-    const scrapedo = dl.indexOf('const sdText = await scrapeDoFetch(');
+    const scrapedo = dl.indexOf('const sdPage = await scrapeDoFetch(');
     const firecrawl = dl.indexOf('!tfSucceeded && !jinaSucceeded && !scrapeDoSucceeded && firecrawlKey');
     expect(jina > 0 && scrapedo > 0 && firecrawl > 0).toBe(true);
     expect(jina < scrapedo, 'Jina must come before scrape.do').toBe(true);

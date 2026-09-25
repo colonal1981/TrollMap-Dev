@@ -1,5 +1,6 @@
 // research/clients.js — split from worker-research.js (behavior-preserving)
 import { callLLM, extractLLMText } from '../worker-core.js';
+import { isHtmlBody, isPdfBody } from '../../js/utils/html-text.js';
 
 // All /research/* route handlers, RESEARCH_AGENTS, deterministic facts, dataset hunt, etc.
 
@@ -464,8 +465,20 @@ async function recordFirecrawlUsage(env, credits = 1) {
 
 // ── Scrape.do Fetch ──────────────────────────────────────────────────────────
 // 1 credit/request for standard pages, 5 with render=true for JS SPAs.
-// Failed requests cost 0. Returns HTML — we strip to plain text via HTMLRewriter.
-// Used as fallback when TinyFish fails. Tracks remaining credits from response header.
+// Failed requests cost 0. Used as fallback when TinyFish fails. Tracks remaining credits from
+// response header.
+//
+// RETURNS THE PAGE AS SENT, NOT TEXT. This used to collect HTMLRewriter's text and run
+// `text.replace(/\s+/g, ' ')`, which stored the page as one line with its entities undecoded --
+// the same bug as the batch fallback in download.js. The page's HTML goes back with its
+// Content-Type, and the caller makes it text with its lines (js/utils/html-text.js), because
+// doing that here does not fit the Worker's 10 ms.
+//
+// HTMLRewriter still runs, only to COUNT the text a reader would see, so "insufficient content,
+// try Firecrawl" is decided on the same measure as before: an app shell with no text in it is
+// still passed down the ladder rather than returned as a long page of markup.
+//
+// @returns {{body: string, contentType: string, textLength: number}}
 async function scrapeDoFetch(url, env, { render = false } = {}) {
   const token = env.SCRAPEDO_API_KEY;
   if (!token) throw new Error('SCRAPEDO_API_KEY not configured');
@@ -485,22 +498,31 @@ async function scrapeDoFetch(url, env, { render = false } = {}) {
 
   if (!res.ok) throw new Error(`Scrape.do HTTP ${res.status}`);
 
-  // Strip HTML to plain text using HTMLRewriter
-  // Remove script, style, nav, footer, ads — keep main content
-  let text = '';
+  // A PDF IS A PDF BY WHAT THE SERVER SENT. This rung runs for a URL that does not look like a
+  // PDF, and ncwildlife.gov/media/4600/download?attachment= is one that does not. Its bytes are
+  // not text: throwing sends the ladder on to the basic fetch, which streams them to the caller
+  // with their Content-Type, and the caller's PDF path reads them.
+  const contentType = res.headers.get('Content-Type') || '';
+  const bytes = await res.arrayBuffer();
+  if (isPdfBody(contentType, bytes)) {
+    throw new Error('Scrape.do sent a PDF, not a page');
+  }
+  const body = new TextDecoder().decode(bytes);
+  if (!isHtmlBody(contentType, body)) {
+    return { body, contentType: contentType || 'text/plain; charset=utf-8', textLength: body.trim().length };
+  }
+
+  let textLength = 0;
   const rewriter = new HTMLRewriter()
     .on('script, style, nav, footer, header, aside, .ads, .advertisement, .cookie-banner, .newsletter, .sidebar', {
       element(el) { el.remove(); }
     })
     .on('*', {
-      text(chunk) { text += chunk.text; }
+      text(chunk) { textLength += chunk.text.trim().length; }
     });
+  await rewriter.transform(new Response(bytes, { headers: res.headers })).arrayBuffer();
 
-  await rewriter.transform(res).text();
-
-  // Clean up whitespace
-  text = text.replace(/\s+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
-  return text;
+  return { body, contentType: contentType || 'text/html; charset=utf-8', textLength };
 }
 // R2 public bucket base URL for regulation digests
 const REGS_R2_BASE = 'https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/regulations';

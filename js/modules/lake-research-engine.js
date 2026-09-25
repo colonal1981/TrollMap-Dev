@@ -31,6 +31,8 @@ import { workerHeaders } from '../utils/worker-auth.js';
 import { boundsOf, paddedBox } from '../utils/geojson-coords.js';
 import { lakeRecordFor, documentNamesFor } from '../data/lake-registry.js';
 import { prepareNormalizedDocuments } from '../utils/doc-relevance.js';
+import { htmlToText, isPdfBody } from '../utils/html-text.js';
+import { readBatchResults } from '../utils/fetch-batch.js';
 // THE WQP RULE MOVED OUT OF THIS FILE AND NOTHING ELSE CHANGED. Only the browser loads this
 // module, so when research_lakes.py replaced the tab as the way research is RUN, these three
 // went out of reach and 64 profiles were saved with a null thermocline, anoxic depth, Secchi
@@ -1411,6 +1413,9 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
           if (!checkRes.ok) continue;
           const checkData = await checkRes.json();
           if (!checkData.found || checkData.document?.indexStatus === 'ambiguous') continue;
+          // A registry record with no `fetchedBy` was stored before the fetch fix and may hold
+          // another page's text (see the cache-hit rule below). It is not reused.
+          if (!checkData.document?.fetchedBy) continue;
 
           // Pull relevant sections from shared registry
           const queryRes = await fetch(`${CF_WORKER_URL}/research/shared/query`, {
@@ -1428,6 +1433,7 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
             agentTags: [agentKey],
             discoveredBy: agentKey,
             fetchedAt: checkData.document.fetchedAt,
+            fetchedBy: checkData.document.fetchedBy,
             sharedDocId: checkData.document.id,
             sharedVersionId: checkData.document.versionId,
           };
@@ -1452,10 +1458,19 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
         const normUrl = String(src.url || '').split('?')[0].toLowerCase();
         const existing = existingByUrl.get(normUrl);
 
-        // Cache hit — reuse if fresh
+        // Cache hit — reuse if fresh, and only if it says where its text came from.
+        //
+        // `fetchedBy` is stamped on every copy the fixed fetch stores (the batch result's source,
+        // proxy-download's X-Source, or 'pdf'). A copy without it was made before the fix: the
+        // batch's Scrape.do fallback kept it as one line of page source, or the batch returned
+        // results in finishing order and this read them by position, which stored one page's
+        // text under another's URL (9 URLs across 84 waters held another URL's text word for
+        // word). Neither can be seen reliably from the text, so such a copy is fetched again
+        // once, whatever its age. A stamped copy is reused by TTL even if it is one line, because
+        // then one line is what that page is. Scripts/research_lakes.py has the same rule.
         if (existing?.fetchedAt) {
           const age = now - new Date(existing.fetchedAt).getTime();
-          if (age < getDocTtl(src.url)) {
+          if (age < getDocTtl(src.url) && existing.fetchedBy) {
             log(`  [${agentKey}] cache hit: ${src.title?.slice(0, 60)}`);
             normalizedDocuments.push({ ...existing, agentTags: [...new Set([...(existing.agentTags || []), agentKey])] });
             continue;
@@ -1472,7 +1487,8 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
             });
             if (checkRes.ok) {
               const checkData = await checkRes.json();
-              if (checkData.found && checkData.document?.indexStatus !== 'ambiguous') {
+              // Not a pre-fix record (no `fetchedBy`): see the cache-hit rule above.
+              if (checkData.found && checkData.document?.indexStatus !== 'ambiguous' && checkData.document?.fetchedBy) {
                 sharedDoc = checkData.document;
               }
             }
@@ -1493,7 +1509,8 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
                 const doc = {
                   title: sharedDoc.title || src.title, url: src.url, fullText: queryData.text,
                   agentTags: src.agentTags || [agentKey], discoveredBy: agentKey,
-                  fetchedAt: sharedDoc.fetchedAt, sharedDocId: sharedDoc.id, sharedVersionId: sharedDoc.versionId,
+                  fetchedAt: sharedDoc.fetchedAt, fetchedBy: sharedDoc.fetchedBy,
+                  sharedDocId: sharedDoc.id, sharedVersionId: sharedDoc.versionId,
                 };
                 normalizedDocuments.push(doc);
                 existingByUrl.set(normUrl, doc);
@@ -1539,17 +1556,18 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
 
           if (batchRes.ok) {
             const batchData = await batchRes.json();
-            for (let j = 0; j < batch.length; j++) {
-              const src = batch[j];
-              const result = batchData.results?.[j];
+            // Paired by URL, HTML made text with its lines, a PDF sent to the PDF path:
+            // js/utils/fetch-batch.js, which says why each of those was wrong.
+            for (const { src, result, kind, text } of readBatchResults(batch, batchData.results)) {
               const normUrl = String(src.url || '').split('?')[0].toLowerCase();
 
-              if (result?.ok && result.text?.length > 200) {
+              if (kind === 'text') {
                 const doc = {
-                  title: src.title, url: src.url, fullText: result.text,
+                  title: src.title, url: src.url, fullText: text,
                   agentTags: src.agentTags || [agentKey],
                   discoveredBy: agentKey,
                   fetchedAt: new Date().toISOString(),
+                  fetchedBy: result.source,
                 };
                 normalizedDocuments.push(doc);
                 existingByUrl.set(normUrl, doc);
@@ -1561,13 +1579,14 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
                     method: 'POST', headers: workerHeaders(),
                     body: JSON.stringify({
                       canonicalUrl: src.canonicalUrl, requestedUrl: src.url,
-                      title: src.title, fullText: result.text,
-                      authority: src.authority || 'unknown', fetchProvider: result.source,
+                      title: src.title, fullText: text,
+                      authority: src.authority || 'unknown', fetchProvider: result.source, fetchedBy: result.source,
                     })
                   }).catch(() => {});
                 }
-              } else if (result?.reason === 'unhandled') {
-                // Batch classified as special — move to individual queue
+              } else if (kind === 'individual') {
+                // Batch classified as special — move to individual queue (as type PDF when the
+                // server said it is one).
                 individualSources.push(src);
               } else {
                 _state.failedUrlsThisRun.add(src.url);
@@ -1591,17 +1610,22 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
           if (proxyRes.ok) {
             const xSource = proxyRes.headers?.get('X-Source') || 'unknown';
             const contentType = proxyRes.headers?.get('Content-Type') || '';
-            const isPdf = /application\/pdf/i.test(contentType)
+            // A PDF by what the server sent -- its Content-Type or its first bytes -- and a page
+            // the basic-fetch rung passed through as text/html is made text with its lines.
+            const bytes = await proxyRes.arrayBuffer();
+            const isPdf = isPdfBody(contentType, bytes)
               || (!contentType && (src.type === 'PDF' || /\.pdf(?:$|[?#])/i.test(src.url || '')));
+            const body = isPdf ? '' : new TextDecoder().decode(bytes);
             const text = isPdf
-              ? (await extractTextFromPDFBytes(await proxyRes.arrayBuffer())).fullText
-              : await proxyRes.text();
+              ? (await extractTextFromPDFBytes(bytes)).fullText
+              : /html/i.test(contentType) ? htmlToText(body) : body;
             if (text && text.length > 200) {
               const doc = {
                 title: src.title, url: src.url, fullText: text,
                 agentTags: src.agentTags || [agentKey],
                 discoveredBy: agentKey,
                 fetchedAt: new Date().toISOString(),
+                fetchedBy: isPdf ? 'pdf' : xSource,
               };
               normalizedDocuments.push(doc);
               existingByUrl.set(normUrl, doc);
@@ -1615,6 +1639,7 @@ async function runAgent(lakeName, agentKey, mode, callbacks = {}, _calledFromRun
                     canonicalUrl: src.canonicalUrl, requestedUrl: src.url,
                     title: src.title, fullText: text,
                     authority: src.authority || 'unknown', fetchProvider: xSource,
+                    fetchedBy: isPdf ? 'pdf' : xSource,
                   })
                 }).catch(() => {});
               }

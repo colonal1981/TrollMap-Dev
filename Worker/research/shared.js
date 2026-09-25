@@ -316,6 +316,7 @@ function latestPointerFor(doc) {
     contentFingerprint: doc.contentFingerprint,
     fetchedAt: doc.fetchedAt,
     lastCheckedAt: doc.lastCheckedAt,
+    ...(doc.fetchedBy ? { fetchedBy: doc.fetchedBy } : {}),
   };
 }
 
@@ -399,7 +400,7 @@ async function handleSharedStore(request, env) {
   if (!sharedEnabled(env)) return new Response(JSON.stringify({ ok: false, disabled: true }), { headers: JSON_HEADERS });
   let body;
   try { body = await request.json(); } catch { body = {}; }
-  const { canonicalUrl, requestedUrl, finalUrl, title, providerTitle, fullText, authority, fetchProvider, etag, lastModified, sourceRevision, urlAliases, categoryHints } = body;
+  const { canonicalUrl, requestedUrl, finalUrl, title, providerTitle, fullText, authority, fetchProvider, fetchedBy, etag, lastModified, sourceRevision, urlAliases, categoryHints } = body;
   if (!canonicalUrl || !fullText) return new Response(JSON.stringify({ ok: false, error: 'missing canonicalUrl or fullText' }), { status: 400, headers: JSON_HEADERS });
 
   const docId = await urlToDocId(canonicalUrl);
@@ -413,8 +414,13 @@ async function handleSharedStore(request, env) {
   // out. It also stops rewriting the version record. A version is content at a point in time
   // and the comment above this handler has always called it immutable; bumping lastCheckedAt
   // on it made that untrue, and made an unchanged re-check a full-document WRITE.
+  //
+  // A RECORD WITH NO `fetchedBy` WAS STORED BEFORE THE FETCH FIX, when the app paired batch
+  // results with sources by position and could store one page's text under another's URL. The
+  // app does not reuse such a record; the first store that says where its text came from writes
+  // a new version even if the text is the same, so it is marked once and reused from then on.
   const existing = await getSharedLatestSummary(env, docId);
-  if (existing?.contentFingerprint === fp) {
+  if (existing?.contentFingerprint === fp && (existing.fetchedBy || !fetchedBy)) {
     existing.lastCheckedAt = new Date().toISOString();
     // Narrowing a legacy inline latest.json down to a pointer THROWS AWAY the only copy of the
     // sections if the version object it names is not actually there. head() is one cheap op
@@ -462,6 +468,7 @@ async function handleSharedStore(request, env) {
     scope,
     lakeSlugs: allSlugs,
     fetchProvider: fetchProvider || 'unknown',
+    ...(fetchedBy ? { fetchedBy: String(fetchedBy) } : {}),
     fetchedAt: new Date().toISOString(),
     lastCheckedAt: new Date().toISOString(),
     etag: etag || null,
