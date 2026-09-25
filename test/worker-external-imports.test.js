@@ -112,6 +112,10 @@ describe('the Worker bundle can be built', () => {
     // failure its own comment above describes, a second time. Both arrived with the research
     // pipeline: Worker/research/keys.js imports research-ids.js, and lake-registry.js came in
     // behind it. Being red and ignored is how the list below stopped being the deploy set.
+    //
+    // TWO MORE ADDED 2026-09-25, in the same commit that made them Worker files: discover.js
+    // imports water-scope.js, the rule that searches a shared-name water in its own county, and
+    // water-scope.js imports qualifiersOf() from reach-places.js. Both are pure.
     const EXPECTED = [
       'js/data/ga-access-species.js',
       'js/data/lake-keys.js',
@@ -120,6 +124,8 @@ describe('the Worker bundle can be built', () => {
       'js/data/water-aliases.js',
       'js/utils/coerce.js',
       'js/utils/geojson-coords.js',
+      'js/utils/reach-places.js',
+      'js/utils/water-scope.js',
       'js/utils/wqp-limnology.js',
     ];
     expect(externalClosure().map((f) => relative(ROOT, f).replace(/\\/g, '/'))).toEqual(EXPECTED);

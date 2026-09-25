@@ -1,0 +1,230 @@
+/**
+ * water-scope.js -- where a water is, for a water whose name does not say.
+ *
+ * Personal use only, not for distribution or resale; not for navigation.
+ *
+ * THE RULE, IN ONE SENTENCE. When a water's name does not pick out one water -- every river, and
+ * any water another registry row also answers to -- discovery asks for it IN ITS OWN COUNTY, and
+ * the off-lake gate refuses a document that names some other state (or, for a lake, the other
+ * namesake's county) more often than it names this water's own.
+ *
+ * WHY THIS EXISTS. The Claude step of 2026-09-24/25 ran 53 rivers and 14 of its 17 failures were
+ * documents about a different water: Johns River, NC was handed Florida's St. Johns; New River,
+ * NC the Virginia and West Virginia New River; Black River, SC Black Rivers in New York, Arizona
+ * and Michigan; French Broad, TN the Asheville stretch; Pee Dee, NC the South Carolina one; Lake
+ * Robinson, SC (H.B. Robinson, Chesterfield County) the Greer Lake Robinson's real estate.
+ *
+ * THE STATE WAS ALREADY IN THE QUERY. discover.js appends the spelled-out state to every open-web
+ * query. It does not hold: the provider treats it as one more word, and a St. Johns page that
+ * mentions "North Carolina" once in a sidebar satisfies it. Quoting it changes nothing. Measured
+ * in TinyFish 2026-09-25, results about THIS water in the top ten:
+ *
+ *                         "<name>" ... <State>      "<name>" "<County> County" fishing
+ *     Johns River, NC      3 of 10                   10 of 10   (Burke)
+ *     New River, NC        6 of 10                   10 of 10   (Ashe)
+ *     Black River, SC      6 of 10                    8 of 8    (Williamsburg)
+ *     Lake Robinson, SC    5 of 10                   10 of 10   (Chesterfield)
+ *     French Broad, TN        --                      6 of 7    (Knox)
+ *     Pee Dee River, NC       --                      7 of 7    (Anson)
+ *     Catawba River, SC       --                     10 of 10   (Chester)
+ *
+ * THE COUNTY IS THE REGISTRY'S OWN ANSWER TO THIS QUESTION. consolidate_lake_index.py stamped a
+ * county on every row because, on 2026-08-02, the state cut name collisions from 66 groups to 40
+ * and every one of the 40 was inside a state; the county separated 35 of them. Search has the same
+ * problem one level out, and the same field answers it. Nothing here is typed in per water.
+ *
+ * WHY RIVERS ALWAYS, AND LAKES ONLY ON A NAMESAKE. A river's namesakes are mostly outside the
+ * registry -- St. Johns is in Florida, the other Black Rivers in five other states -- so the
+ * registry cannot see them, and all seven rivers measured above had one. A lake's name is
+ * checked against the registry: "Lake Robinson" is two rows, "Lake Murray" is one, and a lake
+ * with no namesake is left exactly as it was.
+ *
+ * NO THRESHOLD. The gate compares two counts and takes the larger. A tie, or a page that names no
+ * state at all, is not "plainly about another state" and falls through to the rules below it.
+ */
+import { stripLakeQualifiers } from '../data/research-ids.js';
+import { qualifiersOf, mentions } from './reach-places.js';
+
+const flat = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+/** The app's four states. Their codes count as mentions; no other state's does -- see below. */
+const OUR_CODES = { sc: 'SC', nc: 'NC', ga: 'GA', tn: 'TN' };
+
+/**
+ * Every state by its spelled-out name. Two-letter codes for the other 46 are NOT counted, for the
+ * reason doc-relevance.js already gives: `in`, `or`, `me`, `de`, `ok`, `hi`, `la`, `pa`, `co` are
+ * words. SC, NC, GA and TN are not, and a page about Hyco Lake says "NC" more than it says "North
+ * Carolina".
+ */
+const STATE_NAMES = {
+  alabama: 'AL', alaska: 'AK', arizona: 'AZ', arkansas: 'AR', california: 'CA', colorado: 'CO',
+  connecticut: 'CT', delaware: 'DE', florida: 'FL', georgia: 'GA', hawaii: 'HI', idaho: 'ID',
+  illinois: 'IL', indiana: 'IN', iowa: 'IA', kansas: 'KS', kentucky: 'KY', louisiana: 'LA',
+  maine: 'ME', maryland: 'MD', massachusetts: 'MA', michigan: 'MI', minnesota: 'MN',
+  mississippi: 'MS', missouri: 'MO', montana: 'MT', nebraska: 'NE', nevada: 'NV',
+  'new hampshire': 'NH', 'new jersey': 'NJ', 'new mexico': 'NM', 'new york': 'NY',
+  'north carolina': 'NC', 'north dakota': 'ND', ohio: 'OH', oklahoma: 'OK', oregon: 'OR',
+  pennsylvania: 'PA', 'rhode island': 'RI', 'south carolina': 'SC', 'south dakota': 'SD',
+  tennessee: 'TN', texas: 'TX', utah: 'UT', vermont: 'VT', virginia: 'VA', washington: 'WA',
+  'west virginia': 'WV', wisconsin: 'WI', wyoming: 'WY',
+};
+
+/**
+ * A state's name followed by one of these is not the state: "Washington County" is in NC, GA and
+ * TN, and "Texas rig" and "Carolina rig" are bass fishing -- the reason the title-only
+ * other-state check in doc-relevance.js never read the body.
+ */
+const NOT_A_STATE_AFTER = new Set(['county', 'co', 'counties', 'parish', 'rig', 'rigs', 'rigged',
+  'street', 'st', 'avenue', 'ave', 'road', 'rd']);
+
+/** The state term that starts at word `i`, as [code, words used], or null. Two words first. */
+function stateAt(words, i) {
+  const two = i + 1 < words.length ? `${words[i]} ${words[i + 1]}` : '';
+  if (two === 'n c' || two === 's c') return [two[0] === 'n' ? 'NC' : 'SC', 2];
+  if (two && STATE_NAMES[two]) return [STATE_NAMES[two], 2];
+  if (STATE_NAMES[words[i]]) return [STATE_NAMES[words[i]], 1];
+  if (OUR_CODES[words[i]]) return [OUR_CODES[words[i]], 1];
+  return null;
+}
+
+/**
+ * How many times the text names each state, as {code: count}.
+ *
+ * A name immediately followed by ANOTHER state term is a town in that state, not a state:
+ * "Washington, NC" is on the Pamlico, "Florence, SC" is not in Italy either. The trailing state is
+ * the one counted.
+ */
+export function stateMentions(text) {
+  const words = flat(text).split(' ').filter(Boolean);
+  const out = {};
+  for (let i = 0; i < words.length;) {
+    const hit = stateAt(words, i);
+    if (!hit) { i += 1; continue; }
+    const [code, n] = hit;
+    const next = words[i + n];
+    if (!NOT_A_STATE_AFTER.has(next) && !stateAt(words, i + n)) out[code] = (out[code] || 0) + 1;
+    i += n;
+  }
+  return out;
+}
+
+/**
+ * "Burke" / "Burke County" / "Richland/Calhoun" / "(Richland/Calhoun Co, SC)" -> county names.
+ * The row's `county` field first; the display name's county stamp when the row has none.
+ */
+export function countiesOf(row) {
+  const r = row || {};
+  let raw = r.county;
+  if (Array.isArray(raw)) raw = raw.join('/');
+  if (!raw) {
+    const m = /\(([^()]*?)\s+Co(?:unty)?\.?\s*,\s*[A-Z]{2}(?:\/[A-Z]{2})*\s*\)/.exec(String(r.display_name || ''));
+    raw = m ? m[1] : '';
+  }
+  const seen = new Set();
+  const out = [];
+  for (const piece of String(raw || '').split(/\s*(?:\/|&|,|\band\b)\s*/i)) {
+    const c = piece.replace(/\s+(?:County|Co\.?)$/i, '').replace(/\s+/g, ' ').trim();
+    if (!/^[A-Za-z][A-Za-z' .-]{1,}$/.test(c) || seen.has(c.toLowerCase())) continue;
+    seen.add(c.toLowerCase());
+    out.push(c);
+  }
+  return out;
+}
+
+/** The row's states: `states` where label_water_states.py measured them, else its `state`. */
+export function statesOf(row) {
+  const r = row || {};
+  if (Array.isArray(r.states) && r.states.length) return r.states.map((s) => String(s).toUpperCase());
+  return String(r.state || '').toUpperCase().split(/[^A-Z]+/).filter(Boolean);
+}
+
+const bareName = (row) => flat(stripLakeQualifiers((row && (row.display_name || row.name)) || ''));
+
+/** The other rows answering to this row's bare name: same words once brackets and state go. */
+export function namesakesOf(index, slug) {
+  const row = index && index[slug];
+  const key = bareName(row);
+  if (!key) return [];
+  const out = [];
+  for (const [s, r] of Object.entries(index || {})) {
+    if (s === slug || !r || typeof r !== 'object') continue;
+    if (bareName(r) === key || flat(stripLakeQualifiers(r.name || '')) === key) out.push(s);
+  }
+  return out.sort();
+}
+
+/**
+ * The scope of one registry row, or null when its name already picks it out.
+ *
+ *   why          'river' or 'namesake'
+ *   states       this water's states -- a document is refused only for naming ANOTHER one more
+ *   counties     this water's counties, which discovery anchors on
+ *   namesakes    the other rows with this name
+ *   ownPlaces    this row's counties and bracket words ("Greer")
+ *   rivalPlaces  a LAKE's same-state namesakes' counties and bracket words, minus its own
+ *
+ * RIVAL PLACES ARE FOR LAKES ONLY. A lake sits in a county or two, so its county is where it is.
+ * A river piece crosses several and the row carries the centroid's, so an adjacent piece's
+ * county is often this piece's too; reach-places.js already sorts a river's pieces apart by the
+ * towns on their gauges and launches, which is the better evidence for that.
+ */
+export function waterScope(index, slug) {
+  const row = index && slug ? index[slug] : null;
+  if (!row || typeof row !== 'object') return null;
+  const river = String(row.feature_type || '').toLowerCase() === 'river';
+  const namesakes = namesakesOf(index, slug);
+  if (!river && !namesakes.length) return null;
+  const states = statesOf(row);
+  const counties = countiesOf(row);
+  const ownPlaces = [...counties, ...qualifiersOf(row.display_name)];
+  const own = new Set(ownPlaces.map(flat));
+  const rivalPlaces = [];
+  if (!river) {
+    for (const s of namesakes) {
+      const r = index[s];
+      if (!statesOf(r).some((st) => states.includes(st))) continue;
+      for (const p of [...countiesOf(r), ...qualifiersOf(r.display_name)]) {
+        const k = flat(p);
+        if (k && !own.has(k)) { own.add(k); rivalPlaces.push(p); }
+      }
+    }
+  }
+  return { why: river ? 'river' : 'namesake', states, counties, namesakes, ownPlaces, rivalPlaces };
+}
+
+/**
+ * Why a document is about another place than this water's, or null.
+ *
+ *   another_state     some state not this water's is named more often than every one of its own
+ *   namesake_place    a same-state namesake's county or bracket word outnumbers this water's own
+ *
+ * Both are one comparison of two counts. Equal counts, or none at all, decide nothing.
+ */
+export function elsewhereReason(text, scope) {
+  if (!scope) return null;
+  const ours = new Set((scope.states || []).map((s) => String(s).toUpperCase()));
+  if (ours.size) {
+    let mine = 0;
+    let theirs = 0;
+    for (const [code, n] of Object.entries(stateMentions(text))) {
+      if (ours.has(code)) mine = Math.max(mine, n);
+      else theirs = Math.max(theirs, n);
+    }
+    if (theirs > mine) return 'another_state';
+  }
+  if ((scope.rivalPlaces || []).length) {
+    const most = (list) => Math.max(0, ...list.map((p) => mentions(text, p)));
+    if (most(scope.rivalPlaces) > most(scope.ownPlaces || [])) return 'namesake_place';
+  }
+  return null;
+}
+
+/**
+ * The extra discovery queries: one per county, `"<name>" "<County> County" fishing`. The name is
+ * the search anchor discover.js already cleans (no brackets, no state).
+ */
+export function countyQueries(name, scope) {
+  const n = String(name || '').trim();
+  if (!n || !scope) return [];
+  return (scope.counties || []).map((c) => `"${n}" "${c} County" fishing`);
+}

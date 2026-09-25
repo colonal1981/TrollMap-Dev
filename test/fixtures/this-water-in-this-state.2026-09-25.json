@@ -1,0 +1,329 @@
+{
+ "_note": "Personal use only, not for distribution or resale; not for navigation. Fixture for test/this-water-in-this-state.test.js. `index` rows marked _from a fixture file are copied from that repo fixture (itself cut from the registry); rows marked constructed carry the county the 2026-09-25 TinyFish measurement used. `documents` are pages the searches returned on 2026-09-25, fetched with TinyFish and trimmed to their opening text; `expect` is the verdict the rule must reach. `searches` is the measurement behind the county anchor.",
+ "index": {
+  "broad_river": {
+   "slug": "broad_river",
+   "name": "Broad River",
+   "state": "NC",
+   "states": [
+    "NC",
+    "SC"
+   ],
+   "display_name": "Broad River (Cherokee Co, NC)",
+   "legacy_display_name": "Broad River, NC",
+   "legacy_display_names": [
+    "Broad River, NC"
+   ],
+   "county": "Cherokee",
+   "feature_type": "river",
+   "_from": "the-broad-is-in-two-states.2026-09-24.json"
+  },
+  "broad_river_2": {
+   "slug": "broad_river_2",
+   "name": "Broad River (2)",
+   "state": "SC",
+   "states": [
+    "SC"
+   ],
+   "display_name": "Broad River (2) (Union Co, SC)",
+   "legacy_display_name": "Broad River (2), SC",
+   "legacy_display_names": [
+    "Broad River (2), SC"
+   ],
+   "county": "Union",
+   "feature_type": "river",
+   "_from": "the-broad-is-in-two-states.2026-09-24.json"
+  },
+  "pee_dee_river_2": {
+   "slug": "pee_dee_river_2",
+   "name": "Pee Dee River (2)",
+   "state": "NC",
+   "display_name": "Pee Dee River (2) (Stanly Co, NC)",
+   "legacy_display_name": "Pee Dee River (2), NC",
+   "legacy_display_names": [
+    "Pee Dee River (2), NC"
+   ],
+   "feature_type": "river",
+   "_from": "the-app-knew-the-water.2026-09-23.json"
+  },
+  "french_broad_river": {
+   "slug": "french_broad_river",
+   "name": "French Broad River",
+   "state": "NC",
+   "display_name": "French Broad River (Haywood Co, NC)",
+   "legacy_display_name": "French Broad River, NC",
+   "legacy_display_names": [
+    "French Broad River, NC"
+   ],
+   "feature_type": "river",
+   "_from": "the-app-knew-the-water.2026-09-23.json"
+  },
+  "lake_murray": {
+   "slug": "lake_murray",
+   "name": "Lake Murray",
+   "state": "SC",
+   "display_name": "Lake Murray (Lexington Co, SC)",
+   "legacy_display_name": "Lake Murray, SC",
+   "legacy_display_names": [
+    "Lake Murray, SC",
+    "Buffalo Creek - Lake Murray",
+    "Buffalo Creek - Lake Murray, SC",
+    "Clouds Creek - Lake Murray",
+    "Clouds Creek - Lake Murray, SC",
+    "Rocky Creek - Lake Murray",
+    "Rocky Creek - Lake Murray, SC",
+    "Saluda River - Lake Murray",
+    "Saluda River - Lake Murray, SC"
+   ],
+   "county": "Lexington",
+   "feature_type": "lake",
+   "_from": "a-river-piece-searches-its-own-stretch.2026-09-24.json"
+  },
+  "congaree_river": {
+   "slug": "congaree_river",
+   "name": "Congaree River (to SC-601)",
+   "state": "SC",
+   "display_name": "Congaree River (to SC-601) (Richland Co, SC)",
+   "legacy_display_name": "Congaree River (to SC-601), SC",
+   "legacy_display_names": [
+    "Congaree River (to SC-601), SC"
+   ],
+   "county": "Richland",
+   "feature_type": "river",
+   "_from": "a-river-piece-searches-its-own-stretch.2026-09-24.json"
+  },
+  "wateree_lake": {
+   "slug": "wateree_lake",
+   "name": "Wateree Lake",
+   "state": "SC",
+   "display_name": "Wateree Lake (Kershaw Co, SC)",
+   "legacy_display_name": "Wateree Lake, SC",
+   "legacy_display_names": [
+    "Wateree Lake, SC",
+    "Lake Wateree, SC"
+   ],
+   "county": "Kershaw",
+   "_from": "lake_index.sample.json"
+  },
+  "first_broad_river": {
+   "slug": "first_broad_river",
+   "name": "First Broad River",
+   "state": "NC",
+   "display_name": "First Broad River (Cleveland Co, NC)",
+   "legacy_display_name": "First Broad River, NC",
+   "legacy_display_names": [
+    "First Broad River, NC"
+   ],
+   "county": "Cleveland",
+   "feature_type": "river",
+   "_from": "watershed-fish.2026-09-23.json"
+  },
+  "johns_river": {
+   "slug": "johns_river",
+   "legacy_display_names": [
+    "Johns River, NC"
+   ],
+   "name": "Johns River",
+   "state": "NC",
+   "display_name": "Johns River (Burke Co, NC)",
+   "county": "Burke",
+   "feature_type": "river",
+   "_from": "constructed 2026-09-25 from the run report; not in any repo fixture"
+  },
+  "new_river": {
+   "slug": "new_river",
+   "legacy_display_names": [
+    "New River, NC"
+   ],
+   "name": "New River",
+   "state": "NC",
+   "display_name": "New River (Ashe Co, NC)",
+   "county": "Ashe",
+   "feature_type": "river",
+   "_from": "constructed 2026-09-25 from the run report; not in any repo fixture"
+  },
+  "black_river": {
+   "slug": "black_river",
+   "legacy_display_names": [
+    "Black River, SC"
+   ],
+   "name": "Black River",
+   "state": "SC",
+   "display_name": "Black River (Williamsburg Co, SC)",
+   "county": "Williamsburg",
+   "feature_type": "river",
+   "_from": "constructed 2026-09-25 from the run report; not in any repo fixture"
+  },
+  "french_broad_river_2": {
+   "slug": "french_broad_river_2",
+   "legacy_display_names": [
+    "French Broad River (2), TN"
+   ],
+   "name": "French Broad River (2)",
+   "state": "TN",
+   "display_name": "French Broad River (2) (Knox Co, TN)",
+   "county": "Knox",
+   "feature_type": "river",
+   "_from": "constructed 2026-09-25 from the run report; not in any repo fixture"
+  },
+  "lake_robinson": {
+   "slug": "lake_robinson",
+   "name": "Lake Robinson",
+   "state": "SC",
+   "display_name": "Lake Robinson (Chesterfield Co, SC)",
+   "county": "Chesterfield",
+   "legacy_display_names": [
+    "Lake Robinson, SC"
+   ],
+   "feature_type": "lake",
+   "_from": "constructed 2026-09-25 from the run report; not in any repo fixture"
+  },
+  "lake_robinson_greer": {
+   "slug": "lake_robinson_greer",
+   "name": "Lake Robinson (Greer)",
+   "state": "SC",
+   "display_name": "Lake Robinson (Greer) (Greenville Co, SC)",
+   "county": "Greenville",
+   "legacy_display_names": [
+    "Lake Robinson, SC"
+   ],
+   "feature_type": "lake",
+   "_from": "constructed 2026-09-25 from the run report; not in any repo fixture"
+  }
+ },
+ "documents": {
+  "st_johns_report": {
+   "water": "johns_river",
+   "expect": "another_state",
+   "title": "Saint Johns River Fishing Report Today (September 2026)",
+   "url": "https://fishingreporthub.com/florida/saint-johns-river",
+   "text": "## Today's Fishing Report\n\nGenerated this morning from live readings: gauge, weather model, sun and moon.\n\n3/5 Fair. Fish early or late. Heat pins the bite to the dawn and dusk windows.\n\nSaint Johns River serves up more heat: the productive hours are the dim ones. The river is running 1,890 cfs, dropping and clearing. Today brings cloud cover, wind NNW around 10 mph, steady pressure near 1015 hPa and a high of 81. Water sits around 84 F for the season (estimated).\n\n### The plan, species by species\n\nStriped bass Good\n\nDeep and early: live bait on downlines over the river channel at first light.\n\nCatfish (blue, channel) Good\n\nAnchor on 20-30 ft baited holes with punch bait or cut shad.\n\nLargemouth bass Fair\n\nTopwater at first light on points and seawalls, then slide out to 12-25 ft brush and points with a Carolina rig, deep crank or drop shot. The bite is dawn, dusk or deep.\n\nCrappie Slow\n\nStraight down on bridge pilings and deep brush at 15-25 ft."
+  },
+  "st_johns_riverapp": {
+   "water": "johns_river",
+   "expect": "another_state",
+   "title": "St Johns River (Fl) | Current River Conditions",
+   "url": "https://www.riverapp.net/en/river/59afbcdd5782afa71a14bc96",
+   "text": "St Johns River (Fl) (Florida): get real-time water levels, flow, and temperature data. Ideal for fishing and kayaking - Live gauge updates from multiple sites."
+  },
+  "johns_fishidy": {
+   "water": "johns_river",
+   "expect": null,
+   "title": "Johns River NC Fishing Reports, Maps & Hot Spots",
+   "url": "https://www.fishidy.com/map/us/north-carolina/johns-river",
+   "text": "Johns River\n\nBurke - North Carolina\n\nJohns River is a stream located just 2.9 miles from Morganton, in Burke County, in the state of North Carolina, United States. Fishermen will find a variety of fish including striped bass and others here.\n\nCaught on crankbait close to the end of the river.\n\nJason Honeycutt Nice job... I fish this river often and have never caught anything that big. I target largemouth but have caught a variety of fish. I consider the Johns River as fishing \"pot-luck\" Great catch...\n\nLake Rhodhiss is a small fishing lake located in Burke County, North Carolina.\n\nJohns River (Corpening Bridge Access)\n\nLaura Lail\n\nHiddenite, NC"
+  },
+  "new_river_virginia_dwr": {
+   "water": "new_river",
+   "expect": "another_state",
+   "title": "New River",
+   "url": "https://dwr.virginia.gov/waterbody/new-river/",
+   "text": "When you plan a trip on the New River in southwest Virginia, you will be floating into the past. The New River is an ancient river system, the oldest on the North American continent and second only to the Nile River in Africa as the oldest river in the world. It begins as two streams in the Blue Ridge Mountains of North Carolina, before merging into the New River four miles from the Virginia line. And therein lies another quirk of this ancient river - it flows northward rather than southward like most of the other major rivers along the eastern seaboard. It meanders some 160 miles through the counties of Grayson, Carroll, Wythe, Pulaski, Montgomery and Giles in Virginia before it turns into Bluestone Lake in West Virginia and emerges later as the Kanawha River at the Gauley Bridge. The New River ends its metamorphosis when it empties into the great Mississippi River.\n\nThroughout its journey in Virginia, the New River flows through spectacular, untamed mountain scenery complete with craggy rock cliffs and magnificent gorges.\n\nFishing is not to be missed in on the New River. Simply stated, the New rivals the James and Rappahannock rivers as one of the best fishing rivers in Virginia. It supports outstanding populations of just about every major freshwater game fish in the state: Smallmouth Bass, Spotted Bass, Largemouth Bass, Rock Bass, Striped Bass, Hybrid Striped Bass, Muskellunge, Walleye, Black Crappie, Channel Catfish, Flathead Catfish, Yellow Perch, Redbreast Sunfish, and Bluegill.\n\nNorth Carolina fishing licenses or permits are honored on the mainstream portion of the river from the confluence of the North and South Forks of the New River in North Carolina (Alleghany County), downstream to the confluence of the New and Little Rivers in Virginia (Grayson County)."
+  },
+  "black_river_vermont": {
+   "water": "black_river",
+   "expect": "another_state",
+   "title": "Black River | VT Fly Fishing Reports & Conditions",
+   "url": "https://fishingreports.orvis.com/northeast/vermont/black-river-2019-01-15-05-20-59",
+   "text": "## Woodstock Inn's Tip of the Week\n\nNo current updates on the Black. Our trips have pivoted to Bass fishing on the White due to river temps.\n\n## Description: About Black River\n\nOne of Vermont's \"Trophy Trout\" stocking program rivers. Fish the Black River along Route 131 in Weathersfield and Cavendish, from Downers covered bridge upstream (approximately 4 miles) to the next bridge across the river, the Howard Hill bridge.\nBrook, Brown, and Rainbow Trout: length limit, none; daily limit, 2 trout aggregate\n\n## Nearest Airport:\n\nLebanon, NH, Rutland, VT, Boston, MA, Burlington, VT"
+  },
+  "pee_dee_scdnr": {
+   "water": "pee_dee_river_2",
+   "expect": "another_state",
+   "title": "SCDNR - Scenic Rivers",
+   "url": "https://www.dnr.sc.gov/water/river/scenic/greatpeedee.html",
+   "text": "# Great Pee Dee River\n\nIn 2002, the lower 70-mile segment of the Great Pee Dee was designated a State Scenic River. This designation extends from the US Highway 378 Bridge crossing between Florence and Marion Counties to the US Highway 17 Bridge at Winyah Bay in Georgetown County.\n\nThe Great Pee Dee is large and wild. It is a Coastal Plain river that offers diverse scenery along winding water trails lined by swamps, bottomland forests, coastal marsh, and historic structures.\n\nPartners for South Carolina Scenic River Projects serve on local advisory councils that represent local landowners, river users, community interests, and SCDNR. Participation has included resident property owners, Georgetown County Historical Society, SC Coastal Conservation League, Red Mountain Timber Company, Georgetown County, Pee Dee River Watchers, Wildlife Action, Winyah Rivers Foundation, The Nature Conservancy, US Fish and Wildlife Service, Baruch Institute, Coastal Carolina University, and SCDHEC.\n\nThose who fish the Great Pee Dee are known to seek a variety of species throughout the length of the river in a mix of fresh and salt water environments. Note that mercury contamination of fish is a widespread impairment of streams in South Carolina and the nation, and a fish consumption advisory is in effect for largemouth bass, redear sunfish, blue catfish, and bowfin caught in the Great Pee Dee River."
+  },
+  "robinson_greer_cpw": {
+   "water": "lake_robinson",
+   "expect": "namesake_place",
+   "title": "Lakes & Recreation - Greer Commission of Public Works",
+   "url": "https://www.greercpw.com/lakes-recreation/",
+   "text": "Greer CPW operates two dual-purpose lakes: Lake Cunningham and Lake Robinson. Both lakes provide us with drinking water and offer plenty of recreational activities like boating, fishing, picnic shelters and more.\n\n## Lake Robinson\n\n2544 Mays Bridge Road, Greer SC 29651\n\nLake Robinson is a pristine recreational area just northwest of the City of Greer owned by Greer CPW. The lake was created as an impoundment for drinking water. It is fed by the South Tyger River and serves as part of CPW's drinking water resources. Lake Robinson has a boat ramp, three fishing piers and event sites that can be rented out.\n\nThe lake is approximately 800 acres and is excellent for boating, fishing, kayaking and paddleboarding. In fact, the Greenville News called Robinson a \"small jewel\" for our community because of its abundance of fish.\n\nTo apply for a permit, visit the Lake Warden's office at Lake Robinson: 2544 Mays Bridge Road, Greer SC 29651. Please bring your current state fishing license, boaters registration and valid ID.\n\nFishing Permit: SC Resident Annual $5, Out of State Annual $15"
+  },
+  "robinson_lakebrowser": {
+   "water": "lake_robinson",
+   "expect": null,
+   "title": "Lake H. B. Robinson South Carolina",
+   "url": "http://www.lakebrowser.com/south_carolina/lake_robinson.asp",
+   "text": "Lake H. B. Robinson\n\nLake H B Robinson is a 2,250 acre reservoir on Black Creek in Chesterfield and Darlington Counties near Hartsville, South Carolina. Operated by Progress Energy, this lake is widely used by local residents for year-round boating events, fishing, and water skiing.\n\nBoating\n\nProgress Energy maintains a public boat ramp and pier at the north end of the lake. Boaters can gain access to this ramp via Lake Robinson Drive, also known as State Road S-13-346.\n\nLodging\n\nPrimitive camping is available at Sand Hills State Forest, located in Chesterfield County. About 20 more miles to the east along U.S. 1, campers can find more developed campgrounds at Cheraw State Park.\n\nCommunities\n\nLake H. B. Robinson is located in Darlington and Chesterfield Counties, close to Hartsville and the Hartsville Regional Airport."
+  },
+  "french_broad_legacy_parks": {
+   "water": "french_broad_river_2",
+   "expect": null,
+   "title": "French Broad River - Legacy Parks Foundation",
+   "url": "https://legacyparks.org/places/french-broad-river/",
+   "text": "# French Broad River\n\nAccessible Birding Camping Fishing Paddling\n\nWith its headwaters in North Carolina, the river is 228 miles long in its entirety, including 102 miles within the state of Tennessee. It joins the Holston River in Knox County above Knoxville, where it then becomes the Tennessee River; the river downstream of Douglas Dam is one of the few warm tailwaters found in east Tennessee, where lake sturgeon and smallmouth bass are stocked; along with paddling and fishing there are trails for hiking in Seven Islands State Park; small canoe/kayak launch"
+  },
+  "french_broad_mt_yonder": {
+   "water": "french_broad_river_2",
+   "expect": "other_piece",
+   "title": "French Broad River Fly Fishing Guide | Mt. Yonder",
+   "url": "https://mtyonder.com/pages/french-broad-river-fly-fishing",
+   "text": "The French Broad is older than the bones of the mountains it runs through. Believed to be one of the most ancient rivers on the planet, and one of the few stubborn enough to flow north. It pours out of the headwaters around Rosman before swinging by Brevard, rolling right through downtown Asheville, and keeps flowing all the way into Tennessee. It's big, temperamental with the weather, wild, and full of fish.\n\n## What's swimming in it\n\nThis is smallmouth water, first and foremost. The French Broad grows a world-class population of bronzebacks that crush crayfish patterns and blow up on poppers.\n\n## How we fish it\n\nThis is a float trip down a big river, picking our section by clarity and temperature. We guide for smallmouth on the French Broad and it's typically a mix of stripped streamers, dredged crayfish, and poppers."
+  }
+ },
+ "searches": [
+  {
+   "water": "Johns River, NC",
+   "state_query": "\"Johns River\" fishing report water level flow North Carolina",
+   "state_on_water": 3,
+   "state_total": 10,
+   "county_query": "\"Johns River\" \"Burke County\" fishing",
+   "county_on_water": 10,
+   "county_total": 10
+  },
+  {
+   "water": "Johns River, NC",
+   "state_query": "\"Johns River\" \"North Carolina\" fishing report water level flow",
+   "state_on_water": 3,
+   "state_total": 9,
+   "note": "quoting the state does not help"
+  },
+  {
+   "water": "New River, NC",
+   "state_query": "\"New River\" fishing report water level flow North Carolina",
+   "state_on_water": 6,
+   "state_total": 10,
+   "county_query": "\"New River\" \"Ashe County\" fishing",
+   "county_on_water": 10,
+   "county_total": 10
+  },
+  {
+   "water": "Black River, SC",
+   "state_query": "\"Black River\" fishing report water level flow South Carolina",
+   "state_on_water": 6,
+   "state_total": 10,
+   "county_query": "\"Black River\" \"Williamsburg County\" fishing",
+   "county_on_water": 8,
+   "county_total": 8
+  },
+  {
+   "water": "Lake Robinson, SC",
+   "state_query": "\"Lake Robinson\" fishing report South Carolina",
+   "state_on_water": 5,
+   "state_total": 10,
+   "county_query": "\"Lake Robinson\" \"Chesterfield County\" fishing",
+   "county_on_water": 10,
+   "county_total": 10
+  },
+  {
+   "water": "French Broad River, TN",
+   "county_query": "\"French Broad River\" \"Knox County\" fishing",
+   "county_on_water": 6,
+   "county_total": 7
+  },
+  {
+   "water": "Pee Dee River, NC",
+   "county_query": "\"Pee Dee River\" \"Anson County\" fishing",
+   "county_on_water": 7,
+   "county_total": 7
+  },
+  {
+   "water": "Catawba River, SC",
+   "county_query": "\"Catawba River\" \"Chester County\" fishing",
+   "county_on_water": 10,
+   "county_total": 10
+  }
+ ]
+}

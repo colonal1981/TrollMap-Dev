@@ -17,6 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { reachPlaces, sortFacts, sortDocuments } from '../js/utils/reach-places.js';
 import { researchStorageId, stripLakeQualifiers } from '../js/data/research-ids.js';
+import { waterScope } from '../js/utils/water-scope.js';
 
 const input = JSON.parse(fs.readFileSync(0, 'utf8') || '{}');
 const say = (o) => process.stdout.write(JSON.stringify(o));
@@ -43,10 +44,15 @@ if (input.mode === 'places') {
       if (wbs && typeof wbs === 'object') feedNames.push(...Object.keys(wbs));
     } catch { /* a feed that does not parse adds no names; the registry's still apply */ }
   }
-  say(reachPlaces({
-    index, bindings, lakeName: String(input.lakeName || ''), slug: input.slug || null,
-    storageId: researchStorageId, stripQualifiers: stripLakeQualifiers, feedNames,
-  }));
+  // AND THE WATER'S SCOPE, from the same index: whether its name picks it out, and if not, the
+  // states and counties it is in. js/utils/water-scope.js has the rule; null leaves the gate as it was.
+  say({
+    ...reachPlaces({
+      index, bindings, lakeName: String(input.lakeName || ''), slug: input.slug || null,
+      storageId: researchStorageId, stripQualifiers: stripLakeQualifiers, feedNames,
+    }),
+    scope: waterScope(index, input.slug || null),
+  });
 } else if (input.mode === 'sort') {
   say({
     facts: sortFacts(input.facts || [], input.reach || {}),

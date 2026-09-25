@@ -18,6 +18,7 @@
  * The logic below is a port of the Worker's gate, unchanged in behaviour and now testable —
  * it could never be exercised where it was, because it lived behind an HTTP handler.
  */
+import { elsewhereReason } from './water-scope.js';
 
 /**
  * Sources whose documents are about the water they are about, name test or no name test.
@@ -160,6 +161,9 @@ function namesTheWater(hay, names) {
  *   other_state         the title or URL claims a state this app does not cover
  *   no_name             nothing in the title, the URL or the first 3,000 characters names it
  *   named_no_state      the water is named, loosely, but the page never repeats its state
+ *   another_state       (scoped waters only) another state is named more often than this one's
+ *   namesake_place      (scoped lakes only) the same-state namesake's county or bracket word is
+ *                       named more often than this lake's own -- water-scope.js has the rule
  *
  * THE RULE THAT NAMES THE WATER IS NOW ASKED OF THE BODY AS WELL AS THE TITLE, and that is the
  * change of 2026-09-02. The title half was added on 2026-09-01 for pages like "Hyco Lake Fishing
@@ -188,9 +192,19 @@ function namesTheWater(hay, names) {
 export const WORKER_NAME_WINDOW = 3000;   // what 10 ms of Cloudflare free-plan CPU affords
 export const LOCAL_NAME_WINDOW = 20000;   // what extraction reads, for callers off the Worker
 
-export function offLakeReason(doc, lakeName, altNames = [], nameWindowChars = WORKER_NAME_WINDOW) {
+export function offLakeReason(doc, lakeName, altNames = [], nameWindowChars = WORKER_NAME_WINDOW,
+                              scope = null) {
   const { baseName, state } = lakeTerms(lakeName);
   const url = String(doc?.url || '').toLowerCase();
+  // A WATER WHOSE NAME DOES NOT PICK IT OUT is judged on WHERE the page is before anything else --
+  // see js/utils/water-scope.js. Before the official-source bypass on purpose: an NCWRC page about
+  // the Asheville French Broad is an agency page and still not about the French Broad in Tennessee.
+  // No scope, which is every caller but research_lakes.py, and this line does nothing.
+  if (scope) {
+    const text = `${doc?.title || ''} ${doc?.url || ''} ${String(doc?.fullText || doc?.text || '').slice(0, nameWindowChars)}`;
+    const elsewhere = elsewhereReason(text, scope);
+    if (elsewhere) return elsewhere;
+  }
   if (OFFICIAL_SOURCE.test(url)) return null;
 
   const every = [lakeName, ...(Array.isArray(altNames) ? altNames : [])].filter(Boolean);
@@ -268,8 +282,9 @@ export function offLakeReason(doc, lakeName, altNames = [], nameWindowChars = WO
 }
 
 /** Does this document plausibly concern this lake? `offLakeReason` with the reason thrown away. */
-export function isOnLakeDoc(doc, lakeName, altNames = [], nameWindowChars = WORKER_NAME_WINDOW) {
-  return offLakeReason(doc, lakeName, altNames, nameWindowChars) === null;
+export function isOnLakeDoc(doc, lakeName, altNames = [], nameWindowChars = WORKER_NAME_WINDOW,
+                            scope = null) {
+  return offLakeReason(doc, lakeName, altNames, nameWindowChars, scope) === null;
 }
 
 /** The finished array the Worker will store verbatim.
@@ -278,7 +293,8 @@ export function isOnLakeDoc(doc, lakeName, altNames = [], nameWindowChars = WORK
  * on a desktop and passes LOCAL_NAME_WINDOW, because 3,000 there is an inherited limp rather than a
  * limit -- see the note in offLakeReason(). */
 export function prepareNormalizedDocuments(documents, lakeName, agentTags = [], nowIso = null,
-                                           altNames = [], nameWindowChars = WORKER_NAME_WINDOW) {
+                                           altNames = [], nameWindowChars = WORKER_NAME_WINDOW,
+                                           scope = null) {
   const all = Array.isArray(documents) ? documents : [];
   const stamp = nowIso || new Date().toISOString();
   // AGENT TAGS ARE POSITIONAL AGAINST THE ORIGINAL LIST, so the original index has to be
@@ -288,7 +304,7 @@ export function prepareNormalizedDocuments(documents, lakeName, agentTags = [], 
   // first test that had ever been able to run this code, which is the whole argument for
   // moving it out of an HTTP handler.
   const judged = all.map((doc, i) => ({ doc, i,
-    why: offLakeReason(doc, lakeName, altNames, nameWindowChars) }));
+    why: offLakeReason(doc, lakeName, altNames, nameWindowChars, scope) }));
   const kept = judged.filter(({ why }) => why === null);
   return {
     documents: kept.map(({ doc, i }) => ({
