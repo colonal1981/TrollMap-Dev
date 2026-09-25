@@ -267,7 +267,7 @@ def pdf_text(data):
         return ""
 
 
-def gate_documents(repo, documents, lake, alt_names=None):
+def gate_documents(repo, documents, lake, alt_names=None, scope=None):
     """
     The off-lake gate, RUN RATHER THAN REIMPLEMENTED.
 
@@ -296,12 +296,14 @@ def gate_documents(repo, documents, lake, alt_names=None):
         # Worker's budget here refused documents on a limit that does not apply to us: the first run
         # with SOURCE_CAP lifted dropped 13 of 36, including a Carolina Sportsman issue and a
         # Columbia Metro feature that both name the river past their opening pages.
+        # THE SEVENTH IS THE WATER'S SCOPE, from js/utils/water-scope.js via reach_for(): null for a
+        # water whose name picks it out, which leaves the gate exactly as it was.
         "m.prepareNormalizedDocuments(inp.documents, inp.lakeName, [], null, inp.altNames,"
-        " m.LOCAL_NAME_WINDOW)));"
+        " m.LOCAL_NAME_WINDOW, inp.scope || null)));"
     )
     proc = subprocess.run(["node", "--input-type=module", "-e", script],
                           input=json.dumps({"documents": documents, "lakeName": lake,
-                                            "altNames": alt_names or []}),
+                                            "altNames": alt_names or [], "scope": scope}),
                           capture_output=True, text=True, encoding="utf-8")
     if proc.returncode != 0:
         raise SystemExit(f"!! the off-lake gate failed to run under node: "
@@ -967,8 +969,8 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
     else:
         # WHERE ON THE RIVER, before the first search. See reach_for(). The row is the one the app
         # bound this name to -- SLUG_BY_NAME, else the registry row the batch drove from.
-        reach = reach_for(repo, REGISTRY_DIR, lake,
-                          bound or ((row or {}).get("slug") if isinstance(row, dict) else None))
+        slug = bound or ((row or {}).get("slug") if isinstance(row, dict) else None)
+        reach = reach_for(repo, REGISTRY_DIR, lake, slug)
         if reach:
             out["reach"] = {k: reach.get(k) for k in ("group", "siblings", "search")}
             if reach.get("siblings") or len(reach.get("group") or []) > 1:
@@ -979,6 +981,19 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
                      "names": [lake], "predatorSpecies": species}
         if reach and reach.get("search"):
             disc_body["places"] = reach["search"]
+        # WHICH ROW, so the Worker can tell whether this name picks out one water. "Lake Robinson, SC"
+        # is two rows and the Worker's own lookup rightly refuses to choose; this run already has.
+        # js/utils/water-scope.js has the rule; `scope` is what it said about this row.
+        if slug:
+            disc_body["slug"] = slug
+        scope = (reach or {}).get("scope")
+        if scope:
+            out["scope"] = scope
+            print(f"      [{lake}] name does not pick out one water ({scope.get('why')}): "
+                  f"searching {', '.join(c + ' County' for c in scope.get('counties') or []) or 'no county'}"
+                  f"; refusing pages about another state"
+                  + (f" or {', '.join(scope.get('rivalPlaces') or [])}"
+                     if scope.get("rivalPlaces") else ""))
         code, disc, err = _req("/research/discover", disc_body)
         clock.mark("discover")
         if code != 200 or not disc or not disc.get("success"):
@@ -1041,7 +1056,7 @@ def research_one(lake, state, dry_run=False, verbose=False, repo="TrollMap-Dev",
         if fetched:
             touched = {norm_url(d.get("url")) for d in fetched}
             merged = fetched + [d for d in existing if norm_url(d.get("url")) not in touched]
-            prepared = gate_documents(repo, merged, lake, alt_names)
+            prepared = gate_documents(repo, merged, lake, alt_names, scope)
             out["rejected_offlake"] = prepared.get("rejected", 0)
             keep = prepared.get("documents") or []
             # NAME WHAT THE GATE DROPPED. A count says six documents did not survive; it does not say

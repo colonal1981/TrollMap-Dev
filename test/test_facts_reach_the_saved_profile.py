@@ -203,7 +203,7 @@ class FreshDocumentsGoFirst(unittest.TestCase):
             'title': 'Fresh seasonal report', 'url': 'https://example.org/fresh',
             'fullText': 'Stripers run in early summer. ' * 40}], {})
         # The gate passes everything through, in the order it was given.
-        mod.gate_documents = lambda repo, docs, lake, alt: {'documents': list(docs),
+        mod.gate_documents = lambda repo, docs, lake, alt, scope=None: {'documents': list(docs),
                                                             'rejected': 0, 'refused': []}
         return mod, extracted_from
 

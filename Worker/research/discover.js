@@ -11,6 +11,7 @@ import { matchWaterName, reportTokens } from '../reports.js';
 // a reservoir at all. Same lookup, same fallback, one answer.
 import { lakeIndex, resolveRegistryRow } from '../registry.js';
 import { waterTypeSearch } from './water-type-hints.js';
+import { waterScope, countyQueries } from '../../js/utils/water-scope.js';
 
 // Which organisation stands behind a URL. Two callers below -- Grok citations and Wikipedia
 // citations -- carried byte-identical copies of this ladder, so a domain added to one was
@@ -1077,11 +1078,23 @@ const AGENT_TO_TAGS = {
   // this file could ask was "is the key spelled coast_", which is why a river ran reservoir
   // searches for as long as rivers have been in the app.
   let waterRow = null;
+  let registryIndex = null;
   try {
     waterRow = resolveRegistryRow(await lakeIndex(env), lakeName);
+    registryIndex = await lakeIndex(env);   // the same object, cached for the isolate
   } catch {
     waterRow = null;   // no index is a reason to search unframed, not to fail discovery
   }
+  // A NAME THAT DOES NOT PICK OUT ONE WATER is searched for in its county -- js/utils/water-scope.js
+  // has the rule and the measurements. The client's bound row wins: "Lake Robinson, SC" is two rows,
+  // so resolveRegistryRow() rightly refuses to choose, and research_lakes.py already knows which one
+  // the app means. A water whose name is its own gets null here and runs exactly as before.
+  const scopeSlug = body.slug && registryIndex?.[body.slug] ? String(body.slug)
+    : (waterRow ? Object.keys(registryIndex || {}).find((k) => registryIndex[k] === waterRow) : null);
+  const scope = scopeSlug ? waterScope(registryIndex, scopeSlug) : null;
+  if (scope) queryLog.push(`name does not pick out one water (${scope.why}`
+    + `${scope.namesakes.length ? `; also ${scope.namesakes.join(', ')}` : ''}):`
+    + ` anchoring fisheries on ${scope.counties.length ? scope.counties.map((c) => `${c} County`).join(', ') : 'no county on the row'}`);
   const waterType = String(waterRow?.feature_type || '').toLowerCase();
   const isCoastalTarget = waterType
     ? waterType === 'coastal'
@@ -1132,7 +1145,10 @@ const AGENT_TO_TAGS = {
         }
       }
     }
-    const queries = [...new Set(queryCandidates.filter(Boolean))];
+    // ADDED, NOT SWAPPED IN: every query this water ran yesterday still runs, so a river that already
+    // finds its own pages keeps them, and the county queries add the pages about THIS one.
+    const countyAnchored = agentKey === 'fisheries' ? countyQueries(queryLake, scope) : [];
+    const queries = [...new Set([...queryCandidates, ...countyAnchored].filter(Boolean))];
     if (!queries.length) continue;
     const discoveryAliases = [
       ...new Set([
@@ -1173,7 +1189,9 @@ const AGENT_TO_TAGS = {
       // A/B with the suffix added is still worth running -- but skipping the state here follows the
       // rule this comment block already states, whatever the homepages turn out to be caused by.
       const base = queries[qIndex];
-      const statePinned = /\bsite:/i.test(base) || !!typed?.pressScoped?.[qIndex];
+      // A quoted county is a harder pin than a loose state, by the same argument as `site:`.
+      const statePinned = /\bsite:/i.test(base) || !!typed?.pressScoped?.[qIndex]
+        || countyAnchored.includes(base);
       const q = statePinned ? base : `${base} ${stateFullName(state)}`;
       const domainTypes = AGENT_DISCOVERY_QUERIES._domainTypes?.[agentKey];
       const domainType = domainTypes?.[qIndex] || 'web';
