@@ -98,7 +98,22 @@ def water_terms(lake, aliases, base):
     return [t for t in out if len(t) >= 3]
 
 
-def sections(text, units, paragraphs_if_unbroken=False):
+def _is_date_line(text, a, b):
+    """Is unit text[a:b] a date line: a date that is the WHOLE of its line?
+
+    text-date.js's definition, which reads lines. _units() also cuts after ". ", so without this a
+    sentence that is only a date inside a longer line counted as one -- Blalock's FY2016-17
+    accountability report, "...following the effective date of the section. (June 30, 2015).",
+    made "(June 30, 2015)." the date line above a section, and sent after a BREAK it stood on a
+    line of its own and dated 313 sentences the whole report leaves undated."""
+    if not _DATE_LINE.match(text[a:b].strip()):
+        return False
+    start = text.rfind("\n", 0, a) + 1
+    end = text.find("\n", b)
+    return text[start:len(text) if end < 0 else end].strip() == text[a:b].strip()
+
+
+def sections(text, units, paragraphs_past=None):
     """(heads, dates, bounds): the unit indices of the headings and of the date lines, and the
     section bounds -- unit indices where a section starts, with 0 and len(units) at the ends.
 
@@ -106,18 +121,26 @@ def sections(text, units, paragraphs_if_unbroken=False):
     entries, and on 2026-09-25 the Clarks Hill AHQ page went whole (40,740 characters) into the
     Broad River's packet because one entry mentioned the Broad River arm.
 
-    A PDF'S TEXT MAY HAVE NO BREAK AT ALL. The SCDNR 2007 statewide job report, as the pipeline
-    stores it, is 134,011 characters with no heading, no `--- PAGE` marker and no date line: to
-    the rule above it is one section, and a section that names Parr Reservoir once is the whole
-    report. What such text does have is its blank lines, between the jobs, the tables and the
-    pages. With `paragraphs_if_unbroken`, a document the rule finds no break in is broken at them
-    instead; a document with even one heading or date line is left exactly as the rule reads it."""
+    A SECTION LONGER THAN THE READER CAN TAKE IS BROKEN AT ITS BLANK LINES. The SCDNR 2007
+    statewide job report, as the pipeline stores it, is 134,011 characters with no heading, no
+    `--- PAGE` marker and no date line: to the rule above it is one section, and a section that
+    names Parr Reservoir once is the whole report. A 60,000-character section that names the water
+    near its end is the same problem inside a document that does have breaks. What such text has is
+    its blank lines, between the jobs, the tables and the pages. With `paragraphs_past` (the
+    window's own cut), a section longer than it is broken at them; every other section is read
+    exactly as the rule above reads it."""
     heads = [i for i, (a, b) in enumerate(units) if _is_heading(text[a:b])]
-    dates = [i for i, (a, b) in enumerate(units) if _DATE_LINE.match(text[a:b].strip())]
+    dates = [i for i, (a, b) in enumerate(units) if _is_date_line(text, a, b)]
     bounds = sorted({0, len(units), *[h for h in heads if h > 0], *[d for d in dates if d > 0]})
-    if paragraphs_if_unbroken and len(bounds) <= 2:
-        bounds = sorted({0, len(units), *[i for i in range(1, len(units))
-                                          if re.search(r"\n\s*\n", text[units[i - 1][1]:units[i][0]])]})
+    if paragraphs_past:
+        extra = []
+        for s, e in zip(bounds, bounds[1:]):
+            a = 0 if s == 0 else units[s][0]
+            b = units[e][0] if e < len(units) else len(text)
+            if b - a > paragraphs_past:
+                extra += [i for i in range(s + 1, e)
+                          if re.search(r"\n\s*\n", text[units[i - 1][1]:units[i][0]])]
+        bounds = sorted({*bounds, *extra})
     return heads, dates, bounds
 
 
@@ -147,9 +170,33 @@ BREAK = "\n\n[... text not sent ...]\n\n"
 
 
 def _delink(s):
-    """text-date.js's delink(), for one line: a date line written as a link is still a date line."""
+    """text-date.js's delink(): a date line written as a link is still a date line, and the top of
+    the page is counted without its links."""
     s = re.sub(r"!?\[([^\]]*)\]\((?:[^()\s]|\([^)\s]*\))*\)", r"\1", s)
     return re.sub(r"https?://\S+", " ", s)
+
+
+def _head_end(text, limit):
+    """Where the head ends: the first line end at which the head, read the way text-date.js reads
+    a page, holds the page's whole top -- or `limit` if it cannot within the cut.
+
+    TOP_OF_PAGE COUNTS CHARACTERS AFTER THE LINKS ARE TAKEN OUT. readPage() delinks the whole text
+    and then reads its first TOP_OF_PAGE characters. A page whose top is thick with addresses -- a
+    SCDNR board meeting packet sent for Lake Bowen -- has its top 4,000 read characters reach well
+    past character 4,000 of the stored text; a head cut at 4,000 let the next piece of the window
+    into the read top, and a "May 20, 2021" line 40 pages down dated the packet's cover. So the
+    head ends only where its delinked text is the delinked page's, through the end of the line that
+    holds the TOP_OF_PAGE-th character."""
+    whole = _delink(text)
+    nl = whole.find("\n", TOP_OF_PAGE)
+    need = len(whole) if nl < 0 else nl
+    end = text.find("\n", TOP_OF_PAGE)
+    while 0 <= end < limit:
+        read = _delink(text[:end])
+        if len(read) >= need and whole.startswith(read[:need]):
+            return end
+        end = text.find("\n", end + 1)
+    return limit
 
 
 def _sole_year(s):
@@ -187,14 +234,18 @@ def window(text, title, url, terms, limit):
       1. Text that fits is sent unchanged.
       2. A document whose own title or address names the water: its first `limit` characters.
       3. Otherwise its head, then the sections that name the water in document order, each with
-         the heading and date line above it, until `limit` characters are used.
-      4. No section past the head names the water, or every one that does is already whole inside
-         the first `limit` characters: the first `limit` characters, as before.
+         the heading above it, until `limit` characters are used -- when that carries more of the
+         water's text than the first `limit` characters do.
+      4. Otherwise the first `limit` characters, as before: when no section past the head names
+         the water, when every one that does is already whole inside the first cut, when the head
+         alone reaches the cut, or when the window, with its date lines and breaks, would carry
+         less of the water than the first cut does (named_sent against named_first_cut).
 
     A WINDOW DATES A FACT THE WAY THE WHOLE DOCUMENT WOULD. research/text-date.js reads three
     things, and the window keeps all three as they stand in the document:
-      - the page's stamp, from the first TOP_OF_PAGE characters: the head runs at least to the end
-        of the line that holds that character, so the window's top IS the document's top;
+      - the page's stamp, from the first TOP_OF_PAGE characters once links are taken out: the head
+        runs to the end of the line that holds that character (_head_end()), so the window's top
+        IS the document's top;
       - the nearest date line above a quote, and the year of a month-and-day line, which it counts
         through the page's order ("October 2" under "January 8" is the year before): EVERY date
         line of the document is kept, in order, including those of entries that are not sent --
@@ -226,7 +277,7 @@ def window(text, title, url, terms, limit):
         return text[:limit], info
 
     units = _units(text)
-    heads, dates, bounds = sections(text, units, paragraphs_if_unbroken=True)
+    heads, dates, bounds = sections(text, units, paragraphs_past=limit)
 
     def start_of(k):
         return 0 if k == 0 else units[k][0]
@@ -238,20 +289,21 @@ def window(text, title, url, terms, limit):
     named = [sp for sp in spans if _names_water(text[sp[2]:sp[3]], terms)]
     named_spans = [(a, b) for _, _, a, b in named]
     info["named_first_cut"] = _overlap([(0, limit)], named_spans)
-    past_head = [sp for sp in named if sp[0] > 0]
     info["sections_named"] = len(named)
+
+    # THE HEAD is the top of the page text-date.js reads a stamp from: to the end of the line that
+    # holds its TOP_OF_PAGE-th character as it reads it (_head_end()), and no further. It used to run to the first section break, and
+    # in 16 of the 69 stored documents that name the water only past the cut that break was past
+    # the cut too -- Hartwell's 2013 report at 84,691 -- so the head filled the cut and the
+    # document went as its first cut, the very job reports the window is for.
+    head_end = _head_end(text, limit)
+    if head_end >= limit:
+        return first_cut("the line at the top of the page runs past the cut")
+    past_head = [sp for sp in named if sp[3] > head_end]
     if not past_head:
         return first_cut("no section past its head names the water")
     if all(b <= limit for _, _, _, b in past_head):
         return first_cut("every section that names the water is inside the first cut")
-
-    # THE HEAD: the text before the first section break, where the page stamp and title sit, and
-    # at least the top of the page text-date.js reads a stamp from.
-    first_break = units[bounds[1]][0] if len(bounds) > 2 else len(text)
-    nl = text.find("\n", TOP_OF_PAGE)
-    head_end = max(first_break, len(text) if nl < 0 else nl)
-    if head_end >= limit:
-        return first_cut("its head fills the cut")
     keep = [(0, head_end)]
 
     # Every date line past the head, and the first heading that names a year.
@@ -270,8 +322,8 @@ def window(text, title, url, terms, limit):
         return first_cut("its head and date lines fill the cut")
 
     for s, e, a, b in past_head:
-        pieces = [units[max(m for m in marks if m <= s)] for marks in (heads, dates)
-                  if any(m <= s for m in marks)]
+        # The heading above it. The date line above it is already kept, with every other one.
+        pieces = [units[max(m for m in heads if m <= s)]] if any(m <= s for m in heads) else []
         trial = keep + pieces + [(a, b)]
         over = len(_render(text, trial)) - limit
         if over <= 0:
@@ -293,6 +345,11 @@ def window(text, title, url, terms, limit):
         break
 
     sent = _render(text, keep)
-    info.update(windowed=True, why="sent as a window", sent=len(sent),
-                named_sent=_overlap(_merge(text, keep), named_spans))
+    named_sent = _overlap(_merge(text, keep), named_spans)
+    # THE WINDOW ONLY WHEN IT CARRIES MORE OF THE WATER. Its date lines and breaks take room, and
+    # on 24 stored documents it carried less than the first cut would have -- Falls Lake's NCWRC
+    # fishing reports 7,880 characters against 12,919.
+    if named_sent <= info["named_first_cut"]:
+        return first_cut("the first cut carries as much of the water")
+    info.update(windowed=True, why="sent as a window", sent=len(sent), named_sent=named_sent)
     return sent, info
