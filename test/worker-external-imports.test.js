@@ -125,6 +125,10 @@ describe('the Worker bundle can be built', () => {
     // PDF told by its Content-Type or bytes. The app and research_lakes.py convert the Scrape.do
     // rungs' HTML with it; the Worker imports it only for its PDF and HTML checks, in download.js
     // and clients.js. Pure, no imports.
+    //
+    // ONE MORE ADDED 2026-09-25: num.js, a number or null, where an empty or all-space string is
+    // null and never 0. conditions.js, worker-data.js and registry.js each carried their own copy;
+    // conditions.js's CO-OPS/NWPS copy read CO-OPS's `"v": ""` as a reading of 0. Pure, no imports.
     const EXPECTED = [
       'js/data/ga-access-species.js',
       'js/data/lake-keys.js',
@@ -135,6 +139,7 @@ describe('the Worker bundle can be built', () => {
       'js/utils/fact-date.js',
       'js/utils/geojson-coords.js',
       'js/utils/html-text.js',
+      'js/utils/num.js',
       'js/utils/reach-places.js',
       'js/utils/water-scope.js',
       'js/utils/wqp-limnology.js',

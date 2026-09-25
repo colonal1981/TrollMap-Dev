@@ -3,6 +3,7 @@
 // LAKES, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS
 
 import { matchWaterName, reportTokens } from './reports.js';
+import { num as numOrNull } from '../js/utils/num.js';
 import { GENERIC_LAKE_ZONES, GENERIC_RIVER_ZONES, watershedSensitivity, riverFlowSensitivity,
          zonesForSensitivity } from './clarity-sensitivity.js';
 
@@ -388,14 +389,6 @@ function pickNewestMessage(list) {
   return withText.slice().sort((a, b) => t(b) - t(a))[0].Text;
 }
 
-/** A number, or null. "NA", "" and anything unparseable are null and never NaN. */
-function numOrNull(v) {
-  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
-  if (typeof v !== 'string' || v.trim() === '') return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-}
-
 function normalizeDukeRow(row) {
   const actual = parseFloat(row.Actual);
   const elevMatch = String(row.Elevation || "").match(/([0-9]+(?:\.[0-9]+)?)/);
@@ -480,8 +473,8 @@ function normalizeDukeRow(row) {
     // Target "NA" -- Tillery, Blewett Falls, Keowee, Bad Creek, Tuckasegee, and every lake in the
     // "Others" basin (Harris, Hyco, Hyco Afterbay, Julian, Mayo, Robinson, Sutton) -- so any
     // consumer that guards with `!= null` instead of Number.isFinite() took NaN as a target and
-    // arithmetic on it returns NaN all the way out. conditions.js already has numOrNull() for
-    // exactly this and uses it on the operating-range rows; this row shape never got it.
+    // arithmetic on it returns NaN all the way out. js/utils/num.js is numOrNull() here, and
+    // conditions.js uses it on the operating-range rows; this row shape never got it.
     // Measured against Ryan's 2026-09-23 capture of /lakes/current-level.
     target: numOrNull(row.Target),
     min: numOrNull(row.Min),

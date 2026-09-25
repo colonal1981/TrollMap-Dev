@@ -26,8 +26,8 @@
 // ABSENCE IS CHECKED BEFORE THE CONVERSION, NEVER AFTER. That is the whole rule, and it is here
 // once so the ninth instance is a one-word change instead of a rediscovery.
 //
-// Worker/ code cannot import this: the Worker is a separate bundle and imports nothing from js/.
-// Its copy stays where it is rather than being reached across a boundary that does not exist.
+// Worker/ imports this too (conditions.js, worker-data.js, registry.js), so it is on the Worker's
+// deploy list in test/worker-external-imports.test.js. It stays pure with no imports of its own.
 
 /**
  * Is `v` an actual number — measured, parsed or typed — as opposed to an absence?

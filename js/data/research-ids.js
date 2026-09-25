@@ -85,6 +85,16 @@ export const RESEARCH_CANONICAL_IDS = {
   // 88-acre Habersham Co lake -- which is exactly why that key is not in this table and this
   // one is.
   'lake_richard_russell_ga': 'lake_russell_sc',
+  // "Richard B. Russell Lake" -- the registry's own name for the row, bare -- reached
+  // lake_russell_sc on /research/get only through the registry's identity names, and on
+  // /research/get-normalized, which passes none, only through that handler's private alias table.
+  // That table is gone (2026-09-25; it also carried the lake_russell_ga row removed above), so the
+  // row lives here. COLLISION CHECKED against every water name in js/data and the frozen index in
+  // test/fixtures: `richard_b_russell_lake` is produced by "Richard B. Russell Lake, GA" and
+  // "Richard B Russell Lake (Abbeville Co, SC/GA)", both the 24,608-acre reservoir, and by no other
+  // name. It is also that reservoir's registry slug. test/identity-names.test.js asserts the same
+  // over the full index where ../registry is present.
+  'richard_b_russell_lake': 'lake_russell_sc',
   // The rest of the 2026-09-01 fork, from the same cause: the batch drove from the registry's
   // county-stamped names before /research/save could map them back, so three more waters gained
   // a second, thinner profile under the spelling the picker happens to show. Ryan's research
