@@ -18,6 +18,37 @@
 const FULL = /^\d{4}-\d{2}-\d{2}$/;
 const isFullDate = (d) => typeof d === 'string' && FULL.test(d);
 
+// The categories whose facts can conflict at all: identity (acreage, depth, elevation) and
+// regulations (creel/size limits). Built once, not on every comparison.
+const IMPORTANT_CATEGORIES = new Set(['identity', 'surfacearea', 'maxdepth', 'averagedepth', 'elevation', 'regulations', 'creellimit_lakespecific', 'sizelimit_lakespecific', 'creellimit', 'sizelimit']);
+const catOf = (f) => String((f && f.category) || 'general').toLowerCase().trim();
+const canConflict = (cat) => IMPORTANT_CATEGORIES.has(cat) || cat.includes('identity') || cat.includes('regulation');
+
+// THE WORKER HAS 10 MS OF CPU A REQUEST (the Cloudflare free plan; see research/shared.js). Asking
+// every printed fact about every other one was 417 x 417 comparisons on Lake Wateree's facts, 13.8 ms
+// on a desktop with every fact dated -- over the budget on its own. Only facts of the SAME category
+// that can conflict, and that carry a full date, can ever be named "newer" or "older", so each
+// prompt's facts are grouped that way once and a fact is compared only with its own group. The
+// groups are kept against the `shown` array itself: every caller builds that array for one prompt
+// and does not change it while it prints. Measured on the same four lakes' facts, every one given
+// a full date: Wateree 13.7 ms -> 0.8 ms, with the same words on every line.
+const _datedByCategory = new WeakMap();
+function datedPeers(shown, f) {
+  let groups = _datedByCategory.get(shown);
+  if (!groups) {
+    groups = new Map();
+    for (const g of shown) {
+      if (!g || !isFullDate(g.textDate)) continue;
+      const c = catOf(g);
+      if (!canConflict(c)) continue;
+      if (!groups.has(c)) groups.set(c, []);
+      groups.get(c).push(g);
+    }
+    _datedByCategory.set(shown, groups);
+  }
+  return groups.get(catOf(f)) || [];
+}
+
 /**
  * Do two facts make mutually exclusive numeric claims on the same attribute?
  *
@@ -29,10 +60,9 @@ const isFullDate = (d) => typeof d === 'string' && FULL.test(d);
  */
 function factsDisagree(a, b) {
   if (!a || !b || a === b) return false;
-  const cat = String(a.category || 'general').toLowerCase().trim();
-  if (cat !== String(b.category || 'general').toLowerCase().trim()) return false;
-  const IMPORTANT_CATEGORIES = new Set(['identity', 'surfacearea', 'maxdepth', 'averagedepth', 'elevation', 'regulations', 'creellimit_lakespecific', 'sizelimit_lakespecific', 'creellimit', 'sizelimit']);
-  if (!IMPORTANT_CATEGORIES.has(cat) && !cat.includes('identity') && !cat.includes('regulation')) return false;
+  const cat = catOf(a);
+  if (cat !== catOf(b)) return false;
+  if (!canConflict(cat)) return false;
 
   const prevText = String(a.fact).toLowerCase();
   const currText = String(b.fact).toLowerCase();
@@ -77,7 +107,7 @@ function writtenOf(f, shown = []) {
   if (!d) return '';
   const parts = [d.startsWith('--') ? `written ${d.slice(2)}, year not stated` : `written ${d}`];
   if (isFullDate(d) && Array.isArray(shown)) {
-    for (const g of shown) {
+    for (const g of datedPeers(shown, f)) {
       if (!g || g === f || !isFullDate(g.textDate) || g.textDate === d || !factsDisagree(f, g)) continue;
       parts.push(`${d > g.textDate ? 'newer' : 'older'} than the fact written ${g.textDate} that disagrees with it`);
     }
