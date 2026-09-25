@@ -101,6 +101,7 @@ def norm(s):
 # Celsius ... cubic feet per second"), fishway prescriptions and dock permits. The season comes
 # from the date lines kept above each passage, not from the sentence.
 _FISH_GENERIC = (r"fish(?:ing|ed|es|ermen|erman)?|angler\w*|bass|striper\w*|crappie|specks?|"
+                 r"smallies|smallie|largemouths?|smallmouths?|spots\b|redeyes?|shoal bass|"
                  r"catfish|cats|bream|panfish|bluegill\w*|shellcracker\w*|redear|perch|hybrid\w*|"
                  r"trout|walleye|sauger|musk\w*|pickerel|pike|bite|biting")
 _CUE = re.compile(
@@ -114,7 +115,15 @@ _CUE = re.compile(
     r"deep(?:er|est)? water|"
     r"brush ?piles?|brush\b|docks?\b|bridges?\b|ledges?\b|humps?\b|rip-?rap|timber|grass|"
     r"cane piles?|attractors?|drop-?offs?|points?\b|creek mouths?|flats\b|"
-    r"thermocline|refuge|\d+\s*(?:degrees|°)", re.I)
+    r"thermocline|refuge|\d+\s*(?:degrees|°)|"
+    # RIVER WORDS. The first cut was written from lake reports and kept nothing of "Shoals block off
+    # the river at least every half mile" or "a haven for eating sized channel catfish" on the
+    # Broad River, 2026-09-25 -- a river is fished by current, shoal, hole and bend, not by depth.
+    r"shoals?\b|current|eddy|eddies|seams?\b|riffles?|rapids|runs?\b|pools?\b|holes?\b|bends?\b|"
+    r"log ?jams?|laydowns?|snags?|undercut|banks?\b|tail ?race|tail ?water|below the dam|"
+    r"spillway|flows?\b|cfs\b|releases?\b|tides?\b|tidal|slack|creek mouths?|sloughs?|oxbows?|"
+    r"float(?:ing)?\b|wad(?:e|ing)\b|kayak\w*|canoe\w*|haven|plenty of|good numbers|"
+    r"\d+\s*(?:-|to)\s*\d+\s*(?:pounds?|lbs?|inch\w*)", re.I)
 _MONTH = (r"(?:January|February|March|April|May|June|July|August|September|October|November|"
           r"December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)\.?")
 _DATE_LINE = re.compile(rf"^\W*(?:{_MONTH}\s+\d{{1,2}}(?:,?\s+\d{{4}})?|\d{{1,2}}\s+{_MONTH},?\s+\d{{4}}|"
@@ -192,10 +201,13 @@ def doc_spans(text, fish, terms, doc_names_water):
         return []
     heads = [i for i, (a, b) in enumerate(units) if _is_heading(text[a:b])]
     dates = [i for i, (a, b) in enumerate(units) if _DATE_LINE.match(text[a:b].strip())]
-    # A section runs from one heading to the next. A document that does not name this water in
-    # its title or address keeps only the sections that name it -- a statewide report is about
-    # every lake it covers, and the Hartwell half of a two-lake article is not this water's.
-    bounds = [0] + [h for h in heads if h > 0] + [len(units)]
+    # A section runs from one heading or date line to the next. A document that does not name this
+    # water in its title or address keeps only the sections that name it -- a statewide report is
+    # about every lake it covers, and the Hartwell half of a two-lake article is not this water's.
+    # DATE LINES ARE SECTION BREAKS TOO: a weekly report page has one heading and twenty dated
+    # entries, and on 2026-09-25 the Clarks Hill AHQ page went whole (40,740 characters) into the
+    # Broad River's packet because one entry mentioned the Broad River arm.
+    bounds = sorted({0, len(units), *[h for h in heads if h > 0], *[d for d in dates if d > 0]})
     in_scope = [False] * len(units)
     for s, e in zip(bounds, bounds[1:]):
         ok = doc_names_water or _names_water(text[units[s][0]:units[e - 1][1]], terms)
@@ -239,6 +251,16 @@ def fish_pattern(roster):
     return re.compile(r"\b(?:" + _FISH_GENERIC + extra + r")\b", re.I)
 
 
+def water_kind(name):
+    """'river' for a river, creek, canal or tailrace by its own name, else 'lake'. The app's names
+    say it: "Broad River, SC", "Chessie Creek, SC", "Diversion Canal (Berkeley Co, SC)", "Tail Race
+    Canal, SC". A reservoir named for its creek ("Fishing Creek Reservoir") is a lake."""
+    n = re.sub(r"\s*\([^)]*\)", "", str(name or ""))
+    if re.search(r"\b(reservoir|lake|pond)\b", n, re.I):
+        return "lake"
+    return "river" if re.search(r"\b(river|creek|canal|tail ?race)\b", n, re.I) else "lake"
+
+
 def packet_facts(profile):
     """What the app already knows about the water, from the profile, in a few lines."""
     bio = profile.get("biology") or {}
@@ -275,6 +297,7 @@ def build_packet(lake, state, profile, documents, roster, aliases=None, base=Non
     terms = water_terms(lake, aliases, base)
     fish = fish_pattern(roster)
     head = [f"WATER: {lake} ({state})",
+            f"KIND: {water_kind(lake)}",
             f"ALSO CALLED: {', '.join(t for t in terms if t.lower() != base.lower()) or '-'}",
             f"TODAY: {today or time.strftime('%Y-%m-%d')}",
             "SPECIES TO ANSWER (use these exact keys, all of them): " + json.dumps(roster),
@@ -324,12 +347,28 @@ it; otherwise an object with exactly these keys:
   recommendedPresentations  baits, lures and methods the sources name, in their words
   notes           see NOTES
 A species with nothing in the packet gets four nulls. Never invent one to fill it.
+Also return "coverage": two or three sentences saying which documents in the packet are about this
+water, what they cover, and why the species or seasons you left null are null.
 
 SEASONS ARE THE APP'S CALENDAR: spring Mar 20-Jun 20, summer Jun 21-Sep 21, fall Sep 22-Dec 20,
 winter Dec 21-Mar 19. A dated report belongs to the season its date falls in. Many pages are a
 series of dated entries; the date line above a passage is its date. When a report says the pattern
 is still the previous season's (for example water still in the upper 70s in early October), you may
 use it for that season and must say so in notes.
+A first-hand account on this water that describes how and where a species is caught but gives no
+season: put it under the season(s) its own words point to (water temperature, spawning, low summer
+flow, cold water, a month). If nothing in it points to a season, put it under the season of the
+page's date if it has one; if it has neither, put it under every season it does not contradict and
+say in notes that the source names no season. Do not leave a species null because its best source
+is undated -- null means the packet has nothing on it.
+
+KIND (lake or river) is in the header. A RIVER is fished by current, shoals, holes, runs, eddies,
+bends, banks, landings, tides and flow, not by depth bands. A river entry with null depths is a good
+entry: say where (the stretch, shoal, bridge, landing, creek mouth), how (float, wade, anchor,
+drift, cast to the bank, fish the hole below the shoal), and the flow, tide or water level the
+source gives, in notes. waterDepthFt on a river is the depth of the hole or run when a source states
+one. "holding" on a river: bottom for fish in holes, on the bottom or behind rocks; suspended for
+fish chasing bait in the current or schooling.
 
 WHICH SOURCES WIN.
 1. Dated first-hand accounts ON THIS WATER beat everything else: guide and tournament-angler
@@ -339,9 +378,12 @@ WHICH SOURCES WIN.
    reads alike, water temperatures and depth bands stamped into each), pages that say they are
    synthesized or AI-written, and guide-service sales pages. Use one only when nothing better covers
    that species and season, and then say in notes that it is the only source and what kind it is.
-3. Only text about THIS water counts. Multi-lake articles, statewide reports and river pages cover
-   other waters too; a passage about another lake, or about the river below the dam, is not about
-   this water even in the same document.
+3. Only text about THIS water counts. Multi-lake articles, statewide reports and regional pages
+   cover other waters too. For a LAKE, a passage about another lake, or about the river below its
+   dam, is not about it. For a RIVER, this water is the river named in the header, in that state:
+   a river of the same name somewhere else (another state's Black River, the Georgia Broad River),
+   a different river, or a lake the river runs into or out of is not it. A passage about the river
+   itself counts even when the page is mostly about something else.
 4. General knowledge of the species is not a source. Do not fill a season from spawning biology,
    from another season or from another water. Measured values in the header (thermocline, oxygen,
    clarity) may be mentioned in notes; they are never the depth answer.
@@ -389,9 +431,11 @@ def schema_for(roster):
                              "notes": {"type": ["string", "null"]}}}
     species = {"type": "object", "additionalProperties": False, "required": list(SEASONS),
                "properties": {s: {"$ref": "#/$defs/season"} for s in SEASONS}}
-    return {"type": "object", "additionalProperties": False, "required": ["trollingIntelligence"],
+    return {"type": "object", "additionalProperties": False,
+            "required": ["trollingIntelligence", "coverage"],
             "$defs": {"season": season, "species": species},
-            "properties": {"trollingIntelligence": {
+            "properties": {"coverage": {"type": "string"},
+                           "trollingIntelligence": {
                 "type": "object", "additionalProperties": False, "required": list(roster),
                 "properties": {sp: {"$ref": "#/$defs/species"} for sp in roster}}}}
 
@@ -456,6 +500,8 @@ def ask_claude(packet, roster, model=DEFAULT_MODEL, timeout=CLAUDE_TIMEOUT, run=
             meta["error"] = "claude answered without the structure"
             return None, meta
     section = got.get("trollingIntelligence") if isinstance(got, dict) else None
+    if isinstance(got, dict) and got.get("coverage"):
+        meta["coverage"] = str(got["coverage"])[:2000]
     if not isinstance(section, dict):
         meta["error"] = "claude's answer has no trollingIntelligence"
         return None, meta

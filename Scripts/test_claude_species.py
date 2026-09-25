@@ -111,6 +111,36 @@ class Packet(unittest.TestCase):
         self.assertIsNotNone(fish.search("Channel catfish on cut herring"))
 
 
+class Rivers(unittest.TestCase):
+    """The first river batch, 2026-09-25: every river came back empty. The packet was built from
+    lake words, and a weekly lake report went whole into a river's packet for one mention."""
+
+    def test_kind_comes_from_the_name(self):
+        for n, k in (("Broad River, SC", "river"), ("Chessie Creek, SC", "river"),
+                     ("Diversion Canal (Berkeley Co, SC)", "river"), ("Tail Race Canal, SC", "river"),
+                     ("Fishing Creek Reservoir, SC", "lake"), ("Lake Murray, SC", "lake"),
+                     ("Saluda River (Lower Saluda), SC", "river")):
+            self.assertEqual(C.water_kind(n), k, n)
+
+    def test_river_sentences_are_kept(self):
+        text = ("It's a haven for eating sized channel catfish in the 1- to 3-pound range. "
+                "Smallies hold in the eddies below the shoals when the flow drops in summer.")
+        spans = C.doc_spans(text, C.fish_pattern(["Channel Catfish", "Smallmouth Bass"]),
+                            ["Broad River"], True)
+        kept = " ".join(text[a:b] for a, b in spans)
+        self.assertIn("haven for eating sized channel catfish", kept)
+        self.assertIn("eddies below the shoals", kept)
+
+    def test_one_dated_entry_of_a_lake_report_not_the_whole_page(self):
+        text = ("# AHQ INSIDER Clarks Hill Report\n\nNovember 30\n\nStripers are 25-35 feet deep on "
+                "Clarks Hill on down-rods.\n\nNovember 22\n\nUp the Broad River arm the bass are on "
+                "rock in 8-10 feet of water.\n")
+        spans = C.doc_spans(text, C.fish_pattern(["Largemouth Bass"]), ["Broad River"], False)
+        kept = " ".join(text[a:b] for a, b in spans)
+        self.assertIn("Broad River arm", kept)
+        self.assertNotIn("25-35 feet deep on Clarks Hill", kept)
+
+
 class Checks(unittest.TestCase):
     def test_a_good_answer_passes_whole(self):
         clean, problems = C.check_section(GOOD, ROSTER, DOCS)

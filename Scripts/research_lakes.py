@@ -1730,6 +1730,21 @@ def species_groups_only(lake, state, group_models, save=False, report_dir="_repo
                          if k not in ("packet_docs", "raw_section")}
         if section is None:
             out["error"] = f"claude: {claude_meta.get('error')}"
+            # A FAILED ANSWER IS WRITTEN DOWN TOO. The first river batch, 2026-09-25, came back "no
+            # entry survived the checks" four times with nothing on disk to say why -- not the raw
+            # answer, not Claude's own account of what the packet covered.
+            if claude_meta.get("packet_chars"):
+                sid = re.sub(r"[^a-z0-9]+", "_", lake.lower()).strip("_")
+                fail = os.path.join(report_dir, f"species_groups_claude_{sid}_"
+                                                f"{time.strftime('%Y%m%d_%H%M%S')}_FAILED.json")
+                os.makedirs(report_dir, exist_ok=True)
+                with open(fail, "w", encoding="utf-8") as f:
+                    json.dump({"lake": lake, "state": state, "result": out,
+                               "coverage": claude_meta.get("coverage"),
+                               "claude_raw_section": claude_meta.get("raw_section"),
+                               "packet_docs": claude_meta.get("packet_docs")},
+                              f, indent=1, ensure_ascii=False)
+                return out, [fail]
             return out, []
         groups = [{"group": "all", "species": claude_meta.get("roster"), "ok": True,
                    "returned": list(section), "reason": None, "attempts": 1,
