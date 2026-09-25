@@ -719,6 +719,14 @@ def answer(lake, state, profile, documents, aliases=None, base=None, model=DEFAU
     meta["packet_chars"] = len(packet)
     meta["packet"] = {k: v for k, v in stats.items() if k != "per_doc"}
     meta["packet_docs"] = stats["per_doc"]
+    # NOTHING TO READ, NOTHING TO ASK. Lakes part 1, 2026-09-25: Chessie Creek's one stored document
+    # (1,315 characters) kept no passage, the packet was the header alone, and the call spent a
+    # process start and 622 output tokens to say every season was null. The answer is known before
+    # the call, and the Lite answer the run saved stays either way.
+    if not stats["documents_with_text"]:
+        meta["error"] = (f"no stored document kept a passage about fish on this water "
+                         f"({stats['documents']} readable) -- Claude was not asked")
+        return None, meta
     section, m = ask_claude(packet, roster, model=model, run=run)
     meta.update(m)
     if section is None:

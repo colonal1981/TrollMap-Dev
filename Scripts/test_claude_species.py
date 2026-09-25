@@ -218,6 +218,18 @@ class Call(unittest.TestCase):
         self.assertTrue(seen["input"].startswith(C.RULES) and seen["input"].endswith("PACKET"))
         self.assertEqual(meta["model"], "claude-opus-5-5")
 
+    def test_an_empty_packet_is_not_sent(self):
+        # Chessie Creek, lakes part 1: one 1,315-character document, no passage kept, and a call
+        # spent to hear that every season was null.
+        run, seen = self.fake("{}")
+        docs = [{"title": "Chessie Creek boat ramp", "url": "https://x.example/ramp",
+                 "fullText": "Parking for twelve trailers. Open dawn to dusk. " * 30}]
+        section, meta = C.answer("Chessie Creek, SC", "SC", PROFILE, docs, run=run)
+        self.assertIsNone(section)
+        self.assertIn("Claude was not asked", meta["error"])
+        self.assertNotIn("cmd", seen)
+        self.assertEqual(meta["packet"]["documents_with_text"], 0)
+
     def test_a_usage_limit_stops_claude_for_the_rest_of_the_run(self):
         run, _ = self.fake(json.dumps({"subtype": "success", "is_error": True,
                                        "result": "Claude usage limit reached. Resets 9pm"}))

@@ -48,22 +48,36 @@ async function handleResearchAnalyzeFacts(request, env) {
     return new Response(JSON.stringify({ success: false, error: "Missing lakeName or documents payload" }), { status: 400, headers: JSON_HEADERS });
   }
 
-  // Filter index/search pages — high URL density, low prose content
+  // ── A PAGE FULL OF LINKS IS READ WITHOUT ITS LINKS, NOT REFUSED ─────────────────────────────
+  //
+  // The density test below used to REFUSE the page, and a weekly fishing report is a page full of
+  // links: AHQ's sidebar and archive list put 239 URLs around the Lake Jocassee 2023 Week 38 report,
+  // 323 words of it the report itself, and the Monticello Week 40 report went the same way on the
+  // pilot. Measured 2026-09-25 over the 1,975 stored documents of the backlog's waters, 5 tripped the
+  // test: that AHQ report, two Grokipedia citation pages, a Fishing Creek community page and an EPA
+  // search page. Only the last is an index with nothing to read.
+  //
+  // So a page that trips it is sent with its link targets taken out -- `[text](url)` keeps its text,
+  // a bare URL goes -- which is the prose a person would read, and a real index then gives the model
+  // nothing to extract. The cost of reading one: a call that returns no facts, on 1 page in ~400.
   const isIndexPage = (doc) => {
     const text = doc.text || doc.fullText || '';
     const urlMatches = (text.match(/https?:\/\//g) || []).length;
     const words = text.split(/\s+/).length;
     return urlMatches > 40 && urlMatches / words > 0.15;
   };
+  const delink = (text) => String(text || '')
+    .replace(/!?\[([^\]]*)\]\((?:[^()\s]|\([^)\s]*\))*\)/g, '$1')
+    .replace(/https?:\/\/\S+/g, ' ');
 
-  const usableDocs = documents.filter(d => !isIndexPage(d));
-  const filteredCount = documents.length - usableDocs.length;
-  if (filteredCount > 0) {
-    console.log(`handleResearchAnalyzeFacts: filtered ${filteredCount} index/search page(s)`);
-  }
-
-  if (!usableDocs.length) {
-    return new Response(JSON.stringify({ success: false, error: "All documents were index/search pages" }), { status: 400, headers: JSON_HEADERS });
+  const usableDocs = documents.map((d) => {
+    if (!isIndexPage(d)) return d;
+    const text = delink(d.text || d.fullText);
+    return { ...d, text, fullText: text, delinked: true };
+  });
+  const delinkedCount = usableDocs.filter((d) => d.delinked).length;
+  if (delinkedCount > 0) {
+    console.log(`handleResearchAnalyzeFacts: read ${delinkedCount} link-heavy page(s) with their links taken out`);
   }
 
   // ── MANY SHORT TEXTS, ONE READ: `combine` ─────────────────────────────────────────────────────
@@ -526,7 +540,8 @@ FISHING BEHAVIOUR IS A FIRST-CLASS FACT. Sentences from guides, fishing reports 
     extracted_facts: allFacts,
     meta: {
       totalDocs: usableDocs.length,
-      filteredIndexPages: filteredCount,
+      filteredIndexPages: 0,               // none are refused now; see delinkedPages
+      delinkedPages: delinkedCount,
       docResults,
       totalFacts: allFacts.length
     }
