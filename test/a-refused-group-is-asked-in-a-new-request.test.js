@@ -209,3 +209,22 @@ test('a failed second request leaves the first answer as it was', () => {
   assert.equal(mergeGroupAnswers(first, null), first);
   assert.equal(mergeGroupAnswers(first, { success: false }), first);
 });
+
+test('a group refused per minute is asked again after Google\'s delay, when it is the longer', async () => {
+  // "Please retry in 35.4s": the group's pass ended on that refusal (stopOnRefusal, worker-core.js)
+  // and the delay came back as retryAfterMs. 8 s would be a request spent on the same refusal.
+  const first = { success: true, section: {}, meta: { groups: [
+    { group: 'bass', species: ['Largemouth Bass'], ok: false, asked: true, refusal: 'minute',
+      retryAfterMs: 35400, attempts: 1 }], missingSpecies: ['Largemouth Bass'] } };
+  const again = { success: true, section: { 'Largemouth Bass': {} }, meta: { groups: [
+    { group: 'bass', species: ['Largemouth Bass'], ok: true, asked: true, attempts: 1 }], missingSpecies: [] } };
+  const waited = [];
+  const { res } = await askFailedGroupsAgain(async () => again, first, { sleep: async (ms) => { waited.push(ms); } });
+  assert.deepEqual(waited, [35400]);
+  assert.deepEqual(groupsToAskAgain(res), []);
+  // Google named no delay ("high demand"): the argued wait stands.
+  const busy = { ...first, meta: { ...first.meta, groups: [{ ...first.meta.groups[0], refusal: 'demand', retryAfterMs: null }] } };
+  const waited2 = [];
+  await askFailedGroupsAgain(async () => again, busy, { sleep: async (ms) => { waited2.push(ms); } });
+  assert.deepEqual(waited2, [GROUP_RETRY_WAITS_MS[0]]);
+});
