@@ -67,7 +67,7 @@ describe('the compass is in one place now', () => {
 
   it('and the copies are gone from the modules that could import it', () => {
     expect(src('js/modules/plan-preflight.js')).not.toContain("'NNE'");
-    expect(src('js/modules/measure-tool.js')).not.toContain("'NNE'");
+    // measure-tool.js was the other copy; the module was deleted on 2026-09-25 (no #btnMeasure).
     expect(COMPASS_16.length).toBe(16);
     // plan-builder's copy lives inside the report's generated HTML — a string handed to a browser
     // with no module loader — so it genuinely cannot import and is the one copy left standing.

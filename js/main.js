@@ -70,7 +70,6 @@ import './modules/track-reverse.js';
 import './modules/contour-data.js';
 import './modules/routes-panel.js';
 import './modules/fishing-index.js';
-import './modules/measure-tool.js';
 import './modules/catch-plot.js';
 import './modules/waypoint-to-generator.js';
 import './modules/spot-repositioning.js';
