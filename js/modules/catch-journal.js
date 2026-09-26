@@ -33,8 +33,6 @@ let selectedQueueId = null;
 let currentSubtab = 'review';
 const localPhotoUrls = new Map(); // filename(lower) -> object URL from folder picker
 const localPhotoFiles = new Map();
-window.TM_CATCH_PHOTO_URLS = localPhotoUrls;
-window.TM_CATCH_PHOTO_FILES = localPhotoFiles;
 
 const SPECIES = [
   '', 'Striped Bass', 'White Bass / Hybrid', 'Largemouth Bass', 'Spotted Bass', 'Smallmouth Bass',

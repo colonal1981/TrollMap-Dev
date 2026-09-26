@@ -250,30 +250,8 @@ import { getLoadedAccessIndex } from "../data/access-index.js";
     return [];
   }
 
-  // List all the fishing systems + their member SCDNR keys (for UI dropdowns)
-  function listFishingSystems() {
-    return Object.entries(FISHING_SYSTEMS).map(([name, def]) => ({
-      name,
-      scdnrKeys: def.scdnrKeys,
-      defaultMapCenter: def.defaultMapCenter,
-    }));
-  }
-
-  // Get the notes/warnings attached to a fishing system or waterbody.
-  function getSystemNote(name) {
-    return FISHING_SYSTEMS[name]?.note || SCDNR_OVERRIDES[name]?.note || null;
-  }
-
-  // Expose
-  window.TrollMapFishingIndex = {
-    FISHING_SYSTEMS,
-    SCDNR_OVERRIDES,
-    getFishingRamps,
-    listFishingSystems,
-    getSystemNote,
-    // For debugging / sanity checks:
-    _launchesByWaterbody: launchesByWaterbody,
-  };
+  // window.TrollMapFishingIndex, with listFishingSystems() and getSystemNote() that only it
+  // carried, went on 2026-09-25: nothing read it. plan-builder.js reads getFishingRamps.
   // Convenience global
   window.getFishingRamps = getFishingRamps;
 

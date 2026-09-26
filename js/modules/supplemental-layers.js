@@ -1172,14 +1172,6 @@ window.toggleGarminLayer = async function (name, visible) {
   return got;
 };
 
-/** Turn the whole Garmin chart overlay on or off in one call. */
-window.toggleGarminChart = async function (visible) {
-  const names = Object.entries(GARMIN_LAYERS).filter(([, s]) => s.panel !== false).map(([n]) => n);
-  const want = visible === undefined ? !names.some(n => layerIsVisible(GID(n))) : !!visible;
-  for (const n of names) await window.toggleGarminLayer(n, want);
-  return want;
-};
-
 /**
  * Both POI filters change what the layer CONTAINS, not whether it is shown. Drop the built
  * layer so the next show refetches through the new filter, and if it is on screen right now,
@@ -1328,7 +1320,6 @@ async function loadLakeBoundary(displayName) {
     const cached = await cacheGet(CACHE_NS, cacheKey, CACHE_TTL);
     if (cached?.features?.length) {
       _boundaryGeoJSON = cached;
-      window.LAKE_BOUNDARY_GEOJSON = _boundaryGeoJSON;
       console.log(`[supplemental] boundary loaded from cache: ${boundaryKey}`);
       return;
     }
@@ -1345,7 +1336,6 @@ async function loadLakeBoundary(displayName) {
     }, gj.features[0]);
     _boundaryGeoJSON = { type: 'FeatureCollection', features: [main] };
     await cacheSet(CACHE_NS, cacheKey, _boundaryGeoJSON);
-    window.LAKE_BOUNDARY_GEOJSON = _boundaryGeoJSON;
     console.log(`[supplemental] boundary loaded: ${boundaryKey}`);
   } catch (e) {
     console.warn(`[supplemental] boundary fetch failed for ${boundaryKey}:`, e.message);
@@ -1728,7 +1718,6 @@ init();
 window.loadSupplementalForLake = loadSupplementalForLake;
 window.getSupplementalContext = getSupplementalContext;
 export function getOsmStructures() { return _osmStructureData || []; }
-window._seedOsmStructureData = (features) => { if (!_osmStructureData?.length) _osmStructureData = features; };
 
 window.toggleDepthAreas = function(visible) {
   _depthAreaVisible = visible;

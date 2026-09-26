@@ -2942,7 +2942,6 @@ window.syncPlanRiverData = async function syncPlanRiverData(){
     put('planRiverSchedule', scheduleLines.join('\n'));
     put('planRiverSummary', summary);
     if(statusEl){ statusEl.textContent=`✓ River synced: ${status}`; statusEl.style.color=effectiveStatus==='no-go'?'var(--bad)':effectiveStatus==='caution'?'var(--warn)':'var(--accent2)'; }
-    window.LAST_PLAN_RIVER_DATA = d;
     return d;
   } catch(err){
     console.warn('River sync failed', err);

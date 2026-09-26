@@ -172,7 +172,6 @@ export async function syncLakeIntelData() {
       summary.innerHTML = `<b style="color:var(--accent)">\uD83E\uDDE0 ${esc(d.lake||label)}</b><br><span>${esc(speciesDisplay)}</span>${profileBadge}${d.latestReport?.source?`<br><span class="muted">Latest scraped report source \u2014 verify before relying: ${esc(d.latestReport.source)}</span>`:''}`;
     }
     say('Intel ready', false);
-    window.LAST_LAKE_INTEL = d;
     return d;
   } catch(err){
     console.warn('Lake intel failed', err);
@@ -364,7 +363,6 @@ export async function syncClarityIntelData(o = {}) {
       summary.innerHTML = `<b style="color:var(--warn)">🌦 ${esc(d.lake)}</b><br><span>${badge}</span>${d.rain?`<br><span class="muted">${esc(windSummary)}Rain signal: ${esc(d.rain.weighted72_in)}" weighted 72h \u00B7 verify at ramp</span>`:''}`;
     }
     say('Clarity ready', false);
-    window.LAST_CLARITY_INTEL=d;
     return d;
   } catch(err){
     console.warn('Clarity intel failed', err);

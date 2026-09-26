@@ -60,7 +60,6 @@ function notifyChange() {
   // listener that throws here leaves whatever it renders showing the PREVIOUS lake's
   // contours, which looks like data rather than like a failure.
   changeListeners.forEach((fn, i) => callSafely(fn, `contour change listener #${i}`, state.ACTIVE_CONTOUR));
-  window._smartRouteGeoJSON = state.ACTIVE_CONTOUR?.smart || state.ACTIVE_CONTOUR?.raw || null;
 }
 
 async function fetchFromR2(r2Key) {
