@@ -10,7 +10,7 @@
  *
  * Cross-module shared state lives in core/state.js (the `state`
  * singleton). Helpers that popup buttons invoke across modules
- * (sendWptToGenerator, enableSpotRepositioning, showCatchPhoto)
+ * (sendWptToGenerator, enableSpotRepositioning)
  * are exposed on `window` by their owning modules.
  */
 
@@ -78,8 +78,6 @@ import './modules/layers-panel.js';
 import './modules/ble-motor.js';
 import './modules/wet-hands-remote.js';
 import './modules/gear-autopilot.js';
-import './modules/auto-crop.js';
-import './modules/catch-photo.js';
 import './modules/osm-structure.js';
 import './modules/quickdraw-key.js';
 import './modules/sw-register.js';
