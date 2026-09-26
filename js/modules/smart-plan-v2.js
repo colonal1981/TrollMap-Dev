@@ -783,8 +783,10 @@ export function modelAsker(workerUrl, opts = {}) {
     // to Gemini -- a plan that says which model answered it is a plan that can be argued with.
     const meta = {
       finishReason: data.choices?.[0]?.finish_reason ?? null,
-      model: data.model || null,
-      provider: r.headers.get('X-LLM-Provider') || null,
+      // `_trollmap` is the Worker's own record of who answered, in the BODY, which CORS cannot
+      // hide. The header was never readable from the browser (change request 14).
+      model: data.model || (data._trollmap && data._trollmap.model) || null,
+      provider: r.headers.get('X-LLM-Provider') || (data._trollmap && data._trollmap.provider) || null,
       promptTokens: u.prompt_tokens ?? u.promptTokenCount ?? null,
       completionTokens: u.completion_tokens ?? u.completionTokenCount ?? null,
       totalTokens: u.total_tokens ?? u.totalTokenCount ?? null,

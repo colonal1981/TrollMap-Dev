@@ -6,6 +6,9 @@ var CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, X-Sync-Token, X-Image-Type, X-Lake, X-Date, X-Lat, X-Lon, X-Species-Hint, X-Assume-Board",
+  // The browser hides every response header CORS does not list, so the app's
+  // `r.headers.get('X-LLM-Provider')` has read null since it was written (change request 14).
+  "Access-Control-Expose-Headers": "X-LLM-Provider, X-LLM-Model",
   "Access-Control-Max-Age": "60"
 };
 var JSON_HEADERS = { ...CORS, "Content-Type": "application/json" };
@@ -339,7 +342,21 @@ async function geminiCall(provider, key, modelId, payload, uncapped = false, sen
   const geminiText = parts.filter((p) => !p.thought && typeof p.text === "string").map((p) => p.text).join("");
   if (!geminiText) throw new Error(`gemini/${modelId}: empty content`);
   rec.answered = true;
-  const compatData = { choices: [{ message: { content: geminiText } }] };
+  // WHO ANSWERED, WHY IT STOPPED AND WHAT IT COST, in the OpenAI shape the app already reads
+  // (`data.model`, `choices[0].finish_reason`, `data.usage`). This object used to carry the text
+  // alone, so every saved plan's `exchange` had provider, model, finishReason and every token count
+  // null (change request 14), and a reply cut off at the token ceiling could not be told from one
+  // that finished. Gemini names them `finishReason` and `usageMetadata`; nothing is invented.
+  const cand0 = data.candidates?.[0] || {};
+  const um = data.usageMetadata || {};
+  const compatData = {
+    model: modelId,
+    choices: [{ message: { content: geminiText }, finish_reason: cand0.finishReason ?? null }],
+    usage: { prompt_tokens: um.promptTokenCount ?? null,
+             completion_tokens: um.candidatesTokenCount ?? null,
+             thoughts_tokens: um.thoughtsTokenCount ?? null,
+             total_tokens: um.totalTokenCount ?? null },
+  };
   return { provider: "gemini", model: modelId, data: compatData, _geminiRaw: geminiText.slice(0, 200) };
 }
 
