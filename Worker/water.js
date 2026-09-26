@@ -582,22 +582,42 @@ const MAX_TARGETS = 500;
 // -- every one came back without CORS headers. One request, sources in series, bounded memory.
 const MAX_SOURCES = 32;
 
+// ONE SET OF WORK ARRAYS PER ISOLATE, reused by every call. distancesFrom() is synchronous -- no
+// await anywhere inside it -- so two calls can never be inside it at once and sharing is safe.
+// Measured on Murray 2026-09-26: allocating them per source (12.3 MB each, most of it a heap sized
+// to every edge) took a 16-source call past the isolate's memory and Cloudflare answered "Worker
+// exceeded resource limits"; 8 sources were fine. Reused, a call costs the same memory at any
+// source count, and the heap is only as large as a frontier has actually needed.
+let _work = null;
+function workArrays(g) {
+  if (!_work || _work.cost.length < g.nn) {
+    const hk = _work ? _work.hk : new Float64Array(1024);
+    const hv = _work ? _work.hv : new Int32Array(1024);
+    _work = { cost: new Float64Array(g.nn), real: new Float64Array(g.nn), hk, hv };
+  }
+  return _work;
+}
+
 /**
  * One-to-many Dijkstra with the heap in TYPED ARRAYS. The array-of-pairs heap /route uses allocates
- * a small array per push; on a full pass over Murray that is several hundred thousand of them, and
- * that garbage is what a burst of these ran out of memory on. Pushes are bounded by the number of
- * adjacency entries (one per relaxation), so the heap is sized to that once and never grows.
+ * a small array per push; on a full pass over Murray that is several hundred thousand of them. The
+ * heap grows by doubling only when it fills, and keeps its size for the next call -- so it is as
+ * big as the busiest frontier this isolate has seen and no bigger (see workArrays()).
  */
 function distancesFrom(g, ai, targets, minDepth) {
-  const cost = new Float64Array(g.nn).fill(Infinity);
-  const real = new Float64Array(g.nn).fill(Infinity);
+  const W = workArrays(g);
+  const cost = W.cost.subarray(0, g.nn).fill(Infinity);
+  const real = W.real.subarray(0, g.nn).fill(Infinity);
   cost[ai] = 0; real[ai] = 0;
   const want = new Set(targets.filter((t) => t >= 0));
-  const cap = g.adj.length + 1;
-  const hk = new Float64Array(cap);
-  const hv = new Int32Array(cap);
+  let hk = W.hk;
+  let hv = W.hv;
   let n = 0;
   const push = (d, i) => {
+    if (n === hk.length) {
+      const k2 = new Float64Array(hk.length * 2); k2.set(hk); hk = W.hk = k2;
+      const v2 = new Int32Array(hv.length * 2); v2.set(hv); hv = W.hv = v2;
+    }
     let c = n++;
     hk[c] = d; hv[c] = i;
     while (c > 0) {
@@ -632,7 +652,7 @@ function distancesFrom(g, ai, targets, minDepth) {
       const v = g.adj[e];
       const w = metres(g.lon[u], g.lat[u], g.lon[v], g.lat[v]);
       const c = (minDepth && g.depth[v] < minDepth) ? w * PENALTY : w;   // same pricing as /route
-      if (d + c < cost[v] && n < cap) { cost[v] = d + c; real[v] = real[u] + w; push(d + c, v); }
+      if (d + c < cost[v]) { cost[v] = d + c; real[v] = real[u] + w; push(d + c, v); }
     }
   }
   return targets.map((t) => (t >= 0 && Number.isFinite(real[t]) ? Math.round(real[t]) : null));

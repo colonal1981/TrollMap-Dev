@@ -1070,12 +1070,23 @@ export async function selectByWater(legRuns, selOpts, w) {
   const stats = { selections: 0, askedFromRamp: 0, askedBetween: 0 };
   const select = () => { stats.selections += 1; return selectCandidates(legRuns, opts); };
 
+  // A WHOLE TIER AT A TIME. Pricing only the dozen offered took twelve passes on Murray from Hilton
+  // (13 selections at ~330 ms, 12 Worker calls): each pass let in a few more straight-line legs. So
+  // each pass also prices everything the selector WOULD offer if it could offer as many legs as one
+  // /distances call can price (two ends each). That only changes how fast this settles, never what
+  // it settles on -- the loop below still runs until everything offered is priced by water.
+  const wideOpts = { ...opts, limit: Math.max(Number(selOpts.limit) || 0,
+                                              Math.floor(DISTANCE_TARGETS_PER_CALL / 2)) };
   let cands = select();
   // BOUNDED BY THE RUNS, because every pass prices at least one new end and there are finitely many;
-  // in practice it settles in two or three.
+  // in practice it settles in one or two.
   for (let pass = 0; pass < legRuns.length + 1; pass++) {
-    const need = [...endsOf(cands).entries()].filter(([k]) => !fromRamp.has(k)).map(([, p]) => p);
+    let need = [...endsOf(cands).entries()].filter(([k]) => !fromRamp.has(k)).map(([, p]) => p);
     if (need.length) {
+      stats.selections += 1;
+      const tier = [...endsOf(selectCandidates(legRuns, wideOpts)).entries()]
+        .filter(([k]) => !fromRamp.has(k) && !need.some((p) => key(p) === k)).map(([, p]) => p);
+      need = [...need, ...tier].slice(0, Math.max(need.length, DISTANCE_TARGETS_PER_CALL));
       const got = await ask(w.source || w.ramp, need);
       stats.askedFromRamp += need.length;
       need.forEach((p, i) => {
