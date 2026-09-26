@@ -266,4 +266,24 @@ describe('/distances answers one point to many by water', () => {
                          { from: [-80.9010, 34.4], to: [[-80.8900, 34.4]] });
     expect(r.status).toBe(404);
   });
+
+  it('many sources in one call give the same rows as one call each -- no burst needed', async () => {
+    // The ordering table was first asked as 24 concurrent calls, and on Murray that burst took the
+    // isolate down. `sources` runs them in series inside one request.
+    const env = envWith({ graphBuf: tmwg({ allDeep: true }) });
+    const slug = nextSlug();
+    const sources = [[-80.9010, 34.40], [-80.8950, 34.40], [-80.8850, 34.40]];
+    const to = [[-80.8900, 34.40], [-80.8990, 34.40]];
+    const m = await call(env, slug, '/distances', 'POST', { sources, to });
+    expect(m.status).toBe(200);
+    expect(m.body.rows.length).toBe(3);
+    for (let i = 0; i < sources.length; i++) {
+      const one = await call(env, slug, '/distances', 'POST', { from: sources[i], to });
+      expect(JSON.stringify(m.body.rows[i].distances_m)).toBe(JSON.stringify(one.body.distances_m));
+      expect(m.body.rows[i].from_snapped_m).toBe(one.body.from_snapped_m);
+    }
+    const tooMany = await call(env, slug, '/distances', 'POST',
+      { sources: Array.from({ length: 33 }, () => [-80.9, 34.4]), to });
+    expect(tooMany.status).toBe(400);
+  });
 });

@@ -1093,7 +1093,17 @@ export async function selectByWater(legRuns, selOpts, w) {
     });
     if (!pts.length) break;
     const all = [...endsOf(cands).values()];
-    const rows = await Promise.all(pts.map((src) => ask(src, all)));
+    // ONE CALL FOR THE WHOLE TABLE where the asker offers it (the Worker runs the sources in
+    // series), otherwise one source at a time. NEVER a burst: the first version sent 24 at once and
+    // on Murray that burst took the Worker isolate down, every answer lost without CORS headers.
+    let rows = null;
+    if (typeof w.distancesFrom.matrix === 'function') {
+      try { rows = await w.distancesFrom.matrix(pts, all); } catch (_) { rows = null; }
+    }
+    if (!Array.isArray(rows)) {
+      rows = [];
+      for (const src of pts) rows.push(await ask(src, all));
+    }
     stats.askedBetween += pts.length * all.length;
     pts.forEach((src, i) => {
       all.forEach((dst, j) => {
@@ -1109,39 +1119,59 @@ export async function selectByWater(legRuns, selOpts, w) {
   return cands;
 }
 
-// The Worker's own cap on /distances (MAX_TARGETS in Worker/water.js), so a longer list is split.
+// The Worker's own caps on /distances (MAX_TARGETS and MAX_SOURCES in Worker/water.js), so a
+// longer list is split rather than refused.
 const DISTANCE_TARGETS_PER_CALL = 500;
+const DISTANCE_SOURCES_PER_CALL = 32;
 
 /**
- * The default water-distance asker: POST /water/{slug}/distances, one Dijkstra per call.
+ * The default water-distance asker: POST /water/{slug}/distances, one Dijkstra per source.
  * Returns metres per point -- node to node plus both snaps, so never shorter than the straight
  * line -- or null for a point the graph cannot reach; null for the whole call on a failure.
+ * `.matrix(sources, to)` asks for a whole table in one call; the Worker runs the sources in series.
  */
 export function waterDistances(workerUrl, slug, opts = {}) {
   const timeoutMs = opts.timeoutMs ?? 12000;
   const minDepthFt = opts.minDepthFt ?? 0;
-  return async (from, to) => {
+  const post = async (body) => {
+    const r = await fetch(`${workerUrl}/water/${encodeURIComponent(slug)}/distances`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(minDepthFt > 0 ? { ...body, min_depth_ft: minDepthFt } : body),
+      signal: AbortSignal.timeout?.(timeoutMs),
+    });
+    return r.ok ? r.json() : null;
+  };
+  // Node-to-node metres plus both snaps, so never shorter than the straight line.
+  const total = (row, snaps, j) => {
+    const ds = Array.isArray(row && row.distances_m) ? row.distances_m : [];
+    const m = Number(ds[j]);
+    return ds[j] != null && Number.isFinite(m)
+      ? m + (Number(row.from_snapped_m) || 0) + (Number(snaps[j]) || 0) : null;
+  };
+  const ask = async (from, to) => {
     const out = [];
     for (let i = 0; i < to.length; i += DISTANCE_TARGETS_PER_CALL) {
       const chunk = to.slice(i, i + DISTANCE_TARGETS_PER_CALL);
-      const r = await fetch(`${workerUrl}/water/${encodeURIComponent(slug)}/distances`, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(minDepthFt > 0 ? { from, to: chunk, min_depth_ft: minDepthFt }
-                                            : { from, to: chunk }),
-        signal: AbortSignal.timeout?.(timeoutMs),
-      });
-      if (!r.ok) return null;
-      const d = await r.json();
-      const ds = Array.isArray(d && d.distances_m) ? d.distances_m : [];
-      const snaps = Array.isArray(d && d.to_snapped_m) ? d.to_snapped_m : [];
-      chunk.forEach((_, j) => {
-        const m = Number(ds[j]);
-        out.push(ds[j] != null && Number.isFinite(m)
-          ? m + (Number(d.from_snapped_m) || 0) + (Number(snaps[j]) || 0) : null);
-      });
+      const d = await post({ from, to: chunk });
+      if (!d) return null;
+      const snaps = Array.isArray(d.to_snapped_m) ? d.to_snapped_m : [];
+      chunk.forEach((_, j) => out.push(total(d, snaps, j)));
     }
     return out;
   };
+  // MANY SOURCES, ONE CALL AT A TIME: the Worker runs a call's sources in series. Rows in order.
+  ask.matrix = async (sources, to) => {
+    if (to.length > DISTANCE_TARGETS_PER_CALL) return null;
+    const rows = [];
+    for (let i = 0; i < sources.length; i += DISTANCE_SOURCES_PER_CALL) {
+      const d = await post({ sources: sources.slice(i, i + DISTANCE_SOURCES_PER_CALL), to });
+      if (!d || !Array.isArray(d.rows)) return null;
+      const snaps = Array.isArray(d.to_snapped_m) ? d.to_snapped_m : [];
+      for (const row of d.rows) rows.push(to.map((_, j) => total(row, snaps, j)));
+    }
+    return rows;
+  };
+  return ask;
 }
 
 /**

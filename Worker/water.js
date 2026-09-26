@@ -576,47 +576,63 @@ async function handleRoute(env, slug, request) {
 // costs grows with nodes x targets. On Lake Murray (118,090 nodes) 500 targets is about 59 million
 // distance evaluations, well inside a Worker's budget; the selector sends 24 or so per call.
 const MAX_TARGETS = 500;
+// AND AT MOST THIS MANY SOURCES IN ONE CALL, run one after another. The ordering table between the
+// offered legs is 24 sources at most (two ends of the 12 CANDIDATE_LIMIT legs); the first version
+// sent those as 24 concurrent requests, and on Murray (118,090 nodes) that burst killed the isolate
+// -- every one came back without CORS headers. One request, sources in series, bounded memory.
+const MAX_SOURCES = 32;
 
+/**
+ * One-to-many Dijkstra with the heap in TYPED ARRAYS. The array-of-pairs heap /route uses allocates
+ * a small array per push; on a full pass over Murray that is several hundred thousand of them, and
+ * that garbage is what a burst of these ran out of memory on. Pushes are bounded by the number of
+ * adjacency entries (one per relaxation), so the heap is sized to that once and never grows.
+ */
 function distancesFrom(g, ai, targets, minDepth) {
   const cost = new Float64Array(g.nn).fill(Infinity);
   const real = new Float64Array(g.nn).fill(Infinity);
   cost[ai] = 0; real[ai] = 0;
   const want = new Set(targets.filter((t) => t >= 0));
-  const heap = [[0, ai]];
+  const cap = g.adj.length + 1;
+  const hk = new Float64Array(cap);
+  const hv = new Int32Array(cap);
+  let n = 0;
   const push = (d, i) => {
-    heap.push([d, i]);
-    let c = heap.length - 1;
+    let c = n++;
+    hk[c] = d; hv[c] = i;
     while (c > 0) {
       const p = (c - 1) >> 1;
-      if (heap[p][0] <= heap[c][0]) break;
-      [heap[p], heap[c]] = [heap[c], heap[p]]; c = p;
+      if (hk[p] <= hk[c]) break;
+      const tk = hk[p]; hk[p] = hk[c]; hk[c] = tk;
+      const tv = hv[p]; hv[p] = hv[c]; hv[c] = tv;
+      c = p;
     }
   };
-  const pop = () => {
-    const top = heap[0], last = heap.pop();
-    if (heap.length) {
-      heap[0] = last;
+  push(0, ai);
+  while (n && want.size) {
+    const d = hk[0], u = hv[0];
+    n -= 1;
+    if (n) {
+      hk[0] = hk[n]; hv[0] = hv[n];
       let c = 0;
       for (;;) {
         const l = c * 2 + 1, r = l + 1;
         let s = c;
-        if (l < heap.length && heap[l][0] < heap[s][0]) s = l;
-        if (r < heap.length && heap[r][0] < heap[s][0]) s = r;
+        if (l < n && hk[l] < hk[s]) s = l;
+        if (r < n && hk[r] < hk[s]) s = r;
         if (s === c) break;
-        [heap[s], heap[c]] = [heap[c], heap[s]]; c = s;
+        const tk = hk[s]; hk[s] = hk[c]; hk[c] = tk;
+        const tv = hv[s]; hv[s] = hv[c]; hv[c] = tv;
+        c = s;
       }
     }
-    return top;
-  };
-  while (heap.length && want.size) {
-    const [d, u] = pop();
     if (d > cost[u]) continue;
     want.delete(u);
     for (let e = g.head[u]; e < g.head[u + 1]; e++) {
       const v = g.adj[e];
       const w = metres(g.lon[u], g.lat[u], g.lon[v], g.lat[v]);
       const c = (minDepth && g.depth[v] < minDepth) ? w * PENALTY : w;   // same pricing as /route
-      if (d + c < cost[v]) { cost[v] = d + c; real[v] = real[u] + w; push(d + c, v); }
+      if (d + c < cost[v] && n < cap) { cost[v] = d + c; real[v] = real[u] + w; push(d + c, v); }
     }
   }
   return targets.map((t) => (t >= 0 && Number.isFinite(real[t]) ? Math.round(real[t]) : null));
@@ -629,22 +645,26 @@ async function handleDistances(env, slug, request) {
   try { body = await request.json(); } catch { return json({ error: 'body must be JSON' }, 400); }
   const ok = (p) => Array.isArray(p) && p.length >= 2 && Number.isFinite(p[0]) && Number.isFinite(p[1]);
   const from = body && body.from;
+  const sources = body && body.sources;
   const to = body && body.to;
-  if (!ok(from) || !Array.isArray(to) || !to.every(ok)) {
-    return json({ error: 'from must be [lon, lat] and to a list of [lon, lat]' }, 400);
+  const many = Array.isArray(sources);
+  if ((many ? !(sources.length && sources.every(ok)) : !ok(from)) || !Array.isArray(to) || !to.every(ok)) {
+    return json({ error: 'from must be [lon, lat] (or sources a list of them) and to a list of [lon, lat]' }, 400);
   }
   if (to.length > MAX_TARGETS) return json({ error: `at most ${MAX_TARGETS} targets per call` }, 400);
-  const a = nearestNode(g, from[0], from[1]);
-  if (a.i < 0) return json({ error: 'graph is empty', slug }, 500);
+  if (many && sources.length > MAX_SOURCES) return json({ error: `at most ${MAX_SOURCES} sources per call` }, 400);
+  const minDepth = Number(body.min_depth_ft) || 0;
   const snaps = to.map((p) => nearestNode(g, p[0], p[1]));
-  const d = distancesFrom(g, a.i, snaps.map((s) => s.i), Number(body.min_depth_ft) || 0);
-  return json({
-    slug,
-    from_snapped_m: Math.round(a.d),
-    to_snapped_m: snaps.map((s) => Math.round(s.d)),
+  const targets = snaps.map((s) => s.i);
+  const row = (p) => {
+    const a = nearestNode(g, p[0], p[1]);
     // Node to node, along the path the router would take; null where the graph cannot connect.
-    distances_m: d,
-  });
+    return { from_snapped_m: Math.round(a.d), distances_m: a.i < 0 ? targets.map(() => null)
+                                                                   : distancesFrom(g, a.i, targets, minDepth) };
+  };
+  const toSnapped = snaps.map((s) => Math.round(s.d));
+  if (many) return json({ slug, to_snapped_m: toSnapped, rows: sources.map(row) });
+  return json({ slug, to_snapped_m: toSnapped, ...row(from) });
 }
 
 /** Returns a Response, or null if the path is not ours. */

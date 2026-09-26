@@ -56,6 +56,27 @@ test('the ordering table between offered legs is priced by water too', async () 
   assert.ok(wet.byWater.pricedBetween > 0);
 });
 
+test('the table is one matrix call where the asker offers one, and never a burst where it does not', async () => {
+  const calls = [];
+  const asker = water(calls);
+  let matrixCalls = 0;
+  asker.matrix = async (sources, pts) => { matrixCalls += 1; return Promise.all(sources.map((s) => water()(s, pts))); };
+  const wet = await selectByWater(RUNS, { ...OPTS, limit: 2 }, { ramp: RAMP, distancesFrom: asker });
+  assert.equal(matrixCalls, 1, 'the whole table in one call');
+  assert.ok(wet.byWater.pricedBetween > 0);
+
+  // Without .matrix, one source at a time: never more than one call in flight.
+  let inFlight = 0, most = 0;
+  const serial = async (from, pts) => {
+    inFlight += 1; most = Math.max(most, inFlight);
+    await new Promise((r) => setTimeout(r, 1));
+    inFlight -= 1;
+    return water()(from, pts);
+  };
+  await selectByWater(RUNS, { ...OPTS, limit: 2 }, { ramp: RAMP, distancesFrom: serial });
+  assert.equal(most, 1, 'no burst');
+});
+
 test('no Worker, or a failed call, is the straight line exactly as before', async () => {
   const failing = async () => null;
   const wet = await selectByWater(RUNS, { ...OPTS, limit: 1 }, { ramp: RAMP, distancesFrom: failing });
