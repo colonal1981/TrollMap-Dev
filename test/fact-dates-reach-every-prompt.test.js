@@ -18,7 +18,6 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { handleResearchAnalyzeFacts, handleResearchMapFacts } from '../Worker/research/extract.js';
 import { RESEARCH_AGENTS } from '../Worker/research/agents.js';
-import { COASTAL_AGENTS } from '../Worker/research/coastal-agents.js';
 import { parseBehaviour, behaviourBlock } from '../Worker/research/behaviour.js';
 import { patternFactsFrom } from '../js/modules/plan-prompt.js';
 import { writtenOf } from '../js/utils/fact-date.js';
@@ -102,27 +101,8 @@ const AHQ_FACT = {
 const NO_YEAR = { ...AHQ_FACT, fact: 'Lake Wateree crappie flat on the bottom in 25 feet of water',
   quote: 'flat on the bottom', textDate: '--10-02' };
 
-test('the regulations agent: each fact with its date, and the undated one as it always was', async () => {
-  const { f2007, creel2026 } = await saludaFacts();
-  const p = RESEARCH_AGENTS.regulations.userTemplate('Saluda River (Lower)', 'SC', { _extractedFacts: [f2007, creel2026] });
-  // BEFORE: "• [creelLimit_lakeSpecific] The daily creel limit for striped bass on the Lower Saluda River is 3 fish (source: South Carolina Freshwater Fish Size & Possession Limits)"
-  assert.ok(p.includes('• [creelLimit_lakeSpecific] The daily creel limit for striped bass on the Lower Saluda River is 3 fish (written 2026-08-05) (source: South Carolina Freshwater Fish Size & Possession Limits)'), p);
-  assert.ok(p.includes('• [creelLimit_lakeSpecific] The daily creel limit for striped bass on the Lower Saluda River is 5 fish (source: “Sub-Tropical” Trout)'));
-  // The 2007 side has no full date, so nothing is said to be newer than it: an undated fact is not
-  // an old one. Both are printed.
-  assert.ok(!/newer|older/.test(p));
-});
-
-test('the identity and navigation agents print the date', () => {
-  const pool = { fact: 'Lake Wateree is at 97.5% of full pool', quote: 'Lake Wateree is at 97.5% of full pool',
-    category: 'poolLevel', source: AHQ_FACT.source, confidence: 90, textDate: '2026-02-25' };
-  const idP = RESEARCH_AGENTS.identity.userTemplate('Lake Wateree', 'SC', { _extractedFacts: [
-    { ...pool, fact: 'Normal full pool elevation of Lake Wateree is 225.5 feet', category: 'normalPoolFt' }] });
-  assert.match(idP, /Normal full pool elevation of Lake Wateree is 225\.5 feet \(written 2026-02-25\) \(source:/);
-  const navP = RESEARCH_AGENTS.navigation.userTemplate('Lake Wateree', 'SC', { navigation: { ramps: [] },
-    _extractedFacts: [{ ...NO_YEAR, fact: 'One hump in Colonel Creek is only 12-15 feet deep, a hazard at low water', category: 'navigationHazard' }] });
-  assert.match(navP, /a hazard at low water \(written 10-02, year not stated\) \(source:/);
-});
+// The regulations, identity and navigation agents printed the date here, and further down the two
+// coastal fact agents did. All five were deleted on 2026-09-25 with the six agents nothing ran.
 
 test("the fisheries agent: each parsed observation carries its quote's date", () => {
   const block = behaviourBlock(parseBehaviour([AHQ_FACT, { ...AHQ_FACT, textDate: null, source: 'x' }]));
@@ -137,19 +117,6 @@ test("the fisheries agent's profile dump says `written`, in the same words", () 
   assert.match(p, /"written": "written 2026-02-25"/);
   assert.match(p, /"written": "written 10-02, year not stated"/);
   assert.match(p, /"textDateFrom": "date line above the quote: \\"February 25\\""/, 'the evidence for the date stays');
-});
-
-test('both coastal fact agents print the date', () => {
-  const f = { fact: 'Mean tidal range at Winyah Bay is 4.6 feet', quote: 'mean range of 4.6 feet', category: 'tidal',
-    source: 'NOAA', confidence: 80, textDate: '2019-06-03' };
-  const printing = [];
-  for (const key of Object.keys(COASTAL_AGENTS)) {
-    const p = COASTAL_AGENTS[key].userTemplate('Winyah Bay', 'SC', { _extractedFacts: [{ ...f, category: 'estuary tidal salinity' }] });
-    if (!p.includes('Mean tidal range at Winyah Bay')) continue;   // an agent that prints no facts
-    printing.push(key);
-    assert.ok(p.includes('Mean tidal range at Winyah Bay is 4.6 feet (written 2019-06-03) (source: NOAA'), key);
-  }
-  assert.equal(printing.length, 2, `the two coastal agents that print facts: ${printing}`);
 });
 
 // The validation pass printed the date too. /research/validation-pass went with the Research tab,
@@ -168,19 +135,19 @@ test("the planner's factLine is writtenOf's words, unchanged", () => {
 
 // ── ITEM 2: TWO DATED FACTS THAT DISAGREE -- WHICH IS NEWER, AND BOTH SHOWN ──────────────────
 
-test('the regulations prompt says which of two dated, disagreeing facts is newer, and prints both', async () => {
+// Asserted on the regulations agent's prompt until that agent was deleted on 2026-09-25. The words
+// are writtenOf()'s, and every prompt that prints facts calls it, so it is asserted there now.
+test('writtenOf says which of two dated, disagreeing facts is newer, and dates both', async () => {
   const { f2007, f2018, size2026, creel2026 } = await saludaFacts();
   const facts = [f2007, f2018, size2026, creel2026];
-  const p = RESEARCH_AGENTS.regulations.userTemplate('Saluda River (Lower)', 'SC', { _extractedFacts: facts });
-  assert.ok(p.includes('• [sizeLimit_lakeSpecific] The minimum size limit for striped bass in the Santee River system is 26 inches (written 2018-05-07; older than the fact written 2026-08-05 that disagrees with it) (source: New size limits'), p);
-  assert.ok(p.includes('may be greater than 26 inches (written 2026-08-05; newer than the fact written 2018-05-07 that disagrees with it) (source: South Carolina'));
+  assert.equal(writtenOf(f2018, facts),
+    ' (written 2018-05-07; older than the fact written 2026-08-05 that disagrees with it)');
+  assert.equal(writtenOf(size2026, facts),
+    ' (written 2026-08-05; newer than the fact written 2018-05-07 that disagrees with it)');
   // Whether two facts disagree is the dedupe's test, unchanged (js/utils/fact-date.js): it compares
-  // the FIRST number of each -- here 26 and the 1 of "Oct. 1". The same rule written "23 to 25
-  // inches" first would compare 26 with 23, under its 15% floor, and no pair would be named.
-  // Four facts in, four lines out: the older rule is kept, so the planner can see it changed.
-  assert.equal((p.match(/^• \[/gm) || []).length, 4);
+  // the FIRST number of each -- here 26 and the 1 of "Oct. 1".
   // The creel pair disagrees too (5 vs 3), but 2007 has no full date: no claim either way.
-  assert.ok(p.includes('Lower Saluda River is 3 fish (written 2026-08-05) (source:'));
+  assert.equal(writtenOf(creel2026, facts), ' (written 2026-08-05)');
 });
 
 test('the same day, or a date with no day, says nothing about which is newer', () => {

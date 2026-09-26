@@ -5,21 +5,14 @@ import { dukePoolManagement, isTidalWater } from '../conditions.js';
 import { lakeIndex, resolveRegistryRow, agencyLakeFacts, speciesTraits,
          mripInshore, speciesHabitatWeights, encSeabed, coastalCurrentStations,
          ehydroSurveys } from '../registry.js';
-// MOVED 2026-08-31. identityGrounding() assembles the registry identity and the live pool
-// numbers, and this file handed the result to an LLM as context. That is backwards: it is a
-// deterministic fact, so it now lives in deterministic.js, is written straight into the
-// profile there, and is imported here only for as long as the identity agent still runs.
-import { identityGrounding } from './deterministic.js';
-import { fetchStateRegulations, getLakeRegulations,
-         fetchSaltwaterRegulations, fetchLiveRegsAmendments } from './clients.js';
+// identityGrounding() (deterministic.js) was imported here for the identity agent, and the
+// regulations fetchers from clients.js for the two regulations agents. All three agents went on
+// 2026-09-25; the functions they read stay where they live.
 import { extractJsonPossibly } from './keys.js';
 import { parseBehaviour, behaviourBlock } from './behaviour.js';
 import { waterTypeHint } from './water-type-hints.js';
 import { canonicalizeResearchSpecies } from './facts-util.js';
-import {
-  COASTAL_AGENTS, COASTAL_SKIPPED_AGENTS,
-  isCoastalZone, coastalAgentPlan,
-} from './coastal-agents.js';
+import { isCoastalZone } from './coastal-agents.js';
 import { coerceNum } from '../../js/utils/coerce.js';
 import { writtenOf } from '../../js/utils/fact-date.js';
 
@@ -296,147 +289,8 @@ function coerceHolding(v, rejected) {
 }
 
 var RESEARCH_AGENTS = {
-  identity: {
-    label: "Lake Identity",
-    order: 1,
-    system: "You are a data assembly agent for lake identity and pool management data. Map extracted facts to the JSON fields. CRITICAL RULES: (1) surfaceAreaAcres must be in ACRES — if source gives km², multiply by 247.1; (2) maxDepthFt is actual water depth — NEVER use pool elevation as depth; (3) For Duke Energy CRA pool tables the columns are: Month | Guide Curve ft | Minimum ft | Maximum ft in local datum; (4) riverSystem must be a river/watershed name like 'Saluda River' or 'Catawba-Wateree' — NEVER a HUC code or monitoring site description; (5) archetype must be a lake type like 'large hydroelectric reservoir' — NEVER a water quality site type like 'other-surface water site'; (6) Never invent values. Return ONLY valid JSON. (8) county: use an array for multi-county or multi-state lakes (e.g. ['York, SC', 'Gaston, NC', 'Mecklenburg, NC']). For single county use a string. Never leave null if county information is present in the facts. (7) normalPoolFt is the STATIC full pool surface elevation in feet NGVD/NAVD (e.g. 265.3, 385.5, 569.4, 75.5) — NEVER a daily fluctuation range, drawdown amount, or year range. If you see phrases like 'fluctuate up to X feet', 'averaging X feet per day', 'up to X feet daily', or 'X feet year-round fluctuation', those are fluctuation amounts NOT pool elevations — set normalPoolFt to null. If the only pool number is a fluctuation or a year range, set normalPoolFt to null. Valid pool elevations are typically 3-digit numbers (e.g. 265, 385, 569) for NGVD/NAVD, or 2-digit numbers representing local datum (e.g. 97 for Duke Energy lakes). Single-digit or ambiguous numbers should be set to null unless clearly labeled as pool elevation.",
-    userTemplate: (lakeName, state, prev) => {
-      const facts = prev?._extractedFacts || [];
-
-      // ── Bathymetry-derived depth values from TrollMap contour/depth-area polygons ──
-      // These are the highest-trust depth measurements — direct hypsometric calculations
-      // from our own chart data. They take precedence over LLM training data and
-      // document-extracted facts. Inject them into the prompt so the LLM uses them
-      // verbatim instead of hallucinating different numbers.
-      const prevIdentity = prev?.identity || {};
-      const bathySurfaceArea = prevIdentity.surfaceAreaAcres != null ? prevIdentity.surfaceAreaAcres : null;
-      const bathyMaxDepth = prevIdentity.maxDepthFt != null ? prevIdentity.maxDepthFt : null;
-      const bathyAvgDepth = prevIdentity.averageDepthFt != null ? prevIdentity.averageDepthFt : null;
-      const hasBathymetry = prevIdentity._geometryDerived === true;
-      const bathyMeta = prevIdentity._bathymetryMeta || null;
-
-      const surfaceFact = facts.find(f => f.category === 'surfaceArea' && /acre/i.test(f.fact))
-        || facts.find(f => f.category === 'surfaceArea');
-      const surfaceArea = bathySurfaceArea !== null ? bathySurfaceArea : (surfaceFact ? (() => {
-        const m = surfaceFact.fact.match(/([\d,]+(?:\.\d+)?)\s*acres?/i);
-        if (m) return parseFloat(m[1].replace(',',''));
-        const km = surfaceFact.fact.match(/([\d,]+(?:\.\d+)?)\s*km/i);
-        if (km) return Math.round(parseFloat(km[1].replace(',','')) * 247.1);
-        return null;
-      })() : null);
-
-      const maxFact = facts.find(f => f.category === 'maxDepthFt' && !/225|pool|elevation/i.test(f.fact));
-      const maxDepth = bathyMaxDepth !== null ? bathyMaxDepth : (maxFact ? (() => {
-        const m = maxFact.fact.match(/([\d.]+)\s*f(?:ee)?t/i);
-        if (m) return parseFloat(m[1]);
-        const met = maxFact.fact.match(/([\d.]+)\s*met/i);
-        if (met) return Math.round(parseFloat(met[1]) * 3.281);
-        return null;
-      })() : null);
-
-      const avgFact = facts.find(f => f.category === 'averageDepthFt');
-      const avgDepth = bathyAvgDepth !== null ? bathyAvgDepth : (avgFact ? (() => {
-        const m = avgFact.fact.match(/([\d.]+)\s*f(?:ee)?t/i);
-        if (m) return parseFloat(m[1]);
-        const met = avgFact.fact.match(/([\d.]+)\s*met/i);
-        if (met) return Math.round(parseFloat(met[1]) * 3.281 * 10) / 10;
-        return null;
-      })() : null);
-
-      const identityShown = facts.filter(f => {
-        if (!/identity|surface|depth|dam|year|owner|river|archetype|impound|county|pool|drawdown|elevation|normal/i.test(f.category)) return false;
-        // Exclude poolLevel facts that are just fluctuation ranges — not pool elevations
-        if (f.category === 'poolLevel' && !/elevation|ngvd|navd|feet above|ft msl|\d{3}\s*f/i.test(f.fact)) return false;
-        return true;
-      });
-      const identityFacts = identityShown.map(f => `• [${f.category}] ${f.fact}${writtenOf(f, identityShown)} (source: ${f.source}, confidence ${f.confidence}%)\n  Quote: "${f.quote}"`).join('\n\n');
-
-      const ownerText = (facts.find(f => f.category === 'reservoirOwner')?.fact || '').toLowerCase();
-      const isDuke = /duke/i.test(ownerText);
-
-      // THE POOL TABLE IS DATA NOW, NOT A DOCUMENT TO READ. When the baseline carries it, it came
-      // out of /lakes/operating-range as JSON and there is nothing to extract; the old instruction
-      // stays only for a Duke lake with no location id.
-      //
-      // The retired instruction also said "normalPoolFt to the Maximum column value", which is 100
-      // on a Duke lake — the top of the local index, not an elevation. That is why the authoritative
-      // block below states both scales.
-      const baselinePool = prev?._knownBaseline?.poolManagement || null;
-      const dukePoolSection = baselinePool ? `
-
-DUKE POOL MANAGEMENT (AUTHORITATIVE — from Duke's own operating-range API, do NOT re-derive from documents):
-${JSON.stringify({
-  normalPoolFt: prev._knownBaseline.normalPoolFt,
-  normalPoolDatum: prev._knownBaseline.normalPoolDatum,
-  drawdownType: prev._knownBaseline.drawdownType,
-  seasonalDrawdownFt: prev._knownBaseline.seasonalDrawdownFt,
-  poolManagement: baselinePool,
-}, null, 1)}
-Use these values EXACTLY. normalPoolFt is feet AMSL and is NOT the "Maximum" column — that column is 100, the top of Duke's local index. If a document disagrees, the API wins.` : (isDuke ? `
-
-DUKE ENERGY CRA POOL LEVEL TABLE — IF PRESENT IN DOCUMENTS:
-The CRA agreement PDF has a table: Month(s) | Guide Curve (target ft) | Minimum ft | Maximum ft (local datum, typically 93-100 range).
-Extract into poolManagement: guideCurveFt by month, minimumFt, maximumFt, drawdownSchedule [{months, targetFt}].
-normalPoolFt must be feet NGVD/NAVD, NOT the Maximum column — on a Duke lake that column is 100, the top of the local index.` : '');
-
-      // Bathymetry authority section — when geometry-derived depth values exist,
-      // inject them as authoritative so the LLM doesn't replace them with
-      // document-extracted or training-data numbers.
-      const bathySection = hasBathymetry ? `
-
-BATHYMETRY-DERIVED DEPTH DATA (AUTHORITATIVE — use these exact values, do NOT override with document facts):
-These values were computed directly from TrollMap bathymetric contour lines and depth-area polygons using hypsometric integration.
-They are the highest-trust source for depth and area — higher than any document, guide, or LLM training data.
-${bathySurfaceArea !== null ? `- surfaceAreaAcres: ${bathySurfaceArea} acres` : ''}
-${bathyMaxDepth !== null ? `- maxDepthFt: ${bathyMaxDepth} ft` : ''}
-${bathyAvgDepth !== null ? `- averageDepthFt: ${bathyAvgDepth} ft (area-weighted mean depth)` : ''}
-${bathyMeta ? `- Polygon coverage: ${(bathyMeta.bathymetryCoverage * 100).toFixed(0)}% of lake area, ${bathyMeta.bathymetryBandCount || '?'} depth bands` : ''}
-CRITICAL: Use these bathymetry values EXACTLY as given above. Do NOT replace them with values from documents, websites, or training knowledge. If a document says a different depth, ignore the document — bathymetry is authoritative.` : '';
-
-      const docSection = prev?._documentContext
-        ? `\n\nDOCUMENT TEXT:\n${prev._documentContext.slice(0, 60000)}`
-        : '';
-
-      return `Map identity facts for ${lakeName} (${state}).
-
-EXTRACTED FACTS:
-${identityFacts || 'No identity facts — use document context.'}
-${bathySection}
-
-RULES:
-- surfaceAreaAcres: ${surfaceArea !== null ? surfaceArea : 'extract from facts (acres preferred; km² × 247.1)'}
-- maxDepthFt: ${maxDepth !== null ? maxDepth : 'from EPA/USGS only — reject pool elevation values'}
-- averageDepthFt: ${avgDepth !== null ? avgDepth : 'convert meters × 3.281 if needed'}
-${dukePoolSection}
-${docSection}
-
-Return ONLY valid JSON:
-{
-  "identity": {
-    "lakeName": "${lakeName}",
-    "aliases": [],
-    "state": "${state || ''}",
-    "county": null,
-    "riverSystem": null,
-    "reservoirOwner": null,
-    "surfaceAreaAcres": ${surfaceArea !== null ? surfaceArea : null},
-    "maxDepthFt": ${maxDepth !== null ? maxDepth : null},
-    "averageDepthFt": ${avgDepth !== null ? avgDepth : null},
-    "elevationFt": null,
-    "normalPoolFt": null,
-    "type": "reservoir",
-    "archetype": null,
-    "damName": null,
-    "yearImpounded": null,
-    "drawdownType": null,
-    "poolManagement": null
-  },
-  "sources": []
-}
-JSON only.`;
-    },
-    expectedKey: "identity"
-  },
+  // `identity`, `navigation` and `regulations` stood here: retired from the run 2026-08-31 and
+  // 2026-09-01, and their definitions deleted 2026-09-25 -- nothing ran them.
   // ── `limnology` RETIRED 2026-09-01 ────────────────────────────────────────────────────────
   //
   // All ten of its target fields are now measured, derived from a measurement, or gone.
@@ -474,138 +328,7 @@ JSON only.`;
   // Vegetation is parked empty on purpose. Ryan: "for the lakes and rivers just park those
   // empty... i don't think a web fetch is going to get accurate data... that is one of those
   // things i will just have to learn on the water."
-  navigation: {
-    label: "Navigation",
-    order: 5,
-    system: "You are a boating safety data assembly agent. Map ramp data and hazard facts to the navigation JSON. Return ONLY valid JSON.",
-    // THE RAMPS ARE NOT THE MODEL'S TO REPEAT.
-    //
-    // This template used to interpolate the full ramp array TWICE -- once as context and again
-    // inside the JSON skeleton it asked the model to echo back. That was survivable while
-    // deterministic ramps were coming back empty. Once the registry's geometry join started
-    // supplying them, Thurmond arrived with 116, and 116 ramps do not fit in max_tokens 3000.
-    // From Ryan's run, 2026-08-16:
-    //
-    //   ⚠️ Navigation LLM 502: HTTP 502 — Agent returned non-JSON | raw: { "navigation": {
-    //   "ramps": [ {"name": "Amity RA", ...}, {"name": "Baker Creek State Park", "lat": 33.88
-    //
-    // Cut off mid-object, so extractJsonPossibly found no closing brace and the agent 502'd --
-    // twice, because the retry sent the identical prompt.
-    //
-    // Deterministic data has no business round-tripping through a language model. The ramps
-    // are already on profile.navigation.ramps, the merge in lake-research-engine.js only
-    // overwrites keys the agent actually returns, so leaving them out preserves them exactly.
-    // What the model is for here is hazards, shoals, timber and idle zones.
-    userTemplate: (lakeName, state, prev) => {
-      const existingNav = prev?.navigation || {};
-      const rampList = Array.isArray(existingNav.ramps) ? existingNav.ramps : [];
-      const rampSample = rampList.slice(0, 8).map(r => r?.name).filter(Boolean).join(', ');
-      const facts = prev?._extractedFacts || [];
-      const navShown = facts.filter(f =>
-        /ramp|hazard|shoal|navigation|timber|dam|bridge|tailwater|surge|idle|access/i.test(f.category + ' ' + f.fact)
-      );
-      const navFacts = navShown.map(f => `• ${f.fact}${writtenOf(f, navShown)} (source: ${f.source})`).join('\n');
 
-      return `Navigation data for ${lakeName}.
-
-RAMPS ARE ALREADY RECORDED — DO NOT RETURN THEM.
-${rampList.length} boat ramp(s) are already stored for this lake from official GIS and the
-TrollMap registry${rampSample ? ` (for example: ${rampSample})` : ''}. They are context only.
-Repeating them will truncate your reply and it will be discarded. Omit the "ramps" key.
-
-EXTRACTED HAZARD FACTS:
-${navFacts || 'No navigation facts extracted — derive from lake type and operator.'}
-
-Return ONLY:
-{
-  "navigation": {
-    "hazards": [],
-    "shoals": [],
-    "standingTimberAreas": [],
-    "idleZones": [],
-    "dangerousAreas": [],
-    "notes": null
-  },
-  "sources": []
-}
-JSON only.`;
-    },
-    expectedKey: "navigation"
-  },
-
-  regulations: {
-    label: "Regulations",
-    order: 6,
-    system: "You are a fishing regulations specialist. Extract fishing regulations from the provided approved regulation-source content. For each species: check if the lake appears in an exception list. If listed, use the exception rule. If not listed, the statewide rule applies. Return ONLY valid JSON. Never invent limits — if unknown, set null.",
-    userTemplate: (lakeName, state, prev) => {
-      const facts = (prev?._extractedFacts || [])
-        .filter(f => /regulation|creel|limit|season|closed|gear|size.*limit|possession|sizeLimit|creelLimit/i.test(f.category + ' ' + f.fact))
-        .slice(0, 30);
-      const factsBlock = facts.map(f => `• [${f.category}] ${f.fact}${writtenOf(f, facts)} (source: ${f.source})`).join('\n');
-      const regsContent = prev?._regsSource?.content
-        ? prev._regsSource.content.slice(0, 30000)
-        : 'Not available';
-      return `Extract fishing regulations for ${lakeName} (${state}).
-
-APPROVED REGULATION SOURCE:
-${regsContent}
-
-EXTRACTED REGULATION FACTS (use to fill species-specific fields):
-${factsBlock || 'None extracted'}
-
-INSTRUCTIONS:
-1. Read the approved regulation source above carefully
-2. For each species, find rows that apply to ${lakeName}
-3. If ${lakeName} is in an exception row, use that exception rule
-4. If not listed, statewide rule applies
-5. Extract rules for: Largemouth Bass, Striped Bass / Hybrid, White Bass, Crappie, Blue Catfish, Channel Catfish, Bream, Chain Pickerel
-
-CRITICAL STRUCTURE RULES — violations will corrupt the profile:
-- creelLimits MUST be a JSON object with species name keys. NEVER a string, NEVER an array.
-- sizeLimits MUST be a JSON object with species name keys. NEVER a string, NEVER an array.
-- specialRules is ONLY for gear restrictions (trotlines, traps, slot limits, unusual rules). NEVER put creel or size limits here.
-- Every species you find a creel limit for MUST appear as a key in creelLimits.
-- Every species you find a size limit for MUST appear as a key in sizeLimits.
-
-CORRECT example for Lake Murray:
-"creelLimits": {
-  "Striped Bass / Hybrid": "5",
-  "Largemouth Bass": "5 combined black bass",
-  "Crappie": "20",
-  "White Bass": "10",
-  "Bream": "30",
-  "Blue Catfish": "25",
-  "Chain Pickerel": "30"
-}
-"sizeLimits": {
-  "Largemouth Bass": "14 inches min",
-  "Striped Bass / Hybrid": "Oct. 1 - May 31: 21 inches min; June 1 - Sept. 30: any length",
-  "Crappie": "8 inches min"
-}
-
-WRONG — do NOT do this:
-"creelLimits": "The crappie regulation is 20 fish per day"  ← STRING, NOT ALLOWED
-"creelLimits": ["20 crappie per day"]  ← ARRAY, NOT ALLOWED
-
-Return ONLY valid JSON:
-{
-  "regulations": {
-    "state": "${state || 'SC'}",
-    "lakeSpecificRegulations": {
-      "hasExceptions": true,
-      "creelLimits": {},
-      "sizeLimits": {},
-      "closedSeasons": [],
-      "specialRules": []
-    },
-    "notes": "Verify at official agency site before fishing."
-  },
-  "sources": [{"label":"Approved state regulations digest","url":"r2:regulations","trust":"OFFICIAL"}]
-}
-JSON only. Never output a string or array for creelLimits or sizeLimits.`;
-    },
-    expectedKey: "regulations"
-  },
 
   fisheries: {
     label: "Species Intelligence",
@@ -1248,81 +971,10 @@ async function handleResearchAgent(request, env) {
   const waterType = String(waterRow?.feature_type || '').toLowerCase()
     || (isCoastalZone(body.zoneKey || body.lakeKey || '') ? 'coastal' : '');
 
-  // GROUND THE IDENTITY AGENT FROM THE REGISTRY, NOT FROM A FIFTEEN-LAKE TABLE.
-  //
-  // This read `LAKES[lakeKeyFromName(lakeName)]` — fifteen waters of 454. Every other lake got a
-  // baseline of `undefined` on the one agent whose entire job is to say what the water IS, while
-  // its own system prompt tells it "Never invent values". Ryan, 2026-08-17, choosing the fix:
-  // ground all 454 from the registry.
-  //
-  // The old baseline also spread the whole row, which handed the model `duke: "wateree"`,
-  // `river: "02148000"` and `ahq: "lake-wateree"` — foreign keys for three other services,
-  // presented as curated facts about the lake.
-  //
-  // A FAILED LOOKUP MUST NOT FAIL THE AGENT. R2 being unreachable is a reason to run ungrounded,
-  // which is exactly what 439 lakes did before this. Caught, not thrown.
+  // The identity, regulations and saltwater_regulations branches that grounded their agents from
+  // the registry, the R2 digest and the live amendment search stood here. The three agents were
+  // deleted on 2026-09-25 -- nothing ran them -- and fisheries takes its facts as they come.
   let groundedPrev = previousResults;
-  if (agentKey === 'identity') {
-    const baseline = await identityGrounding(lakeName, env).catch(() => null);
-    if (baseline) groundedPrev = { ...previousResults, _knownBaseline: baseline };
-  }
-
-  // Regulations use the approved R2 digest through the shared parser. This avoids
-  // baking live agency/eRegulations URLs into the agent path.
-  if (agentKey === 'regulations') {
-    try {
-      const stateRegulations = await fetchStateRegulations(state, env);
-      const applicableRegulations = getLakeRegulations(stateRegulations, lakeName);
-      groundedPrev = {
-        ...previousResults,
-        _regsSource: {
-          url: 'r2:regulations',
-          content: JSON.stringify(applicableRegulations),
-          note: 'APPROVED R2 REGULATIONS DIGEST — use this parsed statewide and lake-specific data. Never invent limits.'
-        }
-      };
-    } catch (e) {
-      console.warn('R2 regulations load failed: ' + e.message);
-    }
-  }
-
-  // The saltwater agent was built around two inputs it was never handed. `_regsSource`
-  // was populated only under `agentKey === 'regulations'` above, so `saltwater_regulations`
-  // always took its "No R2 digest available -- do not guess limits; return nulls" branch;
-  // and `_liveRegsSource` had no writer anywhere in the tree, so it always took "No live
-  // amendment source supplied" as well. Every coastal run hit both fallbacks, which is why
-  // saltwater limits came back null with `verificationRequired` set and looked like a
-  // cautious agent rather than an unwired one.
-  //
-  // It gets digest TEXT, not the freshwater parse: `fetchStateRegulations` runs a prompt
-  // whose species list is entirely freshwater, and its output has no red drum in it.
-  if (agentKey === 'saltwater_regulations') {
-    const [digest, live] = await Promise.all([
-      fetchSaltwaterRegulations(state, env).catch(e => {
-        console.warn('saltwater digest load failed: ' + e.message); return null;
-      }),
-      fetchLiveRegsAmendments(state, env).catch(e => {
-        console.warn('live amendment check failed: ' + e.message); return null;
-      })
-    ]);
-    groundedPrev = { ...(groundedPrev || previousResults) };
-    if (digest) {
-      groundedPrev._regsSource = {
-        url: digest.url,
-        published: digest.published,
-        content: digest.content,
-        note: 'APPROVED R2 SALTWATER DIGEST SECTION -- this is the annual baseline. Never invent limits.'
-      };
-    }
-    if (live) {
-      groundedPrev._liveRegsSource = {
-        url: (live.urls || []).join(' '),
-        checkedFrom: live.after,
-        content: live.content,
-        note: 'LIVE AMENDMENT SEARCH -- results published after the digest took effect. Where these conflict with the digest, these win.'
-      };
-    }
-  }
 
   // Inject document text for agents that benefit from reading source material directly
   // biology gets the fisheries docs
@@ -1407,18 +1059,6 @@ async function handleResearchAgent(request, env) {
         _documentContextNote: `Raw document text from ${relevantDocs.length} source(s) — use this for specific measurements, tables, and depth profiles. Prioritize this over training knowledge.${droppedNote}`
       };
     }
-  }
-
-  // For regulations agent — filter facts to only regulation-relevant ones to keep prompt size manageable
-  if (agentKey === 'regulations' && groundedPrev._extractedFacts?.length) {
-    const regsCats = new Set(['sizeLimit_lakeSpecific','creelLimit_lakeSpecific','sizeLimit_general',
-      'creelLimit_general','closedSeason','gearRestrictions','regulations_general','regulations']);
-    groundedPrev = {
-      ...groundedPrev,
-      _extractedFacts: groundedPrev._extractedFacts
-        .filter(f => regsCats.has(f.category) || /regulation|creel|limit|season|closed|gear|size.*limit|possession/i.test(f.category + ' ' + f.fact))
-        .slice(0, 40)  // cap at 40 facts max
-    };
   }
 
   // ── THE PARSER OWNS THE VALUES, THE AGENT OWNS THE PLACEMENT ──────────────────────────────
@@ -1983,45 +1623,6 @@ holding: coerceHolding(entry.holding, holdingRejects),
   // "null" and range strings where numbers belonged. Every one of those numbers is now read off a
   // depth profile or an operator's table as a JSON number, so there is nothing left to repair.
 
-  // Sanitize regulations output — fix malformed creelLimits/sizeLimits
-  // Agent sometimes returns these as strings or arrays instead of {species: limit} objects
-  if (agentKey === 'regulations' && sectionData) {
-    const cleanCreel = {};
-    const cleanSize = {};
-    const lsr = sectionData.lakeSpecificRegulations || {};
-
-    // If creelLimits/sizeLimits came back as a string or array, they're malformed — discard them
-    // so the deterministic parser's correct values aren't overwritten with garbage
-    const creelSource = (lsr.creelLimits && typeof lsr.creelLimits === 'object' && !Array.isArray(lsr.creelLimits))
-      ? lsr.creelLimits : {};
-    const sizeSource = (lsr.sizeLimits && typeof lsr.sizeLimits === 'object' && !Array.isArray(lsr.sizeLimits))
-      ? lsr.sizeLimits : {};
-
-    // Only keep properly keyed species entries (not creel_0, creel_1, size_0, etc.)
-    const numberedKeyPattern = /^(creel|size|limit)_\d+$/i;
-    for (const [k, v] of Object.entries(creelSource)) {
-      if (!numberedKeyPattern.test(k) && typeof v === 'string') cleanCreel[k] = v;
-    }
-    for (const [k, v] of Object.entries(sizeSource)) {
-      if (!numberedKeyPattern.test(k) && typeof v === 'string') cleanSize[k] = v;
-    }
-    // Also filter specialRules — remove nongame device garbage and misplaced creel/size rules
-    const cleanSpecialRules = (lsr.specialRules || []).filter(r =>
-      typeof r === 'string' && r.length < 200 && !/Allowable Nongame Devices|Marking of Nongame|Facebook RSS/i.test(r)
-      && !/\d+\s*(inch|in\b|fish|per day|creel|possession|limit)/i.test(r) // misplaced limits
-    );
-
-    sectionData = {
-      ...sectionData,
-      lakeSpecificRegulations: {
-        ...lsr,
-        creelLimits: cleanCreel,
-        sizeLimits: cleanSize,
-        specialRules: cleanSpecialRules
-      }
-    };
-  }
-
   // The habitat repair block that stood here split comma-separated strings back into arrays for
   // cover, riprapLocations, namedCreekMouths and artificialHabitat. No agent writes habitat any
   // more: the chartpack and the attractor feeds do, as typed values.
@@ -2127,16 +1728,8 @@ holding: coerceHolding(entry.holding, holdingRejects),
     raw: rawText.slice(0, 2000)
   }), {headers: JSON_HEADERS});
 }
-// Coastal agents share the RESEARCH_AGENTS registry so handleResearchAgent,
-// the section-confidence scorer and the review UI in lake-research-ui.js pick
-// them up with no special-casing. They are additive: freshwater lakes never
-// select them because coastalAgentPlan() is only consulted for coast_* keys.
-Object.assign(RESEARCH_AGENTS, COASTAL_AGENTS);
-
 export {
   RESEARCH_AGENTS, handleResearchAgent,
-  COASTAL_AGENTS, COASTAL_SKIPPED_AGENTS,
-  isCoastalZone, coastalAgentPlan,
   splitConjunctiveName, missingConfirmedSpecies,
   pickAgentSection, fisheriesSection, FISHERIES_ENVELOPE_KEYS,
 };

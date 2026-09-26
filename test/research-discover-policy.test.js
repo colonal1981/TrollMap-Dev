@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it, vi } from './expect-shim.mjs';
-import { STATE_REGULATIONS_CONFIG } from '../Worker/research/clients.js';
 import { handleResearchDiscover } from '../Worker/research/discover.js';
 
 const originalFetch = globalThis.fetch;
@@ -35,7 +34,7 @@ describe('research discovery source policy', () => {
     mockDiscoveryFetch();
     const request = new Request('https://worker/research/discover', {
       method: 'POST',
-      body: JSON.stringify({ lakeName: 'Lake Wateree, SC', state: 'SC', agent: 'identity' })
+      body: JSON.stringify({ lakeName: 'Lake Wateree, SC', state: 'SC', agent: 'biology' })
     });
 
     const response = await handleResearchDiscover(request, { TINYFISH_API_KEY: 'test-key' });
@@ -48,25 +47,26 @@ describe('research discovery source policy', () => {
     expect(urls.some(url => /duke-energy\.com/.test(url))).toBe(false);
   });
 
-  it('keeps the approved R2 regulation digest as the regulation source', async () => {
-    mockDiscoveryFetch();
-    const request = new Request('https://worker/research/discover', {
-      method: 'POST',
-      body: JSON.stringify({ lakeName: 'Lake Wateree, SC', state: 'SC', agent: 'regulations' })
+  // The R2 regulation digest was seeded here for the `regulations` agent. That agent and five others
+  // were deleted on 2026-09-25, and the route now refuses an agent it has no queries for -- as it
+  // refuses a request that names none -- instead of answering 200 having searched nothing.
+  for (const [label, agent] of [['names no agent', undefined], ['names a deleted agent', 'regulations'],
+                                ['names another deleted agent', 'identity']]) {
+    it(`answers 400 when the request ${label}, and says which agent it runs`, async () => {
+      globalThis.fetch = vi.fn(async (url) => { throw new Error(`nothing may be fetched: ${url}`); });
+      const request = new Request('https://worker/research/discover', {
+        method: 'POST',
+        body: JSON.stringify({ lakeName: 'Lake Wateree, SC', state: 'SC', ...(agent ? { agent } : {}) })
+      });
+      const response = await handleResearchDiscover(request, { TINYFISH_API_KEY: 'test-key' });
+      const data = await response.json();
+      expect(response.status).toBe(400);
+      expect(data.success).toBe(false);
+      expect(data.error).toMatch(/fisheries/);
+      expect(data.error).toMatch(agent ? new RegExp(`unknown agent "${agent}"`) : /missing agent/);
+      expect(globalThis.fetch).not.toHaveBeenCalled();
     });
-
-    const response = await handleResearchDiscover(request, { TINYFISH_API_KEY: 'test-key' });
-    const data = await response.json();
-
-    expect(data.success).toBe(true);
-    // Assert against the CONFIGURED digest, not a hardcoded year. This test was pinned
-    // to sc_digest_2025_2026.pdf and broke the moment SC published 2026-2027 — a test
-    // that has to be edited every August is a test that gets edited without thinking.
-    const expectedUrl = STATE_REGULATIONS_CONFIG.SC.pages[0].url;
-    const r2Digest = data.sources.find(source => source.url === expectedUrl);
-    expect(r2Digest, `expected the configured SC digest ${expectedUrl}`).toBeTruthy();
-    expect(r2Digest.priority).toBe(1);
-  });
+  }
 
   it('builds SC biology discovery queries without crashing', async () => {
     mockDiscoveryFetch();
