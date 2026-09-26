@@ -5,15 +5,15 @@
 // Every extracted fact carries `textDate` (Worker/research/text-date.js): "YYYY-MM-DD", "YYYY",
 // "--MM-DD" when the page wrote no year, or null. plan-prompt.js's factLine() was the one prompt
 // that printed it. The Worker's agents print facts too -- identity, navigation, regulations,
-// fisheries' parsed observations, the coastal agents, map-facts and the validation pass -- and a
+// fisheries' parsed observations, the coastal agents and map-facts -- and a
 // second way of writing a date is a second thing a model has to learn to read. So the words live
 // here and every one of those prompts calls this.
 //
-// TWO FACTS THAT DISAGREE. `/research/dedupe-contradictions` keeps both sides of a disagreement
-// now, and a prompt that prints facts prints both. Where both carry a full date, the line says
-// which is the newer -- and prints the older too: a regulation that changed is two facts, and the
-// planner has to see both to know it changed. "Disagree" is the dedupe's own test, moved here so
-// the prompt and the dedupe cannot come to mean different things by it.
+// TWO FACTS THAT DISAGREE. A prompt that prints facts prints both sides of a disagreement. Where
+// both carry a full date, the line says which is the newer -- and prints the older too: a
+// regulation that changed is two facts, and the planner has to see both to know it changed.
+// "Disagree" was the test `/research/dedupe-contradictions` applied; that route went with the
+// Research tab, its only caller, on 2026-09-25, and the test lives on here.
 
 const FULL = /^\d{4}-\d{2}-\d{2}$/;
 const isFullDate = (d) => typeof d === 'string' && FULL.test(d);
@@ -52,7 +52,7 @@ function datedPeers(shown, f) {
 /**
  * Do two facts make mutually exclusive numeric claims on the same attribute?
  *
- * Verbatim the test handleResearchDedupeContradictions() has always applied, taken out of its loop:
+ * Verbatim the test handleResearchDedupeContradictions() applied (deleted 2026-09-25), out of its loop:
  * the same category, a category that can conflict at all (identity and regulations -- biology and
  * forage facts are almost always complementary), and different first numbers about the same
  * measurable attribute, not about different species, not both seasonal, and not the same numbers
@@ -115,4 +115,4 @@ function writtenOf(f, shown = []) {
   return ` (${parts.join('; ')})`;
 }
 
-export { writtenOf, factsDisagree };
+export { writtenOf };

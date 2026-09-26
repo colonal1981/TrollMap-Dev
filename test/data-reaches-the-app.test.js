@@ -275,7 +275,7 @@ describe('every route in trollmap-worker.js has a caller', () => {
     // to handle it": no caller in js/, no other caller for fetchDukeDashboard() behind it, a
     // `?basin=` parameter the function ignored, and a second trigger that answered ANY path
     // carrying `?duke` with a raw dump instead of the route asked for.
-    '/lake-research': 'no caller. Superseded by /research/get, which three modules do call.',
+    '/lake-research': 'no caller. Superseded by /research/get, which the app does call.',
     '/lake-intel-sources': 'no caller. Goes with LAKE_INTEL_SOURCE_REGISTRY, already on the tab.',
     '/lakes/': 'no caller. A shortcut alias for /research/get.',
     '/lakes/list': 'no caller. Alias of /research/list, which research-ids.js does call.',
@@ -293,6 +293,24 @@ describe('every route in trollmap-worker.js has a caller', () => {
     '/research/shared/quarantine': 'no client caller. Needs a decision.',
     '/research/shared/status': 'no client caller. Needs a decision.',
     '/research/thermocline-search': 'no client caller. /research/limnology-data is the one that runs.',
+
+    // ── research routes the Research tab called, which only scripts call now ──────────────────
+    // The tab was deleted on 2026-09-25. Ryan: "nothing the tab writes should be used anymore".
+    // The batch is the one writer, and these are its doors.
+    '/research/agent-llm': 'Scripts/research_lakes.py and Scripts/species_group_retry.py.',
+    '/research/analyze-facts': 'Scripts/research_lakes.py.',
+    '/research/delete': 'Scripts/prune_shadowed_profiles.py and collapse_duplicate_profiles.ps1.',
+    '/research/deterministic-facts': 'Scripts/research_lakes.py.',
+    '/research/discover': 'Scripts/research_lakes.py and Scripts/water_sections.py.',
+    '/research/get-normalized': 'Scripts/research_lakes.py.',
+    '/research/limnology-data': 'Scripts/research_lakes.py.',
+    '/research/list': 'Scripts/research_lakes.py, mirror_research_profiles.py, research_todo.mjs '
+                    + 'and audit_research_fields.py.',
+    '/research/proxy-download': 'Scripts/research_lakes.py.',
+    '/research/proxy-download-batch': 'Scripts/research_lakes.py.',
+    '/research/save': 'Scripts/research_lakes.py, mirror_research_profiles.py and '
+                    + 'prune_shadowed_profiles.py.',
+    '/research/save-normalized': 'Scripts/research_lakes.py.',
   };
 
   const callersOf = (route) => {

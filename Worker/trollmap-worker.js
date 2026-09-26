@@ -19,7 +19,7 @@ import { handleReports } from './reports.js';
 import { handlePlaces } from './places.js';
 import { fetchStateRegulations, getLakeRegulations } from './research/clients.js';
 import { regulationsTable, lakeIndex, resolveRegistryRow } from './registry.js';
-import { handleResearchThermoclineSearch, handleResearchLimnologyData, refreshStaleLimnology, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, registrySpeciesFor, speciesFoodHabits, speciesMeasuredTraits, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchRegsDebug, handleResearchDelete, handleResearchDeleteNormalizedDoc, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleResearchValidationPass, handleSharedCheck, handleSharedStore, handleSharedQuery, handleSharedPublish, handleSharedStatus, handleSharedQuarantine } from './worker-research.js';
+import { handleResearchThermoclineSearch, handleResearchLimnologyData, refreshStaleLimnology, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, registrySpeciesFor, speciesFoodHabits, speciesMeasuredTraits, handleResearchAnalyzeFacts, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchRegsDebug, handleResearchDelete, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleSharedPublish, handleSharedStatus, handleSharedQuarantine } from './worker-research.js';
 
 
 /**
@@ -45,9 +45,7 @@ import { handleResearchThermoclineSearch, handleResearchLimnologyData, refreshSt
 const MUTATING_ROUTES = [
   "/research/save",
   "/research/delete",
-  "/research/delete-normalized-doc",
   "/research/save-normalized",
-  "/research/shared/store",
   "/research/shared/publish",
   "/research/shared/quarantine",
   // Writes env.TROLLMAP_DATA, a binding wrangler.toml does not declare -- so the write throws
@@ -1385,9 +1383,6 @@ var trollmap_worker_default = {
       if (path === "/research/analyze-facts" && request.method === "POST") {
         return handleResearchAnalyzeFacts(request, env);
       }
-      if (path === "/research/dedupe-contradictions" && request.method === "POST") {
-        return handleResearchDedupeContradictions(request, env);
-      }
       if (path === "/research/map-facts" && request.method === "POST") {
         return handleResearchMapFacts(request, env);
       }
@@ -1422,22 +1417,10 @@ var trollmap_worker_default = {
       if (path === "/research/delete" && request.method === "POST") {
         return handleResearchDelete(request, env);
       }
-      if (path === "/research/delete-normalized-doc" && request.method === "POST") {
-        return handleResearchDeleteNormalizedDoc(request, env);
-      }
       if (path === "/research/proxy-download-batch" && request.method === "POST") {
         return handleResearchProxyDownloadBatch(request, env);
       }
       // ── Phase 2: Shared R2 document registry ──────────────────────────────
-      if (path === "/research/shared/check" && request.method === "POST") {
-        return handleSharedCheck(request, env);
-      }
-      if (path === "/research/shared/store" && request.method === "POST") {
-        return handleSharedStore(request, env);
-      }
-      if (path === "/research/shared/query" && request.method === "POST") {
-        return handleSharedQuery(request, env);
-      }
       if (path === "/research/shared/publish" && request.method === "POST") {
         return handleSharedPublish(request, env);
       }
@@ -1446,13 +1429,6 @@ var trollmap_worker_default = {
       }
       if (path === "/research/shared/quarantine" && request.method === "POST") {
         return handleSharedQuarantine(request, env);
-      }
-      if (path === "/research/package" && request.method === "GET") {
-        const lake = url.searchParams.get("lake") || "";
-        if (!lake) return new Response(JSON.stringify({ok:false, error:"missing lake"}), {status:400, headers:JSON_HEADERS});
-        const file = url.searchParams.get("file");
-        if (file) return handleResearchPackageFile(env, lake, file);
-        return handleResearchPackage(env, lake);
       }
       if (path === "/lake-research" && request.method === "GET") {
         const lake = url.searchParams.get("lake") || "";
@@ -1467,7 +1443,6 @@ var trollmap_worker_default = {
           return handleResearchGet(env, decodeURIComponent(m[1]));
         }
       }
-      if (path === '/research/validation-pass' && request.method === 'POST') return handleResearchValidationPass(request, env);
 
 
       if (path === "/ramps") {
@@ -2393,8 +2368,6 @@ var trollmap_worker_default = {
           "/research/list or /lakes/list      \u2014 list all researched lake master profiles",
           "/research/get?lake=...             \u2014 get master profile + package file list + versions",
           "/research/save                     \u2014 save merged profile (master + hybrid package + version)",
-          "/research/package?lake=...         \u2014 list package files for lake",
-          "/research/package?lake=...&file=... \u2014 get single package file",
           "/lake-research?lake=...            \u2014 enhanced lake intel with researched profile if exists",
           "/lakes/<id>                        \u2014 shortcut get master profile",
           "/sync/item/:type/:id               \u2014 push/get/delete a sync item (auth required)",

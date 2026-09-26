@@ -899,47 +899,14 @@ async function getAttractorFacts(env, lakeName, state) {
   return { attractors, typeCounts, sourceLabel: sourceDef.label };
 }
 
-/**
- * A GRAB SAMPLE IS DATED OR IT IS NOT A FACT ABOUT TODAY.
- *
- * `limnology.surfaceWater` holds WQP grab samples of whatever age that source last recorded --
- * Lake Norman's surface temperature is 43.88F from 2025-12-16 -- and nothing refreshes them. The
- * live number comes from somewhere else entirely: `waterProbe` in conditions.js walks the water's
- * bound USGS sites, catalogue-first, until one publishes 00010, and that reading auto-fills
- * `planWaterTemp`. Both then reach the SAME Smart Plan prompt, so on 2026-08-21 Norman's prompt
- * carried a live 85.5F in the conditions block and "recent surface water about 43.88F" in the
- * research block, undated, eight months old and called recent.
- *
- * Nothing is withheld here and no staleness threshold is invented -- a winter surface reading is
- * a real part of a lake's thermal range. It is dated, so a reader can see for itself which water
- * it describes.
- *
- * THREE CASES, AND THE MIDDLE ONE IS WHY THIS IS A FUNCTION. Profiles written since limnology.js
- * started keeping per-characteristic dates carry the number's own date. Older profiles carry only
- * `surfaceWater.lastObserved`, the NEWEST of temperature, DO and turbidity -- that date belongs to
- * the group, not to this number, so it is said as the group's. When neither exists the sentence
- * says so rather than going quiet, because a silent date is what caused this.
- *
- * Mirrored in js/modules/lake-research-engine.js -- the client builds the same sentence and cannot
- * import from Worker/. Change both.
- */
-function sampleDated(ownDate, groupDate) {
-  if (ownDate) return ` when last sampled ${ownDate}`;
-  if (groupDate) return ` (grab sample; newest surface sample here ${groupDate})`;
-  return ' (grab sample, date not recorded)';
-}
-
 function buildFactualSummary(profile) {
   const parts = [];
   const id = profile.identity || {};
   const bio = profile.biology || {};
   const lim = profile.limnology || {};
   const hab = profile.habitat || {};
-  // WORD FOR WORD WITH buildDeterministicSummary IN js/modules/lake-research-engine.js, and
-  // test/summary-builders-agree.test.js holds them there. The browser cannot import a Worker
-  // module, so this rule exists twice for the same reason research-ids.js does; what it must
-  // never do is exist twice in two different wordings, because handleResearchSave now rebuilds
-  // the stored sentence and the app builds the one it shows before saving.
+  // handleResearchSave rebuilds the stored sentence with this. It had a word-for-word browser
+  // twin, buildDeterministicSummary in the Research tab, until the tab was deleted on 2026-09-25.
   if (id.archetype || id.surfaceAreaAcres || id.maxDepthFt) {
     let s = profile.lakeName || 'This lake';
     if (id.archetype) s += ` is a ${String(id.archetype).toLowerCase()}`;
@@ -955,7 +922,7 @@ function buildFactualSummary(profile) {
     if (lim.waterClarity?.secchiFt) limBits.push(`Secchi clarity around ${lim.waterClarity.secchiFt} ft`);
     // `swDated` WAS DEFINED HERE AND CALLED BY NOBODY once the two sentences below were cut. A
     // helper left standing after its only callers go is the thing that makes a deleted feature look
-    // half-present; `sampleDated` itself stays, because it is exported, mirrored and tested.
+    // half-present. `sampleDated` went too, on 2026-09-25, with the Research tab that mirrored it.
     // SURFACE TEMPERATURE AND SURFACE OXYGEN ARE NOT IN THIS SENTENCE, DELIBERATELY.
     //
     // 2026-09-14, off the bench on Lake Wateree in September: "surface water near 67.19°F when last
@@ -1002,4 +969,4 @@ function buildFactualSummary(profile) {
   return parts.join(' ').trim() || null;
 }
 
-export { sampleDated, normalizeResearchName, hasResearchValue, buildEvidence, titleCaseWords, RESEARCH_SPECIES_CANON, canonicalizeResearchSpecies, isKnownResearchSpecies, NON_GAME_SPECIES, uniqueResearchSpecies, splitSpeciesText, parseSCDNRDescriptionFacts, RESEARCH_RAMP_SOURCES, RESEARCH_ATTRACTOR_SOURCES, fetchArcGISGrouped, waterbodyMatchesLake, stripHtmlPreserveTables, extractHtmlTableRows, extractMarkdownTableRows, slicePdfPageRange, parseSCRegulationsFromHtml, getRampSpeciesFacts, getAttractorFacts, buildFactualSummary };
+export { normalizeResearchName, hasResearchValue, buildEvidence, titleCaseWords, RESEARCH_SPECIES_CANON, canonicalizeResearchSpecies, isKnownResearchSpecies, NON_GAME_SPECIES, uniqueResearchSpecies, splitSpeciesText, parseSCDNRDescriptionFacts, RESEARCH_RAMP_SOURCES, RESEARCH_ATTRACTOR_SOURCES, fetchArcGISGrouped, waterbodyMatchesLake, stripHtmlPreserveTables, extractHtmlTableRows, extractMarkdownTableRows, slicePdfPageRange, parseSCRegulationsFromHtml, getRampSpeciesFacts, getAttractorFacts, buildFactualSummary };

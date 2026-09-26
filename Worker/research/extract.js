@@ -2,7 +2,7 @@
 import { JSON_HEADERS, callLLM, countRequests, extractLLMText, firstModelsFor, geminiFreeProviders } from '../worker-core.js';
 import { extractJsonPossibly } from './keys.js';
 import { textDateOf, readPage, delink } from './text-date.js';
-import { factsDisagree, writtenOf } from '../../js/utils/fact-date.js';
+import { writtenOf } from '../../js/utils/fact-date.js';
 
 /**
  * A fact read out of a combined document goes back to the text it came from: the block whose text
@@ -591,137 +591,6 @@ FISHING BEHAVIOUR IS A FIRST-CLASS FACT. Sentences from guides, fishing reports 
 
 
 
-async function handleResearchDedupeContradictions(request, env) {
-  let body;
-  try { body = await request.json(); } catch { body = {}; }
-  const facts = body.facts || [];
-
-  const normalize = (s) => String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim().replace(/\s+/g,' ').slice(0,200);
-  const deduplicated = [];
-  const contradictions = [];
-  const seenFactMap = new Map(); // normalized fact -> index in deduped
-  // A quote, its source and the date of its text are one thing: whichever quote a merged fact
-  // keeps, it keeps that quote's source and date. Before, the near-duplicate branch kept the new
-  // quote beside the old source, and a date would have stayed with a quote it no longer had.
-  const takeQuote = (existing, f) => {
-    if (!f.quote) return;
-    existing.quote = f.quote;
-    existing.source = f.source || existing.source;
-    if ('textDate' in f || 'textDate' in existing) {
-      existing.textDate = f.textDate ?? null;
-      existing.textDateFrom = f.textDateFrom ?? null;
-    }
-  };
-  const categoryGroups = new Map(); // category -> array of facts
-
-  for (const f of facts) {
-    const factNorm = normalize(f.fact);
-    if (!factNorm) continue;
-    const cat = String(f.category||'general').toLowerCase().trim();
-
-    // Deduplicate exact or near-identical facts
-    if (seenFactMap.has(factNorm)) {
-      const existingIdx = seenFactMap.get(factNorm);
-      const existing = deduplicated[existingIdx];
-      existing.sourcesAgree = (existing.sourcesAgree||1)+1;
-      // keep higher confidence quote -- and the date of that quote's text with it
-      if ((f.confidence||0) > (existing.confidence||0)) {
-        existing.confidence = f.confidence;
-        takeQuote(existing, f);
-      }
-      continue;
-    }
-    // Near-duplicate check: if one fact contains the other (>80% overlap) treat as same --
-    // UNLESS THEY STATE DIFFERENT NUMBERS. The overlap is measured on the start of the sentence,
-    // and a model writes a limit the same way whatever the limit is: "The daily creel limit for
-    // striped bass on the Lower Saluda River is 5 fish" and "... is 3 fish" share their first 80%.
-    // They were folded into one fact that said two sources agreed, keeping whichever came first,
-    // so the other number -- and the contradiction step below, which never saw it -- was gone.
-    // Two facts that differ in their numbers are two facts; the contradiction step compares them.
-    let isNearDup = false;
-    const numsOf = (s) => [...new Set(String(s || '').match(/\d+(?:\.\d+)?/g) || [])].sort().join(' ');
-    for (let i=0;i<deduplicated.length;i++) {
-      const existingNorm = normalize(deduplicated[i].fact);
-      if (factNorm.length > 20 && existingNorm.length > 20 && numsOf(f.fact) === numsOf(deduplicated[i].fact)) {
-        if (factNorm.includes(existingNorm.slice(0, Math.floor(existingNorm.length*0.8))) || existingNorm.includes(factNorm.slice(0, Math.floor(factNorm.length*0.8)))) {
-          const existing = deduplicated[i];
-          existing.sourcesAgree = (existing.sourcesAgree||1)+1;
-          if ((f.confidence||0) > (existing.confidence||0)) {
-            existing.confidence = f.confidence;
-            takeQuote(existing, f);
-          }
-          seenFactMap.set(factNorm, i);
-          isNearDup = true;
-          break;
-        }
-      }
-    }
-    if (isNearDup) continue;
-
-    // Contradiction detection — ONLY mutually exclusive claims on the SAME specific attribute.
-    // Biology/forage facts are NEVER considered for contradictions (they are almost always complementary).
-    // Only identity (acreage, depth, elevation) and regulations (creel/size limits) can produce real conflicts.
-    const group = categoryGroups.get(cat) || [];
-    // WQP metadata categories — useless for research profile, filter entirely
-    const WQP_NOISE_CATS = new Set(['monitoringlocationidentifier','monitoringlocationname','monitoringlocationtypename',
-      'monitoringlocationdescription','huc','latitude','longitude','datum','identifier','sitetype',
-      'maintainer','watershed','coordinates','country','location']);
-    if (WQP_NOISE_CATS.has(cat)) continue; // skip WQP metadata facts entirely
-
-    // The test itself is factsDisagree() in js/utils/fact-date.js, shared with the prompts that
-    // print both sides and say which is newer: identity (acreage, depth, elevation) and
-    // regulations (creel/size limits) only; biology/forage facts are almost always complementary.
-    for (const prev of group) {
-      const numberConflict = factsDisagree(prev, f);
-      if (numberConflict) {
-        contradictions.push({
-          field: f.category,
-          factA: prev.fact,
-          quoteA: prev.quote,
-          pageA: prev.page,
-          confidenceA: prev.confidence,
-          sourceA: prev.source,
-          textDateA: prev.textDate ?? null,
-          factB: f.fact,
-          quoteB: f.quote,
-          pageB: f.page,
-          confidenceB: f.confidence,
-          sourceB: f.source,
-          textDateB: f.textDate ?? null,
-          reason: 'mutually exclusive numeric claim on same attribute'
-        });
-      }
-    }
-    // Add to deduped
-    const entry = { ...f, sourcesAgree: 1 };
-    const idx = deduplicated.length;
-    deduplicated.push(entry);
-    seenFactMap.set(factNorm, idx);
-    if (!categoryGroups.has(cat)) categoryGroups.set(cat, []);
-    categoryGroups.get(cat).push(entry);
-  }
-
-  // Sort deduplicated by confidence desc
-  deduplicated.sort((a,b)=> (b.confidence||0)-(a.confidence||0));
-
-  // Deduplicate contradictions by field — keep only the highest-confidence pair per field
-  // (per-document extraction produces N facts per field, leading to N*(N-1)/2 contradiction pairs)
-  const seenContraField = new Map();
-  const dedupedContradictions = contradictions.filter(c => {
-    const key = String(c.field).toLowerCase();
-    const pairConf = (c.confidenceA || 0) + (c.confidenceB || 0);
-    if (!seenContraField.has(key) || pairConf > seenContraField.get(key).conf) {
-      seenContraField.set(key, { conf: pairConf, c });
-      return false; // will re-add from map below
-    }
-    return false;
-  });
-  // Re-add best pair per field
-  seenContraField.forEach(({ c }) => dedupedContradictions.push(c));
-
-  return new Response(JSON.stringify({ success: true, deduplicated_facts: deduplicated, contradictions: dedupedContradictions, meta: { input: facts.length, deduped: deduplicated.length, contradictions: dedupedContradictions.length } }), { headers: JSON_HEADERS });
-}
-
 // ── GAP QUERY TEMPLATES ──────────────────────────────────────────────────────
 const GAP_QUERIES = {
   "limnology.thermocline.summerDepthFt":   (lake, dnr) => `"${lake}" thermocline depth summer stratification fishing`,
@@ -979,4 +848,4 @@ async function handleResearchGapSearch(request, env) {
 
 // ─── ORIGINAL LAKE RESEARCH MODULE FUNCTIONS ───
 
-export { handleResearchAnalyzeFacts, handleResearchDedupeContradictions, GAP_QUERIES, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch };
+export { handleResearchAnalyzeFacts, GAP_QUERIES, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch };

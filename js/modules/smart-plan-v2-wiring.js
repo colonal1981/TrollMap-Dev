@@ -637,7 +637,7 @@ function finish(r, gpx) {
 }
 
 /**
- * The lake's researched profile: the cache the research tab fills, else the Worker.
+ * The lake's researched profile, from the Worker.
  *
  * Absence is normal and silent — most lakes have not been researched. A FAILURE is not absence
  * and gets logged, because producing these is what the whole research pipeline is for and a
@@ -651,10 +651,6 @@ function finish(r, gpx) {
  */
 export async function loadResearchedProfile(lakeName) {
   if (!lakeName) return null;
-  try {
-    const cached = window.getResearchedProfile?.(lakeName);
-    if (cached) return cached;
-  } catch (e) { console.warn('[plan-v2] researched cache threw', e.message); }
   try {
     const url = `${CF_WORKER_URL}/research/get?lake=${encodeURIComponent(lakeName)}`;
     const r = await fetch(url);

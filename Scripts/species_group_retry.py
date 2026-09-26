@@ -16,8 +16,9 @@ reaching a model. Ryan's lake batch, 2026-09-25, `--group-models claude`:
 
 A new request has a fresh allowance. So the Worker makes one pass per group and reports each one --
 `ok`, or failed with its reason, or `asked: false` when the allowance was spent before its turn --
-and the callers ask the rest again: research_lakes.py and time_fisheries_run.py through this file,
-the app through js/utils/species-group-retry.js. Two languages, two copies of one rule.
+and the callers ask the rest again: research_lakes.py and time_fisheries_run.py through this file.
+The app's copy, js/utils/species-group-retry.js, went with the Research tab on 2026-09-25, so this
+is the one copy of the rule.
 """
 import time
 

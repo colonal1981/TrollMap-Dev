@@ -1,12 +1,11 @@
 // research/storage.js — split from worker-research.js (behavior-preserving)
-import { CORS, JSON_HEADERS, callLLM, extractLLMText, r2Text, r2Body, listAllR2 } from '../worker-core.js';
+import { CORS, JSON_HEADERS, callLLM, extractLLMText, r2Text, listAllR2 } from '../worker-core.js';
 import { getLakeIntel, lakeKeyFromName } from '../worker-data.js';
 import { searchWeb } from './clients.js';
-import { extractJsonPossibly, researchStorageId, resolveResearchStorageId, stripLakeQualifiers } from './keys.js';
+import { researchStorageId, resolveResearchStorageId, stripLakeQualifiers } from './keys.js';
 import { stateFullName } from './dataset.js';
 import { lakeIndex, identityNamesForLake, resolveRegistryRow } from '../registry.js';
 import { buildFactualSummary } from './facts-util.js';
-import { writtenOf } from '../../js/utils/fact-date.js';
 
 async function handleResearchList(env) {
   const prefix = "lakes/";
@@ -362,34 +361,6 @@ async function handleResearchSave(request, env) {
   return new Response(JSON.stringify({ok:true, lakeId: safe, lakeName, version: nextVersion, masterKey: `lakes/${safe}.json`, status: master.metadata.status, bytes: masterJson.length}), {headers: JSON_HEADERS});
 }
 
-async function handleResearchDeleteNormalizedDoc(request, env) {
-  let body;
-  try { body = await request.json(); } catch { body = {}; }
-  const lakeName = String(body.lakeName || '').trim();
-  const docUrl = String(body.url || '').trim();
-  if (!lakeName) return new Response(JSON.stringify({ ok: false, error: 'missing lakeName' }), { status: 400, headers: JSON_HEADERS });
-  if (!docUrl) return new Response(JSON.stringify({ ok: false, error: 'missing url' }), { status: 400, headers: JSON_HEADERS });
-
-  const safe = researchStorageId(lakeName);
-  const key = `lake_packages/${safe}/normalized_documents.json`;
-  const obj = await env.R2_TROLLMAP_CHARTPACKS.get(key).catch(() => null);
-  if (!obj) return new Response(JSON.stringify({ ok: false, error: 'no normalized documents found' }), { status: 404, headers: JSON_HEADERS });
-
-  let docs;
-  try { docs = JSON.parse(await r2Text(obj)); } catch { return new Response(JSON.stringify({ ok: false, error: 'corrupt normalized documents' }), { status: 500, headers: JSON_HEADERS }); }
-
-  const normTarget = docUrl.split('?')[0].toLowerCase();
-  const before = docs.length;
-  const filtered = docs.filter(d => String(d.url || '').split('?')[0].toLowerCase() !== normTarget);
-  const removed = before - filtered.length;
-
-  if (removed === 0) return new Response(JSON.stringify({ ok: false, error: 'document not found in cache', url: docUrl }), { status: 404, headers: JSON_HEADERS });
-
-  await env.R2_TROLLMAP_CHARTPACKS.put(key, JSON.stringify(filtered, null, 2), { httpMetadata: { contentType: 'application/json' } });
-  console.log(`[delete-normalized-doc] removed ${removed} doc(s) matching ${docUrl} from ${lakeName}`);
-  return new Response(JSON.stringify({ ok: true, lakeName, url: docUrl, removed, remaining: filtered.length }), { headers: JSON_HEADERS });
-}
-
 async function handleResearchDelete(request, env) {
   let body;
   try { body = await request.json(); } catch { body = {}; }
@@ -453,35 +424,6 @@ async function handleResearchDelete(request, env) {
   return new Response(JSON.stringify({ ok:true, lakeName, deleted: keys.length }), { headers: JSON_HEADERS });
 }
 
-async function handleResearchPackage(env, lakeId) {
-  const found = await resolveResearchStorageId(lakeId, async (id) => {
-    const l = await env.R2_TROLLMAP_CHARTPACKS.list({ prefix: `lake_packages/${id}/` }).catch(() => null);
-    return l && l.objects.length ? l : null;
-  }, await registryIdentityNames(env, lakeId));
-  const safe = found ? found.id : researchStorageId(lakeId);
-  const listed = found ? found.hit : { objects: [] };
-  if (!listed.objects.length) return new Response(JSON.stringify({ok:false, error:`no package for ${lakeId}`}), {status:404, headers:JSON_HEADERS});
-  const files = [];
-  for (const o of listed.objects) {
-    files.push({key:o.key, name:o.key.split('/').pop(), size:o.size, uploaded:o.uploaded});
-  }
-  files.sort((a,b)=>a.name.localeCompare(b.name));
-  return new Response(JSON.stringify({ok:true, lakeId: lakeId, sanitized: safe, count: files.length, files}), {headers: JSON_HEADERS});
-}
-
-async function handleResearchPackageFile(env, lakeId, filename) {
-  const found = await resolveResearchStorageId(lakeId,
-    (id) => env.R2_TROLLMAP_CHARTPACKS.get(`lake_packages/${id}/${filename}`).catch(() => null),
-    await registryIdentityNames(env, lakeId));
-  const safe = found ? found.id : researchStorageId(lakeId);
-  const key = `lake_packages/${safe}/${filename}`;
-  const obj = found ? found.hit : null;
-  if (!obj) return new Response(JSON.stringify({ok:false, error:`no file ${filename} for ${lakeId}`}), {status:404, headers:JSON_HEADERS});
-  const ct = filename.endsWith('.json') ? 'application/json' : filename.endsWith('.md') ? 'text/markdown' : 'application/octet-stream';
-  const pkgHeaders = new Headers({...CORS, "Content-Type": ct, "Cache-Control": "no-store"});
-  return new Response(r2Body(obj, pkgHeaders), {headers: pkgHeaders});
-}
-
 async function handleEnhancedLakeIntel(lakeName, env) {
   // The live context (source registry, scraped report, LakeMonster) with the researched profile
   // beside it. The curated LAKE_INTEL half went on 2026-09-24; the research profile is the profile.
@@ -515,66 +457,6 @@ async function handleEnhancedLakeIntel(lakeName, env) {
     console.warn('[storage] researched profile merge failed:', err && err.message);
   }
   return {...curated, researched, hasResearchedProfile: !!researched};
-}
-
-async function handleResearchValidationPass(request, env) {
-  let body;
-  try { body = await request.json(); } catch {
-    return new Response(JSON.stringify({ success:false, error:'invalid JSON' }), { status:400, headers:JSON_HEADERS });
-  }
-  const lakeName = String(body.lakeName || '').trim();
-  const nullFields = Array.isArray(body.nullFields) ? body.nullFields.filter(Boolean) : [];
-  // The client sends extractedFacts (array); retain facts for backward compatibility.
-  const rawFacts = body.extractedFacts || body.facts || [];
-  const facts = Array.isArray(rawFacts)
-    ? rawFacts.map(f => `[${f.category || 'fact'}] ${f.fact || f.quote || ''}${writtenOf(f, rawFacts)}`).filter(Boolean).join('\n')
-    : String(rawFacts || '').trim();
-
-  if (!lakeName || !nullFields.length || !facts) {
-    return new Response(JSON.stringify({ success:false, error:'missing lakeName, nullFields, or extractedFacts', filled:{} }), { status:400, headers:JSON_HEADERS });
-  }
-
-  const prompt = `Fill only requested null fields in a lake research profile for ${lakeName}.
-
-REQUESTED FIELDS:\n${nullFields.join('\n')}
-
-EXTRACTED, SOURCE-BACKED FACTS:\n${facts.slice(0, 30000)}
-
-Return only a JSON object whose keys are requested dot paths and whose values are explicitly supported by the facts. Omit unsupported fields. Do not infer.
-Rules: depth values must be specific and convert meters × 3.281; normalPoolFt must be an actual pool elevation, not a fluctuation.`;
-  const payload = {
-    messages: [
-      { role: 'system', content: 'You are a JSON-only evidence extraction agent. Never guess.' },
-      { role: 'user', content: prompt }
-    ],
-    temperature: 0,
-    max_tokens: 800,
-    response_format: { type: 'json_object' }
-  };
-  try {
-    const llmResult = await callLLM(env, payload, null);
-    const parsed = extractJsonPossibly(extractLLMText(llmResult.data));
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return new Response(JSON.stringify({ success:false, error:'validation agent returned non-JSON', filled:{} }), { status:502, headers:JSON_HEADERS });
-    }
-    const allowed = new Set(nullFields);
-    // Accept either the requested flat dot-path object or a defensive
-    // { filled: { ... } } wrapper from a provider that follows the endpoint
-    // name rather than the prompt literally.
-    const candidate = parsed.filled && typeof parsed.filled === 'object' && !Array.isArray(parsed.filled)
-      ? parsed.filled : parsed;
-    // `limnology.thermocline.strength` was the one field this guard existed for -- a qualitative
-    // word the model kept answering with a depth. The field is gone, and every limnology number
-    // now comes off a depth profile, so there is no path left for this to catch. The trophicStatus
-    // wording rule went with it: that bucket is read off Carlson's secchi boundaries, not written.
-    const validFieldValue = () => true;
-    const filled = Object.fromEntries(Object.entries(candidate).filter(([path, value]) =>
-      allowed.has(path) && value !== null && value !== '' && !(Array.isArray(value) && !value.length) && validFieldValue(path, value)
-    ));
-    return new Response(JSON.stringify({ success:true, filled, meta:{ provider:llmResult.provider, model:llmResult.model } }), { headers:JSON_HEADERS });
-  } catch (e) {
-    return new Response(JSON.stringify({ success:false, error:String(e.message || e), filled:{} }), { status:502, headers:JSON_HEADERS });
-  }
 }
 
 
@@ -733,4 +615,4 @@ If no thermocline or depth information is found, return found: false and null fo
 // Tiling and ESRI image fetching happens client-side (no worker timeout issues).
 // Worker receives one base64 image + bounds, runs Gemini, returns structures.
 
-export { handleResearchList, handleResearchGet, handleResearchSave, handleResearchDeleteNormalizedDoc, handleResearchDelete, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, handleResearchValidationPass, handleResearchThermoclineSearch };
+export { handleResearchList, handleResearchGet, handleResearchSave, handleResearchDelete, handleEnhancedLakeIntel, handleResearchThermoclineSearch };

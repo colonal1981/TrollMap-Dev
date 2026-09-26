@@ -17,7 +17,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { handleResearchAnalyzeFacts, handleResearchMapFacts } from '../Worker/research/extract.js';
-import { handleResearchValidationPass } from '../Worker/research/storage.js';
 import { RESEARCH_AGENTS } from '../Worker/research/agents.js';
 import { COASTAL_AGENTS } from '../Worker/research/coastal-agents.js';
 import { parseBehaviour, behaviourBlock } from '../Worker/research/behaviour.js';
@@ -153,14 +152,12 @@ test('both coastal fact agents print the date', () => {
   assert.equal(printing.length, 2, `the two coastal agents that print facts: ${printing}`);
 });
 
-test('map-facts and the validation pass print the date', async () => {
-  let sent = stubModel(() => ({ identity: {} }));
+// The validation pass printed the date too. /research/validation-pass went with the Research tab,
+// its only caller, on 2026-09-25.
+test('map-facts prints the date', async () => {
+  const sent = stubModel(() => ({ identity: {} }));
   await handleResearchMapFacts(post({ lakeName: 'Lake Wateree', facts: [AHQ_FACT] }), ENV);
   assert.ok(sent.some((b) => b.includes('18-20 feet down over the channel in the lower lake (written 2026-02-25) (Source:')), sent[0]);
-  sent = stubModel(() => ({}));
-  await handleResearchValidationPass(post({ lakeName: 'Lake Wateree', nullFields: ['trollingIntelligence.x'], extractedFacts: [AHQ_FACT, NO_YEAR] }), ENV);
-  assert.ok(sent.some((b) => b.includes('in the lower lake (written 2026-02-25)')), sent[0]);
-  assert.ok(sent.some((b) => b.includes('in 25 feet of water (written 10-02, year not stated)')));
 });
 
 test("the planner's factLine is writtenOf's words, unchanged", () => {

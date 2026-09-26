@@ -109,15 +109,17 @@ describe('and the alias list is what keeps them apart', () => {
 });
 
 describe('the three matching sites agree -- TRIPWIRES ON A NAME', () => {
-  // lake-research-engine.js cannot be imported here: it pulls in custom-vectors.js, which throws
-  // on `window` under node. So these are greps, and they catch a revert, not a behaviour.
-  const eng = readFileSync(new URL('../js/modules/lake-research-engine.js', import.meta.url), 'utf8');
+  // Greps, and they catch a revert, not a behaviour. The first site was cleanLakeBaseName() in the
+  // Research tab's engine until the tab was deleted on 2026-09-25; base_name() in the batch is
+  // the one that sends a base name to the extractor now.
+  const batch = readFileSync(new URL('../Scripts/research_lakes.py', import.meta.url), 'utf8');
   const ext = readFileSync(new URL('../Worker/research/extract.js', import.meta.url), 'utf8');
   const keys = readFileSync(new URL('../Worker/research/keys.js', import.meta.url), 'utf8');
 
-  it('cleanLakeBaseName strips every parenthetical', () => {
-    expect(eng.includes("base.replace(/\\s*\\([^)]*\\)\\s*/g, ' ')")).toBe(true);
-    expect(eng.includes('\\bCo\\b[^)]*\\)\\s*/i')).toBe(false);
+  it("the batch's base_name strips every parenthetical", () => {
+    const fn = batch.slice(batch.indexOf('def base_name('), batch.indexOf('\ndef ', batch.indexOf('def base_name(') + 1));
+    expect(fn.includes('b = re.sub(r"\\s*\\([^)]*\\)\\s*", " "')).toBe(true);
+    expect(fn.includes('\\bCo\\b')).toBe(false);
   });
 
   it("the extractor's own fallback strips every parenthetical", () => {

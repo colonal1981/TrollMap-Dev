@@ -1354,19 +1354,16 @@ async function loadLakeBoundary(displayName) {
 function renderStructureMarkers(displayName) {
   if (!mapReady()) return;
   if (_structureMarkerLayer) { getMap().removeLayer(_structureMarkerLayer); _structureMarkerLayer = null; }
-  // The pack first: every hump and every ledge the pipeline built, uncapped. The research
-  // profile is the fallback for the 43 packs with no structure layer and for profiles saved
-  // before the coordinates moved out of them.
-  const profile = window.getResearchedProfile?.(displayName);
-  const { humps, ledges, holes, source } = structureFor(_garminData.structure,
-                                                        profile?.habitat?.structuralElements);
+  // The pack: every hump and every ledge the pipeline built, uncapped. No profile is passed.
+  // The humps and ledges a profile carried were written by the Research tab, which is gone,
+  // and they are retired fields -- eight profiles hold exactly the old agent's cap of 8 each.
+  const { humps, ledges, holes, source } = structureFor(_garminData.structure, null);
   if (!humps.length && !ledges.length && !(holes || []).length) {
     // SAY SO. A silent return here is what hid 943 features on the Congaree for a day: the
     // console showed depth areas, pois, docks, ramps and the boundary all loading, and simply
     // no line at all about structure, which reads as "this water has none".
     console.log(`[supplemental] structure markers: nothing to draw for ${displayName} `
-              + `(pack layer ${_garminData.structure ? 'loaded but empty' : 'not loaded'}, `
-              + `profile ${profile ? 'present' : 'absent'})`);
+              + `(pack layer ${_garminData.structure ? 'loaded but empty' : 'not loaded'})`);
     return;
   }
   console.log(`[supplemental] structure markers: ${humps.length} humps, ${ledges.length} ledges, `
@@ -1472,17 +1469,10 @@ export async function loadSupplementalForLake(displayName) {
   //    rendering being tied together: "a planner silently missing every dock and every piece
   //    of charted structure, depending on which buttons were clicked in which order".
   //
-  // So: get the layer, draw it, and let the profile be what it always claimed to be -- the
-  // fallback for the 43 packs that have no structure layer.
+  // So: get the layer and draw it. The profile fallback and its loadProfile() re-render went
+  // with the Research tab on 2026-09-25: the humps and ledges it read are retired fields.
   await ensureData(lakeKey, 'structure');
   renderStructureMarkers(displayName);
-  if (!window.getResearchedProfile?.(displayName) && window.loadProfile) {
-    // A profile that arrives later can only ADD to this, so re-render when it does. It cannot
-    // take anything away: structureFor() reads the profile only when the pack gave nothing.
-    window.loadProfile(displayName, true)
-      .then(() => renderStructureMarkers(displayName))
-      .catch(() => {});
-  }
 
   // For coastal zones: fetch current tide height and apply color adjustment.
   // This covers the Map tab where noaa-tides.js auto-sync doesn't fire.

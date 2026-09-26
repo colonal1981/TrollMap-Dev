@@ -69,10 +69,13 @@ test('the draw does not sit behind a research profile', () => {
   assert.ok(!/\.then\(\(\) => renderStructureMarkers\(displayName\)\)\.catch\(\(\) => \{\}\);?\s*\n\s*\} else \{/.test(SUP),
     'and the only path to the renderer is not through a loadProfile() whose rejection is eaten by '
   + 'an empty catch -- that is why the failure printed nothing at all');
-  // A profile arriving later may still re-render: structureFor() prefers the pack, so a late
-  // profile can only ADD to what is drawn.
-  assert.ok(/loadProfile\(displayName, true\)[\s\S]{0,120}renderStructureMarkers\(displayName\)/.test(SUP),
-    'a profile that loads later still triggers a re-render, because it can only add');
+  // A profile arriving later used to re-render here, through the Research tab's loadProfile().
+  // The tab was deleted on 2026-09-25 and the humps and ledges it read are retired fields, so
+  // nothing on this path reads a profile at all -- and nothing may start to again.
+  assert.ok(!/getResearchedProfile|loadProfile\(/.test(SUP.replace(/^\s*\/\/.*$/gm, '')),
+    'the structure draw reads no research profile, cached or loaded');
+  assert.ok(/structureFor\(_garminData\.structure, null\)/.test(SUP),
+    'structureFor() is handed the pack and null for the profile');
 });
 
 test('nothing-to-draw is said out loud, not returned in silence', () => {

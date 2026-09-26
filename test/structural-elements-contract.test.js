@@ -132,7 +132,7 @@ describe('structuralElements: every key read is a key the engine writes', () => 
   for (const file of jsFiles(JS_ROOT)) {
     const rel = path.relative(REPO, file).split(path.sep).join('/');
     // The PRODUCER is not a consumer of itself. It moved to pack-facts.js on 2026-09-04.
-    if (rel.endsWith('pack-facts.js') || rel.endsWith('lake-research-engine.js')) continue;
+    if (rel.endsWith('pack-facts.js')) continue;
     const source = readFileSync(file, 'utf8');
     if (!source.includes('structuralElements')) continue;
 

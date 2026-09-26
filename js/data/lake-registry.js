@@ -765,13 +765,6 @@ export function documentNamesFromRecord(rec) {
   return [...real, ...generated];
 }
 
-/** Same, for callers holding a name rather than a record. Falls back to the name itself. */
-export function documentNamesFor(query) {
-  const rec = lakeRecordFor(query);
-  const names = documentNamesFromRecord(rec);
-  return names.length ? names : [String(query || '')].filter(Boolean);
-}
-
 /**
  * THE NAMES A PROFILE COULD BE FILED UNDER, WHICH IS A STRICTER LIST THAN THE DOCUMENT ONE.
  *

@@ -1705,8 +1705,8 @@ async function handleResearchAgent(request, env) {
       //
       // So this makes ONE pass per group and says what happened; the caller asks the groups that
       // failed again, in a new request, which has a fresh allowance -- after the same 8 s and 20 s.
-      // Scripts/species_group_retry.py and js/utils/species-group-retry.js are the two callers'
-      // halves, and both merge the second answer into the first.
+      // Scripts/species_group_retry.py is the caller's half, and merges the second answer into the
+      // first. (The Research tab's JS copy went with the tab on 2026-09-25.)
       let lastReason = null;
       let refusal = null;
       if (spentBy) {

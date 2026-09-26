@@ -111,10 +111,8 @@ describe('worker auth — headers', () => {
 });
 
 describe('worker auth — every mutating route is gated', () => {
-  const ROUTES = ['/research/save', '/research/delete',
-                  '/research/delete-normalized-doc', '/research/save-normalized',
-                  '/research/shared/store', '/research/shared/publish',
-                  '/research/shared/quarantine'];
+  const ROUTES = ['/research/save', '/research/delete', '/research/save-normalized',
+                  '/research/shared/publish', '/research/shared/quarantine'];
 
   it('the gate runs before any route matching', () => {
     const gateAt = worker.indexOf('await allowMutation(');
@@ -146,8 +144,8 @@ describe('worker auth — every mutating route is gated', () => {
       const src = source(f);
       for (const m of src.matchAll(/\basync\s+function\s+(handle\w+)/g)) {
         // Bound the body at the NEXT function declaration. A fixed 4000-char window overran
-        // into the following function and flagged handleSharedQuery and handleSharedStatus,
-        // which write nothing — a false positive is how a test earns being ignored.
+        // into the following function and flagged handleSharedQuery (deleted 2026-09-25) and
+        // handleSharedStatus, which write nothing — a false positive is how a test earns being ignored.
         const start = m.index;
         const after = src.slice(start + m[0].length);
         const nxt = after.search(/\n(?:export\s+)?(?:async\s+)?function\s+\w+/);
@@ -177,10 +175,8 @@ describe('worker auth — every mutating route is gated', () => {
 describe('worker auth — the client signs what the Worker checks', () => {
   it('every client POST to a gated route sends the token', () => {
     const files = walk(join(ROOT, 'js'));
-    const gated = ['/research/save', '/research/delete',
-                   '/research/delete-normalized-doc', '/research/save-normalized',
-                   '/research/shared/store', '/research/shared/publish',
-                   '/research/shared/quarantine'];
+    const gated = ['/research/save', '/research/delete', '/research/save-normalized',
+                   '/research/shared/publish', '/research/shared/quarantine'];
     const bare = [];
     for (const f of files) {
       const lines = source(f).split('\n');
@@ -196,7 +192,8 @@ describe('worker auth — the client signs what the Worker checks', () => {
   });
 
   it('the token is never attached to a third-party host', () => {
-    // lake-research-engine.js also fetches Open-Meteo, USGS and arbitrary source documents.
+    // The Research tab (deleted 2026-09-25) fetched Open-Meteo, USGS and arbitrary source
+    // documents from js/. Anything that does so next must not carry the token either.
     const files = walk(join(ROOT, 'js'));
     const leaks = [];
     for (const f of files) {
