@@ -16,7 +16,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { handleResearchAnalyzeFacts, handleResearchMapFacts } from '../Worker/research/extract.js';
+import { handleResearchAnalyzeFacts } from '../Worker/research/extract.js';
 import { RESEARCH_AGENTS } from '../Worker/research/agents.js';
 import { parseBehaviour, behaviourBlock } from '../Worker/research/behaviour.js';
 import { patternFactsFrom } from '../js/modules/plan-prompt.js';
@@ -119,13 +119,8 @@ test("the fisheries agent's profile dump says `written`, in the same words", () 
   assert.match(p, /"textDateFrom": "date line above the quote: \\"February 25\\""/, 'the evidence for the date stays');
 });
 
-// The validation pass printed the date too. /research/validation-pass went with the Research tab,
-// its only caller, on 2026-09-25.
-test('map-facts prints the date', async () => {
-  const sent = stubModel(() => ({ identity: {} }));
-  await handleResearchMapFacts(post({ lakeName: 'Lake Wateree', facts: [AHQ_FACT] }), ENV);
-  assert.ok(sent.some((b) => b.includes('18-20 feet down over the channel in the lower lake (written 2026-02-25) (Source:')), sent[0]);
-});
+// Map-facts and the validation pass printed the date too. /research/validation-pass went with the
+// Research tab, its only caller, and /research/map-facts had none; both on 2026-09-25.
 
 test("the planner's factLine is writtenOf's words, unchanged", () => {
   const lines = patternFactsFrom({ _extractedFacts: [AHQ_FACT, NO_YEAR] });

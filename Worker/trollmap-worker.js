@@ -19,7 +19,7 @@ import { handleReports } from './reports.js';
 import { handlePlaces } from './places.js';
 import { fetchStateRegulations, getLakeRegulations } from './research/clients.js';
 import { regulationsTable, lakeIndex, resolveRegistryRow } from './registry.js';
-import { handleResearchThermoclineSearch, handleResearchLimnologyData, refreshStaleLimnology, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, registrySpeciesFor, speciesFoodHabits, speciesMeasuredTraits, handleResearchAnalyzeFacts, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchRegsDebug, handleResearchDelete, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleSharedPublish, handleSharedStatus, handleSharedQuarantine } from './worker-research.js';
+import { handleResearchLimnologyData, refreshStaleLimnology, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, registrySpeciesFor, speciesFoodHabits, speciesMeasuredTraits, handleResearchAnalyzeFacts, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchRegsDebug, handleResearchDelete, handleEnhancedLakeIntel, RESEARCH_AGENTS, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey } from './worker-research.js';
 
 
 /**
@@ -46,12 +46,6 @@ const MUTATING_ROUTES = [
   "/research/save",
   "/research/delete",
   "/research/save-normalized",
-  "/research/shared/publish",
-  "/research/shared/quarantine",
-  // Writes env.TROLLMAP_DATA, a binding wrangler.toml does not declare -- so the write throws
-  // into a `catch (_) {}` and has never once succeeded. Listed anyway: the day that binding is
-  // added, this becomes a live unauthenticated write, and nobody would think to come back here.
-  "/research/dataset-hunt",
 ];
 
 /**
@@ -1352,9 +1346,6 @@ var trollmap_worker_default = {
         }
       }
       // ── LAKE RESEARCH ROUTES ─────────────────────────────────────
-      if (path === "/research/thermocline-search" && request.method === "POST") {
-        return handleResearchThermoclineSearch(request, env);
-      }
 
 
       if (path === "/research/limnology-data" && request.method === "POST") {
@@ -1365,9 +1356,6 @@ var trollmap_worker_default = {
       }
       if (path === "/research/discover" && request.method === "POST") {
         return handleResearchDiscover(request, env);
-      }
-      if (path === "/research/dataset-hunt" && request.method === "POST") {
-        return handleResearchDatasetHunt(request, env);
       }
       if (path === "/research/proxy-download" && request.method === "GET") {
         return handleResearchProxyDownload(request, env);
@@ -1382,15 +1370,6 @@ var trollmap_worker_default = {
       }
       if (path === "/research/analyze-facts" && request.method === "POST") {
         return handleResearchAnalyzeFacts(request, env);
-      }
-      if (path === "/research/map-facts" && request.method === "POST") {
-        return handleResearchMapFacts(request, env);
-      }
-      if (path === "/research/gap-analysis" && request.method === "POST") {
-        return handleResearchGapAnalysis(request, env);
-      }
-      if (path === "/research/gap-search" && request.method === "POST") {
-        return handleResearchGapSearch(request, env);
       }
       if (path === "/research/agent-llm" && request.method === "POST") {
         return handleResearchAgent(request, env);
@@ -1419,16 +1398,6 @@ var trollmap_worker_default = {
       }
       if (path === "/research/proxy-download-batch" && request.method === "POST") {
         return handleResearchProxyDownloadBatch(request, env);
-      }
-      // ── Phase 2: Shared R2 document registry ──────────────────────────────
-      if (path === "/research/shared/publish" && request.method === "POST") {
-        return handleSharedPublish(request, env);
-      }
-      if (path === "/research/shared/status" && request.method === "GET") {
-        return handleSharedStatus(request, env);
-      }
-      if (path === "/research/shared/quarantine" && request.method === "POST") {
-        return handleSharedQuarantine(request, env);
       }
       if (path === "/lake-research" && request.method === "GET") {
         const lake = url.searchParams.get("lake") || "";

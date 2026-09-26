@@ -284,15 +284,10 @@ describe('every route in trollmap-worker.js has a caller', () => {
     '/sync/migrate': 'no caller. A one-shot schema migration.',
     '/usgs': 'no caller. Every USGS read now goes through /conditions or the research engine.',
 
-    // ── research routes with no BROWSER caller; some may be operator-curled during a run ──────
-    '/research/dataset-hunt': 'no client caller. Needs a decision.',
-    '/research/gap-analysis': 'no client caller. Needs a decision.',
-    '/research/gap-search': 'no client caller. Needs a decision.',
-    '/research/map-facts': 'no client caller. Needs a decision.',
-    '/research/shared/publish': 'no client caller. The shared store is written through /shared/store.',
-    '/research/shared/quarantine': 'no client caller. Needs a decision.',
-    '/research/shared/status': 'no client caller. Needs a decision.',
-    '/research/thermocline-search': 'no client caller. /research/limnology-data is the one that runs.',
+    // The eight research routes that sat here with "no client caller. Needs a decision" --
+    // dataset-hunt, gap-analysis, gap-search, map-facts, shared/publish, shared/quarantine,
+    // shared/status and thermocline-search -- were deleted on 2026-09-25. No script called them
+    // either. handleResearchThermoclineSearch stays: limnology.js calls it directly.
 
     // ── research routes the Research tab called, which only scripts call now ──────────────────
     // The tab was deleted on 2026-09-25. Ryan: "nothing the tab writes should be used anymore".

@@ -4,10 +4,10 @@
 //
 // Every extracted fact carries `textDate` (Worker/research/text-date.js): "YYYY-MM-DD", "YYYY",
 // "--MM-DD" when the page wrote no year, or null. plan-prompt.js's factLine() was the one prompt
-// that printed it. The Worker's agents print facts too -- identity, navigation, regulations,
-// fisheries' parsed observations, the coastal agents and map-facts -- and a
-// second way of writing a date is a second thing a model has to learn to read. So the words live
-// here and every one of those prompts calls this.
+// that printed it. The Worker's agents printed facts too -- identity, navigation, regulations,
+// fisheries' parsed observations, the coastal agents and map-facts; since 2026-09-25 fisheries is
+// the one left -- and a second way of writing a date is a second thing a model has to learn to
+// read. So the words live here and every prompt that prints a fact calls this.
 //
 // TWO FACTS THAT DISAGREE. A prompt that prints facts prints both sides of a disagreement. Where
 // both carry a full date, the line says which is the newer -- and prints the older too: a
