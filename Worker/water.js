@@ -161,11 +161,30 @@ async function packBytes(env, slug, file) {
   return new Response(body).arrayBuffer();
 }
 
+// ONE LOAD PER GRAPH AT A TIME, HOWEVER MANY REQUESTS ARRIVE WHILE IT IS LOADING.
+//
+// The cache above answers a request that arrives AFTER the graph is parsed. It did nothing for the
+// ones that arrive DURING: each missed, fetched the 4.6 MB .bin and parsed it again. Pick Water
+// prefetches every transit of the day at once -- twenty requests for Ryan's 2026-09-26 Wateree day --
+// so a cold isolate began twenty parses of the same graph together, each with the ~46 MiB peak the
+// note above works out, against a 128 MiB isolate. Fourteen of the nineteen transits came back
+// unrouted and drew as straight lines, and every one of them routed on a warm Worker afterwards.
+// Now the first miss starts the load and every request behind it waits on that same promise.
+const _inflight = new Map();
+
 /** water_graph.bin, format v2. See build_water_graphs.py for the writer. */
 async function graph(env, slug) {
   const k = `graph:${slug}`;
   const hit = cacheGet(k);
   if (hit !== null) return hit;
+  const pending = _inflight.get(k);
+  if (pending) return pending;
+  const p = loadGraph(env, slug, k).finally(() => _inflight.delete(k));
+  _inflight.set(k, p);
+  return p;
+}
+
+async function loadGraph(env, slug, k) {
   const buf = await packBytes(env, slug, 'water_graph.bin');
   if (!buf || buf.byteLength < 16) return cacheSet(k, false);
   const dv = new DataView(buf);

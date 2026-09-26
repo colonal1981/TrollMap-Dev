@@ -36,6 +36,13 @@ import { legLightFor, lightAgrees } from '../utils/light-state.js';
 import { poolOffsetFt, todayDepthFt } from '../utils/water-conditions.js';
 
 /**
+ * THE MINUTES A STOP GETS WHEN THE MODEL DOES NOT SAY. The prompt's own example stop carries this
+ * number and the model echoes it back, so it is what a stop costs on nearly every plan -- which is
+ * why the Water tab's running total prices the stops he asks for with it (see dayCost()).
+ */
+export const DEFAULT_STOP_MIN = 15;
+
+/**
  * HOW FAR OFF THE BOTTOM A BAIT RIDES, IN THE ONE UNIT THE CARD PRINTS IT IN.
  *
  * `floorFt - deepFt`, rounded to the foot. Zero or less is a bait ON the bottom: the card says
@@ -1658,7 +1665,7 @@ export function assemblePlan(o) {
         depthFt: hit.depthFt ?? null,
         offM: Math.round(hit.offM),
         rods: s.rods || [],
-        durationMin: s.durationMin ?? 15,
+        durationMin: s.durationMin ?? DEFAULT_STOP_MIN,
         why: s.why ?? null,
         presentation: s.presentation ?? null,
         positioning: s.positioning ?? null,
@@ -1960,7 +1967,23 @@ export function assemblePlan(o) {
     // the end it came in by, and the transit to the next leg is measured from there -- which is
     // the whole saving, and reading `legEnd` here would throw it away and route the next transit
     // from a place the boat is not.
-    cursor = legFinish;
+    //
+    // AND THAT IS THE END OF THE LAST PASS ACTUALLY RUN, NOT THE LAST PASS ASKED FOR. `legFinish`
+    // was worked out from `trollPasses` before the loop above, and the loop stops early when a
+    // pass would end after he is due back. Ryan's 2026-09-26 Wateree Pick Water day asked for two
+    // passes on #1422, #1884 and #362, got one each, and the next transit left from the START of
+    // each -- where the second pass would have finished -- so the plan and the GPX skipped about a
+    // mile of water he would really have had to cover. The boat is where the last leg drawn ends.
+    const ranPasses = legs.slice(legs.indexOf(first)).filter((l) => l.type !== 'transit');
+    const lastRun = ranPasses[ranPasses.length - 1];
+    const lastCoords = lastRun && lastRun.coordinates;
+    cursor = lastCoords && lastCoords.length ? lastCoords[lastCoords.length - 1] : legFinish;
+    // And the first pass says how many were really run, so "pass 1 of 2" is not printed on a leg
+    // whose second pass was dropped.
+    if (legPasses > 1 && ranPasses.length < legPasses) {
+      for (const l of ranPasses) l.ofPasses = ranPasses.length;
+      if (ranPasses.length === 1) { delete first.pass; delete first.ofPasses; }
+    }
   }
 
   // ── THE ROUTE HOME ───────────────────────────────────────────────────────────────────────────

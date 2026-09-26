@@ -945,7 +945,18 @@ export function dayCost(picked, o) {
       [arr[k], arr[i]] = [arr[i], arr[k]];
     }
   };
-  if (n <= 8) {
+  // A GIVEN ORDER IS PRICED AS GIVEN. The Water tab's running total used to show only the
+  // cheapest ordering, and the day is BUILT in searchOrder() -- a different, dearer order. Ryan's
+  // 2026-09-26 Wateree pick read 466 min against a 480 min day and the plan came out at 639:
+  // 88 min of moving on the card and 182 in the plan, the same eighteen pieces in two orders. So
+  // the card asks for the order the plan will use, and this walks exactly that one.
+  const given = Array.isArray(o.order) && o.order.length === n
+    && o.order.every((i) => Number.isInteger(i) && i >= 0 && i < n)
+    && new Set(o.order).size === n ? o.order : null;
+  if (given) {
+    const r = walk(given);
+    best.moveM = r.m; best.order = [...given]; best.flips = r.flips;
+  } else if (n <= 8) {
     permute(idx);
   } else {
     // Nearest-neighbour then 2-opt. SAID OUT LOUD in the return value rather than presented as
@@ -990,14 +1001,20 @@ export function dayCost(picked, o) {
   const moveAh = ampHours(best.moveM,
     transitMph + (wind ? Math.max(0, wind.mph) * 0.03 : 0));
   const ah = legAh.reduce((s, x) => s + x, 0) + moveAh;
-  const min = legMin.reduce((s, x) => s + x, 0) + minutesFor(best.moveM, transitMph);
+  // AND THE STOPS HE ASKED FOR. A stop is minutes on the water like any leg, and the card that
+  // tells him how many pieces fit has to count the four stop-and-casts he typed into the box --
+  // at the minutes the plan will give each one (see DEFAULT_STOP_MIN in plan-assemble.js).
+  const stopMin = Number.isFinite(o.stopMin) && o.stopMin > 0 ? o.stopMin : 0;
+  const min = legMin.reduce((s, x) => s + x, 0) + minutesFor(best.moveM, transitMph) + stopMin;
   // THE REFUSAL RUNS AGAINST THE PESSIMISTIC END. § 10. A day that fits only in flat calm is a
   // day that can strand him, and the battery is the one thing allowed to say no.
   const fits = !(o.usableAh > 0) || ah <= o.usableAh;
 
   return {
     fits,
-    exact: n <= 8,
+    exact: given ? true : n <= 8,
+    orderGiven: !!given,
+    stopMin,
     order: best.order,
     flips: best.flips,
     moveM: Math.round(best.moveM),
@@ -1377,6 +1394,34 @@ export function searchOrder(picked) {
     order.push(pick);
   }
   return order;
+}
+
+/**
+ * THE ORDER THE DAY IS BUILT IN, AND WHAT THAT DAY COSTS -- one answer for the card and the plan.
+ *
+ * The Water tab's total priced the CHEAPEST ordering and the plan was built in searchOrder(), so
+ * the number beside the tick boxes described a day nobody was going to be handed. Ryan's
+ * 2026-09-26 Wateree pick: 466 min on the card, 639 in the plan. His ask: "we need to do a better
+ * job of estimating the time so i know how many to pick". So both now read this.
+ *
+ * The search order stands (§ 14) unless it would run the battery over while the cheapest order
+ * would not. The battery is the one hard stop -- "if they are going to run out of battery because
+ * of choice they shouldn't be able to make that choice" -- and the search order is the app's
+ * choice, not his, so there it yields and says so.
+ *
+ * @param {object[]} picked
+ * @param {object}   o   dayCost()'s options; `stopMin` is the stops he asked for, in minutes
+ * @returns {{order:number[], cost:object, cheapest:object, batteryReordered:boolean}}
+ */
+export function dayOrder(picked, o) {
+  const cheapest = dayCost(picked, o);
+  const search = searchOrder(picked);
+  const asSearched = dayCost(picked, { ...o, order: search });
+  if (asSearched.fits || !cheapest.fits) {
+    return { order: search, cost: asSearched, cheapest, batteryReordered: false };
+  }
+  return { order: cheapest.order, cost: dayCost(picked, { ...o, order: cheapest.order }),
+           cheapest, batteryReordered: true };
 }
 
 export function offerWater(lanes, o) {

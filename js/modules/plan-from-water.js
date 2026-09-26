@@ -40,7 +40,7 @@ import { buildPlanRequest, parsePlanResponse, planArgsFrom, MODEL_LEG_FIELDS, mo
   from './plan-prompt.js';
 import { prefetchTransits } from './smart-plan-v2.js';
 import { launchRouteFor } from '../data/launch-reach.js';
-import { searchOrder, dayCost, priceSpots, TROLL_MPH, TRANSIT_MPH } from './plan-water.js';
+import { searchOrder, dayCost, dayOrder, priceSpots, TROLL_MPH, TRANSIT_MPH } from './plan-water.js';
 
 /** The point on a line nearest a given position, and how far along the line it is. */
 function positionOn(coords, cum, fraction) {
@@ -227,9 +227,15 @@ export async function planFromWater(o) {
 
   // THE DAY'S ORDER IS THE SEARCH ORDER, unless he overrode it. § 14: "my maybe was that i have
   // veto or override authority" — so the override is a plain argument, not a setting.
-  const order = Array.isArray(o.order) && o.order.length === picked.length
-    ? o.order
-    : searchOrder(picked);
+  //
+  // AND THE BATTERY OUTRANKS THE SEARCH ORDER. dayOrder() keeps searchOrder() unless that order would
+  // run the battery over where the cheapest would not; it is the same call the Water tab's total
+  // makes, so the order and the minutes he saw beside the tick boxes are the day he is handed.
+  const wind = o.wind || worstWind(o.windByHour);
+  const chosen = dayOrder(picked, { ramp: o.ramp, usableAh: o.usableAh, windowMin: o.windowMin,
+                                    wind });
+  const overridden = Array.isArray(o.order) && o.order.length === picked.length;
+  const order = overridden ? o.order : chosen.order;
   const ordered = order.map((i) => picked[i]);
 
   // THE ONLY REFUSAL, and it is checked against the CHEAPEST possible ordering, not this one --
@@ -238,9 +244,12 @@ export async function planFromWater(o) {
   // ONE READER OF "WHICH HOUR IS THIS DAY COSTED AGAINST". Reduced here and handed to both the
   // refusal and every leg, rather than letting dayCost() reduce it privately and legFrom() price in
   // calm -- which is exactly how the budget and the legs came to disagree.
-  const wind = o.wind || worstWind(o.windByHour);
-  const cheapest = dayCost(picked, { ramp: o.ramp, usableAh: o.usableAh, windowMin: o.windowMin,
-                                    wind });
+  const cheapest = chosen.cheapest;
+  // WHAT THE DAY AS BUILT COSTS -- the order above, not the cheapest one. This is the number the
+  // prompt quotes as the app's price for the water.
+  const asBuilt = overridden
+    ? dayCost(picked, { ramp: o.ramp, usableAh: o.usableAh, windowMin: o.windowMin, wind, order })
+    : chosen.cost;
   if (!cheapest.fits) {
     return {
       plan: null,
@@ -288,6 +297,12 @@ export async function planFromWater(o) {
   const chosenKeys = new Set(o.chosenSpotKeys || []);
   const chosenSpots = spots.filter((s) => chosenKeys.has(s.key));
 
+  // THESE FOUR WERE WRITTEN AS `o.x ?? null` AFTER `...o.planArgs`, and plan-water-ui.js puts all
+  // four INSIDE planArgs -- so the spread filled them and the next lines nulled them again. Ryan's
+  // 2026-09-26 Wateree Pick Water prompt went out with no bait gate ("WHAT EACH OF THESE COVERS"), no
+  // light block and no pattern facts, which Smart Plan's prompt for the same water carried. A field
+  // handed in directly still wins; one that arrives in planArgs is no longer thrown away.
+  const pa = o.planArgs || {};
   const req = buildPlanRequest({
     ...o.planArgs,
     // THE BUDGET, AND THE APP'S OWN PRICE FOR THE WATER HE PICKED. `cheapest` is dayCost() twenty
@@ -295,20 +310,20 @@ export async function planFromWater(o) {
     // to say this. Until 2026-09-05 the model was handed "06:00" and "15:00" and no minutes at
     // all, and the Sep 6 Wateree day came back at 792 against a 540 minute window.
     windowMin: o.windowMin,
-    dayMin: Number.isFinite(cheapest && cheapest.min) ? cheapest.min : undefined,
+    dayMin: Number.isFinite(asBuilt && asBuilt.min) ? asBuilt.min : undefined,
     // So the prompt can say HOW each bait reaches a depth rather than leaving the model to read
     // one off the lure's name. Same resolver the assembler already gets, one line further up.
     lureByName: o.lureByName,
     // THE BAIT GATE'S ONE MEASURED INPUT, AND THE BOX IT FILTERS. Both forwarded rather than
     // rebuilt: Pick Water and Smart Plan must offer the model the SAME list, or the two planners
     // disagree about what is in the tackle box.
-    oxygenFloorFt: o.oxygenFloorFt ?? null,
+    oxygenFloorFt: o.oxygenFloorFt ?? pa.oxygenFloorFt ?? null,
     // THE PROFILE'S LIGHT-TAGGED SOURCED FACTS, for lightPromptBlock(). Forwarded for the same
     // reason as the line above: one prompt, and the two planners must fill the same fields of it.
-    lightFacts: o.lightFacts || null,
+    lightFacts: o.lightFacts || pa.lightFacts || null,
     // AND THE PROFILE'S FISHING-PATTERN FACTS, for patternFactsBlock(). Forwarded for exactly the
     // same reason: one prompt, and the two planners must fill the same fields of it.
-    patternFacts: o.patternFacts || null,
+    patternFacts: o.patternFacts || pa.patternFacts || null,
     // ── AND THE ONE FIELD PICK WATER GENUINELY CANNOT FILL YET, NAMED RATHER THAN ABSENT ──────────
     //
     // `riverCurrent` carries the channel velocity and the battery turnaround to riverPromptBlock().
@@ -327,7 +342,7 @@ export async function planFromWater(o) {
     // this the moment the field was added, which is the test working. An explicit null with the reason
     // beside it makes the gap visible in the code; leaving the key out makes it invisible again.
     riverCurrent: null,
-    inventory: o.inventory || null,
+    inventory: o.inventory || pa.inventory || null,
     candidates: legs.map((l) => ({
       runId: l.runId,
       depthFt: l.depthFt,
@@ -538,7 +553,10 @@ export async function planFromWater(o) {
     // WHAT THE MODEL GOT WRONG, SAID OUT LOUD. This was a hardcoded empty array, so a rod that is
     // not on the boat, a lure that is not in the bag and a leg with no rods deployed all arrived
     // silently. smart-plan-v2.js has always returned these.
-    problems: [...(args.problems || []), ...(plan.warnings || [])],
+    problems: [...(chosen.batteryReordered && !overridden
+      ? [`The app's search order would have needed ${dayCost(picked, { ramp: o.ramp, usableAh: o.usableAh, wind, order: searchOrder(picked) }).ah} Ah `
+         + `of ${o.usableAh}, so this day is fished in the shortest order instead.`] : []),
+               ...(args.problems || []), ...(plan.warnings || [])],
     dayCost: cheapest,
     order,
     // So the UI can say "the app put them in this order, and here is why" rather than silently

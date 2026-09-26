@@ -204,6 +204,26 @@ describe('runs a boat cannot reach are excluded by default', () => {
 
 // ── the magic number ────────────────────────────────────────────────────────────────────────
 
+// Ryan's 2026-09-26 Wateree Pick Water day prefetched twenty transits at once. On a cold isolate each
+// one missed the cache and fetched and parsed the 4.6 MB graph again -- twenty ~46 MiB peaks against a
+// 128 MiB isolate -- and fourteen transits came back unrouted, every one of which routes when warm.
+describe('a burst of routes on a cold Worker loads the graph once', () => {
+  it('twenty concurrent routes read water_graph.bin from R2 once, and all route', async () => {
+    const env = envWith();
+    let graphReads = 0;
+    const get = env.R2_TROLLMAP_CHARTPACKS.get;
+    env.R2_TROLLMAP_CHARTPACKS.get = async (key) => {
+      if (key.endsWith('water_graph.bin')) graphReads++;
+      return get(key);
+    };
+    const slug = nextSlug();
+    const rs = await Promise.all(Array.from({ length: 20 }, () =>
+      call(env, slug, '/route', 'POST', { from: [-80.9010, 34.40], to: [-80.8900, 34.40] })));
+    expect(graphReads).toBe(1);
+    expect(rs.every((r) => r.status === 200)).toBe(true);
+  });
+});
+
 describe('the TMWG header is read little-endian', () => {
   it('a correct graph routes', async () => {
     const r = await call(envWith(), nextSlug(), '/route', 'POST',

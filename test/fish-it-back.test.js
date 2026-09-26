@@ -375,3 +375,34 @@ describe('the timeline says it is the same water again', () => {
     expect(first.desc).not.toMatch(/same water/);
   });
 });
+
+// Ryan's 2026-09-26 Wateree Pick Water day: #1422, #1884 and #362 each asked for two passes and got
+// one, because the second would have ended after he was due back -- and the transit to the next leg
+// left from the START of each, where the dropped second pass would have finished. The plan and the
+// GPX skipped about a mile of water he would really have had to cross.
+describe('a pass dropped for time leaves the boat where the last pass really ended', () => {
+  // A is ~3.7 km: out by 06:10, pass 1 done about 07:20, and pass 2 would end after 08:00.
+  const plan = build({ returnTime: '08:00' }, [{ ...A, trollPasses: 2 }, B]);
+  const trolls = plan.legs.filter((l) => l.type === 'troll');
+  const aLegs = trolls.filter((l) => l.runId === 'w#1');
+
+  it('really did drop the second pass', () => {
+    expect(aLegs.length).toBe(1);
+    expect(plan.warnings.some((w) => /w#1 asked for 2 passes — stopped after 1/.test(w))).toBe(true);
+  });
+
+  it('the move to the next leg starts at the far end of the pass he ran', () => {
+    const i = plan.legs.indexOf(aLegs[0]);
+    const next = plan.legs[i + 1];
+    expect(next.type).toBe('transit');
+    const ranTo = aLegs[0].coordinates[aLegs[0].coordinates.length - 1];
+    expect(metresBetween(next.coordinates[0], ranTo)).toBeLessThan(1);
+    // and NOT from the end he came in by, which is where a second pass would have finished
+    expect(metresBetween(next.coordinates[0], aLegs[0].coordinates[0])).toBeGreaterThan(3000);
+  });
+
+  it('does not call a leg fished once "pass 1 of 2"', () => {
+    expect(aLegs[0].ofPasses).toBe(undefined);
+    expect(aLegs[0].pass).toBe(undefined);
+  });
+});

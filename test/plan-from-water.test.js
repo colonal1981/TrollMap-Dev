@@ -1,5 +1,6 @@
 import { describe, it, expect } from './expect-shim.mjs';
 import { planFromWater } from '../js/modules/plan-from-water.js';
+import { dayCost, dayOrder, searchOrder } from '../js/modules/plan-water.js';
 import { orientLegs } from '../js/modules/plan-candidates.js';
 import { TACKLE_INVENTORY } from '../js/data/tackle-inventory.js';
 import { connectionFor } from '../js/data/lure-knowledge.js';
@@ -327,6 +328,46 @@ describe('Pick Water reads the answer modelAsker() actually returns', () => {
     const r = await build();
     expect(r.plan).toBeTruthy();
     expect(r.exchange).toBe(null);
+  });
+
+  it('sends the bait gate the Water tab put in planArgs, instead of nulling it', async () => {
+    // plan-water-ui.js hands oxygenFloorFt, inventory, lightFacts and patternFacts in via
+    // planArgs; plan-from-water.js spread planArgs and then wrote `o.x ?? null` over all four.
+    // Ryan's 2026-09-26 Wateree Pick Water prompt went out with no "WHAT EACH OF THESE COVERS".
+    let sent = null;
+    const r = await build({
+      askModel: async (req) => { sent = req; return MODEL(req); },
+      planArgs: { water: 'Lake Wateree, SC', ramp: 'Clearwater Cove', date: '2026-07-29',
+                  species: ['Striped Bass'], usableAh: 80, tackle: LURES, conditions: {},
+                  inventory: TACKLE_INVENTORY.filter((l) => l.trollable), oxygenFloorFt: 19.7 },
+    });
+    expect(r.plan).toBeTruthy();
+    expect(sent.user).toMatch(/WHAT EACH OF THESE COVERS/);
+    expect(sent.user).toMatch(/THE FLOOR IS 19\.7 FT/);
+  });
+
+  it('tells the model the minutes of the day it is building, which is the card\'s number', async () => {
+    // Ryan's 2026-09-26 Wateree pick: the card said 466 min, the plan came out at 639. The card and
+    // the prompt priced the CHEAPEST order; the day was built in searchOrder(). Both read dayOrder()
+    // now, so the number he picks against is the number of the day he is handed.
+    let sent = null;
+    await build({ askModel: async (req) => { sent = req; return MODEL(req); } });
+    const od = dayOrder(PICKED, { ramp: RAMP, usableAh: 80, windowMin: 480 });
+    expect(od.order).toEqual(searchOrder(PICKED));
+    const m = /The app prices the water below at (\d+) minutes/.exec(sent.user);
+    expect(m).toBeTruthy();
+    expect(Number(m[1])).toBe(od.cost.min);
+  });
+
+  it('prices a given order as given, and counts the stops asked for', () => {
+    const base = { ramp: RAMP, usableAh: 80, windowMin: 480 };
+    const order = [2, 0, 1];
+    const a = dayCost(PICKED, { ...base, order });
+    expect(a.order).toEqual(order);
+    const b = dayCost(PICKED, { ...base, order, stopMin: 60 });
+    expect(b.min - a.min).toBe(60);
+    // and the cheapest is never dearer than any given order
+    expect(dayCost(PICKED, base).moveM <= a.moveM).toBe(true);
   });
 
   it('keeps the call record when the answer itself cannot be read', async () => {

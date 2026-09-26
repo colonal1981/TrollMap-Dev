@@ -50,9 +50,10 @@ import { primeFishAdvisories } from '../data/fish-advisories.js';
 import { primeInshoreSeason, inshoreSeasonFor } from '../data/inshore-season.js';
 import { primeSeabedHabitat, seabedHabitatFor } from '../data/seabed-habitat.js';
 import { depthSampler, shorelineIndex, waterMask } from './plan-water-index.js';
-import { offerWater, dayCost, priceSpots, searchOrder, optionality, reasons, TROLL_MPH, TRANSIT_MIN_DEPTH_FT, SPOT_KINDS } from './plan-water.js';
+import { offerWater, dayCost, dayOrder, priceSpots, searchOrder, optionality, reasons, TROLL_MPH, TRANSIT_MIN_DEPTH_FT, SPOT_KINDS } from './plan-water.js';
 import { joinedPiece } from './plan-pieces.js';
 import { planFromWater } from './plan-from-water.js';
+import { DEFAULT_STOP_MIN } from './plan-assemble.js';
 import { buildSmartPlanV2, modelAsker, waterRouter } from './smart-plan-v2.js';
 import { poiSpotFeatures, attractorSpotFeatures, dockSpotFeatures, chartedGrid, chartedHazards }
   from './plan-candidates.js';
@@ -516,6 +517,14 @@ function paintSpots() {
   return priced;
 }
 
+/** How many stop-and-casts he typed into the box; blank is none asked for (priced as zero). */
+function stopsWanted() {
+  const raw = ($('wgStops')?.value ?? '').trim();
+  if (!raw) return 0;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
 /** The running total. Feedback for everything, refusal for the battery alone. */
 function total() {
   const picked = T.pieces.filter((p) => T.picked.has(p.key));
@@ -526,8 +535,14 @@ function total() {
                  + `this says what the day costs.</span>`;
     return null;
   }
-  const d = dayCost(picked, { ramp: T.ramp, usableAh: T.usableAh, windowMin: T.windowMin,
-                              windByHour: T.windByHour });
+  // THE DAY AS IT WILL BE BUILT, NOT THE CHEAPEST DAY THESE PIECES COULD MAKE. dayOrder() is the
+  // same call planFromWater() makes, so the order and the minutes here are the plan's. Ryan's
+  // 2026-09-26 Wateree pick read 466 min here and came out at 639: this showed the cheapest
+  // ordering while the plan used the search order, and it left out the stops he had asked for.
+  const wanted = stopsWanted();
+  const od = dayOrder(picked, { ramp: T.ramp, usableAh: T.usableAh, windowMin: T.windowMin,
+                                windByHour: T.windByHour, stopMin: wanted * DEFAULT_STOP_MIN });
+  const d = od.cost;
   // THE MOVING NUMBERS ARE FLOORS AND THEY NOW LOOK LIKE FLOORS.
   //
   // dayCost() prices the deadhead as a straight line — deliberately, because routing every
@@ -542,19 +557,29 @@ function total() {
     `<b>${picked.length}</b> piece${picked.length > 1 ? 's' : ''}`,
     `${fmtMi(d.trollM)} trolling`,
     `${fmtMi(d.moveM)}+ moving`,
-    `${fmtHm(d.min)}+`,
+    `${fmtHm(d.min)}+${wanted ? ` with ${wanted} stop${wanted > 1 ? 's' : ''}` : ''}`,
     `<b>${d.ah} Ah</b> of ${T.usableAh || '?'}`,
   ];
   // WHAT THE ORDER WOULD HAVE TO BE. The refusal is only useful if it comes with the fix, and the
   // fix is almost always an ordering: "yes, if you fish it second instead of last."
-  const order = d.order.map((k) => T.pieces.indexOf(picked[k]) + 1).join(' → ');
+  const order = od.order.map((k) => T.pieces.indexOf(picked[k]) + 1).join(' → ');
   const notes = [];
-  if (!d.fits) {
-    notes.push(`<span class="wg-stop">Over the battery — ${esc(d.reason)}. `
-             + `Best possible order is ${order} and it still does not fit; drop one.</span>`);
+  const cheapOrder = od.cheapest.order.map((k) => T.pieces.indexOf(picked[k]) + 1).join(' → ');
+  if (!od.cheapest.fits) {
+    notes.push(`<span class="wg-stop">Over the battery — ${esc(od.cheapest.reason)}. `
+             + `Best possible order is ${cheapOrder} and it still does not fit; drop one.</span>`);
+  } else if (od.batteryReordered) {
+    notes.push(`<span class="wg-warn">The app's search order would run the battery over, so the `
+             + `day is built shortest-first: ${order}.</span>`);
   } else {
-    notes.push(`<span class="wg-ok">Fits, fished in the order ${order}`
-             + `${d.exact ? '' : ' (best found, not proven best past 8 pieces)'}.</span>`);
+    notes.push(`<span class="wg-ok">Built in this order, most telling water first: ${order}.</span>`);
+    // WHAT THE ORDER IS COSTING HIM. The search order is the app's call, not a law -- so where the
+    // shortest order would give real time back, the number is here for him to weigh.
+    const saved = d.min - od.cheapest.min;
+    if (saved >= 1) {
+      notes.push(`<span class="wg-dim">Fished shortest-first (${cheapOrder}) the same water would `
+               + `take ${fmtHm(od.cheapest.min)}+, ${fmtHm(saved)} less moving.</span>`);
+    }
   }
   if (d.overWindowMin > 0) {
     notes.push(`<span class="wg-warn">${fmtHm(d.overWindowMin)} past your return time — `
@@ -1498,6 +1523,8 @@ export function initWaterTab() {
   $('wgFind')?.addEventListener('click', () => findWater());
   $('wgBuild')?.addEventListener('click', () => buildFromPicked());
   $('wgSort')?.addEventListener('change', (e) => { T.sortBy = e.target.value; paint(); });
+  // The total counts the stops he asks for, so it moves when he changes them.
+  $('wgStops')?.addEventListener('input', () => total());
   $('wgLimit')?.addEventListener('change', (e) => {
     T.limit = Math.max(1, parseInt(e.target.value, 10) || 25); paint();
   });
