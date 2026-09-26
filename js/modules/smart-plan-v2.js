@@ -731,6 +731,10 @@ export async function buildSmartPlanV2(o) {
     oxygenFloorFt,
   });
   plan.notes = args.notes;
+  // What planArgsFrom() settled while reading the answer goes with what the assembler settled.
+  if (args.decisions && args.decisions.length) {
+    plan.decisions = [...(plan.decisions || []), ...args.decisions];
+  }
   // AND EACH LEG AT THE HOURS IT IS ACTUALLY FISHED, now the order is settled. Every troll leg
   // carries `exposure`; a leg whose waves reach his own 1 ft says so with the plan's warnings.
   plan.warnings.push(...roughLegs(plan, rays, o.windByHour));

@@ -103,7 +103,9 @@ describe('a leg built from picked water carries both of its ends', () => {
     const r = await build();
     const ids = r.plan.loadout.rods.map((x) => x.id);
     expect(ids.length >= 2).toBe(true);
-    expect(r.problems.some((p) => /re-seated/.test(p))).toBe(true);
+    // SAID, in one of two places (change request 18): with the warnings when a tie-only bait was
+    // on a snap rod, and with what the app settled when every bait could already go where it was.
+    expect([...r.problems, ...(r.plan.decisions || [])].some((p) => /re-seated/.test(p))).toBe(true);
   });
 
   it('reports what the model got wrong instead of returning an empty list', async () => {

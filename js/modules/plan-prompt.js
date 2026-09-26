@@ -2862,7 +2862,11 @@ export function seatRods(rods, connOf) {
   for (const id of ROD_IDS) {
     if (!rigged.has(id)) out.push({ id, rig: ROD_RIG[id], lure: null, staged: true });
   }
-  return { rods: out.sort((a, b) => ROD_IDS.indexOf(a.id) - ROD_IDS.indexOf(b.id)), map, problems };
+  // HOW MANY LURES COULD NOT GO WHERE THE MODEL PUT THEM -- a tie-only bait on a snap rod. The
+  // seating above moves rods either way, so the caller needs this to say WHY it moved them.
+  const illegal = need.filter((n) => n.tie && ROD_RIG[n.rod.id] === 'snap').length;
+  return { rods: out.sort((a, b) => ROD_IDS.indexOf(a.id) - ROD_IDS.indexOf(b.id)), map, problems,
+           illegal };
 }
 
 /**
@@ -2940,9 +2944,20 @@ export function planArgsFrom(res, candidates, ctx = {}) {
   const seat = seatRods(claimed, ctx.connectionOf);
   problems.push(...seat.problems);
   const moved = Object.keys(seat.map);
+  // TWO DIFFERENT REASONS, AND ONLY ONE OF THEM NEEDS HIM. Change request 18: the note said "so
+  // every lure is on a rod that can carry it" on plans where every bait already could. When a
+  // tie-only bait was on a snap rod the move is a correction and it is said as one; otherwise it is
+  // bookkeeping -- the snap rods get the snap-friendly baits so a change is seconds -- and it goes
+  // with the other things the app settled (plan.decisions), not in the list that wants him.
+  const decisions = [];
   if (moved.length) {
-    problems.push(`re-seated ${moved.map((k) => `${k}→${seat.map[k]}`).join(', ')} so every lure `
-                + 'is on a rod that can carry it');
+    const what = moved.map((k) => `${k}→${seat.map[k]}`).join(', ');
+    if (seat.illegal) {
+      problems.push(`re-seated ${what} so every lure is on a rod that can carry it`);
+    } else {
+      decisions.push(`re-seated ${what} so the snap rods carry the baits that can hang off a snap, `
+                   + 'where a change is seconds — every bait could already go where the model put it');
+    }
   }
   const reseat = (id) => (id && seat.map[id]) || id;
   // Only rods this plan actually rigged may be deployed, cast with, or changed. A staged rod is
@@ -3238,5 +3253,7 @@ export function planArgsFrom(res, candidates, ctx = {}) {
     },
     notes: res.notes && typeof res.notes === 'object' ? res.notes : {},
     problems,
+    // What the app settled while reading the answer, for plan.decisions -- see the re-seat note.
+    decisions,
   };
 }

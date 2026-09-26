@@ -545,6 +545,10 @@ export async function planFromWater(o) {
   });
 
   plan.notes = args.notes;
+  // What planArgsFrom() settled while reading the answer goes with what the assembler settled.
+  if (args.decisions && args.decisions.length) {
+    plan.decisions = [...(plan.decisions || []), ...args.decisions];
+  }
 
   return {
     plan,
