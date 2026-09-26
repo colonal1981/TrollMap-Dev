@@ -557,15 +557,106 @@ async function handleRoute(env, slug, request) {
   });
 }
 
+// ── HOW FAR BY WATER, FROM ONE POINT TO MANY ──────────────────────────────────────────────────
+//
+// Item 24 of the change requests, measured on the 2026-09-27 Murray bench from Hilton: the
+// candidate list ranks water by its distance from the ramp, and that distance was a straight line.
+// Hilton sits in a cove that opens east. The first leg the list offered was 3.2 km away straight
+// and 5.6 km by water (around the point), and the day ran 85% of its distance between legs. The
+// router already knew; the selector never asked, because asking /route once per window is
+// thousands of calls.
+//
+// This answers the selector's question in one call: ONE Dijkstra from `from`, stopped once every
+// target has settled, with the same lexicographic depth pricing /route uses (fewest shallow metres
+// first, then shortest). It returns the REAL metres along that path, not the penalised cost, and
+// the two snap distances, so the caller can add them and get a figure that is never shorter than
+// the straight line -- which is what makes it safe to use the straight line as a lower bound.
+
+// A GUARD, NOT A FISHING NUMBER. Each target is snapped by a scan of every node, so the CPU a call
+// costs grows with nodes x targets. On Lake Murray (118,090 nodes) 500 targets is about 59 million
+// distance evaluations, well inside a Worker's budget; the selector sends 24 or so per call.
+const MAX_TARGETS = 500;
+
+function distancesFrom(g, ai, targets, minDepth) {
+  const cost = new Float64Array(g.nn).fill(Infinity);
+  const real = new Float64Array(g.nn).fill(Infinity);
+  cost[ai] = 0; real[ai] = 0;
+  const want = new Set(targets.filter((t) => t >= 0));
+  const heap = [[0, ai]];
+  const push = (d, i) => {
+    heap.push([d, i]);
+    let c = heap.length - 1;
+    while (c > 0) {
+      const p = (c - 1) >> 1;
+      if (heap[p][0] <= heap[c][0]) break;
+      [heap[p], heap[c]] = [heap[c], heap[p]]; c = p;
+    }
+  };
+  const pop = () => {
+    const top = heap[0], last = heap.pop();
+    if (heap.length) {
+      heap[0] = last;
+      let c = 0;
+      for (;;) {
+        const l = c * 2 + 1, r = l + 1;
+        let s = c;
+        if (l < heap.length && heap[l][0] < heap[s][0]) s = l;
+        if (r < heap.length && heap[r][0] < heap[s][0]) s = r;
+        if (s === c) break;
+        [heap[s], heap[c]] = [heap[c], heap[s]]; c = s;
+      }
+    }
+    return top;
+  };
+  while (heap.length && want.size) {
+    const [d, u] = pop();
+    if (d > cost[u]) continue;
+    want.delete(u);
+    for (let e = g.head[u]; e < g.head[u + 1]; e++) {
+      const v = g.adj[e];
+      const w = metres(g.lon[u], g.lat[u], g.lon[v], g.lat[v]);
+      const c = (minDepth && g.depth[v] < minDepth) ? w * PENALTY : w;   // same pricing as /route
+      if (d + c < cost[v]) { cost[v] = d + c; real[v] = real[u] + w; push(d + c, v); }
+    }
+  }
+  return targets.map((t) => (t >= 0 && Number.isFinite(real[t]) ? Math.round(real[t]) : null));
+}
+
+async function handleDistances(env, slug, request) {
+  const g = await graph(env, slug);
+  if (!g) return json({ error: 'no water graph for this water', slug }, 404);
+  let body;
+  try { body = await request.json(); } catch { return json({ error: 'body must be JSON' }, 400); }
+  const ok = (p) => Array.isArray(p) && p.length >= 2 && Number.isFinite(p[0]) && Number.isFinite(p[1]);
+  const from = body && body.from;
+  const to = body && body.to;
+  if (!ok(from) || !Array.isArray(to) || !to.every(ok)) {
+    return json({ error: 'from must be [lon, lat] and to a list of [lon, lat]' }, 400);
+  }
+  if (to.length > MAX_TARGETS) return json({ error: `at most ${MAX_TARGETS} targets per call` }, 400);
+  const a = nearestNode(g, from[0], from[1]);
+  if (a.i < 0) return json({ error: 'graph is empty', slug }, 500);
+  const snaps = to.map((p) => nearestNode(g, p[0], p[1]));
+  const d = distancesFrom(g, a.i, snaps.map((s) => s.i), Number(body.min_depth_ft) || 0);
+  return json({
+    slug,
+    from_snapped_m: Math.round(a.d),
+    to_snapped_m: snaps.map((s) => Math.round(s.d)),
+    // Node to node, along the path the router would take; null where the graph cannot connect.
+    distances_m: d,
+  });
+}
+
 /** Returns a Response, or null if the path is not ours. */
 export async function handleWaterRoute(request, env, url) {
-  const mm = url.pathname.match(/^\/water\/([^/]+)\/(route)$/);
+  const mm = url.pathname.match(/^\/water\/([^/]+)\/(route|distances)$/);
   if (!mm) return null;
   const slug = mm[1];
   const what = mm[2];
   if (request.method === 'OPTIONS') return new Response(null, { headers: CORS });
   try {
     if (what === 'route' && request.method === 'POST') return await handleRoute(env, slug, request);
+    if (what === 'distances' && request.method === 'POST') return await handleDistances(env, slug, request);
   } catch (e) {
     return json({ error: String(e && e.message || e), slug, endpoint: what }, 500);
   }
@@ -574,4 +665,5 @@ export async function handleWaterRoute(request, env, url) {
 
 export const WATER_ROUTES = [
   'POST /water/<slug>/route  {from:[lon,lat], to:[lon,lat], min_depth_ft?}',
+  'POST /water/<slug>/distances  {from:[lon,lat], to:[[lon,lat],...], min_depth_ft?}',
 ];

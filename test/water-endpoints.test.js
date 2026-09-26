@@ -217,3 +217,53 @@ describe('a missing layer is a 404 with a reason, never an empty success', () =>
     expect(res).toBe(null);
   });
 });
+
+// ── /distances: one point to many, by water ─────────────────────────────────────────────────
+//
+// Item 24: the candidate list ranked water by a straight line from the ramp. On Murray from Hilton
+// the first leg offered was 3.2 km straight and 5.6 km around the point, and the day ran 85% of
+// its distance between legs. /distances answers the selector's question in one call.
+
+describe('/distances answers one point to many by water', () => {
+  it('matches /route for each target, in order, with the snaps beside them', async () => {
+    const env = envWith({ graphBuf: tmwg({ allDeep: true }) });
+    const slug = nextSlug();
+    const from = [-80.9010, 34.40];
+    const to = [[-80.8900, 34.40], [-80.8950, 34.40], [-80.8830, 34.40]];
+    const d = await call(env, slug, '/distances', 'POST', { from, to });
+    expect(d.status).toBe(200);
+    expect(d.body.distances_m.length).toBe(3);
+    expect(d.body.to_snapped_m.length).toBe(3);
+    for (let i = 0; i < to.length; i++) {
+      const r = await call(env, slug, '/route', 'POST', { from, to: to[i] });
+      // /route straightens its line; on a straight chain of nodes that changes nothing.
+      expect(Math.abs(d.body.distances_m[i] - r.body.distance_m) <= 1).toBe(true);
+    }
+    expect(d.body.distances_m[1] < d.body.distances_m[0]).toBe(true);
+    expect(d.body.distances_m[2] > d.body.distances_m[0]).toBe(true);
+  });
+
+  it('prices shallow water the way /route does, and still answers from a shallow ramp', async () => {
+    // Nodes 0 and 1 are 0 ft: the ramp end. A 6 ft floor cannot be held off it, and it answers.
+    const d = await call(envWith(), nextSlug(), '/distances', 'POST',
+      { from: [-80.9010, 34.40], to: [[-80.8900, 34.40]], min_depth_ft: 6 });
+    expect(d.status).toBe(200);
+    expect(d.body.distances_m[0] > 0).toBe(true);
+  });
+
+  it('refuses a malformed body and an oversized one, and says why', async () => {
+    const env = envWith();
+    const bad = await call(env, nextSlug(), '/distances', 'POST', { from: [-80.9, 34.4], to: [[1]] });
+    expect(bad.status).toBe(400);
+    const many = Array.from({ length: 501 }, () => [-80.89, 34.4]);
+    const big = await call(env, nextSlug(), '/distances', 'POST', { from: [-80.9, 34.4], to: many });
+    expect(big.status).toBe(400);
+    expect(big.body.error.includes('500')).toBe(true);
+  });
+
+  it('no graph is a 404 with a reason', async () => {
+    const r = await call(envWith({ graphBuf: null }), nextSlug(), '/distances', 'POST',
+                         { from: [-80.9010, 34.4], to: [[-80.8900, 34.4]] });
+    expect(r.status).toBe(404);
+  });
+});

@@ -31,7 +31,7 @@ import { landingsFor } from '../data/launch-reach.js';
 import { closerLanding, closerLandingNote } from './closer-landing.js';
 import { primeInshoreSeason, inshoreSeasonFor } from '../data/inshore-season.js';
 import { primeSeabedHabitat, seabedHabitatFor } from '../data/seabed-habitat.js';
-import { buildSmartPlanV2, packFetcher, modelAsker, waterRouter } from './smart-plan-v2.js';
+import { buildSmartPlanV2, packFetcher, modelAsker, waterRouter, waterDistances } from './smart-plan-v2.js';
 import { planToTimeline, installTimeline } from './plan-to-timeline.js';
 import { renderSmartPlanUI, syncSpread } from './smart-plan-ui.js';
 import { materialisePlan } from './plan-tracks.js';
@@ -398,6 +398,9 @@ export async function runSmartPlanV2(opts = {}) {
       // `unrouted: true`, the plan warns, and validatePlan() lists it -- it is never faked.
       // The same floor Pick Water sends. A transit is a transit whichever tab planned it.
       routeWater: waterRouter(CF_WORKER_URL, r2Key, { minDepthFt: TRANSIT_MIN_DEPTH_FT }),
+      // AND THE SAME WATER, ASKED ONE-TO-MANY, so the list is ranked by how far the water is by
+      // boat and not by crow -- see selectByWater() in smart-plan-v2.js (item 24).
+      distancesFrom: waterDistances(CF_WORKER_URL, r2Key, { minDepthFt: TRANSIT_MIN_DEPTH_FT }),
       askModel: async (req) => { say('Asking the model…'); return modelAsker(CF_WORKER_URL)(req); },
       // Straight through. buildSmartPlanV2 returns {plan:null, request, candidates} and spends
       // nothing -- see the dryRun note there.

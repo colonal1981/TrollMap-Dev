@@ -290,7 +290,7 @@ export async function buildSmartPlanV2(o) {
                                   currentMph: driftCurrent.medianMph }),
   } : null;
 
-  let candidates = selectCandidates(legRuns, {
+  const selOpts = {
     ramp: o.ramp, slug: o.r2Key, fishDepthFt: o.fishDepthFt, holding: o.holding,
     usableAh: o.usableAh, windowMin: o.windowMin, maxOffM, maxM: legMaxM,
     structures, catches: o.catches, catchSpecies: o.species, month: o.month,
@@ -320,7 +320,25 @@ export async function buildSmartPlanV2(o) {
     // other path reduces it there too and two readers of "which hour is this day costed against"
     // is how the two planners start disagreeing about one day.
     windByHour: o.windByHour,
-  });
+  };
+  // ── ON A LAKE, HOW FAR IS BY WATER, NOT BY CROW ──────────────────────────────────────────────
+  //
+  // Item 24. The list was ranked by the straight line from the ramp, and on Murray from Hilton the
+  // first leg it offered was 3.2 km straight and 5.6 km around the point -- the day ran 85% of its
+  // distance between legs. selectByWater() asks the Worker for the water distance of every leg it
+  // is about to offer, re-ranks, and repeats until everything offered is priced by water. A river
+  // already prices its hops in river miles (centrelineTransit), so this is lakes only. Without the
+  // Worker (a test, a failed call) the straight line stands, exactly as before.
+  const hasWaterDistances = !isRiver && typeof o.distancesFrom === 'function';
+  let candidates = hasWaterDistances
+    ? await selectByWater(legRuns, selOpts, {
+        ramp: o.ramp, distancesFrom: o.distancesFrom,
+        // A RAMP UP A CANAL leaves by its own measured path, so the distances are asked from where
+        // that path meets open water and the path is added -- the same end T1 is drawn from.
+        source: arriveAt,
+        leadM: (Array.isArray(rampRoute) && rampRoute.length >= 2) ? pathM(rampRoute) : 0,
+      })
+    : selectCandidates(legRuns, selOpts);
   // ── ON A RIVER THE APP DRAWS THE DAY; THE LIST WAS NEVER A CHOICE ─────────────────────────────
   //
   // selectCandidates has done the work that still matters on moving water -- the depth rule, the
@@ -990,6 +1008,140 @@ export async function prefetchTransits(candidates, launch, routeWater, launchRou
   }
   if (!routed.size) return null;
   return (a, b) => routed.get(pairKey(a, b)) || null;
+}
+
+/** Metres along a [lon, lat] path. */
+function pathM(cs) {
+  let m = 0;
+  for (let i = 1; i < (cs || []).length; i++) m += metresBetween(cs[i - 1], cs[i]);
+  return m;
+}
+
+/**
+ * selectCandidates(), with every distance it hands the model priced BY WATER.
+ *
+ * Item 24, Lake Murray from Hilton, 2026-09-26: the selector ranked water by the straight line from
+ * the ramp. Hilton sits in a cove that opens east, and the first leg offered was 3.2 km straight and
+ * 5.6 km around the point; the day ran 85% of its distance between legs. Asking the router about
+ * every window of every run is thousands of calls, so this asks about the ones that matter:
+ *
+ *   1. Select with straight lines. A straight line is never longer than the water route, so every
+ *      leg NOT offered is being judged on its best possible distance.
+ *   2. Ask the Worker (/water/{slug}/distances, one Dijkstra per call) for the water distance from
+ *      the ramp to both ends of every leg that WAS offered, and select again. Priced by water, a leg
+ *      can only fall; one that falls out of the list lets in one that was priced by the straight
+ *      line, which is then asked about in turn.
+ *   3. Stop when everything offered is priced by water. Anything left out was beaten by water
+ *      distances while being judged on straight ones -- its best case -- so it would be beaten
+ *      again. That is the whole argument, and it needs no number of its own.
+ *   4. Then price the ordering table between the offered legs the same way (`transitToM`), which is
+ *      what the model orders the day by.
+ *
+ * `w.distancesFrom(from, points)` answers metres or null per point; a null, a failed call or no
+ * Worker at all leaves that distance as the straight line, which is exactly what this did before.
+ *
+ * @returns {Promise<Array>} selectCandidates() output, with `.byWater` saying what was asked
+ */
+export async function selectByWater(legRuns, selOpts, w) {
+  const straight = selOpts.transitM || metresBetween;
+  const key = (p) => `${Number(p[0]).toFixed(6)},${Number(p[1]).toFixed(6)}`;
+  const rampKey = key(w.ramp);
+  const leadM = Number(w.leadM) || 0;
+  const fromRamp = new Map();                   // point -> water metres from the ramp
+  const between = new Map();                    // 'a>b' -> water metres
+  // THE RAMP'S ROUTE IS THE SAME BOTH WAYS, so the run home is read off the run out. The graph's
+  // depth pricing is the only asymmetry and it is paid in the first metres off the bank either way.
+  const transitM = (a, b) => {
+    const ka = key(a), kb = key(b);
+    if (ka === rampKey && fromRamp.has(kb)) return fromRamp.get(kb);
+    if (kb === rampKey && fromRamp.has(ka)) return fromRamp.get(ka);
+    const hit = between.get(`${ka}>${kb}`);
+    return hit !== undefined ? hit : straight(a, b);
+  };
+  const opts = { ...selOpts, transitM };
+  const ask = async (src, pts) => {
+    try { return await w.distancesFrom(src, pts); } catch (_) { return null; }
+  };
+  const endsOf = (list) => {
+    const m = new Map();
+    for (const c of list || []) for (const p of [c.start, c.end]) if (Array.isArray(p)) m.set(key(p), p);
+    return m;
+  };
+  const stats = { selections: 0, askedFromRamp: 0, askedBetween: 0 };
+  const select = () => { stats.selections += 1; return selectCandidates(legRuns, opts); };
+
+  let cands = select();
+  // BOUNDED BY THE RUNS, because every pass prices at least one new end and there are finitely many;
+  // in practice it settles in two or three.
+  for (let pass = 0; pass < legRuns.length + 1; pass++) {
+    const need = [...endsOf(cands).entries()].filter(([k]) => !fromRamp.has(k)).map(([, p]) => p);
+    if (need.length) {
+      const got = await ask(w.source || w.ramp, need);
+      stats.askedFromRamp += need.length;
+      need.forEach((p, i) => {
+        const s = straight(w.ramp, p);
+        const m = got && Number.isFinite(got[i]) ? leadM + got[i] : s;
+        fromRamp.set(key(p), Math.max(m, s));
+      });
+      cands = select();
+      continue;
+    }
+    // Everything offered is priced from the ramp by water. Now the table between them.
+    const pts = [...endsOf(cands).values()].filter((p) => {
+      const kp = key(p);
+      return [...endsOf(cands).keys()].some((kq) => kq !== kp && !between.has(`${kp}>${kq}`));
+    });
+    if (!pts.length) break;
+    const all = [...endsOf(cands).values()];
+    const rows = await Promise.all(pts.map((src) => ask(src, all)));
+    stats.askedBetween += pts.length * all.length;
+    pts.forEach((src, i) => {
+      all.forEach((dst, j) => {
+        if (key(src) === key(dst)) return;
+        const r = rows[i];
+        const s = straight(src, dst);
+        between.set(`${key(src)}>${key(dst)}`, r && Number.isFinite(r[j]) ? Math.max(r[j], s) : s);
+      });
+    });
+    cands = select();
+  }
+  cands.byWater = { ...stats, pricedFromRamp: fromRamp.size, pricedBetween: between.size };
+  return cands;
+}
+
+// The Worker's own cap on /distances (MAX_TARGETS in Worker/water.js), so a longer list is split.
+const DISTANCE_TARGETS_PER_CALL = 500;
+
+/**
+ * The default water-distance asker: POST /water/{slug}/distances, one Dijkstra per call.
+ * Returns metres per point -- node to node plus both snaps, so never shorter than the straight
+ * line -- or null for a point the graph cannot reach; null for the whole call on a failure.
+ */
+export function waterDistances(workerUrl, slug, opts = {}) {
+  const timeoutMs = opts.timeoutMs ?? 12000;
+  const minDepthFt = opts.minDepthFt ?? 0;
+  return async (from, to) => {
+    const out = [];
+    for (let i = 0; i < to.length; i += DISTANCE_TARGETS_PER_CALL) {
+      const chunk = to.slice(i, i + DISTANCE_TARGETS_PER_CALL);
+      const r = await fetch(`${workerUrl}/water/${encodeURIComponent(slug)}/distances`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(minDepthFt > 0 ? { from, to: chunk, min_depth_ft: minDepthFt }
+                                            : { from, to: chunk }),
+        signal: AbortSignal.timeout?.(timeoutMs),
+      });
+      if (!r.ok) return null;
+      const d = await r.json();
+      const ds = Array.isArray(d && d.distances_m) ? d.distances_m : [];
+      const snaps = Array.isArray(d && d.to_snapped_m) ? d.to_snapped_m : [];
+      chunk.forEach((_, j) => {
+        const m = Number(ds[j]);
+        out.push(ds[j] != null && Number.isFinite(m)
+          ? m + (Number(d.from_snapped_m) || 0) + (Number(snaps[j]) || 0) : null);
+      });
+    }
+    return out;
+  };
 }
 
 /**
