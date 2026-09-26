@@ -1060,7 +1060,8 @@ export function researchIntel(profile, species, season, now = Date.now(), packFa
     if (!Number.isFinite(floor)) return null;
     const src = live.tempFrom === 'tailwater'
       ? ' (TAILWATER gauge below the dam, not the lake itself)'
-      : live.tempFrom === 'upstream' ? ' (an upstream gauge, not the lake itself)' : '';
+      : live.tempFrom === 'upstream' ? ' (an upstream gauge, not the lake itself)'
+      : live.tempFrom === 'typed' ? ' (typed in by the angler; no thermometer on the lake itself)' : '';
     const lines = [
       `SQUEEZED FROM BOTH ENDS TODAY: the water reads ${tF}\u00b0F${src} and ${t.species} are `
       + `recorded in ${Math.round((Number(t.tempMinC) * 9) / 5 + 32)}\u2013${ceilF}\u00b0F water, so the top of the `

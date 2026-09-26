@@ -37,8 +37,13 @@ const { isNum } = await import('../js/utils/num.js');
 // The expression as it is written in the file, evaluated on the inputs that reach it. Importing
 // smart-plan-v2-wiring.js pulls in the whole Smart Plan graph and `state`, so the one line is
 // reproduced here and the test below pins that the file still says this.
-const squeezeTempF = (waterState, inp) =>
-  (isNum(waterState && waterState.waterTempF) ? Number(waterState.waterTempF) : inp.waterTempF);
+//
+// 2026-09-26: the line is now `lakeSurfaceTemp(waterState, inp.waterTempF)` in
+// js/utils/water-conditions.js, because a reading below the dam on a lake is not the surface
+// (Murray: 60.3 F in the Saluda below the dam, the lake near 80). The absence rules here are
+// unchanged and are tested against the real function rather than a copy of one line.
+const { lakeSurfaceTemp } = await import('../js/utils/water-conditions.js');
+const squeezeTempF = (waterState, inp) => lakeSurfaceTemp(waterState, inp.waterTempF).tempF;
 
 describe('the squeeze gets the measured temperature, the form value, or nothing', () => {
   it('a live reading wins', () => {
@@ -57,7 +62,7 @@ describe('the squeeze gets the measured temperature, the form value, or nothing'
 
   it('gives nothing rather than zero when neither the gauge nor the form answered', () => {
     // A silent field is a field the prompt block skips. A zero is a reading the model will use.
-    expect(squeezeTempF({ waterTempF: null }, {})).toBe(undefined);
+    expect(squeezeTempF({ waterTempF: null }, {})).toBe(null);
   });
 
   it('a real zero from a real gauge still passes, because 0 °F is a reading', () => {
@@ -76,8 +81,10 @@ describe('the squeeze gets the measured temperature, the form value, or nothing'
 });
 
 describe('the file itself no longer carries the guard that caused it', () => {
-  it('the squeeze temperature is guarded by isNum', () => {
-    expect(/isNum\(waterState && waterState\.waterTempF\)/.test(WIRING)).toBe(true);
+  it('the squeeze temperature comes from lakeSurfaceTemp, with the form value as its fallback', () => {
+    // If someone ever replaces `inp.waterTempF` with a literal, the fallback stops being the
+    // thing the person typed and becomes another invented number.
+    expect(/lakeSurfaceTemp\(waterState, inp\.waterTempF\)/.test(WIRING)).toBe(true);
   });
 
   it('nothing in the file still asks Number.isFinite(Number(...))', () => {
@@ -85,13 +92,8 @@ describe('the file itself no longer carries the guard that caused it', () => {
     expect(WIRING.includes('Number.isFinite(Number(')).toBe(false);
   });
 
-  it('isNum is imported from the one place that defines it', () => {
-    expect(/import \{ isNum \} from '\.\.\/utils\/num\.js'/.test(WIRING)).toBe(true);
-  });
-
-  it('the form value is still the fallback the comment promises', () => {
-    // If someone ever replaces `inp.waterTempF` with a literal, the fallback stops being the
-    // thing the person typed and becomes another invented number.
-    expect(WIRING).toContain(': inp.waterTempF,');
+  it('lakeSurfaceTemp reads its numbers through num(), from the one place that defines it', () => {
+    const WC = strip(src('js/utils/water-conditions.js'));
+    expect(/import \{ num \} from '\.\/num\.js'/.test(WC)).toBe(true);
   });
 });

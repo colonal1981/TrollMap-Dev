@@ -34,6 +34,8 @@
  * so it can be tested.
  */
 
+import { num } from './num.js';
+
 /** Celsius to Fahrenheit, one decimal. Null in, null out. */
 export function cToF(c) {
   return Number.isFinite(c) ? Math.round((c * 9 / 5 + 32) * 10) / 10 : null;
@@ -87,6 +89,44 @@ export function pickWaterTemp(water) {
 }
 
 /**
+ * THE LAKE'S OWN SURFACE TEMPERATURE for the planner's reasoning, and where it came from.
+ *
+ * Personal use only, not for distribution or resale; not for navigation.
+ *
+ * A reading taken below the dam is not the lake's surface. The app already said so in two places
+ * -- the card labels it TAILWATER and `utility-sync.js` keeps it out of the Water Temp field --
+ * and Smart Plan then handed that same reading to the squeeze as the surface anyway. Lake Murray,
+ * 2026-09-26: the Saluda below the dam read 60.3 F while the lake's surface was near 80, so
+ * "SQUEEZED FROM BOTH ENDS" (which fires when the surface is warmer than the species is recorded
+ * in, and tells the model to come DOWN to the band above the oxygen floor) stayed silent, and the
+ * plan put a squarebill at 2-5 ft over 48-67 ft of water. On Wateree the same kind of gauge read
+ * 80.4 against Ryan's 77-78 on the water, because that dam draws nearer the top. Nothing here
+ * knows how deep a dam draws, so no below-dam reading stands in for the surface.
+ *
+ * Order: a live reading taken on the lake, then what Ryan typed into Water Temp, then nothing.
+ * The live reading comes first because it is the number the conditions block prints; a typed
+ * number is his and fills in where the lake has no thermometer.
+ *
+ * @param {object} ws        readConditions() / fetchWaterState() output, or null
+ * @param {*}      typedF    the Water Temp field, already parsed (null when blank)
+ * @returns {{tempF: number|null, tempFrom: string|null, belowDamF: number|null, belowDamGauge: string|null}}
+ */
+export function lakeSurfaceTemp(ws, typedF) {
+  // num(), not Number(): a null or blank reading is an absence, never 0 °F -- the eighth instance
+  // of that family was on exactly this line of the wiring. See js/utils/num.js.
+  const live = ws ? num(ws.waterTempF) : null;
+  // ON A LAKE ONLY. On a river reach below a dam the tailrace IS the water being fished, and its
+  // reading is exactly the one to plan on.
+  const belowDam = live != null && ws.waterTempFrom === 'tailwater' && ws.featureType === 'lake';
+  const typed = num(typedF);
+  const tail = { belowDamF: belowDam ? live : null,
+                 belowDamGauge: belowDam ? (ws.waterTempGauge || null) : null };
+  if (live != null && !belowDam) return { tempF: live, tempFrom: ws.waterTempFrom || null, ...tail };
+  if (typed != null) return { tempF: typed, tempFrom: 'typed', ...tail };
+  return { tempF: null, tempFrom: null, ...tail };
+}
+
+/**
  * The conditions envelope as the three numbers a trip needs, or a stated reason there are none.
  *
  * `pending` and a null level are DIFFERENT from a level of zero, and both are different from a
@@ -134,6 +174,7 @@ export function readConditions(j) {
     oxygenMgL: null,
     oxygenPpm: null,
     oxygenGauge: null,
+    oxygenBelowDam: false,
     clarityScore: null,
     clarityIsMeasured: false,
     clarityNote: null,
@@ -393,6 +434,9 @@ export function readConditions(j) {
     out.oxygenPpm = w.dissolved_oxygen.ppm;
     out.oxygenGauge = w.dissolved_oxygen.name || null;
   }
+  // The Worker already says whether the oxygen gauge is below the dam, as it does for the
+  // temperature. It was dropped here, so the prompt printed Murray's tailrace 8.8 mg/L as the lake's.
+  out.oxygenBelowDam = !!(w.dissolved_oxygen && w.dissolved_oxygen.below_dam);
 
   // ── LAUNCH DECISIONS THAT WERE ALREADY ON THE RESPONSE ──────────────────────────────────
   // flood_category, flood_thresholds, in_service and out_of_service_message come back on every

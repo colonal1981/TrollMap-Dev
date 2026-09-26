@@ -1480,8 +1480,24 @@ const CONDITION_FACTS = [
       // WHERE IT WAS MEASURED TRAVELS WITH IT. A tailrace gauge sits below the dam and is not the
       // lake; a borrowed upstream reading is not this water at all. The card has said so since it
       // was written and a number that arrives without its provenance cannot be argued with.
+      //
+      // THE TAILWATER HALF OF THAT SENTENCE WAS NEVER WRITTEN. Only `upstream` got a label, so a
+      // tailrace reading went out with nothing but the gauge's name. Lake Murray, plan for
+      // 2026-09-27: "Water temperature 60.4 °F — Saluda River below Lake Murray Dam", on a lake
+      // whose surface was near 80 -- Murray releases from deep in the lake. The model wrote
+      // "early fall suspended fish" and put a squarebill at 2-5 ft over 48-67 ft of water. On
+      // Wateree the same kind of gauge read 80.4 against Ryan's 77-78 on the water, because that
+      // dam draws nearer the top. Nothing here knows how deep a given dam draws, so the reading
+      // is given with what it is and without a guess at how far it is from the surface.
       const from = c.waterTempFrom === 'upstream'
           ? ` — measured UPSTREAM, not on this water${c.waterTempGauge ? ` (${c.waterTempGauge})` : ''}`
+        // On a lake only: on a river reach below a dam the tailrace is the water being fished.
+        : c.waterTempFrom === 'tailwater' && c.featureType === 'lake'
+          ? ` — measured in the river BELOW THE DAM${c.waterTempGauge ? ` (${c.waterTempGauge})` : ''}, `
+            + 'not on the lake. It is water released through the dam: where the dam draws from deep '
+            + 'in the lake it runs far colder than the surface, and nothing here says how deep this '
+            + 'one draws. It is not the lake\'s surface temperature and it does not say what season '
+            + 'the lake is in'
         : c.waterTempGauge ? ` — ${c.waterTempGauge}` : '';
       // AND WHEN. A thermometer two days behind is not today's water and the model has no other
       // way to know. Quiet under two hours, which is the ordinary lag on a USGS series.
@@ -1492,9 +1508,14 @@ const CONDITION_FACTS = [
   },
   {
     id: 'oxygen',
-    keys: ['oxygenMgL', 'oxygenPpm', 'oxygenGauge'],
+    keys: ['oxygenMgL', 'oxygenPpm', 'oxygenGauge', 'oxygenBelowDam'],
     say(c) {
-      const at = c.oxygenGauge ? ` (${c.oxygenGauge})` : '';
+      // Same gauge, same problem as the temperature above: Murray's 8.8 mg/L was read in the
+      // Saluda below the dam and went out as though it were the lake's.
+      const at = c.oxygenBelowDam && c.featureType === 'lake'
+        ? ` (measured in the river BELOW THE DAM${c.oxygenGauge ? `, ${c.oxygenGauge}` : ''} — `
+          + 'released water, not the lake; it says nothing about oxygen at depth in the lake)'
+        : c.oxygenGauge ? ` (${c.oxygenGauge})` : '';
       if (isNum(c.oxygenMgL)) {
         return `Dissolved oxygen ${c.oxygenMgL} mg/L. Below about 4 mg/L is not holding fish.${at}`;
       }

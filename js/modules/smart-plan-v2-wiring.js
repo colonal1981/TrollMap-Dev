@@ -14,9 +14,9 @@
 import { state, CF_WORKER_URL } from '../core/state.js';
 import { resolveR2Key } from '../data/lake-keys.js';
 import { matchRampIndex, normRampName } from '../utils/ramp-match.js';
-import { isNum } from '../utils/num.js';
 import { getLoadedAccessIndex, registryRecordFor } from '../data/access-index.js';
-import { getSeason, seasonNote } from '../data/species-intel.js';
+import { getSeason, seasonNote, calendarSeason } from '../data/species-intel.js';
+import { lakeSurfaceTemp } from '../utils/water-conditions.js';
 import { depthBandFor, usableAhFrom, researchIntel, structureWeights, oxygenFloorFt,
          describeDepthBand, fishDepthEvidence, conditionsFrom, fetchRegistrySpecies,
          registryIdentity, thermoclineNormFor } from './plan-inputs.js';
@@ -396,9 +396,16 @@ export async function runSmartPlanV2(opts = {}) {
         // was fixed this morning to stay silent when nothing measured a temperature, so the two
         // had begun DISAGREEING about the same field, which is exactly the defect bd48bcf closed.
         // See js/utils/num.js -- eighth instance of this family.
-        { tempF: isNum(waterState && waterState.waterTempF)
-            ? Number(waterState.waterTempF) : inp.waterTempF,
-          tempFrom: (waterState && waterState.waterTempFrom) || null }),
+        //
+        // AND A READING BELOW THE DAM IS NOT THE SURFACE. It went in here as the lake's surface
+        // on Murray, 2026-09-26: 60.3 F off the Saluda below the dam on a lake near 80, so the
+        // squeeze that sends the spread down to the oxygen floor never fired. The conditions
+        // block now labels that reading as below the dam; the squeeze reasons on the lake's
+        // own reading, or on what Ryan typed, or on nothing. See lakeSurfaceTemp().
+        (() => {
+          const s = lakeSurfaceTemp(waterState, inp.waterTempF);
+          return { tempF: s.tempF, tempFrom: s.tempFrom };
+        })()),
       // THE SAFETY SECTION'S HAZARD SENTENCE, which has never once had anything to say because
       // nothing filled this. Same profile, already loaded, one field further down.
       tackle: castableOrTrollable.map((l) => l.name),
@@ -607,6 +614,17 @@ export async function runSmartPlanV2(opts = {}) {
   // a band changed under him once without anything saying so.
   const sn = seasonNote(date, inp.waterTempF);
   if (sn) r.problems = [...(r.problems || []), sn];
+  // AND WHEN THE ONLY THERMOMETER IS BELOW THE DAM, SAY SO, because then the season came off the
+  // calendar and the squeeze had no surface to reason on. The fix is his to make in one field.
+  const lakeT = lakeSurfaceTemp(waterState, inp.waterTempF);
+  if (lakeT.tempF == null && lakeT.belowDamF != null) {
+    r.problems = [...(r.problems || []),
+      `no thermometer on the lake itself — the only reading is below the dam`
+      + `${lakeT.belowDamGauge ? ` (${lakeT.belowDamGauge})` : ''}, ${lakeT.belowDamF}°F, which is `
+      + `water released through the dam and not the lake's surface. So the season came from the `
+      + `calendar (${calendarSeason(date)}). Type the lake's temperature into Water Temp and build `
+      + 'again to plan on it.'];
+  }
 
   // The warnings go in ABOVE the timeline, after the renderer has written the container --
   // renderSmartPlanUI sets innerHTML, so anything put there first is wiped.

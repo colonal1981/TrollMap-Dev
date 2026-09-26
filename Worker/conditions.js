@@ -3151,7 +3151,10 @@ export function registryCatalog(parms) {
  * One definition, called from both.
  */
 export function isBelowDam(role, name) {
-  return role === 'tailwater' || /tailrace|tailwater|below\b/i.test(String(name || ''));
+  // `BL` is USGS's own abbreviation for "below" in a station name, as `AB` is for above and `NR`
+  // for near. Lake Wylie's temperature comes off 02145910, "CATAWBA RIVER BL LAKE WYLIE DAM
+  // FEWELL ISLAND, SC", and it went out as the lake's because only the spelled-out word matched.
+  return role === 'tailwater' || /tailrace|tailwater|below\b|\bbl\b/i.test(String(name || ''));
 }
 
 /**
