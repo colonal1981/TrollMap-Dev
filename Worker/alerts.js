@@ -426,8 +426,20 @@ export async function handleAlerts(request, env, url) {
 
     const now = Date.now();
     const asked = Date.parse((body && body.until) || '');
-    const until = Math.min(Number.isFinite(asked) ? asked : now + MAX_WATCH_HOURS * 3600e3,
-                           now + MAX_WATCH_HOURS * 3600e3);
+    // THE DAY BEING FISHED, WHEN THE PLANNER SAYS WHICH ONE IT IS (change request 20).
+    //
+    // `from` is local midnight of the trip's date and `date` is that date. Without them the cap
+    // below measured 18 h from the moment of PLANNING, so a plan built two nights ahead -- Ryan
+    // planned Murray on the 25th for the 27th -- armed a watch that expired the afternoon before
+    // its own trip. Every cue on it was dated the 27th and none could fire, while its weather poll
+    // ran through the 26th for a lake he was not on. With `from`, the watch covers that day: it
+    // may run to the end of it, and it asks for weather only once the day has begun.
+    const fromAsked = Date.parse((body && body.from) || '');
+    const dayKey = typeof (body && body.date) === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.date)
+      ? body.date : null;
+    const from = Number.isFinite(fromAsked) && dayKey ? fromAsked : null;
+    const ceiling = from != null ? Math.max(now, from) + 24 * 3600e3 : now + MAX_WATCH_HOURS * 3600e3;
+    const until = Math.min(Number.isFinite(asked) ? asked : ceiling, ceiling);
 
     // THE PLAN'S OWN SCHEDULE, CARRIED SERVER-SIDE. Ryan, 2026-08-26: "i want bait changes, and
     // everything else sent as notifications to the echomap." Those cues fire today from a
@@ -446,10 +458,19 @@ export async function handleAlerts(request, env, url) {
 
     const rec = {
       lat, lon, until: new Date(until).toISOString(),
+      from: from != null ? new Date(from).toISOString() : null, date: dayKey,
       water: (body && body.water) || null, slug: (body && body.slug) || null,
       seen: [], cues, created: nowIso(),
     };
-    const k = `watch:${await shortHash(`${lat},${lon},${rec.until}`)}`;
+    // ONE WATCH PER FISHING DAY. Keyed on the date when the planner sends one, so the plan built
+    // last for a day replaces the one before it -- a rebuild with a new return time used to leave
+    // the old watch armed beside the new one, and two plans for one day sent both days' cues --
+    // while a plan for ANOTHER day sits beside it untouched. That is the rule Ryan asked for:
+    // planning the next trip must not move the alerts off this one. A caller that sends no date
+    // keeps the old key, place and return time, exactly as before.
+    const k = dayKey
+      ? `watch:${await shortHash(`day|${dayKey}`)}`
+      : `watch:${await shortHash(`${lat},${lon},${rec.until}`)}`;
     await env.KV.put(k, JSON.stringify(rec),
                      { expirationTtl: Math.max(120, Math.ceil((until - now) / 1000) + 900) });
     // A WATCH CREATED ON THE WAY TO THE RAMP IS SWEPT FIVE MINUTES LATER, not up to an hour
@@ -668,7 +689,11 @@ export async function runAlertSweep(env, nowMs) {
       queued.push({ title: c.title, body: c.body, tag: c.tag, severity: c.severity, url: './' });
     }
 
-    const j = await hazardsAt(w.lat, w.lon, env);
+    // NOT BEFORE ITS DAY. A watch for tomorrow does not report tonight's weather at tomorrow's
+    // lake; the plan already carried the forecast hazards when it was built. Cues above are timed
+    // and cannot fire early, so only the poll needs the gate.
+    const beforeDay = w.from && Number.isFinite(Date.parse(w.from)) && Date.parse(w.from) > now;
+    const j = beforeDay ? null : await hazardsAt(w.lat, w.lon, env);
     if (j) {
       const seen = new Set(w.seen || []);
       const fresh = (j.items || []).filter((h) => h && h.id && !seen.has(h.id));

@@ -427,9 +427,13 @@ export function loadSessionFromPlan(plan, o = {}) {
           title: 'Head back soon', body: `Return time is ${hToStr(_session.returnTimeH)}`,
           tag: 'return-time', severity: 'note' }] : []),
       ];
+      // AND WHICH DAY IT IS FOR, so the Worker keeps one watch per fishing day: building Sunday's
+      // plan on Friday night no longer replaces or starves Saturday's. See /alerts/watch.
+      const tripDate = (typeof o.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(o.date)) ? o.date : null;
       startTripWatch(_session.hazardWorker, {
         lat: _session.launchPos.lat, lon: _session.launchPos.lon,
         until, water: o.water || null, slug: o.slug || null, cues,
+        date: tripDate, from: tripDate ? dayStart().toISOString() : null,
       });
     }
   } catch (e) {
@@ -756,13 +760,14 @@ export async function registerAlertDevice(worker) {
  * timer in a page that is never open on the water, so they travel with the watch or they do not
  * happen.
  */
-export async function startTripWatch(worker, { lat, lon, until, water, slug, cues } = {}) {
+export async function startTripWatch(worker, { lat, lon, until, water, slug, cues, date, from } = {}) {
   try {
     const workerBase = String(worker || '').replace(/\/+$/, '');
     if (!workerBase || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
     const r = await fetch(`${workerBase}/alerts/watch`, {
       method: 'POST', headers: workerHeaders(),
-      body: JSON.stringify({ lat, lon, until, water, slug, cues: cues || [] }),
+      body: JSON.stringify({ lat, lon, until, water, slug, cues: cues || [],
+                             ...(date ? { date } : {}), ...(from ? { from } : {}) }),
     });
     const j = await r.json().catch(() => null);
     if (!r.ok || !j) throw new Error(`watch rejected (HTTP ${r.status})`);

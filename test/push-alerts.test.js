@@ -416,3 +416,72 @@ test('no KV binding is an empty summary, not a crash in a cron nobody watches', 
   assert.equal(r.checked, 0);
   assert.equal(r.pushed, 0);
 });
+
+// ── one watch per fishing day (change request 20) ───────────────────────────────────────────
+//
+// Ryan, 2026-09-25, the night before Wateree with Murray two days out: "can't build it now or it
+// will change the alerts to fire on the murray plan instead of the wateree one". Measured in this
+// file's own terms: a watch's `until` was capped 18 h from the moment of PLANNING, so a plan built
+// two nights ahead expired the afternoon before its own trip and none of its cues could fire,
+// while its weather poll ran through the day before for a lake he was not on.
+
+const dayIso = (daysAhead) => {
+  const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + daysAhead);
+  const p = (n) => String(n).padStart(2, '0');
+  return { date: `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`, from: d.toISOString(),
+           at: (h) => new Date(d.getTime() + h * 3600e3).toISOString() };
+};
+
+async function armDay(env, day, { returnH = 15, lat = 34.09, lon = -81.33, cues = [] } = {}) {
+  await registerDevice(env);
+  const [r, u] = req('/alerts/watch', { method: 'POST', body: {
+    lat, lon, until: day.at(returnH), date: day.date, from: day.from, cues } });
+  return (await handleAlerts(r, env, u)).json();
+}
+
+test('a plan built two days ahead keeps its watch to its own return time', async () => {
+  const env = { KV: kvStub(), ...vapidEnv() };
+  stubUpstreams();
+  const sunday = dayIso(2);
+  const j = await armDay(env, sunday, { returnH: 15 });
+  assert.equal(j.until, sunday.at(15), 'not cut off at 18 h from the planning');
+  const w = JSON.parse([...env.KV.store.entries()].find(([k]) => k.startsWith('watch:'))[1]);
+  assert.equal(w.date, sunday.date);
+  assert.equal(w.from, sunday.from);
+});
+
+test('one watch per day: a rebuild replaces that day, another day sits beside it', async () => {
+  const env = { KV: kvStub(), ...vapidEnv() };
+  stubUpstreams();
+  const sat = dayIso(1);
+  const sun = dayIso(2);
+  await armDay(env, sat, { returnH: 14, lat: 34.39, lon: -80.73 });   // Wateree, Saturday
+  await armDay(env, sun, { returnH: 15 });                           // Murray, Sunday
+  await armDay(env, sun, { returnH: 13 });                           // Murray rebuilt
+  const watches = [...env.KV.store.entries()].filter(([k]) => k.startsWith('watch:'))
+    .map(([, v]) => JSON.parse(v));
+  assert.equal(watches.length, 2, 'Saturday kept, Sunday replaced rather than doubled');
+  const sunW = watches.find((w) => w.date === sun.date);
+  assert.equal(sunW.until, sun.at(13), 'the last plan built for the day is the one armed');
+  assert.ok(watches.some((w) => w.date === sat.date && w.lat === 34.39));
+});
+
+test('a watch asks for no weather before its own day begins', async () => {
+  const env = { KV: kvStub(), ...vapidEnv() };
+  const pushed = stubUpstreams({ hazards: [
+    { id: 'W-TOMORROW', type: 'Severe Thunderstorm Warning', ends: '2099-01-01T00:00:00Z' }] });
+  await armDay(env, dayIso(2), { lat: 33.21, lon: -80.41 });
+  const s = await runAlertSweep(env);
+  assert.equal(s.new_alerts, 0);
+  assert.equal(pushed.length, 0);
+});
+
+test('a caller that sends no date is keyed and capped exactly as before', async () => {
+  const env = { KV: kvStub(), ...vapidEnv() };
+  stubUpstreams();
+  await registerDevice(env);
+  const far = new Date(Date.now() + 40 * 3600e3).toISOString();
+  const [r, u] = req('/alerts/watch', { method: 'POST', body: { lat: 33.3, lon: -80.3, until: far } });
+  const j = await (await handleAlerts(r, env, u)).json();
+  assert.ok(Date.parse(j.until) <= Date.now() + 18 * 3600e3 + 5e3, 'still the 18 h cap');
+});
