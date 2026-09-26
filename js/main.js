@@ -66,7 +66,6 @@ import './modules/utility-sync.js';
 import './modules/lake-intel.js';
 import './modules/plan-builder.js';
 import './modules/edit.js';
-import './modules/track-reverse.js';
 import './modules/contour-data.js';
 import './modules/routes-panel.js';
 import './modules/fishing-index.js';
