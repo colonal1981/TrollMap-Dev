@@ -184,16 +184,14 @@ export async function runSmartPlanV2(opts = {}) {
 
   // THE RESEARCH PROFILE IS THE POINT OF THE RESEARCH PIPELINE. The first version of this file
   // ignored it entirely and used the four-lake built-in table — worse than v1, which at least put
-  // the research prose in its prompt. Try the in-memory cache the research tab fills, then ask
-  // the Worker, because the planner should not depend on someone having opened that tab first.
+  // the research prose in its prompt. Ask the Worker for it.
   //
-  // LOADED HERE AND NOT SEVENTY LINES DOWN, because the legality check below reads its closed
-  // seasons and cannot await for them. This is the same shape as the ensureRegulations() bug
-  // noted above -- a synchronous check sitting ahead of the only call that fills what it reads --
-  // and it is one load used by both, not a second fetch for the law.
+  // It was loaded HERE, ahead of the legality check, because that check read the profile's
+  // closed seasons. It stopped reading them on 2026-09-25 (profileClosures() in plan-preflight.js
+  // went with the Research tab that wrote them); the load stays where it is.
   const researched = await loadResearchedProfile(inp.lakeName);
 
-  const legality = checkPlanLegality(inp.lakeName, species, date, { profile: researched, at: ramp });
+  const legality = checkPlanLegality(inp.lakeName, species, date, { at: ramp });
   if (!legality.legal) {
     say(`${species} not legal here today`, true);
     if (out) out.innerHTML = `<p style="color:var(--warn);font-size:12px">REGULATION BLOCK — `

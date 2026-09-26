@@ -222,7 +222,9 @@ describe('both planners hand the launch to the law', () => {
     it(f.split('/').pop(), () => {
       const s = src(f);
       expect(s.includes('ensureRegulations(inp.lakeName, { worker: CF_WORKER_URL, at: ramp })')).toBe(true);
-      expect(s.includes('checkPlanLegality(inp.lakeName, species, date, { profile: researched, at: ramp })')).toBe(true);
+      // `profile: researched` rode beside `at` until 2026-09-25, when the legality check stopped
+      // reading the profile's closed seasons (profileClosures() went with the Research tab).
+      expect(s.includes('checkPlanLegality(inp.lakeName, species, date, { at: ramp })')).toBe(true);
     });
   }
 

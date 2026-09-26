@@ -841,14 +841,13 @@ export async function findWater() {
   // both planners again -- one prompt, two planners.
   await primeSeabedHabitat({ worker: CF_WORKER_URL });
 
-  // THE PROFILE BEFORE THE LAW, because checkPlanLegality() reads its extracted closed seasons
-  // and cannot await for them. The long note on why Pick Water loads a profile at all sits below,
-  // where it is used for the depth band; it is loaded HERE so both readers get it. Smart Plan
-  // made the same move for the same reason.
+  // THE PROFILE BEFORE THE LAW, because checkPlanLegality() read its extracted closed seasons --
+  // until 2026-09-25, when profileClosures() went with the Research tab that wrote them. The long
+  // note on why Pick Water loads a profile at all sits below, where it is used for the depth band.
   say('Reading the research…');
   const researched = await loadResearchedProfile(inp.lakeName);
 
-  const legality = checkPlanLegality(inp.lakeName, species, date, { profile: researched, at: ramp });
+  const legality = checkPlanLegality(inp.lakeName, species, date, { at: ramp });
   if (!legality.legal) {
     return say(`${species} not legal here today — `
              + `${legality.reason || 'closed season or closed water'}`, true);

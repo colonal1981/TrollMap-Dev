@@ -74,8 +74,8 @@ test('the draw does not sit behind a research profile', () => {
   // nothing on this path reads a profile at all -- and nothing may start to again.
   assert.ok(!/getResearchedProfile|loadProfile\(/.test(SUP.replace(/^\s*\/\/.*$/gm, '')),
     'the structure draw reads no research profile, cached or loaded');
-  assert.ok(/structureFor\(_garminData\.structure, null\)/.test(SUP),
-    'structureFor() is handed the pack and null for the profile');
+  assert.ok(/structureFor\(_garminData\.structure\)/.test(SUP),
+    'structureFor() is handed the pack and nothing else');
 });
 
 test('nothing-to-draw is said out loud, not returned in silence', () => {
@@ -94,8 +94,8 @@ test('the pack is still what structure comes from', () => {
   assert.ok(/PREFETCH_LAYERS = \[[^\]]*'structure'/.test(SUP),
     'structure stays in PREFETCH_LAYERS: Smart Plan and the tap-context panel read it whether or '
   + 'not the markers are drawn');
-  assert.ok(/export function structureFor\(packGeo, profileStructuralElements\)/.test(ADAPT),
-    'structureFor still takes the pack FIRST and the profile second');
+  assert.ok(/export function structureFor\(packGeo\)/.test(ADAPT),
+    'structureFor takes the pack, and since 2026-09-25 no profile at all');
   assert.ok(/"structure":\s*"structure\.geojson"/.test(UP),
     'and the uploader still knows the file, or there is nothing on R2 to draw');
 });

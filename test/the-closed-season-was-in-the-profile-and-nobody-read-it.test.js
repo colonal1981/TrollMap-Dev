@@ -1,3 +1,13 @@
+// NOW IT IS NOT READ AT ALL, ON PURPOSE. 2026-09-25.
+//
+// This file was written to make the planner read `regulations.lakeSpecificRegulations.closedSeasons`
+// and warn with each sentence (profileClosures() in plan-preflight.js). Only the Research tab's
+// coastal assembler ever wrote that field -- one stored profile of 133 carries any, Santee River
+// Delta, a shellfish-season sentence -- and the tab was deleted. Ryan: "nothing the tab writes
+// should be used anymore". So the tests below assert the opposite of what they used to: the
+// field is not read, the legality check takes no profile, and the state book and the hand table
+// are the two sources left. The history that follows is why it was read in the first place.
+//
 // THE RESEARCH PIPELINE EXTRACTED A CLOSED SEASON AND THE PLANNER NEVER ASKED FOR IT.
 //
 // `regulations.lakeSpecificRegulations.closedSeasons` is filled by the coastal fact assembler in
@@ -29,160 +39,60 @@ const src = (f) => readFileSync(join(here, '..', f), 'utf8');
 
 globalThis.window = globalThis;
 
-const { profileClosures, checkPlanLegality } = await import('../js/modules/plan-preflight.js');
+const preflight = await import('../js/modules/plan-preflight.js');
+const { checkPlanLegality } = preflight;
 
 const withClosures = (rows) => ({
   regulations: { state: 'SC', lakeSpecificRegulations: { closedSeasons: rows } },
 });
+const code = (f) => src(f).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
-describe('the sentences come out of the profile', () => {
-  it('reads the {species, period, note} shape the LLM schema emits', () => {
-    const out = profileClosures(withClosures([
-      { species: 'Striped Bass / Hybrid', period: 'June 1 – Sept 30', note: 'no harvest below the dam' },
-    ]), 'Striped Bass / Hybrid');
-    expect(out.length).toBe(1);
-    expect(out[0].text).toContain('June 1 – Sept 30');
-    expect(out[0].text).toContain('no harvest below the dam');
+describe('the retired field is not read', () => {
+  it('profileClosures() is gone', () => {
+    expect(preflight.profileClosures).toBeUndefined();
   });
 
-  it('reads the {note, source} shape the coastal fact assembler writes', () => {
-    // lake-research-engine.js pushes `{ note: f.fact, source: f.source || null }` — no species
-    // and no period at all. Requiring either would drop every coastal closure on the floor.
-    const out = profileClosures(withClosures([
-      { note: 'Harvest of southern flounder is closed Jan 1 through Aug 31.', source: 'SCDNR' },
-    ]), 'Southern Flounder');
-    expect(out.length).toBe(1);
-    expect(out[0].text).toContain('southern flounder is closed');
-    expect(out[0].source).toBe('SCDNR');
+  it('no code in plan-preflight.js names closedSeasons', () => {
+    const c = code('js/modules/plan-preflight.js');
+    expect(c.includes('closedSeasons')).toBe(false);
+    expect(c.includes('lakeSpecificRegulations')).toBe(false);
   });
 
-  it('reads a bare string, because the research tab already handles one', () => {
-    const out = profileClosures(withClosures(['Closed to all fishing during the spawn.']), 'Crappie');
-    expect(out.length).toBe(1);
-    expect(out[0].text).toBe('Closed to all fishing during the spawn.');
-  });
-
-  it('a row naming ANOTHER fish is not this trip’s problem', () => {
-    const out = profileClosures(withClosures([
-      { species: 'Walleye / Sauger', period: 'March', note: 'closed' },
-    ]), 'Largemouth Bass');
-    expect(out.length).toBe(0);
-  });
-
-  it('...and a row naming NO fish governs the water, so it is kept', () => {
-    const out = profileClosures(withClosures([
-      { period: 'March 1 – April 15', note: 'the whole impoundment is closed' },
-    ]), 'Largemouth Bass');
-    expect(out.length).toBe(1);
-  });
-
-  it('a parenthetical is a second name, not a mismatch', () => {
-    // `Red Drum (Redfish)` on the plan and `Redfish` in the document are one fish, and neither
-    // string contains the other. This is the failure regulations-live.js documents by name.
-    const out = profileClosures(withClosures([
-      { species: 'Redfish', period: 'November', note: 'closed to harvest' },
-    ]), 'Red Drum (Redfish)');
-    expect(out.length).toBe(1);
-  });
-
-  it('no profile, no regulations block and no rows are all simply nothing', () => {
-    expect(profileClosures(null, 'Crappie')).toEqual([]);
-    expect(profileClosures({}, 'Crappie')).toEqual([]);
-    expect(profileClosures(withClosures([]), 'Crappie')).toEqual([]);
+  it('a profile carrying a closed season changes nothing about the answer', () => {
+    const PROFILE = withClosures([
+      { species: 'Largemouth Bass', period: 'April 1 – May 15', note: 'closed on the spawning flats' },
+    ]);
+    const date = new Date('2026-04-10T12:00:00');
+    const withIt = checkPlanLegality('Lake Wateree, SC', 'Largemouth Bass', date, { profile: PROFILE });
+    const bare = checkPlanLegality('Lake Wateree, SC', 'Largemouth Bass', date);
+    expect(withIt).toEqual(bare);
+    expect(withIt.warnings.join(' | ').includes('spawning flats')).toBe(false);
   });
 });
 
-describe('they warn and they never block', () => {
-  const PROFILE = withClosures([
-    { species: 'Largemouth Bass', period: 'April 1 – May 15', note: 'closed on the spawning flats' },
-  ]);
-
-  it('the sentence reaches the plan’s warnings', () => {
-    const r = checkPlanLegality('Lake Wateree, SC', 'Largemouth Bass',
-      new Date('2026-04-10T12:00:00'), { profile: PROFILE });
-    const joined = r.warnings.join(' | ');
-    expect(joined).toContain('April 1 – May 15');
-    expect(joined).toContain('closed on the spawning flats');
-  });
-
-  it('and it says which book it is NOT, because that is what he has to go check', () => {
-    const r = checkPlanLegality('Lake Wateree, SC', 'Largemouth Bass',
-      new Date('2026-04-10T12:00:00'), { profile: PROFILE });
-    expect(r.warnings.join(' | ')).toContain('researched profile');
-  });
-
-  it('a free-text period CANNOT cancel the morning', () => {
-    // Inventing a start and an end out of "April 1 – May 15" is how a planner refuses a trip on
-    // a rule it guessed at. The sentence is carried; the gate is not.
-    const r = checkPlanLegality('Lake Wateree, SC', 'Largemouth Bass',
-      new Date('2026-04-10T12:00:00'), { profile: PROFILE });
-    expect(r.legal).toBe(true);
-  });
-
-  it('the closure is said FIRST, ahead of the limits', () => {
-    const r = checkPlanLegality('Lake Wateree, SC', 'Largemouth Bass',
-      new Date('2026-04-10T12:00:00'), { profile: PROFILE });
-    expect(r.warnings[0]).toContain('Closed season on this water');
-  });
-
-  it('calling without a profile is unchanged — it costs the sentences, never permission', () => {
-    const bare = checkPlanLegality('Lake Wateree, SC', 'Largemouth Bass', new Date('2026-04-10T12:00:00'));
-    expect(bare.legal).toBe(true);
-    expect(bare.warnings.some((w) => /Closed season on this water/.test(w))).toBe(false);
-  });
-});
-
-describe('the wiring actually hands it over', () => {
+describe('neither planner hands a profile to the legality check', () => {
   const wiring = src('js/modules/smart-plan-v2-wiring.js');
+  const pw = src('js/modules/plan-water-ui.js');
 
-  it('checkPlanLegality is given the profile', () => {
-    // `, at: ramp` rides beside it since 2026-09-24 -- the launch, for a water in two states.
-    expect(wiring).toMatch(/checkPlanLegality\([^)]*\{\s*profile:\s*researched\s*[,}]/);
+  it('Smart Plan passes the launch and nothing else', () => {
+    expect(wiring).toMatch(/const legality = checkPlanLegality\([^)]*\{\s*at:\s*ramp\s*\}\)/);
+    expect(/checkPlanLegality\([^)]*profile:/.test(code('js/modules/smart-plan-v2-wiring.js'))).toBe(false);
   });
 
-  it('AND THE PROFILE IS LOADED FIRST — the check cannot await for it', () => {
-    // The bug this file exists to prevent from coming back. `loadResearchedProfile` sat seventy
-    // lines BELOW the legality call, so passing it there would have passed `undefined` forever
-    // and every assertion above would still be green.
-    //
-    // ANCHORED ON THE CALL, NOT THE NAME. `checkPlanLegality()` is named in a comment twenty
-    // lines above the call it describes, and indexOf('checkPlanLegality(') finds the comment --
-    // which is how four source-reading guards in this suite spent a session asserting against
-    // their own prose. The assignment is the thing that runs.
-    const load = wiring.indexOf('const researched = await loadResearchedProfile(');
-    const check = wiring.indexOf('const legality = checkPlanLegality(');
-    expect(load).toBeGreaterThan(-1);
-    expect(check).toBeGreaterThan(-1);
-    expect(load).toBeLessThan(check);
+  it('and so does Pick Water', () => {
+    expect(pw).toMatch(/const legality = checkPlanLegality\([^)]*\{\s*at:\s*ramp\s*\}\)/);
+    expect(/checkPlanLegality\([^)]*profile:/.test(code('js/modules/plan-water-ui.js'))).toBe(false);
   });
 
-  it('ONE load, not a second fetch for the law', () => {
-    const loads = wiring.match(/await loadResearchedProfile\(/g) || [];
-    expect(loads.length).toBe(1);
-  });
-
-  it('AND PICK WATER HANDS IT OVER TOO — two planners, one legality check', () => {
-    // The same defect had the same shape on the other tab: plan-water-ui.js called
-    // checkPlanLegality() and loaded the profile fourteen lines later. A closure that blocks a
-    // Smart Plan day and not a Pick Water day is worse than one that blocks neither, because now
-    // there is a route to the water that does not ask.
-    const pw = src('js/modules/plan-water-ui.js');
-    expect(pw).toMatch(/checkPlanLegality\([^)]*\{\s*profile:\s*researched\s*[,}]/);
-    const load = pw.indexOf('const researched = await loadResearchedProfile(');
-    const check = pw.indexOf('const legality = checkPlanLegality(');
-    expect(load).toBeGreaterThan(-1);
-    expect(check).toBeGreaterThan(load);
-  });
-
-  it('...and Pick Water still loads that profile exactly once', () => {
-    const pw = src('js/modules/plan-water-ui.js');
+  it('each still loads its profile exactly once, for the depth band and the prompt', () => {
+    expect((wiring.match(/await loadResearchedProfile\(/g) || []).length).toBe(1);
     expect((pw.match(/await loadResearchedProfile\(/g) || []).length).toBe(1);
   });
 
   it('the warnings are merged BEFORE anything reads r.problems', () => {
     // They were merged below planToTimeline(), which had already snapshotted the list — so the
     // no-plan branch, the bench JSON and the bench draw all got a list with none of the law in
-    // it. Same defect as the closure above, one layer out: computed right, addressed late.
+    // it. Computed right, addressed late. Still true of the book's warnings.
     const merge = wiring.indexOf('r.problems = [...legality.warnings');
     expect(merge).toBeGreaterThan(-1);
     const firstRead = Math.min(

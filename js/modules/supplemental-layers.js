@@ -1354,10 +1354,10 @@ async function loadLakeBoundary(displayName) {
 function renderStructureMarkers(displayName) {
   if (!mapReady()) return;
   if (_structureMarkerLayer) { getMap().removeLayer(_structureMarkerLayer); _structureMarkerLayer = null; }
-  // The pack: every hump and every ledge the pipeline built, uncapped. No profile is passed.
-  // The humps and ledges a profile carried were written by the Research tab, which is gone,
-  // and they are retired fields -- eight profiles hold exactly the old agent's cap of 8 each.
-  const { humps, ledges, holes, source } = structureFor(_garminData.structure, null);
+  // The pack: every hump and every ledge the pipeline built, uncapped. No profile: the humps and
+  // ledges a profile carried are retired fields -- eight profiles hold exactly the old agent's
+  // cap of 8 each -- and structureFor() stopped reading them on 2026-09-25.
+  const { humps, ledges, holes, source } = structureFor(_garminData.structure);
   if (!humps.length && !ledges.length && !(holes || []).length) {
     // SAY SO. A silent return here is what hid 943 features on the Congaree for a day: the
     // console showed depth areas, pois, docks, ramps and the boundary all loading, and simply
