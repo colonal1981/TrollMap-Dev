@@ -33,6 +33,48 @@ import { JIGHEADS_OWNED_OZ, TROLLING_WEIGHTS_OWNED_OZ,
 import { FISHING_STYLE } from '../data/fishing-style-profile.js';
 import { ozLabel } from '../utils/oz.js';
 import { legLightFor, lightAgrees } from '../utils/light-state.js';
+import { poolOffsetFt, todayDepthFt } from '../utils/water-conditions.js';
+
+/**
+ * HOW FAR OFF THE BOTTOM A BAIT RIDES, IN THE ONE UNIT THE CARD PRINTS IT IN.
+ *
+ * `floorFt - deepFt`, rounded to the foot. Zero or less is a bait ON the bottom: the card says
+ * "rides right on the rise" and marks it `taps`. capBaitDepth() used to shorten a lead until the
+ * bait's deep end EQUALLED the shallowest water and then call that "so it clears" -- and the card,
+ * reading the same two numbers, said gap 0, taps. Ryan's 2026-09-26 Wateree plan did it on nine
+ * legs. One function now answers "does it clear" for both, so the warning and the card cannot
+ * disagree about the same bait on the same leg. No margin is added: a foot is the resolution
+ * depthWindow() reports in, and a rounded gap of one foot is the least the card can print as up.
+ */
+export function bottomGapFt(floorFt, deepFt) {
+  const f = floorFt == null ? NaN : Number(floorFt);
+  const d = deepFt == null ? NaN : Number(deepFt);
+  if (!Number.isFinite(f) || !Number.isFinite(d)) return null;
+  // `+ 0` folds -0 into 0, so a bait 0.4 ft into an 11.6 ft rise prints as 0 and not "-0".
+  return Math.round(f - d) + 0;
+}
+
+/**
+ * THE LEAD THAT PUTS THIS BAIT AT `targetFt`, WITH ITS DEEP END NO DEEPER THAN `deepestFt`.
+ *
+ * leadForDepth() centres the window on the target and depthWindow() reports a band either side,
+ * so the target walks up until the band's deep end is inside the limit. The limit is a measured
+ * depth the bait must not go under -- the anoxic line -- and `Infinity` when there is none, which
+ * makes this plain leadForDepth() for the asked depth.
+ */
+function leadWithin(lure, targetFt, deepestFt, speedMph) {
+  if (!Number.isFinite(targetFt) || targetFt <= 0) return null;
+  let target = Math.min(targetFt, deepestFt);
+  for (let i = 0; i < 8 && target > 0; i++) {
+    const lead = leadForDepth(lure, target, speedMph);
+    if (!Number.isFinite(lead) || lead <= 0) return null;
+    const got = depthWindow(lure, { speedMph, leadFt: lead });
+    if (!Number.isFinite(got.max)) return null;
+    if (got.max <= deepestFt) return lead;
+    target -= Math.max(1, got.max - deepestFt);
+  }
+  return null;
+}
 
 /**
  * A PADDLE TAIL HAS NO WEIGHT UNTIL A HEAD IS ON IT, AND THE LEAD MATHS NEEDS ONE.
@@ -231,6 +273,16 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
   // A lead IS per-pass -- you let line out on the deep leg and reel it in on the shallow one.
   // The loadout is the bag; the leg is what is behind the boat on that leg.
   if (typeof lureByName !== 'function' || !Number.isFinite(ceilingFt) || ceilingFt <= 0) return null;
+  // THE WATER TODAY, NOT THE WATER THE CHART WAS SOUNDED IN. The caller hands `ceilingFt` and the
+  // leg's depths already less the lake's measured drawdown (see poolOffsetFt()), and says so here
+  // so every sentence quoting one of them can say what it is. `chartCeilingFt` is the same rise at
+  // the chart's number, which is what the envelope has to be searched at to find where it is.
+  const dd = Number(legDepth && legDepth.drawdownFt);
+  const today = legDepth && legDepth.drawdownFt != null && Number.isFinite(dd) && dd !== 0
+    ? ` (the chart ${dd > 0 ? 'less' : 'plus'} the ${Math.abs(dd)} ft the lake is `
+      + `${dd > 0 ? 'below' : 'above'} full pool today)` : '';
+  const chartCeilingFt = legDepth && legDepth.chartCeilingFt != null
+    && Number.isFinite(Number(legDepth.chartCeilingFt)) ? Number(legDepth.chartCeilingFt) : ceilingFt;
   const ids = [deploy && deploy.port, deploy && deploy.starboard].filter(Boolean);
   const forThisLeg = {};
   for (const id of ids) {
@@ -254,6 +306,52 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
     const lure = fit ? { ...rigged, weightOz: fit.weightOz } : rigged;
     let leadFt = fit ? fit.leadFt : rod.leadFt;
     if (inlineOz) forThisLeg[id] = { ...(forThisLeg[id] || {}), inlineWeightOz: inlineOz };
+
+    // ── A BAIT BEHIND A TROLLING WEIGHT IS LEADED TO THE DEPTH ASKED FOR, NOT THE LEAD ASKED FOR ──
+    //
+    // The prompt tells the model, for exactly these baits: "Say what depth you want it at and
+    // leave the weight and the lead to the app" (depthNote() in plan-prompt.js). The weight was
+    // fitted -- fitInlineWeight() above, off `runsDepthFt` -- and then the model's own `leadFt`
+    // was used anyway, a number about a rig it was told not to price.
+    //
+    // Ryan's 2026-09-26 Wateree plan: R5, the 3/4oz Nichols behind the 2oz weight, asked for at
+    // 12-16 ft on 90 ft of lead. 90 ft on that rig is 24-28 ft -- below the 19.7 ft anoxic line
+    // measured on that lake -- and the card printed 24-28 on every deep leg. The depth was the
+    // model's judgement and the lead is the app's arithmetic; this is the paddle-tail rule from
+    // fitJighead() applied to the other bait whose weight the app picks.
+    //
+    // Only when the model named a depth. Without one there is nothing to fit to, and the lead it
+    // gave stands, as it always did.
+    const asked = Array.isArray(rod.runsDepthFt) && rod.runsDepthFt.length === 2
+      && rod.runsDepthFt.every(Number.isFinite) ? rod.runsDepthFt : null;
+    if (inlineOz && !fit && asked) {
+      // No longer than he runs. fitInlineWeight() has already said out loud when even the
+      // heaviest weight in the box cannot reach the asked depth inside that; the lead stops there
+      // and the window below reports the depth it does reach, rather than a lead he will not set.
+      const maxLead = FISHING_STYLE.rigging?.maxLeadFt ?? 120;
+      const reach = leadWithin(rigged, (asked[0] + asked[1]) / 2, Infinity, speedMph);
+      const want = Number.isFinite(reach) ? Math.min(reach, maxLead) : null;
+      if (Number.isFinite(want) && want > 0 && want !== leadFt) {
+        const was = Number.isFinite(leadFt) && leadFt > 0 ? leadFt : null;
+        const at = depthWindow(rigged, { speedMph, leadFt: want });
+        // SAID ONCE FOR THE DAY, NOT ONCE A LEG. It is the same fit on every leg fished at the same
+        // speed -- a sentence per leg was four copies of one fact on the plan it was written for.
+        const key = `${id}|${rod.lure}|${want}|${speedMph}`;
+        const saidFits = legDepth && legDepth.fitsSaid;
+        if (!(saidFits && saidFits.has(key))) {
+          if (saidFits) saidFits.add(key);
+          decisions.push(`${id} on ${runId}${saidFits ? ' and every leg after it at this speed' : ''}: `
+                      + `a ${rod.lure} behind the ${ozLabel(inlineOz)} inline `
+                      + `weight goes on ${want} ft of lead for the ${asked[0]}-${asked[1]} ft the `
+                      + `plan asked for, and runs ${at.min}-${at.max} ft on it`
+                      + (was ? `. The ${was} ft of lead the plan named runs that rig to `
+                               + `${depthWindow(rigged, { speedMph, leadFt: was }).max} ft` : '')
+                      + '.');
+        }
+        leadFt = want;
+        forThisLeg[id] = { ...(forThisLeg[id] || {}), leadFt };
+      }
+    }
 
     // A LEAD OF ZERO IS NOT A LEAD.
     //
@@ -290,6 +388,39 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
     // the number Ryan asked for and could not find: `jigWeight` was an empty string on every row
     // of every plan, because nothing had ever chosen one.
     if (fit) forThisLeg[id] = { jigheadOz: fit.weightOz, leadFt };
+
+    // ── AND NEVER UNDER THE ANOXIC LINE ──────────────────────────────────────────────────────────
+    //
+    // The oxygen floor is a MEASURED depth -- `oxygenFloorFt()` off the lake's own profile, the
+    // same number the prompt's bait gate and the depth band's "clamped ... to the 19.7 ft anoxic
+    // line" stand on. Nothing lives under it, so a bait whose deep end is below it is fishing
+    // empty water. The band was clamped and the gate filtered, and then the lead that decides
+    // where the bait actually runs was never checked against it: R5 on Ryan's 2026-09-26 Wateree
+    // plan ran 24-28 ft on a lake measured anoxic below 19.7.
+    //
+    // Only a bait that lead can lift. A bill sets its own depth; trollableBaits() already refuses one
+    // that can only fish below the floor, and one that merely reaches past it is not moved here.
+    // No floor measured, nothing checked -- an absent input does not become a constraint.
+    const oxy = Number(legDepth && legDepth.oxygenFloorFt);
+    let underOxygenFrom = null;
+    if (Number.isFinite(oxy) && oxy > 0 && Number.isFinite(leadFt) && leadFt > 0) {
+      const at = depthWindow(lure, { speedMph, leadFt });
+      if (at.mode === 'lead' && Number.isFinite(at.max) && at.max > oxy) {
+        const up = leadWithin(lure, oxy, oxy, speedMph);
+        if (Number.isFinite(up) && up > 0 && up < leadFt) {
+          underOxygenFrom = { leadFt, max: at.max };
+          const nw = depthWindow(lure, { speedMph, leadFt: up });
+          decisions.push(`${id} on ${runId}: a ${rod.lure}`
+                      + `${inlineOz ? ` behind the ${ozLabel(inlineOz)} inline weight` : ''}`
+                      + `${fit ? ` on a ${ozLabel(fit.weightOz)} head` : ''} on ${leadFt} ft of `
+                      + `lead would run to ${at.max} ft, under the ${oxy} ft anoxic line measured `
+                      + `on this water — nothing lives down there. Shortened to ${up} ft, which `
+                      + `runs it ${nw.min}-${nw.max} ft.`);
+          leadFt = up;
+          forThisLeg[id] = { ...(forThisLeg[id] || {}), leadFt };
+        }
+      }
+    }
 
     const w = depthWindow(lure, { speedMph, leadFt });
 
@@ -333,7 +464,9 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
     // closer to 12". |10 - 12| is 2, so the tolerance swallowed it and the invented number went
     // to the card. On a rated bait the test is equality, which is not a threshold at all.
     const claimedTol = w.claimed === true ? 0 : 4;
-    if (Array.isArray(rod.runsDepthFt) && Number.isFinite(rod.runsDepthFt[1])
+    // Not when the anoxic line moved it: that decision above already names both numbers and why,
+    // and "going with the app's number" beside it would be the same change said twice.
+    if (!underOxygenFrom && Array.isArray(rod.runsDepthFt) && Number.isFinite(rod.runsDepthFt[1])
         && Math.abs(rod.runsDepthFt[1] - w.max) > claimedTol) {
       // "GOING WITH THE MEASURED NUMBER" WAS A LIE THIS FILE TOLD ABOUT ITS OWN ARITHMETIC.
       //
@@ -457,20 +590,31 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
     // a warning saying it had been fixed, which is worse than not fixing it.
     //
     // So the target walks down until the WINDOW clears, because that is the thing that has to be
-    // true. Six passes is far more than the band ever needs and bounds it against a lure whose
+    // true. Eight passes is far more than the band ever needs and bounds it against a lure whose
     // ratio makes it not converge.
     // Taken as a function because it is asked twice now: once for the lead that clears the water
     // the leg sustains (the correction below) and once for the lead that clears the rise (the flag
     // above). Same walk, different depth.
+    // ── AND "CLEARS" MEANS OFF THE BOTTOM, NOT ON IT ────────────────────────────────────────────
+    //
+    // This walked until `got.max <= clear` -- the bait's deep end EQUAL to the shallowest water --
+    // and the warning then said "shortened the lead to 42 ft so it clears". The card, reading the
+    // same two numbers, said gap 0, taps, "rides right on the 14 ft rise". Ryan's 2026-09-26
+    // Wateree plan carried nine of those, a 3/4oz bucktail "cleared" onto a 6 ft rise among them.
+    //
+    // So it walks until bottomGapFt() -- the card's own gap -- is at least a foot. That is not a
+    // safety margin anybody chose: it is the smallest gap the card can print as "up", in the foot
+    // the depth window is reported in. Each step aims the deep end half a foot under the water,
+    // which is where that rounding turns a gap into a foot.
     const leadClearing = (clear) => {
       if (!Number.isFinite(clear) || clear <= 0) return null;
-      for (let target = clear, i = 0; i < 6 && target > 0; i++) {
+      for (let target = clear, i = 0; i < 8 && target > 0; i++) {
         const lead = leadForDepth(lure, target, speedMph);
         if (!Number.isFinite(lead) || lead <= 0) return null;
         const got = depthWindow(lure, { speedMph, leadFt: lead });
         if (!Number.isFinite(got.max)) return null;
-        if (got.max <= clear) return lead;
-        target -= Math.max(1, got.max - clear);
+        if (bottomGapFt(clear, got.max) >= 1) return lead;
+        target -= Math.max(1, got.max - (clear - 0.5));
       }
       return null;
     };
@@ -520,8 +664,9 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
       const clearsRise = leadClearing(ceilingFt);
       const env = [legDepth.minFt, legDepth.maxFt].every(Number.isFinite)
         ? `${legDepth.minFt}-${legDepth.maxFt} ft` : `${ceilingFt} ft at its shallowest`;
+      // The envelope is the CHART's, so the rise is found on it at the chart's number for it.
       const where = riseSentence(risesAtM(legDepth && legDepth.envelope,
-                                         legDepth && legDepth.stepM, ceilingFt));
+                                         legDepth && legDepth.stepM, chartCeilingFt));
       // SAID TWICE. `bottomNote` on this very leg already carries the rise and the lead that
       // clears it, on the card he reads while rigging for that leg -- which is the place it means
       // something. Three more of the eleven.
@@ -529,7 +674,7 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
                   + `${inlineOz ? ` behind the ${ozLabel(inlineOz)} inline weight` : ''}`
                   + `${fit ? ` on a ${ozLabel(fit.weightOz)} head` : ''} `
                   + `runs ${w.min}-${w.max} ft, and this leg is ${env} with a median of `
-                  + `${medianFt} ft. THE LEAD IS LEFT WHERE YOU SET IT \u2014 the bait clears the `
+                  + `${medianFt} ft${today}. THE LEAD IS LEFT WHERE YOU SET IT \u2014 the bait clears the `
                   + `water this pass mostly is, and there is a rise to ${ceilingFt} ft it will not `
                   + (where ? `clear about ${where}. ` : `clear somewhere on it. `)
                   + (w.mode === 'lead'
@@ -547,22 +692,32 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
       continue;
     }
     if (w.mode === 'lead' && shorter && shorter < leadFt) {
+      // THE SENTENCE SAYS WHERE THE BAIT ENDS UP, in the same foot the card's clearance row prints,
+      // so "clears" is never said about a bait that is on the bottom. See bottomGapFt().
+      const nw = depthWindow(lure, { speedMph, leadFt: shorter });
+      const gap = bottomGapFt(ceilingFt, nw.max);
       warnings.push(`${id} on ${runId}: a ${rod.lure}`
                   + `${inlineOz ? ` behind the ${ozLabel(inlineOz)} inline weight` : ''}`
                   + `${fit ? ` on a ${ozLabel(fit.weightOz)} head` : ''} `
                   + `on ${leadFt} ft of lead at ${speedMph} mph runs to ${w.max} ft, and this leg `
-                  + `runs ${ceilingFt} ft at its shallowest with a median of `
+                  + `runs ${ceilingFt} ft at its shallowest${today} with a median of `
                   + `${Number.isFinite(medianFt) ? `${medianFt} ft` : 'no median on the pack'} — `
                   + `too shallow for it along the whole stretch, so shortened the lead to `
-                  + `${shorter} ft so it clears`);
-      const nw = depthWindow(lure, { speedMph, leadFt: shorter });
+                  + `${shorter} ft, which runs it ${nw.min}-${nw.max} ft: ${gap} ft off the bottom `
+                  + `at the shallowest`);
       forThisLeg[id] = { ...(forThisLeg[id] || {}), leadFt: shorter,
                          runsDepthFt: Number.isFinite(nw.max) ? [nw.min, nw.max]
                                                               : (forThisLeg[id] || {}).runsDepthFt };
     } else {
+      // A LEAD BAIT CAN BE LIFTED, SO "LEAD WILL NOT LIFT IT" WAS FALSE ABOUT IT. What is true is
+      // that no lead leaves it off this bottom -- on 2.6 ft of water, say -- and it is still the
+      // wrong bait for the pass. A bill bait keeps the sentence it always had.
       warnings.push(`${id} on ${runId}: a ${rod.lure} runs to ${w.max} ft and the shallowest water `
-                  + `on this leg is ${ceilingFt} ft. Its depth is ${w.controlledBy}, so lead will `
-                  + `not lift it — it is the wrong bait for this pass`);
+                  + `on this leg is ${ceilingFt} ft${today}. `
+                  + (w.mode === 'lead'
+                      ? `No lead the app can set keeps it off that bottom`
+                      : `Its depth is ${w.controlledBy}, so lead will not lift it`)
+                  + ` — it is the wrong bait for this pass`);
     }
   }
   return Object.keys(forThisLeg).length ? forThisLeg : null;
@@ -1002,6 +1157,22 @@ export function assemblePlan(o) {
   const _db = (o.conditions && o.conditions.depthBand) || null;
   const fish = _db ? { bandFt: Array.isArray(_db.ft) ? _db.ft : null,
                        stated: _db.fishDepthStated !== false } : null;
+  // THE LAKE'S MEASURED DRAWDOWN, TAKEN OFF THE CHART BEFORE A BAIT IS CHECKED AGAINST IT.
+  //
+  // Every depth on a leg is the chart's, and the chart was sounded at full pool. Ryan's 2026-09-26
+  // Wateree day was 3.40 ft down, and every bait check on it -- the shortened leads, the rise
+  // flags, the card's bottom note -- compared against water 3.4 ft deeper than the water he was
+  // in. The prompt has said "subtract it" since poolPromptBlock() was written; the app's own
+  // arithmetic never did. Both planners hand this the same `waterState`, so one line here serves
+  // Smart Plan and Pick Water alike. Null (no level published, a river, or at full pool) changes
+  // nothing: the depths stand as the full-pool numbers they are.
+  const poolOff = poolOffsetFt(o.waterState);
+  // THE MEASURED OXYGEN FLOOR, forwarded by both planners from the same oxygenFloorFt() the
+  // prompt's bait gate reads. See capBaitDepth(): no bait lead can lift runs below it.
+  const oxygenFloorFt = o.oxygenFloorFt != null && Number(o.oxygenFloorFt) > 0
+    ? Number(o.oxygenFloorFt) : null;
+  // Which lead fits capBaitDepth() has already reported today, so each is said once. See there.
+  const fitsSaid = new Set();
   const trollMph = o.trollMph ?? 2.0;
   const transitMph = o.transitMph ?? 3.5;
   const launchMin = parseClock(o.launchTime) ?? 6 * 60;
@@ -1566,7 +1737,17 @@ export function assemblePlan(o) {
       ? (flipped ? c.envelope.slice().reverse() : c.envelope) : null;
     const fresh = [];
     const freshDecisions = [];
-    const rodPlan = capBaitDepth(rods, deploy, Number(c.maxRunDepthFt ?? c.depthFt), waterMph,
+    // THE CHART'S RISE AND THE WATER OVER IT TODAY. See `poolOff` at the top of this function.
+    const chartCeilingFt = Number(c.maxRunDepthFt ?? c.depthFt);
+    const ceilingTodayFt = todayDepthFt(chartCeilingFt, poolOff);
+    // A RISE THE DRAWDOWN HAS TAKEN OUT OF THE WATER is not a ceiling capBaitDepth() can check a
+    // bait against -- it returns nothing for a ceiling at or under zero -- so it is said here.
+    if (poolOff != null && chartCeilingFt > 0 && !(ceilingTodayFt > 0)) {
+      fresh.push(`${c.runId}: the shallowest water on this leg is charted at ${chartCeilingFt} ft `
+               + `and the lake is ${poolOff} ft below full pool today, so that spot is dry or `
+               + `awash — no bait on this leg was checked against it. Look at it before you run it.`);
+    }
+    const rodPlan = capBaitDepth(rods, deploy, ceilingTodayFt, waterMph,
                                  o.lureByName, c.runId, fresh, fish,
                                  // THE LEG'S OWN ENVELOPE, so a one-shoal ceiling can be told apart
                                  // from water that is shallow all the way along. See capBaitDepth.
@@ -1575,9 +1756,12 @@ export function assemblePlan(o) {
                                  // below: `atM` on an upstream pass is measured from the end the
                                  // boat actually starts at, and a warning that quoted the drawn
                                  // line's distance would be right about the wrong end of the leg.
-                                 { medianFt: Number(c.depthFt), minFt: Number(c.depthMinFt),
-                                   maxFt: Number(c.depthMaxFt),
-                                   envelope: legEnvelope, stepM: c.envelopeStepM }, legLight,
+                                 { medianFt: todayDepthFt(Number(c.depthFt), poolOff),
+                                   minFt: todayDepthFt(Number(c.depthMinFt), poolOff),
+                                   maxFt: todayDepthFt(Number(c.depthMaxFt), poolOff),
+                                   envelope: legEnvelope, stepM: c.envelopeStepM,
+                                   chartCeilingFt, drawdownFt: poolOff, oxygenFloorFt,
+                                   fitsSaid }, legLight,
                                  freshDecisions);
     for (const w of fresh) sayOnce(w);
     // Deduped the same way and by the same key, so a decision repeated across both passes of a
@@ -1591,6 +1775,11 @@ export function assemblePlan(o) {
       // THE LEG IS A RANGE OF WATER AND SAYS SO. The median is what it is called; the two ends
       // are what a lure depth is judged against. Absent on a pack with no envelope profile.
       depthFt: c.depthFt, depthMinFt: c.depthMinFt ?? null, depthMaxFt: c.depthMaxFt ?? null,
+      // HOW FAR THE LAKE IS BELOW FULL POOL TODAY, which every depth above is NOT adjusted for --
+      // they are the chart's, and the leg is named by them. The card's bait checks read this and
+      // take it off (see bottomClearance() in plan-to-timeline.js). Absent when no level is
+      // published or the lake is at full pool, and then nothing is taken off anything.
+      drawdownFt: poolOff ?? undefined,
       speedMph: legMph,
       // WHICH PASS OVER THIS WATER THIS IS. Stamped here for a river day, whose two passes are
       // siblings in `legList` rather than an inner loop, and by the pass loop below for a lake.

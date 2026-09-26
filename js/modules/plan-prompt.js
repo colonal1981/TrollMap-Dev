@@ -55,7 +55,7 @@
  */
 
 // ONE PLACE KNOWS HOW DEEP A BAIT RUNS, and until now the prompt was not one of its readers.
-import { levelSentence } from '../utils/water-conditions.js';
+import { levelSentence, poolOffsetFt, todayDepthFt } from '../utils/water-conditions.js';
 import { lakeRecordFor } from '../data/lake-registry.js';
 import { compassOf } from '../utils/compass.js';
 import { isNum, num } from '../utils/num.js';
@@ -562,12 +562,17 @@ function poolPromptBlock(ws) {
     : b > 0.05 ? `${b.toFixed(1)} ft LOWER than the chart assumes`
     : b < -0.05 ? `${Math.abs(b).toFixed(1)} ft HIGHER than the chart assumes`
     : 'right at the level the chart assumes';
+  // What buildPlanRequest() takes off each leg's rise before it works out `cannotUse`, so the
+  // sentence below can say so. Same function, same number. See poolOffsetFt().
+  const shift = poolOffsetFt(ws);
   return `
 WHERE THE WATER IS TODAY
 ${levelSentence(ws)}
 ${ws.operatorMessage ? `The operator's own note: ${ws.operatorMessage}\n` : ''}
 Every depth in this prompt — the contours, the structure, the ceilings on each leg — comes off a
-Garmin chart sounded at FULL POOL, and nothing in this app has adjusted it.${off ? ` The water is
+Garmin chart sounded at FULL POOL, and nothing in this app has adjusted it.${shift != null
+  ? ` The one exception is \`cannotUse\` on each leg, which the app has already worked against the
+charted rise ${shift > 0 ? 'less' : 'plus'} ${Math.abs(shift).toFixed(1)} ft, the water today.` : ''}${off ? ` The water is
 ${off}.` : ''}${b != null && b > 0.05 ? ` So subtract ${b.toFixed(1)} ft from every charted number
 before you trust it: a bait picked against a charted 16 ft ceiling is working ${(16 - b).toFixed(1)} ft
 of water today, and the shoreline is not where the chart draws it.` : ''}
@@ -2172,9 +2177,16 @@ ${Object.entries(why).map(([w, names]) => `- ${names.join(', ')}: ${w}`).join('\
     };
   })();
 
+  // AGAINST THE WATER TODAY, NOT THE WATER THE CHART WAS SOUNDED IN. `maxRunDepthFt` is a
+  // full-pool number, and Ryan's 2026-09-26 Wateree day was 3.4 ft down: a charted 15 ft rise is
+  // 11.6 ft of water, so an MR Crankbait rated to 12 ft passes the chart and drags. The drawdown is the
+  // lake's own measured level (see poolOffsetFt()); with no level published this is the charted
+  // number unchanged, which is what it always was. The depths QUOTED to the model stay the
+  // chart's -- poolPromptBlock() tells it to subtract, and says this list already has.
+  const poolOff = poolOffsetFt(o.waterState);
   const candidates = (o.candidates || []).map((c) => (
     c && isNum(c.maxRunDepthFt)
-      ? { ...c, cannotUse: cannotUseOn(Number(c.maxRunDepthFt)) }
+      ? { ...c, cannotUse: cannotUseOn(todayDepthFt(Number(c.maxRunDepthFt), poolOff)) }
       : c));
 
   const system = 'You are TrollMap Smart Plan, an expert fishing guide planning one day on the '
@@ -2426,7 +2438,8 @@ RULES THAT ARE NOT NEGOTIABLE
    not much different than the other water offered", then "flag the rise and let me decide". Do not
    set every lead on the day to the shallowest rise on it.
    A BILL IS THE EXCEPTION, and it is already worked out for you: \`cannotUse\` is computed against
-   the rise, not the median, because no length of lead lifts a lipped bait off a shoal it meets on
+   the rise, not the median — and against the rise as it is TODAY where the lake publishes a level,
+   so the drawdown is already off it — because no length of lead lifts a lipped bait off a shoal it meets on
    every pass and a dragged crankbait is a lost crankbait. There is nothing to adjust at the rise
    with one of those, so it is simply not offered on that leg.
    FISH LOOK UP, so the error is not symmetric. A bait running ABOVE the fish still gets eaten —

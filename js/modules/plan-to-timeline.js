@@ -62,7 +62,8 @@
  * Pure. No DOM, no window. The caller installs the result — see smart-plan-v2-wiring.js.
  */
 
-import { planCues, risesAtM, riseSentence } from './plan-assemble.js';
+import { planCues, risesAtM, riseSentence, bottomGapFt } from './plan-assemble.js';
+import { todayDepthFt } from '../utils/water-conditions.js';
 import { ozLabel } from '../utils/oz.js';
 import { lightLabel } from '../utils/light-state.js';
 
@@ -134,6 +135,17 @@ function bottomNote(rods, leg) {
   const withGap = (rods || []).filter((r) => r && r.clearance);
   if (!withGap.length) return '';
   const floorFt = withGap[0].clearance.floorFt;
+  // THE BOTTOM TODAY, AND WHERE THAT NUMBER CAME FROM. On a lake that publishes a level the floor
+  // is the chart less the drawdown (see bottomClearance()), and the sentence says so -- a figure
+  // that disagrees with the leg's own charted range and does not say why is a figure he will not
+  // trust. With no level it reads exactly as it always did.
+  const c0 = withGap[0].clearance;
+  const chartFloorFt = c0.chartFloorFt ?? floorFt;
+  const bottomIs = c0.drawdownFt != null
+    ? `Bottom is ${floorFt} ft here today — the chart's ${chartFloorFt} ft `
+      + `${c0.drawdownFt > 0 ? 'less' : 'plus'} the ${Math.abs(c0.drawdownFt)} ft the lake is `
+      + `${c0.drawdownFt > 0 ? 'below' : 'above'} full pool — and`
+    : `Bottom is ${floorFt} ft here and`;
   const taps = withGap.filter((r) => r.clearance.taps);
   const runs = withGap.map((r) => r.depth).filter(Boolean).join(' and ');
   if (taps.length) {
@@ -160,13 +172,15 @@ function bottomNote(rods, leg) {
     //
     // `floorFt` is the depth the clearance rows were measured against, so the stations at or under
     // it are the rise those rows are about — the same ceiling, read out of the same array.
-    const where = riseSentence(risesAtM(leg && leg.envelope, leg && leg.envelopeStepM, floorFt));
+    // The envelope is the chart's, so the rise is looked up at the chart's number for it.
+    const where = riseSentence(risesAtM(leg && leg.envelope, leg && leg.envelopeStepM,
+                                        chartFloorFt));
     const lift = lifts.length
       ? ` Shorten to ${Math.min(...lifts)} ft if you want it up over the rise instead.` : '';
     // "about", because the stations are 50 m apart and the slice is aligned to the one at or
     // before the leg's start. Pretending to the metre would be precision the resampling never had.
     const at = where ? ` It is about ${where}.` : ' The chart does not place it on the leg.';
-    return `Bottom is ${floorFt} ft here and the ${taps.length > 1 ? 'baits' : taps[0].lure} `
+    return `${bottomIs} the ${taps.length > 1 ? 'baits' : taps[0].lure} `
          + `${taps.length > 1 ? 'find' : 'finds'} it — let it tap and come up, that rise is the `
          + `spot.${at}${lift}`;
   }
@@ -183,7 +197,7 @@ function bottomNote(rods, leg) {
   // here.
   const nearest = withGap.reduce((a, b) => (a.clearance.gap <= b.clearance.gap ? a : b));
   const g = nearest.clearance.gap;
-  return `Bottom is ${floorFt} ft here and the deepest bait rides ${g} ft off it — let it tap and `
+  return `${bottomIs} the deepest bait rides ${g} ft off it — let it tap and `
        + `you are ${g} ft under your own spread.`;
 }
 
@@ -209,10 +223,20 @@ function bottomNote(rods, leg) {
  * ceiling it taps; below it, the gap is how far up it is riding.
  */
 function bottomClearance(runs, leg, over) {
-  const floorFt = Number(leg && (leg.depthMinFt ?? leg.depthFt));
+  const chartFloorFt = Number(leg && (leg.depthMinFt ?? leg.depthFt));
   const deep = Array.isArray(runs) ? Number(runs[1]) : NaN;
-  if (!Number.isFinite(floorFt) || !Number.isFinite(deep)) return null;
-  const gap = Math.round(floorFt - deep);
+  if (!Number.isFinite(chartFloorFt) || !Number.isFinite(deep)) return null;
+  // THE BOTTOM HE WILL FEEL IS TODAY'S, NOT THE CHART'S. `depthMinFt` is sounded at full pool, and
+  // Ryan's 2026-09-26 Wateree day was 3.40 ft down: a charted 15 ft rise was 11.6 ft of water and
+  // this row said the bait rode a foot or more higher off it than it did. `drawdownFt` is the lake's
+  // own measured level, stamped on the leg by assemblePlan() from the same poolOffsetFt() the bait
+  // checks there use; absent (no level, or at full pool) the chart's number stands untouched.
+  const dd = leg && leg.drawdownFt != null && Number.isFinite(Number(leg.drawdownFt))
+    ? Number(leg.drawdownFt) : null;
+  const floorFt = todayDepthFt(chartFloorFt, dd);
+  const today = dd != null ? { chartFloorFt, drawdownFt: dd } : {};
+  // THE SAME GAP capBaitDepth() FITS TO, so a lead it says clears cannot land here as `taps`.
+  const gap = bottomGapFt(floorFt, deep);
   // WHAT WOULD LIFT IT, ON THE ROW THAT SAYS IT IS DOWN THERE.
   //
   // capBaitDepth() stopped shortening the lead for a whole pass to clear one rise -- Ryan,
@@ -236,13 +260,15 @@ function bottomClearance(runs, leg, over) {
   const clearsAt = Number.isFinite(clearsNum) && clearsNum > 0 ? clearsNum : null;
   const lift = clearsAt ? ` — ${clearsAt} ft of lead clears it` : '';
   if (gap < 0) {
-    return { gap, floorFt, taps: true, clearsAt, note: `digs into the ${floorFt} ft rise${lift}` };
+    return { gap, floorFt, ...today, taps: true, clearsAt,
+             note: `digs into the ${floorFt} ft rise${lift}` };
   }
   if (gap === 0) {
-    return { gap, floorFt, taps: true, clearsAt,
+    return { gap, floorFt, ...today, taps: true, clearsAt,
              note: `rides right on the ${floorFt} ft rise${lift}` };
   }
-  return { gap, floorFt, taps: false, clearsAt: null, note: `${gap} ft up off the bottom` };
+  return { gap, floorFt, ...today, taps: false, clearsAt: null,
+           note: `${gap} ft up off the bottom` };
 }
 
 function rodView(rod, side, over, leg) {

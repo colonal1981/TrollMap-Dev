@@ -495,6 +495,10 @@ export async function planFromWater(o) {
     // So the assembler can check what the model's lead and speed actually put the bait at
     // against the shallowest water on each leg. See capBaitDepth().
     lureByName: o.lureByName,
+    // AND THE MEASURED ANOXIC LINE, so no lead the app fits runs a bait under it. Smart Plan
+    // passes the same field. See capBaitDepth(). Read from `planArgs` first, because that is where
+    // plan-water-ui.js puts it -- the same place `waterState` two fields up is read from.
+    oxygenFloorFt: (o.planArgs && o.planArgs.oxygenFloorFt) ?? o.oxygenFloorFt ?? null,
     // WHAT THE PLAN IS OF. assemblePlan writes `meta` from exactly these five, and this path sent
     // none of them -- every Pick Water day came out with `meta: {water: null, slug: null,
     // ramp: null, date: null, species: []}` and `conditions: {}`. They are all in `o.planArgs`,

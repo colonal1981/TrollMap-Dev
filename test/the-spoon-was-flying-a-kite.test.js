@@ -149,17 +149,24 @@ test('the assembler fits the weight and puts it on the leg, not in a comment', (
   assert.equal(leg.rodPlan?.R6?.inlineWeightOz, 2, 'the 2 oz that is tied on');
 });
 
+// CHANGED 2026-09-26. This asserted the claim check fired: the model asked for 10-16 ft on 70 ft of
+// lead, the app kept the 70 (18-22 ft behind the 2oz weight) and reported "going with the app's
+// number". But the prompt tells the model, for this bait, "Say what depth you want it at and leave
+// the weight and the lead to the app" -- so the app now LEADS it to the 10-16 ft asked for instead
+// of overruling the depth with a lead it told the model not to price. Ryan's Sep 26 Wateree plan
+// is why: the kept lead put the spoon 24-28 ft down, under a 19.7 ft anoxic line. What this test
+// is about is unchanged and still asserted: the sentence names the rig and calls nothing measured.
 test('the note names the rig and no longer calls arithmetic a measurement', () => {
   const p = plan([R6], { [LEG.runId]: { starboard: 'R6' } });
-  // `decisions` since 2026-09-21. The sentence ends "going with the app's number" -- it reports a
-  // reconciliation the app has already made, and the last assertion in this test is that phrase.
-  const said = (p.decisions || []).filter((w) => /R6/.test(w) && /runs to 16 ft/.test(w));
+  const said = (p.decisions || []).filter((w) => /R6/.test(w) && /10-16 ft the plan asked for/.test(w));
   assert.equal(said.length, 1,
-    `expected the claim check to fire, got ${JSON.stringify(p.decisions)}`);
+    `expected the fitted lead to be reported, got ${JSON.stringify(p.decisions)}`);
   assert.match(said[0], /behind the 2oz inline weight/, 'the rig reaches the page');
-  assert.doesNotMatch(said[0], /measured number/,
+  assert.doesNotMatch(said[0], /measured/,
     'lure-knowledge says "STILL UNCALIBRATED" three times in its own header');
-  assert.match(said[0], /the app's number/);
+  assert.match(said[0], /The 70 ft of lead the plan named runs that rig to 22 ft/);
+  const leg = p.legs.find((l) => l.runId === LEG.runId);
+  assert.ok(leg.rodPlan.R6.leadFt < 70, 'the leg fishes the fitted lead, not the named one');
 });
 
 test('an empty swap is warned about, and kept', () => {

@@ -512,9 +512,15 @@ describe('a rise on deep water is flagged, and shallow water is still corrected'
     expect(said(p)).toMatch(/THE LEAD IS LEFT WHERE YOU SET IT/);
   });
 
+  // 45, NOT 48, SINCE 2026-09-26. 48 ft of lead runs this lipless 7-11 ft: its deep end ON the
+  // 11 ft rise, which the card calls gap 0, taps -- and this sentence offered it as the lead that
+  // gets the bait "off the bottom there". 45 runs it 6-10, a foot up, the least the card can print
+  // as off the bottom. See bottomGapFt() in plan-assemble.js.
   it('and hands him the number that WOULD clear, without applying it', () => {
     const w = said(run(leg(11, 20, 25)));
-    expect(w).toMatch(/Shorten to 48 ft over the rise if you want it off the bottom there/);
+    expect(depthWindow(TACKLE_INVENTORY.find((l) => l.name === ROD.lure),
+                       { speedMph: 2.0, leadFt: 48 }).max).toBe(11);
+    expect(w).toMatch(/Shorten to 45 ft over the rise if you want it off the bottom there/);
     // THIS LEG FIXTURE CARRIES NO ENVELOPE, and that is the case the old sentence was written for:
     // a pack with no per-station profile genuinely cannot place the rise, so it still says so. The
     // planner-level test below is the one with an envelope on it.
@@ -530,8 +536,9 @@ describe('a rise on deep water is flagged, and shallow water is still corrected'
 
   it('water that really is shallow all along is still corrected', () => {
     const p = run(leg(11, 12, 14));
-    expect(leadOn(p)).toBe(48);
-    expect(warned(p)).toMatch(/too shallow for it along the whole stretch, so shortened the lead to 48 ft/);
+    // 45 and not 48 -- see the note on the flag above: 48 put the bait on the 11 ft bottom.
+    expect(leadOn(p)).toBe(45);
+    expect(warned(p)).toMatch(/too shallow for it along the whole stretch, so shortened the lead to 45 ft, which runs it 6-10 ft: 1 ft off the bottom/);
     expect(warned(p)).not.toMatch(/LEFT WHERE YOU SET IT/);
     expect(said(p)).not.toMatch(/LEFT WHERE YOU SET IT/);
   });

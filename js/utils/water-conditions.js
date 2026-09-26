@@ -894,6 +894,49 @@ export function levelSentence(c) {
 }
 
 /**
+ * HOW MANY FEET TO TAKE OFF A CHARTED DEPTH TODAY, or null when there is nothing to take off.
+ *
+ * Every depth in the chart packs was sounded at FULL POOL. poolPromptBlock() has told the model
+ * that since it was written -- "nothing in this app has adjusted it" -- and the app's own bait
+ * checks went on comparing baits against the full-pool number. Ryan's 2026-09-26 Wateree plan was
+ * 3.40 ft down; a charted 15 ft rise was 11.6 ft of water under the boat that morning.
+ *
+ * Positive = below full pool, the operator's own convention, so `charted - this` is today's water
+ * and a lake ABOVE full pool comes out negative and adds water. THE STATED DRAWDOWN WINS over a
+ * subtraction, the same rule plan-builder.js's go/no-go reads: Chilhowee and Calderwood publish
+ * feet below full pool and no elevation. Null on a river or a coastal zone, which have no pool,
+ * on a failed lookup, and where no level is published -- the charted depths then stand as the
+ * full-pool numbers they are. A lake reading within 0.05 ft of full pool is at full pool, the
+ * same line poolPromptBlock() draws, so it is not "adjusted" by a rounding error.
+ */
+export function poolOffsetFt(c) {
+  if (!c || c.error) return null;
+  if (c.featureType && c.featureType !== 'lake') return null;
+  const num = (v) => (v == null || v === '' ? NaN : Number(v));
+  const stated = num(c.belowFullPoolFt);
+  const lvl = num(c.levelFt);
+  const full = num(c.fullPoolFt);
+  const d = Number.isFinite(stated) ? stated
+    : (Number.isFinite(lvl) && Number.isFinite(full)) ? Math.round((full - lvl) * 100) / 100
+    : NaN;
+  if (!Number.isFinite(d) || Math.abs(d) < 0.05) return null;
+  return d;
+}
+
+/**
+ * A charted (full-pool) depth as the water it is today: `chartedFt - offsetFt`, to a tenth of a
+ * foot. With no offset (null) the charted number comes back untouched; a non-number comes back
+ * as it went in, so an absent depth stays absent.
+ */
+export function todayDepthFt(chartedFt, offsetFt) {
+  const ch = chartedFt == null ? NaN : Number(chartedFt);
+  if (!Number.isFinite(ch)) return chartedFt;
+  const d = offsetFt == null ? NaN : Number(offsetFt);
+  if (!Number.isFinite(d) || d === 0) return ch;
+  return Math.round((ch - d) * 10) / 10;
+}
+
+/**
  * The one line that fits in a topbar, and the reason each piece earns its place.
  *
  * Ryan, 2026-08-16, on what he wants to know BEFORE he starts planning: *"current level,

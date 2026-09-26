@@ -433,6 +433,10 @@ export async function buildSmartPlanV2(o) {
   // `intelFor` is a callback, and this rides the same reason rather than inventing a second one.
   const thermoclineNorm = typeof o.thermoclineNormFor === 'function'
     ? o.thermoclineNormFor(packFacts) : (o.thermoclineNorm || null);
+  // THE MEASURED OXYGEN FLOOR, asked once and handed to BOTH readers: the prompt's bait gate below
+  // and the assembler's lead check further down. Two calls would be two chances to disagree.
+  const oxygenFloorFt = typeof o.oxygenFloorFor === 'function'
+    ? o.oxygenFloorFor(packFacts) : (o.oxygenFloorFt ?? null);
 
   const req = buildPlanRequest({
     candidates: candidates.map((c) => forModel(c)),
@@ -456,8 +460,7 @@ export async function buildSmartPlanV2(o) {
     // offered to the model is filtered to what can physically reach the deepest oxygenated water,
     // and this is that depth. Null until somebody casts the water, and then the gate goes silent
     // rather than inventing a constraint.
-    oxygenFloorFt: typeof o.oxygenFloorFor === 'function'
-      ? o.oxygenFloorFor(packFacts) : (o.oxygenFloorFt ?? null),
+    oxygenFloorFt,
     inventory: o.inventory || null,
     // No dayMin on this path: selectCandidates() trims the OFFER to the window and the model
     // chooses which of them to fish, so there is no picked-set total yet. The window itself is
@@ -710,6 +713,9 @@ export async function buildSmartPlanV2(o) {
     // test/bait-depth-ceiling.test.js passed throughout, because every one of them called
     // assemblePlan directly and passed the resolver itself.
     lureByName: o.lureByName,
+    // AND THE ANOXIC LINE THE PROMPT WAS GIVEN, so no lead the app fits runs a bait under it.
+    // Pick Water passes the same field. See capBaitDepth().
+    oxygenFloorFt,
   });
   plan.notes = args.notes;
 
