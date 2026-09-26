@@ -78,12 +78,6 @@ export function addContourLayer(name, geo, depthProp) {
                     style="background:var(--warn);color:#000;font-weight:700;padding:6px;border-radius:6px;border:none">
               ✥ Re-Position This Spot
             </button>
-            ${!isRamp ? `
-            <button onclick="window.sendWptToGenerator(${latlng.lat}, ${latlng.lng}, 'start')"
-                    style="background:#0e7c7b;color:#fff;border:none;border-radius:6px;padding:5px;font-size:11.5px;font-weight:700;cursor:pointer">🎯 Set as Troll Start</button>
-            <button onclick="window.sendWptToGenerator(${latlng.lat}, ${latlng.lng}, 'end')"
-                    style="background:#0d4f8b;color:#fff;border:none;border-radius:6px;padding:5px;font-size:11.5px;font-weight:700;cursor:pointer">🎯 Set as Troll End</button>
-            ` : ''}
           </div>
         </div>
       `);

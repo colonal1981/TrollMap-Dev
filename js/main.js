@@ -10,7 +10,7 @@
  *
  * Cross-module shared state lives in core/state.js (the `state`
  * singleton). Helpers that popup buttons invoke across modules
- * (sendWptToGenerator, enableSpotRepositioning)
+ * (enableSpotRepositioning)
  * are exposed on `window` by their owning modules.
  */
 
@@ -70,7 +70,6 @@ import './modules/contour-data.js';
 import './modules/routes-panel.js';
 import './modules/fishing-index.js';
 import './modules/catch-plot.js';
-import './modules/waypoint-to-generator.js';
 import './modules/spot-repositioning.js';
 import './modules/safety-checklist.js';
 import './modules/gis-toggles.js';

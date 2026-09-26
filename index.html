@@ -739,50 +739,6 @@
       </div>
     </section>
     <!-- ===== CONTOURS ===== -->
-    <!-- ===== GENERATE ===== -->
-    <section class="panel" id="panel-generate">
-      <div class="pad">
-        <div class="card">
-          <h3>🌀 Trolling Lane Generator</h3>
-          <p class="muted">Build parallel lanes, S-curves, or zigzags. Preview before committing.</p>
-          <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr))">
-            <div><label>Lake code</label><input id="gLake" placeholder="MUR" value="MUR"></div>
-            <div><label>Start lat</label><input id="gLat1" placeholder="34.0900"></div>
-            <div><label>Start lon</label><input id="gLon1" placeholder="-81.3200"></div>
-            <div><label>End lat</label><input id="gLat2" placeholder="34.1000"></div>
-            <div><label>End lon</label><input id="gLon2" placeholder="-81.3100"></div>
-            <div><label>Lanes</label><input id="gLanes" type="number" value="4" min="1"></div>
-            <div><label>Spacing (ft)</label><input id="gSpacing" type="number" value="150" min="10"></div>
-            <div><label>Points / lane</label><input id="gPts" type="number" value="40" min="5"></div>
-            <div><label>Pattern</label>
-              <select id="gPattern">
-                <option value="straight">Straight — follow waypoint lane</option>
-                <option value="s-curve">S-Curve — weave between waypoint points</option>
-                <option value="zigzag">Zigzag — hard turns between waypoint points</option>
-                <option value="s-straight">S-Curve + Straight Shots</option>
-                <option value="z-straight">Zigzag + Straight Shots</option>
-              </select>
-            </div>
-            <div><label>S amplitude (ft)</label><input id="gAmp" type="number" value="30" min="0"></div>
-            <div><label>S wavelength (ft)</label><input id="gWave" type="number" value="300" min="10"></div>
-            <div><label>Straight shot length (ft)</label><input id="gStraight" type="number" value="350" min="25"></div>
-            <div><label>Connect lanes?</label><select id="gConnect"><option value="no">Separate tracks</option><option value="yes">1 connected track</option></select></div>
-          </div>
-          <div class="row" style="margin-top:10px">
-            <button id="gPickStart">🎯 Pick start</button>
-            <button id="gPickEnd">🎯 Pick end</button>
-            <span style="flex:1"></span>
-            <button id="gPreview">👁 Preview start/end</button>
-            <button id="gPreviewWpt">👁 Preview waypoint lanes</button>
-            <button id="gClearPreview">Clear</button>
-            <button id="gCommit">➕ Commit start/end</button>
-            <button id="gCommitWpt" class="primary">➕ Commit waypoint lanes</button>
-          </div>
-          <div id="gMsg"></div>
-        </div>
-      </div>
-    </section>
-
     <!-- ===== EDIT ===== -->
     <section class="panel" id="panel-edit">
       <div class="pad">

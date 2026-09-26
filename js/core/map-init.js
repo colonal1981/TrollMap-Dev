@@ -5,7 +5,7 @@
  * so that other modules can `import { initMap, renderAll, fitMap }`.
  *
  * Cross-module calls (renderEditTables, renderPlanStats,
- * sendWptToGenerator, refreshChartOverlayTransforms, persistWorkingData)
+ * refreshChartOverlayTransforms, persistWorkingData)
  * are looked up on `window` so this module can be loaded before those
  * modules are wired up.
  *
@@ -301,11 +301,6 @@ export function renderMap() {
         <b style="font-size:15px;color:#0d4f8b">${esc(w.name || '(unnamed)')}</b><br>
         <span style="font-family:monospace;font-size:11px;color:#555">${w.lat.toFixed(5)}, ${w.lon.toFixed(5)}</span><br>
         <span style="font-size:12px;color:#0e7c7b">${esc(w.sym || 'Waypoint')}</span>
-        <div style="margin-top:10px;border-top:1px solid #ddd;padding-top:8px;display:flex;flex-direction:column;gap:6px">
-          <b style="font-size:11px;color:#888;text-transform:uppercase">Trolling Lane Generator</b>
-          <button onclick="window.sendWptToGenerator(${w.lat},${w.lon},'start')" style="background:#0e7c7b;color:#fff;border:none;border-radius:6px;padding:6px;font-size:12px;font-weight:700;cursor:pointer">🎯 Set as Start Spot</button>
-          <button onclick="window.sendWptToGenerator(${w.lat},${w.lon},'end')" style="background:#0d4f8b;color:#fff;border:none;border-radius:6px;padding:6px;font-size:12px;font-weight:700;cursor:pointer">🎯 Set as End Spot</button>
-        </div>
       </div>`);
     circ.addTo(state.LAYER);
 
