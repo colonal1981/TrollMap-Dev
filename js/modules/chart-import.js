@@ -1,10 +1,9 @@
 /**
- * Contour / GIS layer import — load a KML, GPX, or GeoJSON file
- * full of points/lines and render it as a styled layer on the map.
+ * Contour / GIS layers — the ones saved offline by the import that used to live here, restored
+ * and rendered as styled layers on the map. (The import itself, and the batch chart-tile
+ * import, went on 2026-09-25: nothing in index.html could reach either.)
  *
  * Features:
- *   - Auto-detects format from filename extension
- *   - Optional simplification (Douglas-Peucker via simplifyLine)
  *   - Color-coded by depth when features carry a depth-like property
  *   - Drag-to-reposition: clicking the popup button enables drag,
  *     and dragging commits the new position to IndexedDB so the
@@ -18,73 +17,18 @@
 
 import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
-import { depthColor, simplifyLine, guessDepthProp } from '../utils/geo.js';
-import { parseKML, kmlToGeoJSON, parseGPX, geoJSONToLines } from '../utils/parsers.js';
-import { addChartLayer, persistCharts } from './chart-mosaic.js';
+import { depthColor } from '../utils/depth-palette.js';
 import { setBanner } from '../core/map-init.js';
 import { getAll as dbGetAll, del as dbDel, isReady as dbIsReady, tryPut } from '../utils/db.js';
 
 const CONTOUR_LAYERS = {};
 
 // ── File handling ─────────────────────────────────────────────────────────
-
-async function handleLayerFile(file) {
-  const nameEl = document.getElementById('layerName');
-  const name = nameEl?.value || file.name.replace(/\.[^.]+$/, '');
-  const tol = parseFloat(document.getElementById('simplifyTol')?.value) || 0;
-  const text = await file.text();
-  let geo = null, depthProp = null;
-
-  try {
-    if (file.name.match(/\.kml$/i)) {
-      const features = parseKML(text);
-      geo = kmlToGeoJSON(features);
-    } else if (file.name.match(/\.gpx$/i)) {
-      const p = parseGPX(text);
-      geo = {
-        type: 'FeatureCollection',
-        features: p.tracks.map((t) => ({
-          type: 'Feature',
-          geometry: { type: 'LineString', coordinates: t.pts.map((pt) => [pt[1], pt[0]]) },
-          properties: { name: t.name },
-        })),
-      };
-    } else {
-      geo = JSON.parse(text);
-    }
-
-    if (geo.type !== 'FeatureCollection') geo = { type: 'FeatureCollection', features: [] };
-    const lines = geoJSONToLines(geo);
-
-    if (tol > 0) {
-      lines.forEach((l) => { l.coords = simplifyLine(l.coords, tol); });
-    }
-
-    geo = {
-      type: 'FeatureCollection',
-      features: lines.map((l) => ({
-        type: 'Feature',
-        geometry: { type: 'LineString', coordinates: l.coords.map((c) => [c[1], c[0]]) },
-        properties: l.props,
-      })),
-    };
-
-    if (geo.features.length && geo.features[0].properties) {
-      depthProp = guessDepthProp(geo.features[0].properties);
-    }
-
-    if (dbIsReady()) {
-      await tryPut('layers', { name, geo, depthProp }, `imported layer "${name}"`);
-    }
-
-    addContourLayer(name, geo, depthProp);
-    renderLayerList();
-    alert(`Imported "${name}" — ${geo.features.length} features saved offline.`);
-  } catch (err) {
-    alert('Import error: ' + err.message);
-    console.error(err);
-  }
-}
+// handleLayerFile() read a KML, GPX or GeoJSON dropped on #dropZone or picked in #layerFile,
+// simplified it and saved it offline. Neither control is in index.html, so it went on
+// 2026-09-25, with the drop-zone wiring and the PNG + .georef.json batch import (its
+// #batchImportInput is a hidden input nothing opens). Layers saved before still load:
+// loadAllLayers() is untouched.
 
 // ── Add / remove a contour layer ─────────────────────────────────────────
 
@@ -134,12 +78,6 @@ export function addContourLayer(name, geo, depthProp) {
                     style="background:var(--warn);color:#000;font-weight:700;padding:6px;border-radius:6px;border:none">
               ✥ Re-Position This Spot
             </button>
-            ${!isRamp ? `
-            <button onclick="window.sendWptToGenerator(${latlng.lat}, ${latlng.lng}, 'start')"
-                    style="background:#0e7c7b;color:#fff;border:none;border-radius:6px;padding:5px;font-size:11.5px;font-weight:700;cursor:pointer">🎯 Set as Troll Start</button>
-            <button onclick="window.sendWptToGenerator(${latlng.lat}, ${latlng.lng}, 'end')"
-                    style="background:#0d4f8b;color:#fff;border:none;border-radius:6px;padding:5px;font-size:11.5px;font-weight:700;cursor:pointer">🎯 Set as Troll End</button>
-            ` : ''}
           </div>
         </div>
       `);
@@ -307,129 +245,3 @@ window.deleteLayer = function deleteLayer(name) {
 };
 
 window.clearAllLayers = clearAllLayers;
-
-// ── Wire drop zone / file input ──────────────────────────────────────────
-
-// ── Batch sidecar import ────────────────────────────────────────────────────
-// Accepts any number of PNG + .georef.json pairs. Each pair is placed as a
-// named chart layer using the bounds from the sidecar — no manual alignment.
-// Triggered by:
-//   - File picker via the button  → not currently in DOM
-//   - Cloud Chartpacks module    → sets input.files programmatically + dispatches change
-document.getElementById('batchImportInput')?.addEventListener('change', (e) => {
-  const files = Array.from(e.target.files);
-  if (!files.length) return;
-
-  // Group files by stem (filename without .png or .georef.json extension)
-  const pngs = {}, jsons = {};
-  files.forEach((f) => {
-    const base = f.name.replace(/\.georef\.json$/i, '').replace(/\.png$/i, '');
-    if (/\.georef\.json$/i.test(f.name)) jsons[base] = f;
-    else if (/\.png$/i.test(f.name)) pngs[base] = f;
-  });
-
-  const matched = Object.keys(jsons).filter((k) => pngs[k]);
-  if (!matched.length) {
-    alert('No matching PNG + .georef.json pairs found.\nSelect both the PNG files and their .georef.json sidecars together.');
-    return;
-  }
-
-  let loaded = 0;
-  const total = matched.length;
-  setBanner(`Loading ${total} chart tiles...`);
-
-  matched.forEach((base) => {
-    const jr = new FileReader();
-    jr.onload = (jev) => {
-      let georef;
-      try { georef = JSON.parse(jev.target.result); }
-      catch (err) {
-        console.error('Bad georef JSON for', base, err);
-        loaded++;
-        return;
-      }
-
-      // Support both {north,south,east,west} at root or nested under {bounds:{...}}
-      const b = georef.bounds || georef;
-      if (b.north == null || b.south == null || b.east == null || b.west == null) {
-        console.warn('Missing bounds in', base, georef);
-        loaded++;
-        return;
-      }
-
-      const pr = new FileReader();
-      pr.onload = async (pev) => {
-        const bounds = { north: b.north, south: b.south, east: b.east, west: b.west };
-        addChartLayer(base, pev.target.result, bounds, 0.75, 0);
-        loaded++;
-        if (loaded === total) {
-          // Persist BEFORE claiming success. The banner used to say "Imported N chart tiles"
-          // and then swallow the write that makes them survive a refresh, so an import that
-          // did not stick was indistinguishable from one that did -- until the next reload.
-          let persisted = true;
-          try {
-            await persistCharts();
-          } catch (err) {
-            persisted = false;
-            console.error('[chart-import] persistCharts failed; tiles are in memory only:', err && err.message);
-          }
-          setBanner(persisted
-            ? `✅ Imported ${total} chart tiles`
-            : `⚠️ Imported ${total} tiles, but they could NOT be saved — they will be gone on reload`);
-          setTimeout(() => setBanner(''), persisted ? 3000 : 8000);
-          // Fit map to imported tiles
-          const lats = [], lons = [];
-          state.CHARTS.slice(-total).forEach((c) => {
-            lats.push(c.bounds.north, c.bounds.south);
-            lons.push(c.bounds.west, c.bounds.east);
-          });
-          if (lats.length && state.MAP) {
-            state.MAP.fitBounds([
-              [Math.min(...lats), Math.min(...lons)],
-              [Math.max(...lats), Math.max(...lons)],
-            ]);
-          }
-          const wrap = document.getElementById('chartLayersWrap');
-          if (wrap) wrap.style.display = 'block';
-        } else {
-          setBanner(`Loading tiles... ${loaded}/${total}`);
-        }
-      };
-      pr.readAsDataURL(pngs[base]);
-    };
-    jr.readAsText(jsons[base]);
-  });
-
-  e.target.value = ''; // reset so same files can be re-imported if needed
-});
-// ────────────────────────────────────────────────────────────────────────────
-
-function wireImportUI() {
-  const dropZone = document.getElementById('dropZone');
-  const layerFile = document.getElementById('layerFile');
-  if (!dropZone || !layerFile) return;
-
-  dropZone.addEventListener('click', () => layerFile.click());
-  ['dragenter', 'dragover'].forEach((evt) => {
-    dropZone.addEventListener(evt, (e) => {
-      e.preventDefault(); e.stopPropagation();
-      dropZone.classList.add('ok');
-    });
-  });
-  ['dragleave', 'drop'].forEach((evt) => {
-    dropZone.addEventListener(evt, (e) => {
-      e.preventDefault(); e.stopPropagation();
-      dropZone.classList.remove('ok');
-    });
-  });
-  dropZone.addEventListener('drop', (e) => {
-    const f = e.dataTransfer.files[0];
-    if (f) handleLayerFile(f);
-  });
-  layerFile.addEventListener('change', (e) => {
-    const f = e.target.files[0];
-    if (f) handleLayerFile(f);
-  });
-}
-
-wireImportUI();

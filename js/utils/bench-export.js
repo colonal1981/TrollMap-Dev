@@ -22,8 +22,7 @@
  * Personal use only, not for distribution or resale; not for navigation.
  */
 
-const esc = (s) => String(s == null ? '' : s)
-  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+import { esc } from './escape.js';
 
 /**
  * EVERYTHING THE RUN PRODUCED, in the order the bench shows it.

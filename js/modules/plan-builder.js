@@ -11,7 +11,7 @@
 import { state } from "../core/state.js";
 import { esc } from "../utils/escape.js";
 import { planIssues } from "./plan-issues.js";
-import { lakeDbEntryFor, lakeRecordFor } from "../data/lake-registry.js";
+import { lakeDbEntryFor, lakeRecordFor, workerBase } from "../data/lake-registry.js";
 import { renderSpread } from "./spread-builder.js";
 import { newRodRow } from "../utils/rod-row.js";
 import { getFilename, setFilename } from "../core/map-init.js";
@@ -1361,8 +1361,7 @@ ${src}`;
     try {
       const drec = lakeRecordFor(p.meta.waterbodyLabel || p.meta.lake || '') || lakeRecordFor(cleanLake);
       if (drec) {
-        const worker = (typeof CF_WORKER_URL !== 'undefined' ? CF_WORKER_URL
-                        : (window.CF_WORKER_URL || 'https://trollmap-worker.colonal1981.workers.dev'));
+        const worker = workerBase();
         const c = await fetchWaterConditions(worker, drec, { date: p.meta.date || undefined });
         if (c.error) {
           // "No callout" and "the call failed" looked identical on screen before. They do not now.
@@ -1445,8 +1444,7 @@ ${src}`;
     try {
       const rec = lakeRecordFor(p.meta.waterbodyLabel || p.meta.lake || '') || lakeRecordFor(cleanLake);
       if (rec) {
-        const worker = (typeof CF_WORKER_URL !== 'undefined' ? CF_WORKER_URL
-                        : (window.CF_WORKER_URL || 'https://trollmap-worker.colonal1981.workers.dev'));
+        const worker = workerBase();
         const names = [rec.name, rec.displayName, ...(rec.legacyDisplayNames || [])]
           .filter(Boolean).filter((v, i, a) => a.indexOf(v) === i);
         const rc = new AbortController();
@@ -2849,7 +2847,7 @@ window.syncPlanRiverData = async function syncPlanRiverData(){
   setLakeOnlyFieldsVisible(false);
   const statusEl = document.getElementById('utilitySyncStatus');
   const btn = document.getElementById('syncDukeBtn');
-  const worker = (typeof CF_WORKER_URL !== 'undefined' ? CF_WORKER_URL : (window.CF_WORKER_URL || 'https://trollmap-worker.colonal1981.workers.dev'));
+  const worker = workerBase();
   const ramp = getSelectedPlanRiverRamp();
   function put(id, val){ const el=document.getElementById(id); if(el) el.value = val == null ? '' : String(val); }
   try{
@@ -2944,7 +2942,6 @@ window.syncPlanRiverData = async function syncPlanRiverData(){
     put('planRiverSchedule', scheduleLines.join('\n'));
     put('planRiverSummary', summary);
     if(statusEl){ statusEl.textContent=`✓ River synced: ${status}`; statusEl.style.color=effectiveStatus==='no-go'?'var(--bad)':effectiveStatus==='caution'?'var(--warn)':'var(--accent2)'; }
-    window.LAST_PLAN_RIVER_DATA = d;
     return d;
   } catch(err){
     console.warn('River sync failed', err);

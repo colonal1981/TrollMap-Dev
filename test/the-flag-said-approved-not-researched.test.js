@@ -32,10 +32,10 @@ import { readFileSync, readdirSync, existsSync } from 'node:fs';
 
 const read = (rel) => readFileSync(new URL(rel, import.meta.url), 'utf8');
 
+// lake-research-ui.js and lake-research-engine.js were surfaces here until the Research tab was
+// deleted on 2026-09-25.
 const SURFACES = [
   ['js/modules/lake-intel.js', '../js/modules/lake-intel.js'],
-  ['js/modules/lake-research-ui.js', '../js/modules/lake-research-ui.js'],
-  ['js/modules/lake-research-engine.js', '../js/modules/lake-research-engine.js'],
   ['Worker/research/storage.js', '../Worker/research/storage.js'],
   ['Scripts/which_profile_serves.mjs', '../Scripts/which_profile_serves.mjs'],
 ];
@@ -104,12 +104,12 @@ test('the scripts that existed only to repair the flag are gone', () => {
   }
 });
 
-test('the research tab offers no way to set it', () => {
+test('the app offers no way to set it', () => {
+  // The Research tab carried the handler and the status filter; it was deleted on 2026-09-25.
   const html = read('../index.html');
   assert.ok(!html.includes('btnApprove'), 'the Approve / Verify button is still in index.html');
-  const ui = read('../js/modules/lake-research-ui.js');
-  assert.ok(!ui.includes('btnApprove'), 'the Approve handler is still wired');
-  assert.ok(!/All statuses/.test(ui), 'the status filter is still in the lake status modal');
+  assert.ok(!existsSync(new URL('../js/modules/lake-research-ui.js', import.meta.url)),
+    'the Research tab UI is back');
 });
 
 test('prune_shadowed decides on counts, which is what the flag stood in for', () => {

@@ -26,6 +26,7 @@ import { fetchWaterConditions, conditionsStrip, levelSentence, flowClaritySenten
 import { camerasForWater, camerasOnWater, nearestSite, cameraFrame, ageLabel, MAX_RAMP_KM }
   from '../utils/cameras.js';
 import { primeRegulations } from '../data/regulations-live.js';
+import { esc } from '../utils/escape.js';
 
 const CACHE_MS = 5 * 60 * 1000;
 const cache = new Map();          // slug -> { at, c }
@@ -70,11 +71,6 @@ function camerasFor(rec, ramp) {
     camerasOnWater({ slug: rec && rec.slug, name: rec && (rec.displayName || rec.name) }),
     ramp.lat, ramp.lon);
   return { cams: near, scope: 'ramp', hidden: all.length - near.length };
-}
-
-function esc(v) {
-  return String(v == null ? '' : v).replace(/[&<>"']/g, (m) => (
-    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
 }
 
 function els() {

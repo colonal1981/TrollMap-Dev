@@ -281,14 +281,9 @@ describe('every search in the engine goes through it', () => {
     }
   });
 
-  it('the gap-search cascade was moved, not copied', () => {
-    // It was the only caller with fallbacks. Leaving a second copy behind is how two ladders
-    // drift into disagreeing about which provider is cheapest.
-    const code = src('Worker/research/extract.js');
-    expect(code).toContain('searchWeb');
-    expect(code.includes('api.tavily.com')).toBe(false);
-    expect(code.includes('api.firecrawl.dev/v2/search')).toBe(false);
-  });
+  // 'the gap-search cascade was moved, not copied' stood here. /research/gap-search, the one
+  // search in extract.js, was deleted on 2026-09-25 with no caller; the check above still holds
+  // extract.js to calling no search provider of its own.
 
   it('the discovery query log names the provider that answered', () => {
     // A run that fell through to the metered rungs used to look identical in the log to one

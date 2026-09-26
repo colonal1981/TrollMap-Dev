@@ -20,6 +20,7 @@
  * that did not load all answer `state: null` with the reason, and the caller says so out loud.
  */
 import { registryLoader } from './registry-loader.js';
+import { inRing } from '../utils/geojson-coords.js';
 
 export const WATER_STATE_PARTS_PATH = '/chartpacks/_registry/water_state_parts.json';
 
@@ -31,16 +32,7 @@ export const waterStatePartsPrimed = () => _parts.primed();
 /** Tests only. */
 export const _resetWaterStateParts = () => _parts.reset();
 
-/** Even-odd ray cast. `ring` is [[lon, lat], ...]. */
-function inRing(lon, lat, ring) {
-  let hit = false;
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    const [xi, yi] = ring[i];
-    const [xj, yj] = ring[j];
-    if ((yi > lat) !== (yj > lat) && lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) hit = !hit;
-  }
-  return hit;
-}
+// inRing() is the one even-odd ray cast, in js/utils/geojson-coords.js (2026-09-25).
 
 /** Inside a GeoJSON Polygon or MultiPolygon, holes honoured. */
 export function inGeometry(lon, lat, g) {

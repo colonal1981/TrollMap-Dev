@@ -28,6 +28,7 @@
 // ---------------------------------------------------------------------------------------------
 
 import { cumulative, kindHits, metresBetween } from './plan-candidates.js';
+import { inRing } from '../utils/geojson-coords.js';
 
 // THE POSITIONS ARE HIS, AND THE MIDDLE ONE IS NOT A POSITION -- IT IS A QUESTION FOR THE CHART.
 //
@@ -951,13 +952,8 @@ export function waterTest(boundaryFc) {
     let c = false;
     for (const b of boxed) {
       if (lon < b.x0 || lon > b.x1 || lat < b.y0 || lat > b.y1) continue;
-      const r = b.r;
-      let j = r.length - 1;
-      for (let i = 0; i < r.length; i++) {
-        const [xi, yi] = r[i], [xj, yj] = r[j];
-        j = i;
-        if ((yi > lat) !== (yj > lat) && lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi) c = !c;
-      }
+      // Even-odd across every ring: a point inside an odd number of them is on the water.
+      if (inRing(lon, lat, b.r)) c = !c;
     }
     return c;
   };

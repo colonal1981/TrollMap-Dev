@@ -27,11 +27,10 @@
 import { runSmartPlanV2, readInputs } from './smart-plan-v2-wiring.js';
 import { splitPrompt, droppedFromAnswer, candidatesFromPrompt } from '../utils/bench-read.js';
 import { benchJson, benchReportPlan, wrapReport } from '../utils/bench-export.js';
+import { esc } from '../utils/escape.js';
 
 const $ = (id) => document.getElementById(id);
 
-const esc = (s) => String(s == null ? '' : s)
-  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 /** A section is collapsed when it is long. A SHORT one is left open, and an EMPTY one is the
  *  interesting case -- a block that ran and had nothing to say. */

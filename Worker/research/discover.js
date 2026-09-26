@@ -1,6 +1,6 @@
 // research/discover.js — split from worker-research.js (behavior-preserving)
 import { JSON_HEADERS } from '../worker-core.js';
-import { STATE_REGULATIONS_CONFIG, tinyfishFetch, searchWeb } from './clients.js';
+import { tinyfishFetch, searchWeb } from './clients.js';
 import { KNOWN_BAD_NEPIS_IDS, buildNepisSearchUrl, stateFullName } from './dataset.js';
 import { parseLakeBaseName, stripLakeQualifiers } from './keys.js';
 import { resolveAgencyPage } from './agency-pages.js';
@@ -509,22 +509,9 @@ async function handleResearchDiscover(request, env) {
 
   // ─── AGENT-SPECIFIC DISCOVERY QUERIES ───
 const AGENT_DISCOVERY_QUERIES = {
-  // Identity: deterministic seeds (Duke CRA, USACE, TVA) are already seeded above.
-  // Search fills gaps — focused queries, one method per search.
-  identity: {
-    SC: (lake) => [
-      `"${lake}" dam owner FERC license reservoir filetype:pdf`,
-    ],
-    NC: (lake) => [
-      `"${lake}" dam owner FERC license reservoir filetype:pdf`,
-    ],
-    GA: (lake) => [
-      `"${lake}" dam owner FERC license reservoir filetype:pdf`,
-    ],
-    TN: (lake) => [
-      `"${lake}" dam owner FERC license reservoir filetype:pdf`,
-    ],
-  },
+  // `identity`, `navigation` and `regulations` had query tables here, and the coastal agents
+  // `estuary`, `tidal` and `saltwater_regulations` further down. All six were deleted on
+  // 2026-09-25 -- nothing ran them -- and their tables and purposes went with them.
   limnology: {
     SC: (lake) => [
       `"${lake}" dissolved oxygen water quality monitoring assessment filetype:pdf`,
@@ -582,16 +569,10 @@ const AGENT_DISCOVERY_QUERIES = {
   },
   // Per-agent TinyFish purpose strings — passed via API, not injected into query text
   _purposes: {
-    identity:    (lake, st) => `Find authoritative dam owner, FERC license, and reservoir identity documents for ${lake} in ${st}. Prefer government agencies, reservoir owners, and FERC filings.`,
     limnology:   (lake, st) => `Find authoritative water quality, dissolved oxygen, thermocline, and limnology studies for ${lake} in ${st}. Prefer government agencies, reservoir owners, and peer-reviewed studies.`,
     biology:     (lake, st) => `Find authoritative fisheries surveys, stocking records, and fish population assessments for ${lake} in ${st}. Prefer state fish agencies, universities, and original studies.`,
     habitat:     (lake, st) => `Find authoritative aquatic habitat, vegetation, and structural enhancement assessments for ${lake} in ${st}. Prefer state agencies and original studies.`,
-    navigation:  (lake, st) => `Find authoritative navigation hazards, shoals, channel markers, and access information for ${lake} in ${st}. Reject generic boating pages that do not name this lake.`,
-    regulations: (lake, st) => `Find authoritative fishing regulations, creel limits, and size limits for ${lake} in ${st}. Prefer state fish agency regulation digests.`,
     fisheries:   (lake, st) => `Find authoritative seasonal fishing patterns, current fishing reports, and angler catch data for ${lake} in ${st}. Reject social media and generic aggregation pages.`,
-    estuary:     (zone, st) => `Find authoritative estuarine geomorphology, salt marsh extent, inlet and tidal creek information for ${zone} on the ${st} coast. Prefer NOAA, USGS, National Estuarine Research Reserve and state coastal agencies. This is a tidal estuary, not a reservoir — reject documents about freshwater lakes or dams.`,
-    tidal:       (zone, st) => `Find authoritative tidal range, salinity, current velocity and flushing time data for ${zone} on the ${st} coast. Prefer NOAA CO-OPS, USGS and peer-reviewed estuarine studies. Reject reservoir thermocline and dissolved-oxygen studies — this system does not thermally stratify.`,
-    saltwater_regulations: (zone, st) => `Find the most recent SALTWATER recreational fishing regulation changes for ${st} affecting red drum, spotted seatrout and southern flounder — especially in-season amendments, proclamations and slot-limit changes that postdate the annual printed digest. Prefer the state marine fisheries agency. Reject freshwater inland regulations and third-party summaries.`,
   },
   habitat: {
     SC: (lake) => [
@@ -610,28 +591,6 @@ const AGENT_DISCOVERY_QUERIES = {
       `"${lake}" aquatic vegetation hydrilla management -site:facebook.com -site:instagram.com`,
       `"${lake}" fish habitat enhancement assessment -site:facebook.com -site:instagram.com`,
     ],
-  },
-  navigation: {
-    SC: (lake) => [
-      `"${lake}" navigation hazards channel markers -site:facebook.com -site:instagram.com -site:youtube.com`,
-    ],
-    NC: (lake) => [
-      `"${lake}" navigation hazards channel markers -site:facebook.com -site:instagram.com -site:youtube.com`,
-    ],
-    GA: (lake) => [
-      `"${lake}" navigation hazards channel markers -site:facebook.com -site:instagram.com -site:youtube.com`,
-    ],
-    TN: (lake) => [
-      `"${lake}" navigation hazards channel markers -site:facebook.com -site:instagram.com -site:youtube.com`,
-    ],
-  },
-  regulations: {
-    // Regulations primarily sourced from deterministic seeds (eRegulations, SCDNR regs page).
-    // Discovery fallback only — one focused query per state.
-    SC: (lake) => [`"${lake}" fishing regulations exceptions site:${stateFishDomain || 'dnr.sc.gov'}`],
-    NC: (lake) => [`"${lake}" fishing regulations exceptions site:${stateFishDomain || 'ncwildlife.gov'}`],
-    GA: (lake) => [`"${lake}" fishing regulations exceptions site:${stateFishDomain || 'georgiawildlife.com'}`],
-    TN: (lake) => [`"${lake}" fishing regulations exceptions site:${stateFishDomain || 'tn.gov/twra'}`],
   },
   fisheries: {
     // Two separate queries per section 12.6: current reports (recency window) +
@@ -656,86 +615,38 @@ const AGENT_DISCOVERY_QUERIES = {
   },
   // Fisheries query 0 gets recency window (45 days primary); query 1 is evergreen
   _fisheries_recency: [64800, null],
-  summary: { SC: () => [], NC: () => [], GA: () => [], TN: () => [] },
-
-  // ── COASTAL AGENTS ────────────────────────────────────────────────────
-  // Saltwater zones need marine sources: NOAA, the state MARINE division
-  // (which is a different agency from the inland freshwater one in NC and
-  // GA), ASMFC for interstate stock assessments, and the NERR reserves for
-  // estuarine water quality. Searching dnr.sc.gov for tidal range or
-  // salinity returns freshwater reservoir documents.
-  estuary: {
-    SC: (zone) => [
-      `"${zone}" estuary salt marsh acreage tidal creek NERR OR "National Estuarine Research Reserve"`,
-      `"${zone}" inlet shoaling barrier island geomorphology site:noaa.gov OR site:usgs.gov`,
-    ],
-    GA: (zone) => [
-      `"${zone}" estuary salt marsh acreage tidal creek site:coastalgadnr.org OR site:gadnr.org`,
-      `"${zone}" sound inlet barrier island geomorphology site:noaa.gov OR site:usgs.gov`,
-    ],
-    NC: (zone) => [
-      `"${zone}" estuary salt marsh sound tidal creek site:deq.nc.gov OR site:nccoastalreserve.net`,
-      `"${zone}" inlet shoaling barrier island geomorphology site:noaa.gov OR site:usgs.gov`,
-    ],
-  },
-  tidal: {
-    SC: (zone) => [
-      `"${zone}" tidal range salinity stratification estuary site:noaa.gov OR site:usgs.gov`,
-      `"${zone}" salinity gradient flushing time water quality filetype:pdf`,
-    ],
-    GA: (zone) => [
-      `"${zone}" tidal range salinity stratification estuary site:noaa.gov OR site:usgs.gov`,
-      `"${zone}" salinity gradient flushing time water quality filetype:pdf`,
-    ],
-    NC: (zone) => [
-      `"${zone}" tidal range salinity stratification estuary site:noaa.gov OR site:usgs.gov`,
-      `"${zone}" salinity gradient flushing time water quality filetype:pdf`,
-    ],
-  },
-  saltwater_regulations: {
-    // The R2 digest is the baseline (injected deterministically by the agent).
-    // These queries exist to catch mid-cycle amendments the annual PDF cannot
-    // carry: SC changed red drum limits on 2026-07-01, and NC closes seatrout
-    // and flounder by proclamation. Recency-windowed below.
-    SC: (zone) => [
-      `South Carolina saltwater red drum spotted seatrout flounder size limit change site:dnr.sc.gov OR site:saltwaterfishing.sc.gov`,
-      `SCDNR saltwater regulation amendment red drum slot limit ${new Date().getFullYear()}`,
-    ],
-    GA: (zone) => [
-      `Georgia saltwater red drum spotted seatrout flounder creel size limit site:coastalgadnr.org`,
-      `Georgia DNR Coastal Resources saltwater regulation change ${new Date().getFullYear()}`,
-    ],
-    NC: (zone) => [
-      `NCDMF proclamation spotted seatrout flounder red drum harvest closure site:deq.nc.gov`,
-      `North Carolina Marine Fisheries proclamation season closure ${new Date().getFullYear()}`,
-    ],
-  },
-  // Regulation amendments are only useful if recent — 180 days covers a
-  // mid-season proclamation without dredging up superseded rules.
-  _saltwater_regs_recency: [15552000, 15552000],
+  // `summary` stood here with an empty table for every state: an agent retired on 2026-09-01
+  // whose discover call searched nothing in silence. Gone 2026-09-25 with the six.
 };
 
-// Coastal zones use the marine agent set. Freshwater lakes never reach these
-// because the plan is only consulted for coast_* keys.
 // SEARCH_EXCLUDE_DOMAINS, ANGLING_PRESS_DOMAINS, TOURISM_DOMAINS and resultNamesWater() are at
 // MODULE scope, above handleResearchDiscover, with the notes that explain them. They spent an hour
 // here first and could not be exported or tested, because everything in this block is a local of
 // the handler -- which is the same lesson line 55 records about STATE_FISH_AGENCY_DOMAINS.
 
-const COASTAL_AGENT_KEYS = new Set(['estuary', 'tidal', 'saltwater_regulations']);
-
 const AGENT_TO_TAGS = {
-  identity: ['identity'],
   limnology: ['limnology'],
   biology: ['biology'],
   habitat: ['habitat'],
-  navigation: ['navigation'],
-  regulations: ['regulations'],
   fisheries: ['fisheries'],
-  estuary: ['estuary', 'identity'],
-  tidal: ['tidal', 'limnology'],
-  saltwater_regulations: ['saltwater_regulations', 'regulations']
 };
+
+  // AN AGENT IS REQUIRED, AND IT MUST BE ONE THIS ROUTE HAS QUERIES FOR. Checked here, after the
+  // tables it is checked against and before any seed is fetched or search is sent. A request
+  // without one used to fan out across every table, and a request naming an agent with no table
+  // -- one of the six deleted on 2026-09-25, say -- ran no query at all and answered 200 with
+  // only the seeds. Never search nothing in silence: say what was missing and which agent the
+  // batch runs.
+  const askedAgent = String(body.agent || '').trim().toLowerCase();
+  const discoverAgents = Object.keys(AGENT_DISCOVERY_QUERIES).filter((k) => !k.startsWith('_'));
+  if (!askedAgent || !discoverAgents.includes(askedAgent)) {
+    return new Response(JSON.stringify({
+      success: false,
+      error: `${askedAgent ? `unknown agent "${askedAgent}"` : 'missing agent'}: /research/discover `
+        + `searches for one named agent. Scripts/research_lakes.py runs "fisheries". `
+        + `Valid: ${discoverAgents.join(', ')}.`,
+    }), { status: 400, headers: JSON_HEADERS });
+  }
 
   const seenUrls = new Set();
   const queryLog = [];
@@ -757,8 +668,7 @@ const AGENT_TO_TAGS = {
   // Full pipeline (no agent param) gets all seeds as before.
   // Seed relevance map: which agents care about each seed type
   const agentForSeeds = String(body.agent || '').trim().toLowerCase() || null;
-  const wantsGrokipedia   = !agentForSeeds || ['identity','limnology','biology','habitat'].includes(agentForSeeds);
-  const wantsRegs         = !agentForSeeds || agentForSeeds === 'regulations';
+  const wantsGrokipedia   = !agentForSeeds || ['limnology','biology','habitat'].includes(agentForSeeds);
   const wantsNepis        = !agentForSeeds || ['limnology'].includes(agentForSeeds);
 
   // Grokipedia is allowed, but never receives lake-specific routing. Try the
@@ -773,17 +683,8 @@ const AGENT_TO_TAGS = {
     addSeed({ title: `${lakeName} — Grokipedia (discovered candidate)`, type: 'HTML', authority: 'Grokipedia', url: grokCandidates[0], priority: 2, agentTags: ['identity','limnology','biology','habitat'] });
   }
 
-  // State regulations — regulations agent only
-  // NOTE: regulations agent uses KV-cached fetchStateRegulations (0 docs needed) from R2 public bucket
-  // User has all regs pages that matter uploaded to R2 (https://pub-36d686650ccc4a4aa9993ae9b2d29713.r2.dev/regulations)
-  // Primary source is R2 digests, fallback to live agency pages
-  const r2RegsUrl = STATE_REGULATIONS_CONFIG[state]?.pages?.[0]?.url || null;
-  if (wantsRegs) {
-    // R2 digest primary (user uploaded, stable, free via TinyFish)
-    if (r2RegsUrl) {
-      addSeed({ title: `${state} Freshwater Regulations Digest (R2)`, type: 'PDF', authority: dnrName, url: r2RegsUrl, priority: 1, agentTags: ['regulations'] });
-    }
-  }
+  // The R2 regulations digest was seeded here for the `regulations` agent only. The agent was
+  // deleted on 2026-09-25; /regulations reads the digest through fetchStateRegulations().
 
   // TWRA reservoir profiles — R2-hosted static copies (live tn.gov blocks scrapers).
   // Keyed on parseLakeBaseName() output (leading "Lake"/trailing "Reservoir"/"Lake"
@@ -867,7 +768,7 @@ const AGENT_TO_TAGS = {
     // caller that sends no names still has to resolve.
     return best || (table[baseLower] ? { key: baseLower, url: table[baseLower], matched: baseName, overlap: 0 } : null);
   };
-  const wantsAgencyTable = !agentForSeeds || ['identity','biology','fisheries','regulations'].includes(agentForSeeds);
+  const wantsAgencyTable = !agentForSeeds || ['biology','fisheries'].includes(agentForSeeds);
 
   if (state === 'TN' && wantsAgencyTable) {
     const hit = agencyTableHit(TWRA_LAKE_PAGES);
@@ -896,7 +797,7 @@ const AGENT_TO_TAGS = {
   // arrives without a commit. It runs only when the static table missed, so nothing that works
   // today changes, and a failure returns null rather than throwing -- discovery must not die
   // because a state website is down.
-  const agencyWanted = !agentForSeeds || ['identity','biology','fisheries','regulations','habitat'].includes(agentForSeeds);
+  const agencyWanted = !agentForSeeds || ['biology','fisheries','habitat'].includes(agentForSeeds);
   const staticHit = (state === 'TN' && TWRA_LAKE_PAGES[baseLower]) || (state === 'GA' && GADNR_LAKE_PAGES[baseLower]);
   if (agencyWanted && !staticHit) {
     try {
@@ -1094,10 +995,6 @@ const AGENT_TO_TAGS = {
   // ── STEP 3: Agent-specific search queries ───────────────────────────────
   const agent = String(body.agent || "").trim().toLowerCase();
 
-  // Coastal zones and freshwater lakes use disjoint agent sets. Without this
-  // split a lake would run estuary/tidal/saltwater_regulations queries (and
-  // burn searches on salt marsh acreage for Lake Murray), and a coastal zone
-  // would run identity/limnology queries looking for a dam and a thermocline.
   // WHAT KIND OF WATER, FROM THE REGISTRY ROW. `feature_type` is on every index row -- 285 lake,
   // 57 river, 13 coastal on 2026-09-16 -- and the key prefix stays as the fallback so a caller
   // that sends an explicit zone key still works with no index. Without this the only question
@@ -1127,18 +1024,10 @@ const AGENT_TO_TAGS = {
     + `${scope.namesakes.length ? `; also ${scope.namesakes.join(', ')}` : ''}):`
     + ` anchoring fisheries on ${scope.counties.length ? scope.counties.map((c) => `${c} County`).join(', ') : 'no county on the row'}`);
   const waterType = String(waterRow?.feature_type || '').toLowerCase();
-  const isCoastalTarget = waterType
-    ? waterType === 'coastal'
-    : String(body.zoneKey || body.lakeKey || '').startsWith('coast_');
   if (waterType) queryLog.push(`water type: ${waterType} (from the registry row)`);
-  const agentsToDiscover = agent
-    ? [agent]
-    : Object.keys(AGENT_DISCOVERY_QUERIES).filter((k) => {
-        if (k.startsWith('_')) return false;
-        const coastalOnly = COASTAL_AGENT_KEYS.has(k);
-        const freshwaterOnly = k === 'identity' || k === 'limnology' || k === 'regulations';
-        return isCoastalTarget ? !freshwaterOnly : !coastalOnly;
-      });
+  // One agent, always named: the no-agent branch that fanned out across every table went on
+  // 2026-09-25, and handleResearchDiscover refuses a request without one before it gets here.
+  const agentsToDiscover = [agent];
   
   // Cross-category candidate pool — all agents deposit here; dedup by canonical URL
   // before returning so a URL requested by multiple agents is fetched only once.
@@ -1228,13 +1117,8 @@ const AGENT_TO_TAGS = {
       const domainType = domainTypes?.[qIndex] || 'web';
 
       // Fisheries: first query gets recency window (45d primary), second is evergreen.
-      // Saltwater regs: both queries are recency-bounded (180d) because we are
-      // hunting in-season amendments that supersede the annual digest, not the
-      // digest itself.
       const recencyWindows =
-        agentKey === 'fisheries' ? AGENT_DISCOVERY_QUERIES._fisheries_recency :
-        agentKey === 'saltwater_regulations' ? AGENT_DISCOVERY_QUERIES._saltwater_regs_recency :
-        null;
+        agentKey === 'fisheries' ? AGENT_DISCOVERY_QUERIES._fisheries_recency : null;
       const recencyMinutes = recencyWindows ? recencyWindows[qIndex] : null;
 
       try {

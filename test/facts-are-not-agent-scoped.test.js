@@ -25,37 +25,13 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-// READ AS LF, WHATEVER THE CHECKOUT. This file slices JavaScript out of a source file by
-// searching for `\n}\n`, and Ryan's working copy is CRLF -- so on his machine the search failed,
-// the slice came back empty, and the test died building a module out of `export \nexport \n`.
-// Two of these files went red on his clone on 2026-09-19 while CI, which checks out LF, was
-// green. Normalised once at the read rather than at five different markers.
-const ENGINE = readFileSync(path.join(ROOT, 'js/modules/lake-research-engine.js'), 'utf8')
-  .replace(/\r\n/g, '\n');
 const EXTRACT = readFileSync(path.join(ROOT, 'Worker/research/extract.js'), 'utf8')
   .replace(/\r\n/g, '\n');
 
-test('an agent analyses the LAKE document cache, not a set of its own', () => {
-  // Both branches ask for the whole lake and neither narrows by agent -- resume prefers
-  // agent-tagged docs but falls back to all of them, with a comment saying why.
-  const asks = ENGINE.match(/research\/get-normalized\?lake=/g) || [];
-  assert.ok(asks.length >= 2,
-    'runAgent must load the lake-wide normalized cache in both full and resume mode');
-  assert.ok(ENGINE.includes('existingDocs = tagged.length > 0 ? tagged : allDocs'),
-    'the resume branch must fall back to the full cache when no doc carries this agent tag');
-});
-
-test('the fact extractor is never told which agent asked', () => {
-  const call = ENGINE.slice(ENGINE.indexOf("`${CF_WORKER_URL}/research/analyze-facts`"));
-  const body = call.slice(call.indexOf('body:'), call.indexOf('})', call.indexOf('body:')));
-  for (const forbidden of ['agent:', 'agentKey', 'agent_key']) {
-    assert.ok(!body.includes(forbidden),
-      `the analyze-facts request must not carry ${forbidden} -- facts belong to the lake's `
-      + 'corpus, and scoping them by agent is what makes the ledger look partitioned');
-  }
-  assert.ok(body.includes('documents:') && body.includes('lakeName'),
-    'the request is documents plus lake identity, nothing else');
-});
+// FOUR TESTS OF THE RESEARCH TAB'S ENGINE STOOD HERE -- that it read the lake-wide document
+// cache, that it never told the extractor which agent asked, that no agent result wrote evidence,
+// and that the reasoning sat above `allFacts`. The tab was deleted on 2026-09-25 and the batch
+// (Scripts/research_lakes.py) is the one writer; the Worker half of the question is below.
 
 test('the extractor prompt covers every section, not one agent worth of categories', () => {
   const line = EXTRACT.split('\n').find((l) => l.trim().startsWith('Categories:'));
@@ -67,26 +43,4 @@ test('the extractor prompt covers every section, not one agent worth of categori
       `${category} must stay in the one shared category list -- if the list is ever split per `
       + 'agent, the fact ledger becomes agent-partitioned and this whole question reopens');
   }
-});
-
-test('no agent result contributes an evidence entry', () => {
-  // The other half of the same wrong diagnosis: `evidence` is rebuilt from the deterministic pass
-  // and WQP on every save, and that is complete because nothing else ever writes it. Measured on
-  // Lake Norman across the two-agent rerun: habitat 11 sub-keys, identity 3, limnology 2,
-  // navigation 1, summary 1 -- identical before and after.
-  const fn = ENGINE.slice(ENGINE.indexOf('async function assembleAndSaveProfile('));
-  const body = fn.slice(0, fn.indexOf('\n}\n'));
-  assert.ok(!/r\.data\??\.evidence|agentResults[\s\S]{0,80}evidence/.test(body),
-    'if an agent ever starts returning evidence, this merge stops being complete');
-  assert.ok(body.includes('mergeEvidenceMaps(det.evidence || {}, buildWqpEvidence(wqp))'),
-    'evidence is det + WQP, deliberately, and the reasoning is in the comment above it');
-});
-
-test('the reasoning is recorded where the question gets asked', () => {
-  const anchor = ENGINE.indexOf('const allFacts = agentResults.flatMap(');
-  assert.ok(anchor > 0, 'the line must still be here');
-  const preceding = ENGINE.slice(Math.max(0, anchor - 2000), anchor);
-  assert.ok(/NOT OF THE AGENTS THAT RAN/.test(preceding),
-    'a future session reading this line will see what looks like a bug -- the answer has to '
-    + 'arrive with the question, or it gets "fixed" again');
 });

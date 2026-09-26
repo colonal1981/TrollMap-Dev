@@ -158,8 +158,15 @@ describe('the client does not re-derive what the pipeline already built', () => 
       why: 'build_trolling_runs.py stitches contours offline; the browser version could not '
          + 'know whether a run was reachable from water' },
     { fn: 'function walkContourForWaypoints',
-      why: 'POST /water/{slug}/plan returns validated geometry; walking contours in the browser '
-         + 'is what drew connecting lines over land' },
+      why: 'walking contours in the browser is what drew connecting lines over land; the plan '
+         + 'follows the runs build_trolling_runs.py stitched, and legs connect over POST /water/{slug}/route' },
+    // MOVED HERE FROM smart-plan-route.test.js on 2026-09-25, when that file and the module it
+    // tested were deleted: "the contour walker cannot come back anywhere in js/". This list
+    // scans js/ AND Worker/, which is stronger still. buildScoutRoutes joined the walked points
+    // with straight lines and a sine wave.
+    { fn: 'function buildScoutRoutes',
+      why: 'it connected walked contour points with straight lines and a sine wave -- the '
+         + 'connecting routes over land Ryan described' },
     { fn: 'function deriveContourStructures',
       why: 'build_structure.py derives humps from contour NESTING and ships structure.geojson; '
          + 'the browser version grid-bucketed centroids and kept 8 per lake per research run' },
@@ -275,24 +282,32 @@ describe('every route in trollmap-worker.js has a caller', () => {
     // to handle it": no caller in js/, no other caller for fetchDukeDashboard() behind it, a
     // `?basin=` parameter the function ignored, and a second trigger that answered ANY path
     // carrying `?duke` with a raw dump instead of the route asked for.
-    '/lake-research': 'no caller. Superseded by /research/get, which three modules do call.',
-    '/lake-intel-sources': 'no caller. Goes with LAKE_INTEL_SOURCE_REGISTRY, already on the tab.',
-    '/lakes/': 'no caller. A shortcut alias for /research/get.',
-    '/lakes/list': 'no caller. Alias of /research/list, which research-ids.js does call.',
-    '/chartpacks/list': 'no caller. The client lists packs from the registry index instead.',
-    '/rivers': 'no caller. Would return Object.keys(RIVERS) — the 6-of-90 menu.',
-    '/sync/migrate': 'no caller. A one-shot schema migration.',
-    '/usgs': 'no caller. Every USGS read now goes through /conditions or the research engine.',
+    // /lake-research, /lake-intel-sources, /lakes/, /lakes/list, /rivers, /sync/migrate and /usgs
+    // stood here with "no caller" and were deleted on 2026-09-25.
+    '/chartpacks/list': 'no app caller. Scripts/r2_audit.py and r2_vs_local.py call it.',
 
-    // ── research routes with no BROWSER caller; some may be operator-curled during a run ──────
-    '/research/dataset-hunt': 'no client caller. Needs a decision.',
-    '/research/gap-analysis': 'no client caller. Needs a decision.',
-    '/research/gap-search': 'no client caller. Needs a decision.',
-    '/research/map-facts': 'no client caller. Needs a decision.',
-    '/research/shared/publish': 'no client caller. The shared store is written through /shared/store.',
-    '/research/shared/quarantine': 'no client caller. Needs a decision.',
-    '/research/shared/status': 'no client caller. Needs a decision.',
-    '/research/thermocline-search': 'no client caller. /research/limnology-data is the one that runs.',
+    // The eight research routes that sat here with "no client caller. Needs a decision" --
+    // dataset-hunt, gap-analysis, gap-search, map-facts, shared/publish, shared/quarantine,
+    // shared/status and thermocline-search -- were deleted on 2026-09-25. No script called them
+    // either. handleResearchThermoclineSearch stays: limnology.js calls it directly.
+
+    // ── research routes the Research tab called, which only scripts call now ──────────────────
+    // The tab was deleted on 2026-09-25. Ryan: "nothing the tab writes should be used anymore".
+    // The batch is the one writer, and these are its doors.
+    '/research/agent-llm': 'Scripts/research_lakes.py and Scripts/species_group_retry.py.',
+    '/research/analyze-facts': 'Scripts/research_lakes.py.',
+    '/research/delete': 'Scripts/prune_shadowed_profiles.py and collapse_duplicate_profiles.ps1.',
+    '/research/deterministic-facts': 'Scripts/research_lakes.py.',
+    '/research/discover': 'Scripts/research_lakes.py and Scripts/water_sections.py.',
+    '/research/get-normalized': 'Scripts/research_lakes.py.',
+    '/research/limnology-data': 'Scripts/research_lakes.py.',
+    '/research/list': 'Scripts/research_lakes.py, mirror_research_profiles.py, research_todo.mjs '
+                    + 'and audit_research_fields.py.',
+    '/research/proxy-download': 'Scripts/research_lakes.py.',
+    '/research/proxy-download-batch': 'Scripts/research_lakes.py.',
+    '/research/save': 'Scripts/research_lakes.py, mirror_research_profiles.py and '
+                    + 'prune_shadowed_profiles.py.',
+    '/research/save-normalized': 'Scripts/research_lakes.py.',
   };
 
   const callersOf = (route) => {

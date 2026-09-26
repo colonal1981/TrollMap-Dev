@@ -159,41 +159,9 @@ export async function runSmartPlanV2(opts = {}) {
 
   const species = inp.species[0];
 
-  // THE LAW FIRST, BEFORE A MODEL CALL IS SPENT ON IT. Ryan: "reg check is needed so we don't
-  // plan on closed waters." A block returns here — there is no point costing a Gemini call, a
-  // battery budget and a morning on a species that cannot be kept today.
-  //
-  // AND THE BOOK HAS TO BE IN HAND BEFORE IT CAN BE CONSULTED. checkPlanLegality() is
-  // synchronous and answers out of a cache; the only thing that filled that cache was a
-  // fire-and-forget line in conditions-strip.js on a different trigger, and this call sat
-  // thirty-three lines ahead of the only async water work on the path. So it ran cold every
-  // time and every inland lake came back "No regulation data". One await, before the read.
-  // `at`: the launch, so a water in two states is checked against the book for the bank he puts
-  // in from -- see regulationStatePlace() in plan-preflight.js.
-  await ensureRegulations(inp.lakeName, { worker: CF_WORKER_URL, at: ramp });
-  // The plan render is synchronous, so the advisory table is warmed here beside the regulations
-  // it prints under. It never throws -- a water with no advisory and no network look the same to
-  // the caller, and both mean the section does not appear.
-  await primeFishAdvisories({ worker: CF_WORKER_URL });
-  // AND WHAT IS CAUGHT INSHORE IN THIS STATE THIS WAVE, warmed here for the same reason: the
-  // prompt build is synchronous and this is a registry fetch. Never throws; a cold table is a
-  // prompt with no seasonality section, which is the prompt that was there before.
-  await primeInshoreSeason({ worker: CF_WORKER_URL });
-  // AND THE TWO TABLES THAT ANSWER WHAT IS UNDER THE BOAT. Same route, same reason.
-  await primeSeabedHabitat({ worker: CF_WORKER_URL });
-
-  // THE RESEARCH PROFILE IS THE POINT OF THE RESEARCH PIPELINE. The first version of this file
-  // ignored it entirely and used the four-lake built-in table — worse than v1, which at least put
-  // the research prose in its prompt. Try the in-memory cache the research tab fills, then ask
-  // the Worker, because the planner should not depend on someone having opened that tab first.
-  //
-  // LOADED HERE AND NOT SEVENTY LINES DOWN, because the legality check below reads its closed
-  // seasons and cannot await for them. This is the same shape as the ensureRegulations() bug
-  // noted above -- a synchronous check sitting ahead of the only call that fills what it reads --
-  // and it is one load used by both, not a second fetch for the law.
-  const researched = await loadResearchedProfile(inp.lakeName);
-
-  const legality = checkPlanLegality(inp.lakeName, species, date, { profile: researched, at: ramp });
+  // THE LAW FIRST, BEFORE A MODEL CALL IS SPENT ON IT, and the tables the synchronous prompt build
+  // reads. One sequence for both planners since 2026-09-25 -- see preparePlanInputs() below.
+  const { researched, legality } = await preparePlanInputs(inp, species, date, ramp);
   if (!legality.legal) {
     say(`${species} not legal here today`, true);
     if (out) out.innerHTML = `<p style="color:var(--warn);font-size:12px">REGULATION BLOCK — `
@@ -637,7 +605,55 @@ function finish(r, gpx) {
 }
 
 /**
- * The lake's researched profile: the cache the research tab fills, else the Worker.
+ * EVERYTHING BOTH PLANNERS DO BEFORE THEY BUILD A PROMPT, IN ONE PLACE.
+ *
+ * Smart Plan and Pick Water each wrote this sequence out, line for line, with the same comments
+ * explaining it twice: open the regulations book, warm the advisory, inshore-season and seabed
+ * tables the synchronous prompt build reads, load the research profile, and ask the law. "ONE
+ * PROMPT, TWO PLANNERS" (one-prompt-two-planners.test.js) was holding two copies of a sequence
+ * together; since 2026-09-25 there is one, and both call it.
+ *
+ * Returns { researched, legality }. The caller decides what a block looks like on its own tab.
+ */
+export async function preparePlanInputs(inp, species, date, ramp) {
+  // THE LAW FIRST, BEFORE A MODEL CALL IS SPENT ON IT. Ryan: "reg check is needed so we don't
+  // plan on closed waters." The caller returns on a block -- there is no point costing a Gemini
+  // call, a battery budget and a morning on a species that cannot be kept today.
+  //
+  // AND THE BOOK HAS TO BE IN HAND BEFORE IT CAN BE CONSULTED. checkPlanLegality() is
+  // synchronous and answers out of a cache; the only thing that filled that cache was a
+  // fire-and-forget line in conditions-strip.js on a different trigger, and this call sat
+  // thirty-three lines ahead of the only async water work on the path. So it ran cold every
+  // time and every inland lake came back "No regulation data". One await, before the read.
+  // `at`: the launch, so a water in two states is checked against the book for the bank he puts
+  // in from -- see regulationStatePlace() in plan-preflight.js.
+  await ensureRegulations(inp.lakeName, { worker: CF_WORKER_URL, at: ramp });
+  // The plan render is synchronous, so the advisory table is warmed here beside the regulations
+  // it prints under. It never throws -- a water with no advisory and no network look the same to
+  // the caller, and both mean the section does not appear.
+  await primeFishAdvisories({ worker: CF_WORKER_URL });
+  // AND WHAT IS CAUGHT INSHORE IN THIS STATE THIS WAVE, warmed here for the same reason: the
+  // prompt build is synchronous and this is a registry fetch. Never throws; a cold table is a
+  // prompt with no seasonality section, which is the prompt that was there before.
+  await primeInshoreSeason({ worker: CF_WORKER_URL });
+  // AND THE TWO TABLES THAT ANSWER WHAT IS UNDER THE BOAT. Same route, same reason.
+  await primeSeabedHabitat({ worker: CF_WORKER_URL });
+
+  // THE RESEARCH PROFILE IS THE POINT OF THE RESEARCH PIPELINE. The first version of this file
+  // ignored it entirely and used the four-lake built-in table — worse than v1, which at least put
+  // the research prose in its prompt. Ask the Worker for it.
+  //
+  // It was loaded HERE, ahead of the legality check, because that check read the profile's
+  // closed seasons. It stopped reading them on 2026-09-25 (profileClosures() in plan-preflight.js
+  // went with the Research tab that wrote them); the load stays where it is.
+  const researched = await loadResearchedProfile(inp.lakeName);
+
+  const legality = checkPlanLegality(inp.lakeName, species, date, { at: ramp });
+  return { researched, legality };
+}
+
+/**
+ * The lake's researched profile, from the Worker.
  *
  * Absence is normal and silent — most lakes have not been researched. A FAILURE is not absence
  * and gets logged, because producing these is what the whole research pipeline is for and a
@@ -651,10 +667,6 @@ function finish(r, gpx) {
  */
 export async function loadResearchedProfile(lakeName) {
   if (!lakeName) return null;
-  try {
-    const cached = window.getResearchedProfile?.(lakeName);
-    if (cached) return cached;
-  } catch (e) { console.warn('[plan-v2] researched cache threw', e.message); }
   try {
     const url = `${CF_WORKER_URL}/research/get?lake=${encodeURIComponent(lakeName)}`;
     const r = await fetch(url);

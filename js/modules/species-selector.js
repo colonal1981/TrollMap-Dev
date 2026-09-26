@@ -25,10 +25,11 @@ import { matchSpeciesKeys } from './plan-inputs.js';
 
 // THE ROSTER IS IN R2, NOT ONLY IN THE RESEARCH TAB'S MEMORY.
 //
-// `window.getResearchedProfile()` reads a cache the research tab fills when a person opens a lake
-// on it, so on a cold load it answers null for every water -- and a selector that filters on that
-// shows the whole catalogue everywhere, which is the opposite of filtering. loadResearchedProfile()
-// is the loader Pick Water already uses: cache first, then /research/get, which resolves the water
+// `window.getResearchedProfile()` read a cache the research tab filled when a person opened a lake
+// on it, so on a cold load it answered null for every water -- and a selector that filters on that
+// shows the whole catalogue everywhere, which is the opposite of filtering. The tab and its cache
+// were deleted on 2026-09-25. loadResearchedProfile()
+// is the loader Pick Water already uses: /research/get, which resolves the water
 // against every spelling the store holds. Two readers of the same question is how they drift, so
 // this is the same one.
 //
@@ -328,11 +329,9 @@ export function refreshSpeciesChecks() {
   const mode = coastal ? 'salt' : 'fresh';
   const modeChanged = box.dataset.mode !== mode || box.dataset.state !== (stateCode || '');
 
-  // The lake's own species, from the research tab's cache if it is open, else from R2 below.
+  // The lake's own species, from R2 below.
   let profile = null;
-  try { profile = window.getResearchedProfile?.(lakeName) || null; }
-  catch (e) { console.warn('[species-selector] researched cache threw', e.message); }
-  if (!profile && lakeName) profile = _profileByLake.get(lakeName) || null;
+  if (lakeName) profile = _profileByLake.get(lakeName) || null;
   if (!profile && lakeName && !_profileByLake.has(lakeName)) {
     _profileByLake.set(lakeName, null);
     import('./smart-plan-v2-wiring.js')

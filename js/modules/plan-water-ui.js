@@ -43,12 +43,11 @@ import { packFetcher } from './smart-plan-v2.js';
 // layers this function already fetched. See researchIntel() in plan-inputs.js and
 // THE_PROFILE_BECAME_A_CACHE_AND_NOBODY_MOVED_THE_READS_2026-09-01.md.
 import { packDerivedFacts } from '../utils/pack-facts.js';
-import { checkPlanLegality, ensureRegulations, fetchForecast,
+import { fetchForecast,
          fetchWaterState, fetchClarityAtRamp, regulationStateFor,
          detectCoastalZone } from './plan-preflight.js';
-import { primeFishAdvisories } from '../data/fish-advisories.js';
-import { primeInshoreSeason, inshoreSeasonFor } from '../data/inshore-season.js';
-import { primeSeabedHabitat, seabedHabitatFor } from '../data/seabed-habitat.js';
+import { inshoreSeasonFor } from '../data/inshore-season.js';
+import { seabedHabitatFor } from '../data/seabed-habitat.js';
 import { depthSampler, shorelineIndex, waterMask } from './plan-water-index.js';
 import { offerWater, dayCost, dayOrder, priceSpots, searchOrder, optionality, reasons, TROLL_MPH, TRANSIT_MIN_DEPTH_FT, SPOT_KINDS } from './plan-water.js';
 import { joinedPiece } from './plan-pieces.js';
@@ -67,11 +66,10 @@ import { loadSessionFromPlan, isEnabled, launchFrom } from './notifications.js';
 import { renderAll } from '../core/map-init.js';
 import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
 import { connectionFor, snapEligibleFrom } from '../data/lure-knowledge.js';
-import { readInputs, rampCoords, loadResearchedProfile } from './smart-plan-v2-wiring.js';
+import { readInputs, rampCoords, preparePlanInputs } from './smart-plan-v2-wiring.js';
+import { esc } from '../utils/escape.js';
 
 const $ = (id) => document.getElementById(id);
-const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) =>
-  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const mi = (m) => m / 1609.34;
 const fmtMi = (m) => `${mi(m).toFixed(mi(m) < 1 ? 2 : 1)} mi`;
 const fmtHm = (min) => `${Math.floor(min / 60)}h ${String(Math.round(min % 60)).padStart(2, '0')}m`;
@@ -816,39 +814,14 @@ export async function findWater() {
   const species = inp.species[0];
   const date = new Date(`${inp.dateStr}T12:00:00`);
 
-  // THE BOOK, BEFORE ANY OF THE REST OF IT. This tab never opened it.
-  //
-  // Smart Plan refuses to build a day for a species that is out of season or on water that is
-  // closed to it, and says which rule. Pick Water would happily lay out five legs for a striped
-  // bass in a closed reach -- the same lake, the same date, the same digest sitting in the same
-  // cache, and only one tab asking. Ryan, 2026-09-04: "both options should have the exact same
-  // information and work the exact same way with the exception that v2 the model picks the routes
-  // and pickwater i pick the routes." A closed season is not who picks the routes.
-  //
-  // `ensureRegulations` first because checkPlanLegality() is synchronous and answers out of a
-  // cache that nothing on this path had ever filled -- see the note on the Smart Plan call. The
-  // advisory table is warmed in the same breath for the same reason it is there: the plan render
-  // is synchronous and prints advisories under the regulations.
+  // THE BOOK, BEFORE ANY OF THE REST OF IT. This tab never opened it, until 2026-09-04: Smart Plan
+  // refused a closed species and Pick Water laid out five legs for it. Ryan: "both options should
+  // have the exact same information and work the exact same way with the exception that v2 the
+  // model picks the routes and pickwater i pick the routes." The regulations, the tables the
+  // prompt build reads, the research profile and the law are ONE call now, preparePlanInputs() in
+  // smart-plan-v2-wiring.js -- the sequence this tab and Smart Plan each wrote out until 2026-09-25.
   say('Checking the regulations…');
-  await ensureRegulations(inp.lakeName, { worker: CF_WORKER_URL, at: ramp });
-  await primeFishAdvisories({ worker: CF_WORKER_URL });
-  // AND WHAT IS CAUGHT INSHORE IN THIS STATE THIS WAVE. Same reason again: the prompt build is
-  // synchronous and this is a registry fetch. ONE PROMPT, TWO PLANNERS -- Smart Plan primes it
-  // in the same place, and a field filled by only one of the two is the bug
-  // one-prompt-two-planners.test.js exists to catch.
-  await primeInshoreSeason({ worker: CF_WORKER_URL });
-  // AND THE TWO TABLES THAT ANSWER WHAT IS UNDER THE BOAT. Same route, same reason, and
-  // both planners again -- one prompt, two planners.
-  await primeSeabedHabitat({ worker: CF_WORKER_URL });
-
-  // THE PROFILE BEFORE THE LAW, because checkPlanLegality() reads its extracted closed seasons
-  // and cannot await for them. The long note on why Pick Water loads a profile at all sits below,
-  // where it is used for the depth band; it is loaded HERE so both readers get it. Smart Plan
-  // made the same move for the same reason.
-  say('Reading the research…');
-  const researched = await loadResearchedProfile(inp.lakeName);
-
-  const legality = checkPlanLegality(inp.lakeName, species, date, { profile: researched, at: ramp });
+  const { researched, legality } = await preparePlanInputs(inp, species, date, ramp);
   if (!legality.legal) {
     return say(`${species} not legal here today — `
              + `${legality.reason || 'closed season or closed water'}`, true);

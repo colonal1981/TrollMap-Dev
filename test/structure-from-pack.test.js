@@ -69,28 +69,32 @@ test('kinds do not bleed into each other', () => {
   assert.ok(humpsFromPack(p).every((h) => h.slopeFtPer100Ft === undefined));
 });
 
-test('the pack wins when it has one', () => {
-  const r = structureFor(pack(12, 30), { humpCoordinates: [{ id: 'old', lat: 1, lon: 2 }] });
+test('the pack is the source', () => {
+  const r = structureFor(pack(12, 30));
   assert.equal(r.source, 'pack');
   assert.equal(r.humps.length, 12);
-  assert.ok(!r.humps.some((h) => h.id === 'old'));
 });
 
-test('a pack with no structure layer falls back to the profile it used to ship in', () => {
-  // 43 of the 454 shipped packs have no structure.geojson, and profiles saved before today
-  // still carry coordinates. Losing those silently would be the same class of bug as the one
-  // that dropped the coordinates in the first place.
-  const r = structureFor(null, {
-    humpCoordinates: [{ id: 'hump_1', lat: 34.1, lon: -80.7, reliefFt: 9 }],
-    ledgeCoordinates: [{ id: 'ledge_1', lat: 34.2, lon: -80.8 }],
-  });
-  assert.equal(r.source, 'profile');
-  assert.equal(r.humps.length, 1);
-  assert.equal(r.ledges.length, 1);
+// THE PROFILE IS NOT READ. structureFor() fell back to a profile's humpCoordinates and
+// ledgeCoordinates for a pack with no structure layer until 2026-09-25. Those are retired fields
+// (eight profiles carry exactly 8 of each, the old agent's cap), and 0 of 373 shipped packs lack
+// structure.geojson. This used to assert the fallback; it asserts its absence now.
+test('a profile carrying the retired coordinates is not read, with a pack or without one', () => {
+  const retired = {
+    humpCoordinates: [{ id: 'old_hump', lat: 34.1, lon: -80.7, reliefFt: 9 }],
+    ledgeCoordinates: [{ id: 'old_ledge', lat: 34.2, lon: -80.8 }],
+  };
+  const none = structureFor(null, retired);
+  assert.equal(none.source, 'none');
+  assert.equal(none.humps.length, 0);
+  assert.equal(none.ledges.length, 0);
+  const withPack = structureFor(pack(12, 30), retired);
+  assert.ok(!withPack.humps.some((h) => h.id === 'old_hump'));
+  assert.equal(structureFor.length, 1, 'structureFor takes the pack and nothing else');
 });
 
-test('neither one available says so rather than looking like a flat lake', () => {
-  const r = structureFor(null, null);
+test('no structure says so rather than looking like a flat lake', () => {
+  const r = structureFor(null);
   assert.equal(r.source, 'none');
   assert.equal(r.humps.length, 0);
   assert.equal(r.ledges.length, 0);

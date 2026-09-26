@@ -34,8 +34,6 @@ export const state = {
   IMG_ROTATION: 0,
   IMG_AFFINE: null,       // [[a,b,c],[d,e,f]] 2x3 matrix or null
   IMG_AFFINE_PTS: null,   // [{lat,lon}] corresponding source points
-  GEOREF: null,           // {bbox, ...} once georef finished
-  georefState: null,      // current georef step machine
 
   // ── Working data ──
   DATA: { waypoints: [], tracks: [] },
@@ -44,7 +42,6 @@ export const state = {
 
   // ── Chart mosaic (multi-layer depth-contour overlays) ──
   CHARTS: [],            // committed depth-contour overlay layers
-  ACTIVE_CHART: -1,     // -1 = working overlay; >=0 = index into CHARTS
 
   // ── Contour datasets ──
   CONTOUR_DATASETS: [],    // [{ key, lake_name, area_name, zoom, bounds, depthRange, hasSmart, hasRaw }]

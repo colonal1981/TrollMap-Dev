@@ -1,5 +1,4 @@
 import { describe, it, expect } from './expect-shim.mjs';
-import { readFileSync } from 'node:fs';
 import { researchIntel } from '../js/modules/plan-inputs.js';
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -10,13 +9,14 @@ import { researchIntel } from '../js/modules/plan-inputs.js';
 // as an input", and the rule with it -- if a value reaches the plan prompt the tab shows it, and
 // if it does not reach the plan it does not belong on the tab.
 //
-// The panel renders researchIntel() rather than describing it, because a second implementation of
-// the block is a second answer waiting to disagree with the first. These tests hold that seam:
-// the panel exists, it is wired, and the function it leans on still answers.
+// The panel rendered researchIntel() rather than describing it, because a second implementation of
+// the block is a second answer waiting to disagree with the first.
+//
+// THE TAB WAS DELETED ON 2026-09-25. Ryan: "nothing the tab writes should be used anymore". The
+// three tests that held the panel's wiring went with it; the function it leaned on is what the
+// plan still calls, and the tests of that stay below.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
-const HTML = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
-const UI = readFileSync(new URL('../js/modules/lake-research-ui.js', import.meta.url), 'utf8');
 
 const PROFILE = {
   lakeName: 'Test Water, SC',
@@ -34,24 +34,6 @@ const PROFILE = {
     },
   },
 };
-
-describe('the panel is mounted where the plan block belongs', () => {
-  it('index.html carries the container, above Research Sections', () => {
-    expect(HTML.includes('id="researchPlanInput"')).toBe(true);
-    expect(HTML.indexOf('id="researchPlanInput"') < HTML.indexOf('id="researchSections"')).toBe(true);
-  });
-
-  it('renderProfile fills it, and does so BEFORE the stored sections', () => {
-    expect(UI.includes('renderPlanInput(profile);')).toBe(true);
-    expect(UI.indexOf('renderPlanInput(profile);') < UI.indexOf('renderSections(profile);')).toBe(true);
-  });
-
-  it('and it renders the plan\'s own function rather than a second copy of the block', () => {
-    // A panel that rebuilds the block by hand is the failure this whole page exists to prevent.
-    expect(/import \{ researchIntel \} from '\.\/plan-inputs\.js'/.test(UI)).toBe(true);
-    expect(UI.includes('researchIntel(profile, sp, season')).toBe(true);
-  });
-});
 
 describe('and the block it shows is the block the plan gets', () => {
   it('emits the species the profile carries a band for', () => {

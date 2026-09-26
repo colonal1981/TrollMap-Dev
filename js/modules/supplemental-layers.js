@@ -12,7 +12,7 @@ import {
 import { esc } from '../utils/escape.js';
 import { LAKE_NAME_TO_R2_KEY, resolveR2Key } from '../data/lake-keys.js';
 import { cull } from '../utils/viewport-cull.js';
-import { distMiFromCoords as distMi } from '../utils/geo.js';
+import { distMiFromCoords as distMi, geoDistanceM } from '../utils/geo.js';
 import { workerHeaders } from '../utils/worker-auth.js';
 import { depthColor } from '../utils/depth-palette.js';
 import { allAccessPoints, loadAccessIndex } from '../data/access-index.js';
@@ -44,7 +44,6 @@ export { LAKE_NAME_TO_R2_KEY, resolveR2Key };
 //
 // One ladder for every layer now, and depth-palette.js owns it. `coastal` is no longer a
 // palette question at all; it is only a question about DATUM, which is displayDepth()'s job.
-const depthAreaColor = depthColor;
 
 // Was its own database, `trollmap-supplemental`, with its own openDB/idbGet/idbSet. Folded
 // into the shared `cache` store: every layer here is re-fetchable from R2, so there was
@@ -411,7 +410,7 @@ async function loadDepthAreas(lakeKey) {
         // by hand here and again in refreshDepthAreaColors(); displayDepth() is the one place
         // that decides now, so the polygon, the contour over it and the sounding on top of it
         // cannot drift apart.
-        const color = depthAreaColor(displayDepth(chartedFt, isCoastal));
+        const color = depthColor(displayDepth(chartedFt, isCoastal));
         return { fillColor: color, fillOpacity: 0.55, color, weight: strokeW,
                  opacity: strokeW ? 0.5 : 0, stroke: strokeW > 0 };
       },
@@ -970,9 +969,10 @@ function norm(s) {
   return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
+// Metres between two [lon, lat] points. It was a flat-earth approximation named for the haversine;
+// since 2026-09-25 it is the haversine, utils/geo.js's.
 function haversineM(a, b) {
-  return Math.hypot((b[0] - a[0]) * Math.cos(a[1] * Math.PI / 180) * 111320,
-                    (b[1] - a[1]) * 110540);
+  return geoDistanceM(a[1], a[0], b[1], b[0]);
 }
 
 /**
@@ -1171,14 +1171,6 @@ window.toggleGarminLayer = async function (name, visible) {
   return got;
 };
 
-/** Turn the whole Garmin chart overlay on or off in one call. */
-window.toggleGarminChart = async function (visible) {
-  const names = Object.entries(GARMIN_LAYERS).filter(([, s]) => s.panel !== false).map(([n]) => n);
-  const want = visible === undefined ? !names.some(n => layerIsVisible(GID(n))) : !!visible;
-  for (const n of names) await window.toggleGarminLayer(n, want);
-  return want;
-};
-
 /**
  * Both POI filters change what the layer CONTAINS, not whether it is shown. Drop the built
  * layer so the next show refetches through the new filter, and if it is on screen right now,
@@ -1327,7 +1319,6 @@ async function loadLakeBoundary(displayName) {
     const cached = await cacheGet(CACHE_NS, cacheKey, CACHE_TTL);
     if (cached?.features?.length) {
       _boundaryGeoJSON = cached;
-      window.LAKE_BOUNDARY_GEOJSON = _boundaryGeoJSON;
       console.log(`[supplemental] boundary loaded from cache: ${boundaryKey}`);
       return;
     }
@@ -1344,7 +1335,6 @@ async function loadLakeBoundary(displayName) {
     }, gj.features[0]);
     _boundaryGeoJSON = { type: 'FeatureCollection', features: [main] };
     await cacheSet(CACHE_NS, cacheKey, _boundaryGeoJSON);
-    window.LAKE_BOUNDARY_GEOJSON = _boundaryGeoJSON;
     console.log(`[supplemental] boundary loaded: ${boundaryKey}`);
   } catch (e) {
     console.warn(`[supplemental] boundary fetch failed for ${boundaryKey}:`, e.message);
@@ -1354,19 +1344,16 @@ async function loadLakeBoundary(displayName) {
 function renderStructureMarkers(displayName) {
   if (!mapReady()) return;
   if (_structureMarkerLayer) { getMap().removeLayer(_structureMarkerLayer); _structureMarkerLayer = null; }
-  // The pack first: every hump and every ledge the pipeline built, uncapped. The research
-  // profile is the fallback for the 43 packs with no structure layer and for profiles saved
-  // before the coordinates moved out of them.
-  const profile = window.getResearchedProfile?.(displayName);
-  const { humps, ledges, holes, source } = structureFor(_garminData.structure,
-                                                        profile?.habitat?.structuralElements);
+  // The pack: every hump and every ledge the pipeline built, uncapped. No profile: the humps and
+  // ledges a profile carried are retired fields -- eight profiles hold exactly the old agent's
+  // cap of 8 each -- and structureFor() stopped reading them on 2026-09-25.
+  const { humps, ledges, holes, source } = structureFor(_garminData.structure);
   if (!humps.length && !ledges.length && !(holes || []).length) {
     // SAY SO. A silent return here is what hid 943 features on the Congaree for a day: the
     // console showed depth areas, pois, docks, ramps and the boundary all loading, and simply
     // no line at all about structure, which reads as "this water has none".
     console.log(`[supplemental] structure markers: nothing to draw for ${displayName} `
-              + `(pack layer ${_garminData.structure ? 'loaded but empty' : 'not loaded'}, `
-              + `profile ${profile ? 'present' : 'absent'})`);
+              + `(pack layer ${_garminData.structure ? 'loaded but empty' : 'not loaded'})`);
     return;
   }
   console.log(`[supplemental] structure markers: ${humps.length} humps, ${ledges.length} ledges, `
@@ -1472,17 +1459,10 @@ export async function loadSupplementalForLake(displayName) {
   //    rendering being tied together: "a planner silently missing every dock and every piece
   //    of charted structure, depending on which buttons were clicked in which order".
   //
-  // So: get the layer, draw it, and let the profile be what it always claimed to be -- the
-  // fallback for the 43 packs that have no structure layer.
+  // So: get the layer and draw it. The profile fallback and its loadProfile() re-render went
+  // with the Research tab on 2026-09-25: the humps and ledges it read are retired fields.
   await ensureData(lakeKey, 'structure');
   renderStructureMarkers(displayName);
-  if (!window.getResearchedProfile?.(displayName) && window.loadProfile) {
-    // A profile that arrives later can only ADD to this, so re-render when it does. It cannot
-    // take anything away: structureFor() reads the profile only when the pack gave nothing.
-    window.loadProfile(displayName, true)
-      .then(() => renderStructureMarkers(displayName))
-      .catch(() => {});
-  }
 
   // For coastal zones: fetch current tide height and apply color adjustment.
   // This covers the Map tab where noaa-tides.js auto-sync doesn't fire.
@@ -1696,7 +1676,7 @@ export function refreshDepthAreaColors(tideHeightFt) {
     style(feat) {
       const p = feat.properties || {};
       const chartedFt = p.depth_max_ft ?? p.depth_min_ft ?? p.depth_ft ?? 0;
-      const color = depthAreaColor(displayDepth(chartedFt, isCoastal));
+      const color = depthColor(displayDepth(chartedFt, isCoastal));
       return { fillColor: color, fillOpacity: 0.55, color, weight: 0.5, opacity: 0.5 };
     },
     onEachFeature(feat, layer) {
@@ -1737,7 +1717,6 @@ init();
 window.loadSupplementalForLake = loadSupplementalForLake;
 window.getSupplementalContext = getSupplementalContext;
 export function getOsmStructures() { return _osmStructureData || []; }
-window._seedOsmStructureData = (features) => { if (!_osmStructureData?.length) _osmStructureData = features; };
 
 window.toggleDepthAreas = function(visible) {
   _depthAreaVisible = visible;

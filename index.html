@@ -142,8 +142,6 @@
   #recordBtn.recording { animation: pulse 1s infinite; background: var(--bad); }
   @keyframes pulse { 0%{opacity:1} 50%{opacity:.5} 100%{opacity:1} }
   .dot { display:inline-block; width:9px; height:9px; border-radius:50%; vertical-align:middle; margin-right:4px; }
-  /* Measure tool */
-  #measureTooltip { background:rgba(11,22,35,.92); color:var(--accent2); border:1px solid var(--line); border-radius:8px; padding:6px 10px; font-size:12px; font-family:monospace; white-space:nowrap; }
   /* Catch markers */
   .catch-icon { font-size:18px; line-height:1; cursor:pointer; }
 
@@ -489,34 +487,6 @@
   }
   #gpsPanelPopup .gps-grid button { height: 34px; font-size: 11px; }
 
-  /* ── Lake Research Module ── */
-  #panel-research .research-header { display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; margin-bottom:12px; }
-  #panel-research .research-header .lake-field { flex:1 1 220px; }
-  #panel-research .research-meta { display:flex; flex-wrap:wrap; gap:8px; font-size:11px; color:var(--muted); margin-bottom:10px; }
-  #panel-research .research-meta .meta-pill { background:var(--panel2); border:1px solid var(--line); border-radius:999px; padding:3px 9px; font-size:11px; }
-  #panel-research .research-meta .meta-pill.verified { border-color:var(--accent2); color:var(--accent2); }
-  #panel-research .research-meta .meta-pill.draft { border-color:var(--warn); color:var(--warn); }
-  #panel-research .research-actions { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px; }
-  #panel-research .conf-bar { height:8px; background:var(--panel2); border-radius:4px; overflow:hidden; margin-top:4px; }
-  #panel-research .conf-fill { height:100%; transition:width .4s; }
-  #panel-research .conf-fill.veryhigh { background:var(--accent2); }
-  #panel-research .conf-fill.high { background:#4caf50; }
-  #panel-research .conf-fill.medium { background:var(--warn); }
-  #panel-research .conf-fill.low { background:#ff7043; }
-  #panel-research .conf-fill.need { background:var(--bad); }
-  #panel-research .section-row { display:flex; align-items:center; gap:8px; padding:8px 10px; border-bottom:1px solid var(--line); }
-  #panel-research .section-row:last-child { border-bottom:none; }
-  #panel-research .section-row .sec-icon { width:22px; text-align:center; }
-  #panel-research .section-row .sec-name { flex:1; font-size:13px; }
-  #panel-research .section-row .sec-conf { font-size:11px; color:var(--accent2); min-width:40px; text-align:right; }
-  #panel-research .log-box { background:#0d1a2a; border:1px solid var(--line); border-radius:8px; padding:8px 10px; font-family:monospace; font-size:11px; max-height:200px; overflow:auto; white-space:pre-wrap; }
-  #panel-research .source-item { padding:6px 8px; border-bottom:1px solid var(--line); font-size:11px; }
-  #panel-research .source-item a { color:var(--accent); text-decoration:none; }
-  #panel-research .review-card { border:1px solid var(--accent2); background:rgba(118,255,3,.06); border-radius:10px; padding:10px; margin-bottom:8px; }
-  #panel-research .review-card.need { border-color:var(--bad); background:rgba(255,82,82,.08); }
-  #panel-research .section-loaded-textarea:focus, #panel-research .review-section-textarea:focus, #masterJsonTextarea:focus { outline:1px solid var(--accent); border-color:var(--accent); }
-  #panel-research .progress-ring { display:inline-block; width:14px; height:14px; border:2px solid var(--line); border-top-color:var(--accent); border-radius:50%; animation:spin 0.8s linear infinite; vertical-align:middle; margin-right:6px; }
-  @keyframes spin { to { transform:rotate(360deg); } }
   /* ── conditions strip ── */
   /* FIXED, LIKE EVERYTHING ELSE IN THIS LAYOUT. #topbar and #main are both position:fixed, so
      a normal-flow child of #app renders at the top of the document flow -- underneath the fixed
@@ -562,7 +532,6 @@
     <button id="saveBtn" class="primary">⬇ Save GPX</button>
     <button id="pushCloudBtn" title="Push all local data to cloud">☁️ Push</button>
     <button id="pullCloudBtn" title="Pull all data from cloud">⬇️ Pull</button>
-    <input id="batchImportInput" type="file" accept=".png,.json" multiple class="hidden">
   </div>
   <!-- ===== CONDITIONS STRIP =====
        One line that always fits, and a card underneath that does not have to. Before this,
@@ -617,92 +586,10 @@
           <button id="chartDeleteAllBtn" class="small" style="padding:3px 7px;font-size:11px;color:var(--bad)">💣 Delete all</button>
         </div>
         <div id="chartLayers"></div>
-        <p class="muted" style="margin:6px 0 0;font-size:11px">☑ show/hide · 🗑 removes · ✥ re-nudge · slider = opacity</p>
+        <p class="muted" style="margin:6px 0 0;font-size:11px">☑ show/hide · 🗑 removes · slider = opacity</p>
       </div>
 
       <div id="georefBanner" style="position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:600;background:#b06a00;color:#fff;border-radius:8px;padding:6px 16px;font-size:13px;font-weight:700;display:none;pointer-events:none"></div>
-
-      <!-- Georef coord input popup -->
-      <div id="georefCoordBox" style="display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:700;background:var(--panel);border:2px solid var(--accent);border-radius:12px;padding:16px 20px;min-width:300px;box-shadow:0 4px 20px rgba(0,0,0,.6)">
-        <div style="color:var(--accent);font-weight:700;margin-bottom:10px;font-size:14px">📍 Enter coords for Point <span id="georefCoordStep">1</span></div>
-        <div style="color:var(--muted);font-size:12px;margin-bottom:10px">Type the lat/lon of the spot you clicked on the image, or click the satellite map instead.</div>
-        <div style="display:flex;gap:8px;margin-bottom:10px">
-          <div style="flex:1"><label>Latitude</label><input id="georefLatIn" placeholder="34.09421" style="width:100%"></div>
-          <div style="flex:1"><label>Longitude</label><input id="georefLonIn" placeholder="-81.32882" style="width:100%"></div>
-        </div>
-        <div style="display:flex;gap:8px">
-          <button id="georefCoordOk" class="primary" style="flex:1">✓ Use these coords</button>
-          <button id="georefCoordCancel" style="flex:1">Cancel georef</button>
-        </div>
-      </div>
-
-      <!-- ── CLOUD CHARTPACKS LIBRARY PANEL ── -->
-      <div id="cloudChartpacksPanel" style="display:none;position:absolute;top:60px;right:8px;z-index:650;background:rgba(11,22,35,.95);border:1px solid var(--accent);border-radius:10px;padding:10px 12px;font-size:12px;max-width:360px;max-height:80vh;overflow-y:auto;box-shadow:0 4px 16px rgba(0,0,0,.6)">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <span style="color:var(--accent);font-weight:700">📚 Cloud Chartpacks</span>
-          <div style="display:flex;gap:4px;align-items:center">
-            <button id="cloudChartpacksRefresh" style="background:none;border:1px solid var(--line);color:var(--accent);font-size:11px;padding:2px 8px;border-radius:4px;cursor:pointer" title="Refresh list from worker">↻</button>
-            <button id="cloudChartpacksClose" style="background:none;border:none;color:var(--muted);font-size:14px;padding:0 4px;cursor:pointer">✕</button>
-          </div>
-        </div>
-        <div style="color:var(--muted);font-size:11px;margin-bottom:8px;line-height:1.4">Pulled from your Cloudflare R2 chartpack library. Tap a lake to import its tiles into TrollMap.</div>
-        <div id="cloudChartpacksStatus" style="color:var(--muted);font-size:11px;margin-bottom:6px">Loading…</div>
-        <div id="cloudChartpacksList"></div>
-      </div>
-
-      <!-- ── CONTOUR JOB EXPORT PANEL ── -->
-      <div id="contourJobPanel" style="display:none;position:absolute;top:60px;right:8px;z-index:650;background:rgba(11,22,35,.95);border:1px solid var(--accent);border-radius:10px;padding:10px 12px;font-size:12px;max-width:340px;box-shadow:0 4px 16px rgba(0,0,0,.6)">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-          <span style="color:var(--accent);font-weight:700">✏️ Contour Capture</span>
-          <button id="contourJobClose" style="background:none;border:none;color:var(--muted);font-size:14px;padding:0 4px;cursor:pointer">✕</button>
-        </div>
-
-        <!-- Current polygon info -->
-        <div id="contourJobInfo" style="color:var(--text);margin-bottom:8px;line-height:1.5"></div>
-
-        <!-- Job name + save row -->
-        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
-          <input id="contourJobName" placeholder="area name e.g. wateree_clearwater" style="flex:1;min-width:120px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:4px 6px;font-size:11px">
-        </div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
-          <button id="contourJobSave" class="small primary" style="flex:1">💾 Save job.json</button>
-          <button id="contourJobQueue" class="small" style="flex:1;color:var(--accent2);border-color:var(--accent2)">➕ Add to Queue</button>
-          <button id="contourJobDiscard" class="small" style="color:var(--bad);border-color:var(--bad)">🗑</button>
-        </div>
-
-        <!-- Server status -->
-        <div id="contourJobServerRow" style="display:flex;align-items:center;gap:6px;margin-bottom:6px;font-size:11px">
-          <span id="contourServerDot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#888"></span>
-          <span id="contourServerStatus" style="color:var(--muted)">Server: checking…</span>
-        </div>
-
-        <!-- Current job status -->
-        <div id="contourJobStatusRow" style="display:none;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:6px 8px;margin-bottom:6px;font-size:11px;line-height:1.5"></div>
-
-        <!-- Run / Cancel -->
-        <div id="contourJobRunRow" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
-          <button id="contourJobRun" class="small primary" style="flex:1;background:var(--accent2);color:#000;font-weight:700">🚀 Run capture now</button>
-          <button id="contourJobCancel" class="small" style="color:var(--bad);border-color:var(--bad);display:none">✕ Cancel</button>
-        </div>
-
-        <!-- Import when done -->
-        <div id="contourJobImportRow" style="display:none;margin-bottom:6px">
-          <button id="contourJobImport" class="small primary" style="width:100%;background:var(--accent2);color:#000;font-weight:700">📥 Import chartpack</button>
-        </div>
-
-        <!-- Queue section -->
-        <div style="border-top:1px solid var(--line);margin-top:6px;padding-top:8px">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-            <span style="color:var(--accent);font-size:11px;font-weight:700">📋 Job Queue</span>
-            <label class="small" style="cursor:pointer;padding:2px 8px;border:1px solid var(--accent);border-radius:4px;font-size:10px;color:var(--accent)">📂 Load JSONs<input id="contourQueueFileInput" type="file" accept=".json" multiple style="display:none"></label>
-          </div>
-          <div id="contourQueueList" style="font-size:11px;color:var(--muted);min-height:20px">Queue empty — draw polygons or load job JSONs</div>
-          <div style="display:flex;gap:6px;margin-top:6px">
-            <button id="contourQueueRun" class="small primary" style="flex:1;background:var(--accent2);color:#000;font-weight:700;display:none">▶ Run Queue</button>
-            <button id="contourQueueClear" class="small" style="color:var(--bad);border-color:var(--bad);display:none">🗑 Clear Queue</button>
-          </div>
-        </div>
-      </div>
 
      <!-- ── MAP TOOLBAR — single row, uniform buttons ── -->
             <!-- Layer panel: every map overlay toggle, one place, one style. The BUTTONS ARE THE
@@ -784,50 +671,6 @@
       </div>
     </section>
     <!-- ===== CONTOURS ===== -->
-    <!-- ===== GENERATE ===== -->
-    <section class="panel" id="panel-generate">
-      <div class="pad">
-        <div class="card">
-          <h3>🌀 Trolling Lane Generator</h3>
-          <p class="muted">Build parallel lanes, S-curves, or zigzags. Preview before committing.</p>
-          <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(190px,1fr))">
-            <div><label>Lake code</label><input id="gLake" placeholder="MUR" value="MUR"></div>
-            <div><label>Start lat</label><input id="gLat1" placeholder="34.0900"></div>
-            <div><label>Start lon</label><input id="gLon1" placeholder="-81.3200"></div>
-            <div><label>End lat</label><input id="gLat2" placeholder="34.1000"></div>
-            <div><label>End lon</label><input id="gLon2" placeholder="-81.3100"></div>
-            <div><label>Lanes</label><input id="gLanes" type="number" value="4" min="1"></div>
-            <div><label>Spacing (ft)</label><input id="gSpacing" type="number" value="150" min="10"></div>
-            <div><label>Points / lane</label><input id="gPts" type="number" value="40" min="5"></div>
-            <div><label>Pattern</label>
-              <select id="gPattern">
-                <option value="straight">Straight — follow waypoint lane</option>
-                <option value="s-curve">S-Curve — weave between waypoint points</option>
-                <option value="zigzag">Zigzag — hard turns between waypoint points</option>
-                <option value="s-straight">S-Curve + Straight Shots</option>
-                <option value="z-straight">Zigzag + Straight Shots</option>
-              </select>
-            </div>
-            <div><label>S amplitude (ft)</label><input id="gAmp" type="number" value="30" min="0"></div>
-            <div><label>S wavelength (ft)</label><input id="gWave" type="number" value="300" min="10"></div>
-            <div><label>Straight shot length (ft)</label><input id="gStraight" type="number" value="350" min="25"></div>
-            <div><label>Connect lanes?</label><select id="gConnect"><option value="no">Separate tracks</option><option value="yes">1 connected track</option></select></div>
-          </div>
-          <div class="row" style="margin-top:10px">
-            <button id="gPickStart">🎯 Pick start</button>
-            <button id="gPickEnd">🎯 Pick end</button>
-            <span style="flex:1"></span>
-            <button id="gPreview">👁 Preview start/end</button>
-            <button id="gPreviewWpt">👁 Preview waypoint lanes</button>
-            <button id="gClearPreview">Clear</button>
-            <button id="gCommit">➕ Commit start/end</button>
-            <button id="gCommitWpt" class="primary">➕ Commit waypoint lanes</button>
-          </div>
-          <div id="gMsg"></div>
-        </div>
-      </div>
-    </section>
-
     <!-- ===== EDIT ===== -->
     <section class="panel" id="panel-edit">
       <div class="pad">
@@ -887,147 +730,6 @@
               </div>
             </div>
           </div>
-      </div>
-    </section>
-
-    <!-- ===== RESEARCH ===== -->
-    <section class="panel" id="panel-research">
-      <div class="pad">
-        <div class="card">
-          <h3>🧠 Lake Research — Permanent Intelligence</h3>
-          <p class="muted" style="margin:4px 0 12px">Build a verified lake profile that Smart Plan uses forever. Permanent facts (type, forage, structure) are researched once. Dynamic facts (weather, temp) come from live conditions.</p>
-          <div class="research-header">
-            <div class="lake-field">
-              <label>Lake (from SC/NC/GA dropdown)</label>
-              <select id="researchLakeSelect" style="width:100%">
-                <option value="">— select lake —</option>
-              </select>
-            </div>
-            <div style="display:flex;gap:6px;align-items:flex-end">
-              <button id="researchLoadBtn" class="small">📂 Load</button>
-              <button id="researchListBtn" class="small ghost">↻ List</button>
-            </div>
-          </div>
-          <div id="researchMeta" class="research-meta" style="display:none">
-            <span class="meta-pill" id="researchStatusPill">sources: —</span>
-            <span class="meta-pill" id="researchVersionPill">Version: —</span>
-            <span class="meta-pill" id="researchUpdatedPill">Last Updated: —</span>
-            <span class="meta-pill" id="researchConfidencePill">Overall: —%</span>
-          </div>
-          <div class="research-actions">
-            <button id="btnResearch" class="primary" style="background:var(--accent2);color:#000">🔬 Research</button>
-            <button id="btnRefresh" title="Refresh - pick which sections to re-run">🔄 Refresh</button>
-            <button id="btnExport" class="small">⬇ Export JSON</button>
-            <label class="btn-label small" style="cursor:pointer">⬆ Import<input id="researchImportInput" type="file" accept=".json" class="hidden"></label>
-            <button id="btnEditMasterJson" class="small" style="color:var(--accent);border-color:var(--accent)">✏️ Edit Master JSON</button>
-            <button id="btnDeleteResearch" class="small" style="color:var(--bad);border-color:var(--bad);display:none">🗑 Delete</button>
-          </div>
-          <div id="researchProgress" style="display:none;margin:8px 0">
-            <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted)"><span id="researchProgressLabel">Starting...</span><span id="researchProgressPct">0%</span></div>
-            <div class="conf-bar"><div id="researchProgressFill" class="conf-fill veryhigh" style="width:0%"></div></div>
-          </div>
-          <div id="researchLog" class="log-box" style="margin-top:8px;display:none">Waiting to start...</div>
-        </div>
-
-        <!-- Master Profile JSON Editor -->
-        <div class="card" id="masterJsonEditCard" style="display:none; border:1px solid var(--accent); background:rgba(0,229,255,.03)">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-            <h3 style="margin:0">✏️ Master Profile JSON Editor</h3>
-            <button id="btnCloseMasterJson" class="small ghost">✕ Close</button>
-          </div>
-          <p class="muted" style="margin-bottom:8px;font-size:12px">Make direct changes to the entire master profile JSON below. If anything is wrong, edit or delete it and click Save to apply & store back to R2.</p>
-          <textarea id="masterJsonTextarea" style="width:100%;height:380px;font-family:monospace;font-size:11px;background:#030810;color:#bdffa0;border:1px solid var(--line);border-radius:6px;padding:8px;white-space:pre;overflow:auto"></textarea>
-          <div class="row" style="margin-top:10px;display:flex;gap:8px;align-items:center">
-            <button id="btnSaveMasterJson" class="primary small" style="background:var(--accent2);color:#000">💾 Apply & Save to R2</button>
-            <button id="btnFormatMasterJson" class="small ghost">✨ Format JSON</button>
-            <span id="masterJsonStatus" class="muted" style="font-size:11px"></span>
-          </div>
-        </div>
-
-        <!-- THE REFRESH PICKER WAS DELETED 2026-09-01, AND ITS HANDLER NEVER EXISTED.
-             A `display:none` card with eight agent checkboxes and two buttons -- btnDoRefresh
-             and btnCancelRefresh -- neither of which any module ever bound a listener to, and
-             an id (`refreshPicker`) that appeared exactly once in the codebase: here. Six of its
-             eight checkboxes named agents that have since been retired, three of them `checked`.
-             The picker that actually runs is built in lake-research-ui.js from the research
-             order and RESEARCH_LABELS, which is why retiring six agents never broke it. -->
-        <!-- WHAT SMART PLAN RECEIVES. Ryan, THE_RESEARCH_TAB_BECOMES_THE_SMART_PLAN_INPUT_VIEWER
-             _2026-09-02.md: "research is what goes into smart plan... that tab will be rebuilt to
-             show everything that smartplan gets as an input." This is that block, rendered by the
-             same researchIntel() the plan calls -- not a description of it. Anything in Research
-             Sections below that does not appear up here reaches no plan. -->
-        <div class="card">
-          <h3>🎯 What Smart Plan Receives</h3>
-          <!-- The species row is drawn from speciesGroupsFor() -- the SAME grouping the Plan tab's
-               #planSpeciesChecks uses -- so the two tabs cannot offer different fish for the same
-               water. The lake is the tab's own #researchLakeSelect above; a second lake control
-               would be a second place to set it. -->
-          <div id="researchSpeciesChecks"
-               style="display:flex;flex-wrap:wrap;gap:10px;padding:8px 10px;font-size:12px"></div>
-          <div id="researchPlanInput">
-            <div class="muted" style="padding:10px">No profile loaded.</div>
-          </div>
-        </div>
-
-        <!-- Research Sections -->
-        <div class="card">
-          <h3>📋 Research Sections</h3>
-          <div id="researchSections">
-            <div class="muted" style="padding:10px">No profile loaded. Select a lake and click Load or Research.</div>
-          </div>
-        </div>
-
-
-
-        <!-- Sources -->
-        <div class="card" id="sourcesCard" style="display:none">
-          <h3>📚 Sources</h3>
-          <div id="sourcesList"></div>
-        </div>
-
-        <!-- Summary + Notes -->
-        <div class="card" id="summaryCard" style="display:none">
-          <h3>📝 AI Summary</h3>
-          <div id="summaryText" style="font-size:13px;line-height:1.5;color:var(--text);white-space:pre-wrap"></div>
-        </div>
-
-        <div class="card" id="notesCard" style="display:none">
-          <h3>🗒 Notes (editable by user)</h3>
-          <textarea id="researchNotes" placeholder="Add personal notes, corrections, observations... these are saved with the profile." rows="4"></textarea>
-          <div class="row" style="margin-top:8px">
-            <button id="btnSaveNotes" class="small">💾 Save Notes</button>
-            <span id="notesStatus" class="muted" style="font-size:11px"></span>
-          </div>
-        </div>
-
-        <!-- Package Files & Versions -->
-        <div class="card" id="packageCard" style="display:none">
-          <h3>📦 Intelligence Package</h3>
-          <div style="font-size:11px;color:var(--muted);margin-bottom:6px">Hybrid storage: master JSON + split package files + version history in R2 (reuses chartpacks bucket).</div>
-          <div id="packageFiles"></div>
-          <div id="versionHistory" style="margin-top:10px"></div>
-        </div>
-
-
-
-        <!-- Dev / Debug -->
-        <div class="card" style="background:rgba(0,229,255,.04)">
-          <h3>🧪 Lake Research v1.0 — Minimal MVP</h3>
-          <div style="font-size:11px;color:var(--muted);line-height:1.5">
-            ✅ Research any SC/NC/GA lake from dropdown via 8 AI agents (Identity → Limnology → Biology → Habitat → Navigation → Regulations → Trolling → Summary)<br>
-            ✅ Permanent profile stored in R2 lakes/ + lake_packages/ + versions/ — hybrid master + split files<br>
-            ✅ Confidence calculated from trust tiers, not just AI self-score<br>
-            ✅ Sources listed, Notes editable<br>
-            ✅ Export/Import JSON, Version history<br>
-            ✅ Smart Plan auto-uses verified profile<br>
-            ⏳ v2: Compare, Knowledge Browser tree, Inspector traceability, offline IDB cache
-          </div>
-          <div class="row" style="margin-top:8px">
-            <button id="btnDebugProfile" class="small ghost">🐛 Dump Profile JSON</button>
-            <button id="btnClearResearchCache" class="small ghost">🧹 Clear Log</button>
-          </div>
-          <pre id="debugOutput" style="display:none;background:#060f1a;border:1px solid var(--line);border-radius:8px;padding:8px;font-size:10px;max-height:300px;overflow:auto;white-space:pre-wrap;margin-top:8px"></pre>
-        </div>
       </div>
     </section>
 
@@ -1430,7 +1132,6 @@
 
   <nav id="bottomNav">
     <button data-tab="map" class="active"><span class="ico">🗺️</span>Map</button>
-    <button data-tab="research"><span class="ico">🧠</span>Research</button>
     <button data-tab="edit"><span class="ico">✏️</span>Edit</button>
     <button data-tab="catch"><span class="ico">🐟</span>Catch</button>
     <button data-tab="plan"><span class="ico">🎣</span>Plan</button>
@@ -1442,7 +1143,6 @@
 <!-- Leaflet (CDN) -->
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.js"></script>
-<script src="./js/lazy-data.js"></script>
 
 <!-- TrollMap modular build — loads 39 ES modules + wires the app -->
 <script type="module" src="./js/main.js"></script>

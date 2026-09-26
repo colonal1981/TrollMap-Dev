@@ -133,3 +133,28 @@ describe('forEachPosition — every geometry type reaches the callback', () => {
     });
   }
 });
+
+// ONE RAY CAST, 2026-09-25. Four modules each carried this loop; they import it now.
+describe('inRing', () => {
+  it('answers inside, outside, and inside a hole ring by itself', async () => {
+    const { inRing } = await import('../js/utils/geojson-coords.js');
+    const sq = [[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]];
+    expect(inRing(5, 5, sq)).toBe(true);
+    expect(inRing(15, 5, sq)).toBe(false);
+    expect(inRing(5, 10.0001, sq)).toBe(false);
+  });
+
+  it('is written once in js/ and Worker/', async () => {
+    const { readFileSync, readdirSync, statSync } = await import('node:fs');
+    const { join, relative, sep } = await import('node:path');
+    const { fileURLToPath } = await import('node:url');
+    // fileURLToPath, not .pathname: on Ryan's Windows checkout .pathname is '/F:/...'.
+    const root = fileURLToPath(new URL('..', import.meta.url));
+    const walk = (d, o = []) => { for (const e of readdirSync(d)) { const p = join(d, e);
+      if (statSync(p).isDirectory()) walk(p, o); else if (e.endsWith('.js')) o.push(p); } return o; };
+    const defs = [...walk(join(root, 'js')), ...walk(join(root, 'Worker'))]
+      .filter((f) => /function\s+inRing\s*\(/.test(readFileSync(f, 'utf8')))
+      .map((f) => relative(root, f).split(sep).join('/'));
+    expect(defs).toEqual(['js/utils/geojson-coords.js']);
+  });
+});

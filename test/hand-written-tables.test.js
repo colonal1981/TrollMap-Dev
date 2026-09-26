@@ -131,8 +131,8 @@ const DECLARED = [
   // the zones that went. Every one of the four is a row ABOUT those zones: a chain
   // description each, a zone entry each, an R2 key each, and the alias rows pointing at
   // them. The ratchet caught all four the next time it ran, which is what it is for.
-  ['js/modules/contour-data.js', 'CHAIN_DESCRIPTIONS', 21, 'data',
-   'prose for 21 named reservoir chains and coastal zones.'],
+  // contour-data.js CHAIN_DESCRIPTIONS went on 2026-09-25: its coastal labels repeated
+  // COASTAL_ZONES and its inland ones named chain packs the registry had already split.
   ['js/modules/fishing-index.js', 'FISHING_SYSTEMS', 5, 'data',
    'five named systems that group ramps across waters.'],
   // 16 since 2026-08-19. This row used to read "22 declared, 16 shipped" -- it had been

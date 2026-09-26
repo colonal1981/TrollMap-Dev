@@ -8,7 +8,7 @@ import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
 import { coerceList, coerceLabels } from '../utils/coerce.js';
 import { clarityForPlan, versusNormalAt } from '../utils/clarity-at-ramp.js';
-import { lakeRecordFor } from '../data/lake-registry.js';
+import { lakeRecordFor, workerBase } from '../data/lake-registry.js';
 
 /* Lake Intel: species, forage, habitat, hazards, seasonal patterns */
 export async function syncLakeIntelData() {
@@ -22,7 +22,7 @@ export async function syncLakeIntelData() {
   // curated entry when there is one, so it is asked of getPlanRiverDef; whether lake intel applies
   // at all is asked of isRiverWater, below, which knows all 58 river rows and not just six.
   const label = window.getPlanRiverDef?.(lakeVal)?.label || lakeVal;
-  const worker = (typeof CF_WORKER_URL !== 'undefined' ? CF_WORKER_URL : (window.CF_WORKER_URL || 'https://trollmap-worker.colonal1981.workers.dev'));
+  const worker = workerBase();
   function say(msg, bad){ if(statusEl){ statusEl.textContent=msg; statusEl.style.color=bad?'var(--bad)':'var(--accent2)'; } }
   if(!label){ say('Select waterbody first', true); return null; }
   if(window.isRiverWater?.(lakeVal)){
@@ -63,17 +63,19 @@ export async function syncLakeIntelData() {
     // Species / forage
     if(rp?.biology) {
       const bio = rp.biology;
-      // Biology agent outputs predatorSpecies; fallback to primaryGameFish for backward compat.
-      // Coerce to arrays defensively — a malformed string value (e.g. from a prior
-      // run) would otherwise crash .join()/.map(); the assembly path now repairs it.
-      const gameFish = [bio.predatorSpecies, bio.primaryGameFish].map(coerceList).find((l) => l.length) || [];
+      // The fields read here are the ones something still writes: predatorSpecies and
+      // knownStockings (deterministic.js), primaryForage (the batch's fisheries pass). The
+      // `primaryGameFish` fallback and the prose `stocking` were written by the retired biology
+      // agent and went on 2026-09-25. Coerced defensively -- a malformed string value would
+      // otherwise crash .join()/.map().
+      const gameFish = coerceList(bio.predatorSpecies);
       if(gameFish.length) lines.push(`Primary sport fish: ${gameFish.join(', ')}`);
       const forage = coerceList(bio.primaryForage).map(f => typeof f === 'string' ? f : f?.species).filter(Boolean);
       if(forage.length) lines.push(`Known forage: ${forage.join(', ')}`);
       const stockings = coerceList(bio.knownStockings);
       if(stockings.length) {
         lines.push(`Stocking / management: ${stockings.map(s => typeof s === 'string' ? s : `${s.species}${s.note ? ` (${s.note})` : ''}`).join('; ')}`);
-      } else if(bio.stocking) lines.push(`Stocking / management: ${bio.stocking}`);
+      }
     } else {
       lines.push(`Primary sport fish: ${coerceList(p.primarySportFish).join(', ') || 'Unknown / verify locally'}`);
       lines.push(`Known forage: ${coerceList(p.forage).join(', ') || 'Unknown'}`);
@@ -82,92 +84,14 @@ export async function syncLakeIntelData() {
     }
 
     // Habitat / cover / bottom
+    //
+    // THE RESEARCH HALF OF THIS WAS A HUNDRED LINES AND READ RETIRED FIELDS: cover,
+    // structuralElements (the retired hump and ledge coordinates among them) and
+    // bottomComposition, all written by the habitat agent retired on 2026-09-01. It went on
+    // 2026-09-25. What a profile still carries here is the attractor sentence deterministic.js
+    // writes into `habitat.notes`, so that line stays. The chart answers cover and structure.
     if(rp?.habitat) {
-      const h = rp.habitat;
-
-      // Helper: format a single coordinate object as lat/lon pair
-      const fmtCoord = (c) => {
-        if (!c || typeof c !== 'object') return String(c);
-        const lat = Number(c.lat);
-        const lon = Number(c.lon);
-        if (Number.isFinite(lat) && Number.isFinite(lon)) {
-          // Extra context if available (id, acres, depth, density) but keep primary as lat/lon
-          const extras = [];
-          if (c.areaAcres != null) extras.push(`~${c.areaAcres}ac`);
-          if (c.depth != null) extras.push(`@${c.depth}ft`);
-          if (c.contourDensity != null) extras.push(`density ${c.contourDensity}`);
-          const base = `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
-          return extras.length ? `${base} (${extras.join(' ')})` : base;
-        }
-        // Fallback for generic object
-        return JSON.stringify(c);
-      };
-
-      // Helper: format any structural element value into human-readable lat/lon or text
-      const fmtStructVal = (v) => {
-        if (v == null) return '';
-        if (Array.isArray(v)) {
-          if (!v.length) return '';
-          if (typeof v[0] === 'object' && v[0] !== null && ('lat' in v[0] || 'lon' in v[0])) {
-            // Array of coordinate objects -> format as lat/lon pairs
-            return v.map(fmtCoord).join('; ');
-          }
-          if (typeof v[0] === 'string') return v.join(', ');
-          // Mixed / generic objects
-          return v.map(item => {
-            if (item && typeof item === 'object' && 'lat' in item && 'lon' in item) return fmtCoord(item);
-            if (typeof item === 'string') return item;
-            return JSON.stringify(item);
-          }).join('; ');
-        }
-        if (typeof v === 'string') return v;
-        if (typeof v === 'object') {
-          if ('lat' in v && 'lon' in v) return fmtCoord(v);
-          // Generic object map — show key: value, filtering low/empty
-          const entries = Object.entries(v).filter(([k, val]) => k !== 'note' && val && val !== 'low');
-          if (!entries.length) return '';
-          return entries.map(([k2, val2]) => {
-            if (typeof val2 === 'object') return `${k2}: ${fmtStructVal(val2)}`;
-            return `${k2} (${val2})`;
-          }).join(', ');
-        }
-        return String(v);
-      };
-
-      const cover = coerceList(h.cover).map(c => typeof c === 'string' ? c : fmtStructVal(c)).filter(Boolean);
-      if(cover.length) lines.push(`Habitat / cover: ${cover.join(', ')}`);
-      if(h.structuralElements && typeof h.structuralElements === 'object') {
-        const structParts = Object.entries(h.structuralElements)
-          .map(([k, v]) => {
-            const formatted = fmtStructVal(v);
-            if (!formatted) return null;
-            return `${k}: ${formatted}`;
-          })
-          .filter(Boolean);
-        if (structParts.length) lines.push(`Structure: ${structParts.join('; ')}`);
-      }
-      if(h.bottomComposition) {
-        const bc = h.bottomComposition;
-        if (typeof bc === 'string') {
-          lines.push(`Bottom composition: ${bc}`);
-        } else if (Array.isArray(bc)) {
-          // Array of strings or objects
-          const txt = bc.map(item => typeof item === 'string' ? item : fmtStructVal(item)).filter(Boolean).join(', ');
-          if (txt) lines.push(`Bottom composition: ${txt}`);
-        } else if (typeof bc === 'object') {
-          const entries = Object.entries(bc).filter(([k, v]) => k !== 'note' && v && v !== 'low');
-          if (entries.length) {
-            const txt = entries.map(([k, v]) => {
-              if (typeof v === 'object') return `${k}: ${fmtStructVal(v)}`;
-              return `${k} (${v})`;
-            }).join(', ');
-            if (txt) lines.push(`Bottom composition: ${txt}`);
-          } else if (bc.note) {
-            lines.push(`Bottom composition: ${bc.note}`);
-          }
-        }
-      }
-      if(h.notes) lines.push(`Habitat notes: ${h.notes}`);
+      if(rp.habitat.notes) lines.push(`Habitat notes: ${rp.habitat.notes}`);
     } else {
       if(p.habitat) lines.push(`Habitat / cover: ${p.habitat}`);
       if(p.bottom) lines.push(`Bottom composition: ${p.bottom}`);
@@ -205,14 +129,10 @@ export async function syncLakeIntelData() {
       if(tacticalNotes.length){ lines.push('Tactical notes:'); tacticalNotes.forEach(x=>lines.push(`\u2022 ${x}`)); }
     }
 
-    // Regulations
-    if(rp?.regulations) {
-      const reg = rp.regulations;
-      lines.push('Regulations (verified \u2014 always confirm with SCDNR):');
-      if(reg.lengthLimits) Object.entries(reg.lengthLimits).forEach(([sp,limit])=>lines.push(`\u2022 ${sp}: ${limit}`));
-      if(reg.creelLimits) Object.entries(reg.creelLimits).forEach(([sp,limit])=>lines.push(`\u2022 ${sp} creel: ${limit} fish/day`));
-      if(reg.notes) lines.push(`\u2022 ${reg.notes}`);
-    }
+    // REGULATIONS WERE HERE AND ARE GONE -- 2026-09-25. The block read the profile's top-level
+    // lengthLimits, creelLimits and notes, which only the retired regulations agent ever wrote --
+    // and printed its "Regulations (verified)" heading over nothing on every profile since. The
+    // state book is read by the plan's legality check; this briefing does not pretend to.
     if(d.sourceRegistry){
       lines.push('Source Trust Stack:');
       const sr=d.sourceRegistry;
@@ -246,13 +166,12 @@ export async function syncLakeIntelData() {
     if(summary){
       summary.style.display='block';
       const profileBadge = rp ? `<br><span style="color:var(--accent2);font-weight:700">\uD83E\uDDE0 Research v${rp.metadata?.version||'?'}</span>` : (d.confidence&&String(d.confidence).includes('generic')?`<br><span style="color:var(--warn);font-weight:700">\u26A0 VERIFY: generic/unconfirmed profile</span>`:'');
-      const spList = [rp?.biology?.predatorSpecies, rp?.biology?.primaryGameFish, p.primarySportFish]
+      const spList = [rp?.biology?.predatorSpecies, p.primarySportFish]
         .map(coerceList).find((l) => l.length) || [];
       const speciesDisplay = spList.join(', ') || 'Profile generated';
       summary.innerHTML = `<b style="color:var(--accent)">\uD83E\uDDE0 ${esc(d.lake||label)}</b><br><span>${esc(speciesDisplay)}</span>${profileBadge}${d.latestReport?.source?`<br><span class="muted">Latest scraped report source \u2014 verify before relying: ${esc(d.latestReport.source)}</span>`:''}`;
     }
     say('Intel ready', false);
-    window.LAST_LAKE_INTEL = d;
     return d;
   } catch(err){
     console.warn('Lake intel failed', err);
@@ -298,7 +217,7 @@ export async function syncClarityIntelData(o = {}) {
   const label = window.getPlanRiverDef?.(lakeVal)?.lakeKey
              || window.getPlanRiverDef?.(lakeVal)?.label || lakeVal;
   const date = document.getElementById('planDate')?.value || new Date().toISOString().slice(0,10);
-  const worker = (typeof CF_WORKER_URL !== 'undefined' ? CF_WORKER_URL : (window.CF_WORKER_URL || 'https://trollmap-worker.colonal1981.workers.dev'));
+  const worker = workerBase();
   function say(msg,bad){ if(statusEl){ statusEl.textContent=msg; statusEl.style.color=bad?'var(--bad)':'var(--accent2)'; } }
   if(!label){ say('Select lake first', true); return null; }
   try{
@@ -444,7 +363,6 @@ export async function syncClarityIntelData(o = {}) {
       summary.innerHTML = `<b style="color:var(--warn)">🌦 ${esc(d.lake)}</b><br><span>${badge}</span>${d.rain?`<br><span class="muted">${esc(windSummary)}Rain signal: ${esc(d.rain.weighted72_in)}" weighted 72h \u00B7 verify at ramp</span>`:''}`;
     }
     say('Clarity ready', false);
-    window.LAST_CLARITY_INTEL=d;
     return d;
   } catch(err){
     console.warn('Clarity intel failed', err);

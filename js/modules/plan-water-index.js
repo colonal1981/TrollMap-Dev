@@ -15,19 +15,12 @@
  * handful of candidates, which is the difference between a tab that answers and one that hangs.
  */
 
+import { inRing } from '../utils/geojson-coords.js';
+
 const M_PER_DEG_LAT = 110540.0;
 const m_per_deg_lon = (lat) => 111320.0 * Math.cos((lat * Math.PI) / 180);
 
-/** Ray casting. Returns true when the point is inside the ring. */
-function inRing(pt, ring) {
-  let inside = false;
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    const xi = ring[i][0], yi = ring[i][1], xj = ring[j][0], yj = ring[j][1];
-    if (((yi > pt[1]) !== (yj > pt[1]))
-        && (pt[0] < ((xj - xi) * (pt[1] - yi)) / (yj - yi) + xi)) inside = !inside;
-  }
-  return inside;
-}
+// inRing() is the one ray cast in js/utils/geojson-coords.js (2026-09-25); this had its own copy.
 
 /**
  * Depth lookup from depth_areas.geojson.
@@ -67,10 +60,10 @@ export function depthSampler(features, { cellDeg = 0.002 } = {}) {
     let best = null;
     for (const i of (grid.get(k) || [])) {
       const q = polys[i];
-      if (!inRing(pt, q.rings[0])) continue;
+      if (!inRing(pt[0], pt[1], q.rings[0])) continue;
       // Holes are real: an island inside a depth band is not that depth.
       let hole = false;
-      for (let h = 1; h < q.rings.length; h++) if (inRing(pt, q.rings[h])) { hole = true; break; }
+      for (let h = 1; h < q.rings.length; h++) if (inRing(pt[0], pt[1], q.rings[h])) { hole = true; break; }
       if (hole) continue;
       if (best == null || q.maxFt < best) best = q.maxFt;
     }

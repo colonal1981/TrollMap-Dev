@@ -121,7 +121,8 @@ describe('a depth is only stated when it was measured at the spot', () => {
 });
 
 describe('every screen that shows a catch depth asks the same question', () => {
-  const files = ['js/modules/catch-journal.js', 'js/modules/catch-photo.js', 'js/modules/catch-plot.js'];
+  // catch-photo.js went on 2026-09-25: nothing called its window.showCatchPhoto.
+  const files = ['js/modules/catch-journal.js', 'js/modules/catch-plot.js'];
 
   it('imports the one rule instead of restating it', () => {
     for (const f of files) {

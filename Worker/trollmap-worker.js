@@ -6,10 +6,11 @@ import { CORS, JSON_HEADERS, TEXT_HEADERS, callLLM, isAuthorized, chartpackKey, 
 // Bump on every edit to this file. See ARCGIS_BUILD in core/arcgis.js.
 const WORKER_BUILD = 'worker-2026-08-07a';
 
-import { fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun, dukeRowForNames, LAKES, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake } from './worker-data.js';
+import { fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun, dukeRowForNames, LAKES, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity } from './worker-data.js';
 import { SPECIES_MIDLANDS_SANTEE, SPECIES_UPSTATE, SPECIES_COASTAL_SALTWATER, SPECIES_ALL_TROLLMAP, MAX_BIOLOGICAL_LENGTH, PURE_SALTWATER, PURE_FRESHWATER, getSpeciesListForGps, checkBiologicalLength, checkEcologicalReality } from './worker-species.js';
 import { handleGisRoute, flagIsYes, hasText, ARCGIS_BUILD } from './core/arcgis.js';
 import { RAMP_SOURCES } from './core/ramp-sources.js';
+import { ATTRACTOR_SOURCES } from './core/attractor-sources.js';
 import { handleWaterRoute } from './water.js';
 import { handleConditions, handleHazards, dukeBasinFor, parseActiveRun, activeRunForWater, riverBindings, riverArrivals, easternClock } from './conditions.js';
 import { riverGeometry, stationAt, stretchAround, currentBetween, currentVerdict, packSlugFor, BOAT, markerStation, surgeAt } from './river-geometry.js';
@@ -19,7 +20,7 @@ import { handleReports } from './reports.js';
 import { handlePlaces } from './places.js';
 import { fetchStateRegulations, getLakeRegulations } from './research/clients.js';
 import { regulationsTable, lakeIndex, resolveRegistryRow } from './registry.js';
-import { handleResearchThermoclineSearch, handleResearchLimnologyData, refreshStaleLimnology, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDatasetHunt, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, registrySpeciesFor, speciesFoodHabits, speciesMeasuredTraits, handleResearchAnalyzeFacts, handleResearchDedupeContradictions, handleResearchMapFacts, handleResearchGapAnalysis, handleResearchGapSearch, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchRegsDebug, handleResearchDelete, handleResearchDeleteNormalizedDoc, handleResearchPackage, handleResearchPackageFile, handleEnhancedLakeIntel, RESEARCH_AGENTS, GAP_QUERIES, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey, handleResearchValidationPass, handleSharedCheck, handleSharedStore, handleSharedQuery, handleSharedPublish, handleSharedStatus, handleSharedQuarantine } from './worker-research.js';
+import { handleResearchLimnologyData, refreshStaleLimnology, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, registrySpeciesFor, speciesFoodHabits, speciesMeasuredTraits, handleResearchAnalyzeFacts, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchRegsDebug, handleResearchDelete, handleEnhancedLakeIntel, RESEARCH_AGENTS, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey } from './worker-research.js';
 
 
 /**
@@ -45,15 +46,7 @@ import { handleResearchThermoclineSearch, handleResearchLimnologyData, refreshSt
 const MUTATING_ROUTES = [
   "/research/save",
   "/research/delete",
-  "/research/delete-normalized-doc",
   "/research/save-normalized",
-  "/research/shared/store",
-  "/research/shared/publish",
-  "/research/shared/quarantine",
-  // Writes env.TROLLMAP_DATA, a binding wrangler.toml does not declare -- so the write throws
-  // into a `catch (_) {}` and has never once succeeded. Listed anyway: the day that binding is
-  // added, this becomes a live unauthenticated write, and nobody would think to come back here.
-  "/research/dataset-hunt",
 ];
 
 /**
@@ -253,23 +246,10 @@ async function getRiver(key, opts = {}) {
     }
     out.gauges.push(rec);
   }
-  if (cfg.damLakeKey && LAKES[cfg.damLakeKey]) {
-    try {
-      const lakeData = await resolveLake(cfg.damLakeKey);
-      out.upstream_lake = {
-        name: cfg.damLakeKey,
-        elevation_ft: lakeData.elevation_ft,
-        percent_full: lakeData.percent_full,
-        full_pool_ft: lakeData.full_pool_ft,
-        special_message: lakeData.special_message
-      };
-    } catch (err) {
-      // The upstream lake's level is half of reading a dam report -- whether they are
-      // generating is mostly a question of how full the pool above is. Dropping it silently
-      // hands back a report that looks complete and is missing the causal half.
-      console.warn(`[gauges] upstream lake ${cfg.damLakeKey} unavailable:`, err && err.message);
-    }
-  }
+  // THE UPSTREAM LAKE'S LEVEL WAS LOOKED UP HERE, off LAKES by `cfg.damLakeKey`, for the two
+  // rivers that name a dam lake. It went on 2026-09-25 with resolveLake(), its only caller: the
+  // app reads the pool above a dam from /conditions, which answers every bound water from
+  // water_bindings.json rather than from a fifteen-row table.
   // ── THE BASIN IS RESOLVED FROM DUKE'S ROSTER, NOT TYPED ─────────────────────────────────
   //
   // This read `cfg.dukeBasinId`, present on 2 of the 6 RIVERS entries, so /river had a release
@@ -721,6 +701,10 @@ async function fetchDominionSaludaStatus() {
 // Three guards, cheapest first. This is the sixth member of the substring-matcher family the
 // deletion tab already lists; the real fix is resolving by registry slug, which needs the slug
 // to reach here.
+//
+// NO CALLER SINCE 2026-09-25. resolveLake() was its one reader and went with /river's upstream-
+// lake lookup. It is left standing on purpose: it and lakeKeyFromName() in worker-data.js are a
+// pair a later change decides together, not this deletion.
 const FLOWING_RE = /\b(river|creek|canal|branch|run|fork|swamp|slough)\b/i;
 function resolveLakeKey(lakeName) {
   // 1. The county parenthetical is metadata, not part of the water's name.
@@ -730,107 +714,6 @@ function resolveLakeKey(lakeName) {
   if (FLOWING_RE.test(bare)) return null;
   // 3. Whole word, so "russ lake" cannot match "russell" and a key cannot match mid-word.
   return Object.keys(LAKES).find((k) => new RegExp(`\\b${k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(bare)) || null;
-}
-async function resolveLake(lakeName) {
-  const key = resolveLakeKey(lakeName);
-  if (!key) return { error: `unknown lake: ${lakeName}` };
-  const cfg = LAKES[key];
-  const out = {
-    waterbody: key,
-    elevation_ft: null,
-    water_temperature_F: null,
-    sources: [],
-    timestamp: (new Date()).toISOString()
-  };
-  if (cfg.pool) {
-    const u = await fetchUsgs(cfg.pool, "00010,00062,62614,62615,00065");
-    if (u?.elevation != null) {
-      out.elevation_ft = round2(u.elevation);
-      out.sources.push(`USGS ${cfg.pool} (reservoir elevation)`);
-    } else if (u?.gageHeight != null && !cfg.river) {
-      out.elevation_ft = round2(u.gageHeight);
-      out.sources.push(`USGS ${cfg.pool} (gage height \u2014 verify against published pool)`);
-    }
-    if (u?.tempC != null) {
-      out.water_temperature_F = Math.round(u.tempC * 9 / 5 + 32);
-      out.sources.push(`USGS ${cfg.pool} (temp)`);
-    }
-  }
-  if (out.elevation_ft == null && cfg.duke) {
-    const lake = await getDukeLake(cfg.duke);
-    if (lake) {
-      if (lake.ft != null) out.elevation_ft = lake.ft;
-      // `index` is Duke's own published number and `display_full_pool` 100 is the scale it sits
-      // on, so the card shows what his own lake page shows and he can check one against the other.
-      // The unit is NOT a percentage -- see normalizeDukeRow: it is feet inside a 100 ft band
-      // hung under full pond, which is why 100 minus it is a drawdown in feet.
-      if (lake.index != null) out.display_level = lake.index;
-      out.below_full_pool_ft = lake.belowFullPoolFt;
-      out.full_pool_ft = lake.fullPool;
-      out.display_unit = "ft below full pond scale (100 = full)";
-      out.display_full_pool = 100;
-      if (isFinite(lake.target)) out.target = lake.target;
-      out.sources.push("Duke API /lakes/current-level");
-      if (lake.specialMessage) out.special_message = lake.specialMessage;
-    }
-  }
-  // THE SEPA BRANCH IS GONE, AND SO IS EVERYTHING ONLY IT REACHED.
-  //
-  // Ryan, 2026-08-25: *"nothing hand written... everything expandable... if i decide to add
-  // every single lake that garmin has in the US into the app tomorrow this stuff should be able
-  // to expand with it"*.
-  //
-  // What stood here was three hard-coded Corps lakes plus Marion and Moultrie, reached only
-  // through the `/lake` route -- which had no caller anywhere in js/. Behind it: a six-row
-  // CWMS_PROJECT table, a scrape of water.sas.usace.army.mil for a three-digit number sitting
-  // next to a lake name, and a CWMS series fetch. None of it could ever run, and none of it
-  // could have grown past the five lakes somebody typed.
-  //
-  // `/conditions` already answers all five off `water_bindings.json` with nothing typed:
-  // usaceLevels() picks the project from the district's own roster of published conservation
-  // pools and evaluates the seasonal curve for today, so Hartwell knows it is meant to be at
-  // 660 in summer and 656 in winter without a constant anywhere. Marion and Moultrie resolve
-  // through their bound USGS sites.
-  //
-  // resolveLake() stays because getRiver() calls it for the two rivers that name a dam lake,
-  // Wateree River and Saluda. Neither of those lakes carried `sepa`, which is why this branch
-  // was unreachable in the first place.
-
-  if (out.water_temperature_F == null && cfg.river) {
-    const u = await fetchUsgs(cfg.river, "00010,00065,00060,63160");
-    if (u?.tempC != null) {
-      out.water_temperature_F = Math.round(u.tempC * 9 / 5 + 32);
-      out.sources.push(`USGS ${cfg.river} (water temp)`);
-    }
-    if (u?.gageHeight != null) out.river_gage_height_ft = u.gageHeight;
-    if (u?.streamflow != null) out.river_streamflow_cfs = u.streamflow;
-    if (u?.elevationNavd88 != null) out.river_water_elevation_ft_navd88 = u.elevationNavd88;
-    if (u?.timestamp) out.usgs_timestamp = u.timestamp;
-  }
-  if (out.water_temperature_F == null && cfg.ahq) {
-    const a = await fetchAhqWaterTemp(cfg.ahq);
-    if (a?.tempF != null) {
-      out.water_temperature_F = a.tempF;
-      out.water_temperature_source = `Angler's Headquarters report${a.approx ? " (estimated from range)" : ""}: "${a.raw}"`;
-      if (a.range) out.water_temperature_range_F = a.range;
-      out.sources.push(`Angler's Headquarters (${cfg.ahq})`);
-    }
-  }
-  if (out.elevation_ft == null && cfg.normalPool) {
-    out.elevation_ft = cfg.normalPool;
-    out.sources.push("published normal pool (fallback)");
-  }
-  if (out.full_pool_ft == null && cfg.normalPool) out.full_pool_ft = cfg.normalPool;
-  if (out.display_level == null && out.elevation_ft != null) {
-    out.display_level = out.elevation_ft;
-    out.display_unit = "ft";
-    out.display_full_pool = cfg.normalPool || out.full_pool_ft || null;
-  }
-  out.status = out.elevation_ft != null ? "success" : "no_data";
-  return out;
-}
-function round2(n) {
-  return Math.round(n * 100) / 100;
 }
 var SYNC_STORES = ["plan", "spread", "catch", "chart", "layer"];
 async function ensureSyncSchema(db) {
@@ -915,31 +798,6 @@ async function handleSyncDelete(env, type, id) {
      ON CONFLICT(type, id) DO UPDATE SET deleted=1, lastModified=excluded.lastModified`
   ).bind(id, type, (new Date()).toISOString()).run();
   return new Response(JSON.stringify({ ok: true, tombstoned: `${type}/${id}` }), { headers: JSON_HEADERS });
-}
-async function handleSyncMigrate(request, env) {
-  await ensureSyncSchema(env.DB);
-  const body = await request.json();
-  const items = body.items || [];
-  let count = 0;
-  const errors = [];
-  for (const item of items) {
-    try {
-      const { type, id, lastModified = (new Date()).toISOString(), ...data } = item;
-      if (!SYNC_STORES.includes(type) || !id) continue;
-      await env.DB.prepare(
-        `INSERT INTO sync_items (id, type, payload, lastModified, deleted)
-         VALUES (?1, ?2, ?3, ?4, 0)
-         ON CONFLICT(type, id) DO UPDATE SET
-           payload=excluded.payload,
-           lastModified=excluded.lastModified,
-           deleted=0`
-      ).bind(String(id), type, JSON.stringify(data), lastModified).run();
-      count++;
-    } catch (e) {
-      errors.push({ item, error: e.message });
-    }
-  }
-  return new Response(JSON.stringify({ ok: true, imported: count, errors }), { headers: JSON_HEADERS });
 }
 function contourGeojsonKey(lake) {
   return `${lake.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}/vectors/contours.geojson`;
@@ -1354,9 +1212,6 @@ var trollmap_worker_default = {
         }
       }
       // ── LAKE RESEARCH ROUTES ─────────────────────────────────────
-      if (path === "/research/thermocline-search" && request.method === "POST") {
-        return handleResearchThermoclineSearch(request, env);
-      }
 
 
       if (path === "/research/limnology-data" && request.method === "POST") {
@@ -1367,9 +1222,6 @@ var trollmap_worker_default = {
       }
       if (path === "/research/discover" && request.method === "POST") {
         return handleResearchDiscover(request, env);
-      }
-      if (path === "/research/dataset-hunt" && request.method === "POST") {
-        return handleResearchDatasetHunt(request, env);
       }
       if (path === "/research/proxy-download" && request.method === "GET") {
         return handleResearchProxyDownload(request, env);
@@ -1385,22 +1237,10 @@ var trollmap_worker_default = {
       if (path === "/research/analyze-facts" && request.method === "POST") {
         return handleResearchAnalyzeFacts(request, env);
       }
-      if (path === "/research/dedupe-contradictions" && request.method === "POST") {
-        return handleResearchDedupeContradictions(request, env);
-      }
-      if (path === "/research/map-facts" && request.method === "POST") {
-        return handleResearchMapFacts(request, env);
-      }
-      if (path === "/research/gap-analysis" && request.method === "POST") {
-        return handleResearchGapAnalysis(request, env);
-      }
-      if (path === "/research/gap-search" && request.method === "POST") {
-        return handleResearchGapSearch(request, env);
-      }
       if (path === "/research/agent-llm" && request.method === "POST") {
         return handleResearchAgent(request, env);
       }
-      if ((path === "/research/list" || path === "/lakes/list") && request.method === "GET") {
+      if (path === "/research/list" && request.method === "GET") {
         return handleResearchList(env);
       }
       if (path === "/research/get" && request.method === "GET") {
@@ -1422,52 +1262,9 @@ var trollmap_worker_default = {
       if (path === "/research/delete" && request.method === "POST") {
         return handleResearchDelete(request, env);
       }
-      if (path === "/research/delete-normalized-doc" && request.method === "POST") {
-        return handleResearchDeleteNormalizedDoc(request, env);
-      }
       if (path === "/research/proxy-download-batch" && request.method === "POST") {
         return handleResearchProxyDownloadBatch(request, env);
       }
-      // ── Phase 2: Shared R2 document registry ──────────────────────────────
-      if (path === "/research/shared/check" && request.method === "POST") {
-        return handleSharedCheck(request, env);
-      }
-      if (path === "/research/shared/store" && request.method === "POST") {
-        return handleSharedStore(request, env);
-      }
-      if (path === "/research/shared/query" && request.method === "POST") {
-        return handleSharedQuery(request, env);
-      }
-      if (path === "/research/shared/publish" && request.method === "POST") {
-        return handleSharedPublish(request, env);
-      }
-      if (path === "/research/shared/status" && request.method === "GET") {
-        return handleSharedStatus(request, env);
-      }
-      if (path === "/research/shared/quarantine" && request.method === "POST") {
-        return handleSharedQuarantine(request, env);
-      }
-      if (path === "/research/package" && request.method === "GET") {
-        const lake = url.searchParams.get("lake") || "";
-        if (!lake) return new Response(JSON.stringify({ok:false, error:"missing lake"}), {status:400, headers:JSON_HEADERS});
-        const file = url.searchParams.get("file");
-        if (file) return handleResearchPackageFile(env, lake, file);
-        return handleResearchPackage(env, lake);
-      }
-      if (path === "/lake-research" && request.method === "GET") {
-        const lake = url.searchParams.get("lake") || "";
-        if (!lake) return new Response(JSON.stringify({ok:false, error:"missing lake"}), {status:400, headers:JSON_HEADERS});
-        const enhanced = await handleEnhancedLakeIntel(lake, env);
-        return new Response(JSON.stringify(enhanced, null, 2), {headers: JSON_HEADERS});
-      }
-      if (path.startsWith("/lakes/") && request.method === "GET") {
-        // /lakes/<id>.json or /lakes/<id> -> get master
-        const m = path.match(/^\/lakes\/([^\/]+)(?:\.json)?$/);
-        if (m) {
-          return handleResearchGet(env, decodeURIComponent(m[1]));
-        }
-      }
-      if (path === '/research/validation-pass' && request.method === 'POST') return handleResearchValidationPass(request, env);
 
 
       if (path === "/ramps") {
@@ -1634,66 +1431,6 @@ var trollmap_worker_default = {
       }
 
       if (path === "/attractors") {
-        // Read verbatim from the service's own cvd_attractor_code domain, 2026-08-06.
-        const GA_ATTRACTOR_CODES = {
-          AJK: "A Jack", ADU: "Air Diffuser Unit", BLD: "Boulders", CON: "Concrete",
-          CRT: "Crate", GVL: "Gravel", HNH: "Honeyhole", MBK: "Mossback Trophy Tree XL",
-          PAL: "Plastic Pallet Tent", PCP: "Porcupine Balls", PVC: "PVC Cube",
-          PVT: "PVC Trees", RRP: "Rip Rap", STB: "Stake Bed", TRE: "Trees/Brush",
-          UNK: "Unknown", OTH: "Other", other: "Other",
-        };
-        const ATTRACTOR_SOURCES = {
-          SC: {
-            url: "https://services.arcgis.com/acgZYxoN5Oj8pDLa/arcgis/rest/services/SCDNR_Freshwater_Fish_Attractors_Public_Web_App/FeatureServer/0/query",
-            filter: (p) => true,
-            name: (p) => p.FishAttractorName,
-            wb: (p) => p.Waterbody,
-            lat: (p) => p.lat_dd,
-            lon: (p) => p.lon_dd,
-            type: (p) => p.Material,
-            metaMode: "type",
-          },
-          // GA carried `lat: () => null, lon: () => null` -- every one of its 2,202
-          // attractors came back with no position and was dropped by the client's
-          // isFinite guard. It went unnoticed because the front end took GA from a
-          // static snapshot instead of this route. Field names verified against the
-          // service: lowercase `latitude` / `longitude`, esriFieldTypeDouble.
-          GA: {
-            url: "https://services6.arcgis.com/9QlSLDqa0P1cHLhu/arcgis/rest/services/Fish_Attractors_for_Download/FeatureServer/0/query",
-            filter: (p) => true,
-            name: (p) => (p.note || "").trim() || `${p.waterbody || "GA"} attractor`,
-            wb: (p) => p.waterbody,
-            lat: (p) => p.latitude,
-            lon: (p) => p.longitude,
-            // attractor_code is a coded-value domain; the raw code ("TRE", "PAL") is
-            // meaningless to a user AND defeats the PVC/TREE icon test in gis-toggles.
-            type: (p) => GA_ATTRACTOR_CODES[p.attractor_code]
-              || (p.attractor_code_other || "").trim()
-              || p.attractor_code
-              || "Unknown",
-            metaMode: "type",
-          },
-          NC: {
-            url: "https://services1.arcgis.com/YfqBAUM5nWR3yhGP/arcgis/rest/services/Fish_Attractors_public_view/FeatureServer/0/query",
-            filter: (p) => true,
-            name: (p) => `${p.Waterbody} Attractor`,
-            wb: (p) => p.Waterbody,
-            lat: (p) => p.Latitude,
-            lon: (p) => p.Longitude,
-            type: (p) => `${p.Structure1 || ""} ${p.Structure2 || ""}`.trim() || p.Attractor_Type,
-            metaMode: "type",
-          },
-          TN: {
-            url: "https://services3.arcgis.com/PWXNAH2YKmZY7lBq/arcgis/rest/services/Fish_Attractor_Locations_view/FeatureServer/0/query",
-            filter: (p) => true,
-            name: (p) => p.Site_Name || (p.Embayment ? `${p.WaterBody} - ${p.Embayment}` : `${p.WaterBody} Attractor`),
-            wb: (p) => p.WaterBody,
-            lat: (p) => p.YLat,
-            lon: (p) => p.XLong,
-            type: (p) => [p.StructureTypes, p.Artificial, p.Natural_].filter(Boolean).join(", ") || "Unknown",
-            metaMode: "type",
-          }
-        };
         return handleGisRoute({
           env,
           url,
@@ -1719,14 +1456,6 @@ var trollmap_worker_default = {
       if (path === "/hazards") {
         const r = await handleHazards(request, env, url);
         if (r) return r;
-      }
-      if (path === "/usgs") {
-        const site = url.searchParams.get("site");
-        const params = url.searchParams.get("params") || "00010,00065";
-        if (!site) return new Response('{"error":"missing site"}', { headers: JSON_HEADERS, status: 400 });
-        const r = await fetch(`https://waterservices.usgs.gov/nwis/iv/?sites=${site}&parameterCd=${params}&format=json&period=P2D`);
-        const t = await r.text();
-        return new Response(t, { headers: JSON_HEADERS, status: r.status });
       }
       // THE REGULATIONS DIGEST, WHICH THE CLIENT HAD NO PATH TO.
       //
@@ -2035,14 +1764,6 @@ var trollmap_worker_default = {
         const data = await getLakeClarity(name, dateParam, env, clPoint, { slug: clSlug });
         return new Response(JSON.stringify(data, null, 2), { headers: JSON_HEADERS });
       }
-      if (path === "/lake-intel-sources") {
-        const name = url.searchParams.get("lake") || "";
-        if (name) {
-          const key = lakeKeyFromName(name);
-          return new Response(JSON.stringify({ key, registry: getLakeIntelSourceRegistry(key) }, null, 2), { headers: JSON_HEADERS });
-        }
-        return new Response(JSON.stringify(LAKE_INTEL_SOURCE_REGISTRY, null, 2), { headers: JSON_HEADERS });
-      }
       if (path === "/lake-intel") {
         const name = url.searchParams.get("lake") || url.searchParams.get("waterbody") || "";
         if (!name) return new Response(JSON.stringify({ error: "missing lake" }), { headers: JSON_HEADERS, status: 400 });
@@ -2173,25 +1894,12 @@ var trollmap_worker_default = {
         if (!status) return new Response(JSON.stringify({ error: "Dominion Saluda page unavailable" }), { headers: JSON_HEADERS, status: 502 });
         return new Response(JSON.stringify(status, null, 2), { headers: JSON_HEADERS });
       }
-      if (path === "/rivers") {
-        const list = Object.entries(RIVERS).map(([k, v]) => ({
-          key: k,
-          label: v.label,
-          operator: v.operator,
-          dam: v.damName,
-          primaryGauge: (v.gauges.find((g) => g.primary) || v.gauges[0]).site
-        }));
-        return new Response(JSON.stringify(list, null, 2), { headers: JSON_HEADERS });
-      }
       if (path.startsWith("/sync")) {
         if (!env.DB) return new Response(JSON.stringify({ error: "D1 not configured" }), { headers: JSON_HEADERS, status: 503 });
         if (!await isAuthorized(request, env)) {
           return new Response(JSON.stringify({ error: "unauthorized" }), { headers: JSON_HEADERS, status: 401 });
         }
         try {
-          if (path === "/sync/migrate" && request.method === "POST") {
-            return await handleSyncMigrate(request, env);
-          }
           const purgeMatch = path.match(/^\/sync\/purge-type\/([^\/]+)$/);
           if (purgeMatch && request.method === "DELETE") {
             const pType = purgeMatch[1];
@@ -2390,26 +2098,18 @@ var trollmap_worker_default = {
           lastBugLog: "Wateree run 2026-07-12 22:14 — 10 docs but 0 facts + verified 98% -> now draft + filter"
         },
         routes: [
-          "/research/list or /lakes/list      \u2014 list all researched lake master profiles",
+          "/research/list                     \u2014 list all researched lake master profiles",
           "/research/get?lake=...             \u2014 get master profile + package file list + versions",
           "/research/save                     \u2014 save merged profile (master + hybrid package + version)",
-          "/research/package?lake=...         \u2014 list package files for lake",
-          "/research/package?lake=...&file=... \u2014 get single package file",
-          "/lake-research?lake=...            \u2014 enhanced lake intel with researched profile if exists",
-          "/lakes/<id>                        \u2014 shortcut get master profile",
           "/sync/item/:type/:id               \u2014 push/get/delete a sync item (auth required)",
           "/sync/list-updates?since=<ts>      \u2014 delta list for cross-device sync (auth required)",
-          "/sync/migrate                      \u2014 bulk import all local data (auth required)",
           "/contours/:lake/geojson            \u2014 serve/upload vectorized contour GeoJSON",
           "/lake?lake=wateree                     \u2014 unified lake JSON",
           "/lake-clarity?lake=wateree&date=YYYY-MM-DD \u2014 runoff clarity/ramp/lure forecast",
-          "/lake-intel-sources?lake=wateree       \u2014 trust-tier source registry",
           "/lake-intel?lake=murray|marion|wateree    \u2014 fisherman lake profile + latest report scrape + researched if exists",
           "/river?river=wateree|congaree|saluda|broad|santee|cooper",
-          "/rivers                                \u2014 list all rivers",
           "/duke-flow-arrivals?basin=1|2|3|6|10|11 \u2014 raw Duke scheduled dam releases",
           "/dominion-saluda                       \u2014 raw Dominion color-coded status",
-          "/usgs?site=...&params=...              \u2014 raw USGS pass-through",
           "/chartpacks/list                       \u2014 list all uploaded chartpack lakes",
           "/chartpacks/<lake>/<file>             \u2014 serve or upload chartpack file"
         ]
