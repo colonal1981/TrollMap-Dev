@@ -2497,6 +2497,12 @@ RULES THAT ARE NOT NEGOTIABLE
    bottom is fouled. So when the water forces you shallower than the band, take it and do not
    apologise for it: shallow is the cheap direction to be wrong in, deep is the expensive one. A low
    \`maxRunDepthFt\` never means "skip this leg", and never leave the rods out of the water.
+   THAT IS A RULE ABOUT A RISE, AND ONLY ABOUT A RISE. Where nothing on the leg forces the bait up,
+   it is not a licence to fish open water shallow: over 48-67 ft of water at 10:30 in the morning a
+   squarebill running 2-5 ft is not "a little above" fish in a 10-25 ft band, it is out of their
+   water. Fish come up to a bait; they do not come up from the band to the surface in full light.
+   Where the leg's water is deeper than the band, put the bait IN the band. A bait above it belongs
+   to low light, a sky that makes it low light, or fish seen up high, and the leg's notes say which.
    WHAT IS BESIDE THE LINE IS NOT WHAT IS UNDER IT. \`relief\` is the chart pipeline's word for the
    water within ${RELIEF_RADIUS_M} m of the pass — \`channel_edge\`, \`break\`, \`steep_bank\` or
    \`flat\` — and \`deepestNearbyFt\` and \`reliefDropFt\` are the measurement it was classified from:

@@ -522,14 +522,24 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
     // Skipped entirely when the band is not a fish depth. `fishDepthWasStated()` decides that,
     // and when it is false the band is the depth of the WATER -- "above the fish" would be a
     // claim about a quantity nobody measured.
-    if (fish && fish.stated && Array.isArray(fish.bandFt) && fish.bandFt.length === 2
-        && Number.isFinite(w.min) && Number.isFinite(w.max)) {
+    //
+    // AND WHEN THE BAND IS THE TABLE'S FISH RANGE, it is checked too and SAYS it is the table's --
+    // see `fromTable` in assemblePlan(). A water depth is still never treated as a fish depth.
+    if (fish && (fish.stated || fish.fromTable) && Array.isArray(fish.bandFt)
+        && fish.bandFt.length === 2 && Number.isFinite(w.min) && Number.isFinite(w.max)) {
       const [fMin, fMax] = fish.bandFt;
       if (Number.isFinite(fMin) && Number.isFinite(fMax) && (w.max < fMin || w.min > fMax)) {
-        warnings.push(`${id} on ${runId}: a ${rod.lure} works ${w.min}-${w.max} ft and the fish `
-                    + `are ${fMin}-${fMax} ft on this water. Those do not overlap, so this rod is `
-                    + `fishing ${w.max < fMin ? `${Math.round(fMin - w.max)} ft ABOVE`
-                                              : `${Math.round(w.min - fMax)} ft BELOW`} them. Say `
+        const where = fish.stated
+          ? `the fish are ${fMin}-${fMax} ft on this water`
+          : `the built-in table puts the fish at ${fMin}-${fMax} ft on this lake (the research here `
+            + 'gives the water depth, not the fish depth)';
+        const light = legLight && legLight.state
+          ? ` This leg starts ${legLight.from} in ${legLight.low ? 'low light' : 'full light, NOT low light'}.`
+          : '';
+        warnings.push(`${id} on ${runId}: a ${rod.lure} works ${w.min}-${w.max} ft and ${where}. `
+                    + `Those do not overlap, so this rod is fishing `
+                    + `${w.max < fMin ? `${Math.round(fMin - w.max)} ft ABOVE`
+                                      : `${Math.round(w.min - fMax)} ft BELOW`} them.${light} Say `
                     + `why in the leg's notes or put a different bait on it.`);
       }
     }
@@ -1162,8 +1172,15 @@ export function assemblePlan(o) {
   // the field describeDepthBand() writes when the band and the water depth are the same pair;
   // false means the number is a WATER depth and "above the fish" is not a claim anyone can make.
   const _db = (o.conditions && o.conditions.depthBand) || null;
+  // `fromTable`: THE BAND IS A FISH RANGE, JUST NOT THIS WATER'S OWN. Since f048dd8 a researched
+  // season that gives holding and water depth but no fish depth takes its fish range from the
+  // built-in table (`evidence: 'water-only'`). That band is a claim about the FISH, from the
+  // table, and the check below skipped it as though it were a water depth. Lake Murray,
+  // 2026-09-27 plan: table band 10-25 ft, a squarebill at 2-5 ft over 48-67 ft of water at
+  // 10:34 and a spinnerbait at 6-10 ft over 93-102 ft at 2:18 PM, and not a word said.
   const fish = _db ? { bandFt: Array.isArray(_db.ft) ? _db.ft : null,
-                       stated: _db.fishDepthStated !== false } : null;
+                       stated: _db.fishDepthStated !== false,
+                       fromTable: _db.evidence === 'water-only' } : null;
   // THE LAKE'S MEASURED DRAWDOWN, TAKEN OFF THE CHART BEFORE A BAIT IS CHECKED AGAINST IT.
   //
   // Every depth on a leg is the chart's, and the chart was sounded at full pool. Ryan's 2026-09-26

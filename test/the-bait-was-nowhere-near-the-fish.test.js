@@ -83,6 +83,26 @@ describe('capBaitDepth — too deep was caught and too shallow was invisible', (
     expect(warnings.some((x) => /do not overlap/.test(x))).toBe(false);
   });
 
+  // THE TABLE'S FISH RANGE IS A FISH RANGE. Lake Murray, the 2026-09-27 plan: the research gave
+  // the water depth (40-45 ft) and no fish depth, so the band was the built-in table's 10-25 ft --
+  // `evidence: 'water-only'` -- and a squarebill at 2-5 ft over 48-67 ft of water went unflagged.
+  const TABLE_BAND = { depthBand: { ft: [26, 36], fishDepthStated: false, evidence: 'water-only',
+                                    holding: 'both', waterDepthFt: [40, 45] } };
+
+  it('flags a bait above the table\'s fish range, and says the range is the table\'s', () => {
+    const { warnings } = build(TABLE_BAND);
+    const w = warnings.find((x) => /do not overlap/.test(x));
+    expect(!!w).toBe(true);
+    expect(w).toMatch(/ft ABOVE/);
+    expect(w).toMatch(/built-in table puts the fish at 26-36 ft/);
+    expect(w).toMatch(/gives the water depth, not the fish depth/);
+  });
+
+  it('still never treats a water depth as a fish depth', () => {
+    // WATER_ONLY above carries no `evidence: 'water-only'`: its band IS the water, as before.
+    expect(build(WATER_ONLY).warnings.some((x) => /do not overlap/.test(x))).toBe(false);
+  });
+
   it('is silent rather than guessing when no band was supplied at all', () => {
     expect(build({}).warnings.some((x) => /do not overlap/.test(x))).toBe(false);
     expect(build(undefined).warnings.some((x) => /do not overlap/.test(x))).toBe(false);
