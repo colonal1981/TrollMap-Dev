@@ -421,28 +421,6 @@ export function makePredicate(presetName, records, cfg = {}) {
   };
 }
 
-/**
- * The registry cut itself — what would survive a prune, and what would go.
- *
- * Rule D from claude/SHRINKING_THE_REGISTRY_2026-08-11.md: charted, or coastal, or has a ramp, or
- * is a river. Keeps 843 of 1,746 and everything Ryan has named.
- *
- * Returns both halves. A deletion that cannot say what it removed is not reviewable, and this one
- * is derived from a flag that has been wrong twice.
- */
-export function registryCut(records, cfg = {}) {
-  const keep = [], drop = [];
-  for (const rec of (records || [])) {
-    const name = rec.display_name || rec.name || '';
-    const bath = hasBathymetry(rec);
-    const isCoastal = rec.feature_type === 'coastal' || String(rec.slug || '').startsWith('coast_');
-    const survives = isKeepAlways(name)
-                  || bath !== 'no'
-                  || isCoastal
-                  || has(rec.ramps) || has(rec.ramp_sources) || has(rec.rampSources)
-                  || rec.feature_type === 'river'
-                  || Number(rec.area_acres || 0) >= (cfg.minAcres ?? Infinity);
-    (survives ? keep : drop).push(rec);
-  }
-  return { keep, drop };
-}
+// registryCut() stood here until 2026-09-25 with no caller: the prune it previewed never ran.
+// Its rule -- rule D, charted or coastal or has a ramp or is a river -- is written in
+// claude/SHRINKING_THE_REGISTRY_2026-08-11.md if a prune ever happens.
