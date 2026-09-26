@@ -282,14 +282,9 @@ describe('every route in trollmap-worker.js has a caller', () => {
     // to handle it": no caller in js/, no other caller for fetchDukeDashboard() behind it, a
     // `?basin=` parameter the function ignored, and a second trigger that answered ANY path
     // carrying `?duke` with a raw dump instead of the route asked for.
-    '/lake-research': 'no caller. Superseded by /research/get, which the app does call.',
-    '/lake-intel-sources': 'no caller. Goes with LAKE_INTEL_SOURCE_REGISTRY, already on the tab.',
-    '/lakes/': 'no caller. A shortcut alias for /research/get.',
-    '/lakes/list': 'no caller. Alias of /research/list, which research-ids.js does call.',
-    '/chartpacks/list': 'no caller. The client lists packs from the registry index instead.',
-    '/rivers': 'no caller. Would return Object.keys(RIVERS) — the 6-of-90 menu.',
-    '/sync/migrate': 'no caller. A one-shot schema migration.',
-    '/usgs': 'no caller. Every USGS read now goes through /conditions or the research engine.',
+    // /lake-research, /lake-intel-sources, /lakes/, /lakes/list, /rivers, /sync/migrate and /usgs
+    // stood here with "no caller" and were deleted on 2026-09-25.
+    '/chartpacks/list': 'no app caller. Scripts/r2_audit.py and r2_vs_local.py call it.',
 
     // The eight research routes that sat here with "no client caller. Needs a decision" --
     // dataset-hunt, gap-analysis, gap-search, map-facts, shared/publish, shared/quarantine,

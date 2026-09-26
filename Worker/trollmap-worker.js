@@ -6,7 +6,7 @@ import { CORS, JSON_HEADERS, TEXT_HEADERS, callLLM, isAuthorized, chartpackKey, 
 // Bump on every edit to this file. See ARCGIS_BUILD in core/arcgis.js.
 const WORKER_BUILD = 'worker-2026-08-07a';
 
-import { fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun, dukeRowForNames, LAKES, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry } from './worker-data.js';
+import { fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun, dukeRowForNames, LAKES, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity } from './worker-data.js';
 import { SPECIES_MIDLANDS_SANTEE, SPECIES_UPSTATE, SPECIES_COASTAL_SALTWATER, SPECIES_ALL_TROLLMAP, MAX_BIOLOGICAL_LENGTH, PURE_SALTWATER, PURE_FRESHWATER, getSpeciesListForGps, checkBiologicalLength, checkEcologicalReality } from './worker-species.js';
 import { handleGisRoute, flagIsYes, hasText, ARCGIS_BUILD } from './core/arcgis.js';
 import { RAMP_SOURCES } from './core/ramp-sources.js';
@@ -799,31 +799,6 @@ async function handleSyncDelete(env, type, id) {
   ).bind(id, type, (new Date()).toISOString()).run();
   return new Response(JSON.stringify({ ok: true, tombstoned: `${type}/${id}` }), { headers: JSON_HEADERS });
 }
-async function handleSyncMigrate(request, env) {
-  await ensureSyncSchema(env.DB);
-  const body = await request.json();
-  const items = body.items || [];
-  let count = 0;
-  const errors = [];
-  for (const item of items) {
-    try {
-      const { type, id, lastModified = (new Date()).toISOString(), ...data } = item;
-      if (!SYNC_STORES.includes(type) || !id) continue;
-      await env.DB.prepare(
-        `INSERT INTO sync_items (id, type, payload, lastModified, deleted)
-         VALUES (?1, ?2, ?3, ?4, 0)
-         ON CONFLICT(type, id) DO UPDATE SET
-           payload=excluded.payload,
-           lastModified=excluded.lastModified,
-           deleted=0`
-      ).bind(String(id), type, JSON.stringify(data), lastModified).run();
-      count++;
-    } catch (e) {
-      errors.push({ item, error: e.message });
-    }
-  }
-  return new Response(JSON.stringify({ ok: true, imported: count, errors }), { headers: JSON_HEADERS });
-}
 function contourGeojsonKey(lake) {
   return `${lake.toLowerCase().replace(/[^a-z0-9_-]/g, "_")}/vectors/contours.geojson`;
 }
@@ -1265,7 +1240,7 @@ var trollmap_worker_default = {
       if (path === "/research/agent-llm" && request.method === "POST") {
         return handleResearchAgent(request, env);
       }
-      if ((path === "/research/list" || path === "/lakes/list") && request.method === "GET") {
+      if (path === "/research/list" && request.method === "GET") {
         return handleResearchList(env);
       }
       if (path === "/research/get" && request.method === "GET") {
@@ -1289,19 +1264,6 @@ var trollmap_worker_default = {
       }
       if (path === "/research/proxy-download-batch" && request.method === "POST") {
         return handleResearchProxyDownloadBatch(request, env);
-      }
-      if (path === "/lake-research" && request.method === "GET") {
-        const lake = url.searchParams.get("lake") || "";
-        if (!lake) return new Response(JSON.stringify({ok:false, error:"missing lake"}), {status:400, headers:JSON_HEADERS});
-        const enhanced = await handleEnhancedLakeIntel(lake, env);
-        return new Response(JSON.stringify(enhanced, null, 2), {headers: JSON_HEADERS});
-      }
-      if (path.startsWith("/lakes/") && request.method === "GET") {
-        // /lakes/<id>.json or /lakes/<id> -> get master
-        const m = path.match(/^\/lakes\/([^\/]+)(?:\.json)?$/);
-        if (m) {
-          return handleResearchGet(env, decodeURIComponent(m[1]));
-        }
       }
 
 
@@ -1494,14 +1456,6 @@ var trollmap_worker_default = {
       if (path === "/hazards") {
         const r = await handleHazards(request, env, url);
         if (r) return r;
-      }
-      if (path === "/usgs") {
-        const site = url.searchParams.get("site");
-        const params = url.searchParams.get("params") || "00010,00065";
-        if (!site) return new Response('{"error":"missing site"}', { headers: JSON_HEADERS, status: 400 });
-        const r = await fetch(`https://waterservices.usgs.gov/nwis/iv/?sites=${site}&parameterCd=${params}&format=json&period=P2D`);
-        const t = await r.text();
-        return new Response(t, { headers: JSON_HEADERS, status: r.status });
       }
       // THE REGULATIONS DIGEST, WHICH THE CLIENT HAD NO PATH TO.
       //
@@ -1810,14 +1764,6 @@ var trollmap_worker_default = {
         const data = await getLakeClarity(name, dateParam, env, clPoint, { slug: clSlug });
         return new Response(JSON.stringify(data, null, 2), { headers: JSON_HEADERS });
       }
-      if (path === "/lake-intel-sources") {
-        const name = url.searchParams.get("lake") || "";
-        if (name) {
-          const key = lakeKeyFromName(name);
-          return new Response(JSON.stringify({ key, registry: getLakeIntelSourceRegistry(key) }, null, 2), { headers: JSON_HEADERS });
-        }
-        return new Response(JSON.stringify(LAKE_INTEL_SOURCE_REGISTRY, null, 2), { headers: JSON_HEADERS });
-      }
       if (path === "/lake-intel") {
         const name = url.searchParams.get("lake") || url.searchParams.get("waterbody") || "";
         if (!name) return new Response(JSON.stringify({ error: "missing lake" }), { headers: JSON_HEADERS, status: 400 });
@@ -1948,25 +1894,12 @@ var trollmap_worker_default = {
         if (!status) return new Response(JSON.stringify({ error: "Dominion Saluda page unavailable" }), { headers: JSON_HEADERS, status: 502 });
         return new Response(JSON.stringify(status, null, 2), { headers: JSON_HEADERS });
       }
-      if (path === "/rivers") {
-        const list = Object.entries(RIVERS).map(([k, v]) => ({
-          key: k,
-          label: v.label,
-          operator: v.operator,
-          dam: v.damName,
-          primaryGauge: (v.gauges.find((g) => g.primary) || v.gauges[0]).site
-        }));
-        return new Response(JSON.stringify(list, null, 2), { headers: JSON_HEADERS });
-      }
       if (path.startsWith("/sync")) {
         if (!env.DB) return new Response(JSON.stringify({ error: "D1 not configured" }), { headers: JSON_HEADERS, status: 503 });
         if (!await isAuthorized(request, env)) {
           return new Response(JSON.stringify({ error: "unauthorized" }), { headers: JSON_HEADERS, status: 401 });
         }
         try {
-          if (path === "/sync/migrate" && request.method === "POST") {
-            return await handleSyncMigrate(request, env);
-          }
           const purgeMatch = path.match(/^\/sync\/purge-type\/([^\/]+)$/);
           if (purgeMatch && request.method === "DELETE") {
             const pType = purgeMatch[1];
@@ -2165,24 +2098,18 @@ var trollmap_worker_default = {
           lastBugLog: "Wateree run 2026-07-12 22:14 — 10 docs but 0 facts + verified 98% -> now draft + filter"
         },
         routes: [
-          "/research/list or /lakes/list      \u2014 list all researched lake master profiles",
+          "/research/list                     \u2014 list all researched lake master profiles",
           "/research/get?lake=...             \u2014 get master profile + package file list + versions",
           "/research/save                     \u2014 save merged profile (master + hybrid package + version)",
-          "/lake-research?lake=...            \u2014 enhanced lake intel with researched profile if exists",
-          "/lakes/<id>                        \u2014 shortcut get master profile",
           "/sync/item/:type/:id               \u2014 push/get/delete a sync item (auth required)",
           "/sync/list-updates?since=<ts>      \u2014 delta list for cross-device sync (auth required)",
-          "/sync/migrate                      \u2014 bulk import all local data (auth required)",
           "/contours/:lake/geojson            \u2014 serve/upload vectorized contour GeoJSON",
           "/lake?lake=wateree                     \u2014 unified lake JSON",
           "/lake-clarity?lake=wateree&date=YYYY-MM-DD \u2014 runoff clarity/ramp/lure forecast",
-          "/lake-intel-sources?lake=wateree       \u2014 trust-tier source registry",
           "/lake-intel?lake=murray|marion|wateree    \u2014 fisherman lake profile + latest report scrape + researched if exists",
           "/river?river=wateree|congaree|saluda|broad|santee|cooper",
-          "/rivers                                \u2014 list all rivers",
           "/duke-flow-arrivals?basin=1|2|3|6|10|11 \u2014 raw Duke scheduled dam releases",
           "/dominion-saluda                       \u2014 raw Dominion color-coded status",
-          "/usgs?site=...&params=...              \u2014 raw USGS pass-through",
           "/chartpacks/list                       \u2014 list all uploaded chartpack lakes",
           "/chartpacks/<lake>/<file>             \u2014 serve or upload chartpack file"
         ]
