@@ -92,4 +92,36 @@ test('USGS writes "below" as BL in a station name, and that is below the dam', (
   // A word that starts with BL is not the abbreviation.
   assert.equal(isBelowDam('gauge', 'BLUE RIDGE LAKE NR BLUE RIDGE, GA'), false);
   assert.equal(isBelowDam('pool', 'Lake Murray'), false);
+  // And BL below a bridge is not below a dam.
+  assert.equal(isBelowDam('gauge', 'BROAD RIVER BL SC HWY 34 BRIDGE, SC'), false);
+});
+
+// ── When the Worker found a thermometer on the lake, it says where, and keeps the release ────
+const MURRAY_LAKE_READING = {
+  featureType: 'lake', waterTempF: 80.8, waterTempFrom: 'quality',
+  waterTempGauge: 'LITTLE SALUDA R NEAR PROSPERITY, SC', waterTempKm: 21.6,
+  waterTempBelowDamF: 60.3, waterTempBelowDamGauge: 'Saluda River below Lake Murray Dam',
+};
+
+test('a reading on the lake is the surface, and it says how far from the launch it was taken', () => {
+  const s = lakeSurfaceTemp(MURRAY_LAKE_READING, null);
+  assert.equal(s.tempF, 80.8);
+  assert.equal(s.tempFrom, 'quality');
+  const block = conditionsPromptBlock(MURRAY_LAKE_READING);
+  assert.match(block, /Water temperature 80\.8 °F — LITTLE SALUDA R NEAR PROSPERITY, SC, 21\.6 km from the launch\./);
+  assert.match(block, /Below the dam the river reads 60\.3 °F \(Saluda River below Lake Murray Dam\): that is water released through the dam, not the lake's surface\./);
+});
+
+test('readConditions carries the distance and the below-dam reading the Worker kept', () => {
+  const c = readConditions({ slug: 'lake_murray', water: {
+    feature_type: 'lake',
+    water_temp: { usgs_site: '02167716', name: 'LITTLE SALUDA R NEAR PROSPERITY, SC',
+                  role: 'quality', below_dam: false, km_from_point: 21.6, c: 27.1, f: 80.8 },
+    water_temp_below_dam: { usgs_site: '02168504', name: 'Saluda River below Lake Murray Dam',
+                            role: 'tailwater', below_dam: true, c: 15.7, f: 60.3 } } });
+  assert.equal(c.waterTempF, 80.8);
+  assert.equal(c.waterTempFrom, 'quality');
+  assert.equal(c.waterTempKm, 21.6);
+  assert.equal(c.waterTempBelowDamF, 60.3);
+  assert.equal(c.waterTempBelowDamGauge, 'Saluda River below Lake Murray Dam');
 });

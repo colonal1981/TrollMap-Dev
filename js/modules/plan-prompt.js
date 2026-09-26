@@ -1474,7 +1474,8 @@ const CONDITION_FACTS = [
   {
     id: 'waterTemp',
     keys: ['waterTempF', 'waterTempFrom', 'waterTempGauge', 'waterTempSite',
-           'waterTempStation', 'waterTempUpstreamFrom', 'waterTempAgeMin'],
+           'waterTempStation', 'waterTempUpstreamFrom', 'waterTempAgeMin', 'waterTempKm',
+           'waterTempBelowDamF', 'waterTempBelowDamGauge'],
     say(c) {
       if (!isNum(c.waterTempF)) return null;
       // WHERE IT WAS MEASURED TRAVELS WITH IT. A tailrace gauge sits below the dam and is not the
@@ -1498,12 +1499,25 @@ const CONDITION_FACTS = [
             + 'in the lake it runs far colder than the surface, and nothing here says how deep this '
             + 'one draws. It is not the lake\'s surface temperature and it does not say what season '
             + 'the lake is in'
-        : c.waterTempGauge ? ` — ${c.waterTempGauge}` : '';
+        : c.waterTempGauge
+          // AND HOW FAR FROM THE LAUNCH, where the Worker measured it. Murray's two lake
+          // thermometers are at the heads of the Saluda and Little Saluda arms, 21-22 km from
+          // Hilton: the reading is the lake's, and it is not the water under his boat.
+          ? ` — ${c.waterTempGauge}${isNum(c.waterTempKm) ? `, ${c.waterTempKm} km from the launch` : ''}`
+          : '';
       // AND WHEN. A thermometer two days behind is not today's water and the model has no other
       // way to know. Quiet under two hours, which is the ordinary lag on a USGS series.
       const age = isNum(c.waterTempAgeMin) && c.waterTempAgeMin >= 120
         ? ` · reading is ${Math.round(c.waterTempAgeMin / 60)} h old` : '';
-      return `Water temperature ${c.waterTempF} °F${from}${age}.`;
+      // THE RELEASE, WHERE A THERMOMETER ON THE LAKE REPLACED IT. Kept because it is a real
+      // reading of real water -- what comes out of the dam -- and labelled so it is never the
+      // lake's surface.
+      const below = isNum(c.waterTempBelowDamF)
+        ? ` Below the dam the river reads ${c.waterTempBelowDamF} °F`
+          + `${c.waterTempBelowDamGauge ? ` (${c.waterTempBelowDamGauge})` : ''}: that is water `
+          + 'released through the dam, not the lake\'s surface.'
+        : '';
+      return `Water temperature ${c.waterTempF} °F${from}${age}.${below}`;
     },
   },
   {

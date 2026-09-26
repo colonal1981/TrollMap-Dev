@@ -3154,7 +3154,9 @@ export function isBelowDam(role, name) {
   // `BL` is USGS's own abbreviation for "below" in a station name, as `AB` is for above and `NR`
   // for near. Lake Wylie's temperature comes off 02145910, "CATAWBA RIVER BL LAKE WYLIE DAM
   // FEWELL ISLAND, SC", and it went out as the lake's because only the spelled-out word matched.
-  return role === 'tailwater' || /tailrace|tailwater|below\b|\bbl\b/i.test(String(name || ''));
+  // The abbreviation has to be followed by a DAM: "BL" also abbreviates below a bridge or a
+  // creek, and those are not the water released from a reservoir.
+  return role === 'tailwater' || /tailrace|tailwater|below\b|\bbl\b.*\bdam\b/i.test(String(name || ''));
 }
 
 /**
@@ -3211,6 +3213,12 @@ export function usgsSitesFor(b, lat, lon) {
   add(b.pool, 'pool');
   add(b.tailwater, 'tailwater');
   for (const g of b.gauges || []) add(g, 'gauge');
+  // WATER-QUALITY INSTRUMENTS WITH NO LEVEL, written to their own list by build_water_bindings.py
+  // since 2026-09-26. They are here, where the parameter probe and the upstream borrow read, and
+  // NOT in `b.gauges`, which waterBlock() picks the day's stage and flow from -- a thermometer as
+  // the nearest "gauge" would blank the level on the card. Lake Murray's only live lake
+  // temperature is two of these, at the heads of the Saluda and Little Saluda arms.
+  for (const g of b.quality || []) add(g, 'quality');
   // Nearest first, but a site on the lake itself beats a nearer one below the dam.
   return out.sort((x, y) => (x.below_dam - y.below_dam) || (x.km - y.km));
 }
@@ -3276,6 +3284,8 @@ async function siteParameters(site) {
  */
 async function waterProbe(b, lat, lon, seededTemp) {
   const out = { temp: seededTemp && Number.isFinite(seededTemp.c) ? seededTemp : null,
+                // The below-dam reading a lake's own thermometer replaced, kept rather than lost.
+                tempBelowDam: null,
                 oxygen: null, turbidity: null, salt: null, tidalFlow: null,
                 // What no bound site publishes at all, so a null can say WHY.
                 unpublished: [],
@@ -3317,8 +3327,17 @@ async function waterProbe(b, lat, lon, seededTemp) {
     .map((s, i) => ({ s, i, r: rank(s) }))
     .sort((a, z) => (a.r - z.r) || (a.i - z.i))
     .slice(0, 4).map((x) => x.s);
+  // ON A LAKE, A SEEDED TEMPERATURE FROM BELOW THE DAM IS PROVISIONAL. The seed is whichever of
+  // pool / tailwater / gauge read a temperature first, and on Lake Murray that was the Saluda
+  // below the dam, 60.3 F, while the lake was near 80 -- so the probe never asked the two
+  // thermometers in the lake's own water, because `out.temp` was already full. A reading taken on
+  // the lake replaces it and the below-dam one is kept beside it. On a river the tailrace is the
+  // water being fished and the seed stands, as before.
+  const lakeWater = b.feature_type === 'lake';
+  let tempProvisional = !!(lakeWater && out.temp && out.temp.below_dam);
+  const needTemp = () => !out.temp || tempProvisional;
   for (const s of candidates) {
-    if (out.temp && out.oxygen && out.turbidity && out.salt && out.tidalFlow) break;
+    if (!needTemp() && out.oxygen && out.turbidity && out.salt && out.tidalFlow) break;
 
     // Ask the catalog first. A site that publishes none of what is still missing is not worth a
     // request, and knowing that is also what lets the response explain an empty field.
@@ -3342,7 +3361,7 @@ async function waterProbe(b, lat, lon, seededTemp) {
         }
       }
       const stillWanted = [
-        !out.temp && '00010', !out.oxygen && '00300', !out.turbidity && '63680',
+        needTemp() && '00010', !out.oxygen && '00300', !out.turbidity && '63680',
         !out.salt && '00480', !out.salt && '00095', !out.tidalFlow && '72137',
       ].filter(Boolean);
       if (!stillWanted.some((code) => cat[code])) continue;
@@ -3359,9 +3378,11 @@ async function waterProbe(b, lat, lon, seededTemp) {
       usgs_site: s.site, name: s.name, role: s.role, below_dam: s.below_dam,
       km_from_point: Number.isFinite(s.km) ? round1(s.km) : null,
     };
-    if (!out.temp && Number.isFinite(u.tempC)) {
+    if (Number.isFinite(u.tempC) && (!out.temp || (tempProvisional && !s.below_dam))) {
+      if (out.temp && tempProvisional) out.tempBelowDam = out.temp;
       out.temp = { ...where, c: round2(u.tempC), f: round1(u.tempC * 9 / 5 + 32),
                    source: 'USGS — parameter 00010' };
+      tempProvisional = lakeWater && !!s.below_dam;
     }
     if (!out.oxygen && Number.isFinite(u.doMgL)) {
       out.oxygen = { ...where, mg_l: round2(u.doMgL), source: 'USGS — parameter 00300' };
@@ -4446,6 +4467,9 @@ async function waterBlock(b, lat, lon, env) {
 
   const probe = await waterProbe(b, lat, lon, seeded).catch(() => ({ temp: seeded }));
   out.water_temp = probe.temp || null;
+  // Where a thermometer on the lake replaced a reading from below the dam, the below-dam one rides
+  // along under its own name: annotated, not dropped, and never mistaken for the lake's.
+  out.water_temp_below_dam = probe.tempBelowDam || null;
   // A MEASURED clarity number, where one exists. `clarity` on this response is a rainfall model
   // over a historical Secchi baseline; this is an instrument reading from today, and the two
   // must not be presented as the same kind of thing.

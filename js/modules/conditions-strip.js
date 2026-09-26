@@ -398,7 +398,13 @@ function cardHtml(rec, c) {
         ? `<span class="cond-sub"> — NOAA CO-OPS tide station${c.waterTempGauge ? ` (${esc(c.waterTempGauge)})` : ''}. No USGS site on this water.</span>`
         : c.waterTempFrom === 'tailwater'
         ? `<span class="cond-sub"> — TAILWATER gauge${c.waterTempGauge ? ` (${esc(c.waterTempGauge)})` : ''}, below the dam, not the lake</span>`
-        : c.waterTempGauge ? `<span class="cond-sub"> (${esc(c.waterTempGauge)})</span>` : '')));
+        : c.waterTempGauge
+          ? `<span class="cond-sub"> (${esc(c.waterTempGauge)}${c.waterTempKm != null ? `, ${c.waterTempKm} km away` : ''})</span>`
+          : '')
+      // THE RELEASE, KEPT BESIDE THE LAKE'S OWN READING -- see water_temp_below_dam in the Worker.
+      + (c.waterTempBelowDamF != null
+        ? `<span class="cond-sub"> · below the dam ${c.waterTempBelowDamF} °F${c.waterTempBelowDamGauge ? ` (${esc(c.waterTempBelowDamGauge)})` : ''} — released water, not the lake</span>`
+        : '')));
   }
 
   if (c.windMph != null) {

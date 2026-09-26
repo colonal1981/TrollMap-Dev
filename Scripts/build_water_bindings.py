@@ -1275,10 +1275,39 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
                 g['end'] = end
     # A site with a thermistor and no stage sensor is real and is of no use to anyone deciding
     # whether to launch. Drop it here rather than filtering it in five places downstream.
+    #
+    # ...BUT NOT THROWN AWAY, SINCE 2026-09-26. The launch decision is no longer the only thing
+    # the Worker asks a gauge: waterProbe() reads temperature, oxygen, turbidity and conductance,
+    # and the plan is built on them. Lake Murray has exactly two live thermometers in its own
+    # water -- 02167600 SALUDA R NEAR PROSPERITY and 02167716 LITTLE SALUDA R NEAR PROSPERITY,
+    # inside the boundary about 40 m from its edge at the heads of the two arms, both publishing
+    # 00010 and 00300 and nothing else -- and this line dropped both, so the only temperature
+    # Murray's card and plan ever had was the Saluda BELOW the dam: 60.3 F on a lake near 80.
+    # (The pool site, 02168500, lists 00010 but its equipment was moved for construction and it
+    # has read only stage since 2024-02-27.) Ryan named both sites, 2026-09-26.
+    #
+    # So the level rule stands for everything it always governed -- pool, tailwater and the
+    # `gauges` list the Worker picks its stage and flow from are exactly as before -- and a site
+    # that publishes a water-quality parameter LIVE and no level at all is kept aside, bound by
+    # the same two-signal rule, and written to its own `quality` list. The Worker reads that list
+    # for the parameters it probes and never for stage or flow.
+    QUALITY_PARMS = {'00010',     # water temperature
+                     '00300',     # dissolved oxygen
+                     '63680',     # turbidity, FNU
+                     '00095',     # specific conductance
+                     '00480'}     # salinity
+    quality_sites = {k: v for k, v in usgs_sites.items()
+                     if not (v['parms'] & LEVEL_PARMS) and (v['parms_uv'] & QUALITY_PARMS)}
     usgs_sites = {k: v for k, v in usgs_sites.items() if v['parms'] & LEVEL_PARMS}
     usgs_cell = defaultdict(list)
     for g in usgs_sites.values():
         usgs_cell[(int(g['lon']), int(g['lat']))].append(g)
+    quality_cell = defaultdict(list)
+    for g in quality_sites.values():
+        quality_cell[(int(g['lon']), int(g['lat']))].append(g)
+    report['usgs_quality_only_sites'] = len(quality_sites)
+    print('  usgs: %d more sites publish water quality live and no level -- bound to `quality`'
+          % len(quality_sites))
     report['usgs_sites_with_level'] = len(usgs_sites)
     print('  usgs: %d distinct sites carry a level/flow parameter '
           '(%d lake-elevation)' % (len(usgs_sites),
@@ -1338,13 +1367,14 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
         polys, verts = bnd if bnd else (None, None)
 
         w, s, e, n = wsen
-        cand, tcand, ucand, gcand = [], [], [], []
+        cand, tcand, ucand, gcand, qcand = [], [], [], [], []
         for ix in range(int(math.floor(w)) - 1, int(math.floor(e)) + 2):
             for iy in range(int(math.floor(s)) - 1, int(math.floor(n)) + 2):
                 cand += cell.get((ix, iy), [])
                 tcand += tide_cell.get((ix, iy), [])
                 ucand += usace_cell.get((ix, iy), [])
                 gcand += usgs_cell.get((ix, iy), [])
+                qcand += quality_cell.get((ix, iy), [])
 
         def _how_far(lon_, lat_, _polys=polys, _verts=verts, _wsen=wsen):
             """(km outside, is_inside). Shoreline distance, never the box, when we have rings."""
@@ -1733,6 +1763,34 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
             placed.append(entry)
             tally['usgs_bound'] += 1
 
+        # ── water-quality instruments with no level: the same two signals, their own list ──────
+        #
+        # See QUALITY_PARMS above for why these exist at all. The test is the one the stage
+        # gauges above pass -- the name relates to this water AND the site stands on or near it --
+        # plus the geometry-only case for a lake or estuary site standing inside the polygon. It
+        # is not loosened: a stream thermometer that names nothing here stays unbound. Nothing
+        # in this list can become pool, tailwater or a stage gauge.
+        quality = []
+        for g in sorted(qcand, key=lambda x: x['site']):
+            glon, glat, gname = g['lon'], g['lat'], g['name']
+            tok = name_relation(names, gname, weak) or names_the_water(own_names, gname)
+            d_km, inside = _how_far(glon, glat)
+            geom = 'inside' if inside else ('near' if d_km <= margin_km else None)
+            q_is_lake = g['site_type'].startswith(('LK', 'ES'))
+            if tok and geom:
+                conf = 'name+geom' if geom == 'inside' else 'name+near'
+            elif inside and q_is_lake:
+                conf = 'geom_only_inside'
+            else:
+                if tok:
+                    tally['quality_rejected_name_only'] += 1
+                continue
+            quality.append({'usgs_site': g['site'], 'name': gname, 'lat': glat, 'lon': glon,
+                            'confidence': conf, 'km_outside': round(d_km, 1), 'source': 'usgs',
+                            'site_type': g['site_type'], 'state': g['state'],
+                            'parms': sorted(g['parms_uv']), 'last_value': g['end']})
+            tally['quality_bound'] += 1
+
         # ── human overrides, last word ──────────────────────────────────────────────────
         # THE TWO-SIGNAL RULE IS RIGHT AND IT CANNOT SEE EVERYTHING. Lake Robinson is fed and
         # drained by Black Creek. `BLACK CREEK NEAR HARTSVILLE` sits 0.48 km below the dam at
@@ -1857,7 +1915,7 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
                 others.append(ce)
             tally['override_' + (role if role in ('pool', 'tailwater') else 'gauge')] += 1
 
-        if not (pool or tail or others or geom_only):
+        if not (pool or tail or others or geom_only or quality):
             tally['unbound'] += 1
             continue
 
@@ -1879,6 +1937,10 @@ def bind(index, boundaries_dir, src, cache, force, margin_km, report, overrides=
             # list by distance alone would put every geometry-only entry, all at 0.0 km, ahead
             # of a named gauge 200 m off the bank -- which inverts the evidence.
             b['gauges'] = (b.get('gauges') or []) + sorted(geom_only, key=lambda x: x['name'])
+        if quality:
+            # Water-quality instruments with no level. Read by the Worker's parameter probe
+            # (temperature, oxygen, turbidity, conductance) and by nothing that wants a stage.
+            b['quality'] = sorted(quality, key=lambda x: (x['km_outside'], x['usgs_site']))
 
         # NO RAMPS HERE. There was a `b['ramps']` block: up to 12 access points per water,
         # 410 entries and 34.3 KB of the published file. **Nothing read it.**

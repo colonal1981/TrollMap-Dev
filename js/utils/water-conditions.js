@@ -151,6 +151,9 @@ export function readConditions(j) {
     waterTempStation: null,
     waterTempUpstreamFrom: null,
     waterTempAgeMin: null,
+    waterTempKm: null,
+    waterTempBelowDamF: null,
+    waterTempBelowDamGauge: null,
     windFrom: null,
     windStation: null,
     windAgeMin: null,
@@ -347,11 +350,21 @@ export function readConditions(j) {
     out.waterTempSite = wt.usgs_site || null;
     out.waterTempStation = wt.ndbc_station || null;
     out.waterTempAgeMin = Number.isFinite(wt.age_minutes) ? wt.age_minutes : null;
+    // HOW FAR FROM THE LAUNCH IT WAS TAKEN. Lake Murray's thermometers are at the heads of the
+    // Saluda and Little Saluda arms, 21-22 km from Hilton; the number is honest only with that.
+    out.waterTempKm = Number.isFinite(wt.km_from_point) ? wt.km_from_point : null;
   } else {
     const t = pickWaterTemp(w);
     out.waterTempF = t.f;
     out.waterTempFrom = t.from;
     out.waterTempGauge = t.name;
+  }
+  // THE BELOW-DAM READING A THERMOMETER ON THE LAKE REPLACED. The Worker keeps it rather than
+  // dropping it; it is the release, not the lake, and it travels under its own name.
+  const wtb = w.water_temp_below_dam || null;
+  if (wtb && Number.isFinite(wtb.f)) {
+    out.waterTempBelowDamF = wtb.f;
+    out.waterTempBelowDamGauge = wtb.name || null;
   }
 
   // REPORTED, NEVER SUBTRACTED. The Corps publishes what the lake is SUPPOSED to be at today;
