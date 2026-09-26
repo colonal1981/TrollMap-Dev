@@ -42,7 +42,6 @@ export const state = {
 
   // ── Chart mosaic (multi-layer depth-contour overlays) ──
   CHARTS: [],            // committed depth-contour overlay layers
-  ACTIVE_CHART: -1,     // -1 = working overlay; >=0 = index into CHARTS
 
   // ── Contour datasets ──
   CONTOUR_DATASETS: [],    // [{ key, lake_name, area_name, zoom, bounds, depthRange, hasSmart, hasRaw }]

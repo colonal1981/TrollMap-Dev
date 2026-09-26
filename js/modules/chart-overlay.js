@@ -37,8 +37,7 @@ export function refreshChartOverlayTransforms() {
   try {
     (state.CHARTS || []).forEach((c) => {
       if (!c || c.visible === false) return;
-      if (c.type === 'affine' && c.affine && c.affine.update) c.affine.update();
-      else if (c.overlay) applyOverlayRotation(c.overlay, c.rotation || 0);
+      if (c.overlay) applyOverlayRotation(c.overlay, c.rotation || 0);
     });
   } catch (e) {
     console.warn('chart transform refresh failed', e);
