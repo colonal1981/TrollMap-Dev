@@ -801,13 +801,6 @@ async function fetchDukeFlowArrivals(basinId) {
   }
 }
 
-async function getDukeLake(nameFragment) {
-  const arr = await fetchDukeApi();
-  if (!arr) return null;
-  const frag = nameFragment.toLowerCase();
-  const row = arr.find((r) => (r.LakeDisplayName || "").toLowerCase().includes(frag) || (r.LakeName || "").toLowerCase().includes(frag));
-  return row ? normalizeDukeRow(row) : null;
-}
 /**
  * The Duke row for a water, found in the LIVE FEED rather than in the table above.
  *
@@ -890,35 +883,6 @@ const SANTEE_MARION_BACKUP_SITE = "02171000";
 // typed: usaceLevels() picks the project from the district's own roster of published
 // conservation pools, and Marion and Moultrie resolve through their bound USGS sites.
 
-async function fetchAhqWaterTemp(slug) {
-  if (!slug) return null;
-  const url = `https://www.anglersheadquarters.com/pages/${slug}-fishing-report`;
-  const r = await fetchText(url);
-  if (!r.ok || !r.text) return null;
-  const numericRe = /(?:morning\s+)?(?:surface\s+)?water\s+temperatures?\s+(?:are|is|range)\s+(?:about\s+|around\s+|from\s+|approximately\s+)?(\d{2,3})(?:\s*(?:to|[-–])\s*(\d{2,3}))?\s*degrees/i;
-  const m = r.text.match(numericRe);
-  if (m) {
-    const a = parseInt(m[1]), b = m[2] ? parseInt(m[2]) : null;
-    const tempF = b ? Math.round((a + b) / 2) : a;
-    return { tempF, source: url, raw: m[0], range: b ? [a, b] : null };
-  }
-  const vagueRe = /water\s+temperatures?\s+(?:are\s+|is\s+|now\s+)?(?:in\s+the\s+)?(lower|low|mid|upper|high)?\s*(\d{2,3})s(?:\s*(?:to|[-–])\s*(lower|low|mid|upper|high)?\s*(\d{2,3})s)?/i;
-  const v = r.text.match(vagueRe);
-  if (v) {
-    const band = (mod, base) => {
-      const b2 = parseInt(base);
-      if (!mod || mod === "mid") return b2 + 5;
-      if (mod === "lower" || mod === "low") return b2 + 2;
-      if (mod === "upper" || mod === "high") return b2 + 8;
-      return b2 + 5;
-    };
-    const a = band(v[1], v[2]);
-    const b = v[4] ? band(v[3], v[4]) : null;
-    const tempF = b ? Math.round((a + b) / 2) : a;
-    return { tempF, source: url, raw: v[0], range: b ? [a, b] : null, approx: true };
-  }
-  return null;
-}
 var LAKE_INTEL_SOURCE_REGISTRY = {
   "default": {
     "official": [
@@ -2472,4 +2436,4 @@ var RIVERS = {
   }
 };
 
-export { easternOffsetFor, normalizeDukeRow, dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun, fetchDukeAccessAlerts, fetchDukeOperatingRange, fetchDukeCalendar, parseDukeCalendar, LAKES, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, seriesRank, rdbSeriesDescriptions, newerStamp, applyElevation, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake };
+export { easternOffsetFor, normalizeDukeRow, dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun, fetchDukeAccessAlerts, fetchDukeOperatingRange, fetchDukeCalendar, parseDukeCalendar, LAKES, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, seriesRank, rdbSeriesDescriptions, newerStamp, applyElevation, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry };

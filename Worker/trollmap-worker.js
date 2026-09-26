@@ -6,7 +6,7 @@ import { CORS, JSON_HEADERS, TEXT_HEADERS, callLLM, isAuthorized, chartpackKey, 
 // Bump on every edit to this file. See ARCGIS_BUILD in core/arcgis.js.
 const WORKER_BUILD = 'worker-2026-08-07a';
 
-import { fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun, dukeRowForNames, LAKES, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake } from './worker-data.js';
+import { fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun, dukeRowForNames, LAKES, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry } from './worker-data.js';
 import { SPECIES_MIDLANDS_SANTEE, SPECIES_UPSTATE, SPECIES_COASTAL_SALTWATER, SPECIES_ALL_TROLLMAP, MAX_BIOLOGICAL_LENGTH, PURE_SALTWATER, PURE_FRESHWATER, getSpeciesListForGps, checkBiologicalLength, checkEcologicalReality } from './worker-species.js';
 import { handleGisRoute, flagIsYes, hasText, ARCGIS_BUILD } from './core/arcgis.js';
 import { RAMP_SOURCES } from './core/ramp-sources.js';
@@ -245,23 +245,10 @@ async function getRiver(key, opts = {}) {
     }
     out.gauges.push(rec);
   }
-  if (cfg.damLakeKey && LAKES[cfg.damLakeKey]) {
-    try {
-      const lakeData = await resolveLake(cfg.damLakeKey);
-      out.upstream_lake = {
-        name: cfg.damLakeKey,
-        elevation_ft: lakeData.elevation_ft,
-        percent_full: lakeData.percent_full,
-        full_pool_ft: lakeData.full_pool_ft,
-        special_message: lakeData.special_message
-      };
-    } catch (err) {
-      // The upstream lake's level is half of reading a dam report -- whether they are
-      // generating is mostly a question of how full the pool above is. Dropping it silently
-      // hands back a report that looks complete and is missing the causal half.
-      console.warn(`[gauges] upstream lake ${cfg.damLakeKey} unavailable:`, err && err.message);
-    }
-  }
+  // THE UPSTREAM LAKE'S LEVEL WAS LOOKED UP HERE, off LAKES by `cfg.damLakeKey`, for the two
+  // rivers that name a dam lake. It went on 2026-09-25 with resolveLake(), its only caller: the
+  // app reads the pool above a dam from /conditions, which answers every bound water from
+  // water_bindings.json rather than from a fifteen-row table.
   // ── THE BASIN IS RESOLVED FROM DUKE'S ROSTER, NOT TYPED ─────────────────────────────────
   //
   // This read `cfg.dukeBasinId`, present on 2 of the 6 RIVERS entries, so /river had a release
@@ -713,6 +700,10 @@ async function fetchDominionSaludaStatus() {
 // Three guards, cheapest first. This is the sixth member of the substring-matcher family the
 // deletion tab already lists; the real fix is resolving by registry slug, which needs the slug
 // to reach here.
+//
+// NO CALLER SINCE 2026-09-25. resolveLake() was its one reader and went with /river's upstream-
+// lake lookup. It is left standing on purpose: it and lakeKeyFromName() in worker-data.js are a
+// pair a later change decides together, not this deletion.
 const FLOWING_RE = /\b(river|creek|canal|branch|run|fork|swamp|slough)\b/i;
 function resolveLakeKey(lakeName) {
   // 1. The county parenthetical is metadata, not part of the water's name.
@@ -722,107 +713,6 @@ function resolveLakeKey(lakeName) {
   if (FLOWING_RE.test(bare)) return null;
   // 3. Whole word, so "russ lake" cannot match "russell" and a key cannot match mid-word.
   return Object.keys(LAKES).find((k) => new RegExp(`\\b${k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(bare)) || null;
-}
-async function resolveLake(lakeName) {
-  const key = resolveLakeKey(lakeName);
-  if (!key) return { error: `unknown lake: ${lakeName}` };
-  const cfg = LAKES[key];
-  const out = {
-    waterbody: key,
-    elevation_ft: null,
-    water_temperature_F: null,
-    sources: [],
-    timestamp: (new Date()).toISOString()
-  };
-  if (cfg.pool) {
-    const u = await fetchUsgs(cfg.pool, "00010,00062,62614,62615,00065");
-    if (u?.elevation != null) {
-      out.elevation_ft = round2(u.elevation);
-      out.sources.push(`USGS ${cfg.pool} (reservoir elevation)`);
-    } else if (u?.gageHeight != null && !cfg.river) {
-      out.elevation_ft = round2(u.gageHeight);
-      out.sources.push(`USGS ${cfg.pool} (gage height \u2014 verify against published pool)`);
-    }
-    if (u?.tempC != null) {
-      out.water_temperature_F = Math.round(u.tempC * 9 / 5 + 32);
-      out.sources.push(`USGS ${cfg.pool} (temp)`);
-    }
-  }
-  if (out.elevation_ft == null && cfg.duke) {
-    const lake = await getDukeLake(cfg.duke);
-    if (lake) {
-      if (lake.ft != null) out.elevation_ft = lake.ft;
-      // `index` is Duke's own published number and `display_full_pool` 100 is the scale it sits
-      // on, so the card shows what his own lake page shows and he can check one against the other.
-      // The unit is NOT a percentage -- see normalizeDukeRow: it is feet inside a 100 ft band
-      // hung under full pond, which is why 100 minus it is a drawdown in feet.
-      if (lake.index != null) out.display_level = lake.index;
-      out.below_full_pool_ft = lake.belowFullPoolFt;
-      out.full_pool_ft = lake.fullPool;
-      out.display_unit = "ft below full pond scale (100 = full)";
-      out.display_full_pool = 100;
-      if (isFinite(lake.target)) out.target = lake.target;
-      out.sources.push("Duke API /lakes/current-level");
-      if (lake.specialMessage) out.special_message = lake.specialMessage;
-    }
-  }
-  // THE SEPA BRANCH IS GONE, AND SO IS EVERYTHING ONLY IT REACHED.
-  //
-  // Ryan, 2026-08-25: *"nothing hand written... everything expandable... if i decide to add
-  // every single lake that garmin has in the US into the app tomorrow this stuff should be able
-  // to expand with it"*.
-  //
-  // What stood here was three hard-coded Corps lakes plus Marion and Moultrie, reached only
-  // through the `/lake` route -- which had no caller anywhere in js/. Behind it: a six-row
-  // CWMS_PROJECT table, a scrape of water.sas.usace.army.mil for a three-digit number sitting
-  // next to a lake name, and a CWMS series fetch. None of it could ever run, and none of it
-  // could have grown past the five lakes somebody typed.
-  //
-  // `/conditions` already answers all five off `water_bindings.json` with nothing typed:
-  // usaceLevels() picks the project from the district's own roster of published conservation
-  // pools and evaluates the seasonal curve for today, so Hartwell knows it is meant to be at
-  // 660 in summer and 656 in winter without a constant anywhere. Marion and Moultrie resolve
-  // through their bound USGS sites.
-  //
-  // resolveLake() stays because getRiver() calls it for the two rivers that name a dam lake,
-  // Wateree River and Saluda. Neither of those lakes carried `sepa`, which is why this branch
-  // was unreachable in the first place.
-
-  if (out.water_temperature_F == null && cfg.river) {
-    const u = await fetchUsgs(cfg.river, "00010,00065,00060,63160");
-    if (u?.tempC != null) {
-      out.water_temperature_F = Math.round(u.tempC * 9 / 5 + 32);
-      out.sources.push(`USGS ${cfg.river} (water temp)`);
-    }
-    if (u?.gageHeight != null) out.river_gage_height_ft = u.gageHeight;
-    if (u?.streamflow != null) out.river_streamflow_cfs = u.streamflow;
-    if (u?.elevationNavd88 != null) out.river_water_elevation_ft_navd88 = u.elevationNavd88;
-    if (u?.timestamp) out.usgs_timestamp = u.timestamp;
-  }
-  if (out.water_temperature_F == null && cfg.ahq) {
-    const a = await fetchAhqWaterTemp(cfg.ahq);
-    if (a?.tempF != null) {
-      out.water_temperature_F = a.tempF;
-      out.water_temperature_source = `Angler's Headquarters report${a.approx ? " (estimated from range)" : ""}: "${a.raw}"`;
-      if (a.range) out.water_temperature_range_F = a.range;
-      out.sources.push(`Angler's Headquarters (${cfg.ahq})`);
-    }
-  }
-  if (out.elevation_ft == null && cfg.normalPool) {
-    out.elevation_ft = cfg.normalPool;
-    out.sources.push("published normal pool (fallback)");
-  }
-  if (out.full_pool_ft == null && cfg.normalPool) out.full_pool_ft = cfg.normalPool;
-  if (out.display_level == null && out.elevation_ft != null) {
-    out.display_level = out.elevation_ft;
-    out.display_unit = "ft";
-    out.display_full_pool = cfg.normalPool || out.full_pool_ft || null;
-  }
-  out.status = out.elevation_ft != null ? "success" : "no_data";
-  return out;
-}
-function round2(n) {
-  return Math.round(n * 100) / 100;
 }
 var SYNC_STORES = ["plan", "spread", "catch", "chart", "layer"];
 async function ensureSyncSchema(db) {
