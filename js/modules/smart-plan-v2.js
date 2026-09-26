@@ -37,6 +37,8 @@ import { saysRiver } from './plan-inputs.js';
 import { launchRouteFor } from '../data/launch-reach.js';
 // THE WIND ACROSS THE WATER -- fetch off the boundary, waves off the fetch. See wind-waves.js.
 import { shoreRays, wavesByHour, roughLegs } from '../utils/wind-waves.js';
+// HOW FAR BY WATER, answered in the browser -- see waterDistanceAsker().
+import { parseWaterGraph, localWaterDistances } from '../utils/water-graph.js';
 
 // How many candidates the model is shown. Enough to make the ordering a real choice, few enough
 // that the prompt does not turn into a phone book. NOT a cap on what it may fish — it may use all
@@ -1047,6 +1049,42 @@ export async function selectByWater(legRuns, selOpts, w) {
   const key = (p) => `${Number(p[0]).toFixed(6)},${Number(p[1]).toFixed(6)}`;
   const rampKey = key(w.ramp);
   const leadM = Number(w.leadM) || 0;
+
+  // ── WITH THE GRAPH IN HAND, EVERY WINDOW IS PRICED BY WATER, IN ONE SELECTION ──────────────────
+  //
+  // The loop below was built for the Worker, which can only be asked about a few points at a time.
+  // Measured on Murray from Hilton with the graph searched here: the loop took 34 selections and
+  // 26 s to settle, because the cove makes most of what looks near by crow far by water and the true
+  // dozen sat deep in the straight-line ranking. With the graph local, one search from the ramp
+  // prices every window the selector looks at, so there is nothing to iterate: one selection,
+  // exact, plus one search per offered leg end for the ordering table.
+  let local = null;
+  try {
+    local = typeof w.distancesFrom.local === 'function' ? await w.distancesFrom.local()
+      : (typeof w.distancesFrom.fieldFrom === 'function' ? w.distancesFrom : null);
+  } catch (_) { local = null; }
+  if (local && typeof local.fieldFrom === 'function') {
+    const fromRamp = local.fieldFrom(w.source || w.ramp);
+    const fields = new Map();
+    const transitM = (a, b) => {
+      const s = straight(a, b);
+      const ka = key(a), kb = key(b);
+      let m = null;
+      if (ka === rampKey || kb === rampKey) {
+        const got = fromRamp(ka === rampKey ? b : a);
+        m = got == null ? null : leadM + got;
+      } else {
+        let f = fields.get(ka);
+        if (!f) { f = local.fieldFrom(a); fields.set(ka, f); }
+        m = f(b);
+      }
+      return m == null ? s : Math.max(m, s);
+    };
+    const cands = selectCandidates(legRuns, { ...selOpts, transitM });
+    cands.byWater = { local: true, selections: 1, searches: fields.size + 1 };
+    return cands;
+  }
+
   const fromRamp = new Map();                   // point -> water metres from the ramp
   const between = new Map();                    // 'a>b' -> water metres
   // THE RAMP'S ROUTE IS THE SAME BOTH WAYS, so the run home is read off the run out. The graph's
@@ -1182,6 +1220,40 @@ export function waterDistances(workerUrl, slug, opts = {}) {
     }
     return rows;
   };
+  return ask;
+}
+
+/**
+ * THE ASKER THE PLAN USES: the pack's own water graph, searched in the browser, with the Worker's
+ * /distances as the fallback when the graph cannot be had.
+ *
+ * The Worker is on Cloudflare's free plan, 10 ms of CPU a request, and a search over Lake Murray's
+ * 118,090 nodes is far more: measured 2026-09-26, tables of 8, 16 and 24 sources came back "Worker
+ * exceeded resource limits" at random. The graph is 4.5 MB beside a 38 MB pack the plan already
+ * reads, and here the same search costs tens of milliseconds. Loaded on the first question, so a
+ * river -- which never asks -- never downloads it.
+ */
+export function waterDistanceAsker(workerUrl, slug, opts = {}) {
+  const remote = waterDistances(workerUrl, slug, opts);
+  let local = null;
+  let loading = null;
+  const load = () => {
+    if (!loading) {
+      loading = (async () => {
+        try {
+          const r = await fetch(`${workerUrl}/chartpacks/${encodeURIComponent(slug)}/water_graph.bin`);
+          if (r.ok) local = localWaterDistances(parseWaterGraph(await r.arrayBuffer()), opts);
+        } catch (_) { local = null; }
+        return local;
+      })();
+    }
+    return loading;
+  };
+  const ask = async (from, to) => ((await load()) || remote)(from, to);
+  ask.matrix = async (sources, to) => ((await load()) || remote).matrix(sources, to);
+  // The local asker itself, or null when the graph could not be had -- for selectByWater(), which
+  // prices every window directly when it can.
+  ask.local = () => load();
   return ask;
 }
 
