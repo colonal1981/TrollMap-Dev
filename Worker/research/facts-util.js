@@ -2,6 +2,7 @@
 import { callLLM, extractLLMText, r2Text } from '../worker-core.js';
 import { hasResearchValue } from '../../js/utils/coerce.js';
 import { RAMP_SOURCES } from '../core/ramp-sources.js';
+import { ATTRACTOR_SOURCES } from '../core/attractor-sources.js';
 
 function normalizeResearchName(s) {
   return String(s || '').toLowerCase().replace(/&amp;/g, '&').replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ');
@@ -552,56 +553,11 @@ async function parseSCDNRDescriptionFacts(lakeName, url, html, env) {
 // one table now. See Worker/core/ramp-sources.js.
 const RESEARCH_RAMP_SOURCES = RAMP_SOURCES;
 
-const RESEARCH_ATTRACTOR_SOURCES = {
-  SC: {
-    url: "https://services.arcgis.com/acgZYxoN5Oj8pDLa/arcgis/rest/services/SCDNR_Freshwater_Fish_Attractors_Public_Web_App/FeatureServer/0/query",
-    label: 'SCDNR Freshwater Fish Attractors',
-    idField: 'OBJECTID',
-    filter: () => true,
-    name: (p) => p.FishAttractorName,
-    wb: (p) => p.Waterbody,
-    lat: (p) => p.lat_dd,
-    lon: (p) => p.lon_dd,
-    type: (p) => p.Material
-  },
-  // Same null-coordinate defect that was in trollmap-worker.js's /attractors config.
-  // Field names verified against the service: lowercase `latitude` / `longitude`.
-  // NOTE: this table duplicates ATTRACTOR_SOURCES in trollmap-worker.js -- see
-  // test/arcgis-mapping.test.js. Fix both or collapse them; do not fix one.
-  GA: {
-    url: "https://services6.arcgis.com/9QlSLDqa0P1cHLhu/arcgis/rest/services/Fish_Attractors_for_Download/FeatureServer/0/query",
-    label: 'Georgia DNR Fish Attractors',
-    idField: 'OBJECTID',
-    filter: () => true,
-    name: (p) => (p.note || '').trim() || `${p.waterbody || 'GA'} attractor`,
-    wb: (p) => p.waterbody,
-    lat: (p) => p.latitude,
-    lon: (p) => p.longitude,
-    type: (p) => `${p.attractor_code || ''} ${p.attractor_code_other || ''}`.trim()
-  },
-  NC: {
-    url: "https://services1.arcgis.com/YfqBAUM5nWR3yhGP/arcgis/rest/services/Fish_Attractors_public_view/FeatureServer/0/query",
-    label: 'NC WRC Fish Attractors',
-    idField: 'OBJECTID',
-    filter: () => true,
-    name: (p) => `${p.Waterbody} Attractor`,
-    wb: (p) => p.Waterbody,
-    lat: (p) => p.Latitude,
-    lon: (p) => p.Longitude,
-    type: (p) => `${p.Structure1 || ''} ${p.Structure2 || ''}`.trim() || p.Attractor_Type
-  },
-  TN: {
-    url: "https://services3.arcgis.com/PWXNAH2YKmZY7lBq/arcgis/rest/services/Fish_Attractor_Locations_view/FeatureServer/0/query",
-    label: 'Tennessee Wildlife Resources Agency Fish Attractors',
-    idField: 'OBJECTID',
-    filter: () => true,
-    name: (p) => p.Site_Name || (p.Embayment ? `${p.WaterBody} - ${p.Embayment}` : `${p.WaterBody} Attractor`),
-    wb: (p) => p.WaterBody,
-    lat: (p) => p.YLat,
-    lon: (p) => p.XLong,
-    type: (p) => [p.StructureTypes, p.Artificial, p.Natural_].filter(Boolean).join(', ') || 'Unknown'
-  }
-};
+// THE SAME TABLE THE APP'S /attractors ROUTE USES, collapsed 2026-09-25 like the ramps above. The
+// copy that stood here passed Georgia's coded attractor_code through raw; the route decodes it.
+// See Worker/core/attractor-sources.js, which also says which shape of the shared R2 object is in
+// the bucket.
+const RESEARCH_ATTRACTOR_SOURCES = ATTRACTOR_SOURCES;
 
 async function fetchArcGISGrouped(env, cacheKey, sourceDef, buildRecord) {
   try {
