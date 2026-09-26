@@ -1341,6 +1341,9 @@ export function conditionsFrom(inp, ramp, sol, forecast, clarityAtRamp = null) {
     c.windByHour = forecast.windByHour;
   }
   if (forecast && forecast.sunrise) c.sunrise = forecast.sunrise;
+  // THE PRESSURE AT LAUNCH AND 24 AND 48 HOURS BEFORE IT, for the front (change request 23).
+  // Three numbers and their source; what they mean to the bite is the model's to say.
+  if (forecast && forecast.pressureTrend) c.pressureTrend = forecast.pressureTrend;
   if (sol) {
     const hh = (h) => `${String(Math.floor(((h % 24) + 24) % 24)).padStart(2, '0')}:`
                     + `${String(Math.round((h % 1) * 60)).padStart(2, '0')}`;

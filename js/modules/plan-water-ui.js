@@ -45,7 +45,8 @@ import { packFetcher } from './smart-plan-v2.js';
 import { packDerivedFacts } from '../utils/pack-facts.js';
 import { fetchForecast,
          fetchWaterState, fetchClarityAtRamp, regulationStateFor,
-         detectCoastalZone } from './plan-preflight.js';
+         detectCoastalZone, fogNote } from './plan-preflight.js';
+import { lakeSurfaceTemp } from '../utils/water-conditions.js';
 import { inshoreSeasonFor } from '../data/inshore-season.js';
 import { seabedHabitatFor } from '../data/seabed-habitat.js';
 import { depthSampler, shorelineIndex, waterMask } from './plan-water-index.js';
@@ -1344,6 +1345,13 @@ export async function buildFromPicked() {
       'no hourly wind for this water — the safety call was made on a daily maximum, '
       + 'which cannot tell a calm dawn from a blown-out noon'];
   }
+  // FOG HOLDS THE LAUNCH, AND UNTIL WHEN. Same note, same source, as the Smart Plan path -- see
+  // fogNote() in plan-preflight.js (change request 23).
+  const fog = fogNote(T.weatherByHour, {
+    launchTime: T.launchTime,
+    waterTempF: lakeSurfaceTemp(waterState, T.waterTempF).tempF,
+  });
+  if (fog) r.problems = [...(r.problems || []), fog];
 
   if (r.problems && r.problems.length) {
     console.warn('[pick-water] the plan came back with %d problem(s):', r.problems.length);

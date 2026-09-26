@@ -25,7 +25,7 @@ import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
 import { TRANSIT_MIN_DEPTH_FT } from './plan-water.js';
 import { solunarFor } from '../utils/solunar.js';
 import { checkPlanLegality, ensureRegulations, fetchForecast, fetchWaterState,
-         fetchClarityAtRamp, regulationStateFor, detectCoastalZone } from './plan-preflight.js';
+         fetchClarityAtRamp, regulationStateFor, detectCoastalZone, fogNote } from './plan-preflight.js';
 import { primeFishAdvisories } from '../data/fish-advisories.js';
 import { primeInshoreSeason, inshoreSeasonFor } from '../data/inshore-season.js';
 import { primeSeabedHabitat, seabedHabitatFor } from '../data/seabed-habitat.js';
@@ -427,6 +427,15 @@ export async function runSmartPlanV2(opts = {}) {
   if (legality.warnings && legality.warnings.length) {
     r.problems = [...legality.warnings, ...(r.problems || [])];
   }
+  // FOG HOLDS THE LAUNCH, AND UNTIL WHEN (change request 23). Merged here with the law and for the
+  // same reason: above every reader, so the bench and the leg cards carry it as well as the tab.
+  // The hours are the forecast's own fog code; the air and the lake's own surface are printed
+  // beside them. Never a no-go -- fog lifts.
+  const fog = forecast ? fogNote(forecast.weatherByHour, {
+    launchTime: inp.launchTime,
+    waterTempF: lakeSurfaceTemp(waterState, inp.waterTempF).tempF,
+  }) : null;
+  if (fog) r.problems = [...(r.problems || []), fog];
   // And the limits that were read and are not in the way go where the app's other settled things
   // go -- see plan-assemble.js. They are still on the plan and still rendered; they are not one
   // of the things it wants to tell him before he launches.

@@ -182,6 +182,41 @@ export function skyAt(weatherByHour, hour) {
   return weatherByHour.find((w) => w && Number(w.hour) === h) || null;
 }
 
+// ── fog, which is a launch question before it is a light one ─────────────────────────────────────
+//
+// Change request 23. Ryan, 2026-09-26, Wateree: *"it would not have been safe to launch earlier
+// this morning... because of the cold air and the hot water there was seriously dense fog on the
+// lake this morning... it was still present when i got there at 8"*. skyWord() already calls code
+// 45/48 "fog" for the light; these two say WHEN, so the plan can say the launch waits and until
+// when. The forecast's own fog code only -- no visibility cut-off is decided here.
+
+/** The hours fog is forecast, as "06:00-08:00" spans (the end is the first clear hour), or []. */
+export function fogSpans(weatherByHour) {
+  const hrs = (Array.isArray(weatherByHour) ? weatherByHour : [])
+    .filter((e) => e && (e.fog === true || Number(e.code) === 45 || Number(e.code) === 48))
+    .map((e) => Number(e.hour)).filter(Number.isFinite).sort((a, b) => a - b);
+  const spans = [];
+  for (const h of hrs) {
+    const last = spans[spans.length - 1];
+    if (last && h === last[1] + 1) last[1] = h;
+    else if (!last || h !== last[1]) spans.push([h, h]);
+  }
+  const hh = (h) => `${String(h).padStart(2, '0')}:00`;
+  return spans.map(([a, b]) => `${hh(a)}-${hh(b + 1)}`);
+}
+
+/** The lowest forecast visibility in a fog hour, `{ m, hour }`, or null when none was sent. */
+export function fogLowestVisibility(weatherByHour) {
+  let best = null;
+  for (const e of (Array.isArray(weatherByHour) ? weatherByHour : [])) {
+    if (!e || !(e.fog === true || Number(e.code) === 45 || Number(e.code) === 48)) continue;
+    const m = Number(e.visibilityM);
+    if (e.visibilityM == null || !Number.isFinite(m)) continue;
+    if (!best || m < best.m) best = { m: Math.round(m), hour: Number(e.hour) };
+  }
+  return best;
+}
+
 // ── the answer ───────────────────────────────────────────────────────────────────────────────────
 
 /**

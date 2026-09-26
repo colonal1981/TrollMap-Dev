@@ -42,6 +42,7 @@ import { assessZoneIntrusion } from './usgs-gauges.js';
 import { DEPTH_BANDS, normalizeCoastalSpecies, tacticalNote } from './coastal-scoring.js';
 import { clarityForPlan, versusNormalAt } from '../utils/clarity-at-ramp.js';
 import { compassOf } from '../utils/compass.js';
+import { fogSpans, fogLowestVisibility, skyAt } from '../utils/light-state.js';
 
 /** The coastal zone this water is, or null for everything inland. */
 export function detectCoastalZone(lakeName) {
@@ -257,11 +258,19 @@ export async function fetchForecast(lakeName, dateStr, o = {}) {
       // overcast vs daylight". Civil twilight answers the hour; only this answers the sky, and
       // it rides the request that was already being made.
       + '&hourly=windspeed_10m,winddirection_10m,windgusts_10m,weather_code,'
-      + 'precipitation_probability,precipitation,cloudcover'
+      // AND WHETHER HE CAN SEE TO LAUNCH. Ryan, 2026-09-26: "because of the cold air and the hot
+      // water there was seriously dense fog on the lake this morning... it was still present when
+      // i got there at 8". Visibility in metres, beside the weather code's own fog (45, 48).
+      + 'precipitation_probability,precipitation,cloudcover,visibility,temperature_2m'
       + `&timezone=auto&start_date=${dateStr}&end_date=${dateStr}`;
     const res = await fetch(url, { signal: AbortSignal.timeout ? AbortSignal.timeout(4500) : undefined });
     if (!res.ok) return null;
     const d = await res.json();
+    // THE PRESSURE OVER THE TWO DAYS BEFORE, for the front (change request 23). Ryan, same day:
+    // "there was a huge weather swing and coming off of a low front... so they just may not have
+    // been wanting to chew". Asked separately because the hourly arrays above are read by hour of
+    // day, and two more days in them would repeat every hour three times. Never fatal.
+    const pressure = await pressureTrend(lat, lon, dateStr, o.launchTime).catch(() => null);
     const D = d && d.daily;
     if (!D) return null;
     const dir = compassOf((D.winddirection_10m_dominant || [])[0] || 0);
@@ -276,6 +285,7 @@ export async function fetchForecast(lakeName, dateStr, o = {}) {
       weatherByHour: hourlyWeather(d && d.hourly, o.launchTime, o.returnTime),
       sunrise: clock((D.sunrise || [])[0]),
       sunset: clock((D.sunset || [])[0]),
+      pressureTrend: pressure,
     };
   } catch (e) {
     console.warn('[preflight] forecast fetch failed:', e && e.message);
@@ -675,9 +685,93 @@ export function hourlyWeather(hourly, from, to) {
     // Percent sky covered. Kept as the number Open-Meteo sent -- no band, no label. Whoever
     // reads it decides what counts as overcast, and this file is not that reader.
     if (Number.isFinite(Number(cloud[i]))) e.cloudPct = Number(cloud[i]);
+    // FOG IS THE CODE'S OWN WORD, and visibility is the number beside it. No threshold here.
+    if (Number.isFinite(code) && (code === 45 || code === 48)) e.fog = true;
+    const vis = hourly && hourly.visibility ? Number(hourly.visibility[i]) : NaN;
+    if (Number.isFinite(vis)) e.visibilityM = vis;
+    // THE AIR, in °F like the rest of the app (Open-Meteo sends °C). Cold air over warm water is
+    // what made the fog; fogNote() prints it beside the water at the launch hour.
+    const airC = hourly && hourly.temperature_2m ? hourly.temperature_2m[i] : null;
+    if (airC != null && Number.isFinite(Number(airC))) e.airF = Math.round(Number(airC) * 9 / 5 + 32);
     out.push(e);
   }
   return out;
+}
+
+/**
+ * THE LINE FOR THE PLAN WHEN FOG IS FORECAST IN THE TRIP WINDOW, or null.
+ *
+ * Change request 23: "It should say when fog is likely to hold the launch, and until when." The
+ * hours are the forecast's own fog code (fogSpans()); the air and the water at the launch hour are
+ * printed beside them because cold air over warm water is how that morning on Wateree was made,
+ * and he can read the two numbers himself. No cut-off is decided here.
+ *
+ * @param {object[]} weatherByHour  hourlyWeather() output
+ * @param {object} [o]
+ * @param {string} [o.launchTime]   'HH:MM'
+ * @param {number} [o.waterTempF]   the lake's own surface reading, or none
+ */
+export function fogNote(weatherByHour, o = {}) {
+  const spans = fogSpans(weatherByHour);
+  if (!spans.length) return null;
+  const low = fogLowestVisibility(weatherByHour);
+  const hh = (h) => `${String(h).padStart(2, '0')}:00`;
+  const vis = low
+    ? `, visibility down to ${Math.round(low.m * 3.28084 / 10) * 10} ft at ${hh(low.hour)}` : '';
+  const lh = hhToHour(o.launchTime);
+  // THE SPAN THE LAUNCH SITS IN, if it sits in one. A span's end is its first clear hour.
+  const inside = Number.isFinite(lh)
+    ? spans.find((s) => lh >= +s.slice(0, 2) && lh < +s.slice(6, 8)) : null;
+  const at = Number.isFinite(lh) ? skyAt(weatherByHour, lh) : null;
+  const water = typeof o.waterTempF === 'number' && Number.isFinite(o.waterTempF)
+    ? Math.round(o.waterTempF) : null;
+  const air = at && Number.isFinite(at.airF) ? at.airF : null;
+  return `fog is forecast at the lake ${spans.join(', ')} (the forecast's fog code${vis}).`
+    + (inside ? ` A ${o.launchTime} launch is inside it, and it is forecast to hold until `
+              + `${inside.slice(6)}.` : '')
+    + (air != null && water != null
+      ? ` Air ${air}°F over water ${water}°F at ${hh(lh)}.` : '');
+}
+
+/**
+ * THE SURFACE PRESSURE AT THE LAUNCH HOUR ON THE TRIP DAY, AND 24 AND 48 HOURS BEFORE IT.
+ *
+ * Open-Meteo's own hourly surface pressure at the lake: the model's analysis for the hours that
+ * have passed and its forecast for those that have not. Numbers only -- how big a swing is "a
+ * front" is not decided here; the prompt's barometer note already says what a rise and a fall
+ * mean to a fish, and the three numbers let the model and Ryan read it.
+ */
+export async function pressureTrend(lat, lon, dateStr, launchTime) {
+  const day = new Date(`${dateStr}T12:00:00`);
+  if (Number.isNaN(day.getTime())) return null;
+  const back = new Date(day.getTime() - 2 * 86400e3);
+  const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}`
+    + `&hourly=surface_pressure&timezone=auto&start_date=${ymd(back)}&end_date=${dateStr}`;
+  const res = await fetch(url, { signal: AbortSignal.timeout ? AbortSignal.timeout(4500) : undefined });
+  if (!res.ok) return null;
+  const j = await res.json();
+  const t = (j && j.hourly && j.hourly.time) || [];
+  const p = (j && j.hourly && j.hourly.surface_pressure) || [];
+  const h = hhToHour(launchTime);
+  // No launch hour, no answer: an hour picked here would be the app inventing the trip.
+  if (!Number.isFinite(h)) return null;
+  const at = (ds) => {
+    const key = `${ds}T${String(h).padStart(2, '0')}:00`;
+    const i = t.indexOf(key);
+    return i >= 0 && Number.isFinite(Number(p[i])) ? Math.round(Number(p[i]) * 10) / 10 : null;
+  };
+  const now = at(dateStr);
+  const d1 = at(ymd(new Date(day.getTime() - 86400e3)));
+  const d2 = at(ymd(back));
+  if (now == null) return null;
+  return {
+    hPaAtLaunch: now, hPa24hBefore: d1, hPa48hBefore: d2,
+    change24hHPa: d1 != null ? Math.round((now - d1) * 10) / 10 : null,
+    change48hHPa: d2 != null ? Math.round((now - d2) * 10) / 10 : null,
+    at: `${String(h).padStart(2, '0')}:00`,
+    source: 'Open-Meteo hourly surface pressure at the lake (model analysis and forecast)',
+  };
 }
 
 export function hourlyWind(hourly, launchTime, returnTime) {

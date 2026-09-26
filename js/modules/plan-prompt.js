@@ -69,7 +69,8 @@ import { FISHING_STYLE } from '../data/fishing-style-profile.js';
 // than typed here so the prompt cannot come to say a distance the selector does not mean; see
 // RELIEF_RADIUS_M for why the app holds the number at all instead of reading it off the pack.
 import { RELIEF_RADIUS_M } from './plan-candidates.js';
-import { lightSummary, lightPhrasesIn, lightLabel } from '../utils/light-state.js';
+import { lightSummary, lightPhrasesIn, lightLabel, fogSpans, fogLowestVisibility }
+  from '../utils/light-state.js';
 import { writtenOf } from '../utils/fact-date.js';
 
 // Six rods. This never changes; it is the boat, not a setting.
@@ -1010,6 +1011,41 @@ function drawnDayBlock(day, candidates) {
              + 'comes back, and that is all there is.');
   }
   return `\n${lines.join('\n')}\n`;
+}
+
+/**
+ * ── FOG HOLDS THE LAUNCH, AND A FRONT IS A NOTE ────────────────────────────────────────────────
+ *
+ * Change request 23, Wateree 2026-09-26. Ryan: *"it would not have been safe to launch earlier
+ * this morning... there was seriously dense fog on the lake"*, and *"coming off of a low front...
+ * so they just may not have been wanting to chew"*.
+ *
+ * The fog hours are the forecast's own fog code (fogSpans()), and they are printed because
+ * `weatherByHour` is not in the day's JSON. The pressure IS in the JSON as
+ * `conditions.pressureTrend`, so it is pointed at rather than repeated. Neither one decides
+ * `isGo`: fog lifts, and a front is a reason the bite may be slow, not a reason to stay home.
+ */
+export function airAndFrontBlock(weatherByHour, conditions) {
+  const L = [];
+  const spans = fogSpans(weatherByHour);
+  if (spans.length) {
+    const low = fogLowestVisibility(weatherByHour);
+    const hh = (h) => `${String(h).padStart(2, '0')}:00`;
+    L.push(`FOG IS FORECAST AT THE LAKE ${spans.join(', ')} (the forecast's own fog code`
+      + `${low ? `; visibility down to ${low.m} m at ${hh(low.hour)}` : ''}). He launches a kayak `
+      + 'when he can see the water. If the launch time is inside a fog span, say in '
+      + '`safety.rampEvaluation` that fog holds the launch and until when, and do not spend the '
+      + 'plan\'s first-light presentation on minutes he will spend at the ramp waiting for it to '
+      + 'lift. Fog alone is not `isGo: false`.');
+  }
+  const p = conditions && conditions.pressureTrend;
+  if (p && isNum(p.hPaAtLaunch)) {
+    L.push('`conditions.pressureTrend` is the surface pressure at the lake at the launch hour and '
+      + '24 and 48 hours before it (Open-Meteo\'s model, not a station). If it reads as a front '
+      + 'that has just gone through, say so in `notes.scoutNotes` as a reason the bite may be slow '
+      + '— a note for him to read, never a reason for `isGo: false`.');
+  }
+  return L.length ? `\nTHE AIR ON THE DAY\n${L.join('\n')}\n` : '';
 }
 
 export function lightPromptBlock(ws, weatherByHour, launchTime, returnTime, lightFacts,
@@ -2526,7 +2562,7 @@ wind direction: is it a dangerous windward launch?${o.hazards && o.hazards.lengt
     + `from the research is written advice with no position at all: say the ones that bear on `
     + `today out loud, and never imply an unpositioned one is marked on the chart.`
   : ''}
-${coastalPromptBlock(o.waterState)}${riverPromptBlock(o.waterState, o)}${poolPromptBlock(o.waterState)}${chartCoverageBlock(o)}${conditionsPromptBlock(o.waterState)}${lightPromptBlock(o.waterState, o.weatherByHour, o.launchTime, o.returnTime, o.lightFacts, o.isRiver)}${timeBudgetBlock(o.windowMin, o.launchTime, o.returnTime, o.dayMin, o.dayStopMin, o.castStopsWanted)}${thermoclineNormBlock(o.thermoclineNorm)}${inshoreSeasonBlock(o.inshoreSeason)}${seabedHabitatBlock(o.seabedHabitat)}
+${coastalPromptBlock(o.waterState)}${riverPromptBlock(o.waterState, o)}${poolPromptBlock(o.waterState)}${chartCoverageBlock(o)}${conditionsPromptBlock(o.waterState)}${lightPromptBlock(o.waterState, o.weatherByHour, o.launchTime, o.returnTime, o.lightFacts, o.isRiver)}${airAndFrontBlock(o.weatherByHour, o.conditions)}${timeBudgetBlock(o.windowMin, o.launchTime, o.returnTime, o.dayMin, o.dayStopMin, o.castStopsWanted)}${thermoclineNormBlock(o.thermoclineNorm)}${inshoreSeasonBlock(o.inshoreSeason)}${seabedHabitatBlock(o.seabedHabitat)}
 WHAT IS ALREADY KNOWN
 ${o.intel || 'NOTHING. No researched profile exists for this water, so everything else here rests '
   + 'on the chart, the gauges and general species knowledge. Say so in the plan rather than '
