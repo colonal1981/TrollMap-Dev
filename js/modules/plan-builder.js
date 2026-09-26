@@ -11,6 +11,7 @@
 import { state } from "../core/state.js";
 import { esc } from "../utils/escape.js";
 import { planIssues } from "./plan-issues.js";
+import { rodsAtLaunchHtml } from "./rods-at-launch.js";
 import { lakeDbEntryFor, lakeRecordFor } from "../data/lake-registry.js";
 import { renderSpread } from "./spread-builder.js";
 import { newRodRow } from "../utils/rod-row.js";
@@ -284,6 +285,9 @@ export function collectPlan(){
               trailerSize: r.trailerSize,
               arigWeight: r.arigWeight,
               jigWeight: r.jigWeight,
+              // The inline weight ahead of a spoon is what sets its depth. plan-to-timeline.js puts
+              // it on the row and this capture dropped it, so the rigging list could not say it.
+              inlineWeight: r.inlineWeight,
               // How this bait sits against the bottom he will feel. Carried rather than
               // recomputed: the report and the on-screen card must not be able to disagree.
               clearance: r.clearance,
@@ -544,6 +548,12 @@ export function collectPlan(){
         stopIds: (l.stops || []).map((x) => x.id),
       })),
       changes: (v2.changes || []).slice(),
+      // EVERY ROD, NOT ONLY THE ONES THAT GO IN THE WATER. The seated loadout: each id, its rig,
+      // its lure, and `staged` for a rod the plan left alone. Without it the saved file could say
+      // which rods trolled and nothing about the one rigged and never used, and "what is on all
+      // six rods" -- the first thing he does at the ramp -- had no answer in the file he exports.
+      loadout: v2.loadout ? { ...v2.loadout,
+        rods: (v2.loadout.rods || []).map((r) => ({ ...r })) } : null,
     } : null,
     // The one caveat every amp-hour figure in this document needs, carried WITH the figures.
     batteryCurve: v2 ? 'amps(mph) = 5.0 * (mph/2.0)**1.756 — a two-point fit to two observed '
@@ -750,50 +760,19 @@ export async function buildPlanPreviewHtml(p){
     <table><thead><tr style="background:#eef4fa"><th>Step</th><th>Speed / Depth</th><th>Spread / Baits / Leads / Positioning</th><th>Notes</th></tr></thead><tbody>${rows}</tbody></table>`;
   }
 
-  // ── Cast Rods Pre-Rig ─────────────────────────────────────────────────────
-  let castRodsHtml = '';
-  const castRods = p.castRods || [];
-  if (castRods.length) {
-    const rows = castRods.map(r => `<tr>
-      <td><b>Cast Rod ${esc(String(r.rod||''))}</b></td>
-      <td>${esc(r.lure||'—')}</td>
-      <td>${esc(r.rigging||'—')}${r.jigheadWeight ? ` · <b>${esc(r.jigheadWeight)} jighead</b>` : ''}</td>
-      <td>${esc(r.presentation||'—')}</td>
-    </tr>`).join('');
-    // The TROLLING rods belong here too. Ryan, 2026-08-09: "i was expecting the troll rod callout
-    // to be in the pre-rig before launch section not just in the trolling section... just know
-    // that those 2 crankbaits are part of the 4 with fluro leader... it doesn't say that anywhere
-    // in the plan."
-    //
-    // This section answers ONE question -- what do I tie on before I leave the truck -- and it was
-    // only answering it for half the boat. The trolling rods appeared solely in the spread table
-    // further down, which is a reference for what is in the water, not a rigging list. And nothing
-    // anywhere stated which rods carry a leader and which carry a snap.
-    //
-    // THE BOAT IS SIX RODS AND NEVER CHANGES: four on a 20 lb fluoro leader, two on swivel snaps.
-    // Two rods are in the water while trolling, one port and one starboard.
-    const trollByRod = new Map();
-    for (const r of (p.spread || [])) {
-      const id = String(r.rod || '').trim();
-      if (!id || trollByRod.has(id)) continue;      // same rod repeats once per leg
-      trollByRod.set(id, r);
-    }
-    const trollRows = [...trollByRod.values()].map(r => `<tr>
-      <td><b>Troll Rod ${esc(String(r.rod||''))}</b> <span class="rp-small">(${esc(r.side||'')})</span></td>
-      <td>${esc(r.lure||'—')}${r.color ? ` · ${esc(r.color)}` : ''}</td>
-      <td>${esc(r.reel||'—')}</td>
-      <td>${r.lead ? `${esc(String(r.lead))} ft lead · ` : ''}${esc(r.depth||'—')} ft</td>
-    </tr>`).join('');
-
-    const nCast = castRods.filter(r => r.lure).length;
-    castRodsHtml = `
-    <h2>🎣 Pre-Rig Before Launch — Every Rod on the Boat</h2>
-    <p class="rp-small">Six rods: <b>four on a 20 lb fluoro leader</b>, <b>two on swivel snaps</b>.
-      Two are in the water while trolling, one port and one starboard. Tie all of this before you
-      leave — ${nCast} casting rod(s) stowed in the cockpit for any Stop &amp; Cast, and the
-      trolling rods ready to deploy off the launch.</p>
-    <table><thead><tr style="background:#eef4fa"><th>Rod</th><th>Lure</th><th>Rigging / Reel</th><th>Presentation / Lead</th></tr></thead><tbody>${trollRows}${rows}</tbody></table>`;
-  }
+  // ── Rods at launch, and every lure change after ────────────────────────────
+  // Ryan, 2026-08-09: "i was expecting the troll rod callout to be in the pre-rig before launch
+  // section not just in the trolling section... just know that those 2 crankbaits are part of the 4
+  // with fluro leader... it doesn't say that anywhere in the plan."
+  //
+  // Ryan, 2026-09-25: "a section that just shows what all 6 rods are rigged with to start the day
+  // and then any lure changes... i do not see that section on this html".
+  //
+  // He did not see it because it was built inside `if (castRods.length)`: a day where every rigged
+  // rod trolls -- most days -- printed no rigging list at all. And its trolling rows came off the
+  // spread, so a rod rigged and never deployed was missing even when it did print. It is now
+  // unconditional and reads the loadout; see rods-at-launch.js.
+  const rodsHtml = rodsAtLaunchHtml(p, esc);
 
   // ── Clarity tactical ──────────────────────────────────────────────────────
   const clarity = p.meta.clarity || 'Clear';
@@ -2140,7 +2119,7 @@ ${twilightHtml?`<h2>4 · Light &amp; Bite Feed Triggers</h2>${twilightHtml}`:''}
 
 ${rationaleHtml ? `<h2>5.5 · Smart Plan Rationale</h2>${rationaleHtml}` : ''}
 
-${castRodsHtml}
+${rodsHtml}
 
 ${unifiedPreviewHtml}
 
