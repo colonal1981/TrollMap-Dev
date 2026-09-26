@@ -158,8 +158,15 @@ describe('the client does not re-derive what the pipeline already built', () => 
       why: 'build_trolling_runs.py stitches contours offline; the browser version could not '
          + 'know whether a run was reachable from water' },
     { fn: 'function walkContourForWaypoints',
-      why: 'POST /water/{slug}/plan returns validated geometry; walking contours in the browser '
-         + 'is what drew connecting lines over land' },
+      why: 'walking contours in the browser is what drew connecting lines over land; the plan '
+         + 'follows the runs build_trolling_runs.py stitched, and legs connect over POST /water/{slug}/route' },
+    // MOVED HERE FROM smart-plan-route.test.js on 2026-09-25, when that file and the module it
+    // tested were deleted: "the contour walker cannot come back anywhere in js/". This list
+    // scans js/ AND Worker/, which is stronger still. buildScoutRoutes joined the walked points
+    // with straight lines and a sine wave.
+    { fn: 'function buildScoutRoutes',
+      why: 'it connected walked contour points with straight lines and a sine wave -- the '
+         + 'connecting routes over land Ryan described' },
     { fn: 'function deriveContourStructures',
       why: 'build_structure.py derives humps from contour NESTING and ships structure.geojson; '
          + 'the browser version grid-bucketed centroids and kept 8 per lake per research run' },

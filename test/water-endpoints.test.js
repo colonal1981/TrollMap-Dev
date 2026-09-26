@@ -11,6 +11,9 @@
  *      missing file, and it stayed that way until a route was tried against a pack that
  *      definitely had one.
  *
+ *   2 and 3 were /runs bugs, and /runs was deleted on 2026-09-25 (see below). They stay here as
+ *      the record of what a leg-slicer must not do.
+ *
  *   2. A leg was sliced with `(i + 1) % n`, which is correct on a closed ring and catastrophic
  *      on an open run: it walked off the end of an 8,770 m line, wrapped to index 0 and jumped
  *      across the lake. 2,000 m requested, 5,812 m returned. That is Ryan's original SmartPlan
@@ -128,81 +131,11 @@ const call = async (env, slug, path, method = 'GET', body = null) => {
   return { status: res ? res.status : null, body: res ? JSON.parse(await res.text()) : null };
 };
 
-// ── the metric-contour rule ─────────────────────────────────────────────────────────────────
-
-describe('depth is the nearest CHARTED line, and the response says which', () => {
-  it('asking for 12 ft returns the 12.1 ft line', async () => {
-    const r = await call(envWith(), nextSlug(), '/runs?depth=12');
-    expect(r.status).toBe(200);
-    expect(r.body.requested_depth_ft).toBe(12);
-    expect(r.body.depth_ft).toBe(12.1);
-  });
-
-  it('SAYS it substituted, rather than silently returning a different depth', async () => {
-    const r = await call(envWith(), nextSlug(), '/runs?depth=12');
-    expect(typeof r.body.note).toBe('string');
-    expect(r.body.note.includes('12.1')).toBe(true);
-  });
-
-  it('an exact charted depth is not flagged as a substitution', async () => {
-    const r = await call(envWith(), nextSlug(), '/runs?depth=12.1');
-    expect(r.body.depth_ft).toBe(12.1);
-    expect(r.body.note).toBe(undefined);
-  });
-});
-
-// ── the wrap rule ───────────────────────────────────────────────────────────────────────────
-
-describe('a leg may only wrap on a closed ring', () => {
-  it('an OPEN run stops at its end instead of jumping back to the start', async () => {
-    const r = await call(envWith(), nextSlug(), '/runs?depth=12&len=100000&limit=1');
-    const leg = r.body.runs[0].leg;
-    // The run is ~1.5 km. Asking for 100 km must not produce more than the run holds; the
-    // wrapping bug returned 2.9x the requested length by teleporting across the lake.
-    expect(leg.length_m <= 1600).toBe(true);
-    const co = leg.coordinates;
-    let longest = 0;
-    for (let i = 1; i < co.length; i++) {
-      const dx = (co[i][0] - co[i - 1][0]) * 111320 * Math.cos(34.4 * Math.PI / 180);
-      const dy = (co[i][1] - co[i - 1][1]) * 110570;
-      longest = Math.max(longest, Math.hypot(dx, dy));
-    }
-    // A wrap shows up as one enormous segment. Real spacing here is ~37 m.
-    expect(longest < 500).toBe(true);
-  });
-
-  it('a CLOSED ring may wrap, and still stops at the requested length', async () => {
-    const r = await call(envWith(), nextSlug(), '/runs?depth=11.2&len=800&limit=1');
-    const leg = r.body.runs[0].leg;
-    expect(r.body.runs[0].closed).toBe(true);
-    expect(leg.length_m > 0).toBe(true);
-    expect(leg.length_m <= 800 * 1.15).toBe(true);
-  });
-});
-
-// ── reachability ────────────────────────────────────────────────────────────────────────────
-
-describe('runs a boat cannot reach are excluded by default', () => {
-  it('routable:false is filtered out unless asked for', async () => {
-    const r = await call(envWith(), nextSlug(), '/runs?depth=12');
-    expect(r.body.runs.every((x) => x.routable)).toBe(true);
-  });
-
-  it('routable=any includes them, for diagnosis', async () => {
-    const on = await call(envWith(), nextSlug(), '/runs?depth=12');
-    const any = await call(envWith(), nextSlug(), '/runs?depth=12&routable=any');
-    expect(any.body.matched > on.body.matched).toBe(true);
-  });
-
-  it('has= filters on what a run passes', async () => {
-    const hit = await call(envWith(), nextSlug(), '/runs?depth=12&has=timber');
-    const miss = await call(envWith(), nextSlug(), '/runs?depth=12&has=attractor');
-    expect(hit.body.matched).toBe(1);
-    expect(miss.body.matched).toBe(0);
-  });
-});
-
-// ── the magic number ────────────────────────────────────────────────────────────────────────
+// ── /runs, /features and /plan ─────────────────────────────────────────────────────────────
+// Three describe blocks of /runs tests stood here (the nearest charted line, the closed-ring
+// wrap, routable filtering), and one of /plan further down. All three routes were the 2026-08-06
+// SmartPlan design that the current one replaced a day later; no caller was left, and they were
+// deleted on 2026-09-25. /route is what smart-plan-v2.js calls, and it is tested below.
 
 // Ryan's 2026-09-26 Wateree Pick Water day prefetched twenty transits at once. On a cold isolate each
 // one missed the cache and fetched and parsed the 4.6 MB graph again -- twenty ~46 MiB peaks against a
@@ -262,59 +195,21 @@ describe('min_depth_ft is a preference, because ramps are in shallow water', () 
 
 // ── plans chain, which is the whole point ───────────────────────────────────────────────────
 
-describe('every leg of a plan starts where the last one ended', () => {
-  it('no step begins far from the previous step’s end', async () => {
-    const r = await call(envWith(), nextSlug(), '/plan', 'POST', {
-      launch: [-80.9010, 34.40],
-      legs: [{ depth_ft: 12, length_m: 400 }, { depth_ft: 11.2, length_m: 400 }],
-    });
-    expect(r.status).toBe(200);
-    let prevEnd = null, worst = 0;
-    for (const s of r.body.steps) {
-      const co = s.coordinates;
-      if (prevEnd) {
-        const dx = (co[0][0] - prevEnd[0]) * 111320 * Math.cos(34.4 * Math.PI / 180);
-        const dy = (co[0][1] - prevEnd[1]) * 110570;
-        worst = Math.max(worst, Math.hypot(dx, dy));
-      }
-      prevEnd = co[co.length - 1];
-    }
-    // The "reset to nowhere" bug would put kilometres here.
-    expect(worst < 400).toBe(true);
-    // And the endpoint must have noticed for itself, not just passed this assertion.
-    expect(r.body.validation.worst_seam_m < 400).toBe(true);
-    expect(r.body.valid).toBe(true);
-  });
-
-  it('reports fishing against transit, so a 92%-paddling plan is visible', async () => {
-    const r = await call(envWith(), nextSlug(), '/plan', 'POST', {
-      launch: [-80.9010, 34.40], legs: [{ depth_ft: 12, length_m: 400 }],
-    });
-    expect(typeof r.body.fishing_fraction).toBe('number');
-    expect(r.body.total_m >= r.body.fishing_m).toBe(true);
-  });
-
-  it('validates the whole plan against a threshold derived from the mesh, not a constant', async () => {
-    const r = await call(envWith(), nextSlug(), '/plan', 'POST', {
-      launch: [-80.9010, 34.40], legs: [{ depth_ft: 12, length_m: 400 }],
-    });
-    expect(r.body.validation.threshold_source).toBe('half the p99 mesh edge');
-    expect(r.body.validation.points_checked > 0).toBe(true);
-  });
-});
-
 // ── absent layers answer honestly ───────────────────────────────────────────────────────────
 
 describe('a missing layer is a 404 with a reason, never an empty success', () => {
-  it('no trolling_runs', async () => {
-    const r = await call(envWith({ runs: null }), nextSlug(), '/runs?depth=12');
+  it('no water graph', async () => {
+    const r = await call(envWith({ graphBuf: null }), nextSlug(), '/route', 'POST',
+                         { from: [-80.9010, 34.4], to: [-80.8900, 34.4] });
     expect(r.status).toBe(404);
-    expect(r.body.error.includes('trolling_runs')).toBe(true);
+    expect(r.body.error.includes('water graph')).toBe(true);
   });
 
-  it('no water_features', async () => {
-    const r = await call(envWith(), nextSlug(), '/features?kind=point');
-    expect(r.status).toBe(404);
+  it('the deleted routes are not answered', async () => {
+    for (const p of ['/runs?depth=12', '/features?kind=point', '/plan']) {
+      const res = await handleWaterRoute({ method: 'GET' }, envWith(), new URL(`https://w/water/x${p}`));
+      expect(res).toBe(null);
+    }
   });
 
   it('an unrelated path is not claimed', async () => {

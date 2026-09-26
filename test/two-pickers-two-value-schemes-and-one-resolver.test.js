@@ -103,17 +103,18 @@ describe('the second resolver is gone, not left beside the first', () => {
   });
 
   it('nothing in js/ still calls it', () => {
+    // smart-plan-route.js was a fifth, until it was deleted on 2026-09-25 with no importer.
     for (const f of ['js/modules/plan-builder.js', 'js/modules/smart-plan-v2-wiring.js',
-                     'js/modules/plan-water-ui.js', 'js/modules/plan-preflight.js',
-                     'js/modules/smart-plan-route.js']) {
+                     'js/modules/plan-water-ui.js', 'js/modules/plan-preflight.js']) {
       expect(strip(SRC(f)).includes('planWaterKey')).toBe(false);
     }
   });
 
   it('the plan path resolves through the one resolver', () => {
-    // These are the four that were reading null for a river and calling it "no chartpack".
+    // These are three of the four that were reading null for a river and calling it "no
+    // chartpack"; the fourth, smart-plan-route.js, was deleted on 2026-09-25 with no importer.
     for (const f of ['js/modules/smart-plan-v2-wiring.js', 'js/modules/plan-water-ui.js',
-                     'js/modules/plan-preflight.js', 'js/modules/smart-plan-route.js']) {
+                     'js/modules/plan-preflight.js']) {
       expect(strip(SRC(f))).toContain('resolveR2Key(');
     }
   });

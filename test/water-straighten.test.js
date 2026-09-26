@@ -41,7 +41,9 @@ function loadFromWorker() {
     if (a < 0 || b < 0) throw new Error(`water.js no longer contains ${from}`);
     return src.slice(a, b);
   };
-  const code = grab('function metres(', 'function parseNear(')
+  // Ended at `function parseNear(` until /runs, the only reader of that parser, was deleted on
+  // 2026-09-25.
+  const code = grab('function metres(', 'function nearestNode(')
              + grab('const RING_CELL', 'async function boundaryIndex')
              + grab('function straighten(', 'function pathLength(')
              + grab('function pathLength(', '/** pathPreferringDepth');
