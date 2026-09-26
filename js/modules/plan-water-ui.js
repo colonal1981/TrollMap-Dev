@@ -67,10 +67,9 @@ import { renderAll } from '../core/map-init.js';
 import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
 import { connectionFor, snapEligibleFrom } from '../data/lure-knowledge.js';
 import { readInputs, rampCoords, preparePlanInputs } from './smart-plan-v2-wiring.js';
+import { esc } from '../utils/escape.js';
 
 const $ = (id) => document.getElementById(id);
-const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) =>
-  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const mi = (m) => m / 1609.34;
 const fmtMi = (m) => `${mi(m).toFixed(mi(m) < 1 ? 2 : 1)} mi`;
 const fmtHm = (min) => `${Math.floor(min / 60)}h ${String(Math.round(min % 60)).padStart(2, '0')}m`;
