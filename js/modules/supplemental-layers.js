@@ -12,7 +12,7 @@ import {
 import { esc } from '../utils/escape.js';
 import { LAKE_NAME_TO_R2_KEY, resolveR2Key } from '../data/lake-keys.js';
 import { cull } from '../utils/viewport-cull.js';
-import { distMiFromCoords as distMi } from '../utils/geo.js';
+import { distMiFromCoords as distMi, geoDistanceM } from '../utils/geo.js';
 import { workerHeaders } from '../utils/worker-auth.js';
 import { depthColor } from '../utils/depth-palette.js';
 import { allAccessPoints, loadAccessIndex } from '../data/access-index.js';
@@ -970,9 +970,10 @@ function norm(s) {
   return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
+// Metres between two [lon, lat] points. It was a flat-earth approximation named for the haversine;
+// since 2026-09-25 it is the haversine, utils/geo.js's.
 function haversineM(a, b) {
-  return Math.hypot((b[0] - a[0]) * Math.cos(a[1] * Math.PI / 180) * 111320,
-                    (b[1] - a[1]) * 110540);
+  return geoDistanceM(a[1], a[0], b[1], b[0]);
 }
 
 /**

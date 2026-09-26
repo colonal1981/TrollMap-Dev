@@ -4,6 +4,7 @@
 
 import { matchWaterName, reportTokens } from './reports.js';
 import { num as numOrNull } from '../js/utils/num.js';
+import { geoDistanceKm } from '../js/utils/geo.js';
 import { GENERIC_LAKE_ZONES, GENERIC_RIVER_ZONES, watershedSensitivity, riverFlowSensitivity,
          zonesForSensitivity } from './clarity-sensitivity.js';
 
@@ -1527,11 +1528,7 @@ function nearestClarityStation(stations, lat, lon) {
   for (const s of stations || []) {
     const sLat = Number(s && s.lat), sLon = Number(s && s.lon), ft = Number(s && s.avgSecchiDepthFt);
     if (!Number.isFinite(sLat) || !Number.isFinite(sLon) || !Number.isFinite(ft)) continue;
-    const dLat = (sLat - lat) * Math.PI / 180;
-    const dLon = (sLon - lon) * Math.PI / 180;
-    const h = Math.sin(dLat / 2) ** 2
-            + Math.cos(lat * Math.PI / 180) * Math.cos(sLat * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
-    const km = 2 * 6371.0088 * Math.asin(Math.min(1, Math.sqrt(h)));
+    const km = geoDistanceKm(lat, lon, sLat, sLon);   // the one haversine, in js/utils/geo.js
     usable.push({ s, km, n: Number(s.sampleCount) || 0 });
   }
   if (!usable.length) return null;

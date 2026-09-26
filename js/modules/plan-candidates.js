@@ -30,6 +30,7 @@
 // Both cross in one direction only -- see the re-export below DEFAULT_RELIEF_WEIGHTS for why the
 // relief pair is defined over there and not here.
 import { waterBand, reliefDropOf } from './plan-pieces.js';
+import { geoDistanceM } from '../utils/geo.js';
 
 // ── AND WHEN EACH PASS HAPPENS, WHICH IS A FISHING FACT AND WAS NEVER SENT ───────────────────────
 //
@@ -313,12 +314,9 @@ export function turnaroundMiles(o = {}) {
   };
 }
 
-const R = 6371000;
+/** Metres between two [lon, lat] points. The haversine is geo.js's (geoDistanceM). */
 export function metresBetween(a, b) {
-  const p1 = a[1] * Math.PI / 180, p2 = b[1] * Math.PI / 180;
-  const dp = p2 - p1, dl = (b[0] - a[0]) * Math.PI / 180;
-  const x = Math.sin(dp / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(x));
+  return geoDistanceM(a[1], a[0], b[1], b[0]);
 }
 
 /**

@@ -64,6 +64,21 @@ export function geoDistanceFt(lat1, lon1, lat2, lon2) {
 }
 
 /**
+ * The same great-circle distance in metres and in kilometres. THE ONE HAVERSINE, since
+ * 2026-09-25: plan-candidates.js, utils/cameras.js, Worker/conditions.js,
+ * Worker/river-geometry.js and Worker/worker-data.js each carried their own, on two earth radii
+ * (6371 and 6371.0088 km); the differences were parts per million. They call these now, and the
+ * Worker imports this file.
+ */
+export function geoDistanceM(lat1, lon1, lat2, lon2) {
+  return geoDistanceFt(lat1, lon1, lat2, lon2) * 0.3048;
+}
+
+export function geoDistanceKm(lat1, lon1, lat2, lon2) {
+  return geoDistanceFt(lat1, lon1, lat2, lon2) * 0.0003048;
+}
+
+/**
  * Distance in miles between two [lat,lon] points.
  * @param {[number, number]} a [lat,lon]
  * @param {[number, number]} b [lat,lon]

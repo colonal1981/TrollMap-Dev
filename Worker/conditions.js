@@ -61,6 +61,7 @@
  */
 import { CORS, JSON_HEADERS, r2Text } from './worker-core.js';
 import { num as numOrNull } from '../js/utils/num.js';
+import { geoDistanceKm } from '../js/utils/geo.js';
 import { ndbcReadings } from './ndbc.js';
 import { sensorReading, sensorSourceOf } from './sensor.js';
 import { waterChain, damTable, fullPoolTable, coastalCurrentStations, riverClarityByFlow }
@@ -692,13 +693,8 @@ const num = (v) => {
   return n !== null && NO_DATA.has(n) ? null : n;
 };
 
-function kmBetween(aLat, aLon, bLat, bLon) {
-  const R = 6371, r = Math.PI / 180;
-  const dLat = (bLat - aLat) * r, dLon = (bLon - aLon) * r;
-  const s = Math.sin(dLat / 2) ** 2
-          + Math.cos(aLat * r) * Math.cos(bLat * r) * Math.sin(dLon / 2) ** 2;
-  return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
-}
+// The haversine is js/utils/geo.js's, since 2026-09-25; this had its own copy.
+const kmBetween = geoDistanceKm;
 
 const round1 = (n) => Math.round(n * 10) / 10;
 // Hundredths, because the whole point of the chart-datum block is a difference of a few feet and
