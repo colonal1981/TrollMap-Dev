@@ -925,6 +925,45 @@ SEED_SHAPES = {
     'ledge': [('ledge', 'depth_ft', 0.0)],       # along the top of the drop -- "following a
 }                                                # contour line with a drop off near it is great"
 
+# ── THE DEEP SIDE OF A HUMP OR A LEDGE IS OPEN ──────────────────────────────────────────────────
+#
+# Ryan, 2026-09-26: "i dont really pay that close attention to the exact depth line... i treat them
+# more as zones than individual lines... it is really hard to hand steer a kayak on a single
+# contour". Asked whether a pass over a hump or a ledge may run over it and on out into deeper
+# water on either side, he said yes.
+#
+# The ceiling (`--ceiling-dm`) was written for a CONTOUR, which drifts off its ledge into the
+# channel while it is smoothed. A structure seed is a straight chord laid across the feature, and a
+# bait set for the structure's depth cannot touch bottom in water deeper than it. Measured on Lake
+# Murray with the fitter's own first cut (`_scratch/seed_gate.py`, 2026-09-26), the ceiling was
+# what killed them:
+#
+#     seed        kept now     kept with the floor alone
+#     hump_top       23%          82%
+#     hump_edge      20%          72%
+#     ledge          18%          48%
+#
+# THE FLOOR IS UNTOUCHED -- it is the grounding rule. HOLES KEEP THEIR CEILING: they fail on the
+# shallow side (40% of a hole_over chord is under its floor), and his answer was about humps and
+# ledges. The pass still carries `shallowest_ft`, `deepest_ft` and `mean_depth_ft`, so a pass that
+# runs off a hump into 60 ft of water says so.
+DEEP_SIDE_OPEN = frozenset({'hump', 'ledge'})
+
+
+def band_for(pr, a):
+    """(floor, seed_ceil, fit_ceil) in decimetres for one run's properties.
+
+    `seed_ceil` is the band's ceiling and is what `seed_deep()` steps the line against: that step
+    moves a point sideways toward its target and must not jump it off a drop into the channel.
+    `fit_ceil` is what the cut, the smoother and the chords use, and it is open (infinite) for a
+    pass seeded on a hump or a ledge -- see DEEP_SIDE_OPEN.
+    """
+    dm = float(pr['depth_dm'])
+    floor = dm - a.tol_dm
+    ceil = dm + a.ceiling_dm
+    open_deep = bool(pr.get('seed')) and pr.get('seed_kind') in DEEP_SIDE_OPEN
+    return floor, ceil, (math.inf if open_deep else ceil)
+
 
 def seed_relief(xy, depth, own_ft, relief_m):
     """WHAT THE BOTTOM DOES BESIDE A STRUCTURE-SEEDED PASS.
@@ -1031,7 +1070,10 @@ def structure_seeds(pack, depth, lat0, a):
             npts = max(4, int(round(2 * L / 25.0)) + 1)
             ts = np.linspace(-L, L, npts)
             # The band the fitter is about to cut this seed to, so the bearing is chosen against
-            # the same test rather than against a proxy for it.
+            # the same test rather than against a proxy for it. WITH ITS CEILING, even for a hump
+            # or a ledge whose pass the fitter lets run on into deeper water (DEEP_SIDE_OPEN): the
+            # bearing that stays on the structure's own depth longest is still the best line
+            # across it. Only what survives the cut changes, not which line is laid.
             floor = float(ft) * 3.048 - a.tol_dm
             ceil = float(ft) * 3.048 + a.ceiling_dm
             xy, best_in = None, -1
@@ -1092,6 +1134,30 @@ def structure_seeds(pack, depth, lat0, a):
             out.append({'type': 'Feature', 'properties': props,
                         'geometry': {'type': 'LineString', 'coordinates': _ll(xy, lat0)}})
     return out
+
+
+def graph_index(gpath, slug=''):
+    """(NodeIndex, main-component set) for a pack's water graph, or (None, None) without one.
+
+    THE SAME THREE CALLS build_trolling_runs.py AND reflag_routable.py MAKE, WITH THEIR ARGUMENTS.
+    fit_pack() used to pass the file path to NodeIndex and the node LIST to main_component; both
+    raised, and a bare `except` turned that into "no graph" on every pack. So no fitted pass was
+    ever given its own `routable` or `reach_node`: a contour's pieces inherited the parent run's
+    flag, and a structure-seeded pass, which has no parent, carried none. Found 2026-09-26 on the
+    Murray re-fit, where 44 fitted structure passes within a mile of Hilton had `routable` unset.
+    A failure is now said out loud rather than read as a missing graph.
+    """
+    if not os.path.isfile(gpath):
+        return None, None
+    try:
+        g = read_graph(gpath)
+        if not g:
+            return None, None
+        nodes, edges = g
+        return NodeIndex(nodes), main_component(len(nodes), edges)
+    except Exception as e:
+        print('  %s: water_graph.bin could not be read (%s) -- passes get no reach' % (slug, e))
+        return None, None
 
 
 def fit_pack(pack, a):
@@ -1175,15 +1241,7 @@ def fit_pack(pack, a):
     for q in pts:
         grid.setdefault((int(q[0] / cell), int(q[1] / cell)), []).append(q)
 
-    idx = mainset = None
-    gpath = os.path.join(pack, 'water_graph.bin')
-    if os.path.isfile(gpath):
-        try:
-            n, edges = read_graph(gpath)
-            idx = NodeIndex(gpath)
-            mainset = main_component(n, edges)
-        except Exception:
-            idx = mainset = None
+    idx, mainset = graph_index(os.path.join(pack, 'water_graph.bin'), slug)
 
     out = []
     st = {'in': len(runs), 'fitted': 0, 'split': 0, 'kept_closed': 0, 'kept_short': 0,
@@ -1224,12 +1282,13 @@ def fit_pack(pack, a):
             continue
 
         xy0 = _xy(coords, lat0)
-        floor = float(pr['depth_dm']) - a.tol_dm
+        floor, seed_ceil, ceil = band_for(pr, a)
         st['corners_before'] += int(np.sum(_turns(_resample(xy0, 10.0)[0]) > 12))
 
         pieces = []
-        ceil = float(pr['depth_dm']) + a.ceiling_dm
-        seeded = seed_deep(xy0, depth, float(pr['depth_dm']), ceil, a.seed_push_m)
+        # The step onto the deep side keeps the band's own ceiling; everything after it uses
+        # `ceil`, which is open over a hump or a ledge. See band_for() and DEEP_SIDE_OPEN.
+        seeded = seed_deep(xy0, depth, float(pr['depth_dm']), seed_ceil, a.seed_push_m)
         # ONE MEANINGFUL THRESHOLD, APPLIED ONCE, AT THE END.
         #
         # Gating the in-band stretch at `min_leg_m` AND the finished pass at `min_leg_m` rejected

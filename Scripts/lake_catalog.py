@@ -36,10 +36,11 @@ LAKE_CATALOG = {
         'priority': 12
     },
     # The Yadkin chain was catalogued as ONE key covering High Rock -> Blewett Falls, which
-    # is how the app has always served it. That works until the combined pack is retired:
-    # 3DHP names Badin and Tillery but NOT High Rock or Blewett Falls, so deleting
-    # yadkin_river_chain from R2 would orphan a 15,000-acre reservoir with nothing to replace
-    # it. NHD does name both. Bounds taken from LAKE_DB, which has carried them all along.
+    # is how the app served it until the per-lake packs existed. 3DHP names Badin and Tillery
+    # but NOT High Rock or Blewett Falls; NHD names both, so each now has its own key below and
+    # its own pack (bounds from LAKE_DB, which carried them all along). As of 2026-09-26 the
+    # combined chain pack is superseded, and the R2 audit lists it with the other four chain
+    # packs as safe to prune. Pruning R2 is Ryan's to run.
     'high_rock_lake': {
         'name': 'High Rock Lake',
         'bbox': (35.45, 35.70, -80.35, -80.15),
