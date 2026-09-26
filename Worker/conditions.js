@@ -62,6 +62,7 @@
 import { CORS, JSON_HEADERS, r2Text } from './worker-core.js';
 import { num as numOrNull } from '../js/utils/num.js';
 import { geoDistanceKm } from '../js/utils/geo.js';
+import { decodeEntities } from '../js/utils/html-text.js';
 import { ndbcReadings } from './ndbc.js';
 import { sensorReading, sensorSourceOf } from './sensor.js';
 import { waterChain, damTable, fullPoolTable, coastalCurrentStations, riverClarityByFlow }
@@ -2513,19 +2514,9 @@ export function normalizeDamName(v) {
  * runs the ramp — Gaston County for South Point, York County for Ebenezer and Allison Creek — and
  * dropping the href turns "here is who to ask" into "there is a notice".
  */
-const HTML_ENTITY = {
-  nbsp: ' ', amp: '&', quot: '"', apos: "'", lt: '<', gt: '>', ndash: '–', mdash: '—',
-  rsquo: '’', lsquo: '‘', ldquo: '“', rdquo: '”', hellip: '…',
-};
-export function decodeEntities(v) {
-  return String(v == null ? '' : v)
-    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
-    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
-    .replace(/&([a-z]+);/gi, (m, name) => {
-      const k = HTML_ENTITY[name.toLowerCase()];
-      return k === undefined ? m : k;
-    });
-}
+// Entities are decoded by js/utils/html-text.js since 2026-09-25; this file had a thirteen-name
+// copy. Re-exported because test/duke-access-alerts.test.js imports it from here.
+export { decodeEntities };
 
 export function alertText(html) {
   const withBreaks = String(html == null ? '' : html)
