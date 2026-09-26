@@ -41,9 +41,6 @@ const TILES = {
 };
 
 // Mutable map-init-local state. Not shared across modules.
-let PREVIEW_LAYER = null;
-let PREVIEW_TRACKS = [];
-let pickTarget = null;          // { field: 'start'|'end' } during coordinate picking
 let RESTORING_WORKING_DATA = false;
 let FILENAME = 'Untitled';
 
@@ -66,7 +63,6 @@ export function initMap() {
   setBase('sat');
 
   state.LAYER = L.layerGroup().addTo(state.MAP);
-  PREVIEW_LAYER = L.layerGroup().addTo(state.MAP);
   state.MAP_OK = true;
 
   state.MAP.on('click', onMapClick);
@@ -185,20 +181,11 @@ export function editMode() {
 }
 
 /**
- * Handle a click anywhere on the map. Two behaviors, in order:
- *   1. If a coordinate-pick is in progress, fill the targeted input and stop.
- *   2. Otherwise, in "add" mode, prompt for a name and add a waypoint.
- * (A chart georef click was handed to handleGeorefClick here until 2026-09-25, when the
- * georeference workflow was deleted.)
+ * Handle a click anywhere on the map: in "add" mode, prompt for a name and add a waypoint.
+ * (A coordinate pick for the troll generator, and a chart georef click, were handled here first
+ * until 2026-09-25, when nothing could start either any more.)
  */
 export function onMapClick(e) {
-  if (pickTarget) {
-    fillCoord(pickTarget.field, e.latlng.lat, e.latlng.lng);
-    pickTarget = null;
-    document.body.style.cursor = '';
-    setBanner('');
-    return;
-  }
   const mode = editMode();
   if (mode === 'add') {
     const name = prompt('Waypoint name:', suggestName());
@@ -206,18 +193,6 @@ export function onMapClick(e) {
     state.DATA.waypoints.push({ lat: e.latlng.lat, lon: e.latlng.lng, name: name || 'WPT', sym: 'Waypoint' });
     renderAll();
   }
-}
-
-/** Fill the troll-generator start/end coordinate inputs. */
-export function fillCoord(field, lat, lon) {
-  if (field === 'start') {
-    document.getElementById('gLat1').value = lat.toFixed(5);
-    document.getElementById('gLon1').value = lon.toFixed(5);
-  } else if (field === 'end') {
-    document.getElementById('gLat2').value = lat.toFixed(5);
-    document.getElementById('gLon2').value = lon.toFixed(5);
-  }
-  setBanner('');
 }
 
 /** Show or hide the georef banner (the orange strip across the map). */
@@ -231,16 +206,6 @@ export function setBanner(s) {
 /** Auto-name like "WPT1", "WPT2", … based on the current count. */
 export function suggestName() {
   return `WPT${state.DATA.waypoints.length + 1}`;
-}
-
-/**
- * Begin coordinate-picking mode. The next map click will fill the
- * given field ('start' or 'end' for the troll generator).
- */
-export function startPick(field) {
-  pickTarget = { field };
-  document.body.style.cursor = 'crosshair';
-  setBanner('🎯 Click on the map to set ' + (field === 'start' ? 'START' : 'END') + ' waypoint');
 }
 
 /**
@@ -386,27 +351,6 @@ export function fitMap() {
   if (state.MAP_OK && state.MAP?._lastBounds?.length) {
     state.MAP.fitBounds(state.MAP._lastBounds, { padding: [30, 30] });
   }
-}
-
-/** Clear all preview polylines (troll-lane preview before commit). */
-export function clearPreview() {
-  if (PREVIEW_LAYER) PREVIEW_LAYER.clearLayers();
-  PREVIEW_TRACKS = [];
-}
-
-/** Display dashed preview tracks on the map without committing them. */
-export function showPreview(tracks) {
-  clearPreview();
-  PREVIEW_TRACKS = tracks;
-  if (!state.MAP_OK) return;
-  for (const t of tracks) {
-    if (t.pts.length > 1) {
-      L.polyline(t.pts, { color: '#ff00e6', weight: 2.5, dashArray: '6,6', opacity: 0.9 })
-        .addTo(PREVIEW_LAYER);
-    }
-  }
-  const pts = tracks.flatMap((t) => t.pts);
-  if (pts.length) state.MAP.fitBounds(pts, { padding: [40, 40] });
 }
 
 // ── Working-data autosave / restore ─────────────────────────────────────
