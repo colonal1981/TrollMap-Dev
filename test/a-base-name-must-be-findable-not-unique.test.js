@@ -127,7 +127,11 @@ describe('the three matching sites agree -- TRIPWIRES ON A NAME', () => {
     expect(ext.includes('\\bCo\\b[^)]*\\)\\s*/i')).toBe(false);
   });
 
-  it('and keys.js STILL uses the county-only regex, because a key is not a match', () => {
-    expect(keys.includes('\\bCo\\b')).toBe(true);
+  it('and the storage key STILL uses the county-only regex, because a key is not a match', () => {
+    // legacyStorageName() moved from keys.js to js/data/research-ids.js on 2026-09-25 -- one copy,
+    // which keys.js imports -- so the regex is asserted where it lives.
+    const ids = readFileSync(new URL('../js/data/research-ids.js', import.meta.url), 'utf8');
+    expect(ids.includes('\\bCo\\b')).toBe(true);
+    expect(keys.includes("from '../../js/data/research-ids.js'")).toBe(true);
   });
 });
