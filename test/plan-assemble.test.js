@@ -690,7 +690,11 @@ describe('plan-candidates — what the model is told to avoid', () => {
     geometry: { type: 'LineString', coordinates: Array.from({ length: 41 }, (_, i) => [-80.72 + i * 0.001, 34.38]) },
     properties: { depth_ft: 22, length_m: 3690, routable: true, near },
   }];
-  const build = () => selectCandidates(runs, { ramp: LAUNCH, slug: 'w', usableAh: 200, windowMin: 600 });
+  // `minM: 1500` PINNED, because this fixture's counts were drawn with the old default. The window
+  // grows from the densest `minM` of the run; at 600 (the default since 2026-09-26) it seeds in the
+  // middle and ends one mark sooner, which changes what is on the leg and not what this suite is
+  // about -- whether a zero-weight mark survives on the leg it is on.
+  const build = () => selectCandidates(runs, { ramp: LAUNCH, slug: 'w', usableAh: 200, windowMin: 600, minM: 1500 });
 
   it('keeps a zero-weight mark on the candidate instead of deleting it', () => {
     const [c] = build();
@@ -756,7 +760,7 @@ describe('plan-candidates — what the model is told to avoid', () => {
     const withHazards = build()[0];
     const zeroless = [...near.slice(0, 14), near[16]];
     const clean = { ...runs[0], properties: { ...runs[0].properties, near: zeroless } };
-    const [without] = selectCandidates([clean], { ramp: LAUNCH, slug: 'w', usableAh: 200, windowMin: 600 });
+    const [without] = selectCandidates([clean], { ramp: LAUNCH, slug: 'w', usableAh: 200, windowMin: 600, minM: 1500 });
     expect(withHazards.startM).toBe(without.startM);
     expect(withHazards.lengthM).toBe(without.lengthM);
     expect(withHazards.score).toBe(without.score);

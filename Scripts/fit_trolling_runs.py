@@ -1612,9 +1612,10 @@ def main():
     ap.add_argument('--max-turn-deg', type=float, default=35.0,
                     help='sharpest corner the line may ask for; sharper than this ends the pass')
     ap.add_argument('--min-leg-m', type=float, default=1500.0,
-                    help='a piece shorter than this is not a trolling pass. 1500 m is not a '
-                         'taste: it is selectCandidates() own floor (plan-candidates.js, '
-                         'minM 1500), so anything shorter is a pass the app will never offer')
+                    help='a CONTOUR piece shorter than this is not kept as a trolling pass. It '
+                         'was selectCandidates() own floor until 2026-09-26 (plan-candidates.js '
+                         'minM 1500); the app now offers anything from 600 m, the structure '
+                         'minimum below, so this is the contour fitter\'s rule alone')
     ap.add_argument('--min-fit-m', type=float, default=800.0,
                     help='runs shorter than this keep the contour geometry')
     ap.add_argument('--min-stretch-m', type=float, default=500.0,

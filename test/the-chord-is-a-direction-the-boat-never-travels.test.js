@@ -128,8 +128,11 @@ const lane = () => {
       near: Array.from({ length: 6 }, (_, k) => ({ s: 200 + k * 300, t: 'timber', d: 25 })) } };
 };
 const RUNS = [lane()];
+// `minM: 1500` PINNED: the 11.22 / 12.39 Ah below were measured on the window the old default grew,
+// and at 600 (the default since 2026-09-26) the window starts at the first mark instead of the
+// run's start, so it is shorter and both prices move. This suite is about the wind, not the window.
 const BASE = { ramp: [-80.73, 34.38], slug: 'w', fishDepthFt: [0, 99], holding: 'bottom',
-               usableAh: 999, windowMin: 9999 };
+               usableAh: 999, windowMin: 9999, minM: 1500 };
 
 test('a leg into the wind costs more than the same leg in calm', () => {
   const calm = selectCandidates(RUNS, BASE)[0];

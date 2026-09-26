@@ -1867,7 +1867,8 @@ export function groupDocks(hits) {
  *
  * Runs shorter than `minM` are skipped, not offered whole: a 400 m pass over a hump is a
  * legitimate thing to fish but it is not a leg, and offering it as one is what filled the first
- * shortlist with 500 m stubs.
+ * shortlist with 500 m stubs. `minM` is 600 by default -- the fitter's shortest pass -- see
+ * selectCandidates().
  */
 function bestWindow(run, opts) {
   const p = run.properties || {};
@@ -2066,7 +2067,20 @@ export function selectCandidates(runs, o) {
     // A LEG IS A TROLLING PASS, NOT A STUB. First cut allowed 400 m and every candidate came
     // back a 500 m fragment, because short runs cost almost no battery and any per-Ah ranking
     // rewards that hardest. A pass you would actually set two rods for is over a kilometre.
-    minM: o.minM ?? 1500,
+    //
+    // 600, NOT 1500, SINCE 2026-09-26, and the ranking above is no longer the one that loved
+    // stubs: `value` below discounts by the deadhead share and by distance from the ramp, it does
+    // not divide by cost. 1500 hid every pass the fitter builds on structure -- those are laid at
+    // 600-1,200 m (fit_trolling_runs.py --structure-min-leg-m 600) -- so Murray from Hilton was
+    // offered 12 contour lines, the nearest 1,662 m out, and Wateree from Clearwater Cove never
+    // saw ledge #1422 387 m from the ramp. Ryan, 2026-09-25: "the minimum length doesn't
+    // matter... either fish it back or combine a whole bunch of legs together... as long as it
+    // makes the day last the correct amount of time." 600 m is his own number -- buildPieces()
+    // and Pick Water use it -- and it is the fitter's shortest pass, so no fitted pass is dropped
+    // here for its length. Measured on the same inputs as the Murray plan (10-25 ft, 80 Ah, 420
+    // min): four structure passes reach Murray's top twelve and the nearest leg is 1,097 m out;
+    // Wateree gains #1422, #1915 (619 m) and #362 (278 m).
+    minM: o.minM ?? 600,
     // The one fixed length left, and it is a ceiling rather than a target — see bestWindow().
     maxM: o.maxM ?? 8000,
     stepM: o.stepM ?? 250,
@@ -2677,7 +2691,13 @@ export function selectCandidates(runs, o) {
   // arm, so opposite banks of a creek stay two legs. 0.35 catches "about half of it retraces"
   // while letting two legs that merely cross stand. Both are options; if plans start losing water
   // that is genuinely separate, widen the overlap threshold before touching the corridor.
-  const apart = o.dedupeM ?? 1200;
+  // THE START-POINT TEST IS NO LONGER A SEPARATE NUMBER FROM THE SHORTEST LEG. It was 1,200 m while
+  // the shortest leg was 1,500, so two legs could never start closer than most of a leg apart. With
+  // 600 m legs a 1,200 m rule forbade two different pieces of water whose starts were 700 m apart
+  // and which shared nothing -- on Wateree it kept #362 (278 m from the ramp) and threw away ledge
+  // #1422 (387 m) as its "duplicate". The corridor test below is what catches the same water; this
+  // one only catches a coincidence, and it is scaled to the leg so it cannot outvote it.
+  const apart = o.dedupeM ?? opts.minM;
   const corridorM = o.dedupeCorridorM ?? 100;
   const maxOverlap = o.dedupeOverlap ?? 0.35;
   const kept = [];
