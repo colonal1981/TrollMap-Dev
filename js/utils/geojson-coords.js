@@ -101,3 +101,20 @@ export function boundsOf(geojson) {
   });
   return seen ? { west, south, east, north } : null;
 }
+
+/**
+ * Is (lon, lat) inside `ring`, a closed [[lon, lat], ...] ring? Even-odd ray cast.
+ *
+ * THE ONE COPY, since 2026-09-25. Four modules each wrote this loop -- plan-water-index.js,
+ * water-state-parts.js, river-drifts.js and Worker/research/on-water.js -- identical but for
+ * argument order and one divide-by-zero guard the short-circuit already makes unreachable (a
+ * horizontal edge fails `(yi > lat) !== (yj > lat)` before it divides).
+ */
+export function inRing(lon, lat, ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0], yi = ring[i][1], xj = ring[j][0], yj = ring[j][1];
+    if (((yi > lat) !== (yj > lat)) && (lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi)) inside = !inside;
+  }
+  return inside;
+}
