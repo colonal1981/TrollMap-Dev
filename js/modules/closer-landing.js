@@ -129,7 +129,11 @@ export function closerLandingNote(best, rampName) {
   const name = l.name || '(unnamed launch)';
   const fee = l.listing === 'semi-private' ? ' (semi-private — a fee is likely)' : '';
   const ramp = rampName || 'your launch';
-  return `${name}${fee} is ${mi(best.savedM)} mi closer to this day's water by boat: `
+  // "SAVES N MI OF RUNNING", NOT "IS CLOSER". The first bench run on Murray named a landing whose
+  // run OUT was longer than his (5.9 mi against 3.5) and whose run home was far shorter (0.5 against
+  // 4.8), because the day ends near it. "Closer to this day's water" read as false on the first
+  // number; the sum is the claim, so the sentence makes the sum.
+  return `${name}${fee} saves ${mi(best.savedM)} mi of running on this day: `
        + `${mi(best.outM)} mi out to the first leg and ${mi(best.homeM)} mi back from the last, `
        + `against ${mi(best.fromOutM)} and ${mi(best.fromHomeM)} mi from ${ramp}. The plan is `
        + `built from ${ramp}; launching there instead would change which water it offers.`;

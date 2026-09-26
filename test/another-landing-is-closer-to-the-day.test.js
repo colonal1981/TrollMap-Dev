@@ -95,7 +95,7 @@ test('a day already at his ramp names nobody', async () => {
 test('the note gives the landing, the saving and both legs of it, and says what it does not change', () => {
   const n = closerLandingNote({ landing: { name: 'June Creek', listing: 'semi-private' },
     outM: 510, homeM: 520, savedM: 10170, fromOutM: 5100, fromHomeM: 6100 }, 'Clearwater Cove');
-  assert.match(n, /^June Creek \(semi-private — a fee is likely\) is 6\.3 mi closer to this day's water by boat/);
+  assert.match(n, /^June Creek \(semi-private — a fee is likely\) saves 6\.3 mi of running on this day/);
   assert.match(n, /0\.3 mi out to the first leg and 0\.3 mi back from the last, against 3\.2 and 3\.8 mi from Clearwater Cove/);
   assert.match(n, /launching there instead would change which water it offers/);
   assert.equal(closerLandingNote({ landing: { name: 'X' }, outM: 1, homeM: 1, savedM: 60,
