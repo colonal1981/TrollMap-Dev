@@ -64,20 +64,6 @@ export function geoDistanceFt(lat1, lon1, lat2, lon2) {
 }
 
 /**
- * Alias: distance in feet with 4 args, without Infinity guard (for backward compat with older callers).
- * Same formula as geoDistanceFt.
- */
-export function distFtFromCoords(lat1, lon1, lat2, lon2) {
-  // No Infinity guard here — mirrors notifications.js behavior which didn't guard
-  const dLat = (lat2 - lat1) * DEG_TO_RAD;
-  const dLon = (lon2 - lon1) * DEG_TO_RAD;
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(lat1 * DEG_TO_RAD) * Math.cos(lat2 * DEG_TO_RAD) * Math.sin(dLon / 2) ** 2;
-  return EARTH_RADIUS_FT * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-/**
  * Distance in miles between two [lat,lon] points.
  * @param {[number, number]} a [lat,lon]
  * @param {[number, number]} b [lat,lon]
@@ -112,18 +98,6 @@ export function bearing(a, b) {
 }
 
 /**
- * Bearing with 4-arg signature.
- * @param {number} lat1
- * @param {number} lon1
- * @param {number} lat2
- * @param {number} lon2
- * @returns {number} bearing degrees
- */
-export function bearingFromCoords(lat1, lon1, lat2, lon2) {
-  return bearing([lat1, lon1], [lat2, lon2]);
-}
-
-/**
  * Destination point given start, bearing, and distance.
  * ORPHANED 2026-08-07. Its only caller was route-builder.js, which went with the manual
  * routing. Left in place rather than deleted because it is 12 lines of correct spherical
@@ -149,51 +123,6 @@ export function destination(lat, lon, bearingDeg, distFt) {
       Math.cos(d) - Math.sin(lat1) * Math.sin(lat2)
     );
   return [(lat2 * 180) / Math.PI, (lon2 * 180) / Math.PI];
-}
-
-/**
- * Minimum distance from a point to a polygon ring (array of [lon, lat] or [lat, lon]?).
- * For TrollMap boundary rings are [lon, lat] (GeoJSON order).
- * This is a helper for smart-plan's distToRingFt.
- * @param {number} lat
- * @param {number} lon
- * @param {Array<[number, number]>} ring - array of [lon, lat] or [lat, lon] depending on source
- * @param {boolean} ringIsLonLat - if true, ring is [lon,lat] (GeoJSON), else [lat,lon]
- * @returns {number} min distance feet or Infinity
- */
-export function distToRingFt(lat, lon, ring, ringIsLonLat = true) {
-  if (!ring || !ring.length) return Infinity;
-  let minDist = Infinity;
-  for (let i = 0; i < ring.length; i++) {
-    const rLon = ringIsLonLat ? ring[i][0] : ring[i][1];
-    const rLat = ringIsLonLat ? ring[i][1] : ring[i][0];
-    const d = geoDistanceFt(lat, lon, rLat, rLon);
-    if (d < minDist) minDist = d;
-  }
-  return minDist;
-}
-
-/**
- * Convert a foot measurement to latitude degrees at the equator
- * (lat degrees don't shrink with longitude like longitude does).
- *
- * @param {number} ft
- * @returns {number} degrees latitude
- */
-export function ftToDegLat(ft) {
-  return ft / 364000;
-}
-
-/**
- * Convert a foot measurement to longitude degrees at a given latitude.
- * Longitude shrinks as you approach the poles by cos(lat).
- *
- * @param {number} ft
- * @param {number} lat — latitude in degrees
- * @returns {number} degrees longitude
- */
-export function ftToDegLon(ft, lat) {
-  return ft / (364000 * Math.cos(lat * Math.PI / 180));
 }
 
 /**
@@ -286,56 +215,6 @@ export function parseLatLonPair(latText, lonText) {
 
 
 /**
- * Ramer-Douglas-Peucker line simplification.
- * `pts` is an array of [lat, lon]; `tol` is the max squared-distance
- * from a vertex to the chord in DEGREE² units (multiply by ~3.6e7 to
- * think in feet²).
- *
- * @param {Array<[number, number]>} pts
- * @param {number} tol
- * @returns {Array<[number, number]>}
- */
-export function simplifyLine(pts, tol) {
-  if (pts.length <= 2 || tol <= 0) return pts.slice();
-
-  const sqTol = tol * tol;
-
-  // Squared perpendicular distance from p to the line segment a-b.
-  function segDistSq(p, a, b) {
-    const dx = b[1] - a[1];
-    const dy = b[0] - a[0];
-    const lenSq = dx * dx + dy * dy;
-    if (lenSq === 0) return (p[1] - a[1]) ** 2 + (p[0] - a[0]) ** 2;
-
-    let t = ((p[1] - a[1]) * dx + (p[0] - a[0]) * dy) / lenSq;
-    t = Math.max(0, Math.min(1, t));
-    const px = a[1] + t * dx;
-    const py = a[0] + t * dy;
-    return (p[1] - px) ** 2 + (p[0] - py) ** 2;
-  }
-
-  function rdp(points, first, last) {
-    let maxDist = 0,
-      idx = 0;
-    for (let i = first + 1; i < last; i++) {
-      const d = segDistSq(points[i], points[first], points[last]);
-      if (d > maxDist) {
-        maxDist = d;
-        idx = i;
-      }
-    }
-    if (maxDist > sqTol) {
-      const left = rdp(points, first, idx);
-      const right = rdp(points, idx, last);
-      return left.slice(0, left.length - 1).concat(right);
-    }
-    return [points[first], points[last]];
-  }
-
-  return rdp(pts, 0, pts.length - 1);
-}
-
-/**
  * Map a depth value (ft) to a hex color. Used for track/segment
  * visualization so deeper water reads as warmer.
  *
@@ -351,39 +230,6 @@ export function depthColor(d) {
   if (depth <= 70) return '#fff176';
   if (depth <= 90) return '#ffb74d';
   return '#ef5350';
-}
-
-/**
- * Heuristic for picking a "depth" property out of a feature's `properties`
- * object — different datasets use different keys.
- *
- * @param {Object<string, *>} props
- * @returns {string|null} chosen property name, or null
- */
-export function guessDepthProp(props) {
-  const candidates = [
-    'depth',
-    'DEPTH',
-    'elevation',
-    'ELEVATION',
-    'CONTOUR',
-    'contour',
-    'Elev',
-    'Level',
-    'Z',
-    'z',
-    'depth_ft',
-    'DEPTH_FT',
-    'Contour',
-    'ContourInterval',
-  ];
-  for (const c of candidates) {
-    if (props[c] != null) return c;
-  }
-  for (const k of Object.keys(props)) {
-    if (/depth|elev|contour|z/i.test(k) && !isNaN(parseFloat(props[k]))) return k;
-  }
-  return null;
 }
 
 /**
