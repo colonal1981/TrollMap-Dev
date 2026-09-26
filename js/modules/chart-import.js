@@ -17,7 +17,7 @@
 
 import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
-import { depthColor } from '../utils/geo.js';
+import { depthColor } from '../utils/depth-palette.js';
 import { setBanner } from '../core/map-init.js';
 import { getAll as dbGetAll, del as dbDel, isReady as dbIsReady, tryPut } from '../utils/db.js';
 

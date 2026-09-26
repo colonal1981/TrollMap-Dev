@@ -230,24 +230,6 @@ export function parseLatLonPair(latText, lonText) {
 
 
 /**
- * Map a depth value (ft) to a hex color. Used for track/segment
- * visualization so deeper water reads as warmer.
- *
- * @param {number|string} d
- * @returns {string} hex color
- */
-export function depthColor(d) {
-  const depth = Math.abs(parseFloat(d) || 0);
-  if (depth <= 10) return '#4dd0e1';
-  if (depth <= 20) return '#4db6ac';
-  if (depth <= 30) return '#66bb6a';
-  if (depth <= 50) return '#aed581';
-  if (depth <= 70) return '#fff176';
-  if (depth <= 90) return '#ffb74d';
-  return '#ef5350';
-}
-
-/**
  * Box-filter moving average on [lat, lon] coordinates.
  * Window of `win` points is centered on each output point.
  *

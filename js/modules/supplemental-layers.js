@@ -44,7 +44,6 @@ export { LAKE_NAME_TO_R2_KEY, resolveR2Key };
 //
 // One ladder for every layer now, and depth-palette.js owns it. `coastal` is no longer a
 // palette question at all; it is only a question about DATUM, which is displayDepth()'s job.
-const depthAreaColor = depthColor;
 
 // Was its own database, `trollmap-supplemental`, with its own openDB/idbGet/idbSet. Folded
 // into the shared `cache` store: every layer here is re-fetchable from R2, so there was
@@ -411,7 +410,7 @@ async function loadDepthAreas(lakeKey) {
         // by hand here and again in refreshDepthAreaColors(); displayDepth() is the one place
         // that decides now, so the polygon, the contour over it and the sounding on top of it
         // cannot drift apart.
-        const color = depthAreaColor(displayDepth(chartedFt, isCoastal));
+        const color = depthColor(displayDepth(chartedFt, isCoastal));
         return { fillColor: color, fillOpacity: 0.55, color, weight: strokeW,
                  opacity: strokeW ? 0.5 : 0, stroke: strokeW > 0 };
       },
@@ -1677,7 +1676,7 @@ export function refreshDepthAreaColors(tideHeightFt) {
     style(feat) {
       const p = feat.properties || {};
       const chartedFt = p.depth_max_ft ?? p.depth_min_ft ?? p.depth_ft ?? 0;
-      const color = depthAreaColor(displayDepth(chartedFt, isCoastal));
+      const color = depthColor(displayDepth(chartedFt, isCoastal));
       return { fillColor: color, fillOpacity: 0.55, color, weight: 0.5, opacity: 0.5 };
     },
     onEachFeature(feat, layer) {
