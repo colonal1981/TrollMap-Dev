@@ -27,6 +27,8 @@ import { solunarFor } from '../utils/solunar.js';
 import { checkPlanLegality, ensureRegulations, fetchForecast, fetchWaterState,
          fetchClarityAtRamp, regulationStateFor, detectCoastalZone, fogNote } from './plan-preflight.js';
 import { primeFishAdvisories } from '../data/fish-advisories.js';
+import { landingsFor } from '../data/launch-reach.js';
+import { closerLanding, closerLandingNote } from './closer-landing.js';
 import { primeInshoreSeason, inshoreSeasonFor } from '../data/inshore-season.js';
 import { primeSeabedHabitat, seabedHabitatFor } from '../data/seabed-habitat.js';
 import { buildSmartPlanV2, packFetcher, modelAsker, waterRouter } from './smart-plan-v2.js';
@@ -436,6 +438,19 @@ export async function runSmartPlanV2(opts = {}) {
     waterTempF: lakeSurfaceTemp(waterState, inp.waterTempF).tempF,
   }) : null;
   if (fog) r.problems = [...(r.problems || []), fog];
+  // ANOTHER LANDING CLOSER TO THIS DAY'S WATER (change request 10). Ryan: "if i am going to fish
+  // june creek then i should have just launched at june creek". The run out and the run home are
+  // costed from every landing on the water with the router this plan used -- see closer-landing.js.
+  // Annotated, never refused, and a failure here costs the plan nothing.
+  if (r.plan) {
+    say('Checking the other landings…');
+    const closer = await closerLanding({
+      plan: r.plan, launch: ramp, landings: await landingsFor(r2Key),
+      route: waterRouter(CF_WORKER_URL, r2Key, { minDepthFt: TRANSIT_MIN_DEPTH_FT }),
+    }).catch((e) => { console.warn('[plan-v2] closer landing check failed:', e && e.message); return null; });
+    const closerNote = closerLandingNote(closer, inp.rampName);
+    if (closerNote) r.problems = [...(r.problems || []), closerNote];
+  }
   // And the limits that were read and are not in the way go where the app's other settled things
   // go -- see plan-assemble.js. They are still on the plan and still rendered; they are not one
   // of the things it wants to tell him before he launches.

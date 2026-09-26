@@ -47,6 +47,8 @@ import { fetchForecast,
          fetchWaterState, fetchClarityAtRamp, regulationStateFor,
          detectCoastalZone, fogNote } from './plan-preflight.js';
 import { lakeSurfaceTemp } from '../utils/water-conditions.js';
+import { landingsFor } from '../data/launch-reach.js';
+import { closerLanding, closerLandingNote } from './closer-landing.js';
 import { inshoreSeasonFor } from '../data/inshore-season.js';
 import { seabedHabitatFor } from '../data/seabed-habitat.js';
 import { depthSampler, shorelineIndex, waterMask } from './plan-water-index.js';
@@ -1352,6 +1354,15 @@ export async function buildFromPicked() {
     waterTempF: lakeSurfaceTemp(waterState, T.waterTempF).tempF,
   });
   if (fog) r.problems = [...(r.problems || []), fog];
+  // ANOTHER LANDING CLOSER TO THE WATER HE PICKED. Same check, same router, as the Smart Plan
+  // path -- see closer-landing.js (change request 10). A failure costs the plan nothing.
+  say('Checking the other landings…');
+  const closer = await closerLanding({
+    plan: r.plan, launch: T.ramp, landings: await landingsFor(T.r2Key),
+    route: waterRouter(CF_WORKER_URL, T.r2Key, { minDepthFt: TRANSIT_MIN_DEPTH_FT }),
+  }).catch((e) => { console.warn('[pick-water] closer landing check failed:', e && e.message); return null; });
+  const closerNote = closerLandingNote(closer, T.rampName);
+  if (closerNote) r.problems = [...(r.problems || []), closerNote];
 
   if (r.problems && r.problems.length) {
     console.warn('[pick-water] the plan came back with %d problem(s):', r.problems.length);

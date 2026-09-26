@@ -133,6 +133,16 @@ export function reachLabel(r) {
  */
 export async function launchRouteFor(key, lat, lon) {
   if (!key || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  return routeAt(await landingsFor(key), lat, lon);
+}
+
+/**
+ * Every landing on this water, by PACK KEY and awaited -- the same file, cache and collapse as
+ * launchReach(), for a caller that holds a slug and can wait. Closed and off-main landings are
+ * already out (collapse()). [] when the pack has no launches.json, which is the normal case.
+ */
+export async function landingsFor(key) {
+  if (!key) return [];
   let rows = CACHE.get(key);
   if (!Array.isArray(rows)) {
     try {
@@ -144,7 +154,7 @@ export async function launchRouteFor(key, lat, lon) {
     }
     CACHE.set(key, rows);
   }
-  return routeAt(rows, lat, lon);
+  return rows;
 }
 
 export function routeAt(rows, lat, lon) {
