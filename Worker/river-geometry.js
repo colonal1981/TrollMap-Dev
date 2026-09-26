@@ -20,6 +20,7 @@
  * station; only the arrays this module uses are kept after the parse.
  */
 import { chartpackKey, r2Text } from './worker-core.js';
+import { geoDistanceM } from '../js/utils/geo.js';
 
 const CFS_TO_CMS = 0.0283168466;
 const MS_TO_MPH = 2.2369363;
@@ -124,13 +125,8 @@ export function slimLandings(doc) {
     .sort((a, b) => a.station_m - b.station_m);
 }
 
-function metres(lat1, lon1, lat2, lon2) {
-  const R = 6371008.8, rad = Math.PI / 180;
-  const dLat = (lat2 - lat1) * rad, dLon = (lon2 - lon1) * rad;
-  const s = Math.sin(dLat / 2) ** 2
-          + Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLon / 2) ** 2;
-  return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
-}
+// The haversine is js/utils/geo.js's, since 2026-09-25; this had its own copy.
+const metres = geoDistanceM;
 
 /**
  * Where a point is on the river: the nearest station, and how far off the line the point is.

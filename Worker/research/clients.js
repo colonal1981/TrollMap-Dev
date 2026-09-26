@@ -1290,94 +1290,9 @@ function freshwaterRegionOf(text) {
   return head.length >= 500 ? head : text;   // never truncate into uselessness
 }
 
-async function fetchSaltwaterRegulations(state, env) {
-  const cfg = SALTWATER_DIGEST[state];
-  const page = STATE_REGULATIONS_CONFIG[state]?.pages?.[0];
-  if (!cfg || !page) return null;
+// fetchSaltwaterRegulations() and fetchLiveRegsAmendments() stood here: the digest-text and
+// live-amendment inputs to the `saltwater_regulations` agent. The agent was deleted on 2026-09-25
+// -- nothing ran it -- and both went with it. The saltwater half of the digest still reaches the
+// app through fetchStateRegulations() and /regulations, which is where the slicers above serve.
 
-  // Same rule as the freshwater cache: the digest's identity is part of the key, so
-  // a digest swap invalidates itself and nobody has to remember to bust it.
-  const digestId = (page.url || '').split('/').pop().replace(/\.pdf$/i, '');
-  const cacheKey = `saltwater-regs:${state}:v1:${digestId}`;
-  const cached = await env.KV.get(cacheKey, { type: 'json' });
-  if (cached) return cached;
-
-  let out;
-  try {
-    const result = await tinyfishFetch({ urls: [page.url], format: 'markdown' }, env);
-    const text = result.results?.[0]?.text || '';
-    if (text.length < 500) {
-      console.warn(`fetchSaltwaterRegulations(${state}): digest returned ${text.length} chars -- not caching`);
-      return null;
-    }
-    const ext = extractSaltwaterDigest(state, text);
-    if (!ext.located) {
-      console.warn(`fetchSaltwaterRegulations(${state}): no saltwater species rows found in the digest -- not caching`);
-      return null;
-    }
-    out = { url: page.url, digestId, published: cfg.published, located: true,
-            anchor: ext.anchor, content: ext.text };
-  } catch (e) {
-    console.warn(`fetchSaltwaterRegulations(${state}) failed: ${e.message}`);
-    return null;  // a failure is not "this state has no saltwater rules"
-  }
-  await env.KV.put(cacheKey, JSON.stringify(out),
-                   { expirationTtl: 90 * 24 * 60 * 60 });
-  return out;
-}
-
-// Ryan, 2026-08-03: "the regulations agent should use those first and then a live
-// check for news of any changes". The digest is an annual book. NC closes southern
-// flounder and spotted seatrout by proclamation mid-season; SC and GA amend by
-// regulation. This is the second half of that sentence -- a date-bounded search for
-// amendments published since the digest took effect.
-//
-// It returns null rather than an empty object when the search is unavailable, and
-// that distinction matters: the saltwater agent sets `verificationRequired` on the
-// absence of a live source, and an empty-but-present source would silently clear
-// that flag while confirming nothing.
-const LIVE_REGS_QUERY = {
-  SC: 'SCDNR saltwater fishing regulation change red drum spotted seatrout flounder size creel limit',
-  GA: 'Georgia DNR Coastal Resources Division saltwater fishing regulation change red drum seatrout flounder limit',
-  NC: 'NC Marine Fisheries proclamation southern flounder spotted seatrout season closure size limit'
-};
-
-async function fetchLiveRegsAmendments(state, env) {
-  const query = LIVE_REGS_QUERY[state];
-  if (!query) return null;
-  const cacheKey = `live-regs:${state}:v1`;
-  const cached = await env.KV.get(cacheKey, { type: 'json' });
-  if (cached) return cached;
-
-  const since = REGS_EFFECTIVE[state] || REGS_2026_EFFECTIVE;
-  const after = since.toISOString().slice(0, 10);
-  let out;
-  try {
-    // after_date is a HARD constraint here -- an amendment from before the digest took effect
-    // is not an amendment. searchWeb() only falls to a provider that can express it.
-    const res = await searchWeb({
-      query, domain_type: 'web', location: 'US', language: 'en', after_date: after,
-      purpose: `Find regulation amendments or proclamations issued after ${after} that change saltwater size, slot or creel limits in ${state}.`
-    }, env);
-    const hits = (res?.results || []).slice(0, 6);
-    if (!hits.length) return null;
-    out = {
-      queriedAt: Date.now(),
-      after,
-      urls: hits.map(h => h.url).filter(Boolean),
-      content: hits.map(h =>
-        `- ${h.title || h.url || 'untitled'} (${h.url || 'no url'})\n  ` +
-        String(h.markdown || h.content || h.snippet || h.description || '').slice(0, 600)
-      ).join('\n')
-    };
-  } catch (e) {
-    console.warn(`fetchLiveRegsAmendments(${state}) failed: ${e.message}`);
-    return null;  // no source is not the same as no changes
-  }
-  // Short TTL on purpose. This exists to be fresher than the digest; a 90-day cache
-  // of "what changed lately" is the same failure as the annual book it backstops.
-  await env.KV.put(cacheKey, JSON.stringify(out), { expirationTtl: 12 * 60 * 60 });
-  return out;
-}
-
-export { TINYFISH_BASE, TINYFISH_FETCH_BASE, tinyfishSearch, tinyfishFetch, searchWeb, daysFromRecency, tbsForDays, startDateForDays, normaliseHit, csvDomains, FIRECRAWL_HARD_STOP, FIRECRAWL_KV_KEY, FIRECRAWL_TTL_MS, fetchFirecrawlBalance, checkFirecrawlBudget, recordFirecrawlUsage, scrapeDoFetch, REGS_R2_BASE, REGS_2026_EFFECTIVE, REGS_EFFECTIVE, REGS_DATE_VERIFIED, useDigest2026, USE_2026, STATE_REGULATIONS_CONFIG, SALTWATER_DIGEST, SALTWATER_HEAD, FRESHWATER_ONLY, sliceSaltwaterSection, freshwaterRegionOf, extractSaltwaterDigest, DIGEST_BUDGET, fetchSaltwaterRegulations, fetchLiveRegsAmendments, extractMarkdownTables, parseSCTable, parseNCTable, parseGATable, parseTNStatewide, parseTNExceptions, parseTNRegion, PARSERS, normalizeLakeName, parseNCRegulationsWithLLM, parseRegulationsWithLLM, fetchStateRegulations, getLakeRegulations };
+export { TINYFISH_BASE, TINYFISH_FETCH_BASE, tinyfishSearch, tinyfishFetch, searchWeb, daysFromRecency, tbsForDays, startDateForDays, normaliseHit, csvDomains, FIRECRAWL_HARD_STOP, FIRECRAWL_KV_KEY, FIRECRAWL_TTL_MS, fetchFirecrawlBalance, checkFirecrawlBudget, recordFirecrawlUsage, scrapeDoFetch, REGS_R2_BASE, REGS_2026_EFFECTIVE, REGS_EFFECTIVE, REGS_DATE_VERIFIED, useDigest2026, USE_2026, STATE_REGULATIONS_CONFIG, SALTWATER_DIGEST, SALTWATER_HEAD, FRESHWATER_ONLY, sliceSaltwaterSection, freshwaterRegionOf, extractSaltwaterDigest, DIGEST_BUDGET, extractMarkdownTables, parseSCTable, parseNCTable, parseGATable, parseTNStatewide, parseTNExceptions, parseTNRegion, PARSERS, normalizeLakeName, parseNCRegulationsWithLLM, parseRegulationsWithLLM, fetchStateRegulations, getLakeRegulations };

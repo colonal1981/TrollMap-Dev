@@ -132,17 +132,16 @@ describe('structuralElements: every key read is a key the engine writes', () => 
   for (const file of jsFiles(JS_ROOT)) {
     const rel = path.relative(REPO, file).split(path.sep).join('/');
     // The PRODUCER is not a consumer of itself. It moved to pack-facts.js on 2026-09-04.
-    if (rel.endsWith('pack-facts.js') || rel.endsWith('lake-research-engine.js')) continue;
+    if (rel.endsWith('pack-facts.js')) continue;
     const source = readFileSync(file, 'utf8');
     if (!source.includes('structuralElements')) continue;
 
     it(`${rel} reads only keys the engine can write`, () => {
-      // Read off profiles SAVED BEFORE 2026-08-16, when the engine still wrote them. The
-      // adapter's fallback exists for those and for the 43 packs with no structure layer, so
-      // these two are legitimately consumed by a producer that is no longer the engine.
-      const LEGACY_PROFILE_KEYS = new Set(['humpCoordinates', 'ledgeCoordinates']);
+      // humpCoordinates and ledgeCoordinates were excused here as legacy keys the adapter's
+      // profile fallback read. That fallback went on 2026-09-25 -- they are retired fields -- so
+      // the excuse went with it, and a module that starts reading them again fails here.
       const missing = consumedKeys(source)
-        .filter(h => !produced.has(h.key) && !LEGACY_PROFILE_KEYS.has(h.key))
+        .filter(h => !produced.has(h.key))
         .map(h => `${h.via}.${h.key}`);
       const unique = [...new Set(missing)];
       expect(unique.length === 0 ? 'ok' : `not produced: ${unique.join(', ')}`).toBe('ok');

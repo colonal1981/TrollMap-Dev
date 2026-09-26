@@ -20,6 +20,8 @@
  * in a hole (an island) is not on the water.
  */
 
+import { inRing } from '../../js/utils/geojson-coords.js';
+
 /** Every polygon in a GeoJSON object, as arrays of rings of [lon, lat]. */
 export function polygonsOf(geojson) {
   const out = [];
@@ -35,14 +37,7 @@ export function polygonsOf(geojson) {
   return out.filter((p) => Array.isArray(p[0]) && p[0].length >= 4);
 }
 
-function inRing(lon, lat, ring) {
-  let inside = false;
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    const xi = ring[i][0], yi = ring[i][1], xj = ring[j][0], yj = ring[j][1];
-    if (((yi > lat) !== (yj > lat)) && (lon < (xj - xi) * (lat - yi) / ((yj - yi) || 1e-300) + xi)) inside = !inside;
-  }
-  return inside;
-}
+// inRing() is the one even-odd ray cast, in js/utils/geojson-coords.js (2026-09-25).
 
 /** True when (lon, lat) is inside any polygon's outer ring and none of that polygon's holes. */
 export function onWater(polygons, lon, lat) {

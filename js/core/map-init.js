@@ -5,7 +5,7 @@
  * so that other modules can `import { initMap, renderAll, fitMap }`.
  *
  * Cross-module calls (renderEditTables, renderPlanStats,
- * sendWptToGenerator, refreshChartOverlayTransforms, persistWorkingData)
+ * refreshChartOverlayTransforms, persistWorkingData)
  * are looked up on `window` so this module can be loaded before those
  * modules are wired up.
  *
@@ -41,9 +41,6 @@ const TILES = {
 };
 
 // Mutable map-init-local state. Not shared across modules.
-let PREVIEW_LAYER = null;
-let PREVIEW_TRACKS = [];
-let pickTarget = null;          // { field: 'start'|'end' } during coordinate picking
 let RESTORING_WORKING_DATA = false;
 let FILENAME = 'Untitled';
 
@@ -66,7 +63,6 @@ export function initMap() {
   setBase('sat');
 
   state.LAYER = L.layerGroup().addTo(state.MAP);
-  PREVIEW_LAYER = L.layerGroup().addTo(state.MAP);
   state.MAP_OK = true;
 
   state.MAP.on('click', onMapClick);
@@ -185,23 +181,11 @@ export function editMode() {
 }
 
 /**
- * Handle a click anywhere on the map. Three behaviors, in order:
- *   1. If a coordinate-pick is in progress, fill the targeted input and stop.
- *   2. If a chart georef is in progress, hand off to handleGeorefClick.
- *   3. Otherwise, in "add" mode, prompt for a name and add a waypoint.
+ * Handle a click anywhere on the map: in "add" mode, prompt for a name and add a waypoint.
+ * (A coordinate pick for the troll generator, and a chart georef click, were handled here first
+ * until 2026-09-25, when nothing could start either any more.)
  */
 export function onMapClick(e) {
-  if (pickTarget) {
-    fillCoord(pickTarget.field, e.latlng.lat, e.latlng.lng);
-    pickTarget = null;
-    document.body.style.cursor = '';
-    setBanner('');
-    return;
-  }
-  if (window.georefState) {
-    callGlobal('handleGeorefClick', e);
-    return;
-  }
   const mode = editMode();
   if (mode === 'add') {
     const name = prompt('Waypoint name:', suggestName());
@@ -209,18 +193,6 @@ export function onMapClick(e) {
     state.DATA.waypoints.push({ lat: e.latlng.lat, lon: e.latlng.lng, name: name || 'WPT', sym: 'Waypoint' });
     renderAll();
   }
-}
-
-/** Fill the troll-generator start/end coordinate inputs. */
-export function fillCoord(field, lat, lon) {
-  if (field === 'start') {
-    document.getElementById('gLat1').value = lat.toFixed(5);
-    document.getElementById('gLon1').value = lon.toFixed(5);
-  } else if (field === 'end') {
-    document.getElementById('gLat2').value = lat.toFixed(5);
-    document.getElementById('gLon2').value = lon.toFixed(5);
-  }
-  setBanner('');
 }
 
 /** Show or hide the georef banner (the orange strip across the map). */
@@ -234,16 +206,6 @@ export function setBanner(s) {
 /** Auto-name like "WPT1", "WPT2", … based on the current count. */
 export function suggestName() {
   return `WPT${state.DATA.waypoints.length + 1}`;
-}
-
-/**
- * Begin coordinate-picking mode. The next map click will fill the
- * given field ('start' or 'end' for the troll generator).
- */
-export function startPick(field) {
-  pickTarget = { field };
-  document.body.style.cursor = 'crosshair';
-  setBanner('🎯 Click on the map to set ' + (field === 'start' ? 'START' : 'END') + ' waypoint');
 }
 
 /**
@@ -339,11 +301,6 @@ export function renderMap() {
         <b style="font-size:15px;color:#0d4f8b">${esc(w.name || '(unnamed)')}</b><br>
         <span style="font-family:monospace;font-size:11px;color:#555">${w.lat.toFixed(5)}, ${w.lon.toFixed(5)}</span><br>
         <span style="font-size:12px;color:#0e7c7b">${esc(w.sym || 'Waypoint')}</span>
-        <div style="margin-top:10px;border-top:1px solid #ddd;padding-top:8px;display:flex;flex-direction:column;gap:6px">
-          <b style="font-size:11px;color:#888;text-transform:uppercase">Trolling Lane Generator</b>
-          <button onclick="window.sendWptToGenerator(${w.lat},${w.lon},'start')" style="background:#0e7c7b;color:#fff;border:none;border-radius:6px;padding:6px;font-size:12px;font-weight:700;cursor:pointer">🎯 Set as Start Spot</button>
-          <button onclick="window.sendWptToGenerator(${w.lat},${w.lon},'end')" style="background:#0d4f8b;color:#fff;border:none;border-radius:6px;padding:6px;font-size:12px;font-weight:700;cursor:pointer">🎯 Set as End Spot</button>
-        </div>
       </div>`);
     circ.addTo(state.LAYER);
 
@@ -389,27 +346,6 @@ export function fitMap() {
   if (state.MAP_OK && state.MAP?._lastBounds?.length) {
     state.MAP.fitBounds(state.MAP._lastBounds, { padding: [30, 30] });
   }
-}
-
-/** Clear all preview polylines (troll-lane preview before commit). */
-export function clearPreview() {
-  if (PREVIEW_LAYER) PREVIEW_LAYER.clearLayers();
-  PREVIEW_TRACKS = [];
-}
-
-/** Display dashed preview tracks on the map without committing them. */
-export function showPreview(tracks) {
-  clearPreview();
-  PREVIEW_TRACKS = tracks;
-  if (!state.MAP_OK) return;
-  for (const t of tracks) {
-    if (t.pts.length > 1) {
-      L.polyline(t.pts, { color: '#ff00e6', weight: 2.5, dashArray: '6,6', opacity: 0.9 })
-        .addTo(PREVIEW_LAYER);
-    }
-  }
-  const pts = tracks.flatMap((t) => t.pts);
-  if (pts.length) state.MAP.fitBounds(pts, { padding: [40, 40] });
 }
 
 // ── Working-data autosave / restore ─────────────────────────────────────

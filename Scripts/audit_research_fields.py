@@ -97,10 +97,13 @@ def fetch_profiles(worker, cache_fp, sleep=0.25, refresh=False):
 SCHEMA_FILES = ('worker/research/agents.js', 'worker/research/extract.js',
                 'worker/research/facts-util.js', 'worker/research/coastal-agents.js',
                 'worker/research/storage.js')
-# Files that RENDER. A hit here means a person can see it; nothing acts on it.
-UI_FILES = ('js/modules/lake-research-ui.js',)
-# The engine assembles and saves the profile: hits here are writes unless they are clearly not.
-WRITER_FILES = ('js/modules/lake-research-engine.js',)
+# Files that RENDER. A hit here means a person can see it; nothing acts on it. The Research tab's
+# UI (js/modules/lake-research-ui.js) was the one entry until the tab was deleted on 2026-09-25.
+UI_FILES = ()
+# Files that assemble and save the profile: hits here are writes unless they are clearly not. The
+# tab's engine was the one entry until 2026-09-25; the batch that writes profiles now is Python
+# and is not scanned, and the Worker's save is in SCHEMA_FILES.
+WRITER_FILES = ()
 
 # A field is reached by a computed path if any of these appear anywhere -- once true, EVERY field
 # under that root is potentially alive without being named.
@@ -212,28 +215,28 @@ def collapse(path, open_paths):
 def target_fields(repo):
     """Every dotted path any agent is told to go and find.
 
-    AGENT_DEFINITIONS lives in the CLIENT engine, not in the Worker's agents.js -- the first
-    version of this script looked in the Worker, matched nothing, and printed
-    `targetFields declared: 0`, which reads exactly like "nothing is being hunted". A check that
-    cannot see reports nothing, and nothing reads like a clean pass.
+    READ OFF THE BATCH, Scripts/research_lakes.py, since 2026-09-25. It read AGENT_DEFINITIONS in
+    the Research tab's engine (js/modules/lake-research-engine.js) until the tab was deleted, and
+    `if not os.path.exists(p): return {}` would then have reported NOTHING HUNTED, which reads
+    exactly like a clean pass. The batch is the one thing that asks now: its analyze-facts
+    requests carry `"targetFields": [...]`, and the agents it runs are the `"agent": "..."` it
+    sends to /research/agent-llm and /research/discover.
+
+    A MISSING FILE OR AN EMPTY PARSE IS FATAL, not {}. The first version of this script looked in
+    the Worker, matched nothing, and printed `targetFields declared: 0`. A check that cannot see
+    reports nothing, and nothing reads like a clean pass.
     """
-    p = os.path.join(repo, 'js', 'modules', 'lake-research-engine.js')
+    p = os.path.join(repo, 'Scripts', 'research_lakes.py')
     if not os.path.exists(p):
-        return {}
+        raise SystemExit('FATAL: %s not found -- the batch is where targetFields are read from' % p)
     src = io.open(p, encoding='utf-8', errors='replace').read()
+    agents = sorted(set(re.findall(r'"agent":\s*"([a-z_]+)"', src))) or ['research_lakes.py']
     out = {}
-    blk = re.search(r'const AGENT_DEFINITIONS\s*=\s*\{([\s\S]*?)\n\};', src)
-    body = blk.group(1) if blk else src
-    agent = '?'
-    for line in body.split('\n'):
-        m = re.match(r"\s*([a-zA-Z_]+):\s*\{\s*$", line)
-        if m:
-            agent = m.group(1)
-            continue
-        m = re.search(r"targetFields:\s*\[([^\]]*)\]", line)
-        if m:
-            for f in re.findall(r"'([^']+)'", m.group(1)):
-                out.setdefault(f, []).append(agent)
+    for m in re.finditer(r'"targetFields":\s*\[([^\]]*)\]', src):
+        for f in re.findall(r'"([^"]+)"', m.group(1)):
+            for agent in agents:
+                if agent not in out.setdefault(f, []):
+                    out[f].append(agent)
     if not out:
         raise SystemExit('FATAL: no targetFields parsed from %s -- the shape moved. Fix this '
                          'rather than reporting an empty cut list.' % p)

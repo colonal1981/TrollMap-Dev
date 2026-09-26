@@ -21,8 +21,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { handleResearchAgent } from '../Worker/research/agents.js';
-import { askFailedGroupsAgain, groupsToAskAgain, mergeGroupAnswers, GROUP_RETRY_WAITS_MS }
-  from '../js/utils/species-group-retry.js';
 
 // Workers Free, per invocation: developers.cloudflare.com/workers/platform/limits/#subrequests.
 const FREE_PLAN_SUBREQUESTS = 50;
@@ -155,76 +153,8 @@ describe('a group that spends the allowance does not take the next one with it',
     assert.ok(body.warnings.some((w) => /"catfish" was not asked/.test(w)));
   });
 
-  test('the caller asks them again in a new request, and the water loses nothing', async () => {
-    const { body: first } = await spend();
-    assert.deepEqual(groupsToAskAgain(first), ['bass', 'crappie', 'catfish', 'panfish', 'other']);
-    const requests = [];
-    const waited = [];
-    const { res, reasked } = await askFailedGroupsAgain(async (groups) => {
-      requests.push(groups);
-      // A new request is a new invocation: a fresh allowance, and the spike has passed.
-      return (await ask({ groupModels: 'flash', groups, demand: () => false })).body;
-    }, first, { sleep: async (ms) => { waited.push(ms); } });
-    assert.deepEqual(requests, [['bass', 'crappie', 'catfish', 'panfish', 'other']]);
-    assert.deepEqual(waited, [GROUP_RETRY_WAITS_MS[0]]);
-    assert.deepEqual(GROUP_RETRY_WAITS_MS, [8000, 20000], 'the waits the code already argued for');
-    assert.deepEqual(reasked, ['bass', 'crappie', 'catfish', 'panfish', 'other']);
-    assert.deepEqual(Object.keys(res.section).sort(), [...ROSTER].sort());
-    assert.deepEqual(res.meta.missingSpecies, []);
-    assert.deepEqual(groupsToAskAgain(res), []);
-    assert.deepEqual(res.meta.failedGroups, []);
-    assert.deepEqual(res.meta.notAskedGroups, []);
-    assert.deepEqual(res.data.lakeForage.primary, ['Threadfin Shad']);
-    assert.ok(!res.warnings.some((w) => /^fisheries group "/.test(w)), 'no stale per-group warning survives');
-  });
-
-  test('a group still refused after both waits stays LOST', async () => {
-    const { body: first } = await spend();
-    const requests = [];
-    // Every later request answers, except catfish, which the provider keeps refusing.
-    const refusing = async (groups) => {
-      requests.push(groups);
-      const again = (await ask({ groups, demand: () => false })).body;
-      const g = again.meta.groups.find((x) => x.group === 'catfish');
-      if (g) {
-        Object.assign(g, { ok: false, asked: true, reason: 'high demand', returned: undefined });
-        delete again.section['Channel Catfish'];
-        again.meta.missingSpecies = ['Channel Catfish'];
-      }
-      return again;
-    };
-    const { res, reasked } = await askFailedGroupsAgain(refusing, first, { sleep: async () => {} });
-    // One new request per wait, the second one naming only what the first new one could not answer.
-    assert.deepEqual(requests, [['bass', 'crappie', 'catfish', 'panfish', 'other'], ['catfish']]);
-    assert.deepEqual(reasked, ['bass', 'crappie', 'catfish', 'panfish', 'other']);
-    assert.deepEqual(res.meta.missingSpecies, ['Channel Catfish'], 'the report still says LOST');
-    assert.deepEqual(groupsToAskAgain(res), ['catfish']);
-    assert.equal(byGroup(res).catfish.attempts, 2, 'asked in both later requests, never in the first');
-    assert.ok(!('Channel Catfish' in res.section));
-  });
-});
-
-test('a failed second request leaves the first answer as it was', () => {
-  const first = { success: true, section: { A: {} }, meta: { groups: [{ group: 'bass', ok: false }] } };
-  assert.equal(mergeGroupAnswers(first, null), first);
-  assert.equal(mergeGroupAnswers(first, { success: false }), first);
-});
-
-test('a group refused per minute is asked again after Google\'s delay, when it is the longer', async () => {
-  // "Please retry in 35.4s": the group's pass ended on that refusal (stopOnRefusal, worker-core.js)
-  // and the delay came back as retryAfterMs. 8 s would be a request spent on the same refusal.
-  const first = { success: true, section: {}, meta: { groups: [
-    { group: 'bass', species: ['Largemouth Bass'], ok: false, asked: true, refusal: 'minute',
-      retryAfterMs: 35400, attempts: 1 }], missingSpecies: ['Largemouth Bass'] } };
-  const again = { success: true, section: { 'Largemouth Bass': {} }, meta: { groups: [
-    { group: 'bass', species: ['Largemouth Bass'], ok: true, asked: true, attempts: 1 }], missingSpecies: [] } };
-  const waited = [];
-  const { res } = await askFailedGroupsAgain(async () => again, first, { sleep: async (ms) => { waited.push(ms); } });
-  assert.deepEqual(waited, [35400]);
-  assert.deepEqual(groupsToAskAgain(res), []);
-  // Google named no delay ("high demand"): the argued wait stands.
-  const busy = { ...first, meta: { ...first.meta, groups: [{ ...first.meta.groups[0], refusal: 'demand', retryAfterMs: null }] } };
-  const waited2 = [];
-  await askFailedGroupsAgain(async () => again, busy, { sleep: async (ms) => { waited2.push(ms); } });
-  assert.deepEqual(waited2, [GROUP_RETRY_WAITS_MS[0]]);
+  // THE CALLER'S HALF -- asking the unanswered groups again in a new request, and merging -- was
+  // tested here against js/utils/species-group-retry.js, the Research tab's copy of the rule.
+  // The tab and that copy were deleted on 2026-09-25. The batch's copy,
+  // Scripts/species_group_retry.py, is tested by Scripts/test_species_group_retry.py.
 });

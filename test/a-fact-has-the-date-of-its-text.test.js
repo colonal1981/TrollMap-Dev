@@ -12,7 +12,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { handleResearchAnalyzeFacts, handleResearchDedupeContradictions } from '../Worker/research/extract.js';
+import { handleResearchAnalyzeFacts } from '../Worker/research/extract.js';
 import { patternFactsFrom } from '../js/modules/plan-prompt.js';
 import { readPage } from '../Worker/research/text-date.js';
 
@@ -177,56 +177,8 @@ test('combined snippets: each fact is dated against the snippet its quote came f
 });
 
 // ── THE MERGE ────────────────────────────────────────────────────────────────────────────────
-
-const dedupe = async (facts) => (await handleResearchDedupeContradictions(new Request('https://w.example/d', {
-  method: 'POST', body: JSON.stringify({ facts }) }), {})).json();
-
-test('two statements of one fact merge, and the date goes with the quote that is kept', async () => {
-  const said = 'Tight-lining the channel near the bottom is the best way to catch Lake Wateree crappie in winter.';
-  const d = await dedupe([
-    { fact: said, category: 'seasonalPattern', confidence: 80, source: AHQ.title, textDate: '2026-01-29',
-      textDateFrom: 'date line above the quote: "January 29"',
-      quote: 'Tight-lining in the river channel near the bottom is the best way to catch these fish.' },
-    { fact: said, category: 'seasonalPattern', confidence: 90, source: AHQ.title, textDate: '2026-02-04',
-      textDateFrom: 'date line above the quote: "February 4"',
-      quote: 'Tight-lining the main channel near the bottom is the best way to catch these fish.' },
-  ]);
-  assert.equal(d.deduplicated_facts.length, 1);
-  const [f] = d.deduplicated_facts;
-  assert.equal(f.sourcesAgree, 2);
-  assert.match(f.quote, /main channel/);
-  assert.equal(f.textDate, '2026-02-04', 'the February quote with the January date would be a date from nowhere');
-});
-
-// The Lower Saluda's striper creel, in its two real texts: a SCDNR freshwater regulations PDF,
-// "The Saluda River … 5 fish per day and 21-inch minimum size limit" (no year in what was read),
-// and eRegulations, last updated August 5, 2026, which puts the Lower Reach in the Santee system
-// at 3. Written the way the extractor writes a limit, they share their first 80%.
-test('facts that differ only in their numbers are two facts, not one confirmed twice', async () => {
-  const d = await dedupe([
-    { fact: 'The daily creel limit for striped bass on the Lower Saluda River is 5 fish',
-      quote: '5 fish per day and 21-inch minimum size limit', source: 'Freshwater Fishing Regulations www.dnr.sc.gov/freshwater',
-      category: 'creelLimit_lakeSpecific', confidence: 85, textDate: null, textDateFrom: null },
-    { fact: 'The daily creel limit for striped bass on the Lower Saluda River is 3 fish',
-      quote: 'Santee River system (see map below); includes Saluda River (Lower Reach) | Striped or Hybrid Bass or a combination | Oct. 1 - June 15 striped bass between 23 and 25 inches may be harvested except that one fish may be greater than 26 inches | 3',
-      source: 'South Carolina Freshwater Fish Size & Possession Limits', category: 'creelLimit_lakeSpecific',
-      confidence: 85, textDate: '2026-08-05', textDateFrom: 'page date near the top: "Last Updated: August 5, 2026"' },
-  ]);
-  // BEFORE: one fact, "is 5 fish", sourcesAgree 2 -- the current limit gone, and no contradiction.
-  assert.equal(d.deduplicated_facts.length, 2);
-  assert.ok(d.deduplicated_facts.every((f) => f.sourcesAgree === 1));
-  assert.equal(d.contradictions.length, 1, 'the contradiction step now sees the pair');
-  assert.equal(d.contradictions[0].textDateA, null);
-  assert.equal(d.contradictions[0].textDateB, '2026-08-05');
-});
-
-test('the same fact with the same numbers still merges', async () => {
-  const d = await dedupe([
-    { fact: 'Lake Wateree is at 97.5% of full pool and up the river is muddy while the mid-lake down is fairly clear.', category: 'poolLevel', confidence: 90 },
-    { fact: 'Lake Wateree is at 97.5% of full pool and up the river is muddy while the mid-lake down is clear.', category: 'poolLevel', confidence: 80 },
-  ]);
-  assert.equal(d.deduplicated_facts.length, 1);
-});
+// Three tests of /research/dedupe-contradictions stood here. The route went with the Research
+// tab, its only caller, on 2026-09-25.
 
 test('the planner is shown the date of a fact\'s text, and nothing where there is none', () => {
   const lines = patternFactsFrom({ _extractedFacts: [

@@ -16,11 +16,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { htmlToText, isPdfBody, decodeEntities } from '../js/utils/html-text.js';
-import { readBatchResults } from '../js/utils/fetch-batch.js';
 import { handleResearchProxyDownloadBatch } from '../Worker/research/download.js';
 import { textDateOf } from '../Worker/research/text-date.js';
 import { scrapeDoFetch } from '../Worker/research/clients.js';
-import { handleSharedStore, getSharedRegistryEntry } from '../Worker/research/shared.js';
 
 const FIX = new URL('./fixtures/fetched-pages/', import.meta.url);
 // The folder is byte-exact (`* -text`); a checkout that still turned LF into CRLF is undone here.
@@ -187,12 +185,11 @@ test('the fallback sends a page back as its HTML, which the caller makes text wi
   const items = Object.keys(PAGES).map((f) => ({ url: SOURCES[f].url, title: f, type: 'HTML' }));
   const scrapeDo = Object.fromEntries(Object.keys(PAGES).map((f) => [SOURCES[f].url, fixtureAnswer(f)]));
   const results = await batch(items, { scrapeDo });
-  const read = readBatchResults(items, results);
   for (const [i, f] of Object.keys(PAGES).entries()) {
     assert.equal(results[i].ok, true);
     assert.equal(results[i].html, readFileSync(new URL(f, FIX), 'utf8'));
-    assert.equal(read[i].kind, 'text');
-    assert.equal(read[i].text.split('\n')[0], PAGES[f].first);
+    // The caller (Scripts/research_lakes.py, under node) makes it text with htmlToText.
+    assert.equal(htmlToText(results[i].html).split('\n')[0], PAGES[f].first);
   }
 });
 
@@ -219,38 +216,12 @@ test('results come back paired with their URL and in the order sent', async () =
   assert.equal(results[1].source, 'tinyfish');
   assert.ok(results[1].text.startsWith('B:'));
   assert.equal(results[0].source, 'scrapedo');
-  const read = readBatchResults([{ url: A }, { url: B }], [...results].reverse());
-  assert.ok(read[0].text.startsWith('A:'), 'paired by URL, not by position');
-  assert.ok(read[1].text.startsWith('B:'));
 });
 
 // ── the app's reading of the batch ─────────────────────────────────────────────────────────
-
-test('the app sends an item the batch returned as a PDF to its PDF path, as type PDF', () => {
-  const src = { url: PDF_URL, title: 'regs', type: 'HTML' };
-  const [r] = readBatchResults([src], [{ url: PDF_URL, text: '', source: 'unhandled', ok: false, reason: 'pdf' }]);
-  assert.equal(r.kind, 'individual');
-  assert.equal(r.src.type, 'PDF');
-  // nepis and blocked go alone too, keeping the type they had
-  const [n] = readBatchResults([src], [{ url: PDF_URL, text: '', source: 'unhandled', ok: false, reason: 'nepis' }]);
-  assert.equal(n.kind, 'individual');
-  assert.equal(n.src.type, 'HTML');
-});
-
-test('the app reuses a stored copy only if it says where its text came from', () => {
-  // A copy without `fetchedBy` was stored before the fix: flat, or another URL's text put under
-  // this one's by the positional pairing. It is fetched again once, whatever its age; a stamped
-  // copy is reused by TTL, one line or not. Asserted on the source: runAgent needs a window.
-  const src = readFileSync(new URL('../js/modules/lake-research-engine.js', import.meta.url), 'utf8');
-  assert.match(src, /age < getDocTtl\(src\.url\) && existing\.fetchedBy\)/);
-  assert.match(src, /readBatchResults\(batch, batchData\.results\)/);
-  // Every copy it stores is stamped: the batch's source, proxy-download's X-Source, or 'pdf'.
-  assert.match(src, /fetchedBy: result\.source,/);
-  assert.match(src, /fetchedBy: isPdf \? 'pdf' : xSource,/);
-  // A shared-registry record from before the fix is not reused either, in both places it is read.
-  assert.match(src, /if \(!checkData\.document\?\.fetchedBy\) continue;/);
-  assert.match(src, /indexStatus !== 'ambiguous' && checkData\.document\?\.fetchedBy\)/);
-});
+// Two tests of readBatchResults() (js/utils/fetch-batch.js) and the Research tab's reuse rule
+// stood here. Both went with the tab on 2026-09-25; test_a_fetched_page_keeps_its_lines.py
+// covers the batch's own reading.
 
 // ── the single-URL path's Scrape.do rung ────────────────────────────────────────────────────
 
@@ -286,35 +257,8 @@ test('scrapeDoFetch refuses a PDF, so the ladder reaches the basic fetch and its
 });
 
 // ── the shared registry ────────────────────────────────────────────────────────────────────
-
-function bucket() {
-  const store = new Map();
-  return {
-    store,
-    async get(k) { return store.has(k) ? { httpMetadata: {}, text: async () => store.get(k) } : null; },
-    async head(k) { return store.has(k) ? { key: k } : null; },
-    async put(k, v) { store.set(k, String(v)); },
-  };
-}
-
-test('the shared registry marks a pre-fix record once, when a fixed fetch stores it again', async () => {
-  const env = { R2_TROLLMAP_CHARTPACKS: bucket(), SHARED_RESEARCH_ENABLED: 'true' };
-  const url = 'https://www.lakegreenwoodfishing.com/lake-greenwood-fishing-report-sep-6th-2026/';
-  const fullText = htmlToText(page('lakegreenwoodfishing-report-2026-09-06.html'));
-  const store = (extra) => handleSharedStore(new Request('https://w/research/shared/store', {
-    method: 'POST', body: JSON.stringify({ canonicalUrl: url, title: 'Greenwood', fullText, ...extra }) }), env)
-    .then((r) => r.json());
-
-  await store({ fetchProvider: 'scrapedo' });                  // what the old app stored
-  assert.equal((await getSharedRegistryEntry(env, url)).fetchedBy, undefined);
-
-  const second = await store({ fetchProvider: 'scrapedo', fetchedBy: 'scrapedo' });
-  assert.notEqual(second.unchanged, true, 'the same text, but now it says where it came from');
-  assert.equal((await getSharedRegistryEntry(env, url)).fetchedBy, 'scrapedo');
-
-  const third = await store({ fetchProvider: 'scrapedo', fetchedBy: 'scrapedo' });
-  assert.equal(third.unchanged, true, 'marked once; after that an unchanged copy is not rewritten');
-});
+// A test of /research/shared/store stood here. The route went with the Research tab, its only
+// caller, on 2026-09-25.
 
 // ── CPU, printed so the PR can quote it ────────────────────────────────────────────────────
 

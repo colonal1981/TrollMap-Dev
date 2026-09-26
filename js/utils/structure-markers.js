@@ -117,29 +117,20 @@ export function ledgesFromPack(structGeo) {
 }
 
 /**
- * The structure a consumer should use: the pack when it has one, the profile's own arrays when
- * it does not.
+ * The structure a consumer should use: the pack's.
  *
- * The fallback is not decoration, but it is now idle. It was written when 43 of 454 shipped
- * packs had no structure.geojson; after the 2026-08-22 build ran build_structure.py over the
- * whole ship list, 0 of 373 lack one, so every shipped lake reads `source: 'pack'`. It stays
- * for a pack that legitimately has no structure — what it no longer does is serve stale
- * coordinates, because assembly drops those now (RETIRED_PROFILE_FIELDS in utils/coerce.js).
- * Returning `source` means a caller — or a person reading a plan — can still tell which it got.
+ * IT HAD A PROFILE FALLBACK until 2026-09-25: the research profile's humpCoordinates and
+ * ledgeCoordinates (under habitat's structural elements), for a pack with no structure layer.
+ * Those are retired fields. Eight stored profiles carry them, exactly 8 of each -- the old browser
+ * agent's cap, never measured -- and 0 of 373 shipped packs lack structure.geojson. Structure
+ * comes from the pack. `source` stays so a caller, or a person reading a plan, can tell 'pack'
+ * from 'none'.
  */
-export function structureFor(packGeo, profileStructuralElements) {
+export function structureFor(packGeo) {
   const humps = humpsFromPack(packGeo);
   const ledges = ledgesFromPack(packGeo);
   const holes = holesFromPack(packGeo);
-  if (humps.length || ledges.length || holes.length) {
-    return { humps, ledges, holes, source: 'pack',
-             humpCount: humps.length, ledgeCount: ledges.length, holeCount: holes.length };
-  }
-  const se = profileStructuralElements || {};
-  const ph = Array.isArray(se.humpCoordinates) ? se.humpCoordinates : [];
-  const pl = Array.isArray(se.ledgeCoordinates) ? se.ledgeCoordinates : [];
-  // A research profile has never carried holes; absent is [] rather than undefined so every
-  // caller can iterate without checking which source answered.
-  return { humps: ph, ledges: pl, holes: [], source: (ph.length || pl.length) ? 'profile' : 'none',
-           humpCount: ph.length, ledgeCount: pl.length, holeCount: 0 };
+  return { humps, ledges, holes,
+           source: (humps.length || ledges.length || holes.length) ? 'pack' : 'none',
+           humpCount: humps.length, ledgeCount: ledges.length, holeCount: holes.length };
 }

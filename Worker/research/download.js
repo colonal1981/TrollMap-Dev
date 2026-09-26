@@ -528,18 +528,8 @@ async function handleResearchProxyDownload(request, env) {
   }
 }
 
-// ─── DATASET HUNTER ──────────────────────────────────────────────────────────
-// Uses Firecrawl /v1/map to crawl authoritative agency sites and find
-// stocking reports, creel surveys, fisheries assessments, and academic papers
-// for a given lake. Returns a ranked list of discovered dataset URLs.
-//
-// Target sources per state:
-//   SC  — dnr.sc.gov (stocking, creel, annual reports, lake descriptions)
-//   NC  — ncwildlife.org
-//   GA  — georgiawildlife.com
-//   All — USGS ScienceBase, USACE, Google Scholar via Tavily
-//
-// Route: POST /research/dataset-hunt  { lakeName, state }
+// The DATASET HUNTER's header stood here, orphaned from dataset.js; /research/dataset-hunt was
+// deleted on 2026-09-25 with no caller.
 
 async function handleResearchProxyDownloadBatch(request, env) {
   let body;

@@ -37,7 +37,6 @@ import { esc } from '../utils/escape.js';
 import { isReady as dbIsReady, tryPut } from '../utils/db.js';
 
 const VECTOR_LAYERS = {};
-window.CUSTOM_VECTOR_LAYERS = VECTOR_LAYERS;
 
 // Where renderVectorList() draws. Set by the contour panel when it builds; until then the list
 // simply has nowhere to go, which is not an error -- layers still load and still draw.

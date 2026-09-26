@@ -5,13 +5,13 @@ import { sanitizeLakeId, researchStorageId, researchStorageIdCandidates, legacyS
   from '../js/data/research-ids.js';
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
-// A SECOND COPY OF A RULE, AND THE TEST THAT MAKES IT SAFE
+// ONE COPY OF A RULE, AND THE TEST THAT KEEPS IT ONE
 //
-// `js/data/research-ids.js` mirrors `Worker/research/keys.js` so the research picker can answer
-// "which of these do I not have a profile for" without fetching all sixty profiles to read their
-// names back out.
+// `js/data/research-ids.js` mirrored `Worker/research/keys.js` until 2026-09-25, so the research
+// picker could answer "which of these do I not have a profile for" without fetching all sixty
+// profiles to read their names back out. keys.js imports it now.
 //
-// Drift here does not throw. It reports a researched lake as unresearched, which sends Ryan to
+// Drift here would not throw. It reports a researched lake as unresearched, which sends Ryan to
 // re-run a pipeline on a water that is already done, or — worse in the other direction — hides a
 // lake from the picker that he still needs. So the Worker's own source is READ, not paraphrased.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -24,16 +24,14 @@ import { sanitizeLakeId, researchStorageId, researchStorageIdCandidates, legacyS
 const WORKER = readFileSync(new URL('../Worker/research/keys.js', import.meta.url), 'utf8');
 
 describe('the client mirror agrees with the Worker', () => {
-  it('sanitizeLakeId does what the Worker does, character for character', () => {
-    // Lifted from the Worker body rather than restated, so a change there fails here.
-    const body = /function sanitizeLakeId\(name\)\s*\{([\s\S]*?)\n\}/.exec(WORKER);
-    expect(Boolean(body)).toBe(true);
-    // eslint-disable-next-line no-new-func
-    const theirs = new Function('name', body[1]);
-    for (const name of ['Lake Wateree, SC', 'Ft. Loudoun Reservoir, TN', 'Murrells Inlet / Pawleys Island, SC',
-                        'HB Robinson Lake (Darlington Co, SC)', 'Santee River Delta / North Inlet, SC',
-                        '', null, '   ', 'A'.repeat(200)]) {
-      expect(sanitizeLakeId(name)).toBe(theirs(name));
+  // 'sanitizeLakeId does what the Worker does, character for character' stood here, lifting the
+  // Worker's body and comparing. On 2026-09-25 the Worker stopped carrying one: keys.js imports
+  // the storage-id rule from research-ids.js. The guard is the one below it now -- one copy.
+  it('THE STORAGE-ID RULE IS ONE COPY: the Worker imports it and declares none of it', () => {
+    for (const n of ['sanitizeLakeId', 'stripLakeQualifiers', 'researchStorageId',
+                     'legacyStorageName', 'researchStorageIdCandidates']) {
+      expect(WORKER).toMatch(new RegExp(`import \\{[^}]*\\b${n}\\b[^}]*\\}\\s*from\\s*'[^']*js/data/research-ids\\.js'`));
+      expect(WORKER).not.toMatch(new RegExp(`function\\s+${n}\\s*\\(`));
     }
   });
 
@@ -116,28 +114,13 @@ describe('researchedNames — what is already done', () => {
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
 describe('the pre-county spelling resolves', () => {
-  it('legacyStorageName agrees with the Worker, character for character', () => {
-    const body = /function legacyStorageName\(name\)\s*\{([\s\S]*?)\n\}/.exec(WORKER);
-    expect(Boolean(body)).toBe(true);
-    const paren = /const COUNTY_PAREN = (\/.*\/i);/.exec(WORKER);
-    expect(Boolean(paren)).toBe(true);
-    // eslint-disable-next-line no-new-func
-    const theirs = new Function('name', `const COUNTY_PAREN = ${paren[1]};` + body[1]);
-    for (const name of ['Lake Murray (Newberry Co, SC)', 'Saluda River (2) (Newberry Co, SC)',
-                        'J. Strom Thurmond Reservoir (Lincoln Co, GA/SC)', 'Lake Wateree, SC',
-                        'Calderwood Lake (Monroe Co, TN/NC)', 'Bates Old River (Richland Co, SC)',
-                        '', null]) {
-      expect(legacyStorageName(name)).toBe(theirs(name));
-    }
-  });
-
-  it('candidates agree with the Worker, in the same order', () => {
-    const body = /function researchStorageIdCandidates\(lakeName\)\s*\{([\s\S]*?)\n\}/.exec(WORKER);
-    expect(Boolean(body)).toBe(true);
+  // 'legacyStorageName agrees with the Worker, character for character' stood here. There is one
+  // legacyStorageName since 2026-09-25, and the one-copy test at the top holds it there.
+  it('the candidates include the pre-county id and the literal one', () => {
     for (const name of ['Lake Murray (Newberry Co, SC)', 'Lake Thurmond, SC',
                         'North Saluda Reservoir (Greenville Co, SC)', 'Lake Wateree, SC']) {
-      // The Worker's own body cannot be eval'd here without its helpers, so the contract is
-      // asserted on the OUTPUT instead: the mirror must produce the pre-county id in the middle.
+      // The contract, asserted on the OUTPUT: the pre-county id is in the list, and so is the
+      // literal one.
       const got = researchStorageIdCandidates(name);
       expect(got.includes(sanitizeLakeId(legacyStorageName(name)))).toBe(true);
       expect(got.includes(sanitizeLakeId(name))).toBe(true);

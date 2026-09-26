@@ -16,9 +16,7 @@
 import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
 import { LURE_PRESETS, autoCalculateLead } from './spread-builder.js';
-import { getLureColor, canReachDepth } from '../data/lure-knowledge.js';
-import { lureByName, JIGHEADS_OWNED_OZ } from '../data/tackle-inventory.js';
-import { FISHING_STYLE } from '../data/fishing-style-profile.js';
+import { getLureColor } from '../data/lure-knowledge.js';
 
 // ── Reel assignment rule ──────────────────────────────────────────────────────
 export function reelForLure(lureName) {
@@ -904,134 +902,8 @@ export function syncSpread(cards, routeRods, routeSpeeds = {}) {
   state.SPREAD = spreadRowsFrom(cards, routeRods, routeSpeeds);
 }
 
-// ── Lure resolver ─────────────────────────────────────────────────────────────
-const LURE_MAP = {
-  'A-Rig Light':             'A-Rig Light (~1.65oz) – 3.8" Swimbait',
-  'A-Rig Medium':            'A-Rig Medium (~2.65oz) – 4.6" Swimbait',
-  'A-Rig Heavy':             'A-Rig Heavy (~3.5oz) – 5" Swimbait',
-  'umbrella_rig':            'A-Rig Medium (~2.65oz) – 4.6" Swimbait',
-  'umbrella_rig_light':      'A-Rig Light (~1.65oz) – 3.8" Swimbait',
-  'umbrella_rig_medium':     'A-Rig Medium (~2.65oz) – 4.6" Swimbait',
-  'umbrella_rig_heavy':      'A-Rig Heavy (~3.5oz) – 5" Swimbait',
-  'flutter_spoon':           'Nichols Lake Fork Flutter Spoon 3/4oz',
-  'jigging_spoon':           'Dr.Fish Diamond Jig / Jigging Spoon 1oz',
-  'Flutter Spoon':           'Nichols Lake Fork Flutter Spoon 3/4oz',
-  'Bucktail':                '1oz Bucktail Jig',
-  'bucktail':                '1oz Bucktail Jig',
-  'bucktail_jig':            '1oz Bucktail Jig',
-  'deep_diving_crankbait':   'DD2 Crankbait (16-20ft)',
-  'medium_diving_crankbait': 'MR Crankbait (6-12ft)',
-  'spinnerbait':             '1/2oz Spinnerbait',
-  'Spinnerbait':             '1/2oz Spinnerbait',
-  'lipless_crankbait':       '3" Lipless Crankbait',
-  'chatterbait':             '1/2oz Chatterbait',
-  'paddle_tail':             'Swimbait 4.6" – Jighead',
-  'swimbait_jighead':        'Swimbait 4.6" – Jighead',
-  'topwater_walker':         'Walking Bait / Spook',
-  'Choppo 90':               'Prop Bait / Choppo',
-};
-
-function resolveLureName(raw) {
-  if (!raw) return null;
-  if (LURE_MAP[raw]) return LURE_MAP[raw];
-  if (LURE_PRESETS.includes(raw)) return raw;
-  return null;
-}
-
-function fallbackLure(depth, exclude, slotIdx = 0) {
-  const opts = depth < 10
-    ? [['3" Lipless Crankbait', '1/2oz Spinnerbait'],
-       ['MR Crankbait (6-12ft)', '3" Lipless Crankbait']]
-    : depth < 18
-    ? [['A-Rig Light (~1.65oz) – 3.8" Swimbait', 'A-Rig Medium (~2.65oz) – 4.6" Swimbait'],
-       ['MR Crankbait (6-12ft)', 'Nichols Lake Fork Flutter Spoon 3/4oz']]
-    : depth < 26
-    ? [['A-Rig Medium (~2.65oz) – 4.6" Swimbait', 'A-Rig Heavy (~3.5oz) – 5" Swimbait'],
-       ['DD2 Crankbait (16-20ft)', 'Nichols Lake Fork Flutter Spoon 3/4oz']]
-    : [['A-Rig Heavy (~3.5oz) – 5" Swimbait', '1oz Bucktail Jig'],
-       ['DD4 Crankbait (25ft+)', 'Dr.Fish Diamond Jig / Jigging Spoon 1oz']];
-  const slotOpts = opts[Math.min(slotIdx, opts.length - 1)];
-  return slotOpts.find(l => l !== exclude) || slotOpts[0];
-}
-
-function buildOneRod(targetDepth, rec, timeOfDay, clarityKey, speedMph, slotIdx, excludeLure) {
-  const candidates = (rec?.lures || [])
-    .map(l => resolveLureName(l))
-    .filter(l => l && l !== excludeLure)
-    .filter(l => {
-      // Was: a lookup in spread-builder's LURE_DIVE_DEPTHS, keyed by display
-      // name. Now asks the lure whether it can actually fish this depth --
-      // a rated bait is filtered by its bill, a sinking bait by whether the
-      // lead it needs fits inside FISHING_STYLE.rigging.maxLeadFt.
-      const entry = lureByName(l);
-      if (!entry) return true;
-      return canReachDepth(entry, targetDepth, speedMph,
-                           { maxLeadFt: FISHING_STYLE.rigging.maxLeadFt,
-                             jigheads: JIGHEADS_OWNED_OZ }).ok;
-    });
-
-  let lureName = candidates[slotIdx] || candidates[0] || fallbackLure(targetDepth, excludeLure, slotIdx);
-
-  if (slotIdx === 0 && timeOfDay === 'dawn' && targetDepth < 22) {
-    const topwaterMap = {
-      clear:   'Walking Bait / Spook',
-      stained: 'Whopper Plopper',
-      muddy:   'Whopper Plopper',
-    };
-    lureName = topwaterMap[clarityKey] || 'Whopper Plopper';
-  }
-
-  const color = getLureColor(lureName, clarityKey);
-  const reel  = reelForLure(lureName);
-  const rod = {
-    side:     slotIdx === 0 ? 'Port' : 'Starboard',
-    position: 'Mid',
-    rod:      "7' M Mod-Fast Spinning (Ugly Stik Lite Pro)",
-    reel, lureName, color,
-    lure:     lureName,
-    depth:    String(Math.round(targetDepth)),
-    lead:     '0',
-    notes:    '',
-    trailerSize: '', arigWeight: '', jigWeight: '',
-  };
-
-  if (lureName?.toLowerCase().includes('a-rig')) {
-    const isLight  = lureName.includes('Light')  || lureName.includes('1.65');
-    const isMedium = lureName.includes('Medium') || lureName.includes('2.65');
-    rod.arigWeight  = isLight ? '~1.65oz (5-wire light)' : isMedium ? '~2.65oz (5-wire medium)' : '~3.5oz (5-wire heavy)';
-    rod.trailerSize = isLight ? '3.8" swimbait' : isMedium ? '4.6" swimbait' : '5" swimbait';
-    rod.jigWeight   = isLight ? '1/8oz × 5' : isMedium ? '3/16oz × 5' : '1/4oz × 5';
-  }
-
-  rod.lead = String(autoCalculateLead(rod, speedMph || 1.8));
-  return rod;
-}
-
-// ── Assign rods to routes ─────────────────────────────────────────────────────
-export function assignRouteRods(phaseRecs, tracks, speedMph, season, clarity, species) {
-  const clarityKey = (clarity || '').toLowerCase().includes('mud') ? 'muddy'
-    : (clarity || '').toLowerCase().includes('stain') ? 'stained' : 'clear';
-
-  const routeDefs = [
-    { key: 'Ph1 Outbound', phaseIdx: 0, timeOfDay: 'dawn' },
-    { key: 'Ph1 Inbound',  phaseIdx: 0, timeOfDay: 'morning' },
-    { key: 'Ph2 Outbound', phaseIdx: 1, timeOfDay: 'morning' },
-    { key: 'Ph2 Inbound',  phaseIdx: 1, timeOfDay: 'afternoon' },
-  ];
-
-  const routeRods = {};
-  for (const def of routeDefs) {
-    const rec = phaseRecs[def.phaseIdx];
-    if (!rec) { routeRods[def.key] = []; continue; }
-    const dMin = rec.depthMin, dMax = rec.depthMax;
-    const mid  = (dMin + dMax) / 2;
-    const d1   = dMin + (mid - dMin) * 0.4;
-    const d2   = mid  + (dMax - mid) * 0.4;
-    const rod1 = buildOneRod(d1, rec, def.timeOfDay, clarityKey, speedMph, 0, null);
-    const rod2 = buildOneRod(d2, rec, def.timeOfDay, clarityKey, speedMph, 1, rod1.lure);
-    routeRods[def.key] = [rod1, rod2];
-  }
-  return routeRods;
-}
+// THE ROD BUILDER STOOD HERE: assignRouteRods() picked two rods per route from a phase's
+// recommended lures (buildOneRod, a lure-name map and a depth-banded fallback). Nothing called
+// it. Deleted 2026-09-25.
 
 console.log('[smart-plan-ui] module ready — unified timeline');

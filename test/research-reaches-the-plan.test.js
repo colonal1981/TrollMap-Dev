@@ -57,13 +57,19 @@ function codeOnly(src) {
 const PLANNER_CODE = PLAN_PATH.map((p) => codeOnly(read(p))).join('\n');
 const PLANNER_RAW = PLAN_PATH.map((p) => read(p)).join('\n');
 
-/** Every field the research agents are told to produce. */
+/**
+ * Every field the research agents are told to produce.
+ *
+ * Read off the batch, Scripts/research_lakes.py, since 2026-09-25. It read the Research tab's
+ * engine until the tab was deleted, and the batch is now the one thing that asks.
+ */
 function agentTargetFields() {
-  const src = read('js/modules/lake-research-engine.js');
+  const src = read('Scripts/research_lakes.py');
   const out = new Set();
-  for (const block of src.match(/targetFields:\s*\[[^\]]*\]/g) || []) {
-    for (const q of block.match(/'([^']+)'/g) || []) out.add(q.replace(/'/g, ''));
+  for (const block of src.match(/"targetFields":\s*\[[^\]]*\]/g) || []) {
+    for (const q of block.match(/"([^"]+)"/g) || []) out.add(q.replace(/"/g, ''));
   }
+  out.delete('targetFields');
   return [...out].sort();
 }
 
@@ -122,7 +128,7 @@ const NOT_FOR_THE_PLANNER = {
 describe('the research pipeline reaches the planner', () => {
   it('the planner loads a research profile at all', () => {
     // The one-line version of the whole failure: v2 never asked for one.
-    expect(/getResearchedProfile|research\/get/.test(PLANNER_RAW)).toBe(true);
+    expect(/research\/get/.test(PLANNER_RAW)).toBe(true);
   });
 
   it('a researched depth band outranks the hardcoded table', () => {
@@ -173,6 +179,8 @@ describe('the research pipeline reaches the planner', () => {
   });
 
   it('every field the research agents produce is used or explicitly excused', () => {
+    // Not vacuous: the batch must still name at least one target field for this to mean anything.
+    expect(agentTargetFields().length > 0).toBe(true);
     const unaccounted = [];
     for (const field of agentTargetFields()) {
       if (field in NOT_FOR_THE_PLANNER) continue;

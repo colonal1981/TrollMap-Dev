@@ -6,9 +6,10 @@
  * WHY THIS FILE EXISTS, AND WHY IT IS NOT IN coastal-agents.js ANY MORE.
  *
  * `COASTAL_AGENT_HINTS` lived in coastal-agents.js and was keyed on `habitat` and `biology`. Both
- * of those agents were RETIRED on 2026-09-01. The live set is identity, navigation, regulations
- * and fisheries, and on a coastal zone `coastalAgentPlan()` returns exactly one of them:
- * `fisheries`. So the lookup in agents.js —
+ * of those agents were RETIRED on 2026-09-01. The live set was identity, navigation, regulations
+ * and fisheries, and on a coastal zone `coastalAgentPlan()` returned exactly one of them:
+ * `fisheries` -- which since 2026-09-25 is the only agent the Worker defines at all. So the
+ * lookup in agents.js —
  *
  *     COASTAL_AGENT_HINTS[agentKey]
  *

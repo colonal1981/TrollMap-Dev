@@ -29,10 +29,7 @@ import {
   STATE_REGULATIONS_CONFIG, REGS_EFFECTIVE, REGS_DATE_VERIFIED, useDigest2026,
   freshwaterRegionOf,
   sliceSaltwaterSection, extractSaltwaterDigest, DIGEST_BUDGET,
-  fetchSaltwaterRegulations, fetchLiveRegsAmendments,
 } from '../Worker/research/clients.js';
-import { COASTAL_AGENTS } from '../Worker/research/coastal-agents.js';
-import { handleResearchAgent } from '../Worker/research/agents.js';
 
 // ── a digest shaped like the real ones ───────────────────────────────────────
 // Freshwater first, then the caps running head, then saltwater. The lowercase
@@ -310,60 +307,15 @@ describe('effective-date provenance is recorded, not assumed', () => {
       assert.equal(typeof REGS_DATE_VERIFIED[st], 'boolean', `${st} has no provenance flag`)));
 });
 
-// ── 3. fetchSaltwaterRegulations returns the fields the template reads ──────
-describe('fetchSaltwaterRegulations', () => {
-  let stub;
-  before(() => { stub = installFetchStub(); });
-  after(() => stub.restore());
-
-  test('returns content and a published period for a digest state', async () => {
-    const out = await fetchSaltwaterRegulations('SC', env());
-    assert.ok(out, 'SC must resolve a saltwater digest');
-    // coastal-agents.js reads exactly these two keys off _regsSource.
-    assert.ok(out.content.length > 100);
-    assert.ok(/red drum/i.test(out.content));
-    assert.ok(out.published, 'published feeds the prompt; without it the agent is told "unknown date"');
-  });
-
-  test('NC resolves a digest — its book carries the coastal species too', async () => {
-    // This assertion was inverted when first written, on the assumption that NC's
-    // digest is inland-only and saltwater lives with Marine Fisheries. Ryan: "i am
-    // pretty sure NC combines fresh and salt on the same charts" — and it does.
-    // Red drum, spotted seatrout and flounder are rows in the warmwater game fish
-    // table with real slots. Asserting null here would have frozen the bug in place
-    // as intended behaviour, which is the worst thing a test can do.
-    const out = await fetchSaltwaterRegulations('NC', env());
-    assert.ok(out, 'NC must resolve a digest');
-    assert.match(out.content, /RED DRUM/);
-    assert.match(out.content, /greater than 27 inches/, 'the slot upper bound must survive');
-    assert.match(out.content, /between 20 and 26 inches/, 'the seatrout slot must survive');
-  });
-
-  test('NC carries the jurisdiction the numbers depend on', async () => {
-    // WRC limits govern inland and joint waters. Coastal waters are the Division of
-    // Marine Fisheries' and change by proclamation. Handing an agent an 18-27" red
-    // drum slot with no statement of which water it applies to is how a kayak in
-    // Pamlico Sound gets told the wrong limit with confidence.
-    const out = await fetchSaltwaterRegulations('NC', env());
-    assert.match(out.content, /INLAND and JOINT fishing waters/);
-    assert.match(out.content, /Division of Marine Fisheries/);
-    assert.match(out.content, /proclamation/i);
-  });
-
-  test('the cache key carries the digest identity', async () => {
-    const e = env();
-    await fetchSaltwaterRegulations('SC', e);
-    const keys = [...e.KV.store.keys()];
-    assert.equal(keys.length, 1);
-    assert.match(keys[0], /sc_digest_/,
-      'a cache that cannot tell which document it parsed serves last year’s law');
-  });
-});
-
+// ── 3. fetchSaltwaterRegulations was tested here ─────────────────────────────
+// It fed the `saltwater_regulations` agent its digest text. The agent was deleted on 2026-09-25 --
+// nothing ran it -- and the fetcher went with it. extractSaltwaterDigest() below still serves the
+// saltwater half of /regulations through fetchStateRegulations().
 
 // ── 3b. the extract fits the window the template actually forwards ───────────
 describe('extractSaltwaterDigest is budgeted to the template', () => {
-  // coastal-agents.js:160 slices _regsSource.content to 12,000 characters. The first
+  // coastal-agents.js:160 sliced _regsSource.content to 12,000 characters (the agent that did went
+  // on 2026-09-25; the budget stands, because /regulations serves this extract). The first
   // version of this code handed it a 36,000-character section, so two thirds were
   // dropped before the model saw them and which third survived was decided by where
   // the section happened to start — GA's first "red drum" landed at character 9,515,
@@ -386,84 +338,6 @@ describe('extractSaltwaterDigest is budgeted to the template', () => {
   }
 });
 
-// ── 4. the live check reports absence as absence ─────────────────────────────
-describe('fetchLiveRegsAmendments', () => {
-  test('no results returns null, so verificationRequired stays truthful', async () => {
-    const stub = installFetchStub({ searchResults: [] });
-    try {
-      assert.equal(await fetchLiveRegsAmendments('SC', env()), null,
-        'an empty-but-present source would clear verificationRequired while confirming nothing');
-    } finally { stub.restore(); }
-  });
-
-  test('results come back as prompt text with their urls', async () => {
-    const stub = installFetchStub({ searchResults: [
-      { url: 'https://www.dnr.sc.gov/notice', title: 'Red drum slot change',
-        snippet: 'Effective immediately the red drum slot is 16-22 inches.' },
-    ] });
-    try {
-      const out = await fetchLiveRegsAmendments('SC', env());
-      assert.ok(out && /red drum slot/i.test(out.content));
-      assert.ok(out.urls.includes('https://www.dnr.sc.gov/notice'));
-      assert.equal(out.after, '2026-08-14', 'the search is bounded by SC’s own effective date');
-    } finally { stub.restore(); }
-  });
-});
-
-// ── 5. THE REGRESSION THAT MATTERS: the prompt the agent actually receives ───
-describe('the saltwater agent is handed its digest', () => {
-  const FALLBACK_DIGEST = 'No R2 digest available';
-  const FALLBACK_LIVE = 'No live amendment source supplied';
-
-  test('the fallback strings are still the ones the template emits', () => {
-    // If coastal-agents.js is reworded, the two assertions below stop meaning
-    // anything — so check the sentinel first, against an empty prev.
-    const prompt = COASTAL_AGENTS.saltwater_regulations.userTemplate('Charleston Harbor', 'SC', {});
-    assert.ok(prompt.includes(FALLBACK_DIGEST) && prompt.includes(FALLBACK_LIVE));
-  });
-
-  test('a coastal run reaches the LLM with digest text in the prompt', async () => {
-    const stub = installFetchStub({ searchResults: [
-      { url: 'https://www.dnr.sc.gov/notice', title: 'Seatrout closure',
-        snippet: 'Spotted seatrout harvest closed through March.' },
-    ] });
-    try {
-      const res = await handleResearchAgent(new Request('https://x/agent', {
-        method: 'POST',
-        body: JSON.stringify({
-          lakeName: 'Charleston Harbor', state: 'SC',
-          agent: 'saltwater_regulations', previousResults: {},
-        }),
-      }), env());
-      assert.equal(res.status, 200, await res.text());
-
-      const sent = stub.llmPrompts.at(-1);
-      assert.ok(sent, 'no LLM call was made');
-      const prompt = JSON.stringify(sent.messages);
-
-      assert.ok(/red drum/i.test(prompt),
-        'the digest never reached the prompt — this is the original bug');
-      assert.ok(!prompt.includes(FALLBACK_DIGEST),
-        'agent was told no digest was available while one was sitting in R2');
-      assert.ok(!prompt.includes(FALLBACK_LIVE),
-        '_liveRegsSource has no writer — the live check Ryan asked for is not wired');
-      assert.ok(/seatrout harvest closed/i.test(prompt),
-        'the live amendment result must override-able reach the agent');
-    } finally { stub.restore(); }
-  });
-
-  test('the freshwater agent is unaffected', async () => {
-    const stub = installFetchStub();
-    try {
-      const res = await handleResearchAgent(new Request('https://x/agent', {
-        method: 'POST',
-        body: JSON.stringify({
-          lakeName: 'Lake Wateree', state: 'SC', agent: 'regulations', previousResults: {},
-        }),
-      }), env());
-      assert.equal(res.status, 200, await res.text());
-      const prompt = JSON.stringify(stub.llmPrompts.at(-1)?.messages || []);
-      assert.ok(prompt.length > 100, 'freshwater regulations agent still runs');
-    } finally { stub.restore(); }
-  });
-});
+// ── 4 and 5 were tested here ────────────────────────────────────────────────────
+// fetchLiveRegsAmendments(), and the prompt the saltwater and freshwater regulations agents
+// received. All three went on 2026-09-25 with the six agents nothing ran.

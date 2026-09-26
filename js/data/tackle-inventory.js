@@ -495,30 +495,8 @@ export const RIGGED_TROLLING_WEIGHT_OZ =
   (TACKLE_INVENTORY.find((l) => l.type === 'trolling_weight' && l.rigged)
    || { weightOz: null }).weightOz;
 
-import { scoreLureForContext, getIdealSpeed,
-         trollsBehindTheBoat } from './lure-knowledge.js';
-
-export async function selectBestLure(context = {}) {
-  const inv = await getInventory();
-  const { slotIndex = 0 } = context;
-  const trollable = inv.filter(l => l.trollable);
-  const scored = trollable
-    .map(lure => ({ lure, result: scoreLureForContext(lure.type, context) }))
-    .filter(s => s.result.score > -900)
-    .sort((a, b) => b.result.score - a.result.score);
-  if (!scored.length) return null;
-  if (slotIndex === 0) return { lure: scored[0].lure, scoreResult: scored[0].result };
-  const slot0Type = scored[0].lure.type;
-  const slot1 = scored.find(s => s.lure.type !== slot0Type);
-  const chosen = slot1 || scored[1] || scored[0];
-  return { lure: chosen.lure, scoreResult: chosen.result };
-}
-
-export function getRecommendedSpeed(portLureType, stbdLureType) {
-  const ps = getIdealSpeed(portLureType);
-  const ss = getIdealSpeed(stbdLureType);
-  if (ps && ss) return Math.round(((ps + ss) / 2) * 10) / 10;
-  return ps || ss || 1.8;
-}
+// selectBestLure() and getRecommendedSpeed() stood here, the lure scorer's only callers, and
+// were called by nothing. Both went with scoreLureForContext() on 2026-09-25.
+import { trollsBehindTheBoat } from './lure-knowledge.js';
 
 console.log(`[tackle-inventory] ${TACKLE_INVENTORY.filter(l=>l.trollable).length} trollable lures loaded`);

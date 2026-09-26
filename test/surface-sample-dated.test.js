@@ -32,20 +32,21 @@
 // So the surface temperature and surface oxygen came OUT of the profile summary in both builders,
 // and the reasoning is written above the cut in each: a summary asserts what the lake IS, and a
 // point sample from one visit is weather. The values are not deleted -- limnology.surfaceWater
-// keeps them with their dates, and the conditions strip and the research tab both still read them.
+// keeps them with their dates, and the conditions strip still reads them.
 //
 // THIS FILE WAS THE STALE SIDE. Four of its tests still required the summary to date two numbers
 // it no longer states, so they failed on the change that superseded them. They are rewritten to
 // the claim that replaced theirs, which is the stronger one: the summary does not assert a surface
 // temperature at all, `sampleDated` still behaves exactly as specified for wherever the number IS
-// spoken, and the two builders still agree. The dating rule was not relaxed; it was made moot in
+// spoken, and the two builders still agree. (sampleDated and the second builder went with the
+// Research tab on 2026-09-25.) The dating rule was not relaxed; it was made moot in
 // this one sentence and it still governs the rest.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { sampleDated, buildFactualSummary } from '../Worker/research/facts-util.js';
+import { buildFactualSummary } from '../Worker/research/facts-util.js';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p) => readFileSync(path.join(ROOT, p), 'utf8');
@@ -59,27 +60,9 @@ const NORMAN = (surfaceWater) => ({
   habitat: {},
 });
 
-test('sampleDated prefers the number own sample date', () => {
-  assert.equal(sampleDated('2025-12-16', '2026-07-01'), ' when last sampled 2025-12-16');
-});
+// Three tests of `sampleDated` stood here. It had no caller left in the Worker, and was kept only
+// because the Research tab's engine mirrored it; both went on 2026-09-25.
 
-test('sampleDated falls back to the group date and says it is the group', () => {
-  const s = sampleDated(null, '2025-12-16');
-  assert.match(s, /2025-12-16/);
-  assert.match(s, /newest surface sample here/,
-    'the group date is the newest of temperature, DO and turbidity -- it does not belong to any '
-    + 'one of them and must not be printed as though it did');
-});
-
-test('sampleDated admits an undated sample rather than going quiet', () => {
-  assert.equal(sampleDated(null, null), ' (grab sample, date not recorded)');
-  assert.equal(sampleDated(undefined, ''), ' (grab sample, date not recorded)');
-});
-
-// WAS THREE TESTS REQUIRING THE SUMMARY TO DATE THE TEMPERATURE. It does not state it now, so
-// dated or undated is not the question any more -- the question is whether it states it, and the
-// answer has to be no on every shape of input, including the well-dated one. A number that is
-// absent cannot be believed over the live gauge, which is the whole of the 2026-09-14 change.
 test('the worker summary states no surface temperature at all, however well dated', () => {
   const dated = buildFactualSummary(NORMAN({
     recentTempF: 43.88, recentTempLastObserved: '2025-12-16',
@@ -117,39 +100,13 @@ test('limnology.js keeps the per-characteristic sample dates it computes', () =>
     assert.ok(src.includes(field), `limnology.js must write ${field}`);
   }
   assert.ok(/lastObserved: \[swTemp\?\.lastObserved, swDO\?\.lastObserved, swTurbidity\?\.lastObserved\]/.test(src),
-    'the combined lastObserved stays -- lake-research-ui.js and the legacy branch above read it');
+    'the combined lastObserved stays -- the legacy branch above reads it');
 });
 
-// The client builds the same sentence and cannot import from Worker/. If one side is changed
-// alone, a plan built in the browser and a profile built in the worker disagree about the same
-// lake.
-// THE CLIENT CANNOT IMPORT FROM Worker/, SO IT CARRIES A COPY, and a change made on one side alone
-// means a plan built in the browser and a profile built in the worker disagree about the same lake.
-// This used to require both to date the two numbers; it now requires both to have dropped them, and
-// it requires the helper to still be there and still be the same helper, because the dating rule
-// still governs every other place the number is spoken.
-test('the client mirror drops the same two numbers, and keeps the same helper', () => {
-  const src = read('js/modules/lake-research-engine.js');
-  assert.ok(src.includes('function sampleDated(ownDate, groupDate)'),
-    'lake-research-engine.js must carry the mirrored helper');
-  assert.ok(!/surface water near \$\{lim\.surfaceWater\.recentTempF\}/.test(src),
-    'the client still asserts a surface temperature the worker no longer does');
-  assert.ok(!/surface dissolved oxygen near \$\{lim\.surfaceWater\.recentDissolvedOxygenMgL\}/.test(src),
-    'the client still asserts a surface DO the worker no longer does');
-  assert.ok(!/recent surface water near/.test(src), 'the undated client phrasing was the bug');
-  // AND NEITHER SIDE LEAVES THE HELPER'S CALLER BEHIND. `swDated` was defined in both files and
-  // called by nobody after the cut, which is what makes a removed sentence look half-removed.
-  assert.ok(!/const swDated =/.test(src), 'dead swDated binding in the client');
+// TWO MIRROR TESTS STOOD HERE: that the Research tab's engine dropped the same two numbers and
+// answered sampleDated's three cases the same way. The engine was deleted on 2026-09-25. The
+// half that still has something to hold is the Worker's own:
+test('no dead swDated binding is left in the worker', () => {
   assert.ok(!/const swDated =/.test(read('Worker/research/facts-util.js')),
     'dead swDated binding in the worker');
-});
-
-test('both mirrors answer the three cases identically', () => {
-  const src = read('js/modules/lake-research-engine.js');
-  const body = src.slice(src.indexOf('function sampleDated(ownDate, groupDate)'));
-  const clientFn = new Function(`${body.slice(0, body.indexOf('\n}') + 2)}\nreturn sampleDated;`)();
-  for (const [own, group] of [['2025-12-16', '2026-07-01'], [null, '2025-12-16'], [null, null]]) {
-    assert.equal(clientFn(own, group), sampleDated(own, group),
-      `the mirrors disagree for own=${own} group=${group}`);
-  }
 });

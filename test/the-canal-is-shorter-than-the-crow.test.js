@@ -566,7 +566,7 @@ test('the rename happens once, where the index is built, and not at each label',
   // lastIndexOf, not indexOf: `index.lakeNames` is sorted three times in this file and the two
   // earlier ones are the sorts the "rebuild the name list LAST" comment exists because of. I
   // anchored on the first and the assertion failed for the right reason.
-  const at = IDX.indexOf('primeLaunchNames(getWorkerBase())');
+  const at = IDX.indexOf('primeLaunchNames(workerBase())');
   const rebuild = IDX.lastIndexOf('index.lakeNames = [...index.byLake.keys()]');
   const manual = IDX.indexOf('for (const ramp of COASTAL_MANUAL_RAMPS)');
   assert.ok(at > 0 && rebuild > at, 'renamed before the pickable name list is rebuilt');

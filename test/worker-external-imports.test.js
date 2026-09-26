@@ -129,6 +129,9 @@ describe('the Worker bundle can be built', () => {
     // ONE MORE ADDED 2026-09-25: num.js, a number or null, where an empty or all-space string is
     // null and never 0. conditions.js, worker-data.js and registry.js each carried their own copy;
     // conditions.js's CO-OPS/NWPS copy read CO-OPS's `"v": ""` as a reading of 0. Pure, no imports.
+    //
+    // ONE MORE ADDED 2026-09-25: geo.js, the one haversine. conditions.js, river-geometry.js and
+    // worker-data.js each carried their own, on two different earth radii. Pure, no imports.
     const EXPECTED = [
       'js/data/ga-access-species.js',
       'js/data/lake-keys.js',
@@ -137,6 +140,7 @@ describe('the Worker bundle can be built', () => {
       'js/data/water-aliases.js',
       'js/utils/coerce.js',
       'js/utils/fact-date.js',
+      'js/utils/geo.js',
       'js/utils/geojson-coords.js',
       'js/utils/html-text.js',
       'js/utils/num.js',

@@ -45,11 +45,9 @@ describe('siteFilter scopes every domain it is given', () => {
 });
 
 describe('one table, not a second copy', () => {
-  it('extract.js reads the shared table rather than its own ternary', () => {
-    const code = src('Worker/research/extract.js');
-    expect(code).toContain('STATE_FISH_AGENCY_DOMAINS');
-    expect(code).toContain('siteFilter');
-  });
+  // 'extract.js reads the shared table rather than its own ternary' stood here. Its reader was
+  // handleResearchGapAnalysis, deleted with /research/gap-analysis on 2026-09-25; nothing in
+  // extract.js builds a site: filter any more. The check below still covers it.
 
   it('nothing in the research engine still targets the dead NC host in a site: filter', () => {
     // ncwildlife.org 302s to ncwildlife.gov. Measured on Lake Norman, 2026-08-21:

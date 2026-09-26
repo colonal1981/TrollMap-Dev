@@ -62,17 +62,6 @@ function centroidLonLat(ring) {
   return [lon / ring.length, lat / ring.length];
 }
 
-function pointInPolygonLonLat(lon, lat, ring) {
-  let inside = false;
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    const xi = ring[i][0], yi = ring[i][1];
-    const xj = ring[j][0], yj = ring[j][1];
-    const intersect = ((yi > lat) !== (yj > lat)) && (lon < (xj - xi) * (lat - yi) / ((yj - yi) || 1e-9) + xi);
-    if (intersect) inside = !inside;
-  }
-  return inside;
-}
-
 // geoDistanceFt now from utils/geo.js (canonical)
 
 function summarizePointComplexityFromBoundary(ring) {
@@ -102,43 +91,6 @@ function summarizePointComplexityFromBoundary(ring) {
   else if (minima >= 3) out.creekArms = 'several creek arms / embayments visible in boundary geometry';
   return out;
 }
-
-function isClosedContour(coords) {
-  if (!Array.isArray(coords) || coords.length < 4) return false;
-  const first = coords[0], last = coords[coords.length - 1];
-  return geoDistanceFt(first[1], first[0], last[1], last[0]) < 150;
-}
-
-function flattenLineCoords(geom) {
-  if (!geom) return [];
-  if (geom.type === 'LineString') return [geom.coordinates || []];
-  if (geom.type === 'MultiLineString') return geom.coordinates || [];
-  return [];
-}
-
-/**
- * Minimum distance in degrees from a point to any segment of a ring.
- * Used to reject hump/ledge candidates that sit on or near the shoreline
- * (islands, shoreline points) rather than in open water.
- */
-function minDistToRingDeg(lon, lat, ring) {
-  let minD = Infinity;
-  for (let i = 0; i < ring.length - 1; i++) {
-    const [x1, y1] = ring[i];
-    const [x2, y2] = ring[i + 1];
-    const dx = x2 - x1, dy = y2 - y1;
-    const lenSq = dx * dx + dy * dy;
-    let t = lenSq > 0 ? ((lon - x1) * dx + (lat - y1) * dy) / lenSq : 0;
-    t = Math.max(0, Math.min(1, t));
-    const px = x1 + t * dx, py = y1 + t * dy;
-    const d = Math.sqrt((lon - px) ** 2 + (lat - py) ** 2);
-    if (d < minD) minD = d;
-  }
-  return minD;
-}
-
-// ~0.003° ≈ 300m — humps/ledges must be at least this far from the shoreline
-const MIN_OFFSHORE_DEG = 0.003;
 
 // Caps live in js/utils/structure-markers.js so they can be tested without a DOM.
 // See that file for the byte counts that made a cap necessary.
@@ -681,7 +633,7 @@ function packDerivedFacts({ lakeName, structGeo, featGeo, depthGeo, poiGeo, boun
 
 export {
   packDerivedFacts,
-  // The engine's fetching half still asks whether it needs to download contours at all.
+  // Scripts/lake_depth_stats.mjs asks whether it needs to download contours at all.
   depthStats_needsContours,
   // Read directly by tests that pin the geometry, and by nothing else.
   deriveDepthStatistics,

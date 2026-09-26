@@ -53,8 +53,10 @@ describe('there is one ramp source table', () => {
     // groupFeaturesByWaterbody() flattens meta unconditionally. A property that looks like a
     // switch and is not one is worse than no property.
     expect(live(src('Worker/core/ramp-sources.js')).includes('metaMode')).toBe(false);
-    expect(live(src('Worker/trollmap-worker.js')).match(/metaMode/g)?.length ?? 0)
-      .toBe(4);   // the four ATTRACTOR_SOURCES entries, which are a different table
+    // The four ATTRACTOR_SOURCES entries carried it until that table was collapsed into
+    // Worker/core/attractor-sources.js on 2026-09-25, without it.
+    expect(live(src('Worker/trollmap-worker.js')).match(/metaMode/g)?.length ?? 0).toBe(0);
+    expect(live(src('Worker/core/attractor-sources.js')).includes('metaMode')).toBe(false);
   });
 });
 
@@ -159,5 +161,25 @@ describe('the third copy is deliberate, and still points at the same layers', ()
 
   it('and still says out loud that it is a second implementation', () => {
     expect(py.includes('second independent implementation')).toBe(true);
+  });
+});
+
+// THE ATTRACTOR TABLE WENT THE SAME WAY, 2026-09-25. Two copies of four ArcGIS layers, one in the
+// /attractors route and one in research/facts-util.js, with a note asking that they be fixed
+// together or collapsed. They are one object now.
+describe('the attractor feeds are one table too', () => {
+  it('research reads the route\'s table, not a copy of it', async () => {
+    const { ATTRACTOR_SOURCES } = await import('../Worker/core/attractor-sources.js');
+    const { RESEARCH_ATTRACTOR_SOURCES } = await import('../Worker/research/facts-util.js');
+    expect(RESEARCH_ATTRACTOR_SOURCES).toBe(ATTRACTOR_SOURCES);
+    expect(Object.keys(ATTRACTOR_SOURCES).sort()).toEqual(['GA', 'NC', 'SC', 'TN']);
+  });
+
+  it('Georgia\'s coded attractor type is decoded for both readers', async () => {
+    const { ATTRACTOR_SOURCES } = await import('../Worker/core/attractor-sources.js');
+    expect(ATTRACTOR_SOURCES.GA.type({ attractor_code: 'TRE' })).toBe('Trees/Brush');
+    for (const st of Object.keys(ATTRACTOR_SOURCES)) {
+      expect(typeof ATTRACTOR_SOURCES[st].label).toBe('string');
+    }
   });
 });

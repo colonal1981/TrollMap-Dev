@@ -10,7 +10,7 @@
  *
  * Cross-module shared state lives in core/state.js (the `state`
  * singleton). Helpers that popup buttons invoke across modules
- * (sendWptToGenerator, enableSpotRepositioning, showCatchPhoto)
+ * (enableSpotRepositioning)
  * are exposed on `window` by their owning modules.
  */
 
@@ -66,14 +66,10 @@ import './modules/utility-sync.js';
 import './modules/lake-intel.js';
 import './modules/plan-builder.js';
 import './modules/edit.js';
-import './modules/track-reverse.js';
 import './modules/contour-data.js';
-import './modules/capture-panel.js';
 import './modules/routes-panel.js';
 import './modules/fishing-index.js';
-import './modules/measure-tool.js';
 import './modules/catch-plot.js';
-import './modules/waypoint-to-generator.js';
 import './modules/spot-repositioning.js';
 import './modules/safety-checklist.js';
 import './modules/gis-toggles.js';
@@ -81,8 +77,6 @@ import './modules/layers-panel.js';
 import './modules/ble-motor.js';
 import './modules/wet-hands-remote.js';
 import './modules/gear-autopilot.js';
-import './modules/auto-crop.js';
-import './modules/catch-photo.js';
 import './modules/osm-structure.js';
 import './modules/quickdraw-key.js';
 import './modules/sw-register.js';
@@ -103,7 +97,6 @@ import { initWaterTab } from './modules/plan-water-ui.js';
 initWaterTab();
 import { pullUpdatesOnLoad, pushAllLocalToCloud } from './modules/cloud-sync.js';
 import { initTackleInventoryPanel } from './modules/tackle-inventory-ui.js'
-import './modules/lake-research.js';
 
 // ── Plan-tab dropdown helpers are exposed on `window` so the ──
 //    tab switcher in core/tabs.js can invoke them by name.        ──

@@ -39,7 +39,7 @@ import { SPECIES_BEHAVIOR_V2, resolveLakeKey } from '../data/species-intel.js';
  * lake out on a bad number. Research profiles store a plain array.
  * ---------------------------------------------------------------------------------------------
  *
- * @param {object} [researched] the profile from window.getResearchedProfile() or /research/get
+ * @param {object} [researched] the profile from /research/get
  */
 export function depthBandFor(species, lakeName, season, waterTempF, researched) {
   // getSeason() returns 'summer', and every caller that hand-wrote 'Summer' got silently no

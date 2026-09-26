@@ -1,4 +1,5 @@
-import { state, CF_WORKER_URL } from '../core/state.js';
+import { state } from '../core/state.js';
+import { workerBase } from '../data/lake-registry.js';
 import { esc } from '../utils/escape.js';
 import { setBanner } from '../core/map-init.js';
 import { registerLayer, isVisible, wireAll } from '../core/layer-registry.js';
@@ -54,9 +55,6 @@ function normalizeRows(value) {
   return Array.isArray(value) ? value : [];
 }
 
-function getWorkerBase() {
-  return String(window.TROLLMAP_WORKER_URL || window.TROLLMAP_WORKER_BASE || window.WORKER_URL || window.API_BASE || CF_WORKER_URL || 'https://trollmap-worker.colonal1981.workers.dev').replace(/\/$/, '');
-}
 
 // Every state comes live from the Worker. The three static files this used to read
 // (data/tristate-hotspots.json, tristate-paddle.json, tristate-bank-pier.json) are
@@ -78,7 +76,7 @@ const STATE_SOURCE = { SC: 'SCDNR', NC: 'NCWRC', GA: 'GA DNR WRD', TN: 'TWRA' };
 // The Worker groups its response by waterbody; flatten to the shape this renderer
 // consumes. Returns [] rather than throwing so one bad state cannot blank the layer.
 async function loadWorkerRowsForState(path, type, state) {
-  const res = await fetch(`${getWorkerBase()}${path}?state=${state}`, { cache: 'no-store' });
+  const res = await fetch(`${workerBase()}${path}?state=${state}`, { cache: 'no-store' });
   if (!res.ok) throw new Error(`${path}?state=${state} returned HTTP ${res.status}`);
   const payload = await res.json();
   const rows = [];

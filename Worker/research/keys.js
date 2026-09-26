@@ -1,12 +1,11 @@
-import { RESEARCH_CANONICAL_IDS } from '../../js/data/research-ids.js';
 // research/keys.js — split from worker-research.js (behavior-preserving)
-
-function sanitizeLakeId(name) {
-  return String(name || '').toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .slice(0, 80) || 'unknown_lake';
-}
+//
+// THE STORAGE-ID RULE IS IMPORTED, NOT MIRRORED, SINCE 2026-09-25. sanitizeLakeId,
+// stripLakeQualifiers, researchStorageId, legacyStorageName and researchStorageIdCandidates were
+// written here and copied into js/data/research-ids.js, byte for byte, with a test holding the two
+// together. research-ids.js is the one copy now, the way RESEARCH_CANONICAL_IDS already was.
+import { RESEARCH_CANONICAL_IDS, sanitizeLakeId, stripLakeQualifiers, researchStorageId,
+         legacyStorageName, researchStorageIdCandidates } from '../../js/data/research-ids.js';
 
 // Expand common name abbreviations so map lookups match the R2/TWRA document
 // naming regardless of how the app spells the lake. TrollMap calls it
@@ -22,28 +21,6 @@ function expandLakeAbbrev(s) {
     .trim();
 }
 
-// Derive the lake "base name" used for baseLower-keyed lookups: strip the
-// leading "Lake", the state suffix, and trailing Reservoir/Lake, then expand
-// abbreviations. Mirrors the computation in research/discover.js so both the
-// worker and the tests share one definition.
-/**
- * Strip the qualifiers consolidate_lake_index.py added and the profile store never saw.
- *
- * In August the index started naming lakes by county, so "Hartwell Lake" became
- * "Hartwell Lake (Anderson Co, SC/GA)". Every baseLower-keyed lookup in this codebase was
- * written before that and matches on the bare name, and the state-suffix regex below is
- * anchored to the END of the string -- so a trailing ")" defeats it and the parenthetical
- * survives into the key. Measured 2026-08-16: that is why J. Strom Thurmond discovered
- * "0 seeds" with 41 agency pages sitting in the table waiting for it.
- */
-function stripLakeQualifiers(name) {
-  return String(name || '')
-    .replace(/\s*\([^)]*\)\s*/g, ' ')
-    .replace(/,\s*(SC|NC|GA|TN)(\/(?:SC|NC|GA|TN))*\s*$/i, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
 function parseLakeBaseName(displayName) {
   const stripped = stripLakeQualifiers(displayName)
     .replace(/^Lake\s+/i, '')
@@ -54,66 +31,6 @@ function parseLakeBaseName(displayName) {
   return expandLakeAbbrev(stripped);
 }
 
-
-function researchStorageId(lakeName) {
-  const safe = sanitizeLakeId(lakeName);
-  return RESEARCH_CANONICAL_IDS[safe] || safe;
-}
-
-/**
- * Every key a profile for this lake could be living under, best first.
- *
- * READ PATHS MUST TRY ALL OF THEM. On 2026-08-16 the app asked for
- * "J. Strom Thurmond Reservoir (Lincoln Co, GA/SC)", got a 404, and researched from scratch a
- * lake that already had a 95%-confidence verified profile -- landing a 31% draft beside it.
- * The county suffix is not in any key ever written, and RESEARCH_CANONICAL_IDS above exists
- * precisely to stop this lake from splitting in two. The suffix walked straight past it.
- *
- * Bare before raw, canonical before literal: an older profile written under the pre-county
- * name is the one with the research in it, and it must win over a key that only exists
- * because the display name changed.
- */
-/** The county parenthetical `consolidate_lake_index.py` added, and nothing else. */
-const COUNTY_PAREN = /\s*\([^)]*\bCo\b[^)]*\)\s*/i;
-
-/**
- * The name this lake was called BEFORE the index started naming by county: "Lake Murray, SC".
- *
- * NOT `stripLakeQualifiers`, which removes every parenthetical. "Saluda River (2) (Newberry Co,
- * SC)" has to come back as "Saluda River (2), SC" and not as "Saluda River" -- there are four
- * Saluda Rivers in the registry and the "(2)" is the only thing telling them apart. So only the
- * parenthetical containing "Co" is removed, and the state it carried is put back on the end.
- */
-function legacyStorageName(name) {
-  const s = String(name || '');
-  const m = COUNTY_PAREN.exec(s);
-  if (!m) return s;
-  const st = /,\s*((?:SC|NC|GA|TN)(?:\/(?:SC|NC|GA|TN))*)\s*\)?\s*$/i.exec(m[0]);
-  const base = s.replace(COUNTY_PAREN, ' ').replace(/\s+/g, ' ').trim();
-  return st ? `${base}, ${st[1].toUpperCase()}` : base;
-}
-
-function researchStorageIdCandidates(lakeName) {
-  const raw = sanitizeLakeId(lakeName);
-  const bare = sanitizeLakeId(stripLakeQualifiers(lakeName));
-  // THE FORM 59 OF THE 62 PROFILES ARE ACTUALLY FILED UNDER, and it was missing until
-  // 2026-08-23. The Thurmond fix above added `bare` and `raw` and stopped there, so it rescued
-  // exactly the lakes whose stored id happens to be one of those two -- Thurmond's own id IS
-  // the county form, which is why it looked fixed. Measured against the live bucket:
-  //   /research/get?lake=Lake Murray (Newberry Co, SC)  -> 404
-  //   /research/get?lake=Lake Murray, SC                -> ok, v76.0
-  // Every profile written before August is under the second spelling.
-  const legacy = sanitizeLakeId(legacyStorageName(lakeName));
-  const out = [];
-  const push = (x) => { if (x && !out.includes(x)) out.push(x); };
-  push(RESEARCH_CANONICAL_IDS[bare]);
-  push(RESEARCH_CANONICAL_IDS[legacy]);
-  push(RESEARCH_CANONICAL_IDS[raw]);
-  push(bare);
-  push(legacy);
-  push(raw);
-  return out;
-}
 
 /**
  * The first candidate key that exists in R2, or null. `probe` takes an id and resolves truthy
@@ -182,4 +99,4 @@ function extractJsonPossibly(txt) {
   return null;
 }
 
-export { sanitizeLakeId, expandLakeAbbrev, stripLakeQualifiers, legacyStorageName, parseLakeBaseName, RESEARCH_CANONICAL_IDS, researchStorageId, researchStorageIdCandidates, resolveResearchStorageId, lakeResearchMasterKey, lakePackageKey, extractJsonPossibly };
+export { expandLakeAbbrev, parseLakeBaseName, RESEARCH_CANONICAL_IDS, resolveResearchStorageId, lakeResearchMasterKey, lakePackageKey, extractJsonPossibly, sanitizeLakeId, stripLakeQualifiers, legacyStorageName, researchStorageId, researchStorageIdCandidates };

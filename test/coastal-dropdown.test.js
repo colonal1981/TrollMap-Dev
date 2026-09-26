@@ -4,25 +4,11 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { COASTAL_ZONES, COASTAL_SLUGS, coastalNamesByState } from '../js/data/coastal-zones.js';
 import { resolveR2Key } from '../js/data/lake-keys.js';
-import { appendCoastalOptgroups } from '../js/utils/coastal-optgroups.js';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const planBuilderSrc = readFileSync(path.join(REPO, 'js/modules/plan-builder.js'), 'utf8');
 const rampSelectSrc = readFileSync(path.join(REPO, 'js/modules/lake-ramp-select.js'), 'utf8');
-const researchUiSrc = readFileSync(path.join(REPO, 'js/modules/lake-research-ui.js'), 'utf8');
 const wiringSrc = readFileSync(path.join(REPO, 'js/modules/smart-plan-v2-wiring.js'), 'utf8');
-
-/**
- * The smallest DOM that appendCoastalOptgroups touches: createElement, appendChild and the
- * label / value / textContent properties. Enough to assert what it builds without pulling a
- * whole DOM implementation into the suite for three element types.
- */
-function makeSelect() {
-  const node = () => ({ children: [], appendChild(c) { this.children.push(c); } });
-  globalThis.document = globalThis.document || {};
-  globalThis.document.createElement = node;
-  return node();
-}
 
 /**
  * Regression guard for the "everything works but nothing is selectable" class
@@ -106,18 +92,9 @@ describe('both waterbody dropdowns offer coastal zones', () => {
   // catalog on top of that is the second source that put zones in the picker TWICE, which is what
   // the map removed on 2026-08-23.
   //
-  // The helper's last caller is the research dropdown, which has not been reworked and which Ryan
-  // says is going away as redundant. When it goes, the helper goes with it.
-  const HELPER_CALLERS = [
-    ['lake-research-ui', researchUiSrc],
-  ];
-
-  it('the dropdown that still uses the helper still uses it', () => {
-    for (const [name, src] of HELPER_CALLERS) {
-      expect(src, `${name} does not call appendCoastalOptgroups`).toContain('appendCoastalOptgroups');
-      expect(src, `${name} still has its own copy of the loop`).not.toContain('coastalNamesByState()');
-    }
-  });
+  // The helper's last caller was the research dropdown, which Ryan called redundant. It went with
+  // the Research tab on 2026-09-25, and js/utils/coastal-optgroups.js and its three tests went
+  // with it.
 
   it('the map and the plan pickers get their zones from the shared builder', () => {
     const pickerSrc = readFileSync(path.join(REPO, 'js/data/water-picker.js'), 'utf8');
@@ -130,41 +107,6 @@ describe('both waterbody dropdowns offer coastal zones', () => {
         .not.toContain('appendCoastalOptgroups(');
       expect(src, `${name} should bucket through the shared builder`).toContain('bucketWaters(');
     }
-  });
-
-  it('the shared helper groups coastal zones by state', () => {
-    const select = makeSelect();
-    const added = appendCoastalOptgroups(select);
-    expect(added).toBe(COASTAL_SLUGS.length);   // every zone, whatever that count is
-    const labels = select.children.map((c) => c.label);
-    expect(labels).toEqual(['SC Coast', 'GA Coast']);
-  });
-
-  it('and the groups are the states the catalog declares, not a list typed in the helper', () => {
-    // `GROUPS` in coastal-optgroups.js was a literal that still asked for an NC group two weeks
-    // after NC was cut, and it produced nothing only because the loop skips a state with no
-    // zones -- a dead entry that nothing could see and that NC would have come back through.
-    // It is derived now, so this test reads the catalog and the helper and requires them to
-    // agree, which is a claim that survives a state being added or cut either way.
-    const select = makeSelect();
-    appendCoastalOptgroups(select);
-    const fromHelper = select.children.map((c) => c.label.replace(/ Coast$/, ''));
-    const fromCatalog = [...new Set(COASTAL_SLUGS.map((s) => COASTAL_ZONES[s].state))];
-    expect(fromHelper.slice().sort()).toEqual(fromCatalog.slice().sort());
-    // SC leads, because that is where Ryan fishes, and that is the one thing still stated.
-    expect(fromHelper[0]).toBe('SC');
-  });
-
-  it('the option value keeps the state suffix, the visible label drops it', () => {
-    const select = makeSelect();
-    appendCoastalOptgroups(select);
-    const opts = select.children.flatMap((g) => g.children);
-    const winyah = opts.find((o) => o.value.startsWith('Winyah Bay'));
-    expect(Boolean(winyah)).toBe(true);
-    expect(winyah.value).toBe('Winyah Bay / Georgetown, SC');
-    expect(winyah.textContent).toBe('Winyah Bay / Georgetown');
-    // The VALUE is what resolveR2Key() keys off; trimming it would break layer + tide loading.
-    expect(resolveR2Key(winyah.value)).toBe('coast_winyah_bay_sc');
   });
 
   it('the grouping covers every zone exactly once', () => {

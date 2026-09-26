@@ -1,20 +1,12 @@
 /**
  * research-ids.js — the R2 storage id a lake's research profile lives under.
  *
- * PORTED FROM THE WORKER, DELIBERATELY, AND LOCKED BY A TEST.
- *
- * `worker/research/keys.js` decides where a profile is written: `lakes/<id>.json`. The browser
- * never needed to know that until the research picker had to answer "which of these waters do I
- * NOT have a profile for yet" — and `/research/list` returns ids, not display names.
- *
- * The Lake Status table solves the same problem the expensive way: it fetches every profile and
- * reads `profile.lakeName` back out, which is 60 round trips to label 60 rows. That is fine for a
- * table you open on purpose and wrong for a dropdown that populates on load.
- *
- * SO THIS IS A SECOND COPY OF A RULE, WHICH IS A COST. `test/research-ids.test.js` reads the
- * Worker's own source and asserts the two agree, because a silent drift here does not throw — it
- * quietly reports a researched lake as unresearched and sends Ryan to re-run a pipeline he has
- * already paid for in time.
+ * THE ONE COPY OF THE RULE, SINCE 2026-09-25. It was ported from `Worker/research/keys.js`, which
+ * decides where a profile is written (`lakes/<id>.json`), so the research picker could answer
+ * "which of these waters do I NOT have a profile for yet" -- `/research/list` returns ids, not
+ * display names. For a month it was a second copy held to the first by a test. keys.js imports it
+ * now, the way it already imported RESEARCH_CANONICAL_IDS, and Scripts/research_todo.mjs runs it
+ * under node.
  *
  * Personal use only, not for distribution or resale. NOT FOR NAVIGATION.
  */
@@ -23,7 +15,7 @@
 // is used only by researchedNames(), which is client-only and has no counterpart in the Worker.
 import { identityNamesFor } from './lake-registry.js';
 
-/** Mirror of `sanitizeLakeId` in worker/research/keys.js. */
+/** The id a name sanitizes to. The Worker imports this; it is the one copy. */
 export function sanitizeLakeId(name) {
   return String(name || '').toLowerCase()
     .replace(/[^a-z0-9]+/g, '_')
@@ -211,13 +203,26 @@ export const RESEARCH_CANONICAL_IDS = {
   'french_broad_river_haywood_co_nc': 'french_broad_river_tn',
 };
 
-/** Mirror of `researchStorageId` in worker/research/keys.js. */
+/** The id a profile for this lake is WRITTEN under. */
 export function researchStorageId(lakeName) {
   const safe = sanitizeLakeId(lakeName);
   return RESEARCH_CANONICAL_IDS[safe] || safe;
 }
 
-/** Mirror of `stripLakeQualifiers` in worker/research/keys.js. */
+// Derive the lake "base name" used for baseLower-keyed lookups: strip the
+// leading "Lake", the state suffix, and trailing Reservoir/Lake, then expand
+// abbreviations. Mirrors the computation in research/discover.js so both the
+// worker and the tests share one definition.
+/**
+ * Strip the qualifiers consolidate_lake_index.py added and the profile store never saw.
+ *
+ * In August the index started naming lakes by county, so "Hartwell Lake" became
+ * "Hartwell Lake (Anderson Co, SC/GA)". Every baseLower-keyed lookup in this codebase was
+ * written before that and matches on the bare name, and the state-suffix regex below is
+ * anchored to the END of the string -- so a trailing ")" defeats it and the parenthetical
+ * survives into the key. Measured 2026-08-16: that is why J. Strom Thurmond discovered
+ * "0 seeds" with 41 agency pages sitting in the table waiting for it.
+ */
 export function stripLakeQualifiers(name) {
   return String(name || '')
     .replace(/\s*\([^)]*\)\s*/g, ' ')
@@ -226,9 +231,17 @@ export function stripLakeQualifiers(name) {
     .trim();
 }
 
+/** The county parenthetical `consolidate_lake_index.py` added, and nothing else. */
 const COUNTY_PAREN = /\s*\([^)]*\bCo\b[^)]*\)\s*/i;
 
-/** Mirror of `legacyStorageName` in worker/research/keys.js. */
+/**
+ * The name this lake was called BEFORE the index started naming by county: "Lake Murray, SC".
+ *
+ * NOT `stripLakeQualifiers`, which removes every parenthetical. "Saluda River (2) (Newberry Co,
+ * SC)" has to come back as "Saluda River (2), SC" and not as "Saluda River" -- there are four
+ * Saluda Rivers in the registry and the "(2)" is the only thing telling them apart. So only the
+ * parenthetical containing "Co" is removed, and the state it carried is put back on the end.
+ */
 export function legacyStorageName(name) {
   const s = String(name || '');
   const m = COUNTY_PAREN.exec(s);
@@ -238,7 +251,19 @@ export function legacyStorageName(name) {
   return st ? `${base}, ${st[1].toUpperCase()}` : base;
 }
 
-/** Mirror of `researchStorageIdCandidates` in worker/research/keys.js. */
+/**
+ * Every key a profile for this lake could be living under, best first.
+ *
+ * READ PATHS MUST TRY ALL OF THEM. On 2026-08-16 the app asked for
+ * "J. Strom Thurmond Reservoir (Lincoln Co, GA/SC)", got a 404, and researched from scratch a
+ * lake that already had a 95%-confidence verified profile -- landing a 31% draft beside it.
+ * The county suffix is not in any key ever written, and RESEARCH_CANONICAL_IDS above exists
+ * precisely to stop this lake from splitting in two. The suffix walked straight past it.
+ *
+ * Bare before raw, canonical before literal: an older profile written under the pre-county
+ * name is the one with the research in it, and it must win over a key that only exists
+ * because the display name changed.
+ */
 export function researchStorageIdCandidates(lakeName) {
   const raw = sanitizeLakeId(lakeName);
   const bare = sanitizeLakeId(stripLakeQualifiers(lakeName));

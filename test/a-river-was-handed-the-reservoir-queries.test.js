@@ -143,8 +143,9 @@ describe('discover.js asks the registry what kind of water this is -- TRIPWIRES'
   it('resolves the registry row instead of only sniffing the key prefix', () => {
     expect(src.includes('resolveRegistryRow(await lakeIndex(env), lakeName)')).toBe(true);
     expect(src.includes('feature_type')).toBe(true);
-    // The prefix test survives as the FALLBACK, not as the only question asked.
-    expect(src.includes("waterType === 'coastal'")).toBe(true);
+    // `waterType === 'coastal'` with the coast_ prefix as its fallback stood here. It chose between
+    // the freshwater and the coastal agent sets for a request with no agent; the coastal agents
+    // went on 2026-09-25 and a request must now name its agent, so there is no set to choose.
   });
 
   it('still falls back to the state table, which nothing here replaces', () => {

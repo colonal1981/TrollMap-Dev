@@ -38,12 +38,11 @@ import path from 'node:path';
 // Same defect as `between(UTIL, 'NON_GAME_SPECIES', ...)` in species-form-closes-the-books, fixed
 // the same day: a test that reads source by name cannot tell "the concept is gone" from "I am
 // looking at the wrong file". So HOME is asserted to still hold the computation before anything is
-// asserted about it, and the retired names are checked in all three files -- the one that computes
-// it and the two it used to pass through.
+// asserted about it, and the retired names are checked in the file that computes it and the one it
+// passes through. (The engine, the third, was deleted with the Research tab on 2026-09-25.)
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const HOME_PATH = 'js/utils/pack-facts.js';
 const HOME = readFileSync(path.join(ROOT, HOME_PATH), 'utf8');
-const ENGINE = readFileSync(path.join(ROOT, 'js/modules/lake-research-engine.js'), 'utf8');
 const INPUTS = readFileSync(path.join(ROOT, 'js/modules/plan-inputs.js'), 'utf8');
 
 test('this file is reading the file that holds the computation', () => {
@@ -63,10 +62,10 @@ const codeOnly = (src) => src
   .split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
 
 test('nothing computes, stores or reads an open band any more', () => {
-  // ALL THREE FILES, and pack-facts.js first, because that is the one that could bring it back.
-  // Checking only the engine and plan-inputs was checking two files the computation had left.
+  // pack-facts.js first, because that is the one that could bring it back. Checking only the
+  // engine and plan-inputs was checking two files the computation had left. The engine itself
+  // went with the Research tab on 2026-09-25, so two files remain to check.
   const files = [[HOME_PATH, codeOnly(HOME)],
-                 ['js/modules/lake-research-engine.js', codeOnly(ENGINE)],
                  ['js/modules/plan-inputs.js', codeOnly(INPUTS)]];
   for (const name of ['openBanded', 'openBandArea', 'openBandAreaAcres', 'openBandAreaShare',
                       'averageDepthIsLowerBound', 'bathymetryOpenBanded',

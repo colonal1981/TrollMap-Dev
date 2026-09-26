@@ -103,25 +103,18 @@ export function boundsOf(geojson) {
 }
 
 /**
- * A [west, south, east, north] row, padded, as a box — or null if the row is not one.
+ * Is (lon, lat) inside `ring`, a closed [[lon, lat], ...] ring? Even-odd ray cast.
  *
- * `lake_index.json` carries `bounds_wsen` on every registry row, which is the same box
- * `boundsOf` computes but already measured by the pipeline against the real boundary. A caller
- * that has a registry record does not need to fetch a geometry to find out where a lake is.
- *
- * Null rather than a partly-filled box: a row with three numbers in it, or a string where a
- * number should be, is a row nobody should be building a query out of. WQP answers a bad box
- * with someone else's lake rather than with an error.
- *
- * @param {*} wsen  [west, south, east, north]
- * @param {number} pad degrees added on every side
- * @returns {{west:number, south:number, east:number, north:number}|null}
+ * THE ONE COPY, since 2026-09-25. Four modules each wrote this loop -- plan-water-index.js,
+ * water-state-parts.js, river-drifts.js and Worker/research/on-water.js -- identical but for
+ * argument order and one divide-by-zero guard the short-circuit already makes unreachable (a
+ * horizontal edge fails `(yi > lat) !== (yj > lat)` before it divides).
  */
-export function paddedBox(wsen, pad = 0) {
-  if (!Array.isArray(wsen) || wsen.length !== 4) return null;
-  const n = wsen.map(Number);
-  if (!n.every(Number.isFinite)) return null;
-  const [west, south, east, north] = n;
-  if (west > east || south > north) return null;
-  return { west: west - pad, south: south - pad, east: east + pad, north: north + pad };
+export function inRing(lon, lat, ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0], yi = ring[i][1], xj = ring[j][0], yj = ring[j][1];
+    if (((yi > lat) !== (yj > lat)) && (lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi)) inside = !inside;
+  }
+  return inside;
 }

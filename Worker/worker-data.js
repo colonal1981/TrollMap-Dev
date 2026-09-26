@@ -2,8 +2,9 @@
 // worker-data.js — Static lake/river data extracted from trollmap-worker.js
 // LAKES, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS
 
-import { matchWaterName, reportTokens } from './reports.js';
+import { matchWaterName, reportTokens, parseAhqPage } from './reports.js';
 import { num as numOrNull } from '../js/utils/num.js';
+import { geoDistanceKm } from '../js/utils/geo.js';
 import { GENERIC_LAKE_ZONES, GENERIC_RIVER_ZONES, watershedSensitivity, riverFlowSensitivity,
          zonesForSensitivity } from './clarity-sensitivity.js';
 
@@ -801,13 +802,6 @@ async function fetchDukeFlowArrivals(basinId) {
   }
 }
 
-async function getDukeLake(nameFragment) {
-  const arr = await fetchDukeApi();
-  if (!arr) return null;
-  const frag = nameFragment.toLowerCase();
-  const row = arr.find((r) => (r.LakeDisplayName || "").toLowerCase().includes(frag) || (r.LakeName || "").toLowerCase().includes(frag));
-  return row ? normalizeDukeRow(row) : null;
-}
 /**
  * The Duke row for a water, found in the LIVE FEED rather than in the table above.
  *
@@ -890,35 +884,6 @@ const SANTEE_MARION_BACKUP_SITE = "02171000";
 // typed: usaceLevels() picks the project from the district's own roster of published
 // conservation pools, and Marion and Moultrie resolve through their bound USGS sites.
 
-async function fetchAhqWaterTemp(slug) {
-  if (!slug) return null;
-  const url = `https://www.anglersheadquarters.com/pages/${slug}-fishing-report`;
-  const r = await fetchText(url);
-  if (!r.ok || !r.text) return null;
-  const numericRe = /(?:morning\s+)?(?:surface\s+)?water\s+temperatures?\s+(?:are|is|range)\s+(?:about\s+|around\s+|from\s+|approximately\s+)?(\d{2,3})(?:\s*(?:to|[-–])\s*(\d{2,3}))?\s*degrees/i;
-  const m = r.text.match(numericRe);
-  if (m) {
-    const a = parseInt(m[1]), b = m[2] ? parseInt(m[2]) : null;
-    const tempF = b ? Math.round((a + b) / 2) : a;
-    return { tempF, source: url, raw: m[0], range: b ? [a, b] : null };
-  }
-  const vagueRe = /water\s+temperatures?\s+(?:are\s+|is\s+|now\s+)?(?:in\s+the\s+)?(lower|low|mid|upper|high)?\s*(\d{2,3})s(?:\s*(?:to|[-–])\s*(lower|low|mid|upper|high)?\s*(\d{2,3})s)?/i;
-  const v = r.text.match(vagueRe);
-  if (v) {
-    const band = (mod, base) => {
-      const b2 = parseInt(base);
-      if (!mod || mod === "mid") return b2 + 5;
-      if (mod === "lower" || mod === "low") return b2 + 2;
-      if (mod === "upper" || mod === "high") return b2 + 8;
-      return b2 + 5;
-    };
-    const a = band(v[1], v[2]);
-    const b = v[4] ? band(v[3], v[4]) : null;
-    const tempF = b ? Math.round((a + b) / 2) : a;
-    return { tempF, source: url, raw: v[0], range: b ? [a, b] : null, approx: true };
-  }
-  return null;
-}
 var LAKE_INTEL_SOURCE_REGISTRY = {
   "default": {
     "official": [
@@ -1315,44 +1280,16 @@ async function fetchLakeMonsterIntel(key) {
 function stripHtml(html) {
   return String(html || "").replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
 }
+// The page is read by parseAhqPage() in reports.js since 2026-09-25. This file carried its own
+// copy of the same five anchors and four water-temp searches, the one reports.js was lifted from.
 async function fetchAhqFishingReport(slug) {
   if (!slug) return null;
   const url = "https://www.anglersheadquarters.com/pages/" + slug + "-fishing-report";
   try {
     const r = await fetchText(url);
     if (!r.ok || !r.text) return null;
-
-    // AHQ pages have a large nav/product header before the fishing report.
-    // Anchor in raw HTML BEFORE stripping tags — nav links are <a> elements
-    // that disappear on strip, but the text they generate still lands in the
-    // stripped output before the real report content.
-    // Strategy: find the first <article, <div class="rte", or a known
-    // AHQ content marker in raw HTML and slice there before stripping.
-    let rawHtml = r.text;
-    const htmlAnchors = [
-      rawHtml.search(/<article[\s>]/i),
-      rawHtml.search(/class=["'][^"']*\brte\b[^"']*["']/i),
-      rawHtml.search(/class=["'][^"']*article[^"']*body[^"']*["']/i),
-      rawHtml.search(/Learn more about/i),
-      rawHtml.search(/Recent [A-Za-z]+ (Lake|Fishing)/i),
-    ].filter(i => i >= 0);
-    if (htmlAnchors.length) {
-      rawHtml = rawHtml.slice(Math.min(...htmlAnchors));
-    }
-
-    const text = stripHtml(rawHtml);
-
-    const idxs = [
-      text.search(/morning surface water temp/i),
-      text.search(/water temp/i),
-      text.search(/striper|striped bass|largemouth|crappie|catfish/i),
-      text.search(/fishing has been|bite has been|fish are/i),
-    ].filter((i) => i >= 0);
-    if (!idxs.length) return null;
-    const idx = Math.min(...idxs);
-    let summary = text.slice(Math.max(0, idx - 100), idx + 900).trim();
-    if (summary.length > 1e3) summary = summary.slice(0, 1e3) + "\u2026";
-    return { source: url, summary };
+    const summary = parseAhqPage(r.text);
+    return summary ? { source: url, summary } : null;
   } catch (_) {
     return null;
   }
@@ -1563,11 +1500,7 @@ function nearestClarityStation(stations, lat, lon) {
   for (const s of stations || []) {
     const sLat = Number(s && s.lat), sLon = Number(s && s.lon), ft = Number(s && s.avgSecchiDepthFt);
     if (!Number.isFinite(sLat) || !Number.isFinite(sLon) || !Number.isFinite(ft)) continue;
-    const dLat = (sLat - lat) * Math.PI / 180;
-    const dLon = (sLon - lon) * Math.PI / 180;
-    const h = Math.sin(dLat / 2) ** 2
-            + Math.cos(lat * Math.PI / 180) * Math.cos(sLat * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
-    const km = 2 * 6371.0088 * Math.asin(Math.min(1, Math.sqrt(h)));
+    const km = geoDistanceKm(lat, lon, sLat, sLon);   // the one haversine, in js/utils/geo.js
     usable.push({ s, km, n: Number(s.sampleCount) || 0 });
   }
   if (!usable.length) return null;
@@ -2472,4 +2405,4 @@ var RIVERS = {
   }
 };
 
-export { easternOffsetFor, normalizeDukeRow, dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun, fetchDukeAccessAlerts, fetchDukeOperatingRange, fetchDukeCalendar, parseDukeCalendar, LAKES, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, seriesRank, rdbSeriesDescriptions, newerStamp, applyElevation, fetchAhqWaterTemp, fetchAhqFishingReport, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry, getDukeLake };
+export { easternOffsetFor, normalizeDukeRow, dukeRowForNames, fetchDukeFlowArrivals, fetchDukeRivers, fetchDukeActiveRun, fetchDukeAccessAlerts, fetchDukeOperatingRange, fetchDukeCalendar, parseDukeCalendar, LAKES, LAKE_INTEL_SOURCE_REGISTRY, LAKEMONSTER_IDS, LAKE_CLARITY_PROFILES, RIVERS, lakeKeyFromName, fetchText, fetchUsgs, seriesRank, rdbSeriesDescriptions, newerStamp, applyElevation, fetchLakeMonsterIntel, getLakeIntel, getLakeClarity, getLakeIntelSourceRegistry };
