@@ -711,7 +711,25 @@ function stratifies(profile, packFacts = null) {
   return !saysRiver({ featureType: id.bodyType }, { featureType: id.archetype });
 }
 
-export function oxygenFloorFt(profile, packFacts = null) {
+/**
+ * THE MONTHS THE OXYGEN FLOOR WAS MEASURED IN, read off the note the pipeline wrote beside it.
+ *
+ * build_document_limnology.py records every cast behind the number in `oxygen.note` --
+ * "EPA National Lakes Assessment 7/21/2022", or "the median of 6 summer casts: 25.0 ft EPA
+ * National Eutrophication Survey 1973-09-22; ..." -- in one of those two date forms and no other.
+ * Empty when the note carries no date, and then nothing below changes.
+ */
+export function oxygenFloorMonths(profile, packFacts = null) {
+  const lim = { ...((profile && profile.limnology) || {}),
+                ...((packFacts && packFacts.limnology) || {}) };
+  const note = String((lim.oxygen && lim.oxygen.note) || '');
+  const months = new Set();
+  for (const m of note.matchAll(/\b\d{4}-(\d{2})-\d{2}\b/g)) months.add(Number(m[1]));
+  for (const m of note.matchAll(/\b(\d{1,2})\/\d{1,2}\/\d{4}\b/g)) months.add(Number(m[1]));
+  return [...months].filter((n) => n >= 1 && n <= 12).sort((a, b) => a - b);
+}
+
+export function oxygenFloorFt(profile, packFacts = null, when = null) {
   // NULL ON A RIVER, AND A NULL HERE IS THE RIGHT KIND OF ABSENCE -- the gate's own note says a
   // null "must NOT become a gate, because refusing a box over an unmeasured lake is the app
   // inventing a constraint". Refusing a box over a river it modelled as a lake is worse: an
@@ -720,9 +738,23 @@ export function oxygenFloorFt(profile, packFacts = null) {
   const lim = { ...((profile && profile.limnology) || {}),
                 ...((packFacts && packFacts.limnology) || {}) };
   const an = Number(lim.oxygen && lim.oxygen.anoxicBelowFt);
-  if (Number.isFinite(an) && an > 0) return an;
   const dep = Number(lim.oxygen && lim.oxygen.depletionDepthFt);
-  return Number.isFinite(dep) && dep > 0 ? dep : null;
+  const floor = Number.isFinite(an) && an > 0 ? an : (Number.isFinite(dep) && dep > 0 ? dep : null);
+  if (floor == null) return null;
+  // A CAST IS EVIDENCE FOR ITS OWN MONTH (change request 21). Wateree's 19.7 ft is ONE EPA cast on
+  // 2022-07-21, and on 2026-09-26 it capped every lead and struck baits from the box while Ryan's
+  // own sonar put 48% of the targets below it, down to about 35 ft. A reservoir's oxygen line moves
+  // through the season -- the mixed layer deepens as the surface cools toward turnover -- so a July
+  // line says nothing about late September. Where the floor was measured and NONE of its casts is
+  // from the trip's month, it is not a gate here: the prompt still carries it with its dates, and
+  // the model and the sounder weigh it. Murray's six 1973 casts include September, so a September
+  // trip there keeps its floor. An undated floor behaves as before.
+  if (when) {
+    const d = when instanceof Date ? when : new Date(`${when}T12:00:00`);
+    const months = oxygenFloorMonths(profile, packFacts);
+    if (months.length && !Number.isNaN(d.getTime()) && !months.includes(d.getMonth() + 1)) return null;
+  }
+  return floor;
 }
 
 export function researchIntel(profile, species, season, now = Date.now(), packFacts = null,
@@ -1066,7 +1098,18 @@ export function researchIntel(profile, species, season, now = Date.now(), packFa
       `SQUEEZED FROM BOTH ENDS TODAY: the water reads ${tF}\u00b0F${src} and ${t.species} are `
       + `recorded in ${Math.round((Number(t.tempMinC) * 9) / 5 + 32)}\u2013${ceilF}\u00b0F water, so the top of the `
       + 'column is warmer than the range this species is recorded in. Oxygen begins depleting '
-      + `below ${floor} ft${Number.isFinite(anox) && anox !== floor ? ` and there is none below ${anox} ft` : ''}, measured.`,
+      + `below ${floor} ft${Number.isFinite(anox) && anox !== floor ? ` and there is none below ${anox} ft` : ''}, measured`
+      // WHEN, because the line moves through a season (change request 21). The pipeline's note
+      // carries the casts and their dates; a cast from another month is said to be one.
+      + `${lim.oxygen && lim.oxygen.note ? ` (${String(lim.oxygen.note).slice(0, 300)})` : ''}.`
+      + (() => {
+        const months = oxygenFloorMonths(profile, packFacts);
+        const d = live && live.when ? new Date(live.when) : null;
+        if (!months.length || !d || Number.isNaN(d.getTime()) || months.includes(d.getMonth() + 1)) return '';
+        return ' NONE OF THOSE CASTS IS FROM THIS MONTH. The oxygen line moves through the season, '
+          + 'so this is where it was, not where it is today: work toward it, read the sounder for '
+          + 'where the fish and the bait actually are, and do not treat it as a floor.';
+      })(),
       '  Those two together are the day\'s constraint. The measured anoxia is itself the evidence '
       + 'that this column is stratified \u2014 a mixed column stays oxygenated to the bottom \u2014 so '
       + 'temperature falls with depth here, and THE DEEPEST OXYGENATED WATER IS THE COOLEST '

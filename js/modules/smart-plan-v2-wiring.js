@@ -337,8 +337,9 @@ export async function runSmartPlanV2(opts = {}) {
       // THE SAME DOOR AGAIN, for the same reason: the profile is here and the pack is not, and a
       // registry limnology record may beat the profile's copy. One number, read once, used by the
       // gate that decides which baits the model is even shown.
+      // AND THE TRIP'S DATE, because a cast only stands for its own month -- see oxygenFloorFt().
       oxygenFloorFor: (pf) => oxygenFloorFt(researched,
-        regLim ? { ...(pf || {}), limnology: regLim } : pf),
+        regLim ? { ...(pf || {}), limnology: regLim } : pf, date),
       // The live surface reading and where it came from, for the squeeze block -- see
       // researchIntel(). Same value season is derived from.
       intelFor: (packFacts) => researchIntel(researched, species, season, Date.now(),
@@ -372,7 +373,8 @@ export async function runSmartPlanV2(opts = {}) {
         // own reading, or on what Ryan typed, or on nothing. See lakeSurfaceTemp().
         (() => {
           const s = lakeSurfaceTemp(waterState, inp.waterTempF);
-          return { tempF: s.tempF, tempFrom: s.tempFrom };
+          // `when`: the trip's date, so the squeeze can say whether the oxygen casts are this month's.
+          return { tempF: s.tempF, tempFrom: s.tempFrom, when: date.toISOString() };
         })()),
       // THE SAFETY SECTION'S HAZARD SENTENCE, which has never once had anything to say because
       // nothing filled this. Same profile, already loaded, one field further down.

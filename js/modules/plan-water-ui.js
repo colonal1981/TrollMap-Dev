@@ -1094,7 +1094,8 @@ export async function findWater() {
     // thermoclineNorm, the depth band, hazards and weatherByHour. The bait gate in
     // plan-prompt.js stands on this one number and nothing else; without it Pick Water would
     // keep offering the whole box while Smart Plan filtered it, which is two apps.
-    oxygenFloorFor: (pf) => oxygenFloorFt(researched, pf),
+    // With the trip's date: a cast only stands for its own month -- see oxygenFloorFt().
+    oxygenFloorFor: (pf) => oxygenFloorFt(researched, pf, date),
     // THE SAME READING getSeason() IS KEYED ON, HANDED TO THE BLOCK THAT NEEDS IT. The squeeze
     // needs the live surface temperature and its provenance -- a tailwater gauge is not the lake
     // and the sentence says so rather than quietly treating it as one.
@@ -1110,7 +1111,7 @@ export async function findWater() {
           ...(extra || {}),
         };
       })(),
-      { tempF: inp.waterTempF, tempFrom: inp.waterTempFrom || null }),
+      { tempF: inp.waterTempF, tempFrom: inp.waterTempFrom || null, when: date.toISOString() }),
     // THE CHART FIRST, THE RESEARCH SECOND -- same order and same reason as Smart Plan. `poFc` is
     // the pois.geojson this function already fetched for the cast spots.
     // The charted POI layer only -- researchHazards() is gone with the navigation agent.
