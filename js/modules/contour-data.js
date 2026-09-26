@@ -11,38 +11,18 @@ export { LAKE_NAME_TO_R2_KEY, resolveR2Key };
 import { state, CF_WORKER_URL } from '../core/state.js';
 import { depthColor } from '../utils/depth-palette.js';
 import { displayDepth } from './tide-engine.js';
-import { isCoastalKey } from '../data/coastal-zones.js';
+import { isCoastalKey, getCoastalZone } from '../data/coastal-zones.js';
+import { lakeBySlug } from '../data/lake-registry.js';
 import { callSafely } from '../utils/call-global.js';
 
 import { cacheGet, cacheSet, cacheClear, CACHE_NS_CONTOURS } from '../utils/db.js';
-const CHAIN_DESCRIPTIONS = {
-  'lake_thurmond_russell':          'Clarks Hill / Thurmond + Russell Chain',
-  'lake_greenwood_secession':       'Lake Greenwood + Secession Chain',
-  'lake_monticello_parr':           'Lake Monticello + Parr Reservoir',
-  'lake_wateree_fishing_creek':     'Lake Wateree + Fishing Creek',
-  'lake_hickory_rhodhiss':          'Lake Hickory + Rhodhiss Chain',
-  'lake_norman_mountain_island':    'Lake Norman + Mountain Island Chain',
-  'yadkin_river_chain':             'Yadkin River Chain (High Rock → Blewett Falls)',
-  'watauga_boone_chain':            'Watauga / Boone Lake Chain',
-  // Coastal zones
-  'coast_winyah_bay_sc':            'Winyah Bay / Georgetown',
-  'coast_murrells_inlet_sc':        'Murrells Inlet / Pawleys Island',
-  'coast_santee_delta_sc':          'Santee River Delta / North Inlet',
-  'coast_charleston_sc':            'Charleston Harbor',
-  // Added 2026-08-04. Cape Romain was in coastal-zones.js, lake_index.json and
-  // COASTAL_PRIMARY, and missing from BOTH coastal_catalog.py and this map -- so the
-  // zone was offered in the picker, promised every layer by the upload tier, and had
-  // no slug -> label entry to fetch contours with. Fourth list it was absent from.
-  'coast_cape_romain_sc':           'Cape Romain / Bulls Bay',
-  'coast_ace_basin_sc':             'ACE Basin / Edisto',
-  'coast_st_helena_sc':             'St. Helena Sound',
-  'coast_beaufort_sc':              'Beaufort / Port Royal Sound',
-  'coast_hilton_head_sc':           'Hilton Head / Calibogue Sound',
-  'coast_savannah_ga':              'Savannah River / Savannah',
-  'coast_ossabaw_st_catherines_ga': 'Ossabaw / St. Catherines Sound',
-  'coast_sapelo_altamaha_ga':       'Sapelo Sound / Altamaha River',
-  'coast_brunswick_st_simons_ga':   'Brunswick / St. Simons Sound',
-};
+// CHAIN_DESCRIPTIONS stood here until 2026-09-25: 21 hand-typed labels. The 13 coastal ones
+// repeated COASTAL_ZONES[slug].name, and the 8 inland ones named the combined chain packs the
+// registry retired when it split them one pack per lake -- a registry slug is the key loaded
+// now. The label is read from those two tables instead.
+function contourLabel(key) {
+  return getCoastalZone(key)?.name || lakeBySlug(key)?.displayName || key?.replace(/_/g, ' ') || key || '—';
+}
 
 // ── IndexedDB cache ───────────────────────────────────────────────────────────
 // Was its own database, `trollmap_contours`, with its own openDB/idbGet/idbSet -- forty lines
@@ -469,7 +449,7 @@ _wireZoomHandler();
 function updateStatusPanel(status, key, count = 0, errMsg = '') {
   const el = document.getElementById('cdActiveInfo');
   if (!el) return;
-  const label = CHAIN_DESCRIPTIONS[key] || key?.replace(/_/g, ' ') || key || '—';
+  const label = contourLabel(key);
   if (status === 'loading') {
     el.innerHTML = `<div style="color:var(--accent)">⏳ Loading ${label}...</div>`;
   } else if (status === 'loaded') {
