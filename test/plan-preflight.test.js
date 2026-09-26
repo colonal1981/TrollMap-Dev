@@ -152,8 +152,12 @@ describe('plan-preflight — actually wired into Generate', () => {
   it('checks the law BEFORE spending a model call', () => {
     // Order is the whole point. A regulation block after the Gemini call still costs the call,
     // the pack fetch and the wait.
-    const reg = SRC.indexOf('checkPlanLegality(');
+    // Through preparePlanInputs() since 2026-09-25, the one sequence both planners run; it asks
+    // the law, and it is awaited before the build.
+    const reg = SRC.indexOf('await preparePlanInputs(');
     const build = SRC.indexOf('buildSmartPlanV2({');
+    const prep = SRC.slice(SRC.indexOf('export async function preparePlanInputs('));
+    expect(prep.slice(0, prep.indexOf('\n}\n')).includes('checkPlanLegality(')).toBe(true);
     expect(reg > 0).toBe(true);
     expect(build > 0).toBe(true);
     expect(reg < build).toBe(true);

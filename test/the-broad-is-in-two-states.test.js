@@ -218,13 +218,19 @@ describe('the preflight reads the launch\'s book', () => {
 
 // ── the wiring, because a preflight nobody hands the launch to is decoration ────────────────
 describe('both planners hand the launch to the law', () => {
+  // Both planners go through preparePlanInputs() since 2026-09-25, so the launch is handed to the
+  // law once, in there, and each planner is asserted to hand preparePlanInputs() the ramp.
+  it('preparePlanInputs() hands the launch to both calls', () => {
+    const s = src('../js/modules/smart-plan-v2-wiring.js');
+    const prep = s.slice(s.indexOf('export async function preparePlanInputs('));
+    expect(prep.includes('ensureRegulations(inp.lakeName, { worker: CF_WORKER_URL, at: ramp })')).toBe(true);
+    // `profile: researched` rode beside `at` until 2026-09-25, when the legality check stopped
+    // reading the profile's closed seasons (profileClosures() went with the Research tab).
+    expect(prep.includes('checkPlanLegality(inp.lakeName, species, date, { at: ramp })')).toBe(true);
+  });
   for (const f of ['../js/modules/smart-plan-v2-wiring.js', '../js/modules/plan-water-ui.js']) {
     it(f.split('/').pop(), () => {
-      const s = src(f);
-      expect(s.includes('ensureRegulations(inp.lakeName, { worker: CF_WORKER_URL, at: ramp })')).toBe(true);
-      // `profile: researched` rode beside `at` until 2026-09-25, when the legality check stopped
-      // reading the profile's closed seasons (profileClosures() went with the Research tab).
-      expect(s.includes('checkPlanLegality(inp.lakeName, species, date, { at: ramp })')).toBe(true);
+      expect(src(f).includes('await preparePlanInputs(inp, species, date, ramp)')).toBe(true);
     });
   }
 

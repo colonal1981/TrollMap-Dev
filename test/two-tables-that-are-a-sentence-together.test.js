@@ -201,7 +201,11 @@ describe('it reaches buildPlanRequest, and both planners fill it', () => {
     });
 
     it(`${who} primes both tables before the prompt is built`, () => {
-      const warm = text.indexOf('await primeSeabedHabitat(');
+      // Both planners prime through preparePlanInputs() since 2026-09-25: the prime is asserted
+      // inside it, and the planner's call to it ahead of the read.
+      const prep = smart.slice(smart.indexOf('export async function preparePlanInputs('));
+      expect(prep).toContain('await primeSeabedHabitat(');
+      const warm = text.indexOf('await preparePlanInputs(');
       const read = text.indexOf('seabedHabitatFor(detectCoastalZone(');
       expect(warm).toBeGreaterThan(-1);
       expect(read).toBeGreaterThan(warm);

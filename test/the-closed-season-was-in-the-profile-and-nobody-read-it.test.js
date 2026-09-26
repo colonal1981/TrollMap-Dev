@@ -74,19 +74,24 @@ describe('neither planner hands a profile to the legality check', () => {
   const wiring = src('js/modules/smart-plan-v2-wiring.js');
   const pw = src('js/modules/plan-water-ui.js');
 
-  it('Smart Plan passes the launch and nothing else', () => {
-    expect(wiring).toMatch(/const legality = checkPlanLegality\([^)]*\{\s*at:\s*ramp\s*\}\)/);
+  // One call for both planners since 2026-09-25: preparePlanInputs() in smart-plan-v2-wiring.js.
+  const prep = wiring.slice(wiring.indexOf('export async function preparePlanInputs('));
+
+  it('preparePlanInputs() passes the launch and nothing else', () => {
+    expect(prep).toMatch(/const legality = checkPlanLegality\([^)]*\{\s*at:\s*ramp\s*\}\)/);
     expect(/checkPlanLegality\([^)]*profile:/.test(code('js/modules/smart-plan-v2-wiring.js'))).toBe(false);
   });
 
-  it('and so does Pick Water', () => {
-    expect(pw).toMatch(/const legality = checkPlanLegality\([^)]*\{\s*at:\s*ramp\s*\}\)/);
-    expect(/checkPlanLegality\([^)]*profile:/.test(code('js/modules/plan-water-ui.js'))).toBe(false);
+  it('and both planners go through it, Pick Water with no check of its own', () => {
+    expect(wiring).toContain('await preparePlanInputs(inp, species, date, ramp)');
+    expect(pw).toContain('await preparePlanInputs(inp, species, date, ramp)');
+    expect(/checkPlanLegality\(/.test(code('js/modules/plan-water-ui.js'))).toBe(false);
   });
 
-  it('each still loads its profile exactly once, for the depth band and the prompt', () => {
+  it('the profile is loaded exactly once, for the depth band and the prompt', () => {
     expect((wiring.match(/await loadResearchedProfile\(/g) || []).length).toBe(1);
-    expect((pw.match(/await loadResearchedProfile\(/g) || []).length).toBe(1);
+    expect(prep).toMatch(/await loadResearchedProfile\(/);
+    expect((pw.match(/await loadResearchedProfile\(/g) || []).length).toBe(0);
   });
 
   it('the warnings are merged BEFORE anything reads r.problems', () => {

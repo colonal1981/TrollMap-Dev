@@ -189,7 +189,10 @@ describe('it reaches buildPlanRequest, which is the only test that counts', () =
     // this path that a synchronous reader has stood ahead of the only call that fills it —
     // ensureRegulations() and loadResearchedProfile() were the first two — so it is asserted
     // rather than remembered.
-    const warm = wiring.indexOf('await primeInshoreSeason(');
+    // The prime sits in preparePlanInputs() since 2026-09-25, which both planners await first.
+    const prep = wiring.slice(wiring.indexOf('export async function preparePlanInputs('));
+    expect(prep).toContain('await primeInshoreSeason(');
+    const warm = wiring.indexOf('await preparePlanInputs(');
     const read = wiring.indexOf('inshoreSeason: inshoreSeasonFor(');
     expect(warm).toBeGreaterThan(-1);
     expect(read).toBeGreaterThan(warm);
