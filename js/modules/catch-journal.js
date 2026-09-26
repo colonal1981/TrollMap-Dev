@@ -19,6 +19,7 @@ import { LURE_PRESETS } from './spread-builder.js';
 import { get as dbGet, tryPut } from '../utils/db.js';
 
 import { callGlobal } from '../utils/call-global.js';
+import { solunarFor } from '../utils/solunar.js';
 const DEFAULT_HELPER = 'http://127.0.0.1:8787';
 const QUEUE_DB_KEY = 'catch_import_queue';
 const CATCHES_DB_KEY = 'catches';
@@ -128,20 +129,10 @@ function displayTime(t) {
   return `${h}:${min} ${ap}`;
 }
 
+// The phase name is solunarFor()'s, since 2026-09-25; this had its own Julian-day phase with
+// different cut points. Longitude does not move the phase, so 0 is passed for it.
 function moonPhaseLabel(isoDate) {
-  const d = new Date(isoDate);
-  if (Number.isNaN(+d)) return '';
-  const JD = d / 86400000 + 2440587.5;
-  const phase = ((JD - 2451550.1) / 29.530588) % 1;
-  const p = phase < 0 ? phase + 1 : phase;
-  if (p < 0.03 || p > 0.97) return 'New Moon';
-  if (p < 0.22) return 'Waxing Crescent';
-  if (p < 0.28) return 'First Quarter';
-  if (p < 0.47) return 'Waxing Gibbous';
-  if (p < 0.53) return 'Full Moon';
-  if (p < 0.72) return 'Waning Gibbous';
-  if (p < 0.78) return 'Last Quarter';
-  return 'Waning Crescent';
+  return solunarFor(String(isoDate || '').slice(0, 10), 0, 0).phaseName;
 }
 
 function itemIsoDateTime(item) {
