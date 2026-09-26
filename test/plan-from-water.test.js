@@ -294,3 +294,45 @@ describe('the transit router is fetched ahead of the assembler, not called insid
     }
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// THE ASKER THE APP ACTUALLY PASSES
+//
+// Ryan, 2026-09-25, the night before a Wateree trip:
+//
+//     The model did not answer usably: no JSON object in response: [object Object]
+//
+// plan-water-ui.js passes modelAsker(), which since 2026-09-04 returns {content, meta}. This path
+// handed that object straight to parsePlanResponse(), which read it as "[object Object]". Every
+// asker in the tests above returns a bare string, so none of them could see it. These use the
+// shape the app sends.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+describe('Pick Water reads the answer modelAsker() actually returns', () => {
+  const META = { finishReason: 'stop', model: 'test-model', provider: 'test', maxTokens: 8000 };
+  const pairAsker = async (req) => ({ content: await MODEL(req), meta: META });
+
+  it('builds a day from a {content, meta} answer', async () => {
+    const r = await build({ askModel: pairAsker });
+    expect(r.plan).toBeTruthy();
+    expect(r.plan.legs.filter((l) => l.type !== 'transit').length).toBe(PICKED.length);
+    expect(r.problems.some((p) => /object Object|did not answer usably/.test(p))).toBe(false);
+  });
+
+  it('carries the call record out as `exchange`, as Smart Plan does', async () => {
+    const r = await build({ askModel: pairAsker });
+    expect(r.exchange).toEqual(META);
+  });
+
+  it('still takes a bare string, and says so with a null exchange', async () => {
+    const r = await build();
+    expect(r.plan).toBeTruthy();
+    expect(r.exchange).toBe(null);
+  });
+
+  it('keeps the call record when the answer itself cannot be read', async () => {
+    const r = await build({ askModel: async () => ({ content: 'not json at all', meta: META }) });
+    expect(r.plan).toBe(null);
+    expect(r.problems[0]).toMatch(/no JSON object in response: not json at all/);
+    expect(r.exchange).toEqual(META);
+  });
+});

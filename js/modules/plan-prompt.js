@@ -2621,6 +2621,24 @@ function around(src, err) {
   return `\n…${src.slice(Math.max(0, i - 120), i)}<<HERE>>${src.slice(i, i + 120)}…`;
 }
 
+/**
+ * WHAT AN ASKER HANDED BACK, AS `{content, meta}` -- ONE READER FOR BOTH PLANNERS.
+ *
+ * Since 2026-09-04 modelAsker() returns the text AND what the call cost, so a failed parse can say
+ * why. A test asker, or any other caller, may still return the bare text, and that is still a
+ * valid answer. Smart Plan unwrapped the pair inline, twice. Pick Water never did: it handed the
+ * pair straight to parsePlanResponse(), which read it as the string "[object Object]", so from
+ * 2026-09-04 every Pick Water day died at the last step. Ryan, 2026-09-25, the night before a
+ * Wateree trip: "The model did not answer usably: no JSON object in response: [object Object]".
+ * Its tests used bare-string askers, which is why 4,600 of them passed through it.
+ */
+export function modelAnswer(answered) {
+  if (answered && typeof answered === 'object' && typeof answered.content === 'string') {
+    return { content: answered.content, meta: answered.meta ?? null };
+  }
+  return { content: String(answered == null ? '' : answered), meta: null };
+}
+
 export function parsePlanResponse(text) {
   const raw = String(text || '').replace(/```json|```/g, '').trim();
   const a = raw.indexOf('{'), b = raw.lastIndexOf('}');

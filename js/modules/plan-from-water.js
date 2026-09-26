@@ -36,7 +36,7 @@
 
 import { ampHoursAlong, minutesFor, metresBetween, cumulative, worstWind } from './plan-candidates.js';
 import { assemblePlan } from './plan-assemble.js';
-import { buildPlanRequest, parsePlanResponse, planArgsFrom, MODEL_LEG_FIELDS }
+import { buildPlanRequest, parsePlanResponse, planArgsFrom, MODEL_LEG_FIELDS, modelAnswer }
   from './plan-prompt.js';
 import { prefetchTransits } from './smart-plan-v2.js';
 import { launchRouteFor } from '../data/launch-reach.js';
@@ -216,7 +216,7 @@ function legFrom(piece, i, ramp, slug, wind) {
  * @param {number}   o.usableAh    LiFePO4 reserve already removed
  * @param {object[]} [o.windByHour] the day's hourly wind; dayCost() costs against its worst hour
  * @param {number[]} [o.order]     HIS override. Absent = the app's search order.
- * @param {function} o.askModel    ({system,user}) => Promise<string>
+ * @param {function} o.askModel    ({system,user}) => Promise<string|{content, meta}>
  * @param {function} [o.routeWater] transit router; a straight line is marked `unrouted`
  */
 export async function planFromWater(o) {
@@ -367,11 +367,16 @@ export async function planFromWater(o) {
       : undefined,
   });
 
-  let res;
+  // modelAnswer() takes the bare text or modelAsker()'s {content, meta} -- see it for the night
+  // this path read "[object Object]". `meta` rides out as `exchange`, the same field smart-plan-v2
+  // returns, so a Pick Water day records how its call ended as well.
+  let res, answer = null;
   try {
-    res = parsePlanResponse(await o.askModel(req));
+    answer = modelAnswer(await o.askModel(req));
+    res = parsePlanResponse(answer.content);
   } catch (e) {
-    return { plan: null, problems: [`The model did not answer usably: ${e.message}`], dayCost: cheapest };
+    return { plan: null, problems: [`The model did not answer usably: ${e.message}`], dayCost: cheapest,
+             exchange: answer ? answer.meta : null };
   }
 
   // THE MODEL'S ANSWER IS RAW UNTIL planArgsFrom() HAS BEEN OVER IT, AND THIS PATH SKIPPED IT.
@@ -525,6 +530,7 @@ export async function planFromWater(o) {
     // fields on the other path.
     request: req,
     response: res,
+    exchange: answer.meta,
     // WHAT THE MODEL GOT WRONG, SAID OUT LOUD. This was a hardcoded empty array, so a rod that is
     // not on the boat, a lure that is not in the bag and a leg with no rods deployed all arrived
     // silently. smart-plan-v2.js has always returned these.

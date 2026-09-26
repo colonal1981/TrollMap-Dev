@@ -22,7 +22,7 @@ import { selectCandidates, structureIndex, forModel, travelOrder, poiSpotFeature
          turnaroundMiles, riverDay, metresBetween,
          pointToSegmentM } from './plan-candidates.js';
 import { buildPlanRequest, parsePlanResponse, planArgsFrom,
-         resolveTackleName } from './plan-prompt.js';
+         resolveTackleName, modelAnswer } from './plan-prompt.js';
 // A RIVER LEG IS A DRIFT, NOT A LANE. See river-drifts.js for what that means, what it measures
 // and why the trolling runs are the wrong object on moving water.
 import { riverDriftRuns, driftCurrentSummary, centrelineTransit, waterTest } from './river-drifts.js';
@@ -533,10 +533,7 @@ export async function buildSmartPlanV2(o) {
   //
   // Widened rather than changed: a plain string is still a valid answer, so every test asker and
   // every other caller keeps working untouched. Only modelAsker() returns the richer shape.
-  const answered = await o.askModel(req);
-  const raw = (answered && typeof answered === 'object' && typeof answered.content === 'string')
-    ? answered
-    : { content: String(answered == null ? '' : answered), meta: null };
+  const raw = modelAnswer(await o.askModel(req));
 
   let res;
   try {
@@ -627,11 +624,7 @@ export async function buildSmartPlanV2(o) {
       + `Everything else may stay exactly as it was.`;
     let second = null;
     try {
-      const answeredAgain = await o.askModel({ system: req.system, user: corrected });
-      const rawAgain = (answeredAgain && typeof answeredAgain === 'object'
-                        && typeof answeredAgain.content === 'string')
-        ? answeredAgain
-        : { content: String(answeredAgain == null ? '' : answeredAgain), meta: null };
+      const rawAgain = modelAnswer(await o.askModel({ system: req.system, user: corrected }));
       second = { res: parsePlanResponse(rawAgain.content), raw: rawAgain };
     } catch {
       second = null;          // an unreadable second answer is not a reason to lose the first
