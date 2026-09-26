@@ -185,10 +185,11 @@ export function editMode() {
 }
 
 /**
- * Handle a click anywhere on the map. Three behaviors, in order:
+ * Handle a click anywhere on the map. Two behaviors, in order:
  *   1. If a coordinate-pick is in progress, fill the targeted input and stop.
- *   2. If a chart georef is in progress, hand off to handleGeorefClick.
- *   3. Otherwise, in "add" mode, prompt for a name and add a waypoint.
+ *   2. Otherwise, in "add" mode, prompt for a name and add a waypoint.
+ * (A chart georef click was handed to handleGeorefClick here until 2026-09-25, when the
+ * georeference workflow was deleted.)
  */
 export function onMapClick(e) {
   if (pickTarget) {
@@ -196,10 +197,6 @@ export function onMapClick(e) {
     pickTarget = null;
     document.body.style.cursor = '';
     setBanner('');
-    return;
-  }
-  if (window.georefState) {
-    callGlobal('handleGeorefClick', e);
     return;
   }
   const mode = editMode();

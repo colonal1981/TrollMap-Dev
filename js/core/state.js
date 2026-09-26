@@ -34,8 +34,6 @@ export const state = {
   IMG_ROTATION: 0,
   IMG_AFFINE: null,       // [[a,b,c],[d,e,f]] 2x3 matrix or null
   IMG_AFFINE_PTS: null,   // [{lat,lon}] corresponding source points
-  GEOREF: null,           // {bbox, ...} once georef finished
-  georefState: null,      // current georef step machine
 
   // ── Working data ──
   DATA: { waypoints: [], tracks: [] },
