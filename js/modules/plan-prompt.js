@@ -1025,8 +1025,22 @@ function drawnDayBlock(day, candidates) {
  * `conditions.pressureTrend`, so it is pointed at rather than repeated. Neither one decides
  * `isGo`: fog lifts, and a front is a reason the bite may be slow, not a reason to stay home.
  */
-export function airAndFrontBlock(weatherByHour, conditions) {
+export function airAndFrontBlock(weatherByHour, conditions, candidates) {
   const L = [];
+  // ── AND THE WIND ACROSS THE WATER, per leg (change request 22) ───────────────────────────────
+  //
+  // Ryan left the 2026-09-26 Wateree plan because its legs were out in 1-2 ft of wind-driven swell
+  // and kept to the coves instead. smart-plan-v2.js puts `wavesFtByHour` on a leg when it could
+  // measure it; said here only then, because a paragraph about a field nobody sent is noise.
+  if ((candidates || []).some((c) => c && c.wavesFtByHour)) {
+    L.push('`wavesFtByHour` ON A LEG is the wave height the forecast wind makes there at each '
+      + 'hour: the open water upwind of the leg, measured off this lake\'s own outline, through the '
+      + 'Shore Protection Manual\'s formula for wind waves. He left a Wateree plan on 2026-09-26 '
+      + 'because its legs were out in 1-2 ft of wind-driven swell, and fished near the coves where '
+      + 'he could get out of the wind. Prefer the sheltered legs. Where the day needs an exposed '
+      + 'one, fish it in an hour when its waves are small and say so in its `why`. A leg at 1 ft or '
+      + 'more at the hour you put it is one he has already called too rough in the kayak.');
+  }
   const spans = fogSpans(weatherByHour);
   if (spans.length) {
     const low = fogLowestVisibility(weatherByHour);
@@ -2562,7 +2576,7 @@ wind direction: is it a dangerous windward launch?${o.hazards && o.hazards.lengt
     + `from the research is written advice with no position at all: say the ones that bear on `
     + `today out loud, and never imply an unpositioned one is marked on the chart.`
   : ''}
-${coastalPromptBlock(o.waterState)}${riverPromptBlock(o.waterState, o)}${poolPromptBlock(o.waterState)}${chartCoverageBlock(o)}${conditionsPromptBlock(o.waterState)}${lightPromptBlock(o.waterState, o.weatherByHour, o.launchTime, o.returnTime, o.lightFacts, o.isRiver)}${airAndFrontBlock(o.weatherByHour, o.conditions)}${timeBudgetBlock(o.windowMin, o.launchTime, o.returnTime, o.dayMin, o.dayStopMin, o.castStopsWanted)}${thermoclineNormBlock(o.thermoclineNorm)}${inshoreSeasonBlock(o.inshoreSeason)}${seabedHabitatBlock(o.seabedHabitat)}
+${coastalPromptBlock(o.waterState)}${riverPromptBlock(o.waterState, o)}${poolPromptBlock(o.waterState)}${chartCoverageBlock(o)}${conditionsPromptBlock(o.waterState)}${lightPromptBlock(o.waterState, o.weatherByHour, o.launchTime, o.returnTime, o.lightFacts, o.isRiver)}${airAndFrontBlock(o.weatherByHour, o.conditions, candidates)}${timeBudgetBlock(o.windowMin, o.launchTime, o.returnTime, o.dayMin, o.dayStopMin, o.castStopsWanted)}${thermoclineNormBlock(o.thermoclineNorm)}${inshoreSeasonBlock(o.inshoreSeason)}${seabedHabitatBlock(o.seabedHabitat)}
 WHAT IS ALREADY KNOWN
 ${o.intel || 'NOTHING. No researched profile exists for this water, so everything else here rests '
   + 'on the chart, the gauges and general species knowledge. Say so in the plan rather than '

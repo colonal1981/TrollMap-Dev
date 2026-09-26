@@ -49,6 +49,7 @@ import { fetchForecast,
 import { lakeSurfaceTemp } from '../utils/water-conditions.js';
 import { landingsFor } from '../data/launch-reach.js';
 import { closerLanding, closerLandingNote } from './closer-landing.js';
+import { shoreRays, roughLegs } from '../utils/wind-waves.js';
 import { inshoreSeasonFor } from '../data/inshore-season.js';
 import { seabedHabitatFor } from '../data/seabed-habitat.js';
 import { depthSampler, shorelineIndex, waterMask } from './plan-water-index.js';
@@ -1363,6 +1364,12 @@ export async function buildFromPicked() {
   }).catch((e) => { console.warn('[pick-water] closer landing check failed:', e && e.message); return null; });
   const closerNote = closerLandingNote(closer, T.rampName);
   if (closerNote) r.problems = [...(r.problems || []), closerNote];
+  // THE WIND ACROSS THE WATER HE PICKED (change request 22). Each troll leg is stamped with its
+  // roughest hour, and one that reaches his own 1 ft says so -- see wind-waves.js. He chose this
+  // water himself, so it is said, never re-ordered. No boundary, no measurement, nothing said.
+  const boundaryFc = await packFetcher(CF_WORKER_URL)(`/${T.r2Key}/boundary.geojson`);
+  const rough = roughLegs(r.plan, shoreRays(boundaryFc), T.windByHour);
+  if (rough.length) r.problems = [...(r.problems || []), ...rough];
 
   if (r.problems && r.problems.length) {
     console.warn('[pick-water] the plan came back with %d problem(s):', r.problems.length);

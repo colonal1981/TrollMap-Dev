@@ -35,6 +35,8 @@ import { connectionFor, snapEligibleFrom } from '../data/lure-knowledge.js';
 // a string compare in two files, and why it is not `waterState.river`.
 import { saysRiver } from './plan-inputs.js';
 import { launchRouteFor } from '../data/launch-reach.js';
+// THE WIND ACROSS THE WATER -- fetch off the boundary, waves off the fetch. See wind-waves.js.
+import { shoreRays, wavesByHour, roughLegs } from '../utils/wind-waves.js';
 
 // How many candidates the model is shown. Enough to make the ordering a real choice, few enough
 // that the prompt does not turn into a phone book. NOT a cap on what it may fish — it may use all
@@ -438,8 +440,19 @@ export async function buildSmartPlanV2(o) {
   const oxygenFloorFt = typeof o.oxygenFloorFor === 'function'
     ? o.oxygenFloorFor(packFacts) : (o.oxygenFloorFt ?? null);
 
+  // ── THE WAVES ON EACH LEG, HOUR BY HOUR ───────────────────────────────────────────────────────
+  //
+  // Change request 22. Ryan left the 2026-09-26 Wateree plan because its legs were out in 1-2 ft of
+  // wind-driven swell and kept to the coves instead. The model owns the ORDER of the day, so it
+  // decides which hour each leg is fished in -- and it is the thing that has to see which legs are
+  // rough at which hour. Null without a boundary or a forecast, and then nothing is added.
+  const rays = shoreRays(boundaryFc);
   const req = buildPlanRequest({
-    candidates: candidates.map((c) => forModel(c)),
+    candidates: candidates.map((c) => {
+      const m = forModel(c);
+      const waves = wavesByHour(c.coordinates, rays, o.windByHour, Number(c.depthFt));
+      return waves ? { ...m, wavesFtByHour: waves } : m;
+    }),
     water: o.water, ramp: o.rampName, date: o.date,
     launchTime: o.launchTime, returnTime: o.returnTime,
     species: o.species ? [].concat(o.species) : [],
@@ -718,6 +731,9 @@ export async function buildSmartPlanV2(o) {
     oxygenFloorFt,
   });
   plan.notes = args.notes;
+  // AND EACH LEG AT THE HOURS IT IS ACTUALLY FISHED, now the order is settled. Every troll leg
+  // carries `exposure`; a leg whose waves reach his own 1 ft says so with the plan's warnings.
+  plan.warnings.push(...roughLegs(plan, rays, o.windByHour));
 
   const broken = validatePlan(plan);
   return {
