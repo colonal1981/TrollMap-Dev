@@ -455,6 +455,16 @@ export async function handleAlerts(request, env, url) {
       severity: c && c.severity === 'stop' ? 'stop' : 'note',
       fired: false,
     })).filter((c) => c.at && Number.isFinite(Date.parse(c.at))) : [];
+    // A CUE WHOSE TIME WENT BY BEFORE THIS WATCH EXISTED IS HISTORY, NOT NEWS (change request 20).
+    // A plan built at 10:00 for a day that launched at 06:00 carries the 06:30 solunar window and
+    // every earlier cue, and the next sweep would fire the lot at once. The line is one cron period
+    // (CUE_LEAD_MS), the same margin cues already fire early by: anything later than that would
+    // have gone out already had the watch been armed in time. Marked sent, and counted in the
+    // reply, so the page can say how many were skipped rather than letting them vanish.
+    let past = 0;
+    for (const c of cues) {
+      if (Date.parse(c.at) < now - CUE_LEAD_MS) { c.fired = true; past += 1; }
+    }
 
     const rec = {
       lat, lon, until: new Date(until).toISOString(),
@@ -481,7 +491,7 @@ export async function handleAlerts(request, env, url) {
     // rather than shown a tick. This return value is the only place that can say it. Read off
     // the index this call just rebuilt rather than listing again.
     const devices = (await sweepIndex(env)).devices.length;
-    return json({ ok: true, watch: k, until: rec.until, cues: cues.length, devices,
+    return json({ ok: true, watch: k, until: rec.until, cues: cues.length - past, past, devices,
                   warning: devices ? null : 'no device is registered to receive these alerts' });
   }
 

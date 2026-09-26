@@ -476,6 +476,28 @@ test('a watch asks for no weather before its own day begins', async () => {
   assert.equal(pushed.length, 0);
 });
 
+test('a watch armed mid-day does not fire the morning\'s cues all at once', async () => {
+  // Change request 20: a plan built at 10:00 for a day that launched at 06:00 carries every cue
+  // from 06:00 on. Past by more than one cron period when the watch is made, a cue is history.
+  const env = { KV: kvStub(), ...vapidEnv() };
+  stubUpstreams();
+  const today = dayIso(0);
+  await registerDevice(env);
+  const cues = [
+    { at: new Date(Date.now() - 3 * 3600e3).toISOString(), title: 'Solunar Major', body: 'x', tag: 'solunar-major' },
+    { at: new Date(Date.now() - 60e3).toISOString(), title: 'Head back soon', body: 'y', tag: 'return-time' },
+    { at: new Date(Date.now() + 2 * 3600e3).toISOString(), title: 'Weather', body: 'z', tag: 'weather-note' },
+  ];
+  const [r, u] = req('/alerts/watch', { method: 'POST', body: {
+    lat: 34.09, lon: -81.33, until: new Date(Date.now() + 4 * 3600e3).toISOString(),
+    date: today.date, from: today.from, cues } });
+  const j = await (await handleAlerts(r, env, u)).json();
+  assert.equal(j.past, 1, 'the one three hours gone');
+  assert.equal(j.cues, 2, 'what is still to come, counting the one a minute late');
+  const s = await runAlertSweep(env);
+  assert.equal(s.cues, 1, 'only the minute-late cue goes out; the morning does not');
+});
+
 test('a caller that sends no date is keyed and capped exactly as before', async () => {
   const env = { KV: kvStub(), ...vapidEnv() };
   stubUpstreams();

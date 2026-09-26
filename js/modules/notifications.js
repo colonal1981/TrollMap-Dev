@@ -771,10 +771,14 @@ export async function startTripWatch(worker, { lat, lon, until, water, slug, cue
     });
     const j = await r.json().catch(() => null);
     if (!r.ok || !j) throw new Error(`watch rejected (HTTP ${r.status})`);
-    _watchState = { armed: true, until: j.until, cues: j.cues, devices: j.devices, warning: j.warning || null };
+    _watchState = { armed: true, until: j.until, cues: j.cues, past: j.past || 0,
+                    devices: j.devices, warning: j.warning || null };
     // A WATCH THAT PROTECTS NOBODY IS SAID OUT LOUD. The Worker counts the registered devices
     // and returns it precisely so this cannot look armed when nothing will receive it.
     if (j.warning) console.warn('[notifications]', j.warning);
+    // AND THE CUES WHOSE TIME HAD ALREADY GONE BY when the watch was armed -- a plan built mid-day.
+    // The Worker marks them sent rather than firing the morning at once; this says how many.
+    if (j.past) console.info(`[notifications] ${j.past} cue(s) were already past and will not fire`);
     return j;
   } catch (e) {
     _watchState = { armed: false, until: null, cues: 0, devices: 0, warning: (e && e.message) || String(e) };
