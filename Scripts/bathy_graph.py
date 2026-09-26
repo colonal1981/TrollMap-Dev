@@ -112,6 +112,62 @@ def boundary_segments(rings):
     return segs, merged
 
 
+def water_polygon(registry, slug):
+    """The lake as WATER, islands included -- or None, and the caller falls back to the rings.
+
+    WHY NOT boundary_segments(rings). `_rings()` in build_chartpack returns OUTER rings only
+    (`[c[0]]` per polygon), so every island the boundary carries became a filled-in piece of
+    water the moment the rings were built into polygons here. Wateree's registry boundary has
+    54 holes, 1.3 km2 of them, and the land test never saw one: measured on the 2026-08-30
+    graph, 3,396 edges were not covered by the boundary once its holes count as land -- 49.9 km
+    of edge, up to 28.6 m of a single edge over an island.
+
+    Same union-of-the-parts rule as boundary_segments (detail 1): the parts are unioned first so
+    a seam between two 3DHP parts in open water is not a wall. The difference is only that each
+    part is built from its GeoJSON geometry, holes and all, rather than from its outer ring.
+
+    The islands are the BOUNDARY's, not the chart's. Where the boundary calls something an
+    island that the chart floods (hump_8 off Clearwater Cove, 3 ft crown in a 0.27-acre hole --
+    THE_ISLAND_THE_CHART_FLOODS_2026-08-31) this routes around it. That is the conservative
+    direction for a router: the boat is sent round a 3 ft shoal, never across an island.
+    """
+    fp = os.path.join(registry, 'boundaries', slug + '.geojson')
+    if not os.path.exists(fp):
+        return None
+    gj = json.load(open(fp, encoding='utf-8'))
+    geoms = ([f.get('geometry') for f in (gj.get('features') or [])]
+             if gj.get('type') == 'FeatureCollection' else [gj.get('geometry') or gj])
+    polys = []
+    for g in geoms:
+        if not g or g.get('type') not in ('Polygon', 'MultiPolygon'):
+            continue
+        try:
+            p = shape(g)
+            if not p.is_valid:
+                p = p.buffer(0)
+            if not p.is_empty:
+                polys.append(p)
+        except Exception:
+            continue
+    if not polys:
+        return None
+    merged = unary_union(polys)
+    return merged if not merged.is_empty else None
+
+
+def segments_of(merged):
+    """Detail 3 of the land test on an already-merged polygon: its whole boundary -- outer rings
+    AND island rings -- chopped into two-point segments for the STRtree."""
+    segs = []
+    b = merged.boundary
+    for ln in list(getattr(b, 'geoms', [b])):
+        cs = list(ln.coords)
+        for i in range(len(cs) - 1):
+            if cs[i] != cs[i + 1]:
+                segs.append(LineString((cs[i], cs[i + 1])))
+    return segs
+
+
 def depth_bands(pack, slug):
     """Every depth polygon as (rings, shallow_ft). Rings, not shapely -- see rasterise_depths."""
     fp = os.path.join(pack, slug, 'depth_areas.geojson')
@@ -320,16 +376,45 @@ def build_lake(registry, pack, slug, cell=None, quiet=False, coarsen=1):
     if step > 1:
         rep['charted_cells_after_coarsen'] = len(dmap)
         rep['core_cells_after_coarsen'] = len(cells)
+    # ── THE WATER, read BEFORE the nodes, because it decides which cells may be one ──────
+    #
+    # A NODE ON THE BANK IS NOT A NODE. build_mask marks every cell its ring passes through as
+    # core, so a lake narrower than a cell is not lost -- and that puts cells on the bank whose
+    # CENTRE is outside the water. The comment above build_mask(rings, 0.0) already says "a
+    # routing node outside the waterline is a node on the bank"; nothing enforced it.
+    #
+    # What it cost, measured on the 2026-08-30 Wateree graph: 4,790 nodes outside the largest
+    # component, and 4,413 of them had their centre outside the boundary. None can hold an edge
+    # to the lake -- a segment that starts on land is never `covered` -- so each was a loose
+    # point, and the Worker's nearestNode() snaps to the nearest node WHATEVER its component:
+    # 774 of 5,686 trolling-run ends (13.6%) snapped to one, and a route from there answers 422.
+    # Run #401's end is 6 m from an orphan and 17 m from the lake.
+    #
+    # It also broke the prefilter below. "An edge whose bounding box touches no boundary segment
+    # is deep interior" is true only when both ends are in the water; two bank cells side by side
+    # can clear every segment's bounding box, and 697 edges lay wholly on land that way.
+    water = water_polygon(registry, slug)
+    if water is not None:
+        segs, merged = segments_of(water), water
+    else:
+        segs, merged = boundary_segments(rings)
+    on_water = prep(merged) if merged is not None else None
     idx, nodes, depths = {}, [], []
+    on_bank = 0
     for (i, j) in sorted(cells):
         d = dmap.get((i, j))
         if d is None:
             continue
+        xy = (mask.w + (i + 0.5) * node_cell, mask.s + (j + 0.5) * node_cell)
+        if on_water is not None and not on_water.covers(Point(xy)):
+            on_bank += 1
+            continue
         idx[(i, j)] = len(nodes)
-        nodes.append((mask.w + (i + 0.5) * node_cell, mask.s + (j + 0.5) * node_cell))
+        nodes.append(xy)
         depths.append(d)
     rep['nodes'] = len(nodes)
-    rep['uncharted_cells'] = len(cells) - len(nodes)
+    rep['dropped_on_bank'] = on_bank
+    rep['uncharted_cells'] = len(cells) - len(nodes) - on_bank
     if not nodes:
         rep['skipped'] = 'no charted depth inside the boundary'
         return rep, None
@@ -344,8 +429,11 @@ def build_lake(registry, pack, slug, cell=None, quiet=False, coarsen=1):
     rep['candidate_edges'] = len(cand)
 
     # ── THE LAND TEST ───────────────────────────────────────────────────────────────────
-    segs, merged = boundary_segments(rings)
+    # `segs` and `merged` come from water_polygon() above -- islands included -- and every node
+    # is now inside `merged`, which is the premise the prefilter below depends on.
     rep['boundary_segments'] = len(segs)
+    rep['boundary_holes'] = sum(len(p.interiors) for p in getattr(merged, 'geoms', [merged])
+                                if hasattr(p, 'interiors')) if merged is not None else 0
     #
     # THE TEST IS "DOES ANY PART OF THIS SEGMENT LEAVE THE WATER", NOT "DOES IT TOUCH THE EDGE".
     # An earlier version vetoed on crosses() OR touches(), which killed every segment that merely
@@ -406,6 +494,33 @@ def build_lake(registry, pack, slug, cell=None, quiet=False, coarsen=1):
         edges = kept
     rep['vetoed_by_dock_test'] = docked
     rep['edges'] = len(edges)
+
+    # ── LOOSE POINTS ────────────────────────────────────────────────────────────────────
+    #
+    # A node the land and dock tests left with no edge at all is not sparse water, it is a point
+    # nothing can reach -- build_water_graphs.py says the same of a whole graph. On Wateree they
+    # are cells inside a dock polygon or boxed in by docks (351 on 2026-08-30), and each is a
+    # nearestNode() trap: #401's end sits 6 m from one and 17 m from open water. Dropped and the
+    # survivors renumbered, so the file carries no index that points at nothing.
+    deg = [0] * len(nodes)
+    for a, b in edges:
+        deg[a] += 1
+        deg[b] += 1
+    loose = sum(1 for k in deg if k == 0)
+    rep['dropped_no_edge'] = loose
+    if loose:
+        remap, n2, d2 = {}, [], []
+        for k, (p, dd) in enumerate(zip(nodes, depths)):
+            if deg[k]:
+                remap[k] = len(n2)
+                n2.append(p)
+                d2.append(dd)
+        edges = [(remap[a], remap[b]) for a, b in edges]
+        nodes, depths = n2, d2
+    rep['nodes'] = len(nodes)
+    if not nodes:
+        rep['skipped'] = 'no node kept an edge'
+        return rep, None
 
     # ── components ──────────────────────────────────────────────────────────────────────
     adj = [[] for _ in nodes]
