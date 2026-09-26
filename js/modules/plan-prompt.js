@@ -2629,13 +2629,19 @@ RETURN EXACTLY THIS SHAPE
     // puts the swap before the run out, which on a reach fished at first light is rarely the point.` : ''}
   ],
   "notes": {
-    "scoutNotes": "two or three sentences of tactical overview",
+    "scoutNotes": "FIRST one sentence: troll, cast or both today, and which reports say so; then two or three sentences of tactical overview",
     "fishfinderNarrative": "about 150 words on what the sonar should show along these legs and how to work what is rigged"
   }
   // TWO, AND BOTH ARE READ. Nothing else belongs in \`notes\`. Two more fields used to be asked for
   // here and the app read neither, so a sonar signature and an adjustment tip were written on every
   // plan and binned unseen. What to do when nothing is hitting is \`ifNotProducing\` on each leg now,
   // where it names a rod and a reason instead of being one line about nine hours.
+  // TROLL OR CAST IS THE FIRST THING HE READS. Open \`scoutNotes\` with it: from what the reports
+  // above say about these species in this season on this water, would they have him trolling today,
+  // casting, or both -- and name the reports. Live bait is never the answer on fresh water, but a
+  // live-bait report is still a trolling report: shad on planer boards says where the fish were,
+  // how deep and how fast, so strike the bait and keep the report. Where the research says nothing
+  // about method, say that instead of guessing.
 }`;
 
   return { system, user };

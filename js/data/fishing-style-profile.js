@@ -74,8 +74,10 @@ export const FISHING_STYLE = {
   //   available if explicitly toggled on for a specific trip (e.g. bait
   //   bought same-day from a shop that already has it in a tank).
   // - Saltwater (mullet, shrimp): assumed available by default — hardy
-  //   enough for a standard bait bucket, easily bought at most coastal
-  //   bait shops, no unsafe netting required.
+  //   enough for a standard bait bucket, and easily had: bought at most
+  //   coastal bait shops, or cast-netted from the beach. Ryan, 2026-09-25:
+  //   "saltwater alot of times i will cast a net from the beach and get
+  //   finger mullet". The netting is from the beach, not the kayak.
   liveBait: {
     freshwater: false,
     saltwater: true,
