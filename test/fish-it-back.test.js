@@ -285,7 +285,11 @@ describe('what fishing it back is worth, on the water it was reported on', () =>
         [`c#${i + 1}`, { port: 'R1', starboard: 'R5' }])),
     });
     expect(short.legs.filter((l) => l.runId === 'c#1').length).toBeLessThan(6);
-    expect(short.warnings.some((w) => /asked for 6 passes/.test(w) && /07:00/.test(w))).toBe(true);
+    // A pass that would end after 07:00 is a warning; a pass that would push the legs still to come
+    // past 07:00 is an app decision (see owedAfter in plan-assemble.js). On a one-hour window with
+    // seven legs it is the second that stops it first. Either way the plan says which, and when.
+    const said = [...short.warnings, ...(short.decisions || [])];
+    expect(said.some((w) => /asked for 6 passes/.test(w) && /07:00/.test(w))).toBe(true);
   });
 });
 
@@ -404,5 +408,37 @@ describe('a pass dropped for time leaves the boat where the last pass really end
   it('does not call a leg fished once "pass 1 of 2"', () => {
     expect(aLegs[0].ofPasses).toBe(undefined);
     expect(aLegs[0].pass).toBe(undefined);
+  });
+});
+
+// Ryan's 2026-09-26 Wateree Pick Water day, the second time: four legs fished back, every second pass
+// early enough to end well before 16:00 on its own, and the day ran 496 min against 480 because the
+// legs still to come paid for them. A second pass goes in only if the REST of the day still fits.
+describe('a second pass is not bought with the water still to come', () => {
+  // Out by 06:10, A once by 07:19, A back by 08:27 -- long before 10:00 -- but then 4.6 km to B, B,
+  // and 8.3 km home puts the day at about 11:36. Fished once, A-B-home ends about 09:50.
+  const plan = build({ returnTime: '10:00' }, [{ ...A, trollPasses: 2 }, B]);
+  const trolls = plan.legs.filter((l) => l.type === 'troll');
+
+  it('drops the second pass even though it would itself end before 10:00', () => {
+    expect(trolls.filter((l) => l.runId === 'w#1').length).toBe(1);
+    expect(trolls.filter((l) => l.runId === 'w#2').length).toBe(1);
+  });
+
+  it('and the day it builds fits the window', () => {
+    expect(plan.budget.estPlannedMin <= 240).toBe(true);
+    expect(plan.warnings.some((w) => /against a 240 min window/.test(w))).toBe(false);
+  });
+
+  it('says so as a decision, naming what the pass would have cost', () => {
+    const d = (plan.decisions || []).find((x) => /w#1 asked for 2 passes — stopped after 1/.test(x));
+    expect(d).toBeTruthy();
+    expect(d).toMatch(/the 1 leg still to come and the run home would then finish/);
+    expect(plan.warnings.some((w) => /w#1 asked for 2 passes/.test(w))).toBe(false);
+  });
+
+  it('still fishes it back when the whole day has room', () => {
+    const roomy = build({ returnTime: '15:00' }, [{ ...A, trollPasses: 2 }, B]);
+    expect(roomy.legs.filter((l) => l.type === 'troll' && l.runId === 'w#1').length).toBe(2);
   });
 });

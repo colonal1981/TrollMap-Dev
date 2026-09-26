@@ -1330,18 +1330,30 @@ the conditions block says whether that condition is in force today.
  *
  * `dayMin` is dayCost()'s own number when the caller has one. Nothing is re-estimated here.
  */
-export function timeBudgetBlock(windowMin, launchTime, returnTime, dayMin) {
+export function timeBudgetBlock(windowMin, launchTime, returnTime, dayMin, stopMin, stopCount) {
   const w = Number(windowMin);
   if (!Number.isFinite(w) || w <= 0) return '';
   const hrs = (w / 60).toFixed(1).replace(/\.0$/, '');
   const est = Number(dayMin);
   const has = Number.isFinite(est) && est > 0;
   const over = has && est > w;
+  // THE STOPS HE ASKED FOR ARE ALREADY IN `dayMin`, and the prompt has to say so. Ryan's 2026-09-26
+  // Pick Water prompt said "398 minutes ... 82 minutes of slack -- spend it on stops" when the card
+  // beside his tick boxes had already counted his four stops. The model spent the 82 on four stops
+  // AND four second passes, and the day ran 496 against 480.
+  const sMin = Number(stopMin);
+  const sN = Number(stopCount);
+  const hasStops = has && Number.isFinite(sMin) && sMin > 0 && sMin < est;
+  const stopsSaid = Number.isFinite(sN) && sN > 0
+    ? `the ${sN} stop${sN === 1 ? '' : 's'} he asked for` : 'the stops he asked for';
   return `
 HOW LONG HE HAS
 ${launchTime || '?'} to ${returnTime || '?'} is ${w} MINUTES on the water — ${hrs} hours, ramp to
 ramp, including every transit and every stop. That is the whole budget and it does not stretch.${has ? `
-The app prices the water below at ${Math.round(est)} minutes.` : ''}${over ? ` That is ${Math.round(est - w)} minutes
+The app prices the water below at ${hasStops
+  ? `${Math.round(est - sMin)} minutes, and ${stopsSaid} at ${Math.round(sMin)}
+more — ${Math.round(est)} in all`
+  : `${Math.round(est)} minutes`}.` : ''}${over ? ` That is ${Math.round(est - w)} minutes
 MORE than he has.
 
 Do not solve this by dropping a leg — he chose this water and he is going to run it. Solve it by
@@ -1349,7 +1361,10 @@ saying WHERE THE CLOCK RUNS OUT: name the leg he will be on when the ${w} minute
 the time he reaches it, and say what he gives up by turning for the ramp there instead of
 finishing. Put it in the plan where he will read it before he launches, not in a footnote. The
 cut is his to make; your job is to tell him which one he is making.` : has ? ` That leaves
-${Math.round(w - est)} minutes of slack — spend it on stops, not on padding the legs.` : ''}
+${Math.round(w - est)} minutes of slack${hasStops ? ', with his stops already counted'
+  : ' — spend it on stops, not on padding the legs'}. A second pass
+on any leg comes out of it too: the app adds one only while every leg still to come, its stops and
+the run home still finish by ${returnTime || 'the time he is due back'}.` : ''}
 
 THE DAY YOU WRITE MUST ACCOUNT FOR ALL ${w} MINUTES. He is on the water from ${launchTime || '?'}
 until ${returnTime || '?'} whatever you plan, so a plan that runs out at the halfway mark does not
@@ -2379,8 +2394,8 @@ RULES THAT ARE NOT NEGOTIABLE
    compare \`transitToMIfFishedBack\` against \`transitToM\` for the leg that follows it. A day of
    six stretches each fished once, with a transit between every pair, is the shape this is here to
    break. Do not set it on every leg to run the clock up — set it where the water deserves a
-   second look, and say why in \`why\`. The app stops adding passes at the first one that would end
-   after he is due back.`}
+   second look, and say why in \`why\`. The app adds a second pass only while every leg still to
+   come, its stops and the run home still finish by the time he is due back.`}
 4. ${o.isRiver ? `THERE ARE NO STOPS ON A RIVER. Return \`"stops": []\` and mean it.
    Ryan, 2026-09-17: "i do not typically anchor in a river so stop and cast really isn't going to be
    a thing... i am not going to try and hover with either the trolling motor or the pedals." The
@@ -2470,7 +2485,7 @@ wind direction: is it a dangerous windward launch?${o.hazards && o.hazards.lengt
     + `from the research is written advice with no position at all: say the ones that bear on `
     + `today out loud, and never imply an unpositioned one is marked on the chart.`
   : ''}
-${coastalPromptBlock(o.waterState)}${riverPromptBlock(o.waterState, o)}${poolPromptBlock(o.waterState)}${chartCoverageBlock(o)}${conditionsPromptBlock(o.waterState)}${lightPromptBlock(o.waterState, o.weatherByHour, o.launchTime, o.returnTime, o.lightFacts, o.isRiver)}${timeBudgetBlock(o.windowMin, o.launchTime, o.returnTime, o.dayMin)}${thermoclineNormBlock(o.thermoclineNorm)}${inshoreSeasonBlock(o.inshoreSeason)}${seabedHabitatBlock(o.seabedHabitat)}
+${coastalPromptBlock(o.waterState)}${riverPromptBlock(o.waterState, o)}${poolPromptBlock(o.waterState)}${chartCoverageBlock(o)}${conditionsPromptBlock(o.waterState)}${lightPromptBlock(o.waterState, o.weatherByHour, o.launchTime, o.returnTime, o.lightFacts, o.isRiver)}${timeBudgetBlock(o.windowMin, o.launchTime, o.returnTime, o.dayMin, o.dayStopMin, o.castStopsWanted)}${thermoclineNormBlock(o.thermoclineNorm)}${inshoreSeasonBlock(o.inshoreSeason)}${seabedHabitatBlock(o.seabedHabitat)}
 WHAT IS ALREADY KNOWN
 ${o.intel || 'NOTHING. No researched profile exists for this water, so everything else here rests '
   + 'on the chart, the gauges and general species knowledge. Say so in the plan rather than '

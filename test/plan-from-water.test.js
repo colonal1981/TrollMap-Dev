@@ -359,6 +359,26 @@ describe('Pick Water reads the answer modelAsker() actually returns', () => {
     expect(Number(m[1])).toBe(od.cost.min);
   });
 
+  it('counts the stops he asked for in the minutes it quotes, and says they are counted', async () => {
+    // Ryan's 2026-09-26 Wateree pick: the card counted his 4 stops, the prompt said "398 minutes ...
+    // 82 minutes of slack -- spend it on stops", and the model spent it twice over.
+    let sent = null;
+    await build({
+      askModel: async (req) => { sent = req; return MODEL(req); },
+      planArgs: { water: 'Lake Wateree, SC', ramp: 'Clearwater Cove', date: '2026-07-29',
+                  species: ['Striped Bass'], usableAh: 80, tackle: LURES, conditions: {},
+                  castStopsWanted: 4 },
+    });
+    const od = dayOrder(PICKED, { ramp: RAMP, usableAh: 80, windowMin: 480, stopMin: 60 });
+    const m = /The app prices the water below at (\d+) minutes, and the 4 stops he asked for at 60\s+more — (\d+) in all/
+      .exec(sent.user);
+    expect(m).toBeTruthy();
+    expect(Number(m[2])).toBe(od.cost.min);
+    expect(Number(m[1])).toBe(od.cost.min - 60);
+    expect(sent.user).toMatch(/with his stops already counted/);
+    expect(sent.user).not.toMatch(/spend it on stops/);
+  });
+
   it('prices a given order as given, and counts the stops asked for', () => {
     const base = { ramp: RAMP, usableAh: 80, windowMin: 480 };
     const order = [2, 0, 1];

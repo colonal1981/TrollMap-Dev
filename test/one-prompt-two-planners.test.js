@@ -70,8 +70,12 @@ describe('the prompt contract', () => {
   // the model chooses which of them to fish. `windowMin` -- the budget itself -- is sent by
   // BOTH, because the constraint applies either way; only the app's price for a chosen day is
   // one-sided. If Smart Plan ever prices a chosen set before the call, take this back out.
+  //
+  // `dayStopMin` goes with `dayMin`: it is the part of that price that is the stops he typed into
+  // the Water tab's box, so the prompt can say they are already counted. No picked set, no price,
+  // no stops in it.
   const PICKED_WATER_DIALECT = ['castStopsWanted', 'chosenCastSpots', 'freeCastSpots',
-                                'orderIsChosen', 'waterIsChosen', 'dayMin'];
+                                'orderIsChosen', 'waterIsChosen', 'dayMin', 'dayStopMin'];
 
   // AND ONE FIELD PICK WATER CANNOT REACH THE CASE FOR, WHICH IS A DIFFERENT EXEMPTION.
   //

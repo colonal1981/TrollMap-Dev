@@ -35,7 +35,7 @@
  */
 
 import { ampHoursAlong, minutesFor, metresBetween, cumulative, worstWind } from './plan-candidates.js';
-import { assemblePlan } from './plan-assemble.js';
+import { assemblePlan, DEFAULT_STOP_MIN } from './plan-assemble.js';
 import { buildPlanRequest, parsePlanResponse, planArgsFrom, MODEL_LEG_FIELDS, modelAnswer }
   from './plan-prompt.js';
 import { prefetchTransits } from './smart-plan-v2.js';
@@ -232,8 +232,13 @@ export async function planFromWater(o) {
   // run the battery over where the cheapest would not; it is the same call the Water tab's total
   // makes, so the order and the minutes he saw beside the tick boxes are the day he is handed.
   const wind = o.wind || worstWind(o.windByHour);
+  // AND THE STOPS HE ASKED FOR, priced exactly as the Water tab's card prices them. The card counted
+  // them and this did not, so on 2026-09-26 the prompt told the model it had 82 minutes spare when
+  // his four stops had already spent 60 of them. Blank on the card means no stops were asked for.
+  const stopsAsked = Number(o.castStopsWanted ?? (o.planArgs || {}).castStopsWanted);
+  const stopMin = Number.isFinite(stopsAsked) && stopsAsked > 0 ? stopsAsked * DEFAULT_STOP_MIN : 0;
   const chosen = dayOrder(picked, { ramp: o.ramp, usableAh: o.usableAh, windowMin: o.windowMin,
-                                    wind });
+                                    wind, stopMin });
   const overridden = Array.isArray(o.order) && o.order.length === picked.length;
   const order = overridden ? o.order : chosen.order;
   const ordered = order.map((i) => picked[i]);
@@ -248,7 +253,8 @@ export async function planFromWater(o) {
   // WHAT THE DAY AS BUILT COSTS -- the order above, not the cheapest one. This is the number the
   // prompt quotes as the app's price for the water.
   const asBuilt = overridden
-    ? dayCost(picked, { ramp: o.ramp, usableAh: o.usableAh, windowMin: o.windowMin, wind, order })
+    ? dayCost(picked, { ramp: o.ramp, usableAh: o.usableAh, windowMin: o.windowMin, wind, order,
+                        stopMin })
     : chosen.cost;
   if (!cheapest.fits) {
     return {
@@ -311,6 +317,8 @@ export async function planFromWater(o) {
     // all, and the Sep 6 Wateree day came back at 792 against a 540 minute window.
     windowMin: o.windowMin,
     dayMin: Number.isFinite(asBuilt && asBuilt.min) ? asBuilt.min : undefined,
+    // The part of `dayMin` that is his stops, so the prompt can say they are already counted.
+    dayStopMin: stopMin,
     // So the prompt can say HOW each bait reaches a depth rather than leaving the model to read
     // one off the lure's name. Same resolver the assembler already gets, one line further up.
     lureByName: o.lureByName,

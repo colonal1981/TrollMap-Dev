@@ -1393,6 +1393,48 @@ export function assemblePlan(o) {
   const sameLure = (x, y) => String(x ?? '').trim().toLowerCase()
                           === String(y ?? '').trim().toLowerCase();
 
+  // ── WHAT THE REST OF THE DAY STILL OWES ─────────────────────────────────────────────────────
+  //
+  // Ryan's 2026-09-26 Wateree Pick Water plan: fourteen stretches, four of them fished back, and the
+  // day ran 496 minutes against 480 -- the last leg started at 16:07. Each second pass was checked
+  // against the return time ALONE, and at 08:32 a ten-minute pass does not end after 16:00, so every
+  // one of them went in and the legs still to come paid for them at the far end of the day.
+  //
+  // A second pass is the one optional thing in the day. Every stretch he picked gets its first pass
+  // before any stretch gets a second, so a pass goes in only while the rest of the day -- each later
+  // leg once, its stops, the moves between them and the trip home -- still ends by the time he is due
+  // off the water. A move uses the prefetched route where there is one and the straight line where
+  // not, and a straight line can only UNDER-count, so this errs toward keeping a pass the budget
+  // warning then flags, never toward refusing one the day had room for.
+  const hopM = (a, b) => {
+    const r = transit(a, b);
+    return r && Number.isFinite(r.distanceM) ? r.distanceM : metresBetween(a, b);
+  };
+  const owedAfter = (ci, from) => {
+    let min = 0;
+    let at = from;
+    for (let k = ci + 1; k < legList.length; k++) {
+      const n = legList[k];
+      const f = facing[k] || {};
+      const coords = n.coordinates || [];
+      const start = f.start || coords[0];
+      const end = f.end || coords[coords.length - 1];
+      if (Array.isArray(at) && Array.isArray(start)) min += minutesFor(hopM(at, start), transitMph);
+      const want = Number(n.speedMph);
+      const mph = want >= TROLL_MPH_MIN && want <= TROLL_MPH_MAX ? want : trollMph;
+      min += minutesFor(n.lengthM, mph);
+      if ((n.pass ?? 1) === 1) {
+        for (const s of (stopsByRun.get(n.runId) || [])) min += s.durationMin ?? DEFAULT_STOP_MIN;
+      }
+      if (Array.isArray(end)) at = end;
+    }
+    // THE SAME RULE THE ROUTE HOME BELOW USES, so this and the plan's own clock agree.
+    if (Array.isArray(at) && Array.isArray(o.launch) && metresBetween(at, o.launch) > HOME_TOLERANCE_M) {
+      min += minutesFor(hopM(at, o.launch), transitMph);
+    }
+    return min;
+  };
+
   for (const [ci, c] of legList.entries()) {
     // THE OUTWARD PASS OWNS THE STOPS AND THE LURE CHANGES. On a river a reach appears twice in this
     // list, and repeating a stop or a retie because the boat came back over the same water would
@@ -1927,6 +1969,20 @@ export function assemblePlan(o) {
         warnings.push(`${c.runId} asked for ${legPasses} passes — stopped after ${np - 1}, `
                     + `pass ${np} would end after ${formatClock(returnMin)}`);
         break;
+      }
+      // AND NOT AT THE COST OF THE WATER STILL TO COME. See owedAfter(). An app decision, not
+      // something he has to act on, so it is said with the other decisions.
+      if (returnMin != null) {
+        const passEnd = passCoords.length ? passCoords[passCoords.length - 1] : legFinish;
+        const owed = owedAfter(ci, passEnd);
+        if (clock + passMin + owed > returnMin) {
+          const left = legList.length - ci - 1;
+          decisions.push(`${c.runId} asked for ${legPasses} passes — stopped after ${np - 1}: pass `
+                       + `${np} would end ${formatClock(clock + passMin)}, and the ${left} leg`
+                       + `${left === 1 ? '' : 's'} still to come and the run home would then `
+                       + `finish ${formatClock(clock + passMin + owed)}, after ${formatClock(returnMin)}`);
+          break;
+        }
       }
       // Once per direction, not once per pass: passes 3 and 4 repeat 1 and 2 and the warning with
       // them, and the same sentence four times reads as four problems.
