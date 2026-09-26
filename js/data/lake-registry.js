@@ -81,7 +81,10 @@ export const DEFAULT_FILTER = {
 let registryPromise = null;
 let registry = { bySlug: new Map(), byName: new Map(), list: [], loaded: false };
 
-function workerBase() {
+// THE Worker base URL for the app: a window override (tests set TROLLMAP_WORKER_URL), else the
+// deployed Worker. access-index.js, gis-toggles.js, lake-intel.js, plan-builder.js and
+// catch-journal.js each carried a copy until 2026-09-25.
+export function workerBase() {
   const explicit =
     window.TROLLMAP_WORKER_URL ||
     window.TROLLMAP_WORKER_BASE ||

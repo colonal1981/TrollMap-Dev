@@ -12,7 +12,7 @@
 
 import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
-import { getLoadedRegistry, lakeRecordFor } from '../data/lake-registry.js';
+import { getLoadedRegistry, lakeRecordFor, workerBase } from '../data/lake-registry.js';
 import { describeCatchDepth, ON_CONTOUR_MI } from '../utils/catch-depth.js';
 import { loadAccessIndex, nearestLakeByAccessPoint } from '../data/access-index.js';
 import { LURE_PRESETS } from './spread-builder.js';
@@ -1376,7 +1376,7 @@ async function blobToBase64(blob) {
 // Context-aware Gemini ID — sends lake/date/GPS/species_hint to /identify-catch-v2.
 // Falls back to the legacy binary endpoint if v2 fails.
 async function identifyFishWithGemini(imgFile, context = {}) {
-  const WORKER_URL = (typeof CF_WORKER_URL !== 'undefined' ? CF_WORKER_URL : (window.CF_WORKER_URL || 'https://trollmap-worker.colonal1981.workers.dev'));
+  const WORKER_URL = workerBase();
   try {
     const resized = await resizeForGemini(imgFile, 1344);
     const b64 = await blobToBase64(resized);

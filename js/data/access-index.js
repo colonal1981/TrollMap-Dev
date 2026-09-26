@@ -27,7 +27,7 @@
 
 import { state } from '../core/state.js';
 import { COASTAL_ZONES } from './coastal-zones.js';
-import { loadLakeRegistry, filterLakes, accessPointsFor, getLoadedRegistry,
+import { workerBase, loadLakeRegistry, filterLakes, accessPointsFor, getLoadedRegistry,
          namesALanding } from './lake-registry.js';
 import { registerR2Key } from './lake-keys.js';
 import { setLiveAccessSource } from './water-filter.js';
@@ -88,23 +88,11 @@ let accessIndex = {
 };
 
 // ── Worker URL helpers ──────────────────────────────────────────────────
-
-function getWorkerBase() {
-  // Prefer an app-provided worker URL if one exists. On GitHub Pages there is
-  // no same-origin /ramps route, so same-origin gives 404s like:
-  //   https://colonal1981.github.io/TrollMap-Dev/ramps?state=SC
-  // Default to the deployed Cloudflare Worker instead.
-  const explicit =
-    window.TROLLMAP_WORKER_URL ||
-    window.TROLLMAP_WORKER_BASE ||
-    window.WORKER_URL ||
-    window.API_BASE ||
-    'https://trollmap-worker.colonal1981.workers.dev';
-  return String(explicit || '').replace(/\/$/, '');
-}
+// The base is workerBase() in lake-registry.js. Never same-origin: on GitHub Pages there is no
+// /ramps route, so a relative URL 404s.
 
 function workerUrl(path, stateCode) {
-  return `${getWorkerBase()}${path}?state=${encodeURIComponent(stateCode)}`;
+  return `${workerBase()}${path}?state=${encodeURIComponent(stateCode)}`;
 }
 
 // ── Normalization / dedupe helpers ───────────────────────────────────────
@@ -897,7 +885,7 @@ async function buildAccessIndex() {
   // rebuilt. The lookup and the 40 m it matches on live in js/data/launch-reach.js beside
   // samePlace, because it is the same question about the same file.
   try {
-    await primeLaunchNames(getWorkerBase());
+    await primeLaunchNames(workerBase());
     let renamed = 0;
     for (const list of index.byLake.values()) {
       for (const item of list) {

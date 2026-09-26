@@ -8,7 +8,7 @@ import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
 import { coerceList, coerceLabels } from '../utils/coerce.js';
 import { clarityForPlan, versusNormalAt } from '../utils/clarity-at-ramp.js';
-import { lakeRecordFor } from '../data/lake-registry.js';
+import { lakeRecordFor, workerBase } from '../data/lake-registry.js';
 
 /* Lake Intel: species, forage, habitat, hazards, seasonal patterns */
 export async function syncLakeIntelData() {
@@ -22,7 +22,7 @@ export async function syncLakeIntelData() {
   // curated entry when there is one, so it is asked of getPlanRiverDef; whether lake intel applies
   // at all is asked of isRiverWater, below, which knows all 58 river rows and not just six.
   const label = window.getPlanRiverDef?.(lakeVal)?.label || lakeVal;
-  const worker = (typeof CF_WORKER_URL !== 'undefined' ? CF_WORKER_URL : (window.CF_WORKER_URL || 'https://trollmap-worker.colonal1981.workers.dev'));
+  const worker = workerBase();
   function say(msg, bad){ if(statusEl){ statusEl.textContent=msg; statusEl.style.color=bad?'var(--bad)':'var(--accent2)'; } }
   if(!label){ say('Select waterbody first', true); return null; }
   if(window.isRiverWater?.(lakeVal)){
@@ -218,7 +218,7 @@ export async function syncClarityIntelData(o = {}) {
   const label = window.getPlanRiverDef?.(lakeVal)?.lakeKey
              || window.getPlanRiverDef?.(lakeVal)?.label || lakeVal;
   const date = document.getElementById('planDate')?.value || new Date().toISOString().slice(0,10);
-  const worker = (typeof CF_WORKER_URL !== 'undefined' ? CF_WORKER_URL : (window.CF_WORKER_URL || 'https://trollmap-worker.colonal1981.workers.dev'));
+  const worker = workerBase();
   function say(msg,bad){ if(statusEl){ statusEl.textContent=msg; statusEl.style.color=bad?'var(--bad)':'var(--accent2)'; } }
   if(!label){ say('Select lake first', true); return null; }
   try{
