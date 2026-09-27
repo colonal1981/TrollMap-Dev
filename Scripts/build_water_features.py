@@ -117,6 +117,17 @@ name. See HYDROGRAPHY_IS_NOT_CREEKS_2026-08-06.md.
 import argparse, json, math, os, shutil, sys, time
 from collections import Counter, defaultdict
 
+# The compiled grid fill, 2026-09-27 -- see lane_kernels.py. Without numba (or with TM_NO_NUMBA=1)
+# Grid._fill() runs the pure-Python scanline below, unchanged.
+try:
+    import numpy as np
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import lane_kernels as _K
+    _FAST = bool(_K.HAVE_NUMBA) and os.environ.get('TM_NO_NUMBA') != '1'
+except Exception:
+    np = _K = None
+    _FAST = False
+
 
 def write_json(path, obj, pack=None, stamp=None):
     """Write a pack file so an interruption cannot destroy the one it replaces.
@@ -137,8 +148,10 @@ def write_json(path, obj, pack=None, stamp=None):
         os.makedirs(dest, exist_ok=True)
         shutil.copy2(path, os.path.join(dest, os.path.basename(path)))
     tmp = path + '.tmp'
+    # One string, then one write: json.dumps() uses the C encoder, json.dump() the Python one.
+    # Same bytes. 2026-09-27.
     with open(tmp, 'w', encoding='utf-8') as fh:
-        json.dump(obj, fh)
+        fh.write(json.dumps(obj))
     os.replace(tmp, path)
 
 CELL_M = 25.0
@@ -181,6 +194,13 @@ class Grid:
                     self._fill(poly[0], v)
 
     def _fill(self, ring, val):
+        if _FAST and ring:
+            # Same scanline, compiled -- lane_kernels.grid_fill_k(). 44 of Murray's 67 seconds.
+            rx = np.fromiter((p[0] for p in ring), np.float64, len(ring))
+            ry = np.fromiter((p[1] for p in ring), np.float64, len(ring))
+            _K.grid_fill_k(rx, ry, float(self.S), float(self.W), float(self.dx), float(self.dy),
+                           self.nx, self.ny, np.frombuffer(self.g, dtype=np.uint8), int(val))
+            return
         nx, ny, g = self.nx, self.ny, self.g
         ys = [p[1] for p in ring]
         j0 = max(0, int((min(ys) - self.S) / self.dy))

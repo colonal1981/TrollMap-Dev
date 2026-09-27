@@ -110,6 +110,16 @@ from build_trolling_runs import metres, length_m, NodeIndex, read_graph, main_co
 # line, and the thresholds are fishing numbers -- 15 ft to a channel edge, 4 ft to a flat.
 # Restating them here is how they drift apart the first time one is tuned.
 from build_water_features import classify as classify_relief  # noqa: E402
+# THE COMPILED INNER LOOPS, 2026-09-27. On Wateree the fit spent 142 of its 196 seconds in numpy
+# call overhead inside smooth() and 30 more filling the raster through matplotlib. lane_kernels.py
+# does the same arithmetic in the same order, compiled, and gives the same numbers -- see that file
+# and test_lane_kernels.py. Without numba (or with TM_NO_NUMBA=1) every path below is the numpy one.
+try:
+    import lane_kernels as _K  # noqa: E402
+    _FAST = bool(_K.HAVE_NUMBA) and os.environ.get('TM_NO_NUMBA') != '1'
+except Exception:
+    _K = None
+    _FAST = False
 
 M_PER_DEG_LAT = 110540.0
 
@@ -188,12 +198,21 @@ class DepthRaster:
                     continue
                 ii = np.arange(i0, i1 + 1)
                 jj = np.arange(j0, j1 + 1)
-                SX, SY = np.meshgrid(x0 + ii * step_m, y0 + jj * step_m, indexing='ij')
-                sub = np.column_stack([SX.ravel(), SY.ravel()])
-                inside = MplPath(outer).contains_points(sub)
-                for hole in rings[1:]:
-                    if len(hole) >= 4:
-                        inside &= ~MplPath(_xy(hole, lat0)).contains_points(sub)
+                if _FAST:
+                    # matplotlib's own crossings test, walked by edge instead of by cell: the
+                    # same cells come back, without asking about every one of them.
+                    gxs, gys = x0 + ii * step_m, y0 + jj * step_m
+                    inside = _K.ring_inside_grid(outer, gxs, gys)
+                    for hole in rings[1:]:
+                        if len(hole) >= 4:
+                            inside &= ~_K.ring_inside_grid(_xy(hole, lat0), gxs, gys)
+                else:
+                    SX, SY = np.meshgrid(x0 + ii * step_m, y0 + jj * step_m, indexing='ij')
+                    sub = np.column_stack([SX.ravel(), SY.ravel()])
+                    inside = MplPath(outer).contains_points(sub)
+                    for hole in rings[1:]:
+                        if len(hole) >= 4:
+                            inside &= ~MplPath(_xy(hole, lat0)).contains_points(sub)
                 if not inside.any():
                     continue
                 block = dm[i0:i1 + 1, j0:j1 + 1]
@@ -257,15 +276,27 @@ class DepthRaster:
         np.clip(j, 0, self.ny - 1, out=j)
         return i, j
 
+    def _grid(self):
+        return (self.x0, self.y0, self._inv, self.nx, self.ny)
+
     def at(self, xy):
+        if _FAST:
+            return _K.lookup(self.dm, self.x0, self.y0, self._inv, self.nx, self.ny,
+                             np.ascontiguousarray(xy, dtype=np.float64))
         i, j = self._ij(xy)
         return self.dm[i, j]
 
     def at_raw(self, xy):
+        if _FAST:
+            return _K.lookup(self.dm_raw, self.x0, self.y0, self._inv, self.nx, self.ny,
+                             np.ascontiguousarray(xy, dtype=np.float64))
         i, j = self._ij(xy)
         return self.dm_raw[i, j]
 
     def deeper_dir(self, xy):
+        if _FAST:
+            return _K.lookup2(self.gx, self.gy, self.x0, self.y0, self._inv, self.nx, self.ny,
+                              np.ascontiguousarray(xy, dtype=np.float64))
         i, j = self._ij(xy)
         return np.column_stack([self.gx[i, j], self.gy[i, j]])
 
@@ -315,6 +346,12 @@ def _seg_max(depth, a, b, sample_m=5.0):
     the comparison a big number is the failure, so unsurveyed must not manufacture one. Land is
     caught by the floor test; it is not this function's job.
     """
+    if _FAST and isinstance(depth, DepthRaster):
+        if not len(a):
+            return np.array([])
+        return _K._seg_extreme(depth.dm_raw, depth.x0, depth.y0, depth._inv, depth.nx, depth.ny,
+                               np.ascontiguousarray(a, dtype=np.float64),
+                               np.ascontiguousarray(b, dtype=np.float64), float(sample_m), True)
     seg = b - a
     L = np.hypot(seg[:, 0], seg[:, 1])
     if not len(L):
@@ -358,6 +395,12 @@ def _seg_min(depth, a, b, sample_m=5.0, raw=False):
     and a disaster in chord_pass, where a 2.5 km chord is ONE segment and 250 steps, so it made
     250 numpy calls on one-element arrays and call overhead dwarfed the work.
     """
+    if _FAST and isinstance(depth, DepthRaster):
+        if not len(a):
+            return np.array([])
+        return _K._seg_extreme(depth.dm_raw if raw else depth.dm, depth.x0, depth.y0, depth._inv,
+                               depth.nx, depth.ny, np.ascontiguousarray(a, dtype=np.float64),
+                               np.ascontiguousarray(b, dtype=np.float64), float(sample_m), False)
     seg = b - a
     L = np.hypot(seg[:, 0], seg[:, 1])
     if not len(L):
@@ -373,6 +416,16 @@ def _seg_min(depth, a, b, sample_m=5.0, raw=False):
 def smooth(xy0, depth, floor_dm, ceil_dm, target_dm, iters, deep_bias_m):
     """Constrained Laplacian. See the module docstring for why each constraint is the shape it
     is; every one of them replaced a version that measured better and fished worse."""
+    if _FAST and isinstance(depth, DepthRaster) and len(xy0) >= 2:
+        # Every threshold in the dtype numpy would have compared it in -- float32, because the
+        # rasters are float32 and a Python float is weak against them (NEP 50).
+        f32 = depth.dm_raw.dtype.type
+        return _K.smooth_k(np.ascontiguousarray(xy0, dtype=np.float64), depth.dm, depth.dm_raw,
+                           depth.gx, depth.gy, depth.x0, depth.y0, depth._inv, depth.nx, depth.ny,
+                           f32(floor_dm), f32(ceil_dm),
+                           f32(target_dm if target_dm is not None else 0.0),
+                           target_dm is not None, int(iters), depth.gx.dtype.type(deep_bias_m),
+                           float(deep_bias_m), float(SMOOTH_SAMPLE_M))
     xy = xy0.copy()
     lam = 0.5
     stalled = 0

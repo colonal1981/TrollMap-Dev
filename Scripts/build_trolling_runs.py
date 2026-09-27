@@ -92,6 +92,13 @@ def metres(a, b):
 
 
 def length_m(c):
+    if _FAST and len(c) > 1:
+        # The same terms, computed compiled by an exact port of metres() -- and summed HERE, by
+        # Python's own sum(), because CPython 3.12+ sums floats with compensation and a plain
+        # running total would round differently.
+        xs = _np.fromiter((p[0] for p in c), _np.float64, len(c))
+        ys = _np.fromiter((p[1] for p in c), _np.float64, len(c))
+        return sum(_K.metres_path(xs, ys).tolist())
     return sum(metres(c[i - 1], c[i]) for i in range(1, len(c)))
 
 
@@ -139,6 +146,20 @@ try:
     import numpy as _np
 except ImportError:                      # the pipeline box has it; a bare box may not
     _np = None
+
+# THE COMPILED DEPTH INDEX, 2026-09-27. steer() asked DepthIndex 221,467 questions on Wateree and
+# spent 35 of the script's 47 seconds in numpy call overhead answering them. lane_kernels.py asks
+# the same ray cast of the same edges in compiled code, and gives the same answer -- see that file.
+# Without numba this falls back to the numpy path below, unchanged.
+try:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import lane_kernels as _K
+    from lane_kernels import HAVE_NUMBA as _HAVE_NUMBA, CompiledDepthIndex as _CompiledDepthIndex
+except Exception:
+    _K = None
+    _HAVE_NUMBA = False
+    _CompiledDepthIndex = None
+_FAST = bool(_HAVE_NUMBA) and os.environ.get('TM_NO_NUMBA') != '1'
 
 
 def _ring_edges(ring):
@@ -205,6 +226,11 @@ class DepthIndex:
         # deep polygon still wins, because it sorts ahead of it.
         for key in self.grid:
             self.grid[key].sort(key=lambda i: self.polys[i][1])
+        # Built FROM the structures above, so it cannot disagree with them about which polygons
+        # a cell holds or in what order. `fast` is None without numba, or on an empty chart.
+        self.fast = None
+        if _FAST and _np is not None and self.polys:
+            self.fast = _CompiledDepthIndex(self)
 
     def __len__(self):
         return len(self.polys)
@@ -243,6 +269,8 @@ class DepthIndex:
         the chord that runs a boat aground. If anything charted says this water is thin, it is
         thin.
         """
+        if self.fast is not None:
+            return self.fast.shallowest_dm(x, y)
         # The cell list is sorted shallowest-first, so the FIRST containing polygon is the
         # answer and there is nothing to gain by looking at the rest.
         for i in self.grid.get((int(x / self.cell), int(y / self.cell)), ()):
@@ -259,6 +287,9 @@ class DepthIndex:
 
 def chord_ok(a, b, dm, dindex, samples, tol_dm):
     """Would a straight run from a to b stay in water at least as deep as the dm contour?"""
+    fast = getattr(dindex, 'fast', None)
+    if fast is not None:
+        return fast.chord_ok(a, b, dm, samples, tol_dm)
     n = max(2, samples)
     for i in range(1, n):
         t = i / float(n)
@@ -316,6 +347,13 @@ def rdp(pts, eps_m):
     if len(pts) < 3 or eps_m <= 0:
         return pts
     eps = eps_m / 111320.0
+    if _FAST:
+        # Same tests, same ties, same kept vertices -- see lane_kernels.rdp_keep(). This loop was
+        # 25 of Murray's 82 seconds once the depth index stopped being the problem.
+        xs = _np.fromiter((p[0] for p in pts), _np.float64, len(pts))
+        ys = _np.fromiter((p[1] for p in pts), _np.float64, len(pts))
+        keep = _K.rdp_keep(xs, ys, eps)
+        return [pts[k] for k in _np.flatnonzero(keep).tolist()]
     keep = {0, len(pts) - 1}
     stack = [(0, len(pts) - 1)]
     while stack:
@@ -426,8 +464,31 @@ class NodeIndex:
         self.grid = defaultdict(list)
         for i, p in enumerate(nodes):
             self.grid[(int(p[0] / self.cell), int(p[1] / self.cell))].append(i)
+        # THE SAME GRID, FLAT, for the compiled search. nearest() was 14 of Murray's 82 seconds:
+        # 94,624 calls asking metres() about 13.8 M nodes.
+        self._flat = None
+        if _FAST and nodes and self.grid:
+            keys = list(self.grid.keys())
+            gx0 = min(k[0] for k in keys)
+            gy0 = min(k[1] for k in keys)
+            gw = max(k[0] for k in keys) - gx0 + 1
+            gh = max(k[1] for k in keys) - gy0 + 1
+            counts = _np.zeros(gw * gh + 1, _np.int64)
+            for (gx, gy), lst in self.grid.items():
+                counts[(gx - gx0) * gh + (gy - gy0) + 1] = len(lst)
+            start = _np.cumsum(counts)
+            cell_node = _np.empty(int(start[-1]), _np.int64)
+            for (gx, gy), lst in self.grid.items():
+                c = (gx - gx0) * gh + (gy - gy0)
+                cell_node[start[c]:start[c] + len(lst)] = lst
+            nxs = _np.fromiter((p[0] for p in nodes), _np.float64, len(nodes))
+            nys = _np.fromiter((p[1] for p in nodes), _np.float64, len(nodes))
+            self._flat = (self.cell, gx0, gy0, gw, gh, start, cell_node, nxs, nys)
 
     def nearest(self, p, max_rings=4):
+        if self._flat is not None:
+            j, d = _K.nearest_k(float(p[0]), float(p[1]), *self._flat, max_rings)
+            return (None if j < 0 else int(j)), d
         gx, gy = int(p[0] / self.cell), int(p[1] / self.cell)
         best, bi = float('inf'), None
         for r in range(max_rings):
