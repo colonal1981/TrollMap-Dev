@@ -375,16 +375,19 @@ export async function planFromWater(o) {
     for (const h of (l.passes || [])) if (h.spotKey) passOfSpot.set(h.spotKey, { id: h.id, runId: l.runId });
   }
 
-  // What the ordering costs, leg to leg, for the order actually chosen.
+  // What the ordering costs, leg to leg, for the order actually chosen -- and what it costs if the
+  // leg is fished back, when he finishes at the end he came in by.
   for (let i = 0; i < legs.length; i++) {
-    const to = {};
+    const to = {}, back = {};
+    const co = legs[i].coordinates;
     for (let j = 0; j < legs.length; j++) {
       if (i === j) continue;
-      const from = legs[i].coordinates[legs[i].coordinates.length - 1];
       const start = legs[j].coordinates[0];
-      to[legs[j].runId] = Math.round(metresBetween(from, start));
+      to[legs[j].runId] = Math.round(metresBetween(co[co.length - 1], start));
+      back[legs[j].runId] = Math.round(metresBetween(co[0], start));
     }
     legs[i].transitToM = to;
+    legs[i].transitToMIfFishedBack = back;
   }
 
   // THE ROUTER IS ASYNC AND THE ASSEMBLER IS NOT, SO THE ROUTES ARE FETCHED FIRST.
@@ -465,6 +468,15 @@ export async function planFromWater(o) {
       headwindMph: l.headwindMph ?? undefined,
       transitFromRampM: l.transitInM,
       transitToRampM: l.transitOutM,
+      // THE TWO TABLES THE PROMPT DESCRIBES, WHICH THIS PLANNER NEVER SENT. The prompt tells the
+      // model to add up `transitToM` for each hop and to weigh `transitToMIfFishedBack` against it
+      // before fishing a leg back; Pick Water computed the first twenty lines up and sent neither.
+      // Claude, handed the 9/27 Murray request: "I cannot total the hops myself because the
+      // per-leg transit table was not in the data." Straight lines, the same measure as
+      // `transitFromRampM` above and as dayCost(); the transits the plan draws are routed over the
+      // water afterwards and run a little longer.
+      transitToM: l.transitToM,
+      transitToMIfFishedBack: l.transitToMIfFishedBack,
       structures: l.passes.map((h) => ({ id: h.id, type: h.type, atM: h.atM, offM: h.offM,
                                          what: h.what, depthFt: h.depthFt,
                                          worthFishing: h.weight > 0 || undefined,

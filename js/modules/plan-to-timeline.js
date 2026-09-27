@@ -524,11 +524,21 @@ export function planToTimeline(plan, o = {}) {
     //
     // So the sentence is the range and the middle of it. The species band stays in the depth
     // column under its own name; these two are never the same number and never share a label.
+    //
+    // AND IT IS TODAY'S WATER, NOT THE CHART'S. The three numbers are sounded at full pool, and on
+    // Ryan's 9/27 Murray plan the lake was 5.56 ft down: this line said "27–54 ft under the boat"
+    // directly above a bottom note that said 21.4 ft. `drawdownFt` is stamped on the leg by
+    // assemblePlan() from the lake's measured level; absent, the chart stands and the line does
+    // not claim a "today" it does not know.
+    const dd = leg.drawdownFt != null && Number.isFinite(Number(leg.drawdownFt)) && Number(leg.drawdownFt) !== 0
+      ? Number(leg.drawdownFt) : null;
+    const tw = (ft) => todayDepthFt(ft, dd);
+    const under = dd != null ? 'ft under the boat today' : 'ft under the boat';
     const waterPhrase = (leg.depthMinFt != null && leg.depthMaxFt != null)
       ? (leg.depthMinFt === leg.depthMaxFt
-          ? `${leg.depthMinFt} ft under the boat`
-          : `${leg.depthMinFt}–${leg.depthMaxFt} ft under the boat · median ${leg.depthFt}`)
-      : (leg.depthFt != null ? `${leg.depthFt} ft under the boat` : '');
+          ? `${tw(leg.depthMinFt)} ${under}`
+          : `${tw(leg.depthMinFt)}–${tw(leg.depthMaxFt)} ${under} · median ${tw(leg.depthFt)}`)
+      : (leg.depthFt != null ? `${tw(leg.depthFt)} ${under}` : '');
     // SAY WHEN IT IS THE SAME WATER AGAIN. A leg fished back is its own leg — its own id, its own
     // track, its own minutes — so on a timeline it would otherwise read as a second stretch that
     // happens to be the same length and depth as the one above it. Even passes run the opposite

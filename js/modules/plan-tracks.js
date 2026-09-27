@@ -41,6 +41,21 @@
 import { state } from '../core/state.js';
 import { LEG_COLORS, TRANSIT_COLOR, RETURN_COLOR } from './plan-to-timeline.js';
 import { metresBetween, markLabel } from './plan-candidates.js';
+import { todayDepthFt } from '../utils/water-conditions.js';
+
+// ── EVERY DEPTH THAT GOES ON THE UNIT IS TODAY'S ─────────────────────────────────────────────
+//
+// The numbers below come off a chart sounded at full pool, and every one of them is put on the
+// ECHOMAP to be read against the SOUNDER, which reads the water that is there. Ryan's 9/27 Murray
+// export, with the lake 5.56 ft down: "ledge 47ft" over 41 ft of water, "L1 · 34 ft" over a
+// median of 28, and the Contour alarm cue "L1 29-39ft" set around water that was not there -- an
+// alarm band the boat would have sat under the whole pass. `drawdownFt` is stamped on each troll
+// leg by assemblePlan() from the lake's measured level; where it is absent the chart stands.
+const legDrawdown = (leg) => {
+  const d = leg && leg.drawdownFt != null ? Number(leg.drawdownFt) : NaN;
+  return Number.isFinite(d) && d !== 0 ? d : null;
+};
+const todayOnLeg = (leg, ft) => todayDepthFt(ft, legDrawdown(leg));
 
 /**
  * The colour a leg draws in, on the map and on its card. One palette, one function, so a line on
@@ -90,12 +105,12 @@ export function trackName(leg) {
   // original direction again. Both stay inside the 24 characters the 93sv shows.
   const again = leg.pass > 1 ? (leg.pass % 2 === 0 ? ' back' : ' again') : '';
   return leg.depthFt != null
-    ? `${leg.id} · ${Math.round(Number(leg.depthFt))} ft${again}`
+    ? `${leg.id} · ${Math.round(Number(todayOnLeg(leg, leg.depthFt)))} ft${again}`
     : `${leg.id} · troll${again}`;
 }
 
 /** `S1.1 · hump 14ft`. The id first, because that is what the timeline calls it. */
-export function stopName(stop) {
+export function stopName(stop, drawdownFt = null) {
   const what = String(stop.structureType || stop.structure || 'cast').split(',')[0];
   // `Number(null)` IS 0, AND 0 IS FINITE, so a structure with no depth printed as `0ft`.
   // Ryan, 2026-08-26, on `S1.1 \u00b7 dock_cluster 0ft`: "dock clusters are a land object... they
@@ -103,7 +118,7 @@ export function stopName(stop) {
   // `depthFt: null` for anything whose depth did not resolve (`depth > 0 ? ... : null`). The null
   // travelled the whole plan intact and died at this one coercion, one step from the card, where
   // it turned into a claim that the boat can troll a dock in no water.
-  const d = stop.depthFt == null ? NaN : Number(stop.depthFt);
+  const d = stop.depthFt == null ? NaN : Number(todayDepthFt(Number(stop.depthFt), drawdownFt));
   const ft = Number.isFinite(d) && d > 0 ? ` ${Math.round(d)}ft` : '';
   return trim(`${stop.id} · ${what}${ft}`, 24);
 }
@@ -201,7 +216,8 @@ export function planCueLines(plan, waypoints = [], runId = null) {
     if (leg.type === 'transit' || leg.depthFt == null) continue;
     const co = leg.coordinates || [];
     if (co.length < 2) continue;
-    const d = Math.round(Number(leg.depthFt));
+    // The Contour alarm reads the sounder, so the band is set around TODAY's water.
+    const d = Math.round(Number(todayOnLeg(leg, leg.depthFt)));
     if (!Number.isFinite(d)) continue;
     const text = `${d - HAND_STEER_BAND_FT}-${d + HAND_STEER_BAND_FT}ft`;
     const near = waypoints.find((w) => w.castingStop && !band.has(w)
@@ -403,13 +419,15 @@ export function planWaypoints(plan, launch = null, runId = null, opts = {}) {
       const at = Array.isArray(s.at) && s.at.length === 2 ? s.at : null;
       if (!at || !Number.isFinite(at[0]) || !Number.isFinite(at[1])) continue;
       out.push({
-        name: stopName(s), lat: at[1], lon: at[0], sym: 'Fishing Area',
+        name: stopName(s, legDrawdown(leg)), lat: at[1], lon: at[0], sym: 'Fishing Area',
         // `castingStop` is what parsers.js:111 turns into the GPX type CAST and what
         // smart-plan-ui.js filters on, so a stop written here replaces the one it would make
         // rather than sitting beside it.
         castingStop: true, scoutWaypoint: true, planRunId: runId,
         legId: leg.id, stopId: s.id, atM: leg.startM + s.atM,
-        depth: s.depthFt ?? null,
+        // Today's, like the name: the GPX comment is read against the sounder too.
+        depth: s.depthFt != null ? todayOnLeg(leg, Number(s.depthFt)) : null,
+        chartDepth: s.depthFt ?? null,
         structureType: s.structureType || null,
         tacticalNote: s.why || s.presentation || '',
       });
@@ -521,23 +539,32 @@ export function planWaypoints(plan, launch = null, runId = null, opts = {}) {
         const dup = seenBefore(m.type, at[0], at[1]);
         seen.push([m.type, at[0], at[1]]);
         if (dup) continue;
-        // The name carries the CHARTED depth where there is one, because the whole point is to
-        // stand it next to the sounder and see whether they agree. No depth means no number in
-        // the name -- an empty field reads as "the chart does not say", a zero would not.
-        const d = Number.isFinite(m.depthFt) ? ` ${Math.round(m.depthFt)}ft` : '';
+        // The name carries the charted feature's depth where there is one, because the whole
+        // point is to stand it next to the sounder and see whether they agree -- so it is the
+        // depth the SOUNDER should read: the chart less the lake's drawdown today (see
+        // todayOnLeg at the top). The chart's own figure goes in the note. No depth means no
+        // number in the name -- an empty field reads as "the chart does not say", a zero would not.
+        const dd = legDrawdown(leg);
+        const today = Number.isFinite(m.depthFt) ? todayOnLeg(leg, m.depthFt) : null;
+        const d = Number.isFinite(today) ? ` ${Math.round(today)}ft` : '';
+        // ONLY WHERE IT IS ONE. `charted` is false when no feature resolved and the pin is the
+        // point on the line at that distance, which is not a charted position and must not say it
+        // is -- the whole point of the note is that he stands it next to the sounder.
+        const where = m.charted === false
+          ? 'position along the line \u2014 the chart does not place this one'
+          : 'charted position \u2014 compare with the sounder';
         out.push({
           name: `${markLabel(m.type, m.side, onRiver)}${d}`,
-          lat: at[1], lon: at[0], sym: markSymbol(m.type, m.side, m.depthFt),
+          lat: at[1], lon: at[0], sym: markSymbol(m.type, m.side, today),
           chartMark: true, scoutWaypoint: true, planRunId: runId,
           legId: leg.id, markId: m.id, atM: (leg.startM || 0) + (m.atM || 0),
-          depth: m.depthFt ?? null,
+          depth: today,
+          chartDepth: m.depthFt ?? null,
           structureType: m.type || null,
-          // ONLY WHERE IT IS ONE. `charted` is false when no feature resolved and the pin is the
-          // point on the line at that distance, which is not a charted position and must not say it
-          // is -- the whole point of the note is that he stands it next to the sounder.
-          tacticalNote: m.charted === false
-            ? 'position along the line \u2014 the chart does not place this one'
-            : 'charted position \u2014 compare with the sounder',
+          tacticalNote: dd != null && Number.isFinite(m.depthFt)
+            ? `${where}; ${m.depthFt} ft on the chart, ${today} ft today with the lake `
+              + `${Math.abs(dd)} ft ${dd > 0 ? 'below' : 'above'} full pool`
+            : where,
         });
       }
     }

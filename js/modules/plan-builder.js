@@ -36,7 +36,7 @@ import { loadAccessIndex, registryRecordFor } from "../data/access-index.js";
 // fetchDamLevels() was the other one, and it is gone rather than fixed -- Module F now reads
 // /conditions, which resolves every operator from water_bindings.json instead of four
 // hand-written substring matchers. See Module F for what that replaced.
-import { fetchWaterConditions } from "../utils/water-conditions.js";
+import { fetchWaterConditions, todayDepthFt } from "../utils/water-conditions.js";
 import { distFt } from "../utils/geo.js";
 import { solunarFor } from "../utils/solunar.js";
 import { get as dbGet, put as dbPut, getAll as dbGetAll, del as dbDel, isReady as dbIsReady } from '../utils/db.js';
@@ -172,7 +172,12 @@ function contourBands(plan) {
   return (plan.legs || [])
     .filter((l) => l.type === 'troll' && l.depthFt != null && Number.isFinite(Number(l.depthFt)))
     .map((l) => {
-      const d = Math.round(Number(l.depthFt));
+      // THE ALARM READS THE SOUNDER, SO THE BAND IS TODAY'S WATER. `depthFt` is the chart at full
+      // pool; `drawdownFt` is the lake's measured level, stamped by assemblePlan(). On the 9/27
+      // Murray plan, 5.56 ft down, "L1 29-39" was set around a leg whose median was 28 that day.
+      // The same rule as the cue names in plan-tracks.js.
+      const dd = Number(l.drawdownFt);
+      const d = Math.round(Number(todayDepthFt(Number(l.depthFt), Number.isFinite(dd) ? dd : null)));
       return { legId: l.id, depthFt: d,
                shallow: d - HAND_STEER_BAND_FT, deep: d + HAND_STEER_BAND_FT };
     });
