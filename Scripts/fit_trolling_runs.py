@@ -885,6 +885,11 @@ def annotate(props, coords, grid, cell, annotate_m, depth, lat0):
         for dx in (-1, 0, 1):
             for dy in (-1, 0, 1):
                 for q in grid.get((gx + dx, gy + dy), ()):
+                    # metres() is hypot(east, north) and never less than |north|, so a mark
+                    # further north or south than annotate_m is out without asking it. Exact: the
+                    # same marks are kept, and most of the 3x3 cells' marks never cost a cosine.
+                    if abs((q[1] - v[1]) * 110570.0) > annotate_m:
+                        continue
                     d = metres(v, (q[0], q[1]))
                     if d > annotate_m:
                         continue
@@ -978,7 +983,22 @@ SEED_SHAPES = {
     'ledge': [('ledge', 'depth_ft', 0.0)],       # along the top of the drop -- "following a
 }                                                # contour line with a drop off near it is great"
 
-# ── THE DEEP SIDE OF A HUMP OR A LEDGE IS OPEN ──────────────────────────────────────────────────
+# ── CLOSED AGAIN, 2026-09-27: EVERY PASS KEEPS ITS CEILING ──────────────────────────────────────
+#
+# Ryan, the next day, on the passes this produced: *"our trolling lanes are broken... a lane having
+# a 30ft depth difference from shallowest to deepest isn't a trolling lane"*. Measured on the water
+# ON the line (`envelope_line_ft`): Murray's hump passes had a median of 39 ft from shallowest to
+# deepest and its ledge passes 26 ft; 2,023 of 2,812 ran more than 20 ft, and the worst ran from
+# 11 ft to 168 ft. Every contour and hole pass, on Murray and on all 629 other packs, had kept the
+# ceiling and none of those ran more than 20 ft. "Zones" meant the band, not no band.
+#
+# So DEEP_SIDE_OPEN is empty and band_for() gives a hump or a ledge the same ceiling as anything
+# else. The mechanism is kept, with its history below, so the question is not reopened by someone
+# who reads only the 9/26 half: the answer to "may a pass run off the structure into the deep" is
+# no, and the Hilton cove's lanes come from the contour minimum instead (--min-leg-m, 600 m).
+# `test_deep_side_open.py` holds it.
+#
+# ── WHAT 2026-09-26 SAID, AND WHY IT WAS DONE ─────────────────────────────────────────────────────
 #
 # Ryan, 2026-09-26: "i dont really pay that close attention to the exact depth line... i treat them
 # more as zones than individual lines... it is really hard to hand steer a kayak on a single
@@ -1000,7 +1020,7 @@ SEED_SHAPES = {
 # shallow side (40% of a hole_over chord is under its floor), and his answer was about humps and
 # ledges. The pass still carries `shallowest_ft`, `deepest_ft` and `mean_depth_ft`, so a pass that
 # runs off a hump into 60 ft of water says so.
-DEEP_SIDE_OPEN = frozenset({'hump', 'ledge'})
+DEEP_SIDE_OPEN = frozenset()          # was {'hump', 'ledge'} for one day; see above
 
 
 def band_for(pr, a):
@@ -1008,8 +1028,8 @@ def band_for(pr, a):
 
     `seed_ceil` is the band's ceiling and is what `seed_deep()` steps the line against: that step
     moves a point sideways toward its target and must not jump it off a drop into the channel.
-    `fit_ceil` is what the cut, the smoother and the chords use, and it is open (infinite) for a
-    pass seeded on a hump or a ledge -- see DEEP_SIDE_OPEN.
+    `fit_ceil` is what the cut, the smoother and the chords use. It is open (infinite) only for a
+    seed kind in DEEP_SIDE_OPEN, and since 2026-09-27 that set is empty: every pass has a ceiling.
     """
     dm = float(pr['depth_dm'])
     floor = dm - a.tol_dm
@@ -1123,10 +1143,8 @@ def structure_seeds(pack, depth, lat0, a):
             npts = max(4, int(round(2 * L / 25.0)) + 1)
             ts = np.linspace(-L, L, npts)
             # The band the fitter is about to cut this seed to, so the bearing is chosen against
-            # the same test rather than against a proxy for it. WITH ITS CEILING, even for a hump
-            # or a ledge whose pass the fitter lets run on into deeper water (DEEP_SIDE_OPEN): the
-            # bearing that stays on the structure's own depth longest is still the best line
-            # across it. Only what survives the cut changes, not which line is laid.
+            # the same test rather than against a proxy for it, ceiling and all -- the same band the
+            # cut uses now that no seed kind has its deep side open (DEEP_SIDE_OPEN is empty).
             floor = float(ft) * 3.048 - a.tol_dm
             ceil = float(ft) * 3.048 + a.ceiling_dm
             xy, best_in = None, -1
@@ -1134,7 +1152,10 @@ def structure_seeds(pack, depth, lat0, a):
                 th = b * math.pi / 12.0
                 along = np.array([math.sin(th), math.cos(th)])
                 down = np.array([along[1], -along[0]])
-                cand = np.array([P[0] + down * (off_r * rad) + along * t for t in ts], float)
+                # One array expression instead of a Python loop over the points: per element it
+                # is the same (P + down*c) + along*t, so the same numbers. 12.6 s on Murray.
+                cand = np.array((P[0] + down * (off_r * rad))[None, :] + along[None, :] * ts[:, None],
+                                float)
                 d = depth.at_raw(cand)
                 inb = int(np.sum(np.isfinite(d) & (d >= floor) & (d <= ceil)))
                 if inb > best_in:
@@ -1312,6 +1333,9 @@ def fit_pack(pack, a):
 
         # HOW LONG A PASS HAS TO BE IS NOT THE SAME QUESTION FOR THE TWO SEEDS.
         #
+        # (2026-09-27: `--min-leg-m` is 600 now, the same as a structure pass -- see its help.
+        # The paragraph below is the 8/31 reasoning, kept because it is why the two were separate.)
+        #
         # `--min-leg-m` is 1500 because that is what a contour pass down a main-lake ledge should
         # be worth. It is also, exactly, why Clearwater Cove is empty: every contour in it carries
         # the note "no fitted pass of 1500 m survived". A pass over a three-acre hump is not a
@@ -1340,7 +1364,7 @@ def fit_pack(pack, a):
 
         pieces = []
         # The step onto the deep side keeps the band's own ceiling; everything after it uses
-        # `ceil`, which is open over a hump or a ledge. See band_for() and DEEP_SIDE_OPEN.
+        # `ceil`, which is the same ceiling now that DEEP_SIDE_OPEN is empty. See band_for().
         seeded = seed_deep(xy0, depth, float(pr['depth_dm']), seed_ceil, a.seed_push_m)
         # ONE MEANINGFUL THRESHOLD, APPLIED ONCE, AT THE END.
         #
@@ -1606,8 +1630,11 @@ def fit_pack(pack, a):
         dest = '%s.refit%d' % (dest, n)
     os.replace(rpath, dest)
     tmp = rpath + '.tmp'
+    # ONE STRING, THEN ONE WRITE. json.dump() streams through the pure-Python encoder; json.dumps()
+    # uses the C one. Same bytes -- the two encoders are the same format by design -- and on Murray
+    # the dump alone was 17 of the fit's 128 seconds. 2026-09-27.
     with open(tmp, 'w', encoding='utf-8') as fh:
-        json.dump({'type': 'FeatureCollection', 'features': out}, fh)
+        fh.write(json.dumps({'type': 'FeatureCollection', 'features': out}))
     os.replace(tmp, rpath)
     return st
 
@@ -1723,11 +1750,18 @@ def main():
     ap.add_argument('--registry', default=None)
     ap.add_argument('--max-turn-deg', type=float, default=35.0,
                     help='sharpest corner the line may ask for; sharper than this ends the pass')
-    ap.add_argument('--min-leg-m', type=float, default=1500.0,
-                    help='a CONTOUR piece shorter than this is not kept as a trolling pass. It '
-                         'was selectCandidates() own floor until 2026-09-26 (plan-candidates.js '
-                         'minM 1500); the app now offers anything from 600 m, the structure '
-                         'minimum below, so this is the contour fitter\'s rule alone')
+    # 600, NOT 1500, SINCE 2026-09-27. Ryan, on the Hilton cove, with four lanes drawn up a creek
+    # channel: "there are perfect contour lines or depth zones that could be followed that should
+    # produce lanes... you can also split them at the 90 degree turn if needed". Every one of the 57
+    # contour runs in his screenshot carried "no fitted pass of 1500 m survived": a creek arm does
+    # not hold 1,500 m on one depth between its bends. The lab fit of that cove at 600 m made 98
+    # contour lanes where the pack had 2, 30 of them along his four lines. 600 m is the structure
+    # minimum below and the app's own (plan-pieces.js minM), so a contour lane and a structure pass
+    # now have to be the same length to count. The corner rule still cuts at the bends.
+    ap.add_argument('--min-leg-m', type=float, default=600.0,
+                    help='a CONTOUR piece shorter than this is not kept as a trolling pass. Was '
+                         '1500 until 2026-09-27; now the same 600 m as a structure pass and as '
+                         'the app itself (plan-pieces.js minM)')
     ap.add_argument('--min-fit-m', type=float, default=800.0,
                     help='runs shorter than this keep the contour geometry')
     ap.add_argument('--min-stretch-m', type=float, default=500.0,

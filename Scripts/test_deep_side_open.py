@@ -1,21 +1,28 @@
 #!/usr/bin/env python3
-"""A pass over a hump or a ledge may run on into deeper water. A contour and a hole may not.
+"""Every pass keeps its ceiling -- a pass over a hump or a ledge included.
 
-Ryan, 2026-09-26: "i dont really pay that close attention to the exact depth line... i treat them
+The file keeps its old name so the history reads in one place. What it holds changed on
+2026-09-27.
+
+2026-09-26: Ryan, "i dont really pay that close attention to the exact depth line... i treat them
 more as zones than individual lines... it is really hard to hand steer a kayak on a single
-contour". Asked whether a pass over a hump or ledge may run over it and on out into deeper water
-on either side: yes. On Lake Murray the band's ceiling -- written for contours, which drift off
-their ledge while smoothed -- was what cut 77% of hump passes and 82% of ledge passes.
+contour". Asked whether a pass over a hump or ledge may run over it and on out into deeper water,
+he said yes, and the ceiling came off hump and ledge seeds (DEEP_SIDE_OPEN = {hump, ledge}).
+
+2026-09-27: on what that produced, *"our trolling lanes are broken... a lane having a 30ft depth
+difference from shallowest to deepest isn't a trolling lane"*. Measured on Lake Murray, the only
+pack re-fitted in between: hump passes had a median 39 ft of water between their shallowest and
+deepest point, ledge passes 26 ft, and 2,023 of 2,812 ran more than 20 ft (worst: 11 to 168 ft).
+Contour and hole passes, which had kept the ceiling, never ran more than 20 ft on any pack. So
+DEEP_SIDE_OPEN is empty again.
 
 WHAT THESE TESTS HOLD.
 
   1. The floor never moves. It is the grounding rule, for every kind of pass.
-  2. The ceiling comes off only for a pass SEEDED on a hump or a ledge. A contour keeps it, and so
-     does a hole, whose failures are on the shallow side and which his answer was not about.
-  3. `seed_deep()` still gets the band's own ceiling, so the step onto the deep side cannot jump a
-     point off a drop into the channel.
-  4. On a chord that crosses a hump rising out of deep water, the cut keeps the whole chord with
-     the ceiling open and keeps nothing long enough with it closed -- the Murray failure, small.
+  2. The ceiling applies to every pass: contour, hole, and a pass seeded on a hump or a ledge.
+  3. `seed_deep()` gets the same ceiling.
+  4. The 9/26 failure, small: a chord laid over a 15 ft hump standing in 60 ft of water keeps only
+     the stretch over the hump. It does not run on across 60 ft of water as one lane.
   5. A shoal still ends the pass.
 
 Personal use only, not for distribution or resale; not for navigation.
@@ -54,9 +61,9 @@ class Hump:
         return d.astype(np.float32)
 
 
-def cut(ceil, raster, floor):
+def cut(ceil, raster, floor, min_leg=600.0):
     chord = np.array([[x, 0.0] for x in np.linspace(-600.0, 600.0, 49)], float)
-    ps = ftr.split_to_band(chord, raster, floor, ceil, 600.0, bridge_m=40.0, bridge_dm=6.0,
+    ps = ftr.split_to_band(chord, raster, floor, ceil, min_leg, bridge_m=40.0, bridge_dm=6.0,
                            deep_bridge_m=300.0, deep_bridge_dm=30.0)
     return max([float(ftr._seglens(p).sum()) for p in ps] or [0.0])
 
@@ -67,35 +74,34 @@ def main():
     ledge = {'depth_dm': 76, 'seed': 'ledge', 'seed_kind': 'ledge'}
     hole = {'depth_dm': 140, 'seed': 'hole_over', 'seed_kind': 'hole'}
     contour = {'depth_dm': 76}
+    everything = (top, edge, ledge, hole, contour)
+
+    eq(ftr.DEEP_SIDE_OPEN, frozenset(), 'no seed kind has its deep side open')
 
     # ── 1 · the floor never moves ───────────────────────────────────────────────────────────
-    for pr in (top, edge, ledge, hole, contour):
+    for pr in everything:
         eq(ftr.band_for(pr, Args())[0], pr['depth_dm'] - Args.tol_dm, f'floor for {pr}')
 
-    # ── 2 · open for a hump or a ledge seed, closed for everything else ─────────────────────
-    for pr in (top, edge, ledge):
-        eq(ftr.band_for(pr, Args())[2], math.inf, f'the deep side is open for {pr["seed"]}')
-    for pr in (hole, contour):
+    # ── 2 · the ceiling applies to every pass ───────────────────────────────────────────────
+    for pr in everything:
         eq(ftr.band_for(pr, Args())[2], pr['depth_dm'] + Args.ceiling_dm,
            f'the ceiling stays for {pr.get("seed", "a contour")}')
-    eq(ftr.band_for({'depth_dm': 76, 'seed_kind': 'ledge'}, Args())[2], 76 + Args.ceiling_dm,
-       'a seed_kind with no seed is not a structure seed')
 
-    # ── 3 · seed_deep keeps the band's own ceiling ──────────────────────────────────────────
-    for pr in (top, ledge, hole, contour):
+    # ── 3 · seed_deep steps against the same ceiling ────────────────────────────────────────
+    for pr in everything:
         eq(ftr.band_for(pr, Args())[1], pr['depth_dm'] + Args.ceiling_dm,
            f'seed_deep steps against the band ceiling for {pr.get("seed", "a contour")}')
 
-    # ── 4 · the Murray failure, small ───────────────────────────────────────────────────────
+    # ── 4 · the 9/26 failure, small ─────────────────────────────────────────────────────────
     floor, seed_ceil, fit_ceil = ftr.band_for(top, Args())
-    closed = cut(seed_ceil, Hump(), floor)
-    opened = cut(fit_ceil, Hump(), floor)
-    assert closed < 600.0, f'with the ceiling, 150 m over the hump is all that survives: {closed}'
-    assert opened >= 1150.0, f'with it open, the whole chord over the hump survives: {opened}'
+    eq(fit_ceil, seed_ceil, 'the cut uses the band ceiling for a hump seed')
+    kept = cut(fit_ceil, Hump(), floor, min_leg=100.0)
+    assert kept < 300.0, f'only the stretch over the hump survives, not 1,200 m of 60 ft water: {kept}'
+    assert cut(fit_ceil, Hump(), floor) == 0.0, 'nothing 600 m long is 15 ft deep here'
+    assert cut(math.inf, Hump(), floor) >= 1150.0, 'with no ceiling it would run the whole chord'
 
     # ── 5 · a shoal still ends the pass ─────────────────────────────────────────────────────
-    shoaled = cut(fit_ceil, Hump(shoal_at=300.0), floor)
-    assert shoaled < 1000.0, f'a 3 ft bar across the chord still cuts it: {shoaled}'
+    assert cut(math.inf, Hump(shoal_at=300.0), floor) < 1000.0, 'a 3 ft bar still cuts a chord'
 
     print('test_deep_side_open: all checks passed')
 
