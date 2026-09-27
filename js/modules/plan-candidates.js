@@ -622,7 +622,7 @@ function ringCentroid(g) {
 }
 
 const RESOLVE_CELL = 0.004;          // ~440 m of longitude here; one bucket comfortably covers a pass
-const RESOLVE_MARGIN_M = 40;         // slack over the recorded offset, for the sign of `d`
+export const RESOLVE_MARGIN_M = 40;  // slack over the recorded offset, for the sign of `d`
 
 // ── THE VOCABULARY IS `poi_type`, AND READING THE OTHER TWO COST 16,719 CHARTED POINTS ───────
 //

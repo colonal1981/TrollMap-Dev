@@ -46,20 +46,20 @@ import { packDerivedFacts } from '../utils/pack-facts.js';
 import { fetchForecast,
          fetchWaterState, fetchClarityAtRamp, regulationStateFor,
          detectCoastalZone, fogNote } from './plan-preflight.js';
-import { lakeSurfaceTemp } from '../utils/water-conditions.js';
+import { lakeSurfaceTemp, poolOffsetFt } from '../utils/water-conditions.js';
 import { landingsFor } from '../data/launch-reach.js';
 import { closerLanding, closerLandingNote } from './closer-landing.js';
 import { shoreRays, roughLegs } from '../utils/wind-waves.js';
 import { inshoreSeasonFor } from '../data/inshore-season.js';
 import { seabedHabitatFor } from '../data/seabed-habitat.js';
 import { depthSampler, shorelineIndex, waterMask } from './plan-water-index.js';
-import { offerWaterAsync, dayCost, dayOrder, priceSpots, searchOrder, optionality, reasons, TROLL_MPH, TRANSIT_MIN_DEPTH_FT, SPOT_KINDS } from './plan-water.js';
+import { offerWaterAsync, dayCost, dayOrder, priceSpots, searchOrder, optionality, reasons, TROLL_MPH, TRANSIT_MIN_DEPTH_FT, SPOT_KINDS, todayFt } from './plan-water.js';
 import { joinedPiece } from './plan-pieces.js';
 import { planFromWater } from './plan-from-water.js';
 import { DEFAULT_STOP_MIN } from './plan-assemble.js';
 import { buildSmartPlanV2, modelAsker, waterRouter } from './smart-plan-v2.js';
-import { poiSpotFeatures, attractorSpotFeatures, dockSpotFeatures, chartedGrid, chartedHazards }
-  from './plan-candidates.js';
+import { poiSpotFeatures, attractorSpotFeatures, dockSpotFeatures, chartedGrid, chartedHazards,
+         structureIndex } from './plan-candidates.js';
 import { planToTimeline, installTimeline } from './plan-to-timeline.js';
 import { renderSmartPlanUI, syncSpread } from './smart-plan-ui.js';
 import { lightFactsFrom, patternFactsFrom } from './plan-prompt.js';
@@ -118,13 +118,15 @@ const T = { pieces: [], picked: new Set(), ramp: null, rampName: '', usableAh: 0
 // live sonar". A crisp line for something never verified is a lie told in a picture.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 function strip(p, band, w = 560, h = 96) {
-  const env = p.envelope || [];
+  // Drawn in TODAY'S water, the same as the row above it -- see todayView() in plan-water.js.
+  const env = (p.envelope || []).map(tf);
   const step = p.envelopeStepM || 40;
   const n = env.length;
   if (n < 2) return '';
   const real = env.filter((d) => d >= 0);
-  const line = p.envelopeLine || [];
-  const deepAll = [...real, ...(p.envelopeDeep || []).filter((d) => d >= 0), ...(band || [0, 0])];
+  const line = (p.envelopeLine || []).map(tf);
+  const deepAll = [...real, ...(p.envelopeDeep || []).map(tf).filter((d) => d >= 0),
+                   ...(band || [0, 0])];
   const maxFt = Math.max(10, Math.ceil((Math.max(...deepAll) + 4) / 5) * 5);
   const X = (i) => (i / (n - 1)) * w;
   const Y = (ft) => (ft / maxFt) * h;
@@ -349,7 +351,7 @@ function paintMap(pieces, picked, ramp) {
  * he can fish the whole pass -- it is just not what the water IS.
  */
 function water(p) {
-  const o = p.reasons?.optionality;
+  const o = corridorOf(p);
   if (!o || o.fromFt == null) return '';
   return o.toFt - o.fromFt >= 2 ? ` of ${o.fromFt}\u2013${o.toFt} ft water`
                                 : ` of about ${o.fromFt} ft water`;
@@ -413,9 +415,9 @@ function joinsHtml(p) {
                   : `${id}, a ${fmtMi(j.otherLengthM || 0)} piece not in this list`;
     return `<button type="button" class="wg-join" data-join="${esc(String(j.idx))}">`
          + `carry on into ${esc(who)} — ${fmtMi(j.lengthM)} `
-         + `on one ${j.baitFt} ft bait${cost}`
+         + `on one ${tf(j.baitFt)} ft bait${cost}`
          + `<span class="wg-join-meta">${j.gapM} m of water between them, ${j.turnDeg}° turn`
-         + `${j.floorFt ? `, floor ${j.floorFt.minFt}\u2013${j.floorFt.maxFt} ft` : ''}</span>`
+         + `${j.floorFt ? `, floor ${tf(j.floorFt.minFt)}\u2013${tf(j.floorFt.maxFt)} ft` : ''}</span>`
          + `</button>`;
   }).join('')}</div>`;
 }
@@ -432,7 +434,7 @@ function joinsHtml(p) {
  */
 function spotRow(s, i) {
   const on = T.pickedSpots.has(s.key);
-  const d = s.depthFt != null ? ` · ${Math.round(s.depthFt)} ft` : '';
+  const d = s.depthFt != null ? ` · ${Math.round(tf(s.depthFt))} ft` : '';
   const where = s.free
     ? `<span class="wg-ok">on water you picked, ${s.detourM} m off the line</span>`
     : `${fmtMi(s.detourM)} off your nearest picked water`;
@@ -646,9 +648,17 @@ function total() {
  * Cached on the piece: `shown()` runs on every repaint and `optionality` medians two arrays.
  */
 function corridorOf(p) {
-  if (p._corr === undefined) p._corr = optionality(p);
+  if (p._corr === undefined) {
+    // TODAY'S WATER, which is what he picks by -- see todayView() in plan-water.js. The slider,
+    // the filter and the row headline all read this, so they agree with the reasons under them.
+    const c = optionality(p);
+    p._corr = { ...c, fromFt: tf(c.fromFt), toFt: tf(c.toFt) };
+  }
   return p._corr;
 }
+
+/** A charted depth as today's water on this lake, or unchanged where no level is published. */
+function tf(ft) { return todayFt(ft, T.offsetFt); }
 
 function inDepthBand(p) {
   const lo = T.depthMin, hi = T.depthMax;
@@ -961,6 +971,23 @@ export async function findWater() {
                    what: f.properties.name || 'DNR brushpile' }));
   if (dnrSpots.length) console.log(`[pick-water] ${dnrSpots.length} state attractors listed`);
 
+  // ── TODAY'S LEVEL, BEFORE A SINGLE DEPTH IS WRITTEN ──────────────────────────────────────────
+  //
+  // Ryan, 2026-09-26, on the Murray day built off this tab: a pass it called 6-15 ft of water was
+  // about 1.5-9.5 ft that morning, because the lake was 5.54 ft below full pool and every depth on
+  // this page was the chart at full pool. The plan subtracted the drawdown; the page he picked
+  // from did not. So the level is read here, and the reasons, the rows, the slider and the depth
+  // strips all read today's water. The pieces keep their charted numbers -- see todayView().
+  // The same call buildFromPicked() makes. Failure is no offset, which is what a lake with no
+  // published level gets too: the charted depths, said to be charted.
+  say('Reading the lake level…');
+  const levelState = await fetchWaterState(inp.lakeName, inp.dateStr, {
+    worker: CF_WORKER_URL, launchTime: inp.launchTime, species,
+    point: ramp ? { lat: ramp[1], lon: ramp[0] } : undefined,
+  }).catch(() => null);
+  const offsetFt = poolOffsetFt(levelState);
+  T.offsetFt = offsetFt || 0;
+
   say('Measuring the water…');
   // Let the status line paint before the work starts, and keep answering while it runs -- see
   // offerWaterAsync(). Ryan, 2026-09-26: "pickwater is causing the browser to hang".
@@ -978,6 +1005,7 @@ export async function findWater() {
       minM,
       fishBandFt: depth ? depth.band : null,
       holding: depth ? depth.holding : null,
+      todayOffsetFt: offsetFt,
       windByHour: forecast ? forecast.windByHour : null,
       depthAt: daFc && daFc.features ? depthSampler(daFc.features) : null,
       // WATER-VERSUS-LAND, COARSE AND FAST. Same layer, a different question -- see waterMask().
@@ -1004,6 +1032,17 @@ export async function findWater() {
 
   Object.assign(T, {
     pieces: out.pieces, spots: out.spots || [], picked: new Set(),
+    // HOW FAR BELOW FULL POOL THE LAKE IS, and the record it came from, so the status line can say
+    // it and the plan built from these pieces can tell the model the reasons are in today's water.
+    offsetFt: offsetFt || 0,
+    levelFt: levelState && Number.isFinite(Number(levelState.levelFt)) ? Number(levelState.levelFt) : null,
+    fullPoolFt: levelState && Number.isFinite(Number(levelState.fullPoolFt))
+      ? Number(levelState.fullPoolFt) : null,
+    // THE PACK'S STRUCTURE, INDEXED THE WAY SMART PLAN INDEXES IT, so a mark on a picked leg is
+    // pinned where the thing is and not at the point on the line beside it. Same four layers,
+    // same order, as smart-plan-v2.js. See legFrom() in plan-from-water.js.
+    structures: structureIndex((stFc && stFc.features) || [], (wfFc && wfFc.features) || [],
+                               (dkFc && dkFc.features) || [], poiSpotFeatures(poFc)),
     // THE CHART, KEPT RATHER THAN THROWN AWAY. Both were fetched above to measure with and were
     // dropped the moment the numbers came out of them -- which is why the map was a black box.
     daFeatures: (daFc && daFc.features) || [],
@@ -1163,6 +1202,16 @@ export async function findWater() {
     : '';
   say(`${out.laneCount} charted lanes → ${out.pieces.length} pieces of water, `
     + `${withLaps} with somewhere to turn onto. Depths are MINIMUM WATER DEPTH, not bait depth.`
+    // WHICH WATER THE NUMBERS ARE. Today's, where the lake publishes a level; the chart's where it
+    // does not, and said so rather than left to be assumed.
+    + (T.offsetFt > 0
+      ? ` Every depth here is TODAY'S water: the chart less ${T.offsetFt} ft, because the lake is `
+        + `${T.offsetFt} ft below full pool${T.levelFt != null ? ` (${T.levelFt} ft` : ''}`
+        + `${T.levelFt != null && T.fullPoolFt != null ? ` against ${T.fullPoolFt} ft)` : T.levelFt != null ? ')' : ''}.`
+      : T.offsetFt < 0
+      ? ` Every depth here is TODAY'S water: the chart plus ${-T.offsetFt} ft, because the lake is `
+        + `above full pool.`
+      : ` Depths are the chart at full pool — no level is published for this water today, or it is at full pool.`)
     + bandNote
     + (extras.length ? ` — ${extras.join('; ')}.` : ''));
   return out;
@@ -1219,6 +1268,10 @@ export async function buildFromPicked() {
       // WHAT HE TICKED, not what the app thinks is nearby. A spot he chose is a commitment the day
       // has to carry; the rest are still sent so the model can suggest one, but only these are his.
       chosenSpotKeys: [...T.pickedSpots],
+      // So each leg's marks are pinned on the structure itself -- see legFrom().
+      structures: T.structures || null,
+      // So the prompt can say the reasons he picked by were written in today's water.
+      todayOffsetFt: T.offsetFt || 0,
       ramp: T.ramp,
       slug: T.r2Key,
       usableAh: T.usableAh,
@@ -1591,7 +1644,8 @@ export function initWaterTab() {
     const piece = { ...merged, key, partners: [],
                     shallowSide: null, shoreAspect: null,
                     reasons: reasons(merged, { minM: T.minM, fishBandFt: T.band,
-                                               holding: T.holding, partners: [] }),
+                                               holding: T.holding, partners: [],
+                                               todayOffsetFt: T.offsetFt }),
                     joins: [] };
     T.pieces.push(piece);
     for (const p of T.pieces) {

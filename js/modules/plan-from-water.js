@@ -34,10 +34,11 @@
  * choice they shouldn't be able to make that choice."
  */
 
-import { ampHoursAlong, minutesFor, metresBetween, cumulative, worstWind } from './plan-candidates.js';
+import { ampHoursAlong, minutesFor, metresBetween, cumulative, worstWind, resolveStructure,
+         RESOLVE_MARGIN_M } from './plan-candidates.js';
 import { assemblePlan, DEFAULT_STOP_MIN } from './plan-assemble.js';
-import { buildPlanRequest, parsePlanResponse, planArgsFrom, MODEL_LEG_FIELDS, modelAnswer }
-  from './plan-prompt.js';
+import { buildPlanRequest, parsePlanResponse, planArgsFrom, MODEL_LEG_FIELDS, modelAnswer,
+         cannotUseBreaks } from './plan-prompt.js';
 import { prefetchTransits } from './smart-plan-v2.js';
 import { launchRouteFor } from '../data/launch-reach.js';
 import { searchOrder, dayCost, dayOrder, priceSpots, TROLL_MPH, TRANSIT_MPH } from './plan-water.js';
@@ -57,7 +58,23 @@ function positionOn(coords, cum, fraction) {
  *
  * @param {?{mph:number,deg:number}} wind  the day's worst hour, or null when nothing was forecast
  */
-function legFrom(piece, i, ramp, slug, wind) {
+/** How far along a line the vertex nearest `at` sits, and how far off the line that vertex is. */
+function alongLine(coords, cum, at) {
+  let best = 0, bestM = Infinity;
+  for (let k = 0; k < coords.length; k++) {
+    const m = metresBetween(at, coords[k]);
+    if (m < bestM) { bestM = m; best = k; }
+  }
+  return { atM: Math.round(cum[best] || 0), offM: Math.round(bestM) };
+}
+
+/**
+ * @param {object} [extra]
+ * @param {object} [extra.structures]  structureIndex() of the pack -- pins each mark on the thing
+ * @param {object[]} [extra.spots]     the cast spots on this leg, priced, see planFromWater()
+ * @param {Set}    [extra.chosenKeys]  the spot keys he ticked himself
+ */
+function legFrom(piece, i, ramp, slug, wind, extra = {}) {
   const coords = piece.coords || [];
   const cum = cumulative(coords);
   const lengthM = piece.lengthM;
@@ -74,22 +91,76 @@ function legFrom(piece, i, ramp, slug, wind) {
   const passes = near
     .filter((n) => n.s != null && n.s <= laneM)
     .map((n, k) => {
-      const { at, atM } = positionOn(coords, cum, n.s / laneM);
+      const { at: onLine, atM } = positionOn(coords, cum, n.s / laneM);
+      // THE PIN GOES WHERE THE THING IS, NOT WHERE THE LINE IS -- the fix plan-candidates.js got
+      // on 2026-09-19, which this path never did. `at` was the point on the line at that distance,
+      // so on Ryan's 2026-09-27 Murray export every flag sat on his trolling line 52-100 m from
+      // the point, hump or hole it named, and still said "charted position -- compare with the
+      // sounder". The point stop was 308 ft from the point. Same resolver, same search radius.
+      // Where nothing resolves, the line point is still the honest answer and `charted: false`
+      // makes the GPX say so.
+      const s = extra.structures
+        ? resolveStructure(onLine, n.t, Math.round(n.d) * 1.25 + RESOLVE_MARGIN_M, extra.structures)
+        : null;
       return {
         id: `${slug || 'water'}#${i}:p${k}`,
-        structureId: null,
+        structureId: s ? s.id : null,
         type: n.t,
         atM,
-        at,
+        at: s ? [s.lon, s.lat] : onLine,
+        charted: !!s,
+        side: s ? s.bendSide : undefined,
         offM: Math.round(n.d),
-        // From the pack or not at all. `near` carries no depth, and for timber, piles and
+        // From the structure or not at all. `near` carries no depth, and for timber, piles and
         // attractors none exists anywhere in the packs -- "how tall is every tree claude???"
-        depthFt: null,
-        what: String(n.t).replace(/_/g, ' '),
+        depthFt: s ? s.depthFt : null,
+        what: s ? s.what : String(n.t).replace(/_/g, ' '),
         weight: (n.t === 'hazard' || n.t === 'obstruction') ? 0 : 1,
       };
-    })
-    .sort((a, b) => a.atM - b.atM);
+    });
+
+  // ── THE CAST SPOTS ON THIS WATER ARE STOPS HE CAN BE GIVEN ───────────────────────────────────
+  //
+  // Pick Water found 29 cast spots within 1-50 m of his 2026-09-27 Murray route -- ledges, scour
+  // holes, a submerged roadbed, creek channels, a bridge, Fish Attractor #8, an offshore hump --
+  // and the plan could stop at none of them. They reached the model as a separate list naming each
+  // leg by the tab's own key (`w123`), which is none of the leg names it was given, and carrying no
+  // id; and the assembler only places a stop on an id it finds among a leg's passes. So the model
+  // stopped at two of the passes and the structure he had been pointing at all evening was on the
+  // page and out of reach. A spot he ticks himself had the same fate.
+  //
+  // So each spot on this leg becomes one of its passes: an id the model can return, the spot's own
+  // position, how far along the leg it comes up and how far off the line it is. A spot that is a
+  // mark already on the list (same structure, or the same kind within 15 m) is that mark, not a
+  // second one.
+  let sk = 0;
+  for (const s of (extra.spots || [])) {
+    if (!Array.isArray(s.at)) continue;
+    const same = passes.find((h) => (s.structureId && h.structureId === s.structureId)
+      || (h.type === s.type && metresBetween(h.at, s.at) <= 15));
+    const chosen = !!(extra.chosenKeys && extra.chosenKeys.has(s.key));
+    if (same) {
+      same.spotKey = s.key;
+      if (chosen) same.chosen = true;
+      continue;
+    }
+    const where = alongLine(coords, cum, s.at);
+    passes.push({
+      id: `${slug || 'water'}#${i}:s${sk++}`,
+      structureId: s.structureId || null,
+      type: s.type,
+      atM: where.atM,
+      at: s.at,
+      charted: true,
+      offM: where.offM,
+      depthFt: Number.isFinite(s.depthFt) ? s.depthFt : null,
+      what: s.what || String(s.type).replace(/_/g, ' '),
+      weight: (s.type === 'hazard' || s.type === 'obstruction') ? 0 : 1,
+      spotKey: s.key,
+      chosen: chosen || undefined,
+    });
+  }
+  passes.sort((a, b) => a.atM - b.atM);
 
   const a = coords[0], b = coords[coords.length - 1];
   // Walked both ways along the piece's real geometry rather than resolved against the chord between
@@ -265,7 +336,44 @@ export async function planFromWater(o) {
     };
   }
 
-  const legs = ordered.map((p, i) => legFrom(p, i, o.ramp, o.slug, wind));
+  // Spots priced against the water he actually picked -- a spot in a picked corridor is a free
+  // stop, one outside every corridor is a trip. § 6. Priced BEFORE the legs are built now, because
+  // each leg carries the spots on it as passes the model can stop at. See legFrom().
+  const spots = priceSpots(o.spots || [], picked, { ramp: o.ramp });
+  const freeSpots = spots.filter((s) => s.free);
+  // HIS PICKS OUTRANK THE APP'S OFFER. A spot he ticked is part of the day whether it sits on the
+  // water he chose or costs a run out to it -- that was his call and the plan carries it.
+  const chosenKeys = new Set(o.chosenSpotKeys || []);
+  const chosenSpots = spots.filter((s) => chosenKeys.has(s.key));
+  // Which leg each spot belongs to: the piece whose corridor it sits in, and for a spot he ticked
+  // off every picked corridor, the picked piece nearest it -- that is the leg he leaves to go to it.
+  const spotsOn = new Map();
+  const nearestPiece = (s) => {
+    let best = null, bestM = Infinity;
+    for (const p of picked) {
+      for (const c of (p.coords || [])) {
+        const m = metresBetween(s.at, c);
+        if (m < bestM) { bestM = m; best = p.key; }
+      }
+    }
+    return best;
+  };
+  for (const s of spots) {
+    const key = s.onPiece || (chosenKeys.has(s.key) ? nearestPiece(s) : null);
+    if (!key) continue;
+    if (!spotsOn.has(key)) spotsOn.set(key, []);
+    spotsOn.get(key).push(s);
+  }
+
+  const legs = ordered.map((p, i) => legFrom(p, i, o.ramp, o.slug, wind, {
+    structures: o.structures || null, spots: spotsOn.get(p.key) || [], chosenKeys,
+  }));
+  // Which pass each spot became, so the prompt's spot lists name a leg and an id the model can
+  // return, rather than the tab's own piece key.
+  const passOfSpot = new Map();
+  for (const l of legs) {
+    for (const h of (l.passes || [])) if (h.spotKey) passOfSpot.set(h.spotKey, { id: h.id, runId: l.runId });
+  }
 
   // What the ordering costs, leg to leg, for the order actually chosen.
   for (let i = 0; i < legs.length; i++) {
@@ -293,15 +401,6 @@ export async function planFromWater(o) {
   //
   // A router that answers for nothing returns null, and assemblePlan falls back to straight lines
   // that mark themselves `unrouted`. That is a worse plan, not a broken one, and it says so.
-
-  // Spots priced against the water he actually picked -- a spot in a picked corridor is a free
-  // stop, one outside every corridor is a trip. § 6.
-  const spots = priceSpots(o.spots || [], picked, { ramp: o.ramp });
-  const freeSpots = spots.filter((s) => s.free);
-  // HIS PICKS OUTRANK THE APP'S OFFER. A spot he ticked is part of the day whether it sits on the
-  // water he chose or costs a run out to it -- that was his call and the plan carries it.
-  const chosenKeys = new Set(o.chosenSpotKeys || []);
-  const chosenSpots = spots.filter((s) => chosenKeys.has(s.key));
 
   // THESE FOUR WERE WRITTEN AS `o.x ?? null` AFTER `...o.planArgs`, and plan-water-ui.js puts all
   // four INSIDE planArgs -- so the spread filled them and the next lines nulled them again. Ryan's
@@ -368,7 +467,9 @@ export async function planFromWater(o) {
       transitToRampM: l.transitOutM,
       structures: l.passes.map((h) => ({ id: h.id, type: h.type, atM: h.atM, offM: h.offM,
                                          what: h.what, depthFt: h.depthFt,
-                                         worthFishing: h.weight > 0 || undefined })),
+                                         worthFishing: h.weight > 0 || undefined,
+                                         // A spot he ticked on the Water tab -- a stop, not an option.
+                                         heTickedIt: h.chosen || undefined })),
       structuresShown: l.passes.length,
       structuresTotal: l.passes.length,
       // The reasons the app already computed, so the model is arguing with the same facts Ryan saw.
@@ -383,11 +484,25 @@ export async function planFromWater(o) {
     // judgement -- "There is water that is worth stopping on today and water that is not" -- so
     // the app supplies the positions and the count he asked for, and the model does the choosing.
     // Truncating here would be the app quietly making that call by ranking.
-    freeCastSpots: freeSpots.map((s) => ({ what: s.what, onLeg: s.onPiece, offM: s.detourM })),
+    // EACH ONE NAMED BY THE LEG IT IS ON AND THE ID THAT STOPS THERE. These went out keyed by the
+    // tab's own piece key (`w123`), which matched none of the runIds the model was given, and with
+    // no id -- so not one could become a stop. They are passes on their legs now (see legFrom()),
+    // and the id here is the one a stop returns.
+    freeCastSpots: freeSpots.map((s) => {
+      const p = passOfSpot.get(s.key);
+      return { id: p ? p.id : undefined, what: s.what, onLeg: p ? p.runId : undefined,
+               offM: s.detourM };
+    }),
     chosenCastSpots: chosenSpots.length
-      ? chosenSpots.map((s) => ({ what: s.what, depthFt: s.depthFt, onLeg: s.onPiece,
-                                  offM: s.detourM, free: s.free }))
+      ? chosenSpots.map((s) => {
+        const p = passOfSpot.get(s.key);
+        return { id: p ? p.id : undefined, what: s.what, depthFt: s.depthFt,
+                 onLeg: p ? p.runId : undefined, offM: s.detourM, free: s.free };
+      })
       : undefined,
+    // THE REASONS HE PICKED BY ARE IN TODAY'S WATER. See todayView() in plan-water.js; the prompt
+    // says so beside `whyThisWater`, because everything else it quotes is the chart.
+    whyThisWaterOffsetFt: Number(o.todayOffsetFt) || 0,
   });
 
   // modelAnswer() takes the bare text or modelAsker()'s {content, meta} -- see it for the night
@@ -400,6 +515,35 @@ export async function planFromWater(o) {
   } catch (e) {
     return { plan: null, problems: [`The model did not answer usably: ${e.message}`], dayCost: cheapest,
              exchange: answer ? answer.meta : null };
+  }
+
+  // ── A BAIT THE LEG WAS TOLD IT CANNOT USE GOES BACK, ONCE ─────────────────────────────────────
+  //
+  // Ryan's 2026-09-27 Murray plan put the MR Crankbait out on three legs whose `cannotUse` named
+  // it: a 10.5 ft rise, a 4.5 ft rise and a leg that was 1.5 ft at its shallowest that morning. The
+  // app wrote three warnings and the crankbait went on the card anyway. Same rule as the cast-only
+  // re-ask in smart-plan-v2.js: one round trip to fix a slip, and the second answer is taken only
+  // when it breaks the rule less. A break that survives is left to capBaitDepth()'s warning.
+  const broke = cannotUseBreaks(res, req.cannotUse);
+  if (broke.length) {
+    const lines = broke.map((b) => `- ${b.runId}: ${b.rod} carries the ${b.lure}`).join('\n');
+    const corrected = `${req.user}\n\nTHAT ANSWER BROKE A RULE AND IS COMING BACK TO YOU.\n`
+      + 'On these legs you put in the water a bait that the leg lists under `cannotUse` -- the rise '
+      + 'on it is shallower than the bill takes that bait, no lead lifts a bill, and it drags:\n'
+      + `${lines}\n`
+      + 'Return the WHOLE plan again in the same shape. On each of those legs deploy rods whose '
+      + 'baits are not on that leg\'s `cannotUse`. Everything else may stay exactly as it was.';
+    try {
+      const again = modelAnswer(await o.askModel({ system: req.system, user: corrected }));
+      const res2 = parsePlanResponse(again.content);
+      if (cannotUseBreaks(res2, req.cannotUse).length < broke.length) {
+        res = res2;
+        answer = again;
+        req.user = corrected;
+      }
+    } catch {
+      // an unreadable second answer is not a reason to lose the first
+    }
   }
 
   // THE MODEL'S ANSWER IS RAW UNTIL planArgsFrom() HAS BEEN OVER IT, AND THIS PATH SKIPPED IT.
@@ -422,6 +566,25 @@ export async function planFromWater(o) {
   // And its `problems` are returned instead of thrown away. A model that names a rod the boat
   // does not carry, or a lure that is not in the bag, said so all along and nobody was listening.
   const args = planArgsFrom(res, legs, { tackle: o.tackle, connectionOf: o.connectionOf });
+
+  // A SPOT HE TICKED IS A STOP, WHETHER OR NOT THE MODEL WROTE ONE FOR IT. The prompt calls them
+  // "not yours to drop", and a prompt is a request. One the model left out goes in at the default
+  // length with no rod named -- the card says so -- rather than vanishing from a day he built
+  // around it.
+  const stopped = new Set((args.stops || []).map((s) => `${s.runId}|${s.structureId}`));
+  for (const s of chosenSpots) {
+    const p = passOfSpot.get(s.key);
+    if (!p || stopped.has(`${p.runId}|${p.id}`)
+        || (s.structureId && stopped.has(`${p.runId}|${s.structureId}`))) continue;
+    args.stops = [...(args.stops || []), {
+      runId: p.runId, structureId: p.id, rods: [], durationMin: DEFAULT_STOP_MIN,
+      why: 'You ticked this spot yourself. The model wrote no stop for it, so it is here at the '
+         + 'default length with no rod named — pick the cast rod on the day.',
+      presentation: null, positioning: null,
+    }];
+    args.problems = [...(args.problems || []), `the model left out a spot you ticked (${s.what}) — `
+                   + `put in as a ${DEFAULT_STOP_MIN} min stop on ${p.runId} with no rod named`];
+  }
 
   // A LEG THE MODEL NEVER MENTIONED IS A LEG TROLLED EMPTY, AND NOTHING SAID WHY.
   //

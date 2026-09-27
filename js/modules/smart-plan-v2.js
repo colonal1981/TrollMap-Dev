@@ -22,7 +22,7 @@ import { selectCandidates, structureIndex, forModel, travelOrder, poiSpotFeature
          turnaroundMiles, riverDay, metresBetween,
          pointToSegmentM } from './plan-candidates.js';
 import { buildPlanRequest, parsePlanResponse, planArgsFrom,
-         resolveTackleName, modelAnswer } from './plan-prompt.js';
+         resolveTackleName, modelAnswer, cannotUseBreaks } from './plan-prompt.js';
 // A RIVER LEG IS A DRIFT, NOT A LANE. See river-drifts.js for what that means, what it measures
 // and why the trolling runs are the wrong object on moving water.
 import { riverDriftRuns, driftCurrentSummary, centrelineTransit, waterTest } from './river-drifts.js';
@@ -681,6 +681,36 @@ export async function buildSmartPlanV2(o) {
         + `again after being told. ${still.length === 1 ? 'That rod is' : 'Those rods are'} `
         + `fishing nothing — swap ${still.length === 1 ? 'it' : 'them'} on the Plan tab before `
         + `you launch.`);
+    }
+  }
+
+  // ── AND A BAIT THE LEG WAS TOLD IT CANNOT USE GOES BACK, ONCE ───────────────────────────────
+  //
+  // The same rule as above for the same reason, on the list each leg carries: a bill bait whose
+  // rated depth is past that leg's rise today drags, and no lead lifts it. Ryan's 2026-09-27
+  // Murray plan (Pick Water) deployed one on three such legs; plan-from-water.js carries the
+  // identical check, and cannotUseBreaks() is the one reader of the rule for both planners.
+  const useBroke = cannotUseBreaks(res, req.cannotUse);
+  if (useBroke.length) {
+    const lines = useBroke.map((b) => `- ${b.runId}: ${b.rod} carries the ${b.lure}`).join('\n');
+    const corrected = `${req.user}\n\nTHAT ANSWER BROKE A RULE AND IS COMING BACK TO YOU.\n`
+      + 'On these legs you put in the water a bait that the leg lists under `cannotUse` -- the rise '
+      + 'on it is shallower than the bill takes that bait, no lead lifts a bill, and it drags:\n'
+      + `${lines}\n`
+      + 'Return the WHOLE plan again in the same shape. On each of those legs deploy rods whose '
+      + 'baits are not on that leg\'s `cannotUse`. Everything else may stay exactly as it was.';
+    try {
+      const rawAgain = modelAnswer(await o.askModel({ system: req.system, user: corrected }));
+      const res2 = parsePlanResponse(rawAgain.content);
+      if (cannotUseBreaks(res2, req.cannotUse).length < useBroke.length
+          && castOnlyRods(res2).length <= castOnlyRods(res).length) {
+        res = res2;
+        raw.content = rawAgain.content;
+        raw.meta = rawAgain.meta;
+        req.user = corrected;
+      }
+    } catch {
+      // an unreadable second answer is not a reason to lose the first
     }
   }
 

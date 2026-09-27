@@ -214,7 +214,9 @@ test('both planners hand the same forecast to the thing that prices the day', ()
   assert.ok(PW.includes('const wind = o.wind || worstWind(o.windByHour);'),
             'planFromWater reduces the forecast itself');
   assert.ok(/dayCost\(picked, \{[\s\S]{0,200}\bwind\b/.test(PW), 'the refusal is costed against it');
-  assert.ok(PW.includes('legFrom(p, i, o.ramp, o.slug, wind)'), 'and so is every leg');
+  // The sixth argument (structures and spots, 2026-09-27) rides after the wind; the wind is still
+  // the fifth, which is what this is checking.
+  assert.ok(PW.includes('legFrom(p, i, o.ramp, o.slug, wind,'), 'and so is every leg');
 });
 
 test('and a picked piece is priced the same way a chosen one is', () => {

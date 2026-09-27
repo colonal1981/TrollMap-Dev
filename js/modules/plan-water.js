@@ -253,6 +253,51 @@ const mi = (m) => m / 1609.34;
 const fmtMi = (m) => `${mi(m).toFixed(mi(m) < 1 ? 2 : 1)} mi`;
 
 /**
+ * A charted depth as today's water: `ft - offsetFt`, to a tenth of a foot, and never below 0.
+ * Anything that is not a number comes back as it went in, so an absent depth stays absent and the
+ * pack's -1 for an unsounded station stays -1.
+ */
+export function todayFt(ft, offsetFt) {
+  if (!Number.isFinite(ft) || ft < 0) return ft;
+  const off = Number(offsetFt);
+  if (!Number.isFinite(off) || off === 0) return ft;
+  return Math.max(0, Math.round((ft - off) * 10) / 10);
+}
+
+/**
+ * THE PIECE AS IT IS TODAY -- every depth on it less the lake's measured drawdown.
+ *
+ * Ryan, 2026-09-26, on a Pick Water day that sent him up a pass it described as 6-15 ft of water:
+ * the lake was 5.54 ft below full pool, so that pass was about 1.5-9.5 ft, and both baits the plan
+ * put on it were in the mud. The chart packs are sounded at full pool, Pick Water measured and
+ * wrote every reason against that, and the plan only subtracted the drawdown afterwards. He picks
+ * off this page, so this page reads today's water.
+ *
+ * FOR DISPLAY AND FOR THE REASONS ONLY. The piece itself keeps its charted numbers: the plan built
+ * from it subtracts the same drawdown in assemblePlan(), and taking it off here as well would take
+ * it off twice. `reliefDropFt` and the steep-edge gap are differences, so they do not move.
+ */
+export function todayView(piece, offsetFt) {
+  const t = (x) => todayFt(x, offsetFt);
+  const ta = (a) => (Array.isArray(a) ? a.map(t) : a);
+  const w = piece.water || null;
+  return {
+    ...piece,
+    envelope: ta(piece.envelope),
+    envelopeDeep: ta(piece.envelopeDeep),
+    envelopeLine: ta(piece.envelopeLine),
+    holdsFt: t(piece.holdsFt),
+    deepestNearbyFt: t(piece.deepestNearbyFt),
+    water: w ? {
+      ...w,
+      line: w.line ? { ...w.line, minFt: t(w.line.minFt), sustainedMinFt: t(w.line.sustainedMinFt),
+                       medianFt: t(w.line.medianFt), maxFt: t(w.line.maxFt) } : w.line,
+      side: w.side ? { ...w.side, minFt: t(w.side.minFt) } : w.side,
+    } : w,
+  };
+}
+
+/**
  * REASONS FOR, AND REASONS AGAINST.
  *
  * Ryan: "the reasons against needs to be built... there needs to be consequences for trying to
@@ -272,8 +317,17 @@ export function reasons(piece, o) {
   const forIt = [];
   const against = [];
 
+  // TODAY'S WATER, NOT THE CHART'S. See todayView(). Every depth this function prints is read off
+  // the piece, so shifting the piece once shifts every sentence, and the band is compared against
+  // the water he will actually be over.
+  const off = Number(o.todayOffsetFt);
+  const shifted = Number.isFinite(off) && off !== 0;
+  if (shifted) piece = todayView(piece, off);
+
   const opt = optionality(piece);
-  const partners = o.partners || [];
+  const partners = shifted
+    ? (o.partners || []).map((q) => ({ ...q, holdsFt: todayFt(q.holdsFt, off) }))
+    : (o.partners || []);
   const near = piece.near || [];
   const avoid = near.filter((n) => n.t === 'hazard' || n.t === 'obstruction');
   const cover = near.filter((n) => n.t === 'timber' || n.t === 'attractor' || n.t === 'pile');
@@ -1612,6 +1666,9 @@ export function* offerWaterSteps(lanes, o) {
                                   gainM: j.lengthM - p.lengthM }))
       .sort((x, y) => (y.baitFt - x.baitFt) || (y.lengthM - x.lengthM)),
     reasons: reasons(p, { minM, fishBandFt: o.fishBandFt, holding: o.holding,
+                          // The lake's measured drawdown, so the reasons read today's water. The
+                          // piece keeps its charted numbers -- see todayView().
+                          todayOffsetFt: o.todayOffsetFt,
                           partners: partners[i], wind: o.wind || worstWind(o.windByHour),
                           sunBehind: (o.dateUTC != null && o.tzOffset != null)
                             ? sunBehindBank({ ...p, shoreAspect: p.shoreAspect, coords: p.coords },

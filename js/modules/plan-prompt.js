@@ -2397,7 +2397,11 @@ THE FISHERMAN ALREADY CHOSE THIS WATER AND THIS ORDER.
 He picked these stretches himself, off a map, with the reasons for and against in front of him —
 they are in \`whyThisWater\` on each one, computed from the chart, not written by you. Do not
 re-rank them, do not suggest better water, and do not reorder the day. The list above IS the day,
-first to last.
+first to last.${Number(o.whyThisWaterOffsetFt) ? `
+\`whyThisWater\` IS WRITTEN IN TODAY'S WATER — the chart ${o.whyThisWaterOffsetFt > 0 ? 'less' : 'plus'}
+${Math.abs(o.whyThisWaterOffsetFt)} ft, the lake's measured level — because that is what he picked by.
+Every other depth on a leg (\`depthFt\`, \`depthMinFt\`, \`depthMaxFt\`, \`maxRunDepthFt\`, a
+structure's \`depthFt\`) is the chart at full pool. The two describe the same water.` : ''}
 
 RETURN ONE ENTRY IN \`legs\` FOR EVERY ONE OF THE ${(o.candidates || []).length} \`runId\`s ABOVE
 — all ${(o.candidates || []).length} of them, every one carrying its own \`deploy\`. A runId you
@@ -2421,14 +2425,17 @@ ${(o.freeCastSpots || []).length ? `
 CAST SPOTS ALREADY ON HIS ROUTE — ${JSON.stringify(o.freeCastSpots)}
 These sit inside the water he picked, so working one costs only the minutes spent on it. Prefer
 them over anything that would need a detour. Every one is listed; NONE has been pre-selected for
-you, because which water is worth stopping on today is the judgement you are here to make.` : ''}${
+you, because which water is worth stopping on today is the judgement you are here to make.
+Each is also in its leg's \`structures\`: \`onLeg\` is that leg's \`runId\`, and to stop at one,
+return a stop with that \`runId\` and its \`id\`, exactly as for any other structure.` : ''}${
 (o.chosenCastSpots || []).length ? `
 
 HE PICKED THESE CAST SPOTS HIMSELF — ${JSON.stringify(o.chosenCastSpots)}
 These are not suggestions and they are not yours to drop. Work each one into the day, and where
 one is marked \`free: false\` it costs a run out and back that he already accepted. Say what to
 throw at each and how to hold the boat on it — there is no spot-lock, so positioning is pedal work
-against the wind or the current and you have to say which.` : ''}${
+against the wind or the current and you have to say which. Each one is a stop: return it in
+\`stops\` with the \`runId\` in its \`onLeg\` and its \`id\`.` : ''}${
 o.castStopsWanted != null ? `
 
 HE ASKED FOR ${o.castStopsWanted} STOP-AND-CAST${o.castStopsWanted === 1 ? '' : 'S'} TODAY.
@@ -2664,7 +2671,46 @@ RETURN EXACTLY THIS SHAPE
   // about method, say that instead of guessing.
 }`;
 
-  return { system, user };
+  const req = { system, user };
+  // WHICH BAITS EACH LEG WAS TOLD IT CANNOT USE, kept with the request so the answer can be held to
+  // it -- see cannotUseBreaks(). Not enumerable: the request is what is sent and what is saved, and
+  // this is neither.
+  const cannotUse = {};
+  for (const c of candidates) if (c && c.runId && c.cannotUse) cannotUse[c.runId] = c.cannotUse;
+  Object.defineProperty(req, 'cannotUse', { value: cannotUse, enumerable: false });
+  return req;
+}
+
+/**
+ * THE BAITS AN ANSWER PUT IN THE WATER ON A LEG THAT WAS TOLD IT CANNOT USE THEM.
+ *
+ * Ryan's 2026-09-27 Murray plan: the prompt listed the MR Crankbait under `cannotUse` on three
+ * legs -- the rise on each is shallower than the bill takes it, and no lead lifts a bill -- and
+ * the answer deployed it on all three. The app said so afterwards, in three warnings, and the
+ * crankbait went out on the card anyway. A rule stated in a prompt is a request; this is the check.
+ *
+ * @param {object} res        the parsed answer
+ * @param {object} cannotUse  { runId: [bait names as the prompt spelled them] }
+ * @returns {{runId:string, rod:string, lure:string}[]}
+ */
+export function cannotUseBreaks(res, cannotUse) {
+  if (!res || !cannotUse) return [];
+  const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  const lureOf = new Map((((res.loadout || {}).rods) || [])
+    .filter((r) => r && r.id).map((r) => [String(r.id).toUpperCase(), r.lure]));
+  const out = [];
+  for (const leg of (Array.isArray(res.legs) ? res.legs : [])) {
+    const banned = leg && cannotUse[leg.runId];
+    if (!banned || !banned.length) continue;
+    const bannedSet = new Set(banned.map(norm));
+    const d = leg.deploy || {};
+    for (const side of ['port', 'starboard']) {
+      const rod = String(d[side] || '').toUpperCase();
+      const lure = lureOf.get(rod);
+      if (lure && bannedSet.has(norm(lure))) out.push({ runId: leg.runId, rod, lure });
+    }
+  }
+  return out;
 }
 
 /**
@@ -3126,7 +3172,11 @@ export function planArgsFrom(res, candidates, ctx = {}) {
     //
     // BELOW THE DEPLOY BLOCK SINCE 2026-09-18, because `ifNotProducing` is checked against the two
     // rods this leg puts in the water and there is no way to check that before they are known.
-    const answer = { why: str(leg.why), ifNotProducing };
+    // THE REASON UNDER WHATEVER NAME IT CAME BACK. On 2026-09-27 the model wrote the last leg's
+    // sentence as `"work": "..."`, and the card for that leg came up blank. A misnamed field is
+    // still the leg's reason, so the obvious spellings are read before giving up on it.
+    const answer = { why: str(leg.why) || str(leg.work) || str(leg.reason) || str(leg.notes),
+                     ifNotProducing };
     if (!riverDay) {
       answer.speedMph = num(leg.speedMph) ?? undefined;
       answer.trollPasses = trollPasses;

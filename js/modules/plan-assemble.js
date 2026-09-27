@@ -725,6 +725,27 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
       forThisLeg[id] = { ...(forThisLeg[id] || {}), leadFt: shorter,
                          runsDepthFt: Number.isFinite(nw.max) ? [nw.min, nw.max]
                                                               : (forThisLeg[id] || {}).runsDepthFt };
+    } else if (w.mode === 'lead' && Number.isFinite(medianFt) && medianFt > ceilingFt
+               && (() => { const m = leadClearing(medianFt); return m && m < leadFt; })()) {
+      // ── NO LEAD CLEARS THE RISE, BUT ONE CLEARS THE WATER THE PASS MOSTLY IS ──────────────────
+      //
+      // Ryan's 2026-09-27 Murray plan, Leg 8: 1.5 ft at its shallowest that morning and 5.5 ft in
+      // the middle, and a 1 oz swimbait left on 114 ft of lead running 26-30 ft -- in the mud the
+      // whole pass, with a warning saying so. Nothing keeps a bait off a 1.5 ft rise; that was never
+      // a reason to leave it at a lead set for 30 ft. So it comes up to clear the median, the same
+      // tier the flag above uses, and the rise is said as a rise.
+      const toMedian = leadClearing(medianFt);
+      const nw = depthWindow(lure, { speedMph, leadFt: toMedian });
+      warnings.push(`${id} on ${runId}: a ${rod.lure}`
+                  + `${fit ? ` on a ${ozLabel(fit.weightOz)} head` : ''} `
+                  + `on ${leadFt} ft of lead at ${speedMph} mph runs to ${w.max} ft, and this leg `
+                  + `is ${medianFt} ft in the middle${today} and ${ceilingFt} ft at its shallowest. `
+                  + `No lead keeps it off that rise, so the lead is shortened to ${toMedian} ft, `
+                  + `which runs it ${nw.min}-${nw.max} ft over the water the pass mostly is — it will `
+                  + `find the rise. This is very thin water for it`);
+      forThisLeg[id] = { ...(forThisLeg[id] || {}), leadFt: toMedian,
+                         runsDepthFt: Number.isFinite(nw.max) ? [nw.min, nw.max]
+                                                              : (forThisLeg[id] || {}).runsDepthFt };
     } else {
       // A LEAD BAIT CAN BE LIFTED, SO "LEAD WILL NOT LIFT IT" WAS FALSE ABOUT IT. What is true is
       // that no lead leaves it off this bottom -- on 2.6 ft of water, say -- and it is still the

@@ -74,8 +74,13 @@ describe('the prompt contract', () => {
   // `dayStopMin` goes with `dayMin`: it is the part of that price that is the stops he typed into
   // the Water tab's box, so the prompt can say they are already counted. No picked set, no price,
   // no stops in it.
+  //
+  // `whyThisWaterOffsetFt` (2026-09-27) is the drawdown the Water tab's reasons were written in.
+  // Those reasons -- `whyThisWater` -- exist only on water he picked; Smart Plan's candidates carry
+  // no such field, so there is nothing on that path for the number to describe.
   const PICKED_WATER_DIALECT = ['castStopsWanted', 'chosenCastSpots', 'freeCastSpots',
-                                'orderIsChosen', 'waterIsChosen', 'dayMin', 'dayStopMin'];
+                                'orderIsChosen', 'waterIsChosen', 'dayMin', 'dayStopMin',
+                                'whyThisWaterOffsetFt'];
 
   // AND ONE FIELD PICK WATER CANNOT REACH THE CASE FOR, WHICH IS A DIFFERENT EXEMPTION.
   //
