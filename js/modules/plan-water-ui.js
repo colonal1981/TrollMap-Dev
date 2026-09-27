@@ -58,6 +58,7 @@ import { joinedPiece } from './plan-pieces.js';
 import { planFromWater } from './plan-from-water.js';
 import { DEFAULT_STOP_MIN } from './plan-assemble.js';
 import { buildSmartPlanV2, modelAsker, waterRouter } from './smart-plan-v2.js';
+import { claudeFirstAsker } from './claude-bridge.js';
 import { poiSpotFeatures, attractorSpotFeatures, dockSpotFeatures, chartedGrid, chartedHazards,
          structureIndex } from './plan-candidates.js';
 import { planToTimeline, installTimeline } from './plan-to-timeline.js';
@@ -1366,7 +1367,8 @@ export async function buildFromPicked() {
                                                              T.waterTempF)) },
         waterState,
       },
-      askModel: modelAsker(CF_WORKER_URL),
+      // CLAUDE ON THIS PC WHEN IT IS RUNNING, GEMINI WHEN IT IS NOT -- see claude-bridge.js.
+      askModel: claudeFirstAsker(modelAsker(CF_WORKER_URL), { say }),
       // FOR planArgsFrom(), which validates the model's answer before the assembler sees it.
       // `tackle` is what the bag actually holds, so a lure the model invented is caught by name;
       // `connectionOf` is how a lure gets seated on a rod that can carry it — tie-only lures onto
