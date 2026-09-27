@@ -169,13 +169,17 @@ describe('smart-plan-v2 — the whole path with no network', () => {
     expect(r.problems[0].includes('no trolling runs')).toBe(true);
   });
 
-  it('stops when nothing on the lake matches the depth band', async () => {
-    // 200-300 ft SUSPENDED, so the suspended rule's floor (water deeper than 200 ft) is what
-    // empties it. On a reservoir with a 225 ft maximum this is water that does not exist.
+  it('offers the water when none of it matches the depth band, and marks every leg (2026-09-26)', async () => {
+    // 200-300 ft SUSPENDED: no water on this lake is deeper than 200 ft. This used to empty the
+    // day. Ryan, on Murray's 50-70 ft band: "unless we can make it more specific then the 50-70ft
+    // cannot cut lanes". So the day is built, and every leg says it is outside the band.
     const r = await buildSmartPlanV2({ ...OPTS, fishDepthFt: [200, 300], holding: 'suspended',
-                                       askModel: async () => { throw new Error('must not be called'); } });
-    expect(r.plan).toBe(null);
-    expect(r.problems[0].includes('reachable from this ramp')).toBe(true);
+                                       askModel: goodModel() });
+    expect(r.plan).not.toBe(null);
+    expect(r.candidates.length > 0).toBe(true);
+    expect(r.candidates.every((c) => c.inFishBand === false)).toBe(true);
+    expect(/"inFishBand":\s*false/.test(r.request.user)).toBe(true);
+    expect(r.request.user.includes('THE FISH DEPTH ABOVE DID NOT CHOOSE THIS WATER')).toBe(true);
   });
 
   // ── THE ELIGIBILITY RULE, END TO END — 2026-08-10 ──────────────────────────────────────────
@@ -190,25 +194,29 @@ describe('smart-plan-v2 — the whole path with no network', () => {
   // symptom was a correct rule that nothing ever invoked.
 
   // THE FIXTURE RUNS SIT AT 22 AND 23 FT, which is what makes a 10-20 ft band the discriminator:
-  // on the bottom that water is outside the band and the day is empty; suspended, the only
-  // requirement is water deeper than 10 ft and both runs qualify. One input, two answers,
-  // decided entirely by `holding` -- which is the proof that the value survives depthBandFor,
-  // the wiring, buildSmartPlanV2 and selectCandidates rather than being dropped somewhere in
-  // between. researchedBand() dropped it silently for as long as it existed.
+  // on the bottom that water is outside the band; suspended, the only requirement is water deeper
+  // than 10 ft and both runs qualify. One input, two answers, decided entirely by `holding` --
+  // which is the proof that the value survives depthBandFor, the wiring, buildSmartPlanV2 and
+  // selectCandidates rather than being dropped somewhere in between. researchedBand() dropped it
+  // silently for as long as it existed.
+  //
+  // SINCE 2026-09-26 HOLDING DECIDES THE MARK, NOT WHETHER THE WATER IS OFFERED. The bottom day
+  // used to be empty; it is built now, with every leg marked outside the band.
   it('lets holding decide the outcome through the whole path', async () => {
     const bottom = await buildSmartPlanV2({ ...OPTS, fishDepthFt: [10, 20], holding: 'bottom',
                                             askModel: goodModel() });
-    expect(bottom.plan).toBe(null);
+    expect(bottom.plan).not.toBe(null);
+    expect(bottom.candidates.every((c) => c.inFishBand === false)).toBe(true);
     const susp = await buildSmartPlanV2({ ...OPTS, fishDepthFt: [10, 20], holding: 'suspended',
                                           askModel: goodModel() });
     expect(susp.plan).not.toBe(null);
+    expect(susp.candidates.every((c) => c.inFishBand === true)).toBe(true);
   });
 
-  it('says which rule emptied the day', async () => {
+  it('says which rule each leg was judged on', async () => {
     const r = await buildSmartPlanV2({ ...OPTS, fishDepthFt: [10, 20], holding: 'bottom',
                                        askModel: goodModel() });
-    // "The band is wrong" and "this fish does not live on this lake" used to read as one failure.
-    expect(r.problems[0].includes('bottom: water must be inside 10–20 ft')).toBe(true);
+    expect(r.candidates[0].fishBandRule.includes('bottom: water must be inside 10–20 ft')).toBe(true);
   });
 });
 
@@ -239,42 +247,53 @@ describe('the eligibility rule — fish depth is not water depth', () => {
   });
   const base = { ramp: RAMP, slug: 'w', usableAh: 200, windowMin: 600 };
   const depthsOf = (out) => out.map((c) => c.depthFt).sort((a, b) => a - b);
+  // SINCE 2026-09-26 THE RULE MARKS AND DOES NOT CUT. Every run below is offered; these read
+  // which ones the rule calls inside the band. Ryan: "unless we can make it more specific then
+  // the 50-70ft cannot cut lanes".
+  const inBandOf = (out) => depthsOf(out.filter((c) => c.inFishBand));
 
-  it('suspended: keeps everything deeper than the fish, with no ceiling', () => {
+  it('offers every run whatever the band, and counts the ones outside it', () => {
+    const out = selectCandidates(runsAt(), { ...base, fishDepthFt: [18, 25], holding: 'bottom' });
+    expect(depthsOf(out)).toEqual([12, 22, 55]);
+    expect(out.selection.outsideBand).toBe(2);
+    expect(out.selection.rejected.depth).toBe(0);
+  });
+
+  it('suspended: marks everything deeper than the fish, with no ceiling', () => {
     const out = selectCandidates(runsAt(), { ...base, fishDepthFt: [15, 40], holding: 'suspended' });
     // 55 ft is the one that matters. It is below the band, the old test deleted it, and it is
     // exactly the water Ryan described: "fish absolutely could be suspended at 25ft in 40ft of
-    // water." 12 ft goes because a fish cannot suspend at 15 ft in 12 ft of water.
-    expect(depthsOf(out)).toEqual([22, 55]);
+    // water." 12 ft is marked outside because a fish cannot suspend at 15 ft in 12 ft of water.
+    expect(inBandOf(out)).toEqual([22, 55]);
   });
 
   it('suspended: the floor is the top of the band, not the bottom of it', () => {
     // 22 ft water holds a 15-40 ft fish in its shallower half. Requiring water deeper than 40
-    // would throw it away, and that is real fishable water.
+    // would mark it outside, and that is real fishable water.
     const out = selectCandidates(runsAt(), { ...base, fishDepthFt: [15, 40], holding: 'suspended' });
-    expect(out.some((c) => c.depthFt === 22)).toBe(true);
+    expect(out.some((c) => c.depthFt === 22 && c.inFishBand)).toBe(true);
   });
 
-  it('bottom: the water has to match the band', () => {
+  it('bottom: the water has to match the band to be marked inside it', () => {
     const out = selectCandidates(runsAt(), { ...base, fishDepthFt: [18, 25], holding: 'bottom' });
-    // 55 ft is not deep water holding bottom catfish that are in 18-25 ft. It is the wrong water.
-    expect(depthsOf(out)).toEqual([22]);
+    // 55 ft is not deep water holding bottom catfish that are in 18-25 ft. Offered, and marked.
+    expect(inBandOf(out)).toEqual([22]);
   });
 
-  it('both: exactly what suspended selects, not a compromise between the two', () => {
+  it('both: exactly what suspended marks, not a compromise between the two', () => {
     // Ryan: "yeah use the suspended number so that you could fish any portion that is deeper than
     // the fish."
     const b = selectCandidates(runsAt(), { ...base, fishDepthFt: [15, 40], holding: 'both' });
     const s = selectCandidates(runsAt(), { ...base, fishDepthFt: [15, 40], holding: 'suspended' });
-    expect(depthsOf(b)).toEqual(depthsOf(s));
+    expect(inBandOf(b)).toEqual(inBandOf(s));
   });
 
-  it('unknown holding: behaves exactly as it did before, and says so', () => {
+  it('unknown holding: marks as the old comparison did, and says so', () => {
     // NOT A DEFAULT -- a deferral. Ryan, asked which way null should fail: "for null i dont
     // know... cross that bridge when we get to it." So the old comparison still runs here and
     // nowhere else, and the result is flagged rather than passed off as the researched path.
     const out = selectCandidates(runsAt(), { ...base, fishDepthFt: [18, 25], holding: null });
-    expect(depthsOf(out)).toEqual([22]);
+    expect(inBandOf(out)).toEqual([22]);
     expect(out.selection.holdingUnknown).toBe(true);
     expect(out.selection.depthRule.includes('holding unknown')).toBe(true);
   });
@@ -288,6 +307,7 @@ describe('the eligibility rule — fish depth is not water depth', () => {
     shallow.properties.mean_depth_ft = 34.5;   // measured: comfortably deeper than the band's floor
     const out = selectCandidates([shallow], { ...base, fishDepthFt: [15, 40], holding: 'suspended' });
     expect(out.length).toBe(1);
+    expect(out[0].inFishBand).toBe(true);
     expect(out[0].waterDepthFt).toBe(34.5);
     expect(out[0].waterDepthMeasured).toBe(true);
   });

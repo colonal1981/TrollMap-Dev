@@ -2358,9 +2358,15 @@ they are cast baits, and there is no stop to cast them at on a river (rule 4). D
 a rod. The six rods are six trolling baits.
 ` : ''}
 ${o.waterIsChosen ? 'THE WATER HE CHOSE' : 'THE WATER YOU MAY FISH'}
-Each candidate is a stretch of a real trolling run, already filtered to water he can reach and
-depths that matter today, and ranked by what it passes. \`structures\` lists what each leg goes by
-in the order you meet them, with \`atM\` metres from the start of that leg.
+Each candidate is a stretch of a real trolling run, already filtered to water he can reach, and
+ranked by what it passes. \`structures\` lists what each leg goes by in the order you meet them,
+with \`atM\` metres from the start of that leg.
+
+THE FISH DEPTH ABOVE DID NOT CHOOSE THIS WATER. A candidate carrying \`inFishBand: false\` sits
+outside it and is offered anyway, because that depth is one source's claim and the source said
+when and where it holds (\`depthBand.sourceNotes\`, when it is there). Weigh it by the hour you put
+the leg in and by where on the lake the leg is. Do not drop a leg for it alone, and say in its
+\`why\` when a leg is outside the band and why you chose it anyway.
 
 NOT EVERYTHING ON A LEG IS THERE TO BE FISHED. An entry carrying \`worthFishing: true\` is a
 target. An entry with no \`worthFishing\` is a hazard, an obstruction or a pile — it is on the list

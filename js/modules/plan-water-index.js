@@ -99,15 +99,39 @@ export function depthSampler(features, { cellDeg = 0.002 } = {}) {
     // shallowest band containing the point is the answer, so the first one found is it.
     const kept = near.filter((i) => whole == null || polys[i].maxFt < whole)
       .sort((a, b) => polys[a].maxFt - polys[b].maxFt);
-    c = { whole, near: kept };
+    c = { whole, near: kept, subs: new Map() };
     cells.set(k, c);
     return c;
+  };
+  // A QUARTER CELL, SORTED THE SAME WAY, FROM ITS CELL'S SHORT LIST. On Murray a 200 m cell on a
+  // channel edge is crossed by dozens of 1 ft bands and a deep point tested most of them. A band
+  // that covers the whole cell covers the whole quarter; a band that misses the cell misses the
+  // quarter; so only the cell's `near` list has to be sorted again, against the smaller box.
+  const SUB = 4, subDeg = cellDeg / SUB;
+  const subAt = (c, sx, sy) => {
+    const k = `${sx},${sy}`;
+    let s = c.subs.get(k);
+    if (s) return s;
+    const w = sx * subDeg, so = sy * subDeg, e = w + subDeg, n = so + subDeg;
+    let whole = c.whole;
+    const near = [];
+    for (const i of c.near) {
+      const q = polys[i];
+      if (idxOf(q).some((R) => ringNearBox(R, w, so, e, n))) near.push(i);
+      else if (covers(q, w + subDeg / 2, so + subDeg / 2) && (whole == null || q.maxFt < whole)) whole = q.maxFt;
+    }
+    // `c.near` is already shallowest first, so this keeps that order.
+    s = { whole, near: near.filter((i) => whole == null || polys[i].maxFt < whole) };
+    c.subs.set(k, s);
+    return s;
   };
   return (pt) => {
     const cx = Math.floor(pt[0] / cellDeg), cy = Math.floor(pt[1] / cellDeg);
     const c = cellAt(cx, cy, `${cx},${cy}`);
-    for (const i of c.near) if (covers(polys[i], pt[0], pt[1])) return polys[i].maxFt;
-    return c.whole;
+    if (!c.near.length) return c.whole;
+    const s = subAt(c, Math.floor(pt[0] / subDeg), Math.floor(pt[1] / subDeg));
+    for (const i of s.near) if (covers(polys[i], pt[0], pt[1])) return polys[i].maxFt;
+    return s.whole;
   };
 }
 

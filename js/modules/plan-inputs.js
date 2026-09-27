@@ -54,8 +54,8 @@ export function depthBandFor(species, lakeName, season, waterTempF, researched) 
   const partial = fromResearch && !fromResearch.band ? fromResearch : null;
   const researchedFields = partial
     ? { holding: partial.holding, waterDepthFt: partial.waterDepthFt, sourceQuote: partial.sourceQuote,
-        fishDepthFrom: 'table' }
-    : { holding: null, waterDepthFt: null, sourceQuote: null };
+        sourceNotes: partial.sourceNotes, fishDepthFrom: 'table' }
+    : { holding: null, waterDepthFt: null, sourceQuote: null, sourceNotes: null };
   const researchNote = partial
     ? `; holding${partial.waterDepthFt ? ' and water depth' : ''} from the researched profile`
     : '';
@@ -293,6 +293,7 @@ export function researchedBand(profile, species, seasonKey) {
       waterDepthFt,
       sourceQuote: typeof node.sourceQuote === 'string' && node.sourceQuote.trim()
         ? node.sourceQuote.trim() : null,
+      sourceNotes: sourceNotesOf(node),
       species: hit,
       season: seasonKey,
     };
@@ -328,9 +329,29 @@ export function researchedBand(profile, species, seasonKey) {
     // read exactly the same until the quote was there to check.
     sourceQuote: typeof node.sourceQuote === 'string' && node.sourceQuote.trim()
       ? node.sourceQuote.trim() : null,
+    sourceNotes: sourceNotesOf(node),
     species: hit,
     season: seasonKey,
   };
+}
+
+/**
+ * WHAT THE SOURCE SAID AROUND ITS NUMBER: when, where, and what time of day.
+ *
+ * The research pass writes `notes` beside every season, and for Murray's summer stripers it holds
+ * exactly what the band lost on its way into the app: "In July and until late August, fish are
+ * grouped in the lower lake, mostly Shull Island down... In the morning they move up ridges into
+ * less than 20 ft. By day they are on the bottom in 50-70 ft... At night they suspend anywhere
+ * from 20-85 ft". Ryan, 2026-09-26, asking what the app did with the band: *"all times of the day?
+ * for the entire summer?... where at on the lake is that 50-70ft correct?"*. It did not know, and
+ * this was sitting in the profile.
+ *
+ * Carried whole. The model and Ryan read it and nothing parses it, and a cut would be a length
+ * picked here.
+ */
+function sourceNotesOf(node) {
+  const n = node && typeof node.notes === 'string' ? node.notes.trim() : '';
+  return n || null;
 }
 
 /**
@@ -1477,17 +1498,17 @@ export function describeDepthBand(depth, species, season) {
   // of year... and then yeah use the suspended number."
   const note = holding === 'both'
     ? `The research says ${sp} are BOTH hugging the bottom and suspended on this water in ${se}. `
-      + `Water was picked on the suspended rule, so some of these passes are deeper than the `
+      + `Passes were marked on the suspended rule, so some of them are deeper than the `
       + `fish. Say this in the plan and tell me to watch the sounder for which it is on the day.`
     : holding === 'suspended'
     ? `${sp} are suspended here in ${se}, so the water only has to be deeper than the fish — `
       + `depth of water is not the target, the ${lo}–${hi} ft the fish are holding at is.`
     : holding === 'bottom'
-    ? `${sp} are on the bottom here in ${se}, so the depth of water IS the target — these passes `
-      + `run through ${lo}–${hi} ft of water.`
+    ? `${sp} are on the bottom here in ${se}, so the depth of water IS the target — ${lo}–${hi} ft `
+      + `of it. Passes outside that are offered too and carry inFishBand: false.`
     : `The research does not say whether ${sp} are on the bottom or suspended here in ${se}. `
-      + `Water was picked by matching its depth to the band, which is only right if they are on `
-      + `the bottom. Treat the depths as less certain than usual.`;
+      + `Each pass was marked against the band by matching its depth to it, which is only right if `
+      + `they are on the bottom. Treat the depths as less certain than usual.`;
 
   // ── THE POSITION SURVIVES THE CAVEAT; THE NUMBER INSIDE IT MUST NOT ─────────────────────────
   //
@@ -1612,6 +1633,10 @@ export function describeDepthBand(depth, species, season) {
     holding,
     waterDepthFt: (depth && depth.waterDepthFt) || null,
     sourceQuote: (depth && depth.sourceQuote) || null,
+    // WHEN AND WHERE THE SOURCE SAID IT HOLDS, which the band alone cannot carry. The band stopped
+    // cutting lanes on 2026-09-26 (see selectCandidates), so this is how the model weighs a leg
+    // outside it: by the hour and the part of the lake.
+    sourceNotes: (depth && depth.sourceNotes) || null,
     note: collapsed
       ? evidence === 'one-number' ? NOTES[evidence] : NOTES[evidence] + holdingAside
       : note,

@@ -2182,6 +2182,8 @@ export function selectCandidates(runs, o) {
   // charted depth" is only the report when nothing had one, which is itself worth saying plainly.
   let depthRule = null;
   let depthRuleUnmeasured = null;
+  // Runs that missed the fish band and were offered anyway. See the note where it is counted.
+  let outsideBand = 0;
   const straight = (a, b) => metresBetween(a, b);
   const transitM = o.transitM || straight;
 
@@ -2213,7 +2215,27 @@ export function selectCandidates(runs, o) {
     const elig = eligibleForHolding(p, fishBand, holding);
     if (Number.isFinite(elig.waterFt)) { if (!depthRule) depthRule = elig.rule; }
     else if (!depthRuleUnmeasured) depthRuleUnmeasured = elig.rule;
-    if (!elig.ok) { rejected.depth++; continue; }
+    // ── THE FISH BAND NO LONGER CUTS A LANE. IT IS WRITTEN ON IT. ─────────────────────────────
+    //
+    // Ryan, 2026-09-26, on Murray's researched summer striper band of 50-70 ft: *"from when to
+    // when does the app think that 50-70ft is appropriate... all times of the day? for the entire
+    // summer? when the water temp is at a certain amount? where at on the lake is that 50-70ft
+    // correct?... i think unless we can make it more specific then the 50-70ft cannot cut lanes"*.
+    //
+    // The source was specific and the app was not. It is one guide's report (Capt. Brad Taylor,
+    // AHQ, 3 Aug 2019): July to late August, in the lower lake from Shull Island to the dam, and
+    // only "during the day", because in the morning the fish are on ridges in under 20 ft. The
+    // app applied it to every hour of any day it called summer, over the whole lake. From Hilton
+    // that left 12 lanes within a mile, all of them out in open water, and the cove at the ramp
+    // offered nothing. He showed it: a 40-68 ft creek channel with humps, holes, ledges and two
+    // submerged bridges, and *"what is wrong with all of this water?"*.
+    //
+    // So a lane outside the band is OFFERED, carrying `inFishBand: false` and the rule it missed,
+    // and the model reads the band with its source's own when and where. His standing rule is
+    // annotate, never filter. Water with no charted depth is still refused: that is not the band
+    // deciding, it is nothing to judge.
+    if (!Number.isFinite(elig.waterFt)) { rejected.depth++; continue; }
+    if (!elig.ok) outsideBand++;
     const coords = run.geometry && run.geometry.coordinates;
     // A COUNTER, BECAUSE A RUN THAT LEAVES THIS LOOP IN NO BUCKET IS INVISIBLE. This `continue`
     // had none, so `accountedFor` below could not balance and nothing said why. It is zero on
@@ -2514,6 +2536,10 @@ export function selectCandidates(runs, o) {
       wholeRun: win.whole,
       waterDepthFt: Number.isFinite(elig.waterFt) ? Number(elig.waterFt.toFixed(1)) : null,
       waterDepthMeasured: elig.measured,
+      // Whether this water fits the day's fish band, and the rule it was judged on. Offered either
+      // way since 2026-09-26; see where `outsideBand` is counted.
+      inFishBand: elig.ok,
+      fishBandRule: elig.rule,
       start, end, coordinates: line,
       transitInM: Math.round(inM), transitOutM: Math.round(outM),
       fromRampM: Math.round(fromRampM),
@@ -2824,6 +2850,9 @@ export function selectCandidates(runs, o) {
                 + rejected.scoreless + rejected.battery + rejected.window + rejected.dedupe
                 + rejected.limit + rejected.unfitted + rejected.geometry,
     depthRule: depthRule || depthRuleUnmeasured || 'no runs reached the depth test',
+    // How many runs missed the fish band and were considered anyway. The band is a note now, not a
+    // cut, and this says how much water it would have removed.
+    outsideBand,
     // WHETHER THIS PACK HAD FITTED LANES AT ALL, because "800 unfitted runs were refused" and
     // "this lake has no fitted lanes so rough ones were offered" are different days on the water
     // and only this field separates them.
@@ -2836,9 +2865,9 @@ export function selectCandidates(runs, o) {
     holdingUnknown: !holding,
   };
   if (!holding) {
-    console.warn('[plan-candidates] holding unknown for this species/season — water was filtered '
-               + 'with the old fish-band-vs-water-depth test. Bands from the built-in table never '
-               + 'carry holding; only a researched profile does.');
+    console.warn('[plan-candidates] holding unknown for this species/season — water was judged '
+               + 'with the old fish-band-vs-water-depth test (a note on each lane, not a cut). '
+               + 'Bands from the built-in table never carry holding; only a researched profile does.');
   }
   return kept;
 }
@@ -3472,6 +3501,9 @@ export function forModel(c, cap = MODEL_STRUCTURE_CAP) {
     depthMinFt: c.depthMinFt ?? undefined,
     depthMaxFt: c.depthMaxFt ?? undefined,
     maxRunDepthFt: c.maxRunDepthFt ?? undefined,
+    // SAID ONLY WHEN IT MISSES. Water outside the day's fish band is offered since 2026-09-26, and
+    // the prompt tells the model what the band is and what its source said about when and where.
+    inFishBand: c.inFishBand === false ? false : undefined,
     lengthM: c.lengthM,
     transitFromRampM: c.transitInM,
     // WHAT THE ORDERING COSTS. `transitToM` is metres of deadhead from this leg to each other leg

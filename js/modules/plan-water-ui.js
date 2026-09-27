@@ -53,7 +53,7 @@ import { shoreRays, roughLegs } from '../utils/wind-waves.js';
 import { inshoreSeasonFor } from '../data/inshore-season.js';
 import { seabedHabitatFor } from '../data/seabed-habitat.js';
 import { depthSampler, shorelineIndex, waterMask } from './plan-water-index.js';
-import { offerWater, dayCost, dayOrder, priceSpots, searchOrder, optionality, reasons, TROLL_MPH, TRANSIT_MIN_DEPTH_FT, SPOT_KINDS } from './plan-water.js';
+import { offerWaterAsync, dayCost, dayOrder, priceSpots, searchOrder, optionality, reasons, TROLL_MPH, TRANSIT_MIN_DEPTH_FT, SPOT_KINDS } from './plan-water.js';
 import { joinedPiece } from './plan-pieces.js';
 import { planFromWater } from './plan-from-water.js';
 import { DEFAULT_STOP_MIN } from './plan-assemble.js';
@@ -962,9 +962,19 @@ export async function findWater() {
   if (dnrSpots.length) console.log(`[pick-water] ${dnrSpots.length} state attractors listed`);
 
   say('Measuring the water…');
+  // Let the status line paint before the work starts, and keep answering while it runs -- see
+  // offerWaterAsync(). Ryan, 2026-09-26: "pickwater is causing the browser to hang".
+  await new Promise((res) => setTimeout(res, 0));
+  const STEP_SAYS = {
+    pieces: 'Measuring the water… which side the bottom rises on',
+    sides: 'Measuring the water… which side the bottom rises on',
+    joins: 'Measuring the water… where two pieces run on into one',
+    reasons: 'Measuring the water… writing the reasons',
+    spots: 'Measuring the water… the cast spots',
+  };
   let out;
   try {
-    out = offerWater(lanes, {
+    out = await offerWaterAsync(lanes, {
       minM,
       fishBandFt: depth ? depth.band : null,
       holding: depth ? depth.holding : null,
@@ -989,7 +999,7 @@ export async function findWater() {
       dateUTC: Date.UTC(...inp.dateStr.split('-').map((n, i) => (i === 1 ? +n - 1 : +n))),
       tzOffset: -new Date(`${inp.dateStr}T12:00:00`).getTimezoneOffset() / 60,
       ramps: [{ name: inp.rampName || 'launch', lonLat: ramp }],
-    });
+    }, (step) => { if (STEP_SAYS[step]) say(STEP_SAYS[step]); });
   } catch (e) { return say(e.message, true); }
 
   Object.assign(T, {

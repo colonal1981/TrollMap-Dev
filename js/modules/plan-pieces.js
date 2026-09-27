@@ -421,6 +421,33 @@ const turnBetween = (x, y) => { const d = Math.abs(x - y) % 360; return d > 180 
  * @returns {object[]} one entry per joinable pair, both directions collapsed into one
  */
 export function joinsFor(pieces, o) {
+  return drainSteps(joinsForSteps(pieces, o));
+}
+
+/**
+ * Run a step generator to the end and return what it returned. The synchronous way through
+ * joinsForSteps() and offerWaterSteps(); offerWaterAsync() walks the same steps and hands the page
+ * back between them.
+ */
+export function drainSteps(gen) {
+  let r = gen.next();
+  while (!r.done) r = gen.next();
+  return r.value;
+}
+
+/**
+ * joinsFor(), a step at a time.
+ *
+ * ON MURRAY IT WAS THE HANG (2026-09-26). With the ladder starting at the surface, a Find at 0.3 mi
+ * makes 2,079 pieces, 4,158 ends and 8.6 million end pairs, and 36,696 of those join. Sounding
+ * their gaps is 1.8 million depth lookups, about 8 s in node and more in the browser, all in one
+ * synchronous call. Two changes, and NEITHER CHANGES A JOIN:
+ *   - ends are filed on a grid a quarter wider than `minM`, so each end is measured only against
+ *     the ends in the 3 x 3 cells around it. No pair further apart than `minM` was ever kept.
+ *     Pairs are still visited in the same (a, b) order, so the list and its sort are identical.
+ *   - it yields every few dozen ends, so a caller that is a web page can breathe between them.
+ */
+export function* joinsForSteps(pieces, o) {
   const depthAt = o && o.depthAt;
   const clearFt = o && o.clearFt;
   const bar = o && o.bar;
@@ -441,9 +468,38 @@ export function joinsFor(pieces, o) {
     ends.push({ i, side: 1, at: c[n - 1], out: bearingOf(c[Math.max(0, n - 4)], c[n - 1]) });
   });
 
+  // THE NEIGHBOUR GRID. A cell is a quarter wider than `minM` both ways, measured at the most
+  // poleward end so a degree of longitude is never shorter than assumed.
+  let maxAbsLat = 0;
+  for (const e of ends) { const l = Math.abs(e.at[1]); if (l > maxAbsLat) maxAbsLat = l; }
+  const reach = Math.max(1, minM) * 1.25;
+  const dLat = reach / 111000;
+  const dLon = reach / (111000 * Math.cos((Math.min(89, maxAbsLat + 1) * Math.PI) / 180));
+  const cellOf = (at) => [Math.floor(at[0] / dLon), Math.floor(at[1] / dLat)];
+  const grid = new Map();
+  ends.forEach((e, n) => {
+    const [x, y] = cellOf(e.at);
+    const k = `${x},${y}`;
+    if (!grid.has(k)) grid.set(k, []);
+    grid.get(k).push(n);
+  });
+  const later = (a) => {
+    const [x, y] = cellOf(ends[a].at);
+    const hits = [];
+    for (let i = x - 1; i <= x + 1; i++) for (let j = y - 1; j <= y + 1; j++) {
+      const list = grid.get(`${i},${j}`);
+      if (list) for (const n of list) if (n > a) hits.push(n);
+    }
+    return hits.sort((p, q) => p - q);
+  };
+
+  // The least water any rung needs. A gap station with less than this ends a join. See gapProfile().
+  const minNeed = depths.length ? Math.min(...depths) + clearFt : Infinity;
+
   const out = [];
   for (let a = 0; a < ends.length; a++) {
-    for (let b = a + 1; b < ends.length; b++) {
+    if (a % 32 === 31) yield 'joins';
+    for (const b of later(a)) {
       const A = ends[a], B = ends[b];
       if (A.i === B.i) continue;
       const gapM = metresBetween(A.at, B.at);
@@ -459,8 +515,9 @@ export function joinsFor(pieces, o) {
 
       const pa = pieces[A.i], pb = pieces[B.i];
       const step = pa.envelopeStepM || 40;
-      const gap = gapProfile(A.at, B.at, step, envM, depthAt);
+      const gap = gapProfile(A.at, B.at, step, envM, depthAt, minNeed);
       if (!gap) continue;                       // nobody sounded any of it -- not a claim to make
+      if (gap.hopeless) continue;               // a station no rung clears; see gapProfile()
       const ea = A.side === 0 ? pa.envelope.slice().reverse() : pa.envelope.slice();
       const eb = B.side === 0 ? pb.envelope.slice() : pb.envelope.slice().reverse();
       const joined = ea.concat(gap.shallow, eb);
@@ -612,7 +669,7 @@ function mergeRampM(x, y) {
  * Matching `envelope_ft`'s definition matters: the result is concatenated with two real envelopes
  * and handed to reachCurve, which cannot tell them apart and must not have to.
  */
-function gapProfile(a, b, stepM, envM, depthAt) {
+function gapProfile(a, b, stepM, envM, depthAt, minNeed = -Infinity) {
   const d = metresBetween(a, b);
   const n = Math.max(1, Math.round(d / stepM));
   const brg = bearingOf(a, b) * Math.PI / 180;
@@ -633,11 +690,21 @@ function gapProfile(a, b, stepM, envM, depthAt) {
       const off = (k * envM) / 3;
       const z = depthAt([x + (nx * off) / m_per_deg_lon(y), y + (ny * off) / M_PER_DEG_LAT]);
       if (z == null) continue;
+      // A GAP STATION TOO SHALLOW FOR THE SHALLOWEST RUNG ENDS THE JOIN, so stop sounding it.
+      // Every gap station sits inside the joined run, between two piece envelopes, and joinsFor()
+      // keeps a join only when one depth runs all of it but at most one END station. A station
+      // shallower than `minNeed` fails every rung, so that can never happen, and the rest of the
+      // gap cannot change the answer. On Murray this is most of 3 million lookups.
+      if (z < minNeed) return { hopeless: true };
       if (k === 0) mid = z;
       if (sh === null || z < sh) sh = z;
       if (dp === null || z > dp) dp = z;
     }
-    if (sh === null) { shallow.push(-1); line.push(-1); deep.push(-1); }
+    if (sh === null) {
+      // Nobody sounded any of this station, which reads as -1 below: the same dead end.
+      if (minNeed > -1) return { hopeless: true };
+      shallow.push(-1); line.push(-1); deep.push(-1);
+    }
     else { shallow.push(sh); line.push(mid == null ? -1 : mid); deep.push(dp); charted++; }
   }
   return (n <= 1 || charted > 0) ? { shallow, line, deep, coords } : null;

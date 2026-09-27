@@ -25,11 +25,20 @@ function lane(id, ft, n, northDeg = 0, opts = {}) {
 }
 
 describe('depthLadder — the axis is water depth, not bait depth', () => {
-  it('spans the fish band with room either side to be wrong', () => {
+  it('starts at the surface and reaches past the fish band', () => {
     const l = depthLadder([20, 30]);
-    expect(l[0] <= 12).toBe(true);
+    expect(l[0]).toBe(2);
     expect(l[l.length - 1] >= 38).toBe(true);
     expect(l.every((d, i) => i === 0 || d - l[i - 1] === 2)).toBe(true);
+  });
+
+  it('a deep band does not start the ladder deep (Murray, 50-70 ft, 2026-09-26)', () => {
+    // It started at 42, so no lane shallower than that was ever a piece. Ryan: "even in pickwater
+    // i can't set the water depth below 44ft... i am the one doing the damn picking".
+    const l = depthLadder([50, 70]);
+    expect(l[0]).toBe(2);
+    expect(l.includes(20)).toBe(true);
+    expect(l[l.length - 1]).toBe(78);
   });
 
   it('never offers a depth of zero', () => {

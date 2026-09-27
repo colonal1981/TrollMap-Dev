@@ -48,7 +48,7 @@
  * that knows about `document`, and the fetch comes in as an argument.
  */
 
-import { buildPieces, joinsFor, followBar, RELIEF_RADIUS_M } from './plan-pieces.js';
+import { buildPieces, joinsForSteps, drainSteps, followBar, RELIEF_RADIUS_M } from './plan-pieces.js';
 import { ampHours, minutesFor, metresBetween,
          ampHoursBand, ampHoursAlong, headwindMph, bearingDeg, worstWind } from './plan-candidates.js';
 
@@ -93,13 +93,25 @@ export const TRANSIT_MIN_DEPTH_FT = 6;
  * two feet below full pool, and the wander envelope already moves the answer by a median 3.9 ft.
  * A one-foot ladder would draw a precision the inputs do not have.
  *
- * It spans the fish band with room either side ON PURPOSE. The band is where the research says
- * the fish are, and a piece of water that only just covers it is a piece of water with no room to
- * be wrong -- which is the optionality the doc asks to be scored rather than assumed away.
+ * IT STARTS AT THE SURFACE, WHATEVER THE BAND SAYS. It used to start 8 ft above the fish band,
+ * and that made the band a cut: a lane that could not hold the ladder's first rung for the
+ * shortest pass was never measured, so it never became a piece. On Murray, with the researched
+ * summer striper band of 50-70 ft, the ladder began at 42 ft. Pick Water's depth slider could not
+ * go below 44, and the cove at Hilton offered 3 pieces.
+ *
+ * Ryan, 2026-09-26: *"even in pickwater i can't set the water depth below 44ft... and that is
+ * just silly i am the one doing the damn picking"*. On the band itself: *"unless we can make it
+ * more specific then the 50-70ft cannot cut lanes"*. The 50-70 is one guide's midday July-August
+ * pattern for the lower lake, and the app applied it all day, all summer and everywhere.
+ *
+ * So every lane is measured from `stepFt` down. The band still sets how deep the ladder REACHES
+ * (its top plus `padFt`), because past that a deeper rung only says the water is deeper still.
+ * Measured on Murray from Hilton at a 0.3 mi shortest pass: 872 pieces became 2,079, and 3 within
+ * a mile of the ramp became 21.
  */
 export function depthLadder(bandFt, { stepFt = 2, padFt = 8 } = {}) {
-  const [lo, hi] = Array.isArray(bandFt) && bandFt.length === 2 ? bandFt : [6, 40];
-  const from = Math.max(stepFt, Math.floor((lo - padFt) / stepFt) * stepFt);
+  const hi = Array.isArray(bandFt) && bandFt.length === 2 ? bandFt[1] : 40;
+  const from = stepFt;
   const to = Math.ceil((hi + padFt) / stepFt) * stepFt;
   const out = [];
   for (let d = from; d <= to; d += stepFt) out.push(d);
@@ -1488,6 +1500,35 @@ export function dayOrder(picked, o) {
 }
 
 export function offerWater(lanes, o) {
+  return drainSteps(offerWaterSteps(lanes, o));
+}
+
+/**
+ * offerWater() WITHOUT FREEZING THE PAGE. The same steps, the same answer; between them, when the
+ * page has been held for longer than a frame or two, it is handed back so the browser can paint
+ * the status line and answer clicks. `onStep(label)` is told which part is running.
+ *
+ * Ryan, 2026-09-26: "pickwater is causing the browser to hang". The lookups behind that are an
+ * order of magnitude faster now, and it is still several seconds of work on a lake of Murray's
+ * size, so it is done in slices instead of in one block.
+ */
+export async function offerWaterAsync(lanes, o, onStep) {
+  const gen = offerWaterSteps(lanes, o);
+  const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+  let t = now(), last = null;
+  for (;;) {
+    const r = gen.next();
+    if (r.done) return r.value;
+    if (r.value !== last) { last = r.value; if (onStep) onStep(r.value); }
+    if (now() - t > 40) {
+      await new Promise((res) => setTimeout(res, 0));
+      t = now();
+    }
+  }
+}
+
+/** offerWater(), a step at a time. See offerWaterAsync(). */
+export function* offerWaterSteps(lanes, o) {
   const minM = o.minM;
   if (!(minM > 0)) {
     // HIS NUMBER FOR THE DAY, and there is no constant behind it: "if i want to spend the day
@@ -1503,16 +1544,22 @@ export function offerWater(lanes, o) {
     // So a pass stops where the lake does instead of hooking into a cove. See trimDeadEnd().
     inWater: o.inWater,
   });
+  yield 'pieces';
   // OPTIONAL AND SILENT WHEN ABSENT. `depthAt` comes from depth_areas.geojson, which every pack
   // already ships and R2 already holds -- no refit, no pipeline change. Without it the wind
   // reasons simply say they do not know which way you get set, which is the honest fallback.
-  const keyed = built.pieces.map((p, i) => ({
-    ...p, key: `w${i}`,
-    shallowSide: o.depthAt ? shallowSide(p.coords, o.depthAt) : null,
-    // Null wherever the pack has no shoreline -- 322 of 543 run-carrying packs have one, so this
-    // is absent often and every reader treats absent as "not known", never as "no bank".
-    shoreAspect: o.shoreIndex ? shoreAspect(p.coords, o.shoreIndex) : null,
-  }));
+  const keyed = [];
+  for (let i = 0; i < built.pieces.length; i++) {
+    const p = built.pieces[i];
+    keyed.push({
+      ...p, key: `w${i}`,
+      shallowSide: o.depthAt ? shallowSide(p.coords, o.depthAt) : null,
+      // Null wherever the pack has no shoreline -- 322 of 543 run-carrying packs have one, so
+      // this is absent often and every reader treats absent as "not known", never as "no bank".
+      shoreAspect: o.shoreIndex ? shoreAspect(p.coords, o.shoreIndex) : null,
+    });
+    if (i % 32 === 31) yield 'sides';
+  }
   // WHERE TWO OF THESE ARE ONE RUN. Ryan: "blue and purple to me are pretty much one line...
   // that is how i would fish that", and "they are still too short and stubby and do not link
   // where they should". A piece ends where reachCurve ran out of water for the bait, not where
@@ -1523,7 +1570,7 @@ export function offerWater(lanes, o) {
   // claiming a join across water nobody sampled is exactly the promise this app must not make.
   const step = (lanes.find((f) => f && f.properties && f.properties.envelope_step_m) || {})
     .properties?.envelope_step_m || 40;
-  const joins = o.depthAt ? joinsFor(keyed, {
+  const joins = o.depthAt ? yield* joinsForSteps(keyed, {
     depthAt: o.depthAt,
     clearFt: AXIS_IS_WATER_DEPTH,
     // THE PACK'S OWN SHARPEST FITTED BEND, not an angle chosen here. See followBar().
@@ -1531,6 +1578,7 @@ export function offerWater(lanes, o) {
     minM,
     depths: depthLadder(o.fishBandFt),
   }) : [];
+  yield 'reasons';
 
   // Partners first: a piece's best argument is usually the one next to it, so reasons() cannot
   // be written until the whole set is known.
@@ -1572,6 +1620,7 @@ export function offerWater(lanes, o) {
   }));
   // Spots are gathered here and PRICED later, by priceSpots(), because their price depends on
   // what has been ticked and that is not known yet. Gathering is expensive; pricing is cheap.
+  yield 'spots';
   const spots = castSpots(lanes, { features: o.spotFeatures || null,
                                    extraSpots: o.extraSpots || null });
   // `joins` also comes out whole, because joinedPiece() indexes into the piece array it was
