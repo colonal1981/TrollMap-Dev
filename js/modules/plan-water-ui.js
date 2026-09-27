@@ -53,7 +53,7 @@ import { shoreRays, roughLegs } from '../utils/wind-waves.js';
 import { inshoreSeasonFor } from '../data/inshore-season.js';
 import { seabedHabitatFor } from '../data/seabed-habitat.js';
 import { depthSampler, shorelineIndex, waterMask } from './plan-water-index.js';
-import { offerWaterAsync, dayCost, dayOrder, priceSpots, searchOrder, optionality, reasons, TROLL_MPH, TRANSIT_MIN_DEPTH_FT, SPOT_KINDS, todayFt } from './plan-water.js';
+import { offerWaterAsync, dayCost, dayOrder, priceSpots, optionality, reasons, TROLL_MPH, TRANSIT_MIN_DEPTH_FT, SPOT_KINDS, todayFt } from './plan-water.js';
 import { joinedPiece } from './plan-pieces.js';
 import { planFromWater } from './plan-from-water.js';
 import { DEFAULT_STOP_MIN } from './plan-assemble.js';
@@ -569,22 +569,12 @@ function total() {
   // fix is almost always an ordering: "yes, if you fish it second instead of last."
   const order = od.order.map((k) => T.pieces.indexOf(picked[k]) + 1).join(' → ');
   const notes = [];
-  const cheapOrder = od.cheapest.order.map((k) => T.pieces.indexOf(picked[k]) + 1).join(' → ');
+  // SHORTEST-FIRST, and said as that. Ryan, 2026-09-26: "Always shortest-first" -- see dayOrder().
   if (!od.cheapest.fits) {
     notes.push(`<span class="wg-stop">Over the battery — ${esc(od.cheapest.reason)}. `
-             + `Best possible order is ${cheapOrder} and it still does not fit; drop one.</span>`);
-  } else if (od.batteryReordered) {
-    notes.push(`<span class="wg-warn">The app's search order would run the battery over, so the `
-             + `day is built shortest-first: ${order}.</span>`);
+             + `Shortest order is ${order} and it still does not fit; drop one.</span>`);
   } else {
-    notes.push(`<span class="wg-ok">Built in this order, most telling water first: ${order}.</span>`);
-    // WHAT THE ORDER IS COSTING HIM. The search order is the app's call, not a law -- so where the
-    // shortest order would give real time back, the number is here for him to weigh.
-    const saved = d.min - od.cheapest.min;
-    if (saved >= 1) {
-      notes.push(`<span class="wg-dim">Fished shortest-first (${cheapOrder}) the same water would `
-               + `take ${fmtHm(od.cheapest.min)}+, ${fmtHm(saved)} less moving.</span>`);
-    }
+    notes.push(`<span class="wg-ok">Built shortest-first: ${order}.</span>`);
   }
   if (d.overWindowMin > 0) {
     notes.push(`<span class="wg-warn">${fmtHm(d.overWindowMin)} past your return time — `
@@ -1222,7 +1212,8 @@ export async function findWater() {
 /** The water he ticked, in the order the app would fish it. Exported so a test can read it. */
 export function pickedWater() {
   const picked = T.pieces.filter((p) => T.picked.has(p.key));
-  const order = searchOrder(picked);
+  const order = dayOrder(picked, { ramp: T.ramp, usableAh: T.usableAh, windowMin: T.windowMin,
+                                   windByHour: T.windByHour }).order;
   return { lake: T.lake, ramp: T.ramp, rampName: T.rampName, band: T.band, holding: T.holding,
            order, pieces: order.map((i) => picked[i]), spots: T.spots };
 }
@@ -1524,8 +1515,7 @@ export async function buildFromPicked() {
     returnTime: T.returnTime || null,
   });
 
-  // SAY THE ORDER OUT LOUD AND SAY IT IS NOT THE SHORT ONE. Silently reordering what he ticked is
-  // how a search reads as a mistake -- § 14 gives him veto, and a veto needs something to look at.
+  // SAY THE ORDER OUT LOUD. The app reorders what he ticked, shortest-first, and says so.
   const seq = r.order.map((i) => T.pieces.indexOf(picked[i]) + 1).join(' → ');
   // THE REAL CLOCK, OFF THE ASSEMBLED PLAN, NOT THE STRAIGHT-LINE ESTIMATE.
   //
@@ -1562,8 +1552,7 @@ export async function buildFromPicked() {
   }
   window._planV2NoGo = false;
 
-  say(`Built ${picked.length} legs, fished ${seq} — most diagnostic first, so a leg that produces `
-    + `nothing still tells you something. That is a search order, not the shortest route. `
+  say(`Built ${picked.length} legs, fished shortest-first: ${seq}. `
     + `${clock}${r.dayCost.ah} Ah of ${T.usableAh}. ${gpx.tracks} tracks and ${gpx.waypoints} waypoints `
     + `for the Echomap — the charted structure is in there to check against the sounder. `
     + `${cues.positionCues} alerts loaded`

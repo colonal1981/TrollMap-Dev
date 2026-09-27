@@ -624,7 +624,15 @@ export function planToTimeline(plan, o = {}) {
       port: rods[0] ? rods[0].lure : '', starboard: rods[1] ? rods[1].lure : '',
       portColor: rods[0] ? rods[0].color : '', starboardColor: rods[1] ? rods[1].color : '',
       portLeadFt: rods[0] ? rods[0].lead : '', starboardLeadFt: rods[1] ? rods[1].lead : '',
-      why: clean(leg.why), phaseName: card.label,
+      // THE CARD'S WHOLE SENTENCE, NOT JUST THE MODEL'S. `longDesc` above carries the leg's reason,
+      // the "if they are not producing" line and the sonar check, and the comment on it says it is
+      // there "so it reaches the panel, the print, the HTML export and the phone". It reached none
+      // of them: the panel, the print and the export all read THIS field, and this field was
+      // `clean(leg.why)` alone. Since 2026-09-18 (b469ade, 369006f) every fallback the model wrote
+      // was validated, stored and never shown -- 8 of 10 legs on Ryan's 9/27 Murray plan -- while
+      // the tests read `cards[].longDesc`, which nothing renders. The transit entry above already
+      // did it this way.
+      why: card.longDesc, phaseName: card.label,
     });
   }
 

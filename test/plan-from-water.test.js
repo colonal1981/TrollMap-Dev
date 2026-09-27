@@ -1,6 +1,6 @@
 import { describe, it, expect } from './expect-shim.mjs';
 import { planFromWater } from '../js/modules/plan-from-water.js';
-import { dayCost, dayOrder, searchOrder } from '../js/modules/plan-water.js';
+import { dayCost, dayOrder } from '../js/modules/plan-water.js';
 import { orientLegs } from '../js/modules/plan-candidates.js';
 import { TACKLE_INVENTORY } from '../js/data/tackle-inventory.js';
 import { connectionFor } from '../js/data/lure-knowledge.js';
@@ -351,11 +351,12 @@ describe('Pick Water reads the answer modelAsker() actually returns', () => {
   it('tells the model the minutes of the day it is building, which is the card\'s number', async () => {
     // Ryan's 2026-09-26 Wateree pick: the card said 466 min, the plan came out at 639. The card and
     // the prompt priced the CHEAPEST order; the day was built in searchOrder(). Both read dayOrder()
-    // now, so the number he picks against is the number of the day he is handed.
+    // now, so the number he picks against is the number of the day he is handed -- and since his
+    // "Always shortest-first" the same night, that order IS the cheapest one.
     let sent = null;
     await build({ askModel: async (req) => { sent = req; return MODEL(req); } });
     const od = dayOrder(PICKED, { ramp: RAMP, usableAh: 80, windowMin: 480 });
-    expect(od.order).toEqual(searchOrder(PICKED));
+    expect(od.order).toEqual(dayCost(PICKED, { ramp: RAMP, usableAh: 80, windowMin: 480 }).order);
     const m = /The app prices the water below at (\d+) minutes/.exec(sent.user);
     expect(m).toBeTruthy();
     expect(Number(m[1])).toBe(od.cost.min);

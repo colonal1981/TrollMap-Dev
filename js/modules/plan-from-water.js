@@ -21,14 +21,13 @@
  * amp-hours, the clock, which end to start from.
  *
  * ─────────────────────────────────────────────────────────────────────────────────────────────
- * TWO ORDERINGS, AND THEY ARE NOT THE SAME ORDERING
+ * ONE ORDERING SINCE 2026-09-26
  *
- *   § 14  the DAY's order is a SEARCH order — most diagnostic first, and Ryan keeps a veto
- *   § 9   the BATTERY check runs against the best realisable ordering of the ticked set
- *
- * `searchOrder()` gives the first. `dayCost()` gives the second. They routinely differ, and using
- * the cheap one to order the day would quietly turn a search into an itinerary — which is the
- * thing the whole rewrite exists to stop.
+ * § 14 made the day's order a SEARCH order — most diagnostic first, with Ryan keeping a veto — and
+ * § 9 checked the battery against the cheapest ordering. The veto never reached the page, and on
+ * his 9/27 Murray plan the search order ran him 2.1 km out of the middle of the day. Asked, he
+ * picked "Always shortest-first", so the day and the battery check are now the same ordering: the
+ * cheapest one dayCost() finds. See dayOrder().
  *
  * The battery is still the only refusal. § 9: "if they are going to run out of battery because of
  * choice they shouldn't be able to make that choice."
@@ -41,7 +40,7 @@ import { buildPlanRequest, parsePlanResponse, planArgsFrom, MODEL_LEG_FIELDS, mo
          cannotUseBreaks } from './plan-prompt.js';
 import { prefetchTransits } from './smart-plan-v2.js';
 import { launchRouteFor } from '../data/launch-reach.js';
-import { searchOrder, dayCost, dayOrder, priceSpots, TROLL_MPH, TRANSIT_MPH } from './plan-water.js';
+import { dayCost, dayOrder, priceSpots, TROLL_MPH, TRANSIT_MPH } from './plan-water.js';
 
 /** The point on a line nearest a given position, and how far along the line it is. */
 function positionOn(coords, cum, fraction) {
@@ -286,7 +285,7 @@ function legFrom(piece, i, ramp, slug, wind, extra = {}) {
  * @param {number[]} o.ramp        [lon, lat]
  * @param {number}   o.usableAh    LiFePO4 reserve already removed
  * @param {object[]} [o.windByHour] the day's hourly wind; dayCost() costs against its worst hour
- * @param {number[]} [o.order]     HIS override. Absent = the app's search order.
+ * @param {number[]} [o.order]     a given order, built as given. Absent = shortest-first.
  * @param {function} o.askModel    ({system,user}) => Promise<string|{content, meta}>
  * @param {function} [o.routeWater] transit router; a straight line is marked `unrouted`
  */
@@ -296,12 +295,9 @@ export async function planFromWater(o) {
     return { plan: null, problems: ['No water picked — tick some on the Water tab first'] };
   }
 
-  // THE DAY'S ORDER IS THE SEARCH ORDER, unless he overrode it. § 14: "my maybe was that i have
-  // veto or override authority" — so the override is a plain argument, not a setting.
-  //
-  // AND THE BATTERY OUTRANKS THE SEARCH ORDER. dayOrder() keeps searchOrder() unless that order would
-  // run the battery over where the cheapest would not; it is the same call the Water tab's total
-  // makes, so the order and the minutes he saw beside the tick boxes are the day he is handed.
+  // THE DAY'S ORDER IS THE SHORTEST ONE. Ryan, 2026-09-26: "Always shortest-first" -- see dayOrder().
+  // It is the same call the Water tab's total makes, so the order and the minutes he saw beside the
+  // tick boxes are the day he is handed. `o.order` still prices and builds a given order as given.
   const wind = o.wind || worstWind(o.windByHour);
   // AND THE STOPS HE ASKED FOR, priced exactly as the Water tab's card prices them. The card counted
   // them and this did not, so on 2026-09-26 the prompt told the model it had 82 minutes spare when
@@ -740,10 +736,7 @@ export async function planFromWater(o) {
     // WHAT THE MODEL GOT WRONG, SAID OUT LOUD. This was a hardcoded empty array, so a rod that is
     // not on the boat, a lure that is not in the bag and a leg with no rods deployed all arrived
     // silently. smart-plan-v2.js has always returned these.
-    problems: [...(chosen.batteryReordered && !overridden
-      ? [`The app's search order would have needed ${dayCost(picked, { ramp: o.ramp, usableAh: o.usableAh, wind, order: searchOrder(picked) }).ah} Ah `
-         + `of ${o.usableAh}, so this day is fished in the shortest order instead.`] : []),
-               ...(args.problems || []), ...(plan.warnings || [])],
+    problems: [...(args.problems || []), ...(plan.warnings || [])],
     dayCost: cheapest,
     order,
     // So the UI can say "the app put them in this order, and here is why" rather than silently

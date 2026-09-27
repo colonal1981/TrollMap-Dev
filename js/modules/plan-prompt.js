@@ -2393,9 +2393,10 @@ things almost never point the same way and here they do.`}
 
 ${JSON.stringify(candidates)}
 ${o.waterIsChosen ? `
-THE FISHERMAN ALREADY CHOSE THIS WATER AND THIS ORDER.
+THE FISHERMAN ALREADY CHOSE THIS WATER, AND THE APP PUT IT IN ORDER.
 He picked these stretches himself, off a map, with the reasons for and against in front of him —
-they are in \`whyThisWater\` on each one, computed from the chart, not written by you. Do not
+they are in \`whyThisWater\` on each one, computed from the chart, not written by you. The ORDER
+is the app's: the shortest route through them it could find, which is what he asked for. Do not
 re-rank them, do not suggest better water, and do not reorder the day. The list above IS the day,
 first to last.${Number(o.whyThisWaterOffsetFt) ? `
 \`whyThisWater\` IS WRITTEN IN TODAY'S WATER — the chart ${o.whyThisWaterOffsetFt > 0 ? 'less' : 'plus'}
@@ -2410,9 +2411,6 @@ goes in the plan with nothing behind the boat. On 2026-08-31 five of ten came ba
 he pedalled five miles of chosen water with bare rods. If a stretch is genuinely not worth fishing,
 say so in its \`why\` and rig it anyway — that is a leg he can skip on the day, which is his call
 to make and not one you can make for him by omission.
-
-The order is a SEARCH order: the most diagnostic water first, so that a leg which produces nothing
-still tells him something. That is why it is not the shortest route between them.
 
 YOUR JOB IS THE TACKLE. Baits, speeds, leads, presentation, which two rods go in the water on each
 leg, and where to pause. Nothing about which water.
@@ -2470,9 +2468,8 @@ RULES THAT ARE NOT NEGOTIABLE
    WHAT IS LEFT IS THE FISHING: which two baits go in the water on each leg, at what lead, why that
    water at that hour, and what the sonar should show. That is the whole of your job here, and it is
    the part nothing in this app can compute.` : `${o.orderIsChosen
-   ? `THE ORDER IS FIXED AND IT IS NOT YOURS. Fish them in the order given. If the deadheading
-   between two of them looks genuinely wasteful, SAY SO in the notes and leave the order alone —
-   he has veto over his own plan and does not need it exercised for him.`
+   ? `THE ORDER IS FIXED AND IT IS NOT YOURS. It is the shortest route the app found through the
+   water he picked, and he asked for exactly that. Fish them in the order given.`
    : `ORDER THE LEGS TO SPEND AS LITTLE OF THE DAY DEADHEADING AS YOU CAN.`} Add up
    \`transitFromRampM\` for the leg you start with, \`transitToM\` for each hop between
    consecutive legs, and \`transitToRampM\` for the leg you finish on — that total is time and
@@ -3012,6 +3009,19 @@ export function planArgsFrom(res, candidates, ctx = {}) {
     }
   }
   const reseat = (id) => (id && seat.map[id]) || id;
+  // ── AND THE SAME NUMBERS IN THE MODEL'S OWN SENTENCES ──────────────────────────────────────────
+  //
+  // The re-seat moved every rod id the app reads -- deploy, stops, changes, the fallback -- and
+  // left every id the model WROTE where it was. Ryan's 9/27 Murray plan, Claude-built: R2→R5,
+  // R3→R6, R4→R2, R5→R3, R6→R4, and 28 rod numbers in the leg reasons, stop presentations and sonar
+  // notes pointed at a different lure on the card. Stop S3.1 said "a few casts of R6 lipless"; R6
+  // on the card was the 3 oz bucktail.
+  //
+  // ONE PASS, so a swap cannot chain: R2→R5 and R5→R3 in the same sentence must not make the first
+  // one R3. The replacer looks each match up in the map once and never sees its own output.
+  const reseatText = (s) => (typeof s === 'string' && moved.length
+    ? s.replace(/\bR[1-6]\b/g, (m) => seat.map[m] || m) : s);
+  seat.rods = seat.rods.map((r) => (r.why ? { ...r, why: reseatText(r.why) } : r));
   // Only rods this plan actually rigged may be deployed, cast with, or changed. A staged rod is
   // carrying whatever it was carrying last trip, and the plan has no idea what that is — telling
   // him to "swap R3" when it never said what is on R3 is worse than saying nothing.
@@ -3162,7 +3172,7 @@ export function planArgsFrom(res, candidates, ctx = {}) {
         problems.push(`${c.runId} says to swap ${outId} out if nothing produces, and ${outId} is not `
                     + 'one of the two rods it deploys there — dropped');
       } else if (usable(inId, `the fallback rod on ${c.runId}`)) {
-        ifNotProducing = { rodId: inId, insteadOf: outId, why: str(f.why) };
+        ifNotProducing = { rodId: inId, insteadOf: outId, why: reseatText(str(f.why)) };
       }
     }
 
@@ -3175,7 +3185,8 @@ export function planArgsFrom(res, candidates, ctx = {}) {
     // THE REASON UNDER WHATEVER NAME IT CAME BACK. On 2026-09-27 the model wrote the last leg's
     // sentence as `"work": "..."`, and the card for that leg came up blank. A misnamed field is
     // still the leg's reason, so the obvious spellings are read before giving up on it.
-    const answer = { why: str(leg.why) || str(leg.work) || str(leg.reason) || str(leg.notes),
+    const answer = { why: reseatText(str(leg.why) || str(leg.work) || str(leg.reason)
+                                     || str(leg.notes)),
                      ifNotProducing };
     if (!riverDay) {
       answer.speedMph = num(leg.speedMph) ?? undefined;
@@ -3260,7 +3271,8 @@ export function planArgsFrom(res, candidates, ctx = {}) {
       ? s.rods.map(reseat).filter((x) => ROD_IDS.includes(x) && usable(x, `a stop on ${s.runId}`))
       : [],
     durationMin: num(s.durationMin) ?? 15,
-    why: str(s.why), presentation: str(s.presentation), positioning: str(s.positioning),
+    why: reseatText(str(s.why)), presentation: reseatText(str(s.presentation)),
+    positioning: reseatText(str(s.positioning)),
   }));
 
   const changes = (Array.isArray(res.changes) ? res.changes : []).filter((c) => {
@@ -3293,21 +3305,22 @@ export function planArgsFrom(res, candidates, ctx = {}) {
     return {
       beforeRunId: c.beforeRunId, rodId: reseat(c.rodId),
       pass: onPass === 2 ? 2 : 1,
-      to: (hit && hit.name) || asked, why: str(c.why),
+      to: (hit && hit.name) || asked, why: reseatText(str(c.why)),
     };
   });
 
   const safety = res.safety || {};
   return {
     candidates: ordered,
-    loadout: { why: str(res.loadout && res.loadout.why), rods: seat.rods },
+    loadout: { why: reseatText(str(res.loadout && res.loadout.why)), rods: seat.rods },
     deploy, deployBack, stops, changes,
     safety: {
       isGo: safety.isGo !== false,
-      warning: str(safety.warning) || '',
+      warning: reseatText(str(safety.warning)) || '',
       rampEvaluation: str(safety.rampEvaluation) || '',
     },
-    notes: res.notes && typeof res.notes === 'object' ? res.notes : {},
+    notes: res.notes && typeof res.notes === 'object'
+      ? Object.fromEntries(Object.entries(res.notes).map(([k, v]) => [k, reseatText(v)])) : {},
     problems,
     // What the app settled while reading the answer, for plan.decisions -- see the re-seat note.
     decisions,

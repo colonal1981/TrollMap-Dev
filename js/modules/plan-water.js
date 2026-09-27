@@ -1012,7 +1012,7 @@ export function dayCost(picked, o) {
     }
   };
   // A GIVEN ORDER IS PRICED AS GIVEN. The Water tab's running total used to show only the
-  // cheapest ordering, and the day is BUILT in searchOrder() -- a different, dearer order. Ryan's
+  // cheapest ordering, and the day was BUILT in searchOrder() -- a different, dearer order. Ryan's
   // 2026-09-26 Wateree pick read 466 min against a 480 min day and the plan came out at 639:
   // 88 min of moving on the card and 182 in the plan, the same eighteen pieces in two orders. So
   // the card asks for the order the plan will use, and this walks exactly that one.
@@ -1533,24 +1533,24 @@ export function searchOrder(picked) {
  * 2026-09-26 Wateree pick: 466 min on the card, 639 in the plan. His ask: "we need to do a better
  * job of estimating the time so i know how many to pick". So both now read this.
  *
- * The search order stands (§ 14) unless it would run the battery over while the cheapest order
- * would not. The battery is the one hard stop -- "if they are going to run out of battery because
- * of choice they shouldn't be able to make that choice" -- and the search order is the app's
- * choice, not his, so there it yields and says so.
+ * SHORTEST-FIRST, ALWAYS. Until 2026-09-26 the day was built in searchOrder() -- most diagnostic
+ * water first (§ 14) -- unless that ran the battery over. § 14 also promised him a veto, and the
+ * veto was only ever an argument to planFromWater() that nothing on the page passed, so he had no
+ * way to take the short route the card was quoting at him. Ryan, reading his 9/27 Murray plan with
+ * a 2.1 km run out of the middle of it: "you keep saying that i pick the order for pick water...
+ * i dont see a way to do that". Offered the app's order, shortest-first, or a choice on the card,
+ * he picked "Always shortest-first".
+ *
+ * So the day is the cheapest ordering dayCost() can find, and the card and the plan both read it.
+ * searchOrder() is left exported for what it measures; nothing builds a day in it.
  *
  * @param {object[]} picked
  * @param {object}   o   dayCost()'s options; `stopMin` is the stops he asked for, in minutes
- * @returns {{order:number[], cost:object, cheapest:object, batteryReordered:boolean}}
+ * @returns {{order:number[], cost:object, cheapest:object}}
  */
 export function dayOrder(picked, o) {
   const cheapest = dayCost(picked, o);
-  const search = searchOrder(picked);
-  const asSearched = dayCost(picked, { ...o, order: search });
-  if (asSearched.fits || !cheapest.fits) {
-    return { order: search, cost: asSearched, cheapest, batteryReordered: false };
-  }
-  return { order: cheapest.order, cost: dayCost(picked, { ...o, order: cheapest.order }),
-           cheapest, batteryReordered: true };
+  return { order: cheapest.order, cost: dayCost(picked, { ...o, order: cheapest.order }), cheapest };
 }
 
 export function offerWater(lanes, o) {

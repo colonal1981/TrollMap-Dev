@@ -119,7 +119,9 @@ export function stopName(stop, drawdownFt = null) {
   // travelled the whole plan intact and died at this one coercion, one step from the card, where
   // it turned into a claim that the boat can troll a dock in no water.
   const d = stop.depthFt == null ? NaN : Number(todayDepthFt(Number(stop.depthFt), drawdownFt));
-  const ft = Number.isFinite(d) && d > 0 ? ` ${Math.round(d)}ft` : '';
+  // AND A CHARTED DEPTH THE LAKE HAS DROPPED BELOW IS DRY, SAID AS DRY. See the marks below.
+  const ft = Number.isFinite(d) && d > 0 ? ` ${Math.round(d)}ft`
+    : (Number.isFinite(d) && drawdownFt != null ? ' dry' : '');
   return trim(`${stop.id} · ${what}${ft}`, 24);
 }
 
@@ -546,7 +548,12 @@ export function planWaypoints(plan, launch = null, runId = null, opts = {}) {
         // number in the name -- an empty field reads as "the chart does not say", a zero would not.
         const dd = legDrawdown(leg);
         const today = Number.isFinite(m.depthFt) ? todayOnLeg(leg, m.depthFt) : null;
-        const d = Number.isFinite(today) ? ` ${Math.round(today)}ft` : '';
+        // DRY IS A WORD, NOT A NEGATIVE DEPTH. The chart less the drawdown goes below zero on a
+        // feature the lake has dropped off: Ryan's 9/27 Murray GPX carried "point -4ft" and
+        // "cove -4ft", charted at 1.4 and 1.6 ft with the lake 5.56 ft down. Kept on the unit --
+        // annotate, never filter -- and named for what it is today.
+        const dry = dd != null && Number.isFinite(today) && today <= 0;
+        const d = dry ? ' dry' : Number.isFinite(today) ? ` ${Math.round(today)}ft` : '';
         // ONLY WHERE IT IS ONE. `charted` is false when no feature resolved and the pin is the
         // point on the line at that distance, which is not a charted position and must not say it
         // is -- the whole point of the note is that he stands it next to the sounder.
@@ -562,7 +569,8 @@ export function planWaypoints(plan, launch = null, runId = null, opts = {}) {
           chartDepth: m.depthFt ?? null,
           structureType: m.type || null,
           tacticalNote: dd != null && Number.isFinite(m.depthFt)
-            ? `${where}; ${m.depthFt} ft on the chart, ${today} ft today with the lake `
+            ? `${where}; ${m.depthFt} ft on the chart, `
+              + `${dry ? 'out of the water' : `${today} ft`} today with the lake `
               + `${Math.abs(dd)} ft ${dd > 0 ? 'below' : 'above'} full pool`
             : where,
         });
