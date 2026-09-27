@@ -118,3 +118,105 @@ export function inRing(lon, lat, ring) {
   }
   return inside;
 }
+
+/**
+ * THE SAME RAY CAST FOR A RING ASKED MANY TIMES: index it once, then read only the edges that
+ * can cross the ray.
+ *
+ * A horizontal ray is crossed only by an edge whose latitude span holds the point's latitude --
+ * the first half of inRing()'s own test, `(yi > lat) !== (yj > lat)`. indexRing() files every
+ * edge under each latitude row it spans; inIndexedRing() reads the one row its point is in and
+ * applies inRing()'s test, unchanged, to those edges. The edges it skips are exactly the ones that
+ * cannot pass that test, so THE ANSWER IS inRing()'S ANSWER, not an approximation of it. The
+ * ring's own arrays are read, not copied; the index is one Int32Array of edge numbers.
+ *
+ * Why it exists: Pick Water hung the browser on Murray, 2026-09-26, inside inRing() under
+ * depthSampler(). See plan-water-index.js.
+ *
+ * @param {Array<[number, number]>} ring
+ * @returns {object} opaque; hand it to inIndexedRing()
+ */
+export function indexRing(ring) {
+  const n = ring.length;
+  let y0 = Infinity, y1 = -Infinity, x0 = Infinity, x1 = -Infinity;
+  for (let i = 0; i < n; i++) {
+    const x = ring[i][0], y = ring[i][1];
+    if (y < y0) y0 = y;
+    if (y > y1) y1 = y;
+    if (x < x0) x0 = x;
+    if (x > x1) x1 = x;
+  }
+  // About two edges a row, so the rows scale with the ring and a tiny ring stays one row.
+  const rows = Math.max(1, Math.ceil(n / 2));
+  const h = (y1 - y0) / rows || 1;
+  const row = (y) => Math.min(rows - 1, Math.max(0, Math.floor((y - y0) / h)));
+  const start = new Int32Array(rows + 1);
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const a = ring[i][1], b = ring[j][1];
+    const r1 = row(Math.max(a, b));
+    for (let r = row(Math.min(a, b)); r <= r1; r++) start[r + 1]++;
+  }
+  for (let r = 0; r < rows; r++) start[r + 1] += start[r];
+  const edges = new Int32Array(start[rows]);
+  const fill = start.slice(0, rows);
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const a = ring[i][1], b = ring[j][1];
+    const r1 = row(Math.max(a, b));
+    for (let r = row(Math.min(a, b)); r <= r1; r++) edges[fill[r]++] = i;
+  }
+  return { ring, n, y0, y1, x0, x1, row, start, edges };
+}
+
+// A billionth of a degree, about 0.1 mm. inRing()'s crossing point can round a few units in the
+// last place past the edge it lies on -- around 1e-13 of a degree out here -- so the box test
+// below stands this far off the ring before it answers for it, and never answers differently.
+const BOX_MARGIN_DEG = 1e-9;
+
+/**
+ * inRing() against a ring indexed by indexRing(). Same answer, a fraction of the edges read.
+ *
+ * @param {number} lon
+ * @param {number} lat
+ * @param {object} idx  from indexRing()
+ * @returns {boolean}
+ */
+export function inIndexedRing(lon, lat, idx) {
+  // Nothing spans a latitude outside the ring: no crossing, so not inside, as inRing() finds.
+  if (!(lat >= idx.y0 && lat < idx.y1)) return false;
+  // East of the ring, nothing crosses the ray. West of it, every edge that spans the latitude
+  // crosses, and around a closed ring that is always an even number. Not inside either way, which
+  // is inRing()'s answer; this only skips reading the edges to find that out.
+  if (lon > idx.x1 + BOX_MARGIN_DEG || lon < idx.x0 - BOX_MARGIN_DEG) return false;
+  const ring = idx.ring, r = idx.row(lat);
+  let inside = false;
+  for (let k = idx.start[r]; k < idx.start[r + 1]; k++) {
+    const i = idx.edges[k], j = i === 0 ? idx.n - 1 : i - 1;
+    const xi = ring[i][0], yi = ring[i][1], xj = ring[j][0], yj = ring[j][1];
+    if (((yi > lat) !== (yj > lat)) && (lon < ((xj - xi) * (lat - yi)) / (yj - yi) + xi)) inside = !inside;
+  }
+  return inside;
+}
+
+/**
+ * Could any edge of an indexed ring come within BOX_MARGIN_DEG of the box [w,s]-[e,n]?
+ *
+ * Conservative on purpose: it answers true for an edge whose own box touches the grown box, which
+ * includes a few that pass by the corner without entering. False is the claim that matters, and
+ * false is exact: then every point in the box is at least the margin from the ring, the ray cast
+ * cannot round differently anywhere in it, and the whole box is inside or the whole box is out.
+ */
+export function ringNearBox(idx, w, s, e, n) {
+  if (idx.y1 < s - BOX_MARGIN_DEG || idx.y0 > n + BOX_MARGIN_DEG
+      || idx.x1 < w - BOX_MARGIN_DEG || idx.x0 > e + BOX_MARGIN_DEG) return false;
+  const ring = idx.ring;
+  const r1 = idx.row(n + BOX_MARGIN_DEG);
+  for (let r = idx.row(s - BOX_MARGIN_DEG); r <= r1; r++) {
+    for (let k = idx.start[r]; k < idx.start[r + 1]; k++) {
+      const i = idx.edges[k], j = i === 0 ? idx.n - 1 : i - 1;
+      const xi = ring[i][0], yi = ring[i][1], xj = ring[j][0], yj = ring[j][1];
+      if (Math.min(xi, xj) <= e + BOX_MARGIN_DEG && Math.max(xi, xj) >= w - BOX_MARGIN_DEG
+          && Math.min(yi, yj) <= n + BOX_MARGIN_DEG && Math.max(yi, yj) >= s - BOX_MARGIN_DEG) return true;
+    }
+  }
+  return false;
+}

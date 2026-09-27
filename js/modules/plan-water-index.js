@@ -15,12 +15,13 @@
  * handful of candidates, which is the difference between a tab that answers and one that hangs.
  */
 
-import { inRing } from '../utils/geojson-coords.js';
+import { indexRing, inIndexedRing, ringNearBox } from '../utils/geojson-coords.js';
 
 const M_PER_DEG_LAT = 110540.0;
 const m_per_deg_lon = (lat) => 111320.0 * Math.cos((lat * Math.PI) / 180);
 
 // inRing() is the one ray cast in js/utils/geojson-coords.js (2026-09-25); this had its own copy.
+// depthSampler() uses its indexed form from the same file, which gives the same answer.
 
 /**
  * Depth lookup from depth_areas.geojson.
@@ -55,19 +56,58 @@ export function depthSampler(features, { cellDeg = 0.002 } = {}) {
       }
     }
   }
-  return (pt) => {
-    const k = `${Math.floor(pt[0] / cellDeg)},${Math.floor(pt[1] / cellDeg)}`;
-    let best = null;
+  // ── WHY THIS IS NOT JUST inRing() ON EVERY CANDIDATE ANY MORE ──────────────────────────────────
+  //
+  // Pick Water hung the browser on Murray, 2026-09-26 (Ryan: "pickwater is causing the browser to
+  // hang"). Paused mid-hang, it was in inRing() under this sampler, called from shallowSide() and
+  // joinsFor(). Murray's depth_areas.geojson is 49,783 polygons and 7.1 million vertices, the
+  // biggest rings about 4,000, and a lookup there had 87 candidates whose box covered its cell and
+  // walked every edge of each: 0.6-0.9 ms a lookup against Wateree's 0.2. A Find asked 15,696 for
+  // the sides of the pieces (14.5 s), then 640,000-800,000 for the gaps joinsFor() sounds, which
+  // is ten minutes.
+  //
+  // Two changes, and NEITHER CHANGES AN ANSWER:
+  //   1. A ring is indexed the first time a lookup reaches it, so a ray cast reads only the edges
+  //      that can cross it (indexRing() in geojson-coords.js -- inRing()'s own test, fewer edges).
+  //   2. Each grid cell is sorted once, the first time a lookup lands in it. A polygon with no
+  //      edge within a hair of the cell (ringNearBox()) covers all of the cell or none of it, so
+  //      it is tested once at the cell's centre and its answer kept. Only polygons whose edges do
+  //      come near the cell are tested point by point.
+  // Measured against the old sampler on 20,000 points each on Murray and Wateree, a fifth of them
+  // polygon vertices: no difference at any point.
+  const cells = new Map();
+  const idxOf = (q) => q.idx || (q.idx = q.rings.map(indexRing));
+  const covers = (q, lon, lat) => {
+    const I = idxOf(q);
+    if (!inIndexedRing(lon, lat, I[0])) return false;
+    // Holes are real: an island inside a depth band is not that depth.
+    for (let h = 1; h < I.length; h++) if (inIndexedRing(lon, lat, I[h])) return false;
+    return true;
+  };
+  const cellAt = (cx, cy, k) => {
+    let c = cells.get(k);
+    if (c) return c;
+    const w = cx * cellDeg, s = cy * cellDeg, e = w + cellDeg, n = s + cellDeg;
+    let whole = null;
+    const near = [];
     for (const i of (grid.get(k) || [])) {
       const q = polys[i];
-      if (!inRing(pt[0], pt[1], q.rings[0])) continue;
-      // Holes are real: an island inside a depth band is not that depth.
-      let hole = false;
-      for (let h = 1; h < q.rings.length; h++) if (inRing(pt[0], pt[1], q.rings[h])) { hole = true; break; }
-      if (hole) continue;
-      if (best == null || q.maxFt < best) best = q.maxFt;
+      if (idxOf(q).some((R) => ringNearBox(R, w, s, e, n))) near.push(i);
+      else if (covers(q, w + cellDeg / 2, s + cellDeg / 2) && (whole == null || q.maxFt < whole)) whole = q.maxFt;
     }
-    return best;
+    // Shallowest first, and none that could not beat the band covering the whole cell: the
+    // shallowest band containing the point is the answer, so the first one found is it.
+    const kept = near.filter((i) => whole == null || polys[i].maxFt < whole)
+      .sort((a, b) => polys[a].maxFt - polys[b].maxFt);
+    c = { whole, near: kept };
+    cells.set(k, c);
+    return c;
+  };
+  return (pt) => {
+    const cx = Math.floor(pt[0] / cellDeg), cy = Math.floor(pt[1] / cellDeg);
+    const c = cellAt(cx, cy, `${cx},${cy}`);
+    for (const i of c.near) if (covers(polys[i], pt[0], pt[1])) return polys[i].maxFt;
+    return c.whole;
   };
 }
 

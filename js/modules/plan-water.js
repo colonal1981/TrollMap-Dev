@@ -1232,18 +1232,73 @@ export function castSpots(lanes, { features = null, mergeM = 60, extraSpots = nu
                             depthFt: Number((f.properties || {}).depth_ft) });
   }
 
+  // ── A GRID, SO A SIGHTING READS ITS NEIGHBOURS AND NOT THE WHOLE LAKE ─────────────────────────
+  //
+  // Pick Water hung the browser on Murray, 2026-09-26. Once the depth lookups were fixed, the
+  // stack sat here: every sighting measured the distance to every charted feature of its kind,
+  // and every timber or pile sighting to every spot already kept -- 7.1 s of a 12.4 s Find, in
+  // the haversine alone. Both searches have a radius (250 m to snap, `mergeM` to merge), so each
+  // is answered from the 3 x 3 cells around the sighting, cells a quarter wider than the radius.
+  // THE SAME ANSWER: nothing outside those cells is within the radius, the nearest inside them is
+  // the nearest overall whenever it counts, and ties go to the one listed first, as the plain
+  // scan's `<` gave them.
+  let maxAbsLat = 0;
+  for (const r of raw) { const a = Math.abs(r.at[1]); if (a > maxAbsLat) maxAbsLat = a; }
+  for (const list of byKind.values()) for (const c of list) { const a = Math.abs(c.at[1]); if (a > maxAbsLat) maxAbsLat = a; }
+  const gridFor = (radiusM) => {
+    const r = Math.max(1, radiusM) * 1.25;
+    const dLat = r / 111000;
+    const dLon = r / (111000 * Math.cos((Math.min(89, maxAbsLat + 1) * Math.PI) / 180));
+    const cell = (at) => [Math.floor(at[0] / dLon), Math.floor(at[1] / dLat)];
+    return {
+      cells: new Map(),
+      keyOf: (at) => cell(at).join(','),
+      around(at) {
+        const [x, y] = cell(at);
+        const hits = [];
+        for (let i = x - 1; i <= x + 1; i++) for (let j = y - 1; j <= y + 1; j++) {
+          const list = this.cells.get(`${i},${j}`);
+          if (list) for (const v of list) hits.push(v);
+        }
+        return hits;
+      },
+    };
+  };
+  const SNAP_M = 250;
+  const realGrid = new Map();
+  for (const [kind, list] of byKind) {
+    const g = gridFor(SNAP_M);
+    list.forEach((c, n) => {
+      const k = g.keyOf(c.at);
+      if (!g.cells.has(k)) g.cells.set(k, []);
+      g.cells.get(k).push({ c, n });
+    });
+    realGrid.set(kind, g);
+  }
+  const mergeGrid = gridFor(mergeM);
+  const mergeSeq = new Map();          // key -> order it was first kept, which is Map order
+  const mergeCell = new Map();         // key -> the cell it is filed under now
+  const fileMerge = (key, at) => {
+    const was = mergeCell.get(key), now = mergeGrid.keyOf(at);
+    if (was === now) return;
+    if (was != null) { const l = mergeGrid.cells.get(was); l.splice(l.indexOf(key), 1); }
+    if (!mergeGrid.cells.has(now)) mergeGrid.cells.set(now, []);
+    mergeGrid.cells.get(now).push(key);
+    mergeCell.set(key, now);
+  };
+
   const out = new Map();
   for (const r of raw) {
     const real = byKind.get(r.type);
     let key = null, at = r.at, id = null, depthFt = null;
     if (real) {
-      let best = null, bd = Infinity;
-      for (const c of real) {
+      let best = null, bd = Infinity, bn = Infinity;
+      for (const { c, n } of realGrid.get(r.type).around(r.at)) {
         const d = metresBetween(r.at, c.at);
-        if (d < bd) { bd = d; best = c; }
+        if (d < bd || (d === bd && n < bn)) { bd = d; best = c; bn = n; }
       }
       // Generous, because the estimate is what is loose here, not the feature.
-      if (best && bd <= 250) {
+      if (best && bd <= SNAP_M) {
         at = best.at; id = best.id;
         depthFt = Number.isFinite(best.depthFt) && best.depthFt > 0 ? best.depthFt : null;
         key = `${r.type}@${at[0].toFixed(5)},${at[1].toFixed(5)}`;
@@ -1265,10 +1320,14 @@ export function castSpots(lanes, { features = null, mergeM = 60, extraSpots = nu
       }
     }
     if (!key) {
-      // No file to snap to. Merge against what has already been kept, by real distance.
-      for (const [k, v] of out) {
+      // No file to snap to. Merge against what has already been kept, by real distance -- into
+      // the one kept FIRST, which is the one the plain scan over `out` met first.
+      let first = Infinity;
+      for (const k of mergeGrid.around(r.at)) {
+        const v = out.get(k);
         if (v.type !== r.type) continue;
-        if (metresBetween(r.at, v.at) <= mergeM) { key = k; break; }
+        const s = mergeSeq.get(k);
+        if (s < first && metresBetween(r.at, v.at) <= mergeM) { first = s; key = k; }
       }
       if (!key) key = `${r.type}~${r.at[0].toFixed(5)},${r.at[1].toFixed(5)}`;
     }
@@ -1280,6 +1339,10 @@ export function castSpots(lanes, { features = null, mergeM = 60, extraSpots = nu
                      // DEPTH ONLY WHERE THE PACK HAS ONE. Timber, piles and attractors carry none
                      // anywhere: "how tall is every tree claude??? that is the answer lol"
                      depthFt });
+      if (!real) {
+        if (!mergeSeq.has(key)) mergeSeq.set(key, mergeSeq.size);
+        fileMerge(key, at);
+      }
     }
   }
   return [...out.values()];
