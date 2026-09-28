@@ -233,7 +233,8 @@ export async function runSmartPlanV2(opts = {}) {
       .catch((e) => console.warn('[plan] clarity briefing refresh failed:', e && e.message));
   }
 
-  const depth = depthBandFor(species, inp.lakeName, season, inp.waterTempF, researched);
+  // The trip's date, so an oxygen cast from another month does not cut the band (request 21).
+  const depth = depthBandFor(species, inp.lakeName, season, inp.waterTempF, researched, date);
   if (!depth) return say(`No depth profile for ${species} in ${season}`, true), null;
 
   // What THIS species wants on THIS lake in THIS season, per the research. Falls back to the

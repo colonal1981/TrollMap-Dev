@@ -41,12 +41,12 @@ import { SPECIES_BEHAVIOR_V2, resolveLakeKey } from '../data/species-intel.js';
  *
  * @param {object} [researched] the profile from /research/get
  */
-export function depthBandFor(species, lakeName, season, waterTempF, researched) {
+export function depthBandFor(species, lakeName, season, waterTempF, researched, when = null) {
   // getSeason() returns 'summer', and every caller that hand-wrote 'Summer' got silently no
   // plan. Normalise here rather than trusting six call sites to agree.
   const seasonKey = String(season || '').toLowerCase();
   const fromResearch = researchedBand(researched, species, seasonKey);
-  if (fromResearch && fromResearch.band) return clampToOxygen(fromResearch, researched);
+  if (fromResearch && fromResearch.band) return clampToOxygen(fromResearch, researched, when);
   // THE RESEARCH ANSWERED THE SEASON WITHOUT A FISH DEPTH (see researchedBand). The fish range
   // below comes from the table; how they hold, over what water and on whose word come from the
   // research, and `fishDepthFrom: 'table'` says so to fishDepthEvidence(). Absent research, the
@@ -136,7 +136,7 @@ export function depthBandFor(species, lakeName, season, waterTempF, researched) 
       // the consumer sees an explicit "not known" instead of an absent key it might read as false
       // -- unless the research answered them for this season, in which case its answer is used.
       ...researchedFields,
-    }, researched);
+    }, researched, when);
   }
 
   // ---------------------------------------------------------------------------------------
@@ -169,7 +169,31 @@ export function depthBandFor(species, lakeName, season, waterTempF, researched) 
     generic: true,
     source: 'table-union',
     ...researchedFields,
-  }, researched);
+  }, researched, when);
+}
+
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August',
+                     'September', 'October', 'November', 'December'];
+
+/**
+ * The months the oxygen casts were taken in, when NONE of them is the trip's month; else null.
+ *
+ * The one test behind change request 21, shared by every reader of the oxygen line so they cannot
+ * disagree about it again. oxygenFloorFt() applied it to the lead cap on 2026-09-26, and two other
+ * readers of the SAME July 2022 cast went on without it: clampToOxygen() still cut the fish band at
+ * 19.7 ft, and researchIntel() still told the model "Anoxic below: 19.7 ft - nothing holds under
+ * this". Ryan's 9/28 Wateree plan put both baits above 16.4 ft on the strength of it, the day after
+ * his own sonar on that water put half the marks below 19.7 ft.
+ *
+ * Null when there is no date, no dated cast, or a cast from this month: then nothing changes.
+ */
+export function oxygenCastsOutOfSeason(profile, packFacts = null, when = null) {
+  if (!when) return null;
+  const d = when instanceof Date ? when : new Date(String(when).length <= 10 ? `${when}T12:00:00` : when);
+  if (Number.isNaN(d.getTime())) return null;
+  const months = oxygenFloorMonths(profile, packFacts);
+  if (!months.length || months.includes(d.getMonth() + 1)) return null;
+  return months.map((m) => MONTH_NAMES[m - 1]);
 }
 
 /**
@@ -186,11 +210,21 @@ export function depthBandFor(species, lakeName, season, waterTempF, researched) 
  * contradicting itself — it would leave no fishable water at all — and quietly returning an empty
  * or inverted band would be worse than saying so. The band stands and `oxygenConflict` is set.
  */
-function clampToOxygen(result, researched) {
+function clampToOxygen(result, researched, when = null) {
   const anoxic = Number(researched?.limnology?.oxygen?.anoxicBelowFt);
   if (!result || !Number.isFinite(anoxic) || anoxic <= 0) return result;
   const [lo, hi] = result.band;
   if (anoxic >= hi) return result;                       // band already sits in living water
+  // A CAST FROM ANOTHER MONTH DOES NOT CUT THE BAND (change request 21, the reader it missed).
+  // Said in `basis`, which the prompt carries, so the line is still in front of the model with its
+  // date -- as where the oxygen was, not as a floor.
+  const castMonths = oxygenCastsOutOfSeason(researched, null, when);
+  if (castMonths) {
+    return { ...result,
+      basis: `${result.basis}; NOT clamped to the ${anoxic} ft anoxic line, which was measured in `
+           + `${castMonths.join(' and ')}, not this month`,
+      oxygenOutOfSeason: { anoxicBelowFt: anoxic, months: castMonths } };
+  }
   if (anoxic <= lo) {
     return { ...result,
       oxygenConflict: `the profile puts anoxic water above ${lo} ft, which would leave nothing `
@@ -997,9 +1031,17 @@ export function researchIntel(profile, species, season, now = Date.now(), packFa
   else if (columnStratifies && lim.thermocline?.note) {
     out.push(`Thermocline: NOT established for this water — ${lim.thermocline.note}`);
   }
+  // A CAST FROM ANOTHER MONTH IS WHERE THE LINE WAS, NOT WHERE IT IS (change request 21). This
+  // line said "nothing holds under this" whatever the month, and on 2026-09-28 the model kept both
+  // of Ryan's Wateree baits above 16.4 ft because of a July 2022 cast. Said here, beside the
+  // numbers, and not only in the squeeze block below, which prints only on a hot-water day.
+  const castMonths = oxygenCastsOutOfSeason(profile, packFacts, live && live.when);
   if (columnStratifies) {
-    put('Anoxic below', lim.oxygen?.anoxicBelowFt, ' ft — nothing holds under this in late summer');
-    put('Oxygen depletion begins', lim.oxygen?.depletionDepthFt, ' ft');
+    put('Anoxic below', lim.oxygen?.anoxicBelowFt, castMonths
+      ? ` ft when it was measured (${castMonths.join(' and ')}, not this month)`
+      : ' ft — nothing holds under this in late summer');
+    put('Oxygen depletion begins', lim.oxygen?.depletionDepthFt, castMonths
+      ? ` ft when it was measured` : ' ft');
   }
   // WHERE THE OXYGEN NUMBERS CAME FROM. Wateree's read "measured vertical profile, EPA National
   // Lakes Assessment 7/21/2022" -- a measured, dated number is a different claim from a modelled
@@ -1007,6 +1049,11 @@ export function researchIntel(profile, species, season, now = Date.now(), packFa
   if (columnStratifies && lim.oxygen?.note
       && (lim.oxygen?.anoxicBelowFt != null || lim.oxygen?.depletionDepthFt != null)) {
     out.push(`  those oxygen depths: ${lim.oxygen.note}`);
+    if (castMonths) {
+      out.push('  NONE OF THOSE CASTS IS FROM THIS MONTH. The oxygen line moves through the season, '
+        + 'so those depths are where it was then, not where it is today. They are not a floor: put '
+        + 'the baits where the fish are, and let the sounder say where that is.');
+    }
   }
   if (columnStratifies) put('Trophic status', lim.trophicStatus);
   put('Typical clarity', lim.waterClarity?.typical);

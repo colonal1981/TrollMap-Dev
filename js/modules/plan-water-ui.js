@@ -844,7 +844,9 @@ export async function findWater() {
   // Absence is still normal and still silent — `depthBandFor` falls back exactly as before, and
   // says which source it used in `basis`. What changes is that a researched lake now gets its
   // researched answer here as well as there.
-  const depth = depthBandFor(species, inp.lakeName, getSeason(date, inp.waterTempF), inp.waterTempF, researched);
+  // The trip's date, so an oxygen cast from another month does not cut the band (request 21).
+  const depth = depthBandFor(species, inp.lakeName, getSeason(date, inp.waterTempF), inp.waterTempF,
+                             researched, date);
 
   say('Reading the pack…');
   const get = packFetcher(CF_WORKER_URL);
