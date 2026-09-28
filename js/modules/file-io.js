@@ -11,6 +11,7 @@
 
 import { state } from '../core/state.js';
 import { parseGPX, parseKML, kmlToGeoJSON, buildGPX, geoJSONToLines } from '../utils/parsers.js';
+import { admFile, cueBoundaries } from '../utils/adm.js';
 import { setFilename, getFilename, renderAll } from '../core/map-init.js';
 
 /**
@@ -78,6 +79,30 @@ function wireButtons() {
     a.href = URL.createObjectURL(blob);
     const fname = getFilename().endsWith('.gpx') ? getFilename() : getFilename() + '.gpx';
     a.download = fname;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+
+  // Save ADM -- the plan's cue lines as boundaries, for the card. His unit imports boundaries
+  // only from an .adm, and ActiveCaptain carries a GPX but not an ADM, so this one goes on the
+  // card: Where To > Menu > Manage User Data > Data Transfer > File Type ADM > Merge from Card.
+  // Named for the plan's day, TMmmdd.ADM, short and plain so the unit's file list shows it whole.
+  document.getElementById('saveAdmBtn')?.addEventListener('click', () => {
+    const boundaries = cueBoundaries(state.DATA && state.DATA.routes);
+    if (!boundaries.length) {
+      alert('No plan cue lines to write. Build a plan, or load one saved since 2026-09-28 '
+        + '(older saved plans did not keep their cue lines); the ADM holds them as boundaries.');
+      return;
+    }
+    const day = (window._planV2 && window._planV2.meta && window._planV2.meta.date) || '';
+    const m = /^\d{4}-(\d{2})-(\d{2})$/.exec(day);
+    const now = new Date();
+    const mmdd = m ? `${m[1]}${m[2]}`
+      : `${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+    const blob = new Blob([admFile(boundaries, { when: now })], { type: 'application/octet-stream' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `TM${mmdd}.ADM`;
     a.click();
     URL.revokeObjectURL(a.href);
   });

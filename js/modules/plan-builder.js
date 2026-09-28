@@ -600,7 +600,12 @@ export function collectPlan(){
       // `pts` is [lat, lon], the way GPX writes it and the way `state.DATA.tracks` holds it --
       // NOT the [lon, lat] the plan uses everywhere else. It is in the `gpx` block, beside the
       // count it belongs to, for exactly that reason.
-      trackList: state.DATA.tracks.map(t=>({name:t.name, points:t.pts.length, pts:t.pts}))
+      trackList: state.DATA.tracks.map(t=>({name:t.name, points:t.pts.length, pts:t.pts})),
+      // THE CUE LINES, so a loaded plan can still be written as boundaries (Save ADM). They were
+      // in the GPX and in nothing saved, so a plan loaded from a file had no cue lines to write.
+      // [lat, lon], like trackList.
+      routeList: (state.DATA.routes || []).filter((r) => r.smartPlan && Array.isArray(r.pts))
+        .map((r) => ({ name: r.name, pts: r.pts, cueKind: r.cueKind || null, legId: r.legId || null })),
     },
     // ── WHAT THE MODEL WAS SENT AND WHAT IT SENT BACK ──────────────────────────────────────────
     //
@@ -769,6 +774,14 @@ function restorePlanView(p) {
   if (waypoints.length) {
     state.DATA.waypoints = [...(state.DATA.waypoints || []).filter((w) => !w.scoutWaypoint
                               && !w.castingStop && !w.chartMark), ...waypoints];
+  }
+  // The cue lines, where the file carries them (saved from 2026-09-28), so Save ADM and Save GPX
+  // write them for a loaded plan as they do for a built one.
+  const routes = ((p.gpx && p.gpx.routeList) || [])
+    .filter((r) => Array.isArray(r.pts) && r.pts.length >= 3)
+    .map((r) => ({ ...r, smartPlan: true }));
+  if (routes.length) {
+    state.DATA.routes = [...(state.DATA.routes || []).filter((r) => !r.smartPlan), ...routes];
   }
 
   // The plan block and the exchange, as the build path leaves them, so a Save of this restored
