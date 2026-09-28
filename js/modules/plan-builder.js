@@ -27,6 +27,8 @@ import { launchReach, listingAt, shallowAt, reachLabel, samePlace, offMainAt }
 import { advisoryRows } from "../data/fish-advisories.js";
 // The band is defined once, where the cue line that carries it is built.
 import { HAND_STEER_BAND_FT } from "./plan-tracks.js";
+import { ampsAtMph, AMPS_REF_A, AMPS_EXP, TOP_SPEED_MPH, MEASURED_DRAW } from "./plan-candidates.js";
+import { TROLL_MPH, TRANSIT_MPH } from "./plan-water.js";
 import { makePredicate } from "../data/water-filter.js";
 import { loadAccessIndex, registryRecordFor } from "../data/access-index.js";
 // distFt() was CALLED below and never imported -- a latent ReferenceError predating the
@@ -570,8 +572,10 @@ export function collectPlan(){
         rods: (v2.loadout.rods || []).map((r) => ({ ...r })) } : null,
     } : null,
     // The one caveat every amp-hour figure in this document needs, carried WITH the figures.
-    batteryCurve: v2 ? 'amps(mph) = 5.0 * (mph/2.0)**1.756 — a two-point fit to two observed '
-                     + 'readings (3–7 A at 1.8–2.2 mph, 25 A at ~5 mph), not a measurement' : null,
+    batteryCurve: v2 ? `amps(mph) = ${AMPS_REF_A.toFixed(2)} * (mph/2.0)**${AMPS_EXP.toFixed(3)} - `
+                     + `fitted to ${MEASURED_DRAW.length} readings of his own motor on 2026-09-28 (BMS log `
+                     + 'against the GPX track, and 25 A at 4.8 mph full throttle); speed over the ground, '
+                     + 'mostly into the wind' : null,
     gpx: {
       waypoints: state.DATA.waypoints.length,
       tracks: state.DATA.tracks.length,
@@ -988,12 +992,20 @@ export async function buildPlanPreviewHtml(p){
     </tr>`;
   }
 
+  // THE ROWS ARE HIS MOTOR'S, AT THE SPEEDS THIS PLAN USES. These were four hand-written rows --
+  // "Easy (slow finesse troll 1.5-2.0 mph)" 3.5 A, "Typical (standard tournament troll 2.2-2.5 mph)"
+  // 7.5 A, "Hard" 14 A, "Sprint" 25 A -- none of them measured and two of them twice what his motor
+  // draws. Since 2026-09-28 the draw is his measured curve (ampsAtMph in plan-candidates.js): the
+  // plan's trolling speed, the speed it runs between legs at, and full throttle.
+  const trollMph = Number(p.trolling && p.trolling.speed) || TROLL_MPH;
   const battScenarios = [
-    ['Easy (slow finesse troll 1.5–2.0 mph, calm water)',  '3.5A (~84W)',   (usableAh/3.5).toFixed(1) + ' hrs'],
-    ['Typical (standard tournament troll 2.2–2.5 mph)',    '7.5A (~180W)',  (usableAh/7.5).toFixed(1) + ' hrs'],
-    ['Hard (2.8+ mph, heavy headwind or river current)',   '14.0A (~336W)', (usableAh/14.0).toFixed(1) + ' hrs'],
-    ['Sprint / Repositioning (100% full throttle)',        '25.0A (~600W)', (usableAh/25.0).toFixed(1) + ' hrs'],
-  ].map(([scenario, draw, time])=>
+    [`Trolling at ${trollMph} mph (this plan's speed)`, trollMph],
+    [`Running between legs at ${TRANSIT_MPH} mph`, TRANSIT_MPH],
+    [`Full throttle, ${TOP_SPEED_MPH} mph (he read 25 A there on 9/28)`, TOP_SPEED_MPH],
+  ].map(([scenario, mph]) => {
+    const a = ampsAtMph(mph);
+    return [scenario, `${a.toFixed(1)}A`, (usableAh / a).toFixed(1) + ' hrs'];
+  }).map(([scenario, draw, time])=>
     `<tr><td><b>${scenario}</b></td><td><b style="font-family:monospace;color:var(--accent)">${draw}</b></td><td style="font-weight:700;color:var(--accent2)">${time} <span class="rp-small" style="color:var(--muted)">(80% Usable Capacity)</span></td></tr>`
   ).join('');
 

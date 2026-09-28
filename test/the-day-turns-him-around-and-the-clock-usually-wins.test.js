@@ -27,10 +27,11 @@ test('the asymmetry is real, and it comes out of the curve rather than a rule of
 });
 
 test('and on his boat it is the clock that binds, not the battery', () => {
-  // 80 usable Ah against 0.95 mph buys about 13.9 miles up; a nine-hour window at 2.0 mph buys 9.0.
-  // A number that quoted only the battery would send him planning water he has no hours for.
+  // 80 usable Ah against 0.95 mph buys about 23.4 miles up on his measured curve (2026-09-28; the
+  // old two-point fit said 13.9); a nine-hour window at 2.0 mph buys 9.0. A number that quoted only
+  // the battery would send him planning water he has no hours for.
   const t = turnaroundMiles({ usableAh: 80, windowMin: 540, trollMph: 2.0, currentMph: 0.95 });
-  assert.ok(t.batteryMiles > 13 && t.batteryMiles < 15, `battery ${t.batteryMiles}`);
+  assert.ok(t.batteryMiles > 23 && t.batteryMiles < 24, `battery ${t.batteryMiles}`);
   assert.equal(t.clockMiles, 9);
   assert.equal(t.milesUp, 9);
   assert.equal(t.binding, 'clock');
@@ -48,12 +49,16 @@ test('a faster river moves the battery limit in, monotonically', () => {
   for (const c of [0, 0.5, 0.95, 1.4, 1.8]) assert.equal(at(c).binding, 'clock', `at ${c} mph`);
 });
 
-test('but a half-charged battery is what actually takes the day off him', () => {
-  // 40 usable Ah rather than 80 -- the realistic way the battery becomes the binding constraint.
+test('but a low battery is what actually takes the day off him', () => {
+  // On the old two-point fit half a battery (40 Ah) was enough to bind. On his measured curve it
+  // buys 11.7 miles up against the clock's 9, so the clock still wins; it takes under about 31
+  // usable Ah. 20 Ah -- a quarter of the battery -- is the realistic way the battery binds.
   const half = turnaroundMiles({ usableAh: 40, windowMin: 540, trollMph: 2.0, currentMph: 0.95 });
-  assert.ok(half.batteryMiles < half.clockMiles, `battery ${half.batteryMiles} vs clock ${half.clockMiles}`);
-  assert.equal(half.binding, 'battery');
-  assert.equal(half.milesUp, half.batteryMiles);
+  assert.equal(half.binding, 'clock', `half a battery: ${half.batteryMiles} vs ${half.clockMiles}`);
+  const low = turnaroundMiles({ usableAh: 20, windowMin: 540, trollMph: 2.0, currentMph: 0.95 });
+  assert.ok(low.batteryMiles < low.clockMiles, `battery ${low.batteryMiles} vs clock ${low.clockMiles}`);
+  assert.equal(low.binding, 'battery');
+  assert.equal(low.milesUp, low.batteryMiles);
 });
 
 test('no window means the battery is the only answer there is, and it says so', () => {
@@ -91,7 +96,7 @@ test('the prompt says the speed, the turnaround and which constraint binds', () 
   assert.match(block, /48% of a 2 mph trolling speed/);
   assert.match(block, /turns him around at about 9 miles up/);
   assert.match(block, /the clock is what binds/);
-  assert.match(block, /battery 13\.9 mi, clock 9 mi/);
+  assert.match(block, /battery 23\.4 mi, clock 9 mi/);
   assert.match(block, /ORDER THE DAY UPSTREAM FIRST/);
   assert.match(block, /Assumes trolling the whole way at one speed and one current/,
                'the assumptions are stated, not buried');

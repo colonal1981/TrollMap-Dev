@@ -119,10 +119,11 @@ describe('amp-hours cost what is measurable and never what is not', () => {
     // 7.8 calm -- refusing fishable days. So the claim is stated as the physics instead of a number
     // that happened to be true. He still makes 2.0 mph over the ground into this wind, so the clock
     // is unchanged and the ENTIRE cost of the wind is the draw at 2.36 mph rather than 2.0 -- a third
-    // dearer than calm, and nothing like four times it.
+    // dearer than calm on the two-point fit, 1.58 times on his measured curve (exponent 2.77,
+    // 2026-09-28), and nothing like the four times the first version charged.
     const calm = ampHoursBand(5000, 2.0, 90, {}).ah;
     expect(b.ah > calm).toBe(true);
-    expect(b.ah < calm * 1.4).toBe(true);
+    expect(b.ah < calm * 2).toBe(true);
   });
 });
 

@@ -101,9 +101,10 @@ describe('the export reads the plan instead of re-deriving it', () => {
   });
 
   it('carries the amp-hour caveat with the amp-hour figures', () => {
-    // "This is a two-point fit, not a measurement, and it should say so wherever it surfaces."
-    // It said so only in a source comment, while the report printed a battery table with none.
-    expect(p.batteryCurve).toContain('two-point fit');
+    // Where the amp-hours come from travels with them. Until 2026-09-28 that was "a two-point fit,
+    // not a measurement"; now it is his own motor's readings, and the caveat says what they were.
+    expect(p.batteryCurve).toContain('readings of his own motor on 2026-09-28');
+    expect(p.batteryCurve).toContain('mostly into the wind');
   });
 
   it('fills meta.solunar from the plan rather than leaving the HTML to compute it', () => {

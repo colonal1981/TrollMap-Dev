@@ -69,7 +69,10 @@ import { FISHING_STYLE } from '../data/fishing-style-profile.js';
 // The radius `relief`, `deepestNearbyFt` and `reliefDropFt` are all measured over. Imported rather
 // than typed here so the prompt cannot come to say a distance the selector does not mean; see
 // RELIEF_RADIUS_M for why the app holds the number at all instead of reading it off the pack.
-import { RELIEF_RADIUS_M } from './plan-candidates.js';
+import { RELIEF_RADIUS_M, ahPerMile } from './plan-candidates.js';
+// The two speeds the planners cost a day at; the Ah per mile the prompt quotes comes off his
+// measured curve at each (ahPerMile), not off a typed figure.
+import { TROLL_MPH, TRANSIT_MPH } from './plan-water.js';
 import { lightSummary, lightPhrasesIn, lightLabel, fogSpans, fogLowestVisibility }
   from '../utils/light-state.js';
 import { writtenOf } from '../utils/fact-date.js';
@@ -2486,8 +2489,8 @@ RULES THAT ARE NOT NEGOTIABLE
    : `ORDER THE LEGS TO SPEND AS LITTLE OF THE DAY DEADHEADING AS YOU CAN.`} Add up
    \`transitFromRampM\` for the leg you start with, \`transitToM\` for each hop between
    consecutive legs, and \`transitToRampM\` for the leg you finish on — that total is time and
-   battery with nothing in the water. Trolling costs about 2.5 Ah per mile; deadheading at 3.5 mph
-   costs about 3.8 Ah, half again as much for water you do not fish. Two legs that are each close
+   battery with nothing in the water. Trolling at ${TROLL_MPH} mph costs about ${ahPerMile(TROLL_MPH).toFixed(1)} Ah per mile; deadheading at ${TRANSIT_MPH} mph
+   costs about ${ahPerMile(TRANSIT_MPH).toFixed(1)} Ah, ${(ahPerMile(TRANSIT_MPH) / ahPerMile(TROLL_MPH)).toFixed(1)} times as much for water you do not fish (his motor's measured draw). Two legs that are each close
    to the ramp can still be six miles from EACH OTHER, and a day that spends nearly half its
    distance travelling is a day half wasted — that is a real plan, from 2026-08-09, and it is what
    \`transitToM\` is here to stop. There is no "out and back": you finish near the ramp because

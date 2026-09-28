@@ -917,9 +917,9 @@ const TRANSIT_SHARE_WARN = 0.35;
 // seconds, a fluoro leader is a knot with cold wet hands in a moving kayak.
 const FLUORO_RETIE_WARN = 3;
 
-// Sane bounds on a speed the model asked for, taken from the amps curve's own two anchors: 2.0
-// mph is the trolling anchor, 5.0 mph is 100% throttle. Outside 0.5-5.0 is not a speed this boat
-// has. Nothing upstream bounds it -- plan-prompt.js:369 only checks that it is a number -- so the
+// Sane bounds on a speed the model asked for. 5.0 mph was the old two-point fit's full-throttle
+// anchor; on 2026-09-28 he measured 4.8 mph at full throttle (TOP_SPEED_MPH), and no trolling speed
+// comes near either, so the bound stands. Outside 0.5-5.0 is not a speed this boat trolls at. Nothing upstream bounds it -- plan-prompt.js:369 only checks that it is a number -- so the
 // range is enforced here.
 const TROLL_MPH_MIN = 0.5;
 const TROLL_MPH_MAX = 5.0;

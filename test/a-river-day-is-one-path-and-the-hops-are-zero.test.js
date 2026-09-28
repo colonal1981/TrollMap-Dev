@@ -213,14 +213,15 @@ describe('fitRiverDay — the day is re-fitted once the baits set the speed', ()
   });
 
   it('the battery binds the same way the clock does', () => {
-    // All night, so only the battery can bind. Reach A alone is 25.4 Ah, so 25 keeps A and drops B --
-    // and then says the day is over budget, because THE FIRST REACH IS NEVER DROPPED and a day with
-    // no water is not a day. That refusal is the hard stop's job, not this function's.
-    const plan = build({ returnTime: '23:00', usableAh: 25 });
+    // All night, so only the battery can bind. Reach A alone is 10.8 Ah on his measured curve
+    // (2026-09-28; 25.4 on the two-point fit), so 10 keeps A and drops B -- and then says the day is
+    // over budget, because THE FIRST REACH IS NEVER DROPPED and a day with no water is not a day.
+    // That refusal is the hard stop's job, not this function's.
+    const plan = build({ returnTime: '23:00', usableAh: 10 });
     expect(plan.legs.filter((l) => l.type === 'troll').length).toBe(2);
     expect(plan.decisions.some((w) => w.includes('is off the day') && w.includes(B.runId))).toBe(true);
     expect(plan.warnings.some((w) => w.includes('over budget'))).toBe(true);
-    // And with room for both it takes both, so 25 was the battery talking and not a bug.
+    // And with room for both it takes both, so 10 was the battery talking and not a bug.
     expect(build({ returnTime: '23:00', usableAh: 200 })
       .legs.filter((l) => l.type === 'troll').length).toBe(4);
   });

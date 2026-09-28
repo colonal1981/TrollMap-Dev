@@ -7,9 +7,11 @@
 // whose chord runs due north, perpendicular to both of its arms, so the chord method reports no
 // wind at all and charges the still-water price for a leg that is half spent on the nose.
 //
-// AND THE AVERAGE IS NOT THE FIX. Amps go as mph^1.756, so the draw is convex in water speed and a
-// mph added on the nose costs more than the same mph taken off the tail gives back. The mean head
-// component on that hairpin is zero. The real cost is 3.3% above still water. Only a sum finds it.
+// AND THE AVERAGE IS NOT THE FIX. Amps go as mph^2.77 on his measured curve (mph^1.756 on the
+// two-point fit this was written against), so the draw is convex in water speed and a mph added on
+// the nose costs more than the same mph taken off the tail gives back. The mean head component on
+// that hairpin is zero. The real cost is 12% above still water (3.3% on the old fit). Only a sum
+// finds it.
 //
 // The second half of this file is the wiring: until 2026-09-17 the Smart Plan selector chose the
 // day's legs in flat calm and the model was then asked whether the day was safe, and the Pick Water
@@ -60,10 +62,11 @@ test('a leg that doubles back costs more than still water, and the chord says it
   assert.equal(Number(chord.ah.toFixed(6)), Number(calm.ah.toFixed(6)));
   // The sum does not.
   assert.ok(walked.ah > calm.ah, `walked ${walked.ah} vs calm ${calm.ah}`);
-  // Convexity, sized. (2.45/2)^1.756 and (1.55/2)^1.756 average to 1.033 -- half the leg into the
-  // 3% of the wind that is surface drift, half of it pushed, and the two do not cancel.
+  // Convexity, sized. On his measured curve (exponent 2.77, 2026-09-28) (2.45/2)^2.77 and
+  // (1.55/2)^2.77 average to 1.124 -- half the leg into the 3% of the wind that is surface drift,
+  // half of it pushed, and the two do not cancel. (On the old 1.756 it was 1.033.)
   const ratio = walked.ah / calm.ah;
-  assert.ok(ratio > 1.02 && ratio < 1.05, `ratio ${ratio}`);
+  assert.ok(ratio > 1.10 && ratio < 1.15, `ratio ${ratio}`);
 });
 
 test('and the mean head component on that leg is zero, which is why the cost is a sum', () => {
@@ -128,7 +131,7 @@ const lane = () => {
       near: Array.from({ length: 6 }, (_, k) => ({ s: 200 + k * 300, t: 'timber', d: 25 })) } };
 };
 const RUNS = [lane()];
-// `minM: 1500` PINNED: the 11.22 / 12.39 Ah below were measured on the window the old default grew,
+// `minM: 1500` PINNED: the 7.81 / 8.72 Ah below were measured on the window the old default grew,
 // and at 600 (the default since 2026-09-26) the window starts at the first mark instead of the
 // run's start, so it is shorter and both prices move. This suite is about the wind, not the window.
 const BASE = { ramp: [-80.73, 34.38], slug: 'w', fishDepthFt: [0, 99], holding: 'bottom',
@@ -156,12 +159,12 @@ test('and it costs the same whichever way the contour happens to be drawn', () =
 });
 
 test('the battery gate refuses on a wind it could not see before', () => {
-  // 11.22 Ah in calm, 12.39 Ah into fifteen. A day with 11.5 usable fits one and not the other, and
-  // until now the selector offered it either way. Ryan on the one thing allowed to be rigid: "if
-  // they are going to run out of battery because of choice they shouldn't be able to make that
-  // choice."
-  const roomy = selectCandidates(RUNS, { ...BASE, usableAh: 11.5 });
-  const blown = selectCandidates(RUNS, { ...BASE, usableAh: 11.5, wind: { mph: 15, deg: 90 } });
+  // 7.81 Ah in calm, 8.72 Ah into fifteen, on his measured curve (2026-09-28; the two-point fit
+  // said 11.22 and 12.39). A day with 8.2 usable fits one and not the other, and until the wind was
+  // wired the selector offered it either way. Ryan on the one thing allowed to be rigid: "if they
+  // are going to run out of battery because of choice they shouldn't be able to make that choice."
+  const roomy = selectCandidates(RUNS, { ...BASE, usableAh: 8.2 });
+  const blown = selectCandidates(RUNS, { ...BASE, usableAh: 8.2, wind: { mph: 15, deg: 90 } });
   assert.equal(roomy.length, 1);
   assert.equal(blown.length, 0);
   assert.equal(blown.selection.rejected.battery, 1);

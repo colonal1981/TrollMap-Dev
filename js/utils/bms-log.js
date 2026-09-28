@@ -5,8 +5,9 @@
  *
  * Ryan, 2026-09-28, on Wateree: "into the wind at 52% throttle I'm going about 1.9mph and it is
  * only usimg 53watts and the xzny app is showing 2.0amp draw". The app's battery model
- * (`ampsAtMph()` in plan-candidates.js) is a two-point fit that says 4.6 A at 1.9 mph on still
- * water, so every Ah on a plan has been more than twice his real draw. The code has said since
+ * (`ampsAtMph()` in plan-candidates.js) was then a two-point fit that said 4.6 A at 1.9 mph on still
+ * water, so every Ah on a plan was more than twice his real draw. The first log replaced it the
+ * same night. The code has said since
  * 2026-08-07 that the real curve "is learnable from his own trips", and nothing ever kept the
  * readings: ble-motor.js polled the BMS every 3 s and overwrote one object. The XZNY app keeps no
  * log he can export either. Asked "Does trollmap have a log for the battery meter", the answer was

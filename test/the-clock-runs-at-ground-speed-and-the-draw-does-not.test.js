@@ -35,8 +35,9 @@ test('upstream costs the draw of the water and the hours of the ground', () => {
   const oldWrong = ampHours(8000, 3.0);                   // draw AND clock at 3.0
   assert.ok(Math.abs(up.ah - expected) < 1e-9, `${up.ah} should be ${expected}`);
   assert.ok(up.ah > oldWrong * 1.4, `the old form understated it: ${oldWrong} vs ${up.ah}`);
-  // And the size of it, because a third of a leg's battery is not a rounding difference.
-  assert.ok(up.ah > 25 && up.ah < 26, `~25.3 Ah on his numbers, got ${up.ah.toFixed(2)}`);
+  // And the size of it, because a third of a leg's battery is not a rounding difference. On his
+  // measured curve (2026-09-28) that is 6.78 A for 2.49 h; on the old two-point fit it was 25.3 Ah.
+  assert.ok(up.ah > 16.5 && up.ah < 17.2, `~16.8 Ah on his measured curve, got ${up.ah.toFixed(2)}`);
 });
 
 test('and a following current is still a discount, not a floor at zero', () => {

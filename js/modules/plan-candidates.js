@@ -40,23 +40,59 @@ import { geoDistanceM } from '../utils/geo.js';
 // Imported from utils/ rather than from plan-assemble.js, which imports THIS file.
 import { legLightFor, hhmmToHours, hoursToHhmm } from '../utils/light-state.js';
 
-// Fitted to Ryan's own two observations, 2026-08-07, because Newport publishes no curve:
-// trolling 1.8–2.2 mph draws 3–7 A; 100% throttle (~5 mph, no wind or current) draws 25 A.
-// Anchoring 5 A at 2.0 and 25 A at 5.0 gives an exponent of ln(5)/ln(2.5) = 1.756, which lands
-// at 4.2 A at 1.8 mph and 5.9 A at 2.2 — inside his range without being told to.
+// ── HIS MOTOR'S OWN CURVE, MEASURED 2026-09-28 ──────────────────────────────────────────────
 //
-// THIS IS A TWO-POINT FIT, NOT A MEASUREMENT. The BMS reports live draw and the GPS reports
-// speed, so the real curve is learnable from his own trips. Say so wherever it surfaces.
+// Until 9/28 this was a two-point fit to two estimates from 2026-08-07 (3-7 A at 1.8-2.2 mph, 25 A
+// at ~5 mph): 5.0 A at 2.0 mph and an exponent of 1.756. On Wateree on 9/28 Ryan saw "52% throttle
+// ... 1.9mph and it is only usimg 53watts and the xzny app is showing 2.0amp draw", and the app
+// began keeping every BMS reading (js/utils/bms-log.js). Joined to the Garmin track's speed, the
+// steady stretches of that day are below, with the top end he read off the same day: "max speed
+// today was 4.8mph and was pulling 25 amps 599 watts... which is the motor max".
+//
+// The curve is the least-squares line through them in log-log, computed here from the list, not
+// typed. Ten of the thirteen trolling stretches were into the wind, so it leans to the dear side,
+// which is the safe side for a battery. It gives 2.2 A at 2.0 mph (the old fit said 5.0), 10.4 A at
+// 3.5 mph (13.4), and 24.9 A at 4.8 mph, where he read 25. Ryan: "ok lets switch the app to my
+// actual battery curve". A new day's steady stretches are new rows; the fit moves with them.
+//
+// SPEED IS OVER THE GROUND, as the GPX gives it; the wind is in the amps, not added to the speed.
+export const MEASURED_DRAW = Object.freeze([
+  // [mph over ground, amps, heading], 9/28 Wateree, BMS log against 28SEP26EXPORT.GPX
+  [1.94, 2.00, 276], [1.82, 2.04, 259], [1.88, 1.93, 269], [1.73, 1.93, 256], [1.77, 1.93, 283],
+  [1.86, 1.93, 323], [2.39, 3.87, 243], [1.86, 1.59, 93], [1.87, 1.00, 94], [1.96, 1.11, 101],
+  [2.02, 2.30, 307], [1.75, 2.30, 301], [3.41, 10.91, 308],
+  [4.80, 25.0, null],   // full throttle, read off the unit and the BMS the same day
+].map(Object.freeze));
+
+function powerFit(rows) {
+  const xs = rows.map((r) => Math.log(r[0])), ys = rows.map((r) => Math.log(r[1]));
+  const mx = xs.reduce((a, x) => a + x, 0) / xs.length, my = ys.reduce((a, y) => a + y, 0) / ys.length;
+  let sxy = 0, sxx = 0;
+  xs.forEach((x, i) => { sxy += (x - mx) * (ys[i] - my); sxx += (x - mx) ** 2; });
+  const exp = sxy / sxx;
+  return { exp, coef: Math.exp(my - exp * mx) };
+}
+const FIT = powerFit(MEASURED_DRAW);
+
+// The same curve, said at the trolling speed: amps(mph) = AMPS_REF_A * (mph / 2.0) ** AMPS_EXP.
 export const AMPS_REF_MPH = 2.0;
-export const AMPS_REF_A = 5.0;
-export const AMPS_EXP = 1.756;
+export const AMPS_EXP = FIT.exp;
+export const AMPS_REF_A = FIT.coef * AMPS_REF_MPH ** FIT.exp;
+// His measured top speed at full throttle on 9/28.
+export const TOP_SPEED_MPH = 4.8;
 
 export function ampsAtMph(mph) {
   const v = Math.max(0.1, Number(mph) || 0);
   return AMPS_REF_A * Math.pow(v / AMPS_REF_MPH, AMPS_EXP);
 }
 
-/** Amp-hours to cover `metres` at `mph`. Trolling ~2.5 Ah/mile; transit at 3.5 mph ~3.8. */
+/** Amp-hours per mile at `mph`: the draw over the speed. */
+export function ahPerMile(mph) {
+  const v = Math.max(0.1, Number(mph) || 0);
+  return ampsAtMph(v) / v;
+}
+
+/** Amp-hours to cover `metres` at `mph`. See ahPerMile(). */
 export function ampHours(metres, mph) {
   const v = Math.max(0.1, Number(mph) || 0);
   return ampsAtMph(v) * (metres / 1609.34) / v;
@@ -178,8 +214,10 @@ export function ampHoursBand(metres, mph, courseDeg, env) {
   // The boat only covers ground, so the HOURS come from `mph`. Worked on his own numbers -- 8 km
   // upstream at 2.0 mph over ground against 1.0 mph of current, so 3.0 mph through the water:
   //
-  //     amps(3.0) = 10.19 A,  time = 8000 m / 2.0 mph = 2.485 h   ->  25.3 Ah   (what it costs)
-  //     amps(3.0) = 10.19 A,  time = 8000 m / 3.0 mph = 1.657 h   ->  16.9 Ah   (what it said)
+  //     amps(3.0) = 6.78 A,  time = 8000 m / 2.0 mph = 2.485 h   ->  16.8 Ah   (what it costs)
+  //     amps(3.0) = 6.78 A,  time = 8000 m / 3.0 mph = 1.657 h   ->  11.2 Ah   (what it said)
+  //
+  // (On his measured curve, 2026-09-28. Written against the two-point fit: 10.19 A, 25.3 and 16.9.)
   //
   // A THIRD UNDERSTATED, in the direction that matters most. Ryan on the one thing allowed to be
   // rigid: "if it is a battery thing i would say we need a safety hard stop... if they are going to
@@ -207,8 +245,8 @@ export function ampHoursBand(metres, mph, courseDeg, env) {
  *
  * ── AND THE MEAN HEAD COMPONENT IS NOT THE ANSWER EITHER ─────────────────────────────────────
  *
- * This is a SUM and not an average, and that is the whole point. Amps go as mph^1.756 -- the fit
- * above -- so the draw is CONVEX in water speed: a mph added on the nose costs more than the same
+ * This is a SUM and not an average, and that is the whole point. Amps go as mph^2.77 -- his measured
+ * curve above (it was mph^1.756 on the two-point fit) -- so the draw is CONVEX in water speed: a mph added on the nose costs more than the same
  * mph taken off the tail gives back. A leg that doubles back has a headwind on one half and a
  * tailwind on the other, so its mean head component is about zero while its real cost is above
  * still water. Averaging the wind before costing it throws that away. It is the same asymmetry
@@ -265,14 +303,14 @@ export function ampHoursAlong(coords, mph, env) {
  * then turn me back around based on speed, and can actually predict river current and how much battery
  * i would use that would be even better."
  *
- * The asymmetry is real and it is not a guess: the draw curve is convex (amps go as mph^1.756), so a mph
+ * The asymmetry is real and it is not a guess: the draw curve is convex (amps go as mph^2.77), so a mph
  * added on the nose costs more than a mph taken off the tail saves. Half the battery therefore lands
  * well past half the distance, which is exactly why "at least half the day" is the right instinct and a
  * bad rule.
  *
  * TWO CONSTRAINTS, AND SAYING WHICH ONE BINDS IS THE WHOLE VALUE. On his boat the clock usually wins:
- * 80 usable Ah against 0.95 mph of current buys about 13.9 miles up, and a nine-hour window at 2.0 mph
- * buys 9.0. A number that quoted only the battery would send him planning water he has no hours for.
+ * 80 usable Ah against 0.95 mph of current buys about 23.4 miles up on his measured curve (13.9 on the
+ * old two-point fit), and a nine-hour window at 2.0 mph buys 9.0. A number that quoted only the battery would send him planning water he has no hours for.
  *
  * WHAT IT ASSUMES, SAID OUT LOUD rather than buried: trolling the whole way at one speed, one current
  * for the whole reach, and no transit. The current varies seven-fold along one river at a single
