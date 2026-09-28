@@ -183,6 +183,17 @@ function cueSafe(s) {
     .slice(0, 24);
 }
 
+/**
+ * The band he sets the Contour alarm and Depth Shading to for one leg -- `10-20ft` -- around
+ * TODAY's water, because the alarm reads the sounder. One function for the leg's cue line and its
+ * start waypoint, so the two names on the unit cannot give him two bands for one leg.
+ */
+function legBand(leg) {
+  if (!leg || leg.depthFt == null) return null;
+  const d = Math.round(Number(todayOnLeg(leg, leg.depthFt)));
+  return Number.isFinite(d) ? `${d - HAND_STEER_BAND_FT}-${d + HAND_STEER_BAND_FT}ft` : null;
+}
+
 /** A triangle CUE_LINE_M across, centred on the cue. Closed by the unit it has no crossings. */
 function cueTriangle(name, lat, lon, cueKind, legId, runId) {
   const dLat = (CUE_LINE_M / 2) / 111320;
@@ -218,10 +229,8 @@ export function planCueLines(plan, waypoints = [], runId = null) {
     if (leg.type === 'transit' || leg.depthFt == null) continue;
     const co = leg.coordinates || [];
     if (co.length < 2) continue;
-    // The Contour alarm reads the sounder, so the band is set around TODAY's water.
-    const d = Math.round(Number(todayOnLeg(leg, leg.depthFt)));
-    if (!Number.isFinite(d)) continue;
-    const text = `${d - HAND_STEER_BAND_FT}-${d + HAND_STEER_BAND_FT}ft`;
+    const text = legBand(leg);
+    if (!text) continue;
     const near = waypoints.find((w) => w.castingStop && !band.has(w)
       && metresBetween(co[0], [w.lon, w.lat]) <= CUE_FOLD_M);
     if (near) band.set(near, text);
@@ -415,6 +424,57 @@ export function planWaypoints(plan, launch = null, runId = null, opts = {}) {
   if (Array.isArray(launch) && Number.isFinite(launch[0]) && Number.isFinite(launch[1])) {
     out.push({ name: 'Launch', lat: launch[1], lon: launch[0], sym: 'Boat Ramp',
                role: 'launch_ramp', scoutWaypoint: true, planRunId: runId });
+  }
+  // ── WHERE EACH LEG STARTS AND ENDS, AS A PLACE HE CAN GO TO ─────────────────────────────────
+  //
+  // Ryan, 2026-09-27: "for navigating a track it only gives you from beginning or end and then
+  // draws a line to get to track but doesn't get you to the beginning". Follow Track offers Forward
+  // or Backward and nothing else (UHD2 manual, "Browsing for and Navigating a Recorded Track"), and
+  // nothing on the unit marked where a leg starts: his 9/28 plan wrote the ramp, four stops and 34
+  // structure marks, and the only object at a leg's start was its cue route. A waypoint is what Go
+  // To takes him to. Offered this, a date on every name and fewer cue routes, he chose this.
+  //
+  // `Flag, Green` and `Flag, Red` came out of his own unit's exports (see MARK_SYMBOL), and no other
+  // mark in this file is a green or a red flag, so a start and an end read as what they are.
+  //
+  // THE START CARRIES THE BAND, the same text as the leg's cue line (legBand), because the start is
+  // where he sets the Contour alarm and Depth Shading for the leg.
+  //
+  // ONE MARK PER PLACE, AND THE PLACE IS EXACT. A leg fished back starts on the very coordinate the
+  // one before it ended on, and ends on that one's start. There the start is kept -- `L2 start` says
+  // what to do at that spot and `L1 end` would sit on top of it -- and so is the first mark to claim
+  // a spot, in the order of the day. Equal coordinates, not near ones: no distance is chosen here.
+  const legs = ((plan && plan.legs) || []).filter((leg) => leg.type !== 'transit'
+    && Array.isArray(leg.coordinates) && leg.coordinates.length >= 2);
+  const sameSpot = (p, q) => p[0] === q[0] && p[1] === q[1];
+  const startSpots = legs.map((leg) => leg.coordinates[0]);
+  const placed = [];
+  for (const leg of legs) {
+    const co = leg.coordinates;
+    const start = co[0];
+    const end = co[co.length - 1];
+    const band = legBand(leg);
+    if (!placed.some((p) => sameSpot(p, start))) {
+      placed.push(start);
+      out.push({
+        name: cueSafe(`${leg.id} start${band ? ` ${band}` : ''}`),
+        lat: start[1], lon: start[0], sym: 'Flag, Green',
+        legStart: true, scoutWaypoint: true, planRunId: runId,
+        legId: leg.id, atM: leg.startM || 0,
+        tacticalNote: band ? `start of ${leg.id}: Contour alarm and Depth Shading ${band}`
+                           : `start of ${leg.id}`,
+      });
+    }
+    if (!startSpots.some((p) => sameSpot(p, end)) && !placed.some((p) => sameSpot(p, end))) {
+      placed.push(end);
+      out.push({
+        name: cueSafe(`${leg.id} end`),
+        lat: end[1], lon: end[0], sym: 'Flag, Red',
+        legEnd: true, scoutWaypoint: true, planRunId: runId,
+        legId: leg.id, atM: (leg.startM || 0) + (leg.lengthM || 0),
+        tacticalNote: `end of ${leg.id}`,
+      });
+    }
   }
   for (const leg of ((plan && plan.legs) || [])) {
     for (const s of (leg.stops || [])) {

@@ -121,18 +121,24 @@ describe('plan-tracks — the route reaches state.DATA', () => {
     }
   });
 
-  it('waypoints are the launch plus one stop each, at the stop’s own position', () => {
+  it('waypoints are the launch, each leg’s start and end, and one stop each, at the stop’s own position', () => {
     const p = plan();
     const stops = p.legs.flatMap((l) => l.stops || []);
     const wpts = planWaypoints(p, LAUNCH, 'run1');
-    expect(wpts.length).toBe(stops.length + 1);
+    // 2026-09-27: each leg's start and end joined the list (a-leg-has-a-start-he-can-go-to.test.js),
+    // so a stop is found by what it is rather than by where it sits in the array.
+    const legMarks = wpts.filter((w) => w.legStart || w.legEnd);
+    const cast = wpts.filter((w) => w.castingStop);
+    expect(legMarks.length).toBe(4);                 // two separate legs, a start and an end each
+    expect(wpts.length).toBe(1 + legMarks.length + stops.length);
+    expect(cast.length).toBe(stops.length);
     expect(wpts[0].name).toBe('Launch');
     expect(wpts[0].lat).toBe(LAUNCH[1]);
-    expect(wpts[1].lat).toBe(stops[0].at[1]);
-    expect(wpts[1].lon).toBe(stops[0].at[0]);
+    expect(cast[0].lat).toBe(stops[0].at[1]);
+    expect(cast[0].lon).toBe(stops[0].at[0]);
     // castingStop is what parsers.js turns into the GPX type CAST, and what smart-plan-ui
     // filters on -- so this waypoint REPLACES the one it would have made, not doubles it.
-    expect(wpts[1].castingStop).toBe(true);
+    expect(cast[0].castingStop).toBe(true);
   });
 
   it('replaces its own output and leaves the user’s loaded GPX alone', () => {
