@@ -37,9 +37,27 @@ function ctext(el, name) {
 }
 
 /**
+ * The first DESCENDANT with this local name, as a number, or null. Garmin puts the sounder's
+ * readings two levels down -- <extensions><gpxx:WaypointExtension><gpxx:Depth> -- and older units
+ * use the wptx1: namespace for the same element, so it is found by local name, not by prefix.
+ */
+function dnum(el, name) {
+  for (const c of el.getElementsByTagName('*')) {
+    if (localName(c.tagName) !== name) continue;
+    const t = (c.textContent || '').trim();
+    const v = t === '' ? NaN : Number(t);
+    return Number.isFinite(v) ? v : null;
+  }
+  return null;
+}
+
+/**
  * Parse a GPX document into { waypoints, tracks }.
  *
- * Waypoints:  [{ lat, lon, name, sym }]
+ * Waypoints:  [{ lat, lon, name, sym, time, depthM, tempC }]
+ *             `time` is the <time> text (UTC ISO) or null. `depthM` and `tempC` are the sounder's
+ *             readings at the mark when a Garmin wrote them (metres, degrees C), else null. The
+ *             catch drop reads all three: Ryan marks a waypoint when a fish bites (2026-09-27).
  * Tracks:     [{ name, pts: [[lat, lon], ...] }]
  *
  * @param {string} text — raw GPX text
@@ -66,6 +84,9 @@ export function parseGPX(text) {
           lon,
           name: ctext(el, 'name'),
           sym: ctext(el, 'sym') || 'Waypoint',
+          time: ctext(el, 'time') || null,
+          depthM: dnum(el, 'Depth'),
+          tempC: dnum(el, 'Temperature'),
         });
       }
     } else if (ln === 'trk') {

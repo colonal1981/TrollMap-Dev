@@ -20,6 +20,9 @@ import { get as dbGet, tryPut } from '../utils/db.js';
 
 import { callGlobal } from '../utils/call-global.js';
 import { solunarFor } from '../utils/solunar.js';
+import { parseGPX } from '../utils/parsers.js';
+import { distMiFromCoords } from '../utils/geo.js';
+import { groupPhotosByWaypoint, waypointReadings, localIso, fmtGap } from '../utils/catch-waypoints.js';
 const DEFAULT_HELPER = 'http://127.0.0.1:8787';
 const QUEUE_DB_KEY = 'catch_import_queue';
 const CATCHES_DB_KEY = 'catches';
@@ -301,6 +304,11 @@ function enrichItemFromGps(item) {
   if (!item) return item;
   const spatial = nearestLakeAndContour(item.lat, item.lon);
   if (!item.lake && spatial.lake) item.lake = spatial.lake;
+  // A DEPTH HIS SOUNDER MEASURED AT THE MARK IS NOT LOOKED UP AGAIN. The catch drop takes it from
+  // the Garmin waypoint he drops at the bite. A contour band written beside it would make
+  // describeCatchDepth() call a sonar reading "charted" -- the band and the flag below are what
+  // mark a depth as a lookup -- so the lake is filled in and the depth is left alone.
+  if (item.depthSource === 'sounder_at_waypoint' && item.depth) return item;
   // A contour 0.27 mi away is not this spot's depth, so it does not get to BE the catch's
   // depth. The band below still records what was found and how far off it was, which is the
   // information; `depth` is a claim, and that claim needs the fix to be on the contour.
@@ -596,7 +604,7 @@ function renderJournalOnly(body = document.getElementById('catchCenterBody')) {
         <span style="font-size:18px">🐟</span>
         <div style="flex:1;min-width:0">
           <div><b>${esc(c.species || 'Fish')}</b>${c.length ? ` · ${esc(c.length)}"` : ''} · ${esc(c.date || '')} ${esc(c.time || '')} · ${esc(c.lake || '')}${c.reviewFlags?.includes('lake_mismatch_on_recheck') ? ` <span style="color:#e0a030">⚠ suggested: ${esc(c.lakeRecheckSuggestion || '')}</span>` : ''}</div>
-          <div class="muted">${c.depth ? `Depth: ${esc(describeCatchDepth(c).text)}` : ''}${c.sourceFile ? ` · ${esc(c.sourceFile)}` : ''}${c.verification?.length ? ` · length: ${esc(c.verification.length)}` : ''}</div>
+          <div class="muted">${c.depth ? `Depth: ${esc(describeCatchDepth(c).text)}` : ''}${c.waterTempF != null ? ` · Water ${esc(c.waterTempF)} °F` : ''}${c.sourceFile ? ` · ${esc(c.sourceFile)}` : ''}${c.verification?.length ? ` · length: ${esc(c.verification.length)}` : ''}</div>
           ${c.notes ? `<div style="margin-top:2px">${esc(c.notes)}</div>` : ''}
         </div>
         <button data-delcatch="${i}" class="small">🗑</button>
@@ -623,9 +631,9 @@ function renderImport(body) {
   body.innerHTML = `
     <div class="card" style="margin:0 0 12px 0;border-color:var(--accent)">
       <h3>🌙 Nightly Catch Upload — live AI ID, no offline script needed</h3>
-      <p class="muted">Drop tonight's photos straight in. For each catch: shoot the <b>fish-on-board photo first</b>, then the <b>lure photo second</b>, within about 90 seconds of each other — TrollMap pairs them by timestamp automatically (swap button in review if it guesses wrong). AI only runs on the fish photo (species + length); the lure photo is never sent to AI — you just pick the lure yourself while looking at it, free.</p>
-      <div class="filebox" id="nightlyDropBox">Drop tonight's photos here or click to choose (select all of them at once)</div>
-      <input id="nightlyPhotoInput" type="file" accept="image/*" multiple class="hidden">
+      <p class="muted">Drop the day's photos <b>and the Garmin's GPX export</b> together. Each waypoint you marked at a bite becomes one catch: the first photo after it is the <b>lure shot</b>, the second is the <b>fish-on-board shot</b>, and the position, depth and water temperature come from the waypoint. AI only sees the board shot (species + length); you pick the lure yourself while looking at the lure shot. Without a GPX, photos taken within 90 seconds of each other are paired the same way, lure first (🔄 swap in review if it guessed wrong).</p>
+      <div class="filebox" id="nightlyDropBox">Drop the photos and the .gpx here, or click to choose (select them all at once)</div>
+      <input id="nightlyPhotoInput" type="file" accept="image/*,.gpx" multiple class="hidden">
       <div id="nightlyUploadStatus" class="muted" style="margin-top:8px"></div>
     </div>
     <div class="grid" style="grid-template-columns:minmax(280px,1fr) minmax(280px,1fr);gap:12px">
@@ -662,7 +670,7 @@ function renderImport(body) {
   nightlyBox.addEventListener('dragleave', () => nightlyBox.classList.remove('ok'));
   nightlyBox.addEventListener('drop', e => {
     e.preventDefault(); nightlyBox.classList.remove('ok');
-    handleNightlyPhotoUpload([...e.dataTransfer.files].filter(f => f.type.startsWith('image/')), body);
+    handleNightlyPhotoUpload([...e.dataTransfer.files].filter(f => f.type.startsWith('image/') || isGpxFile(f)), body);
   });
   nightlyInput.addEventListener('change', e => handleNightlyPhotoUpload([...e.target.files], body));
   const input = body.querySelector('#catchCsvInput');
@@ -782,7 +790,8 @@ function renderQueueDetail(el, q) {
       <div><label>Date</label><input id="rvDate" value="${esc(q.date || '')}"></div>
       <div><label>Time</label><input id="rvTime" value="${esc(q.time || '')}"></div>
       <div><label>Lake</label><input id="rvLake" value="${esc(q.lake || '')}"></div>
-      <div><label>Depth ft</label><input id="rvDepth" value="${esc(q.depth || '')}"></div>
+      <div><label>Depth ft${q.depthSource === 'sounder_at_waypoint' ? ' (sonar, at the waypoint)' : ''}</label><input id="rvDepth" value="${esc(q.depth || '')}"></div>
+      <div><label>Water °F</label><input id="rvWaterTemp" value="${esc(q.waterTempF ?? '')}"></div>
       <div><label>Latitude</label><input id="rvLat" value="${esc(q.lat || '')}"></div>
       <div><label>Longitude</label><input id="rvLon" value="${esc(q.lon || '')}"></div>
       <div><label>Has fish</label><select id="rvHasFish"><option value="true" ${q.verified?.hasFish ? 'selected' : ''}>Yes</option><option value="false" ${!q.verified?.hasFish ? 'selected' : ''}>No</option></select></div>
@@ -841,6 +850,9 @@ function applyDetailEdits(q) {
   q.time = document.getElementById('rvTime')?.value || '';
   q.lake = document.getElementById('rvLake')?.value || '';
   q.depth = document.getElementById('rvDepth')?.value || '';
+  // Blank is "no reading", not 0 -- 32 °F water is a temperature, an empty box is not.
+  const waterTemp = String(document.getElementById('rvWaterTemp')?.value ?? '').trim();
+  q.waterTempF = waterTemp !== '' && Number.isFinite(Number(waterTemp)) ? Number(waterTemp) : null;
   q.lat = document.getElementById('rvLat')?.value || '';
   q.lon = document.getElementById('rvLon')?.value || '';
   q.lure = document.getElementById('rvLure')?.value || '';
@@ -877,6 +889,11 @@ async function approveQueueItem(q) {
     date: q.date || '',
     lake: q.lake || '',
     lat: q.lat || '', lon: q.lon || '',
+    // From the Garmin waypoint he marks at the bite (2026-09-27): the sounder's water temperature,
+    // where the depth came from, and the mark itself, so the position can always be traced.
+    waterTempF: q.waterTempF ?? null,
+    depthSource: q.depthSource || null,
+    waypoint: q.waypoint || null,
     notes: q.ai?.notes || '',
     weather: q.weather || null,
     structure: q.structure || null,
@@ -1085,6 +1102,7 @@ function exportQueueCsv() {
   const rows = getQueue().map(q => ({
     review_status: q.status, review_flags: (q.reviewFlags || []).join('|'), filename: q.filename,
     datetime: q.datetime, date: q.date, time: q.time, lat: q.lat, lon: q.lon, lake: q.lake, depth: q.depth,
+    water_temp_f: q.waterTempF ?? '',
     has_fish: q.verified?.hasFish, on_bump_board: q.verified?.onBoard,
     species: q.verified?.species || q.ai?.inferredSpecies || q.ai?.species,
     verified_length_inches: q.verified?.length || '', ai_length_inches: q.ai?.length || '',
@@ -1098,6 +1116,7 @@ function exportQueueCsv() {
 function exportJournalCsv() {
   const rows = getCatches().map(c => ({
     species: c.species, length: c.length, date: c.date, time: c.time, lake: c.lake, depth: c.depth,
+    waterTempF: c.waterTempF ?? '',
     lat: c.lat, lon: c.lon, lure: c.lure, lead: c.lead, notes: c.notes,
     tempF: c.weather?.tempF ?? '', windMph: c.weather?.windMph ?? '', windDir: c.weather?.windDir ?? '', cloudPct: c.weather?.cloudPct ?? '', pressureHpa: c.weather?.pressureHpa ?? '', moonPhase: c.weather?.moonPhase || '',
     sourceFile: c.sourceFile, sourcePath: c.sourcePath, importedFrom: c.importedFrom,
@@ -1128,15 +1147,26 @@ async function addManualCatch() {
 }
 
 // Legacy buttons may exist before render override; wire defensively.
-// ── Nightly Catch Upload — live multi-photo intake with fish/lure pairing ────
-// Convention: shoot the fish-on-board photo FIRST, then the lure photo
-// SECOND, within PAIR_WINDOW_S of each other. Photos are grouped by EXIF
-// timestamp; earlier photo in a pair = fish (gets sent to AI), later = lure
-// (never sent to AI — user tags it manually in review, since that's free
-// and just as fast as trying to get AI to guess correctly). A cluster of
-// exactly 2 is treated as a pair; anything else (1, or 3+) is treated as
-// individual unpaired fish photos rather than guessing at a grouping.
+// ── Nightly Catch Upload — live multi-photo intake with lure/fish pairing ────
+// Ryan's process (2026-09-27): mark a waypoint on the Garmin when the fish bites, land it, shoot
+// the LURE photo (fish with the lure in its mouth), unhook, then shoot the FISH-ON-BOARD photo.
+// The board photo is the one sent to AI; the lure photo never is -- he picks the lure himself
+// while looking at it, which is free and just as fast.
+//
+// WITH A GPX IN THE DROP, the waypoints anchor the catches (js/utils/catch-waypoints.js): one
+// catch per marked waypoint, first photo after it = lure, second = board, and the position, depth
+// and water temperature are the Garmin's, not the phone's.
+//
+// WITHOUT ONE, photos are grouped by EXIF time: a cluster of exactly 2 taken within PAIR_WINDOW_S
+// of each other is a pair, EARLIER = LURE, LATER = BOARD. Anything else (1, or 3+) is treated as
+// individual fish photos rather than guessing at a grouping. The window is the old one and it is
+// not his number -- his second 9/27 bowfin took 112 s to unhook and would have split -- which is
+// why the waypoint is the way in.
 const PAIR_WINDOW_S = 90;
+
+function isGpxFile(f) {
+  return /\.gpx$/i.test(String(f?.name || ''));
+}
 
 // Load exif-js ourselves — don't depend on catch_importer.js having already
 // injected it, since module load order isn't guaranteed.
@@ -1223,111 +1253,180 @@ function fileToDataUrl(file, maxPx = 1024) {
   });
 }
 
+// Why a photo with a GPX in the drop did not land on a waypoint -- said on the row, never dropped.
+const UNANCHORED_NOTE = {
+  no_photo_time: () => 'This photo has no time on it, so it could not be matched to a waypoint.',
+  no_waypoint_before: () => 'No waypoint in the GPX was marked before this photo.',
+  waypoint_other_day: (w) => `The last waypoint before this photo, ${w?.name || '(unnamed)'}, was marked on another day (${localIso(w.epochS).slice(0, 10)}).`,
+  after_waypoint_pair: (w) => `Taken after waypoint ${w?.name || '(unnamed)'}'s lure and board photos, so it is not guessed into that catch. A fish with no waypoint of its own?`,
+};
+
 async function handleNightlyPhotoUpload(files, body) {
   const status = body?.querySelector('#nightlyUploadStatus') || document.getElementById('nightlyUploadStatus');
   if (!files.length) return;
-  if (status) status.textContent = `Reading ${files.length} photo(s)...`;
+  const gpxFiles = files.filter(isGpxFile);
+  const photoFiles = files.filter(f => !isGpxFile(f));
+  if (!photoFiles.length) {
+    if (status) status.textContent = 'No photos in that drop. Drop the photos and the GPX together.';
+    return;
+  }
+  if (status) status.textContent = `Reading ${photoFiles.length} photo(s)${gpxFiles.length ? ` and ${gpxFiles.length} GPX` : ''}...`;
   await ensureExifLoaded();
 
-  const withExif = await Promise.all(files.map(extractExif));
-  const clusters = clusterByTimestamp(withExif);
+  const waypoints = [];
+  const gpxUnread = [];
+  for (const g of gpxFiles) {
+    try {
+      waypoints.push(...parseGPX(await g.text()).waypoints.map(w => ({ ...w, file: g.name })));
+    } catch (err) {
+      // Said in the status line: a GPX that did not read means every catch below fell back to
+      // the phone's position, and that must not look like the waypoints were used.
+      gpxUnread.push(g.name);
+      console.warn('[catch-journal] could not read GPX', g.name, err);
+    }
+  }
+
+  const withExif = await Promise.all(photoFiles.map(extractExif));
+  const grouped = groupPhotosByWaypoint(withExif, waypoints);
+
+  // One plan per catch: which photo goes to the fish ID, which is the lure, and the waypoint.
+  const plans = grouped.catches.map(c => ({
+    board: c.board, lure: c.lure, waypoint: c.waypoint,
+    flags: c.onePhoto ? ['one_photo_at_waypoint'] : [], notes: [],
+  }));
+  // Everything not under a waypoint: paired by time as before, lure first. With a GPX in the
+  // drop each one says why it had no waypoint; without one there is nothing to explain.
+  const why = new Map(grouped.unanchored.map(u => [u.photo, u]));
+  for (const cluster of clusterByTimestamp(grouped.unanchored.map(u => u.photo))) {
+    const isPair = cluster.length === 2;
+    for (const board of (isPair ? [cluster[1]] : cluster)) {
+      const u = why.get(board);
+      plans.push({
+        board, lure: isPair ? cluster[0] : null, waypoint: null,
+        flags: gpxFiles.length ? [u.reason] : [],
+        notes: gpxFiles.length ? [UNANCHORED_NOTE[u.reason](u.waypoint)] : [],
+      });
+    }
+  }
 
   let created = 0, aiCalled = 0, aiFailed = 0;
   const queue = getQueue();
 
-  for (let i = 0; i < clusters.length; i++) {
-    const cluster = clusters[i];
-    if (status) status.textContent = `Processing catch ${i + 1} of ${clusters.length}...`;
+  for (let i = 0; i < plans.length; i++) {
+    const { board, lure, waypoint: w, flags, notes } = plans[i];
+    if (status) status.textContent = `Processing catch ${i + 1} of ${plans.length}...`;
 
-    // Exactly 2 in a cluster = fish+lure pair (earlier = fish, later = lure).
-    // Anything else = treat each photo as its own unpaired fish photo rather
-    // than guessing at a grouping.
-    const isPair = cluster.length === 2;
-    const fishItems = isPair ? [cluster[0]] : cluster;
-    const lureItem = isPair ? cluster[1] : null;
+    const [photoDataUrl, lureDataUrl] = await Promise.all([
+      fileToDataUrl(board.file, 1024),
+      lure ? fileToDataUrl(lure.file, 640) : Promise.resolve(''),
+    ]);
 
-    for (const fishItem of fishItems) {
-      const [photoDataUrl, lureDataUrl] = await Promise.all([
-        fileToDataUrl(fishItem.file, 1024),
-        lureItem ? fileToDataUrl(lureItem.file, 640) : Promise.resolve(''),
-      ]);
+    // THE TIME IS THE BITE when there is a waypoint; the photos come minutes after it. Declared
+    // before the AI call that sends its date -- it used to sit below it, which is a ReferenceError
+    // (temporal dead zone) caught by the try, so every nightly catch read "AI call failed".
+    const dt = w ? localIso(w.epochS) : (board.isoDatetime || localIso(board.timestamp));
+    const { date, time } = splitDateTime(dt.replace('T', ' '));
+    const readings = waypointReadings(w);
+    const lat = w ? w.lat : (board.lat ?? '');
+    const lon = w ? w.lon : (board.lon ?? '');
 
-      let ai = null;
-      try {
-        ai = await identifyFishWithGemini(fishItem.file, {
-          lake: document.getElementById('planLake')?.value || '',
-          date: dt.split('T')[0],
-          lat: fishItem.lat,
-          lon: fishItem.lon,
-        });
-        aiCalled++;
-      } catch (e) {
-        aiFailed++;
-        console.warn('[catch-journal] Nightly AI ID failed:', e.message);
-      }
-
-      const dt = fishItem.isoDatetime || new Date(fishItem.timestamp * 1000).toISOString();
-      const { date, time } = splitDateTime(dt.replace('T', ' '));
-
-      const item = {
-        id: `nightly_${fishItem.timestamp}_${Math.random().toString(36).slice(2, 8)}`,
-        filename: fishItem.file.name,
-        sourcePath: '',
-        datetime: dt, date, time,
-        lat: fishItem.lat ?? '', lon: fishItem.lon ?? '',
-        lake: '', depth: '',
-        photoDataUrl,
-        lurePhotoDataUrl: lureDataUrl,
-        lureFilename: lureItem?.file?.name || '',
-        lure: '', // filled in manually during review — never sent to AI
-        // NOTE: /identify-catch's actual response shape is
-        // {species, lengthInches, confidence, notes} — no has_fish or
-        // on_bump_board fields exist. This endpoint's species classification
-        // is also hard-restricted to Striped Bass/Largemouth/Smallmouth/
-        // Crappie/Catfish/White Bass-Hybrid only; other species (bowfin,
-        // bream, gar, pickerel, redfish, trout, flounder, shad) will come
-        // back misclassified into one of those 6 until that prompt is
-        // widened — always human-review species on those catches.
-        ai: ai ? {
-          species: ai.species || '', length: ai.lengthInches ?? '', confidence: ai.confidence || '',
-          notes: ai.notes || '', model: 'Gemini 2.5-flash v13 (SC trolling taxonomy)',
-          inferredSpecies: ai.species || '',
-          // v2 extended fields — stored on the item, displayed in review, ignored by old code safely
-          has_fish: ai.has_fish ?? true,
-          on_bump_board: ai.on_bump_board ?? true,
-          length_source: ai.length_source || '',
-          board_detected: !!ai.board_detected,
-          board_type: ai.board_type || '',
-          measurement_confidence: ai.measurement_confidence || ai.confidence || '',
-          species_confidence: ai.species_confidence ?? null,
-          alt_species: ai.alt_species || [],
-          id_features: ai.id_features || [],
-          data_quality: ai.data_quality || null,
-          trollmap_tags: ai.trollmap_tags || [],
-        } : { species: '', length: '', confidence: '', notes: 'AI call failed — enter manually.', model: '' },
-        verified: {
-          species: ai?.species || '', length: ai?.lengthInches ?? '',
-          // has_fish/on_bump_board don't exist in this endpoint's response —
-          // default true, since a nightly-uploaded fish photo is a catch by
-          // definition of this workflow; correct manually if wrong.
-          hasFish: true, onBoard: true,
-          reviewed: false,
-        },
-        weather: null,
-        reviewFlags: ai === null ? ['ai_call_failed'] : [],
-        status: 'pending',
-        importedFrom: 'nightly_upload',
-        updatedAt: new Date().toISOString(),
-      };
-      queue.unshift(item);
-      created++;
+    if (w) {
+      const got = [readings.depthFt != null ? `depth ${readings.depthFt} ft` : '',
+                   readings.waterTempF != null ? `water ${readings.waterTempF} °F` : ''].filter(Boolean);
+      notes.unshift(`Garmin waypoint ${w.name || '(unnamed)'} at ${displayTime(dt.slice(11))}: position${got.length ? `, ${got.join(', ')}` : ''} from the sounder.`
+        + (lure ? ` Lure photo ${fmtGap(lure.timestamp - w.epochS)} after it,` : '')
+        + ` board photo ${fmtGap(board.timestamp - w.epochS)} after it.`
+        + (Number.isFinite(board.lat) && Number.isFinite(board.lon)
+          ? ` The phone put the board photo ${distMiFromCoords(board.lat, board.lon, w.lat, w.lon).toFixed(2)} mi from the waypoint.`
+          : ''));
     }
+
+    let ai = null;
+    try {
+      ai = await identifyFishWithGemini(board.file, {
+        lake: document.getElementById('planLake')?.value || '',
+        date,
+        lat: w ? w.lat : board.lat,
+        lon: w ? w.lon : board.lon,
+      });
+    } catch (e) {
+      console.warn('[catch-journal] Nightly AI ID failed:', e.message);
+    }
+    // identifyFishWithGemini() returns null on failure rather than throwing, so the count is
+    // taken off the answer -- counting the call as "ran" hid every failure behind a success.
+    if (ai) aiCalled++; else aiFailed++;
+
+    const item = {
+      id: `nightly_${board.timestamp}_${Math.random().toString(36).slice(2, 8)}`,
+      filename: board.file.name,
+      sourcePath: '',
+      datetime: dt, date, time,
+      lat, lon,
+      lake: '',
+      depth: readings.depthFt != null ? String(readings.depthFt) : '',
+      // Measured by his sounder at the mark, not looked up off a chart; enrichItemFromGps()
+      // leaves it alone because of this.
+      depthSource: readings.depthFt != null ? 'sounder_at_waypoint' : '',
+      waterTempF: readings.waterTempF,
+      waypoint: w ? { name: w.name, time: w.time, lat: w.lat, lon: w.lon,
+                      depthM: w.depthM, tempC: w.tempC, file: w.file } : null,
+      photoDataUrl,
+      lurePhotoDataUrl: lureDataUrl,
+      lureFilename: lure?.file?.name || '',
+      lure: '', // filled in manually during review — never sent to AI
+      // /identify-catch-v2 (falling back to /identify-catch) answers with has_fish,
+      // on_bump_board, species, length and confidence. Its species list is the Worker's, which
+      // includes Bowfin -- with a freshwater eyespot rule so a bowfin is not called a red drum --
+      // plus gar, pickerel, bream, shad and the saltwater fish. Species is still human-reviewed.
+      ai: ai ? {
+        species: ai.species || '', length: ai.lengthInches ?? '', confidence: ai.confidence || '',
+        notes: [ai.notes || '', ...notes].filter(Boolean).join(' | '),
+        model: 'Gemini 2.5-flash v13 (SC trolling taxonomy)',
+        inferredSpecies: ai.species || '',
+        // v2 extended fields — stored on the item, displayed in review, ignored by old code safely
+        has_fish: ai.has_fish ?? true,
+        on_bump_board: ai.on_bump_board ?? true,
+        length_source: ai.length_source || '',
+        board_detected: !!ai.board_detected,
+        board_type: ai.board_type || '',
+        measurement_confidence: ai.measurement_confidence || ai.confidence || '',
+        species_confidence: ai.species_confidence ?? null,
+        alt_species: ai.alt_species || [],
+        id_features: ai.id_features || [],
+        data_quality: ai.data_quality || null,
+        trollmap_tags: ai.trollmap_tags || [],
+      } : {
+        species: '', length: '', confidence: '', model: '',
+        notes: ['AI call failed — enter manually.', ...notes].join(' | '),
+      },
+      verified: {
+        species: ai?.species || '', length: ai?.lengthInches ?? '',
+        // Default true: the board shot is a landed fish by definition of this workflow.
+        // Corrected in review if wrong.
+        hasFish: true, onBoard: true,
+        reviewed: false,
+      },
+      weather: null,
+      reviewFlags: [...(ai === null ? ['ai_call_failed'] : []), ...flags],
+      status: 'pending',
+      importedFrom: 'nightly_upload',
+      updatedAt: new Date().toISOString(),
+    };
+    queue.unshift(item);
+    created++;
   }
 
   setQueue(queue);
   await saveQueue();
   if (status) {
-    status.textContent = `✓ Added ${created} catch(es) to review queue. AI ID ran on ${aiCalled}${aiFailed ? ` (${aiFailed} failed — check flagged items)` : ''}. Review below.`;
+    const onMarks = grouped.catches.length;
+    status.textContent = `✓ Added ${created} catch(es) to review queue. AI ID ran on ${aiCalled}${aiFailed ? ` (${aiFailed} failed — check flagged items)` : ''}.`
+      + (gpxFiles.length
+        ? ` ${onMarks} on a Garmin waypoint${created > onMarks ? `, ${created - onMarks} without one (flagged)` : ''}.`
+          + (grouped.loaded ? ` ${grouped.loaded} waypoints in the GPX share one timestamp, so they were loaded onto the unit, not marked, and were not used.` : '')
+        : '')
+      + (gpxUnread.length ? ` Could not read ${gpxUnread.join(', ')}.` : '')
+      + ' Review below.';
   }
   renderCatchSubtab();
 }
