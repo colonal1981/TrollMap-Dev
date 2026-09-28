@@ -4610,9 +4610,12 @@ async function waterBlock(b, lat, lon, env) {
  */
 export function chartDatumShape(b, sources = {}) {
   const out = {
-    // True of every Garmin-derived pack in R2, not just the ones with a level feed.
-    charted_at: 'full_pool',
-    charted_at_source: 'Garmin — soundings and contours are referenced to full pool; drawdown is '
+    // WHAT LEVEL THE CHART WAS MADE AT IS NOT PUBLISHED. This said 'full_pool' of every pack until
+    // 2026-09-27, when Ryan's own sounder measured Wateree's chart at about 2.3 ft below full pool
+    // (js/data/chart-levels.js, which the app reads; poolOffsetFt() applies it there).
+    charted_at: 'unknown',
+    charted_at_source: 'Garmin publishes no level for its lake charts; measured on Wateree against '
+                     + 'the sounder it is about 2.3 ft below full pool, not full pool. Drawdown is '
                      + 'not applied to the base map',
     applied: false,
     below_full_pool_ft: null,

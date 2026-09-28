@@ -77,7 +77,8 @@ test('a river or coastal zone has no full pool to be below', () => {
 test('the datum is REPORTED and never APPLIED', () => {
   for (const src of [{ duke: DUKE }, {}]) {
     assert.equal(chartDatumShape(LAKE, src).applied, false);
-    assert.equal(chartDatumShape(LAKE, src).charted_at, 'full_pool');
+    // 'unknown' since 2026-09-27: 'full_pool' was never measured, and on Wateree it is not.
+    assert.equal(chartDatumShape(LAKE, src).charted_at, 'unknown');
   }
 });
 
