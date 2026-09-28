@@ -1253,10 +1253,20 @@ export function structureIndex(...featureLists) {
       if (lon === null) continue;
       if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
       const depth = Number(p[DEPTH_FIELD[kind]]);
+      // A POINT OR A COVE HAS TWO DEPTHS AND IS PLACED AT THE SHALLOW ONE. `deep_side_ft` is the
+      // deepest water within `deepest_within_m` of the feature; the feature's own position is the
+      // tip, at `shallow_side_ft`. Ryan, 2026-09-28, on `point 31ft` sitting on the bank in under
+      // 5 ft of water: the tip was 0.4 ft on the chart and the 34.3 ft was 39 m off it. Carried so
+      // the mark can say both. `p.x == null` first, because Number(null) is 0 and 0 ft is a depth.
+      const two = kind === 'point' || kind === 'cove';
+      const shallow = two && p.shallow_side_ft != null ? Number(p.shallow_side_ft) : NaN;
+      const within = two && p.deepest_within_m != null ? Number(p.deepest_within_m) : NaN;
       const rec = {
         kind, lon, lat,
         id: p.id || null,
         depthFt: Number.isFinite(depth) && depth > 0 ? Number(depth.toFixed(1)) : null,
+        shallowFt: Number.isFinite(shallow) && shallow >= 0 ? Number(shallow.toFixed(1)) : null,
+        deepWithinM: Number.isFinite(within) && within > 0 ? Math.round(within) : null,
         // How far it reaches from the point recorded above; 0 where the pack does not say. See
         // featureReachM() for which fields are trusted and, more to the point, which are not.
         reachM: featureReachM(kind, p),
@@ -1274,6 +1284,18 @@ export function structureIndex(...featureLists) {
     }
   }
   return { grid, n };
+}
+
+/**
+ * The kind a pass is looked up as. A dock line or a dock cluster is a GROUP the app made out of
+ * single docks along the run (groupDocks), and the index only ever holds the single docks
+ * (`docks.geojson` polygons, indexed as `dock`). So a group looked up as itself never resolved
+ * and every one of them kept the fallback, the point on the trolling line. Ryan, 2026-09-28: "next
+ * to it is a dock cluster but that symbol is sitting in 20ft of water". Looked up as `dock`, it
+ * lands on the nearest dock of its group, inside the same radius. Every other kind is itself.
+ */
+export function lookupKind(type) {
+  return type === 'dock_cluster' || type === 'dock_line' ? 'dock' : type;
 }
 
 /** Nearest feature of `kind` to `at`, within `withinM`. Null when nothing matches. */
@@ -2619,20 +2641,24 @@ export function selectCandidates(runs, o) {
           // distance but not which bank, so `charted` says which of the two this is and the GPX
           // writer stops promising a charted position for a mark that has none.
           const onLine = pointAt(line, lineCum, h.atM);
-          const s = resolveStructure(onLine, h.type, h.offM * 1.25 + RESOLVE_MARGIN_M, o.structures);
+          const s = resolveStructure(onLine, lookupKind(h.type), h.offM * 1.25 + RESOLVE_MARGIN_M,
+                                     o.structures);
+          // A group keeps its own description: the dock it was pinned on is one of several.
+          const group = h.type === 'dock_line' ? `line of ${h.n} docks over ${h.spanM} m — run a bait down it`
+            : h.type === 'dock_cluster' ? `cluster of ${h.n} docks — worth stopping on` : null;
           return {
             ...h,
             id: `${o.slug || 'run'}#${i}:p${k}`,
             at: s ? [s.lon, s.lat] : onLine,
             charted: !!s,
             structureId: s ? s.id : null,
-            what: s ? s.what
-              : h.type === 'dock_line' ? `line of ${h.n} docks over ${h.spanM} m — run a bait down it`
-              : h.type === 'dock_cluster' ? `cluster of ${h.n} docks — worth stopping on`
+            what: group || (s ? s.what
               : h.type === 'dock' ? 'a single dock'
-              : h.type.replace(/_/g, ' '),
+              : h.type.replace(/_/g, ' ')),
             // From the structure or not at all. There is no fallback depth on purpose.
             depthFt: s ? s.depthFt : null,
+            shallowFt: s ? (s.shallowFt ?? null) : null,
+            deepWithinM: s ? (s.deepWithinM ?? null) : null,
             matchM: s ? s.matchM : null,
           };
         }),

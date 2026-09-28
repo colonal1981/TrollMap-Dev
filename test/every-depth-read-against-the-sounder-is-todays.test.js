@@ -44,7 +44,7 @@ describe('the GPX carries the depth the sounder will read', () => {
     expect(w.name).toBe('ledge 41ft');
     expect(w.depth).toBe(41.3);
     expect(w.chartDepth).toBe(46.9);
-    expect(w.tacticalNote).toMatch(/46\.9 ft on the chart, 41\.3 ft today with the lake 5\.56 ft below full pool/);
+    expect(w.tacticalNote).toMatch(/46\.9 ft on the chart, 41\.3 ft today with the lake 5\.56 ft below the level its chart was made at/);
   });
 
   it('and with no level published the chart stands, unannotated', () => {

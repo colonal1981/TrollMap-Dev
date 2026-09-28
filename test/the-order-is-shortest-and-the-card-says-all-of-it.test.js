@@ -164,7 +164,7 @@ describe('a mark the lake has dropped off reads as dry', () => {
       .find((x) => x.chartMark);
     expect(w.name).toBe('point dry');
     expect(w.chartDepth).toBe(1.4);
-    expect(w.tacticalNote).toMatch(/1\.4 ft on the chart, out of the water today with the lake 5\.56 ft below full pool/);
+    expect(w.tacticalNote).toMatch(/1\.4 ft on the chart, out of the water today with the lake 5\.56 ft below the level its chart was made at/);
   });
   it('a stop on one says dry too, and with no level published the chart stands', () => {
     expect(stopName({ id: 'S1.1', structureType: 'point', depthFt: 1.4 }, 5.56)).toBe('S1.1 · point dry');

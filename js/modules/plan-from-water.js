@@ -34,7 +34,7 @@
  */
 
 import { ampHoursAlong, minutesFor, metresBetween, cumulative, worstWind, resolveStructure,
-         RESOLVE_MARGIN_M } from './plan-candidates.js';
+         lookupKind, RESOLVE_MARGIN_M } from './plan-candidates.js';
 import { assemblePlan, DEFAULT_STOP_MIN } from './plan-assemble.js';
 import { buildPlanRequest, parsePlanResponse, planArgsFrom, MODEL_LEG_FIELDS, modelAnswer,
          cannotUseBreaks } from './plan-prompt.js';
@@ -99,7 +99,8 @@ function legFrom(piece, i, ramp, slug, wind, extra = {}) {
       // Where nothing resolves, the line point is still the honest answer and `charted: false`
       // makes the GPX say so.
       const s = extra.structures
-        ? resolveStructure(onLine, n.t, Math.round(n.d) * 1.25 + RESOLVE_MARGIN_M, extra.structures)
+        ? resolveStructure(onLine, lookupKind(n.t), Math.round(n.d) * 1.25 + RESOLVE_MARGIN_M,
+                           extra.structures)
         : null;
       return {
         id: `${slug || 'water'}#${i}:p${k}`,
@@ -113,6 +114,10 @@ function legFrom(piece, i, ramp, slug, wind, extra = {}) {
         // From the structure or not at all. `near` carries no depth, and for timber, piles and
         // attractors none exists anywhere in the packs -- "how tall is every tree claude???"
         depthFt: s ? s.depthFt : null,
+        // A point or a cove: the tip's own depth and how far off it the deep number is. See
+        // structureIndex() in plan-candidates.js.
+        shallowFt: s ? (s.shallowFt ?? null) : null,
+        deepWithinM: s ? (s.deepWithinM ?? null) : null,
         what: s ? s.what : String(n.t).replace(/_/g, ' '),
         weight: (n.t === 'hazard' || n.t === 'obstruction') ? 0 : 1,
       };

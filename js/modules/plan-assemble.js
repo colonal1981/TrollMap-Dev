@@ -1949,6 +1949,10 @@ export function assemblePlan(o) {
         // Null stays null. A waypoint labelled with a guessed depth would poison the very
         // comparison it exists to enable.
         depthFt: h.depthFt ?? null,
+        // A point or a cove sits at its tip; these say how deep the tip is and how far off it
+        // `depthFt` is, so the mark's name can give both (planWaypoints in plan-tracks.js).
+        shallowFt: h.shallowFt ?? null,
+        deepWithinM: h.deepWithinM ?? null,
         worthFishing: h.weight === undefined ? undefined : h.weight > 0,
       })),
       // Reported, never scored. See catchSupport() in plan-candidates.js for why this is kept

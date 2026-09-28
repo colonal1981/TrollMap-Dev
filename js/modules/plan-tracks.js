@@ -620,13 +620,37 @@ export function planWaypoints(plan, launch = null, runId = null, opts = {}) {
         // "cove -4ft", charted at 1.4 and 1.6 ft with the lake 5.56 ft down. Kept on the unit --
         // annotate, never filter -- and named for what it is today.
         const dry = dd != null && Number.isFinite(today) && today <= 0;
-        const d = dry ? ' dry' : Number.isFinite(today) ? ` ${Math.round(today)}ft` : '';
+        // A POINT OR A COVE IS TWO DEPTHS, AND THE MARK SITS ON THE SHALLOW ONE. Ryan, 2026-09-28,
+        // on `point 31ft` at 34.37479, -80.72916: "it's sitting on the bank in less than 5 ft of
+        // water". The pack's feature there is `shallow_side_ft 0.4, deep_side_ft 34.3,
+        // deepest_within_m 39`: the mark is the tip, on the bank, and the number was the deepest
+        // water within 39 m of it. So the name gives both ends, tip first, each in today's water,
+        // and the note says how far off the tip the deep one is. A feature with no shallow side
+        // keeps the one number it has.
+        const shallowToday = Number.isFinite(m.shallowFt) ? todayOnLeg(leg, m.shallowFt) : null;
+        const tip = shallowToday == null ? null
+          : (dd != null && shallowToday <= 0) ? 'dry' : `${Math.max(0, Math.round(shallowToday))}`;
+        const d = dry ? ' dry'
+          : tip != null && Number.isFinite(today) ? ` ${tip}-${Math.round(today)}ft`
+          : Number.isFinite(today) ? ` ${Math.round(today)}ft` : '';
         // ONLY WHERE IT IS ONE. `charted` is false when no feature resolved and the pin is the
         // point on the line at that distance, which is not a charted position and must not say it
         // is -- the whole point of the note is that he stands it next to the sounder.
         const where = m.charted === false
           ? 'position along the line \u2014 the chart does not place this one'
           : 'charted position \u2014 compare with the sounder';
+        // `dd` is the lake against the level its chart was made at (poolOffsetFt), which is the
+        // drawdown only where that level is full pool, so the sentence names the chart's level.
+        const lake = dd == null ? ''
+          : ` today with the lake ${Math.abs(dd)} ft ${dd > 0 ? 'below' : 'above'} the level its chart was made at`;
+        const deepNote = Number.isFinite(m.depthFt)
+          ? `${m.depthFt} ft on the chart${dd != null ? `, ${dry ? 'out of the water' : `${today} ft`}${lake}` : ''}`
+          : null;
+        const tipNote = shallowToday == null ? null
+          : `the mark is the tip, ${m.shallowFt} ft on the chart${dd != null
+              ? (tip === 'dry' ? ', out of the water today' : `, ${shallowToday} ft today`) : ''}; `
+            + `the deep side is ${deepNote || 'not charted'}`
+            + (Number.isFinite(m.deepWithinM) ? `, within ${Math.round(m.deepWithinM)} m of the tip` : '');
         out.push({
           name: `${markLabel(m.type, m.side, onRiver)}${d}`,
           lat: at[1], lon: at[0], sym: markSymbol(m.type, m.side, today),
@@ -635,10 +659,8 @@ export function planWaypoints(plan, launch = null, runId = null, opts = {}) {
           depth: today,
           chartDepth: m.depthFt ?? null,
           structureType: m.type || null,
-          tacticalNote: dd != null && Number.isFinite(m.depthFt)
-            ? `${where}; ${m.depthFt} ft on the chart, `
-              + `${dry ? 'out of the water' : `${today} ft`} today with the lake `
-              + `${Math.abs(dd)} ft ${dd > 0 ? 'below' : 'above'} full pool`
+          tacticalNote: tipNote ? `${where}; ${tipNote}`
+            : (dd != null && deepNote) ? `${where}; ${deepNote}`
             : where,
         });
       }
