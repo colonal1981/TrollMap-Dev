@@ -15,6 +15,10 @@
 //   3. the band in the start's name is the band in the leg's cue line, today's water included;
 //   4. the new marks change nothing about the cue lines;
 //   5. the GPX carries the two flags, and no name has a period for the unit to eat.
+//
+// 2026-09-28: his unit keeps ten characters of a waypoint name, and `L1 start 12-22ft` read
+// `L1 start 1`. The start is now `L1 12-22ft`, the same text as its cue line, and the comment --
+// the second line, twenty characters -- says what to set: `alarm & shade 12-22`.
 
 import { describe, it } from './expect-shim.mjs';
 import assert from 'node:assert/strict';
@@ -42,9 +46,9 @@ describe('a leg has a start he can Go To', () => {
     const L3 = troll('L3', line(-80.700, -80.690, 34.36), { depthFt: 30 });
     const marks = legMarks(planWaypoints({ legs: [L1, T2, L3] }, LAUNCH, 'run'));
     assert.deepEqual(marks.map((m) => [m.name, m.sym]), [
-      ['L1 start 12-22ft', 'Flag, Green'],
+      ['L1 12-22ft', 'Flag, Green'],
       ['L1 end', 'Flag, Red'],
-      ['L3 start 25-35ft', 'Flag, Green'],
+      ['L3 25-35ft', 'Flag, Green'],
       ['L3 end', 'Flag, Red'],
     ]);
     assert.deepEqual([marks[0].lon, marks[0].lat], L1.coordinates[0]);
@@ -58,7 +62,7 @@ describe('a leg has a start he can Go To', () => {
     const L1 = troll('L1', out);
     const L2 = troll('L2', out.slice().reverse(), { pass: 2 });
     const marks = legMarks(planWaypoints({ legs: [L1, L2] }, LAUNCH));
-    assert.deepEqual(marks.map((m) => m.name), ['L1 start 12-22ft', 'L2 start 12-22ft']);
+    assert.deepEqual(marks.map((m) => m.name), ['L1 12-22ft', 'L2 12-22ft']);
     assert.deepEqual([marks[1].lon, marks[1].lat], out.at(-1));
   });
 
@@ -66,7 +70,7 @@ describe('a leg has a start he can Go To', () => {
     const out = line(-80.720, -80.710);
     const legs = [troll('L1', out), troll('L2', out.slice().reverse()), troll('L3', out)];
     assert.deepEqual(legMarks(planWaypoints({ legs }, LAUNCH)).map((m) => m.name),
-      ['L1 start 12-22ft', 'L2 start 12-22ft']);
+      ['L1 12-22ft', 'L2 12-22ft']);
   });
 
   it('gives a leg with no depth a start with no band, and a leg with no line nothing', () => {
@@ -90,8 +94,9 @@ describe('the start and the cue line say the same thing', () => {
     const cue = planCueLines(plan, wps, 'run').find((r) => r.legId === 'L1' && r.cueKind === 'band');
     const start = wps.find((w) => w.legStart);
     assert.ok(cue, 'the leg start has its cue line');
-    assert.equal(start.name, `L1 start ${cue.name.split(' ')[1]}`);
-    assert.equal(start.name, 'L1 start 8-18ft', '16.8 ft charted, 3.5 ft down: 13 ft today');
+    assert.equal(start.name, cue.name);
+    assert.equal(start.name, 'L1 8-18ft', '16.8 ft charted, 3.5 ft down: 13 ft today');
+    assert.equal(start.cmt, 'alarm 8-18 shd 12-22', 'the shading is the chart\'s, 17 ft');
   });
 
   it('leaves the cue lines exactly as they were', () => {
@@ -102,7 +107,8 @@ describe('the start and the cue line say the same thing', () => {
 
   it('reaches the GPX as a green flag and a red flag, with no period in a name', () => {
     const gpx = buildGPX({ waypoints: wps, tracks: [], routes: [] });
-    assert.ok(gpx.includes('<name>L1 start 8-18ft</name>'));
+    assert.ok(gpx.includes('<name>L1 8-18ft</name>'));
+    assert.ok(gpx.includes('<cmt>alarm 8-18 shd 12-22</cmt>'));
     assert.ok(gpx.includes('<sym>Flag, Green</sym>'));
     assert.ok(gpx.includes('<name>L1 end</name>'));
     assert.ok(gpx.includes('<sym>Flag, Red</sym>'));

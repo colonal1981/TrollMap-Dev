@@ -15,6 +15,10 @@
 //   2. a point mark is named tip-to-drop in today's water, and its note says how far off the drop is;
 //   3. a tip the lake has dropped off is "dry", and a feature with no tip depth keeps one number;
 //   4. a dock cluster or a dock line is looked up as a dock, and lands on the nearest one.
+//
+// The same evening: his unit keeps ten characters of a waypoint name, so `point dry-33ft` would
+// read `point dry-`. The name keeps the depths whole and shortens the word -- `pt dry-33` -- and
+// the comment, twenty characters, says it in full.
 
 import { describe, it } from './expect-shim.mjs';
 import assert from 'node:assert/strict';
@@ -55,7 +59,8 @@ describe('a point mark names the tip and the drop', () => {
   it('on Wateree 9/28: the tip is dry and the drop is 33 ft, 39 m off', () => {
     // 1.15 ft is Wateree 3.5 ft down against its chart's measured level (js/data/chart-levels.js).
     const w = markOf(legWith({ depthFt: 34.3, shallowFt: 0.4, deepWithinM: 39 }, { drawdownFt: 1.15 }));
-    assert.equal(w.name, 'point dry-33ft');
+    assert.equal(w.name, 'pt dry-33');
+    assert.equal(w.cmt, 'point dry-33ft');
     assert.match(w.tacticalNote, /the mark is the tip, 0\.4 ft on the chart, out of the water today/);
     assert.match(w.tacticalNote, /the deep side is 34\.3 ft on the chart, 33\.2 ft today/);
     assert.match(w.tacticalNote, /within 39 m of the tip/);
@@ -64,13 +69,14 @@ describe('a point mark names the tip and the drop', () => {
 
   it('where no level applies the chart stands, tip and drop both', () => {
     const w = markOf(legWith({ depthFt: 34.3, shallowFt: 0.4, deepWithinM: 39 }));
-    assert.equal(w.name, 'point 0-34ft');
+    assert.equal(w.name, 'pt 0-34ft');
+    assert.equal(w.cmt, 'point 0-34ft');
     assert.match(w.tacticalNote, /the mark is the tip, 0\.4 ft on the chart; the deep side is 34\.3 ft on the chart, within 39 m/);
   });
 
   it('a tip still under water gives its depth', () => {
     const w = markOf(legWith({ depthFt: 18, shallowFt: 6, deepWithinM: 25 }, { drawdownFt: 1.15 }));
-    assert.equal(w.name, 'point 5-17ft');
+    assert.equal(w.name, 'pt 5-17ft');
   });
 
   it('a feature with no tip depth keeps the one number it has', () => {

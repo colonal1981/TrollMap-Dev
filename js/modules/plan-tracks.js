@@ -84,6 +84,71 @@ const trim = (s, n) => {
   return t.length > n ? `${t.slice(0, n - 1)}…` : t;
 };
 
+// ── WHAT HIS UNIT KEEPS OF A NAME ─────────────────────────────────────────────────────────────
+//
+// Read off his own ECHOMAP, 2026-09-28. The ADM it exported (28Sep26_Trip\ADMEXPORT.ADM) stores a
+// waypoint's name in 10 bytes and its comment in 20, a route's name in 15 and a track's in 20, and
+// the GPX it exported beside it agrees: 34 of its 61 waypoint names come back exactly 10 characters
+// long -- `S1.1 · doc`, `dock clust`, `obstructio`. The note (<desc>) has no field at all and never
+// reaches the unit. So `L3 start 27-37ft` read `L3 start 2` on his screen and `point dry-33ft` read
+// `point dry-`: the part he acts on was the part cut off.
+//
+// Offered the part he acts on first in the ten and the twenty-character comment as a second line,
+// he said "sure". What does not fit is spelled out in the comment, and the whole note stays in the
+// app.
+export const UNIT_CHARS = { name: 10, comment: 20, route: 15, track: 20 };
+
+/** The first candidate that fits in `n` characters; if none does, the last one cut to `n`. */
+export function fitUnit(candidates, n) {
+  const c = (candidates || []).filter((s) => s != null && s !== '')
+    .map((s) => String(s).replace(/\s+/g, ' ').trim());
+  if (!c.length) return '';
+  return c.find((s) => s.length <= n) ?? c[c.length - 1].slice(0, n).trim();
+}
+
+// Shorter words for the same things, tried in order only when the whole word and its depth do not
+// fit. The depth is never the part that gives way: it is what he reads against the sounder.
+const UNIT_WORDS = {
+  point: ['pt'],
+  'dock cluster': ['docks'],
+  'dock line': ['docks'],
+  obstruction: ['obstr'],
+  attractor: ['attr'],
+  'creek mouth': ['creek'],
+  shallow: ['shoal'],
+  hazard: ['haz'],
+  timber: ['tmbr'],
+  'outside bend hole': ['out bend hole', 'out hole', 'hole'],
+  'inside bend hole': ['in bend hole', 'in hole', 'hole'],
+  'outside bend ledge': ['out bend ledge', 'out ledge', 'ledge'],
+  'inside bend ledge': ['in bend ledge', 'in ledge', 'ledge'],
+  'outside bank': ['out bank', 'bank'],
+  'inside bank': ['in bank', 'bank'],
+};
+const unitWords = (label) => [label, ...(UNIT_WORDS[label] || [])];
+
+/**
+ * A structure's name and comment as the unit keeps them. `depth` is the depth without its unit --
+ * `25`, `dry`, `0-34`, `dry-33` -- or null when the chart gives none. The name keeps the depth whole
+ * and shortens the word (`pt dry-33`); the comment keeps the word where it fits and says `ft`
+ * (`point dry-33ft`).
+ */
+export function unitLabel(label, depth = null) {
+  const words = unitWords(String(label || 'mark'));
+  if (depth == null || depth === '') {
+    return { name: fitUnit(words, UNIT_CHARS.name), cmt: fitUnit(words, UNIT_CHARS.comment) };
+  }
+  const d = String(depth);
+  const ft = d === 'dry' ? d : `${d}ft`;
+  const last = words[words.length - 1];
+  const name = fitUnit([
+    ...words.map((w) => `${w} ${ft}`),
+    ...words.map((w) => `${w} ${d}`),
+    `${last.slice(0, Math.max(1, UNIT_CHARS.name - d.length - 1))} ${d}`,
+  ], UNIT_CHARS.name);
+  return { name, cmt: fitUnit(words.map((w) => `${w} ${ft}`), UNIT_CHARS.comment) };
+}
+
 /** `L1 · 16.1 ft` / `T2 · transit`. Readable at a glance on a 4-inch screen. */
 export function trackName(leg) {
   if (!leg) return '';
@@ -111,9 +176,20 @@ export function trackName(leg) {
     : `${leg.id} · troll${again}`;
 }
 
-/** `S1.1 · hump 14ft`. The id first, because that is what the timeline calls it. */
+/** `S1.1 hump`. The id first, because that is what the timeline calls it; the depth is in stopUnit's comment. */
 export function stopName(stop, drawdownFt = null) {
-  const what = String(stop.structureType || stop.structure || 'cast').split(',')[0];
+  return stopUnit(stop, drawdownFt).name;
+}
+
+/**
+ * A stop as the unit keeps it: `{ name: 'S1.1 hump', cmt: 'hump 36ft' }`.
+ *
+ * It was `S1.1 · hump 36ft`, and his unit keeps ten characters of a waypoint's name: on 9/28 his
+ * four stops read `S1.1 · doc`, `S3.1 · hol`, `S5.1 · hol`. The id and what to cast at go in the
+ * ten; the depth goes in the comment, which keeps twenty.
+ */
+export function stopUnit(stop, drawdownFt = null) {
+  const kind = String(stop.structureType || stop.structure || 'cast').split(',')[0].trim();
   // `Number(null)` IS 0, AND 0 IS FINITE, so a structure with no depth printed as `0ft`.
   // Ryan, 2026-08-26, on `S1.1 \u00b7 dock_cluster 0ft`: "dock clusters are a land object... they
   // probably do not have depth." They do not, and plan-candidates.js already agrees -- it writes
@@ -122,9 +198,14 @@ export function stopName(stop, drawdownFt = null) {
   // it turned into a claim that the boat can troll a dock in no water.
   const d = stop.depthFt == null ? NaN : Number(todayDepthFt(Number(stop.depthFt), drawdownFt));
   // AND A CHARTED DEPTH THE LAKE HAS DROPPED BELOW IS DRY, SAID AS DRY. See the marks below.
-  const ft = Number.isFinite(d) && d > 0 ? ` ${Math.round(d)}ft`
-    : (Number.isFinite(d) && drawdownFt != null ? ' dry' : '');
-  return trim(`${stop.id} · ${what}${ft}`, 24);
+  const depth = Number.isFinite(d) && d > 0 ? `${Math.round(d)}`
+    : (Number.isFinite(d) && drawdownFt != null ? 'dry' : null);
+  const label = markLabel(kind);
+  const id = String(stop.id || 'S');
+  return {
+    name: fitUnit(unitWords(label).map((w) => `${id} ${w}`), UNIT_CHARS.name),
+    cmt: unitLabel(label, depth).cmt,
+  };
 }
 
 
@@ -197,14 +278,28 @@ function legBand(leg) {
 }
 
 /** A triangle CUE_LINE_M across, centred on the cue. Closed by the unit it has no crossings. */
-function cueTriangle(name, lat, lon, cueKind, legId, runId) {
+function cueTriangle(name, lat, lon, cueKind, legId, runId, color = null) {
   const dLat = (CUE_LINE_M / 2) / 111320;
   const dLon = (CUE_LINE_M / 2) / (111320 * Math.cos(lat * Math.PI / 180) || 1);
   return {
     name: cueSafe(name),
     pts: [[lat - dLat, lon - dLon], [lat + dLat, lon], [lat - dLat, lon + dLon]],
     cueKind, legId, planRunId: runId, smartPlan: true,
+    // THE LEG'S COLOUR, so the boundary made from this draws like the track it belongs to. Save
+    // ADM writes it (adm.js); a route in a GPX carries no colour, so there it goes unused.
+    color,
   };
+}
+
+/** Each leg's id to the colour its track draws in, counted the way planTracks() counts. */
+function legColours(plan) {
+  const out = new Map();
+  let trollN = 0;
+  for (const leg of ((plan && plan.legs) || [])) {
+    out.set(leg.id, legColor(leg, leg.type === 'troll' ? trollN : 0));
+    if (leg.type === 'troll') trollN += 1;
+  }
+  return out;
 }
 
 /**
@@ -226,6 +321,7 @@ function cueTriangle(name, lat, lon, cueKind, legId, runId) {
  */
 export function planCueLines(plan, waypoints = [], runId = null) {
   const out = [];
+  const colours = legColours(plan);
   const band = new Map();          // waypoint -> the band its name should also carry
   for (const leg of ((plan && plan.legs) || [])) {
     if (leg.type === 'transit' || leg.depthFt == null) continue;
@@ -236,7 +332,8 @@ export function planCueLines(plan, waypoints = [], runId = null) {
     const near = waypoints.find((w) => w.castingStop && !band.has(w)
       && metresBetween(co[0], [w.lon, w.lat]) <= CUE_FOLD_M);
     if (near) band.set(near, text);
-    else out.push(cueTriangle(`${leg.id} ${text}`, co[0][1], co[0][0], 'band', leg.id, runId));
+    else out.push(cueTriangle(`${leg.id} ${text}`, co[0][1], co[0][0], 'band', leg.id, runId,
+                              colours.get(leg.id) || null));
   }
   for (const w of waypoints) {
     if (!(w.castingStop || w.lureChange)) continue;
@@ -246,8 +343,9 @@ export function planCueLines(plan, waypoints = [], runId = null) {
     // at the same spot, with the note. So the id identifies it and the band tells him what to do.
     const b = band.get(w);
     const id = cueSafe(w.name).split(' ')[0];
-    out.push(cueTriangle(b ? `${id} ${b}` : w.name, w.lat, w.lon,
-                         w.lureChange ? 'change' : 'stop', w.legId || null, runId));
+    out.push(cueTriangle(b ? `${id} ${b}` : (w.routeName || w.name), w.lat, w.lon,
+                         w.lureChange ? 'change' : 'stop', w.legId || null, runId,
+                         colours.get(w.legId) || null));
   }
   return out;
 }
@@ -313,6 +411,19 @@ function pointAtM(plan, atM) {
   const last = (legs[legs.length - 1] || {}).coordinates || [];
   if (!first.length) return null;
   return atM <= 0 ? first[0] : (last[last.length - 1] || first[0]);
+}
+
+/**
+ * The id of the leg a distance along the day falls on, walked the way pointAtM() walks it, or null.
+ * A lure change carries it so its boundary can be drawn in its leg's colour.
+ */
+function legAtM(plan, atM) {
+  if (!Number.isFinite(atM)) return null;
+  for (const leg of ((plan && plan.legs) || [])) {
+    const s0 = leg.startM || 0;
+    if (atM >= s0 && atM <= s0 + (leg.lengthM || 0)) return leg.id || null;
+  }
+  return null;
 }// ─────────────────────────────────────────────────────────────────────────────────────────────
 // WHAT THE CHARTPLOTTER DRAWS, AND WHY IT WAS ALL ONE ICON
 //
@@ -421,6 +532,22 @@ export function markSymbol(type, bendSide, depthFt) {
 
 
 
+/**
+ * The leg start's comment, the second line on the unit: the two settings he makes there, in twenty
+ * characters. `alarm 27-37 shd28-38` where the chart's shading pair differs from today's alarm
+ * pair, `alarm & shade 27-37` where they are the same.
+ */
+function startComment(band, shade) {
+  if (!band) return null;
+  const b = band.replace(/ft$/, '');
+  const s = shade ? shade.replace(/ft$/, '') : b;
+  if (s === b) {
+    return fitUnit([`alarm & shade ${band}`, `alarm & shade ${b}`, `alarm+shade ${b}`], UNIT_CHARS.comment);
+  }
+  return fitUnit([`alarm ${b} shade ${s}`, `alarm ${b} shd ${s}`, `alarm ${b} shd${s}`,
+                  `alm ${b} shd${s}`, `${b} / ${s}`], UNIT_CHARS.comment);
+}
+
 export function planWaypoints(plan, launch = null, runId = null, opts = {}) {
   const out = [];
   if (Array.isArray(launch) && Number.isFinite(launch[0]) && Number.isFinite(launch[1])) {
@@ -462,7 +589,12 @@ export function planWaypoints(plan, launch = null, runId = null, opts = {}) {
     if (!placed.some((p) => sameSpot(p, start))) {
       placed.push(start);
       out.push({
-        name: cueSafe(`${leg.id} start${band ? ` ${band}` : ''}`),
+        // `L3 27-37ft`, NOT `L3 start 27-37ft`: his unit keeps ten characters, and that read
+        // `L3 start 2`. The green flag already says it is a start; the band is what he sets there.
+        name: band ? fitUnit([cueSafe(`${leg.id} ${band}`), cueSafe(`${leg.id} ${band.replace(/ft$/, '')}`)],
+                             UNIT_CHARS.name)
+          : cueSafe(`${leg.id} start`),
+        cmt: startComment(band, shade),
         lat: start[1], lon: start[0], sym: 'Flag, Green',
         legStart: true, scoutWaypoint: true, planRunId: runId,
         legId: leg.id, atM: leg.startM || 0,
@@ -487,8 +619,11 @@ export function planWaypoints(plan, launch = null, runId = null, opts = {}) {
     for (const s of (leg.stops || [])) {
       const at = Array.isArray(s.at) && s.at.length === 2 ? s.at : null;
       if (!at || !Number.isFinite(at[0]) || !Number.isFinite(at[1])) continue;
+      const unit = stopUnit(s, legDrawdown(leg));
       out.push({
-        name: stopName(s, legDrawdown(leg)), lat: at[1], lon: at[0], sym: 'Fishing Area',
+        name: unit.name, cmt: unit.cmt, lat: at[1], lon: at[0], sym: 'Fishing Area',
+        // A route keeps fifteen, so the stop's cue line has room for the depth too.
+        routeName: fitUnit([`${s.id} ${unit.cmt}`, unit.name], UNIT_CHARS.route),
         // `castingStop` is what parsers.js:111 turns into the GPX type CAST and what
         // smart-plan-ui.js filters on, so a stop written here replaces the one it would make
         // rather than sitting beside it.
@@ -534,8 +669,13 @@ export function planWaypoints(plan, launch = null, runId = null, opts = {}) {
     const to = String(c.to || '').trim();
     out.push({
       // SHORT, AND THE LURE LAST SO TRUNCATION EATS THE LEAST USEFUL END. The 93sv clips a long
-      // name, and this is read at 2 mph with wet hands: which rod, then what goes on it.
-      name: `${rod} \u00b7 ${to}`.slice(0, 30),
+      // name, and this is read at 2 mph with wet hands: which rod, then what goes on it. It keeps
+      // ten characters (see UNIT_CHARS), so no separator spends two of them; the comment says the
+      // whole lure.
+      name: fitUnit([`${rod} ${to}`], UNIT_CHARS.name),
+      cmt: fitUnit([`${rod} tie on ${to}`, `${rod} ${to}`], UNIT_CHARS.comment),
+      routeName: fitUnit([`${rod} ${to}`], UNIT_CHARS.route),
+      legId: legAtM(plan, c.atM),
       // NOT `Fish`. His unit's own export used seven symbols and that was not one of them, so it
       // was very likely drawing as the default pin. A blue pin is in the grid he read off the
       // picker, and a bait change is an ACTION rather than a piece of structure -- so it gets the
@@ -630,9 +770,13 @@ export function planWaypoints(plan, launch = null, runId = null, opts = {}) {
         const shallowToday = Number.isFinite(m.shallowFt) ? todayOnLeg(leg, m.shallowFt) : null;
         const tip = shallowToday == null ? null
           : (dd != null && shallowToday <= 0) ? 'dry' : `${Math.max(0, Math.round(shallowToday))}`;
-        const d = dry ? ' dry'
-          : tip != null && Number.isFinite(today) ? ` ${tip}-${Math.round(today)}ft`
-          : Number.isFinite(today) ? ` ${Math.round(today)}ft` : '';
+        // The depth as the unit shows it: `dry`, `dry-33`, `0-34`, `25`. unitLabel() puts it in the
+        // ten characters whole and shortens the word around it -- `pt dry-33` -- and the comment
+        // says `point dry-33ft`.
+        const depthText = dry ? 'dry'
+          : tip != null && Number.isFinite(today) ? `${tip}-${Math.round(today)}`
+          : Number.isFinite(today) ? `${Math.round(today)}` : null;
+        const unit = unitLabel(markLabel(m.type, m.side, onRiver), depthText);
         // ONLY WHERE IT IS ONE. `charted` is false when no feature resolved and the pin is the
         // point on the line at that distance, which is not a charted position and must not say it
         // is -- the whole point of the note is that he stands it next to the sounder.
@@ -652,7 +796,7 @@ export function planWaypoints(plan, launch = null, runId = null, opts = {}) {
             + `the deep side is ${deepNote || 'not charted'}`
             + (Number.isFinite(m.deepWithinM) ? `, within ${Math.round(m.deepWithinM)} m of the tip` : '');
         out.push({
-          name: `${markLabel(m.type, m.side, onRiver)}${d}`,
+          name: unit.name, cmt: unit.cmt,
           lat: at[1], lon: at[0], sym: markSymbol(m.type, m.side, today),
           chartMark: true, scoutWaypoint: true, planRunId: runId,
           legId: leg.id, markId: m.id, atM: (leg.startM || 0) + (m.atM || 0),

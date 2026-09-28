@@ -68,7 +68,9 @@ describe('the start flag tells the alarm from the shading', () => {
     const leg = { id: 'L1', type: 'troll', depthFt: 20, drawdownFt: 1.2, startM: 0, lengthM: 900,
                   coordinates: [[-80.72, 34.37], [-80.71, 34.37]], stops: [], marks: [] };
     const start = planWaypoints({ legs: [leg] }).find((w) => w.legStart);
-    assert.equal(start.name, 'L1 start 14-24ft');            // 20 - 1.2 = 18.8, the sounder's
+    assert.equal(start.name, 'L1 14-24ft');                  // 20 - 1.2 = 18.8, the sounder's
+    // The comment is the line his unit shows under the name, twenty characters of it.
+    assert.equal(start.cmt, 'alarm 14-24 shd15-25');
     assert.equal(start.tacticalNote,
       'start of L1: Contour alarm 14-24ft; Depth Shading 15-25ft on the chart');
   });
@@ -78,5 +80,6 @@ describe('the start flag tells the alarm from the shading', () => {
                   coordinates: [[-80.72, 34.37], [-80.71, 34.37]], stops: [], marks: [] };
     const start = planWaypoints({ legs: [leg] }).find((w) => w.legStart);
     assert.equal(start.tacticalNote, 'start of L1: Contour alarm and Depth Shading 15-25ft');
+    assert.equal(start.cmt, 'alarm & shade 15-25');
   });
 });

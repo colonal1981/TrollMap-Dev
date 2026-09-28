@@ -609,7 +609,8 @@ export function collectPlan(){
       // in the GPX and in nothing saved, so a plan loaded from a file had no cue lines to write.
       // [lat, lon], like trackList.
       routeList: (state.DATA.routes || []).filter((r) => r.smartPlan && Array.isArray(r.pts))
-        .map((r) => ({ name: r.name, pts: r.pts, cueKind: r.cueKind || null, legId: r.legId || null })),
+        .map((r) => ({ name: r.name, pts: r.pts, cueKind: r.cueKind || null, legId: r.legId || null,
+                       color: r.color || null })),
     },
     // ── WHAT THE MODEL WAS SENT AND WHAT IT SENT BACK ──────────────────────────────────────────
     //

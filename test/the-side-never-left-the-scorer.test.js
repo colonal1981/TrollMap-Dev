@@ -97,8 +97,12 @@ test('the waypoint the Garmin gets is named for the bend, not for a cove on a ri
     depthFt: h.depthFt ?? null })) }] };
   const wpts = planWaypoints(plan, null, 'run1', { marks: true }).filter((w) => w.chartMark);
   assert.ok(wpts.length, 'the marks have to become waypoints');
-  const names = wpts.map((w) => w.name.replace(/\s*\d+ft$/, ''));
-  assert.ok(!names.includes('cove'), `a river bend reached the Garmin as "cove": ${names.join(', ')}`);
+  // THE COMMENT, because his unit keeps ten characters of a name (2026-09-28): the name is
+  // `hole 12ft` and the comment, twenty characters, says which bend -- `out bend hole 12ft`.
+  const names = wpts.map((w) => w.cmt.replace(/\s*(\d+ft|dry)$/, '')
+    .replace(/^out /, 'outside ').replace(/^in /, 'inside '));
+  assert.ok(!names.includes('cove') && !wpts.some((w) => /cove/.test(w.name)),
+    `a river bend reached the Garmin as "cove": ${names.join(', ')}`);
   // THE BEND IS THE SCOUR. Ryan, 2026-09-19: "an outside bend shouldn't be in 1 ft of water... that
   // should be the deepest part of the river". On his own pack the holes run a median 12.1 ft with 128
   // of 189 on the outside, while the coves stamped outside run 3 ft.

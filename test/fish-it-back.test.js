@@ -338,9 +338,9 @@ describe('the name on the unit says which pass it is', () => {
     expect(trackName({ id: 'L1', type: 'troll', depthFt: 21.4 })).toBe('L1 · 21 ft');
     expect(trackName({ id: 'L2', type: 'troll', depthFt: 21.4, pass: 2 })).toBe('L2 · 21 ft back');
     expect(trackName({ id: 'L3', type: 'troll', depthFt: 21.4, pass: 3 })).toBe('L3 · 21 ft again');
-    // Inside the 24 characters the 93sv shows.
+    // Inside the 20 characters his unit keeps of a track name (UNIT_CHARS, read 2026-09-28).
     expect(trackName({ id: 'L12', type: 'troll', depthFt: 21.4, pass: 3 }).length)
-      .toBeLessThan(25);
+      .toBeLessThan(21);
   });
 });
 

@@ -20,7 +20,7 @@
  *   (0x0F0C), where the record schema and point schema are and how many fields each has, where
  *   the records start, and how many there are. The schema is (tag, size) pairs, and each record is:
  *     0x320 GUID (16)      0x321 1 (4)          0x322 name, NUL-padded (61)   0x323 point count (4)
- *     0x324 14 (4)         0x325 1 (1)          0x326 0 (1)          0x327 0 (4)     0x328 0 (4)
+ *     0x324 colour (4)     0x325 1 (1)          0x326 0 (1)          0x327 0 (4)     0x328 0 (4)
  *     0x329 warning distance, metres, f32 (4)   0x32a alarm on (1)   0x32b offset of its points (4)
  *   then per point: 0x384 lat, 0x385 lon (i32 semicircles), 0x386 0, 0x387 0xFFFFFFFF.
  *   The file ends in 01 00 0A 00 00 00 and a u32 sum of every byte before it.
@@ -34,6 +34,8 @@
  *
  * Carrying it to the unit is his: ActiveCaptain moves a GPX but not an ADM, so it goes on the card.
  */
+
+import { displayColor } from './parsers.js';
 
 const SEMI = 2 ** 31 / 180;
 const BS = 8192;
@@ -58,6 +60,23 @@ const RECORD_SCHEMA = [[0x320, 16], [0x321, 4], [0x322, 61], [0x323, 4], [0x324,
 const POINT_SCHEMA = [[0x384, 4], [0x385, 4], [0x386, 4], [0x387, 4]];
 const RECORD_BYTES = 108;
 
+/**
+ * THE COLOUR FIELD, 0x324, IS AN INDEX INTO GARMIN'S SIXTEEN, in the gpxx order. Read off the same
+ * export: USERDATA.TRK carries one byte per track in this order, and all 15 of his 9/28 tracks
+ * match the <gpxx:DisplayColor> the GPX beside it gives them; his boundaries all carry 14, Cyan,
+ * the colour the unit gave every one he converted.
+ */
+export const GARMIN_COLOR_ORDER = ['Black', 'DarkRed', 'DarkGreen', 'DarkYellow', 'DarkBlue',
+  'DarkMagenta', 'DarkCyan', 'LightGray', 'DarkGray', 'Red', 'Green', 'Yellow', 'Blue', 'Magenta',
+  'Cyan', 'White'];
+export const BOUNDARY_DEFAULT_COLOR = 14;
+
+/** A leg's hex colour as the index a boundary carries; Cyan, as his unit gives, when it has none. */
+export function colorIndex(hex) {
+  const i = GARMIN_COLOR_ORDER.indexOf(displayColor(hex));
+  return i >= 0 ? i : BOUNDARY_DEFAULT_COLOR;
+}
+
 function guid(rand) {
   const g = new Uint8Array(16);
   for (let i = 0; i < 16; i++) g[i] = Math.floor(rand() * 256);
@@ -73,7 +92,8 @@ export function admName(name) {
 }
 
 /**
- * USERDATA.BDY for `boundaries`: [{ name, pts: [[lat, lon], ...], warnM }].
+ * USERDATA.BDY for `boundaries`: [{ name, pts: [[lat, lon], ...], warnM, color? }]. `color` is an
+ * index into GARMIN_COLOR_ORDER, 14 (Cyan) when absent.
  * `rand` is only a parameter so a test can pin the GUIDs.
  */
 export function bdyFile(boundaries, rand = Math.random) {
@@ -98,7 +118,8 @@ export function bdyFile(boundaries, rand = Math.random) {
     dv.setUint32(o + 16, 1, true);
     u8.set(admName(b.name), o + 20);                 // the rest of the 61 stays NUL
     dv.setUint32(o + 81, b.pts.length, true);
-    dv.setUint32(o + 85, 14, true);
+    dv.setUint32(o + 85, Number.isInteger(b.color) && b.color >= 0 && b.color < 16
+      ? b.color : BOUNDARY_DEFAULT_COLOR, true);
     u8[o + 89] = 1; u8[o + 90] = 0;
     dv.setUint32(o + 91, 0, true); dv.setUint32(o + 95, 0, true);
     dv.setFloat32(o + 99, b.warnM, true);
@@ -155,11 +176,13 @@ export function admFile(boundaries, { when = new Date(), rand = Math.random } = 
 /**
  * The plan's cue lines as boundaries. `routes` is state.DATA.routes; only the plan's own cue
  * lines go (`smartPlan`), each a closed triangle on the unit. The warning distance is his: every
- * one of the ten boundaries he converted on 9/28 carried 152.4 m, his 500 ft.
+ * one of the ten boundaries he converted on 9/28 carried 152.4 m, his 500 ft. Each is drawn in its
+ * leg's colour (`r.color`, set by planCueLines), so a boundary reads as part of its track.
  */
 export const HIS_WARNING_M = 152.4;
 export function cueBoundaries(routes, warnM = HIS_WARNING_M) {
   return (routes || [])
     .filter((r) => r && r.smartPlan && Array.isArray(r.pts) && r.pts.length >= 3)
-    .map((r) => ({ name: r.name, pts: r.pts.map((p) => [Number(p[0]), Number(p[1])]), warnM }));
+    .map((r) => ({ name: r.name, pts: r.pts.map((p) => [Number(p[0]), Number(p[1])]), warnM,
+                   color: colorIndex(r.color) }));
 }

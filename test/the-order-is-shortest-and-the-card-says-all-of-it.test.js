@@ -14,7 +14,7 @@ import { planFromWater } from '../js/modules/plan-from-water.js';
 import { dayCost, dayOrder, searchOrder } from '../js/modules/plan-water.js';
 import { planArgsFrom } from '../js/modules/plan-prompt.js';
 import { planToTimeline } from '../js/modules/plan-to-timeline.js';
-import { stopName, planWaypoints } from '../js/modules/plan-tracks.js';
+import { stopName, stopUnit, planWaypoints } from '../js/modules/plan-tracks.js';
 import { TACKLE_INVENTORY } from '../js/data/tackle-inventory.js';
 import { connectionFor } from '../js/data/lure-knowledge.js';
 
@@ -167,7 +167,10 @@ describe('a mark the lake has dropped off reads as dry', () => {
     expect(w.tacticalNote).toMatch(/1\.4 ft on the chart, out of the water today with the lake 5\.56 ft below the level its chart was made at/);
   });
   it('a stop on one says dry too, and with no level published the chart stands', () => {
-    expect(stopName({ id: 'S1.1', structureType: 'point', depthFt: 1.4 }, 5.56)).toBe('S1.1 · point dry');
-    expect(stopName({ id: 'S1.1', structureType: 'point', depthFt: 1.4 })).toBe('S1.1 · point 1ft');
+    // Ten characters on his unit (2026-09-28): the id and the kind in the name, the depth in the
+    // comment.
+    expect(stopName({ id: 'S1.1', structureType: 'point', depthFt: 1.4 }, 5.56)).toBe('S1.1 point');
+    expect(stopUnit({ id: 'S1.1', structureType: 'point', depthFt: 1.4 }, 5.56).cmt).toBe('point dry');
+    expect(stopUnit({ id: 'S1.1', structureType: 'point', depthFt: 1.4 }).cmt).toBe('point 1ft');
   });
 });

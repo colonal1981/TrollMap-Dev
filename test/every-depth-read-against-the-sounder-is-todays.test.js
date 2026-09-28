@@ -14,7 +14,8 @@
 import { describe, it, expect } from './expect-shim.mjs';
 import { planFromWater } from '../js/modules/plan-from-water.js';
 import { planToTimeline } from '../js/modules/plan-to-timeline.js';
-import { trackName, stopName, planWaypoints, planCueLines } from '../js/modules/plan-tracks.js';
+import { trackName, stopName, stopUnit, planWaypoints, planCueLines } from '../js/modules/plan-tracks.js';
+import { buildGPX } from '../js/utils/parsers.js';
 import { TACKLE_INVENTORY } from '../js/data/tackle-inventory.js';
 
 const DD = 5.56;
@@ -35,8 +36,10 @@ describe('the GPX carries the depth the sounder will read', () => {
   });
 
   it('names a stop by today\'s depth of the thing it stops on', () => {
-    expect(stopName(legOf(DD).stops[0], DD)).toBe('S1.1 · hump 36ft');
-    expect(stopName(legOf(DD).stops[0])).toBe('S1.1 · hump 42ft');
+    // His unit keeps ten characters of a name (2026-09-28), so the depth is in the comment.
+    expect(stopName(legOf(DD).stops[0], DD)).toBe('S1.1 hump');
+    expect(stopUnit(legOf(DD).stops[0], DD).cmt).toBe('hump 36ft');
+    expect(stopUnit(legOf(DD).stops[0]).cmt).toBe('hump 42ft');
   });
 
   it('names a charted mark by today\'s depth and keeps the chart\'s in the note', () => {
@@ -55,7 +58,9 @@ describe('the GPX carries the depth the sounder will read', () => {
 
   it('the stop waypoint\'s depth is today\'s too, so the GPX comment matches its name', () => {
     const w = planWaypoints(planOf(DD), LAUNCH, 'r').find((x) => x.castingStop);
-    expect(w.name).toBe('S1.1 · hump 36ft');
+    expect(w.name).toBe('S1.1 hump');
+    expect(w.cmt).toBe('hump 36ft');
+    expect(buildGPX({ waypoints: [w], tracks: [], routes: [] })).toMatch(/<cmt>hump 36ft<\/cmt>/);
     expect(w.depth).toBe(36.4);
     expect(w.chartDepth).toBe(42);
   });

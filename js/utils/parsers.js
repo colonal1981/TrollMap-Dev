@@ -202,7 +202,11 @@ export function buildGPX(data) {
     );
     // Not gated on `castingStop` — see the same note in garmin-export.js. A waypoint that
     // carries a note has a note to write, whatever class it is.
-    if (w.structureType) lines.push(`    <cmt>${esc(w.structureType)}${w.depth ? ` ${w.depth}ft` : ''}</cmt>`);
+    // `w.cmt` where the plan wrote one to fit his unit (plan-tracks.js, UNIT_CHARS): the second
+    // line on his screen, twenty characters. Otherwise the structure and depth, as before.
+    const cmt = w.cmt != null && w.cmt !== '' ? w.cmt
+      : w.structureType ? `${w.structureType}${w.depth ? ` ${w.depth}ft` : ''}` : null;
+    if (cmt) lines.push(`    <cmt>${esc(cmt)}</cmt>`);
     if (w.tacticalNote) lines.push(`    <desc>${esc(String(w.tacticalNote).slice(0, 200))}</desc>`);
     lines.push(`  </wpt>`);
   }
