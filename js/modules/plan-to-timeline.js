@@ -138,14 +138,16 @@ function bottomNote(rods, leg) {
   // THE BOTTOM TODAY, AND WHERE THAT NUMBER CAME FROM. On a lake that publishes a level the floor
   // is the chart less the drawdown (see bottomClearance()), and the sentence says so -- a figure
   // that disagrees with the leg's own charted range and does not say why is a figure he will not
-  // trust. With no level it reads exactly as it always did.
+  // trust. With no offset it says the number is the chart's.
   const c0 = withGap[0].clearance;
   const chartFloorFt = c0.chartFloorFt ?? floorFt;
   const bottomIs = c0.drawdownFt != null
     ? `Bottom is ${floorFt} ft here today — the chart's ${chartFloorFt} ft `
       + `${c0.drawdownFt > 0 ? 'less' : 'plus'} the ${Math.abs(c0.drawdownFt)} ft the lake is `
-      + `${c0.drawdownFt > 0 ? 'below' : 'above'} full pool — and`
-    : `Bottom is ${floorFt} ft here and`;
+      + `${c0.drawdownFt > 0 ? 'below' : 'above'} the level its chart was made at — and`
+    // No offset is also every lake whose chart level his sounder has not measured, and the chart
+    // there is only the chart (2026-09-27, poolOffsetFt()) -- so it says whose number it is.
+    : `Bottom is ${floorFt} ft here on the chart and`;
   const taps = withGap.filter((r) => r.clearance.taps);
   const runs = withGap.map((r) => r.depth).filter(Boolean).join(' and ');
   if (taps.length) {
@@ -226,7 +228,7 @@ function bottomClearance(runs, leg, over) {
   const chartFloorFt = Number(leg && (leg.depthMinFt ?? leg.depthFt));
   const deep = Array.isArray(runs) ? Number(runs[1]) : NaN;
   if (!Number.isFinite(chartFloorFt) || !Number.isFinite(deep)) return null;
-  // THE BOTTOM HE WILL FEEL IS TODAY'S, NOT THE CHART'S. `depthMinFt` is sounded at full pool, and
+  // THE BOTTOM HE WILL FEEL IS TODAY'S, NOT THE CHART'S. `depthMinFt` is the chart's, and
   // Ryan's 2026-09-26 Wateree day was 3.40 ft down: a charted 15 ft rise was 11.6 ft of water and
   // this row said the bait rode a foot or more higher off it than it did. `drawdownFt` is the lake's
   // own measured level, stamped on the leg by assemblePlan() from the same poolOffsetFt() the bait
@@ -525,15 +527,17 @@ export function planToTimeline(plan, o = {}) {
     // So the sentence is the range and the middle of it. The species band stays in the depth
     // column under its own name; these two are never the same number and never share a label.
     //
-    // AND IT IS TODAY'S WATER, NOT THE CHART'S. The three numbers are sounded at full pool, and on
+    // AND IT IS TODAY'S WATER, NOT THE CHART'S. The three numbers are the chart's, and on
     // Ryan's 9/27 Murray plan the lake was 5.56 ft down: this line said "27–54 ft under the boat"
     // directly above a bottom note that said 21.4 ft. `drawdownFt` is stamped on the leg by
     // assemblePlan() from the lake's measured level; absent, the chart stands and the line does
-    // not claim a "today" it does not know.
+    // not claim a "today" it does not know. It SAYS it is the chart: absent is also every water
+    // whose chart level his sounder has not measured (2026-09-27, poolOffsetFt()), and Ryan's call
+    // for those was the chart as it stands, said so.
     const dd = leg.drawdownFt != null && Number.isFinite(Number(leg.drawdownFt)) && Number(leg.drawdownFt) !== 0
       ? Number(leg.drawdownFt) : null;
     const tw = (ft) => todayDepthFt(ft, dd);
-    const under = dd != null ? 'ft under the boat today' : 'ft under the boat';
+    const under = dd != null ? 'ft under the boat today' : 'ft on the chart';
     const waterPhrase = (leg.depthMinFt != null && leg.depthMaxFt != null)
       ? (leg.depthMinFt === leg.depthMaxFt
           ? `${tw(leg.depthMinFt)} ${under}`

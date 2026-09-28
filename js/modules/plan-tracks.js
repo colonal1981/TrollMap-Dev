@@ -45,8 +45,10 @@ import { todayDepthFt } from '../utils/water-conditions.js';
 
 // ── EVERY DEPTH THAT GOES ON THE UNIT IS TODAY'S ─────────────────────────────────────────────
 //
-// The numbers below come off a chart sounded at full pool, and every one of them is put on the
-// ECHOMAP to be read against the SOUNDER, which reads the water that is there. Ryan's 9/27 Murray
+// The numbers below come off Garmin's chart, and every one of them is put on the ECHOMAP to be
+// read against the SOUNDER, which reads the water that is there. (The chart was taken to be at
+// full pool until 2026-09-27; measured on Wateree it is not. `drawdownFt` is now the lake against
+// the chart's own level -- see poolOffsetFt() and js/data/chart-levels.js.) Ryan's 9/27 Murray
 // export, with the lake 5.56 ft down: "ledge 47ft" over 41 ft of water, "L1 · 34 ft" over a
 // median of 28, and the Contour alarm cue "L1 29-39ft" set around water that was not there -- an
 // alarm band the boat would have sat under the whole pass. `drawdownFt` is stamped on each troll
@@ -454,6 +456,9 @@ export function planWaypoints(plan, launch = null, runId = null, opts = {}) {
     const start = co[0];
     const end = co[co.length - 1];
     const band = legBand(leg);
+    // Depth Shading paints the CHART, which has no level offset on the unit, so where the lake is
+    // off its chart's level the shading pair is the chart's and only the alarm's is today's.
+    const shade = legBand({ ...leg, drawdownFt: null });
     if (!placed.some((p) => sameSpot(p, start))) {
       placed.push(start);
       out.push({
@@ -461,8 +466,10 @@ export function planWaypoints(plan, launch = null, runId = null, opts = {}) {
         lat: start[1], lon: start[0], sym: 'Flag, Green',
         legStart: true, scoutWaypoint: true, planRunId: runId,
         legId: leg.id, atM: leg.startM || 0,
-        tacticalNote: band ? `start of ${leg.id}: Contour alarm and Depth Shading ${band}`
-                           : `start of ${leg.id}`,
+        tacticalNote: !band ? `start of ${leg.id}`
+          : shade && shade !== band
+            ? `start of ${leg.id}: Contour alarm ${band}; Depth Shading ${shade} on the chart`
+            : `start of ${leg.id}: Contour alarm and Depth Shading ${band}`,
       });
     }
     if (!startSpots.some((p) => sameSpot(p, end)) && !placed.some((p) => sameSpot(p, end))) {

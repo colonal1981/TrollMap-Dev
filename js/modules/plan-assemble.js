@@ -287,7 +287,7 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
   const dd = Number(legDepth && legDepth.drawdownFt);
   const today = legDepth && legDepth.drawdownFt != null && Number.isFinite(dd) && dd !== 0
     ? ` (the chart ${dd > 0 ? 'less' : 'plus'} the ${Math.abs(dd)} ft the lake is `
-      + `${dd > 0 ? 'below' : 'above'} full pool today)` : '';
+      + `${dd > 0 ? 'below' : 'above'} the level its chart was made at today)` : '';
   const chartCeilingFt = legDepth && legDepth.chartCeilingFt != null
     && Number.isFinite(Number(legDepth.chartCeilingFt)) ? Number(legDepth.chartCeilingFt) : ceilingFt;
   const ids = [deploy && deploy.port, deploy && deploy.starboard].filter(Boolean);
@@ -1204,13 +1204,15 @@ export function assemblePlan(o) {
                        fromTable: _db.evidence === 'water-only' } : null;
   // THE LAKE'S MEASURED DRAWDOWN, TAKEN OFF THE CHART BEFORE A BAIT IS CHECKED AGAINST IT.
   //
-  // Every depth on a leg is the chart's, and the chart was sounded at full pool. Ryan's 2026-09-26
+  // Every depth on a leg is the chart's. poolOffsetFt() is the lake against the level that chart
+  // was made at -- NOT against full pool since 2026-09-27, when his sounder showed Wateree's chart
+  // was made about 2.3 ft below it, and null where no chart level is measured. Ryan's 2026-09-26
   // Wateree day was 3.40 ft down, and every bait check on it -- the shortened leads, the rise
   // flags, the card's bottom note -- compared against water 3.4 ft deeper than the water he was
   // in. The prompt has said "subtract it" since poolPromptBlock() was written; the app's own
   // arithmetic never did. Both planners hand this the same `waterState`, so one line here serves
-  // Smart Plan and Pick Water alike. Null (no level published, a river, or at full pool) changes
-  // nothing: the depths stand as the full-pool numbers they are.
+  // Smart Plan and Pick Water alike. Null (no chart level measured, no level published, a river,
+  // or the lake at its chart's level) changes nothing: the depths stand as the chart's.
   const poolOff = poolOffsetFt(o.waterState);
   // THE MEASURED OXYGEN FLOOR, forwarded by both planners from the same oxygenFloorFt() the
   // prompt's bait gate reads. See capBaitDepth(): no bait lead can lift runs below it.
@@ -1831,7 +1833,7 @@ export function assemblePlan(o) {
     // bait against -- it returns nothing for a ceiling at or under zero -- so it is said here.
     if (poolOff != null && chartCeilingFt > 0 && !(ceilingTodayFt > 0)) {
       fresh.push(`${c.runId}: the shallowest water on this leg is charted at ${chartCeilingFt} ft `
-               + `and the lake is ${poolOff} ft below full pool today, so that spot is dry or `
+               + `and the lake is ${poolOff} ft below the level its chart was made at today, so that spot is dry or `
                + `awash — no bait on this leg was checked against it. Look at it before you run it.`);
     }
     const rodPlan = capBaitDepth(rods, deploy, ceilingTodayFt, waterMph,
@@ -1862,10 +1864,11 @@ export function assemblePlan(o) {
       // THE LEG IS A RANGE OF WATER AND SAYS SO. The median is what it is called; the two ends
       // are what a lure depth is judged against. Absent on a pack with no envelope profile.
       depthFt: c.depthFt, depthMinFt: c.depthMinFt ?? null, depthMaxFt: c.depthMaxFt ?? null,
-      // HOW FAR THE LAKE IS BELOW FULL POOL TODAY, which every depth above is NOT adjusted for --
-      // they are the chart's, and the leg is named by them. The card's bait checks read this and
-      // take it off (see bottomClearance() in plan-to-timeline.js). Absent when no level is
-      // published or the lake is at full pool, and then nothing is taken off anything.
+      // HOW FAR THE LAKE IS BELOW THE LEVEL ITS CHART WAS MADE AT TODAY (poolOffsetFt()), which
+      // every depth above is NOT adjusted for -- they are the chart's, and the leg is named by
+      // them. The card's bait checks read this and take it off (see bottomClearance() in
+      // plan-to-timeline.js). Absent when no chart level is measured, no level is published, or
+      // the lake is at its chart's level, and then nothing is taken off anything.
       drawdownFt: poolOff ?? undefined,
       speedMph: legMph,
       // WHICH PASS OVER THIS WATER THIS IS. Stamped here for a river day, whose two passes are
