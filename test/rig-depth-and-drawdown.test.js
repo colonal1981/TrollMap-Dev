@@ -31,14 +31,7 @@ const BUCKTAIL = lureByName('3/4oz Bucktail Jig');
 const MR = lureByName('MR Crankbait (6-12ft)');
 const RIGGED_SPOON = { ...SPOON, inlineWeightOz: 2 };
 const ANOXIC = 19.7;
-// A LAKE 3.4 FT BELOW THE LEVEL ITS CHART WAS MADE AT. Until 2026-09-27 every chart was taken to be
-// at full pool, and this fixture was Wateree 3.4 ft below full pool. Measured against Ryan's sounder
-// that night, Wateree's chart was made about 2.3 ft below full pool (js/data/chart-levels.js), and a
-// water whose chart level nobody has measured now gets no offset at all -- his call. So the
-// fixture says its chart is at full pool, `chartBelowFullPoolFt: 0`, and every number below that
-// tests the ARITHMETIC of an offset keeps its meaning. What a real Wateree day gets is the next test.
-const WATEREE_TODAY = { featureType: 'lake', belowFullPoolFt: 3.4, levelFt: 222.1, fullPoolFt: 225.5,
-                        chartBelowFullPoolFt: 0 };
+const WATEREE_TODAY = { featureType: 'lake', belowFullPoolFt: 3.4, levelFt: 222.1, fullPoolFt: 225.5 };
 
 const leg = (runId, { min, median, max = median + 8 }) => ({
   runId, lengthM: 1800, depthFt: median, depthMinFt: min, depthMaxFt: max, maxRunDepthFt: min,
@@ -157,15 +150,10 @@ test('the lead offered over a flagged rise is one that gets the bait off it', ()
 test('the drawdown is the stated one, and nothing when there is no level', () => {
   assert.equal(poolOffsetFt(WATEREE_TODAY), 3.4);
   // The stated drawdown wins over a subtraction; a subtraction stands in when nothing is stated.
-  const AT_FULL = { featureType: 'lake', chartBelowFullPoolFt: 0 };
-  assert.equal(poolOffsetFt({ ...AT_FULL, belowFullPoolFt: 3.4, levelFt: 1, fullPoolFt: 2 }), 3.4);
-  assert.equal(poolOffsetFt({ ...AT_FULL, levelFt: 222.1, fullPoolFt: 225.5 }), 3.4);
-  assert.equal(poolOffsetFt({ ...AT_FULL, belowFullPoolFt: -1.2 }), -1.2);
-  assert.equal(poolOffsetFt({ ...AT_FULL, belowFullPoolFt: null, levelFt: null }), null);
-  // The chart's own level comes off first: Wateree, made about 2.3 ft below full pool, 3.4 ft down.
-  assert.equal(poolOffsetFt({ featureType: 'lake', belowFullPoolFt: 3.4, chartBelowFullPoolFt: 2.3 }), 1.1);
-  // And a chart nobody has measured gets nothing taken off, however far down the lake is.
-  assert.equal(poolOffsetFt({ featureType: 'lake', belowFullPoolFt: 3.4 }), null);
+  assert.equal(poolOffsetFt({ featureType: 'lake', belowFullPoolFt: 3.4, levelFt: 1, fullPoolFt: 2 }), 3.4);
+  assert.equal(poolOffsetFt({ featureType: 'lake', levelFt: 222.1, fullPoolFt: 225.5 }), 3.4);
+  assert.equal(poolOffsetFt({ featureType: 'lake', belowFullPoolFt: -1.2 }), -1.2);
+  assert.equal(poolOffsetFt({ featureType: 'lake', belowFullPoolFt: null, levelFt: null }), null);
   assert.equal(poolOffsetFt({ featureType: 'river', belowFullPoolFt: 3.4 }), null);
   assert.equal(poolOffsetFt(null), null);
   assert.equal(todayDepthFt(15, 3.4), 11.6);
@@ -190,13 +178,13 @@ test('3.4 ft down, a 15 ft rise is 11.6 ft of water and the 6-12 ft MR is on can
   assert.ok((c.cannotUse || []).includes(MR.name), JSON.stringify(c.cannotUse));
   // The depth QUOTED stays the chart's; the prompt says the list already has the drawdown off.
   assert.equal(c.maxRunDepthFt, 15);
-  assert.match(ask(WATEREE_TODAY), /`cannotUse` on each leg has already been worked against the charted rise less\s+3\.4 ft/);
+  assert.match(ask(WATEREE_TODAY), /exception is `cannotUse` on each leg.*less 3\.4 ft/s);
 });
 
 test('with no level published, cannotUse is what it always was', () => {
   const c = cands(ask(null))[0];
   assert.ok(!(c.cannotUse || []).includes(MR.name), JSON.stringify(c.cannotUse));
-  assert.doesNotMatch(ask(null), /has already been worked against the charted rise/);
+  assert.doesNotMatch(ask(null), /exception is `cannotUse`/);
 });
 
 test('the card measures the bait against the bottom today and says it is the chart less the drawdown', () => {
@@ -210,7 +198,7 @@ test('the card measures the bait against the bottom today and says it is the cha
   assert.equal(rod.clearance.floorFt, 11.6);
   assert.equal(rod.clearance.chartFloorFt, 15);
   assert.equal(rod.clearance.taps, true);               // 12 ft of bill into 11.6 ft of water
-  assert.match(card.bottomNote, /Bottom is 11\.6 ft here today — the chart's 15 ft less the 3\.4 ft the lake is below the level its chart was made at/);
+  assert.match(card.bottomNote, /Bottom is 11\.6 ft here today — the chart's 15 ft less the 3\.4 ft the lake is below full pool/);
   // And the bait check in the assembler saw the same 11.6.
   assert.ok(plan.warnings.concat(plan.decisions).some((w) => /^R1 on wateree_lake#1422: .*11\.6 ft/.test(w)),
             plan.warnings.concat(plan.decisions).join('\n'));
@@ -226,7 +214,7 @@ test('with no level published, the card and the checks are unchanged', () => {
   assert.equal(rod.clearance.floorFt, 15);
   assert.equal(rod.clearance.gap, 3);
   assert.equal(rod.clearance.taps, false);
-  assert.match(card.bottomNote, /^Bottom is 15 ft here on the chart and the deepest bait rides 3 ft off it/);
+  assert.match(card.bottomNote, /^Bottom is 15 ft here and the deepest bait rides 3 ft off it/);
 });
 
 test('Smart Plan hands the water state to the checks, end to end', async () => {

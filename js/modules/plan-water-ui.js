@@ -1197,16 +1197,14 @@ export async function findWater() {
     + `${withLaps} with somewhere to turn onto. Depths are MINIMUM WATER DEPTH, not bait depth.`
     // WHICH WATER THE NUMBERS ARE. Today's, where the lake publishes a level; the chart's where it
     // does not, and said so rather than left to be assumed.
-    // AND THE OFFSET IS THE LAKE AGAINST THE CHART'S OWN LEVEL, not against full pool -- measured
-    // on Wateree against his sounder, 2026-09-27; see poolOffsetFt() and js/data/chart-levels.js.
     + (T.offsetFt > 0
-      ? ` Every depth here is TODAY'S water: the chart less ${T.offsetFt} ft, the lake's level `
-        + `against the level its chart was made at, which his sounder measured.`
+      ? ` Every depth here is TODAY'S water: the chart less ${T.offsetFt} ft, because the lake is `
+        + `${T.offsetFt} ft below full pool${T.levelFt != null ? ` (${T.levelFt} ft` : ''}`
+        + `${T.levelFt != null && T.fullPoolFt != null ? ` against ${T.fullPoolFt} ft)` : T.levelFt != null ? ')' : ''}.`
       : T.offsetFt < 0
       ? ` Every depth here is TODAY'S water: the chart plus ${-T.offsetFt} ft, because the lake is `
-        + `above the level its chart was made at.`
-      : ` Depths are Garmin's chart as it stands, not corrected for today's level — the level this `
-        + `chart was made at has not been measured on this water, or the lake is at it.`)
+        + `above full pool.`
+      : ` Depths are the chart at full pool — no level is published for this water today, or it is at full pool.`)
     + bandNote
     + (extras.length ? ` — ${extras.join('; ')}.` : ''));
   return out;

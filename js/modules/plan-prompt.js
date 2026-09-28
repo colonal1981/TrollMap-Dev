@@ -57,7 +57,6 @@
 // ONE PLACE KNOWS HOW DEEP A BAIT RUNS, and until now the prompt was not one of its readers.
 import { levelSentence, poolOffsetFt, todayDepthFt } from '../utils/water-conditions.js';
 import { lakeRecordFor } from '../data/lake-registry.js';
-import { CHART_LEVELS, chartLevelFor, measuredDays } from '../data/chart-levels.js';
 import { compassOf } from '../utils/compass.js';
 import { isNum, num } from '../utils/num.js';
 import { depthWindow, jigheadRangeOz, trollableBaits, describeBait, LURE_KNOWLEDGE,
@@ -544,51 +543,40 @@ export function riverPromptBlock(ws, o = {}) {
 // shows it, the printable report prints it, `levelSentence()` says it in one line -- and the
 // thing choosing baits against charted depths was never told.
 //
-// THE CONSEQUENCE IS THE POINT, NOT THE NUMBER -- AND THE NUMBER WAS WRONG. This block used to say
-// Garmin sounded every pack at full pool and tell the model to subtract the whole drawdown. On
-// 2026-09-27 that was measured against Ryan's own sounder on Wateree: the chart there was made
-// about 2.3 ft below full pool, so with the lake 3.4 ft down the water was about 1.1 ft shallower
-// than the chart, not 3.4 (js/data/chart-levels.js). The comment this replaced even named the gap
-// -- "no vertical datum is reconciled between an operator's 'full pond' and Garmin's sounding" --
-// and then told the model to subtract as though it were.
+// THE CONSEQUENCE IS THE POINT, NOT THE NUMBER. Garmin sounded these packs at full pool. When
+// the lake is 2.5 ft down, every contour, every structure depth and every ceiling this prompt
+// quotes reads 2.5 ft DEEPER than the water actually is, and nothing in the app subtracts it.
+// A crankbait picked against a charted 16 ft ceiling on a lake 3 ft down is fishing 13 ft of
+// water. That is the same failure the bait-depth block above exists to prevent, arriving by a
+// different road.
 //
-// So the model is told what is known and nothing more. Where his sounder has measured the chart,
-// the offset is the lake against the chart's own level, and `cannotUse` already carries it. Where
-// it has not -- Ryan's call: the chart as it stands, and say so -- the model is told the drawdown
-// is NOT the correction, with the measured lakes as the reason.
+// Deliberately not corrected here either. `applied: false` is a decision with a reason -- no
+// vertical datum is reconciled between an operator's "full pond" and Garmin's sounding -- so the
+// model is told the size of the offset and told to carry it, rather than handed numbers this
+// file quietly moved.
 function poolPromptBlock(ws) {
   if (!ws || ws.error) return '';
   if (ws.featureType && ws.featureType !== 'lake') return '';   // rivers and coast have their own
   if (ws.belowFullPoolFt == null && ws.levelFt == null) return '';
+  const b = ws.belowFullPoolFt;
+  const off = b == null ? null
+    : b > 0.05 ? `${b.toFixed(1)} ft LOWER than the chart assumes`
+    : b < -0.05 ? `${Math.abs(b).toFixed(1)} ft HIGHER than the chart assumes`
+    : 'right at the level the chart assumes';
   // What buildPlanRequest() takes off each leg's rise before it works out `cannotUse`, so the
   // sentence below can say so. Same function, same number. See poolOffsetFt().
   const shift = poolOffsetFt(ws);
-  const cb = ws.chartBelowFullPoolFt == null ? NaN : Number(ws.chartBelowFullPoolFt);
-  let body;
-  if (Number.isFinite(cb)) {
-    const days = measuredDays(chartLevelFor(ws.slug));
-    body = `Every depth in this prompt — the contours, the structure, the ceilings on each leg — comes
-off Garmin's chart, and on this water that chart was made about ${cb.toFixed(1)} ft below full pool,
-measured against his own sounder${days ? ` on ${days}` : ''}.${shift == null
-  ? ' The lake is at that level today, so the charted depths are the water under the boat.'
-  : ` So today the water is ${Math.abs(shift).toFixed(1)} ft ${shift > 0 ? 'SHALLOWER' : 'DEEPER'} than the chart.
-\`cannotUse\` on each leg has already been worked against the charted rise ${shift > 0 ? 'less' : 'plus'}
-${Math.abs(shift).toFixed(1)} ft.${shift > 0 ? ` Take ${shift.toFixed(1)} ft off every other charted number before you
-trust it: a bait picked against a charted 16 ft ceiling is working ${(16 - shift).toFixed(1)} ft of water today.` : ''}`}`;
-  } else {
-    const known = Object.entries(CHART_LEVELS)
-      .map(([slug, r]) => `${slug.replace(/_/g, ' ')} (made ${r.belowFullPoolFt} ft below full pool)`);
-    body = `Every depth in this prompt — the contours, the structure, the ceilings on each leg — is
-Garmin's chart as it stands, and nothing in this app has adjusted it. The level that chart was made
-at has NOT been measured on this water, so the drawdown above is NOT the correction and must not be
-subtracted from the charted depths.${known.length ? ` Where his sounder has measured a chart it was not
-made at full pool: ${known.join('; ')}.` : ''} Read the charted depths as the chart's, and let the
-sounder on the day say how far off they are.`;
-  }
   return `
 WHERE THE WATER IS TODAY
 ${levelSentence(ws)}
-${ws.operatorMessage ? `The operator's own note: ${ws.operatorMessage}\n` : ''}${body}
+${ws.operatorMessage ? `The operator's own note: ${ws.operatorMessage}\n` : ''}
+Every depth in this prompt — the contours, the structure, the ceilings on each leg — comes off a
+Garmin chart sounded at FULL POOL, and nothing in this app has adjusted it.${shift != null
+  ? ` The one exception is \`cannotUse\` on each leg, which the app has already worked against the
+charted rise ${shift > 0 ? 'less' : 'plus'} ${Math.abs(shift).toFixed(1)} ft, the water today.` : ''}${off ? ` The water is
+${off}.` : ''}${b != null && b > 0.05 ? ` So subtract ${b.toFixed(1)} ft from every charted number
+before you trust it: a bait picked against a charted 16 ft ceiling is working ${(16 - b).toFixed(1)} ft
+of water today, and the shoreline is not where the chart draws it.` : ''}
 `;
 }
 
@@ -1827,7 +1815,7 @@ const CONDITION_FACTS = [
       if (isNum(c.seasonalDrawdownFt) && c.seasonalDrawdownFt > 0) {
         L.push(`This water is moved ${c.seasonalDrawdownFt} ft across a year by `
           + `${c.seasonalDrawdownFrom || 'its operator'}. Every charted depth in the pack was `
-          + 'sounded at one level, so on a lake with a swing this size the charted number and the '
+          + 'sounded at full pool, so on a lake with a swing this size the charted number and the '
           + 'water under the hull are different questions in the drawdown months.');
       }
       return L.length ? L : null;
@@ -1953,7 +1941,6 @@ const CONDITION_ELSEWHERE = {
   levelFt: 'poolPromptBlock()',
   fullPoolFt: 'poolPromptBlock()',
   belowFullPoolFt: 'poolPromptBlock()',
-  chartBelowFullPoolFt: 'poolPromptBlock(), and poolOffsetFt() under every "today" depth',
   levelSource: 'levelSentence(), inside poolPromptBlock()',
   levelUrl: 'a link for the card only',
   feedName: 'levelSentence(), inside poolPromptBlock()',
@@ -2413,9 +2400,9 @@ is the app's: the shortest route through them it could find, which is what he as
 re-rank them, do not suggest better water, and do not reorder the day. The list above IS the day,
 first to last.${Number(o.whyThisWaterOffsetFt) ? `
 \`whyThisWater\` IS WRITTEN IN TODAY'S WATER — the chart ${o.whyThisWaterOffsetFt > 0 ? 'less' : 'plus'}
-${Math.abs(o.whyThisWaterOffsetFt)} ft, the lake's measured level against the chart's — because that is what he picked by.
+${Math.abs(o.whyThisWaterOffsetFt)} ft, the lake's measured level — because that is what he picked by.
 Every other depth on a leg (\`depthFt\`, \`depthMinFt\`, \`depthMaxFt\`, \`maxRunDepthFt\`, a
-structure's \`depthFt\`) is the chart as charted. The two describe the same water.` : ''}
+structure's \`depthFt\`) is the chart at full pool. The two describe the same water.` : ''}
 
 RETURN ONE ENTRY IN \`legs\` FOR EVERY ONE OF THE ${(o.candidates || []).length} \`runId\`s ABOVE
 — all ${(o.candidates || []).length} of them, every one carrying its own \`deploy\`. A runId you

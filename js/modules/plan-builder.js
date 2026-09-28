@@ -166,12 +166,13 @@ function contourRange(plan) {
  * or a sudden shallow area." `Layers > Chart > Depth > Depth Shading` takes a pair too and
  * paints the water between them. One band, heard and seen, per leg.
  *
- * BUT THE TWO READ DIFFERENT DEPTHS. The alarm reads the sounder, which is today's water. The
- * shading paints Garmin's chart, and the unit has no level offset for Garmin's own chart (the
- * UHD2 manual's offsets are for Quickdraw only). So where the lake is off its chart's level the
- * shading pair is the chart's number and the alarm pair is today's -- measured on Wateree,
- * 2026-09-27, about a foot apart on 9/28 (js/data/chart-levels.js). Where no offset applies they
- * are the same pair.
+ * BUT THE TWO READ DIFFERENT DEPTHS, and on a drawn-down lake by the whole drawdown. The alarm
+ * reads the sounder, which is today's water. The shading paints Garmin's chart, which is at full
+ * pool, and the unit has no level offset for Garmin's own chart (the UHD2 manual's offsets are for
+ * Quickdraw only). So the shading pair is the chart's number and the alarm pair is today's --
+ * 3.5 ft apart on Wateree on 9/28. Where no level is published they are the same pair. Found
+ * 2026-09-27, when Ryan asked what to set his Depth Shading to; until then both columns printed
+ * the alarm pair, so the shading painted water 3.5 ft shallower than the band he meant.
  *
  * The half-width is HAND_STEER_BAND_FT and it is Ryan's, not a tuning: "i would probably give at
  * least 5 ft offset because i am hand steering."
@@ -180,9 +181,10 @@ function contourBands(plan) {
   return (plan.legs || [])
     .filter((l) => l.type === 'troll' && l.depthFt != null && Number.isFinite(Number(l.depthFt)))
     .map((l) => {
-      // THE ALARM READS THE SOUNDER, SO ITS BAND IS TODAY'S WATER. `depthFt` is the chart;
-      // `drawdownFt` is the lake against the chart's own level, stamped by assemblePlan() from
-      // poolOffsetFt(). The same rule as the cue names in plan-tracks.js.
+      // THE ALARM READS THE SOUNDER, SO ITS BAND IS TODAY'S WATER. `depthFt` is the chart at full
+      // pool; `drawdownFt` is the lake's measured level, stamped by assemblePlan(). On the 9/27
+      // Murray plan, 5.56 ft down, "L1 29-39" was set around a leg whose median was 28 that day.
+      // The same rule as the cue names in plan-tracks.js.
       const dd = Number(l.drawdownFt);
       const d = Math.round(Number(todayDepthFt(Number(l.depthFt), Number.isFinite(dd) ? dd : null)));
       const c = Math.round(Number(l.depthFt));

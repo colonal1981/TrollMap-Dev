@@ -14,7 +14,8 @@
 //   2. a leg fished back gets no mark on top of another one: the start is kept;
 //   3. the band in the start's name is the band in the leg's cue line, today's water included;
 //   4. the new marks change nothing about the cue lines;
-//   5. the GPX carries the two flags, and no name has a period for the unit to eat.
+//   5. the GPX carries the two flags, and no name has a period for the unit to eat;
+//   6. the start's note gives the Contour alarm today's band and Depth Shading the chart's.
 
 import { describe, it } from './expect-shim.mjs';
 import assert from 'node:assert/strict';
@@ -107,5 +108,26 @@ describe('the start and the cue line say the same thing', () => {
     assert.ok(gpx.includes('<name>L1 end</name>'));
     assert.ok(gpx.includes('<sym>Flag, Red</sym>'));
     assert.ok(legMarks(wps).every((w) => !w.name.includes('.')));
+  });
+});
+
+describe('the start says which band is the alarm and which is the shading', () => {
+  // The Contour alarm reads the sounder, so its band is today's water. Depth Shading paints
+  // Garmin's chart, which is at full pool, and the unit has no level offset for it. Ryan's sand bar
+  // at 34.37814, -80.73880 settled which: charted 2-3 ft, dry with Wateree 3.4-3.5 ft down.
+  it('gives the chart\'s band for the shading when the lake is down', () => {
+    const [start] = legMarks(planWaypoints({ legs: [
+      troll('L1', line(-80.720, -80.710), { depthFt: 20, drawdownFt: 3.5 }),
+    ] }, LAUNCH));
+    assert.equal(start.name, 'L1 start 12-22ft', '20 ft charted, 3.5 ft down: 16.5, so 17 today');
+    assert.equal(start.tacticalNote,
+      'start of L1: Contour alarm 12-22ft; Depth Shading 15-25ft on the chart');
+  });
+
+  it('says one band when no level is known', () => {
+    const [start] = legMarks(planWaypoints({ legs: [
+      troll('L1', line(-80.720, -80.710), { depthFt: 20 }),
+    ] }, LAUNCH));
+    assert.equal(start.tacticalNote, 'start of L1: Contour alarm and Depth Shading 15-25ft');
   });
 });

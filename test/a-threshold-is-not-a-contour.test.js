@@ -88,7 +88,7 @@ describe('the leg depth is the water under it, not one shoal and not a contour n
     const r = await build();
     const built = planToTimeline(r.plan, { depthBand: [15, 27] });
     const leg = built.timeline.find((e) => e.type === 'troll' && e.legType !== 'transit');
-    expect(leg.desc).toMatch(/17–25 ft on the chart · median 23/);
+    expect(leg.desc).toMatch(/17–25 ft under the boat · median 23/);
     expect(leg.desc).not.toMatch(/ft line/);
     expect(leg.depthMin).toBe(17);
     expect(leg.depthMax).toBe(25);

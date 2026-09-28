@@ -100,9 +100,7 @@ describe('the leg card says what is under the boat today', () => {
     const r = await build();
     const card = planToTimeline(r.plan, { depthBand: [15, 27] }).timeline
       .find((e) => e.type === 'troll' && e.legType !== 'transit');
-    // 2026-09-27: it SAYS it is the chart -- every lake whose chart level his sounder has not
-    // measured lands here now, and Ryan's call for those was the chart as it stands, said so.
-    expect(card.desc).toMatch(/17–25 ft on the chart · median 23/);
+    expect(card.desc).toMatch(/17–25 ft under the boat · median 23/);
     expect(card.desc).not.toMatch(/today/);
   });
 });

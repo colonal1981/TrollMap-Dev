@@ -35,7 +35,6 @@
  */
 
 import { num } from './num.js';
-import { chartLevelFor } from '../data/chart-levels.js';
 
 /** Celsius to Fahrenheit, one decimal. Null in, null out. */
 export function cToF(c) {
@@ -141,9 +140,6 @@ export function readConditions(j) {
     levelFt: null,
     fullPoolFt: null,
     belowFullPoolFt: null,
-    // The level the CHART was made at, in the same units, where his sounder has measured it --
-    // js/data/chart-levels.js. Null means nobody has measured it, which is not zero.
-    chartBelowFullPoolFt: null,
     levelSource: null,
     levelUrl: null,
     feedName: null,
@@ -302,8 +298,6 @@ export function readConditions(j) {
   }
   out.displayName = w.display_name || null;
   out.featureType = w.feature_type || null;
-  const chartLevel = chartLevelFor(out.slug || w.slug || null);
-  out.chartBelowFullPoolFt = chartLevel ? chartLevel.belowFullPoolFt : null;
 
   const cd = w.chart_datum || null;
   if (cd) {
@@ -959,45 +953,35 @@ export function levelSentence(c) {
 /**
  * HOW MANY FEET TO TAKE OFF A CHARTED DEPTH TODAY, or null when there is nothing to take off.
  *
- * THE LAKE'S LEVEL AGAINST THE LEVEL ITS CHART WAS MADE AT -- not against full pool.
+ * Every depth in the chart packs was sounded at FULL POOL. poolPromptBlock() has told the model
+ * that since it was written -- "nothing in this app has adjusted it" -- and the app's own bait
+ * checks went on comparing baits against the full-pool number. Ryan's 2026-09-26 Wateree plan was
+ * 3.40 ft down; a charted 15 ft rise was 11.6 ft of water under the boat that morning.
  *
- * Until 2026-09-27 this returned the whole drawdown, on the premise that every chart was sounded
- * at full pool. Measured against Ryan's own sounder on Wateree that night, it is not: the chart
- * there was made about 2.3 ft below full pool, so on 9/28 (3.5 ft down) the water was about 1.2 ft
- * shallower than the chart and this function took off 3.5. Every "today" depth on that lake --
- * leg cards, GPX names, the Contour alarm band, `cannotUse`, the lead fitting -- read 2.3 ft
- * shallow. js/data/chart-levels.js holds the measurement and how it was taken.
- *
- * So: drawdown less the chart's own level, where his sounder has measured the chart
- * (`chartBelowFullPoolFt`, set by readConditions from that table), and NULL where it has not.
- * Ryan's call for an unmeasured water, the same night: the chart as it stands, and the plan says
- * it is not corrected. Null already means "the chart stands" to every reader of this function.
- *
- * Positive = the water is that much shallower than the chart. THE STATED DRAWDOWN WINS over a
+ * Positive = below full pool, the operator's own convention, so `charted - this` is today's water
+ * and a lake ABOVE full pool comes out negative and adds water. THE STATED DRAWDOWN WINS over a
  * subtraction, the same rule plan-builder.js's go/no-go reads: Chilhowee and Calderwood publish
- * feet below full pool and no elevation. Also null on a river or a coastal zone, which have no
- * pool, on a failed lookup, and where no level is published. Within 0.05 ft is no offset, so
- * nothing is "adjusted" by a rounding error.
+ * feet below full pool and no elevation. Null on a river or a coastal zone, which have no pool,
+ * on a failed lookup, and where no level is published -- the charted depths then stand as the
+ * full-pool numbers they are. A lake reading within 0.05 ft of full pool is at full pool, the
+ * same line poolPromptBlock() draws, so it is not "adjusted" by a rounding error.
  */
 export function poolOffsetFt(c) {
   if (!c || c.error) return null;
   if (c.featureType && c.featureType !== 'lake') return null;
   const num = (v) => (v == null || v === '' ? NaN : Number(v));
-  const chart = num(c.chartBelowFullPoolFt);
-  if (!Number.isFinite(chart)) return null;
   const stated = num(c.belowFullPoolFt);
   const lvl = num(c.levelFt);
   const full = num(c.fullPoolFt);
   const d = Number.isFinite(stated) ? stated
     : (Number.isFinite(lvl) && Number.isFinite(full)) ? Math.round((full - lvl) * 100) / 100
     : NaN;
-  if (!Number.isFinite(d)) return null;
-  const off = Math.round((d - chart) * 100) / 100;
-  return Math.abs(off) < 0.05 ? null : off;
+  if (!Number.isFinite(d) || Math.abs(d) < 0.05) return null;
+  return d;
 }
 
 /**
- * A charted depth as the water it is today: `chartedFt - offsetFt` (poolOffsetFt), to a tenth of a
+ * A charted (full-pool) depth as the water it is today: `chartedFt - offsetFt`, to a tenth of a
  * foot. With no offset (null) the charted number comes back untouched; a non-number comes back
  * as it went in, so an absent depth stays absent.
  */
