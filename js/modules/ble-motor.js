@@ -5,7 +5,12 @@
  *
  * Exposes window.ACTIVE_BLE_BMS = { connected, name, voltage, current,
  *   soc, usableAh, ... } so the Plan UI can display the active BMS feed.
+ *
+ * Every basic-info reading is also kept on the phone (js/utils/bms-log.js), so a trip's draw can
+ * be joined to the Garmin track's speed afterwards. Ryan, 2026-09-28: "Does trollmap have a log for
+ * the battery meter that it has?" -- it did not; it overwrote one object every 3 s.
  */
+import { logReading, saveLogFile, countLog } from '../utils/bms-log.js';
 
 /* ── Embedded Integrated Web Bluetooth BLE pairing Engine ── */
 (function initEmbeddedWebBluetooth(){
@@ -18,6 +23,16 @@
     const ebAmps    = document.getElementById('ebAmps');
     const ebRemAh   = document.getElementById('ebRemAh');
     const ebSprint  = document.getElementById('ebSprintTime');
+
+    // The log is read and saved without pairing: the day's readings are still on the phone after
+    // the battery is switched off.
+    const btnLog     = document.getElementById('btnBmsLogExport');
+    const logCountEl = document.getElementById('bmsLogCount');
+    const refreshLogCount = () => countLog().then((n) => {
+      if (logCountEl) logCountEl.textContent = n ? `${n} readings kept on this device` : 'No readings kept yet';
+    });
+    if (btnLog) btnLog.addEventListener('click', () => saveLogFile().then(refreshLogCount));
+    refreshLogCount();
 
     if(!btnPair) return;
 
@@ -121,6 +136,10 @@
             window.ACTIVE_BLE_BMS.cycles = cycles;
             window.ACTIVE_BLE_BMS.cells = cells;
             window.ACTIVE_BLE_BMS.tempsC = temps;
+            // Kept as the BMS said it: signed amps, before the magnitude above is taken.
+            logReading({ volts: voltage, amps: current, soc, remainingAh: remAh, capacityAh: capAh,
+                         tempC: temps.length ? temps[0] : null, device: window.ACTIVE_BLE_BMS.name })
+              .then((ok) => { if (ok) refreshLogCount(); });
             if(ebSoc)   ebSoc.textContent   = `${soc}% SOC`;
             if(ebVolts) ebVolts.textContent = `${voltage.toFixed(1)}V`;
             if(ebAmps)  ebAmps.textContent  = `Live Draw: ${draw.toFixed(1)}A (${Math.round(voltage*draw)}W)`;
