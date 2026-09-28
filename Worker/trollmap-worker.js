@@ -917,13 +917,24 @@ ONLY if fish is on bump board:
 Return ONLY this JSON:
 {"has_fish": <true/false>, "on_bump_board": <true/false>, "species": "<exact species from list>", "length_inches": <number or null>, "confidence": "high|medium|low", "notes": "<what you see: tail tip position, visible ruler marks, species field marks>"}`;
 }
+// THE FISH ID HAS BEEN REFUSED BY GEMINI, EVERY CALL. Found 2026-09-27 on Ryan's two bowfin, the
+// first catch drop that ever reached this route (the drop's own date bug stopped every earlier one
+// before the fetch):
+//
+//     Gemini API 400: Invalid JSON payload received. Unknown name "type" at
+//     'generation_config.response_schema.properties[3].value': Proto field is not repeating,
+//     cannot start list.
+//
+// Gemini's response schema is an OpenAPI subset: `type` is ONE name, and "may be null" is
+// `nullable: true`. `length_inches` said `type: ["NUMBER", "NULL"]`, the JSON-Schema spelling,
+// which that parser refuses outright -- so the request never reached the model at all.
 var CATCH_JSON_SCHEMA = {
   type: "OBJECT",
   properties: {
     has_fish: { type: "BOOLEAN" },
     on_bump_board: { type: "BOOLEAN" },
     species: { type: "STRING" },
-    length_inches: { type: ["NUMBER", "NULL"] },
+    length_inches: { type: "NUMBER", nullable: true },
     confidence: { type: "STRING", enum: ["high", "medium", "low"] },
     notes: { type: "STRING" }
   },

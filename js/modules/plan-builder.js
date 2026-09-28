@@ -10,12 +10,13 @@
 
 import { state } from "../core/state.js";
 import { esc } from "../utils/escape.js";
-import { planIssues } from "./plan-issues.js";
+import { planIssues, planIssuesHtml } from "./plan-issues.js";
+import { renderSmartPlanUI } from "./smart-plan-ui.js";
 import { rodsAtLaunchHtml } from "./rods-at-launch.js";
 import { lakeDbEntryFor, lakeRecordFor, workerBase } from "../data/lake-registry.js";
 import { renderSpread } from "./spread-builder.js";
 import { newRodRow } from "../utils/rod-row.js";
-import { getFilename, setFilename } from "../core/map-init.js";
+import { getFilename, setFilename, renderAll } from "../core/map-init.js";
 import { COASTAL_ZONES, isCoastalKey } from "../data/coastal-zones.js";
 import { landOnCoastalZone, focusRamp } from "../utils/viewport-cull.js";
 import { bucketWaters, STATE_ORDER, TYPE_ORDER, sortForDisplay,
@@ -686,6 +687,103 @@ function loadPlanIntoForm(p){
   sVBot('planTackle', p.tackle);
   sVBot('planSafety', p.safety);
   sVBot('planNotes', p.notes);
+  // The form is back; now the day itself. A failure here leaves the form loaded, which is what a
+  // load did before, and says so in the console rather than taking the form down with it.
+  try { restorePlanView(p); } catch (err) {
+    console.warn('[plan-builder] the saved plan could not be redrawn:', err);
+  }
+}
+
+/**
+ * A SAVED PLAN COMES BACK AS THE PLAN, NOT AS A FORM.
+ *
+ * Ryan, 2026-09-27, the night before a Wateree trip: "i refreshed the page which cleared the plan
+ * i imported the json but it didn't rebuild the plan on the plan tab and it doesn't show in saved
+ * plans". loadPlanIntoForm() put back the lake, the ramp, the date and the rods, and nothing of
+ * the day: no leg cards and no lines on the map. Every piece of it was in the file:
+ *
+ *   - the leg cards are the timeline's troll entries (planToTimeline() builds each entry from its
+ *     card, so the card is the entry);
+ *   - the lines are `gpx.trackList`, named `L1 · 17 ft` / `T1 · transit`, so each takes its
+ *     card's colour by leg id;
+ *   - the marks are `gpx.waypointList`;
+ *   - the plan block is `plan`, and the exchange with the model is `model`.
+ *
+ * NOTHING IS RE-ASKED. The model is not called and the assembler does not run; this draws what was
+ * saved, with the renderer that drew it the first time. What it does not do is arm the phone's
+ * trip alerts: those need each leg's own geometry and stops, and the file carries the geometry as
+ * tracks rather than on the legs.
+ *
+ * Returns true when the plan was redrawn. A file saved without a timeline or a plan block gets the
+ * form alone, exactly as before.
+ */
+function restorePlanView(p) {
+  const unified = Array.isArray(p.unifiedTimeline) && p.unifiedTimeline.length ? p.unifiedTimeline
+    : (Array.isArray(p.timeline) && p.timeline.length ? p.timeline : null);
+  if (!unified || !p.plan || !Array.isArray(p.plan.legs) || !p.plan.legs.length) return false;
+
+  const cardDefs = unified.filter((e) => e.type === 'troll')
+    .map((e) => ({ ...e, longDesc: e.longDesc || e.why || '' }));
+  const cardFor = new Map(cardDefs.map((c) => [c.legId || c.key, c]));
+
+  window._smartPlanCastRods = Array.isArray(p.castRods) ? p.castRods : [];
+  window._smartPlanRationale = p.rationale || '';
+  window._groqPlanTimeline = null;
+  renderSmartPlanUI({
+    routeRods: p.routeRods || {}, routeSpeeds: p.routeSpeeds || {},
+    speedMph: cardDefs[0] ? cardDefs[0].speedMph : 2.0,
+    stopCandidates: Array.isArray(p.castingStops) ? p.castingStops : [],
+    scoutReport: p.rationale || '',
+    solunar: (p.meta && p.meta.solunar) || '',
+    cardDefs, unified,
+  });
+
+  // THE LINES AND THE MARKS, owned the way materialisePlan() owns them: flagged as the plan's, so
+  // the next plan built replaces them, and nothing the user loaded is touched. Set AFTER the
+  // renderer, which writes its own CAST: waypoints -- the saved list is the plan's, and the plan is
+  // the last writer, exactly as on the build path.
+  if (!state.DATA) state.DATA = { waypoints: [], tracks: [] };
+  const tracks = ((p.gpx && p.gpx.trackList) || [])
+    .filter((t) => Array.isArray(t.pts) && t.pts.length > 1)
+    .map((t) => {
+      const legId = String(t.name || '').split('·')[0].trim();
+      const c = cardFor.get(legId);
+      return { name: t.name, pts: t.pts, scoutRoute: true, smartPlan: true, legId,
+               color: c ? c.color : undefined, dashed: !!c && c.legType === 'transit' };
+    });
+  const waypoints = ((p.gpx && p.gpx.waypointList) || [])
+    .filter((w) => Number.isFinite(w.lat) && Number.isFinite(w.lon))
+    .map((w) => ({ ...w, scoutWaypoint: true }));
+  if (tracks.length) {
+    state.DATA.tracks = [...(state.DATA.tracks || []).filter((t) => !t.scoutRoute && !t.smartPlan),
+                         ...tracks];
+  }
+  if (waypoints.length) {
+    state.DATA.waypoints = [...(state.DATA.waypoints || []).filter((w) => !w.scoutWaypoint
+                              && !w.castingStop && !w.chartMark), ...waypoints];
+  }
+
+  // The plan block and the exchange, as the build path leaves them, so a Save of this restored
+  // plan writes the same `plan` and `model` blocks back out. collectPlan() matches the result to
+  // the plan by identity, which is why both point at the one object.
+  const m = p.model || null;
+  window._planV2 = p.plan;
+  window._planV2Result = {
+    plan: p.plan, request: (m && m.request) || null, response: (m && m.response) || null,
+    exchange: (m && m.exchange) || null, problems: (m && Array.isArray(m.problems)) ? m.problems : [],
+  };
+
+  const out = document.getElementById('smartPlanUIContainer');
+  if (out) {
+    const issues = planIssuesHtml(p.plan, (m && m.problems) || []);
+    const when = p.savedAt ? new Date(p.savedAt).toLocaleString() : '';
+    out.insertAdjacentHTML('afterbegin',
+      `<div class="muted" style="font-size:11px;margin-bottom:8px">Loaded from a saved plan`
+      + `${when ? ` (saved ${esc(when)})` : ''}. Nothing was asked again. The phone's trip alerts `
+      + `are armed only when a plan is built.</div>` + (issues || ''));
+  }
+  try { renderAll(); } catch (e) { console.warn('[plan-builder] map redraw failed:', e && e.message); }
+  return true;
 }
 
 export async function buildPlanPreviewHtml(p){
@@ -3011,12 +3109,32 @@ document.getElementById('importPlanFile')?.addEventListener('change', (e) => {
   const f = e.target.files[0];
   if (!f) return;
   const r = new FileReader();
-  r.onload = (ev) => {
-    try {
-      const p = JSON.parse(ev.target.result);
-      loadPlanIntoForm(p);
-      alert('Plan imported.');
-    } catch (err) { alert('Invalid JSON: ' + err.message); }
+  r.onload = async (ev) => {
+    let p;
+    try { p = JSON.parse(ev.target.result); } catch (err) { alert('Invalid JSON: ' + err.message); return; }
+    loadPlanIntoForm(p);
+    // AND AN IMPORTED PLAN IS KEPT. Ryan, 2026-09-27: "it doesn't show in saved plans" -- the
+    // import only ever filled the form, so the next refresh lost it again. Saved the way the Save
+    // button saves, and a second import of the same file replaces its own copy instead of
+    // stacking a duplicate: the same name and the same `savedAt` is the same plan.
+    let kept = false;
+    if (dbIsReady()) {
+      try {
+        const all = await dbGetAll('plans');
+        const same = all.find((x) => x && x.meta && p.meta && x.meta.name === p.meta.name
+                                     && x.savedAt === p.savedAt);
+        const rec = { ...p };
+        if (same) rec.id = same.id; else delete rec.id;
+        await dbPut('plans', rec);
+        kept = true;
+        refreshPlanLibrary();
+        if (window.pushItemOnSave) window.pushItemOnSave('plan', planSyncKey(rec), rec);
+      } catch (err) {
+        console.error('[plan-builder] the imported plan could not be saved:', err);
+      }
+    }
+    document.querySelector('#planSubtabs button[data-plansub="plan"]')?.click();
+    alert(kept ? 'Plan imported and saved.' : 'Plan imported, but it could not be saved on this device.');
   };
   r.readAsText(f);
   e.target.value = '';
