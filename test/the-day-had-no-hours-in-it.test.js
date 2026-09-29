@@ -276,7 +276,7 @@ describe('the prompt — it states the day instead of asking for one', () => {
     expect(u.includes('What is yours is what goes in the water, and WHEN.')).toBe(true);
   });
 
-  it('and on a lake the order is the app\'s too, since 2026-09-28', () => {
+  it('and on a lake the order is the app\'s too, since 2026-09-29', () => {
     // Ryan, on item 31: "i want to end a lane close to the ramp... however that looks". Smart Plan
     // now puts the model's legs in the shortest route from the ramp and back, as Pick Water has
     // since item 27, so the lake prompt no longer asks the model to order the day by light or says

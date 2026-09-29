@@ -720,7 +720,7 @@ export async function buildSmartPlanV2(o) {
 
   // ── THE DAY ENDS ON A LANE NEAR THE RAMP ──────────────────────────────────────────────────────
   //
-  // Ryan, 2026-09-28 (item 31): *"i want to end a lane close to the ramp... i do not want to waste 3
+  // Ryan, 2026-09-29 (item 31): *"i want to end a lane close to the ramp... i do not want to waste 3
   // miles heading back and not being able to fish it... however that looks"*. The model chose the
   // water and what goes in it; the app now sets the order, shortest from the ramp and back, as Pick
   // Water has since item 27. See shortestOrder(). The rods, stops and changes are keyed by runId,

@@ -1155,7 +1155,7 @@ ${lines.join('\n')}
     // ── AND ON A LAKE THE ORDER IS THE APP'S NOW TOO ────────────────────────────────────────────
     //
     // This said "Put the low-light legs and the full-daylight legs in the order the light comes".
-    // Pick Water has handed the model a fixed order since item 27, and since 2026-09-28 Smart Plan
+    // Pick Water has handed the model a fixed order since item 27, and since 2026-09-29 Smart Plan
     // puts the legs it chooses in the shortest route from the ramp and back (Ryan: "i want to end a
     // lane close to the ramp"). So on no water is the model arranging the day by light any more, and
     // the sentence would ask for the one thing rule 3 now says the app does.
@@ -2496,7 +2496,7 @@ RULES THAT ARE NOT NEGOTIABLE
    the part nothing in this app can compute.` : `${o.orderIsChosen
    ? `THE ORDER IS FIXED AND IT IS NOT YOURS. It is the shortest route the app found through the
    water he picked, and he asked for exactly that. Fish them in the order given.`
-   : `THE APP PUTS YOUR LEGS IN ORDER, AND THE DAY ENDS ON A LANE NEAR THE RAMP. Ryan, 2026-09-28:
+   : `THE APP PUTS YOUR LEGS IN ORDER, AND THE DAY ENDS ON A LANE NEAR THE RAMP. Ryan, 2026-09-29:
    "i want to end a lane close to the ramp... i do not want to waste 3 miles heading back and not
    being able to fish it". After you answer, the app puts the legs you choose in the shortest route
    out from the ramp, through every one of them and back, and turns each pass whichever way that

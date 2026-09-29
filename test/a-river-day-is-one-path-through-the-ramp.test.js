@@ -239,7 +239,7 @@ test('the prompt gives a river the one path and a lake the ordering problem', ()
   // The lake paragraph is actively wrong on a river: it says there is no out and back, and tells
   // the model to hunt for legs that are near each other. On a river they all are.
   assert.ok(!river.user.includes('There is no "out and back"'));
-  // Since 2026-09-28 a lake day's order is the app's as well (item 31), so the lake paragraph says
+  // Since 2026-09-29 a lake day's order is the app's as well (item 31), so the lake paragraph says
   // that instead of "you finish near the ramp because you ordered it that way".
   assert.ok(lake.user.includes('THE APP PUTS YOUR LEGS IN ORDER'));
   assert.ok(!lake.user.includes('THE DAY IS ONE PATH'));

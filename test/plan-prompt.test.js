@@ -189,7 +189,7 @@ describe('plan-prompt — the request', () => {
     // and it is told what they are for
     expect(withHops.user).toContain('transitToM');
     expect(withHops.user).toContain('transitToRampM');
-    // Since 2026-09-28 the app orders a Smart Plan day (item 31); the tables say what CHOOSING a
+    // Since 2026-09-29 the app orders a Smart Plan day (item 31); the tables say what CHOOSING a
     // leg costs, and the prompt says the order is the app's.
     expect(withHops.user).toMatch(/THE APP PUTS YOUR LEGS IN ORDER, AND THE DAY ENDS ON A LANE NEAR THE RAMP/);
     // the specific trap: near the ramp is not the same as near each other

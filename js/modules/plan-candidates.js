@@ -479,7 +479,7 @@ export function movingM(candidates, launch) {
 /**
  * ── THE DAY ENDS ON A LANE NEAR THE RAMP ───────────────────────────────────────────────────────
  *
- * Ryan, 2026-09-28, on item 31 (the 9/28 Wateree plan crossed the lake twice and finished 3 miles
+ * Ryan, 2026-09-29, on item 31 (the 9/28 Wateree plan crossed the lake twice and finished 3 miles
  * out): *"i want to end a lane close to the ramp... i do not want to waste 3 miles heading back
  * and not being able to fish it... however that looks"*.
  *
