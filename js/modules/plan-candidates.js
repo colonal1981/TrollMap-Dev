@@ -462,6 +462,164 @@ export function orientLegs(candidates, launch) {
 }
 
 /**
+ * The metres of moving a lake day costs in this order: ramp to the first leg, leg to leg, and the
+ * last leg home, with each leg turned the way orientLegs() turns it. Straight lines, like
+ * orientLegs(), so this and the assembler cannot disagree about which way a pass is fished.
+ */
+export function movingM(candidates, launch) {
+  const legs = Array.isArray(candidates) ? candidates : [];
+  if (!legs.length) return 0;
+  const f = orientLegs(legs, launch);
+  const hop = (a, b) => (Array.isArray(a) && Array.isArray(b) ? metresBetween(a, b) : 0);
+  let m = hop(launch, f[0].start);
+  for (let i = 1; i < f.length; i++) m += hop(f[i - 1].finish, f[i].start);
+  return m + hop(f[f.length - 1].finish, launch);
+}
+
+/**
+ * ── THE DAY ENDS ON A LANE NEAR THE RAMP ───────────────────────────────────────────────────────
+ *
+ * Ryan, 2026-09-28, on item 31 (the 9/28 Wateree plan crossed the lake twice and finished 3 miles
+ * out): *"i want to end a lane close to the ramp... i do not want to waste 3 miles heading back
+ * and not being able to fish it... however that looks"*.
+ *
+ * So Smart Plan's legs go in the order that moves the boat least from the ramp, through every leg
+ * and back to the ramp -- the same rule Pick Water has used since he chose "Always shortest-first"
+ * (dayOrder(), item 27). The run home is part of the total, so a day that finishes far out pays for
+ * it and loses to one that finishes on a lane near the ramp. The model chose the water and what
+ * goes in it; it had been ordering the day too, and on 9/28 it read `transitToM` (measured at
+ * whichever ends suit the pair) against `transitToRampM` (measured at the leg's own end) and took
+ * the cheap end twice.
+ *
+ * A LOOP COSTS THE SAME BOTH WAYS ROUND, so there are usually two shortest orders. Of the ones that
+ * tie, this keeps the one closest to the order it was given -- the most pairs of legs still in the
+ * given relative order -- so the model's first leg, the one it rigged for first light, stays first
+ * wherever the distance allows. "Tie" is equal to the metre: straight lines between the same
+ * points either add up the same or they do not.
+ *
+ * Exact over every order up to 8 legs; past that, 2-opt from the given order, and the result says so.
+ *
+ * @param {object[]} candidates  lake legs `{start, end, trollPasses?}`, in the given order
+ * @param {number[]} launch      [lon, lat]
+ * @returns {{order:number[], moveM:number, givenM:number, exact:boolean}} `order` indexes into
+ *          `candidates`; `givenM` is the given order's moving, for the sentence that says what changed
+ */
+export function shortestOrder(candidates, launch) {
+  const legs = Array.isArray(candidates) ? candidates : [];
+  const n = legs.length;
+  const idx = [...Array(n).keys()];
+  const givenM = movingM(legs, launch);
+  if (n < 2) return { order: idx, moveM: givenM, givenM, exact: true };
+  const cost = (order) => Math.round(movingM(order.map((i) => legs[i]), launch));
+  const agree = (order) => {
+    const at = new Map(order.map((v, k) => [v, k]));
+    let a = 0;
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) if (at.get(i) < at.get(j)) a += 1;
+    return a;
+  };
+  let best = [...idx], bestM = cost(idx), bestA = agree(idx);
+  const offer = (order) => {
+    const m = cost(order);
+    if (m > bestM) return;
+    const a = agree(order);
+    if (m < bestM || a > bestA) { best = [...order]; bestM = m; bestA = a; }
+  };
+  if (n <= 8) {
+    const permute = (arr, k) => {
+      if (k === arr.length) { offer(arr); return; }
+      for (let i = k; i < arr.length; i++) {
+        [arr[k], arr[i]] = [arr[i], arr[k]];
+        permute(arr, k + 1);
+        [arr[k], arr[i]] = [arr[i], arr[k]];
+      }
+    };
+    permute([...idx], 0);
+    return { order: best, moveM: bestM, givenM, exact: true };
+  }
+  let improved = true;
+  while (improved) {
+    improved = false;
+    for (let i = 0; i < n - 1; i++) {
+      for (let j = i + 1; j < n; j++) {
+        const cand = [...best.slice(0, i), ...best.slice(i, j + 1).reverse(), ...best.slice(j + 1)];
+        const before = bestM;
+        offer(cand);
+        if (bestM < before) improved = true;
+      }
+    }
+  }
+  return { order: best, moveM: bestM, givenM, exact: false };
+}
+
+/**
+ * ── AND A DEAD END IS FISHED BACK, NOT RUN BACK ────────────────────────────────────────────────
+ *
+ * The shortest order alone does not stop the waste he named. On the 9/28 Wateree plan it puts the
+ * day's last leg 0.2 mi from the ramp, but #48 is a 4 km lane with nothing at its far end, so the
+ * boat still runs 3 miles back from it with nothing in the water -- mid-day instead of at the end.
+ * His words were about exactly that: *"i do not want to waste 3 miles heading back and not being
+ * able to fish it"*. Fished back, the same 4 km comes home trolling.
+ *
+ * So a leg fished an odd number of times gets one more pass when that saves more battery in
+ * deadhead than the extra pass costs in trolling, on his motor's measured curve (ahPerMile). That
+ * is his motor's rule, not a distance of ours. The best such leg is taken, the order is solved
+ * again, and it repeats until no leg pays.
+ *
+ * AND ONLY WHILE THE DAY HAS THE TIME. `windowMin` is launch to return; the day is the trolling at
+ * `trollMph`, the running at `transitMph` and `fixedMin` (the stops). A pass goes in only while that
+ * still fits. Straight lines under-count the running, so the assembler still has the last word and
+ * drops a pass that would put the rest of the day past his return, saying so -- but a pass added
+ * here and dropped there would leave the boat at the far end of a dead end, the one thing this is
+ * for, so the day is judged here too. With no window given, no pass is added.
+ *
+ * @param {object[]} candidates  lake legs in the given order, each with `lengthM`
+ * @param {number[]} launch      [lon, lat]
+ * @param {{trollMph:number, transitMph:number, windowMin?:number, fixedMin?:number}} speeds
+ * @returns {{legs:object[], added:{runId:string, savedM:number}[], givenM:number, moveM:number,
+ *           exact:boolean}} `legs` in the order to fish, with `trollPasses` raised where a pass was added
+ */
+export function dayShape(candidates, launch, speeds) {
+  const given = Array.isArray(candidates) ? candidates : [];
+  const givenM = movingM(given, launch);
+  const passes = (c) => {
+    const n = Number(c && c.trollPasses);
+    return Number.isInteger(n) && n >= 1 ? n : 1;
+  };
+  const trollAh = ahPerMile(speeds.trollMph) / 1609.34;
+  const runAh = ahPerMile(speeds.transitMph) / 1609.34;
+  const perMin = (mph) => (mph * 1609.34) / 60;
+  const dayMin = (list) => list.reduce((m, c) => m + (Number(c.lengthM) || 0) * passes(c), 0)
+      / perMin(speeds.trollMph)
+    + movingM(list, launch) / perMin(speeds.transitMph) + (Number(speeds.fixedMin) || 0);
+  const windowMin = Number(speeds.windowMin);
+  let so = shortestOrder(given, launch);
+  let legs = so.order.map((i) => given[i]);
+  let exact = so.exact;
+  const added = [];
+  for (let guard = 0; guard < given.length; guard++) {
+    const base = movingM(legs, launch);
+    let best = null;
+    for (let i = 0; i < legs.length; i++) {
+      const c = legs[i];
+      const len = Number(c.lengthM);
+      if (passes(c) % 2 === 0 || !(len > 0)) continue;
+      const trial = legs.map((x, k) => (k === i ? { ...x, trollPasses: passes(x) + 1 } : x));
+      if (!(windowMin > 0) || dayMin(trial) > windowMin) continue;
+      const savedM = base - movingM(trial, launch);
+      const gain = savedM * runAh - len * trollAh;
+      if (gain > 0 && (!best || gain > best.gain)) best = { i, gain, savedM };
+    }
+    if (!best) break;
+    legs = legs.map((x, k) => (k === best.i ? { ...x, trollPasses: passes(x) + 1 } : x));
+    added.push({ runId: legs[best.i].runId, savedM: Math.round(best.savedM) });
+    so = shortestOrder(legs, launch);
+    legs = so.order.map((i) => legs[i]);
+    exact = exact && so.exact;
+  }
+  return { legs, added, givenM, moveM: movingM(legs, launch), exact };
+}
+
+/**
  * ── A RIVER DAY IS ONE PATH OUT AND ONE PATH BACK, NOT A PASS-PAIR PER REACH ────────────────────
  *
  * Ryan, 2026-09-17, on what a river day is: *"is there anything to actually choose on a river... or

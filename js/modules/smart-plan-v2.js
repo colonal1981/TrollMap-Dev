@@ -18,6 +18,7 @@
  */
 
 import { selectCandidates, structureIndex, forModel, travelOrder, poiSpotFeatures,
+         dayShape, orientLegs,
          attractorSpotFeatures, osmShoreFeatures, chartedGrid, chartedHazards,
          turnaroundMiles, riverDay, metresBetween,
          pointToSegmentM } from './plan-candidates.js';
@@ -29,7 +30,8 @@ import { riverDriftRuns, driftCurrentSummary, centrelineTransit, waterTest } fro
 // THE PACK'S OWN FACTS. Pure, and it takes the layers fetched below -- see researchIntel() in
 // plan-inputs.js and THE_PROFILE_BECAME_A_CACHE_AND_NOBODY_MOVED_THE_READS_2026-09-01.md item 1.
 import { packDerivedFacts } from '../utils/pack-facts.js';
-import { assemblePlan, validatePlan } from './plan-assemble.js';
+import { assemblePlan, validatePlan, parseClock, DEFAULT_STOP_MIN } from './plan-assemble.js';
+import { TROLL_MPH, TRANSIT_MPH } from './plan-water.js';
 import { connectionFor, snapEligibleFrom } from '../data/lure-knowledge.js';
 // ONE SPELLING OF "IS THIS A RIVER", shared with the Water tab -- see saysRiver() for why it is not
 // a string compare in two files, and why it is not `waterState.river`.
@@ -715,6 +717,42 @@ export async function buildSmartPlanV2(o) {
   }
 
   const args = planArgsFrom(res, candidates, { tackle: o.tackle, connectionOf });
+
+  // ── THE DAY ENDS ON A LANE NEAR THE RAMP ──────────────────────────────────────────────────────
+  //
+  // Ryan, 2026-09-28 (item 31): *"i want to end a lane close to the ramp... i do not want to waste 3
+  // miles heading back and not being able to fish it... however that looks"*. The model chose the
+  // water and what goes in it; the app now sets the order, shortest from the ramp and back, as Pick
+  // Water has since item 27. See shortestOrder(). The rods, stops and changes are keyed by runId,
+  // so they travel with their legs, and the assembler times the day from the new order. A river
+  // day is already one path out and back (travelOrder), so it is left alone.
+  if (!isRiver && args.candidates.length > 1) {
+    const given = args.candidates;
+    // The day's window and the stops he will make, so a pass is added only while the day has time.
+    const l0 = parseClock(o.launchTime), r0 = parseClock(o.returnTime);
+    const stopMin = (args.stops || []).reduce((m, st) => m + (Number(st.durationMin) || DEFAULT_STOP_MIN), 0);
+    const shape = dayShape(given, o.ramp, {
+      trollMph: TROLL_MPH, transitMph: TRANSIT_MPH,
+      windowMin: l0 != null && r0 != null ? r0 - l0 : null, fixedMin: stopMin,
+    });
+    const moved = shape.legs.some((c, k) => c !== given[k]);
+    if (moved) {
+      const home = (list) => {
+        const f = orientLegs(list, o.ramp);
+        return metresBetween(f[f.length - 1].finish, o.ramp);
+      };
+      const mi = (m) => (m / 1609.34).toFixed(1);
+      const back = shape.added.length
+        ? ` Fished back to come home trolling instead of running: ${shape.added
+            .map((a) => `${a.runId} (${mi(a.savedM)} mi less running)`).join(', ')}.` : '';
+      args.decisions = [...(args.decisions || []),
+        `Put the legs in the shortest order from the ramp and back, so the day ends near the ramp: `
+        + `${mi(shape.moveM)} mi of running instead of ${mi(shape.givenM)}, and ${mi(home(shape.legs))} `
+        + `mi home from the last leg instead of ${mi(home(given))}.${back} The model's order was `
+        + `${given.map((c) => c.runId).join(', ')}.`];
+      args.candidates = shape.legs;
+    }
+  }
 
   // THE TRANSITS ARE ROUTED OVER WATER, OR THEY SAY THEY ARE NOT.
   //

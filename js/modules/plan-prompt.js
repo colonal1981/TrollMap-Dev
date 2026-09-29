@@ -1152,11 +1152,20 @@ ${lines.join('\n')}
              + 'fish on the run out at first light and a trolled bait on the way back at noon are '
              + 'not the same fish — and on a river they are the SAME WATER.');
   } else {
+    // ── AND ON A LAKE THE ORDER IS THE APP'S NOW TOO ────────────────────────────────────────────
+    //
+    // This said "Put the low-light legs and the full-daylight legs in the order the light comes".
+    // Pick Water has handed the model a fixed order since item 27, and since 2026-09-28 Smart Plan
+    // puts the legs it chooses in the shortest route from the ramp and back (Ryan: "i want to end a
+    // lane close to the ramp"). So on no water is the model arranging the day by light any more, and
+    // the sentence would ask for the one thing rule 3 now says the app does.
     lines.push('THE LIGHT CHANGES DURING THIS TRIP, so a presentation is not a property of the day '
-             + '— it belongs to the stretch of it whose light suits it. Put the low-light legs and '
-             + 'the full-daylight legs in the order the light comes, and say in each leg\'s `why` '
-             + 'what the light is on it. A topwater fish in the first run above and a trolled bait '
-             + 'in the middle of the day are not the same fish.');
+             + '— it belongs to the stretch of it whose light suits it. THE ORDER IS THE APP\'S '
+             + '(rule 3): it is the shortest route from the ramp and back, so the legs nearest the '
+             + 'ramp are usually fished first and last. The app times each leg from that order and '
+             + 'flags a bait whose own recorded light the leg is not fished in. Say in each leg\'s '
+             + '`why` what light you rigged it for. A topwater fish at first light and a trolled '
+             + 'bait in the middle of the day are not the same fish.');
   }
   // THE MEASURED PERCENTAGES, HOUR BY HOUR, UNLABELLED. The runs above are the app's reading of
   // the sky; this is the sky. hourlyWeather() keeps the figure exactly as Open-Meteo sent it --
@@ -2398,8 +2407,9 @@ they are a real choice. On a river they are not being offered to you: the app dr
 order is the order (rule 3). What is yours is what goes in the water, and WHEN.
 ${drawnDayBlock(o.drawnDay, candidates)}` : `WHAT THE ORDER COSTS. Each candidate also carries \`transitToM\` — metres of deadhead from the END
 of that leg to the START of every other leg — \`transitFromRampM\` from the ramp to its start, and
-\`transitToRampM\` from its end back to the ramp. Those are the only numbers that change when you
-reorder the day, and they are yours to spend: the app computes the legs, you choose the sequence.
+\`transitToRampM\` from its end back to the ramp. They say what choosing a leg costs in deadhead.
+The ORDER is not yours: the app puts the legs you choose in the shortest route from the ramp and back
+(rule 3).
 
 AND WHAT TURNING AROUND COSTS. \`transitToMIfFishedBack\` is the same table for a leg you troll an
 EVEN number of times: turn at each end and you finish where you started, so the hop to the next
@@ -2486,15 +2496,22 @@ RULES THAT ARE NOT NEGOTIABLE
    the part nothing in this app can compute.` : `${o.orderIsChosen
    ? `THE ORDER IS FIXED AND IT IS NOT YOURS. It is the shortest route the app found through the
    water he picked, and he asked for exactly that. Fish them in the order given.`
-   : `ORDER THE LEGS TO SPEND AS LITTLE OF THE DAY DEADHEADING AS YOU CAN.`} Add up
+   : `THE APP PUTS YOUR LEGS IN ORDER, AND THE DAY ENDS ON A LANE NEAR THE RAMP. Ryan, 2026-09-28:
+   "i want to end a lane close to the ramp... i do not want to waste 3 miles heading back and not
+   being able to fish it". After you answer, the app puts the legs you choose in the shortest route
+   out from the ramp, through every one of them and back, and turns each pass whichever way that
+   route needs. Of two routes equally short it keeps the one nearer the order you wrote. So spend
+   nothing on the order, and say nothing in a leg's \`why\` about where in the day it comes: the app
+   times the day from its own order, and flags a bait whose recorded light the leg is not fished in.
+   What the tables are for is WHICH WATER.`} Add up
    \`transitFromRampM\` for the leg you start with, \`transitToM\` for each hop between
    consecutive legs, and \`transitToRampM\` for the leg you finish on — that total is time and
    battery with nothing in the water. Trolling at ${TROLL_MPH} mph costs about ${ahPerMile(TROLL_MPH).toFixed(1)} Ah per mile; deadheading at ${TRANSIT_MPH} mph
    costs about ${ahPerMile(TRANSIT_MPH).toFixed(1)} Ah, ${(ahPerMile(TRANSIT_MPH) / ahPerMile(TROLL_MPH)).toFixed(1)} times as much for water you do not fish (his motor's measured draw). Two legs that are each close
    to the ramp can still be six miles from EACH OTHER, and a day that spends nearly half its
    distance travelling is a day half wasted — that is a real plan, from 2026-08-09, and it is what
-   \`transitToM\` is here to stop. There is no "out and back": you finish near the ramp because
-   you ordered it that way. Prefer a slightly weaker leg next door to a slightly better one across
+   \`transitToM\` is here to stop. ${o.orderIsChosen ? 'There is no "out and back": the order given finishes near the ramp.'
+   : 'The app can only shorten the route through the water you chose; it cannot bring far water closer.'} Prefer a slightly weaker leg next door to a slightly better one across
    the lake, and if the good water genuinely is far apart, fish fewer legs rather than commuting
    between them.
    AND FISH THE GOOD ONES BACK. A pass is a piece of water, not an errand to be run once and

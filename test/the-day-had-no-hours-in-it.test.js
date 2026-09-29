@@ -276,12 +276,17 @@ describe('the prompt — it states the day instead of asking for one', () => {
     expect(u.includes('What is yours is what goes in the water, and WHEN.')).toBe(true);
   });
 
-  it('and a lake day still owns its order, because there it is a real choice', () => {
+  it('and on a lake the order is the app\'s too, since 2026-09-28', () => {
+    // Ryan, on item 31: "i want to end a lane close to the ramp... however that looks". Smart Plan
+    // now puts the model's legs in the shortest route from the ramp and back, as Pick Water has
+    // since item 27, so the lake prompt no longer asks the model to order the day by light or says
+    // the deadhead is its to spend.
     const u = promptFor({ candidates: [forModel({ ...A, passClock: undefined, passes: [],
                                                   drift: null, fromRamp: null, transitToM: { x: 1 } })],
                           isRiver: false });
-    expect(u.includes(ORDER_BY_LIGHT)).toBe(true);
-    expect(u.includes(YOURS_TO_SPEND)).toBe(true);
+    expect(u.includes(ORDER_BY_LIGHT)).toBe(false);
+    expect(u.includes(YOURS_TO_SPEND)).toBe(false);
+    expect(u.includes("THE ORDER IS THE APP'S")).toBe(true);
     expect(u.includes('THE DAY AS DRAWN')).toBe(false);
   });
 });
