@@ -65,6 +65,79 @@ const MAX_POINTS = 25;         // per request, so one call cannot spend a day's 
 const BUDGET_KEY = 'places:spent';
 const PLACES_BUDGET = 1000;    // a fifth of the Pro free pool, per calendar month
 
+/**
+ * ── IS THE LAUNCH OPEN. `POST /places/status` ───────────────────────────────────────────────
+ *
+ * Ryan, 2026-10-01: *"I think we talked about having smartplan use my google maps api key to
+ * check for ramp closures... did that get done?"* It had not. It was designed on 2026-09-20 and
+ * never built, and the only closure the app carried was typed by hand into the Cooper's ramp
+ * list -- the thing he had already ruled out: *"hand writing in that it is closed will go stale
+ * with no way of updating it without changing code"*, pasting Google's own "William Dennis Boat
+ * Landing -- Temporarily closed" beside it.
+ *
+ * SAME TIER, SAME RADIUS, SAME NAME RULE AS THE NAMING SWEEP.
+ *
+ *   - `businessStatus` is a Nearby Search PRO field, the tier `displayName` already bills at
+ *     (Google's Nearby Search field list, read 2026-10-01). Adding it does not reprice the call,
+ *     and a test reads this mask the way it reads FIELD_MASK.
+ *   - 150 m, nearest first, the radius the naming sweep settled on.
+ *   - WHICH RESULT IS THE LAUNCH is the naming script's own pick(): the nearest within 150 m whose
+ *     NAME reads like a launch. Google barely types boat ramps and a fish camp is typed
+ *     `restaurant, store`, so the type is not read. The two patterns below are copied from
+ *     Scripts/name_launches_from_places.py, and a test reads them out of the Python and fails the
+ *     day the two stop matching.
+ *
+ * ONE ASK PER LAUNCH PER DAY. A status changes and a name does not, so this is NOT the naming
+ * cache, which keeps an answer forever. The key carries the day the answer is stamped with -- his
+ * day, Eastern -- so a plan that says "checked 2026-10-01" means it. KV is told to drop the key
+ * after two days only so old days clean themselves up; the day in the key is what decides.
+ *
+ * WHAT IT DOES NOT DO. It does not decide a launch is closed. Google's status is Google's -- for
+ * William Dennis it was right and SCDNR's feed was not -- and the plan prints it as Google's, with
+ * the name and the distance Google gave and the day it was read.
+ */
+const STATUS_FIELD_MASK = 'places.id,places.displayName,places.location,places.types,'
+  + 'places.businessStatus';
+const ACCEPT_M = RADIUS_M;     // name_launches_from_places.py's ACCEPT_M; a test holds them equal
+const STATUS_KV_TTL_S = 2 * 24 * 3600;
+
+// Copied from Scripts/name_launches_from_places.py, which says why every word is there.
+export const LAUNCH_RE = new RegExp(
+  String.raw`\bboat\s+(ramp|landing|launch|dock|slip)|\bmarine\s+complex\b|`
+  + String.raw`\b(ramps?|landings?|launch|slipway|marina|dock|ferry|camp|campground|access|park|`
+  + String.raw`put[-\s]?in)\b`, 'i');
+export const NOT_A_LAUNCH_RE = new RegExp(
+  String.raw`\b(rentals?|charters?|guide\s+service|tackle|trailhead|restaurant|grill|`
+  + String.raw`parts|repair|store|realty|real\s+estate|dealer|marine\s+(sales|service))\b`, 'i');
+
+/** Does this NAME say it is somewhere you put a boat in? The type is not consulted. */
+export function readsLikeALaunch(name) {
+  const nm = String(name || '');
+  if (!nm || NOT_A_LAUNCH_RE.test(nm)) return false;
+  return LAUNCH_RE.test(nm);
+}
+
+/**
+ * The one result worth calling this launch, or none with the reason -- pick() in the Python, line
+ * for line: nearest first, and the first that reads like a launch wins, so a shop 20 m away does
+ * not veto the ramp 30 m away.
+ */
+export function pickLaunch(results) {
+  const rs = Array.isArray(results) ? results : [];
+  if (!rs.length) return { launch: null, why: 'Google has nothing within ' + RADIUS_M + ' m' };
+  const near = rs.filter((r) => r && r.m != null && r.m <= ACCEPT_M);
+  if (!near.length) return { launch: null, why: `the nearest thing Google has is ${rs[0].m} m away` };
+  for (const r of near) if (readsLikeALaunch(r.name)) return { launch: r, why: '' };
+  return { launch: null, why: `nothing within ${ACCEPT_M} m reads like a launch (`
+    + near.slice(0, 2).map((x) => x.name).join('; ') + ')' };
+}
+
+/** His day, not UTC's: a plan built at 9 PM Eastern is checked "today", not tomorrow. */
+export function dayEastern(d = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric',
+                                            month: '2-digit', day: '2-digit' }).format(d);
+}
+
 const json = (o, status = 200) =>
   new Response(JSON.stringify(o), { status, headers: { ...JSON_HEADERS, ...CORS } });
 
@@ -91,20 +164,17 @@ function metres(la1, lo1, la2, lo2) {
   return Math.hypot((lo2 - lo1) * 111320 * c, (la2 - la1) * 110540);
 }
 
-/** One coordinate -> what Google has within RADIUS_M, nearest first. Cached forever. */
-async function lookup(env, lat, lon) {
-  const k = cacheKey(lat, lon);
-  try {
-    const hit = await env.KV.get(k);
-    if (hit) return { ...JSON.parse(hit), cached: true };
-  } catch (_) { /* a bad cache entry is a cache miss */ }
-
+/**
+ * One Nearby Search at a coordinate, with the given mask. Both routes ask through this, so the
+ * radius, the order and the error handling cannot drift apart between the name and the status.
+ */
+async function nearby(env, lat, lon, mask) {
   const res = await fetch(ENDPOINT, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'X-Goog-Api-Key': env.PLACES_API_KEY,
-      'X-Goog-FieldMask': FIELD_MASK,
+      'X-Goog-FieldMask': mask,
     },
     body: JSON.stringify({
       locationRestriction: { circle: { center: { latitude: lat, longitude: lon }, radius: RADIUS_M } },
@@ -117,11 +187,11 @@ async function lookup(env, lat, lon) {
     // THE STATUS TRAVELS. A 429 is a quota Ryan set and a 403 is a key problem, and they need
     // different hands; "lookup failed" would send him to the wrong one.
     const body = await res.text().catch(() => '');
-    return { error: `places ${res.status}`, detail: String(body).slice(0, 300), spent: true };
+    return { error: `places ${res.status}`, detail: String(body).slice(0, 300) };
   }
 
   const j = await res.json().catch(() => ({}));
-  const out = {
+  return {
     results: (j.places || []).map((p) => ({
       name: (p.displayName && p.displayName.text) || null,
       place_id: p.id || null,
@@ -130,9 +200,22 @@ async function lookup(env, lat, lon) {
       lon: p.location && p.location.longitude,
       m: (p.location && Number.isFinite(p.location.latitude))
         ? Math.round(metres(lat, lon, p.location.latitude, p.location.longitude)) : null,
+      ...(p.businessStatus !== undefined ? { status: p.businessStatus || null } : {}),
     })),
-    at: new Date().toISOString(),
   };
+}
+
+/** One coordinate -> what Google has within RADIUS_M, nearest first. Cached forever. */
+async function lookup(env, lat, lon) {
+  const k = cacheKey(lat, lon);
+  try {
+    const hit = await env.KV.get(k);
+    if (hit) return { ...JSON.parse(hit), cached: true };
+  } catch (_) { /* a bad cache entry is a cache miss */ }
+
+  const got = await nearby(env, lat, lon, FIELD_MASK);
+  if (got.error) return { ...got, spent: true };
+  const out = { results: got.results, at: new Date().toISOString() };
   // Cached even when EMPTY. "Google has nothing here" is an answer, it is worth knowing about a
   // launch, and paying for it twice would be silly.
   await env.KV.put(k, JSON.stringify(out)).catch(() => {});
@@ -147,6 +230,7 @@ async function lookup(env, lat, lon) {
  */
 export async function handlePlaces(request, env, url) {
   const p = url.pathname.replace(/\/+$/, '');
+  if (p === '/places/status') return handleStatus(request, env);
   if (p !== '/places/name') return null;
   if (request.method === 'OPTIONS') return new Response(null, { headers: CORS });
   if (!env || !env.KV) return json({ error: 'KV not bound' }, 500);
@@ -188,4 +272,57 @@ export async function handlePlaces(request, env, url) {
 
   return json({ results, budget: { month: budget.month, spent: budget.spent + spent,
                                    ceiling: PLACES_BUDGET, this_call: spent } });
+}
+
+
+const statusKey = (lat, lon, day) => `places:status:${lat.toFixed(5)},${lon.toFixed(5)}:${day}`;
+
+/** One coordinate -> Google's launch there and whether it is open, for today. */
+async function statusLookup(env, lat, lon, day) {
+  const k = statusKey(lat, lon, day);
+  try {
+    const hit = await env.KV.get(k);
+    if (hit) return { ...JSON.parse(hit), cached: true };
+  } catch (_) { /* a bad cache entry is a cache miss */ }
+
+  const got = await nearby(env, lat, lon, STATUS_FIELD_MASK);
+  if (got.error) return { ...got, day, spent: true };
+  const { launch, why } = pickLaunch(got.results);
+  const out = { day, at: new Date().toISOString(), launch, why, results: got.results };
+  await env.KV.put(k, JSON.stringify(out), { expirationTtl: STATUS_KV_TTL_S }).catch(() => {});
+  return { ...out, spent: true };
+}
+
+/**
+ * POST /places/status  { lat, lon }  -> { day, launch: {name, m, status, ...} | null, why,
+ *                                        results, budget }
+ *
+ * Token-guarded and budgeted with /places/name -- one counter, because it is one pool of Ryan's.
+ */
+async function handleStatus(request, env) {
+  if (request.method === 'OPTIONS') return new Response(null, { headers: CORS });
+  if (!env || !env.KV) return json({ error: 'KV not bound' }, 500);
+  if (request.method !== 'POST') return json({ error: 'POST' }, 405);
+  if (!await isAuthorized(request, env)) return json({ error: 'unauthorized' }, 401);
+  if (!env.PLACES_API_KEY) return json({ error: 'PLACES_API_KEY is not set on the Worker' }, 503);
+
+  const body = await request.json().catch(() => null);
+  const lat = Number(body && body.lat);
+  const lon = Number(body && body.lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return json({ error: 'lat and lon required' }, 400);
+
+  const budget = await readBudget(env);
+  const day = dayEastern();
+  // A cached answer costs nothing, so the budget only stands in the way of an uncached one.
+  const cached = await env.KV.get(statusKey(lat, lon, day)).catch(() => null);
+  if (!cached && budget.spent >= PLACES_BUDGET) {
+    return json({ error: 'monthly budget reached', day, ceiling: PLACES_BUDGET }, 429);
+  }
+  const r = await statusLookup(env, lat, lon, day);
+  const spent = r.spent ? 1 : 0;
+  if (spent) await writeBudget(env, { month: budget.month, spent: budget.spent + spent });
+  const { spent: _s, ...out } = r;
+  return json({ ...out, budget: { month: budget.month, spent: budget.spent + spent,
+                                  ceiling: PLACES_BUDGET, this_call: spent } },
+              out.error ? 502 : 200);
 }

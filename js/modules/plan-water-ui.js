@@ -49,6 +49,7 @@ import { fetchForecast,
 import { lakeSurfaceTemp, poolOffsetFt } from '../utils/water-conditions.js';
 import { landingsFor } from '../data/launch-reach.js';
 import { closerLanding, closerLandingNote } from './closer-landing.js';
+import { askLaunchStatus, launchStatusNote } from './launch-status.js';
 import { shoreRays, roughLegs } from '../utils/wind-waves.js';
 import { inshoreSeasonFor } from '../data/inshore-season.js';
 import { seabedHabitatFor } from '../data/seabed-habitat.js';
@@ -1251,6 +1252,9 @@ export async function buildFromPicked() {
   // prompt that had never been told this is a 12.5 ft kayak on an estuary — two plans behaving
   // differently on the same boat on the same water, which is the divergence this file's own
   // header warns about.
+  // IS THE LAUNCH OPEN, by Google's listing -- same check, same sentence, as the Smart Plan path
+  // (launch-status.js). Asked now, read after the model answers.
+  const launchStatus = askLaunchStatus({ worker: CF_WORKER_URL, lonLat: T.ramp });
   say('Reading the water…');
   const waterState = await fetchWaterState(T.lake, T.dateStr, {
     worker: CF_WORKER_URL, launchTime: T.launchTime, species: T.species,
@@ -1426,6 +1430,9 @@ export async function buildFromPicked() {
   }).catch((e) => { console.warn('[pick-water] closer landing check failed:', e && e.message); return null; });
   const closerNote = closerLandingNote(closer, T.rampName);
   if (closerNote) r.problems = [...(r.problems || []), closerNote];
+  const ls = launchStatusNote(await launchStatus, T.rampName);
+  if (ls.warning) r.problems = [...(r.problems || []), ls.warning];
+  if (ls.decision && r.plan) r.plan.decisions = [...(r.plan.decisions || []), ls.decision];
   // THE WIND ACROSS THE WATER HE PICKED (change request 22). Each troll leg is stamped with its
   // roughest hour, and one that reaches his own 1 ft says so -- see wind-waves.js. He chose this
   // water himself, so it is said, never re-ordered. No boundary, no measurement, nothing said.

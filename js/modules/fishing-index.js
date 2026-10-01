@@ -58,10 +58,11 @@ import { getLoadedAccessIndex } from "../data/access-index.js";
         "Back River":          "Parallel waterway, Bushy Park area",
         "Cooper River":        "Main Cooper",
       },
-      // Specific per-ramp notes (overlaid on the SCDNR ramp name)
-      rampNotes: {
-        "William Dennis": "⚠ Temporarily closed for renovations 2026; reopening pending.",
-      },
+      // Specific per-ramp notes (overlaid on the SCDNR ramp name). William Dennis carried
+      // "Temporarily closed for renovations" here by hand until 2026-10-01. Ryan, 2026-09-20:
+      // "hand writing in that it is closed will go stale with no way of updating it without
+      // changing code". A plan now asks Google whether its launch is open (launch-status.js).
+      rampNotes: {},
       defaultMapCenter: [33.10, -79.92, 11],
     },
 

@@ -2472,8 +2472,9 @@ export function renderPlanStats(){
  *
  * These six entries predate the registry serving rivers. They are not chartpacks -- selecting
  * one switches the tab into river mode, filling gauge, flow, rise, surge ETA and schedule, and
- * carrying a parent lake for level data plus ramps annotated by hand ("Lugoff, just below dam",
- * "William Dennis, temporarily closed"). None of that exists anywhere else.
+ * carrying a parent lake for level data plus ramps annotated by hand ("Lugoff, just below dam").
+ * None of that exists anywhere else. (William Dennis also carried "temporarily closed" by hand.
+ * It came off 2026-10-01: a plan now asks Google whether its launch is open -- launch-status.js.)
  *
  * Then the live DNR ramps reached the planner filter (e098c9d) and the registry rows for the
  * SAME water started passing it, because they finally had ramps. Ryan, 2026-08-14: "planning one
@@ -2485,10 +2486,14 @@ export function renderPlanStats(){
  * that a river entry already claims, and the pack resolves through resolveR2Key(). One
  * entry, tailwater conditions AND trolling lanes.
  *
- * COOPER IS HONESTLY PARTIAL. Its label spans "Pinopolis tailrace -> Charleston Harbor" and no
- * single registry row covers that; `tail_race_canal` is the tailrace half, charted 0.94, and the
- * harbour end is coast_charleston_sc. The slug gives it a pack for the water you would troll and
- * does not pretend to cover the rest.
+ * THE COOPER IS ONE WATER, DAM TO HARBOUR, AND HAS BEEN SINCE 2026-08-17. Ryan: *"the tailrace
+ * canal is just the upper portion of the cooper from the dam to whatever line someone has drawn"*
+ * and *"just use the cooper polygon for the whole system"*. merge_duplicate_waters.py folded
+ * `tail_race_canal` and `wadboo_creek` into `cooper_river` that day. This row kept the retired
+ * slug until 2026-10-01, so getPlanRiverDef() never matched the Cooper the picker offers, and its
+ * curated ramps, map centre and river panel never attached. 3DHP agrees there is no line to draw:
+ * one river-area polygon from the dam to the harbour, and its names leave 2.6 km unnamed between
+ * where "Tailrace Canal" ends (33.2154) and "West Branch Cooper River" begins at Wadboo Creek.
  */
 // The key->slug mapping now exists in two files: here, where the picker and the curated ramps
 // are, and js/data/lake-keys.js, where every resolver already is. Two copies of a mapping that
@@ -2526,8 +2531,8 @@ const PLAN_RIVERS = [
     {name:'Lenuds', lat:33.30431, lon:-79.67896},
     {name:'McConnels', lat:33.24514, lon:-79.52085},
   ]},
-  { key:'cooper', slug:'tail_race_canal', label:'Cooper River (Pinopolis tailrace → Charleston Harbor)', worker:'cooper', center:[33.04,-79.95,11], lakeKey:'Lake Moultrie', fishingSystem:'Cooper River system (Pinopolis tailrace → Charleston Harbor)', ramps:[
-    {name:'William Dennis (Pinopolis tailrace) ⚠ temporarily closed for renovations', lat:33.21311, lon:-79.97347},
+  { key:'cooper', slug:'cooper_river', label:'Cooper River (Pinopolis tailrace → Charleston Harbor)', worker:'cooper', center:[33.04,-79.95,11], lakeKey:'Lake Moultrie', fishingSystem:'Cooper River system (Pinopolis tailrace → Charleston Harbor)', ramps:[
+    {name:'William Dennis (Pinopolis tailrace)', lat:33.21311, lon:-79.97347},
     {name:'Rembert C Dennis (Wadboo Creek)', lat:33.19601, lon:-79.95324},
     {name:'Huger Park (upper Cooper)', lat:33.13111, lon:-79.81111},
     {name:'John R Bettis (Goose Creek)', lat:32.93278, lon:-80.02266},

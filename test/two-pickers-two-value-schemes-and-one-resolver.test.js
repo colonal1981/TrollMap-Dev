@@ -48,7 +48,9 @@ describe('the resolver understands the plan picker, not just the map picker', ()
     expect(resolveR2Key('river:saluda')).toBe('saluda_river_lower_saluda');
     expect(resolveR2Key('river:broad')).toBe('broad_river_2');
     expect(resolveR2Key('river:santee')).toBe('santee_river');
-    expect(resolveR2Key('river:cooper')).toBe('tail_race_canal');
+    // cooper_river, not tail_race_canal: that slug was folded into the Cooper on 2026-08-17 and
+    // the alias kept naming it until 2026-10-01.
+    expect(resolveR2Key('river:cooper')).toBe('cooper_river');
   });
 
   it('agrees with PLAN_RIVERS on every row, which is what stops the two copies drifting', () => {
@@ -60,8 +62,23 @@ describe('the resolver understands the plan picker, not just the map picker', ()
     }
   });
 
+  it('names only waters the app offers, so a curated row cannot outlive a merge', () => {
+    // THE COOPER ROW NAMED `tail_race_canal` FOR SIX WEEKS AFTER THAT SLUG WAS MERGED AWAY. The
+    // check above held -- the two copies agreed with each other -- and both were wrong about the
+    // registry, so getPlanRiverDef() matched nothing and the Cooper's curated ramps and river panel
+    // never attached. The offered list is the one frozen for the clarity test on 2026-09-24
+    // (352 waters, the same set lake_index.json held on 2026-10-01).
+    const fx = JSON.parse(SRC('test/fixtures/clarity-is-on-every-water.2026-09-24.json'));
+    const offered = new Set(Object.keys(fx.feature_type));
+    expect(offered.size).toBe(352);
+    for (const r of PLAN_RIVERS) {
+      expect(`${r.key} -> ${r.slug}: ${offered.has(r.slug) ? 'offered' : 'NOT OFFERED'}`)
+        .toBe(`${r.key} -> ${r.slug}: offered`);
+    }
+  });
+
   it('refuses an unknown river key instead of guessing at one', () => {
-    // `broad` -> broad_river_2 and `cooper` -> tail_race_canal cannot be derived from the string,
+    // `broad` -> broad_river_2 and `cooper` -> cooper_river cannot be derived from the string,
     // so a fuzzy fallback here would be inventing a water. Null is the honest answer.
     expect(resolveR2Key('river:enoree')).toBe(null);
     expect(resolveR2Key('river:')).toBe(null);

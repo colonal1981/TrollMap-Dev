@@ -1973,7 +1973,8 @@ var trollmap_worker_default = {
       if (repRes) return repRes;
       // What Google calls the thing at a coordinate, for the 1,600 launches OSM never named.
       // Same null-when-not-ours contract. This is the only route that SPENDS MONEY, so it is
-      // token-guarded on POST, budgeted in KV, and cached forever -- see places.js.
+      // token-guarded on POST and budgeted in KV; a name is cached forever and a launch's
+      // open-or-closed status (/places/status) for the day it was read -- see places.js.
       const placeRes = await handlePlaces(request, env, url);
       if (placeRes) return placeRes;
 

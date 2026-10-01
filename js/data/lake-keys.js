@@ -449,7 +449,9 @@ function hasNoPack(name) {
  * resolver that only understands what the app emits TODAY breaks every one of them.
  *
  * The keys are PLAN_RIVERS' own, and they are six rows of data rather than a rule, because
- * `broad` -> broad_river_2 and `cooper` -> tail_race_canal cannot be derived from the string.
+ * `broad` -> broad_river_2 and `cooper` -> cooper_river cannot be derived from the string.
+ * (`cooper` read `tail_race_canal` until 2026-10-01, a slug retired into cooper_river on
+ * 2026-08-17, so a stored `river:cooper` opened a pack the app no longer offers.)
  */
 const RIVER_VALUE_ALIASES = {
   wateree: 'wateree_river',
@@ -457,7 +459,7 @@ const RIVER_VALUE_ALIASES = {
   saluda:   'saluda_river_lower_saluda',
   broad:    'broad_river_2',
   santee:   'santee_river',
-  cooper:   'tail_race_canal',
+  cooper:   'cooper_river',
 };
 
 export function resolveR2Key(displayName) {

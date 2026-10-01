@@ -29,6 +29,7 @@ import { checkPlanLegality, ensureRegulations, fetchForecast, fetchWaterState,
 import { primeFishAdvisories } from '../data/fish-advisories.js';
 import { landingsFor } from '../data/launch-reach.js';
 import { closerLanding, closerLandingNote } from './closer-landing.js';
+import { askLaunchStatus, launchStatusNote } from './launch-status.js';
 import { primeInshoreSeason, inshoreSeasonFor } from '../data/inshore-season.js';
 import { primeSeabedHabitat, seabedHabitatFor } from '../data/seabed-habitat.js';
 import { buildSmartPlanV2, packFetcher, modelAsker, waterRouter, waterDistanceAsker } from './smart-plan-v2.js';
@@ -153,6 +154,9 @@ export async function runSmartPlanV2(opts = {}) {
     return say(inp.rampName ? `Could not place "${inp.rampName}" on ${inp.lakeName}`
                             : 'Select a ramp / launch first', true), null;
   }
+  // IS THE LAUNCH OPEN, by Google's listing -- see launch-status.js. Asked now and read once the
+  // model has answered, so it costs the plan no time. Not on a dry run, which spends nothing.
+  const launchStatus = opts.dryRun ? null : askLaunchStatus({ worker: CF_WORKER_URL, lonLat: ramp });
 
   const date = new Date(`${inp.dateStr}T12:00:00`);
   // THE WATER GETS A SAY. `season` decides the depth band, the structure weights and which
@@ -459,6 +463,13 @@ export async function runSmartPlanV2(opts = {}) {
     }).catch((e) => { console.warn('[plan-v2] closer landing check failed:', e && e.message); return null; });
     const closerNote = closerLandingNote(closer, inp.rampName);
     if (closerNote) r.problems = [...(r.problems || []), closerNote];
+  }
+  // IS THE LAUNCH OPEN, asked at the top. Closed is a warning; anything else goes with the things
+  // the app settled, so a plan always says whether the check ran and what it found.
+  if (launchStatus) {
+    const ls = launchStatusNote(await launchStatus, inp.rampName);
+    if (ls.warning) r.problems = [...(r.problems || []), ls.warning];
+    if (ls.decision && r.plan) r.plan.decisions = [...(r.plan.decisions || []), ls.decision];
   }
   // And the limits that were read and are not in the way go where the app's other settled things
   // go -- see plan-assemble.js. They are still on the plan and still rendered; they are not one
