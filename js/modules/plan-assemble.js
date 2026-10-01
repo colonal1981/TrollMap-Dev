@@ -282,14 +282,11 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
   if (typeof lureByName !== 'function' || !Number.isFinite(ceilingFt) || ceilingFt <= 0) return null;
   // THE WATER TODAY, NOT THE WATER THE CHART WAS SOUNDED IN. The caller hands `ceilingFt` and the
   // leg's depths already less the lake's measured drawdown (see poolOffsetFt()), and says so here
-  // so every sentence quoting one of them can say what it is. `chartCeilingFt` is the same rise at
-  // the chart's number, which is what the envelope has to be searched at to find where it is.
+  // so every sentence quoting one of them can say what it is.
   const dd = Number(legDepth && legDepth.drawdownFt);
   const today = legDepth && legDepth.drawdownFt != null && Number.isFinite(dd) && dd !== 0
     ? ` (the chart ${dd > 0 ? 'less' : 'plus'} the ${Math.abs(dd)} ft the lake is `
       + `${dd > 0 ? 'below' : 'above'} the level its chart was made at today)` : '';
-  const chartCeilingFt = legDepth && legDepth.chartCeilingFt != null
-    && Number.isFinite(Number(legDepth.chartCeilingFt)) ? Number(legDepth.chartCeilingFt) : ceilingFt;
   const ids = [deploy && deploy.port, deploy && deploy.starboard].filter(Boolean);
   const forThisLeg = {};
   for (const id of ids) {
@@ -640,86 +637,45 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
     // Lead-controlled baits can be brought up by shortening the lead. A lipped or weighted bait
     // that dives on its own cannot, and there the honest answer is that it is the wrong bait for
     // this leg -- said plainly rather than corrected into something it is not.
-    // ── A ONE-SHOAL CEILING IS A RISE TO AVOID, NOT A REASON TO FISH THE WHOLE PASS SHALLOW ──
+    // ── ONE BAIT FOR THE WHOLE PASS: IT CLEARS THE SHALLOWEST WATER THE PASS SUSTAINS ───────────
     //
-    // `maxRunDepthFt` is a THRESHOLD -- the shallowest point the whole stretch clears, set by one
-    // rise somewhere along it -- and this function's own note says so. It then shortened the lead
-    // for the ENTIRE pass to clear that rise. On wateree_lake#216, 2026-09-14, that meant pulling a
-    // lipless off 17 ft down to 11 across a leg that runs 11-25 ft with a MEDIAN of 20.
+    // Ryan, 2026-10-01, asked whether to switch to this: *"sure go ahead"*. His words that set it:
+    // *"a bait that can't clear shallow is a bait that is lost... either we have to use a bait that
+    // works for the whole pass or break that pass up"* (2026-09-27, and splitting was measured out:
+    // 39 passes and 38 bait changes over 10 legs), and his 8/30 rule, *"One run only if one bait
+    // covers it."*
     //
-    // Ryan, reading it: "i dont see anything wrong with leg 8... 11-25ft of water with the median
-    // being 20ft... it is not much different than the other water offered". Asked whether he wanted
-    // the cap kept or the rise flagged: "flag the rise and let me decide."
+    // WHAT IT REPLACES. From 2026-09-14 a lead bait that cleared the leg's MEDIAN kept the lead he
+    // set and the rise was flagged with the lead that would clear it (*"flag the rise and let me
+    // decide"*, on a lipless pulled off 17 ft to 11 across an 11-25 ft pass with a median of 20).
+    // Then on 9/27 he read what the flag does on the water: *"warning me does what exactly... does
+    // it tell me exactly when i am supposed to reel the bait in?"* It could not.
     //
-    // AND THIS IS A NARROWING OF HIS 2026-08-11 RULE, NOT A RESTATEMENT OF IT. That rule was "the
-    // shallowest that water runs is 20ft... even if the water is 25-35ft don't give me a bait that
-    // runs deeper than 20ft" -- 25-35 ft of water with a 20 ft shoal is the SAME SHAPE as leg 8,
-    // so pretending the two situations differ would be this file telling itself a story. What
-    // changed is that he read the rule's output on real water and narrowed it. Do not "restore"
-    // the cap on the strength of the August quote; the September one was written knowing it.
+    // WHY IT IS CHEAP NOW. The 9/14 pass had 9 ft between its median and its floor, and the old
+    // Murray hump and ledge passes ran 10 -> 56 -> 14 ft. The 9/27 rebuild put the ceiling back on
+    // those, and measured on the rebuilt lanes (`_scratch\rise_count_1001.mjs`) a pass's median sits
+    // a typical 2-3 ft over its sustained floor, 9 in 10 within 5-6 ft: Wateree, Murray, Marion and
+    // Greenwood, 15,144 fitted lanes, 9 of them 10 ft or more. So clearing the whole pass costs a
+    // bait a few feet, and in exchange nothing on the card is dragging.
     //
-    // The flag is not a smaller answer than the cap was. It hands him the identical number the cap
-    // would have applied -- `shorter`, below -- and leaves the applying to him, which is the whole
-    // of what he asked for: "flag the rise and let me decide."
-    //
-    // THE SPLIT USES THE LEG'S OWN TWO NUMBERS, so there is no threshold to invent: a bait that
-    // clears the MEDIAN is a bait for this water with a rise to get over, and it is flagged with
-    // the lead that would clear so he can shorten there if he wants. A bait that does not clear the
-    // median is too deep for the stretch generally, and that is still corrected as before.
+    // THE FLOOR IS STILL THE SUSTAINED ONE. A lone sounding is not a rise (see "ONE FLOOR" above),
+    // so a bait is never pulled up for one station the next one does not agree with.
     const medianFt = Number(legDepth && legDepth.medianFt);
-    // ── DOES IT SUIT THE STRETCH? TWO TIERS, BOTH THE LEG'S OWN NUMBERS ─────────────────────────
-    //
-    // It clears the floor the leg sustains, or -- for a lead-controlled bait, where the flag can
-    // hand him a lead to act on -- it clears the median. The median tier is Ryan's 2026-09-14
-    // narrowing and is unchanged; the sustained tier is what stops a lone sounding refusing a pass.
-    const clearsMedian = Number.isFinite(medianFt) && medianFt > ceilingFt && w.max <= medianFt;
-    const suitsStretch = w.max <= ceilingFt || (w.mode === 'lead' && clearsMedian);
-    if (suitsStretch) {
-      // AGAINST THE RISE, NOT AGAINST THE STRETCH. `shorter` above walks the lead down until the
-      // window clears `ceilingFt`; what he is being offered here is the lead that clears the RISE,
-      // so it is worked out again against the shallower number.
-      const clearsRise = leadClearing(ceilingFt);
-      const env = [legDepth.minFt, legDepth.maxFt].every(Number.isFinite)
-        ? `${legDepth.minFt}-${legDepth.maxFt} ft` : `${ceilingFt} ft at its shallowest`;
-      // The envelope is the CHART's, so the rise is found on it at the chart's number for it.
-      const where = riseSentence(risesAtM(legDepth && legDepth.envelope,
-                                         legDepth && legDepth.stepM, chartCeilingFt));
-      // SAID TWICE. `bottomNote` on this very leg already carries the rise and the lead that
-      // clears it, on the card he reads while rigging for that leg -- which is the place it means
-      // something. Three more of the eleven.
-      decisions.push(`${id} on ${runId}: a ${rod.lure}`
-                  + `${inlineOz ? ` behind the ${ozLabel(inlineOz)} inline weight` : ''}`
-                  + `${fit ? ` on a ${ozLabel(fit.weightOz)} head` : ''} `
-                  + `runs ${w.min}-${w.max} ft, and this leg is ${env} with a median of `
-                  + `${medianFt} ft${today}. THE LEAD IS LEFT WHERE YOU SET IT \u2014 the bait clears the `
-                  + `water this pass mostly is, and there is a rise to ${ceilingFt} ft it will not `
-                  + (where ? `clear about ${where}. ` : `clear somewhere on it. `)
-                  + (w.mode === 'lead'
-                      ? (clearsRise
-                          ? `Shorten to ${clearsRise} ft over the rise if you want it off the bottom `
-                            + `there` : `Nothing shorter clears it`)
-                      // Lead cannot lift a bait that dives on its own, so the answer at the rise is
-                      // the boat's, not the reel's -- said plainly rather than offered as a lead.
-                      : `Its depth is ${w.controlledBy}, so lead will not lift it over the rise — `
-                        + `steer round that spot or take it out of the water for it`)
-                  + (where ? '.' : '; the chart does not say where the rise is.'));
-      forThisLeg[id] = { ...(forThisLeg[id] || {}),
-                         runsDepthFt: [w.min, w.max],
-                         clearsAt: clearsRise ?? null };
-      continue;
-    }
     if (w.mode === 'lead' && shorter && shorter < leadFt) {
       // THE SENTENCE SAYS WHERE THE BAIT ENDS UP, in the same foot the card's clearance row prints,
       // so "clears" is never said about a bait that is on the bottom. See bottomGapFt().
       const nw = depthWindow(lure, { speedMph, leadFt: shorter });
       const gap = bottomGapFt(ceilingFt, nw.max);
-      warnings.push(`${id} on ${runId}: a ${rod.lure}`
+      // SETTLED BY THE APP, SO IT IS SAID WITH THE OTHER THINGS THE APP SETTLED. Under the
+      // whole-pass rule this is the ordinary case rather than the exception, and the leg card
+      // prints the shortened lead; there is nothing in it for him to act on.
+      decisions.push(`${id} on ${runId}: a ${rod.lure}`
                   + `${inlineOz ? ` behind the ${ozLabel(inlineOz)} inline weight` : ''}`
                   + `${fit ? ` on a ${ozLabel(fit.weightOz)} head` : ''} `
                   + `on ${leadFt} ft of lead at ${speedMph} mph runs to ${w.max} ft, and this leg `
-                  + `runs ${ceilingFt} ft at its shallowest${today} with a median of `
+                  + `comes up to ${ceilingFt} ft${today} with a median of `
                   + `${Number.isFinite(medianFt) ? `${medianFt} ft` : 'no median on the pack'} — `
-                  + `too shallow for it along the whole stretch, so shortened the lead to `
+                  + `one bait for the whole pass, so the lead is shortened to `
                   + `${shorter} ft, which runs it ${nw.min}-${nw.max} ft: ${gap} ft off the bottom `
                   + `at the shallowest`);
       forThisLeg[id] = { ...(forThisLeg[id] || {}), leadFt: shorter,
@@ -727,22 +683,23 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
                                                               : (forThisLeg[id] || {}).runsDepthFt };
     } else if (w.mode === 'lead' && Number.isFinite(medianFt) && medianFt > ceilingFt
                && (() => { const m = leadClearing(medianFt); return m && m < leadFt; })()) {
-      // ── NO LEAD CLEARS THE RISE, BUT ONE CLEARS THE WATER THE PASS MOSTLY IS ──────────────────
+      // ── NO LEAD CLEARS THE PASS: THE WRONG BAIT FOR IT, AND STILL NOT LEFT 30 FT DOWN ─────────
       //
       // Ryan's 2026-09-27 Murray plan, Leg 8: 1.5 ft at its shallowest that morning and 5.5 ft in
       // the middle, and a 1 oz swimbait left on 114 ft of lead running 26-30 ft -- in the mud the
-      // whole pass, with a warning saying so. Nothing keeps a bait off a 1.5 ft rise; that was never
-      // a reason to leave it at a lead set for 30 ft. So it comes up to clear the median, the same
-      // tier the flag above uses, and the rise is said as a rise.
+      // whole pass, with a warning saying so. Under the whole-pass rule nothing that cannot clear
+      // the pass belongs on it, so the sentence says that first. The lead still comes up to the
+      // median, so a bait put out anyway is not printed at a lead set for 30 ft.
       const toMedian = leadClearing(medianFt);
       const nw = depthWindow(lure, { speedMph, leadFt: toMedian });
       warnings.push(`${id} on ${runId}: a ${rod.lure}`
                   + `${fit ? ` on a ${ozLabel(fit.weightOz)} head` : ''} `
-                  + `on ${leadFt} ft of lead at ${speedMph} mph runs to ${w.max} ft, and this leg `
-                  + `is ${medianFt} ft in the middle${today} and ${ceilingFt} ft at its shallowest. `
-                  + `No lead keeps it off that rise, so the lead is shortened to ${toMedian} ft, `
-                  + `which runs it ${nw.min}-${nw.max} ft over the water the pass mostly is — it will `
-                  + `find the rise. This is very thin water for it`);
+                  + `runs to ${w.max} ft on ${leadFt} ft of lead at ${speedMph} mph, and this leg `
+                  + `comes up to ${ceilingFt} ft${today} with a median of ${medianFt} ft. No lead `
+                  + `keeps it off the shallowest water — it is the wrong bait for this pass. If it `
+                  + `goes out anyway, the lead is shortened to ${toMedian} ft, which runs it `
+                  + `${nw.min}-${nw.max} ft over the water the pass mostly is, and it will find the `
+                  + `shallow part`);
       forThisLeg[id] = { ...(forThisLeg[id] || {}), leadFt: toMedian,
                          runsDepthFt: Number.isFinite(nw.max) ? [nw.min, nw.max]
                                                               : (forThisLeg[id] || {}).runsDepthFt };

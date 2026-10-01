@@ -236,6 +236,19 @@ describe('plan-prompt — the request', () => {
     expect(req.user.includes('w#1:p0')).toBe(true);
     expect(req.system.includes('one valid JSON object')).toBe(true);
   });
+
+  // Item 28, 2026-10-01, Ryan: "sure go ahead". One bait covers the whole pass, so the model is
+  // told to pick the pair for the floor -- and no longer told to size against the median and leave
+  // the rise for him to decide at the card.
+  it('tells the model one bait covers the whole pass, floor and all', () => {
+    const all = req.system + req.user;
+    expect(all).toMatch(/IS THE DEEPEST ANY BAIT ON THAT LEG MAY RUN, FOR THE WHOLE PASS/);
+    expect(all).toMatch(/ONE BAIT COVERS THE WHOLE PASS/);
+    expect(all).toMatch(/a bait\s+that can't clear shallow is a bait that is lost/);
+    expect(all).not.toMatch(/IS ONE RISE, NOT THE DEPTH OF THE LEG/);
+    expect(all).not.toMatch(/the rise gets flagged on the card/);
+    expect(all).not.toMatch(/Do not\s+set every lead on the day to the shallowest rise/);
+  });
 });
 
 describe('plan-prompt — reading the answer', () => {

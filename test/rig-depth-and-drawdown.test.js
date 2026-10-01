@@ -116,8 +116,10 @@ test('a shortened lead leaves the spoon OFF the rise, and the card agrees', () =
   const rod = { ...R5(), runsDepthFt: undefined };
   const flat = leg('wateree_lake#1485', { min: 14, median: 14, max: 16 });
   const plan = build([flat], [rod]);
-  const said = plan.warnings.find((w) => /^R5 on wateree_lake#1485: .*shortened the lead/.test(w));
-  assert.ok(said, plan.warnings.join('\n'));
+  // `decisions` since 2026-10-01: one bait for the whole pass makes this the ordinary case, and the
+  // card prints the shortened lead (item 28).
+  const said = plan.decisions.find((w) => /^R5 on wateree_lake#1485: .*the lead is shortened to/.test(w));
+  assert.ok(said, plan.decisions.join('\n'));
   assert.doesNotMatch(said, /so it clears/);
   const got = trollLeg(plan, flat.runId).rodPlan.R5;
   const w = depthWindow(RIGGED_SPOON, { speedMph: 2.0, leadFt: got.leadFt });
@@ -142,14 +144,17 @@ test('a bucktail shortened for a 6 ft rise rides above it, not on it', () => {
   assert.ok(rod.clearance.gap > 0, `gap ${rod.clearance.gap}`);
 });
 
-test('the lead offered over a flagged rise is one that gets the bait off it', () => {
-  // Spoon fitted to 12-16 on a leg with a 14 ft rise and a 20 ft median: the lead is left where it
-  // is and the rise flagged, with a lead that clears it. That lead has to CLEAR it.
+test('a rise on a deeper pass is cleared for the whole pass, and the bait is off it', () => {
+  // Spoon fitted to 12-16 on a leg with a 14 ft rise and a 20 ft median. Until 2026-10-01 the lead
+  // was left where it was and the rise flagged with a lead that would clear it. Since the
+  // whole-pass rule (item 28, "sure go ahead") the lead is shortened to that, and it has to CLEAR.
   const risey = leg('wateree_lake#1480', { min: 14, median: 20 });
   const plan = build([risey], [R5()]);
   const got = trollLeg(plan, risey.runId).rodPlan.R5;
-  assert.ok(Number.isFinite(got.clearsAt), JSON.stringify(got));
-  assert.ok(depthWindow(RIGGED_SPOON, { speedMph: 2.0, leadFt: got.clearsAt }).max < 14);
+  assert.ok(Number.isFinite(got.leadFt), JSON.stringify(got));
+  assert.ok(depthWindow(RIGGED_SPOON, { speedMph: 2.0, leadFt: got.leadFt }).max < 14);
+  const { rod: row } = cardRod(plan, risey.runId, 'R5');
+  assert.equal(row.clearance.taps, false);
 });
 
 // ── BUG E ───────────────────────────────────────────────────────────────────────────────────────

@@ -77,7 +77,9 @@ describe('a bait too deep for the whole stretch is brought up', () => {
     // THE BAG IS UNTOUCHED. This is the half that was wrong: the loadout still carries what the
     // model asked for, and only this leg fishes it short.
     expect(rod.leadFt).toBe(120);
-    const said = plan.warnings.filter((w) => /shortened the lead/.test(w));
+    // `decisions` since 2026-10-01 (item 28): one bait for the whole pass makes this the ordinary
+    // case, the app set the number, and the card prints it.
+    const said = plan.decisions.filter((w) => /the lead is shortened to/.test(w));
     expect(said.length).toBe(1);
     // The number Ryan would look for has to be IN the sentence, both of them.
     expect(/18 ft/.test(said[0]) && /25 ft/.test(said[0])).toBe(true);
@@ -210,9 +212,9 @@ describe('the lead belongs to the leg, not to the day', () => {
        depthWindow(LIPLESS, { speedMph: 2.0, leadFt: 120 }).max]);
   });
 
-  it('the warning names only the leg it applies to', () => {
+  it('the sentence names only the leg it applies to', () => {
     const { plan } = twoLegs();
-    const said = plan.warnings.filter((w) => /shortened the lead/.test(w));
+    const said = plan.decisions.filter((w) => /the lead is shortened to/.test(w));
     expect(said.length).toBe(1);
     expect(said[0].includes(SHALLOW.runId)).toBe(true);
     expect(said[0].includes(DEEP.runId)).toBe(false);
@@ -415,76 +417,52 @@ describe('the ceiling survives the trip through the planner, not just the assemb
     expect(leg.depthMinFt).toBe(8);
   });
 
-  // THIS TEST USED TO ASSERT THE LEAD WAS SHORTENED, and the lane it asserts it on is the one
-  // described right above: 28 ft of water with a single 8 ft rise. That is the case Ryan took the
-  // cap OFF on 2026-09-14 ("flag the rise and let me decide"), so the current answer here is the
-  // flag — and the flag proves this block's subject just as well, because neither the flag nor the
-  // cap can happen unless smart-plan-v2 handed `lureByName` to assemblePlan and not only to
+  // THE LEAD IS SHORTENED HERE AGAIN, SINCE 2026-10-01. This lane is 28 ft of water with a single
+  // 8 ft rise. From 2026-09-14 that was flagged rather than capped ("flag the rise and let me
+  // decide"); since the whole-pass rule (item 28, "sure go ahead") one bait covers the whole pass,
+  // so the lead comes up until it clears. Either way this block's subject is the same: neither can
+  // happen unless smart-plan-v2 handed `lureByName` to assemblePlan and not only to
   // buildPlanRequest. What it must never go back to is silence.
-  it('flags the rise, which it can only do if the planner handed it the resolver', async () => {
+  it('clears the rise on the whole pass, which it can only do if the planner handed it the resolver', async () => {
     const r = await buildSmartPlanV2(OPTS);
     const leg = r.plan.legs.find((l) => l.type === 'troll');
     const got = (leg.rodPlan || {}).R5 || {};
-    expect(got.leadFt).toBe(undefined);                       // 120 ft, as the model asked for it
-    // The rise is on `decisions`: bottomNote on the leg card already says it where it means
-    // something. See plan-assemble.js.
+    expect(Number.isFinite(got.leadFt) && got.leadFt < 120).toBe(true);
+    expect(depthWindow(LIPLESS, { speedMph: 2.0, leadFt: got.leadFt }).max < 8).toBe(true);
+    // Said with what the app settled: the card prints the lead, and nothing is left to decide.
     const said = r.plan.decisions.filter((w) => /^R5 /.test(w)).join(' | ');
-    expect(said).toMatch(/THE LEAD IS LEFT WHERE YOU SET IT/);
-    // The number that WOULD clear is computed and kept, which is the half he acts on.
-    expect(Number.isFinite(got.clearsAt)).toBe(true);
-    expect(depthWindow(LIPLESS, { speedMph: 2.0, leadFt: got.clearsAt }).max <= 8).toBe(true);
-    // AND IT SAYS WHERE THE RISE IS, because the chart does say. This lane's 8 ft station is index
-    // 20 of a 100 m envelope, so it is 2,000 m into the pass, and the leg now carries the array the
-    // ceiling was read from. Ryan, 2026-09-19, having read the old sentence four times on one plan:
-    // it ended by telling him the chart could not place the shallow spot it had just measured.
-    // BOTH STATIONS, because the rise is two of them -- riseSentence() names a pair rather than
-    // picking one, and a shoal the boat trolls 200 m of is exactly the case this block is about.
-    expect(said).toMatch(/about 2,000 m and 2,100 m into the pass/);
-    expect(said).not.toMatch(/the chart does not say where the rise is/);
+    expect(said).toMatch(/one bait for the whole pass, so the lead is shortened to/);
+    expect(said).toMatch(/comes up to 8 ft/);
     expect(leg.envelope[20]).toBe(8);
     expect(leg.envelopeStepM).toBe(100);
   });
 
-  // AND IT HAS TO REACH THE CARD, NOT JUST THE WARNINGS ARRAY.
-  //
-  // `clearsAt` was computed, written onto the leg, and read by nobody — the same failure this
-  // pipeline has made five times in one month: a value worked out correctly and addressed to no
-  // one. The decision it exists for gets made on the water, off the card, so the card is where it
-  // has to be. planToTimeline() is the whole card path and this is the one number on it that came
-  // out of the flag.
-  it('and the clearing lead reaches the card, because that is where he decides', async () => {
+  // AND THE CARD AGREES: the bait is off the bottom along the whole pass, so the clearance row says
+  // so and the bottom note offers no lead to shorten to.
+  it('and the card shows the bait off the bottom, with nothing to shorten', async () => {
     const r = await buildSmartPlanV2(OPTS);
-    const leg = r.plan.legs.find((l) => l.type === 'troll');
     const t = planToTimeline(r.plan, { warnings: r.plan.warnings });
     // `type` is 'troll' on transit entries too (the preview branches on it and reads a deadhead
     // through the same renderer), so the trolling leg is the one whose `legType` says so.
     const card = t.timeline.find((c) => c.type === 'troll' && c.legType === 'troll');
     const rod = (card.rods || []).find((x) => x.rod === 'R5');
-    expect(rod.clearance.taps).toBe(true);                   // 25 ft of bait into an 8 ft rise
-    expect(rod.clearance.note).toMatch(/digs into the 8 ft rise — \d+ ft of lead clears it/);
-    expect(card.bottomNote).toMatch(/Shorten to \d+ ft if you want it up over the rise instead/);
+    expect(rod.clearance.taps).toBe(false);
+    expect(rod.clearance.gap >= 1).toBe(true);
+    expect(card.bottomNote || '').not.toMatch(/Shorten to \d+ ft/);
   });
 });
 
-// ── A ONE-SHOAL CEILING IS A RISE TO AVOID, NOT A WHOLE PASS TO FISH SHALLOW ────────────────────
-//
-// `maxRunDepthFt` is a THRESHOLD -- the shallowest point the whole stretch clears, set by one rise
-// somewhere along it -- and capBaitDepth's own note says exactly that. It then shortened the lead
-// for the ENTIRE pass to clear that rise.
+// ── ONE BAIT FOR THE WHOLE PASS ────────────────────────────────────────────────────────────────
 //
 // wateree_lake#216, 2026-09-14: a lipless pulled off 17 ft down to 11, on a leg that runs 11-25 ft
-// with a MEDIAN of 20. Ryan: "i dont see anything wrong with leg 8... 11-25ft of water with the
-// median being 20ft... it is not much different than the other water offered." Asked whether to
-// keep the cap or flag the rise: "flag the rise and let me decide."
+// with a MEDIAN of 20. Ryan then: "flag the rise and let me decide", and from that day a bait that
+// cleared the median kept its lead and the rise was flagged.
 //
-// HIS ORIGINAL RULE IS NOT REVERSED. 2026-08-11: "the shallowest that water runs is 20ft... even if
-// the water is 25-35ft don't give me a bait that runs deeper than 20ft." On that leg the shallowest
-// WAS the character of the water. Here it is one rise on a twenty-foot stretch. Two situations, and
-// they had one answer.
-//
-// THE SPLIT USES THE LEG'S OWN TWO NUMBERS so there is no threshold to invent: clears the median ->
-// flagged and left alone; does not clear the median -> too deep for the stretch, corrected as before.
-describe('a rise on deep water is flagged, and shallow water is still corrected', () => {
+// On 2026-09-27 he read what the flag does on the water -- "a bait that can't clear shallow is a
+// bait that is lost... warning me does what exactly" -- and on 2026-10-01, shown that on the
+// rebuilt lanes a pass's median sits a typical 2-3 ft over its floor, he chose the whole-pass rule:
+// "sure go ahead". So this pass is now cleared end to end, the same as water shallow all along.
+describe('one bait for the whole pass: a rise on deeper water is cleared like shallow water', () => {
   const lureByName = (n) => TACKLE_INVENTORY.find((l) => l.name === n) || null;
   const leg = (minFt, medFt, maxFt) => ({
     runId: 'wateree_lake#216', lengthM: 2400, depthFt: medFt,
@@ -498,57 +476,47 @@ describe('a rise on deep water is flagged, and shallow water is still corrected'
     deploy: { 'wateree_lake#216': { starboard: 'R6' } }, stops: [], changes: [],
     launchTime: '06:00', returnTime: '15:00', usableAh: 80, lureByName });
   const said = (p) => (p.decisions || []).filter((w) => /^R6 /.test(w)).join(' | ');
-  // A LEAD THE APP SHORTENED IS STILL A WARNING, and it is the one thing in this block that is.
-  // The split is not by which rod said it, it is by whether he has to do anything: the rise is
-  // left for him to decide about and lands in `decisions`; a lead that was CHANGED is a number
-  // on his reel that is no longer the one he set.
   const warned = (p) => (p.warnings || []).filter((w) => /^R6 /.test(w)).join(' | ');
   const leadOn = (p) => (p.legs.find((l) => l.runId === 'wateree_lake#216') || {})
     .rodPlan?.R6?.leadFt;
 
-  it('leaves the lead alone on 11-25 ft water with a median of 20', () => {
-    const p = run(leg(11, 20, 25));
-    expect(leadOn(p)).toBe(undefined);                       // 80 ft, as he set it
-    expect(said(p)).toMatch(/THE LEAD IS LEFT WHERE YOU SET IT/);
-  });
-
-  // 45, NOT 48, SINCE 2026-09-26. 48 ft of lead runs this lipless 7-11 ft: its deep end ON the
-  // 11 ft rise, which the card calls gap 0, taps -- and this sentence offered it as the lead that
-  // gets the bait "off the bottom there". 45 runs it 6-10, a foot up, the least the card can print
-  // as off the bottom. See bottomGapFt() in plan-assemble.js.
-  it('and hands him the number that WOULD clear, without applying it', () => {
-    const w = said(run(leg(11, 20, 25)));
+  // 45, NOT 48: 48 ft of lead runs this lipless 7-11 ft, its deep end ON the 11 ft rise, which the
+  // card calls gap 0, taps. 45 runs it 6-10, a foot up, the least the card prints as off the bottom.
+  // See bottomGapFt() in plan-assemble.js.
+  it('shortens the lead on 11-25 ft water with a median of 20, so it clears the 11 ft', () => {
     expect(depthWindow(TACKLE_INVENTORY.find((l) => l.name === ROD.lure),
                        { speedMph: 2.0, leadFt: 48 }).max).toBe(11);
-    expect(w).toMatch(/Shorten to 45 ft over the rise if you want it off the bottom there/);
-    // THIS LEG FIXTURE CARRIES NO ENVELOPE, and that is the case the old sentence was written for:
-    // a pack with no per-station profile genuinely cannot place the rise, so it still says so. The
-    // planner-level test below is the one with an envelope on it.
-    expect(w).toMatch(/the chart does not say where the rise is/);
+    const p = run(leg(11, 20, 25));
+    expect(leadOn(p)).toBe(45);
+    expect(said(p)).toMatch(/one bait for the whole pass, so the lead is shortened to 45 ft, which runs it 6-10 ft: 1 ft off the bottom at the shallowest/);
   });
 
-  it('states all three numbers, because the decision rests on the comparison', () => {
+  it('states the numbers it decided on: the bait, the floor and the median', () => {
     const w = said(run(leg(11, 20, 25)));
-    expect(w).toMatch(/runs 13-17 ft/);                      // the bait
-    expect(w).toMatch(/this leg is 11-25 ft/);               // the envelope
+    expect(w).toMatch(/runs to 17 ft/);                      // the bait as the model set it
+    expect(w).toMatch(/comes up to 11 ft/);                  // the floor
     expect(w).toMatch(/median of 20 ft/);                    // what the pass mostly is
   });
 
-  it('water that really is shallow all along is still corrected', () => {
+  it('water that really is shallow all along is corrected the same way', () => {
     const p = run(leg(11, 12, 14));
-    // 45 and not 48 -- see the note on the flag above: 48 put the bait on the 11 ft bottom.
     expect(leadOn(p)).toBe(45);
-    expect(warned(p)).toMatch(/too shallow for it along the whole stretch, so shortened the lead to 45 ft, which runs it 6-10 ft: 1 ft off the bottom/);
-    expect(warned(p)).not.toMatch(/LEFT WHERE YOU SET IT/);
-    expect(said(p)).not.toMatch(/LEFT WHERE YOU SET IT/);
+    expect(said(p)).toMatch(/the lead is shortened to 45 ft, which runs it 6-10 ft: 1 ft off the bottom/);
   });
 
-  it('a bait that already clears the rise says nothing at all', () => {
+  it('is said with what the app settled, and no longer leaves a rise to decide about', () => {
+    const p = run(leg(11, 20, 25));
+    expect(warned(p)).toBe('');
+    expect(said(p)).not.toMatch(/LEFT WHERE YOU SET IT|Shorten to \d+ ft over the rise/);
+  });
+
+  it('a bait that already clears the floor says nothing at all', () => {
     const shallowRod = { ...ROD, leadFt: 30 };
     const p = assemblePlan({
       candidates: [leg(11, 20, 25)], launch: [-80.71, 34.348],
       loadout: { rods: [shallowRod] }, deploy: { 'wateree_lake#216': { starboard: 'R6' } },
       stops: [], changes: [], launchTime: '06:00', returnTime: '15:00', usableAh: 80, lureByName });
-    expect(said(p)).not.toMatch(/LEFT WHERE YOU SET IT|shortened the lead|too deep/);
+    expect(said(p)).not.toMatch(/LEFT WHERE YOU SET IT|lead is shortened|too deep|wrong bait/);
+    expect(warned(p)).toBe('');
   });
 });

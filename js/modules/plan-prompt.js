@@ -2567,24 +2567,22 @@ RULES THAT ARE NOT NEGOTIABLE
    may be the right answer on the next leg, and the list is worked out per leg for that reason.
    Nothing appears on it that has any way of working, because a weighted bait is simply given a
    shorter lead instead.
-   \`maxRunDepthFt\` IS ONE RISE, NOT THE DEPTH OF THE LEG. It is the shallowest water anywhere on
-   that leg, measured within the boat's wander — one spot somewhere along the pass, and the chart
-   does not say where. A leg reading 25-31 ft with \`maxRunDepthFt: 20\` is twenty-five to thirty-one
-   feet of water that comes up to 20 once. It is NOT a 20 ft leg.
-   So size the bait against \`depthFt\`, the median — that is the water the pass mostly is — and read
-   the rise as a thing to know about rather than a limit on the whole stretch. A bait that clears
-   the median is right for this leg; the rise gets flagged on the card with the lead that would lift
-   it over, and the angler decides there. A bait deeper than the MEDIAN is a bait too deep for the
-   stretch generally, and that one is wrong: take a shallower bait or a shorter lead.
-   That is the angler's own correction, on being shown a lipless pulled off 17 ft down to 11 for a
-   whole pass on 11-25 ft water with a median of 20: "i dont see anything wrong with leg 8... it is
-   not much different than the other water offered", then "flag the rise and let me decide". Do not
-   set every lead on the day to the shallowest rise on it.
-   A BILL IS THE EXCEPTION, and it is already worked out for you: \`cannotUse\` is computed against
-   the rise, not the median — and against the rise as it is TODAY where the lake publishes a level,
-   so the drawdown is already off it — because no length of lead lifts a lipped bait off a shoal it meets on
-   every pass and a dragged crankbait is a lost crankbait. There is nothing to adjust at the rise
-   with one of those, so it is simply not offered on that leg.
+   \`maxRunDepthFt\` IS THE DEEPEST ANY BAIT ON THAT LEG MAY RUN, FOR THE WHOLE PASS. It is the
+   shallowest water the pass holds for two soundings in a row, within the boat's wander, so one odd
+   sounding does not set it. ONE BAIT COVERS THE WHOLE PASS: every bait you put on a leg has to clear
+   \`maxRunDepthFt\` all the way along, not just the median. The angler's rule, in his words: "a bait
+   that can't clear shallow is a bait that is lost... we have to use a bait that works for the whole
+   pass", and "One run only if one bait covers it." Splitting a pass into pieces with bait changes
+   is out (he does not want the changes), so it is one pair from end to end.
+   On the passes this app offers the median is usually only a few feet deeper than that floor, so
+   this costs a bait a few feet and keeps every bait off the bottom. Pick the pair for the floor and
+   let \`depthFt\`, the median, tell you how much water is under it most of the way.
+   A weighted or lead-set bait that would run deeper than the floor is brought up by the app, which
+   shortens its lead until it clears; say nothing about it. A lipped bait cannot be brought up, and
+   it is already worked out for you: \`cannotUse\` is computed against that floor — and against the
+   water as it is TODAY where the lake publishes a level, so the drawdown is already off it —
+   because no length of lead lifts a lipped bait off a shoal it meets on every pass and a dragged
+   crankbait is a lost crankbait. It is simply not offered on that leg.
    FISH LOOK UP, so the error is not symmetric. A bait running ABOVE the fish still gets eaten —
    they come up to it. A bait running BELOW them is behind them and out of sight, and one dragging
    bottom is fouled. So when the water forces you shallower than the band, take it and do not
@@ -2605,7 +2603,7 @@ RULES THAT ARE NOT NEGOTIABLE
    beside it. Both are 25-31 ft of water under the boat, and the bait depth is the same question on
    each — this changes WHICH LEG IS WORTH THE BATTERY, and which end of a long pass to start on.
    IT IS NOT A DEPTH YOU CAN FISH. The deep water is somewhere in that circle and the chart does not
-   say where, exactly as \`maxRunDepthFt\` does not say where its rise is. Never set a bait to
+   say where. Never set a bait to
    \`deepestNearbyFt\` — nothing is trolling over it — and never call a leg deep because of it. Where
    the fields are absent the pipeline's probe had no answer there; that is not a flat.
 

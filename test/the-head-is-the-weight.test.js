@@ -207,23 +207,21 @@ test('the ceiling still wins over the head', () => {
   assert.ok(w.max <= 24, `runs to ${w.max} ft over a 24 ft ceiling`);
 });
 
-test('and on deep water with a rise, the head is fitted and the rise is flagged', () => {
-  // The same rod on the 38-48 ft envelope: the bait is right for the pass and wrong for one rise.
-  // Ryan, 2026-09-14: "flag the rise and let me decide". What has to be true is that the head was
-  // still fitted first -- the flag is about a bait with mass on it, or the window it quotes is
-  // about a bait with none -- and that the sentence names the head, since the head is what he
-  // ties on and therefore what the number depends on.
+test('and on deep water with a rise, the head is fitted and the bait clears the whole pass', () => {
+  // The same rod on the 38-48 ft envelope with a 24 ft rise. From 2026-09-14 the rise was flagged
+  // and the lead left alone; since 2026-10-01 one bait covers the whole pass (item 28, "sure go
+  // ahead"), so the lead comes up until it clears. What still has to be true is that the head was
+  // fitted first -- the window quoted is about a bait with mass on it -- and that the sentence
+  // names the head, since the head is what he ties on and therefore what the number depends on.
   const plan = planWith({ id: 'R5', lure: 'Swimbait 4.6" – Jighead', leadFt: 60,
                           runsDepthFt: [38, 42], role: 'troll', rig: 'snap' });
   const over = planned(plan, 'R5');
   assert.ok(Number.isFinite(over.jigheadOz), 'a head was still fitted');
-  assert.equal(over.leadFt > 60, true, 'the lead followed the head and was not pulled back up');
-  assert.ok(Number.isFinite(over.clearsAt), 'the lead that would clear the rise is handed over');
-  // `decisions` since 2026-09-21: the rise is already printed as bottomNote on the leg card, and
-  // the sentence leaves the lead where he set it -- there is nothing in it for him to do. The head
-  // still had to be fitted first, which is what the three assertions above pin.
-  const said = plan.decisions.filter((w) => /^R5 /.test(w)).join(' | ');
-  assert.match(said, /THE LEAD IS LEFT WHERE YOU SET IT/);
+  const w = depthWindow({ ...sb46, weightOz: over.jigheadOz }, { speedMph: 2, leadFt: over.leadFt });
+  assert.ok(w.max < 24, `runs to ${w.max} ft over a 24 ft rise`);
+  // `decisions`: the app set the lead and the card prints it; nothing in it for him to do.
+  const said = plan.decisions.filter((w2) => /^R5 /.test(w2)).join(' | ');
+  assert.match(said, /one bait for the whole pass, so the lead is shortened to/);
   assert.match(said, /on a .*oz head/);
 });
 

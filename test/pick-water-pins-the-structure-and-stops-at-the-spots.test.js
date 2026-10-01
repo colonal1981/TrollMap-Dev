@@ -215,7 +215,9 @@ describe('a lead bait no lead keeps off the rise is still brought up off the mid
       }),
     });
     const said = [...r.problems, ...(r.plan.warnings || [])];
-    const line = said.find((s) => /No lead keeps it off that rise, so the lead is shortened/.test(s));
+    // Since 2026-10-01 (item 28, one bait for the whole pass) the sentence says first that it is
+    // the wrong bait for the pass, and then what the lead comes up to if it goes out anyway.
+    const line = said.find((s) => /No lead keeps it off the shallowest water — it is the wrong bait for this pass\. If it goes out anyway, the lead is shortened/.test(s));
     expect(Boolean(line)).toBe(true);
     const leg = trollLegs(r)[0];
     const r5 = (leg.rods || []).find((x) => x.id === 'R5' || x.rod === 'R5');

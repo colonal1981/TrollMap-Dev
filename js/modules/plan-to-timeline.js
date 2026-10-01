@@ -151,10 +151,12 @@ function bottomNote(rods, leg) {
   const taps = withGap.filter((r) => r.clearance.taps);
   const runs = withGap.map((r) => r.depth).filter(Boolean).join(' and ');
   if (taps.length) {
-    // AND WHAT TO DO ABOUT IT IF HE WANTS THE BAIT OFF THE RISE. Since 2026-09-14 a bait that
-    // clears the water the pass mostly is keeps the lead he set and the rise is flagged instead
-    // ("flag the rise and let me decide"), so this sentence is where the decision gets made and
-    // the lead that clears has to be IN it. One number, whichever bait is deepest into the rise.
+    // AND WHAT TO DO ABOUT IT IF HE WANTS THE BAIT OFF THE RISE. From 2026-09-14 to 2026-10-01 a
+    // bait that cleared the water the pass mostly is kept the lead he set and the rise was flagged
+    // here with the lead that would clear it. Since 2026-10-01 capBaitDepth() shortens the lead
+    // so one bait clears the whole pass ("sure go ahead", item 28), so a bait still tapping on the
+    // card is one no lead lifts, and `clearsAt` is null for it. Kept for that case and for plans
+    // saved before the change. One number, whichever bait is deepest into the rise.
     // `> 0` AND NOT JUST FINITE, for the reason spelled out on `clearsAt` in clearanceOf(): a lead
     // of zero is a bait in the wake, not a lead. Both ends check it because both ends print it.
     const lifts = taps.map((r) => r.clearance.clearsAt)
@@ -243,7 +245,8 @@ function bottomClearance(runs, leg, over) {
   //
   // capBaitDepth() stopped shortening the lead for a whole pass to clear one rise -- Ryan,
   // 2026-09-14: "flag the rise and let me decide" -- and put the lead that WOULD clear on the leg
-  // as `clearsAt`. A number the app computed and nobody reads is the failure this pipeline keeps
+  // as `clearsAt`. (Since 2026-10-01 it shortens again, one bait for the whole pass, so it no
+  // longer writes `clearsAt`; plans saved between the two still carry it.) A number the app computed and nobody reads is the failure this pipeline keeps
   // making, and the decision it was computed for is made on the water, off this card. So it rides
   // with the clearance, which is the field already saying the bait is into the bottom.
   // AND `Number(null)` IS 0, WHICH IS FINITE. capBaitDepth writes `clearsAt: null` whenever no
