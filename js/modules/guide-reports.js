@@ -18,7 +18,37 @@
  * utils/report-water.js.
  */
 
-import { supersede, reportWaterForPlan } from '../utils/report-water.js';
+import { supersede, reportWaterForPlan, SANTEE_LAKES, placeNamesIn, namesOnlyOn } from '../utils/report-water.js';
+
+/**
+ * The names on only one of the two Santee Cooper charts, for santeeLakesIn() in report-water.js.
+ *
+ * Read off the packs HERE and not in the Worker: the two lakes' place files are about 2 MB of JSON
+ * and the Worker has 10 ms of CPU a request. Never throws; null when either pack could not be read,
+ * and then a lake is known from its name and "upper"/"lower lake" only.
+ */
+export async function santeePlaces({ worker, fetchImpl } = {}) {
+  const f = fetchImpl || (typeof fetch === 'function' ? fetch : null);
+  if (!worker || !f) return null;
+  const get = async (slug, file) => {
+    try {
+      const r = await f(`${String(worker).replace(/\/+$/, '')}/chartpacks/${slug}/${file}`);
+      return r && r.ok ? await r.json() : null;
+    } catch (_) { return null; }
+  };
+  const read = async (slug) => {
+    const [pois, waterFeatures, launches] = await Promise.all([
+      get(slug, 'pois.geojson'), get(slug, 'water_features.geojson'), get(slug, 'launches.json')]);
+    return pois || launches ? placeNamesIn({ pois, waterFeatures, launches }) : null;
+  };
+  const [a, b] = await Promise.all(SANTEE_LAKES.map(read));
+  return a && b ? namesOnlyOn(a, b) : null;
+}
+
+/** Marion or Moultrie: which lake a report's water is to be about, and the names that tell. */
+const lakeOf = (guide) => (guide && SANTEE_LAKES.includes(guide.slug)
+  ? { slug: guide.slug, places: guide.places || null } : null);
+const lakeWord = (slug) => (slug === 'lake_marion' ? 'Marion' : slug === 'lake_moultrie' ? 'Moultrie' : slug);
 
 /**
  * GET /guide-reports/<slug> for the plan's day. Never throws: a failure comes back as `{error}` and
@@ -30,13 +60,16 @@ export async function askGuideReports({ worker, slug, date, fetchImpl, timeoutMs
   if (!f) return { error: 'no fetch' };
   const ctl = typeof AbortController === 'function' ? new AbortController() : null;
   const t = ctl ? setTimeout(() => ctl.abort(), timeoutMs) : null;
+  // On Marion and Moultrie the two charts' place names are read alongside, to tell which lake a
+  // report's sentence is about.
+  const placesAsk = SANTEE_LAKES.includes(slug) ? santeePlaces({ worker, fetchImpl: f }) : null;
   try {
     const q = date ? `?date=${encodeURIComponent(date)}` : '';
     const r = await f(`${String(worker).replace(/\/+$/, '')}/guide-reports/${encodeURIComponent(slug)}${q}`,
       ctl ? { signal: ctl.signal } : undefined);
     if (!r || !r.ok) return { error: `the Worker answered HTTP ${r ? r.status : '?'}` };
     const body = await r.json();
-    return { ...body, reports: supersede(body.reports || []) };
+    return { ...body, reports: supersede(body.reports || []), ...(placesAsk ? { places: await placesAsk } : {}) };
   } catch (e) {
     return { error: e && e.name === 'AbortError' ? `no answer in ${Math.round(timeoutMs / 1000)} s`
       : String((e && e.message) || e) };
@@ -56,7 +89,7 @@ export async function askGuideReports({ worker, slug, date, fetchImpl, timeoutMs
 export function reportWaterForLanes(guide, species, planDate, offsetFt = null) {
   if (!guide || guide.error) return [];
   const off = Number.isFinite(Number(offsetFt)) && offsetFt !== null ? Number(offsetFt) : null;
-  return reportWaterForPlan(guide.reports, species, planDate).map((w) => ({
+  return reportWaterForPlan(guide.reports, species, planDate, lakeOf(guide)).map((w) => ({
     ...w,
     chartFt: off == null ? w.ft
       : [w.ft[0] + off, w.ft[1] == null ? null : w.ft[1] + off].map((v) => (v == null ? v : Math.round(v * 10) / 10)),
@@ -95,7 +128,15 @@ export function guideReportsBlock(guide, species, planDate) {
     + `says so in its text; take the part about this water.`);
   L.push('Where a report from this month or last names a DEPTH OF WATER for the species ("30-45 feet of water"), the candidate lanes over that '
     + 'water (their median depth is in it) carry it as `reportWater`, and where the ranking had offered none, the best lane over it was added and says `offeredForReport`. '
-    + 'That is the depth of the WATER the guides found fish over, not the depth to run a bait at.');
+    + 'That is the depth of the WATER the guides found fish over, not the depth to run a bait at. '
+    + 'A report marked "same month, an earlier year" is history: read it for the pattern this month usually brings; its water marks no lane.');
+  const lake = lakeOf(guide);
+  if (lake) {
+    L.push(`On Marion and Moultrie a depth of water counts for the lanes only from a sentence that says which lake it is about: by name, `
+      + `"upper lake" (Marion) or "lower lake" (Moultrie), or a place on only one of the two charts, and the rest of its paragraph goes with it. `
+      + `A depth that says neither is printed below and is on no lane: read it knowing it may be ${lake.slug === 'lake_marion' ? "Moultrie's" : "Marion's"} water.`
+      + (lake.places ? '' : " (The two charts' place names could not be read today, so only the lakes' names and upper/lower lake were used.)"));
+  }
   for (const r of live) {
     L.push('');
     L.push(`--- ${r.label}${r.guides ? ` (${r.guides})` : ''} -- ${whenOf(r)}${r.via ? `, ${r.via}` : ''}${r.role && r.role !== 'newest' ? ` -- ${r.role}` : ''}`
@@ -109,10 +150,12 @@ export function guideReportsBlock(guide, species, planDate) {
     L.push('\nCould not be read today:');
     for (const c of failed) L.push(`- ${c.label}: ${c.why}`);
   }
-  const water = reportWaterForPlan(guide.reports, species, planDate);
+  const water = reportWaterForPlan(guide.reports, species, planDate, lake);
   if (water.length) {
     L.push('\nThe depths of water those reports name for the species, as read off their own sentences:');
-    for (const w of water) L.push(`- ${w.species}: ${fmtFt(w.ft)} of water -- ${w.label}: "${w.quote}"`);
+    for (const w of water) {
+      L.push(`- ${w.species}: ${fmtFt(w.ft)} of water${w.lake ? ` on ${lakeWord(w.lake)} (said in ${w.lakeFrom})` : ''} -- ${w.label}: "${w.quote}"`);
+    }
   }
   return `${L.join('\n')}\n`;
 }

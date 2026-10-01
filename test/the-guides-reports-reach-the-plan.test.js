@@ -355,7 +355,7 @@ test('the route: his five lakes, a day\'s copy from KV, and fresh only with the 
   const env = { KV: { get: async (k) => (store.has(k) ? JSON.parse(store.get(k)) : null),
                       put: async (k, v) => store.set(k, v) } };
   const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
-  store.set(`guide:reports:v4:lake_marion:2026-10:${day}`, JSON.stringify({ reports: [{ label: 'kept' }] }));
+  store.set(`guide:reports:v5:lake_marion:2026-10:${day}`, JSON.stringify({ reports: [{ label: 'kept' }] }));
   const get = (q) => handleGuideReports(new Request(`https://w/guide-reports/lake_marion${q}`), env, new URL(`https://w/guide-reports/lake_marion${q}`));
   const hit = await (await get('?date=2026-10-02')).json();
   assert.equal(hit.cached, true);
@@ -390,7 +390,10 @@ test('a newer post seen only as a preview in search goes in, labelled, and super
   try {
     const { gatherGuideReports } = await import('../Worker/guide-reports.js');
     const g = await gatherGuideReports('lake_marion', { TINYFISH_API_KEY: 'k' }, '2026-10-02');
-    assert.deepEqual(g.checked.map((c) => c.ok), [true, true, true]);
+    assert.deepEqual(g.checked.slice(0, 3).map((c) => c.ok), [true, true, true]);
+    // Angler's Headquarters is the fourth source since 2026-10-01; this fake serves none of its pages.
+    assert.equal(g.checked[3].label, "Angler's Headquarters weekly report");
+    assert.equal(g.checked[3].ok, false);
     const pv = g.reports.find((r) => r.preview);
     assert.equal(pv.monthYear, '2026-10');
     assert.match(pv.label, /search preview only/);

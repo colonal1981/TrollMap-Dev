@@ -282,8 +282,15 @@ const DECLARED = [
   // simply has no guide reports. Added 2026-10-01 on his "yes" (APP_CHANGE_REQUESTS 42).
   ['Worker/guide-reports.js', 'GUIDE_SOURCES', 5, 'foreign-key',
    'where the guides on Wateree, Murray, Marion, Moultrie and Monticello publish: SCDNR\'s section '
-   + 'name, Santee Cooper Country\'s page and Facebook author, Wolfe\'s Facebook author, and the '
-   + 'Lake Murray report channel. Verify by reading: each report carries its source and URL.'],
+   + 'name, Santee Cooper Country\'s page and Facebook author, Wolfe\'s Facebook author, the '
+   + 'Lake Murray report channel, and Angler\'s Headquarters\' tag and title for each lake (added '
+   + '2026-10-01, "we need notes like this"). Verify by reading: each report carries its source and URL.'],
+  // The two lakes of the Santee Cooper system, which share one set of reports. A depth of water in
+  // one of those reports goes on a lane only on the lake its sentence is about. Ryan, 2026-10-01:
+  // "If place names help lock down which lake why wouldn't we use them?" and "go ahead".
+  ['js/utils/report-water.js', 'SANTEE_LAKES', 2, 'data',
+   'Marion and Moultrie: the two lakes Santee Cooper reports speak of together. The system is not a '
+   + 'registry field; if it becomes one, read it there.'],
   ['js/data/scc-attractor-notes.js', 'SCC_ATTRACTOR_NOTES', 32, 'data',
    'Santee Cooper Country\'s depth, buoy and comment for 32 SCDNR attractors on Marion and '
    + 'Moultrie, read off their page 2026-10-01. Shown under SCDNR\'s point, labelled as theirs. '

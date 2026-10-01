@@ -14,8 +14,14 @@
  *
  *   SCDNR Freshwater Fishing Trends   dnr.sc.gov/news/freshwater.html. Angler's Headquarters' monthly
  *                                     summary, posted free; one section per lake, guides by name.
- *                                     AHQ's own pages are paid teasers. THE PAGE STATES NO DATE: the
- *                                     text names the month ("in September"), and that is all it has.
+ *                                     THE PAGE STATES NO DATE: the text names the month ("in
+ *                                     September"), and that is all it has.
+ *   Angler's Headquarters (weekly)    anglersheadquarters.com/blogs/ahq-report, one weekly post per
+ *                                     lake, guides by name, every entry dated. THE NEWEST FOUR OR
+ *                                     FIVE WEEKS ARE FOR MEMBERS ("We reserve only the newest
+ *                                     reports for members"); everything older is free. So what is
+ *                                     read is the plan's month in each of the last three years.
+ *                                     Corrected 2026-10-01: this said AHQ's pages were paid teasers.
  *   Santee Cooper Country (site)      santeecoopercountry.org/fishing/fishing-reports/, Capt. Joe
  *                                     Dennis and Kyle Austin. Dated by the page's own modified time.
  *   Santee Cooper Country (Facebook)  the same report, usually days before the site.
@@ -36,6 +42,7 @@
  */
 
 import { CORS, JSON_HEADERS, isAuthorized } from './worker-core.js';
+import { decodeEntities } from '../js/utils/html-text.js';
 import { dayEastern } from './places.js';
 import { tinyfishSearch, tinyfishFetch, checkFirecrawlBudget, recordFirecrawlUsage }
   from './research/clients.js';
@@ -79,17 +86,35 @@ const MURRAY_YT = {
   url: 'https://www.youtube.com/@BigFishBlanch',
 };
 
+// ── ANGLER'S HEADQUARTERS, THE PLAN'S MONTH IN EACH OF THE LAST THREE YEARS ─────────────────
+//
+// Ryan, 2026-10-01, pasting their October 19, 2023 Santee Cooper report (Capt. Bobby Winters):
+// "we need notes like this", and "the difference being that this one calls out upper and lower
+// lake... the new October one we found does not". Their newest weeks are for members, so the
+// current one cannot be read; the same month in earlier years can. Asked how many years: "i
+// actually like the idea of the last 3 years... this way the history is there". Asked whether
+// last year's depths should mark lanes: "Reading only". So these carry `role` and are never this
+// month's report (utils/report-water.js isCurrentReport). No sign-in is ever used: that would be
+// his account.
+const AHQ_BASE = 'https://www.anglersheadquarters.com';
+const AHQ_YEARS = 3;
+const ahqOn = (tag, title) => ({
+  kind: 'ahq', label: "Angler's Headquarters weekly report",
+  guides: "Angler's Headquarters (each guide is named in the text)",
+  tag, title, url: `${AHQ_BASE}/blogs/ahq-report/tagged/${tag}`,
+});
+
 /**
  * Keyed by the registry slug. FOREIGN KEYS, not a gate: these are other people's pages and the
  * section names on them, which no registry field can derive. A water not listed gets an empty
  * answer that says so. Declared in test/hand-written-tables.test.js.
  */
 export const GUIDE_SOURCES = {
-  wateree_lake: [{ ...SCDNR, section: 'Lake Wateree' }, WOLFE_FB],
-  lake_murray: [{ ...SCDNR, section: 'Lake Murray' }, MURRAY_YT],
-  lake_marion: [{ ...SCDNR, section: 'Santee Cooper' }, SCC_SITE, SCC_FB],
-  lake_moultrie: [{ ...SCDNR, section: 'Santee Cooper' }, SCC_SITE, SCC_FB],
-  monticello_reservoir: [{ ...SCDNR, section: 'Lake Monticello' }],
+  wateree_lake: [{ ...SCDNR, section: 'Lake Wateree' }, WOLFE_FB, ahqOn('lake-wateree', 'Lake Wateree')],
+  lake_murray: [{ ...SCDNR, section: 'Lake Murray' }, MURRAY_YT, ahqOn('lake-murray', 'Lake Murray')],
+  lake_marion: [{ ...SCDNR, section: 'Santee Cooper' }, SCC_SITE, SCC_FB, ahqOn('santee-cooper', 'Santee Cooper')],
+  lake_moultrie: [{ ...SCDNR, section: 'Santee Cooper' }, SCC_SITE, SCC_FB, ahqOn('santee-cooper', 'Santee Cooper')],
+  monticello_reservoir: [{ ...SCDNR, section: 'Lake Monticello' }, ahqOn('lake-monticello', 'Lake Monticello')],
 };
 
 // ── parsers (pure, tested) ──────────────────────────────────────────────────────────────────
@@ -267,6 +292,79 @@ export function parseYoutubeScrape(md) {
   return transcript ? { uploaded, transcript } : null;
 }
 
+// ── Angler's Headquarters (pure, tested) ───────────────────────────────────────────────────
+
+/**
+ * The date in a post's title: "AHQ INSIDER Santee Cooper (SC) 2025 Week 47 Fishing Report --
+ * Updated November 19" is 2025-11-19. An old title has a season ("Winter 2017/18 ... Updated
+ * January 18"), and a January to June date in it is the second year.
+ */
+export function ahqTitleDate(title) {
+  const t = String(title || '');
+  const u = t.match(new RegExp(`Updated\\s+(${MONTHS.join('|')})\\s+(\\d{1,2})\\b`, 'i'));
+  const y = t.match(/\b(20\d\d)(?:\/(\d\d))?\b/);
+  if (!u || !y) return null;
+  const mi = MONTHS.findIndex((x) => x.toLowerCase() === u[1].toLowerCase());
+  const year = y[2] && mi <= 5 ? Number(`20${y[2]}`) : Number(y[1]);
+  return `${year}-${String(mi + 1).padStart(2, '0')}-${String(u[2]).padStart(2, '0')}`;
+}
+
+/** A tag listing page's posts, from the <h4> titles TinyFish returns: [{ url, title, date }]. */
+export function parseAhqListing(html) {
+  const out = [];
+  for (const m of String(html || '').matchAll(/<h4[^>]*>\s*<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>\s*<\/h4>/gi)) {
+    const title = decodeEntities(m[2].replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim();
+    const href = /^https?:/.test(m[1]) ? m[1] : `${AHQ_BASE}${m[1]}`;
+    out.push({ url: href.replace(/[?#].*$/, ''), title, date: ahqTitleDate(title) });
+  }
+  return out;
+}
+
+/**
+ * Which posts hold one year's month for one lake, best first. Each post repeats the entries of
+ * the weeks before it (the October 19, 2023 post runs back to July 14), so the first post AFTER
+ * the month holds all of it. The last one inside the month holds all but its last days, and is
+ * the one tried when the first is missing or no longer reaches back.
+ */
+export function pickAhqPosts(posts, title, year, mi) {
+  const ym = `${year}-${String(mi + 1).padStart(2, '0')}`;
+  const mine = (posts || []).filter((p) => p.date && String(p.title).includes(`AHQ INSIDER ${title}`));
+  const after = mine.filter((p) => p.date.slice(0, 7) > ym).sort((a, b) => a.date.localeCompare(b.date));
+  const within = mine.filter((p) => p.date.slice(0, 7) === ym).sort((a, b) => b.date.localeCompare(a.date));
+  return [after[0], within[0]].filter(Boolean);
+}
+
+const AHQ_DATE_LINE = new RegExp(`^(${MONTHS.join('|')})\\s+(\\d{1,2})$`);
+const AHQ_END = /^(We use cookies|#+\s*Search\b|#+\s*Get Hooked|Join AHQ Premier|Leave a comment)/i;
+
+/**
+ * One month's entries off a post, verbatim, newest first, each opened by its own date with the
+ * year added ("October 19, 2023"). Null when the post has none for that month.
+ */
+export function parseAhqEntries(md, year, mi) {
+  const entries = [];
+  let cur = null;
+  for (const raw of String(md || '').split('\n')) {
+    const line = raw.trim();
+    if (AHQ_END.test(line)) break;
+    const d = line.match(AHQ_DATE_LINE);
+    if (d) {
+      cur = { mi: MONTHS.indexOf(d[1]), day: Number(d[2]), lines: [] };
+      entries.push(cur);
+      continue;
+    }
+    if (cur) cur.lines.push(raw.replace(/\s+$/, ''));
+  }
+  const keep = entries.filter((e) => e.mi === mi && e.lines.join('').trim());
+  if (!keep.length) return null;
+  const pad = (n) => String(n).padStart(2, '0');
+  return {
+    dates: keep.map((e) => `${year}-${pad(mi + 1)}-${pad(e.day)}`),
+    text: keep.map((e) => `${MONTHS[mi]} ${e.day}, ${year}\n${e.lines.join('\n').replace(/\n{3,}/g, '\n\n').trim()}`)
+      .join('\n\n'),
+  };
+}
+
 // ── fetching ────────────────────────────────────────────────────────────────────────────────
 
 async function tfPage(env, url, extra = {}) {
@@ -406,7 +504,67 @@ async function readYoutube(src, env, month) {
   return out;
 }
 
-const READERS = { scdnr: readScdnr, page: readSccSite, facebook: readFacebook, youtube: readYoutube };
+/**
+ * The plan's month in each of the last three years. A past month's report never changes, so each
+ * is kept in KV for good once read, and the listing is read only for a year not yet kept. Ten
+ * listing pages (about 22 posts each, newest first) reach back past three years: on Santee Cooper
+ * page 3 was February to August 2025 on 2026-10-01.
+ */
+async function readAhq(src, env, dateStr) {
+  const y = Number(dateStr.slice(0, 4));
+  const mi = Number(dateStr.slice(5, 7)) - 1;
+  const years = Array.from({ length: AHQ_YEARS }, (_, k) => y - 1 - k);
+  const keyOf = (yr) => `guide:ahq:v1:${src.tag}:${yr}-${String(mi + 1).padStart(2, '0')}`;
+  const got = new Map();
+  const failed = [];
+  if (env.KV) {
+    for (const yr of years) {
+      const hit = await env.KV.get(keyOf(yr), 'json');
+      if (hit) got.set(yr, hit);
+    }
+  }
+  const need = years.filter((yr) => !got.has(yr));
+  if (need.length) {
+    const pages = Array.from({ length: 10 }, (_, k) => `${src.url}?page=${k + 1}`);
+    const lr = await tinyfishFetch({ urls: pages, format: 'html', include_selectors: ['h4'] }, env);
+    const posts = ((lr && lr.results) || []).flatMap((h) => parseAhqListing(h.text));
+    const picks = need.map((yr) => ({ yr, cands: pickAhqPosts(posts, src.title, yr, mi), why: [] }));
+    const fetchPosts = async (urls) => {
+      if (!urls.length) return new Map();
+      const r = await tinyfishFetch({ urls, format: 'markdown', exclude_selectors: ['nav', 'header', 'footer'] }, env);
+      return new Map(((r && r.results) || []).map((h) => [String(h.url).replace(/[?#].*$/, ''), h]));
+    };
+    const tryPost = (p, c, h) => {
+      if (!h) { p.why.push(`${c.title}: not fetched`); return; }
+      if (/doesn.t look like you have access/i.test(h.text)) { p.why.push(`${c.title}: members only`); return; }
+      const e = parseAhqEntries(h.text, p.yr, mi);
+      if (e) { p.e = e; p.c = c; } else p.why.push(`${c.title}: no ${MONTHS[mi]} entries on it`);
+    };
+    // Each year's best post in one call; the fallback only for a year whose best had nothing.
+    const first = await fetchPosts(picks.filter((p) => p.cands[0]).map((p) => p.cands[0].url));
+    for (const p of picks) if (p.cands[0]) tryPost(p, p.cands[0], first.get(p.cands[0].url));
+    const retry = picks.filter((p) => !p.e && p.cands[1]);
+    const second = await fetchPosts(retry.map((p) => p.cands[1].url));
+    for (const p of retry) tryPost(p, p.cands[1], second.get(p.cands[1].url));
+    for (const p of picks) {
+      if (!p.cands.length) p.why.push(`no ${src.title} post dated in or after ${MONTHS[mi]} ${p.yr} on the first ten listing pages`);
+      if (!p.e) { failed.push(`${p.yr}: ${p.why.join('; ')}`); continue; }
+      const rep = {
+        kind: src.kind, label: `${src.label} -- ${src.title}, ${MONTHS[mi]} ${p.yr}`, guides: src.guides,
+        url: p.c.url, published: p.e.dates[0], publishedFrom: `its newest ${MONTHS[mi]} entry`,
+        role: 'same month, an earlier year', monthNamed: MONTHS[mi], monthsNamed: [MONTHS[mi]], text: p.e.text,
+      };
+      got.set(p.yr, rep);
+      if (env.KV) await env.KV.put(keyOf(p.yr), JSON.stringify(rep));
+    }
+  }
+  const out = years.filter((yr) => got.has(yr)).map((yr) => got.get(yr));
+  if (!out.length) throw new Error(failed.join('; ') || 'nothing found');
+  if (failed.length) out.partial = `not found: ${failed.join('; ')}`;
+  return out;
+}
+
+const READERS = { scdnr: readScdnr, page: readSccSite, facebook: readFacebook, youtube: readYoutube, ahq: readAhq };
 
 /** Every listed source for one water, each one's failure said rather than swallowed. */
 export async function gatherGuideReports(slug, env, dateStr) {
@@ -419,13 +577,17 @@ export async function gatherGuideReports(slug, env, dateStr) {
   const settled = await Promise.allSettled(sources.map((s) => {
     const fn = READERS[s.kind];
     return s.kind === 'facebook' ? fn(s, env, `${month} ${y}`, prev)
-      : s.kind === 'youtube' ? fn(s, env, month) : fn(s, env);
+      : s.kind === 'youtube' ? fn(s, env, month)
+        : s.kind === 'ahq' ? fn(s, env, d) : fn(s, env);
   }));
   const reports = [];
   const checked = [];
   settled.forEach((r, i) => {
     const s = sources[i];
-    if (r.status === 'fulfilled') { reports.push(...r.value); checked.push({ label: s.label, url: s.url, ok: true }); }
+    if (r.status === 'fulfilled') {
+      reports.push(...r.value);
+      checked.push({ label: s.label, url: s.url, ok: true, ...(r.value.partial ? { why: r.value.partial } : {}) });
+    }
     else checked.push({ label: s.label, url: s.url, ok: false, why: String(r.reason && r.reason.message || r.reason) });
   });
   return { slug, date: d, reports, checked,
@@ -457,7 +619,8 @@ export async function handleGuideReports(request, env, url) {
   const date = url.searchParams.get('date') || dayEastern();
   // v2 since the search preview was added (2026-10-01): a day kept by v1 has no preview in it.
   // v3 the same evening: the quoted search form and the live transcript scrape. v4: "may" is a verb.
-  const key = `guide:reports:v4:${slug}:${String(date).slice(0, 7)}:${dayEastern()}`;
+  // v5: Angler's Headquarters, the plan's month in each of the last three years.
+  const key = `guide:reports:v5:${slug}:${String(date).slice(0, 7)}:${dayEastern()}`;
   if (env.KV && !fresh) {
     const hit = await env.KV.get(key, 'json');
     if (hit) return json({ ...hit, cached: true });

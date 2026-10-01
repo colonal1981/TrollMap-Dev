@@ -77,27 +77,115 @@ export function waterRangesIn(sentence) {
 const sentencesOf = (text) => String(text || '').split(/(?<=[.!?])\s+(?=["“(]?[A-Z0-9])/)
   .map((s) => s.trim()).filter(Boolean);
 
+// ── WHICH OF THE TWO SANTEE COOPER LAKES A SENTENCE IS ABOUT ──────────────────────────────────
+//
+// Ryan, 2026-10-01, on Santee Cooper Country's October "30-45 feet of water": "i bet more likely
+// that depth is discussing lake moultrie... and there is no way to distinguish that". Measured on
+// the packs: Marion has 202 acres at 35 ft or more and 2 at 45; Moultrie has 8,128 and 3,226. Then,
+// on Angler's Headquarters' October 2023 report: "the difference being that this one calls out
+// upper and lower lake". Asked whether a depth should mark lanes only when its sentence says which
+// lake, and whether place names should count: "If place names help lock down which lake why
+// wouldn't we use them?", then "go ahead".
+//
+// So on Marion and Moultrie a sentence is about a lake when it:
+//   - names it ("Marion", "Moultrie"; "Francis Marion" is the forest by Moultrie, not the lake);
+//   - says "upper lake" (Marion) or "lower lake" (Moultrie), but not "lower Lake Marion", which is
+//     Marion;
+//   - or names a place on only ONE of the two charts (`places`, read off both packs: the Hatchery,
+//     Bonneau and Pinopolis are Moultrie's, Jacks Creek, Taw Caw and Pack's Landing Marion's). It
+//     counts only as the chart writes it, capitalised, and a one-word name ("Cross") only where it
+//     is not the sentence's first word, because the packs' labels include ordinary words.
+// The lake carries to the rest of its paragraph, and a heading's to its section. A sentence that
+// names both lakes says neither. One that names none, in a paragraph that named none, is about
+// neither lake, and its depth goes to the plan as text and on no lane.
+export const SANTEE_LAKES = ['lake_marion', 'lake_moultrie'];
+const [MARION, MOULTRIE] = SANTEE_LAKES;
+const UPPER_LOWER = /\b(upper|lower)\s+lakes?\b(?!\s+(?:Marion|Moultrie)\b)/gi;
+const escRe = (x) => String(x).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+function placeNamed(s, name) {
+  const m = new RegExp(`(^|[^A-Za-z'])${escRe(name)}(?![A-Za-z])`).exec(s);
+  if (!m) return false;
+  if (/\s/.test(name.trim())) return true;
+  return /[A-Za-z]/.test(s.slice(0, m.index + m[1].length));   // a one-word name, not the first word
+}
+
+/** The Santee Cooper lakes a sentence speaks of, as a Set of slugs. */
+export function santeeLakesIn(sentence, places = null) {
+  const t = String(sentence || '');
+  const found = new Set();
+  if (/(?<!Francis\s)\bMarion\b/.test(t)) found.add(MARION);
+  if (/\bMoultrie\b/.test(t)) found.add(MOULTRIE);
+  for (const m of t.matchAll(UPPER_LOWER)) found.add(m[1].toLowerCase() === 'upper' ? MARION : MOULTRIE);
+  for (const slug of SANTEE_LAKES) {
+    for (const name of (places && places[slug]) || []) {
+      if (placeNamed(t, name)) { found.add(slug); break; }
+    }
+  }
+  return found;
+}
+
+const PLACE_KINDS = new Set(['place_name', 'recreation', 'boat_ramp', 'store']);
+
+/**
+ * The names a pack puts on its own water: its named places, landings and creek mouths. A label with
+ * a digit, a quote, a comma or a slash in it is a buoy, a depth or a road number, not a place.
+ */
+export function placeNamesIn({ pois, waterFeatures, launches } = {}) {
+  const names = new Set();
+  const add = (n) => {
+    const t = String(n || '').trim();
+    if (/[A-Za-z]{3}/.test(t) && !/[\d",/]/.test(t)) names.add(t);
+  };
+  for (const f of (pois && pois.features) || []) {
+    const p = f.properties || {};
+    if (PLACE_KINDS.has(p.poi_type)) add(p.name);
+  }
+  for (const f of (waterFeatures && waterFeatures.features) || []) add((f.properties || {}).name);
+  for (const l of (launches && launches.landings) || []) add(l.name);
+  return names;
+}
+
+/** For each of the two lakes, the names its chart has and the other's does not. */
+export function namesOnlyOn(marionNames, moultrieNames) {
+  const a = [...(marionNames || [])].filter((n) => !moultrieNames.has(n));
+  const b = [...(moultrieNames || [])].filter((n) => !marionNames.has(n));
+  return Object.fromEntries([[MARION, a.sort()], [MOULTRIE, b.sort()]]);
+}
+
 /**
  * The water a report puts `species` over: [{ ft: [lo, hi|null], quote }].
+ *
+ * With `lake` ({ slug, places }) on Marion or Moultrie, only a sentence about THAT lake counts, and
+ * each row says which lake and how that was known (`lake`, `lakeFrom`) -- see santeeLakesIn().
  */
-export function reportWaterFor(text, species) {
+export function reportWaterFor(text, species, lake = null) {
   const target = speciesRe(species);
+  const sys = lake && SANTEE_LAKES.includes(lake.slug) ? lake : null;
+  const one = (set) => (set.size === 1 ? [...set][0] : null);
   const out = [];
   let heading = null;                 // null: no heading yet; [] : a heading that names no fish
+  let headingLake = null;
   let prevNamed = false;
   for (const raw of String(text || '').split('\n')) {
     let line = raw.trim();
     if (!line) continue;
     if (isHeading(line)) {
       heading = target.test(line) ? ['target'] : ANY_FISH.test(line) ? ['other'] : [];
+      headingLake = sys ? one(santeeLakesIn(line, sys.places)) : null;
       prevNamed = false;
       continue;
     }
+    let paraLake = headingLake;
+    let paraFrom = headingLake ? 'its heading' : null;
     // SCDNR writes each fish as a paragraph that opens with its name: "Striped bass: Captain ...".
+    // And each part of a lake the same way: "Upper Lake Marion: At the top of the upper lake, ...".
     const label = line.match(/^([A-Z][A-Za-z &/'-]{2,40}):\s+(.+)$/);
     let local = heading;
     if (label && label[1].split(/\s+/).length <= 4) {
       local = target.test(label[1]) ? ['target'] : ANY_FISH.test(label[1]) ? ['other'] : [];
+      const labelLake = sys ? one(santeeLakesIn(label[1], sys.places)) : null;
+      if (labelLake) { paraLake = labelLake; paraFrom = 'its paragraph'; }
       line = label[2];
       prevNamed = false;
     }
@@ -106,8 +194,19 @@ export function reportWaterFor(text, species) {
       const about = names || (local && local[0] === 'target')
         || (local === null && prevNamed);
       prevNamed = names;
+      // The lake is followed whether or not this sentence is about the fish, so a paragraph that
+      // opens "In the upper lake ..." carries Marion to the sentence with the depth in it.
+      let lakeOf = null;
+      let lakeFrom = null;
+      if (sys) {
+        const own = santeeLakesIn(s, sys.places);
+        if (own.size === 1) { lakeOf = one(own); lakeFrom = 'the sentence'; paraLake = lakeOf; paraFrom = 'its paragraph'; }
+        else if (!own.size && paraLake) { lakeOf = paraLake; lakeFrom = paraFrom; }
+      }
       if (!about) continue;
-      for (const ft of waterRangesIn(s)) out.push({ ft, quote: s.length > 300 ? `${s.slice(0, 297)}...` : s });
+      if (sys && lakeOf !== sys.slug) continue;
+      const quote = s.length > 300 ? `${s.slice(0, 297)}...` : s;
+      for (const ft of waterRangesIn(s)) out.push(sys ? { ft, quote, lake: lakeOf, lakeFrom } : { ft, quote });
     }
   }
   return out;
@@ -167,18 +266,19 @@ export function supersede(reports) {
 /**
  * The water this month's reports put the plan's species over, one row per range per report.
  */
-export function reportWaterForPlan(reports, species, planDate) {
+export function reportWaterForPlan(reports, species, planDate, lake = null) {
   const out = [];
   for (const r of reports || []) {
     if (r.supersededBy || r.outdatedBy || !isCurrentReport(r, planDate)) continue;
     for (const sp of [].concat(species || [])) {
       const seen = new Set();
-      for (const w of reportWaterFor(r.text, sp)) {
+      for (const w of reportWaterFor(r.text, sp, lake)) {
         const k = `${w.ft[0]}-${w.ft[1]}`;
         if (seen.has(k)) continue;
         seen.add(k);
         out.push({ species: sp, ft: w.ft, quote: w.quote, label: r.label, url: r.url || null,
-                   published: r.published || null, monthNamed: r.monthNamed || null });
+                   published: r.published || null, monthNamed: r.monthNamed || null,
+                   ...(w.lake ? { lake: w.lake, lakeFrom: w.lakeFrom } : {}) });
       }
     }
   }
