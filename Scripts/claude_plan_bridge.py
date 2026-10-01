@@ -39,6 +39,7 @@ import argparse
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import tempfile
@@ -216,9 +217,23 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
+class OneBridge(ThreadingHTTPServer):
+    """ONE BRIDGE PER PORT. Measured 2026-10-01: two were running, one started 11:48 and one 3:21,
+    both LISTENING on 127.0.0.1:8791 (netstat). http.server sets SO_REUSEADDR, and on Windows that
+    lets a second process bind a port already in use, after which either one may answer and each
+    keeps its own one-at-a-time lock. So the port is bound exclusively, and a second double-click
+    says a bridge is already running instead of quietly becoming a second one."""
+    allow_reuse_address = False
+
+    def server_bind(self):
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):                  # Windows
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
 def serve(port=PORT, model=DEFAULT_MODEL, effort=None):
     Handler.model, Handler.effort = model, effort
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    httpd = OneBridge(("127.0.0.1", port), Handler)
     return httpd
 
 
@@ -231,7 +246,12 @@ def main(argv=None):
     if not claude_exe():
         print("claude CLI not found -- set TROLLMAP_CLAUDE_EXE, or install Claude Code.")
         return 1
-    httpd = serve(a.port, a.model, a.effort)
+    try:
+        httpd = serve(a.port, a.model, a.effort)
+    except OSError:
+        print(f"A plan bridge is already running on http://127.0.0.1:{a.port}. Use that window; this "
+              "one can be closed.", flush=True)
+        return 1
     print(f"TrollMap plan bridge on http://127.0.0.1:{a.port} -- {a.model}"
           f"{' / effort ' + a.effort if a.effort else ''}. Leave this window open; Ctrl+C stops it.",
           flush=True)

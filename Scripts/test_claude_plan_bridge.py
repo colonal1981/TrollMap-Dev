@@ -157,6 +157,11 @@ class Server(unittest.TestCase):
         st, _, _ = self.req("POST", "/ask", None, {"system": "s", "user": ""})
         self.assertEqual(st, 400)
 
+    def test_a_second_bridge_on_the_same_port_is_refused(self):
+        # 2026-10-01: two bridges were LISTENING on 8791 at once. The second must fail to bind.
+        with self.assertRaises(OSError):
+            B.serve(self.port, "sonnet")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

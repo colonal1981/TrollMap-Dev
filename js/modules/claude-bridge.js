@@ -77,7 +77,14 @@ export function claudeFirstAsker(fallback, o = {}) {
           if (data && data.usageLimit) why = `Claude's usage limit is reached (${data.error})`;
         }
       } catch (e) {
-        why = `the bridge stopped answering: ${e.message}`;
+        // THE HEALTH CHECK ANSWERED AND THIS DID NOT. On 2026-10-01 Chrome said why in the console
+        // and the plan did not: "Permission was denied for this request to access the `loopback`
+        // address space" -- the site's local network permission, refused on the POST after the GET
+        // had gone through. A fetch says only "Failed to fetch", so the likely cause is named here
+        // beside the bridge closing, which is the other way to get the same TypeError.
+        why = `the bridge stopped answering: ${e.message}. If Chrome's console says "Permission was `
+          + 'denied ... loopback", allow this site\'s local network access (the icon left of the '
+          + 'address bar, Site settings); otherwise the bridge window closed';
       }
     }
     say(`${why} — asking Gemini.`);
