@@ -8,7 +8,7 @@
 // and his own 1 ft as the point a leg is worth saying.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { shoreRays, waveHeightFt, exposure, wavesByHour, roughLegs, TOO_ROUGH_FT }
+import { shoreRays, waveHeightFt, exposure, wavesByHour, roughLegs, shelter, TOO_ROUGH_FT }
   from '../js/utils/wind-waves.js';
 import { airAndFrontBlock } from '../js/modules/plan-prompt.js';
 
@@ -85,6 +85,43 @@ test('roughLegs stamps every leg and says only the ones at his 1 ft', () => {
   assert.ok(plan.legs[2].exposure.waveFt >= TOO_ROUGH_FT, `L2 ${plan.legs[2].exposure.waveFt}`);
   assert.equal(said.length, 1);
   assert.match(said[0], /^L2 \(10:40\) is exposed: at 11:00, 2\.\d mi of open water to the N; 22 mph from there makes waves about \d\.\d ft — you found 1-2 ft too much on Wateree/);
+  // and how far to water under his 1 ft, in place of "keep a cove close" (item 22, 2026-10-01)
+  assert.ok(plan.legs[2].exposure.shelter && plan.legs[2].exposure.shelter.m > 0);
+  assert.equal(plan.legs[0].exposure.shelter, undefined, 'a leg under the limit is not asked');
+  assert.match(said[0], /the nearest water under 1 ft at that wind is about \d\.\d mi to the N of its most open point, straight into the wind\.$/);
+});
+
+// ── HOW FAR TO GET OUT OF IT ─────────────────────────────────────────────────────────────────
+// Item 22's third measurement, 2026-10-01. Ryan, 2026-09-26: "i kept in closer to the coves so i
+// had somewhere to get out of the wind if it got too bad". Sheltered is his 1 ft, at the same wind.
+test('shelter: straight into the wind, where the fetch left makes under his 1 ft', () => {
+  const rays = shoreRays(LAKE);
+  // Open water 3.5 km south of the north shore, a 22 mph northerly. No shore on any bearing is
+  // sheltered nearer than that, so the answer is upwind, and exactly where the waves fall to 1 ft.
+  const sh = shelter([P(-1000, -1500)], rays, { mph: 22, deg: 0 }, 30);
+  assert.equal(sh.upwind, true);
+  assert.equal(sh.toward, 'N');
+  const left = 3500 - sh.m;
+  assert.ok(Math.abs(waveHeightFt(22, left, 30) - TOO_ROUGH_FT) < 0.01,
+    `the fetch left at ${sh.m} m makes ${waveHeightFt(22, left, 30)} ft`);
+});
+
+test('shelter: under a shore off to the side when that is nearer -- here the lee of the island', () => {
+  const rays = shoreRays(LAKE);
+  // South-west of the island, with 2.6 km of open water to the north and a 30 mph northerly: about
+  // 1.5 ft, and straight upwind the waves only fall under 1 ft some 1.4 km on. The island's south
+  // shore is 566 m away to the north-east, and the water against it has a metre of fetch.
+  const sh = shelter([P(600, -600)], rays, { mph: 30, deg: 0 }, 30);
+  assert.equal(sh.upwind, false);
+  assert.equal(sh.toward, 'NE');
+  assert.ok(Math.abs(sh.m - 566) < 3, `${sh.m} m`);
+});
+
+test('shelter: nothing to go looking for when the leg is already under the limit', () => {
+  const rays = shoreRays(LAKE);
+  assert.deepEqual(shelter([P(-1900, 1900)], rays, { mph: 6, deg: 0 }, 30),
+    { m: 0, toward: 'N', upwind: true });
+  assert.equal(shelter([P(0, 0)], null, { mph: 6, deg: 0 }, 30), null);
 });
 
 test('the prompt explains wavesFtByHour only when a leg carries it', () => {

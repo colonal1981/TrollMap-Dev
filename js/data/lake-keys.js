@@ -45,7 +45,16 @@ export const LAKE_NAME_TO_R2_KEY = {
   'Lake Secession, SC':                 'secession_lake',
   'Secession Lake, SC':                 'secession_lake',
   'Lake Russell, SC/GA':                'richard_b_russell_lake',
-  'Lake Russell, GA':                   'richard_b_russell_lake',
+  // "LAKE RUSSELL, GA" IS THE 88-ACRE HABERSHAM CO LAKE, NOT RICHARD B RUSSELL. It was mapped to
+  // the big lake's pack. The registry row `lake_russell` carries "Lake Russell, GA" as its own
+  // legacy name, and Georgia's feed calls the reservoir "Lake Richard Russell". In the browser the
+  // registry slug wins (Pass 0) and the picker entry opened the right chart -- run 2026-10-01 with
+  // the saved feeds: "Lake Russell, GA" -> lake_russell. The Worker has no Pass 0, so there it
+  // read the reservoir's pack: the same clash PR #72 removed from the research ids (item 6).
+  'Lake Russell, GA':                   'lake_russell',
+  // AND "LAKE RUSSELL, SC" IS THE RESERVOIR: SCDNR's name for it. Its 14 ramps, measured the same
+  // day, are every one already on the big lake's picker row within 21 m, so the SC name being
+  // hidden from both pickers loses nothing.
   'Lake Russell, SC':                   'richard_b_russell_lake',
   'Richard B. Russell Lake, GA':        'richard_b_russell_lake',
   'Clarks Hill / Thurmond, SC/GA':      'j_strom_thurmond_reservoir',

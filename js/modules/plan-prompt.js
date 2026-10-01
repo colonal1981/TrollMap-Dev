@@ -2820,6 +2820,60 @@ function zeroBeforeLeadingPoint(src) {
   return { text: out, fixes };
 }
 
+/**
+ * Put the quotes round a key the model wrote bare, and count them.
+ *
+ * 2026-09-25, the second Wateree failure that evening: *"the model's answer could not be read"* on
+ * `}, name: "wateree_lake#438", "why": ...` -- a stray `name:` inside a leg, after `ifNotProducing`.
+ * JSON requires a key to be a string; `name:` where a key starts has exactly one reading,
+ * `"name":`. Same standing as the trailing comma and the leading point: a typo in the notation,
+ * not a wrong answer. The retry worked, and a retry is a whole second call for one missing pair
+ * of quotes.
+ *
+ * STRING-AWARE for the same reason as the other two, and narrower still: an identifier is quoted
+ * only outside a string literal, only where a KEY starts (the last thing written was `{` or `,`),
+ * and only when a `:` follows it. `true`, `false` and `null` as values come after `:` or `[`, or
+ * after a `,` with no `:` behind them, so none of them is ever touched; and "name: Ryan" inside a
+ * `why` is inside a string.
+ *
+ * Item 14 also holds a hypothesis -- that both bad answers came while a research batch had the
+ * free Gemini keys and the chain fell through to a weaker JSON mode. That is a question about why,
+ * and the plan's `exchange` now records the model to answer it. Neither answer changes this one:
+ * the bare key has one reading whoever wrote it.
+ */
+function quoteBareKeys(src) {
+  let out = '', inStr = false, esc = false, fixes = 0;
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (inStr) {
+      out += ch;
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') { inStr = true; out += ch; continue; }
+    if (/[A-Za-z_$]/.test(ch)) {
+      let k = out.length - 1;
+      while (k >= 0 && /\s/.test(out[k])) k--;
+      if (out[k] === '{' || out[k] === ',') {
+        let j = i;
+        while (j < src.length && /[A-Za-z0-9_$]/.test(src[j])) j++;
+        let c = j;
+        while (c < src.length && /\s/.test(src[c])) c++;
+        if (src[c] === ':') {
+          out += `"${src.slice(i, j)}"`;
+          fixes++;
+          i = j - 1;
+          continue;
+        }
+      }
+    }
+    out += ch;
+  }
+  return { text: out, fixes };
+}
+
 /** The 120 characters either side of where JSON.parse gave up, when it says where. */
 function around(src, err) {
   const at = /at position (\d+)/.exec(String(err && err.message) || '');
@@ -2867,8 +2921,9 @@ export function parsePlanResponse(text) {
     // reaches `problems` through planArgsFrom() and lands in the saved plan's `model.response`,
     // so an answer that keeps arriving malformed is visible rather than absorbed.
     const { text: noCommas, fixes } = stripTrailingCommas(body);
-    const { text: fixed, fixes: zeros } = zeroBeforeLeadingPoint(noCommas);
-    if (fixes || zeros) {
+    const { text: zeroed, fixes: zeros } = zeroBeforeLeadingPoint(noCommas);
+    const { text: fixed, fixes: keys } = quoteBareKeys(zeroed);
+    if (fixes || zeros || keys) {
       try {
         const out = JSON.parse(fixed);
         if (out && typeof out === 'object') {
@@ -2877,6 +2932,8 @@ export function parsePlanResponse(text) {
               + `comma${fixes === 1 ? '' : 's'} before a ] or }, removed by the app`] : []),
             ...(zeros ? [`the model's answer was not valid JSON — ${zeros} number`
               + `${zeros === 1 ? '' : 's'} written from the decimal point (.15), given the 0 by the app`] : []),
+            ...(keys ? [`the model's answer was not valid JSON — ${keys} key`
+              + `${keys === 1 ? '' : 's'} written without quotes (name:), quoted by the app`] : []),
           ];
         }
         return out;

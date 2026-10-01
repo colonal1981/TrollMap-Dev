@@ -895,9 +895,14 @@ export function formatClock(mins) {
 
 const round2 = (v) => Number(Number(v).toFixed(2));
 
-// How far from the ramp the last leg may finish before the plan admits the trip home is not in
-// the budget. 500 m is a few minutes of pedalling; anything past that is a real cost being hidden.
-const HOME_TOLERANCE_M = 500;
+// THE RUN HOME IS DRAWN BY THE SAME RULE AS EVERY OTHER TRANSIT: whenever the joined path is longer
+// than a metre, which is the test `p.distanceM > 1` the move to each leg already uses.
+//
+// It used to be HOME_TOLERANCE_M, 500 m, "a few minutes of pedalling", and nothing measured it. A day
+// that ended 450 m out had no track home on the unit and no minutes or amp-hours for it, and since
+// 2026-09-29 the app ends the day on a lane near the ramp on purpose, so that is now the common case.
+// Ryan's rule: "Arbitrary numbers are an AI problem."
+const homeOwed = (m) => Number.isFinite(m) && m > 1;
 
 // The share of the day's distance that may be deadhead before the plan says so out loud.
 //
@@ -1062,7 +1067,7 @@ function fitRiverDay(cands, launch, o, rods, windowMin, transitMph) {
   // number next to it is the tell.
   //
   // Charged BOTH WAYS: every arm of a river day starts and ends at the launch, so the same hop is
-  // also the run home unless it is inside HOME_TOLERANCE_M, and reserving it when it turns out free is
+  // also the run home unless the arm ends on the launch, and reserving it when it turns out free is
   // the safe direction to be wrong in.
   const nearM = [cands[0].fromRampM, cands[0].transitInM, cands[0].transitOutM]
     .map(Number).filter((x) => Number.isFinite(x) && x >= 0);
@@ -1469,7 +1474,7 @@ export function assemblePlan(o) {
       if (Array.isArray(end)) at = end;
     }
     // THE SAME RULE THE ROUTE HOME BELOW USES, so this and the plan's own clock agree.
-    if (Array.isArray(at) && Array.isArray(o.launch) && metresBetween(at, o.launch) > HOME_TOLERANCE_M) {
+    if (Array.isArray(at) && Array.isArray(o.launch) && homeOwed(metresBetween(at, o.launch))) {
       min += minutesFor(hopM(at, o.launch), transitMph);
     }
     return min;
@@ -1517,9 +1522,15 @@ export function assemblePlan(o) {
       // It is a retie of the identical lure: a job on the water that buys nothing at all, which is
       // the same test the "never fishes again" branch above applies for the same reason. Dropped
       // rather than warned, because there is nothing here for him to weigh -- keeping it cannot help.
+      //
+      // AND SAID WITH THE OTHER THINGS THE APP SETTLED, which is where the "never fishes again" drop
+      // above already goes. This one was left in `warnings`, the list that is meant to need him, so
+      // it took a slot there for a decision that was already made -- the 9/21 sort names "dropped a
+      // lure change ... buys nothing" as exactly that kind of line. Found checking the 9/25 Wateree
+      // plans (item 18).
       const tiedOn = rodTiedOn.has(ch.rodId) ? rodTiedOn.get(ch.rodId) : rod.lure;
       if (sameLure(tiedOn, ch.to)) {
-        warnings.push(`dropped a lure change on ${ch.rodId} before ${c.runId} -- it ties on the `
+        decisions.push(`dropped a lure change on ${ch.rodId} before ${c.runId} -- it ties on the `
                     + `${ch.to} that is already on that rod, so it is a retie of the same bait and `
                     + 'buys nothing');
         continue;
@@ -2113,9 +2124,13 @@ export function assemblePlan(o) {
   //
   // The over-battery and past-return-time checks below run on the budget AFTER this leg is in
   // it, which is the point: the trip home is now something the day can fail to afford.
+  //
+  // AND IT IS DRAWN HOWEVER SHORT IT IS. See homeOwed(): a 300 m run home is six minutes he spends
+  // and a track his unit should carry, and leaving it off because it was short was a hand-picked
+  // number deciding what he gets told.
   if (candidates.length && Array.isArray(o.launch)) {
     const gap = metresBetween(cursor, o.launch);
-    if (gap > HOME_TOLERANCE_M) {
+    if (homeOwed(gap)) {
       const p = joinEnds(transit(cursor, o.launch) || straight(cursor, o.launch),
                          cursor, o.launch);
       const len = Math.round(p.distanceM);
@@ -2257,7 +2272,7 @@ export function assemblePlan(o) {
   }
   // The old warning that lived here -- "last leg ends 2.8 km from the ramp ... not in the plan"
   // -- is gone because the thing it warned about is now in the plan. `cursor` is the ramp by
-  // the time it gets here, unless the last leg finished inside HOME_TOLERANCE_M of it.
+  // the time it gets here.
   // HOW MUCH OF THE DAY IS SPENT GETTING THERE. The budget has separated fishingM from transitM
   // since the schema was written and nothing ever read the split back. The ordering is the
   // model's (PLAN_SCHEMA_V2, "MODEL DECIDES: which runId, in which order") and it is now shown

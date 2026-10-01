@@ -227,3 +227,15 @@ describe('Cheoah is a real reservoir upstream of Calderwood and the app does not
     expect(resolveR2Key('Calderwood Lake, TN/NC')).toBe('calderwood_lake');
   });
 });
+
+// Item 6, 2026-10-01. Two lakes answer to "Lake Russell": the 88-acre Habersham Co lake, whose
+// registry row carries "Lake Russell, GA" as its own legacy name, and Richard B Russell, which
+// SCDNR calls "Lake Russell" and Georgia calls "Lake Richard Russell". The map sent the GA name to
+// the reservoir's pack. The browser's registry pass hid that; the Worker has no registry pass.
+describe('the two Lake Russells open their own charts without the registry', () => {
+  it('the GA name is the Habersham lake, and the SC name and the GA feed\'s spelling are the reservoir', () => {
+    expect(resolveR2Key('Lake Russell, GA')).toBe('lake_russell');
+    expect(resolveR2Key('Lake Russell, SC')).toBe('richard_b_russell_lake');
+    expect(resolveR2Key('Lake Richard Russell, GA')).toBe('richard_b_russell_lake');
+  });
+});

@@ -151,9 +151,80 @@ export function wavesByHour(coords, rays, windByHour, depthFt) {
 export const TOO_ROUGH_FT = 1;
 
 /**
+ * HOW FAR TO WATER UNDER HIS 1 FT, from the most open point on a leg, at one wind.
+ *
+ * Item 22's third measurement. Ryan, Wateree 2026-09-26: *"i kept in closer to the coves so i had
+ * somewhere to get out of the wind if it got too bad"*. A leg's exposure says how rough it gets;
+ * this says how far the boat is from somewhere it is not, which is what he was steering by.
+ *
+ * "SHELTERED" IS HIS NUMBER, NOT A NEW ONE: water where the same formula, at the same wind, makes
+ * waves under TOO_ROUGH_FT. Nothing else is decided here.
+ *
+ * TWO PLACES SHELTER CAN BE, AND BOTH ARE MEASURED RATHER THAN SEARCHED FOR.
+ *
+ * Straight into the wind. A point d metres upwind sits on the same ray to the same shore, so its
+ * fetch is exactly F - d, and the waves fall under the limit at d = F - F_ok, where F_ok is the
+ * longest fetch that keeps them under it. Exact, and no extra ray: the waves grow with fetch, so
+ * F_ok is found by halving.
+ *
+ * Under a shore in any other direction -- a cove off to the side, the lee of an island. On each of
+ * the sixteen compass bearings this file already names directions by, the shore that bearing meets
+ * is one ray away, and whether the water at that shore is sheltered is one ray more: its own fetch
+ * toward the wind. Thirty-two rays, so about 16 ms on Murray's 50,000 edges.
+ *
+ * WHAT IT DOES NOT DO is walk a grid, so open water in the lee of something the bearings miss is
+ * not found, and the answer can only be too far, never too near. The depth used is the leg's, and
+ * the water is shallower toward any shore, which holds waves down -- also the safe direction.
+ *
+ * @returns {?{m:number, toward:string, upwind:boolean}} metres and compass direction, `m: 0` when
+ *          the most open point is already under the limit, null with nothing to measure
+ */
+export function shelter(coords, rays, wind, depthFt, limitFt = TOO_ROUGH_FT) {
+  if (!Array.isArray(coords) || !coords.length || typeof rays !== 'function' || !wind) return null;
+  const mph = Number(wind.mph), deg = Number(wind.deg);
+  if (!Number.isFinite(mph) || !Number.isFinite(deg)) return null;
+  const pts = [coords[0], coords[Math.floor(coords.length / 2)], coords[coords.length - 1]];
+  let P = null, F = null;
+  for (const p of pts) {
+    const f = rays(p[0], p[1], deg);
+    if (f != null && (F == null || f > F)) { F = f; P = p; }
+  }
+  if (F == null) return null;
+  const rough = (fetchM) => waveHeightFt(mph, fetchM, depthFt) >= limitFt;
+  if (!rough(F)) return { m: 0, toward: compass(deg), upwind: true };
+
+  // Straight upwind: the longest fetch that stays under the limit, by halving.
+  let lo = 0, hi = F;
+  for (let i = 0; i < 40 && hi - lo > 1; i++) {
+    const mid = (lo + hi) / 2;
+    if (rough(mid)) hi = mid; else lo = mid;
+  }
+  let best = { m: F - lo, toward: compass(deg), upwind: true };
+
+  // Under a shore on each compass bearing.
+  const kx = M_PER_DEG * Math.cos(P[1] * Math.PI / 180), ky = M_PER_DEG;
+  for (let i = 0; i < 16; i++) {
+    const b = i * 22.5;
+    const S = rays(P[0], P[1], b);
+    if (S == null || S >= best.m) continue;
+    // AT the shore: a metre short of the edge the ray met, so the point is on this water.
+    const r = Math.max(0, S - 1), th = b * Math.PI / 180;
+    const q = [P[0] + (r * Math.sin(th)) / kx, P[1] + (r * Math.cos(th)) / ky];
+    const fq = rays(q[0], q[1], deg);
+    if (fq == null || rough(fq)) continue;
+    best = { m: S, toward: compass(b), upwind: false };
+  }
+  return { m: Math.round(best.m), toward: best.toward, upwind: best.upwind };
+}
+
+/**
  * Stamps each troll leg with its roughest exposure over the hours it is fished, and returns a
  * sentence for every leg whose waves reach TOO_ROUGH_FT. The plan legs carry `estStartTime`,
  * `estDurationMin` and `depthFt`.
+ *
+ * A leg at the limit also carries `exposure.shelter`, the distance from its most open point to
+ * water under the limit at that hour's wind (see shelter()), and the sentence gives it in place of
+ * "keep a cove close".
  */
 export function roughLegs(plan, rays, windByHour) {
   const out = [];
@@ -174,13 +245,25 @@ export function roughLegs(plan, rays, windByHour) {
     if (!worst) continue;
     leg.exposure = { ...worst, at: worstAt };
     if (worst.waveFt >= TOO_ROUGH_FT) {
+      const sh = shelter(leg.coordinates, rays, { mph: worst.mph, deg: worst.fromDeg },
+                         Number(leg.depthFt));
+      if (sh) leg.exposure.shelter = sh;
       out.push(`${leg.id} (${leg.estStartTime}) is exposed: at ${worstAt}, ${exposureSentence(worst)}`
-             + ' — you found 1-2 ft too much on Wateree. Fish it in a calmer hour, or keep a cove '
-             + 'close.');
+             + ' — you found 1-2 ft too much on Wateree. Fish it in a calmer hour'
+             + (sh && sh.m > 0
+               ? `; the nearest water under ${TOO_ROUGH_FT} ft at that wind is about `
+                 + `${fmtDist(sh.m)} to the ${sh.toward} of its most open point`
+                 + (sh.upwind ? ', straight into the wind' : ', under the shore there')
+               : ', or keep a cove close')
+             + '.');
     }
   }
   return out;
 }
+
+/** Metres as he reads them: feet under a tenth of a mile, then miles. */
+const fmtDist = (m) => (m < 161 ? `${Math.round(m * 3.28084 / 10) * 10} ft`
+                                : `${(m / 1609.34).toFixed(1)} mi`);
 
 /** The forecast hour a clock time falls in, from hourlyWind() rows. */
 export function windAt(windByHour, hhmm) {

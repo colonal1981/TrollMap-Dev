@@ -301,6 +301,32 @@ describe('plan-prompt — reading the answer', () => {
     expect(out._appRepairs).toBe(undefined);
   });
 
+  // -------------------------------------------------------------------------------------------
+  // AND SO IS A KEY WRITTEN WITHOUT ITS QUOTES
+  //
+  // The same Wateree evening, the second failure: `}, name: "wateree_lake#438", "why": ...` -- a
+  // stray `name:` inside a leg, after `ifNotProducing`. A bare key has one reading (item 14).
+  // -------------------------------------------------------------------------------------------
+  it('quotes a key the model wrote bare, and says so', () => {
+    const out = parsePlanResponse('{ "legs": [ { "runId": "w#1", "ifNotProducing": { "move": 1 },'
+      + ' name: "wateree_lake#438", "why": "slow roll" } ], changes: [] }');
+    expect(out.legs[0].name).toBe('wateree_lake#438');
+    expect(out.legs[0].why).toBe('slow roll');
+    expect(out.changes).toEqual([]);
+    expect(out._appRepairs.length).toBe(1);
+    expect(out._appRepairs[0]).toMatch(/2 keys written without quotes/);
+  });
+
+  it('never quotes a value, or a word inside the model\'s own prose', () => {
+    const out = parsePlanResponse('{ "a": [true, false, null], "b": true, "why": "{ name: Ryan, x: 1 }", '
+      + 'c: 1 }');
+    expect(out.a).toEqual([true, false, null]);
+    expect(out.b).toBe(true);
+    expect(out.why).toBe('{ name: Ryan, x: 1 }');
+    expect(out.c).toBe(1);
+    expect(out._appRepairs[0]).toMatch(/1 key written without quotes/);
+  });
+
   it('still fails loudly on an answer that is broken some other way', () => {
     let msg = '';
     try { parsePlanResponse('{ "legs": [ {"a": } ] }'); } catch (e) { msg = e.message; }

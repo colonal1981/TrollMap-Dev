@@ -327,8 +327,8 @@ describe('plan-assemble — saying when it does not fit', () => {
   });
 
   it('adds nothing when the last leg already finishes at the ramp', () => {
-    // HOME_TOLERANCE_M is 500 m. A leg that ends on the ramp needs no leg home, and inventing a
-    // zero-length one would put an empty track on the unit.
+    // A leg that ends on the ramp needs no leg home, and inventing a zero-length one would put an
+    // empty track on the unit. "On the ramp" is the transit rule, a metre -- not a tolerance.
     const backHome = leg('w#9', -80.7200, -80.7300, 34.3800);
     const plan = assemblePlan({
       transit: routed, candidates: [backHome], launch: LAUNCH, loadout: LOADOUT,
@@ -336,6 +336,25 @@ describe('plan-assemble — saying when it does not fit', () => {
     });
     expect(plan.legs.filter((l) => l.role === 'return').length).toBe(0);
     expect(plan.legs[plan.legs.length - 1].type).toBe('troll');
+  });
+
+  it('draws the run home however short it is, because 500 m was a number nobody measured', () => {
+    // Item 18, found on the 9/25 Wateree plans: a day ending inside HOME_TOLERANCE_M (500 m) of the
+    // ramp had no track home, no minutes and no amp-hours for it. Since 9/29 the app ends the day on
+    // a lane near the ramp on purpose, so that became the usual day. This one ends about 300 m out.
+    const near = leg('w#9', -80.7200, -80.7267, 34.3800);
+    const plan = assemblePlan({
+      transit: routed, candidates: [near], launch: LAUNCH, loadout: LOADOUT,
+      launchTime: '06:00', returnTime: '15:00', usableAh: 80,
+    });
+    const home = plan.legs.filter((l) => l.role === 'return');
+    expect(home.length).toBe(1);
+    expect(home[0].lengthM).toBeGreaterThan(250);
+    expect(home[0].lengthM).toBeLessThan(350);
+    expect(home[0].estDurationMin).toBeGreaterThan(0);
+    const end = home[0].coordinates[home[0].coordinates.length - 1];
+    expect(metresBetween(end, LAUNCH) < 1).toBe(true);
+    expect(validatePlan(plan).length).toBe(0);
   });
 
   it('never draws the way home as a straight line without saying so', () => {
@@ -420,7 +439,10 @@ describe('plan-assemble — saying when it does not fit', () => {
       changes: [{ beforeRunId: 'w#2', rodId: 'R6', to: 'Walking Bait', why: 'a darker blade' }],
     });
     expect(plan.changes.length).toBe(0);
-    expect(plan.warnings.some((w) => /already on that rod/.test(w))).toBe(true);
+    // `decisions`, beside the other dropped change: the app settled it and there is nothing for him
+    // to do, so it is not in the list that wants him (item 18, 2026-10-01).
+    expect(plan.decisions.some((w) => /already on that rod/.test(w))).toBe(true);
+    expect(plan.warnings.some((w) => /already on that rod/.test(w))).toBe(false);
   });
 
   it('and tracks what a rod is wearing, so the second change knows what it comes off', () => {

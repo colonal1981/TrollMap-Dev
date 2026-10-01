@@ -882,11 +882,14 @@ function trimDeadEnd(coords, inWater, from, to, stepM) {
  */
 function collapse(entries, swathM) {
   const cell = Math.max(30, swathM);
+  // A bucket's key as one number rather than a "gx,gy" string, which was most of the time left.
+  // Unique: a row number |gy| is a latitude in metres over a bucket of metres, far under 5e6, and
+  // gx * 1e7 stays an exact integer.
+  const cellKey = (gx, gy) => gx * 1e7 + gy;
   const grid = new Map();
-  const key = (p) => `${Math.floor(p[0] / cell)},${Math.floor(p[1] / cell)}`;
   entries.forEach((e, n) => {
     for (let i = 0; i < e.xy.length; i += 2) {
-      const k = key(e.xy[i]);
+      const k = cellKey(Math.floor(e.xy[i][0] / cell), Math.floor(e.xy[i][1] / cell));
       if (!grid.has(k)) grid.set(k, []);
       grid.get(k).push(n);
     }
@@ -894,33 +897,74 @@ function collapse(entries, swathM) {
   const parent = entries.map((_, i) => i);
   const find = (x) => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; };
   const union = (a, b) => { a = find(a); b = find(b); if (a !== b) parent[b] = a; };
-  const frac = (A, B) => {
-    let hit = 0, n = 0;
-    for (let i = 0; i < A.length; i += 2) {
-      n++;
-      let d = Infinity;
-      for (const q of B) { const t = dist2(A[i], q); if (t < d) d = t; }
-      if (d <= swathM) hit++;
+
+  // FASTER, AND THE SAME ANSWER TO THE BIT. Item 24, 2026-10-01: on Murray's built-in 10-25 ft band
+  // this function was 7 of buildPieces()'s 8 seconds, nearly all of it measuring every sampled
+  // point of one stretch against EVERY point of the other. Three changes, none of which changes
+  // what is asked:
+  //
+  //   - each stretch's points are bucketed by `swathM`, so a point is measured only against the
+  //     points in the nine buckets round it. A point within `swathM` is never more than one bucket
+  //     away, so nothing that could pass is skipped;
+  //   - a point stops being measured the moment one point of the other stretch is within the
+  //     swath, because "the nearest is within it" and "one is within it" are the same test;
+  //   - the count stops the moment the 60% is passed, or can no longer be reached.
+  //
+  // And a pair already in one group is not measured at all: joining it again changes nothing, and
+  // which pairs are measured never decides the groups -- they are whatever is connected, listed in
+  // `entries` order. Checked on the real packs: JSON-identical pieces before and after.
+  const buckets = new Array(entries.length);
+  const bucketsOf = (m) => {
+    if (buckets[m]) return buckets[m];
+    const g = new Map();
+    for (const q of entries[m].xy) {
+      const k = cellKey(Math.floor(q[0] / swathM), Math.floor(q[1] / swathM));
+      if (!g.has(k)) g.set(k, []);
+      g.get(k).push(q);
     }
-    return n ? hit / n : 0;
+    buckets[m] = g;
+    return g;
   };
-  const seen = new Set();
+  const within = (a, g) => {
+    const gx = Math.floor(a[0] / swathM), gy = Math.floor(a[1] / swathM);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        const qs = g.get(cellKey(gx + dx, gy + dy));
+        if (!qs) continue;
+        for (const q of qs) if (dist2(a, q) <= swathM) return true;
+      }
+    }
+    return false;
+  };
+  // Is more than 60% of A's sampled stretch inside B's swath? The 60% is unchanged.
+  const mostlyInside = (A, g) => {
+    const n = Math.ceil(A.length / 2);
+    if (!n) return false;
+    let hit = 0, asked = 0;
+    for (let i = 0; i < A.length; i += 2) {
+      asked++;
+      if (within(A[i], g)) {
+        hit++;
+        if (hit / n > 0.6) return true;
+      } else if ((hit + (n - asked)) / n <= 0.6) {
+        return false;
+      }
+    }
+    return hit / n > 0.6;
+  };
   entries.forEach((e, n) => {
     const cand = new Set();
     for (let i = 0; i < e.xy.length; i += 2) {
-      const [gx, gy] = key(e.xy[i]).split(',').map(Number);
+      const gx = Math.floor(e.xy[i][0] / cell), gy = Math.floor(e.xy[i][1] / cell);
       for (let dx = -1; dx <= 1; dx++) {
         for (let dy = -1; dy <= 1; dy++) {
-          for (const m of grid.get(`${gx + dx},${gy + dy}`) || []) cand.add(m);
+          for (const m of grid.get(cellKey(gx + dx, gy + dy)) || []) if (m > n) cand.add(m);
         }
       }
     }
     for (const m of cand) {
-      if (m <= n) continue;
-      const kk = `${n}:${m}`;
-      if (seen.has(kk)) continue;
-      seen.add(kk);
-      if (frac(e.xy, entries[m].xy) > 0.6 || frac(entries[m].xy, e.xy) > 0.6) union(n, m);
+      if (find(n) === find(m)) continue;
+      if (mostlyInside(e.xy, bucketsOf(m)) || mostlyInside(entries[m].xy, bucketsOf(n))) union(n, m);
     }
   });
   const groups = new Map();

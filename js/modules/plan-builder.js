@@ -8,7 +8,8 @@
  * (the stats bar), and the lake/river dropdown population logic.
  */
 
-import { state } from "../core/state.js";
+import { state, CF_WORKER_URL } from "../core/state.js";
+import { alertsFromSaved } from "./saved-plan-alerts.js";
 import { esc } from "../utils/escape.js";
 import { planIssues, planIssuesHtml } from "./plan-issues.js";
 import { renderSmartPlanUI } from "./smart-plan-ui.js";
@@ -728,9 +729,12 @@ function loadPlanIntoForm(p){
  *   - the plan block is `plan`, and the exchange with the model is `model`.
  *
  * NOTHING IS RE-ASKED. The model is not called and the assembler does not run; this draws what was
- * saved, with the renderer that drew it the first time. What it does not do is arm the phone's
- * trip alerts: those need each leg's own geometry and stops, and the file carries the geometry as
- * tracks rather than on the legs.
+ * saved, with the renderer that drew it the first time.
+ *
+ * AND IT ARMS THE TRIP ALERTS, which until 2026-10-01 it did not (item 20). They need each leg's
+ * own geometry and stops, and the file carries those as tracks and timeline stops rather than on
+ * the legs; alertsFromSaved() reads them back. The watch is one per fishing day, so loading
+ * tomorrow's plan arms tomorrow and touches no other day. A day that has gone by is not armed.
  *
  * Returns true when the plan was redrawn. A file saved without a timeline or a plan block gets the
  * form alone, exactly as before.
@@ -805,11 +809,44 @@ function restorePlanView(p) {
     const when = p.savedAt ? new Date(p.savedAt).toLocaleString() : '';
     out.insertAdjacentHTML('afterbegin',
       `<div class="muted" style="font-size:11px;margin-bottom:8px">Loaded from a saved plan`
-      + `${when ? ` (saved ${esc(when)})` : ''}. Nothing was asked again. The phone's trip alerts `
-      + `are armed only when a plan is built.</div>` + (issues || ''));
+      + `${when ? ` (saved ${esc(when)})` : ''}. Nothing was asked again. `
+      + `<span id="savedPlanAlerts">Trip alerts: checking.</span></div>` + (issues || ''));
   }
   try { renderAll(); } catch (e) { console.warn('[plan-builder] map redraw failed:', e && e.message); }
+  armSavedPlan(p);
   return true;
+}
+
+/**
+ * THE TRIP ALERTS FOR A LOADED PLAN, armed the way the build path arms them.
+ *
+ * The same call smart-plan-v2-wiring.js makes after a build, with what the file holds: the plan
+ * with its lines and stops put back, the ramp at the plan's own first point, the trip's date and
+ * return time, and the solunar windows computed for that date and place -- arithmetic, the same
+ * solunarFor() both build paths call. The forecast is not saved, so the hour-by-hour weather cues
+ * a build carries are not here; the Worker's watch still polls the weather for the day itself.
+ *
+ * Imported when it is needed rather than at the top, because notifications.js wires itself to
+ * `window` as it loads and the tests that import this file run without one.
+ */
+function armSavedPlan(p) {
+  const say = (t) => { const el = document.getElementById('savedPlanAlerts'); if (el) el.textContent = t; };
+  const a = alertsFromSaved(p);
+  if (!a.plan) { say(`Trip alerts not armed: ${a.why}.`); return; }
+  import('./notifications.js').then((n) => {
+    const sol = solunarFor(a.date, a.launch.lat, a.launch.lon);
+    const got = n.loadSessionFromPlan(a.plan, {
+      worker: CF_WORKER_URL, launch: a.launch, date: a.date, solunar: sol,
+      returnTime: a.returnTime, water: a.water, slug: a.slug,
+    });
+    say(n.isEnabled()
+      ? `Trip alerts re-armed for ${a.date}: ${got.positionCues} on-the-water cue(s), the bite `
+        + 'windows and the return time.'
+      : 'Trip alerts are off on this device, so nothing was armed.');
+  }).catch((e) => {
+    console.warn('[plan-builder] trip alerts for the loaded plan failed:', e && e.message);
+    say('Trip alerts could not be armed for the loaded plan.');
+  });
 }
 
 export async function buildPlanPreviewHtml(p){

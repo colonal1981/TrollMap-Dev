@@ -126,13 +126,17 @@ describe('travelOrder — out through every reach, then back through every reach
 });
 
 describe('the assembler walks it, and the deadhead goes with it', () => {
-  it('four fished legs, one hop out, and nothing between them', () => {
+  it('four fished legs, one hop out, one hop home, and nothing between them', () => {
     const plan = build();
     const troll = plan.legs.filter((l) => l.type === 'troll');
     const transit = plan.legs.filter((l) => l.type === 'transit');
     expect(troll.length).toBe(4);
-    expect(transit.length).toBe(1);                    // the hop to the water and nothing else
-    expect(plan.budget.transitM < 200).toBe(true);
+    // The hop from the bank to the water and the same hop back. Until 2026-10-01 the one back was
+    // left off because it was inside HOME_TOLERANCE_M (500 m), a number nobody measured (item 18).
+    expect(transit.length).toBe(2);
+    expect(plan.legs[0].type).toBe('transit');
+    expect(plan.legs[plan.legs.length - 1].role).toBe('return');
+    expect(plan.budget.transitM < 2 * 200).toBe(true);
   });
 
   it('the boat goes out downstream and comes back up, and each leg says which', () => {
@@ -141,9 +145,15 @@ describe('the assembler walks it, and the deadhead goes with it', () => {
       .toEqual(['downstream', 'downstream', 'upstream', 'upstream']);
   });
 
-  it('the route home is the last fished pass, so no transit leg is invented', () => {
+  it('the route home is the last fished pass and then the hop it came out by', () => {
+    // The last pass finishes at the near end of the first reach, so the only thing left between it
+    // and the ramp is the same bank-to-channel hop the day started with. That hop is drawn, timed
+    // and charged, because the boat has to make it; nothing longer is invented.
     const plan = build();
-    expect(plan.legs.some((l) => l.role === 'return')).toBe(false);
+    const out = plan.legs[0];
+    const home = plan.legs.filter((l) => l.role === 'return');
+    expect(home.length).toBe(1);
+    expect(Math.abs(home[0].lengthM - out.lengthM)).toBeLessThan(5);
   });
 
   it('THE DEADHEAD WARNING IS GONE, because there is no deadhead to warn about', () => {
@@ -328,8 +338,8 @@ describe('a river day with two arms, and the ends that are not where they look',
     expect(troll.length).toBe(2);
     expect(troll.every((l) => !l.trimmedFrom)).toBe(true);
     expect(plan.warnings.some((w) => w.includes('is off the day') || w.includes('is cut to'))).toBe(false);
-    // And the hop it actually pays is the 49 m one.
-    expect(plan.budget.transitM).toBeLessThan(200);
+    // And the hop it actually pays is the near one, out and back -- not 7,978 m.
+    expect(plan.budget.transitM).toBeLessThan(2 * 200);
   });
 
   it('trimReach cuts the FAR end of an upstream reach, and keeps the end the boat comes in by', () => {

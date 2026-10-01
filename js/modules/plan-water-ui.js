@@ -53,7 +53,7 @@ import { shoreRays, roughLegs } from '../utils/wind-waves.js';
 import { inshoreSeasonFor } from '../data/inshore-season.js';
 import { seabedHabitatFor } from '../data/seabed-habitat.js';
 import { depthSampler, shorelineIndex, waterMask } from './plan-water-index.js';
-import { offerWaterAsync, dayCost, dayOrder, priceSpots, optionality, reasons, TROLL_MPH, TRANSIT_MIN_DEPTH_FT, SPOT_KINDS, todayFt } from './plan-water.js';
+import { offerWaterAsync, dayCost, dayOrder, priceSpots, waterRange, reasons, TROLL_MPH, TRANSIT_MIN_DEPTH_FT, SPOT_KINDS, todayFt } from './plan-water.js';
 import { joinedPiece } from './plan-pieces.js';
 import { planFromWater } from './plan-from-water.js';
 import { DEFAULT_STOP_MIN } from './plan-assemble.js';
@@ -344,7 +344,7 @@ function paintMap(pieces, picked, ramp) {
 // A ROW
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 /**
- * HOW DEEP THIS WATER IS -- from the corridor, not from `holdsFt`.
+ * HOW DEEP THIS WATER IS -- from the water on the line, not from `holdsFt`.
  *
  * `holdsFt` is the shallowest point the whole stretch clears, set by one shoal somewhere along it.
  * Leading a row with it announced a stretch of 17-24 ft water as "8 ft or deeper", which is true
@@ -631,18 +631,20 @@ function total() {
  * piece running 22–31 ft of water with a single 18 ft rise reads as "18 ft" and a filter asking
  * for 20 ft and deeper would throw it away. That is water he wants, hidden by its worst metre.
  *
- * `optionality()` gives the corridor: the median shallow and the median deep across the whole
- * envelope, which is the water he is actually fishing. A piece is kept when its corridor OVERLAPS
- * the asked-for band at all, not when it sits wholly inside — asking for 20–30 ft should still
- * show you a piece running 25–40, because most of a pass through it is in the band.
+ * `waterRange()` gives the water: the shallowest to the deepest on the line, the same two numbers
+ * the plan card prints for the leg. Until 2026-10-01 this was optionality()'s two medians, which
+ * stopped being a range once ledge and hump passes ran on into deeper water (a 10 -> 56 -> 14 ft
+ * leg read "18.4-28.4 ft"). Ryan, 2026-09-27: "pick water showing the shallowest to deepest is
+ * fine". A piece is kept when its water OVERLAPS the asked-for band at all, not when it sits
+ * wholly inside — asking for 20–30 ft should still show you a piece running 25–40.
  *
- * Cached on the piece: `shown()` runs on every repaint and `optionality` medians two arrays.
+ * Cached on the piece: `shown()` runs on every repaint.
  */
 function corridorOf(p) {
   if (p._corr === undefined) {
     // TODAY'S WATER, which is what he picks by -- see todayView() in plan-water.js. The slider,
     // the filter and the row headline all read this, so they agree with the reasons under them.
-    const c = optionality(p);
+    const c = waterRange(p);
     p._corr = { ...c, fromFt: tf(c.fromFt), toFt: tf(c.toFt) };
   }
   return p._corr;

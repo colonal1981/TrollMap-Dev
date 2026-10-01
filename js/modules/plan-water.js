@@ -150,6 +150,47 @@ export function optionality(piece) {
 }
 
 /**
+ * THE SHALLOWEST AND THE DEEPEST WATER ON THE LINE -- what a Pick Water row says the water IS.
+ *
+ * Ryan, 2026-09-27: "pick water showing the shallowest to deepest is fine".
+ *
+ * The row used to print optionality()'s two medians: the median of the shallow side and the
+ * median of the deep side. That was a true range only while every lane followed one contour.
+ * Since the 9/26 refit, ledge and hump passes run on into deeper water. The 9/27 leg 5 runs
+ * 10 -> 56 -> 14 ft under the line, and its row read "0.35 mi unbroken, 18.4-28.4 ft of water":
+ * neither the 10 ft that takes a bait off nor the 56 ft it crosses. His 8/30 rule is "One run only
+ * if one bait covers it", and he can only check that against the whole range.
+ *
+ * THE SAME TWO NUMBERS THE PLAN CARD PRINTS. `water.line` is waterBand() on the stations the piece
+ * was trimmed to, and plan-from-water.js hands the leg `depthMinFt` (the sustained floor) and
+ * `depthMaxFt` (the deepest station), which the card shows as "17-25 ft on the chart". A row and
+ * the leg built from it now say the same thing about the same water.
+ *
+ * THE SHALLOW END IS THE SUSTAINED FLOOR, for the reason the bait ceiling below gives: a lone
+ * sounding is not reported as the bottom anywhere, so this range, the ceiling sentence and the
+ * bait sized against it cannot disagree. The lone shallow station is still named, by the ceiling
+ * sentence's "one spot rather than the whole stretch" and by the wander sentence after it.
+ *
+ * A piece with no line profile (a pack built before `envelope_line_ft`) falls back to the
+ * shallowest of the shallow side and the deepest of the deep side, which is the same question
+ * asked of the only profiles there are.
+ *
+ * @returns {{fromFt:number|null, toFt:number|null}}
+ */
+export function waterRange(piece) {
+  const l = piece && piece.water && piece.water.line;
+  const floor = l ? (l.sustainedMinFt ?? l.minFt) : null;
+  if (l && Number.isFinite(floor) && Number.isFinite(l.maxFt) && floor >= 0) {
+    return { fromFt: floor, toFt: l.maxFt };
+  }
+  const ok = (a) => (a || []).filter((x) => Number.isFinite(x) && x >= 0);
+  const sh = ok(piece && piece.envelope);
+  if (!sh.length) return { fromFt: null, toFt: null };
+  const dp = ok(piece.envelopeDeep);
+  return { fromFt: Math.min(...sh), toFt: Math.max(...(dp.length ? dp : sh)) };
+}
+
+/**
  * WHERE THE LAPS ACTUALLY COME FROM.
  *
  * Ryan does not stop at the end of a pass:
@@ -234,11 +275,14 @@ export function ladderPartners(pieces, { linkM = 100, stepFt = 3 } = {}) {
  * `holdsFt` is a THRESHOLD -- the shallowest point the whole stretch clears, set by one shoal
  * somewhere along it. The corridor is the WATER. Describing a piece by its threshold is how a
  * stretch of 17-24 ft water ends up announced as 8 ft.
+ *
+ * Since 2026-10-01 "the water" is waterRange(), the shallowest to the deepest on the line, so this
+ * and the row's headline read the same two numbers.
  */
 function bandOverlap(piece, bandFt) {
   if (!Array.isArray(bandFt) || bandFt.length !== 2) return null;
   const [lo, hi] = bandFt;
-  const { fromFt, toFt } = optionality(piece);
+  const { fromFt, toFt } = waterRange(piece);
   if (fromFt == null) return { covers: 0, fromFt: null, toFt: null };
   const a = Math.max(lo, fromFt), b = Math.min(hi, toFt);
   const overlapFt = Math.max(0, b - a);
@@ -335,10 +379,14 @@ export function reasons(piece, o) {
   // DESCRIBE THE WATER, THEN THE THING THAT LIMITS IT. `holdsFt` is a threshold set by the
   // shallowest point on the stretch; the corridor is what he is actually fishing. Leading with
   // the threshold is how 17-24 ft water got announced as "8 ft or deeper".
-  if (opt.fromFt != null && opt.toFt - opt.fromFt >= 2) {
-    forIt.push(`${fmtMi(piece.lengthM)} unbroken, ${opt.fromFt}–${opt.toFt} ft of water`);
-  } else if (opt.fromFt != null) {
-    forIt.push(`${fmtMi(piece.lengthM)} unbroken, about ${opt.fromFt} ft of water`);
+  //
+  // AND THE RANGE IS THE SHALLOWEST TO THE DEEPEST ON THE LINE, not the corridor's two medians.
+  // See waterRange().
+  const range = waterRange(piece);
+  if (range.fromFt != null && range.toFt - range.fromFt >= 2) {
+    forIt.push(`${fmtMi(piece.lengthM)} unbroken, ${range.fromFt}–${range.toFt} ft of water`);
+  } else if (range.fromFt != null) {
+    forIt.push(`${fmtMi(piece.lengthM)} unbroken, about ${range.fromFt} ft of water`);
   } else {
     forIt.push(`${fmtMi(piece.lengthM)} unbroken`);
   }
