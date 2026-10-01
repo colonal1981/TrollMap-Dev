@@ -104,6 +104,17 @@ export function monthsNamed(text) {
   return out;
 }
 
+/**
+ * The month a report names WITH its year -- "OCTOBER 2026 FISHING REPORT", "April 2026 Fishing
+ * report" -- as YYYY-MM, or null. A post's own date is better; this is for text that has no other.
+ */
+export function monthYearNamed(text) {
+  const m = String(text || '').match(new RegExp(`\\b(${MONTHS.join('|')})\\s+(20\\d\\d)\\b`, 'i'));
+  if (!m) return null;
+  const mi = MONTHS.findIndex((x) => x.toLowerCase() === m[1].toLowerCase());
+  return `${m[2]}-${String(mi + 1).padStart(2, '0')}`;
+}
+
 /** One lake's section of the SCDNR page, as TinyFish returns it in markdown. */
 export function parseScdnrSection(md, section) {
   const lines = String(md || '').split('\n');
@@ -265,8 +276,9 @@ async function readScdnr(src, env) {
   if (!sec) throw new Error(`no "${src.section}" section on the page`);
   return [{
     kind: src.kind, label: `${src.label} -- ${src.section}`, guides: null, url: src.url,
-    published: null, publishedFrom: null, undated: true,
-    monthNamed: sec.monthsNamed[sec.monthsNamed.length - 1] || null,
+    // NO SINGLE MONTH: the September page also names August behind it and October and November
+    // ahead of it ("It usually isn't until October and November that..."). All of them are kept.
+    published: null, publishedFrom: null, undated: true, monthNamed: null,
     monthsNamed: sec.monthsNamed, note: src.note, text: sec.text,
   }];
 }
@@ -278,6 +290,7 @@ async function readSccSite(src, env) {
   return [{ kind: src.kind, label: src.label, guides: src.guides, url: src.url, ...p }];
 }
 
+const pageOf = (u) => String(u || '').replace(/[?#].*$/, '').replace(/\/+$/, '').toLowerCase();
 const isPostUrl = (u) => /^https:\/\/(www\.|m\.)?facebook\.com\//.test(u)
   && /\/(posts|photos|videos|permalink)\b/.test(u) && !/\/(groups|fb-answers)\//.test(u);
 
@@ -287,19 +300,44 @@ async function readFacebook(src, env, month, prevMonth) {
     query: q, include_domains: 'facebook.com',
     purpose: `Find ${src.author}'s monthly fishing report post on Facebook`,
   }, env).catch(() => null)));
-  const urls = [...new Set(found.flatMap((r) => (r && r.results || []).map((x) => x.url)).filter(isPostUrl))]
+  const hits = found.flatMap((r) => (r && r.results) || []);
+  const urls = [...new Set(hits.map((x) => x.url).filter(isPostUrl))]
     .slice(0, 10);                                     // TinyFish fetch takes ten URLs a call
-  if (!urls.length) throw new Error('search found no post by URL');
   const now = Date.now();
-  const r = await tinyfishFetch({ urls, format: 'markdown', ttl: 0 }, env);
-  const posts = (r && r.results || []).map((hit) => {
+  const r = urls.length ? await tinyfishFetch({ urls, format: 'markdown', ttl: 0 }, env) : null;
+  const posts = ((r && r.results) || []).map((hit) => {
     const p = parseFacebookPost(hit.text, src.author, now);
     return p && /fishing report/i.test(p.text) ? { ...p, url: hit.final_url || hit.url } : null;
   }).filter(Boolean)
     .sort((a, b) => String(b.published || '').localeCompare(String(a.published || '')));
-  if (!posts.length) throw new Error(`read ${urls.length} post(s); none was a fishing report by ${src.author}`);
-  const p = posts[0];
-  return [{ kind: src.kind, label: src.label, guides: src.guides, ...p }];
+  const out = posts.length ? [{ kind: src.kind, label: src.label, guides: src.guides, ...posts[0] }] : [];
+  // ── A NEWER POST SEARCH CAN SEE AND NOBODY CAN READ YET ─────────────────────────────────────
+  //
+  // Measured the evening of 2026-10-01: the October report, posted that afternoon, came back from
+  // search only as the PAGE, with a preview: "OCTOBER 2026 FISHING REPORT Santee Cooper & Cooper
+  // River STRIPERS Striper season opens October 1st, and anglers should start looking for fish in
+  // 30-45 feet of water along flats and creek areas." The page needs a login and the post had no
+  // URL in search yet, so the newest readable post was August's. The preview is the only copy of
+  // the newest report there is, so it goes in, labelled as a search preview of a post nobody read,
+  // and only when the month it names is newer than the newest post that was read.
+  const page = pageOf(src.url);
+  const previews = hits.filter((x) => pageOf(x.url) === page && /fishing report/i.test(x.snippet || '')
+    && monthYearNamed(x.snippet))
+    .sort((a, b) => String(monthYearNamed(b.snippet)).localeCompare(String(monthYearNamed(a.snippet)))
+      || String(b.snippet).length - String(a.snippet).length);
+  const pv = previews[0];
+  const readMonth = out[0] ? String(out[0].published || '').slice(0, 7) : '';
+  if (pv && monthYearNamed(pv.snippet) > readMonth) {
+    out.push({
+      kind: src.kind, label: `${src.label} -- search preview only, the post itself could not be read yet`,
+      guides: src.guides, url: src.url, published: null, publishedFrom: null, preview: true,
+      monthYear: monthYearNamed(pv.snippet), monthNamed: monthsNamed(pv.snippet)[0] || null,
+      monthsNamed: monthsNamed(pv.snippet), text: String(pv.snippet).trim(),
+    });
+  }
+  if (!out.length) throw new Error(urls.length ? `read ${urls.length} post(s); none was a fishing report by ${src.author}`
+                                               : 'search found no post by URL');
+  return out;
 }
 
 async function transcriptOf(env, videoId) {
@@ -397,7 +435,8 @@ export async function handleGuideReports(request, env, url) {
   if (fresh && !await isAuthorized(request, env)) return json({ error: 'unauthorized' }, 401);
   const slug = mm[1];
   const date = url.searchParams.get('date') || dayEastern();
-  const key = `guide:reports:v1:${slug}:${String(date).slice(0, 7)}:${dayEastern()}`;
+  // v2 since the search preview was added (2026-10-01): a day kept by v1 has no preview in it.
+  const key = `guide:reports:v2:${slug}:${String(date).slice(0, 7)}:${dayEastern()}`;
   if (env.KV && !fresh) {
     const hit = await env.KV.get(key, 'json');
     if (hit) return json({ ...hit, cached: true });

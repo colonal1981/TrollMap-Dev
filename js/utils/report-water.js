@@ -130,6 +130,7 @@ export function isCurrentReport(r, planDate) {
   if (!r || !/^\d{4}-\d{2}/.test(String(planDate || ''))) return false;
   const want = [ym(planDate), prevYm(planDate)];
   if (r.published) return want.includes(ym(r.published));
+  if (r.monthYear) return want.includes(r.monthYear);         // "OCTOBER 2026 FISHING REPORT"
   const names = (r.monthsNamed || (r.monthNamed ? [r.monthNamed] : [])).map((m) => String(m).toLowerCase());
   const months = want.map((w) => MONTH_NAMES[Number(w.slice(5, 7)) - 1]);
   return names.some((n) => months.includes(n));
@@ -144,11 +145,13 @@ export function isCurrentReport(r, planDate) {
 export function supersede(reports) {
   const list = (reports || []).map((r) => ({ ...r }));
   const key = (r) => (r.role && r.role !== 'newest') ? null : r.guides || null;
+  // A search preview has no date, only the month it names ("2026-10"), which still sorts against a
+  // date ("2026-09-04") the right way round.
+  const when = (r) => String(r.published || r.monthYear || '');
   for (const r of list) {
     const k = key(r);
     if (!k) continue;
-    const newer = list.find((o) => o !== r && key(o) === k
-      && String(o.published || '') > String(r.published || ''));
+    const newer = list.find((o) => o !== r && key(o) === k && when(o) > when(r));
     if (newer) r.supersededBy = newer.label;
   }
   return list;

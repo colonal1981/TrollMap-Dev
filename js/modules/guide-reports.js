@@ -70,6 +70,7 @@ const fmtFt = (ft) => (ft[1] == null ? `${ft[0]}+ ft` : ft[0] === ft[1] ? `${ft[
 
 function whenOf(r) {
   if (r.published) return `${r.published}${r.publishedFrom ? ` (${r.publishedFrom})` : ''}`;
+  if (r.preview) return `NOT DATED: a search preview of a post naming ${r.monthYear || r.monthNamed || 'no month'}; only this much of it could be read`;
   const named = (r.monthsNamed && r.monthsNamed.length) ? r.monthsNamed.join(' and ') : r.monthNamed;
   return `NO DATE STATED${named ? `; the text speaks of ${named}` : ''}`;
 }

@@ -355,13 +355,54 @@ test('the route: his five lakes, a day\'s copy from KV, and fresh only with the 
   const env = { KV: { get: async (k) => (store.has(k) ? JSON.parse(store.get(k)) : null),
                       put: async (k, v) => store.set(k, v) } };
   const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
-  store.set(`guide:reports:v1:lake_marion:2026-10:${day}`, JSON.stringify({ reports: [{ label: 'kept' }] }));
+  store.set(`guide:reports:v2:lake_marion:2026-10:${day}`, JSON.stringify({ reports: [{ label: 'kept' }] }));
   const get = (q) => handleGuideReports(new Request(`https://w/guide-reports/lake_marion${q}`), env, new URL(`https://w/guide-reports/lake_marion${q}`));
   const hit = await (await get('?date=2026-10-02')).json();
   assert.equal(hit.cached, true);
   assert.equal(hit.reports[0].label, 'kept');
   assert.equal((await get('?date=2026-10-02&fresh=1')).status, 401);
   assert.equal(await handleGuideReports(new Request('https://w/reports/x'), env, new URL('https://w/reports/x')), null);
+});
+
+// The evening of 2026-10-01: the October post was only a preview on the PAGE in search; the newest
+// post search could give by URL was August's.
+const PAGE = 'https://www.facebook.com/santeecoopercountrysouthcarolina/';
+const AUG_URL = 'https://www.facebook.com/santeecoopercountrysouthcarolina/posts/august-fishing-report-2026/1544620447683398/';
+const AUG_MD = `## Santee Cooper Country's Post\n\n---\n\n### **Santee Cooper Country**\n\nAugust 5\n\nAugust Fishing Report 2026.\n\nStriper season is closed.`;
+const PREVIEW = 'OCTOBER 2026 FISHING REPORT Santee Cooper & Cooper River STRIPERS Striper season opens October 1st, and anglers should start looking for fish in 30–45 feet of water along flats and creek areas.';
+
+test('a newer post seen only as a preview in search goes in, labelled, and supersedes the older ones', async () => {
+  const real = globalThis.fetch;
+  globalThis.fetch = async (u, init) => {
+    const url = String(u);
+    if (url.startsWith('https://api.search.tinyfish.ai')) {
+      return Response.json({ results: [{ url: PAGE, snippet: PREVIEW }, { url: AUG_URL, snippet: 'August Fishing Report 2026.' }] });
+    }
+    if (url.startsWith('https://api.fetch.tinyfish.ai')) {
+      const body = JSON.parse(init.body);
+      const page = (x) => (x === 'https://www.dnr.sc.gov/news/freshwater.html' ? { text: SCDNR_MD }
+        : x.startsWith('https://www.santeecoopercountry.org/') ? { text: SCC_SITE_MD, page_metadata: SCC_SITE_META }
+        : x === AUG_URL ? { text: AUG_MD } : null);
+      return Response.json({ results: body.urls.map((x) => ({ url: x, final_url: x, ...page(x) })).filter((x) => x.text), errors: [] });
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  };
+  try {
+    const { gatherGuideReports } = await import('../Worker/guide-reports.js');
+    const g = await gatherGuideReports('lake_marion', { TINYFISH_API_KEY: 'k' }, '2026-10-02');
+    assert.deepEqual(g.checked.map((c) => c.ok), [true, true, true]);
+    const pv = g.reports.find((r) => r.preview);
+    assert.equal(pv.monthYear, '2026-10');
+    assert.match(pv.label, /search preview only/);
+    assert.equal(g.reports.find((r) => r.url === AUG_URL).published, '2026-08-05');
+    const s = supersede(g.reports);
+    assert.deepEqual(s.filter((r) => !r.supersededBy).map((r) => r.kind).sort(), ['facebook', 'scdnr']);
+    assert.deepEqual(reportWaterForPlan(s, 'Striped Bass', '2026-10-02').map((w) => w.ft), [[30, 45]]);
+    assert.match(guideReportsBlock({ reports: s, checked: g.checked }, ['Striped Bass'], '2026-10-02'),
+      /NOT DATED: a search preview of a post naming 2026-10/);
+  } finally {
+    globalThis.fetch = real;
+  }
 });
 
 test('both planners pass the reports, Smart Plan passes the water to the lanes, and the prompt prints them', () => {
