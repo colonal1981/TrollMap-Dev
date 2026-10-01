@@ -61,7 +61,10 @@ const SCC_FB = {
   kind: 'facebook', label: 'Santee Cooper Country on Facebook', guides: SCC_GUIDES,
   author: 'Santee Cooper Country',
   url: 'https://www.facebook.com/santeecoopercountrysouthcarolina',
-  queries: (m) => [`Santee Cooper Country ${m} fishing report`],
+  // The second form is their own heading in quotes. Measured 2026-10-01: only it brought back the
+  // preview that names the month ("OCTOBER 2026 FISHING REPORT ..."); the first returned the page
+  // with "2026 FISHING REPORT ..." and no month in it.
+  queries: (m) => [`Santee Cooper Country ${m} fishing report`, `"${m} fishing report" Santee Cooper`],
 };
 const WOLFE_FB = {
   kind: 'facebook', label: "Wolfe's Guide Service on Facebook", guides: 'Capt. Jason Wolfe',
@@ -353,14 +356,21 @@ async function transcriptOf(env, videoId) {
   const res = await fetch('https://api.firecrawl.dev/v2/scrape', {
     method: 'POST',
     headers: { Authorization: `Bearer ${fk}`, 'Content-Type': 'application/json' },
+    // maxAge 0: a live scrape. The first Worker call, without it, came back with no transcript on
+    // 2026-10-01 while the same request with maxAge 0 through Firecrawl's MCP had the whole of it.
     body: JSON.stringify({ url: `https://www.youtube.com/watch?v=${videoId}`, formats: ['markdown'],
-                           onlyMainContent: true, timeout: 90000 }),
+                           onlyMainContent: true, maxAge: 0, timeout: 90000 }),
   });
   if (!res.ok) throw new Error(`Firecrawl HTTP ${res.status}`);
   await recordFirecrawlUsage(env, 1);
   const data = await res.json();
-  const p = parseYoutubeScrape((data && data.data && data.data.markdown) || data.markdown);
-  if (!p) throw new Error('Firecrawl returned no transcript');
+  const md = (data && data.data && data.data.markdown) || (data && data.markdown) || '';
+  const p = parseYoutubeScrape(md);
+  if (!p) {
+    const meta = (data && data.data && data.data.metadata) || {};
+    throw new Error(`Firecrawl returned no transcript (${md.length} characters of markdown, `
+      + `postprocessors ${JSON.stringify(meta.postprocessorsUsed || [])}, cache ${meta.cacheState || 'unknown'})`);
+  }
   if (env.KV) await env.KV.put(key, JSON.stringify(p));      // a transcript never changes
   return p;
 }
@@ -372,9 +382,12 @@ async function readYoutube(src, env, month) {
   const { newest, sameMonth } = pickYoutube(parseYoutubeFeed(await r.text()), src.titleRe, month);
   if (!newest) throw new Error('no report video in the channel feed');
   const out = [];
+  const failed = [];
   for (const [v, role] of [[newest, 'newest'], [sameMonth, 'same month, an earlier year']]) {
     if (!v) continue;
-    const t = await transcriptOf(env, v.videoId);
+    // One video failing does not lose the other.
+    let t;
+    try { t = await transcriptOf(env, v.videoId); } catch (e) { failed.push(`${v.title}: ${e.message}`); continue; }
     out.push({
       kind: src.kind, label: `${src.label}: ${v.title}`, guides: src.guides,
       url: `https://www.youtube.com/watch?v=${v.videoId}`,
@@ -383,6 +396,7 @@ async function readYoutube(src, env, month) {
       monthNamed: monthsNamed(v.title)[0] || null, role, text: t.transcript,
     });
   }
+  if (!out.length) throw new Error(failed.join('; '));
   return out;
 }
 
@@ -436,7 +450,8 @@ export async function handleGuideReports(request, env, url) {
   const slug = mm[1];
   const date = url.searchParams.get('date') || dayEastern();
   // v2 since the search preview was added (2026-10-01): a day kept by v1 has no preview in it.
-  const key = `guide:reports:v2:${slug}:${String(date).slice(0, 7)}:${dayEastern()}`;
+  // v3 the same evening: the quoted search form and the live transcript scrape.
+  const key = `guide:reports:v3:${slug}:${String(date).slice(0, 7)}:${dayEastern()}`;
   if (env.KV && !fresh) {
     const hit = await env.KV.get(key, 'json');
     if (hit) return json({ ...hit, cached: true });
