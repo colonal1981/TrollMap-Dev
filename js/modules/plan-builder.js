@@ -1699,6 +1699,48 @@ ${src}`;
         + `<span class="rp-small">Could not be checked — the report lookup failed. This is not the same as "no reports".</span></div>`;
     }
 
+    // ── Module F2 — What the guides reported, as the plan read it ─────────────────────────────
+    //
+    // Ryan, 2026-10-01 (item 42): reports from the top guides on his five lakes, read by the plan.
+    // The saved plan carries what it read (`plan.guideReports`), so this shows the same thing the
+    // model saw; an older plan without it asks the Worker for the plan's day. Verbatim, dated, and
+    // a source that could not be read says so.
+    try {
+      let g = (p.plan && p.plan.guideReports) || null;
+      if (!g) {
+        const grec = lakeRecordFor(p.meta.waterbodyLabel || p.meta.lake || '') || lakeRecordFor(cleanLake);
+        if (grec && grec.slug) {
+          const { askGuideReports } = await import('./guide-reports.js');
+          g = await askGuideReports({ worker: workerBase(), slug: grec.slug, date: p.meta.date, timeoutMs: 20000 });
+        }
+      }
+      if (g && !g.none) {
+        const when = (r) => (r.published
+          ? `<b style="color:#1a7f37">${esc(r.published)}</b>${r.publishedFrom ? ` <span class="rp-small">(${esc(r.publishedFrom)})</span>` : ''}`
+          : `<b style="color:#b06a00">no date stated</b>${(r.monthsNamed || []).length ? `<span class="rp-small"> — the text speaks of ${esc(r.monthsNamed.join(' and '))}</span>` : ''}`);
+        const cards = (g.reports || []).map((r) => {
+          const text = String(r.text || '');
+          const body = text.length > 1500
+            ? `<details><summary class="rp-small">Read it (${Math.round(text.length / 1000)}k characters)</summary><div class="rp-small" style="white-space:pre-wrap">${esc(text)}</div></details>`
+            : `<div class="rp-small" style="white-space:pre-wrap">${esc(text)}</div>`;
+          return `<div class="rp-callout rp-info" style="margin-top:8px${r.supersededBy ? ';opacity:.6' : ''}">`
+            + `<b>${esc(r.label || '')}</b>${r.guides ? ` — ${esc(r.guides)}` : ''}<br>${when(r)}`
+            + `${r.via ? `<span class="rp-small"> · ${esc(r.via)}</span>` : ''}`
+            + `${r.role && r.role !== 'newest' ? `<span class="rp-small"> · ${esc(r.role)}</span>` : ''}`
+            + `${r.supersededBy ? `<br><span class="rp-small">Not read by the plan: ${esc(r.supersededBy)} is newer.</span>` : ''}`
+            + `${r.url ? `<br><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.url)}</a>` : ''}${body}</div>`;
+        }).join('');
+        const failed = (g.checked || []).filter((c) => !c.ok)
+          .map((c) => `${esc(c.label)}: ${esc(c.why || '')}`).join('<br>');
+        reportsHtml += `<h2>🎣 What the Guides Reported</h2>`
+          + `<p class="rp-small">${g.error ? `Could not be read: ${esc(g.error)}. This is not the same as "nobody reported".`
+              : 'What the plan read, verbatim. Nothing here has been summarised.'}</p>`
+          + cards + (failed ? `<div class="rp-callout rp-warn" style="margin-top:8px"><span class="rp-small">Could not be read: <br>${failed}</span></div>` : '');
+      }
+    } catch (err) {
+      console.warn('[plan-builder] guide reports unavailable:', err);
+    }
+
     // USGS — only temperature is reliable for most lakes.
     // For Wateree (and other Duke lakes) the 00065 river gauge is BELOW the dam and is NOT pool level.
     // We deliberately skip 00065 for Wateree and only show temperature.

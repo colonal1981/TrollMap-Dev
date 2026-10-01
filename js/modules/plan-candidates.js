@@ -3002,12 +3002,13 @@ export function selectCandidates(runs, o) {
     if (![...a, ...b].every(Number.isFinite)) return true;
     return a[0] < b[1] && b[0] < a[1];
   };
+  const isDuplicate = (c) => kept.some((k) =>
+    lineKey(k) === lineKey(c) && sameWater(k, c) && (
+      metresBetween(k.start, c.start) < apart
+      || overlapFraction(c.coordinates, k.coordinates, corridorM) >= maxOverlap
+      || overlapFraction(k.coordinates, c.coordinates, corridorM) >= maxOverlap));
   for (const c of out) {
-    const duplicate = kept.some((k) =>
-      lineKey(k) === lineKey(c) && sameWater(k, c) && (
-        metresBetween(k.start, c.start) < apart
-        || overlapFraction(c.coordinates, k.coordinates, corridorM) >= maxOverlap
-        || overlapFraction(k.coordinates, c.coordinates, corridorM) >= maxOverlap));
+    const duplicate = isDuplicate(c);
     // COUNTED, BECAUSE THIS IS THE BIGGEST FILTER IN THE FUNCTION AND IT WAS THE ONLY SILENT ONE.
     //
     // Measured 2026-08-26 on the real Wateree pack: 1,750 runs in, 504 cut on depth, 639 as
@@ -3020,6 +3021,50 @@ export function selectCandidates(runs, o) {
     // The cap is a cut like any other, and a cut nobody can see is how "top N" gets mistaken for
     // "all of them" -- see the same rule in build_water_bindings.py and planCueRoute.
     if (o.limit && kept.length >= o.limit) { rejected.limit = out.length - kept.length - rejected.dedupe; break; }
+  }
+
+  // ── THE WATER A GUIDE PUT THE FISH OVER IS OFFERED ────────────────────────────────────────
+  //
+  // Ryan, 2026-10-01, on the Marion striper plan whose 12 lanes were all shallow: "depth itself
+  // shouldn't be weighted i dont think... but guide reports that put fish in certain depth of water
+  // should count towards something". `o.reportWater` is that water, read off this month's reports
+  // (utils/report-water.js) and put in the chart's terms by the caller: Santee Cooper Country's
+  // October "30-45 feet of water along flats and creek areas".
+  //
+  // It counts in two ways, and neither is a weight:
+  //   - every lane offered that passes over that water carries the report on it (`reportWater`);
+  //   - where the ranking offered NO lane over it, the best-ranked lane over it that is not the same
+  //     water as one already offered is added, past the limit, and says so (`offeredForReport`).
+  // The ranking is untouched. The model still picks; it now has the guide's water to pick from.
+  // "Over that water" is the lane's MEDIAN in the report's range: the water under the boat for most
+  // of the pass. Touching it was the first version, and on Marion from Rowland a 22-31 ft lane with
+  // a 25 ft median counted as being over "30-45 feet of water" and nothing deeper was offered.
+  const rw = (Array.isArray(o.reportWater) ? o.reportWater : []).filter((w) => w
+    && Array.isArray(w.chartFt || w.ft) && Number.isFinite(Number((w.chartFt || w.ft)[0])));
+  let offeredForReports = 0;
+  if (rw.length) {
+    const rng = (w) => w.chartFt || w.ft;
+    const over = (c, w) => Number.isFinite(Number(c.depthFt))
+      && Number(c.depthFt) >= rng(w)[0] && (rng(w)[1] == null || Number(c.depthFt) <= rng(w)[1]);
+    const mark = (c) => {
+      const hits = rw.filter((w) => over(c, w));
+      if (hits.length) {
+        c.reportWater = hits.map((w) => ({ species: w.species, ft: w.ft, chartFt: rng(w),
+          label: w.label, published: w.published || null, quote: w.quote, chartBasis: w.chartBasis }));
+      }
+    };
+    kept.forEach(mark);
+    for (const w of rw) {
+      if (kept.some((c) => over(c, w))) continue;
+      const add = out.find((c) => !kept.includes(c) && over(c, w) && !isDuplicate(c));
+      if (!add) continue;
+      mark(add);
+      add.offeredForReport = true;
+      kept.push(add);
+      offeredForReports++;
+      // It came from the limit bucket: anything the dedupe cut is still a duplicate of what is kept.
+      if (rejected.limit > 0) rejected.limit--;
+    }
   }
 
   // ── WHAT IT COSTS TO GO FROM THIS LEG TO THE NEXT ONE ────────────────────────────────────────
@@ -3102,6 +3147,10 @@ export function selectCandidates(runs, o) {
     // How many runs missed the fish band and were considered anyway. The band is a note now, not a
     // cut, and this says how much water it would have removed.
     outsideBand,
+    // How many of this month's guide-report depths of water came in, and how many lanes were added
+    // past the limit because the ranking had offered none over one of them.
+    reportWater: rw.length,
+    offeredForReports,
     // WHETHER THIS PACK HAD FITTED LANES AT ALL, because "800 unfitted runs were refused" and
     // "this lake has no fitted lanes so rough ones were offered" are different days on the water
     // and only this field separates them.
@@ -3753,6 +3802,12 @@ export function forModel(c, cap = MODEL_STRUCTURE_CAP) {
     // SAID ONLY WHEN IT MISSES. Water outside the day's fish band is offered since 2026-09-26, and
     // the prompt tells the model what the band is and what its source said about when and where.
     inFishBand: c.inFishBand === false ? false : undefined,
+    // THE GUIDE'S WATER, when this lane passes over it -- see selectCandidates().
+    reportWater: Array.isArray(c.reportWater) && c.reportWater.length
+      ? c.reportWater.map((w) => ({ species: w.species, waterFt: w.ft, label: w.label,
+                                    published: w.published || undefined, quote: w.quote }))
+      : undefined,
+    offeredForReport: c.offeredForReport || undefined,
     lengthM: c.lengthM,
     transitFromRampM: c.transitInM,
     // WHAT THE ORDERING COSTS. `transitToM` is metres of deadhead from this leg to each other leg

@@ -277,6 +277,13 @@ const DECLARED = [
    + 'and no registry field says "never hide this", so it is legitimately hand-written.'],
   // Keyed by SCDNR attractor NAMES, not waters, and it refuses nothing: a point with no entry
   // simply has no note. Added 2026-10-01 on Ryan's "both sound good" (APP_CHANGE_REQUESTS 43).
+  // His five lakes and where each one's guides publish. Other people's pages, a channel id and the
+  // section names on SCDNR's page: nothing in the registry can derive them, and a water not listed
+  // simply has no guide reports. Added 2026-10-01 on his "yes" (APP_CHANGE_REQUESTS 42).
+  ['Worker/guide-reports.js', 'GUIDE_SOURCES', 5, 'foreign-key',
+   'where the guides on Wateree, Murray, Marion, Moultrie and Monticello publish: SCDNR\'s section '
+   + 'name, Santee Cooper Country\'s page and Facebook author, Wolfe\'s Facebook author, and the '
+   + 'Lake Murray report channel. Verify by reading: each report carries its source and URL.'],
   ['js/data/scc-attractor-notes.js', 'SCC_ATTRACTOR_NOTES', 32, 'data',
    'Santee Cooper Country\'s depth, buoy and comment for 32 SCDNR attractors on Marion and '
    + 'Moultrie, read off their page 2026-10-01. Shown under SCDNR\'s point, labelled as theirs. '

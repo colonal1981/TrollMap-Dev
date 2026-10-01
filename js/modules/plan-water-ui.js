@@ -50,6 +50,7 @@ import { lakeSurfaceTemp, poolOffsetFt } from '../utils/water-conditions.js';
 import { landingsFor } from '../data/launch-reach.js';
 import { closerLanding, closerLandingNote } from './closer-landing.js';
 import { askLaunchStatus, launchStatusNote } from './launch-status.js';
+import { askGuideReports } from './guide-reports.js';
 import { shoreRays, roughLegs } from '../utils/wind-waves.js';
 import { inshoreSeasonFor } from '../data/inshore-season.js';
 import { seabedHabitatFor } from '../data/seabed-habitat.js';
@@ -1255,6 +1256,9 @@ export async function buildFromPicked() {
   // IS THE LAUNCH OPEN, by Google's listing -- same check, same sentence, as the Smart Plan path
   // (launch-status.js). Asked now, read after the model answers.
   const launchStatus = askLaunchStatus({ worker: CF_WORKER_URL, lonLat: T.ramp });
+  // The guides' monthly reports, for the prompt. He picked the water, so they choose nothing here;
+  // the model reads them. See guide-reports.js.
+  const guideAsk = askGuideReports({ worker: CF_WORKER_URL, slug: T.r2Key, date: T.dateStr });
   say('Reading the water…');
   const waterState = await fetchWaterState(T.lake, T.dateStr, {
     worker: CF_WORKER_URL, launchTime: T.launchTime, species: T.species,
@@ -1298,6 +1302,7 @@ export async function buildFromPicked() {
         water: T.lake, ramp: T.rampName, date: T.dateStr,
         launchTime: T.launchTime, returnTime: T.returnTime,
         species: [T.species], usableAh: T.usableAh,
+        guideReports: await guideAsk,
         tackle: castable.map((l) => l.name),
         // THE THREE FIELDS buildPlanRequest READS THAT THIS PATH NEVER SENT.
         //
@@ -1433,6 +1438,9 @@ export async function buildFromPicked() {
   const ls = launchStatusNote(await launchStatus, T.rampName);
   if (ls.warning) r.problems = [...(r.problems || []), ls.warning];
   if (ls.decision && r.plan) r.plan.decisions = [...(r.plan.decisions || []), ls.decision];
+  // What the plan read from the guides goes with the plan, so the trip report shows the same thing.
+  const guide = await guideAsk;
+  if (guide && r.plan) r.plan.guideReports = guide;
   // THE WIND ACROSS THE WATER HE PICKED (change request 22). Each troll leg is stamped with its
   // roughest hour, and one that reaches his own 1 ft says so -- see wind-waves.js. He chose this
   // water himself, so it is said, never re-ordered. No boundary, no measurement, nothing said.

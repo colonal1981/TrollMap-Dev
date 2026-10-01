@@ -18,6 +18,7 @@ import { handleCameras } from './cameras.js';
 import { handleAlerts, runAlertSweep } from './alerts.js';
 import { handleReports } from './reports.js';
 import { handlePlaces } from './places.js';
+import { handleGuideReports } from './guide-reports.js';
 import { fetchStateRegulations, getLakeRegulations } from './research/clients.js';
 import { regulationsTable, lakeIndex, resolveRegistryRow } from './registry.js';
 import { handleResearchLimnologyData, refreshStaleLimnology, handleResearchDiscover, handleResearchProxyDownload, handleResearchProxyDownloadBatch, handleResearchDeterministicFacts, handleResearchSaveNormalized, handleResearchGetNormalized, registrySpeciesFor, speciesFoodHabits, speciesMeasuredTraits, handleResearchAnalyzeFacts, handleResearchAgent, handleResearchList, handleResearchGet, handleResearchSave, handleResearchRegsDebug, handleResearchDelete, handleEnhancedLakeIntel, RESEARCH_AGENTS, sanitizeLakeId, lakeResearchMasterKey, lakePackageKey } from './worker-research.js';
@@ -1977,6 +1978,11 @@ var trollmap_worker_default = {
       // open-or-closed status (/places/status) for the day it was read -- see places.js.
       const placeRes = await handlePlaces(request, env, url);
       if (placeRes) return placeRes;
+      // What the guides on his five lakes said this month, verbatim and dated, for the plan. Same
+      // null-when-not-ours contract; token-guarded because a transcript spends a Firecrawl credit.
+      // See guide-reports.js.
+      const guideRes = await handleGuideReports(request, env, url);
+      if (guideRes) return guideRes;
 
       if (path === "/chartpacks/lake-boundary" && request.method === "GET") {
         const lakeName = url.searchParams.get("lake") || "";

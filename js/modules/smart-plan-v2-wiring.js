@@ -16,7 +16,8 @@ import { resolveR2Key } from '../data/lake-keys.js';
 import { matchRampIndex, normRampName } from '../utils/ramp-match.js';
 import { getLoadedAccessIndex, registryRecordFor } from '../data/access-index.js';
 import { getSeason, seasonNote, calendarSeason } from '../data/species-intel.js';
-import { lakeSurfaceTemp } from '../utils/water-conditions.js';
+import { lakeSurfaceTemp, poolOffsetFt } from '../utils/water-conditions.js';
+import { askGuideReports, reportWaterForLanes } from './guide-reports.js';
 import { depthBandFor, usableAhFrom, researchIntel, structureWeights, oxygenFloorFt,
          describeDepthBand, fishDepthEvidence, conditionsFrom, fetchRegistrySpecies,
          registryIdentity, thermoclineNormFor } from './plan-inputs.js';
@@ -157,6 +158,9 @@ export async function runSmartPlanV2(opts = {}) {
   // IS THE LAUNCH OPEN, by Google's listing -- see launch-status.js. Asked now and read once the
   // model has answered, so it costs the plan no time. Not on a dry run, which spends nothing.
   const launchStatus = opts.dryRun ? null : askLaunchStatus({ worker: CF_WORKER_URL, lonLat: ramp });
+  // THE GUIDES' MONTHLY REPORTS, asked now and awaited when the plan is built -- the first read of
+  // the day can take the better part of a minute (a search, the posts, a transcript).
+  const guideAsk = opts.dryRun ? null : askGuideReports({ worker: CF_WORKER_URL, slug: r2Key, date: inp.dateStr });
 
   const date = new Date(`${inp.dateStr}T12:00:00`);
   // THE WATER GETS A SAY. `season` decides the depth band, the structure weights and which
@@ -270,6 +274,9 @@ export async function runSmartPlanV2(opts = {}) {
   const sol = solunarFor(inp.dateStr, ramp[1], ramp[0]);
   const castableOrTrollable = TACKLE_INVENTORY.filter((l) => l.trollable || l.castable);
 
+  say('Reading the guide reports…');
+  const guide = guideAsk ? await guideAsk : null;
+
   say('Reading the pack…');
   let r;
   try {
@@ -292,6 +299,12 @@ export async function runSmartPlanV2(opts = {}) {
       // a missing forecast read as a calm day.
       windByHour: forecast ? forecast.windByHour : null,
       weatherByHour: forecast ? forecast.weatherByHour : null,
+      // WHAT THE GUIDES ON THIS WATER REPORTED, for the prompt, and the depth of water this month's
+      // reports put the species over, for the lanes. Ryan, 2026-10-01: "guide reports that put fish
+      // in certain depth of water should count towards something". poolOffsetFt() puts today's
+      // water on the chart where its level is measured; elsewhere the chart stands and it says so.
+      guideReports: guide,
+      reportWater: reportWaterForLanes(guide, species, inp.dateStr, poolOffsetFt(waterState)),
       // THE LIGHT GUIDANCE ANYBODY ACTUALLY WROTE DOWN ABOUT THIS WATER. `_extractedFacts` carries
       // a fact, the quote it came from and the source; some of them tie a depth or a presentation
       // to the light, and until now nothing outside the research pipeline read one. Selected here
@@ -471,6 +484,8 @@ export async function runSmartPlanV2(opts = {}) {
     if (ls.warning) r.problems = [...(r.problems || []), ls.warning];
     if (ls.decision && r.plan) r.plan.decisions = [...(r.plan.decisions || []), ls.decision];
   }
+  // What the plan read from the guides goes with the plan, so the trip report shows the same thing.
+  if (guide && r.plan) r.plan.guideReports = guide;
   // And the limits that were read and are not in the way go where the app's other settled things
   // go -- see plan-assemble.js. They are still on the plan and still rendered; they are not one
   // of the things it wants to tell him before he launches.

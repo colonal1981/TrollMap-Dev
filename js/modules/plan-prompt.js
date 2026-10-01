@@ -76,6 +76,7 @@ import { TROLL_MPH, TRANSIT_MPH } from './plan-water.js';
 import { lightSummary, lightPhrasesIn, lightLabel, fogSpans, fogLowestVisibility }
   from '../utils/light-state.js';
 import { writtenOf } from '../utils/fact-date.js';
+import { guideReportsBlock } from './guide-reports.js';
 
 // Six rods. This never changes; it is the boat, not a setting.
 export const ROD_IDS = ['R1', 'R2', 'R3', 'R4', 'R5', 'R6'];
@@ -2393,6 +2394,13 @@ when and where it holds (\`depthBand.sourceNotes\`, when it is there). Weigh it 
 the leg in and by where on the lake the leg is. Do not drop a leg for it alone, and say in its
 \`why\` when a leg is outside the band and why you chose it anyway.
 
+THE GUIDES' WATER IS ON THE LANES THAT CROSS IT. A candidate carrying \`reportWater\` passes over a
+depth of WATER that a guide report from this month or last named for the species; the report, its
+date and its sentence are on it, and the reports themselves are under WHAT THE GUIDES ON THIS WATER
+REPORTED. One carrying \`offeredForReport\` was not in the ranking's list and was added because no
+lane in it crossed that water. It is a depth of water, not a bait depth, and it decides nothing on
+its own: weigh it as you would a person who was out there last week.
+
 NOT EVERYTHING ON A LEG IS THERE TO BE FISHED. An entry carrying \`worthFishing: true\` is a
 target. An entry with no \`worthFishing\` is a hazard, an obstruction or a pile — it is on the list
 because it is on the water, not because it is worth a cast. Never put a stop on one. Say where it
@@ -2623,7 +2631,7 @@ ${o.intel || 'NOTHING. No researched profile exists for this water, so everythin
   + 'on the chart, the gauges and general species knowledge. Say so in the plan rather than '
   + 'writing as though this water had been studied — an absent profile is not a profile that '
   + 'looked and found nothing.'}
-${patternFactsBlock(o.patternFacts)}
+${patternFactsBlock(o.patternFacts)}${guideReportsBlock(o.guideReports, o.species, o.date)}
 RETURN EXACTLY THIS SHAPE
 {
   "safety": { "isGo": true, "warning": "", "rampEvaluation": "one sentence on wind exposure at this ramp" },

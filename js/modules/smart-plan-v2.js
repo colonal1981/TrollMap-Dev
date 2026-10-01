@@ -324,6 +324,9 @@ export async function buildSmartPlanV2(o) {
     // other path reduces it there too and two readers of "which hour is this day costed against"
     // is how the two planners start disagreeing about one day.
     windByHour: o.windByHour,
+    // THE WATER THIS MONTH'S GUIDE REPORTS PUT THE SPECIES OVER, in the chart's terms. Marks the
+    // lanes over it and offers the best one when the ranking left none -- see selectCandidates().
+    reportWater: o.reportWater || null,
   };
   // ── ON A LAKE, HOW FAR IS BY WATER, NOT BY CROW ──────────────────────────────────────────────
   //
@@ -512,6 +515,12 @@ export async function buildSmartPlanV2(o) {
     // research pipeline had ever read one. Selected by lightFactsFrom() at the wiring, where the
     // profile lives, and sent already rendered like `intel` is.
     lightFacts: o.lightFacts || null,
+    // AND THE PATTERN FACTS. The wiring has selected them since 2026-09-17 ("the bench plan run on
+    // that river saw none of them") and this call never passed them on, so Smart Plan's prompt
+    // printed an empty block while Pick Water's printed them. Found 2026-10-01 wiring the reports.
+    patternFacts: o.patternFacts || null,
+    // WHAT THE GUIDES ON THIS WATER REPORTED THIS MONTH, verbatim and dated -- guide-reports.js.
+    guideReports: o.guideReports || null,
     // THE CHART FIRST, THE RESEARCH SECOND. The charted ones come out of the pack this function
     // already fetched; the wiring adds the profile's prose. Each line says which it is, so when
     // navigation.hazards retires this half simply goes empty and the sentence still stands.
