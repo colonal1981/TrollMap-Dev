@@ -1,0 +1,250 @@
+{
+ "_": "SCDNR attractors on Lake Marion and Lake Moultrie, from the live Worker /attractors?state=SC on 2026-10-01. Frozen for test/scc-attractor-notes.test.js. Personal use only, not for distribution or resale; not for navigation.",
+ "points": [
+  {
+   "name": "Fish Attractor #21 Lake Marion",
+   "wb": "Lake Marion",
+   "lat": 33.518872,
+   "lon": -80.205337,
+   "type": "brush/trees"
+  },
+  {
+   "name": "Fish Attractor #22 Lake Marion",
+   "wb": "Lake Marion",
+   "lat": 33.414311,
+   "lon": -80.152307,
+   "type": "brush/trees"
+  },
+  {
+   "name": "Fish Attractor #23 Lake Marion",
+   "wb": "Lake Marion",
+   "lat": 33.426153,
+   "lon": -80.324913,
+   "type": "brush/trees"
+  },
+  {
+   "name": "Fish Attractor #24 Lake Marion",
+   "wb": "Lake Marion",
+   "lat": 33.554564,
+   "lon": -80.502665,
+   "type": "brush/trees"
+  },
+  {
+   "name": "Fish Attractor #25 Lake Marion",
+   "wb": "Lake Marion",
+   "lat": 33.431842,
+   "lon": -80.224254,
+   "type": "manmade - PVC"
+  },
+  {
+   "name": "Fish Attractor #26 Lake Marion",
+   "wb": "Lake Marion",
+   "lat": 33.437423,
+   "lon": -80.281303,
+   "type": "manmade - PVC"
+  },
+  {
+   "name": "Fish Attractor #27 Lake Marion",
+   "wb": "Lake Marion",
+   "lat": 33.430123,
+   "lon": -80.322133,
+   "type": "manmade - PVC"
+  },
+  {
+   "name": "Fish Attractor #28 Lake Marion",
+   "wb": "Lake Marion",
+   "lat": 33.433923,
+   "lon": -80.362273,
+   "type": "manmade - PVC"
+  },
+  {
+   "name": "Fish Attractor #29 Lake Marion",
+   "wb": "Lake Marion",
+   "lat": 33.448033,
+   "lon": -80.393273,
+   "type": "manmade - PVC"
+  },
+  {
+   "name": "Fish Attractor #30 Lake Marion",
+   "wb": "Lake Marion",
+   "lat": 33.464873,
+   "lon": -80.419973,
+   "type": "manmade - PVC"
+  },
+  {
+   "name": "Fish Attractor #31 Lake Marion",
+   "wb": "Lake Marion",
+   "lat": 33.502813,
+   "lon": -80.460024,
+   "type": "manmade - PVC"
+  },
+  {
+   "name": "Fish Attractor #32 Lake Marion",
+   "wb": "Lake Marion",
+   "lat": 33.524423,
+   "lon": -80.478195,
+   "type": "manmade - PVC"
+  },
+  {
+   "name": "Fish Attractor #33 Lake Marion",
+   "wb": "Lake Marion",
+   "lat": 33.547784,
+   "lon": -80.492665,
+   "type": "manmade - PVC"
+  },
+  {
+   "name": "Fish Attractor #34 Lake Marion",
+   "wb": "Lake Marion",
+   "lat": 33.517421,
+   "lon": -80.211669,
+   "type": "manmade - PVC"
+  },
+  {
+   "name": "Fish Attractor #35 Lake Marion",
+   "wb": "Lake Marion",
+   "lat": 33.48875,
+   "lon": -80.303445,
+   "type": "manmade - PVC"
+  },
+  {
+   "name": "Fish Attractor #36 Lake Marion",
+   "wb": "Lake Marion",
+   "lat": 33.497056,
+   "lon": -80.306366,
+   "type": "manmade - PVC"
+  },
+  {
+   "name": "Fish Attractor #1 Lake Moultrie",
+   "wb": "Lake Moultrie",
+   "lat": 33.306588,
+   "lon": -79.976871,
+   "type": "brush/trees"
+  },
+  {
+   "name": "Fish Attractor #10 Lake Moultrie",
+   "wb": "Lake Moultrie",
+   "lat": 33.314028,
+   "lon": -80.007231,
+   "type": "manmade - PVC"
+  },
+  {
+   "name": "Fish Attractor #11 Lake Moultrie",
+   "wb": "Lake Moultrie",
+   "lat": 33.233338,
+   "lon": -80.028229,
+   "type": "manmade - PVC"
+  },
+  {
+   "name": "Fish Attractor #12 Lake Moultrie",
+   "wb": "Lake Moultrie",
+   "lat": 33.257918,
+   "lon": -80.025509,
+   "type": "manmade - PVC"
+  },
+  {
+   "name": "Fish Attractor #13 Lake Moultrie",
+   "wb": "Lake Moultrie",
+   "lat": 33.254229,
+   "lon": -80.044478,
+   "type": "manmade - PVC"
+  },
+  {
+   "name": "Fish Attractor #14 Lake Moultrie",
+   "wb": "Lake Moultrie",
+   "lat": 33.274589,
+   "lon": -80.080447,
+   "type": "manmade - PVC"
+  },
+  {
+   "name": "Fish Attractor #15 Lake Moultrie",
+   "wb": "Lake Moultrie",
+   "lat": 33.28851,
+   "lon": -80.082637,
+   "type": "manmade - PVC"
+  },
+  {
+   "name": "Fish Attractor #16 Lake Moultrie",
+   "wb": "Lake Moultrie",
+   "lat": 33.31734,
+   "lon": -80.125696,
+   "type": "manmade - PVC"
+  },
+  {
+   "name": "Fish Attractor #17 Lake Moultrie",
+   "wb": "Lake Moultrie",
+   "lat": 33.334949,
+   "lon": -80.048949,
+   "type": "manmade - PVC"
+  },
+  {
+   "name": "Fish Attractor #18 Lake Moultrie",
+   "wb": "Lake Moultrie",
+   "lat": 33.330589,
+   "lon": -80.03876,
+   "type": "manmade - PVC"
+  },
+  {
+   "name": "Fish Attractor #19 Lake Moultrie",
+   "wb": "Lake Moultrie",
+   "lat": 33.278448,
+   "lon": -80.01295,
+   "type": "brush/trees"
+  },
+  {
+   "name": "Fish Attractor #2 Lake Moultrie",
+   "wb": "Lake Moultrie",
+   "lat": 33.300008,
+   "lon": -79.978511,
+   "type": "brush/trees"
+  },
+  {
+   "name": "Fish Attractor #3 Lake Moultrie",
+   "wb": "Lake Moultrie",
+   "lat": 33.299778,
+   "lon": -79.987311,
+   "type": "brush/trees"
+  },
+  {
+   "name": "Fish Attractor #4 Lake Moultrie",
+   "wb": "Lake Moultrie",
+   "lat": 33.239618,
+   "lon": -80.025119,
+   "type": "brush/trees"
+  },
+  {
+   "name": "Fish Attractor #5 Lake Moultrie",
+   "wb": "Lake Moultrie",
+   "lat": 33.37559,
+   "lon": -80.075059,
+   "type": "brush/trees"
+  },
+  {
+   "name": "Fish Attractor #6 Lake Moultrie",
+   "wb": "Lake Moultrie",
+   "lat": 33.3844,
+   "lon": -80.079389,
+   "type": "brush/trees"
+  },
+  {
+   "name": "Fish Attractor #7 Lake Moultrie",
+   "wb": "Lake Moultrie",
+   "lat": 33.38659,
+   "lon": -80.080639,
+   "type": "brush/trees"
+  },
+  {
+   "name": "Fish Attractor #8 Lake Moultrie",
+   "wb": "Lake Moultrie",
+   "lat": 33.34973,
+   "lon": -80.096008,
+   "type": "brush/trees"
+  },
+  {
+   "name": "Fish Attractor #9 Lake Moultrie",
+   "wb": "Lake Moultrie",
+   "lat": 33.33017,
+   "lon": -80.088778,
+   "type": "manmade - PVC"
+  }
+ ]
+}

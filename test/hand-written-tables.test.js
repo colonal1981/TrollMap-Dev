@@ -275,6 +275,12 @@ const DECLARED = [
    + '"the test that a preset has not eaten the water the app exists for". The first cut of that '
    + 'filter hid Wittee and Ferry, the two lakes it was built for. Eleven of Ryan\'s home waters, '
    + 'and no registry field says "never hide this", so it is legitimately hand-written.'],
+  // Keyed by SCDNR attractor NAMES, not waters, and it refuses nothing: a point with no entry
+  // simply has no note. Added 2026-10-01 on Ryan's "both sound good" (APP_CHANGE_REQUESTS 43).
+  ['js/data/scc-attractor-notes.js', 'SCC_ATTRACTOR_NOTES', 32, 'data',
+   'Santee Cooper Country\'s depth, buoy and comment for 32 SCDNR attractors on Marion and '
+   + 'Moultrie, read off their page 2026-10-01. Shown under SCDNR\'s point, labelled as theirs. '
+   + 'scc-attractor-notes.test.js holds every pair mutual against a frozen copy of the feed.'],
 ];
 
 /**

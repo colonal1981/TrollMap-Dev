@@ -3,6 +3,7 @@ import { workerBase } from '../data/lake-registry.js';
 import { esc } from '../utils/escape.js';
 import { setBanner } from '../core/map-init.js';
 import { registerLayer, isVisible, wireAll } from '../core/layer-registry.js';
+import { sccNoteFor, SCC_ATTRACTOR_SOURCE } from '../data/scc-attractor-notes.js';
 
 // This file used to carry THREE verbatim copies of the same state machine -- BANK_LAYER /
 // BANK_VISIBLE / BANK_DATA, then PADDLE_*, then ATTRACTOR_* -- plus three near-identical
@@ -35,7 +36,22 @@ function getLatLng(rec) {
   return [Number(lat), Number(lon)];
 }
 
-function buildPopup(name, type, lat, lon, icon, accentColor) {
+// Santee Cooper Country's line for one Marion or Moultrie attractor: their site number, depth, buoy
+// and comment, verbatim and labelled as theirs, under SCDNR's point. See data/scc-attractor-notes.js.
+function sccNoteHtml(n) {
+  if (!n) return '';
+  const where = `${Math.round(n.offset.m)} m ${n.offset.dir} of this point`;
+  return `
+      <div style="margin-top:6px;padding-top:6px;border-top:1px solid #ccc;font-size:12px">
+        <b>${esc(SCC_ATTRACTOR_SOURCE.label)}</b> site ${esc(n.scc)}, page read ${esc(SCC_ATTRACTOR_SOURCE.checked)}<br>
+        Depth ${esc(n.depthFt)} ft &middot; buoy ${n.buoy === 'NO' ? '<b>no</b>' : 'yes'}<br>
+        &ldquo;${esc(n.note)}&rdquo;<br>
+        ${n.material ? `${esc(n.material)}<br>` : ''}
+        <span style="color:#555">Their coordinate is ${esc(where)}.</span>
+      </div>`;
+}
+
+function buildPopup(name, type, lat, lon, icon, accentColor, extraHtml = '') {
   const safeName = esc(name || 'Unnamed').replace(/'/g, "\\'");
   const repositionBtn = window.enableSpotRepositioning
     ? `<button onclick="window.enableSpotRepositioning(this, '${safeName}')" class="small warn" style="margin-top:8px">✥ Re-Position This Spot</button>`
@@ -46,6 +62,7 @@ function buildPopup(name, type, lat, lon, icon, accentColor) {
       <b>${icon} ${esc(name || 'Unnamed')}</b><br>
       <span style="font-family:monospace;font-size:11px">${lat.toFixed(5)}, ${lon.toFixed(5)}</span>
       <div style="color:${accentColor};font-size:12px;margin-top:4px">${esc(type || '')}</div>
+      ${extraHtml}
       ${repositionBtn}
     </div>
   `;
@@ -197,7 +214,7 @@ const LAYERS = [
         fillColor: color, fillOpacity: 0.95,
       });
       m.bindTooltip(`${ico} ${esc(h.name || 'Attractor')}`, { sticky: true, direction: 'top', opacity: 0.95 });
-      m.bindPopup(buildPopup(h.name || 'Attractor', type, lat, lon, ico, color));
+      m.bindPopup(buildPopup(h.name || 'Attractor', type, lat, lon, ico, color, sccNoteHtml(sccNoteFor(h))));
       return m;
     },
   },
