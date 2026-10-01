@@ -2975,9 +2975,36 @@ export function selectCandidates(runs, o) {
   // candidate has no `drift`, so every lake key is identical and the behaviour there is exactly
   // what it was — the 1,750-run Wateree measurement above still holds.
   const lineKey = (c) => (c.drift && c.drift.side) || '';
+  // ── TWO LANES AT DIFFERENT DEPTHS ARE NOT THE SAME WATER ──────────────────────────────────
+  //
+  // Ryan, 2026-10-01, on an October striper plan for Lake Marion from Rowland Subdivision:
+  // *"the depths seem to be way to shallow unless i am missing something"*. He was not. Every
+  // one of the 12 lanes offered was outside the 20-30 ft band, and three of them touched 1 ft,
+  // so the whole-pass rule put surface baits on most of the day. The deep water was there and
+  // this loop threw it away:
+  //
+  //     #1540  21-29 ft, 605 m from the ramp   dropped for #1660 (1-15 ft), starts 280 m apart
+  //     #6761  22-24 ft, 509 m                 dropped for #1660 (1-15 ft), starts 179 m apart
+  //     #7955  22-29 ft, 1,366 m               dropped for #473 (7-18 ft), starts 579 m apart
+  //     #6810  19-25 ft, 608 m                 dropped for #473 (7-18 ft), corridor overlap 0.92
+  //
+  // Both tests below were written for nested contours a few feet apart, the 15-16-17-18 ft runs
+  // through one pocket, and the measured case above (23 ft and 25.9 ft) is that. On a steep
+  // bank the 3 ft line and the 25 ft line are inside 100 m of each other too, and they are not
+  // one piece of water to a man choosing a bait for it. So a lane is the same water as one
+  // already kept only if the WATER under them overlaps as well: each one's shallowest is
+  // shallower than the other's deepest. No number is added; the two ranges are measured on both
+  // lanes the same way. Where either range is missing the old tests stand alone, as before.
+  // Lanes only: a river drift is already told apart by its side, and nothing here measured rivers.
+  const sameWater = (k, c) => {
+    if (c.drift || k.drift) return true;
+    const a = [k.depthMinFt, k.depthMaxFt], b = [c.depthMinFt, c.depthMaxFt];
+    if (![...a, ...b].every(Number.isFinite)) return true;
+    return a[0] < b[1] && b[0] < a[1];
+  };
   for (const c of out) {
     const duplicate = kept.some((k) =>
-      lineKey(k) === lineKey(c) && (
+      lineKey(k) === lineKey(c) && sameWater(k, c) && (
         metresBetween(k.start, c.start) < apart
         || overlapFraction(c.coordinates, k.coordinates, corridorM) >= maxOverlap
         || overlapFraction(k.coordinates, c.coordinates, corridorM) >= maxOverlap));

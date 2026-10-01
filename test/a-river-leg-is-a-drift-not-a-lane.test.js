@@ -248,9 +248,15 @@ test('and a lane still dedupes against a lane, because a lake has no side to pic
   // scores, same numbers -- the only difference is whether a candidate knows which line it is on.
   const { river, coords, structures } = scoredRiver();
   const drifts = riverDriftRuns(river, { structures, slug: 'test_river', laterals: LATERALS });
+  // AND THE WATER UNDER THEM, since 2026-10-01. A lane now dedupes against a lane only where the
+  // water under the two overlaps (two-lanes-at-different-depths-are-not-one.test.js: on Marion a
+  // 21-29 ft lane was being dropped for a 1-15 ft one). The laterals here sit over different water
+  // -- bank and channel -- so stripping the side alone would now be stripping two things. The
+  // measured range goes too, which leaves the side as the only difference, as this test intends.
   const asLanes = drifts.map((d) => {
     const props = { ...d.properties };
     delete props.drift;
+    delete props.envelope_line_ft;
     return { ...d, properties: props };
   });
   const withSides = selectCandidates(drifts, SELECT(structures, coords[0])).length;
