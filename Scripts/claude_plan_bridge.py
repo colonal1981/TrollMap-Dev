@@ -151,6 +151,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
             self.send_header("Access-Control-Allow-Headers", "Content-Type")
             self.send_header("Access-Control-Allow-Private-Network", "true")
+            # The same answer under the name the Local Network Access draft briefly used, for a
+            # preflight that asks with it. The app sends no preflight since 2026-10-01; this is for
+            # any other caller that does.
+            self.send_header("Access-Control-Allow-Local-Network", "true")
             self.send_header("Access-Control-Max-Age", "600")
 
     def _send(self, status, body):

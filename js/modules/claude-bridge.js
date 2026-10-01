@@ -61,8 +61,18 @@ export function claudeFirstAsker(fallback, o = {}) {
     if (st.up) {
       say(`Asking Claude (${st.model || 'the bridge'}) on this PC — a plan takes a minute or two.`);
       try {
+        // A SIMPLE REQUEST, SO CHROME SENDS NO PREFLIGHT. Ryan, 2026-10-01: "I am getting the same
+        // error... the plan i uploaded less than hour ago ran on claude just fine", with both "Local
+        // network" and "Apps on device" allowed for the site. The GET to /health went through and
+        // the POST to /ask was refused ("Permission was denied ... `loopback` address space") --
+        // same page, same permission, same Chrome process (154, started 1:55 pm, which wrote his
+        // 2:10 pm plan). The one difference between the two requests was the preflight a JSON
+        // Content-Type forces. With no header a string body goes as text/plain, which needs none,
+        // and the bridge reads the body as JSON whatever it is labelled. (A second bridge had also
+        // been started on the port at 3:21 pm, before the single-bridge fix; it may have been part
+        // of it too. Not proven either way.)
         const r = await fetchImpl(`${url}/ask`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          method: 'POST',
           body: JSON.stringify({ system: req.system, user: req.user }),
         });
         const text = await r.text();

@@ -91,6 +91,24 @@ test('the bridge dropping mid-answer falls back rather than failing the plan', a
   assert.match(out.meta.claudeBridge, /stopped answering/);
 });
 
+test('the ask is a simple request, so the browser sends no preflight to the loopback address', async () => {
+  // 2026-10-01: the GET to /health went through and the preflighted POST to /ask was refused by
+  // Chrome's local network check, with the site's permissions allowed.
+  const seen = [];
+  const fetchImpl = async (u, init = {}) => {
+    seen.push({ u, init });
+    if (u.endsWith('/health')) return new Response(JSON.stringify({ ok: true, model: 'sonnet', claude: true }), { status: 200 });
+    return new Response(JSON.stringify({ choices: [{ message: { content: '{"ok":1}' } }] }), { status: 200 });
+  };
+  const out = await claudeFirstAsker(async () => ({ content: 'gemini' }), { fetchImpl })(REQ);
+  assert.equal(out.content, '{"ok":1}');
+  const ask = seen.find((s) => s.u.endsWith('/ask'));
+  assert.equal(ask.init.method, 'POST');
+  assert.equal(ask.init.headers, undefined);
+  assert.equal(typeof ask.init.body, 'string');
+  assert.deepEqual(Object.keys(JSON.parse(ask.init.body)).sort(), ['system', 'user']);
+});
+
 test('both planners ask through it, and the app and the bridge agree on the port', () => {
   for (const f of ['js/modules/smart-plan-v2-wiring.js', 'js/modules/plan-water-ui.js']) {
     const src = fs.readFileSync(path.join(ROOT, f), 'utf8');
