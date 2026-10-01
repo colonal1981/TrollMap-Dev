@@ -15,10 +15,12 @@
  *      the ranking left none -- see selectCandidates() in plan-candidates.js;
  *   3. the trip report shows what the plan read.
  * Gathering is the Worker's (Worker/guide-reports.js); reading the water out of a report is
- * utils/report-water.js.
+ * utils/report-water.js. A report Ryan read himself and pasted in joins them here, on every
+ * planner, through askGuideReports() -- see pasted-reports.js.
  */
 
 import { supersede, reportWaterForPlan, SANTEE_LAKES, placeNamesIn, namesOnlyOn } from '../utils/report-water.js';
+import { loadPasted, pastedForWater, pastedAsReports } from './pasted-reports.js';
 
 /**
  * The names on only one of the two Santee Cooper charts, for santeeLakesIn() in report-water.js.
@@ -53,11 +55,23 @@ const lakeWord = (slug) => (slug === 'lake_marion' ? 'Marion' : slug === 'lake_m
 /**
  * GET /guide-reports/<slug> for the plan's day. Never throws: a failure comes back as `{error}` and
  * the plan says the reports could not be read, rather than planning as though there were none.
+ *
+ * The reports Ryan pasted for this water are added to whatever the Worker answered -- and still
+ * reach the plan when the Worker could not be read (`{error, reports}`). `pasted` is the list to
+ * use; left out, this device's are read (none under node).
  */
-export async function askGuideReports({ worker, slug, date, fetchImpl, timeoutMs = 60000 } = {}) {
+export async function askGuideReports({ worker, slug, date, fetchImpl, timeoutMs = 60000, pasted } = {}) {
   if (!worker || !slug) return { error: 'no Worker or no water to ask about' };
+  const pastedAsk = Array.isArray(pasted) ? Promise.resolve(pasted) : loadPasted();
+  const mine = async (sourceReports) => pastedAsReports(pastedForWater(await pastedAsk, slug), date, sourceReports);
+  // The water asked about rides on every answer: lakeOf() reads it to tell Marion's water from
+  // Moultrie's, and a paste can reach the plan on an answer the Worker never gave.
+  const withMine = async (out) => {
+    const m = await mine([]);
+    return m.length ? { slug, ...out, reports: supersede(m) } : { slug, ...out };
+  };
   const f = fetchImpl || (typeof fetch === 'function' ? fetch : null);
-  if (!f) return { error: 'no fetch' };
+  if (!f) return withMine({ error: 'no fetch' });
   const ctl = typeof AbortController === 'function' ? new AbortController() : null;
   const t = ctl ? setTimeout(() => ctl.abort(), timeoutMs) : null;
   // On Marion and Moultrie the two charts' place names are read alongside, to tell which lake a
@@ -67,12 +81,14 @@ export async function askGuideReports({ worker, slug, date, fetchImpl, timeoutMs
     const q = date ? `?date=${encodeURIComponent(date)}` : '';
     const r = await f(`${String(worker).replace(/\/+$/, '')}/guide-reports/${encodeURIComponent(slug)}${q}`,
       ctl ? { signal: ctl.signal } : undefined);
-    if (!r || !r.ok) return { error: `the Worker answered HTTP ${r ? r.status : '?'}` };
+    const places = placesAsk ? { places: await placesAsk } : {};
+    if (!r || !r.ok) return withMine({ error: `the Worker answered HTTP ${r ? r.status : '?'}`, ...places });
     const body = await r.json();
-    return { ...body, reports: supersede(body.reports || []), ...(placesAsk ? { places: await placesAsk } : {}) };
+    const theirs = body.reports || [];
+    return { slug, ...body, reports: supersede([...theirs, ...await mine(theirs)]), ...places };
   } catch (e) {
-    return { error: e && e.name === 'AbortError' ? `no answer in ${Math.round(timeoutMs / 1000)} s`
-      : String((e && e.message) || e) };
+    return withMine({ error: e && e.name === 'AbortError' ? `no answer in ${Math.round(timeoutMs / 1000)} s`
+      : String((e && e.message) || e), ...(placesAsk ? { places: await placesAsk } : {}) });
   } finally {
     if (t) clearTimeout(t);
   }
@@ -87,7 +103,7 @@ export async function askGuideReports({ worker, slug, date, fetchImpl, timeoutMs
  * it. Where it is null the comparison is against the chart as it stands, and each row says so.
  */
 export function reportWaterForLanes(guide, species, planDate, offsetFt = null) {
-  if (!guide || guide.error) return [];
+  if (!guide || !(guide.reports || []).length) return [];
   const off = Number.isFinite(Number(offsetFt)) && offsetFt !== null ? Number(offsetFt) : null;
   return reportWaterForPlan(guide.reports, species, planDate, lakeOf(guide)).map((w) => ({
     ...w,
@@ -116,12 +132,15 @@ function whenOf(r) {
 export function guideReportsBlock(guide, species, planDate) {
   if (guide == null) return '';
   const head = '\nWHAT THE GUIDES ON THIS WATER REPORTED\n';
-  if (guide.error) return `${head}They could not be read today (${guide.error}). Say so in \`scoutNotes\`; do not write as though nobody reported.\n`;
-  if (guide.none) return `${head}No guide sources are listed for this water.\n`;
+  const cannot = guide.error ? `They could not be read today (${guide.error}). Say so in \`scoutNotes\`; do not write as though nobody reported.` : null;
+  const any = (guide.reports || []).length > 0;
+  if (cannot && !any) return `${head}${cannot}\n`;
+  if (guide.none && !any) return `${head}No guide sources are listed for this water.\n`;
   const live = (guide.reports || []).filter((r) => !r.supersededBy);
   const old = (guide.reports || []).filter((r) => r.supersededBy);
   const failed = (guide.checked || []).filter((c) => !c.ok);
   const L = [head.trimEnd()];
+  if (cannot) L.push(`The guides' sources: ${cannot} What Ryan pasted himself is below.`);
   L.push(`Read ${String(guide.readAt || '').slice(0, 10) || 'today'} from the sources below, VERBATIM. These are people who were on this water. `
     + `Each says who wrote it and when, and one that states no date says so. Weigh each by its date against ${planDate || 'the day planned'}, `
     + `and say in \`scoutNotes\` which you used and how old each was. A report about the whole system (Santee Cooper is Marion and Moultrie) `
@@ -130,6 +149,10 @@ export function guideReportsBlock(guide, species, planDate) {
     + 'water (their median depth is in it) carry it as `reportWater`, and where the ranking had offered none, the best lane over it was added and says `offeredForReport`. '
     + 'That is the depth of the WATER the guides found fish over, not the depth to run a bait at. '
     + 'A report marked "same month, an earlier year" is history: read it for the pattern this month usually brings; its water marks no lane.');
+  if (live.some((r) => r.pasted)) {
+    L.push('A report headed "Pasted by Ryan" is one he read himself -- a post, a text, a page -- and pasted in, with the date he gave it '
+      + 'and, where he named them, who wrote it and which lake it is about. Weigh it as you would the guides\' own: by its date and by who wrote it.');
+  }
   const lake = lakeOf(guide);
   if (lake) {
     L.push(`On Marion and Moultrie a depth of water counts for the lanes only from a sentence that says which lake it is about: by name, `
@@ -140,6 +163,7 @@ export function guideReportsBlock(guide, species, planDate) {
   for (const r of live) {
     L.push('');
     L.push(`--- ${r.label}${r.guides ? ` (${r.guides})` : ''} -- ${whenOf(r)}${r.via ? `, ${r.via}` : ''}${r.role && r.role !== 'newest' ? ` -- ${r.role}` : ''}`
+      + `${r.aboutLake ? ` -- about ${r.aboutLake === 'lake_marion' ? 'Lake Marion' : 'Lake Moultrie'}, he said` : ''}`
       + `${r.outdatedBy ? ` -- older than "${r.outdatedBy}" by the same guides, so printed whole but its depths of water are not counted` : ''}`);
     if (r.url) L.push(r.url);
     if (r.note) L.push(r.note);

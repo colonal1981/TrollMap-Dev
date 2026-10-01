@@ -158,26 +158,35 @@ export function namesOnlyOn(marionNames, moultrieNames) {
  *
  * With `lake` ({ slug, places }) on Marion or Moultrie, only a sentence about THAT lake counts, and
  * each row says which lake and how that was known (`lake`, `lakeFrom`) -- see santeeLakesIn().
+ *
+ * `docLake` is the lake the whole text is about when someone who knows has said so: Ryan, pasting a
+ * report (pasted-reports.js). Every paragraph starts on it; a sentence or heading that names the
+ * other lake is still the other lake's.
  */
-export function reportWaterFor(text, species, lake = null) {
+export function reportWaterFor(text, species, lake = null, docLake = null) {
   const target = speciesRe(species);
   const sys = lake && SANTEE_LAKES.includes(lake.slug) ? lake : null;
   const one = (set) => (set.size === 1 ? [...set][0] : null);
   const out = [];
   let heading = null;                 // null: no heading yet; [] : a heading that names no fish
-  let headingLake = null;
+  const said = sys && SANTEE_LAKES.includes(docLake) ? docLake : null;
+  const SAID_BY = "Ryan's own note on it";
+  let headingLake = said;
+  let headingFrom = said ? SAID_BY : null;
   let prevNamed = false;
   for (const raw of String(text || '').split('\n')) {
     let line = raw.trim();
     if (!line) continue;
     if (isHeading(line)) {
       heading = target.test(line) ? ['target'] : ANY_FISH.test(line) ? ['other'] : [];
-      headingLake = sys ? one(santeeLakesIn(line, sys.places)) : null;
+      const own = sys ? one(santeeLakesIn(line, sys.places)) : null;
+      headingLake = own || said;
+      headingFrom = own ? 'its heading' : said ? SAID_BY : null;
       prevNamed = false;
       continue;
     }
     let paraLake = headingLake;
-    let paraFrom = headingLake ? 'its heading' : null;
+    let paraFrom = headingFrom;
     // SCDNR writes each fish as a paragraph that opens with its name: "Striped bass: Captain ...".
     // And each part of a lake the same way: "Upper Lake Marion: At the top of the upper lake, ...".
     const label = line.match(/^([A-Z][A-Za-z &/'-]{2,40}):\s+(.+)$/);
@@ -272,7 +281,7 @@ export function reportWaterForPlan(reports, species, planDate, lake = null) {
     if (r.supersededBy || r.outdatedBy || !isCurrentReport(r, planDate)) continue;
     for (const sp of [].concat(species || [])) {
       const seen = new Set();
-      for (const w of reportWaterFor(r.text, sp, lake)) {
+      for (const w of reportWaterFor(r.text, sp, lake, r.aboutLake || null)) {
         const k = `${w.ft[0]}-${w.ft[1]}`;
         if (seen.has(k)) continue;
         seen.add(k);

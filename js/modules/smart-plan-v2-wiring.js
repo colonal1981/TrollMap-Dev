@@ -18,6 +18,7 @@ import { getLoadedAccessIndex, registryRecordFor } from '../data/access-index.js
 import { getSeason, seasonNote, calendarSeason } from '../data/species-intel.js';
 import { lakeSurfaceTemp, poolOffsetFt } from '../utils/water-conditions.js';
 import { askGuideReports, reportWaterForLanes } from './guide-reports.js';
+import { wirePasteBox } from './pasted-reports.js';
 import { depthBandFor, usableAhFrom, researchIntel, structureWeights, oxygenFloorFt,
          describeDepthBand, fishDepthEvidence, conditionsFrom, fetchRegistrySpecies,
          registryIdentity, thermoclineNormFor } from './plan-inputs.js';
@@ -784,6 +785,11 @@ export function wireSmartPlanV2() {
   // v1 binds this button from a setTimeout in smart-plan.js, so the flag is set here and checked
   // there rather than trying to removeEventListener a handler nobody kept a reference to.
   window.__smartPlanV2Owns = true;
+  // The "A report you read" card -- dated today by default, for the water picked above.
+  wirePasteBox({
+    slugOf: () => resolveR2Key($('planLake')?.value || ''),
+    dateOf: () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); },
+  });
   const btn = $('runSmartPlanBtn');
   if (!btn || btn.dataset.v2wired) return;
   btn.dataset.v2wired = '1';

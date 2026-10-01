@@ -869,6 +869,39 @@
               </div>
             </div>
 
+            <!-- A REPORT HE READ HIMSELF. Ryan, 2026-10-01: "we could use this for current facebook or
+                 other posts". Read by every planner with the guides' reports -- pasted-reports.js. -->
+            <details id="pastedReportsCard" class="card plan-section" style="margin-top:8px">
+              <summary style="cursor:pointer;font-size:12px;font-weight:700;color:var(--accent2);text-transform:uppercase;letter-spacing:.05em">
+                📝 A report you read <span id="pastedReportsCount" style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)"></span>
+              </summary>
+              <p style="font-size:11px;color:var(--muted);margin:6px 0">A Facebook post, a text, a page — anything about the water picked above. The plan reads it with the guides' reports, by the date you give it.</p>
+              <textarea id="pastedReportText" rows="5" placeholder="Paste the report here" style="width:100%"></textarea>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px">
+                <div>
+                  <label for="pastedReportDate">Date it was written</label>
+                  <input type="date" id="pastedReportDate" style="width:100%">
+                </div>
+                <div>
+                  <label for="pastedReportFrom">Who wrote it</label>
+                  <input id="pastedReportFrom" placeholder="Santee Cooper Country, a friend…" style="width:100%">
+                </div>
+              </div>
+              <div id="pastedReportLakeWrap" style="display:none;margin-top:6px">
+                <label for="pastedReportLake">Which lake is it about?</label>
+                <select id="pastedReportLake" style="width:100%">
+                  <option value="">It says in the text, or both lakes</option>
+                  <option value="lake_marion">Lake Marion</option>
+                  <option value="lake_moultrie">Lake Moultrie</option>
+                </select>
+              </div>
+              <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
+                <button id="pastedReportSave" type="button" class="small primary" style="font-size:11px">Add it</button>
+                <span id="pastedReportStatus" style="font-size:11px;color:var(--muted)"></span>
+              </div>
+              <div id="pastedReportList" style="margin-top:6px"></div>
+            </details>
+
             <!-- Hidden fields auto-populated by Smart Plan -->
             <input type="hidden" id="planTargetDepth">
             <input type="hidden" id="planPattern" value="S-curves">
