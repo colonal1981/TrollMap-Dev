@@ -355,7 +355,7 @@ test('the route: his five lakes, a day\'s copy from KV, and fresh only with the 
   const env = { KV: { get: async (k) => (store.has(k) ? JSON.parse(store.get(k)) : null),
                       put: async (k, v) => store.set(k, v) } };
   const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
-  store.set(`guide:reports:v3:lake_marion:2026-10:${day}`, JSON.stringify({ reports: [{ label: 'kept' }] }));
+  store.set(`guide:reports:v4:lake_marion:2026-10:${day}`, JSON.stringify({ reports: [{ label: 'kept' }] }));
   const get = (q) => handleGuideReports(new Request(`https://w/guide-reports/lake_marion${q}`), env, new URL(`https://w/guide-reports/lake_marion${q}`));
   const hit = await (await get('?date=2026-10-02')).json();
   assert.equal(hit.cached, true);
@@ -396,7 +396,9 @@ test('a newer post seen only as a preview in search goes in, labelled, and super
     assert.match(pv.label, /search preview only/);
     assert.equal(g.reports.find((r) => r.url === AUG_URL).published, '2026-08-05');
     const s = supersede(g.reports);
-    assert.deepEqual(s.filter((r) => !r.supersededBy).map((r) => r.kind).sort(), ['facebook', 'scdnr']);
+    // The preview supersedes nothing; the September page supersedes August's post.
+    assert.deepEqual(s.filter((r) => !r.supersededBy).map((r) => r.kind).sort(), ['facebook', 'page', 'scdnr']);
+    assert.equal(s.find((r) => r.url === AUG_URL).supersededBy, 'Santee Cooper Country fishing report');
     assert.deepEqual(reportWaterForPlan(s, 'Striped Bass', '2026-10-02').map((w) => w.ft), [[30, 45]]);
     assert.match(guideReportsBlock({ reports: s, checked: g.checked }, ['Striped Bass'], '2026-10-02'),
       /NOT DATED: a search preview of a post naming 2026-10/);
@@ -421,4 +423,5 @@ test('both planners pass the reports, Smart Plan passes the water to the lanes, 
   assert.match(pw, /guideReports:/);
   assert.match(live(read('Worker/trollmap-worker.js')), /handleGuideReports\(request, env, url\)/);
   assert.deepEqual(monthsNamed('sept and October'), ['September', 'October']);
+  assert.deepEqual(monthsNamed('in September. Fish may also move shallower. MAY 2026'), ['September', 'May']);
 });

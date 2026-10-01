@@ -94,12 +94,18 @@ export const GUIDE_SOURCES = {
 
 // ── parsers (pure, tested) ──────────────────────────────────────────────────────────────────
 
-const MONTH_RE = /\b(January|February|March|April|May|June|July|August|September|Sept|October|November|December)\b/gi;
+// "May" and "March" are also a verb, so they count only capitalised ("Fish may also move
+// shallower" put May on SCDNR's September Murray section, 2026-10-01). The rest are unambiguous in
+// any case, which keeps Wolfe's "sept".
+const MONTH_RE = /\b(January|February|April|June|July|August|September|Sept|October|November|December)\b/gi;
+const MONTH_VERB_RE = /\b(May|March|MAY|MARCH)\b/g;
 
 /** Month names a text uses, full form, in the order they first appear. */
 export function monthsNamed(text) {
   const out = [];
-  for (const m of String(text || '').matchAll(MONTH_RE)) {
+  const t = String(text || '');
+  const hits = [...t.matchAll(MONTH_RE), ...t.matchAll(MONTH_VERB_RE)].sort((a, b) => a.index - b.index);
+  for (const m of hits) {
     const w = m[1].toLowerCase() === 'sept' ? 'September'
       : m[1][0].toUpperCase() + m[1].slice(1).toLowerCase();
     if (!out.includes(w)) out.push(w);
@@ -450,8 +456,8 @@ export async function handleGuideReports(request, env, url) {
   const slug = mm[1];
   const date = url.searchParams.get('date') || dayEastern();
   // v2 since the search preview was added (2026-10-01): a day kept by v1 has no preview in it.
-  // v3 the same evening: the quoted search form and the live transcript scrape.
-  const key = `guide:reports:v3:${slug}:${String(date).slice(0, 7)}:${dayEastern()}`;
+  // v3 the same evening: the quoted search form and the live transcript scrape. v4: "may" is a verb.
+  const key = `guide:reports:v4:${slug}:${String(date).slice(0, 7)}:${dayEastern()}`;
   if (env.KV && !fresh) {
     const hit = await env.KV.get(key, 'json');
     if (hit) return json({ ...hit, cached: true });

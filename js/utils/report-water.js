@@ -151,8 +151,15 @@ export function supersede(reports) {
   for (const r of list) {
     const k = key(r);
     if (!k) continue;
-    const newer = list.find((o) => o !== r && key(o) === k && when(o) > when(r));
+    // A SEARCH PREVIEW DOES NOT PUSH A REPORT OUT OF THE PROMPT. It is a line or two of a post
+    // nobody could read, and on 2026-10-01 it pushed Santee Cooper Country's whole September page
+    // out. So the September page is still printed -- but it is no longer this month's word from
+    // those guides, so its water does not count for the lanes (`outdatedBy`). Its "10 to 15 ft of
+    // water" under "## Striper" was written in a closed season about drifting for catfish at night.
+    const newer = list.find((o) => o !== r && !o.preview && key(o) === k && when(o) > when(r));
     if (newer) r.supersededBy = newer.label;
+    const newest = list.find((o) => o !== r && key(o) === k && when(o) > when(r));
+    if (newest) r.outdatedBy = newest.label;
   }
   return list;
 }
@@ -163,7 +170,7 @@ export function supersede(reports) {
 export function reportWaterForPlan(reports, species, planDate) {
   const out = [];
   for (const r of reports || []) {
-    if (r.supersededBy || !isCurrentReport(r, planDate)) continue;
+    if (r.supersededBy || r.outdatedBy || !isCurrentReport(r, planDate)) continue;
     for (const sp of [].concat(species || [])) {
       const seen = new Set();
       for (const w of reportWaterFor(r.text, sp)) {

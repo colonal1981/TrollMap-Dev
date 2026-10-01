@@ -98,7 +98,8 @@ export function guideReportsBlock(guide, species, planDate) {
     + 'That is the depth of the WATER the guides found fish over, not the depth to run a bait at.');
   for (const r of live) {
     L.push('');
-    L.push(`--- ${r.label}${r.guides ? ` (${r.guides})` : ''} -- ${whenOf(r)}${r.via ? `, ${r.via}` : ''}${r.role && r.role !== 'newest' ? ` -- ${r.role}` : ''}`);
+    L.push(`--- ${r.label}${r.guides ? ` (${r.guides})` : ''} -- ${whenOf(r)}${r.via ? `, ${r.via}` : ''}${r.role && r.role !== 'newest' ? ` -- ${r.role}` : ''}`
+      + `${r.outdatedBy ? ` -- older than "${r.outdatedBy}" by the same guides, so printed whole but its depths of water are not counted` : ''}`);
     if (r.url) L.push(r.url);
     if (r.note) L.push(r.note);
     L.push(String(r.text || '').trim());
