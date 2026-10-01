@@ -976,6 +976,40 @@ function collapse(entries, swathM) {
   return [...groups.values()];
 }
 
+/** Put a kept piece's points into swath-sized buckets. See freshM(). */
+function coverWith(cover, xy, swathM) {
+  for (const q of xy) {
+    const k = Math.floor(q[0] / swathM) * 1e7 + Math.floor(q[1] / swathM);
+    if (!cover.has(k)) cover.set(k, []);
+    cover.get(k).push(q);
+  }
+}
+
+/**
+ * The longest unbroken stretch of `xy`, in metres, that is outside the swath of every point in
+ * `cover`. Measured the way collapse() measures "inside": a point within `swathM` of a kept point
+ * is covered, and a point within `swathM` is never more than one bucket away.
+ */
+function freshM(xy, cover, swathM) {
+  const covered = (a) => {
+    const gx = Math.floor(a[0] / swathM), gy = Math.floor(a[1] / swathM);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        const qs = cover.get((gx + dx) * 1e7 + (gy + dy));
+        if (qs) for (const q of qs) if (dist2(a, q) <= swathM) return true;
+      }
+    }
+    return false;
+  };
+  let best = 0, run = 0, prev = null;
+  for (const q of xy) {
+    if (covered(q)) { run = 0; prev = null; continue; }
+    if (prev) { run += dist2(prev, q); if (run > best) best = run; }
+    prev = q;
+  }
+  return best;
+}
+
 /**
  * Lanes in, pieces of water out.
  *
@@ -1017,95 +1051,128 @@ export function buildPieces(lanes, o) {
   for (const f of usable) {
     const p = f.properties;
     const step = p.envelope_step_m || 40;
-    const curve = reachCurve(p.envelope_ft, step, depths, clearFt);
-    if (!curve.size) continue;
-    // NO FALLBACK. A lane that cannot give `minM` at ANY depth is not a short piece of water, it
-    // is not a piece of water at all — and `minM` is HIS number for the day, not a constant, so
-    // wanting the short stuff means lowering it rather than having this quietly admit fragments.
+    // ── EVERY STRETCH OF THE LANE, NOT ONLY ITS DEEPEST ─────────────────────────────────────
     //
-    // The first cut did have a fallback, and it is worth saying what it cost: 3,539 entries
-    // instead of ~900, and the extra ones were all stubs. Stubs chain. Two stubs 40 m apart merge,
-    // that pair reaches a third, and the union walks the shoreline — one Wateree group came back
-    // holding 981 members, which is not a piece of water, it is most of the lake.
-    let best = deepestUsable(curve, minM);
-    if (!best) continue;
-    // A HOOK INTO A DEAD END IS NOT PART OF THE PASS. reachCurve trims where the water runs out
-    // for the BAIT; it has no idea the last stretch turns into a pocket he would have to pull the
-    // rods to get out of. See trimDeadEnd().
-    const cut = trimDeadEnd(f.geometry.coordinates, inWater, best.from, best.to, step);
-    if (cut.from > best.from || cut.to < best.to) {
-      best = { ...best, from: cut.from, to: cut.to, lengthM: (cut.to - cut.from) * step };
-      if (best.lengthM < minM) continue;   // what is left is not a pass by his own measure
+    // Ryan, 2026-10-01, on Pick Water from Rowland: *"i am not seeing any lanes in the deeper water
+    // in wyboo creek"*, and then *"if the lane maker follows the contour lines then why isn't there a
+    // lane on the 2 29ft contours that run that entire length... or the 2 28ft ones"*.
+    //
+    // There were lanes. This loop kept ONE stretch of each, the one carrying the deepest bait, and a
+    // long lane's deepest stretch is often somewhere else. Measured on lake_marion with a 20-30 ft
+    // band and his 0.5 mi pass: #17 (the 27.9 ft lane, 5.7 mi, 1.05 mi of it down the Wyboo
+    // channel) and #19 (28.9 ft, 5.4 mi) both offered only a stretch out in the open lake, 100% past
+    // the line he drew across the mouth. The creek stretch of each was never offered at all.
+    //
+    // So the lane gives every stretch that is a pass by his own measure: take the deepest, mark it
+    // taken, and ask again of what is left, until nothing left is `minM` long at any depth. No new
+    // number: `minM` is his, and each stretch is chosen exactly as the one stretch always was.
+    //
+    // THE STUB WARNING BELOW STILL HOLDS. Every stretch kept here is at least `minM`, so nothing
+    // short enters `entries` and nothing can chain the way the old fallback's stubs did.
+    const env = p.envelope_ft.slice();
+    let first = true;
+    for (;;) {
+      const curve = reachCurve(env, step, depths, clearFt);
+      if (!curve.size) break;
+      // NO FALLBACK. A lane that cannot give `minM` at ANY depth is not a short piece of water, it
+      // is not a piece of water at all — and `minM` is HIS number for the day, not a constant, so
+      // wanting the short stuff means lowering it rather than having this quietly admit fragments.
+      //
+      // The first cut did have a fallback, and it is worth saying what it cost: 3,539 entries
+      // instead of ~900, and the extra ones were all stubs. Stubs chain. Two stubs 40 m apart merge,
+      // that pair reaches a third, and the union walks the shoreline — one Wateree group came back
+      // holding 981 members, which is not a piece of water, it is most of the lake.
+      let best = deepestUsable(curve, minM);
+      if (!best) break;
+      const took = [best.from, best.to];
+      // A HOOK INTO A DEAD END IS NOT PART OF THE PASS. reachCurve trims where the water runs out
+      // for the BAIT; it has no idea the last stretch turns into a pocket he would have to pull the
+      // rods to get out of. See trimDeadEnd().
+      const cut = trimDeadEnd(f.geometry.coordinates, inWater, best.from, best.to, step);
+      // Taken, trimmed hook and all, so the next stretch is looked for in the water that is left.
+      for (let s = took[0]; s <= took[1]; s++) env[s] = -1;
+      if (cut.from > best.from || cut.to < best.to) {
+        best = { ...best, from: cut.from, to: cut.to, lengthM: (cut.to - cut.from) * step };
+        if (best.lengthM < minM) continue;   // what is left is not a pass by his own measure; look again
+      }
+      const coords = stretchCoords(f.geometry.coordinates, step, best.from, best.to);
+      const drop = reliefDropOf(p);
+      entries.push({
+        // THE LANE'S OWN ID ON THE FIRST STRETCH IT OFFERS, and the lane's id with where the stretch
+        // starts on every other one. A piece's runId is the leg's key once it is picked --
+        // plan-from-water.js hands `piece.runId` to the assembler, which keys rods, stops and passes
+        // by it -- so two stretches of one lane picked on one day must not share it. The first keeps
+        // the bare id so every piece offered before this change is named as it was.
+        runId: first || !p.id ? (p.id || null) : `${p.id}@${Math.round(best.from * step)}`,
+        // THE PROFILE TRAVELS WITH THE PIECE, and until 2026-08-11 it did not.
+        //
+        // A row can say "0.55 mi at 25 ft" and still leave him blind to WHERE the shallow bit is,
+        // which hump is under the baits and which is in them. The strip view needs the raw envelope
+        // and optionality() needs both its sides; both are already measured, and carrying them costs
+        // a few hundred numbers and saves a round trip to the pack.
+        //
+        // These were dropped here, silently. plan-pieces.test.js asserts holdsFt, offers, duplicates
+        // and rampM and none of them touch the envelope, so 15 tests passed over a module that
+        // threw it away -- and the strip chart drew nothing while optionality() reported every
+        // corridor as "undefined-undefined ft, 0 ft span". Found by running the whole chain on a
+        // real pack and reading the sentences it produced.
+        // SLICED TO THE PIECE, BECAUSE `coords` IS. Station 0 of these arrays used to be station 0
+        // of the whole PASS while the geometry beside them started wherever reachCurve cut it, and
+        // 56 of Wateree's 70 pieces start past station 0. Everything that walks the array against
+        // the line was therefore reading the wrong place on it:
+        //
+        //   depthCues() puts a cue at `i * stepM` into the leg. On #123 -- a 3.0 km piece that
+        //   begins 360 m along a 3.5 km pass -- the shallowest station on the pass is 3 ft at 40 m,
+        //   so the phone announced "3 ft in 27 m, the shallowest water on this leg" 13 m into a leg
+        //   whose own shallowest is 18 ft. A shoal warning for water the boat never goes near, on
+        //   the leg it was trimmed to avoid.
+        //
+        //   the strip chart in the Water tab drew the whole pass under a row describing the piece.
+        //
+        //   optionality() took its corridor medians across stations outside the piece.
+        //
+        // The whole pass is still on the piece as `fullCoords` for anything that wants the lane.
+        envelope: p.envelope_ft.slice(best.from, best.to + 1),
+        // Deep side and centreline. `deep` minus `envelope` is how much depth 25 m of wander buys:
+        // narrow means relaxed water, wide means a steep edge that wants steering. `line` is what
+        // the chart says about the centreline, kept ONLY so the gap between it and the shallow side
+        // stays visible -- nothing should ever decide on it.
+        envelopeDeep: p.envelope_deep_ft ? p.envelope_deep_ft.slice(best.from, best.to + 1) : null,
+        envelopeLine: p.envelope_line_ft ? p.envelope_line_ft.slice(best.from, best.to + 1) : null,
+        envelopeStepM: step,
+        envelopeM: p.envelope_m ?? null,
+        // THE WATER THIS PIECE IS ACTUALLY OVER, measured on the stations it was trimmed to. It
+        // replaces `depth_ft`, `shallowest_ft` and `shallowest_line_ft` -- three whole-lane numbers
+        // that were standing in for a piece-local one. See waterBand().
+        water: waterBand(p, best.from * step, best.to * step),
+        chartedFrac: p.charted_frac ?? null,
+        relief: p.relief ?? null,
+        // WHAT IS BESIDE THE LINE, which is what `relief` above is the WORD for. Both come off one
+        // probe of the whole pass, so both belong to the piece the same way `chartedFrac` does: a
+        // property of the lane this stretch was cut from, not of the stretch. reasons() says it.
+        deepestNearbyFt: drop ? drop.deepestFt : null,
+        reliefDropFt: drop ? drop.dropFt : null,
+        near: p.near || [],
+        holdsFt: best.depthFt,
+        lengthM: best.lengthM,
+        // What THIS stretch offers. The first stretch keeps the whole lane's curve, as it always has;
+        // a later one is measured on its own stations only, because the rest of the lane is already
+        // on another piece.
+        curve: first ? curve
+          : reachCurve(p.envelope_ft.map((v, s) => (s >= best.from && s <= best.to ? v : -1)), step, depths, clearFt),
+        coords,
+        xy: project(coords, lat0),
+        full: f.geometry.coordinates,
+      });
+      first = false;
     }
-    const coords = stretchCoords(f.geometry.coordinates, step, best.from, best.to);
-    const drop = reliefDropOf(p);
-    entries.push({
-      runId: p.id || null,
-      // THE PROFILE TRAVELS WITH THE PIECE, and until 2026-08-11 it did not.
-      //
-      // A row can say "0.55 mi at 25 ft" and still leave him blind to WHERE the shallow bit is,
-      // which hump is under the baits and which is in them. The strip view needs the raw envelope
-      // and optionality() needs both its sides; both are already measured, and carrying them costs
-      // a few hundred numbers and saves a round trip to the pack.
-      //
-      // These were dropped here, silently. plan-pieces.test.js asserts holdsFt, offers, duplicates
-      // and rampM and none of them touch the envelope, so 15 tests passed over a module that
-      // threw it away -- and the strip chart drew nothing while optionality() reported every
-      // corridor as "undefined-undefined ft, 0 ft span". Found by running the whole chain on a
-      // real pack and reading the sentences it produced.
-      // SLICED TO THE PIECE, BECAUSE `coords` IS. Station 0 of these arrays used to be station 0
-      // of the whole PASS while the geometry beside them started wherever reachCurve cut it, and
-      // 56 of Wateree's 70 pieces start past station 0. Everything that walks the array against
-      // the line was therefore reading the wrong place on it:
-      //
-      //   depthCues() puts a cue at `i * stepM` into the leg. On #123 -- a 3.0 km piece that
-      //   begins 360 m along a 3.5 km pass -- the shallowest station on the pass is 3 ft at 40 m,
-      //   so the phone announced "3 ft in 27 m, the shallowest water on this leg" 13 m into a leg
-      //   whose own shallowest is 18 ft. A shoal warning for water the boat never goes near, on
-      //   the leg it was trimmed to avoid.
-      //
-      //   the strip chart in the Water tab drew the whole pass under a row describing the piece.
-      //
-      //   optionality() took its corridor medians across stations outside the piece.
-      //
-      // The whole pass is still on the piece as `fullCoords` for anything that wants the lane.
-      envelope: p.envelope_ft.slice(best.from, best.to + 1),
-      // Deep side and centreline. `deep` minus `envelope` is how much depth 25 m of wander buys:
-      // narrow means relaxed water, wide means a steep edge that wants steering. `line` is what
-      // the chart says about the centreline, kept ONLY so the gap between it and the shallow side
-      // stays visible -- nothing should ever decide on it.
-      envelopeDeep: p.envelope_deep_ft ? p.envelope_deep_ft.slice(best.from, best.to + 1) : null,
-      envelopeLine: p.envelope_line_ft ? p.envelope_line_ft.slice(best.from, best.to + 1) : null,
-      envelopeStepM: step,
-      envelopeM: p.envelope_m ?? null,
-      // THE WATER THIS PIECE IS ACTUALLY OVER, measured on the stations it was trimmed to. It
-      // replaces `depth_ft`, `shallowest_ft` and `shallowest_line_ft` -- three whole-lane numbers
-      // that were standing in for a piece-local one. See waterBand().
-      water: waterBand(p, best.from * step, best.to * step),
-      chartedFrac: p.charted_frac ?? null,
-      relief: p.relief ?? null,
-      // WHAT IS BESIDE THE LINE, which is what `relief` above is the WORD for. Both come off one
-      // probe of the whole pass, so both belong to the piece the same way `chartedFrac` does: a
-      // property of the lane this stretch was cut from, not of the stretch. reasons() says it.
-      deepestNearbyFt: drop ? drop.deepestFt : null,
-      reliefDropFt: drop ? drop.dropFt : null,
-      near: p.near || [],
-      holdsFt: best.depthFt,
-      lengthM: best.lengthM,
-      curve,
-      coords,
-      xy: project(coords, lat0),
-      full: f.geometry.coordinates,
-    });
   }
 
   const swath = 2 * ((usable[0].properties.envelope_m) || 25);
   const groups = collapse(entries, swath);
 
-  const pieces = groups.map((g) => {
-    const members = g.map((i) => entries[i]);
-    const win = members.reduce((a, b) => (b.holdsFt > a.holdsFt
-      || (b.holdsFt === a.holdsFt && b.lengthM > a.lengthM) ? b : a));
+  // One group's piece, built from the member that carries it.
+  const pieceOf = (win, n) => {
     // THE CURVE IS THE ROW. Not a depth and a length — the whole trade, so he can read what
     // going deeper costs him in unbroken water and pick the point on it that suits the day.
     const offers = [...win.curve.entries()]
@@ -1129,7 +1196,7 @@ export function buildPieces(lanes, o) {
       envelopeM: win.envelopeM,
       coords: win.coords,
       fullCoords: win.full,
-      duplicates: members.length,
+      duplicates: n,
     };
     if (o && Array.isArray(o.ramps) && o.ramps.length) {
       out.rampM = {};
@@ -1141,7 +1208,31 @@ export function buildPieces(lanes, o) {
       }
     }
     return out;
-  });
+  };
+
+  // ── SIDE BY SIDE IS NOT ONE PIECE WHEN ONE OF THEM GOES WHERE THE OTHER DOES NOT ─────────────
+  //
+  // A group was one piece: the member carrying the deepest bait, every other member dropped as a
+  // subset of the same water. That is true of nested contours on one bank, which is what collapse()
+  // was written for. It is not true of two lanes that share some water and then part: on
+  // lake_marion #503 runs 0.82 mi of the Wyboo channel holding 28 ft, and it was dropped for #484,
+  // which holds 30 ft for 0.52 mi. Shown that, Ryan, 2026-10-01: *"yeah lets do that"*.
+  //
+  // So the members are taken deepest first, ties by length -- the order that chose the one
+  // survivor, so the member that survived before is still the first kept -- and each further
+  // member is kept when it carries `minM` of unbroken water outside the swath of the members
+  // already kept. `minM` is his pass length and the swath is collapse()'s own; nothing new is set.
+  const pieces = [];
+  for (const g of groups) {
+    const members = g.map((i) => entries[i])
+      .sort((a, b) => (b.holdsFt - a.holdsFt) || (b.lengthM - a.lengthM));
+    const cover = new Map();
+    for (const m of members) {
+      if (cover.size && freshM(m.xy, cover, swath) < minM) continue;
+      pieces.push(pieceOf(m, members.length));
+      coverWith(cover, m.xy, swath);
+    }
+  }
 
   pieces.sort((a, b) => b.lengthM - a.lengthM);
   return { pieces, laneCount: (lanes || []).length, usableCount: entries.length };

@@ -11,6 +11,11 @@
 // This holds the same thing on a made-up lake where many lanes sit within a swath of each other,
 // some just inside it and some just outside: the groups buildPieces() makes are exactly the ones
 // the old all-against-all measure makes.
+//
+// A GROUP IS NO LONGER ALWAYS ONE PIECE, since 2026-10-01: a member that carries `minM` of unbroken
+// water outside the swath of the members already kept is kept too (see buildPieces(), "SIDE BY
+// SIDE"). So the expected pieces are worked out here the slow way as well -- every point against
+// every kept point -- and the bucketed measure in the module has to agree with it.
 
 import { describe, it } from './expect-shim.mjs';
 import assert from 'node:assert/strict';
@@ -107,13 +112,28 @@ describe('collapse() makes the groups the all-against-all measure makes', () => 
       entries.push({ runId: p.id, lengthM: best.lengthM, holdsFt: best.depthFt,
                      xy: coords.map((c) => [c[0] * px, c[1] * 110540.0]) });
     }
-    const want = oldCollapse(entries, swath).map((g) => {
-      const w = g.map((i) => entries[i]).reduce((a, b) => (b.holdsFt > a.holdsFt
-        || (b.holdsFt === a.holdsFt && b.lengthM > a.lengthM) ? b : a));
-      return `${w.runId}:${g.length}`;
+    // The longest unbroken run of `xy` outside the swath of every point of `kept`, all against all.
+    const fresh = (xy, kept) => {
+      let best = 0, run = 0, prev = null;
+      for (const q of xy) {
+        if (kept.some((k) => k.xy.some((r) => dist2(q, r) <= swath))) { run = 0; prev = null; continue; }
+        if (prev) { run += dist2(prev, q); if (run > best) best = run; }
+        prev = q;
+      }
+      return best;
+    };
+    const groups = oldCollapse(entries, swath);
+    const want = groups.flatMap((g) => {
+      const members = g.map((i) => entries[i])
+        .sort((a, b) => (b.holdsFt - a.holdsFt) || (b.lengthM - a.lengthM));
+      const kept = [];
+      for (const m of members) if (!kept.length || fresh(m.xy, kept) >= minM) kept.push(m);
+      return kept.map((w) => `${w.runId}:${g.length}`);
     }).sort();
-    assert.ok(want.length > 6 && want.length < entries.length,
-      `the made-up lake has groups to make: ${want.length} of ${entries.length}`);
+    assert.ok(groups.length > 6 && groups.length < entries.length,
+      `the made-up lake has groups to make: ${groups.length} of ${entries.length}`);
+    assert.ok(want.length > groups.length,
+      `and some group keeps a second member, so the side-by-side rule is exercised: ${want.length} pieces from ${groups.length} groups`);
     assert.deepEqual(got.pieces.map((p) => `${p.runId}:${p.duplicates}`).sort(), want);
   });
 });
