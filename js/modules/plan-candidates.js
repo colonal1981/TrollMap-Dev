@@ -3184,7 +3184,7 @@ export function overlapFraction(line, other, corridorM = 100, samples = 25) {
  * each point is fuzzy. Anything finer than "which pocket" is reading noise.
  *
  * Better data exists if it is ever wanted: a Garmin catch waypoint is dropped at the moment of
- * the catch, not after the photo. `garmin-parser.js` already reads them.
+ * the catch, not after the photo. The Nightly Catch Upload reads them (`js/utils/catch-waypoints.js`).
  * ---------------------------------------------------------------------------------------------
  */
 export function catchSupport(line, catches, o = {}) {

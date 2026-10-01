@@ -90,11 +90,12 @@ describe('layers panel — every toggle survived the move', () => {
 });
 
 describe('layers panel — the bottom bar stayed slim', () => {
-  it('holds only the opener and the three non-layer tools', () => {
+  it('holds only the opener and the non-layer tools', () => {
+    // "📥 GPX Catches" (btnGarminParser) was removed 2026-10-01, Ryan: "remove the catches button".
+    // The Nightly Catch Upload reads a Garmin GPX properly, one catch per marked waypoint (item 29).
     const ids = [...toolbarHtml().matchAll(/<(?:button|label) id="(\w+)"/g)].map((m) => m[1]);
     expect(ids).toEqual([
       'btnLayers',          // opens the panel
-      'btnGarminParser',    // GPX import, a file input rather than an overlay
       'btnQuickdrawKey',    // a legend
       'btnGpsPanel',        // opens a panel
       'btnContourRoutes',   // opens a panel
