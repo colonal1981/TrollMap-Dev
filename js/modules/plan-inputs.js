@@ -429,7 +429,12 @@ export const RESEARCH_LEAD = 27;
 const STRUCTURE_PHRASES = [
   [/creek\s*mouth|tributary mouth|feeder creek/i, ['creek_mouth']],
   [/\bpoint/i, ['point']],
-  [/\bcoves?\b|\bpockets?\b|\bbasins?\b|\barms?\b/i, ['cove']],
+  // NOT "basin". A "main lake basin" is the open middle of the lake, the opposite of a cove, and
+  // reading it as one raised coves for Marion's summer stripers -- whose researched structures are
+  // "thermocline; main lake basin; Rediversion Canal" -- by the full research lead. Ryan,
+  // 2026-10-01, asked whether to stop: "Fix it". The chart has no open-water kind to lead instead,
+  // so the phrase lands in `unmatched`, in the open, with the other cover the chart cannot see.
+  [/\bcoves?\b|\bpockets?\b|\barms?\b/i, ['cove']],
   [/hump|offshore structure|sunken island|shoal|high spot/i, ['hump']],
   [/ledge|drop\s*-?\s*off|break\s*line|breakline|\bbluff/i, ['ledge']],
   [/timber|laydown|stump|brush|wood|treetop/i, ['timber', 'attractor']],

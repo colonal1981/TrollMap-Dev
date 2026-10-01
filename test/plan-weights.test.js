@@ -488,13 +488,26 @@ describe('the phrases the profiles actually use', () => {
   });
 
   it('reads the plural the profiles write, not the singular the regex assumed', () => {
-    // "creek arms" 27x, "main lake basins" 15x, "pockets" 7x. Each named a cove and each fell
-    // through a \b anchor written around the singular.
-    for (const phrase of ['creek arms', 'main lake basins', 'pockets', 'coves']) {
+    // "creek arms" 27x, "pockets" 7x. Each named a cove and each fell through a \b anchor written
+    // around the singular. ("main lake basins" was read as a cove here too until 2026-10-01; see
+    // the next test.)
+    for (const phrase of ['creek arms', 'pockets', 'coves']) {
       const { weights, unmatched } = structureWeights(
         DEFAULT_WEIGHTS, DEFAULT_RELIEF_WEIGHTS, [phrase]);
       expect(weights.cove).toBe(DEFAULT_WEIGHTS.cove + RESEARCH_LEAD);
       expect(unmatched.length).toBe(0);
+    }
+  });
+
+  it('does not read the main lake basin as a cove', () => {
+    // Ryan, 2026-10-01, "Fix it": Marion's summer striper structures are "thermocline; main lake
+    // basin; Rediversion Canal", and "basin" raised coves by the full lead for a fish that lives out
+    // over open water. A basin is the open lake. Nothing on the chart is that, so it leads nothing.
+    for (const phrase of ['main lake basin', 'main lake basins']) {
+      const { weights, unmatched } = structureWeights(
+        DEFAULT_WEIGHTS, DEFAULT_RELIEF_WEIGHTS, [phrase]);
+      expect(weights.cove).toBe(DEFAULT_WEIGHTS.cove);
+      expect(unmatched).toEqual([phrase]);
     }
   });
 

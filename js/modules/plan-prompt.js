@@ -2388,11 +2388,16 @@ Each candidate is a stretch of a real trolling run, already filtered to water he
 ranked by what it passes. \`structures\` lists what each leg goes by in the order you meet them,
 with \`atM\` metres from the start of that leg.
 
-THE FISH DEPTH ABOVE DID NOT CHOOSE THIS WATER. A candidate carrying \`inFishBand: false\` sits
+THE FISH DEPTH ABOVE DID NOT RANK THIS WATER. A candidate carrying \`inFishBand: false\` sits
 outside it and is offered anyway, because that depth is one source's claim and the source said
 when and where it holds (\`depthBand.sourceNotes\`, when it is there). Weigh it by the hour you put
 the leg in and by where on the lake the leg is. Do not drop a leg for it alone, and say in its
 \`why\` when a leg is outside the band and why you chose it anyway.
+The band did ADD water. The ranking scores what a lane passes, and the bank passes the most, so a
+candidate carrying \`offeredForBand\` is a lane over the band that the ranking left out, added
+because it is no farther from the ramp than the ranking went; they were added until the band's
+lanes hold a day of trolling. That is the same one source's band and nothing else: weigh it like
+any other lane.
 
 THE GUIDES' WATER IS ON THE LANES THAT CROSS IT. A candidate carrying \`reportWater\` passes over a
 depth of WATER that a guide report from this month or last named for the species; the report, its

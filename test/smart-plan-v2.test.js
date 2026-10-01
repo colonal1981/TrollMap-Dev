@@ -179,7 +179,7 @@ describe('smart-plan-v2 — the whole path with no network', () => {
     expect(r.candidates.length > 0).toBe(true);
     expect(r.candidates.every((c) => c.inFishBand === false)).toBe(true);
     expect(/"inFishBand":\s*false/.test(r.request.user)).toBe(true);
-    expect(r.request.user.includes('THE FISH DEPTH ABOVE DID NOT CHOOSE THIS WATER')).toBe(true);
+    expect(r.request.user.includes('THE FISH DEPTH ABOVE DID NOT RANK THIS WATER')).toBe(true);
   });
 
   // ── THE ELIGIBILITY RULE, END TO END — 2026-08-10 ──────────────────────────────────────────

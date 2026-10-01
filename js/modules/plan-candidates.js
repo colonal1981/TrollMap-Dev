@@ -3023,6 +3023,59 @@ export function selectCandidates(runs, o) {
     if (o.limit && kept.length >= o.limit) { rejected.limit = out.length - kept.length - rejected.dedupe; break; }
   }
 
+  // How far from the ramp the ranking itself went, before anything is added past the limit.
+  const rankedReach = kept.reduce((m, c) => Math.max(m, Number(c.fromRampM) || 0), 0);
+
+  // ── THE LANES OVER THE FISH BAND ARE OFFERED TOO ──────────────────────────────────────────────
+  //
+  // Ryan, 2026-10-01, testing a Marion striper plan from Rowland: "so how do we get the lanes
+  // fixed". The ranking scores what a lane PASSES -- docks, points, timber, coves -- and a lane
+  // along the bank passes far more of those than one out over open water, so for a fish suspended
+  // over deep water the list fills up with the bank. Measured on Marion from Rowland (20-30 ft,
+  // suspended): 7 lanes over water deeper than 20 ft lie inside the distance the ranking already
+  // went to, and 2 of them were among the 12. The other 10 had medians of 3-13 ft, and the model
+  // made a 256-minute day of a 540-minute window out of the two.
+  //
+  // His rules stand. The band does not cut (2026-09-26, "the 50-70ft cannot cut lanes") and depth
+  // is not weighted ("depth itself shouldn't be weighted"), so nothing is dropped and `value` is
+  // untouched. What he chose, asked on 2026-10-01 ("Add the band's lanes"): lanes over the band
+  // that the ranking left out are ADDED past the limit, best-ranked first, and say so
+  // (`offeredForBand`). Three bounds, read off the day and the list rather than invented here:
+  //   - no farther from the ramp than the farthest lane the ranking offered, so the band never
+  //     takes the day out to water the ranking would not have gone to;
+  //   - only until the band's lanes on offer hold the day's window in trolling (one pass each);
+  //   - only until the list holds as many lanes over the band as outside it. The band is one
+  //     source's claim and the ranking is the other view of the same water, so neither gets more
+  //     room than the other. This one is MINE, added after measuring the first two alone: Marion
+  //     largemouth at 5-8 ft from Rowland had 8 of its 12 outside the band, a 9 km lane among them
+  //     set the reach, and 25 lanes were added. With it, 4 are. The stripers' 3 are unchanged.
+  // A band that is wrong (Murray's 50-70 ft) adds lanes in the wrong water and still takes nothing
+  // away; the model reads the band with its source's own when and where, as before. Added BEFORE
+  // the guide's water below, so a lane added here is marked with the report too, and the report
+  // adds a lane only where neither the ranking nor the band put one over its water.
+  let offeredForBand = 0;
+  const bandGiven = Array.isArray(o.fishDepthFt) && o.fishDepthFt.length === 2
+    && Number.isFinite(Number(o.fishDepthFt[0]));
+  if (bandGiven && outsideBand > 0 && Number(o.windowMin) > 0) {
+    const trollMin = (c) => minutesFor(Number(c.lengthM) || 0, trollMph);
+    let bandMin = kept.filter((c) => c.inFishBand !== false).reduce((t, c) => t + trollMin(c), 0);
+    const outsideOffered = kept.filter((c) => c.inFishBand === false).length;
+    let insideOffered = kept.length - outsideOffered;
+    for (const c of out) {
+      if (bandMin >= Number(o.windowMin) || insideOffered >= outsideOffered) break;
+      if (kept.includes(c) || c.inFishBand === false) continue;
+      if ((Number(c.fromRampM) || 0) > rankedReach) continue;
+      if (isDuplicate(c)) continue;
+      c.offeredForBand = true;
+      kept.push(c);
+      offeredForBand++;
+      insideOffered++;
+      bandMin += trollMin(c);
+      // From the limit bucket, as the report's lane below: the dedupe's cuts are still duplicates.
+      if (rejected.limit > 0) rejected.limit--;
+    }
+  }
+
   // ── THE WATER A GUIDE PUT THE FISH OVER IS OFFERED ────────────────────────────────────────
   //
   // Ryan, 2026-10-01, on the Marion striper plan whose 12 lanes were all shallow: "depth itself
@@ -3151,6 +3204,8 @@ export function selectCandidates(runs, o) {
     // past the limit because the ranking had offered none over one of them.
     reportWater: rw.length,
     offeredForReports,
+    // How many lanes over the fish band were added past the limit because the ranking left them out.
+    offeredForBand,
     // WHETHER THIS PACK HAD FITTED LANES AT ALL, because "800 unfitted runs were refused" and
     // "this lake has no fitted lanes so rough ones were offered" are different days on the water
     // and only this field separates them.
@@ -3808,6 +3863,8 @@ export function forModel(c, cap = MODEL_STRUCTURE_CAP) {
                                     published: w.published || undefined, quote: w.quote }))
       : undefined,
     offeredForReport: c.offeredForReport || undefined,
+    // ADDED FOR THE BAND, past the limit, because the ranking left it out -- see selectCandidates().
+    offeredForBand: c.offeredForBand || undefined,
     lengthM: c.lengthM,
     transitFromRampM: c.transitInM,
     // WHAT THE ORDERING COSTS. `transitToM` is metres of deadhead from this leg to each other leg
