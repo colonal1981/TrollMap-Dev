@@ -94,6 +94,6 @@ test('the assembled plan and the sync carry them too', () => {
   const read = (f) => readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
   assert.match(read('js/modules/plan-assemble.js'), /\.\.\.yourMarks\(c\.markSupport\)/);
   assert.match(read('js/modules/cloud-sync.js'), /mark: 'settings'/);
-  assert.match(read('worker/trollmap-worker.js'), /SYNC_STORES = \[[^\]]*"mark"/);
+  assert.match(read('Worker/trollmap-worker.js'), /SYNC_STORES = \[[^\]]*"mark"/);
   assert.match(read('js/modules/smart-plan-v2-wiring.js'), /marks: marksForPlan\(state\.GARMIN_MARKS\)/);
 });
