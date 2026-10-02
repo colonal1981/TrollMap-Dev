@@ -17,8 +17,34 @@ import { state } from '../core/state.js';
 import { esc } from '../utils/escape.js';
 import { LURE_PRESETS, autoCalculateLead } from './spread-builder.js';
 import { getLureColor } from '../data/lure-knowledge.js';
+import { ROD_RIG } from './plan-prompt.js';
 
 // ── Reel assignment rule ──────────────────────────────────────────────────────
+const REEL_LEADER = 'Spinning / 30lb 8-strand braid + 20lb fluoro leader';
+const REEL_SNAP = 'Spinning / 30lb 8-strand braid directly tied to swivel snap';
+
+/**
+ * WHAT IS ON THE END OF THIS ROD, WHICH IS A FACT ABOUT THE ROD AND NOT ABOUT THE BAIT.
+ *
+ * Personal use only, not for distribution or resale; not for navigation.
+ *
+ * Ryan's 2026-10-02 Moultrie plan from Short Stay: four of six rod cards contradicted the rod.
+ * R3 and R4 carry a 20 lb fluoro leader and their cards said "directly tied to swivel snap"; R5
+ * and R6 carry swivel snaps and their cards said "fluoro leader". The seating was right by his
+ * own snap list (seatRods() in plan-prompt.js puts the bucktail and the jighead swimbait on the
+ * snaps). The line on the card came from reelForLure() below, a keyword guess from 2026-07-25
+ * that never asked which rod the bait was on and predates that snap list.
+ *
+ * So a row that names its rod prints what that rod carries (ROD_RIG). A row with no rod id --
+ * the hand-built spread table -- still gets the old guess, because there is no rod to ask.
+ */
+export function reelForRod(rodId, lureName) {
+  const rig = rodId ? ROD_RIG[rodId] : undefined;
+  if (rig === 'snap') return REEL_SNAP;
+  if (rig === 'fluoro') return REEL_LEADER;
+  return reelForLure(lureName);
+}
+
 export function reelForLure(lureName) {
   if (!lureName) return 'Spinning / 30lb 8-strand braid + 20lb fluoro leader';
   const l = lureName.toLowerCase();
@@ -122,7 +148,7 @@ function rodSlotHtml(rod, cardIdx, slotIdx) {
   if (!rod) {
     return `<div style="border:1px dashed var(--line);border-radius:7px;padding:8px 10px;opacity:0.4;font-size:11px;color:var(--muted)">${label} — no lure assigned</div>`;
   }
-  const reel = reelForLure(rod.lure);
+  const reel = reelForRod(rod.rod, rod.lure);
   const isSwivel = reel.includes('swivel snap');
   const reelBadge = isSwivel
     ? `<span style="color:#ffb300;font-size:10px">⚡ Direct braid → swivel snap</span>`
@@ -854,7 +880,7 @@ export function renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeed
     const picked = prompt(`Edit ${card.label} ${slotIdx === 0 ? 'Port' : 'Stbd'}\nCurrent: ${rod.lure}\n\n${lureList}`, rod.lure);
     if (!picked || picked === rod.lure) return;
     rod.lure  = picked;
-    rod.reel  = reelForLure(picked);
+    rod.reel  = reelForRod(rod.rod, picked);
     rod.color = getLureColor(picked, 'clear');
     rod.lead  = String(autoCalculateLead({ ...rod, lure: picked }, card.speedMph));
     renderSmartPlanUI({ routeRods, scoutReport, speedMph, routeSpeeds, phases, solunar, stopCandidates, timeline });
@@ -889,7 +915,7 @@ export function spreadRowsFrom(cards, routeRods, routeSpeeds = {}) {
       if (!rod) continue;
       rows.push({
         ...rod,
-        reel: reelForLure(rod.lure),
+        reel: reelForRod(rod.rod, rod.lure),
         speedMph: card.speedMph,
         notes: `[${card.label} @ ${card.speedMph} mph] ${rod.notes || ''}`.trim(),
       });
