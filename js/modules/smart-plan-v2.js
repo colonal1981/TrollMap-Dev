@@ -824,9 +824,21 @@ export async function buildSmartPlanV2(o) {
   const riverRoute = (isRiver && riverTransit && riverTransit.route) || null;
   // The ramp leg comes off the measured water route when the pack has one; every other pair
   // still comes off the centreline, which is what a river day is made of.
+  //
+  // AND ON A LAKE EVERY OTHER PAIR COMES OFF THE WATER ROUTER. This was `rampLegRouter(o.ramp,
+  // rampRoute, riverRoute) || prefetchTransits(...)` from 2026-09-20, and on a lake riverRoute is
+  // null: wherever the ramp HAD a measured way out of two points or more, rampLegRouter answered
+  // the ramp pairs and handed every other pair to a null base, so prefetchTransits was never
+  // called and every hop between legs went out a straight line. Found on Ryan's first plan from
+  // Monticello's Recreation Lake Boat Ramp, 2026-10-03: T2-T5 "STRAIGHT LINE, not water-routed",
+  // while the Worker answered all four when asked (`_scratch/mw/rec_route_probe.ps1`). 199 lake
+  // landings carry a route that long -- Monticello Boat Ramp, William Dennis and Spiers on
+  // Moultrie among them. The ramp leg still comes off the measured route; the rest is prefetched.
+  const prefetched = (o.transit || riverRoute) ? null
+    : await prefetchTransits(args.candidates, o.ramp, o.routeWater, rampRoute);
   const transit = o.transit
-                  || rampLegRouter(o.ramp, rampRoute, riverRoute)
-                  || await prefetchTransits(args.candidates, o.ramp, o.routeWater, rampRoute);
+                  || rampLegRouter(o.ramp, rampRoute, riverRoute || prefetched)
+                  || prefetched;
 
   const plan = assemblePlan({
     ...args,

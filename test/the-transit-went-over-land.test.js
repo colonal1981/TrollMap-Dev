@@ -158,8 +158,9 @@ test('it degrades to exactly what was there before', () => {
 });
 
 test('both planners reach for it', () => {
-  assert.ok(/rampLegRouter\(o\.ramp, rampRoute, riverRoute\)/.test(SPV2),
-    'the river path wraps centrelineTransit rather than replacing it');
+  assert.ok(/rampLegRouter\(o\.ramp, rampRoute, riverRoute \|\| prefetched\)/.test(SPV2),
+    'the river path wraps centrelineTransit, and the lake path wraps the prefetched routes, rather '
+  + 'than replacing either -- a null base sends every hop between legs out a straight line');
   assert.ok(/prefetchTransits\(args\.candidates, o\.ramp, o\.routeWater, rampRoute\)/.test(SPV2),
     'and the lake path passes it through to prefetchTransits');
   assert.ok(/prefetchTransits\(candidates, o\.ramp, o\.routeWater, rampRoute\)/.test(PFW),

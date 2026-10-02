@@ -163,8 +163,15 @@ export function depthBandFor(species, lakeName, season, waterTempF, researched, 
   if (!across.length) return null;
   return clampToOxygen({
     band: [Math.min(...across.map((x) => x[0])), Math.max(...across.map((x) => x[1]))],
+    // "HAS NO RESEARCHED PROFILE" WAS SAID OF WATERS THAT HAVE ONE. Monticello was researched on
+    // 9/24 and has no striped bass in it, and Ryan's 10/3 plan for striper there read "Lake
+    // Monticello, SC has no researched profile and is not one of them" -- a false statement in the
+    // prompt about the one source that knew better. A profile that says nothing about the fish is
+    // a different fact from no profile at all, and it is the one the model needs.
     basis: `${s} across the ${across.length} lakes in the built-in table — `
-         + `${lakeName} ${partial ? 'has no researched fish depth' : 'has no researched profile'} `
+         + `${lakeName} ${partial ? 'has no researched fish depth'
+           : researched ? `has a researched profile, and it says nothing about ${s}`
+           : 'has no researched profile'} `
          + `and is not one of them${researchNote}`,
     generic: true,
     source: 'table-union',

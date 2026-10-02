@@ -369,6 +369,31 @@ describe('smart-plan-v2 — transits are routed over water, or they say they are
     expect(r.problems.some((p) => p.includes('not water-routed'))).toBe(false);
   });
 
+  // Monticello's Recreation Lake Boat Ramp, 2026-10-03: its measured way out is two points, and
+  // that sent T2-T5 out as straight lines -- rampLegRouter answered the ramp pairs and handed the
+  // rest to a null base, so the router was never asked. A pack key of its own, because launchReach
+  // caches by key.
+  it('routes the hops between legs when the ramp has a measured way out', async () => {
+    const KEY = 'w_ramp_route';
+    const saved = globalThis.fetch;
+    globalThis.fetch = async (url) => (String(url).includes(`/chartpacks/${KEY}/launches.json`)
+      ? { ok: true, json: async () => ({ landings: [{ name: 'Ramp', lat: RAMP[1], lon: RAMP[0], water_m: 41,
+          on_main_water: true, route: [[RAMP[0] + 0.0004, RAMP[1] + 0.0003], [RAMP[0], RAMP[1]]] }] }) }
+      : { ok: false, json: async () => null });
+    try {
+      const r = await buildSmartPlanV2({ ...OPTS, r2Key: KEY, askModel: goodModel(), routeWater,
+                                         fetchJson: (p) => fetchJson(p.replace(`/${KEY}/`, '/w/')) });
+      const transits = r.plan.legs.filter((l) => l.type === 'transit');
+      const between = transits.slice(1, -1);
+      expect(between.length).toBeGreaterThan(0);
+      for (const t of between) {
+        expect(t.unrouted).toBeUndefined();
+        expect(t.coordinates.some((c) => c[0] === BEND[0] && c[1] === BEND[1])).toBe(true);
+      }
+      expect(r.problems.some((p) => p.includes('not water-routed'))).toBe(false);
+    } finally { globalThis.fetch = saved; }
+  });
+
   it('marks them and says so when there is no router', async () => {
     const r = await buildSmartPlanV2({ ...OPTS, askModel: goodModel() });
     const transits = r.plan.legs.filter((l) => l.type === 'transit');

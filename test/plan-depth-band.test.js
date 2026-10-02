@@ -92,6 +92,16 @@ describe('depthBandFor — the species depth band for a whole day', () => {
     expect(Number.isFinite(r.band[0]) && Number.isFinite(r.band[1])).toBe(true);
   });
 
+  it('a researched water that says nothing about the fish is not called unresearched', () => {
+    // Lake Monticello, 2026-10-03: researched on 9/24, no striped bass in it, and the prompt said
+    // it "has no researched profile".
+    const r = depthBandFor('Striped Bass', 'Lake Monticello, SC', 'fall', 74,
+                           { biology: { predatorSpecies: ['Largemouth Bass', 'Blue Catfish'] } });
+    expect(r.source).toBe('table-union');
+    expect(r.basis.includes('Lake Monticello, SC has a researched profile, and it says nothing about')).toBe(true);
+    expect(r.basis.includes('has no researched profile')).toBe(false);
+  });
+
   it('falls back to what the species does elsewhere, and says that it did', () => {
     const r = depthBandFor('Striped Bass', 'Lake Hartwell', 'summer', 84);
     expect(r.generic).toBe(true);
