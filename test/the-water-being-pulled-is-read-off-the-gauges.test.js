@@ -40,13 +40,30 @@ test('a tidal tailrace: the cut sits in the empty band between the tide and a ru
   assert.ok(cut > 2000 && cut < 3500, `cut ${cut}`);
 });
 
-test('the last two days list the evening runs and the one-unit mornings, and name the tide', () => {
+test('the last two days list the evening runs and the one-unit mornings, and the flow back up', () => {
   const line = gaugeLine(JG, JEF);
   for (const s of ['below the lake on Cooper River, 1.2 km from it', '9/30 16:00-23:15 (about 13,800 cfs)',
                    '10/1 06:30-08:15 (about 5,800 cfs)', '10/1 13:45-20:45', '10/2 06:30-08:00',
-                   'through 10/2 09:45', 'the tide']) {
+                   'through 10/2 09:45', 'flowing back upstream.']) {
     assert.ok(line.includes(s), `missing "${s}" in: ${line}`);
   }
+});
+
+// The rediversion canal at St. Stephen, the other gauge below Moultrie, on 10/2: a steady 100-200
+// cfs, four one-reading surges in 15 days (3,400-6,700 cfs), and a few hours of back-flow after
+// each. No tide. The first general line said "ran 10/1 00:45-00:45 ... the tide pushing back
+// upstream": a span that was not there and a cause nobody read.
+test('a surge of one reading says so, and the back-flow after it is not called the tide', () => {
+  const RX = JSON.parse(readFileSync(new URL('./fixtures/rediversion-canal-2026-10-02.json', import.meta.url), 'utf8'));
+  const RED = seriesFrom(asPayload(RX['02171645_00060']));
+  const RG = { site: '02171645', param: '00060', role: 'outflow', name: 'REDIV CANAL AT SANTEE RIVER NR ST STEPHEN, SC',
+               via: 'santee_river', viaName: 'Santee River', km: 8.2 };
+  const line = gaugeLine(RG, RED);
+  for (const s of ['10/1 00:45 for one reading (5,330 cfs)', '10/2 12:30 for one reading (3,410 cfs)',
+                   'down to -1,120 cfs, flowing back upstream.']) {
+    assert.ok(line.includes(s), `missing "${s}" in: ${line}`);
+  }
+  assert.doesNotMatch(line, /00:45-00:45|tide/);
 });
 
 test('a neap-tide two days does not turn the tide into a run, because the cut reads a full cycle', () => {

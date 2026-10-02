@@ -1093,8 +1093,9 @@ export function movingWaterBlock(conditions) {
   if (!Array.isArray(m) || !m.length) return '';
   return '\nMOVING WATER\n`conditions.movingWater` is what the gauges at this water did in the last '
     + '48 hours, from USGS 15-minute data: the lake\'s own level, the first gauge below it on each '
-    + 'river it empties into, and the rivers that feed it. A tailrace the tide runs back up is given '
-    + 'as the hours it ran; every other gauge as each day\'s low and high and when, so a dam that '
+    + 'river it empties into, and the rivers that feed it. A flow below a dam that runs back upstream '
+    + 'between releases is given as the hours it ran, and a run of one reading says so; every '
+    + 'other gauge as each day\'s low and high and when, so a dam that '
     + 'generated shows as a high many times its low. It is HISTORY, not a schedule. Nobody publishes '
     + 'when these run, so never tell him when the water will move today. If the reports or the '
     + 'research above tie the bite on this water to moving water, say in `notes.scoutNotes` what the '

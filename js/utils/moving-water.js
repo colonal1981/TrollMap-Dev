@@ -18,9 +18,10 @@
  * HISTORY, NOT A SCHEDULE. What each gauge did, said as such.
  *
  * WHAT IS SAID, BY WHAT THE GAUGE IS:
- *   - A FLOW THAT RUNS BACKWARDS is a tidal tailrace: the tide pushes back up it between runs. There
- *     a run can be told from the tide without a number written here, so the line gives the hours
- *     it ran (tailraceCut(), below). Jefferies over 9/22-10/2 sits in three groups: -3,000 to 2,000
+ *   - A FLOW THAT RUNS BACKWARDS gets the hours it ran: between runs something pushes back up it.
+ *     Below Jefferies that is the tide; on the rediversion canal it was the water settling back
+ *     after a surge, so the line says "flowing back upstream" and not why. There a run can be told
+ *     from the back-flow without a number written here (tailraceCut(), below). Jefferies over 9/22-10/2 sits in three groups: -3,000 to 2,000
  *     cfs (the tide), 3,500 to 8,500 and 11,500 to 16,500. tailraceCut() splits (otsuSplit(), the
  *     value that best parts the readings into two groups), and splits the lower side again while
  *     the group it adds averages more than the strongest reverse flow -- the tide runs about as far
@@ -81,11 +82,15 @@ export function runsWhere(series, test) {
 const round = (x, to) => Math.round(x / to) * to;
 const mean = (a) => a.reduce((s, x) => s + x, 0) / a.length;
 
-/** "9/30 16:00-23:15", in the browser's clock, which is his. A run past midnight says so. */
+/**
+ * "9/30 16:00-23:15", in the browser's clock, which is his. A run past midnight says so. A run of
+ * one reading is that reading's time alone: "10/1 00:45-00:45" said a span that was not there.
+ */
 export function spanText(from, to) {
   const a = new Date(from), b = new Date(to);
   const hm = (d) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   const day = (d) => `${d.getMonth() + 1}/${d.getDate()}`;
+  if (a.getTime() === b.getTime()) return `${day(a)} ${hm(a)}`;
   return day(a) === day(b) ? `${day(a)} ${hm(a)}-${hm(b)}` : `${day(a)} ${hm(a)}-${day(b)} ${hm(b)}`;
 }
 
@@ -123,7 +128,13 @@ function through(series) {
   return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
-/** A tailrace: the hours it ran in the last two days, each with its flow, or that it did not. */
+/**
+ * A flow below a lake that runs back upstream: the hours it ran in the last two days, each with its
+ * flow, or that it did not. Why it runs back is not said. Below Jefferies it is the tide; on the
+ * rediversion canal at St. Stephen (2026-10-02) it was the water settling back for a few hours after
+ * a one-reading surge, and the canal otherwise ran its steady 100-200 cfs with no tide in it. A run
+ * of one reading says so, with that reading.
+ */
 export function tailraceLine(g, series) {
   if (!series.length) return null;
   const win = lastHours(series);
@@ -135,11 +146,12 @@ export function tailraceLine(g, series) {
     return `${head}: did not run in the ${WINDOW_HOURS} hours through ${through(series)}; the highest `
       + `reading was ${round(Math.max(...win.map((p) => p.v)), 10).toLocaleString('en-US')} cfs.`;
   }
-  const parts = runs.map((r) => `${spanText(r.from, r.to)} (about ${round(mean(r.pts.map((p) => p.v)), 100)
-    .toLocaleString('en-US')} cfs)`);
+  const parts = runs.map((r) => (r.pts.length === 1
+    ? `${spanText(r.from, r.to)} for one reading (${Math.round(r.pts[0].v).toLocaleString('en-US')} cfs)`
+    : `${spanText(r.from, r.to)} (about ${round(mean(r.pts.map((p) => p.v)), 100).toLocaleString('en-US')} cfs)`));
   return `${head}: ran ${parts.join(', ')}, in the ${WINDOW_HOURS} hours through ${through(series)}.`
-    + (low < 0 ? ` Between runs it reads near 0 and below, down to ${Math.round(low).toLocaleString('en-US')} cfs: `
-      + 'the tide pushing back upstream.' : '');
+    + (low < 0 ? ` Between runs it reads near 0 and below, down to ${Math.round(low).toLocaleString('en-US')} cfs, `
+      + 'flowing back upstream.' : '');
 }
 
 const UNIT = (g) => (g.param === '00060' ? 'cfs' : 'ft');
@@ -208,7 +220,7 @@ export function seriesFrom(payload) {
 export function gaugeLine(g, series) {
   if (!series || !series.length) return `${g.name} (USGS ${g.site}): no readings came back.`;
   if (g.role === 'inflow') return riverLine(g, series);
-  // A flow that ran backwards anywhere in what was read is tidal: the tide-guarded runs.
+  // A flow that ran backwards anywhere in what was read: the runs, guarded by the back-flow.
   if (g.param === '00060' && series.some((p) => p.v < 0)) return tailraceLine(g, series);
   return rangeLine(g, series);
 }
