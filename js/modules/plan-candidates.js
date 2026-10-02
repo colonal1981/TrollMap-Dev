@@ -2845,6 +2845,13 @@ export function selectCandidates(runs, o) {
         // smart-plan-v2-wiring.js exists to prevent. forModel() drops the null and sends the zero.
         headwindMph: wind ? costBand.headwindMph : null,
         estMin: Math.round(totalMin),
+        // ONE PASS IN THE WATER, AND NOTHING ELSE. `estMin` above is this lane fished ALONE -- the
+        // run out from the ramp, one pass, the run home -- which is the right price for deciding
+        // whether it fits the day by itself and the wrong one to add up. On Rowland, 2026-10-02, the
+        // model was handed five lanes whose `estMin` came to 395 minutes, wrote a 243-minute day into
+        // a 480-minute window and stopped. This is the number a day is built from; see the AND WHAT
+        // A LANE COSTS ON ITS OWN paragraph in plan-prompt.js.
+        trollMin: Math.round(minutesFor(win.lengthM, trollMph)),
         score: Number(win.score.toFixed(1)),
         reliefScore,
         // Rank on structure passed, discounted by how much of the trip is deadhead, and again by
@@ -4024,6 +4031,7 @@ export function forModel(c, cap = MODEL_STRUCTURE_CAP) {
     // fifteen and read as fine. This is per leg, in mph, at the direction its battery price assumes.
     headwindMph: c.headwindMph ?? undefined,
     estMin: c.estMin,
+    trollMin: c.trollMin ?? undefined,
     // WHICH WAY THE WATER IS GOING AND HOW FAST, or why that is not known.
     //
     // Ryan on how a river day is actually run: "i go up stream against the current for at least half

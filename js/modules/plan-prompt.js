@@ -2441,7 +2441,17 @@ AND WHAT TURNING AROUND COSTS. \`transitToMIfFishedBack\` is the same table for 
 EVEN number of times: turn at each end and you finish where you started, so the hop to the next
 leg is measured from the other end of the pass. Where that number is much smaller than
 \`transitToM\`, fishing the leg back is cheaper in deadhead AND longer in the water — the two
-things almost never point the same way and here they do.`}
+things almost never point the same way and here they do.${o.waterIsChosen ? '' : `
+
+AND WHAT A LANE COSTS ON ITS OWN IS NOT WHAT IT ADDS TO A DAY. \`estMin\` and \`batteryAh\` on a
+candidate are that lane fished ALONE: the run out from the ramp, one pass, and the run home. They
+compare one lane with another and they do NOT add up. A day of several lanes makes one trip out and
+one trip home, and the hops between lanes are \`transitToM\`, so a sum of \`estMin\` pays the ramp
+runs once for every lane. On Lake Marion from Rowland on 2026-10-02, five lanes whose \`estMin\` came
+to 395 minutes made a 243-minute day in a 480-minute window, and the plan stopped there with four
+hours unwritten. \`trollMin\` is one pass in the water. Time a day from \`transitFromRampM\` to the
+first lane, \`trollMin\` for every pass, \`transitToM\` for every hop, your stops, and
+\`transitToRampM\` home, the metres at ${TRANSIT_MPH} mph.`}`}
 
 ${JSON.stringify(candidates)}
 ${o.waterIsChosen ? `
