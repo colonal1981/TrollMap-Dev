@@ -2977,6 +2977,42 @@ function quoteBareKeys(src) {
   return { text: out, fixes };
 }
 
+/**
+ * Drop closing brackets written after the answer had already closed, and count them.
+ *
+ * Ryan, 2026-10-02, the first plan Opus wrote through the bridge: *"the model's answer could not be
+ * read: Unexpected non-whitespace character after JSON at position 15111 ... Circle back, mark it,
+ * and cast R6."}}<<HERE>>}"*. The object was whole; one `}` came after it. A bracket after the
+ * object has closed belongs to nothing, so the answer has one reading: the object as it closed.
+ * Same standing as the trailing comma: a typo in the notation, not a wrong answer.
+ *
+ * NARROW ON PURPOSE. Only when everything after the object is closing brackets and whitespace. A
+ * second object, or any words, after the first is not a typo, and still fails loudly.
+ */
+function dropStrayClosers(src) {
+  let depth = 0, inStr = false, esc = false;
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') { inStr = true; continue; }
+    if (ch === '{' || ch === '[') depth++;
+    else if (ch === '}' || ch === ']') {
+      depth--;
+      if (depth === 0) {
+        const rest = src.slice(i + 1);
+        if (!rest.trim() || !/^[\s}\]]*$/.test(rest)) return { text: src, fixes: 0 };
+        return { text: src.slice(0, i + 1), fixes: (rest.match(/[}\]]/g) || []).length };
+      }
+    }
+  }
+  return { text: src, fixes: 0 };
+}
+
 /** The 120 characters either side of where JSON.parse gave up, when it says where. */
 function around(src, err) {
   const at = /at position (\d+)/.exec(String(err && err.message) || '');
@@ -3025,8 +3061,9 @@ export function parsePlanResponse(text) {
     // so an answer that keeps arriving malformed is visible rather than absorbed.
     const { text: noCommas, fixes } = stripTrailingCommas(body);
     const { text: zeroed, fixes: zeros } = zeroBeforeLeadingPoint(noCommas);
-    const { text: fixed, fixes: keys } = quoteBareKeys(zeroed);
-    if (fixes || zeros || keys) {
+    const { text: keyed, fixes: keys } = quoteBareKeys(zeroed);
+    const { text: fixed, fixes: strays } = dropStrayClosers(keyed);
+    if (fixes || zeros || keys || strays) {
       try {
         const out = JSON.parse(fixed);
         if (out && typeof out === 'object') {
@@ -3037,6 +3074,8 @@ export function parsePlanResponse(text) {
               + `${zeros === 1 ? '' : 's'} written from the decimal point (.15), given the 0 by the app`] : []),
             ...(keys ? [`the model's answer was not valid JSON — ${keys} key`
               + `${keys === 1 ? '' : 's'} written without quotes (name:), quoted by the app`] : []),
+            ...(strays ? [`the model's answer was not valid JSON — ${strays} closing bracket`
+              + `${strays === 1 ? '' : 's'} after the answer had closed, dropped by the app`] : []),
           ];
         }
         return out;

@@ -340,6 +340,34 @@ describe('plan-prompt — reading the answer', () => {
     expect(out._appRepairs[0]).toMatch(/1 key written without quotes/);
   });
 
+  // AND A BRACKET AFTER THE ANSWER HAS CLOSED
+  //
+  // 2026-10-02, the first plan Opus wrote through the bridge: `...and cast R6."}}<<HERE>>}`. The
+  // object was whole and one `}` followed it.
+  // -------------------------------------------------------------------------------------------
+  it('drops a closing bracket written after the answer closed, and says so', () => {
+    const out = parsePlanResponse('{ "legs": [], "notes": { "fishfinderNarrative": "Bait balls going '
+      + 'ragged or scattering mean feeding fish. Circle back, mark it, and cast R6." }}}');
+    expect(out.notes.fishfinderNarrative.endsWith('cast R6.')).toBe(true);
+    expect(out.legs).toEqual([]);
+    expect(out._appRepairs).toEqual(["the model's answer was not valid JSON — 1 closing bracket "
+      + 'after the answer had closed, dropped by the app']);
+  });
+
+  it('reads a bracket inside the model\'s prose as prose', () => {
+    const out = parsePlanResponse('{ "why": "the hump } is the spot", "n": [1] }\n] }');
+    expect(out.why).toBe('the hump } is the spot');
+    expect(out._appRepairs[0]).toMatch(/2 closing brackets after the answer had closed/);
+  });
+
+  it('does not drop a second answer, or words, after the first', () => {
+    for (const tail of ['{ "legs": [1] }', 'I hope this helps }']) {
+      let msg = '';
+      try { parsePlanResponse(`{ "legs": [] }\n${tail}`); } catch (e) { msg = e.message; }
+      expect(msg.length > 0).toBe(true);
+    }
+  });
+
   it('still fails loudly on an answer that is broken some other way', () => {
     let msg = '';
     try { parsePlanResponse('{ "legs": [ {"a": } ] }'); } catch (e) { msg = e.message; }
