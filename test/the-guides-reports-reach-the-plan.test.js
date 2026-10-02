@@ -348,14 +348,16 @@ test('askGuideReports never throws and supersedes on the way in', async () => {
     'the Worker answered HTTP 500');
 });
 
-test('the route: his five lakes, a day\'s copy from KV, and fresh only with the token', async () => {
+test('the route: the individual guides\' waters, a day\'s copy from KV, and fresh only with the token', async () => {
+  // Only the individual guides are listed by water since 2026-10-02; SCDNR, AHQ and the search
+  // come by name for every water with a research profile (generalSources()).
   assert.deepEqual(Object.keys(GUIDE_SOURCES).sort(),
-    ['lake_marion', 'lake_moultrie', 'lake_murray', 'monticello_reservoir', 'wateree_lake']);
+    ['lake_marion', 'lake_moultrie', 'lake_murray', 'wateree_lake']);
   const store = new Map();
   const env = { KV: { get: async (k) => (store.has(k) ? JSON.parse(store.get(k)) : null),
                       put: async (k, v) => store.set(k, v) } };
   const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
-  store.set(`guide:reports:v5:lake_marion:2026-10:${day}`, JSON.stringify({ reports: [{ label: 'kept' }] }));
+  store.set(`guide:reports:v6:lake_marion:2026-10:${day}`, JSON.stringify({ reports: [{ label: 'kept' }] }));
   const get = (q) => handleGuideReports(new Request(`https://w/guide-reports/lake_marion${q}`), env, new URL(`https://w/guide-reports/lake_marion${q}`));
   const hit = await (await get('?date=2026-10-02')).json();
   assert.equal(hit.cached, true);
@@ -371,6 +373,19 @@ const AUG_URL = 'https://www.facebook.com/santeecoopercountrysouthcarolina/posts
 const AUG_MD = `## Santee Cooper Country's Post\n\n---\n\n### **Santee Cooper Country**\n\nAugust 5\n\nAugust Fishing Report 2026.\n\nStriper season is closed.`;
 const PREVIEW = 'OCTOBER 2026 FISHING REPORT Santee Cooper & Cooper River STRIPERS Striper season opens October 1st, and anglers should start looking for fish in 30–45 feet of water along flats and creek areas.';
 
+const AHQ_LINKS = ['https://www.anglersheadquarters.com/pages/santee-cooper-lake-marion-lake-moultrie-fishing-report',
+  'https://www.anglersheadquarters.com/blogs/ahq-report/tagged/santee-cooper'];
+const MARION_ROW = { slug: 'lake_marion', name: 'Lake Marion', display_name: 'Lake Marion (Clarendon Co, SC)', state: 'SC',
+  feature_type: 'lake', legacy_display_names: ['Lake Marion, SC'] };
+const MARION_BUCKET = {
+  async get(key) {
+    if (key !== '_registry/lake_index.json') return null;
+    const body = JSON.stringify({ lake_marion: MARION_ROW });
+    return { text: async () => body };
+  },
+  async head(key) { return /^lakes\/lake_marion/.test(key) ? { key } : null; },
+};
+
 test('a newer post seen only as a preview in search goes in, labelled, and supersedes the older ones', async () => {
   const real = globalThis.fetch;
   globalThis.fetch = async (u, init) => {
@@ -382,18 +397,29 @@ test('a newer post seen only as a preview in search goes in, labelled, and super
       const body = JSON.parse(init.body);
       const page = (x) => (x === 'https://www.dnr.sc.gov/news/freshwater.html' ? { text: SCDNR_MD }
         : x.startsWith('https://www.santeecoopercountry.org/') ? { text: SCC_SITE_MD, page_metadata: SCC_SITE_META }
-        : x === AUG_URL ? { text: AUG_MD } : null);
+        : x === AUG_URL ? { text: AUG_MD }
+        : x === 'https://www.anglersheadquarters.com/blogs/ahq-report' ? { text: '* Santee Cooper', links: AHQ_LINKS } : null);
       return Response.json({ results: body.urls.map((x) => ({ url: x, final_url: x, ...page(x) })).filter((x) => x.text), errors: [] });
     }
     throw new Error(`unexpected fetch ${url}`);
   };
   try {
-    const { gatherGuideReports } = await import('../Worker/guide-reports.js');
-    const g = await gatherGuideReports('lake_marion', { TINYFISH_API_KEY: 'k' }, '2026-10-02');
-    assert.deepEqual(g.checked.slice(0, 3).map((c) => c.ok), [true, true, true]);
-    // Angler's Headquarters is the fourth source since 2026-10-01; this fake serves none of its pages.
-    assert.equal(g.checked[3].label, "Angler's Headquarters weekly report");
-    assert.equal(g.checked[3].ok, false);
+    const { gatherGuideReports, _resetAhqIndex } = await import('../Worker/guide-reports.js');
+    const { _resetIndexCache } = await import('../Worker/registry.js');
+    _resetIndexCache();
+    _resetAhqIndex();
+    // Since 2026-10-02 SCDNR comes by name for a water with a research profile, so the bucket holds
+    // Marion's registry row and a profile, and AHQ's blog lists the page that says Santee Cooper is
+    // Marion and Moultrie (the bridge to SCDNR's "Santee Cooper" heading).
+    const g = await gatherGuideReports('lake_marion', { TINYFISH_API_KEY: 'k', R2_TROLLMAP_CHARTPACKS: MARION_BUCKET }, '2026-10-02');
+    const by = (label) => g.checked.find((c) => c.label === label);
+    assert.equal(by('Santee Cooper Country fishing report').ok, true);
+    assert.equal(by('Santee Cooper Country on Facebook').ok, true);
+    assert.equal(by('SCDNR Freshwater Fishing Trends').ok, true);
+    // Angler's Headquarters: this fake serves its blog but none of its listing pages.
+    assert.equal(by("Angler's Headquarters weekly report").ok, false);
+    _resetIndexCache();
+    _resetAhqIndex();
     const pv = g.reports.find((r) => r.preview);
     assert.equal(pv.monthYear, '2026-10');
     assert.match(pv.label, /search preview only/);

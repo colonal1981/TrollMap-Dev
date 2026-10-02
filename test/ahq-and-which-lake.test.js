@@ -20,7 +20,7 @@
 //   7. the place names come off both charts in the browser, and the prompt says the rule.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ahqTitleDate, parseAhqListing, pickAhqPosts, parseAhqEntries, GUIDE_SOURCES }
+import { ahqTitleDate, parseAhqListing, pickAhqPosts, parseAhqEntries, GUIDE_SOURCES, ahqOn }
   from '../Worker/guide-reports.js';
 import { santeeLakesIn, reportWaterFor, reportWaterForPlan, placeNamesIn, namesOnlyOn, SANTEE_LAKES }
   from '../js/utils/report-water.js';
@@ -106,7 +106,9 @@ test('three Octobers back, kept for good, and a members-only page says so and fa
   const real = globalThis.fetch;
   globalThis.fetch = fetchMock;
   try {
-    const src = GUIDE_SOURCES.lake_marion.find((s) => s.kind === 'ahq');
+    // Santee Cooper's tag and title as generalSources() derives them from AHQ's own page names
+    // (every-water-with-a-profile-gets-the-guides.test.js holds that match).
+    const src = ahqOn('santee-cooper', 'Santee Cooper');
     assert.equal(src.url, `${BASE}/blogs/ahq-report/tagged/santee-cooper`);
     const { gatherGuideReports } = await import('../Worker/guide-reports.js');
     // Only the AHQ source, so the other sources' failures do not muddy the call count.
@@ -149,7 +151,7 @@ test('a year that cannot be found is said, and the others still come', async () 
   globalThis.fetch = fetchMock;
   const saved = GUIDE_SOURCES.lake_moultrie;
   try {
-    GUIDE_SOURCES.lake_moultrie = [saved.find((s) => s.kind === 'ahq')];
+    GUIDE_SOURCES.lake_moultrie = [ahqOn('santee-cooper', 'Santee Cooper')];
     const { gatherGuideReports } = await import('../Worker/guide-reports.js');
     const g = await gatherGuideReports('lake_moultrie', env, '2026-10-02');
     assert.equal(g.reports.length, 1);

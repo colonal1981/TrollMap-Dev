@@ -277,14 +277,14 @@ const DECLARED = [
    + 'and no registry field says "never hide this", so it is legitimately hand-written.'],
   // Keyed by SCDNR attractor NAMES, not waters, and it refuses nothing: a point with no entry
   // simply has no note. Added 2026-10-01 on Ryan's "both sound good" (APP_CHANGE_REQUESTS 43).
-  // His five lakes and where each one's guides publish. Other people's pages, a channel id and the
-  // section names on SCDNR's page: nothing in the registry can derive them, and a water not listed
-  // simply has no guide reports. Added 2026-10-01 on his "yes" (APP_CHANGE_REQUESTS 42).
-  ['Worker/guide-reports.js', 'GUIDE_SOURCES', 5, 'foreign-key',
-   'where the guides on Wateree, Murray, Marion, Moultrie and Monticello publish: SCDNR\'s section '
-   + 'name, Santee Cooper Country\'s page and Facebook author, Wolfe\'s Facebook author, the '
-   + 'Lake Murray report channel, and Angler\'s Headquarters\' tag and title for each lake (added '
-   + '2026-10-01, "we need notes like this"). Verify by reading: each report carries its source and URL.'],
+  // The individual guides and the water each one fishes. A guide is a person; no registry field
+  // says where a person fishes. SCDNR and AHQ were listed here for his five lakes until 2026-10-02
+  // and now come by name for every water with a research profile (Ryan: "the individual guide
+  // reports can probably stay but we can do general searches for the other major lakes").
+  ['Worker/guide-reports.js', 'GUIDE_SOURCES', 4, 'foreign-key',
+   'where four individual guides publish and the water each fishes: Santee Cooper Country\'s page '
+   + 'and Facebook author (Marion, Moultrie), Wolfe\'s Facebook author (Wateree), the Lake Murray '
+   + 'report channel. Verify by reading: each report carries its source and URL.'],
   // The two lakes of the Santee Cooper system, which share one set of reports. A depth of water in
   // one of those reports goes on a lane only on the lake its sentence is about. Ryan, 2026-10-01:
   // "If place names help lock down which lake why wouldn't we use them?" and "go ahead".

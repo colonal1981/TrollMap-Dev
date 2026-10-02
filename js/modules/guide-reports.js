@@ -135,7 +135,8 @@ export function guideReportsBlock(guide, species, planDate) {
   const cannot = guide.error ? `They could not be read today (${guide.error}). Say so in \`scoutNotes\`; do not write as though nobody reported.` : null;
   const any = (guide.reports || []).length > 0;
   if (cannot && !any) return `${head}${cannot}\n`;
-  if (guide.none && !any) return `${head}No guide sources are listed for this water.\n`;
+  // Why there are none, in the Worker's words: no research profile, or nothing that reports on it.
+  if (guide.none && !any) return `${head}No guide reports were looked for on this water: ${guide.none}.\n`;
   const live = (guide.reports || []).filter((r) => !r.supersededBy);
   const old = (guide.reports || []).filter((r) => r.supersededBy);
   const failed = (guide.checked || []).filter((c) => !c.ok);
