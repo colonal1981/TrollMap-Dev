@@ -1084,6 +1084,21 @@ export function airAndFrontBlock(weatherByHour, conditions, candidates) {
   return L.length ? `\nTHE AIR ON THE DAY\n${L.join('\n')}\n` : '';
 }
 
+/**
+ * WHEN THE WATER WAS BEING PULLED (item 46). `conditions.movingWater` is in the day's JSON; this
+ * says what it is and what it is not. Only on the waters whose gauges show it.
+ */
+export function movingWaterBlock(conditions) {
+  const m = conditions && conditions.movingWater;
+  if (!Array.isArray(m) || !m.length) return '';
+  return '\nMOVING WATER\n`conditions.movingWater` is what the gauges that show this water being '
+    + 'pulled did in the last 48 hours, from USGS 15-minute data: the hours a dam ran, or a '
+    + 'pumped-storage lake fell and rose. It is HISTORY, not a schedule. Nobody publishes when these '
+    + 'run, so never tell him when the water will move today. If the reports or the research above '
+    + 'tie the bite on this water to moving water, say in `notes.scoutNotes` what the last two days '
+    + 'looked like; the call on what to make of it is his.\n';
+}
+
 export function lightPromptBlock(ws, weatherByHour, launchTime, returnTime, lightFacts,
                                 isRiver) {
   if (!ws || ws.error) return '';
@@ -2653,7 +2668,7 @@ wind direction: is it a dangerous windward launch?${o.hazards && o.hazards.lengt
     + `from the research is written advice with no position at all: say the ones that bear on `
     + `today out loud, and never imply an unpositioned one is marked on the chart.`
   : ''}
-${coastalPromptBlock(o.waterState)}${riverPromptBlock(o.waterState, o)}${poolPromptBlock(o.waterState)}${chartCoverageBlock(o)}${conditionsPromptBlock(o.waterState)}${lightPromptBlock(o.waterState, o.weatherByHour, o.launchTime, o.returnTime, o.lightFacts, o.isRiver)}${airAndFrontBlock(o.weatherByHour, o.conditions, candidates)}${timeBudgetBlock(o.windowMin, o.launchTime, o.returnTime, o.dayMin, o.dayStopMin, o.castStopsWanted)}${thermoclineNormBlock(o.thermoclineNorm)}${inshoreSeasonBlock(o.inshoreSeason)}${seabedHabitatBlock(o.seabedHabitat)}
+${coastalPromptBlock(o.waterState)}${riverPromptBlock(o.waterState, o)}${poolPromptBlock(o.waterState)}${chartCoverageBlock(o)}${conditionsPromptBlock(o.waterState)}${lightPromptBlock(o.waterState, o.weatherByHour, o.launchTime, o.returnTime, o.lightFacts, o.isRiver)}${airAndFrontBlock(o.weatherByHour, o.conditions, candidates)}${movingWaterBlock(o.conditions)}${timeBudgetBlock(o.windowMin, o.launchTime, o.returnTime, o.dayMin, o.dayStopMin, o.castStopsWanted)}${thermoclineNormBlock(o.thermoclineNorm)}${inshoreSeasonBlock(o.inshoreSeason)}${seabedHabitatBlock(o.seabedHabitat)}
 WHAT IS ALREADY KNOWN
 ${o.intel || 'NOTHING. No researched profile exists for this water, so everything else here rests '
   + 'on the chart, the gauges and general species knowledge. Say so in the plan rather than '

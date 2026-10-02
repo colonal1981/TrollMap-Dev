@@ -1369,9 +1369,13 @@ export function researchIntel(profile, species, season, now = Date.now(), packFa
  * @param {number[]} ramp     [lon, lat]; unused today, kept so callers pass the same four
  * @param {object} [sol]      solunarFor() output, or null
  * @param {object} [forecast] fetchForecast() output, or null
+ * @param {object} [clarityAtRamp] fetchClarityAtRamp() output, or null
+ * @param {object} [moving]   fetchMovingWater() output, or null
  */
-export function conditionsFrom(inp, ramp, sol, forecast, clarityAtRamp = null) {
+export function conditionsFrom(inp, ramp, sol, forecast, clarityAtRamp = null, moving = null) {
   const c = { clarity: inp.clarity };
+  // WHEN THE WATER WAS BEING PULLED, the last two days, off the gauges that show it (item 46).
+  if (moving && Array.isArray(moving.lines) && moving.lines.length) c.movingWater = moving.lines;
   // ── THE CLARITY SAYS WHICH WATER IT IS ABOUT ─────────────────────────────────────────────────
   //
   // `clarity` alone is a bare word, and for months it was the lake-wide MEAN of every zone sent as

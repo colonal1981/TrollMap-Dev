@@ -45,7 +45,7 @@ import { packFetcher } from './smart-plan-v2.js';
 import { packDerivedFacts } from '../utils/pack-facts.js';
 import { fetchForecast,
          fetchWaterState, fetchClarityAtRamp, regulationStateFor,
-         detectCoastalZone, fogNote } from './plan-preflight.js';
+         detectCoastalZone, fogNote, fetchMovingWater, movingWaterNote } from './plan-preflight.js';
 import { lakeSurfaceTemp, poolOffsetFt } from '../utils/water-conditions.js';
 import { landingsFor } from '../data/launch-reach.js';
 import { closerLanding, closerLandingNote } from './closer-landing.js';
@@ -917,6 +917,8 @@ export async function findWater() {
                                                 (regRow || {}).slug || '');
   const regId = registryIdentity(regRow);
   say('Checking the forecast…');
+  // WHEN THE WATER WAS BEING PULLED (item 46), asked beside the forecast; see fetchMovingWater().
+  const movingAsk = fetchMovingWater(r2Key).catch(() => null);
   const forecast = await fetchForecast(inp.lakeName, inp.dateStr,
     { launchTime: inp.launchTime, returnTime: inp.returnTime }).catch(() => null);
   // ── THE CLARITY AT HIS LAUNCH, THE SAME WAY THE OTHER TAB GETS IT ────────────────────────────
@@ -1087,7 +1089,7 @@ export async function findWater() {
     // Solunar was not computed on this path at all; `solunarFor` is pure arithmetic on the date
     // and the ramp position, so it costs nothing and there is no reason one tab should have it.
     conditions: conditionsFrom(inp, ramp, solunarFor(inp.dateStr, ramp[1], ramp[0]), forecast,
-                               clarityAtRamp),
+                               clarityAtRamp, await movingAsk),
     // Carried on the tab state so buildFromPicked() — which writes the plan and does not have
     // `clarityAtRamp` in scope — can put the resolved verdict on the plan for the card to read.
     clarityAtRamp,
@@ -1426,6 +1428,9 @@ export async function buildFromPicked() {
     waterTempF: lakeSurfaceTemp(waterState, T.waterTempF).tempF,
   });
   if (fog) r.problems = [...(r.problems || []), fog];
+  // AND WHEN THE WATER WAS BEING PULLED -- same line as the Smart Plan path (item 46).
+  const movingNote = movingWaterNote(T.conditions && T.conditions.movingWater);
+  if (movingNote) r.problems = [...(r.problems || []), movingNote];
   // ANOTHER LANDING CLOSER TO THE WATER HE PICKED. Same check, same router, as the Smart Plan
   // path -- see closer-landing.js (change request 10). A failure costs the plan nothing.
   say('Checking the other landings…');

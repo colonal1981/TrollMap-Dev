@@ -43,6 +43,7 @@ import { DEPTH_BANDS, normalizeCoastalSpecies, tacticalNote } from './coastal-sc
 import { clarityForPlan, versusNormalAt } from '../utils/clarity-at-ramp.js';
 import { compassOf } from '../utils/compass.js';
 import { fogSpans, fogLowestVisibility, skyAt } from '../utils/light-state.js';
+import { MOVING_WATER_GAUGES, WINDOW_HOURS, seriesFrom, gaugeLine } from '../utils/moving-water.js';
 
 /** The coastal zone this water is, or null for everything inland. */
 export function detectCoastalZone(lakeName) {
@@ -731,6 +732,46 @@ export function fogNote(weatherByHour, o = {}) {
               + `${inside.slice(6)}.` : '')
     + (air != null && water != null
       ? ` Air ${air}°F over water ${water}°F at ${hh(lh)}.` : '');
+}
+
+/**
+ * WHEN THE WATER WAS BEING PULLED, off the gauges that show it (item 46, "yeah go ahead on 46").
+ *
+ * USGS 15-minute data straight from api.waterdata.usgs.gov (it answers the browser; see
+ * usgs-gauges.js), one request per gauge, the lines worded by utils/moving-water.js. Only the
+ * waters whose gauges the 10/1 check found showing it: Moultrie, Monticello and Marion. Null for
+ * every other water. Never throws: a gauge that does not answer says so in its own line, and the
+ * plan is built either way.
+ *
+ * @returns {Promise<{lines: string[]}|null>}
+ */
+export async function fetchMovingWater(slug, o = {}) {
+  const gauges = MOVING_WATER_GAUGES[slug];
+  if (!gauges || !gauges.length) return null;
+  const get = o.fetch || fetch;
+  const now = o.now ?? Date.now();
+  const lines = await Promise.all(gauges.map(async (g) => {
+    const days = g.days || WINDOW_HOURS / 24;
+    const since = new Date(now - days * 864e5).toISOString().slice(0, 19) + 'Z';
+    const url = 'https://api.waterdata.usgs.gov/ogcapi/v0/collections/continuous/items'
+      + `?monitoring_location_id=USGS-${g.site}&parameter_code=${g.param}`
+      + `&datetime=${encodeURIComponent(`${since}/..`)}&limit=10000&skipGeometry=true`
+      + '&properties=time,value&f=json';
+    try {
+      const res = await get(url, { signal: AbortSignal.timeout ? AbortSignal.timeout(8000) : undefined });
+      if (!res.ok) return `${g.name} (USGS ${g.site}): could not be read (HTTP ${res.status}).`;
+      return gaugeLine(g, seriesFrom(await res.json()));
+    } catch (e) {
+      return `${g.name} (USGS ${g.site}): could not be read (${(e && e.message) || 'no answer'}).`;
+    }
+  }));
+  return { lines: lines.filter(Boolean) };
+}
+
+/** The line he reads with the plan, or null. History, and it says so. */
+export function movingWaterNote(lines) {
+  if (!Array.isArray(lines) || !lines.length) return null;
+  return `moving water, from the gauges (what they did, not a schedule): ${lines.join(' ')}`;
 }
 
 /**

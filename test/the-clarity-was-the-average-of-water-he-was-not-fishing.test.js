@@ -246,7 +246,8 @@ test('both planners resolve it before they build conditions, not one of them', (
     assert.match(src, /fetchClarityAtRamp\(inp\.lakeName, inp\.dateStr/, `${who} must resolve it`);
     assert.match(src, /if \(clarityAtRamp && clarityAtRamp\.select\) inp\.clarity = clarityAtRamp\.select;/,
       `${who} must use it`);
-    assert.match(src, /conditionsFrom\(inp, ramp, sol[^)]*, forecast,?\s*\n?\s*(clarityAtRamp|clarityAtRamp\))|conditionsFrom\(inp, ramp, solunarFor\([^)]*\), forecast,\s*\n?\s*clarityAtRamp\)/,
+    // `clarityAtRamp` may be followed by the moving-water answer (item 46, 2026-10-02).
+    assert.match(src, /conditionsFrom\(inp, ramp, sol[^)]*, forecast,?\s*\n?\s*(clarityAtRamp|clarityAtRamp\))|conditionsFrom\(inp, ramp, solunarFor\([^)]*\), forecast,\s*\n?\s*clarityAtRamp(,\s*[^)]*)?\)/,
       `${who} must pass the provenance to conditionsFrom`);
   }
   assert.match(PRE, /export async function fetchClarityAtRamp/);

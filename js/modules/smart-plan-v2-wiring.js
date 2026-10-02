@@ -27,7 +27,8 @@ import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
 import { TRANSIT_MIN_DEPTH_FT } from './plan-water.js';
 import { solunarFor } from '../utils/solunar.js';
 import { checkPlanLegality, ensureRegulations, fetchForecast, fetchWaterState,
-         fetchClarityAtRamp, regulationStateFor, detectCoastalZone, fogNote } from './plan-preflight.js';
+         fetchClarityAtRamp, regulationStateFor, detectCoastalZone, fogNote,
+         fetchMovingWater, movingWaterNote } from './plan-preflight.js';
 import { primeFishAdvisories } from '../data/fish-advisories.js';
 import { landingsFor } from '../data/launch-reach.js';
 import { closerLanding, closerLandingNote } from './closer-landing.js';
@@ -163,6 +164,9 @@ export async function runSmartPlanV2(opts = {}) {
   // THE GUIDES' MONTHLY REPORTS, asked now and awaited when the plan is built -- the first read of
   // the day can take the better part of a minute (a search, the posts, a transcript).
   const guideAsk = opts.dryRun ? null : askGuideReports({ worker: CF_WORKER_URL, slug: r2Key, date: inp.dateStr });
+  // WHEN THE WATER WAS BEING PULLED, the last two days, on the waters whose gauges show it (item
+  // 46). Asked now, awaited with the conditions. Not on a dry run, which spends nothing.
+  const movingAsk = opts.dryRun ? null : fetchMovingWater(r2Key).catch(() => null);
 
   const date = new Date(`${inp.dateStr}T12:00:00`);
   // THE WATER GETS A SAY. `season` decides the depth band, the structure weights and which
@@ -278,6 +282,7 @@ export async function runSmartPlanV2(opts = {}) {
 
   say('Reading the guide reports…');
   const guide = guideAsk ? await guideAsk : null;
+  const moving = movingAsk ? await movingAsk : null;
 
   say('Reading the pack…');
   let r;
@@ -319,7 +324,7 @@ export async function runSmartPlanV2(opts = {}) {
       // and the bench plan run on that river saw none of them. Selected here, where the profile is.
       patternFacts: patternFactsFrom(researched),
       conditions: {
-        ...conditionsFrom(inp, ramp, sol, forecast, clarityAtRamp),
+        ...conditionsFrom(inp, ramp, sol, forecast, clarityAtRamp, moving),
         // The model is told where the band came from, so a generic one cannot be mistaken for a
         // lake-specific one by the thing writing the reasoning.
         //
@@ -468,6 +473,9 @@ export async function runSmartPlanV2(opts = {}) {
     waterTempF: lakeSurfaceTemp(waterState, inp.waterTempF).tempF,
   }) : null;
   if (fog) r.problems = [...(r.problems || []), fog];
+  // AND WHEN THE WATER WAS BEING PULLED, the line he asked for (item 46). History, said as such.
+  const movingNote = movingWaterNote(moving && moving.lines);
+  if (movingNote) r.problems = [...(r.problems || []), movingNote];
   // ANOTHER LANDING CLOSER TO THIS DAY'S WATER (change request 10). Ryan: "if i am going to fish
   // june creek then i should have just launched at june creek". The run out and the run home are
   // costed from every landing on the water with the router this plan used -- see closer-landing.js.
