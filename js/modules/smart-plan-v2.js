@@ -80,7 +80,7 @@ export const CANDIDATE_LIMIT = 12;
  */
 export async function buildSmartPlanV2(o) {
   const base = o.chartpackBase || '';
-  const [runsFc, structFc, waterFc, docksFc, poisFc, centrelineFc, boundaryFc, osmFc] = await Promise.all([
+  const [runsFc, structFc, waterFc, docksFc, poisFc, centrelineFc, boundaryFc, osmFc, channelsFile] = await Promise.all([
     o.fetchJson(`${base}/${o.r2Key}/trolling_runs.geojson`),
     o.fetchJson(`${base}/${o.r2Key}/structure.geojson`),
     o.fetchJson(`${base}/${o.r2Key}/water_features.geojson`),
@@ -112,6 +112,10 @@ export async function buildSmartPlanV2(o) {
     // and drawn by the map's OSM toggle; the planner never read them. Optional like the three above.
     // See osmShoreFeatures() in plan-candidates.js for what is kept and why.
     Promise.resolve(o.fetchJson(`${base}/${o.r2Key}/osm-structures.geojson`)).catch(() => null),
+    // NINTH: WHERE EACH LANE RUNS IN A CHANNEL. Scripts/stamp_channels.mjs, rule in
+    // plan-channels.js. Ryan, 2026-10-01: "just the fact that it is a deep creek channel is
+    // structure in itself". Optional like the four above: a pack without it plans as it did.
+    Promise.resolve(o.fetchJson(`${base}/${o.r2Key}/channels.json`)).catch(() => null),
   ]);
   const runs = (runsFc && runsFc.features) || [];
   // A RIVER DOES NOT NEED LANES, AND THIS REFUSED TO PLAN ONE WITHOUT THEM.
@@ -304,6 +308,8 @@ export async function buildSmartPlanV2(o) {
     water: waterTest(boundaryFc),
     // Per species, per season, per lake, from the research profile — see structureWeights().
     weights: o.weights, reliefWeights: o.reliefWeights, docks, attractors, pois, shore,
+    // runId -> [[fromM, toM], ...] of channel. See the fetch above and selectCandidates().
+    channels: (channelsFile && channelsFile.runs) || null,
     // ── ON A RIVER THE HOP IS RIVER MILES, NOT A STRAIGHT LINE ────────────────────────────────
     //
     // The straight line is the right answer on a lake and a wrong one on moving water -- see

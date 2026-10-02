@@ -144,11 +144,16 @@ LAYERS = {
     # straight line -- build_ramp_reach.py, rivers only so far. Opt-in like the rest of that
     # group: a separate pass builds it and most packs do not have one yet.
     "launches":         "launches.json",
+    # Where each fitted lane runs IN a channel -- Scripts/stamp_channels.mjs, rule in
+    # js/modules/plan-channels.js. Smart Plan reads it (optional: a pack without it plans as it
+    # did). Opt-in for the same reason as the rest of this group: a separate pass builds it.
+    #     py Scripts\upload_garmin_to_r2.py --root F:\TrollMapPipeline\chartpack --layers channels
+    "channels":         "channels.json",
 }
 # Not uploaded unless named explicitly with --layers. `boundary` would replace the NHD/3DHP
 # polygon the app renders as the lake outline.
 LAYERS_OPT_IN = {"boundary", "areas", "water_graph", "structure", "trolling_runs", "water_features",
-                 "centreline", "launches"}
+                 "centreline", "launches", "channels"}
 
 # ── What R2 does not need ─────────────────────────────────────────────────────────────
 #

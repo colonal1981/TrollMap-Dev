@@ -30,6 +30,7 @@
 // Both cross in one direction only -- see the re-export below DEFAULT_RELIEF_WEIGHTS for why the
 // relief pair is defined over there and not here.
 import { waterBand, reliefDropOf } from './plan-pieces.js';
+import { CHANNEL_KIND, channelHits, channelMetres } from './plan-channels.js';
 import { geoDistanceM } from '../utils/geo.js';
 
 // ── AND WHEN EACH PASS HAPPENS, WHICH IS A FISHING FACT AND WAS NEVER SENT ───────────────────────
@@ -1774,7 +1775,10 @@ function scoreWindow(near, fromM, toM, weights, maxOffM, capPerType = SCORE_CAP_
     // that a real target would otherwise have had.
     if (w > 0) {
       counted[n.t] = (counted[n.t] || 0) + 1;
-      if (counted[n.t] <= capPerType) score += w * proximity;
+      // A CHANNEL COUNTS ONCE A WINDOW. Its hits sit every step along the stretch so a window can
+      // grow down it, but the channel is the water the leg is in, not a row of things beside it --
+      // the same reason `relief` is added once a leg. See plan-channels.js.
+      if (counted[n.t] <= (n.t === CHANNEL_KIND ? 1 : capPerType)) score += w * proximity;
     }
     // The hit is kept either way: it is still a place to stop, it just stops adding to the score.
     // `side` TRAVELS WITH THE HIT, and it did not until 2026-09-18. kindHits() put the feature's
@@ -1788,7 +1792,8 @@ function scoreWindow(near, fromM, toM, weights, maxOffM, capPerType = SCORE_CAP_
     // is right and is never reached is indistinguishable from one that is wrong.
     hits.push({ atM: Math.round(n.s - fromM), type: n.t, offM: n.d, weight: w,
                 side: n.side,
-                n: n.n, spanM: n.spanM, scored: w > 0 && counted[n.t] <= capPerType });
+                n: n.n, spanM: n.spanM,
+                scored: w > 0 && counted[n.t] <= (n.t === CHANNEL_KIND ? 1 : capPerType) });
   }
   return { score, hits };
 }
@@ -2086,6 +2091,29 @@ export function groupDocks(hits) {
  * shortlist with 500 m stubs. `minM` is 600 by default -- the fitter's shortest pass -- see
  * selectCandidates().
  */
+/**
+ * The windows a lane's channel stretches add to its first one: each stretch that holds `minM` of
+ * channel the first window does not fish becomes a window of its own, the whole stretch, capped at
+ * `maxM` like any leg. Not on a drift: a river reach is one window by construction (bestWindow()).
+ */
+function channelWindows(run, first, stretches, opts) {
+  const p = run.properties || {};
+  if (p.drift || !Array.isArray(stretches) || !stretches.length) return [];
+  const total = p.length_m || 0;
+  const near = p.near || [];
+  const out = [];
+  for (const [a, b0] of stretches) {
+    const b = Math.min(b0, total, a + opts.maxM);
+    if (b - a < opts.minM) continue;
+    const unfished = (b - a) - channelMetres([[a, b]], first.startM, first.startM + first.lengthM);
+    if (unfished < opts.minM) continue;
+    const w = scoreWindow(near, a, b, opts.weights, opts.maxOffM);
+    out.push({ startM: a, lengthM: b - a, score: w.score, hits: w.hits,
+               whole: a === 0 && b >= total, channel: true });
+  }
+  return out;
+}
+
 function bestWindow(run, opts) {
   const p = run.properties || {};
   const total = p.length_m || 0;
@@ -2304,7 +2332,11 @@ export function selectCandidates(runs, o) {
     // about as far as anyone would carry a set of rods on faith.
     quietM: o.quietM ?? 500,
     maxOffM: o.maxOffM ?? 100,
-    weights: o.weights || DEFAULT_WEIGHTS,
+    // A CHANNEL HIT IS WORTH WHAT A CHANNEL IS WORTH: the relief weight for `channel_edge`, with
+    // the research lead when this species' profile names a channel (RELIEF_PHRASES in
+    // plan-inputs.js). No new number -- it is the one the relief word already carries.
+    weights: { ...(o.weights || DEFAULT_WEIGHTS),
+               [CHANNEL_KIND]: (o.reliefWeights || DEFAULT_RELIEF_WEIGHTS).channel_edge || 0 },
     reliefWeights: o.reliefWeights || DEFAULT_RELIEF_WEIGHTS,
   };
   const trollMph = o.trollMph ?? 2.0;
@@ -2406,6 +2438,8 @@ export function selectCandidates(runs, o) {
   const transitM = o.transitM || straight;
 
   const out = [];
+  // Channel windows past a lane's first, counted so every window is accounted for.
+  let extraWindows = 0;
   for (let i = 0; i < runs.length; i++) {
     const run = runs[i], p = run.properties || {};
     if (p.routable === false) { rejected.unroutable++; continue; }
@@ -2483,430 +2517,455 @@ export function selectCandidates(runs, o) {
       ? kindHits(coords, cum0, o.shore, opts.maxOffM, 'bridge')
           .concat(kindHits(coords, cum0, o.shore, opts.maxOffM, 'pier'))
       : [];
-    const joined = docks.concat(dnr, poi, shore);
-    const win = bestWindow(joined.length ? withNear(base, joined) : base, opts);
-    if (!win) { rejected.noWindow++; continue; }
-    // Relief is a property of the whole run, so it is added once rather than per hit. River
-    // channel and channel edge are 12 cites across 7 species -- more species than anything else
-    // in the count -- and nothing scored them until 2026-08-08.
-    const reliefScore = opts.reliefWeights[p.relief] || 0;
-    win.score += reliefScore;
-    // The same probe's other half, read here so the word and its size are resolved in one place.
-    // NOT SCORED, and deliberately: the weights above are research-led counts of what a species is
-    // cited on, and multiplying one of them by a depth would be a coefficient nobody measured.
-    // This is a fact for whoever writes the plan -- see forModel().
-    const reliefDrop = reliefDropOf(p);
-    if (win.score <= 0) { rejected.scoreless++; continue; }
+    // ── WHERE THIS LANE RUNS IN A CHANNEL ─────────────────────────────────────────────────────
+    //
+    // Ryan, 2026-10-01: "just the fact that it is a deep creek channel is structure in itself... it
+    // is called out as something to fish for striper". The stretches come from the pack's
+    // channels.json (Scripts/stamp_channels.mjs, rule in plan-channels.js); a pack without one has
+    // none and plans exactly as it did.
+    const chs = o.channels && p.id ? o.channels[p.id] || null : null;
+    const joined = docks.concat(dnr, poi, shore, chs ? channelHits(chs, opts.stepM) : []);
+    const scored = joined.length ? withNear(base, joined) : base;
+    const first = bestWindow(scored, opts);
+    if (!first) { rejected.noWindow++; continue; }
+    // A STRETCH OF CHANNEL IS A LEG OF ITS OWN when the window above leaves a pass of it unfished.
+    // One window a lane was chosen by what the lane passes, so a long lane whose channel stretch
+    // passes nothing else got its leg somewhere else and the channel never. The stretch must hold
+    // `minM` the first window does not -- his pass, the same test Pick Water keeps a piece by.
+    const wins = [first, ...channelWindows(scored, first, chs, opts)];
+    extraWindows += wins.length - 1;
+    for (const [wi, win] of wins.entries()) {
+      // Relief is a property of the whole run, so it is added once rather than per hit. River
+      // channel and channel edge are 12 cites across 7 species -- more species than anything else
+      // in the count -- and nothing scored them until 2026-08-08.
+      // A WINDOW IN A CHANNEL HAS ALREADY SCORED IT, so the run's one word for its relief is not
+      // added on top: on that stretch the channel IS the relief, measured where the leg is.
+      const inChannel = (win.hits || []).some((h) => h.type === CHANNEL_KIND);
+      const reliefScore = inChannel ? 0 : (opts.reliefWeights[p.relief] || 0);
+      win.score += reliefScore;
+      // The same probe's other half, read here so the word and its size are resolved in one place.
+      // NOT SCORED, and deliberately: the weights above are research-led counts of what a species is
+      // cited on, and multiplying one of them by a depth would be a coefficient nobody measured.
+      // This is a fact for whoever writes the plan -- see forModel().
+      const reliefDrop = reliefDropOf(p);
+      if (win.score <= 0) { rejected.scoreless++; continue; }
 
-    const cum = cumulative(coords);
-    const start = pointAt(coords, cum, win.startM);
-    const end = pointAt(coords, cum, win.startM + win.lengthM);
-    // The geometry of the leg itself, sliced once and carried on the candidate. Without this the
-    // assembler has a leg with a length and no line, so nothing can be drawn or exported and a
-    // stop has nowhere to sit.
-    const line = sliceLine(coords, cum, win.startM, win.startM + win.lengthM);
-    const lineCum = cumulative(line);
-    // WHAT IS UNDER THE BOAT ON THE WINDOW ACTUALLY CHOSEN, not on the whole pass and not the
-    // name of the contour it was cut from. Null on a pack fitted before envelope profiles existed,
-    // and every reader below falls back to what it used to use.
-    const band = waterBand(p, win.startM, win.startM + win.lengthM);
-    // AND THE ENVELOPE ITSELF, SLICED TO THIS WINDOW, because a summary cannot say WHERE.
-    //
-    // `waterBand` reduces the same two arrays to four numbers, and the leg has carried an `envelope`
-    // field since it was written with nothing ever putting one in it. So a bait-depth warning could
-    // say "there is a rise to 5 ft on it somewhere" and then "the chart does not say where the rise
-    // is" -- which stopped being true when the drift started shipping `envelope_ft`. It does say:
-    // the index is the distance. Ryan read that sentence four times on one plan, 2026-09-19.
-    //
-    // `envelope_line_ft` AND NOT `envelope_ft`, BECAUSE THE CEILING CAME OFF THE LINE. `maxRunDepthFt`
-    // is `band.line.minFt` -- the shallowest depth ON the line -- and a warning that quotes that
-    // number has to locate it in the array it came from. Tried the other way round first: read off
-    // `envelope_ft`, the shallowest within SIDE_ENVELOPE_M either side, 50 of the Congaree leg's 161
-    // stations came back at or under 5 ft, which is a true statement about the corridor and a false
-    // answer to "where is the rise the bait will not clear".
-    //
-    // ALIGNED TO THE NEAREST STATION AND NOT BETTER THAN THAT. The slice starts at the station at or
-    // before the window's start, so index 0 sits within one step -- 50 m on every river pack built so
-    // far -- of the leg's own start, and whoever reads it says "about". Pretending to the metre would
-    // be inventing precision the 50 m resampling never had.
-    const envStep = Number(p && p.envelope_step_m);
-    const envAll = p && p.envelope_line_ft;
-    const envelope = (envStep > 0 && Array.isArray(envAll))
-      ? envAll.slice(Math.max(0, Math.min(envAll.length - 1, Math.floor(win.startM / envStep))),
-                     Math.max(0, Math.min(envAll.length,
-                       Math.ceil((win.startM + win.lengthM) / envStep) + 1)))
-      : null;
-
-    const inM = transitM(o.ramp, start);
-    const outM = transitM(end, o.ramp);
-    // HOW FAR THIS WATER IS FROM THE RAMP HE PICKED. The nearer end, because a leg can be run in
-    // either direction and what matters is how far out the water is, not which way the contour
-    // happens to be drawn.
-    //
-    // TRIED AND REVERTED, 2026-08-10 -- leaving the note so it is not tried a third time. The
-    // direction fix established that a leg costs `inM + outM` whichever way it is trolled, and it
-    // looked like the min was therefore understating a long leg pointing away from the ramp: on
-    // the plan Ryan objected to, L2's near end was 2.5 km out and its far end 6.3 km, and it
-    // scored as 2.5 km water.
-    //
-    // Replacing it with the midpoint made things WORSE, and the suite said so immediately. The min
-    // and the midpoint answer different questions: min says HOW CLOSE this water comes to the
-    // ramp, the midpoint says WHERE IT SITS. Because a far leg's two ends are both far while a
-    // near leg's are near and not-so-near, the midpoint COMPRESSES the gap between them -- near
-    // water went from 8x closer to 3.7x closer, its proximity dropped from 0.81 to 0.67, and 6.5
-    // km of better water four miles out took first place over 2.2 km beside the ramp. That is
-    // "why would i launch at clearwater cove and then go fish the opposite side of the lake",
-    // reintroduced by a change meant to help.
-    //
-    // The cost of the far end is real, and it is already charged -- `moveAh` below uses
-    // `inM + outM`, and the model is quoted the honest run home. This factor is not a cost. It is
-    // a preference about location, and the min is the right shape for that.
-    const fromRampM = Math.min(inM, outM);
-    const proximity = 1 / (1 + fromRampM / rampBiasM);
-    // ── COSTED WITH THE WATER AND WITH THE AIR, WHERE THERE IS EITHER ───────────────────────────
-    //
-    // `ampHoursBand()` has modelled both a current and a wind since it was written, and for most of
-    // that time no caller on this path supplied either -- it lived in plan-water.js, which imports
-    // this file. The current arrived on 2026-09-16. The wind arrives now, and it brings with it the
-    // reason neither can be priced off a chord: see ampHoursAlong(), which both calls below go
-    // through and which walks the leg's real geometry instead of the straight line between its ends.
-    //
-    // THE TWO ENVIRONMENTS ARE NOT THE SAME SHAPE, and that is why this block reads as it does. A
-    // drift follows the channel by construction, so the current is ALONG the line: one pass runs
-    // straight into it and the other straight with it, and there is no angle to measure. The wind
-    // is along nothing, so it must be resolved against each segment's own bearing. `alongCurrentMph`
-    // is how one call carries both -- the current already resolved, the wind still to be.
-    //
-    // DIRECTION IS THE ORDER THE LINE IS WALKED, not a pair of courses. A drift is drawn downstream,
-    // so the line as it stands IS the downstream pass and the reversed line is the upstream one;
-    // reversing it flips every segment bearing by 180, which is exactly what the wind needs on the
-    // way back. The old code passed `comesFrom` and `flowTo` as two courses and priced the whole leg
-    // against each -- correct for a current that follows the channel, and with nowhere to put a wind.
-    //
-    // ONE PASS, NOT THE PAIR. plan-assemble.js materialises each pass as a real leg with its own
-    // amp-hours -- "the alternative, one leg carrying a multiplier, would have every reader of
-    // lengthM, coordinates and estDurationMin quietly understating the day" -- so a candidate's
-    // `batteryAh` is one pass and `trollPasses` is what asks for the second.
-    //
-    // AND THE SINGLE NUMBER IS THE DEARER DIRECTION. Which way this leg gets fished is not decided
-    // yet -- orientLegs and the model do that later -- so the gate below has to pick a price without
-    // knowing. It takes the dearer, because the gate exists to stop him committing to a day he
-    // cannot finish: "if they are going to run out of battery because of choice they shouldn't be
-    // able to make that choice." On a river both prices are reported, the same way `transitToM` and
-    // `transitToMIfFishedBack` are two prices on one decision rather than two decisions. On a lake
-    // the two directions have no names worth printing, so only the dearer one is.
-    const cur = Number(p.current_mph);
-    const hasCurrent = Number.isFinite(cur) && cur > 0;
-    // Positive is on the nose, so upstream is `+cur` and downstream is `-cur`. A following current
-    // is deliberately NOT floored at zero -- clamping a push to nothing would make every river day
-    // cost more than it does, which is the same dishonesty pointing the other way. See ampHoursBand().
-    const upEnv = { wind, ...(hasCurrent ? { alongCurrentMph: cur } : {}) };
-    const downEnv = { wind, ...(hasCurrent ? { alongCurrentMph: -cur } : {}) };
-    const downBand = ampHoursAlong(line, trollMph, downEnv);
-    const upBand = ampHoursAlong([...line].reverse(), trollMph, upEnv);
-    const upAh = hasCurrent ? upBand.ah : null;
-    const downAh = hasCurrent ? downBand.ah : null;
-    // On still air and still water these two are the same number and either will do. They stop being
-    // the same the moment anything is moving, and then the dearer is the honest one to gate on.
-    //
-    // NOT `fishBand` -- that name is taken, twenty lines up, by the depth band the FISH are in.
-    // Shadowing it here put every earlier read of it in this block into the temporal dead zone.
-    const costBand = upBand.ah >= downBand.ah ? upBand : downBand;
-    const fishAh = costBand.ah;
-    // TRANSIT IS STILL COSTED IN STILL WATER, AND THAT IS A KNOWN GAP RATHER THAN AN OVERSIGHT. The
-    // hop to and from the ramp is not necessarily along the channel -- it crosses it, leaves it, or
-    // runs up a different reach -- so the current's component on it is not `cur` and cannot be had
-    // without routing the transit over the river first. Naming it here so the next pass does not have
-    // to rediscover which half was done.
-    const moveAh = ampHours(inM + outM, transitMph);
-    const totalAh = fishAh + moveAh;
-    const totalMin = minutesFor(win.lengthM, trollMph) + minutesFor(inM + outM, transitMph);
-
-    // ── THE TRIP HOME IS THE OTHER HALF OF THE DAY, AND IT IS FISHING ────────────────────────────
-    //
-    // Ryan, 2026-09-17, shown that the app charged him 8.2 km of deadhead home on a leg that starts
-    // 0.2 km from the ramp: "the trip home is the other half of the day... fishing... so yeah that
-    // needs to be fixed whatever that looks like."
-    //
-    // A LEG FISHED TWICE ENDS WHERE IT STARTED. That is already why `transitToMIfFishedBack` exists
-    // for the hop to the NEXT leg -- "a leg fished twice ends where it started, so the hop to the
-    // next leg is measured from the OTHER end and `transitToM` no longer describes the boat". The
-    // run back to the RAMP is the same sentence and nobody had written it: it is `inM`, not `outM`,
-    // because the boat finishes at the start.
-    //
-    // SO THERE ARE TWO WHOLE DAYS HERE, NOT TWO NUMBERS. Fishing it back costs LESS BATTERY and MORE
-    // CLOCK, and covers twice the water:
-    //
-    //     congaree quarter_right@48000, 8 km, 0.2 km off the ramp
-    //       one pass out and deadhead home   15.64 + 8.4 km of transit   = 35.65 Ah   239 min
-    //       fished up and drifted back       15.64 + 9.58 + 0.4 km       = 25.7 Ah   ~305 min
-    //
-    // THE GATE THEREFORE REFUSES ONLY WHEN NEITHER DAY FITS. Its job is to stop him committing to a
-    // day he CANNOT finish -- "if they are going to run out of battery because of choice they
-    // shouldn't be able to make that choice" -- and refusing a leg that has a feasible reading is a
-    // different thing entirely. Each day is checked whole, battery AND clock together, because they
-    // move in opposite directions and a leg that fits the battery only by taking all night fits
-    // nothing.
-    //
-    // `batteryAh` BELOW IS STILL THE ONE-PASS PRICE and keeps its documented meaning; the fished-back
-    // figures ride beside it, the same way `transitToM` and `transitToMIfFishedBack` do, and
-    // `trollPasses` is what chooses. Only the GATE and the RANKING read both, because those are the
-    // two places that were quietly assuming a deadhead he would never make.
-    // ── RIVERS ONLY, AND THAT IS A DECISION RATHER THAN A HALF-MEASURE ───────────────────────────
-    //
-    // A lake leg fished twice also ends where it started, so the arithmetic below is true there as
-    // well. It is not applied there. Tried on 2026-09-17 and plan-weights.test.js went red on two
-    // assertions immediately: `rampBiasM` -- the 4 km at which a leg is worth half what the same leg
-    // is worth off the ramp -- was tuned against the one-pass transit share, and changing the
-    // denominator under it moves an ordering Ryan set by looking at his own plans. "why would i
-    // launch at clearwater cove and then go fish the opposite side of the lake" was that tuning.
-    //
-    // So this is scoped to the object it was asked about. A drift is a river leg by construction --
-    // `p.drift` exists only on the lines river-drifts.js lays out -- and doing lakes too is a
-    // deliberate second change with its own measurement, not a free generalisation.
-    const isDrift = !!p.drift;
-    const outBackM = inM;                       // fished back, the boat finishes where it started
-    const moveAhBack = ampHours(2 * inM, transitMph);
-    // Both directions. On a river these differ by the current; the pair is what `batteryAhUpstream`
-    // and `batteryAhDownstream` already report.
-    const bothWaysAh = upBand.ah + downBand.ah;
-    const totalAhBack = bothWaysAh + moveAhBack;
-    const totalMinBack = minutesFor(2 * win.lengthM, trollMph) + minutesFor(2 * inM, transitMph);
-    const fits = (ah, min) => !(o.usableAh && ah > o.usableAh) && !(o.windowMin && min > o.windowMin);
-    const onePassFits = fits(totalAh, totalMin);
-    const fishedBackFits = isDrift && fits(totalAhBack, totalMinBack);
-    if (!onePassFits && !fishedBackFits) {
-      // SAY WHICH ONE STOPPED IT, and over the days that were actually on offer -- a leg refused on
-      // the clock and a leg refused on the battery are different problems with different fixes, and
-      // the counters are what the empty-list sentence is built from.
+      const cum = cumulative(coords);
+      const start = pointAt(coords, cum, win.startM);
+      const end = pointAt(coords, cum, win.startM + win.lengthM);
+      // The geometry of the leg itself, sliced once and carried on the candidate. Without this the
+      // assembler has a leg with a length and no line, so nothing can be drawn or exported and a
+      // stop has nowhere to sit.
+      const line = sliceLine(coords, cum, win.startM, win.startM + win.lengthM);
+      const lineCum = cumulative(line);
+      // WHAT IS UNDER THE BOAT ON THE WINDOW ACTUALLY CHOSEN, not on the whole pass and not the
+      // name of the contour it was cut from. Null on a pack fitted before envelope profiles existed,
+      // and every reader below falls back to what it used to use.
+      const band = waterBand(p, win.startM, win.startM + win.lengthM);
+      // AND THE ENVELOPE ITSELF, SLICED TO THIS WINDOW, because a summary cannot say WHERE.
       //
-      // THE FIRST VERSION TOOK `Math.min(totalAh, totalAhBack)` UNCONDITIONALLY and the suite caught
-      // it in one run: on a LAKE the fished-back day is not on offer at all, but its cheaper battery
-      // still won the min, so a leg refused for the battery was counted against the clock.
-      // `the-chord-is-a-direction-the-boat-never-travels.test.js` asserts that counter.
+      // `waterBand` reduces the same two arrays to four numbers, and the leg has carried an `envelope`
+      // field since it was written with nothing ever putting one in it. So a bait-depth warning could
+      // say "there is a rise to 5 ft on it somewhere" and then "the chart does not say where the rise
+      // is" -- which stopped being true when the drift started shipping `envelope_ft`. It does say:
+      // the index is the distance. Ryan read that sentence four times on one plan, 2026-09-19.
       //
-      // Battery only when EVERY day on offer is over it; otherwise one of them was inside the
-      // battery and over the clock, which is a clock refusal.
-      const days = isDrift ? [[totalAh, totalMin], [totalAhBack, totalMinBack]] : [[totalAh, totalMin]];
-      if (o.usableAh && days.every(([a]) => a > o.usableAh)) rejected.battery++; else rejected.window++;
-      continue;
+      // `envelope_line_ft` AND NOT `envelope_ft`, BECAUSE THE CEILING CAME OFF THE LINE. `maxRunDepthFt`
+      // is `band.line.minFt` -- the shallowest depth ON the line -- and a warning that quotes that
+      // number has to locate it in the array it came from. Tried the other way round first: read off
+      // `envelope_ft`, the shallowest within SIDE_ENVELOPE_M either side, 50 of the Congaree leg's 161
+      // stations came back at or under 5 ft, which is a true statement about the corridor and a false
+      // answer to "where is the rise the bait will not clear".
+      //
+      // ALIGNED TO THE NEAREST STATION AND NOT BETTER THAN THAT. The slice starts at the station at or
+      // before the window's start, so index 0 sits within one step -- 50 m on every river pack built so
+      // far -- of the leg's own start, and whoever reads it says "about". Pretending to the metre would
+      // be inventing precision the 50 m resampling never had.
+      const envStep = Number(p && p.envelope_step_m);
+      const envAll = p && p.envelope_line_ft;
+      const envelope = (envStep > 0 && Array.isArray(envAll))
+        ? envAll.slice(Math.max(0, Math.min(envAll.length - 1, Math.floor(win.startM / envStep))),
+                       Math.max(0, Math.min(envAll.length,
+                         Math.ceil((win.startM + win.lengthM) / envStep) + 1)))
+        : null;
+
+      const inM = transitM(o.ramp, start);
+      const outM = transitM(end, o.ramp);
+      // HOW FAR THIS WATER IS FROM THE RAMP HE PICKED. The nearer end, because a leg can be run in
+      // either direction and what matters is how far out the water is, not which way the contour
+      // happens to be drawn.
+      //
+      // TRIED AND REVERTED, 2026-08-10 -- leaving the note so it is not tried a third time. The
+      // direction fix established that a leg costs `inM + outM` whichever way it is trolled, and it
+      // looked like the min was therefore understating a long leg pointing away from the ramp: on
+      // the plan Ryan objected to, L2's near end was 2.5 km out and its far end 6.3 km, and it
+      // scored as 2.5 km water.
+      //
+      // Replacing it with the midpoint made things WORSE, and the suite said so immediately. The min
+      // and the midpoint answer different questions: min says HOW CLOSE this water comes to the
+      // ramp, the midpoint says WHERE IT SITS. Because a far leg's two ends are both far while a
+      // near leg's are near and not-so-near, the midpoint COMPRESSES the gap between them -- near
+      // water went from 8x closer to 3.7x closer, its proximity dropped from 0.81 to 0.67, and 6.5
+      // km of better water four miles out took first place over 2.2 km beside the ramp. That is
+      // "why would i launch at clearwater cove and then go fish the opposite side of the lake",
+      // reintroduced by a change meant to help.
+      //
+      // The cost of the far end is real, and it is already charged -- `moveAh` below uses
+      // `inM + outM`, and the model is quoted the honest run home. This factor is not a cost. It is
+      // a preference about location, and the min is the right shape for that.
+      const fromRampM = Math.min(inM, outM);
+      const proximity = 1 / (1 + fromRampM / rampBiasM);
+      // ── COSTED WITH THE WATER AND WITH THE AIR, WHERE THERE IS EITHER ───────────────────────────
+      //
+      // `ampHoursBand()` has modelled both a current and a wind since it was written, and for most of
+      // that time no caller on this path supplied either -- it lived in plan-water.js, which imports
+      // this file. The current arrived on 2026-09-16. The wind arrives now, and it brings with it the
+      // reason neither can be priced off a chord: see ampHoursAlong(), which both calls below go
+      // through and which walks the leg's real geometry instead of the straight line between its ends.
+      //
+      // THE TWO ENVIRONMENTS ARE NOT THE SAME SHAPE, and that is why this block reads as it does. A
+      // drift follows the channel by construction, so the current is ALONG the line: one pass runs
+      // straight into it and the other straight with it, and there is no angle to measure. The wind
+      // is along nothing, so it must be resolved against each segment's own bearing. `alongCurrentMph`
+      // is how one call carries both -- the current already resolved, the wind still to be.
+      //
+      // DIRECTION IS THE ORDER THE LINE IS WALKED, not a pair of courses. A drift is drawn downstream,
+      // so the line as it stands IS the downstream pass and the reversed line is the upstream one;
+      // reversing it flips every segment bearing by 180, which is exactly what the wind needs on the
+      // way back. The old code passed `comesFrom` and `flowTo` as two courses and priced the whole leg
+      // against each -- correct for a current that follows the channel, and with nowhere to put a wind.
+      //
+      // ONE PASS, NOT THE PAIR. plan-assemble.js materialises each pass as a real leg with its own
+      // amp-hours -- "the alternative, one leg carrying a multiplier, would have every reader of
+      // lengthM, coordinates and estDurationMin quietly understating the day" -- so a candidate's
+      // `batteryAh` is one pass and `trollPasses` is what asks for the second.
+      //
+      // AND THE SINGLE NUMBER IS THE DEARER DIRECTION. Which way this leg gets fished is not decided
+      // yet -- orientLegs and the model do that later -- so the gate below has to pick a price without
+      // knowing. It takes the dearer, because the gate exists to stop him committing to a day he
+      // cannot finish: "if they are going to run out of battery because of choice they shouldn't be
+      // able to make that choice." On a river both prices are reported, the same way `transitToM` and
+      // `transitToMIfFishedBack` are two prices on one decision rather than two decisions. On a lake
+      // the two directions have no names worth printing, so only the dearer one is.
+      const cur = Number(p.current_mph);
+      const hasCurrent = Number.isFinite(cur) && cur > 0;
+      // Positive is on the nose, so upstream is `+cur` and downstream is `-cur`. A following current
+      // is deliberately NOT floored at zero -- clamping a push to nothing would make every river day
+      // cost more than it does, which is the same dishonesty pointing the other way. See ampHoursBand().
+      const upEnv = { wind, ...(hasCurrent ? { alongCurrentMph: cur } : {}) };
+      const downEnv = { wind, ...(hasCurrent ? { alongCurrentMph: -cur } : {}) };
+      const downBand = ampHoursAlong(line, trollMph, downEnv);
+      const upBand = ampHoursAlong([...line].reverse(), trollMph, upEnv);
+      const upAh = hasCurrent ? upBand.ah : null;
+      const downAh = hasCurrent ? downBand.ah : null;
+      // On still air and still water these two are the same number and either will do. They stop being
+      // the same the moment anything is moving, and then the dearer is the honest one to gate on.
+      //
+      // NOT `fishBand` -- that name is taken, twenty lines up, by the depth band the FISH are in.
+      // Shadowing it here put every earlier read of it in this block into the temporal dead zone.
+      const costBand = upBand.ah >= downBand.ah ? upBand : downBand;
+      const fishAh = costBand.ah;
+      // TRANSIT IS STILL COSTED IN STILL WATER, AND THAT IS A KNOWN GAP RATHER THAN AN OVERSIGHT. The
+      // hop to and from the ramp is not necessarily along the channel -- it crosses it, leaves it, or
+      // runs up a different reach -- so the current's component on it is not `cur` and cannot be had
+      // without routing the transit over the river first. Naming it here so the next pass does not have
+      // to rediscover which half was done.
+      const moveAh = ampHours(inM + outM, transitMph);
+      const totalAh = fishAh + moveAh;
+      const totalMin = minutesFor(win.lengthM, trollMph) + minutesFor(inM + outM, transitMph);
+
+      // ── THE TRIP HOME IS THE OTHER HALF OF THE DAY, AND IT IS FISHING ────────────────────────────
+      //
+      // Ryan, 2026-09-17, shown that the app charged him 8.2 km of deadhead home on a leg that starts
+      // 0.2 km from the ramp: "the trip home is the other half of the day... fishing... so yeah that
+      // needs to be fixed whatever that looks like."
+      //
+      // A LEG FISHED TWICE ENDS WHERE IT STARTED. That is already why `transitToMIfFishedBack` exists
+      // for the hop to the NEXT leg -- "a leg fished twice ends where it started, so the hop to the
+      // next leg is measured from the OTHER end and `transitToM` no longer describes the boat". The
+      // run back to the RAMP is the same sentence and nobody had written it: it is `inM`, not `outM`,
+      // because the boat finishes at the start.
+      //
+      // SO THERE ARE TWO WHOLE DAYS HERE, NOT TWO NUMBERS. Fishing it back costs LESS BATTERY and MORE
+      // CLOCK, and covers twice the water:
+      //
+      //     congaree quarter_right@48000, 8 km, 0.2 km off the ramp
+      //       one pass out and deadhead home   15.64 + 8.4 km of transit   = 35.65 Ah   239 min
+      //       fished up and drifted back       15.64 + 9.58 + 0.4 km       = 25.7 Ah   ~305 min
+      //
+      // THE GATE THEREFORE REFUSES ONLY WHEN NEITHER DAY FITS. Its job is to stop him committing to a
+      // day he CANNOT finish -- "if they are going to run out of battery because of choice they
+      // shouldn't be able to make that choice" -- and refusing a leg that has a feasible reading is a
+      // different thing entirely. Each day is checked whole, battery AND clock together, because they
+      // move in opposite directions and a leg that fits the battery only by taking all night fits
+      // nothing.
+      //
+      // `batteryAh` BELOW IS STILL THE ONE-PASS PRICE and keeps its documented meaning; the fished-back
+      // figures ride beside it, the same way `transitToM` and `transitToMIfFishedBack` do, and
+      // `trollPasses` is what chooses. Only the GATE and the RANKING read both, because those are the
+      // two places that were quietly assuming a deadhead he would never make.
+      // ── RIVERS ONLY, AND THAT IS A DECISION RATHER THAN A HALF-MEASURE ───────────────────────────
+      //
+      // A lake leg fished twice also ends where it started, so the arithmetic below is true there as
+      // well. It is not applied there. Tried on 2026-09-17 and plan-weights.test.js went red on two
+      // assertions immediately: `rampBiasM` -- the 4 km at which a leg is worth half what the same leg
+      // is worth off the ramp -- was tuned against the one-pass transit share, and changing the
+      // denominator under it moves an ordering Ryan set by looking at his own plans. "why would i
+      // launch at clearwater cove and then go fish the opposite side of the lake" was that tuning.
+      //
+      // So this is scoped to the object it was asked about. A drift is a river leg by construction --
+      // `p.drift` exists only on the lines river-drifts.js lays out -- and doing lakes too is a
+      // deliberate second change with its own measurement, not a free generalisation.
+      const isDrift = !!p.drift;
+      const outBackM = inM;                       // fished back, the boat finishes where it started
+      const moveAhBack = ampHours(2 * inM, transitMph);
+      // Both directions. On a river these differ by the current; the pair is what `batteryAhUpstream`
+      // and `batteryAhDownstream` already report.
+      const bothWaysAh = upBand.ah + downBand.ah;
+      const totalAhBack = bothWaysAh + moveAhBack;
+      const totalMinBack = minutesFor(2 * win.lengthM, trollMph) + minutesFor(2 * inM, transitMph);
+      const fits = (ah, min) => !(o.usableAh && ah > o.usableAh) && !(o.windowMin && min > o.windowMin);
+      const onePassFits = fits(totalAh, totalMin);
+      const fishedBackFits = isDrift && fits(totalAhBack, totalMinBack);
+      if (!onePassFits && !fishedBackFits) {
+        // SAY WHICH ONE STOPPED IT, and over the days that were actually on offer -- a leg refused on
+        // the clock and a leg refused on the battery are different problems with different fixes, and
+        // the counters are what the empty-list sentence is built from.
+        //
+        // THE FIRST VERSION TOOK `Math.min(totalAh, totalAhBack)` UNCONDITIONALLY and the suite caught
+        // it in one run: on a LAKE the fished-back day is not on offer at all, but its cheaper battery
+        // still won the min, so a leg refused for the battery was counted against the clock.
+        // `the-chord-is-a-direction-the-boat-never-travels.test.js` asserts that counter.
+        //
+        // Battery only when EVERY day on offer is over it; otherwise one of them was inside the
+        // battery and over the clock, which is a clock refusal.
+        const days = isDrift ? [[totalAh, totalMin], [totalAhBack, totalMinBack]] : [[totalAh, totalMin]];
+        if (o.usableAh && days.every(([a]) => a > o.usableAh)) rejected.battery++; else rejected.window++;
+        continue;
+      }
+      // THE DAY HE WOULD ACTUALLY CHOOSE, for the ranking below. Where both fit, the cheaper battery
+      // wins, because that is the one that leaves him something in hand -- and on a river it is also
+      // the one that fishes twice the water.
+      const rankMoveAh = (fishedBackFits && (!onePassFits || totalAhBack <= totalAh)) ? moveAhBack : moveAh;
+      const rankFishAh = (fishedBackFits && (!onePassFits || totalAhBack <= totalAh)) ? bothWaysAh : fishAh;
+
+      out.push({
+        // THE PACK'S OWN ID WHEN IT HAS ONE, the array index only as a fallback.
+        //
+        // This used to be index-based unconditionally, with a note saying it breaks whenever the
+        // pipeline reruns because build_trolling_runs.py emits no stable id. fit_trolling_runs.py
+        // now writes one, and it has to: fitting SPLITS a run into passes where the lake turns too
+        // hard to tow through, so a re-fit changes what every later index means and silently
+        // repoints every saved plan at different water. A pack without ids still works exactly as
+        // before -- it just keeps the old fragility until it is refitted.
+        // A SECOND WINDOW ON ONE LANE IS NAMED BY WHERE IT STARTS, because the runId is the key
+        // the model answers with and the assembler keys rods, stops and passes by.
+        runId: (p.id || `${o.slug || 'run'}#${i}`) + (wi ? `@${Math.round(win.startM)}` : ''),
+        runIndex: i,
+        startM: Math.round(win.startM), lengthM: Math.round(win.lengthM),
+        // THIS IS THE WATER'S DEPTH, NOT THE FISH'S. Kept as `depthFt` because plan-builder,
+        // plan-to-timeline, plan-prompt and plan-assemble all read that name and renaming it is a
+        // separate change; `waterDepthFt` is emitted alongside as the unambiguous one, carrying the
+        // measured value where fit_trolling_runs.py stamped one. `waterDepthMeasured` says which.
+        depthFt: band ? band.line.medianFt : p.depth_ft,
+        // ── AND IT IS THE SUSTAINED FLOOR, BECAUSE THE APP MAY ONLY SAY ONE THING ABOUT IT ────────
+        //
+        // Ryan, 2026-09-21, shown a card reading "2-27 ft under the boat" beside a bait sized for a
+        // 13 ft floor: *"if the card tells me that the shallowest is 2 feet i am going to question
+        // the baits being assigned... the water is either 2 ft under my bait or it is not... it
+        // cannot be both"*.
+        //
+        // He is right and it settles a split this file made on purpose a few hours earlier: the
+        // refusal used the sustained floor and the card kept the shallowest single sounding, on the
+        // reasoning that a rise is still his to know about. Two numbers for one question is not a
+        // richer answer, it is the app contradicting itself on the card he rigs from -- and once it
+        // does, neither number can be trusted.
+        //
+        // SO THE WHOLE APP SPEAKS WITH ONE FLOOR: this, `maxRunDepthFt`, the model's candidate, the
+        // clearance row and the card's bottom note. A LONE SOUNDING BELOW IT IS NOT REPORTED AS THE
+        // BOTTOM, and that is not hiding a measurement -- 2,550 Congaree stations were sampled
+        // against the pack's own depth areas and 13 of them read 6 ft or more shallower than the
+        // chart under the same point, with nothing in the profile marking which 13. The app cannot
+        // tell a 50 m bar from a bad sounding, so it does not claim to. A rise across two stations
+        // is 100 m he trolls through, it survives into this number, and it is still flagged.
+        depthMinFt: band ? band.line.sustainedMinFt : null,
+        depthMaxFt: band ? band.line.maxFt : null,
+        // THE CEILING SMART PLAN NEVER HAD. plan-prompt.js has explained `maxRunDepthFt` to the
+        // model since it was written -- "A leg reading 25-31 ft of water with maxRunDepthFt: 20 has
+        // a 20 ft shoal somewhere along it" -- and only the Pick Water path ever sent one. Smart
+        // Plan legs arrived with none, plan-assemble.js fell back to `depthFt`, and the fallback
+        // was the contour's NAME, so the shallowest water on the leg was never checked at all.
+        // AND IT IS THE SUSTAINED SHALLOWEST, NOT THE SHALLOWEST SAMPLE. `depthMinFt` above still
+        // carries the true minimum and risesAtM() can still place it; this is the number a bait is
+        // REFUSED on, and a single 50 m station is not a stretch of water to refuse a 5 km pass over.
+        // See sustainedMin() in plan-pieces.js for the 2,550-station measurement behind that.
+        maxRunDepthFt: band ? band.line.sustainedMinFt : null,
+        // THE SHALLOWEST WATER STATION BY STATION, so a warning about a rise can place it. Sliced to
+        // this window above; the assembler reverses it with the geometry on an upstream pass, the same
+        // way it reverses `marks`, and capBaitDepth turns an index into a distance.
+        envelope: envelope || undefined,
+        envelopeStepM: envelope ? envStep : undefined,
+        wholeRun: win.whole,
+        waterDepthFt: Number.isFinite(elig.waterFt) ? Number(elig.waterFt.toFixed(1)) : null,
+        waterDepthMeasured: elig.measured,
+        // Whether this water fits the day's fish band, and the rule it was judged on. Offered either
+        // way since 2026-09-26; see where `outsideBand` is counted.
+        inFishBand: elig.ok,
+        fishBandRule: elig.rule,
+        start, end, coordinates: line,
+        transitInM: Math.round(inM), transitOutM: Math.round(outM),
+        fromRampM: Math.round(fromRampM),
+        proximity: Number(proximity.toFixed(3)),
+        batteryAh: Number((fishAh + moveAh).toFixed(2)),
+        // ── AND WHAT THE SAME WATER COSTS FISHED BOTH WAYS ───────────────────────────────────────
+        //
+        // Two prices on one decision rather than two decisions, exactly as `transitToM` and
+        // `transitToMIfFishedBack` are. `trollPasses: 2` is what asks for this day; these are the
+        // numbers that make that choice decidable instead of a habit the app cannot see.
+        //
+        // `transitToRampMIfFishedBack` is `transitInM` and not a second measurement: the boat
+        // finishes where it started, so the run home is the run out.
+        // Null on a lake: see the note at `isDrift`. An absent number is the absence of a claim.
+        batteryAhFishedBack: isDrift ? Number(totalAhBack.toFixed(2)) : null,
+        estMinFishedBack: isDrift ? Math.round(totalMinBack) : null,
+        transitToRampMIfFishedBack: isDrift ? Math.round(outBackM) : null,
+        // ON THE NOSE, IN MPH, FOR THE DIRECTION `batteryAh` WAS PRICED AT -- length-weighted along
+        // the leg's real geometry, not taken off a chord. Positive is a headwind, negative a push.
+        //
+        // REPORTED AND PARTLY COSTED, WHICH IS NOT A CONTRADICTION. Only the 3% of a wind that shows
+        // up as surface drift is charged, because that is water genuinely moving against the hull.
+        // The other 97% is aerodynamic drag on a 12.5 ft kayak, nothing has ever measured it on this
+        // boat, and a coefficient nobody fitted would be exactly the arbitrary number this project
+        // refuses to invent. So the full component is stated and the day's arithmetic does not
+        // include it. See the note above ampHoursBand() and § 10 in plan-water.js.
+        //
+        // NULL WHEN NOTHING WAS FORECAST, AND NOT ZERO. A leg that a forecast says is crosswind is
+        // genuinely 0 on the nose and that is worth saying; a leg nobody forecast is not calm, it is
+        // unknown, and a zero printed there is the silence-reads-as-calm defect the `problems` line in
+        // smart-plan-v2-wiring.js exists to prevent. forModel() drops the null and sends the zero.
+        headwindMph: wind ? costBand.headwindMph : null,
+        estMin: Math.round(totalMin),
+        score: Number(win.score.toFixed(1)),
+        reliefScore,
+        // Rank on structure passed, discounted by how much of the trip is deadhead, and again by
+        // how far the water is from the ramp he actually launched at.
+        //
+        // NOT score/Ah. That was the first version and it ranked 500 m stubs top of the list,
+        // because a stub costs almost nothing and any per-cost ratio therefore loves it. The
+        // question is not "cheapest per point", it is "most fishing for a day, with the travel
+        // taxed" -- so discount by the transit share instead of dividing by total cost.
+        //
+        // The transit share alone was not enough, and the plan he took out proves it: launched at
+        // Clearwater Cove, sent across the lake to the cove beside Colonel Creek ramp. "why would i
+        // launch at clearwater cove and then go fish the opposite side of the lake in the cove
+        // where colonel creek boat ramp is????" The transit share is a RATIO -- a long leg has a
+        // large fishAh, which dilutes the deadhead in the denominator, so an 8 km leg four miles
+        // out is barely taxed while a 2 km leg four miles out is taxed hard. Distance from the ramp
+        // is not a property of the leg's length and should not be scaled by it.
+        value: Number((win.score / (1 + rankMoveAh / Math.max(0.1, rankFishAh)) * proximity).toFixed(2)),
+        // Every pass gets an id and, where the lake data can name it, the real structure behind it.
+        // The id is what the model returns to ask for a stop -- it can only name something it was
+        // handed, which is what makes an invented stop like "Main Lake Point Alpha" impossible
+        // rather than something the renderer has to cope with.
+        // Metres of this leg that run in a channel; zero, and absent for the model, when none do.
+        channelM: chs ? Math.round(channelMetres(chs, win.startM, win.startM + win.lengthM)) : 0,
+        // The channel is the water the leg is in, not a place to stop: its hits never become passes.
+        passes: win.hits
+          .filter((h) => h.type !== CHANNEL_KIND)
+          .sort((a, b) => a.atM - b.atM)
+          .map((h, k) => {
+            // THE PIN GOES WHERE THE THING IS, NOT WHERE THE LINE IS.
+            //
+            // `at` was the point ON the line at `atM`, and the feature's own offset -- sitting right
+            // here as `h.offM`, and used on the very next line to size the search radius -- was thrown
+            // away. Every mark therefore landed in the middle of the water the boat was on.
+            //
+            // Ryan, 2026-09-19, looking at the GPX on the plotter: "inside and outside bends that are
+            // literally right next to each other and i dont mean side by side". Measured on that
+            // export: 11 of the 46 bend pins are an inside/outside pair within 60 m and FIVE share one
+            // coordinate exactly -- a cove on the outer bank and a point on the inner bank at the same
+            // station, both collapsed onto the line between them. The depth in the name came from the
+            // same place, which is why the pairs read the same depth as each other.
+            //
+            // `resolveStructure` already returns the feature it matched, carrying the `lon`/`lat` the
+            // pack recorded. That is the charted position, which is what the waypoint's own note has
+            // claimed it was all along ("charted position -- compare with the sounder").
+            //
+            // WHEN NOTHING RESOLVES, THE LINE POINT IS STILL THE HONEST ANSWER: the scan knows a
+            // distance but not which bank, so `charted` says which of the two this is and the GPX
+            // writer stops promising a charted position for a mark that has none.
+            const onLine = pointAt(line, lineCum, h.atM);
+            const s = resolveStructure(onLine, lookupKind(h.type), h.offM * 1.25 + RESOLVE_MARGIN_M,
+                                       o.structures);
+            // A group keeps its own description: the dock it was pinned on is one of several.
+            const group = h.type === 'dock_line' ? `line of ${h.n} docks over ${h.spanM} m — run a bait down it`
+              : h.type === 'dock_cluster' ? `cluster of ${h.n} docks — worth stopping on` : null;
+            return {
+              ...h,
+              id: `${o.slug || 'run'}#${i}:p${k}`,
+              at: s ? [s.lon, s.lat] : onLine,
+              charted: !!s,
+              structureId: s ? s.id : null,
+              what: group || (s ? s.what
+                : h.type === 'dock' ? 'a single dock'
+                : h.type.replace(/_/g, ' ')),
+              // From the structure or not at all. There is no fallback depth on purpose.
+              depthFt: s ? s.depthFt : null,
+              shallowFt: s ? (s.shallowFt ?? null) : null,
+              deepWithinM: s ? (s.deepWithinM ?? null) : null,
+              matchM: s ? s.matchM : null,
+            };
+          }),
+        // Present only when the caller supplied a journal. Never affects `value` -- see catchSupport().
+        support: o.catches
+          ? catchSupport(line, o.catches,
+                         { species: o.catchSpecies, month: o.month, radiusM: o.catchRadiusM,
+                           water: o.water })
+          : null,
+        // WHOLE-RUN, not windowed. build_trolling_runs.py reports ledges per run and gives no
+        // positions, so these cannot be clipped to the window the way `near` can. Named so that
+        // nothing downstream mistakes them for "ledges on this leg".
+        runLedges: p.ledge_n ? { n: p.ledge_n, minFt: p.ledge_min_ft, maxFt: p.ledge_max_ft } : null,
+        relief: p.relief ?? null,
+        // THE WATER BESIDE THE LINE, which is what `relief` above is the WORD for. See
+        // reliefDropOf() for the measurement, and for why a negative drop is dropped rather than
+        // clamped. Null on the 8.9% of runs the relief probe never answered for.
+        deepestNearbyFt: reliefDrop ? reliefDrop.deepestFt : null,
+        reliefDropFt: reliefDrop ? reliefDrop.dropFt : null,
+        // WHICH LINE OF WATER THIS IS, on a river. Null on a lake, where a candidate is a contour
+        // lane and there is no side to pick. Read by the dedupe below — see the note there — and it
+        // is what lets a plan say "quarter-left, downstream past three holes" instead of naming a
+        // contour depth that does not exist on moving water.
+        drift: p.drift || null,
+        // WHICH SIDE OF THE RAMP THIS REACH IS ON, AND HOW FAR OUT. `{direction: 'upstream', m: 8000}`
+        // -- see river-drifts.js. The day is one path through the launch and this is the only field
+        // that says which half of it a leg belongs to; `flowDeg` says where the water goes, which is
+        // a different question. Null on a lake and on a river laid out with no ramp.
+        fromRamp: p.from_ramp || null,
+        // THE CURRENT ON THIS LINE, AND THE REASON WHERE THERE IS NONE.
+        //
+        // `ampHoursBand()` in plan-water.js has modelled a current since it was written -- resolves it
+        // against the course, charges the head component, deliberately does not floor a following
+        // current at zero -- and no caller has ever supplied one. `currentMph` occurred nowhere else
+        // in js/ or Worker/. This is the supply, and it comes from Q/A off the centreline's charted
+        // cross-section against the live discharge; see river-drifts.js for the 2 ft guard on it.
+        //
+        // `currentBasis` is never null, because a null with no reason beside it is the hole a model
+        // fills from its own recall -- tidal, no gauge and no charted section are three different
+        // answers and all three are useful.
+        currentMph: p.current_mph ?? null,
+        currentBasis: p.current_basis || null,
+        // WHAT FRACTION OF THE REACH THE VELOCITY IS MEASURED FROM. On the Congaree that runs from 2
+        // stations in 161 to most of them, so the number and its support travel together and nothing
+        // here picks a cutoff -- see the note in river-drifts.js.
+        currentFrac: p.current_frac ?? null,
+        flowDeg: p.flow_deg ?? null,
+        // WHAT THIS PASS COSTS EACH WAY. Null on still water, where one number is the whole answer.
+        // `batteryAh` above is the upstream price plus transit -- see the note at fishAh.
+        batteryAhUpstream: upAh != null ? Number(upAh.toFixed(2)) : null,
+        batteryAhDownstream: downAh != null ? Number(downAh.toFixed(2)) : null,
+      });
     }
-    // THE DAY HE WOULD ACTUALLY CHOOSE, for the ranking below. Where both fit, the cheaper battery
-    // wins, because that is the one that leaves him something in hand -- and on a river it is also
-    // the one that fishes twice the water.
-    const rankMoveAh = (fishedBackFits && (!onePassFits || totalAhBack <= totalAh)) ? moveAhBack : moveAh;
-    const rankFishAh = (fishedBackFits && (!onePassFits || totalAhBack <= totalAh)) ? bothWaysAh : fishAh;
-
-    out.push({
-      // THE PACK'S OWN ID WHEN IT HAS ONE, the array index only as a fallback.
-      //
-      // This used to be index-based unconditionally, with a note saying it breaks whenever the
-      // pipeline reruns because build_trolling_runs.py emits no stable id. fit_trolling_runs.py
-      // now writes one, and it has to: fitting SPLITS a run into passes where the lake turns too
-      // hard to tow through, so a re-fit changes what every later index means and silently
-      // repoints every saved plan at different water. A pack without ids still works exactly as
-      // before -- it just keeps the old fragility until it is refitted.
-      runId: p.id || `${o.slug || 'run'}#${i}`,
-      runIndex: i,
-      startM: Math.round(win.startM), lengthM: Math.round(win.lengthM),
-      // THIS IS THE WATER'S DEPTH, NOT THE FISH'S. Kept as `depthFt` because plan-builder,
-      // plan-to-timeline, plan-prompt and plan-assemble all read that name and renaming it is a
-      // separate change; `waterDepthFt` is emitted alongside as the unambiguous one, carrying the
-      // measured value where fit_trolling_runs.py stamped one. `waterDepthMeasured` says which.
-      depthFt: band ? band.line.medianFt : p.depth_ft,
-      // ── AND IT IS THE SUSTAINED FLOOR, BECAUSE THE APP MAY ONLY SAY ONE THING ABOUT IT ────────
-      //
-      // Ryan, 2026-09-21, shown a card reading "2-27 ft under the boat" beside a bait sized for a
-      // 13 ft floor: *"if the card tells me that the shallowest is 2 feet i am going to question
-      // the baits being assigned... the water is either 2 ft under my bait or it is not... it
-      // cannot be both"*.
-      //
-      // He is right and it settles a split this file made on purpose a few hours earlier: the
-      // refusal used the sustained floor and the card kept the shallowest single sounding, on the
-      // reasoning that a rise is still his to know about. Two numbers for one question is not a
-      // richer answer, it is the app contradicting itself on the card he rigs from -- and once it
-      // does, neither number can be trusted.
-      //
-      // SO THE WHOLE APP SPEAKS WITH ONE FLOOR: this, `maxRunDepthFt`, the model's candidate, the
-      // clearance row and the card's bottom note. A LONE SOUNDING BELOW IT IS NOT REPORTED AS THE
-      // BOTTOM, and that is not hiding a measurement -- 2,550 Congaree stations were sampled
-      // against the pack's own depth areas and 13 of them read 6 ft or more shallower than the
-      // chart under the same point, with nothing in the profile marking which 13. The app cannot
-      // tell a 50 m bar from a bad sounding, so it does not claim to. A rise across two stations
-      // is 100 m he trolls through, it survives into this number, and it is still flagged.
-      depthMinFt: band ? band.line.sustainedMinFt : null,
-      depthMaxFt: band ? band.line.maxFt : null,
-      // THE CEILING SMART PLAN NEVER HAD. plan-prompt.js has explained `maxRunDepthFt` to the
-      // model since it was written -- "A leg reading 25-31 ft of water with maxRunDepthFt: 20 has
-      // a 20 ft shoal somewhere along it" -- and only the Pick Water path ever sent one. Smart
-      // Plan legs arrived with none, plan-assemble.js fell back to `depthFt`, and the fallback
-      // was the contour's NAME, so the shallowest water on the leg was never checked at all.
-      // AND IT IS THE SUSTAINED SHALLOWEST, NOT THE SHALLOWEST SAMPLE. `depthMinFt` above still
-      // carries the true minimum and risesAtM() can still place it; this is the number a bait is
-      // REFUSED on, and a single 50 m station is not a stretch of water to refuse a 5 km pass over.
-      // See sustainedMin() in plan-pieces.js for the 2,550-station measurement behind that.
-      maxRunDepthFt: band ? band.line.sustainedMinFt : null,
-      // THE SHALLOWEST WATER STATION BY STATION, so a warning about a rise can place it. Sliced to
-      // this window above; the assembler reverses it with the geometry on an upstream pass, the same
-      // way it reverses `marks`, and capBaitDepth turns an index into a distance.
-      envelope: envelope || undefined,
-      envelopeStepM: envelope ? envStep : undefined,
-      wholeRun: win.whole,
-      waterDepthFt: Number.isFinite(elig.waterFt) ? Number(elig.waterFt.toFixed(1)) : null,
-      waterDepthMeasured: elig.measured,
-      // Whether this water fits the day's fish band, and the rule it was judged on. Offered either
-      // way since 2026-09-26; see where `outsideBand` is counted.
-      inFishBand: elig.ok,
-      fishBandRule: elig.rule,
-      start, end, coordinates: line,
-      transitInM: Math.round(inM), transitOutM: Math.round(outM),
-      fromRampM: Math.round(fromRampM),
-      proximity: Number(proximity.toFixed(3)),
-      batteryAh: Number((fishAh + moveAh).toFixed(2)),
-      // ── AND WHAT THE SAME WATER COSTS FISHED BOTH WAYS ───────────────────────────────────────
-      //
-      // Two prices on one decision rather than two decisions, exactly as `transitToM` and
-      // `transitToMIfFishedBack` are. `trollPasses: 2` is what asks for this day; these are the
-      // numbers that make that choice decidable instead of a habit the app cannot see.
-      //
-      // `transitToRampMIfFishedBack` is `transitInM` and not a second measurement: the boat
-      // finishes where it started, so the run home is the run out.
-      // Null on a lake: see the note at `isDrift`. An absent number is the absence of a claim.
-      batteryAhFishedBack: isDrift ? Number(totalAhBack.toFixed(2)) : null,
-      estMinFishedBack: isDrift ? Math.round(totalMinBack) : null,
-      transitToRampMIfFishedBack: isDrift ? Math.round(outBackM) : null,
-      // ON THE NOSE, IN MPH, FOR THE DIRECTION `batteryAh` WAS PRICED AT -- length-weighted along
-      // the leg's real geometry, not taken off a chord. Positive is a headwind, negative a push.
-      //
-      // REPORTED AND PARTLY COSTED, WHICH IS NOT A CONTRADICTION. Only the 3% of a wind that shows
-      // up as surface drift is charged, because that is water genuinely moving against the hull.
-      // The other 97% is aerodynamic drag on a 12.5 ft kayak, nothing has ever measured it on this
-      // boat, and a coefficient nobody fitted would be exactly the arbitrary number this project
-      // refuses to invent. So the full component is stated and the day's arithmetic does not
-      // include it. See the note above ampHoursBand() and § 10 in plan-water.js.
-      //
-      // NULL WHEN NOTHING WAS FORECAST, AND NOT ZERO. A leg that a forecast says is crosswind is
-      // genuinely 0 on the nose and that is worth saying; a leg nobody forecast is not calm, it is
-      // unknown, and a zero printed there is the silence-reads-as-calm defect the `problems` line in
-      // smart-plan-v2-wiring.js exists to prevent. forModel() drops the null and sends the zero.
-      headwindMph: wind ? costBand.headwindMph : null,
-      estMin: Math.round(totalMin),
-      score: Number(win.score.toFixed(1)),
-      reliefScore,
-      // Rank on structure passed, discounted by how much of the trip is deadhead, and again by
-      // how far the water is from the ramp he actually launched at.
-      //
-      // NOT score/Ah. That was the first version and it ranked 500 m stubs top of the list,
-      // because a stub costs almost nothing and any per-cost ratio therefore loves it. The
-      // question is not "cheapest per point", it is "most fishing for a day, with the travel
-      // taxed" -- so discount by the transit share instead of dividing by total cost.
-      //
-      // The transit share alone was not enough, and the plan he took out proves it: launched at
-      // Clearwater Cove, sent across the lake to the cove beside Colonel Creek ramp. "why would i
-      // launch at clearwater cove and then go fish the opposite side of the lake in the cove
-      // where colonel creek boat ramp is????" The transit share is a RATIO -- a long leg has a
-      // large fishAh, which dilutes the deadhead in the denominator, so an 8 km leg four miles
-      // out is barely taxed while a 2 km leg four miles out is taxed hard. Distance from the ramp
-      // is not a property of the leg's length and should not be scaled by it.
-      value: Number((win.score / (1 + rankMoveAh / Math.max(0.1, rankFishAh)) * proximity).toFixed(2)),
-      // Every pass gets an id and, where the lake data can name it, the real structure behind it.
-      // The id is what the model returns to ask for a stop -- it can only name something it was
-      // handed, which is what makes an invented stop like "Main Lake Point Alpha" impossible
-      // rather than something the renderer has to cope with.
-      passes: win.hits
-        .sort((a, b) => a.atM - b.atM)
-        .map((h, k) => {
-          // THE PIN GOES WHERE THE THING IS, NOT WHERE THE LINE IS.
-          //
-          // `at` was the point ON the line at `atM`, and the feature's own offset -- sitting right
-          // here as `h.offM`, and used on the very next line to size the search radius -- was thrown
-          // away. Every mark therefore landed in the middle of the water the boat was on.
-          //
-          // Ryan, 2026-09-19, looking at the GPX on the plotter: "inside and outside bends that are
-          // literally right next to each other and i dont mean side by side". Measured on that
-          // export: 11 of the 46 bend pins are an inside/outside pair within 60 m and FIVE share one
-          // coordinate exactly -- a cove on the outer bank and a point on the inner bank at the same
-          // station, both collapsed onto the line between them. The depth in the name came from the
-          // same place, which is why the pairs read the same depth as each other.
-          //
-          // `resolveStructure` already returns the feature it matched, carrying the `lon`/`lat` the
-          // pack recorded. That is the charted position, which is what the waypoint's own note has
-          // claimed it was all along ("charted position -- compare with the sounder").
-          //
-          // WHEN NOTHING RESOLVES, THE LINE POINT IS STILL THE HONEST ANSWER: the scan knows a
-          // distance but not which bank, so `charted` says which of the two this is and the GPX
-          // writer stops promising a charted position for a mark that has none.
-          const onLine = pointAt(line, lineCum, h.atM);
-          const s = resolveStructure(onLine, lookupKind(h.type), h.offM * 1.25 + RESOLVE_MARGIN_M,
-                                     o.structures);
-          // A group keeps its own description: the dock it was pinned on is one of several.
-          const group = h.type === 'dock_line' ? `line of ${h.n} docks over ${h.spanM} m — run a bait down it`
-            : h.type === 'dock_cluster' ? `cluster of ${h.n} docks — worth stopping on` : null;
-          return {
-            ...h,
-            id: `${o.slug || 'run'}#${i}:p${k}`,
-            at: s ? [s.lon, s.lat] : onLine,
-            charted: !!s,
-            structureId: s ? s.id : null,
-            what: group || (s ? s.what
-              : h.type === 'dock' ? 'a single dock'
-              : h.type.replace(/_/g, ' ')),
-            // From the structure or not at all. There is no fallback depth on purpose.
-            depthFt: s ? s.depthFt : null,
-            shallowFt: s ? (s.shallowFt ?? null) : null,
-            deepWithinM: s ? (s.deepWithinM ?? null) : null,
-            matchM: s ? s.matchM : null,
-          };
-        }),
-      // Present only when the caller supplied a journal. Never affects `value` -- see catchSupport().
-      support: o.catches
-        ? catchSupport(line, o.catches,
-                       { species: o.catchSpecies, month: o.month, radiusM: o.catchRadiusM,
-                         water: o.water })
-        : null,
-      // WHOLE-RUN, not windowed. build_trolling_runs.py reports ledges per run and gives no
-      // positions, so these cannot be clipped to the window the way `near` can. Named so that
-      // nothing downstream mistakes them for "ledges on this leg".
-      runLedges: p.ledge_n ? { n: p.ledge_n, minFt: p.ledge_min_ft, maxFt: p.ledge_max_ft } : null,
-      relief: p.relief ?? null,
-      // THE WATER BESIDE THE LINE, which is what `relief` above is the WORD for. See
-      // reliefDropOf() for the measurement, and for why a negative drop is dropped rather than
-      // clamped. Null on the 8.9% of runs the relief probe never answered for.
-      deepestNearbyFt: reliefDrop ? reliefDrop.deepestFt : null,
-      reliefDropFt: reliefDrop ? reliefDrop.dropFt : null,
-      // WHICH LINE OF WATER THIS IS, on a river. Null on a lake, where a candidate is a contour
-      // lane and there is no side to pick. Read by the dedupe below — see the note there — and it
-      // is what lets a plan say "quarter-left, downstream past three holes" instead of naming a
-      // contour depth that does not exist on moving water.
-      drift: p.drift || null,
-      // WHICH SIDE OF THE RAMP THIS REACH IS ON, AND HOW FAR OUT. `{direction: 'upstream', m: 8000}`
-      // -- see river-drifts.js. The day is one path through the launch and this is the only field
-      // that says which half of it a leg belongs to; `flowDeg` says where the water goes, which is
-      // a different question. Null on a lake and on a river laid out with no ramp.
-      fromRamp: p.from_ramp || null,
-      // THE CURRENT ON THIS LINE, AND THE REASON WHERE THERE IS NONE.
-      //
-      // `ampHoursBand()` in plan-water.js has modelled a current since it was written -- resolves it
-      // against the course, charges the head component, deliberately does not floor a following
-      // current at zero -- and no caller has ever supplied one. `currentMph` occurred nowhere else
-      // in js/ or Worker/. This is the supply, and it comes from Q/A off the centreline's charted
-      // cross-section against the live discharge; see river-drifts.js for the 2 ft guard on it.
-      //
-      // `currentBasis` is never null, because a null with no reason beside it is the hole a model
-      // fills from its own recall -- tidal, no gauge and no charted section are three different
-      // answers and all three are useful.
-      currentMph: p.current_mph ?? null,
-      currentBasis: p.current_basis || null,
-      // WHAT FRACTION OF THE REACH THE VELOCITY IS MEASURED FROM. On the Congaree that runs from 2
-      // stations in 161 to most of them, so the number and its support travel together and nothing
-      // here picks a cutoff -- see the note in river-drifts.js.
-      currentFrac: p.current_frac ?? null,
-      flowDeg: p.flow_deg ?? null,
-      // WHAT THIS PASS COSTS EACH WAY. Null on still water, where one number is the whole answer.
-      // `batteryAh` above is the upstream price plus transit -- see the note at fishAh.
-      batteryAhUpstream: upAh != null ? Number(upAh.toFixed(2)) : null,
-      batteryAhDownstream: downAh != null ? Number(downAh.toFixed(2)) : null,
-    });
   }
 
   out.sort((a, b) => b.value - a.value);
@@ -3007,6 +3066,24 @@ export function selectCandidates(runs, o) {
       metresBetween(k.start, c.start) < apart
       || overlapFraction(c.coordinates, k.coordinates, corridorM) >= maxOverlap
       || overlapFraction(k.coordinates, c.coordinates, corridorM) >= maxOverlap));
+  // The same question without the start-point test, which the note above says only ever catches a
+  // coincidence. Two channels meet: the creek and the channel it runs into start at the same mouth
+  // and share none of their water. Used by the channel step below and nowhere else.
+  //
+  // AND THE WATER IS COMPARED BY WHAT IS TYPICALLY UNDER EACH LEG, not by its two extremes. A leg
+  // down the middle of a channel and one along its shoulder share most of their range -- 22-31 ft
+  // against 18-28 on Wyboo's east-west channel -- so the min-max test calls them one water while
+  // their medians sit 6 ft apart. Each leg's own median has to fall inside the other's range.
+  const typicalIn = (a, b) => Number(a.depthFt) >= Number(b.depthMinFt) && Number(a.depthFt) <= Number(b.depthMaxFt);
+  const sameTypicalWater = (k, c) => {
+    if (c.drift || k.drift) return true;
+    if (![k.depthFt, k.depthMinFt, k.depthMaxFt, c.depthFt, c.depthMinFt, c.depthMaxFt].every((v) => Number.isFinite(Number(v)))) return sameWater(k, c);
+    return typicalIn(c, k) && typicalIn(k, c);
+  };
+  const sameChannelWater = (c) => kept.some((k) =>
+    lineKey(k) === lineKey(c) && sameTypicalWater(k, c) && (
+      overlapFraction(c.coordinates, k.coordinates, corridorM) >= maxOverlap
+      || overlapFraction(k.coordinates, c.coordinates, corridorM) >= maxOverlap));
   for (const c of out) {
     const duplicate = isDuplicate(c);
     // COUNTED, BECAUSE THIS IS THE BIGGEST FILTER IN THE FUNCTION AND IT WAS THE ONLY SILENT ONE.
@@ -3092,6 +3169,54 @@ export function selectCandidates(runs, o) {
   // "Over that water" is the lane's MEDIAN in the report's range: the water under the boat for most
   // of the pass. Touching it was the first version, and on Marion from Rowland a 22-31 ft lane with
   // a 25 ft median counted as being over "30-45 feet of water" and nothing deeper was offered.
+  // ── THE CHANNEL'S WATER IS OFFERED ──────────────────────────────────────────────────────────
+  //
+  // Ryan, 2026-10-01, of the 28-30 ft water down the middle of Wyboo Creek and its east-west
+  // channel: "I just want that water in the middle of the creek and the east to west channel to be
+  // offered in smart plan... Whatever the best method is to get it added". The method is mine.
+  //
+  // Counting the channel in the score was not enough on its own. Measured from Rowland on the
+  // 10/2 inputs: #484 came into the twelve, and the east-west channel and the upper creek did not --
+  // the ranking still scores the bank's docks and points higher, and the band's lanes stop once
+  // the list is half over the band. So a leg that runs a pass of channel (`minM`, his pass) over
+  // water inside the fish band is added past the limit, the way the band's lanes are: nothing is
+  // dropped, `value` is unchanged, and the same two bounds hold -- no farther from the ramp than
+  // the ranking's own legs reach, and until the legs over the band hold the day's window, one pass
+  // each.
+  let offeredForChannel = 0;
+  if (bandGiven && Number(o.windowMin) > 0) {
+    const dMin = Number(o.fishDepthFt[0]), dMax = Number(o.fishDepthFt[1]);
+    const susp = holding === 'suspended' || holding === 'both';
+    // The leg's own water, median under the line on the window: suspended fish need water deeper
+    // than the band's top, bottom fish need it inside the band -- eligibleForHolding()'s rule.
+    const overBand = (c) => {
+      const ft = Number(c.depthFt);
+      return Number.isFinite(ft) && (susp ? ft > dMin : ft >= dMin && ft <= dMax);
+    };
+    const channelLeg = (c) => c.channelM >= opts.minM && overBand(c);
+    // HOW FAR THE RANKING'S OWN LEGS ALREADY TAKE HIM: the far end of the farthest one, not its
+    // near end. A channel runs away from the ramp, and its mouth can sit just past where the
+    // nearest end of the ranking's farthest leg does while that leg itself runs well beyond it.
+    const legReach = kept.reduce((m, c) => Math.max(m, Number(c.transitInM) || 0,
+                                                    Number(c.transitOutM) || 0), 0);
+    const trollMin = (c) => minutesFor(Number(c.lengthM) || 0, trollMph);
+    // Counted over EVERY leg already offered over the band, channel or not: once the band's water
+    // on the list fills the day, one pass each, nothing more is added. A day is the bound the band
+    // step uses; counting the channel legs alone added twenty on Murray from Hilton.
+    let channelMin = kept.filter(overBand).reduce((t, c) => t + trollMin(c), 0);
+    for (const c of out) {
+      if (channelMin >= Number(o.windowMin)) break;
+      if (kept.includes(c) || !channelLeg(c)) continue;
+      if ((Number(c.fromRampM) || 0) > legReach) continue;
+      if (sameChannelWater(c)) continue;
+      c.offeredForChannel = true;
+      kept.push(c);
+      offeredForChannel++;
+      channelMin += trollMin(c);
+      if (rejected.limit > 0) rejected.limit--;
+    }
+  }
+
   const rw = (Array.isArray(o.reportWater) ? o.reportWater : []).filter((w) => w
     && Array.isArray(w.chartFt || w.ft) && Number.isFinite(Number((w.chartFt || w.ft)[0])));
   let offeredForReports = 0;
@@ -3189,7 +3314,7 @@ export function selectCandidates(runs, o) {
   // the first is the wrong band, the second is the wrong lake for this fish -- and until now the
   // caller could only report the first, because it did not know which test had been applied.
   kept.selection = {
-    considered: runs.length,
+    considered: runs.length + extraWindows,
     rejected,
     // EVERY RUN ACCOUNTED FOR. If this does not equal `considered` a filter has been added
     // without a counter, which is exactly how the dedupe went unreported for as long as it did.
@@ -3206,6 +3331,10 @@ export function selectCandidates(runs, o) {
     offeredForReports,
     // How many lanes over the fish band were added past the limit because the ranking left them out.
     offeredForBand,
+    // How many legs that run a channel over the band were added past the limit.
+    offeredForChannel,
+    // Windows laid on a lane's channel stretch, past its first. `considered` counts them.
+    channelWindows: extraWindows,
     // WHETHER THIS PACK HAD FITTED LANES AT ALL, because "800 unfitted runs were refused" and
     // "this lake has no fitted lanes so rough ones were offered" are different days on the water
     // and only this field separates them.
@@ -3865,6 +3994,10 @@ export function forModel(c, cap = MODEL_STRUCTURE_CAP) {
     offeredForReport: c.offeredForReport || undefined,
     // ADDED FOR THE BAND, past the limit, because the ranking left it out -- see selectCandidates().
     offeredForBand: c.offeredForBand || undefined,
+    // IN A CHANNEL: how many metres of the leg, and whether it was added for that -- see
+    // plan-channels.js and the channel step in selectCandidates().
+    channelM: c.channelM || undefined,
+    offeredForChannel: c.offeredForChannel || undefined,
     lengthM: c.lengthM,
     transitFromRampM: c.transitInM,
     // WHAT THE ORDERING COSTS. `transitToM` is metres of deadhead from this leg to each other leg

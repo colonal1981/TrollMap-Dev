@@ -2399,6 +2399,13 @@ because it is no farther from the ramp than the ranking went; they were added un
 lanes hold a day of trolling. That is the same one source's band and nothing else: weigh it like
 any other lane.
 
+A CHANNEL IS STRUCTURE. A candidate carrying \`channelM\` runs that many metres IN a channel: the
+bottom comes up on both sides of it, so it is down a creek bed, the cut between an island and the
+bank, or the middle of a cove's old creek. Ryan: "just the fact that it is a deep creek channel is
+structure in itself... it is called out as something to fish for striper". One carrying
+\`offeredForChannel\` runs a pass of channel over water inside the fish band and was added past the
+ranking for that. Say in its \`why\` when the channel is the reason you chose a leg.
+
 THE GUIDES' WATER IS ON THE LANES THAT CROSS IT. A candidate carrying \`reportWater\` passes over a
 depth of WATER that a guide report from this month or last named for the species; the report, its
 date and its sentence are on it, and the reports themselves are under WHAT THE GUIDES ON THIS WATER

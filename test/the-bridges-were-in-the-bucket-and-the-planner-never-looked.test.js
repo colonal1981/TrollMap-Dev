@@ -75,7 +75,8 @@ describe('the planner reads them', () => {
   it('the selector joins bridges and piers per run, like the state attractors', () => {
     const c = src('../js/modules/plan-candidates.js');
     expect(c).toContain("kindHits(coords, cum0, o.shore, opts.maxOffM, 'bridge')");
-    expect(c).toContain('const joined = docks.concat(dnr, poi, shore);');
+    // The channel's hits joined the same list on 2026-10-02 (plan-channels.js); the shore is still in it.
+    expect(c).toContain('const joined = docks.concat(dnr, poi, shore, chs ? channelHits(chs, opts.stepM) : []);');
   });
 });
 
