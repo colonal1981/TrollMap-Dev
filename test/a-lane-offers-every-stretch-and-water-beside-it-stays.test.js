@@ -61,10 +61,36 @@ describe('a lane beside the kept one stays a piece when it goes somewhere the ke
       [['fake#A', 30, 3], ['fake#B', 28, 3]]);
   });
 
+  // Since 2026-10-02 a member is dropped only when a kept one sharing its water is at least as deep
+  // AND at least as long (see the next describe). So this B is no longer than A: 800 m beside it,
+  // then 200 m away, 1000 m in all against A's 1000.
   it('does not keep the one that leaves when its own water is shorter than his pass', () => {
-    const short = lane('fake#B', [...along(21, 0, 10), ...Array.from({ length: 15 }, (_, i) => [800, 50 + i * 40])],
-      Array(36).fill(28));
+    const short = lane('fake#B', [...along(21, 0, 10), ...Array.from({ length: 5 }, (_, i) => [800, 50 + i * 40])],
+      Array(26).fill(28));
     const g2 = buildPieces([C, short, A], { clearFt: 0, minM: 805, depths: [10, 20, 26, 28, 30] });
     assert.deepEqual(g2.pieces.map((p) => p.runId), ['fake#A']);
+  });
+});
+
+describe('a longer lane is not dropped for a deeper, shorter one', () => {
+  // Wyboo Creek, Lake Marion, 2026-10-01: #19 runs his 28 ft line for 1,440 m and was dropped for
+  // #484, which holds 30 ft for 840 m, because only 550-ish m of #19 is outside #484's swath. Ryan:
+  // "those lines are somewhat close to what i drew but not actually the ones i drew at all".
+  // Here: D 30 ft for 840 m; L 28 ft for 1,440 m, 10 m beside D and on past its end; S 28 ft for
+  // 840 m on D's other side. One group.
+  const D = lane('fake#484', along(22), Array(22).fill(30));
+  const L = lane('fake#19', along(37, 0, 10), Array(37).fill(28));
+  const S = lane('fake#503', along(22, 0, -10), Array(22).fill(28));
+  const got = buildPieces([S, L, D], { clearFt: 0, minM: 805, depths: [10, 20, 28, 30] });
+
+  it('keeps the deeper one and the longer one, and drops the one no better on either count', () => {
+    assert.deepEqual(got.pieces.map((p) => [p.runId, p.holdsFt, p.lengthM, p.duplicates]).sort(),
+      [['fake#19', 28, 1440, 3], ['fake#484', 30, 840, 3]]);
+  });
+
+  it('and still drops the longer one when the kept one is as long as it', () => {
+    const D2 = lane('fake#484', along(37, 0, 0), Array(37).fill(30));
+    const g2 = buildPieces([L, D2], { clearFt: 0, minM: 805, depths: [10, 20, 28, 30] });
+    assert.deepEqual(g2.pieces.map((p) => p.runId), ['fake#484']);
   });
 });

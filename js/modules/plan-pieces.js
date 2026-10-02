@@ -986,6 +986,23 @@ function coverWith(cover, xy, swathM) {
 }
 
 /**
+ * Whether any point of `xy` is within `swathM` of a point in `cover` -- the two share water.
+ * The same "inside" freshM() and collapse() use, on the same buckets.
+ */
+function touches(xy, cover, swathM) {
+  for (const a of xy) {
+    const gx = Math.floor(a[0] / swathM), gy = Math.floor(a[1] / swathM);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        const qs = cover.get((gx + dx) * 1e7 + (gy + dy));
+        if (qs) for (const q of qs) if (dist2(a, q) <= swathM) return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
  * The longest unbroken stretch of `xy`, in metres, that is outside the swath of every point in
  * `cover`. Measured the way collapse() measures "inside": a point within `swathM` of a kept point
  * is covered, and a point within `swathM` is never more than one bucket away.
@@ -1222,15 +1239,30 @@ export function buildPieces(lanes, o) {
   // survivor, so the member that survived before is still the first kept -- and each further
   // member is kept when it carries `minM` of unbroken water outside the swath of the members
   // already kept. `minM` is his pass length and the swath is collapse()'s own; nothing new is set.
+  //
+  // AND A LONGER LANE IS NOT DROPPED FOR A DEEPER, SHORTER ONE. Ryan, 2026-10-01, after the change
+  // above: *"those lines are somewhat close to what i drew but not actually the ones i drew at
+  // all"*. #503, #19 and #562 run his 28 ft lines in Wyboo for 1,200-1,440 m each, and all three
+  // were still dropped for #484, which holds 30 ft for only 840 m: just 170-680 m of each is outside
+  // #484's swath, under his pass length. Deepest-first had thrown away the longer water. So a member
+  // is dropped only when a kept member that shares its water holds AT LEAST AS DEEP A BAIT FOR AT
+  // LEAST AS LONG -- when it is no better on either count. Offered 2026-10-01; *"you are good to fix
+  // the 2 bugs"*, 2026-10-02. Still no number: `minM` and the swath are the two already here.
   const pieces = [];
   for (const g of groups) {
     const members = g.map((i) => entries[i])
       .sort((a, b) => (b.holdsFt - a.holdsFt) || (b.lengthM - a.lengthM));
     const cover = new Map();
+    const kept = [];
     for (const m of members) {
-      if (cover.size && freshM(m.xy, cover, swath) < minM) continue;
+      if (cover.size && freshM(m.xy, cover, swath) < minM
+          && kept.some((k) => k.e.holdsFt >= m.holdsFt && k.e.lengthM >= m.lengthM
+                              && touches(m.xy, k.cover, swath))) continue;
       pieces.push(pieceOf(m, members.length));
       coverWith(cover, m.xy, swath);
+      const own = new Map();
+      coverWith(own, m.xy, swath);
+      kept.push({ e: m, cover: own });
     }
   }
 

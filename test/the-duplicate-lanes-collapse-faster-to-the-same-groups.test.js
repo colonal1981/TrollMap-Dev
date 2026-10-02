@@ -127,7 +127,11 @@ describe('collapse() makes the groups the all-against-all measure makes', () => 
       const members = g.map((i) => entries[i])
         .sort((a, b) => (b.holdsFt - a.holdsFt) || (b.lengthM - a.lengthM));
       const kept = [];
-      for (const m of members) if (!kept.length || fresh(m.xy, kept) >= minM) kept.push(m);
+      // ...and since 2026-10-02 a member is dropped only when a kept one that shares its water is
+      // at least as deep AND at least as long. All points against all points here too.
+      const beaten = (m) => kept.some((k) => k.holdsFt >= m.holdsFt && k.lengthM >= m.lengthM
+        && m.xy.some((q) => k.xy.some((r) => dist2(q, r) <= swath)));
+      for (const m of members) if (!kept.length || fresh(m.xy, kept) >= minM || !beaten(m)) kept.push(m);
       return kept.map((w) => `${w.runId}:${g.length}`);
     }).sort();
     assert.ok(groups.length > 6 && groups.length < entries.length,
