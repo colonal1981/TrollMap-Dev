@@ -2796,6 +2796,57 @@ export function cannotUseBreaks(res, cannotUse) {
 }
 
 /**
+ * THE RE-ASK, WITH ITS OWN ANSWER IN HAND.
+ *
+ * When an answer breaks a bait rule the planner sends it back once (smart-plan-v2.js twice over, for
+ * two rules; plan-from-water.js once). It used to send the whole prompt again with the complaint on
+ * the end and "Return the WHOLE plan again", so Claude planned the day from nothing a second time.
+ * His bridge log, 2026-10-02, his largemouth plan from the Recreation Lake ramp: 683.8 s for the
+ * first answer and 588.9 s for the re-ask, 21 minutes in Claude. He chose to make it cheaper.
+ *
+ * So the re-ask carries the answer it is correcting and asks for that answer back, changed only
+ * where the rule needs it, and at low effort: the thinking that chose the water and the baits was
+ * done the first time and is in the answer. Each re-ask is built from the prompt the day was
+ * first asked with, so two corrections do not stack two answers into one prompt. The planner
+ * still takes the second answer only when it breaks the rule less.
+ *
+ * @param {string} asked       the user prompt the day was first asked with
+ * @param {string} answerText  the answer being corrected, as the model wrote it
+ * @param {string} complaint   what it broke, and what to do about it
+ */
+export const RE_ASK_EFFORT = 'low';
+export function correctedRequest(system, asked, answerText, complaint) {
+  const user = `${asked}\n\nYOUR ANSWER, AS YOU SENT IT:\n${String(answerText || '').trim()}\n\n`
+    + `THAT ANSWER BROKE A RULE AND IS COMING BACK TO YOU.\n${complaint}\n`
+    + 'Return that same JSON object, in the same shape, changed only where it has to be to fix '
+    + 'this. Everything else stays exactly as it is in your answer above.';
+  return { system, user, effort: RE_ASK_EFFORT };
+}
+
+/**
+ * WHAT A RE-ASK MAY CHANGE: the rods and which go in the water on each leg, and nothing else.
+ *
+ * The re-ask goes at low effort (correctedRequest()), and on 2026-10-02 the same Moultrie request
+ * asked from scratch at low effort came back with the safety warning empty -- the five charted
+ * Danger marks the default and medium answers both named were gone. A re-ask is told to change only
+ * what the rule needs; this makes sure that is all it can change. The first answer keeps its legs,
+ * passes, speeds, stops, notes and safety call, and takes from the second its `loadout`, its
+ * `changes` (they swap lures on those rods) and each of its own legs' `deploy`.
+ */
+export function withRodsFrom(first, second) {
+  if (!second) return first;
+  const deployOf = new Map((Array.isArray(second.legs) ? second.legs : [])
+    .filter((l) => l && l.runId).map((l) => [l.runId, l.deploy]));
+  return {
+    ...first,
+    loadout: second.loadout || first.loadout,
+    changes: Array.isArray(second.changes) ? second.changes : first.changes,
+    legs: (Array.isArray(first.legs) ? first.legs : []).map((l) => (l && deployOf.has(l.runId)
+      ? { ...l, deploy: deployOf.get(l.runId) } : l)),
+  };
+}
+
+/**
  * Pull the JSON object out of whatever the provider returned.
  * Kept in the spirit of the extraction smart-plan.js already used against /groq-query, because
  * that path has survived several providers and their various ideas about code fences.

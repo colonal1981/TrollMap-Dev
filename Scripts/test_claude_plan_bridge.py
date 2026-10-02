@@ -153,6 +153,24 @@ class Server(unittest.TestCase):
         self.assertEqual(json.loads(b)["choices"][0]["message"]["content"], '{"legs": []}')
         self.assertEqual(h["Access-Control-Allow-Origin"], "https://trollmap-dev.pages.dev")
 
+    def test_a_request_may_name_its_effort_and_nothing_else_gets_through(self):
+        # 2026-10-02: the planner's re-ask hands Claude its own answer back and asks at "low".
+        seen = []
+        B.Handler.runner = staticmethod(runner(OK_OUT, seen=seen))
+        try:
+            st, _, b = self.req("POST", "/ask", None, {"system": "s", "user": "u", "effort": "low"})
+            self.assertEqual(st, 200)
+            cmd = seen[-1]["cmd"]
+            self.assertEqual(cmd[cmd.index("--effort") + 1], "low")
+            self.assertEqual(json.loads(b)["_trollmap"]["effort"], "low")
+            # Not a level the CLI takes: the bridge's own setting stands (none, here).
+            st, _, b = self.req("POST", "/ask", None, {"system": "s", "user": "u", "effort": "--rm"})
+            self.assertEqual(st, 200)
+            self.assertNotIn("--effort", seen[-1]["cmd"])
+            self.assertIsNone(json.loads(b)["_trollmap"]["effort"])
+        finally:
+            B.Handler.runner = staticmethod(runner(OK_OUT))
+
     def test_an_empty_prompt_is_refused(self):
         st, _, _ = self.req("POST", "/ask", None, {"system": "s", "user": ""})
         self.assertEqual(st, 400)

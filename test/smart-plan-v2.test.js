@@ -672,6 +672,23 @@ describe('a bait that cannot be trolled goes back to the model', () => {
     expect(/THAT ANSWER BROKE A RULE/.test(r.request.user)).toBe(true);
   });
 
+  it('re-asks with its own answer in hand, at low effort, and not from scratch', async () => {
+    // 2026-10-02, his bridge log: 683.8 s for an answer and 588.9 s for its re-ask, because the
+    // re-ask asked for the whole plan again. See correctedRequest().
+    const asks = [];
+    const inner = slipping(1);
+    const r = await buildSmartPlanV2({ ...OPTS_F,
+      askModel: async (req) => { asks.push(req); return inner(req); } });
+    expect(asks.length).toBe(2);
+    expect(asks[0].effort).toBe(undefined);          // the first ask goes at the bridge's own
+    expect(asks[1].effort).toBe('low');
+    expect(asks[1].user.startsWith(asks[0].user)).toBe(true);
+    expect(asks[1].user.includes('YOUR ANSWER, AS YOU SENT IT:')).toBe(true);
+    expect(asks[1].user.includes('Creature Bait / Craw')).toBe(true);
+    expect(/Return the WHOLE plan again/.test(asks[1].user)).toBe(false);
+    expect(r.request.user).toBe(asks[1].user);       // the prompt saved is the one that was sent
+  });
+
   it('tells him only when the second answer breaks it too', async () => {
     let asked = 0;
     const inner = slipping(99);

@@ -19,6 +19,8 @@
  * the bridge not running.
  */
 
+import { ANSWER_STEP } from '../utils/step-timer.js';
+
 // THE SAME NUMBER AS `PORT` IN Scripts/claude_plan_bridge.py -- the two must agree.
 export const CLAUDE_BRIDGE_URL = 'http://127.0.0.1:8791';
 
@@ -26,7 +28,7 @@ export const CLAUDE_BRIDGE_URL = 'http://127.0.0.1:8791';
 // this only has to outlast the one-time "allow local network access" prompt while he reads it.
 const HEALTH_TIMEOUT_MS = 60000;
 
-/** {up, model, busy} from the bridge, or {up:false, why}. Never throws. */
+/** {up, model, effort, busy} from the bridge, or {up:false, why}. Never throws. */
 export async function claudeBridgeStatus(url = CLAUDE_BRIDGE_URL, { fetchImpl = fetch } = {}) {
   try {
     const signal = typeof AbortSignal !== 'undefined' && AbortSignal.timeout
@@ -36,7 +38,7 @@ export async function claudeBridgeStatus(url = CLAUDE_BRIDGE_URL, { fetchImpl = 
     const h = await r.json();
     if (!h || !h.ok) return { up: false, why: 'the bridge did not say it was ready' };
     if (h.claude === false) return { up: false, why: 'the bridge is running but cannot find the claude CLI' };
-    return { up: true, model: h.model || null, busy: !!h.busy };
+    return { up: true, model: h.model || null, effort: h.effort || null, busy: !!h.busy };
   } catch (e) {
     return { up: false, why: 'Claude is not running on this PC (Scripts\\claude_plan_bridge.py)' };
   }
@@ -59,7 +61,10 @@ export function claudeFirstAsker(fallback, o = {}) {
     const st = await claudeBridgeStatus(url, { fetchImpl });
     let why = st.why;
     if (st.up) {
-      say(`Asking Claude (${st.model || 'the bridge'}) on this PC — a plan takes a minute or two.`);
+      // It said "a plan takes a minute or two". His bridge log, 2026-10-02: 8 to 11 minutes an ask.
+      // The step timer says how long it took; this line says only what is happening.
+      const effort = req.effort || st.effort;
+      say(`Asking Claude (${st.model || 'the bridge'}${effort ? `, ${effort} effort` : ''}) on this PC…`);
       try {
         // A SIMPLE REQUEST, SO CHROME SENDS NO PREFLIGHT. Ryan, 2026-10-01: "I am getting the same
         // error... the plan i uploaded less than hour ago ran on claude just fine", with both "Local
@@ -71,16 +76,19 @@ export function claudeFirstAsker(fallback, o = {}) {
         // and the bridge reads the body as JSON whatever it is labelled. (A second bridge had also
         // been started on the port at 3:21 pm, before the single-bridge fix; it may have been part
         // of it too. Not proven either way.)
+        // `effort` only when the planner set one -- the re-ask does (correctedRequest() in
+        // plan-prompt.js); a first ask goes at whatever the bridge was started with.
         const r = await fetchImpl(`${url}/ask`, {
           method: 'POST',
-          body: JSON.stringify({ system: req.system, user: req.user }),
+          body: JSON.stringify({ system: req.system, user: req.user,
+                                 ...(req.effort ? { effort: req.effort } : {}) }),
         });
         const text = await r.text();
         let data = null;
         try { data = JSON.parse(text); } catch { data = null; }
         if (r.ok && data) {
           const out = readAnswer(data, text);
-          if (out.content) return out;
+          if (out.content) { say(ANSWER_STEP); return out; }
           why = 'Claude answered with nothing in it';
         } else {
           why = `Claude on this PC failed: ${(data && data.error) || `HTTP ${r.status}`}`;
@@ -99,6 +107,7 @@ export function claudeFirstAsker(fallback, o = {}) {
     }
     say(`${why} — asking Gemini.`);
     const g = await fallback(req);
+    say(ANSWER_STEP);
     // The Gemini asker returns {content, meta}; a bare string is still a valid answer.
     if (g && typeof g === 'object' && typeof g.content === 'string') {
       return { content: g.content, meta: { ...(g.meta || {}), claudeBridge: why } };
@@ -122,6 +131,7 @@ function readAnswer(data, text) {
       completionTokens: u.completion_tokens ?? null,
       totalTokens: u.total_tokens ?? null,
       seconds: t.seconds ?? null,
+      effort: t.effort ?? null,
       apiListPriceUsd: t.apiListPriceUsd ?? null,
       bodyBytes: text.length,
       contentChars: content.length,

@@ -37,7 +37,7 @@ import { ampHoursAlong, minutesFor, metresBetween, cumulative, worstWind, resolv
          lookupKind, RESOLVE_MARGIN_M } from './plan-candidates.js';
 import { assemblePlan, DEFAULT_STOP_MIN } from './plan-assemble.js';
 import { buildPlanRequest, parsePlanResponse, planArgsFrom, MODEL_LEG_FIELDS, modelAnswer,
-         cannotUseBreaks } from './plan-prompt.js';
+         cannotUseBreaks, correctedRequest, withRodsFrom } from './plan-prompt.js';
 import { prefetchTransits } from './smart-plan-v2.js';
 import { launchRouteFor } from '../data/launch-reach.js';
 import { dayCost, dayOrder, priceSpots, TROLL_MPH, TRANSIT_MPH } from './plan-water.js';
@@ -540,15 +540,17 @@ export async function planFromWater(o) {
   const broke = cannotUseBreaks(res, req.cannotUse);
   if (broke.length) {
     const lines = broke.map((b) => `- ${b.runId}: ${b.rod} carries the ${b.lure}`).join('\n');
-    const corrected = `${req.user}\n\nTHAT ANSWER BROKE A RULE AND IS COMING BACK TO YOU.\n`
-      + 'On these legs you put in the water a bait that the leg lists under `cannotUse` -- the rise '
+    // With its own answer in hand, at low effort -- see correctedRequest().
+    const ask2 = correctedRequest(req.system, req.user, answer.content,
+      'On these legs you put in the water a bait that the leg lists under `cannotUse` -- the rise '
       + 'on it is shallower than the bill takes that bait, no lead lifts a bill, and it drags:\n'
       + `${lines}\n`
-      + 'Return the WHOLE plan again in the same shape. On each of those legs deploy rods whose '
-      + 'baits are not on that leg\'s `cannotUse`. Everything else may stay exactly as it was.';
+      + 'On each of those legs deploy rods whose baits are not on that leg\'s `cannotUse`.');
+    const corrected = ask2.user;
     try {
-      const again = modelAnswer(await o.askModel({ system: req.system, user: corrected }));
-      const res2 = parsePlanResponse(again.content);
+      const again = modelAnswer(await o.askModel(ask2));
+      // Only its rods are taken -- see withRodsFrom().
+      const res2 = withRodsFrom(res, parsePlanResponse(again.content));
       if (cannotUseBreaks(res2, req.cannotUse).length < broke.length) {
         res = res2;
         answer = again;

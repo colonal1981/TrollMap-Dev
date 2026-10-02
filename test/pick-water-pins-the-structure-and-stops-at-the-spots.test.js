@@ -176,13 +176,15 @@ describe('a bait the leg was told it cannot use goes back to the model once', ()
     // A 10 ft ceiling: the MR crank is rated to 12 ft, so it is on this leg's cannotUse.
     const P = piece(81, -80.70, 34.35, 10);
     let calls = 0;
+    const asks = [];
     const r = await build([P], {
       // The bag the prompt lists, as the Water tab sends it -- the MR has to be in it to be banned.
       planArgs: { water: 'Lake Wateree, SC', ramp: 'Clearwater Cove', date: '2026-07-29',
                   species: ['Striped Bass'], usableAh: 80, conditions: {},
                   tackle: [...LURES, 'MR Crankbait (6-12ft)'] },
-      askModel: async () => {
+      askModel: async (req) => {
         calls += 1;
+        asks.push(req);
         return calls === 1
           ? answer([P], { rods: [{ id: 'R2', lure: 'MR Crankbait (6-12ft)', role: 'troll', leadFt: 36 },
                                  { id: 'R5', lure: LURES[1], role: 'troll', leadFt: 60 }],
@@ -192,6 +194,10 @@ describe('a bait the leg was told it cannot use goes back to the model once', ()
     });
     expect(calls).toBe(2);
     expect(r.request.user.includes('THAT ANSWER BROKE A RULE')).toBe(true);
+    // With its own answer in hand and at low effort -- see correctedRequest() (2026-10-02).
+    expect(asks[1].effort).toBe('low');
+    expect(asks[1].user.includes('YOUR ANSWER, AS YOU SENT IT:')).toBe(true);
+    expect(asks[1].user.startsWith(asks[0].user)).toBe(true);
     const leg = trollLegs(r)[0];
     const lures = r.plan.loadout.rods.filter((x) => [leg.deploy.port, leg.deploy.starboard]
       .includes(x.id)).map((x) => x.lure);

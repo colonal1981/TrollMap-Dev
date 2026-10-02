@@ -47,6 +47,7 @@ import { syncClarityIntelData } from './lake-intel.js';
 import { planIssuesHtml } from './plan-issues.js';
 import { renderAll } from '../core/map-init.js';
 import { marksForPlan } from './garmin-marks.js';
+import { stepTimer, timingNote } from '../utils/step-timer.js';
 
 export { depthBandFor, usableAhFrom };
 
@@ -158,7 +159,11 @@ export async function runSmartPlanV2(opts = {}) {
   // v1's status line and v1's container. There is no second set any more.
   const status = $('smartPlanStatus');
   const out = $('smartPlanUIContainer');
+  // WHERE THE MINUTES GO: every step announces itself here, so this is where the clock is marked
+  // -- see step-timer.js.
+  const timer = stepTimer();
   const say = (msg, bad) => {
+    timer.mark(msg);
     if (status) { status.textContent = msg; status.style.color = bad ? 'var(--warn)' : 'var(--muted)'; }
   };
 
@@ -177,6 +182,7 @@ export async function runSmartPlanV2(opts = {}) {
   }
   // A POOL CUT OFF FROM THE MAIN LAKE, which none of the lake's gauges reads (cutOffPool()). Asked
   // first, because the season below is decided on the water temperature the form holds.
+  say('Checking the regulations…');
   const cut = cutOffPool(await poolsFor(r2Key), ramp);
   if (cut) keepToThePool(inp);
   // IS THE LAUNCH OPEN, by Google's listing -- see launch-status.js. Asked now and read once the
@@ -534,6 +540,11 @@ export async function runSmartPlanV2(opts = {}) {
   if (legality.notes && legality.notes.length && r.plan) {
     r.plan.decisions = [...legality.notes, ...(r.plan.decisions || [])];
   }
+  // HOW LONG IT TOOK AND WHERE, with the plan and in the saved JSON (`model.timings`). Everything
+  // the app does before it draws is done by here.
+  r.timings = timer.report();
+  const took = timingNote(r.timings);
+  if (took && r.plan) r.plan.decisions = [...(r.plan.decisions || []), took];
 
   if (!r.plan) {
     say(r.problems[0] || 'No plan', true);

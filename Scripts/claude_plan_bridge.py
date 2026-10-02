@@ -72,6 +72,12 @@ ASK = "Answer the request below with the one JSON object it asks for, and nothin
 
 _one_at_a_time = threading.Lock()
 
+# THE CLI'S OWN EFFORT LEVELS -- what --effort below says it takes. A request may name one (the
+# planner's re-ask asks at "low": it hands Claude its own answer back and asks for one fix, which
+# needs none of the first answer's thinking); anything else in that field is ignored and the
+# bridge's own setting stands.
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+
 
 def origin_allowed(origin):
     return origin is None or bool(ALLOWED_ORIGINS.match(origin))
@@ -113,10 +119,10 @@ def ask(system, user, model=DEFAULT_MODEL, effort=None, run=subprocess.run, time
     if out.get("is_error") or out.get("subtype") != "success":
         why = str(out.get("result") or out.get("subtype") or "error")[:400]
         return 502, {"error": f"claude: {why}", "usageLimit": bool(_LIMIT_WORDS.search(why))}
-    return 200, to_openai(out, model, seconds)
+    return 200, to_openai(out, model, seconds, effort)
 
 
-def to_openai(out, model_asked, seconds):
+def to_openai(out, model_asked, seconds, effort=None):
     """The CLI's result, in the shape the Worker's /groq-query returns and modelAsker() reads."""
     u = out.get("usage") or {}
     mu = out.get("modelUsage") or {}
@@ -132,6 +138,8 @@ def to_openai(out, model_asked, seconds):
                   "total_tokens": prompt + completion},
         "_trollmap": {"provider": "claude (this PC)", "model": model, "modelAsked": model_asked,
                       "seconds": seconds,
+                      # None is the CLI's own default: the bridge was started without --effort.
+                      "effort": effort,
                       # What the same call would cost at API list price. NOT what the subscription
                       # charges; it is the one number the CLI gives for "how big was that".
                       "apiListPriceUsd": out.get("total_cost_usd")},
@@ -202,12 +210,13 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(user, str) or not user.strip():
             return self._send(400, {"error": "no user prompt"})
         model = str(req.get("model") or self.model)
+        effort = req.get("effort") if req.get("effort") in EFFORTS else self.effort
         # One at a time: a plan and its re-ask are sequential anyway, and two tabs building at once
         # would otherwise run two CLIs against one subscription.
         with _one_at_a_time:
-            print(f"{time.strftime('%H:%M:%S')}  asking {model}: {len(system or '')} + {len(user)} "
-                  f"characters", flush=True)
-            status, body = ask(system, user, model, self.effort, run=self.runner)
+            print(f"{time.strftime('%H:%M:%S')}  asking {model}{' at ' + effort + ' effort' if effort else ''}: "
+                  f"{len(system or '')} + {len(user)} characters", flush=True)
+            status, body = ask(system, user, model, effort, run=self.runner)
         if status == 200:
             t = body["_trollmap"]
             print(f"{time.strftime('%H:%M:%S')}  answered by {t['model']} in {t['seconds']} s, "

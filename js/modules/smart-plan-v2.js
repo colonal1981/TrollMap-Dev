@@ -23,7 +23,8 @@ import { selectCandidates, structureIndex, forModel, travelOrder, poiSpotFeature
          turnaroundMiles, riverDay, metresBetween,
          pointToSegmentM } from './plan-candidates.js';
 import { buildPlanRequest, parsePlanResponse, planArgsFrom,
-         resolveTackleName, modelAnswer, cannotUseBreaks } from './plan-prompt.js';
+         resolveTackleName, modelAnswer, cannotUseBreaks, correctedRequest,
+         withRodsFrom } from './plan-prompt.js';
 // A RIVER LEG IS A DRIFT, NOT A LANE. See river-drifts.js for what that means, what it measures
 // and why the trolling runs are the wrong object on moving water.
 import { riverDriftRuns, driftCurrentSummary, centrelineTransit, waterTest } from './river-drifts.js';
@@ -691,21 +692,24 @@ export async function buildSmartPlanV2(o) {
     })
     .filter(Boolean));
 
+  // The prompt the day was first asked with: every re-ask below is built from it -- see
+  // correctedRequest().
+  const asked = req.user;
   const broke = castOnlyRods(res);
   if (broke.length) {
     const verb = broke.length === 1 ? 'is a CAST-ONLY bait' : 'are CAST-ONLY baits';
     const which = broke.length === 1 ? 'that rod' : 'those rods';
-    const corrected = `${req.user}\n\nTHAT ANSWER BROKE A RULE AND IS COMING BACK TO YOU.\n`
-      + `${broke.join(' and ')} ${verb}. They plane at trolling speed instead of sinking, so `
+    const again = correctedRequest(req.system, asked, raw.content,
+      `${broke.join(' and ')} ${verb}. They plane at trolling speed instead of sinking, so `
       + `they have no running depth and no lead puts them at one — a rod carrying one is a rod `
       + `fishing nothing. They are on the NOT ON THE WATER TODAY list above, which said not to `
-      + `name one on a rod.\n`
-      + `Return the WHOLE plan again in the same shape, with a trollable bait on ${which}. `
-      + `Everything else may stay exactly as it was.`;
+      + `name one on a rod. Put a trollable bait on ${which}.`);
+    const corrected = again.user;
     let second = null;
     try {
-      const rawAgain = modelAnswer(await o.askModel({ system: req.system, user: corrected }));
-      second = { res: parsePlanResponse(rawAgain.content), raw: rawAgain };
+      const rawAgain = modelAnswer(await o.askModel(again));
+      // Only its rods are taken -- see withRodsFrom().
+      second = { res: withRodsFrom(res, parsePlanResponse(rawAgain.content)), raw: rawAgain };
     } catch {
       second = null;          // an unreadable second answer is not a reason to lose the first
     }
@@ -737,15 +741,16 @@ export async function buildSmartPlanV2(o) {
   const useBroke = cannotUseBreaks(res, req.cannotUse);
   if (useBroke.length) {
     const lines = useBroke.map((b) => `- ${b.runId}: ${b.rod} carries the ${b.lure}`).join('\n');
-    const corrected = `${req.user}\n\nTHAT ANSWER BROKE A RULE AND IS COMING BACK TO YOU.\n`
-      + 'On these legs you put in the water a bait that the leg lists under `cannotUse` -- the rise '
+    const again = correctedRequest(req.system, asked, raw.content,
+      'On these legs you put in the water a bait that the leg lists under `cannotUse` -- the rise '
       + 'on it is shallower than the bill takes that bait, no lead lifts a bill, and it drags:\n'
       + `${lines}\n`
-      + 'Return the WHOLE plan again in the same shape. On each of those legs deploy rods whose '
-      + 'baits are not on that leg\'s `cannotUse`. Everything else may stay exactly as it was.';
+      + 'On each of those legs deploy rods whose baits are not on that leg\'s `cannotUse`.');
+    const corrected = again.user;
     try {
-      const rawAgain = modelAnswer(await o.askModel({ system: req.system, user: corrected }));
-      const res2 = parsePlanResponse(rawAgain.content);
+      const rawAgain = modelAnswer(await o.askModel(again));
+      // Only its rods are taken -- see withRodsFrom().
+      const res2 = withRodsFrom(res, parsePlanResponse(rawAgain.content));
       if (cannotUseBreaks(res2, req.cannotUse).length < useBroke.length
           && castOnlyRods(res2).length <= castOnlyRods(res).length) {
         res = res2;

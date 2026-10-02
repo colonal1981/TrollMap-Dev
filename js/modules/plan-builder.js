@@ -635,6 +635,8 @@ export function collectPlan(){
         // an answer cut off mid-JSON was indistinguishable from an answer that was nonsense.
         exchange: r.exchange || null,
         problems: Array.isArray(r.problems) ? r.problems.slice() : [],
+        // HOW LONG EACH STEP TOOK, the model's asks among them -- see step-timer.js.
+        timings: r.timings || null,
       };
     })(),
     savedAt: new Date().toISOString()
@@ -801,6 +803,7 @@ function restorePlanView(p) {
   window._planV2Result = {
     plan: p.plan, request: (m && m.request) || null, response: (m && m.response) || null,
     exchange: (m && m.exchange) || null, problems: (m && Array.isArray(m.problems)) ? m.problems : [],
+    timings: (m && m.timings) || null,
   };
 
   const out = document.getElementById('smartPlanUIContainer');

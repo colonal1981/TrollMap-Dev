@@ -76,6 +76,7 @@ import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
 import { connectionFor, snapEligibleFrom } from '../data/lure-knowledge.js';
 import { readInputs, rampCoords, preparePlanInputs, keepToThePool } from './smart-plan-v2-wiring.js';
 import { esc } from '../utils/escape.js';
+import { stepTimer, timingNote } from '../utils/step-timer.js';
 
 const $ = (id) => document.getElementById(id);
 const mi = (m) => m / 1609.34;
@@ -1274,7 +1275,10 @@ export function pickedWater() {
  * before ONE_PATH_TO_THE_SCREEN, and every export came up empty.
  */
 export async function buildFromPicked() {
+  // WHERE THE MINUTES GO, marked off the status line -- see step-timer.js.
+  const timer = stepTimer();
   const say = (m, bad) => {
+    timer.mark(m);
     const el = $('wgStatus');
     if (el) { el.textContent = m; el.style.color = bad ? 'var(--warn)' : 'var(--muted)'; }
   };
@@ -1496,6 +1500,10 @@ export async function buildFromPicked() {
   const boundaryFc = await packFetcher(CF_WORKER_URL)(`/${T.r2Key}/boundary.geojson`);
   const rough = roughLegs(r.plan, shoreRays(boundaryFc), T.windByHour);
   if (rough.length) r.problems = [...(r.problems || []), ...rough];
+  // HOW LONG IT TOOK AND WHERE, from the press of Build -- same line as the Smart Plan path.
+  r.timings = timer.report();
+  const took = timingNote(r.timings);
+  if (took && r.plan) r.plan.decisions = [...(r.plan.decisions || []), took];
 
   if (r.problems && r.problems.length) {
     console.warn('[pick-water] the plan came back with %d problem(s):', r.problems.length);
