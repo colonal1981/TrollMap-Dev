@@ -1375,6 +1375,17 @@ export function waterRouter(workerUrl, slug, opts = {}) {
     });
     if (!r.ok) return null;
     const d = await r.json();
+    // ONE NODE IS A ROUTE. Lake Moultrie from Short Stay, 2026-10-02, the first plan on the
+    // rebuilt graph: T5 (7 m), T6 (33 m) and T7 (20 m) went out marked "a straight line, not a
+    // water-routed path -- it can cross land". The Worker had answered all three with HTTP 200:
+    // both ends snapped to the SAME node, so the path was that one node and `distance_m` was 0.
+    // Read as fewer than two vertices, an answered route became an unanswered one. It is the
+    // ends joined to their node, the same join joinEnds() makes on every routed transit.
+    if (Array.isArray(d.coordinates) && d.coordinates.length === 1) {
+      return { distanceM: 0, coordinates: [from, d.coordinates[0], to],
+               minDepthHeld: d.min_depth_held, askedDepthFt: minDepthFt || undefined,
+               shallowM: d.shallow_m, shallowestFt: d.shallowest_ft };
+    }
     if (!Array.isArray(d.coordinates) || d.coordinates.length < 2) return null;
     // `min_depth_held` IS THE HALF THAT WAS BEING THROWN AWAY. The Worker relaxes the floor
     // rather than failing -- "a plan that quietly ignores the request is as bad as one that
