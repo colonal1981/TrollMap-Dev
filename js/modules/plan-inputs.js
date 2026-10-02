@@ -1159,8 +1159,15 @@ export function researchIntel(profile, species, season, now = Date.now(), packFa
     if (!Number.isFinite(tF) || !Number.isFinite(maxC)) return null;
     const ceilF = Math.round((maxC * 9) / 5 + 32);
     if (tF <= ceilF) return null;                       // no thermal squeeze today: say nothing
-    const dep = Number(lim.oxygen?.depletionDepthFt);
-    const anox = Number(lim.oxygen?.anoxicBelowFt);
+    // NULL IS NOT 0 FT. Number(null) is 0, so a profile that says "no oxygen depth" -- Lake
+    // Moultrie's, whose note is "surface/grab samples only -- no vertical depth profiles" -- read
+    // here as a measured floor at the surface. On 2026-10-02 the prompt told the model "Oxygen
+    // begins depleting below 0 ft, measured" and "Put the spread within a few feet of 0 ft", and it
+    // put all six rods at 2-8 ft over 39-48 ft of water. Ryan: "absolute garbage". oxygenFloorFt()
+    // and clampToOxygen() already take only a depth above 0; this block now takes the same.
+    const ft = (v) => (v != null && Number(v) > 0 ? Number(v) : NaN);
+    const dep = ft(lim.oxygen?.depletionDepthFt);
+    const anox = ft(lim.oxygen?.anoxicBelowFt);
     const floor = Number.isFinite(dep) ? dep : anox;
     if (!Number.isFinite(floor)) return null;
     const src = live.tempFrom === 'tailwater'
