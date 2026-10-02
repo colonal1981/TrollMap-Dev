@@ -3,8 +3,8 @@ r"""claude_plan_bridge.py -- the app asks Claude on this PC to write the plan, o
 
 Personal use only, not for distribution or resale; not for navigation.
 
-    py Scripts\claude_plan_bridge.py                 (sonnet, the same default as the research)
-    py Scripts\claude_plan_bridge.py --model opus
+    py Scripts\claude_plan_bridge.py                 (opus -- see PLAN_MODEL)
+    py Scripts\claude_plan_bridge.py --model sonnet
 
 Leave the window open. While it runs, Smart Plan, Pick Water and the Bench send their request here
 instead of to the Worker's free Gemini chain; when it is not running they ask Gemini exactly as
@@ -49,7 +49,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # The CLI lookup and the usage-limit words are the research step's, not a second copy of them.
-from claude_species import DEFAULT_MODEL, _LIMIT_WORDS, claude_exe  # noqa: E402
+from claude_species import _LIMIT_WORDS, claude_exe  # noqa: E402
+
+# OPUS WRITES THE PLAN, NOT THE RESEARCH'S SONNET. Ryan, 2026-10-02: "it is taking anywhere from 8-13
+# minutes now to run a plan". On his PC `sonnet` runs claude-sonnet-5, which thought for nine minutes
+# (49,662 tokens) before writing the first word of his Moultrie plan. The same request on Opus 5.5:
+# 122.3 s, 12,512 tokens written, the same API list price, and the better plan of the two
+# (APP_CHANGE_REQUESTS.md item 52). He: "make it the default". claude_species.py keeps its own.
+PLAN_MODEL = "opus"
 
 # THE PORT. Any free loopback port would do; the app's CLAUDE_BRIDGE_URL (js/modules/claude-bridge.js)
 # carries the same number, and the two must agree. Nothing on this PC listened on 8000-9999 on
@@ -92,7 +99,7 @@ def command(exe, model, system_file, effort=None):
     return cmd
 
 
-def ask(system, user, model=DEFAULT_MODEL, effort=None, run=subprocess.run, timeout=PLAN_TIMEOUT):
+def ask(system, user, model=PLAN_MODEL, effort=None, run=subprocess.run, timeout=PLAN_TIMEOUT):
     """(status, body). body is the OpenAI-shaped answer, or {"error", "usageLimit"}.
     `run` is injectable so the tests never start the CLI."""
     exe = claude_exe()
@@ -147,7 +154,7 @@ def to_openai(out, model_asked, seconds, effort=None):
 
 
 class Handler(BaseHTTPRequestHandler):
-    model = DEFAULT_MODEL
+    model = PLAN_MODEL
     effort = None
     runner = staticmethod(subprocess.run)
 
@@ -244,7 +251,7 @@ class OneBridge(ThreadingHTTPServer):
         super().server_bind()
 
 
-def serve(port=PORT, model=DEFAULT_MODEL, effort=None):
+def serve(port=PORT, model=PLAN_MODEL, effort=None):
     Handler.model, Handler.effort = model, effort
     httpd = OneBridge(("127.0.0.1", port), Handler)
     return httpd
@@ -252,7 +259,7 @@ def serve(port=PORT, model=DEFAULT_MODEL, effort=None):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--model", default=DEFAULT_MODEL, help="sonnet (default), opus, or a full name")
+    ap.add_argument("--model", default=PLAN_MODEL, help="opus (default), sonnet, or a full name")
     ap.add_argument("--effort", default=None, help="low, medium, high, xhigh or max (CLI default)")
     ap.add_argument("--port", type=int, default=PORT)
     a = ap.parse_args(argv)

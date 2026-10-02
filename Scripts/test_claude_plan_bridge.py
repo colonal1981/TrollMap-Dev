@@ -87,6 +87,14 @@ class Ask(unittest.TestCase):
         self.assertIn("boom", body["error"])
         self.assertFalse(body["usageLimit"])
 
+    def test_opus_writes_the_plan_unless_told_otherwise(self):
+        # 2026-10-02: Opus 5.5 answered his Moultrie request in 122 s against Sonnet 5's 586 s.
+        seen = []
+        st, _ = B.ask("s", "u", run=runner(OK_OUT, seen=seen))
+        self.assertEqual(st, 200)
+        self.assertEqual(seen[0]["cmd"][seen[0]["cmd"].index("--model") + 1], "opus")
+        self.assertEqual(B.PLAN_MODEL, "opus")
+
     def test_no_cli_is_a_503(self):
         B.claude_exe = lambda: None
         st, body = B.ask("s", "u", run=runner(OK_OUT))
