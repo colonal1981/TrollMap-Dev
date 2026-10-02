@@ -48,6 +48,7 @@ import { fetchForecast,
          detectCoastalZone, fogNote, fetchMovingWater, movingWaterNote } from './plan-preflight.js';
 import { lakeSurfaceTemp, poolOffsetFt } from '../utils/water-conditions.js';
 import { landingsFor } from '../data/launch-reach.js';
+import { rampWater, poolsFor, sameWaterLandings } from '../data/lake-pools.js';
 import { closerLanding, closerLandingNote } from './closer-landing.js';
 import { askLaunchStatus, launchStatusNote } from './launch-status.js';
 import { askGuideReports } from './guide-reports.js';
@@ -861,7 +862,7 @@ export async function findWater() {
   // I offered twice before checking the bucket. 385 packs carry a shoreline against 543 carrying
   // runs, so the shoreline is genuinely absent a lot and its absence must stay silent rather than
   // become a claim of open water.
-  const [fc, daFc, slFc, wfFc, stFc, poFc, dkFc] = await Promise.all([
+  const [fcAll, daFc, slFc, wfAll, stAll, poAll, dkAll, poolsFile] = await Promise.all([
     get(`/${r2Key}/trolling_runs.geojson`),
     get(`/${r2Key}/depth_areas.geojson`).catch(() => null),
     get(`/${r2Key}/garmin_shoreline.geojson`).catch(() => null),
@@ -875,9 +876,30 @@ export async function findWater() {
     // distance along a trolling lane, and this file was never fetched here at all. Ryan: "docks
     // need to be there... they would be a primary target for casting for largemouth".
     get(`/${r2Key}/docks.geojson`).catch(() => null),
+    // WHICH WATER THIS RAMP CAN REACH -- Scripts/build_pools.py, lakes only; see lake-pools.js.
+    get(`/${r2Key}/pools.json`).catch(() => null),
   ]);
+  // ── THE WATER THIS RAMP LAUNCHES ONTO, AND NOTHING BEHIND A DIKE ──────────────────────────────
+  //
+  // Ryan, 2026-10-02: *"the app needs to be prevented from running plans from a ramp on a part of
+  // the lake the ramp can't access... the ramp needs to be listed so that i can choose to launch
+  // from the ramp and plan/fish the accessible area from that ramp"*. From the 99 ramp this page
+  // offered 3 pieces on Monticello's Recreational Lake, across SC-99. Every layer a piece or a cast
+  // spot comes from is cut to the ramp's own pool here, where the layers land. The depth areas and
+  // the shoreline are not: they describe the bottom and the bank, and offer nothing.
+  const water = rampWater(poolsFile, ramp);
+  const [fc, wfFc, stFc, poFc, dkFc] = [fcAll, wfAll, stAll, poAll, dkAll].map(water.fc);
+  if (water.dropped()) {
+    console.log(`[pick-water] ${r2Key}: ${water.dropped()} charted features left out, on water `
+              + `${water.pool ? `other than the ${water.acres}-acre pool this ramp launches onto`
+                              : 'this ramp cannot reach'}`);
+  }
   const lanes = (fc && fc.features) || [];
-  if (!lanes.length) return say(`${inp.lakeName} has no trolling runs in its chartpack`, true);
+  if (!lanes.length) {
+    return say(water.dropped() && ((fcAll && fcAll.features) || []).length
+      ? `${inp.lakeName} has no trolling runs on the water ${inp.rampName || 'this ramp'} launches onto`
+      : `${inp.lakeName} has no trolling runs in its chartpack`, true);
+  }
 
   // FOUR REASONS A LAKE CAN COME BACK EMPTY, AND THEY WANT FOUR DIFFERENT ANSWERS.
   //
@@ -966,6 +988,7 @@ export async function findWater() {
                                (wfFc && wfFc.features) || [], (stFc && stFc.features) || []]);
   const dnrSpots = attractorSpotFeatures(dnrRows, poiSpotFeatures(poFc),
                                          { onWater, where: `pick-water ${r2Key}` })
+    .filter(water.keep)
     .map((f) => ({ type: 'dnr_attractor', at: f.geometry.coordinates,
                    what: f.properties.name || 'DNR brushpile' }));
   if (dnrSpots.length) console.log(`[pick-water] ${dnrSpots.length} state attractors listed`);
@@ -1435,7 +1458,9 @@ export async function buildFromPicked() {
   // path -- see closer-landing.js (change request 10). A failure costs the plan nothing.
   say('Checking the other landings…');
   const closer = await closerLanding({
-    plan: r.plan, launch: T.ramp, landings: await landingsFor(T.r2Key),
+    plan: r.plan, launch: T.ramp,
+    // Only the landings on the pool his ramp launches onto -- see sameWaterLandings().
+    landings: sameWaterLandings(await poolsFor(T.r2Key), T.ramp, await landingsFor(T.r2Key)),
     route: waterRouter(CF_WORKER_URL, T.r2Key, { minDepthFt: TRANSIT_MIN_DEPTH_FT }),
   }).catch((e) => { console.warn('[pick-water] closer landing check failed:', e && e.message); return null; });
   const closerNote = closerLandingNote(closer, T.rampName);

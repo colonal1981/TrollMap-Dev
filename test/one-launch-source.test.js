@@ -178,7 +178,7 @@ test('a landing on water it cannot leave is dropped, and null is not false', () 
   assert.match(fn[0], /on_main_water === false/);
   assert.doesNotMatch(fn[0], /!r\.on_main_water|on_main_water\s*\?/,
     'a falsy test would delete every landing on a lake that was never measured');
-  assert.match(code(REACHSRC), /if \(offMainWater\(r\)\)/, 'collapse() must apply it');
+  assert.match(code(REACHSRC), /if \(offMainWater\(r, key\)\)/, 'collapse() must apply it');
 });
 
 test('both of collapse\u2019s drops are counted, not silent', () => {

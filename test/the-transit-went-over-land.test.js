@@ -105,7 +105,7 @@ test('the loader does not lose the route in the collapse', () => {
   assert.ok(/export function routeAt\(rows, lat, lon\)/.test(REACH), 'routeAt() exists');
   assert.ok(/export async function launchRouteFor\(key, lat, lon\)/.test(REACH),
     'launchRouteFor() exists for the planners, which hold a slug rather than a display name');
-  const m = REACH.match(/function collapse\(rows\) \{[\s\S]*?\n\}/);
+  const m = REACH.match(/function collapse\(rows, key\) \{[\s\S]*?\n\}/);
   assert.ok(m && /hit\.route = r\.route/.test(m[0]),
     'collapse() carries the route across a merge. Two feeds record one ramp and only the row the '
   + 'generator measured has a path; losing it puts the straight line back');

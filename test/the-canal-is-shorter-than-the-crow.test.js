@@ -54,7 +54,8 @@ function loadReachLabel(){
   const m = REACH.match(/export function reachLabel\(r\) \{[\s\S]*?\n\}/);
   assert.ok(m, 'reachLabel() is still in js/data/launch-reach.js');
   // eslint-disable-next-line no-new-func
-  return new Function(`${m[0].replace('export ', '')}; return reachLabel;`)();
+  // His names are read live (ryanName, launch_name_overrides.json); none are loaded here.
+  return new Function('ryanName', `${m[0].replace('export ', '')}; return reachLabel;`)(() => '');
 }
 
 function loadSamePlace(){
@@ -83,7 +84,7 @@ function loadRyanName(body){
 
 function loadCollapse(){
   const s = REACH.match(/export function samePlace\(a, b\) \{[\s\S]*?\n\}/);
-  const c = REACH.match(/\nfunction collapse\(rows\) \{[\s\S]*?\n\}/);
+  const c = REACH.match(/\nfunction collapse\(rows, key\) \{[\s\S]*?\n\}/);
   const x = REACH.match(/\nfunction isClosed\(r\) \{[\s\S]*?\n\}/);
   const n = REACH.match(/\nfunction sameNamedPlace\(a, b\) \{[\s\S]*?\n\}/);
   const o = REACH.match(/\nconst NAME_SOURCE_ORDER = [^\n]+\n/);
@@ -91,7 +92,7 @@ function loadCollapse(){
   // offMainWater() joined collapse()'s callees on 2026-09-22 -- the second deliberate filter in
   // that file, after isClosed(). Ryan: "on wateree i am seeing launches that you can't physically
   // get to from wateree... lugoff, debutary".
-  const f = REACH.match(/\nfunction offMainWater\(r\) \{[\s\S]*?\n\}/);
+  const f = REACH.match(/\nfunction offMainWater\(r, key\) \{[\s\S]*?\n\}/);
   assert.ok(s && c && x && n && o && k && f,
             'collapse() and everything it calls are still there');
   // eslint-disable-next-line no-new-func
@@ -301,9 +302,9 @@ test('the Plan tab appends the reach list on EVERY water, not just the curated s
 });
 
 test('the loader collapses before it caches, so both dropdowns get the same rows', () => {
-  assert.match(REACH, /got\s*=\s*collapse\(d\.landings\)/,
-               'launchReach() collapses the landings it caches');
-  assert.equal((REACH.match(/\nfunction collapse\(rows\)/g) || []).length, 1,
+  assert.match(REACH, /got\s*=\s*collapse\(d\.landings, key\)/,
+               'launchReach() collapses the landings it caches, for this water');
+  assert.equal((REACH.match(/\nfunction collapse\(rows, key\)/g) || []).length, 1,
                'there is one collapse(), not one per caller');
 });
 

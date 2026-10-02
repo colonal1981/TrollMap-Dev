@@ -37,6 +37,7 @@ import { connectionFor, snapEligibleFrom } from '../data/lure-knowledge.js';
 // a string compare in two files, and why it is not `waterState.river`.
 import { saysRiver } from './plan-inputs.js';
 import { launchRouteFor } from '../data/launch-reach.js';
+import { rampWater } from '../data/lake-pools.js';
 // THE WIND ACROSS THE WATER -- fetch off the boundary, waves off the fetch. See wind-waves.js.
 import { shoreRays, wavesByHour, roughLegs } from '../utils/wind-waves.js';
 // HOW FAR BY WATER, answered in the browser -- see waterDistanceAsker().
@@ -81,7 +82,8 @@ export const CANDIDATE_LIMIT = 12;
  */
 export async function buildSmartPlanV2(o) {
   const base = o.chartpackBase || '';
-  const [runsFc, structFc, waterFc, docksFc, poisFc, centrelineFc, boundaryFc, osmFc, channelsFile] = await Promise.all([
+  const [runsAll, structAll, waterAll, docksAll, poisAll, centrelineFc, boundaryFc, osmAll, channelsFile,
+         poolsFile] = await Promise.all([
     o.fetchJson(`${base}/${o.r2Key}/trolling_runs.geojson`),
     o.fetchJson(`${base}/${o.r2Key}/structure.geojson`),
     o.fetchJson(`${base}/${o.r2Key}/water_features.geojson`),
@@ -117,7 +119,26 @@ export async function buildSmartPlanV2(o) {
     // plan-channels.js. Ryan, 2026-10-01: "just the fact that it is a deep creek channel is
     // structure in itself". Optional like the four above: a pack without it plans as it did.
     Promise.resolve(o.fetchJson(`${base}/${o.r2Key}/channels.json`)).catch(() => null),
+    // TENTH: WHICH WATER THIS RAMP CAN REACH. Scripts/build_pools.py, lakes only; see lake-pools.js.
+    // Optional like the five above: a pack without it plans every pool, as it did.
+    Promise.resolve(o.fetchJson(`${base}/${o.r2Key}/pools.json`)).catch(() => null),
   ]);
+  // ── THE WATER THIS RAMP LAUNCHES ONTO, AND NOTHING BEHIND A DIKE ──────────────────────────────
+  //
+  // Ryan, 2026-10-02: *"the app needs to be prevented from running plans from a ramp on a part of
+  // the lake the ramp can't access"*. Monticello's Recreational Lake is part of the lake to the
+  // registry and the water graph joins it to the main pool across SC-99, so its lanes were offered
+  // from the 99 ramp and routed over the road. Every layer a candidate can come from is cut to the
+  // ramp's own pool HERE, where the layers land, so nothing below can reach past it -- lanes,
+  // structure, features, docks, POIs, the OSM shore and (below) the state's attractors.
+  const water = rampWater(poolsFile, o.ramp);
+  const [runsFc, structFc, waterFc, docksFc, poisFc, osmFc] =
+    [runsAll, structAll, waterAll, docksAll, poisAll, osmAll].map(water.fc);
+  if (water.dropped()) {
+    console.log(`[smart-plan] ${o.r2Key}: ${water.dropped()} charted features left out, on water `
+              + `${water.pool ? `other than the ${water.acres}-acre pool this ramp launches onto`
+                              : 'this ramp cannot reach'}`);
+  }
   const runs = (runsFc && runsFc.features) || [];
   // A RIVER DOES NOT NEED LANES, AND THIS REFUSED TO PLAN ONE WITHOUT THEM.
   //
@@ -150,8 +171,11 @@ export async function buildSmartPlanV2(o) {
   }
   if (!runs.length && !centrelineReady) {
     return { plan: null, candidates: [],
-             problems: [...packProblems, `${o.r2Key} has no trolling runs in its chartpack and no centreline either, `
-                      + 'so there is nothing to lay a day out on'] };
+             problems: [...packProblems, water.dropped() && (runsAll && runsAll.features || []).length
+               ? `${o.r2Key} has no trolling runs on the water this ramp launches onto, so there is `
+                 + 'nothing to lay a day out on from here'
+               : `${o.r2Key} has no trolling runs in its chartpack and no centreline either, `
+                 + 'so there is nothing to lay a day out on'] };
   }
 
   const poiSpots = poiSpotFeatures(poisFc);
@@ -173,7 +197,7 @@ export async function buildSmartPlanV2(o) {
                                (waterFc && waterFc.features) || [],
                                (docksFc && docksFc.features) || []]);
   const attractors = structureIndex(attractorSpotFeatures(o.dnrAttractors, poiSpots,
-                                    { onWater, where: `smart-plan ${o.r2Key}` }));
+                                    { onWater, where: `smart-plan ${o.r2Key}` }).filter(water.keep));
   // THE OSM BRIDGES AND PIERS: on this water, not already a Garmin dock, not on a coastal zone
   // whose ENC layer already carries them. See osmShoreFeatures().
   const shore = structureIndex(osmShoreFeatures(osmFc, docksFc,

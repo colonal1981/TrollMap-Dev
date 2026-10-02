@@ -63,7 +63,7 @@ export function launchReach(waterbodyName, onReady) {
       const r = await fetch(`${CF_WORKER_URL}/chartpacks/${encodeURIComponent(key)}/launches.json`);
       if (r.ok) {
         const d = await r.json();
-        if (Array.isArray(d && d.landings)) { got = collapse(d.landings); OFF_MAIN.set(key, got.offMain || []); }
+        if (Array.isArray(d && d.landings)) { got = collapse(d.landings, key); OFF_MAIN.set(key, got.offMain || []); }
       }
     } catch (_) { /* a pack without one is the normal case, not an error */ }
     CACHE.set(key, got);
@@ -81,7 +81,12 @@ export function launchReach(waterbodyName, onReady) {
  */
 export function reachLabel(r) {
   const m = Number(r && r.water_m);
-  const nm = (r && r.name) || '(unnamed launch)';
+  // HIS NAME FIRST, LIVE. launches.json carries the name its build read from his corrections, so a
+  // correction made after the pack was built reached the live feed's rows (access-index.js) and not
+  // these -- the Monticello recreation-lake ramp, renamed to Google's "Recreation Lake Boat Ramp" on
+  // 2026-10-02, would have kept its 9/22 name here until a rebuild. ryanName() is '' until the
+  // overrides are read, and the access index reads them before either dropdown is filled.
+  const nm = (r && ryanName(Number(r.lat), Number(r.lon))) || (r && r.name) || '(unnamed launch)';
   if (!Number.isFinite(m)) return nm;
   if (m < 160) return nm;
   const mi = m / 1609.34;
@@ -147,7 +152,7 @@ export async function landingsFor(key) {
   if (!Array.isArray(rows)) {
     try {
       const r = await fetch(`${CF_WORKER_URL}/chartpacks/${encodeURIComponent(key)}/launches.json`);
-      rows = r.ok ? collapse((await r.json()).landings || []) : [];
+      rows = r.ok ? collapse((await r.json()).landings || [], key) : [];
       OFF_MAIN.set(key, (rows && rows.offMain) || []);
     } catch (_) {
       rows = [];                      // a pack without one is the normal case, not an error
@@ -265,13 +270,13 @@ export function samePlace(a, b) {
  * nearest record's distances win, because the nearest water is the true answer for that spot;
  * only the name, and the lists of who files it and where it came from, merge upward.
  */
-function collapse(rows) {
+function collapse(rows, key) {
   const out = [];
   const union = (a, b) => [...new Set([...(a || []), ...(b || [])])].sort();
   const dropped = { closed: 0, offMain: [] };
   for (const r of rows) {
     if (isClosed(r)) { dropped.closed++; continue; }
-    if (offMainWater(r)) { dropped.offMain.push(r); continue; }
+    if (offMainWater(r, key)) { dropped.offMain.push(r); continue; }
     const hit = out.find((p) => samePlace(p, r)) || out.find((p) => sameNamedPlace(p, r));
     if (!hit) { out.push({ ...r }); continue; }
     if (r.name && (!hit.name || nameRank(r) < nameRank(hit))) hit.name = r.name;
@@ -343,9 +348,29 @@ function collapse(rows) {
  * 40,000-polygon cap (Hartwell, Thurmond, Norris, Lanier, Cherokee, Murray and four coastal).
  * Treating "we did not measure" as "you cannot get there" would delete most of the landings on the
  * biggest lakes in the app over a cap that is about to be raised. Ryan's call, same day.
+ *
+ * AND A LANDING IS NEVER DROPPED FROM THE WATER IT IS FILED UNDER -- 2026-10-02. "Nothing is lost"
+ * above was true of Wateree, where Lugoff, Debutary and Stumpy Pond are filed under the Wateree
+ * River and Cedar Creek Reservoir. It was not true of Lake Monticello's Recreation Lake Boat Ramp:
+ * the 285-acre Recreational Lake behind the SC-99 dike is not a water of its own in the app, so
+ * its one ramp is filed under monticello_reservoir, off that water's main pool, and was dropped
+ * from the only list it was ever on. Ryan: *"the subimpoundment (recreation area) boat ramp isn't
+ * listed so there is no way to fish the subimpoundment area with the app"*, then *"the ramp needs
+ * to be listed so that i can choose to launch from the ramp and plan/fish the accessible area from
+ * that ramp"*. Counted the same day: 95 landing rows on about 40 waters were listed nowhere this
+ * way, Marion's Borrow Pit and Wyboo pier among them. `filed` (build_ramp_reach.py, from
+ * ramp_filing.py) already says which water a landing belongs to, so the drop now needs both: off
+ * this water's main pool AND filed under a different water. Listed plainly -- *"there is not room
+ * in the dropdown for you to put all of that info about it being a separate lake... and it would
+ * just show as noise to me"* -- and what keeps a plan from it on its own pool is
+ * js/data/lake-pools.js.
+ *
+ * @param {object} r    a launches.json landing
+ * @param {string} key  the pack key of the water whose list this is
  */
-function offMainWater(r) {
-  return r && r.on_main_water === false;
+function offMainWater(r, key) {
+  return !!r && r.on_main_water === false
+    && !(key && Array.isArray(r.filed) && r.filed.includes(key));
 }
 
 /**

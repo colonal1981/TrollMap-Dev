@@ -31,6 +31,7 @@ import { checkPlanLegality, ensureRegulations, fetchForecast, fetchWaterState,
          fetchMovingWater, movingWaterNote } from './plan-preflight.js';
 import { primeFishAdvisories } from '../data/fish-advisories.js';
 import { landingsFor } from '../data/launch-reach.js';
+import { poolsFor, sameWaterLandings } from '../data/lake-pools.js';
 import { closerLanding, closerLandingNote } from './closer-landing.js';
 import { askLaunchStatus, launchStatusNote } from './launch-status.js';
 import { primeInshoreSeason, inshoreSeasonFor } from '../data/inshore-season.js';
@@ -483,7 +484,9 @@ export async function runSmartPlanV2(opts = {}) {
   if (r.plan) {
     say('Checking the other landings…');
     const closer = await closerLanding({
-      plan: r.plan, launch: ramp, landings: await landingsFor(r2Key),
+      plan: r.plan, launch: ramp,
+      // Only the landings on the pool his ramp launches onto -- see sameWaterLandings().
+      landings: sameWaterLandings(await poolsFor(r2Key), ramp, await landingsFor(r2Key)),
       route: waterRouter(CF_WORKER_URL, r2Key, { minDepthFt: TRANSIT_MIN_DEPTH_FT }),
     }).catch((e) => { console.warn('[plan-v2] closer landing check failed:', e && e.message); return null; });
     const closerNote = closerLandingNote(closer, inp.rampName);

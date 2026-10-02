@@ -149,11 +149,16 @@ LAYERS = {
     # did). Opt-in for the same reason as the rest of this group: a separate pass builds it.
     #     py Scripts\upload_garmin_to_r2.py --root F:\TrollMapPipeline\chartpack --layers channels
     "channels":         "channels.json",
+    # Which water each ramp can reach on its own lake: the pools that do not touch the main one
+    # (a dike, a road embankment) and the pool each landing launches onto -- Scripts/build_pools.py,
+    # lakes only, read by js/data/lake-pools.js (item 50). Opt-in like the rest of this group.
+    #     py Scripts\upload_garmin_to_r2.py --root F:\TrollMapPipeline\chartpack --layers pools --no-boundaries
+    "pools":            "pools.json",
 }
 # Not uploaded unless named explicitly with --layers. `boundary` would replace the NHD/3DHP
 # polygon the app renders as the lake outline.
 LAYERS_OPT_IN = {"boundary", "areas", "water_graph", "structure", "trolling_runs", "water_features",
-                 "centreline", "launches", "channels"}
+                 "centreline", "launches", "channels", "pools"}
 
 # ── What R2 does not need ─────────────────────────────────────────────────────────────
 #
