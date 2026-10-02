@@ -30,6 +30,16 @@ one. For every lake pack this writes chartpack/<slug>/pools.json:
             put off the main water is on the nearest of these pools within 0.004 deg, the same
             reach as build_ramp_reach.py's _nearest_comp(); null when none is that near.
 
+HIS WORD JOINS A POOL THE CHART CUT OFF. Garmin leaves water unsounded, and a pool can be cut off by
+a gap in the soundings rather than by a dike. Ryan, 2026-10-02, on Marion's 95-acre pool at
+33.68863,-80.53482: "the other one is part of sparkleberry swamp and is accessible from packs landing
+and sparkleberry... that one you can get there from the main lake and is because garmin is missing
+soundings not because of a dike". The pack's own `unsurveyed` layer cannot settle it in general: it
+joins that pool to Marion, and it also joins Monticello's Recreational Lake across SC-99, where a
+culvert carries water and no boat. So registry/_pool_corrections.json carries his answers, keyed by a
+position inside the pool, like his launch names in _launch_name_overrides.json: a pool holding one of
+his `joins` positions is part of the main pool.
+
 js/data/lake-pools.js reads it: a plan keeps to the pool its ramp is on. A lake with one pool gets
 a file with no pools, so a stale file never outlives the water it described. Rivers get none: the
 registry cuts a river at its dams (ONE_RIVER_IS_ONE_WATER_UNTIL_A_DAM_CUTS_IT), so a break in a
@@ -99,8 +109,29 @@ def _rings(g):
     return [[r6(p.exterior.coords)] + [r6(h.coords) for h in p.interiors] for p in parts]
 
 
-def pools_for(slug, chartpack):
-    """The pools.json body for one lake pack, and a few numbers for the report."""
+def corrections(registry):
+    """His `joins`, by lake: {slug: [(lat, lon, why), ...]}. {} when the file is absent."""
+    p = os.path.join(registry, '_pool_corrections.json')
+    if not os.path.isfile(p):
+        return {}
+    out = {}
+    for key, r in (load(p).get('joins') or {}).items():
+        try:
+            la, lo = (float(v) for v in key.split(','))
+        except ValueError:
+            continue
+        r = r or {}
+        if r.get('lake'):
+            out.setdefault(r['lake'], []).append((la, lo, r.get('why') or ''))
+    return out
+
+
+def pools_for(slug, chartpack, joins=()):
+    """The pools.json body for one lake pack, and a few numbers for the report.
+
+    `joins` is his corrections for this lake, [(lat, lon, why)]: the pool each one is in, or the
+    nearest within NEAR_DEG, is part of the main pool.
+    """
     from shapely.geometry import Point
     from shapely.ops import unary_union
     from shapely.strtree import STRtree
@@ -119,10 +150,27 @@ def pools_for(slug, chartpack):
         u = unary_union([polys[i] for i in ix])
         pools.append({'id': k, 'acres': round(_acres(u.area, lat), 1), 'rings': _rings(u)})
         geoms.append(u)
+    joined, unmatched, joined_geoms = [], [], []
+    for la, lo, why in joins or ():
+        pt = Point(lo, la)
+        best = None
+        for i, g in enumerate(geoms):
+            d = 0.0 if g.contains(pt) else g.distance(pt)
+            if d <= NEAR_DEG and (best is None or d < best[0]):
+                best = (d, i)
+        if best is None:
+            unmatched.append([la, lo])           # named, so a correction that no longer lands is seen
+            continue
+        joined.append(pools[best[1]]['id'])
+        joined_geoms.append(geoms[best[1]])
+        del pools[best[1]], geoms[best[1]]
     landings = []
     lp = os.path.join(P, 'launches.json')
     if os.path.isfile(lp):
-        tree = STRtree(geoms) if geoms else None
+        # A landing on a pool he joined is on the main pool, so the joined outlines are searched too.
+        cand = geoms + joined_geoms
+        ids = [p['id'] for p in pools] + [0] * len(joined_geoms)
+        tree = STRtree(cand) if cand else None
         for r in load(lp).get('landings') or []:
             la, lo = r.get('lat'), r.get('lon')
             if la is None or lo is None:
@@ -134,11 +182,11 @@ def pools_for(slug, chartpack):
                     pt = Point(lo, la)
                     best = None
                     for i in tree.query(pt.buffer(NEAR_DEG)):
-                        d = geoms[int(i)].distance(pt)
+                        d = cand[int(i)].distance(pt)
                         if best is None or d < best[0]:
                             best = (d, int(i))
                     if best is not None:
-                        pool = pools[best[1]]['id']
+                        pool = ids[best[1]]
             landings.append({'name': r.get('name'), 'lat': la, 'lon': lo, 'pool': pool})
     body = {'_note': NOTE, 'slug': slug, 'source': 'depth_areas.geojson',
             'pools': pools, 'landings': landings}
@@ -171,15 +219,16 @@ def pools_for(slug, chartpack):
     stat = {'slug': slug, 'polygons': len(polys), 'main_polygons': len(comps[0]), 'pools': len(pools),
             'pool_acres': sorted((p['acres'] for p in pools), reverse=True)[:8],
             'lanes_off_main': {str(k): v for k, v in sorted(lanes.items())},
-            'landings_off_main': [(l['name'], l['pool']) for l in landings if l['pool'] != 0]}
+            'landings_off_main': [(l['name'], l['pool']) for l in landings if l['pool'] != 0],
+            'joined_by_him': joined, 'corrections_unmatched': unmatched}
     return body, stat
 
 
 def _one(job):
-    slug, chartpack, check = job
+    slug, chartpack, check, joins = (tuple(job) + ((),))[:4]
     t = dt.datetime.now()
     try:
-        body, stat = pools_for(slug, chartpack)
+        body, stat = pools_for(slug, chartpack, joins)
     except Exception as exc:                        # named, never swallowed
         return {'slug': slug, 'error': '%s: %s' % (type(exc).__name__, exc)}
     stat['seconds'] = round((dt.datetime.now() - t).total_seconds(), 1)
@@ -215,7 +264,8 @@ def main(argv=None):
     slugs = lake_slugs(a.registry, a.chartpack) if a.all else a.lake
     if not slugs:
         ap.error('name --lake or --all')
-    jobs = [(s, a.chartpack, a.check) for s in slugs]
+    fixes = corrections(a.registry)
+    jobs = [(s, a.chartpack, a.check, tuple(fixes.get(s, ()))) for s in slugs]
     stats = []
     if a.jobs > 1:
         with ProcessPoolExecutor(max_workers=a.jobs) as ex:

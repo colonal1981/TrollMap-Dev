@@ -74,6 +74,17 @@ class Pools(unittest.TestCase):
         self.assertEqual(got['Behind the dike'], 1)
         self.assertIsNone(got['Off main, nothing near'])
 
+    def test_his_word_joins_a_pool_the_chart_cut_off(self):
+        # The Sparkleberry case: water reachable from the main lake, cut off by missing soundings.
+        body, stat = build_pools.pools_for('test_lake', self.root, [(34.0135, 0.0025, 'his word')])
+        self.assertEqual(body['pools'], [])
+        self.assertEqual(stat['joined_by_him'], [1])
+        got = {l['name']: l['pool'] for l in body['landings']}
+        self.assertEqual(got['Behind the dike'], 0, 'a landing on a joined pool is on the main pool')
+        # A correction that lands on no pool is reported, not dropped in silence.
+        _, stat = build_pools.pools_for('test_lake', self.root, [(36.0, 2.0, 'nowhere')])
+        self.assertEqual(stat['corrections_unmatched'], [[36.0, 2.0]])
+
     def test_check_mode_writes_nothing_and_says_stale(self):
         st = build_pools._one(('test_lake', self.root, True))
         self.assertTrue(st['stale'])
