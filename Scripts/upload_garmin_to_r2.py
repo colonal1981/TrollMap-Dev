@@ -971,6 +971,21 @@ def main():
             print(f"!! {_gh.name} not found -- no drowned fords, ferries, islands or towns on the "
                   f"map (538 on 64 waters, seven on Wateree); build it with build_gnis_historical.py")
 
+        # WHICH GAUGES SHOW EACH LAKE'S WATER MOVING, 2026-10-02 (item 46). Read by the BROWSER
+        # (js/data/moving-water-gauges.js), beside the other browser-read objects above and not
+        # through PASSTHROUGH_REGISTRIES, which is the Worker's. Built for every lake by
+        # build_moving_water.py from water_bindings.json and water_chain.json, so rebuild it after
+        # either changes.
+        _mw = regdir / "moving_water_gauges.json"
+        if _mw.exists():
+            reg_jobs.append((str(_mw), f"{args.prefix}_registry/moving_water_gauges.json",
+                             "_registry", "moving_water_gauges"))
+            print(f"moving:   gauges that show each lake's water moving -> "
+                  f"{args.prefix}_registry/moving_water_gauges.json ({_mw.stat().st_size/1024:.0f} KB)")
+        else:
+            print(f"!! {_mw.name} not found -- no plan says when the water was moving; build it with "
+                  f"build_moving_water.py")
+
         # NORTH CAROLINA'S SPECIES. Not slimmed -- the file is already only what it needs to be,
         # a species list and a stocking list per registry slug.
         #

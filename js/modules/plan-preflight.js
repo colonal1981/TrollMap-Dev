@@ -43,7 +43,8 @@ import { DEPTH_BANDS, normalizeCoastalSpecies, tacticalNote } from './coastal-sc
 import { clarityForPlan, versusNormalAt } from '../utils/clarity-at-ramp.js';
 import { compassOf } from '../utils/compass.js';
 import { fogSpans, fogLowestVisibility, skyAt } from '../utils/light-state.js';
-import { MOVING_WATER_GAUGES, WINDOW_HOURS, seriesFrom, gaugeLine } from '../utils/moving-water.js';
+import { seriesFrom, gaugeLine, daysFor } from '../utils/moving-water.js';
+import { movingWaterGaugesFor } from '../data/moving-water-gauges.js';
 
 /** The coastal zone this water is, or null for everything inland. */
 export function detectCoastalZone(lakeName) {
@@ -737,21 +738,25 @@ export function fogNote(weatherByHour, o = {}) {
 /**
  * WHEN THE WATER WAS BEING PULLED, off the gauges that show it (item 46, "yeah go ahead on 46").
  *
- * USGS 15-minute data straight from api.waterdata.usgs.gov (it answers the browser; see
- * usgs-gauges.js), one request per gauge, the lines worded by utils/moving-water.js. Only the
- * waters whose gauges the 10/1 check found showing it: Moultrie, Monticello and Marion. Null for
- * every other water. Never throws: a gauge that does not answer says so in its own line, and the
- * plan is built either way.
+ * WHICH GAUGES comes from _registry/moving_water_gauges.json, derived for every lake by
+ * Scripts/build_moving_water.py (its own level, the first gauge below it on each river it empties
+ * into, the last above it on each river that feeds it) -- not from a list here. Then USGS
+ * 15-minute data straight from api.waterdata.usgs.gov (it answers the browser; see usgs-gauges.js),
+ * one request per gauge, the lines worded by utils/moving-water.js. Null when the file has no
+ * gauge for this water or could not be read. Never throws: a gauge that does not answer says so in
+ * its own line, and the plan is built either way.
  *
+ * @param {string} slug
+ * @param {object} [o]  { worker, fetch, now, gauges } -- `gauges` skips the registry (tests)
  * @returns {Promise<{lines: string[]}|null>}
  */
 export async function fetchMovingWater(slug, o = {}) {
-  const gauges = MOVING_WATER_GAUGES[slug];
+  const gauges = o.gauges || await movingWaterGaugesFor(slug, { worker: o.worker, fetch: o.fetch });
   if (!gauges || !gauges.length) return null;
   const get = o.fetch || fetch;
   const now = o.now ?? Date.now();
   const lines = await Promise.all(gauges.map(async (g) => {
-    const days = g.days || WINDOW_HOURS / 24;
+    const days = daysFor(g);
     const since = new Date(now - days * 864e5).toISOString().slice(0, 19) + 'Z';
     const url = 'https://api.waterdata.usgs.gov/ogcapi/v0/collections/continuous/items'
       + `?monitoring_location_id=USGS-${g.site}&parameter_code=${g.param}`

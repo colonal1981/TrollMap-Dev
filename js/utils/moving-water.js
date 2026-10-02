@@ -5,31 +5,34 @@
  *
  * Item 46 of APP_CHANGE_REQUESTS. Checked 2026-10-01 on two days of USGS 15-minute data: Jefferies'
  * tailrace (`02172002`) is plain on/off, and Monticello's level (`02160900`) falls in the evening
- * and refills in the morning (Fairfield pumped storage). Wateree's and Murray's gauges below the
- * dams were flat, and Duke's schedule is already read for Wateree. Offered as "a moving-water line
- * in the plan, given as the last days' hours"; Ryan, 2026-10-02: "yeah go ahead on 46".
+ * and refills in the morning (Fairfield pumped storage). Offered as "a moving-water line in the
+ * plan, given as the last days' hours"; Ryan, 2026-10-02: "yeah go ahead on 46".
  *
- * HISTORY, NOT A SCHEDULE. What the gauge did, said as such. Nobody publishes when Jefferies or
- * Fairfield will run; the hours they ran the last two days are what can be known.
+ * WHICH GAUGES IS NOT DECIDED HERE. The first version named gauges for three lakes by hand, and
+ * Ryan: "remember my rule no lake gets something that isn't available to all", then "build the
+ * general version". They come from registry/moving_water_gauges.json, which
+ * Scripts/build_moving_water.py derives for every lake from water_bindings.json and
+ * water_chain.json: the lake's own level gauge, the first gauge below it on each river it empties
+ * into, the last gauge above it on each river that feeds it. js/data/moving-water-gauges.js reads it.
  *
- * WHERE "RUNNING" STARTS IS THE DATA'S OWN, not a number written here:
- *   - otsuSplit() is the value that best splits the window's readings into two groups (the most
- *     variance between them).
- *   - A TAILRACE IS ALSO TIDAL, AND IT RUNS AT MORE THAN ONE RATE. Between runs Jefferies reads near
- *     0 and below: the tide pushing back up the canal. Ten days of it (9/22-10/2) sit in three
- *     groups: -3,000 to 2,000 (the tide), 3,500 to 8,500 and 11,500 to 16,500 cfs. One split cannot
- *     part three groups, so tailraceCut() splits, and splits the lower side again, for as long as
- *     the group it would add averages more than the strongest reverse flow -- the tide runs about
- *     as far forward as it pushes back, so a group that averages no more than that can be the tide.
- *   - THE REVERSE FLOW IS READ OVER A FULL SPRING-NEAP CYCLE (15 days), not the two days reported.
- *     Two days can fall on a neap tide: on 9/26-9/28 the strongest reverse flow was 1,120 cfs, the
- *     tide's own upper half averaged 1,200, and the line said Jefferies ran at "about 1,000 cfs".
- *     Over the cycle it is the spring tide's (2,840 cfs in 9/22-10/2), and the cut lands at
- *     3,065-3,395 cfs in every window checked, inside the empty band between the tide and a run.
- *   - A LEVEL moves when its hour-to-hour change is on the moving side of the split, and the split
- *     has to clear the gauge's own smallest step (0.01 ft on Monticello) -- below that the gauge
- *     cannot tell a move from still water. Hours, not 15-minute steps: the steps jitter across the
- *     split and cut one evening's draw into eight pieces.
+ * HISTORY, NOT A SCHEDULE. What each gauge did, said as such.
+ *
+ * WHAT IS SAID, BY WHAT THE GAUGE IS:
+ *   - A FLOW THAT RUNS BACKWARDS is a tidal tailrace: the tide pushes back up it between runs. There
+ *     a run can be told from the tide without a number written here, so the line gives the hours
+ *     it ran (tailraceCut(), below). Jefferies over 9/22-10/2 sits in three groups: -3,000 to 2,000
+ *     cfs (the tide), 3,500 to 8,500 and 11,500 to 16,500. tailraceCut() splits (otsuSplit(), the
+ *     value that best parts the readings into two groups), and splits the lower side again while
+ *     the group it adds averages more than the strongest reverse flow -- the tide runs about as far
+ *     forward as it pushes back. The reverse flow is read over a full spring-neap cycle (15 days):
+ *     read over two neap days (9/26-9/28, reverse 1,120 cfs) the tide's own upper half averaged
+ *     1,200 and the line said Jefferies ran at "about 1,000 cfs". Over the cycle the cut lands at
+ *     3,065-3,395 cfs in every window checked, in the empty band between the tide and a run.
+ *   - ANY OTHER FLOW OR LEVEL is given as each day's low and high and when, and nothing is decided
+ *     about it. A dam that generates shows as a high many times its low; one that held steady shows
+ *     as a low and a high a few cfs apart, and that is the answer. A threshold for "ran" on a
+ *     river with no tide would be a number nobody measured.
+ *   - A RIVER INTO THE LAKE is where it is now against two days before, and its range between.
  *
  * Two days is the window reported, the one the 10/1 check read and the one pressureTrend() uses:
  * two of a pattern that repeats daily. Pure: nothing here fetches. plan-preflight.js does.
@@ -38,28 +41,6 @@
 export const WINDOW_HOURS = 48;
 /** A spring-neap cycle is 14.8 days; the tailrace's reverse flow is read over one whole. */
 export const TIDE_CYCLE_DAYS = 15;
-
-/** Which gauges show the water moving, per water. Only those the 10/1 check found showing it. */
-export const MOVING_WATER_GAUGES = Object.freeze({
-  lake_moultrie: [
-    { site: '02172002', param: '00060', kind: 'tailrace', name: 'Jefferies tailrace at Moncks Corner',
-      what: "Moultrie's outflow at Pinopolis dam", days: TIDE_CYCLE_DAYS },
-  ],
-  monticello_reservoir: [
-    { site: '02160900', param: '00062', kind: 'level', name: 'Monticello Reservoir near Jenkinsville',
-      what: 'Fairfield pumped storage: the level falls when it generates and rises when it pumps back' },
-  ],
-  lake_marion: [
-    { site: '02172002', param: '00060', kind: 'tailrace', name: 'Jefferies tailrace at Moncks Corner',
-      what: "Moultrie's outflow; it is what pulls Marion's water through the Diversion Canal",
-      days: TIDE_CYCLE_DAYS },
-    // The upper lake's current is the rivers'. Fort Motte reports stage only.
-    { site: '02169750', param: '00065', kind: 'river', unit: 'ft', name: 'Congaree River at Fort Motte',
-      what: 'one of the two rivers that make the upper lake' },
-    { site: '02148000', param: '00060', kind: 'river', unit: 'cfs', name: 'Wateree River near Camden',
-      what: 'the other river into the upper lake, below Wateree dam' },
-  ],
-});
 
 /** The value that best splits `values` into two groups (Otsu): most variance between them. */
 export function otsuSplit(values) {
@@ -148,7 +129,7 @@ export function tailraceLine(g, series) {
   const win = lastHours(series);
   const cut = tailraceCut(series.map((p) => p.v));
   const runs = cut != null ? runsWhere(win, (p) => p.v > cut) : [];
-  const head = `${g.name} (USGS ${g.site}), ${g.what}`;
+  const head = gaugeHead(g);
   const low = Math.min(...win.map((p) => p.v));
   if (!runs.length) {
     return `${head}: did not run in the ${WINDOW_HOURS} hours through ${through(series)}; the highest `
@@ -158,72 +139,57 @@ export function tailraceLine(g, series) {
     .toLocaleString('en-US')} cfs)`);
   return `${head}: ran ${parts.join(', ')}, in the ${WINDOW_HOURS} hours through ${through(series)}.`
     + (low < 0 ? ` Between runs it reads near 0 and below, down to ${Math.round(low).toLocaleString('en-US')} cfs: `
-      + 'the tide pushing back up the canal.' : '');
+      + 'the tide pushing back upstream.' : '');
 }
 
-/** The readings as one value per clock hour (their mean), `t` the start of the hour. */
-export function hourly(series) {
+const UNIT = (g) => (g.param === '00060' ? 'cfs' : 'ft');
+const fmt = (g, x) => (UNIT(g) === 'cfs' ? Math.round(x).toLocaleString('en-US') : x.toFixed(2));
+const hm = (t) => {
+  const d = new Date(t);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+const md = (t) => { const d = new Date(t); return `${d.getMonth() + 1}/${d.getDate()}`; };
+
+/** Each local day in the readings: its low and its high, and when. */
+export function dailyRange(series) {
   const by = new Map();
   for (const p of series || []) {
-    const d = new Date(p.t);
-    d.setMinutes(0, 0, 0);
-    const k = d.getTime();
-    if (!by.has(k)) by.set(k, []);
-    by.get(k).push(p.v);
+    const k = md(p.t);
+    const d = by.get(k) || { day: k, lo: p, hi: p, first: p.t, last: p.t };
+    if (p.v < d.lo.v) d.lo = p;
+    if (p.v > d.hi.v) d.hi = p;
+    d.last = p.t;
+    by.set(k, d);
   }
-  return [...by.entries()].sort((a, b) => a[0] - b[0]).map(([t, vs]) => ({ t, v: mean(vs) }));
+  return [...by.values()];
 }
 
-/** A level that is pumped and drawn: when it fell and when it rose, and from what to what. */
-export function levelLine(g, series) {
-  const hrs = hourly(lastHours(series));
-  if (hrs.length < 2) return null;
-  const steps = [];
-  for (let i = 1; i < hrs.length; i++) {
-    // Only between hours that follow each other; a gap in the gauge is not a move.
-    if (hrs[i].t - hrs[i - 1].t !== 3600e3) continue;
-    steps.push({ t: hrs[i].t, d: hrs[i].v - hrs[i - 1].v, v: hrs[i].v, prev: hrs[i - 1].v, from: hrs[i - 1].t });
-  }
-  const raw = series.map((p) => p.v);
-  let resolution = Infinity;
-  for (let i = 1; i < raw.length; i++) {
-    const d = Math.abs(raw[i] - raw[i - 1]);
-    if (d > 1e-9 && d < resolution) resolution = d;
-  }
-  const split = otsuSplit(steps.map((s) => Math.abs(s.d)));
-  const cut = Math.max(split ?? Infinity, Number.isFinite(resolution) ? resolution : 0);
-  const moving = (sign) => (s) => Math.abs(s.d) > cut && Math.sign(s.d) === sign;
-  const joined = (list) => {
-    // Consecutive hours only: runsWhere() walks every step, so a still hour ends the run.
-    const out = [];
-    for (const s of steps) {
-      const last = out[out.length - 1];
-      if (list(s)) {
-        if (last && last.open) { last.to = s.t + 3600e3; last.end = s.v; }
-        else out.push({ open: true, from: s.from, to: s.t + 3600e3, start: s.prev, end: s.v });
-      } else if (last) last.open = false;
-    }
-    return out;
-  };
-  const runs = [
-    ...joined(moving(-1)).map((r) => ({ ...r, word: 'fell' })),
-    ...joined(moving(1)).map((r) => ({ ...r, word: 'rose' })),
-  ].sort((a, b) => a.from - b.from);
-  const head = `${g.name} (USGS ${g.site}), ${g.what}`;
-  if (!runs.length) return `${head}: held level in the ${WINDOW_HOURS} hours through ${through(series)}.`;
-  const ft = (x) => x.toFixed(2);
-  const parts = runs.map((r) => `${r.word} ${spanText(r.from, r.to)} (${ft(r.start)} to ${ft(r.end)} ft)`);
-  return `${head}, in the ${WINDOW_HOURS} hours through ${through(series)}: ${parts.join(', ')}.`;
+/** What the gauge is, in the line: where it sits against the lake. */
+export function gaugeHead(g) {
+  const where = g.role === 'level' ? "the lake's own level"
+    : g.role === 'outflow' ? `below the lake on ${g.viaName || g.via}${Number.isFinite(g.km) ? `, ${g.km} km from it` : ''}`
+      : `on ${g.viaName || g.via}, which feeds the lake${Number.isFinite(g.km) ? `, ${g.km} km above it` : ''}`;
+  return `${g.name} (USGS ${g.site}), ${where}`;
 }
 
-/** A river into the lake: where it is now against two days ago, and its range between. */
+/** A flow or level given as each day's low and high, and when. Nothing decided about it. */
+export function rangeLine(g, series) {
+  const win = lastHours(series);
+  if (!win.length) return null;
+  // The first and last days are part days: the window starts and ends mid-day.
+  const days = dailyRange(win).map((d) => `${d.day} low ${fmt(g, d.lo.v)} ${UNIT(g)} at ${hm(d.lo.t)}, `
+    + `high ${fmt(g, d.hi.v)} at ${hm(d.hi.t)}`);
+  return `${gaugeHead(g)}, in the ${WINDOW_HOURS} hours through ${through(series)}: ${days.join('; ')}.`;
+}
+
+/** A river into the lake: where it is now against two days before, and its range between. */
 export function riverLine(g, series) {
-  if (!series.length) return null;
-  const vals = lastHours(series).map((p) => p.v);
-  const u = g.unit || '';
-  const f = (x) => (u === 'cfs' ? Math.round(x).toLocaleString('en-US') : x.toFixed(2));
-  return `${g.name} (USGS ${g.site}), ${g.what}: ${f(vals[vals.length - 1])} ${u} at ${through(series)}, `
-    + `${f(vals[0])} ${u} ${WINDOW_HOURS} hours before (low ${f(Math.min(...vals))}, high ${f(Math.max(...vals))}).`;
+  const win = lastHours(series);
+  if (!win.length) return null;
+  const vals = win.map((p) => p.v);
+  const u = UNIT(g);
+  return `${gaugeHead(g)}: ${fmt(g, vals[vals.length - 1])} ${u} at ${through(series)}, `
+    + `${fmt(g, vals[0])} ${u} ${WINDOW_HOURS} hours before (low ${fmt(g, Math.min(...vals))}, high ${fmt(g, Math.max(...vals))}).`;
 }
 
 /** USGS OGC `continuous` features -> [{ t, v }], sorted, unreadable values dropped. */
@@ -238,10 +204,16 @@ export function seriesFrom(payload) {
   return out.sort((a, b) => a.t - b.t);
 }
 
-/** One gauge's line from its readings, by kind. */
+/** One gauge's line from its readings, by what the gauge is and what it read. */
 export function gaugeLine(g, series) {
   if (!series || !series.length) return `${g.name} (USGS ${g.site}): no readings came back.`;
-  if (g.kind === 'tailrace') return tailraceLine(g, series);
-  if (g.kind === 'level') return levelLine(g, series);
-  return riverLine(g, series);
+  if (g.role === 'inflow') return riverLine(g, series);
+  // A flow that ran backwards anywhere in what was read is tidal: the tide-guarded runs.
+  if (g.param === '00060' && series.some((p) => p.v < 0)) return tailraceLine(g, series);
+  return rangeLine(g, series);
+}
+
+/** How many days of readings a gauge needs: a full tide cycle for a flow below a lake, else two. */
+export function daysFor(g) {
+  return g.role === 'outflow' && g.param === '00060' ? TIDE_CYCLE_DAYS : WINDOW_HOURS / 24;
 }

@@ -918,7 +918,7 @@ export async function findWater() {
   const regId = registryIdentity(regRow);
   say('Checking the forecast…');
   // WHEN THE WATER WAS BEING PULLED (item 46), asked beside the forecast; see fetchMovingWater().
-  const movingAsk = fetchMovingWater(r2Key).catch(() => null);
+  const movingAsk = fetchMovingWater(r2Key, { worker: CF_WORKER_URL }).catch(() => null);
   const forecast = await fetchForecast(inp.lakeName, inp.dateStr,
     { launchTime: inp.launchTime, returnTime: inp.returnTime }).catch(() => null);
   // ── THE CLARITY AT HIS LAUNCH, THE SAME WAY THE OTHER TAB GETS IT ────────────────────────────

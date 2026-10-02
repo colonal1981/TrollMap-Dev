@@ -166,7 +166,7 @@ export async function runSmartPlanV2(opts = {}) {
   const guideAsk = opts.dryRun ? null : askGuideReports({ worker: CF_WORKER_URL, slug: r2Key, date: inp.dateStr });
   // WHEN THE WATER WAS BEING PULLED, the last two days, on the waters whose gauges show it (item
   // 46). Asked now, awaited with the conditions. Not on a dry run, which spends nothing.
-  const movingAsk = opts.dryRun ? null : fetchMovingWater(r2Key).catch(() => null);
+  const movingAsk = opts.dryRun ? null : fetchMovingWater(r2Key, { worker: CF_WORKER_URL }).catch(() => null);
 
   const date = new Date(`${inp.dateStr}T12:00:00`);
   // THE WATER GETS A SAY. `season` decides the depth band, the structure weights and which
