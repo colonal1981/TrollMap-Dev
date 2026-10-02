@@ -246,6 +246,11 @@ function heldByWater(profile) {
   return out;
 }
 
+/** Does this catalogue box stand for a fish the water holds? A group box counts through `covers`. */
+function boxHeld(held, s) {
+  return held.has(normSpecies(s.value)) || (s.covers || []).some((c) => held.has(normSpecies(c)));
+}
+
 /**
  * The groups to show for a waterbody. Pure — no DOM, no globals — so it can be tested.
  *
@@ -254,26 +259,31 @@ function heldByWater(profile) {
  * replaced. Ryan, 2026-09-02, choosing this over showing everything: "hopefully a research run on
  * those 4 will fix the issue... and only 4 would then show all the fish instead of 64."
  *
- * Three things are never filtered away: a species the angler has already ticked, the default tick,
- * and anything the research names that the catalogue does not carry.
+ * AND NOTHING THE WATER DOES NOT HOLD COMES BACK THROUGH A SIDE DOOR. Until 2026-10-02 two things
+ * were kept whatever the roster said: the default tick, and any species already ticked. Neither was
+ * his decision -- they were added with the filter -- and between them they put Striped Bass on
+ * Monticello: it is the freshwater default, a lake change from fresh water to fresh water carries
+ * the tick over, and the box therefore survived a roster of fifteen fish that does not name it. He
+ * planned the Recreation Lake for striper by accident that morning. Ryan, 2026-10-02: "i thought
+ * we had built into the plan tab that the check boxes only show up for fish that are researched if
+ * a research profile exists". So the roster decides, and a tick on a box it removed goes with the
+ * box. A plan that still asks for such a fish -- run before the roster loaded -- says so; see
+ * rosterNote() below.
+ *
+ * Anything the research names that the catalogue does not carry is still added below it.
  *
  * @param {string|null} key      the R2 key, e.g. 'wateree_lake' or 'coast_winyah_bay_sc'
  * @param {object|null} profile  the researched profile, or null when there is none
- * @param {string[]}    keep     values currently ticked, which survive the filter
  */
-export function speciesGroupsFor(key, profile, keep = []) {
+export function speciesGroupsFor(key, profile) {
   const all = (isCoastalKey(key) ? SALTWATER_GROUPS : FRESHWATER_GROUPS)
     .map((g) => ({ label: g.label, species: g.species.map((s) => ({ ...s })) }));
 
   const held = heldByWater(profile);
-  const ticked = new Set(Array.isArray(keep) ? keep.map(String) : []);
   let groups = all;
   if (held.size) {
-    const wanted = (s) => s.checked || ticked.has(s.value)
-      || held.has(normSpecies(s.value))
-      || (s.covers || []).some((c) => held.has(normSpecies(c)));
     groups = all
-      .map((g) => ({ label: g.label, species: g.species.filter(wanted) }))
+      .map((g) => ({ label: g.label, species: g.species.filter((s) => boxHeld(held, s)) }))
       .filter((g) => g.species.length);
   }
 
@@ -282,6 +292,43 @@ export function speciesGroupsFor(key, profile, keep = []) {
   const extras = researchedExtras(profile, all);
   if (extras.length) groups.push({ label: 'Named by this lake’s research', species: extras });
   return groups;
+}
+
+/**
+ * The picked species this water's research does not name. Empty when the water has no roster --
+ * "no opinion" is not "no fish", the same reading the filter makes.
+ *
+ * Read the same way as the filter: a group box ("Crappie", "Catfish") is held when the roster
+ * names any fish it covers, and a value the catalogue does not carry is held when the research
+ * names it, which is how such a box came to exist.
+ */
+export function speciesNotHeld(key, profile, picked) {
+  const held = heldByWater(profile);
+  if (!held.size) return [];
+  const all = flatten(isCoastalKey(key) ? SALTWATER_GROUPS : FRESHWATER_GROUPS);
+  return (Array.isArray(picked) ? picked : []).map(String).filter((v) => {
+    const box = all.find((s) => s.value === v);
+    return box ? !boxHeld(held, box) : !held.has(normSpecies(v));
+  });
+}
+
+/**
+ * A FISH THE RESEARCH DOES NOT PLACE IN THIS WATER, SAID ON THE PLAN. Annotated, never refused --
+ * the roster can be missing a fish, and he may know better. Ryan said YES to this on 2026-10-02,
+ * after the Recreation Lake plan for Striped Bass came back as though nothing were wrong.
+ *
+ * The plan's own check, not the picker's: the picker filters only once the roster has loaded, and
+ * a plan asked for before then still carries the default tick. Null when every fish is held or the
+ * water has no roster.
+ */
+export function rosterNote(key, lakeName, profile, picked) {
+  const missing = speciesNotHeld(key, profile, picked);
+  if (!missing.length) return null;
+  const fish = missing.length === 1 ? missing[0]
+    : `${missing.slice(0, -1).join(', ')} and ${missing[missing.length - 1]}`;
+  const verb = missing.length === 1 ? 'is' : 'are';
+  return `${fish} ${verb} not on ${lakeName || 'this water'}'s researched species list — `
+    + 'this plan was built for a fish the research does not place in this water';
 }
 
 function currentTripDate() {
@@ -344,8 +391,8 @@ export function refreshSpeciesChecks() {
       .catch((e) => console.warn('[species-selector] roster load failed', e.message));
   }
 
-  // The ticks travel through the filter: a species the angler asked for is never hidden by it.
-  const groups = speciesGroupsFor(key, profile, [...previouslyChecked]);
+  // A tick survives a re-render only where its box does -- see speciesGroupsFor().
+  const groups = speciesGroupsFor(key, profile);
   const date = currentTripDate();
 
   const html = groups.map((group) => {

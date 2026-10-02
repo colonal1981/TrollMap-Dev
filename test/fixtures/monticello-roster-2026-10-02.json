@@ -1,0 +1,41 @@
+{
+ "_note": "Lake Monticello, SC's researched species, as /research/get answered on 2026-10-02 -- biology.predatorSpecies and the trollingIntelligence keys, nothing else. Personal use only, not for distribution or resale; not for navigation.",
+ "lake": "Lake Monticello, SC",
+ "key": "monticello_reservoir",
+ "biology": {
+  "predatorSpecies": [
+   "Largemouth Bass",
+   "Smallmouth Bass",
+   "Spotted Bass",
+   "Bluegill",
+   "Redear Sunfish (Shellcracker)",
+   "Warmouth",
+   "Black Crappie",
+   "Blue Catfish",
+   "Channel Catfish",
+   "Flathead Catfish",
+   "White Bass / Hybrid",
+   "White Perch",
+   "Black Crappies",
+   "White Crappies",
+   "Redbreast Sunfish"
+  ]
+ },
+ "trollingIntelligenceKeys": [
+  "Largemouth Bass",
+  "Smallmouth Bass",
+  "Spotted Bass",
+  "White Bass / Hybrid",
+  "Black Crappies",
+  "White Crappies",
+  "Blue Catfish",
+  "Channel Catfish",
+  "Flathead Catfish",
+  "Bluegill",
+  "Redear Sunfish (Shellcracker)",
+  "White Perch",
+  "Warmouth",
+  "Redbreast Sunfish",
+  "Black Crappie"
+ ]
+}

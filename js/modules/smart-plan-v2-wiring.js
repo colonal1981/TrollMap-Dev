@@ -31,7 +31,7 @@ import { checkPlanLegality, ensureRegulations, fetchForecast, fetchWaterState,
          fetchMovingWater, movingWaterNote } from './plan-preflight.js';
 import { primeFishAdvisories } from '../data/fish-advisories.js';
 import { landingsFor } from '../data/launch-reach.js';
-import { poolsFor, sameWaterLandings } from '../data/lake-pools.js';
+import { poolsFor, sameWaterLandings, cutOffPool, poolOnlyState, cutOffNote } from '../data/lake-pools.js';
 import { closerLanding, closerLandingNote } from './closer-landing.js';
 import { askLaunchStatus, launchStatusNote } from './launch-status.js';
 import { primeInshoreSeason, inshoreSeasonFor } from '../data/inshore-season.js';
@@ -67,6 +67,22 @@ export function readInputs() {
     motor: $('planMotor')?.value || '',
     species: [...document.querySelectorAll('#planSpeciesChecks input:checked')].map((c) => c.value),
   };
+}
+
+/**
+ * A RAMP ON A POOL CUT OFF FROM THE MAIN LAKE GETS NONE OF THE LAKE'S GAUGES -- see cutOffPool() in
+ * lake-pools.js. The plan form's level and water temperature were filled from those gauges by
+ * utility-sync.js, so they are emptied on the form as well as on the inputs: what the model was
+ * given and what the saved plan prints cannot disagree.
+ */
+export function keepToThePool(inp) {
+  inp.waterTempF = null;
+  inp.poolLevel = '';
+  for (const id of ['planWaterTemp', 'planPoolLevel', 'planFullPool', 'planBelowFullPool']) {
+    const el = $(id);
+    if (el) el.value = '';
+  }
+  return inp;
 }
 
 /**
@@ -159,6 +175,10 @@ export async function runSmartPlanV2(opts = {}) {
     return say(inp.rampName ? `Could not place "${inp.rampName}" on ${inp.lakeName}`
                             : 'Select a ramp / launch first', true), null;
   }
+  // A POOL CUT OFF FROM THE MAIN LAKE, which none of the lake's gauges reads (cutOffPool()). Asked
+  // first, because the season below is decided on the water temperature the form holds.
+  const cut = cutOffPool(await poolsFor(r2Key), ramp);
+  if (cut) keepToThePool(inp);
   // IS THE LAUNCH OPEN, by Google's listing -- see launch-status.js. Asked now and read once the
   // model has answered, so it costs the plan no time. Not on a dry run, which spends nothing.
   const launchStatus = opts.dryRun ? null : askLaunchStatus({ worker: CF_WORKER_URL, lonLat: ramp });
@@ -166,8 +186,10 @@ export async function runSmartPlanV2(opts = {}) {
   // the day can take the better part of a minute (a search, the posts, a transcript).
   const guideAsk = opts.dryRun ? null : askGuideReports({ worker: CF_WORKER_URL, slug: r2Key, date: inp.dateStr });
   // WHEN THE WATER WAS BEING PULLED, the last two days, on the waters whose gauges show it (item
-  // 46). Asked now, awaited with the conditions. Not on a dry run, which spends nothing.
-  const movingAsk = opts.dryRun ? null : fetchMovingWater(r2Key, { worker: CF_WORKER_URL }).catch(() => null);
+  // 46). Asked now, awaited with the conditions. Not on a dry run, which spends nothing, and not
+  // from a cut-off pool, which those gauges do not read.
+  const movingAsk = (opts.dryRun || cut) ? null
+    : fetchMovingWater(r2Key, { worker: CF_WORKER_URL }).catch(() => null);
 
   const date = new Date(`${inp.dateStr}T12:00:00`);
   // THE WATER GETS A SAY. `season` decides the depth band, the structure weights and which
@@ -179,7 +201,7 @@ export async function runSmartPlanV2(opts = {}) {
 
   // THE LAW FIRST, BEFORE A MODEL CALL IS SPENT ON IT, and the tables the synchronous prompt build
   // reads. One sequence for both planners since 2026-09-25 -- see preparePlanInputs() below.
-  const { researched, legality } = await preparePlanInputs(inp, species, date, ramp);
+  const { researched, legality, roster } = await preparePlanInputs(inp, species, date, ramp);
   if (!legality.legal) {
     say(`${species} not legal here today`, true);
     if (out) out.innerHTML = `<p style="color:var(--warn);font-size:12px">REGULATION BLOCK — `
@@ -212,12 +234,14 @@ export async function runSmartPlanV2(opts = {}) {
   //
   // Fire-and-degrade like the forecast: a null water state is a poorer prompt, never a cancelled
   // plan, and the coastal block says out loud when the tide could not be read.
-  const waterState = await fetchWaterState(inp.lakeName, inp.dateStr, {
+  const lakeState = await fetchWaterState(inp.lakeName, inp.dateStr, {
     worker: CF_WORKER_URL, launchTime: inp.launchTime, species,
     // THE LAUNCH CHOOSES THE GAUGE. The Worker picks the nearest bound gauge to the point it is
     // given, and the centroid of the Congaree sits 46 km from Bates Bridge — see conditionsUrl().
     point: ramp ? { lat: ramp[1], lon: ramp[0] } : undefined,
   });
+  // From a cut-off pool, only what no gauge measured: the sky and the notices. See poolOnlyState().
+  const waterState = cut ? poolOnlyState(lakeState) : lakeState;
 
   // ── THE CLARITY AT HIS LAUNCH, RESOLVED HERE AND NOT READ OFF A SELECT ──────────────────────
   //
@@ -477,6 +501,9 @@ export async function runSmartPlanV2(opts = {}) {
   // AND WHEN THE WATER WAS BEING PULLED, the line he asked for (item 46). History, said as such.
   const movingNote = movingWaterNote(moving && moving.lines);
   if (movingNote) r.problems = [...(r.problems || []), movingNote];
+  // Or, from a cut-off pool, that no gauge reads it -- the one line in place of all of that.
+  const cutNote = cutOffNote(cut);
+  if (cutNote) r.problems = [...(r.problems || []), cutNote];
   // ANOTHER LANDING CLOSER TO THIS DAY'S WATER (change request 10). Ryan: "if i am going to fish
   // june creek then i should have just launched at june creek". The run out and the run home are
   // costed from every landing on the water with the router this plan used -- see closer-landing.js.
@@ -514,6 +541,13 @@ export async function runSmartPlanV2(opts = {}) {
       r.problems.map((p) => `<li>${String(p).replace(/[&<>]/g, '')}</li>`).join('')}</ul>`;
     return r;
   }
+
+  // A FISH THE RESEARCH DOES NOT PLACE IN THIS WATER goes on the plan's list ahead of the notes
+  // added here: every one of them is about a day spent on that fish. Ryan, 2026-10-02, after a
+  // Recreation Lake plan for striper.
+  // After the no-plan branch, whose status line is the first problem and has to say why there is
+  // no plan; before the bench and the tab, which both read this list.
+  if (roster) r.problems = [roster, ...(r.problems || [])];
 
   // THE ANSWER AND WHAT THE APP MADE OF IT, AND STILL NO PLAN. `r` already carries all three
   // things the bench shows -- `request` is what the model was given, `response` what it said, and
@@ -743,7 +777,16 @@ export async function preparePlanInputs(inp, species, date, ramp) {
   const researched = await loadResearchedProfile(inp.lakeName);
 
   const legality = checkPlanLegality(inp.lakeName, species, date, { at: ramp });
-  return { researched, legality };
+  // AND WHETHER THE RESEARCH PLACES THE FISH IN THIS WATER AT ALL -- the profile is in hand, and
+  // the picker's filter only applies once its own copy has loaded. See rosterNote().
+  //
+  // IMPORTED HERE, NOT AT THE TOP. species-selector.js boots itself whenever `document` exists and
+  // retries every 300 ms until the species box does; a test that stubs `document` to load this file
+  // (cast-spot-kinds.test.js, through plan-water-ui.js) then never exits. On the page main.js has
+  // already loaded it, so this is the same module and costs nothing.
+  const { rosterNote } = await import('./species-selector.js');
+  const roster = rosterNote(resolveR2Key(inp.lakeName), inp.lakeName, researched, inp.species);
+  return { researched, legality, roster };
 }
 
 /**

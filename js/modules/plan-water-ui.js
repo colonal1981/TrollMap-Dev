@@ -48,7 +48,7 @@ import { fetchForecast,
          detectCoastalZone, fogNote, fetchMovingWater, movingWaterNote } from './plan-preflight.js';
 import { lakeSurfaceTemp, poolOffsetFt } from '../utils/water-conditions.js';
 import { landingsFor } from '../data/launch-reach.js';
-import { rampWater, poolsFor, sameWaterLandings } from '../data/lake-pools.js';
+import { rampWater, poolsFor, sameWaterLandings, cutOffPool, poolOnlyState, cutOffNote } from '../data/lake-pools.js';
 import { closerLanding, closerLandingNote } from './closer-landing.js';
 import { askLaunchStatus, launchStatusNote } from './launch-status.js';
 import { askGuideReports } from './guide-reports.js';
@@ -74,7 +74,7 @@ import { loadSessionFromPlan, isEnabled, launchFrom } from './notifications.js';
 import { renderAll } from '../core/map-init.js';
 import { TACKLE_INVENTORY } from '../data/tackle-inventory.js';
 import { connectionFor, snapEligibleFrom } from '../data/lure-knowledge.js';
-import { readInputs, rampCoords, preparePlanInputs } from './smart-plan-v2-wiring.js';
+import { readInputs, rampCoords, preparePlanInputs, keepToThePool } from './smart-plan-v2-wiring.js';
 import { esc } from '../utils/escape.js';
 
 const $ = (id) => document.getElementById(id);
@@ -831,11 +831,16 @@ export async function findWater() {
   // prompt build reads, the research profile and the law are ONE call now, preparePlanInputs() in
   // smart-plan-v2-wiring.js -- the sequence this tab and Smart Plan each wrote out until 2026-09-25.
   say('Checking the regulations…');
-  const { researched, legality } = await preparePlanInputs(inp, species, date, ramp);
+  const { researched, legality, roster } = await preparePlanInputs(inp, species, date, ramp);
   if (!legality.legal) {
     return say(`${species} not legal here today — `
              + `${legality.reason || 'closed season or closed water'}`, true);
   }
+  // A POOL CUT OFF FROM THE MAIN LAKE, which none of the lake's gauges reads -- same check, same
+  // consequence, as the Smart Plan path (cutOffPool() in lake-pools.js). Before the depth band,
+  // whose season is decided on the water temperature the form holds.
+  const cut = cutOffPool(await poolsFor(r2Key), ramp);
+  if (cut) keepToThePool(inp);
 
   // THE RESEARCHED PROFILE FIRST — the same source the Smart Plan tab reads.
   //
@@ -940,7 +945,8 @@ export async function findWater() {
   const regId = registryIdentity(regRow);
   say('Checking the forecast…');
   // WHEN THE WATER WAS BEING PULLED (item 46), asked beside the forecast; see fetchMovingWater().
-  const movingAsk = fetchMovingWater(r2Key, { worker: CF_WORKER_URL }).catch(() => null);
+  // Not from a cut-off pool, which those gauges do not read.
+  const movingAsk = cut ? null : fetchMovingWater(r2Key, { worker: CF_WORKER_URL }).catch(() => null);
   const forecast = await fetchForecast(inp.lakeName, inp.dateStr,
     { launchTime: inp.launchTime, returnTime: inp.returnTime }).catch(() => null);
   // ── THE CLARITY AT HIS LAUNCH, THE SAME WAY THE OTHER TAB GETS IT ────────────────────────────
@@ -1003,10 +1009,12 @@ export async function findWater() {
   // The same call buildFromPicked() makes. Failure is no offset, which is what a lake with no
   // published level gets too: the charted depths, said to be charted.
   say('Reading the lake level…');
-  const levelState = await fetchWaterState(inp.lakeName, inp.dateStr, {
+  const lakeState = await fetchWaterState(inp.lakeName, inp.dateStr, {
     worker: CF_WORKER_URL, launchTime: inp.launchTime, species,
     point: ramp ? { lat: ramp[1], lon: ramp[0] } : undefined,
   }).catch(() => null);
+  // From a cut-off pool there is no level to read -- see poolOnlyState().
+  const levelState = cut ? poolOnlyState(lakeState) : lakeState;
   const offsetFt = poolOffsetFt(levelState);
   T.offsetFt = offsetFt || 0;
 
@@ -1075,6 +1083,8 @@ export async function findWater() {
     joins: out.joins || [], joinsTaken: 0, minM: out.minM,
     ramp, rampName: inp.rampName || 'launch',
     species, r2Key, dateStr: inp.dateStr, windByHour: forecast ? forecast.windByHour : null,
+    // THE POOL NO GAUGE READS, carried to buildFromPicked(), which reads the water again.
+    cutOff: cut,
     // CARRIED FOR THE SEASON, which now asks the water rather than the calendar. findWater()
     // reads the inputs; buildFromPicked() writes the prompt, and without this the second half
     // would fall back to the month on its own -- the two halves of one tab disagreeing about
@@ -1285,10 +1295,12 @@ export async function buildFromPicked() {
   // the model reads them. See guide-reports.js.
   const guideAsk = askGuideReports({ worker: CF_WORKER_URL, slug: T.r2Key, date: T.dateStr });
   say('Reading the water…');
-  const waterState = await fetchWaterState(T.lake, T.dateStr, {
+  const lakeState = await fetchWaterState(T.lake, T.dateStr, {
     worker: CF_WORKER_URL, launchTime: T.launchTime, species: T.species,
     point: T.ramp ? { lat: T.ramp[1], lon: T.ramp[0] } : undefined,
   });
+  // From a cut-off pool, only what no gauge measured -- see poolOnlyState().
+  const waterState = T.cutOff ? poolOnlyState(lakeState) : lakeState;
 
   say('Asking the model for baits and speeds…');
   let r;
@@ -1427,6 +1439,10 @@ export async function buildFromPicked() {
 
   if (!r.plan) return say((r.problems && r.problems[0]) || 'No plan', true);
 
+  // A FISH THE RESEARCH DOES NOT PLACE IN THIS WATER, ahead of the notes added here -- same line,
+  // same place, as the Smart Plan path (rosterNote() in species-selector.js).
+  if (roster) r.problems = [roster, ...(r.problems || [])];
+
   // WHAT THE MODEL GOT WRONG, ON SCREEN. Every one of these was being computed and discarded:
   // a rod the boat does not carry, a lure the bag does not hold, a leg with no rods deployed, a
   // bait shortened to clear a shoal. The Smart Plan tab has always shown them.
@@ -1454,6 +1470,9 @@ export async function buildFromPicked() {
   // AND WHEN THE WATER WAS BEING PULLED -- same line as the Smart Plan path (item 46).
   const movingNote = movingWaterNote(T.conditions && T.conditions.movingWater);
   if (movingNote) r.problems = [...(r.problems || []), movingNote];
+  // Or, from a cut-off pool, that no gauge reads it -- same line as the Smart Plan path.
+  const cutNote = cutOffNote(T.cutOff);
+  if (cutNote) r.problems = [...(r.problems || []), cutNote];
   // ANOTHER LANDING CLOSER TO THE WATER HE PICKED. Same check, same router, as the Smart Plan
   // path -- see closer-landing.js (change request 10). A failure costs the plan nothing.
   say('Checking the other landings…');

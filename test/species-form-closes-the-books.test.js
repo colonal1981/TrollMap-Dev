@@ -152,15 +152,18 @@ describe('the form shows what the water holds', () => {
     expect(v).toContain('Crappie');      // the roster says Black Crappie; the box is the group
     expect(v).toContain('Catfish');      // and Blue Catfish reaches it through `covers`
     expect(v).toContain('Bluegill');
-    expect(v).toContain('Striped Bass'); // the default tick is never filtered away
+    // Not the default tick either, since 2026-10-02: it is how striper stayed on Monticello.
+    expect(v).not.toContain('Striped Bass');
     expect(v).not.toContain('Muskellunge');
     expect(v).not.toContain('Shoal Bass');
     expect(v.length).toBeLessThan(12);
   });
 
-  it('never hides a species the angler has already ticked', () => {
+  it('a tick does not keep a box the roster removed', () => {
+    // It did until 2026-10-02, and that is how a Striped Bass tick carried from one lake onto a
+    // lake whose roster does not name it. The plan says so instead -- see rosterNote().
     const v = values(speciesGroupsFor(WATEREE, profile(['Largemouth Bass']), ['Muskellunge']));
-    expect(v).toContain('Muskellunge');
+    expect(v).not.toContain('Muskellunge');
   });
 
   it('shows the whole catalogue when the water has not told us anything', () => {

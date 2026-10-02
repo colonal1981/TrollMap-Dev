@@ -176,3 +176,54 @@ export function sameWaterLandings(file, ramp, landings) {
   if (!ix || pool === null || !ix.pools.length) return landings || [];
   return (landings || []).filter((l) => l && rampPool(ix, [Number(l.lon), Number(l.lat)]) === pool);
 }
+
+// ── A GAUGE ON THE LAKE DOES NOT READ A POOL CUT OFF FROM IT ─────────────────────────────────────
+//
+// 2026-10-02, his first plan from the Recreation Lake ramp on Monticello carried the main
+// reservoir's gauge (USGS 02160900, swinging 1.0-1.8 ft a day on the pumped storage) as "the lake's
+// own level", the level as "where the water is today", and the model told him to "watch the current
+// at the ramp and on the channel edges". The Recreational Lake is "maintained at a stable water
+// level" and not affected by the pumped-storage operation (Dominion's Land Use and Shoreline
+// Management Plan for FERC Project 1894), and no gauge reads it. Ryan, asked the same evening, chose
+// to leave the main lake's gauges off such a plan rather than label them.
+//
+// The lake's gauges are its main lake's: the level gauge on it, the river below its dam, the rivers
+// that feed it. Measured the same evening against every pack with a pool off the main one
+// (_scratch/gauge_pool_check_1003.mjs): 46 bound gauge points, every one on the main pool except
+// Lake Rabun's dam gauge, which sits on a 7.8-acre sliver no landing launches onto. So a ramp on a
+// cut-off pool gets none of them.
+
+/** The pool this ramp launches onto when it is NOT the main one, `{pool, acres}`; else null. */
+export function cutOffPool(file, ramp) {
+  const w = rampWater(file, ramp);
+  return w.pool ? { pool: w.pool, acres: w.acres } : null;
+}
+
+// What fetchWaterState() carries that is NOT measured on the water: the envelope, the sky, and the
+// notices about the place. Everything else in it -- the level and full pool, the trend, the water
+// temperature, oxygen, turbidity, the operator's targets, drawdown, drought stage and releases, and
+// the list of what its gauges do not publish -- was read by a gauge on the main lake. A key added
+// to the Worker later is left off by default, which is the safe side for a pool no gauge reads.
+const NOT_FROM_A_GAUGE = new Set([
+  'ok', 'slug', 'displayName', 'featureType', 'pending', 'error',
+  'moonPhase', 'moonIllumination', 'popPct',
+  'pressureMb', 'pressureFrom', 'pressure3h', 'pressureStale', 'obsStation', 'obsKmAway',
+  'windMeasured', 'windMph', 'windDirDeg', 'gustMph', 'windFrom', 'windStation', 'windAgeMin',
+  'civilDawn', 'civilDusk', 'sunrise', 'sunset', 'hazards', 'hazardsAllClear',
+  'accessAlerts', 'accessAlertsExpired',
+]);
+
+/** fetchWaterState()'s answer with only what a pool no gauge reads can still be told. */
+export function poolOnlyState(ws) {
+  if (!ws || typeof ws !== 'object') return ws;
+  return Object.fromEntries(Object.entries(ws).filter(([k]) => NOT_FROM_A_GAUGE.has(k)));
+}
+
+/** The one line on the plan. */
+export function cutOffNote(cut) {
+  if (!cut) return null;
+  const acres = Number.isFinite(Number(cut.acres)) && cut.acres ? `${Math.round(cut.acres)}-acre ` : '';
+  return `no gauge reads the ${acres}pool this ramp launches onto — `
+    + "the lake's gauges read the main lake, so this plan has no level, moving water or water "
+    + 'temperature for it';
+}
