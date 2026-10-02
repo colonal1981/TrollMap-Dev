@@ -151,6 +151,19 @@ test('the prompt names the fog hours and says fog alone is not a no-go', () => {
   assert.doesNotMatch(b, /pressureTrend/);
 });
 
+// Ryan, 2026-10-02, after a Rowland plan read "fog holds the ramp until 11:00" as a 240-minute day
+// inside his 540-minute window: "the plan should not move the launch... it can let me know there is
+// forecasted fog but that is up to me to decide".
+test('fog never moves the launch or shortens the day: the model plans the whole window', () => {
+  const b = airAndFrontBlock(hourlyWeather(HOURLY, '06:00', '10:00'), {});
+  assert.match(b, /HIS call at the ramp, not yours/);
+  assert.match(b, /up to me to decide/);
+  assert.match(b, /plan the whole window from the launch time he set/);
+  assert.match(b, /do not start the day later for the fog, do not shorten it/);
+  assert.doesNotMatch(b, /fog holds the launch/);
+  assert.doesNotMatch(b, /waiting for it to lift/);
+});
+
 test('the prompt points at the pressure and asks for a note, never a no-go', () => {
   const b = airAndFrontBlock([], { pressureTrend: { hPaAtLaunch: 1016.2 } });
   assert.match(b, /`conditions\.pressureTrend`/);

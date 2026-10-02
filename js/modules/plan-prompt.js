@@ -1040,6 +1040,10 @@ function drawnDayBlock(day, candidates) {
  * `weatherByHour` is not in the day's JSON. The pressure IS in the JSON as
  * `conditions.pressureTrend`, so it is pointed at rather than repeated. Neither one decides
  * `isGo`: fog lifts, and a front is a reason the bite may be slow, not a reason to stay home.
+ *
+ * Fog never moves the launch or shortens the day (Ryan, 2026-10-02): the Rowland plan that morning
+ * read the old wording as "fog holds the ramp until 11:00" and built a 240-minute day inside a
+ * 540-minute window, while the app still timed it from 06:00. Launching in fog is his call.
  */
 export function airAndFrontBlock(weatherByHour, conditions, candidates) {
   const L = [];
@@ -1062,11 +1066,13 @@ export function airAndFrontBlock(weatherByHour, conditions, candidates) {
     const low = fogLowestVisibility(weatherByHour);
     const hh = (h) => `${String(h).padStart(2, '0')}:00`;
     L.push(`FOG IS FORECAST AT THE LAKE ${spans.join(', ')} (the forecast's own fog code`
-      + `${low ? `; visibility down to ${low.m} m at ${hh(low.hour)}` : ''}). He launches a kayak `
-      + 'when he can see the water. If the launch time is inside a fog span, say in '
-      + '`safety.rampEvaluation` that fog holds the launch and until when, and do not spend the '
-      + 'plan\'s first-light presentation on minutes he will spend at the ramp waiting for it to '
-      + 'lift. Fog alone is not `isGo: false`.');
+      + `${low ? `; visibility down to ${low.m} m at ${hh(low.hour)}` : ''}). Whether to launch `
+      + 'in it is HIS call at the ramp, not yours. Ryan, 2026-10-02: "the plan should not move the '
+      + 'launch... it can let me know there is forecasted fog but that is up to me to decide". So '
+      + 'plan the whole window from the launch time he set: do not start the day later for the '
+      + 'fog, do not shorten it, and do not count minutes as lost to it. If the launch time is '
+      + 'inside a fog span, say in `safety.rampEvaluation` that fog is forecast over the launch '
+      + 'and until when, so he can decide. Fog alone is not `isGo: false`.');
   }
   const p = conditions && conditions.pressureTrend;
   if (p && isNum(p.hPaAtLaunch)) {
