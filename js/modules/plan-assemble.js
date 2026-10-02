@@ -24,7 +24,7 @@
  */
 
 import { ampHours, ampHoursAlong, minutesFor, metresBetween, cumulative, pointAt,
-         travelOrder, trimReach, riverPassFlipped } from './plan-candidates.js';
+         travelOrder, trimReach, riverPassFlipped, yourMarks } from './plan-candidates.js';
 import { depthWindow, lightWindowFor, leadForDepth, jigheadForSwimbait,
          requiresInlineWeight, changeCostFor, presentationDelta,
          LURE_KNOWLEDGE, gpsWindowFor, sharedSpeedWindow } from '../data/lure-knowledge.js';
@@ -1930,7 +1930,8 @@ export function assemblePlan(o) {
             sameSeason: c.support.seasonN, lastCaught: c.support.lastDate,
             // Counted, not dropped -- catchSupport() says why.
             ignoredOffWater: c.support.offWater || 0,
-            note: 'positions are post-fight photo locations, accurate to a few hundred metres' }
+            note: 'positions are post-fight photo locations, accurate to a few hundred metres',
+            ...yourMarks(c.markSupport) }
         : undefined,
     });
     const first = legs[legs.length - 1];

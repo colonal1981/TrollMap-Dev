@@ -716,7 +716,8 @@ function resolveLakeKey(lakeName) {
   // 3. Whole word, so "russ lake" cannot match "russell" and a key cannot match mid-word.
   return Object.keys(LAKES).find((k) => new RegExp(`\\b${k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(bare)) || null;
 }
-var SYNC_STORES = ["plan", "spread", "catch", "chart", "layer", "report"];
+// "mark": his labelled Garmin marks (js/modules/garmin-marks.js), 2026-10-02.
+var SYNC_STORES = ["plan", "spread", "catch", "chart", "layer", "report", "mark"];
 async function ensureSyncSchema(db) {
   try {
     await db.exec("CREATE TABLE IF NOT EXISTS sync_items (id TEXT NOT NULL, type TEXT NOT NULL, payload TEXT NOT NULL, lastModified TEXT NOT NULL, deleted INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (type, id))");

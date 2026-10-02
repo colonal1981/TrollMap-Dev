@@ -61,6 +61,7 @@ export const CANDIDATE_LIMIT = 12;
  * @param {string[]} o.tackle       exact lure names, from the inventory
  * @param {object[]} [o.inventory]  [{name, type}] so lure names resolve to a connection
  * @param {object[]} [o.catches]    the catch journal, for `yourHistory`
+ * @param {object[]} [o.marks]      his labelled Garmin marks (marksForPlan()), for `yourHistory`
  * @param {function} o.fetchJson    (url) => Promise<object|null>
  * @param {function} o.askModel     ({system, user}) => Promise<string|{content, meta}>
  *                                  A bare string is still valid; modelAsker() returns the pair
@@ -302,6 +303,8 @@ export async function buildSmartPlanV2(o) {
     ramp: o.ramp, slug: o.r2Key, fishDepthFt: o.fishDepthFt, holding: o.holding,
     usableAh: o.usableAh, windowMin: o.windowMin, maxOffM, maxM: legMaxM,
     structures, catches: o.catches, catchSpecies: o.species, month: o.month,
+    // His labelled Garmin marks (garmin-marks.js), counted beside the catches in `yourHistory`.
+    marks: o.marks,
     // THE PACK'S OWN OUTLINE, so a catch logged at a position that is not on this water cannot
     // stand in as evidence about it. Null where the pack ships no boundary -- and then nothing is
     // screened, because "outside" and "nothing to be outside of" are different answers.

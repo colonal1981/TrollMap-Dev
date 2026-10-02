@@ -44,6 +44,9 @@ const STORE_BY_TYPE = {
   // A report Ryan pasted (pasted-reports.js). Kept in `settings` under its own key, so it needed
   // no new store and no version bump; never in the backfill list below, which walks whole stores.
   report: 'settings',
+  // His labelled Garmin marks (garmin-marks.js, item 40): one record each in `settings`, the same
+  // way as a pasted report, so no new store and no version bump.
+  mark: 'settings',
 };
 
 const statusEl = () => document.getElementById('syncStatus');

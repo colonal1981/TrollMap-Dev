@@ -2929,6 +2929,12 @@ export function selectCandidates(runs, o) {
                          { species: o.catchSpecies, month: o.month, radiusM: o.catchRadiusM,
                            water: o.water })
           : null,
+        // His labelled Garmin marks -- missed bites, fish on sonar, hazards (garmin-marks.js).
+        // Present only when he has any. Reported beside `support`, never scored, for the same
+        // reason catches are not: see catchSupport().
+        markSupport: Array.isArray(o.marks) && o.marks.length
+          ? marksSupport(line, o.marks, { radiusM: o.catchRadiusM, water: o.water })
+          : null,
         // WHOLE-RUN, not windowed. build_trolling_runs.py reports ledges per run and gives no
         // positions, so these cannot be clipped to the window the way `near` can. Named so that
         // nothing downstream mistakes them for "ledges on this leg".
@@ -3517,6 +3523,27 @@ export function catchSupport(line, catches, o = {}) {
     }
     if (c.date && (!out.lastDate || String(c.date) > out.lastDate)) out.lastDate = String(c.date);
     if (c.lure) out.lures[c.lure] = (out.lures[c.lure] || 0) + 1;
+  }
+  return out;
+}
+
+/**
+ * HIS OWN MARKS NEAR THE LINE, BY WHAT HE SAID THEY WERE. Item 40, 2026-10-02: the waypoints he
+ * drops on the Garmin that are not catches, labelled at upload (garmin-marks.js) as a missed
+ * bite, fish on the sonar or a hazard. Counted inside the same radius as his catches, through
+ * catchSupport() itself, so "in this pocket" means one thing for both. The radius was sized to
+ * post-fight drift; a mark is the Garmin's fix at the moment, so for marks it is the pocket and
+ * not a tolerance. Nothing here is scored.
+ */
+export function marksSupport(line, marks, o = {}) {
+  const out = { missedBite: 0, fishOnSonar: 0, hazard: 0, lastMarked: null, offWater: 0 };
+  for (const [label, key] of [['missed_bite', 'missedBite'], ['fish_on_sonar', 'fishOnSonar'],
+                              ['hazard', 'hazard']]) {
+    const s = catchSupport(line, (marks || []).filter((m) => m && m.label === label),
+                           { radiusM: o.radiusM, water: o.water });
+    out[key] = s.n;
+    out.offWater += s.offWater || 0;
+    if (s.lastDate && (!out.lastMarked || s.lastDate > out.lastMarked)) out.lastMarked = s.lastDate;
   }
   return out;
 }
@@ -4121,7 +4148,23 @@ export function forModel(c, cap = MODEL_STRUCTURE_CAP) {
           // Said out loud rather than dropped: these are his fish, at a position that is not on
           // this water, and the reason the count above is lower than he expects.
           ignoredOffWater: c.support.offWater || 0,
-          note: 'positions are post-fight photo locations, accurate to a few hundred metres' }
+          note: 'positions are post-fight photo locations, accurate to a few hundred metres',
+          ...yourMarks(c.markSupport) }
       : undefined,
+  };
+}
+
+/**
+ * The `yourHistory` fields for his labelled Garmin marks, or nothing when he has none. Shared by
+ * the candidate list and the assembled plan so the two say it the same way.
+ */
+export function yourMarks(m) {
+  if (!m) return {};
+  return {
+    missedBitesWithin300m: m.missedBite, fishOnSonarWithin300m: m.fishOnSonar,
+    hazardsWithin300m: m.hazard, lastMarked: m.lastMarked,
+    ...(m.offWater ? { marksOffWater: m.offWater } : {}),
+    marksNote: 'waypoints he marked on his Garmin at the moment and labelled himself: a bite he did '
+      + 'not land, fish he saw on the sonar, or a hazard; positions are the Garmin\'s',
   };
 }

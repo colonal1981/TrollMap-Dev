@@ -38,6 +38,8 @@ export const state = {
   // ── Working data ──
   DATA: { waypoints: [], tracks: [] },
   CATCHES: [],
+  // His labelled Garmin marks -- missed bites, fish on sonar, hazards (js/modules/garmin-marks.js).
+  GARMIN_MARKS: [],
   SPREAD: [],
 
   // ── Chart mosaic (multi-layer depth-contour overlays) ──

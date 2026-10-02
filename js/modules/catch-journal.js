@@ -23,6 +23,7 @@ import { solunarFor } from '../utils/solunar.js';
 import { parseGPX } from '../utils/parsers.js';
 import { distMiFromCoords } from '../utils/geo.js';
 import { groupPhotosByWaypoint, waypointReadings, localIso, fmtGap } from '../utils/catch-waypoints.js';
+import { marksToAsk, markRecord, saveMark, loadMarks, MARK_LABELS } from './garmin-marks.js';
 const DEFAULT_HELPER = 'http://127.0.0.1:8787';
 const QUEUE_DB_KEY = 'catch_import_queue';
 const CATCHES_DB_KEY = 'catches';
@@ -34,6 +35,11 @@ function setQueue(arr) { state.CATCH_IMPORT_QUEUE = arr || []; }
 
 let selectedQueueId = null;
 let currentSubtab = 'review';
+// THE LAST DROP'S MARKS STILL TO LABEL, AND ITS STATUS LINE, kept here because the drop ends by
+// re-rendering the Import tab -- which rebuilt the status line empty, so the "Added N catches"
+// line vanished as it was written. Item 40, 2026-10-02.
+let pendingMarks = [];
+let nightlyNote = '';
 const localPhotoUrls = new Map(); // filename(lower) -> object URL from folder picker
 const localPhotoFiles = new Map();
 
@@ -462,6 +468,8 @@ export async function loadCatches() {
     if (r) setCatches(r.data || []);
     const q = await dbGet('journal', QUEUE_DB_KEY);
     if (q) setQueue(q.data || []);
+    // His labelled Garmin marks, for the plan's `yourHistory` (garmin-marks.js). Never throws.
+    state.GARMIN_MARKS = await loadMarks();
   } catch (err) {
     // NOT best-effort. Swallowing here renders an empty journal that looks like "no catches
     // yet" rather than "your catches could not be read", which is the difference between a
@@ -634,7 +642,8 @@ function renderImport(body) {
       <p class="muted">Drop the day's photos <b>and the Garmin's GPX export</b> together. Each waypoint you marked at a bite becomes one catch: the first photo after it is the <b>lure shot</b>, the second is the <b>fish-on-board shot</b>, and the position, depth and water temperature come from the waypoint. AI only sees the board shot (species + length); you pick the lure yourself while looking at the lure shot. Without a GPX, photos taken within 90 seconds of each other are paired the same way, lure first (🔄 swap in review if it guessed wrong).</p>
       <div class="filebox" id="nightlyDropBox">Drop the photos and the .gpx here, or click to choose (select them all at once)</div>
       <input id="nightlyPhotoInput" type="file" accept="image/*,.gpx" multiple class="hidden">
-      <div id="nightlyUploadStatus" class="muted" style="margin-top:8px"></div>
+      <div id="nightlyUploadStatus" class="muted" style="margin-top:8px">${esc(nightlyNote)}</div>
+      <div id="nightlyMarks">${marksCardHtml()}</div>
     </div>
     <div class="grid" style="grid-template-columns:minmax(280px,1fr) minmax(280px,1fr);gap:12px">
       <div class="card" style="margin:0">
@@ -673,6 +682,7 @@ function renderImport(body) {
     handleNightlyPhotoUpload([...e.dataTransfer.files].filter(f => f.type.startsWith('image/') || isGpxFile(f)), body);
   });
   nightlyInput.addEventListener('change', e => handleNightlyPhotoUpload([...e.target.files], body));
+  wireMarks(body.querySelector('#nightlyMarks'));
   const input = body.querySelector('#catchCsvInput');
   const box = body.querySelector('#csvDropBox');
   box.addEventListener('click', () => input.click());
@@ -1266,12 +1276,10 @@ async function handleNightlyPhotoUpload(files, body) {
   if (!files.length) return;
   const gpxFiles = files.filter(isGpxFile);
   const photoFiles = files.filter(f => !isGpxFile(f));
-  if (!photoFiles.length) {
-    if (status) status.textContent = 'No photos in that drop. Drop the photos and the GPX together.';
+  if (!photoFiles.length && !gpxFiles.length) {
+    if (status) status.textContent = 'Nothing to read in that drop. Drop the photos and the GPX together.';
     return;
   }
-  if (status) status.textContent = `Reading ${photoFiles.length} photo(s)${gpxFiles.length ? ` and ${gpxFiles.length} GPX` : ''}...`;
-  await ensureExifLoaded();
 
   const waypoints = [];
   const gpxUnread = [];
@@ -1285,6 +1293,19 @@ async function handleNightlyPhotoUpload(files, body) {
       console.warn('[catch-journal] could not read GPX', g.name, err);
     }
   }
+
+  // A GPX WITH NO PHOTOS IS A DAY WITH NO FISH, and its marks are still worth having: a missed
+  // bite is exactly the mark with no photos after it. It used to be refused here.
+  if (!photoFiles.length) {
+    const n = await collectMarks(waypoints, []);
+    nightlyNote = 'No photos in that drop, so no catches. '
+      + (n ? `${n} mark(s) of yours to label below.` : 'No marks of yours in it that are not already labelled or a catch.')
+      + (gpxUnread.length ? ` Could not read ${gpxUnread.join(', ')}.` : '');
+    renderCatchSubtab();
+    return;
+  }
+  if (status) status.textContent = `Reading ${photoFiles.length} photo(s)${gpxFiles.length ? ` and ${gpxFiles.length} GPX` : ''}...`;
+  await ensureExifLoaded();
 
   const withExif = await Promise.all(photoFiles.map(extractExif));
   const grouped = groupPhotosByWaypoint(withExif, waypoints);
@@ -1418,6 +1439,7 @@ async function handleNightlyPhotoUpload(files, body) {
 
   setQueue(queue);
   await saveQueue();
+  const toLabel = gpxFiles.length ? await collectMarks(waypoints, grouped.catches.map(c => c.waypoint)) : 0;
   if (status) {
     const onMarks = grouped.catches.length;
     status.textContent = `✓ Added ${created} catch(es) to review queue. AI ID ran on ${aiCalled}${aiFailed ? ` (${aiFailed} failed — check flagged items)` : ''}.`
@@ -1426,9 +1448,64 @@ async function handleNightlyPhotoUpload(files, body) {
           + (grouped.loaded ? ` ${grouped.loaded} waypoints in the GPX share one timestamp, so they were loaded onto the unit, not marked, and were not used.` : '')
         : '')
       + (gpxUnread.length ? ` Could not read ${gpxUnread.join(', ')}.` : '')
+      + (toLabel ? ` ${toLabel} mark(s) with no photos after them to label below.` : '')
       + ' Review below.';
+    nightlyNote = status.textContent;
   }
   renderCatchSubtab();
+}
+
+// ── His marks with no photos after them (item 40) ──────────────────────────────────────────────
+// What each one was is his to say: "Ask me at upload". See garmin-marks.js.
+
+async function collectMarks(waypoints, withPhotos) {
+  const known = state.GARMIN_MARKS && state.GARMIN_MARKS.length ? state.GARMIN_MARKS : await loadMarks();
+  pendingMarks = marksToAsk(waypoints, { withPhotos, journal: [...getCatches(), ...getQueue()], known });
+  return pendingMarks.length;
+}
+
+function marksCardHtml() {
+  if (!pendingMarks.length) return '';
+  const rows = pendingMarks.map((w, i) => {
+    const r = waypointReadings(w);
+    const when = localIso(w.epochS);
+    const read = [r.depthFt != null ? `${r.depthFt} ft` : '', r.waterTempF != null ? `${r.waterTempF} °F` : '']
+      .filter(Boolean).join(', ');
+    return `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:6px 0;border-top:1px solid var(--line)">
+      <div style="flex:1 1 220px"><b>${esc(w.name || '(unnamed)')}</b> · ${esc(when.slice(0, 10))} ${esc(displayTime(when.slice(11)))}${read ? ` · ${esc(read)}` : ''}
+        <div class="muted" style="font-size:11px">${Number(w.lat).toFixed(5)}, ${Number(w.lon).toFixed(5)}${w.file ? ` · ${esc(w.file)}` : ''}</div></div>
+      <div class="row" style="gap:4px;flex-wrap:wrap">${MARK_LABELS.map(l =>
+        `<button class="small" data-mark="${i}" data-label="${l.id}">${esc(l.text)}</button>`).join('')}</div>
+    </div>`;
+  }).join('');
+  return `<div class="card" style="margin:10px 0 0 0">
+    <h3 style="margin:0 0 4px 0">📍 Your marks with no photos after them</h3>
+    <p class="muted" style="margin:0 0 6px 0">Waypoints you marked on the water that are not a catch. Say what each one was: a missed bite, fish on sonar or a hazard goes to the plan beside your catches. Skip is remembered too, so a mark is only asked about once.</p>
+    ${rows}
+    ${pendingMarks.length > 1 ? '<div style="margin-top:8px"><button class="small" data-mark-skip-rest>Skip the rest</button></div>' : ''}
+  </div>`;
+}
+
+async function labelMark(w, label) {
+  const rec = markRecord(w, label);
+  if (!rec || !(await saveMark(rec))) return false;
+  state.GARMIN_MARKS = [...(state.GARMIN_MARKS || []).filter(m => m.id !== rec.id), rec];
+  return true;
+}
+
+function wireMarks(host) {
+  if (!host) return;
+  host.addEventListener('click', async (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    if (b.hasAttribute('data-mark-skip-rest')) {
+      for (const w of [...pendingMarks]) if (await labelMark(w, 'skip')) pendingMarks = pendingMarks.filter(x => x !== w);
+    } else if (b.dataset.mark != null) {
+      const w = pendingMarks[Number(b.dataset.mark)];
+      if (w && await labelMark(w, b.dataset.label)) pendingMarks = pendingMarks.filter(x => x !== w);
+    } else return;
+    host.innerHTML = marksCardHtml();
+  });
 }
 
 // ── Gemini fish identification (for single photo drop) ───────────────────────
@@ -1558,6 +1635,11 @@ function wireButtons() {
   renderCatchCenter();
   // Attach zoom after render
   setTimeout(attachPhotoZoom, 500);
+}
+
+// Marks labelled on another device arrive through the cloud pull (type `mark`, garmin-marks.js).
+if (typeof window !== 'undefined' && window.addEventListener) {
+  window.addEventListener('trollmap:data-synced', async () => { state.GARMIN_MARKS = await loadMarks(); });
 }
 
 wireButtons();

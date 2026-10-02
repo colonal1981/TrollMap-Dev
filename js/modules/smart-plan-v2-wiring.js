@@ -44,6 +44,7 @@ import { patternFactsFrom, lightFactsFrom } from './plan-prompt.js';
 import { syncClarityIntelData } from './lake-intel.js';
 import { planIssuesHtml } from './plan-issues.js';
 import { renderAll } from '../core/map-init.js';
+import { marksForPlan } from './garmin-marks.js';
 
 export { depthBandFor, usableAhFrom };
 
@@ -335,6 +336,8 @@ export async function runSmartPlanV2(opts = {}) {
       },
       waterState,
       catches: state.CATCHES || [],
+      // Missed bites, fish on sonar and hazards he marked and labelled at upload (item 40).
+      marks: marksForPlan(state.GARMIN_MARKS),
       // What the research pipeline actually found about this water — thermocline, oxygen,
       // forage, habitat, the lot. v2 was sending none of it.
       //
