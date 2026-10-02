@@ -1210,8 +1210,15 @@ export function trollableBaits(inventory, o = {}) {
       // setback for one, and printing that as "80 ft of lead at its deepest" reads like a bait
       // being sunk. It is how far behind the boat it rides, and it is said that way.
       const surface = k.depthMode === 'surface';
+      // NO FURTHER BACK THAN HE RUNS. The DD4 went into the prompt as "182 ft of lead at its
+      // deepest" -- 35 ft times the working ratio -- and a plan took it at its word: 180 ft on
+      // every leg, past the 120 ft he runs. Ryan, 2026-10-02: "Hold them to 120 ft". Where the
+      // line is what stops it, the table says so, rather than claiming the box depth is reached.
+      const full = leadForDepth(lure, d.max, speedFor(bought.type));
+      const held = Number.isFinite(full) && full > maxLeadFt;
       legal.push({ ...bought, covers: [d.min, Math.min(d.max, hasFloor ? floor : d.max)],
-                   leadFt: leadForDepth(lure, d.max, speedFor(bought.type)),
+                   leadFt: held ? maxLeadFt : full,
+                   leadIsLimit: held || undefined,
                    leadIsSetback: surface || undefined,
                    controlledBy: surface ? 'it stays on top' : 'the bill' });
       continue;

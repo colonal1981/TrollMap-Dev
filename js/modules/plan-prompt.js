@@ -2285,6 +2285,7 @@ export function buildPlanRequest(o) {
       + ` (${l.controlledBy})`
       + `${Number.isFinite(l.leadFt) && l.leadFt > 0
             ? (l.leadIsSetback ? `, ${l.leadFt} ft behind the boat`
+               : l.leadIsLimit ? `, ${l.leadFt} ft of lead, the most he runs`
                                : `, ${l.leadFt} ft of lead at its deepest`) : ''}`
       + `${l.inlineWeightOz ? ` behind the ${l.inlineWeightOz}oz inline weight` : ''}`
       + `${l.jigheadOz ? ` on a ${ozLabel(l.jigheadOz)} head` : ''}`

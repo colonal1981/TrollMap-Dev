@@ -193,6 +193,50 @@ function fitInlineWeight(lure, rod, speedMph, ceilingFt, id, runId, warnings) {
   return heaviest;
 }
 
+/** The most line he lets out behind the kayak. FISHING_STYLE.rigging owns it; see there. */
+const MAX_LEAD_FT = FISHING_STYLE.rigging?.maxLeadFt ?? 120;
+
+/**
+ * NO ROD GOES OUT FURTHER THAN THE LINE HE RUNS.
+ *
+ * Ryan, 2026-08-02: "i would set a hard line out limit before i set a hard speed limit" -- and 120
+ * ft is that limit, a two-rod kayak handling limit (FISHING_STYLE.rigging). Every bait the app
+ * weights or heads for itself was already held to it, by fitJighead() and fitInlineWeight(). A
+ * crankbait never was. The prompt's lure table quoted the DD4 at "182 ft of lead at its deepest"
+ * -- its 35 ft rating times the 5.2 working ratio, numbers that came in with the first upload of the
+ * app on 2026-06-23 with no source behind them -- and his first Opus plan, 2026-10-02 at Moultrie,
+ * put it out on 180 ft on all ten of its legs. A Sonnet plan had put it on 150 at Murray on 9/27.
+ * The one measured curve found for a bait like it, a Bandit Walleye Deep on 10 lb mono quoted from
+ * Precision Trolling, gets 2 ft for the 78 ft of line between 117 and 195. His answer, 2026-10-02:
+ * "Hold them to 120 ft".
+ *
+ * The bag is copied, not edited: what the caller passed is the model's answer and stays what it
+ * said. Said once a rod, because a rod carries one lead for the day. A rated bait's sentence says
+ * the box's depth was not measured on this much line, because nothing the app has says it was.
+ *
+ * @returns {{ loadout: object, notes: string[] }}
+ */
+export function holdLeadsToTheLine(loadout, lureByName = null, maxLeadFt = MAX_LEAD_FT) {
+  const notes = [];
+  if (!loadout || !Array.isArray(loadout.rods) || !(maxLeadFt > 0)) {
+    return { loadout: loadout || { rods: [] }, notes };
+  }
+  const rods = loadout.rods.map((rod) => {
+    const asked = Number(rod && rod.leadFt);
+    if (!Number.isFinite(asked) || asked <= maxLeadFt) return rod;
+    const lure = typeof lureByName === 'function' ? lureByName(rod.lure) : null;
+    const box = lure ? depthWindow(lure, { leadFt: maxLeadFt }) : null;
+    notes.push(`${rod.id}: the plan put a ${rod.lure} on ${asked} ft of lead, and you run no `
+             + `more than ${maxLeadFt} ft — it goes out on ${maxLeadFt} ft`
+             + (box && box.claimed === true && box.mode === 'rated'
+                 ? `. Its box rates it ${box.min}-${box.max} ft; nothing the app has measured says `
+                   + `how much of that it reaches on ${maxLeadFt} ft.`
+                 : '.'));
+    return { ...rod, leadFt: maxLeadFt };
+  });
+  return { loadout: { ...loadout, rods }, notes };
+}
+
 /**
  * THE SHALLOWEST WATER ON THE LEG IS A CEILING ON HOW DEEP THE BAIT MAY RUN.
  *
@@ -375,19 +419,32 @@ function capBaitDepth(rods, deploy, ceilingFt, speedMph, lureByName, runId, warn
     // there is nothing to invert) and falls through to the skip below, as it always did.
     if (!fit && !(Number.isFinite(leadFt) && leadFt > 0)) {
       const rated = depthWindow(lure, { speedMph, leadFt: null });
-      const want = rated.claimed && Number.isFinite(rated.max)
+      const full = rated.claimed && Number.isFinite(rated.max)
         ? leadForDepth(lure, rated.max, speedMph) : null;
+      // NO FURTHER BACK THAN HE RUNS. See holdLeadsToTheLine(): 35 ft times the working ratio is
+      // 182 ft for a DD4, and nothing measured stands behind that number.
+      const want = Number.isFinite(full) ? Math.min(full, MAX_LEAD_FT) : null;
       if (Number.isFinite(want) && want > 0) {
         warnings.push(`${id} on ${runId}: the plan put a ${rod.lure} on `
                     + `${Number.isFinite(leadFt) ? `${leadFt} ft of lead` : 'no lead at all'}. The `
                     + 'bill sets how DEEP it runs, not how far BEHIND the boat it is — at the rod '
-                    + `tip it is in the wake. Let out ${want} ft, which is what it takes to work `
-                    + `a bait rated to ${rated.max} ft.`);
+                    + `tip it is in the wake. Let out ${want} ft, `
+                    + (want < full ? 'the most you run.'
+                                   : `which is what it takes to work a bait rated to ${rated.max} ft.`));
         leadFt = want;
         forThisLeg[id] = { ...(forThisLeg[id] || {}), leadFt };
       }
     }
     if (!Number.isFinite(leadFt)) continue;
+    // AND NO LEAD THE APP WORKED OUT ITSELF GOES PAST IT EITHER. The model's own leads were held
+    // to the line for the whole day before any leg was built (holdLeadsToTheLine()); what can still
+    // be longer here is a lead this function computed -- a head that cannot make the depth inside
+    // the line, which fitJighead() has already said out loud. The lead stops at the line and the
+    // window below reports the depth it does reach there.
+    if (leadFt > MAX_LEAD_FT) {
+      leadFt = MAX_LEAD_FT;
+      forThisLeg[id] = { ...(forThisLeg[id] || {}), leadFt };
+    }
     // A fitted head is reported whether or not anything else about this leg had to move. It is
     // the number Ryan asked for and could not find: `jigWeight` was an empty string on every row
     // of every plan, because nothing had ever chosen one.
@@ -1128,7 +1185,8 @@ function groundSpeedFor(window, currentMph, upstream) {
  * @param {object}   o
  * @param {object[]} o.candidates  from selectCandidates(), IN THE ORDER THE MODEL CHOSE
  * @param {number[]} o.launch      [lon, lat] of the ramp
- * @param {object}   o.loadout     the model's six rods; passed through untouched
+ * @param {object}   o.loadout     the model's six rods; copied, with any lead past the line he runs
+ *                               held to it (holdLeadsToTheLine()), and otherwise untouched
  * @param {object}   [o.deploy]    { [runId]: {port, starboard} } — which two rods go in the water
  * @param {object} [o.deployBack]  the same, for the RUN BACK over a river reach. Optional, and
  *                               absent means the run back keeps the rods from the run out.
@@ -1182,6 +1240,9 @@ export function assemblePlan(o) {
     ? Number(o.oxygenFloorFt) : null;
   // Which lead fits capBaitDepth() has already reported today, so each is said once. See there.
   const fitsSaid = new Set();
+  // THE BAG, WITH NO ROD FURTHER BACK THAN HE RUNS. Every reader below takes this one, the river
+  // fit and the plan's own copy of the loadout included. See holdLeadsToTheLine().
+  const held = holdLeadsToTheLine(o.loadout, o.lureByName);
   const trollMph = o.trollMph ?? 2.0;
   const transitMph = o.transitMph ?? 3.5;
   const launchMin = parseClock(o.launchTime) ?? 6 * 60;
@@ -1241,7 +1302,7 @@ export function assemblePlan(o) {
   // out-and-backs from one launch and only that function knows how to order them.
   const riverDayPath = t0.river;
   const fitted = riverDayPath
-    ? fitRiverDay(candidates, o.launch, o, (o.loadout && o.loadout.rods) || [],
+    ? fitRiverDay(candidates, o.launch, o, (held.loadout && held.loadout.rods) || [],
                   returnMin != null ? returnMin - launchMin : Infinity, transitMph)
     : { legs: t0.legs, facing: t0.facing, dropped: [], droppedRuns: [] };
   const legList = fitted.legs;
@@ -1263,7 +1324,7 @@ export function assemblePlan(o) {
   // SORTED: `warnings` is what needs him, `decisions` is what the app did, and the two surfaces
   // that render a plan show them differently. A list where nine of eleven need no action is a
   // list nobody reads, which costs the two that do.
-  const decisions = [];
+  const decisions = [...held.notes];
   let cursor = o.launch;          // where the boat is
   // THE SPINE IS INTEGER METRES, accumulated from already-rounded leg lengths — not a float that
   // gets rounded on the way out. Round a running total and the reported starts drift a metre off
@@ -1390,7 +1451,7 @@ export function assemblePlan(o) {
     changeAtPass.set(c, has ? asked : 1);
   }
 
-  const rods = (o.loadout && o.loadout.rods) || [];
+  const rods = (held.loadout && held.loadout.rods) || [];
   const rodTiedOn = new Map(rods.map((r) => [r.id, r.lure ?? null]));
   const sameLure = (x, y) => String(x ?? '').trim().toLowerCase()
                           === String(y ?? '').trim().toLowerCase();
@@ -2186,7 +2247,7 @@ export function assemblePlan(o) {
       species: o.species || [],
     },
     conditions: o.conditions || {},
-    loadout: o.loadout || { rods: [] },
+    loadout: held.loadout,
     legs,
     changes,
     budget: {
