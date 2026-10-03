@@ -41,7 +41,7 @@ import { loadAccessIndex, registryRecordFor } from "../data/access-index.js";
 // fetchDamLevels() was the other one, and it is gone rather than fixed -- Module F now reads
 // /conditions, which resolves every operator from water_bindings.json instead of four
 // hand-written substring matchers. See Module F for what that replaced.
-import { fetchWaterConditions, todayDepthFt } from "../utils/water-conditions.js";
+import { fetchWaterConditions, todayDepthFt, statedDrawdown } from "../utils/water-conditions.js";
 import { distFt } from "../utils/geo.js";
 import { solunarFor } from "../utils/solunar.js";
 import { get as dbGet, put as dbPut, getAll as dbGetAll, del as dbDel, isReady as dbIsReady } from '../utils/db.js';
@@ -1902,13 +1902,16 @@ ${src}`;
     // THE STATED DRAWDOWN WINS over a subtraction. Chilhowee and Calderwood publish feet below
     // full pool and no elevation, so `poolLevel - fullPool` is NaN on the two lakes that
     // answered the question directly.
+    //
+    // AND NEVER A SUBTRACTION ACROSS TWO MARKS. See statedDrawdown(): a level and a full pool with
+    // no stated drawdown is one the Worker withheld, and this said "CAUTION: 5.2 ft below full pool"
+    // about Moultrie off a NAVD88 reading and Marion's full pool.
     const poolVal = parseFloat(p.meta.poolLevel);
     const fullVal = parseFloat(p.meta.fullPool);
-    const statedBelow = parseFloat(p.meta.belowFullPool);
+    const dd = statedDrawdown(p.meta);
     // Positive = below full pool, matching how every operator publishes it. `diff` keeps the
     // old sign convention (negative = down) so the sentences below read the same way.
-    const diff = isFinite(statedBelow) ? -statedBelow
-               : (isFinite(poolVal) && isFinite(fullVal)) ? poolVal - fullVal : NaN;
+    const diff = isFinite(dd.below) ? -dd.below : NaN;
     if(isFinite(diff)){
       const at = isFinite(poolVal) ? `${poolVal.toFixed(1)} ft` : 'level';
       if(diff <= -10) addRisk(`NO-GO: lake is ${Math.abs(diff).toFixed(1)} ft below full pool — likely ramp/prop hazards`);
@@ -1916,6 +1919,11 @@ ${src}`;
       else if(diff >= 5) addRisk(`NO-GO: lake is ${diff.toFixed(1)} ft above full pool — flood/debris risk`);
       else if(diff >= 2) addRisk(`CAUTION: lake is ${diff.toFixed(1)} ft above full pool — floating debris / flooded banks`);
       else addPositive(`Lake ${at} — ${Math.abs(diff) < 0.05 ? 'at full pool' : `${Math.abs(diff).toFixed(1)} ft ${diff < 0 ? 'below' : 'above'} full pool`}, near target`);
+    } else if (dd.withheld) {
+      // A level IS loaded; how far down it is just cannot be read off these two numbers. A fact
+      // about the day, not a hazard, so it is a note and it does not move the verdict.
+      addNote(`Lake ${poolVal.toFixed(2)} ft, full pool ${fullVal} ft — measured from different `
+            + 'marks, so how far down it is is not given');
     } else if((p.meta.waterbodyType||'lake') === 'lake'){
       addRisk('CAUTION: no verified live lake-level source loaded — manually verify ramp depth and pool level');
     }
@@ -2242,9 +2250,13 @@ ${pressureHtml}
       // and no elevation, so the old subtraction printed no badge on a lake that had already
       // answered. The comparison is also `>= 0` on a rounded string in the original, which made
       // "-0.0 Drawdown" render green.
-      const stated = parseFloat(p.meta.belowFullPool);
-      const lvl = parseFloat(p.meta.poolLevel), full = parseFloat(p.meta.fullPool);
-      const below = isFinite(stated) ? stated : (isFinite(lvl) && isFinite(full)) ? full - lvl : NaN;
+      // Stated, or not at all: two numbers on different marks get a plain note, not a red badge.
+      const { below, withheld } = statedDrawdown(p.meta);
+      if (withheld) {
+        return '<span style="display:inline-block;margin-left:8px;padding:2px 6px;border-radius:4px;'
+             + 'font-size:11px;background:#eceff1;color:#455a64">measured from different marks — '
+             + 'how far down is not given</span>';
+      }
       if (!isFinite(below)) return '';
       const good = below <= 0;
       const txt = Math.abs(below) < 0.05 ? 'At Full Pool'

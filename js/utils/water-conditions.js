@@ -952,8 +952,44 @@ export function levelSentence(c) {
               : `${Math.abs(d).toFixed(2)} ft above full pool`);
   }
   if (c.fullPoolFt != null) bits.push(`full pool ${c.fullPoolFt} ft`);
+  // BOTH NUMBERS AND NO DIFFERENCE MEANS THE WORKER WITHHELD IT, and says why: the level and the
+  // full pool are measured from different marks (a NAVD88 gauge against a full pool whose datum
+  // nobody stated), and across datums the subtraction can be a foot out or flip sign. Saying so
+  // here keeps the card, the topbar and the plan's prompt from reading as an invitation to do it.
+  if (c.belowFullPoolFt == null && c.levelFt != null && c.fullPoolFt != null) {
+    bits.push('measured from different marks, so how far down it is is not given');
+  }
   const src = c.feedName ? `${c.levelSource} — ${c.feedName}` : c.levelSource;
   return `${bits.join(' · ')}${src ? ` (${src})` : ''}`;
+}
+
+/**
+ * HOW FAR BELOW FULL POOL, FROM A SAVED PLAN'S META -- and only when somebody actually said so.
+ *
+ * The plan form's level fields are hidden inputs filled by the conditions sync, never typed. So a
+ * plan carrying a level and a full pool but NO `belowFullPool` is one where the Worker withheld the
+ * difference because the two were on different marks. plan-builder's go/no-go and drawdown badge
+ * used to subtract them anyway: Moultrie's 71.6 (NAVD88) from Marion's 76.8 printed "CAUTION: lake
+ * is 5.2 ft below full pool" on 2026-10-03, and Marion and Murray do the same today. Ryan: "you can
+ * fix both of those open items".
+ *
+ * A file saved before `belowFullPool` existed carries no key at all, and gets the old subtraction:
+ * nothing about those files says the two numbers were on different marks.
+ *
+ * @returns {{below: number, withheld: boolean}}  below is NaN when not known; positive = down.
+ */
+export function statedDrawdown(meta) {
+  const m = meta || {};
+  const n = (v) => (v == null || v === '' ? NaN : Number(v));
+  const stated = n(m.belowFullPool);
+  if (Number.isFinite(stated)) return { below: stated, withheld: false };
+  const lvl = n(m.poolLevel);
+  const full = n(m.fullPool);
+  const both = Number.isFinite(lvl) && Number.isFinite(full);
+  if (both && !Object.prototype.hasOwnProperty.call(m, 'belowFullPool')) {
+    return { below: Math.round((full - lvl) * 100) / 100, withheld: false };
+  }
+  return { below: NaN, withheld: both };
 }
 
 /**
