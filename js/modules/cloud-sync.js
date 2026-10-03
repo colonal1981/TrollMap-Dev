@@ -24,6 +24,7 @@
 import { state, CF_WORKER_URL } from '../core/state.js';
 import { get as dbGet, put as dbPut, getAll as dbGetAll, isReady as dbIsReady, tryPut, tryDel } from '../utils/db.js';
 import { SYNC_TOKEN } from '../utils/worker-auth.js';
+import { mergePulledJournal, isCatch } from '../utils/journal-merge.js';
 
 // The token lives in utils/worker-auth.js. It was spelled out here AND, differently, in
 // plan-builder.js -- `trollmap-sync-9a8b7c6d5e`, which the worker rejected on every call.
@@ -337,14 +338,21 @@ export async function pullUpdatesOnLoad() {
           // For plans/spreads the id IS the name; for charts it's the name;
           // for journal "catches" the id is row.id. Pick what fits the store.
           if (store === 'journal') {
-            // catches are stored as a single record named 'catches' with data array
-            const cur = await dbGet('journal', 'catches');
-            const data2 = cur?.data || [];
-            const idx = data2.findIndex((c) => c.key === id || c.id === id);
-            const merged2 = [...data2];
-            if (idx >= 0) merged2[idx] = { ...merged2[idx], ...local };
-            else merged2.push(local);
-            await dbPut('journal', { name: 'catches', data: merged2 });
+            // THE JOURNAL IS ONE RECORD, and this used to push it into itself. catch-journal.js
+            // sends the whole journal as `catch/catches`; this looked for a catch keyed 'catches',
+            // found none, and appended the record as one more catch -- 504 blank rows in Ryan's
+            // journal by 2026-10-03. Now the pulled record's catches are merged in: what this device
+            // lacks is added, nothing here is overwritten. Any other journal record (the review
+            // queue) is not a catch and is left alone. See journal-merge.js.
+            if (id === 'catches' || isCatch(local)) {
+              const cur = await dbGet('journal', 'catches');
+              const m = mergePulledJournal(cur?.data || [], local);
+              await dbPut('journal', { name: 'catches', data: m.catches });
+              if (state.CATCHES) state.CATCHES = m.catches;
+              if (m.recovered) console.log(`[cloud-sync] ${m.recovered} catch(es) from the cloud journal added on this device.`);
+            } else {
+              console.log(`[cloud-sync] journal record "${id}" pulled and not merged: it is not a catch.`);
+            }
           } else if (store === 'charts') {
             // charts is one record '__all__' with array
             const cur = await dbGet('charts', '__all__');

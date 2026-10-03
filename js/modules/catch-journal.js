@@ -24,6 +24,7 @@ import { parseGPX } from '../utils/parsers.js';
 import { distMiFromCoords } from '../utils/geo.js';
 import { groupPhotosByWaypoint, waypointReadings, localIso, fmtGap } from '../utils/catch-waypoints.js';
 import { marksToAsk, markRecord, saveMark, loadMarks, MARK_LABELS } from './garmin-marks.js';
+import { flattenJournal } from '../utils/journal-merge.js';
 const DEFAULT_HELPER = 'http://127.0.0.1:8787';
 const QUEUE_DB_KEY = 'catch_import_queue';
 const CATCHES_DB_KEY = 'catches';
@@ -35,6 +36,14 @@ function setQueue(arr) { state.CATCH_IMPORT_QUEUE = arr || []; }
 
 let selectedQueueId = null;
 let currentSubtab = 'review';
+// WHAT THE LAST CSV IMPORT DID WITH ITS ROWS. Ryan, 2026-10-03, importing the catch history rebuilt
+// the night before (catches_approved_2026-10-03.csv): "when it goes to the review queue it says
+// there to import a csv first". Every one of its 157 rows says review_status=imported, so the import
+// sends them straight to the Journal -- by design -- and then it switched to the Review Queue anyway,
+// which was empty and told him to import a CSV. The status line that said where they went was on the
+// Import tab, out of sight. So the summary is kept, the import opens the tab its rows went to, and
+// an empty queue says what the last import did instead of asking for one.
+let lastCsvImport = null;
 // THE LAST DROP'S MARKS STILL TO LABEL, AND ITS STATUS LINE, kept here because the drop ends by
 // re-rendering the Import tab -- which rebuilt the status line empty, so the "Added N catches"
 // line vanished as it was written. Item 40, 2026-10-02.
@@ -465,7 +474,21 @@ async function saveQueue() {
 export async function loadCatches() {
   try {
     const r = await dbGet('journal', CATCHES_DB_KEY);
-    if (r) setCatches(r.data || []);
+    if (r) {
+      // A JOURNAL THAT HOLDS COPIES OF ITSELF IS REPAIRED ON LOAD. cloud-sync's pull appended every
+      // pulled `catch/catches` record as one more catch until 2026-10-03 (504 blank rows in Ryan's
+      // journal). The copies come out; a catch that was only inside one -- logged on another device
+      // and never merged -- stays, once. See journal-merge.js.
+      const fixed = flattenJournal(r.data || []);
+      setCatches(fixed.catches);
+      if (fixed.records || fixed.dropped) {
+        console.warn(`[catch-journal] repaired the journal: ${fixed.records} cop${fixed.records === 1 ? 'y' : 'ies'} of `
+          + `the journal removed, ${fixed.recovered} catch(es) found only inside them kept, ${fixed.dropped} empty `
+          + `entr${fixed.dropped === 1 ? 'y' : 'ies'} removed; ${fixed.catches.length} catches.`);
+        state.JOURNAL_REPAIR = { ...fixed, catches: undefined, at: new Date().toISOString(), kept: fixed.catches.length };
+        await saveCatches();
+      }
+    }
     const q = await dbGet('journal', QUEUE_DB_KEY);
     if (q) setQueue(q.data || []);
     // His labelled Garmin marks, for the plan's `yourHistory` (garmin-marks.js). Never throws.
@@ -755,7 +778,12 @@ function renderReview(body) {
 }
 
 function renderQueueList(el, queue) {
-  if (!queue.length) { el.innerHTML = '<p class="muted">No queue yet. Import a CSV first.</p>'; return; }
+  if (!queue.length) {
+    el.innerHTML = lastCsvImport
+      ? `<p class="muted">The queue is empty. The last import (${esc(lastCsvImport.files.join(', '))}): ${esc(csvImportSummary(lastCsvImport))}</p>`
+      : '<p class="muted">No queue yet. Import a CSV first.</p>';
+    return;
+  }
   el.innerHTML = queue.map(q => {
     const sp = q.verified?.species || q.ai?.inferredSpecies || q.ai?.species || 'Fish';
     const len = q.verified?.length || q.ai?.length || '';
@@ -1042,9 +1070,24 @@ async function importCsvFiles(files) {
     }
   }
   await saveQueue();
-  if (status) status.textContent = `${autoApproved ? `Auto-approved ${autoApproved} to journal. ` : ''}${added ? `Added ${added} to review queue. ` : ''}${skippedHandheld ? `Skipped ${skippedHandheld} handheld. ` : ''}${skipped ? `Skipped ${skipped} duplicate. ` : ''}`.trim();
-  currentSubtab = 'review'; selectedQueueId = getQueue().find(q => q.status === 'pending')?.id || getQueue()[0]?.id || null;
+  lastCsvImport = { files: files.map(f => f.name), added, autoApproved, skipped, skippedHandheld };
+  if (status) status.textContent = csvImportSummary(lastCsvImport);
+  // THE TAB THE ROWS WENT TO: the queue when any went there, the Journal when they all went straight
+  // in, and this tab -- with the line above -- when nothing went anywhere.
+  currentSubtab = added ? 'review' : autoApproved ? 'journal' : 'import';
+  selectedQueueId = getQueue().find(q => q.status === 'pending')?.id || getQueue()[0]?.id || null;
   setTimeout(renderCatchCenter, 700);
+}
+
+/** One line on where an import's rows went, for the Import tab and for an empty Review Queue. */
+export function csvImportSummary(r) {
+  if (!r) return '';
+  const parts = [];
+  if (r.autoApproved) parts.push(`${r.autoApproved} row${r.autoApproved === 1 ? ' was' : 's were'} already marked imported and went straight to the Journal`);
+  if (r.added) parts.push(`${r.added} added to the review queue`);
+  if (r.skipped) parts.push(`${r.skipped} skipped — already in the journal or the queue, or not a fish`);
+  if (r.skippedHandheld) parts.push(`${r.skippedHandheld} handheld fish skipped (untick "board fish only" to bring them in)`);
+  return parts.length ? `${parts.join('; ')}.` : 'No rows were read from that file.';
 }
 function indexPhotoFolder(files, body) {
   let count = 0;
