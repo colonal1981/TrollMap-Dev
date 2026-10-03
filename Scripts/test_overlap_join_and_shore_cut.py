@@ -57,6 +57,18 @@ def test_a_piece_nothing_joins_keeps_its_direction():
     assert B.join_overlaps([b]) == [b]
 
 
+def test_pieces_that_would_close_into_a_ring_are_left_open():
+    # A square loop in two pieces that overlap at BOTH seams: joining across one seam would leave
+    # the run's ends 1 m apart, which build_one() calls closed -- and the fitter skips closed runs.
+    s = 200 * D
+    a = [[0.0, LAT], [s, LAT], [s, LAT + 0.0018], [0.5 * s, LAT + 0.0018]]
+    b = [[0.5 * s + 9 * D, LAT + 0.0018], [0.0, LAT + 0.0018], [0.0, LAT], [1 * D, LAT]]
+    r = B.join_overlaps([a, b])
+    # Joined across the 9 m seam its ends would be 1 m apart, so that join is refused; across the
+    # 1 m seam its ends stay 9 m apart, an open run the fitter will take.
+    assert all(B.metres(x[0], x[-1]) >= 2.0 for x in r)
+
+
 def test_the_build_joins_after_it_stitches():
     src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'build_trolling_runs.py'),
                encoding='utf-8').read()

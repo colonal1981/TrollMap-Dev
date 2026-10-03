@@ -444,7 +444,7 @@ def _lies_on_head(p, run, tol_m, reach_m):
     return None
 
 
-def join_overlaps(runs, quant=5, cell_deg=0.001):
+def join_overlaps(runs, quant=5, cell_deg=0.001, closed_m=2.0):
     """Join runs whose ends OVERLAP instead of meeting at a shared vertex.
 
     `stitch()` joins two fragments only where an endpoint is the same point to ~1.1 m. Where
@@ -463,11 +463,14 @@ def join_overlaps(runs, quant=5, cell_deg=0.001):
     to be at the ends -- each end is looked for only within the distance between the two ends --
     so a fragment that ends ON another line part way along it is left alone.
 
-    A RUN IS NEVER JOINED TO ITSELF. A contour round a whole basin, cut at an overlap, comes out of
-    this an open run with its two ends overlapping, exactly as `stitch()` left it -- because the
-    fitter skips every closed ring (a ring is a hump you circle), and the first version of this,
-    which closed them, took about a third of Lake Keowee's fitted lanes with it (1,063 before; 609
-    with that and the first shore cut together, 949 with rings left open).
+    A RUN IS NEVER JOINED INTO A RING. A contour round a whole basin, cut at overlaps, comes out of
+    this still open, as `stitch()` left it -- because the fitter skips every closed ring (a ring is
+    a hump you circle), and the first version of this, which closed them, took about a third of
+    Lake Keowee's fitted lanes with it (1,063 before; 609 with that and the first shore cut, 949
+    with rings left open). And not only by joining a run to itself: a join whose result would have
+    its two ends within `closed_m` -- `build_one()`'s own test for a closed run -- is refused too.
+    Without that, Wateree lost 9% of its fitted lanes to basin-wide contours whose last seam
+    overlapped by under 2 m.
 
     `cell_deg` only sizes the grid that finds candidate pairs; the test above decides.
     """
@@ -491,6 +494,8 @@ def join_overlaps(runs, quant=5, cell_deg=0.001):
                     reach = metres(a[-1], b[0]) + tol
                     k = _lies_on_head(a[-1], b, tol, reach)
                     if k is None or _lies_on_head(b[0], a[::-1], tol, reach) is None:
+                        continue
+                    if k < len(b) and metres(a[0], b[-1]) < closed_m:
                         continue
                     runs[i] = a + b[k:]
                     runs[j] = None
