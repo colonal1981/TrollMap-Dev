@@ -1210,6 +1210,94 @@ def structure_seeds(pack, depth, lat0, a):
     return out
 
 
+# ── NO PASS GOES THROUGH WHAT THE CHART DRAWS AS SHORE ─────────────────────────────────────────
+#
+# Ryan, 2026-10-02, on L7/L8 of his Moultrie plan: *"lane 8 runs right through a wall on the
+# dam... this point is a concrete wall LOL"*. It did, at 33.24512, -79.99241. The lane was a hump
+# chord, and everything this script asks is DEPTH: the chart draws that wall as one thin shoreline
+# line with 50-60 ft of water on both sides of it, so in the depth raster there is no wall at all.
+# The line the chart does draw was in the pack the whole time (`garmin_shoreline.geojson`) and
+# nothing here read it. On Moultrie 317 of 8,225 lanes touched one.
+#
+# So a pass is CUT where it meets a charted shoreline line, the same way it is cut at a corner it
+# cannot be steered round: what is left on each side is a pass if it is still long enough. Nothing
+# is moved or bent round the wall -- the line the boat cannot cross is the end of the pass.
+# Without shapely, or without the layer, the cut is skipped and `shore_lines` in the stats is 0.
+try:
+    from shapely.geometry import LineString as _SLine, MultiLineString as _SMulti
+    from shapely.ops import split as _ssplit
+    from shapely.strtree import STRtree as _STree
+    _HAVE_SHAPELY = True
+except Exception:                                        # pragma: no cover
+    _HAVE_SHAPELY = False
+
+
+class ChartedShore:
+    """`garmin_shoreline.geojson` in the fitter's metre frame, for cutting passes at it."""
+
+    def __init__(self, pack, lat0):
+        self.lines, self.tree, self.free_standing = [], None, 0
+        p = os.path.join(pack, 'garmin_shoreline.geojson')
+        if not _HAVE_SHAPELY or not os.path.isfile(p):
+            return
+        try:
+            with open(p, 'r', encoding='utf-8') as fh:
+                feats = json.load(fh).get('features') or []
+        except Exception:
+            return
+        lines = []
+        for f in feats:
+            g = f.get('geometry') or {}
+            parts = ([g.get('coordinates')] if g.get('type') == 'LineString'
+                     else g.get('coordinates') if g.get('type') == 'MultiLineString' else [])
+            for c in parts or ():
+                if c and len(c) >= 2:
+                    lines.append(_SLine(_xy(c, lat0)))
+        if not lines:
+            return
+        # ONLY WHAT IS JOINED TO THE REST OF THE SHORE. An outline standing free in the water --
+        # touching no other shore line -- is a bridge pier, a rock or an islet, and a boat steers
+        # round it; the depth raster already ends a pass at anything big enough to be water it
+        # cannot cross. Cutting at those cost 8% of Lake Keowee's fitted lanes (949 against 1,031),
+        # most of them at two rows of bridge piers (34.8335, -82.949 and 34.710, -82.970). The Pinopolis wall is the
+        # other kind: its outline touches the dam's, so it is a barrier and the pass ends there.
+        whole = _STree(lines)
+        for i, ln in enumerate(lines):
+            if any(j != i and ln.intersects(lines[j]) for j in whole.query(ln)):
+                self.lines.append(ln)
+        self.free_standing = len(lines) - len(self.lines)
+        if self.lines:
+            self.tree = _STree(self.lines)
+
+    def cut(self, xy):
+        """The stretches of `xy` between the charted shore lines it meets, in order. One stretch,
+        the input itself, when it meets none."""
+        if self.tree is None or len(xy) < 2:
+            return [xy]
+        line = _SLine(xy)
+        hit = [self.lines[i] for i in self.tree.query(line) if line.intersects(self.lines[i])]
+        if not hit:
+            return [xy]
+        try:
+            parts = _ssplit(line, _SMulti(hit))
+        except Exception:
+            # A pass running ALONG a shore line for a stretch cannot be split by it as a line;
+            # cut it at the points where the two meet instead.
+            pts = line.intersection(_SMulti(hit))
+            bits = [g for g in getattr(pts, 'geoms', [pts]) if not g.is_empty]
+            cuts = []
+            for g in bits:
+                cuts.extend(list(g.coords) if g.geom_type != 'Point' else [g.coords[0]])
+            from shapely.geometry import MultiPoint as _SMP
+            try:
+                parts = _ssplit(line, _SMP(cuts)) if cuts else line
+            except Exception:
+                return [xy]
+        out = [np.array(g.coords, float) for g in getattr(parts, 'geoms', [parts])
+               if g.geom_type == 'LineString' and len(g.coords) >= 2]
+        return out or [xy]
+
+
 def graph_index(gpath, slug=''):
     """(NodeIndex, main-component set) for a pack's water graph, or (None, None) without one.
 
@@ -1316,6 +1404,20 @@ def fit_pack(pack, a):
         grid.setdefault((int(q[0] / cell), int(q[1] / cell)), []).append(q)
 
     idx, mainset = graph_index(os.path.join(pack, 'water_graph.bin'), slug)
+    shore = ChartedShore(pack, lat0)
+
+    def unfitted_at_shore(coords, min_leg):
+        """A run kept as drawn is cut at the shore too, when it is long enough to be offered as a leg
+        (`min_leg`, which is what both planners ask for). What is kept of it is the pieces that
+        still are. A shorter run is left as it was: no planner offers it, and cutting a 2 ft
+        contour at every dock it passes was 36,849 fragments and 24 MB on Lake Keowee alone."""
+        if shore.tree is None or length_m(coords) < min_leg:
+            return [coords]
+        bits = shore.cut(_xy(coords, lat0))
+        if len(bits) < 2:
+            return [coords]
+        st['cut_at_shore'] += 1
+        return [_ll(b, lat0) for b in bits if float(_seglens(b).sum()) >= min_leg]
 
     out = []
     st = {'in': len(runs), 'fitted': 0, 'split': 0, 'kept_closed': 0, 'kept_short': 0,
@@ -1323,7 +1425,8 @@ def fit_pack(pack, a):
           'corners_before': 0, 'corners_after': 0, 'passes': 0,
           # `in` counts both seed sources because they go through one loop. These say how much of
           # it was structure, so a run that produced nothing new says so instead of looking normal.
-          'seeds_in': len(st_seeds), 'seed_passes': 0, 'seed_kinds': {}}
+          'seeds_in': len(st_seeds), 'seed_passes': 0, 'seed_kinds': {},
+          'shore_lines': len(shore.lines), 'cut_at_shore': 0, 'm_cut_at_shore': 0.0}
 
     for f in runs:
         pr = dict(f['properties'])
@@ -1353,9 +1456,17 @@ def fit_pack(pack, a):
             # with its ends pinned collapses it toward a point. Short runs are not passes.
             st['kept_closed' if pr.get('closed') else 'kept_short'] += 1
             pr['fitted'] = False
-            annotate(pr, coords, grid, cell, a.annotate_m, depth, lat0)
-            out.append({'type': 'Feature', 'properties': pr,
-                        'geometry': {'type': 'LineString', 'coordinates': coords}})
+            for c2 in unfitted_at_shore(coords, min_leg):
+                p3 = dict(pr)
+                if c2 is not coords:
+                    p3['length_m'] = round(length_m(c2), 1)
+                    p3['vertices'] = len(c2)
+                    p3['closed'] = False
+                    p3.pop('area_m2', None)
+                    p3['cut_at_shore'] = True
+                annotate(p3, c2, grid, cell, a.annotate_m, depth, lat0)
+                out.append({'type': 'Feature', 'properties': p3,
+                            'geometry': {'type': 'LineString', 'coordinates': c2}})
             continue
 
         xy0 = _xy(coords, lat0)
@@ -1424,6 +1535,21 @@ def fit_pack(pack, a):
                                             bridge_m=a.bridge_m, bridge_dm=a.bridge_dm,
                                             deep_bridge_m=a.deep_bridge_m,
                                             deep_bridge_dm=a.deep_bridge_dm))
+        # AND NOT THROUGH THE SHORE. See ChartedShore: a pass that meets a charted shore line ends
+        # there, and what is left on each side is kept if it is still a pass.
+        cut = []
+        for piece in pieces:
+            bits = shore.cut(piece)
+            if len(bits) > 1:
+                st['cut_at_shore'] += 1
+                keep = [b for b in bits if float(_seglens(b).sum()) >= min_leg]
+                st['m_cut_at_shore'] += float(_seglens(piece).sum()) - float(
+                    sum(_seglens(b).sum() for b in keep))
+                cut.extend(keep)
+            else:
+                cut.append(piece)
+        pieces = cut
+
         if not pieces:
             st['kept_thin'] += 1
             pr['fit_note'] = ('no fitted pass of %.0f m survived: this %s is not %.1f ft '
@@ -1432,9 +1558,15 @@ def fit_pack(pack, a):
             # Every piece came out under min_leg_m: the water here does not hold a pass. Keep the
             # contour rather than inventing one, and say so in the properties.
             pr['fitted'] = False
-            annotate(pr, coords, grid, cell, a.annotate_m, depth, lat0)
-            out.append({'type': 'Feature', 'properties': pr,
-                        'geometry': {'type': 'LineString', 'coordinates': coords}})
+            for c2 in unfitted_at_shore(coords, min_leg):
+                p3 = dict(pr)
+                if c2 is not coords:
+                    p3['length_m'] = round(length_m(c2), 1)
+                    p3['vertices'] = len(c2)
+                    p3['cut_at_shore'] = True
+                annotate(p3, c2, grid, cell, a.annotate_m, depth, lat0)
+                out.append({'type': 'Feature', 'properties': p3,
+                            'geometry': {'type': 'LineString', 'coordinates': c2}})
             continue
 
         st['fitted'] += 1

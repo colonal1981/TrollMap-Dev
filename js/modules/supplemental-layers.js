@@ -558,6 +558,12 @@ const POI_STYLE = {
   nav_beacon:      { emoji: '🟢', color: '#4CAF50' },
   nav_light:       { emoji: '💡', color: '#FFEB3B' },
   mile_marker:     { emoji: '📍', color: '#9E9E9E' },
+  // A NUMBERED MARK ON THE WATER. These were filed as highway signs and hidden with the land POIs
+  // until 2026-10-03 -- Ryan, on Moultrie's "2": "these are not land POI at all... they are channel
+  // markers they alternate red and green". refile_channel_markers.py refiles each one that sits in
+  // the pack's charted water and writes its `side` from the number (33 CFR 62.43: red even, green
+  // odd). The colour drawn is that side; this one is only the fallback for a record without it.
+  channel_marker:  { emoji: '🚩', color: '#9E9E9E' },
   place_name:      { emoji: '📌', color: '#aaaaaa' },
 
   // ── Garmin RGN4 classes (chartpack schema v2) ──────────────────────────
@@ -601,6 +607,12 @@ const POI_STYLE = {
 // hide a whole undecoded class among the lake names.
 const POI_STYLE_UNKNOWN = { emoji: '❔', color: '#8e8e8e' };
 
+/** Red or green for a refiled channel marker, from the `side` the pipeline wrote; null otherwise. */
+export function channelMarkerColor(p) {
+  if (!p || p.poi_type !== 'channel_marker') return null;
+  return p.side === 'red' ? '#e53935' : p.side === 'green' ? '#43a047' : null;
+}
+
 function poiStyleFor(type) {
   return POI_STYLE[type] || (/^garmin_/.test(type) ? POI_STYLE_UNKNOWN : POI_STYLE.place_name);
 }
@@ -623,6 +635,7 @@ const POI_LABEL = {
   slow_no_wake:     'No wake',
   restricted_area:  'No boats / restricted',
   mile_marker:      'Marker number',
+  channel_marker:   'Channel marker',
   marine_dealer:    'Marine dealer',
   fuel_dock:        'Fuel dock',
   boat_club:        'Boat club',
@@ -1009,12 +1022,17 @@ async function buildPoiLayer(lakeKey) {
       // handled by renderPoiLabels(); an unnamed one has nothing to draw at all.
       if (type === 'place_name') { asText++; return; }
       if (!_showUnidentified && isUnidentified(type)) { unknown++; return; }
-      const style = poiStyleFor(type);
+      const base  = poiStyleFor(type);
+      const style = { ...base, color: channelMarkerColor(p) || base.color };
       const label = poiLabel(type);
       // Title is the name when Garmin or ActiveCaptain gave one, and the human class name
-      // otherwise -- never the raw type key.
-      const name  = p.name || p.card || label;
-      const sub   = (p.name || p.card) ? label : (p.mode ? `Garmin mode ${p.mode}` : '');
+      // otherwise -- never the raw type key. A channel marker's name is only its number, written
+      // with Garmin's quotes; it reads as "Channel marker 2".
+      const name  = type === 'channel_marker' && Number.isFinite(Number(p.marker_number))
+        ? `${label} ${p.marker_number}` : (p.name || p.card || label);
+      const sub   = type === 'channel_marker'
+        ? (p.side ? `${p.side} side (${p.side === 'red' ? 'even' : 'odd'} number)` : '')
+        : (p.name || p.card) ? label : (p.mode ? `Garmin mode ${p.mode}` : '');
       const m = L.circleMarker([coords[1], coords[0]], { radius: 5, color: '#ffffff', weight: 1.5, fillColor: style.color, fillOpacity: 0.9 });
       m.bindTooltip(`${style.emoji} ${esc(name)}`, { sticky: true, direction: 'top', opacity: 0.9 });
       // Garmin business cards carry a service list (20 of 25 marinas list a Ramp) and free

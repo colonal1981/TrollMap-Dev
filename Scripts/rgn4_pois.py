@@ -226,6 +226,12 @@ def poi_type(p):
         # A bare number in mode 5/1 is a highway shield -- 97, 521, 601, 321, 77, 378 are all US
         # and SC routes through these tiles. Numeric NAVAID labels are a different thing and are
         # already handled above, so this only sees the road network.
+        #
+        # NOT ONLY THE ROAD NETWORK, as it turned out (2026-10-03). This runs for every mode, and
+        # Lake Moultrie's numbered channel markers ("2" at Pinopolis Dam up to "32") come through
+        # here too -- Ryan: "these are not land POI at all... they are channel markers". A tile
+        # has no water to test against, so they are refiled per pack, where it does:
+        # refile_channel_markers.py, after the pack is built.
         t = 'road_shield'
     else:
         t = TYPE_BY_MODE.get(p.get('mode'), 'place_name')

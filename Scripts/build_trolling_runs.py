@@ -419,6 +419,108 @@ def stitch(lines, quant=5):
     return runs
 
 
+def _seg_dist_m(p, a, b):
+    """Metres from p to segment ab, in a local equirectangular frame centred on p."""
+    kx = 111320.0 * math.cos(math.radians(p[1]))
+    ky = 110570.0
+    ax, ay = (a[0] - p[0]) * kx, (a[1] - p[1]) * ky
+    bx, by = (b[0] - p[0]) * kx, (b[1] - p[1]) * ky
+    dx, dy = bx - ax, by - ay
+    l2 = dx * dx + dy * dy
+    t = 0.0 if l2 == 0.0 else max(0.0, min(1.0, -(ax * dx + ay * dy) / l2))
+    return math.hypot(ax + t * dx, ay + t * dy)
+
+
+def _lies_on_head(p, run, tol_m, reach_m):
+    """Index of the first vertex of `run` past `p`, if `p` lies on `run` within `tol_m` somewhere in
+    its first `reach_m` metres; otherwise None."""
+    walked = 0.0
+    for i in range(1, len(run)):
+        if _seg_dist_m(p, run[i - 1], run[i]) <= tol_m:
+            return i
+        walked += metres(run[i - 1], run[i])
+        if walked > reach_m:
+            return None
+    return None
+
+
+def join_overlaps(runs, quant=5, cell_deg=0.001):
+    """Join runs whose ends OVERLAP instead of meeting at a shared vertex.
+
+    `stitch()` joins two fragments only where an endpoint is the same point to ~1.1 m. Where
+    Garmin cuts a contour at a boundary inside its tile it does not always cut it at one point: the
+    two pieces run on past each other for a few metres. Found 2026-10-03 on Lake Moultrie's levee,
+    the bank Ryan trolls -- *"i troll right along the levy where there is the huge line of parrel
+    contours... you can go down one until it starts to get shallow then run back the other way a
+    bit deeper"*. Every contour along it from 3 ft to 52 ft was held as two pieces that overlap by
+    about 10 m at lon -79.99689, so none of them was ever one line: the pieces east of the cut were
+    540-630 m long and none became a lane. Counted with `_scratch/lanes_1003/seam_overlap_1003.py`:
+    861 such pairs on Moultrie, 323 on Wateree, 1,463 on Monticello.
+
+    THE TEST IS THE SAME 1.1 m `stitch()` ALREADY TRUSTS, asked of a line instead of a point: A's
+    end lies on B, and B's end lies on A, each within the precision a shared vertex is written at.
+    Both have to hold, so two lines that merely touch, or cross, are not joined. And the overlap has
+    to be at the ends -- each end is looked for only within the distance between the two ends --
+    so a fragment that ends ON another line part way along it is left alone.
+
+    A RUN IS NEVER JOINED TO ITSELF. A contour round a whole basin, cut at an overlap, comes out of
+    this an open run with its two ends overlapping, exactly as `stitch()` left it -- because the
+    fitter skips every closed ring (a ring is a hump you circle), and the first version of this,
+    which closed them, took about a third of Lake Keowee's fitted lanes with it (1,063 before; 609
+    with that and the first shore cut together, 949 with rings left open).
+
+    `cell_deg` only sizes the grid that finds candidate pairs; the test above decides.
+    """
+    tol = 10 ** -quant * 110570.0
+    runs = [list(r) for r in runs if len(r) >= 2]
+    q = lambda p: (round(p[0], quant), round(p[1], quant))
+    is_ring = lambda r: q(r[0]) == q(r[-1])
+    cell = lambda p: (int(p[0] / cell_deg), int(p[1] / cell_deg))
+
+    def extend_tail(i, grid):
+        a = runs[i]
+        gx, gy = cell(a[-1])
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for j, e in grid.get((gx + dx, gy + dy), ()):
+                    if j == i or runs[j] is None:
+                        continue
+                    b = runs[j] if e == 0 else runs[j][::-1]
+                    if is_ring(b) or q(b[0]) == q(a[-1]):
+                        continue
+                    reach = metres(a[-1], b[0]) + tol
+                    k = _lies_on_head(a[-1], b, tol, reach)
+                    if k is None or _lies_on_head(b[0], a[::-1], tol, reach) is None:
+                        continue
+                    runs[i] = a + b[k:]
+                    runs[j] = None
+                    return True
+        return False
+
+    while True:
+        grid = defaultdict(list)
+        for i, r in enumerate(runs):
+            if r is not None and not is_ring(r):
+                grid[cell(r[0])].append((i, 0))
+                grid[cell(r[-1])].append((i, -1))
+        joined = False
+        for i in range(len(runs)):
+            if runs[i] is None or is_ring(runs[i]):
+                continue
+            if extend_tail(i, grid):
+                joined = True
+                continue
+            # The head, by turning the run round and back -- a run nothing joins keeps the
+            # direction stitch() gave it.
+            runs[i] = runs[i][::-1]
+            got = extend_tail(i, grid)
+            runs[i] = runs[i][::-1]
+            joined = joined or got
+        if not joined:
+            break
+    return [r for r in runs if r is not None]
+
+
 # ── the water graph, for reachability ───────────────────────────────────────────────────────
 
 def read_graph(path):
@@ -920,7 +1022,7 @@ def build_one(pack, min_len, simplify, reach_m, annotate_m=100.0,
                       'v_raw': 0, 'v_out': 0, 'depths': len(by),
                       'steered': 0, 'v_chord': 0}
     for dm in sorted(by):
-        for run in stitch(by[dm]):
+        for run in join_overlaps(stitch(by[dm])):
             stats['runs'] += 1
             L = length_m(run)
             if L < min_len:
