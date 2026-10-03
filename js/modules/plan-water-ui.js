@@ -1105,6 +1105,9 @@ export async function findWater() {
       .properties?.envelope_step_m || 40,
     waterDepthFt: depth && Array.isArray(depth.waterDepthFt) ? depth.waterDepthFt : null,
     trollOrder: null,
+    // A FISH THE RESEARCH DOES NOT PLACE IN THIS WATER -- preparePlanInputs()'s note, for
+    // buildFromPicked() to put first on the plan. See the note there.
+    roster: roster || null,
     // WHERE TWO OF THESE ARE ONE RUN -- see joinsFor() in plan-pieces.js. Held whole because
     // joinedPiece() indexes into the piece array these were measured against, so the pair and
     // the array have to stay together.
@@ -1591,7 +1594,12 @@ export async function buildFromPicked() {
 
   // A FISH THE RESEARCH DOES NOT PLACE IN THIS WATER, ahead of the notes added here -- same line,
   // same place, as the Smart Plan path (rosterNote() in species-selector.js).
-  if (roster) r.problems = [roster, ...(r.problems || [])];
+  //
+  // FROM T, NOT FROM SCOPE. `roster` is a local of findWater() -- preparePlanInputs() hands it back
+  // there -- and db25a58 wrote this line here, where no `roster` exists, so every Build the day threw
+  // "roster is not defined" after the model had already answered (Ryan, 2026-10-03). findWater() now
+  // carries it across the gap on the tab state, the way every other fact this function needs is.
+  if (T.roster) r.problems = [T.roster, ...(r.problems || [])];
 
   // WHAT THE MODEL GOT WRONG, ON SCREEN. Every one of these was being computed and discarded:
   // a rod the boat does not carry, a lure the bag does not hold, a leg with no rods deployed, a
