@@ -4908,7 +4908,8 @@ async function chartDatum(b, operator, poolReading, env) {
     const row = ((table && table.rows) || {})[b.slug];
     if (row && Number.isFinite(row.full_pool_ft)) {
       fp = { ft: row.full_pool_ft, source: row.source || null, datum: row.datum || null,
-             status: row.full_pool_status || null };
+             // `status` in the published copy, `full_pool_status` in the pipeline's own file.
+             status: row.status || row.full_pool_status || null };
     }
   } catch (e) {
     const out = chartDatumShape(b, {});

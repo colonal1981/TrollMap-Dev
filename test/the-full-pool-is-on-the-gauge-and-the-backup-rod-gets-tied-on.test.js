@@ -126,6 +126,10 @@ describe('the full pool comes off the gauge, on the gauge\'s own scale', () => {
 
   it('the Worker hands the pool reading\'s line to the shape', () => {
     expect(WORKER).toContain('gaugeFullPool: gaugeFullPoolLine(poolReading)');
+    // and reads the row's settled state under the name the PUBLISHED copy uses. The first cut read
+    // only `full_pool_status`, which is the pipeline file's name; R2's copy says `status`, so Lake
+    // Lure's town figure was overruled live anyway.
+    expect(WORKER).toContain('status: row.status || row.full_pool_status || null');
   });
 });
 
